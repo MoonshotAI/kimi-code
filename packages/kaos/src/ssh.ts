@@ -696,7 +696,7 @@ export class SSHKaos implements Kaos {
     // Match Python's splitlines() semantics: returned lines do NOT include
     // the line terminator, and a trailing newline does not create an extra
     // empty line.
-    const text = await this.readText(this._resolvePath(path), options);
+    const text = await this.readText(path, options);
     if (text === '') {
       return;
     }
