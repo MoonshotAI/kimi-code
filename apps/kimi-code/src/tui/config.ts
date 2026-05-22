@@ -149,5 +149,8 @@ function escapeTomlBasicString(value: string): string {
     .replaceAll('\t', '\\t')
     .replaceAll('\n', '\\n')
     .replaceAll('\f', '\\f')
-    .replaceAll('\r', '\\r');
+    .replaceAll('\r', '\\r')
+    .replaceAll(/[\x00-\x08\x0b\x0e-\x1f\x7f]/g, (ch) =>
+      `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`,
+    );
 }
