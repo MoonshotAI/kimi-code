@@ -327,7 +327,10 @@ async function fetchWithTimeout(
 function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted === true) return Promise.reject(abortError());
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
     timer.unref?.();
     const onAbort = (): void => {
       clearTimeout(timer);
