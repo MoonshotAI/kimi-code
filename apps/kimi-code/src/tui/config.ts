@@ -6,8 +6,8 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 
 import { parse as parseToml } from 'smol-toml';
 import { z } from 'zod';
@@ -108,8 +108,17 @@ export async function saveTuiConfig(
   config: TuiConfig,
   filePath: string = getTuiConfigPath(),
 ): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, renderTuiConfig(config), 'utf-8');
+  const dir = dirname(filePath);
+  await mkdir(dir, { recursive: true });
+  const nonce = `${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`;
+  const tmpPath = join(dir, `.${basename(filePath)}.${nonce}.tmp`);
+  try {
+    await writeFile(tmpPath, renderTuiConfig(config), 'utf-8');
+    await rename(tmpPath, filePath);
+  } catch (error) {
+    await unlink(tmpPath).catch(() => {});
+    throw error;
+  }
 }
 
 export function normalizeTuiConfig(config: TuiConfigFileShape): TuiConfig {
