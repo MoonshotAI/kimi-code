@@ -595,8 +595,12 @@ class AnthropicStreamedMessage implements StreamedMessage {
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
   }): void {
+    const totalInput = usage.input_tokens ?? 0;
     this._usage = {
-      inputOther: usage.input_tokens ?? 0,
+      inputOther:
+        totalInput
+        - (usage.cache_read_input_tokens ?? 0)
+        - (usage.cache_creation_input_tokens ?? 0),
       output: usage.output_tokens ?? 0,
       inputCacheRead: usage.cache_read_input_tokens ?? 0,
       inputCacheCreation: usage.cache_creation_input_tokens ?? 0,
