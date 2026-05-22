@@ -1851,6 +1851,7 @@ export class KimiTUI {
     for (const dispose of this.reverseRpcDisposers) {
       dispose();
     }
+    this.reverseRpcDisposers.length = 0;
   }
 
   // Connects session approval and question requests to local controllers.
