@@ -1,6 +1,7 @@
 import type { ToolInputDisplay } from '../../../tools/display';
 import {
   DEFAULT_WORKSPACE_ACCESS_POLICY,
+  isWithinDirectory,
   resolvePathAccess,
   type PathAccessOperation,
 } from '../../../tools/policies/path-access';
@@ -55,6 +56,14 @@ export const YoloOutsideWorkspacePermissionPolicy: PermissionPolicy = {
     }
 
     if (!access.outsideWorkspace) return undefined;
+
+    // In yolo mode, temp directory access does not require approval
+    const kaos = agent.runtime.kaos;
+    const pathClass = kaos.pathClass();
+    if (isWithinDirectory(access.path, kaos.gettmpdir(), pathClass)) {
+      return undefined;
+    }
+
     return {
       kind: 'ask',
       display: {

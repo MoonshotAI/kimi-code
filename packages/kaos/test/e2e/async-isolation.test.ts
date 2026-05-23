@@ -14,6 +14,7 @@ function createNamedKaos(kaosName: string): Kaos {
     normpath: (p: string) => base.normpath(p),
     gethome: () => base.gethome(),
     getcwd: () => base.getcwd(),
+    gettmpdir: () => base.gettmpdir(),
     chdir: async (p: string) => base.chdir(p),
     stat: async (p: string, opts?: { followSymlinks?: boolean }) => base.stat(p, opts),
     iterdir: (p: string) => base.iterdir(p),

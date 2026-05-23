@@ -429,12 +429,14 @@ export class SSHKaos implements Kaos {
   private _sftp: SFTPWrapper;
   private _home: string;
   private _cwd: string;
+  private _tmpdir: string;
 
-  private constructor(client: Client, sftp: SFTPWrapper, home: string, cwd: string) {
+  private constructor(client: Client, sftp: SFTPWrapper, home: string, cwd: string, tmpdir: string) {
     this._client = client;
     this._sftp = sftp;
     this._home = home;
     this._cwd = cwd;
+    this._tmpdir = tmpdir;
   }
 
   private _resolvePath(path: string): string {
@@ -501,7 +503,14 @@ export class SSHKaos implements Kaos {
         }
       }
 
-      return new SSHKaos(client, sftp, home, cwd);
+      let tmpdir = '/tmp';
+      try {
+        tmpdir = await sftpRealpath(sftp, '/tmp');
+      } catch {
+        // fallback to /tmp
+      }
+
+      return new SSHKaos(client, sftp, home, cwd, tmpdir);
     } catch (error) {
       client.end();
       throw error;
@@ -524,6 +533,10 @@ export class SSHKaos implements Kaos {
 
   getcwd(): string {
     return this._cwd;
+  }
+
+  gettmpdir(): string {
+    return this._tmpdir;
   }
 
   // ── Directory operations (async) ───────────────────────────────────

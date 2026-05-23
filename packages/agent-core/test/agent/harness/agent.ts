@@ -516,6 +516,7 @@ function createResumeNoSideEffectKaos(): Kaos {
     normpath: (p: string) => p,
     gethome: () => '/home/test',
     getcwd: () => '/workspace',
+    gettmpdir: () => '/tmp',
     chdir: () => fail('chdir'),
     stat: () => fail('stat'),
     iterdir: () => fail('iterdir'),

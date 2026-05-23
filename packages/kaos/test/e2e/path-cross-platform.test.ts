@@ -23,6 +23,9 @@ function createMockKaos(overrides: Partial<Kaos> & { name: string }): Kaos {
     getcwd(): string {
       return '/default/cwd';
     },
+    gettmpdir(): string {
+      return '/tmp';
+    },
     async chdir(): Promise<void> {
       // no-op
     },

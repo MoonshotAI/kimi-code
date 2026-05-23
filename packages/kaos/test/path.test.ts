@@ -17,6 +17,7 @@ function makeMockKaos(pathClass: 'posix' | 'win32', overrides: Partial<Kaos> = {
     normpath: (p: string) => (pathClass === 'win32' ? win32Path.normalize(p) : p),
     gethome: () => (pathClass === 'win32' ? 'C:\\Users\\test' : '/home/test'),
     getcwd: () => (pathClass === 'win32' ? 'C:\\work\\project' : '/work/project'),
+    gettmpdir: () => (pathClass === 'win32' ? 'C:\\Users\\test\\AppData\\Local\\Temp' : '/tmp'),
     chdir: async () => {},
     stat: async () => ({
       stMode: 0,
@@ -225,6 +226,7 @@ describe('KaosPath', () => {
         normpath: (p: string) => win32Path.normalize(p),
         gethome: () => 'C:\\Users\\test',
         getcwd: () => 'C:\\work\\project',
+        gettmpdir: () => 'C:\\Users\\test\\AppData\\Local\\Temp',
         chdir: async () => {},
         stat: async () => ({
           stMode: 0,

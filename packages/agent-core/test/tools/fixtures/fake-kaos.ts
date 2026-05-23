@@ -27,6 +27,7 @@ export function createFakeKaos(overrides?: Partial<Kaos>): Kaos {
     normpath: (p: string) => p,
     gethome: () => '/home/test',
     getcwd: () => '/workspace',
+    gettmpdir: () => '/tmp',
     chdir: () => notImplemented('chdir'),
     stat: () => notImplemented('stat'),
     iterdir: () => notImplemented('iterdir'),

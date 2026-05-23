@@ -10,7 +10,7 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join as pathJoin, normalize } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 
@@ -174,6 +174,10 @@ export class LocalKaos implements Kaos {
 
   getcwd(): string {
     return this._cwd;
+  }
+
+  gettmpdir(): string {
+    return tmpdir();
   }
 
   /**

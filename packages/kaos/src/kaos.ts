@@ -22,6 +22,8 @@ export interface Kaos {
   gethome(): string;
   /** Return the current working directory. */
   getcwd(): string;
+  /** Return the temp directory for the current environment. */
+  gettmpdir(): string;
 
   // ── Directory operations (async) ────────────────────────────────────
 

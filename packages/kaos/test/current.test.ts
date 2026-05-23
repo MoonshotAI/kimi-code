@@ -37,6 +37,7 @@ function createMockKaos(name: string): Kaos {
     normpath: (p: string) => p,
     gethome: () => '/',
     getcwd: () => '/',
+    gettmpdir: () => '/tmp',
     chdir: async () => {},
     stat: () =>
       Promise.resolve({

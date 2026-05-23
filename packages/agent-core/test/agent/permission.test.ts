@@ -389,11 +389,9 @@ describe('Permission auto mode', () => {
   );
 
   it.each([
-    ['Read', { path: '/tmp/notes.md' }, 'read'],
-    ['ReadMediaFile', { path: '/tmp/image.png' }, 'read'],
-    ['Write', { path: '/tmp/notes.md', content: 'x' }, 'write'],
-    ['Edit', { path: '/tmp/notes.md', old_string: 'a', new_string: 'b' }, 'edit'],
-    ['Grep', { pattern: 'TODO', path: '/tmp' }, 'grep'],
+    ['Read', { path: '/outside/notes.md' }, 'read'],
+    ['ReadMediaFile', { path: '/outside/image.png' }, 'read'],
+    ['Grep', { pattern: 'TODO', path: '/outside' }, 'grep'],
   ] as const)(
     'requests approval for %s outside the workspace in yolo mode',
     async (toolName, args, operation) => {
@@ -418,6 +416,28 @@ describe('Permission auto mode', () => {
         }),
         expect.any(Object),
       );
+    },
+  );
+
+  it.each([
+    ['Read', { path: '/tmp/notes.md' }],
+    ['ReadMediaFile', { path: '/tmp/image.png' }],
+    ['Write', { path: '/tmp/notes.md', content: 'x' }],
+    ['Edit', { path: '/tmp/notes.md', old_string: 'a', new_string: 'b' }],
+    ['Grep', { pattern: 'TODO', path: '/tmp' }],
+  ] as const)(
+    'does not request approval for %s outside the workspace in yolo mode when target is temp directory',
+    async (toolName, args) => {
+      const { manager, requestApproval } = makePermissionManager(async () => ({
+        decision: 'approved',
+      }));
+      manager.setMode('yolo');
+
+      await expect(
+        manager.beforeToolCall(hookContext({ id: `call_${toolName}`, toolName, args })),
+      ).resolves.toBeUndefined();
+
+      expect(requestApproval).not.toHaveBeenCalled();
     },
   );
 
@@ -504,7 +524,7 @@ describe('Permission auto mode', () => {
         hookContext({
           id: 'call_read_session',
           toolName: 'Read',
-          args: { path: '/tmp/notes.md' },
+          args: { path: '/outside/notes.md' },
         }),
       );
 
