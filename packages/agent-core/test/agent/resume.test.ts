@@ -4,7 +4,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AgentRecord, AgentRecordPersistence } from '../../src/agent';
+import type { AgentRecord } from '../../src/agent';
+import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
 import { appendTaskOutput, writeTask } from '../../src/tools/background/persist';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { testAgent } from './harness/agent';
@@ -282,24 +283,17 @@ describe('Agent resume', () => {
   });
 });
 
-class RecordingAgentPersistence implements AgentRecordPersistence {
+class RecordingAgentPersistence extends InMemoryAgentRecordPersistence {
   readonly appended: AgentRecord[] = [];
 
-  constructor(private readonly events: readonly AgentRecord[]) {}
-
-  async *read(): AsyncIterable<AgentRecord> {
-    for (const event of this.events) {
-      yield event;
-    }
+  constructor(events: readonly AgentRecord[]) {
+    super(events);
   }
 
-  async append(input: AgentRecord): Promise<void> {
+  override append(input: AgentRecord): void {
     this.appended.push(input);
+    super.append(input);
   }
-
-  async flush(): Promise<void> {}
-
-  async close(): Promise<void> {}
 }
 
 function resumeHistory(): AgentRecord[] {

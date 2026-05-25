@@ -146,9 +146,6 @@ export class Agent {
           : undefined),
     );
     this.records.onRecord = config.onRecord;
-    this.records.onError = (error, record) => {
-      this.emitRecordsWriteError(error, record);
-    };
     this.fullCompaction = new FullCompaction(this, config.compactionStrategy);
     this.context = new ContextMemory(this);
     this.config = new ConfigState(this);

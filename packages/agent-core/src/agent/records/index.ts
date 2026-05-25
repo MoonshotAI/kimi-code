@@ -1,15 +1,24 @@
 import type { Agent } from '..';
-import type { AgentRecord, AgentRecordPersistence } from './types';
+import {
+  AGENT_WIRE_PROTOCOL_VERSION,
+  type AgentRecord,
+  type AgentRecordPersistence,
+} from './types';
 
 export * from './types';
-export { FileSystemAgentRecordPersistence } from './wire-file';
-export type { FileSystemAgentRecordPersistenceOptions } from './wire-file';
+export {
+  FileSystemAgentRecordPersistence,
+  InMemoryAgentRecordPersistence,
+} from './persistence';
+export type { FileSystemAgentRecordPersistenceOptions } from './persistence';
 
 // Contract: restore MUST NOT emit UI events, call the LLM, execute tools, or
 // touch the filesystem in a way that triggers external side effects. Each case
 // should reproduce the in-memory state the live handler left behind, nothing more.
 export function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
   switch (input.type) {
+    case 'metadata':
+      return;
     case 'turn.prompt':
       agent.turn.restorePrompt();
       return;
@@ -82,10 +91,9 @@ export function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
 }
 
 export class AgentRecords {
-  private readonly records: AgentRecord[] = [];
   private _restoring = false;
+  private metadataInitialized = false;
   onRecord?: (record: AgentRecord) => void;
-  onError?: (error: unknown, record: AgentRecord) => void;
 
   constructor(
     private readonly restoreRecord: (record: AgentRecord) => void,
@@ -100,11 +108,23 @@ export class AgentRecords {
     if (this._restoring) return;
     const stamped: AgentRecord =
       record.time !== undefined ? record : { ...record, time: Date.now() };
-    this.records.push(stamped);
+    if (
+      this.persistence !== undefined &&
+      !this.metadataInitialized &&
+      stamped.type !== 'metadata'
+    ) {
+      this.persistence.append({
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: Date.now(),
+      });
+      this.metadataInitialized = true;
+    }
+    if (stamped.type === 'metadata') {
+      this.metadataInitialized = true;
+    }
+    this.persistence?.append(stamped);
     this.onRecord?.(stamped);
-    void this.persistence?.append(stamped).catch((error) => {
-      this.onError?.(error, stamped);
-    });
   }
 
   restore(record: AgentRecord): void {
@@ -119,18 +139,11 @@ export class AgentRecords {
   async replay(): Promise<void> {
     if (!this.persistence) throw new Error('No persistence provided for AgentRecords');
     for await (const record of this.persistence.read()) {
-      this.records.push(record);
-      this._restoring = true;
-      try {
-        this.restoreRecord(record);
-      } finally {
-        this._restoring = false;
+      if (!this.metadataInitialized) {
+        this.metadataInitialized = true;
       }
+      this.restore(record);
     }
-  }
-
-  snapshot(): readonly AgentRecord[] {
-    return [...this.records];
   }
 
   async flush(): Promise<void> {

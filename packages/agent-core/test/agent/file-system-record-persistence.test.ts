@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
+  AgentRecords,
   FileSystemAgentRecordPersistence,
+  InMemoryAgentRecordPersistence,
   type AgentRecord,
 } from '../../src/agent/records';
 
@@ -32,11 +34,11 @@ async function readLines(path: string): Promise<string[]> {
 }
 
 describe('FileSystemAgentRecordPersistence', () => {
-  it('writes a metadata header on the first append', async () => {
+  it('writes only the appended record', async () => {
     const wirePath = await makeWirePath();
     const persistence = new FileSystemAgentRecordPersistence(wirePath);
 
-    await persistence.append({
+    persistence.append({
       type: 'turn.prompt',
       input: [{ type: 'text', text: 'hello' }],
       origin: { kind: 'user' },
@@ -44,20 +46,15 @@ describe('FileSystemAgentRecordPersistence', () => {
     await persistence.close();
 
     const lines = await readLines(wirePath);
-    expect(lines).toHaveLength(2);
-    const meta = JSON.parse(lines[0]!) as Record<string, unknown>;
-    expect(meta).toMatchObject({
-      type: 'metadata',
-      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-    });
-    expect(typeof meta['created_at']).toBe('number');
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)['type']).toBe('turn.prompt');
   });
 
-  it('does not re-emit a metadata header when the file already has content', async () => {
+  it('appends to an existing file without injecting records', async () => {
     const wirePath = await makeWirePath();
 
     const first = new FileSystemAgentRecordPersistence(wirePath);
-    await first.append({
+    first.append({
       type: 'turn.prompt',
       input: [{ type: 'text', text: 'one' }],
       origin: { kind: 'user' },
@@ -65,7 +62,7 @@ describe('FileSystemAgentRecordPersistence', () => {
     await first.close();
 
     const second = new FileSystemAgentRecordPersistence(wirePath);
-    await second.append({
+    second.append({
       type: 'turn.prompt',
       input: [{ type: 'text', text: 'two' }],
       origin: { kind: 'user' },
@@ -73,16 +70,22 @@ describe('FileSystemAgentRecordPersistence', () => {
     await second.close();
 
     const lines = await readLines(wirePath);
-    // 1 metadata + 2 turn.prompt records.
-    expect(lines).toHaveLength(3);
-    const metaLines = lines.filter((l) => l.includes('"type":"metadata"'));
-    expect(metaLines).toHaveLength(1);
+    expect(lines).toHaveLength(2);
+    expect(lines.map((line) => JSON.parse(line)['type'])).toEqual([
+      'turn.prompt',
+      'turn.prompt',
+    ]);
   });
 
-  it('filters the metadata header out of read() output', async () => {
+  it('returns appended metadata records from read() output', async () => {
     const wirePath = await makeWirePath();
     const persistence = new FileSystemAgentRecordPersistence(wirePath);
-    await persistence.append({
+    persistence.append({
+      type: 'metadata',
+      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+      created_at: 1,
+    });
+    persistence.append({
       type: 'turn.prompt',
       input: [{ type: 'text', text: 'hi' }],
       origin: { kind: 'user' },
@@ -92,28 +95,140 @@ describe('FileSystemAgentRecordPersistence', () => {
     const reader = new FileSystemAgentRecordPersistence(wirePath);
     const records: AgentRecord[] = [];
     for await (const r of reader.read()) records.push(r);
-    expect(records).toHaveLength(1);
-    expect(records[0]!.type).toBe('turn.prompt');
+    expect(records).toHaveLength(2);
+    expect(records[0]).toMatchObject({
+      type: 'metadata',
+      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+    });
+    expect(records[1]!.type).toBe('turn.prompt');
   });
 
-  it('rejects an append that resumes after close starts', async () => {
+  it('rewrites records from the beginning and then appends after them', async () => {
+    const wirePath = await makeWirePath();
+    const persistence = new FileSystemAgentRecordPersistence(wirePath);
+    persistence.append({
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: 'old' }],
+      origin: { kind: 'user' },
+    });
+    persistence.rewrite([
+      {
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+      },
+      {
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'new' }],
+        origin: { kind: 'user' },
+      },
+    ]);
+    persistence.append({
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: 'later' }],
+      origin: { kind: 'user' },
+    });
+    await persistence.flush();
+
+    const lines = await readLines(wirePath);
+    expect(lines.map((line) => JSON.parse(line)['type'])).toEqual([
+      'metadata',
+      'turn.prompt',
+      'turn.prompt',
+    ]);
+    expect(JSON.parse(lines[1]!)['input'][0]['text']).toBe('new');
+    expect(JSON.parse(lines[2]!)['input'][0]['text']).toBe('later');
+  });
+
+  it('flushes pending records on close', async () => {
     const wirePath = await makeWirePath();
     const persistence = new FileSystemAgentRecordPersistence(wirePath);
 
-    const appendPromise = persistence.append({
+    persistence.append({
       type: 'turn.prompt',
       input: [{ type: 'text', text: 'late' }],
       origin: { kind: 'user' },
     });
-    const closePromise = persistence.close();
-
-    await expect(appendPromise).rejects.toThrow(
-      'FileSystemAgentRecordPersistence: append on closed persistence',
-    );
-    await closePromise;
+    await persistence.close();
 
     const lines = await readLines(wirePath);
     expect(lines).toHaveLength(1);
-    expect(JSON.parse(lines[0]!)['type']).toBe('metadata');
+    expect(JSON.parse(lines[0]!)['type']).toBe('turn.prompt');
+  });
+});
+
+describe('InMemoryAgentRecordPersistence', () => {
+  it('stores appended records and replaces them on rewrite', async () => {
+    const persistence = new InMemoryAgentRecordPersistence();
+    persistence.append({
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: 'one' }],
+      origin: { kind: 'user' },
+    });
+    persistence.rewrite([
+      {
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+      },
+    ]);
+
+    const records: AgentRecord[] = [];
+    for await (const record of persistence.read()) records.push(record);
+
+    expect(records).toEqual([
+      {
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+      },
+    ]);
+    expect(persistence.records).toEqual(records);
+  });
+});
+
+describe('AgentRecords persistence metadata', () => {
+  it('writes metadata before the first persisted record', async () => {
+    const wirePath = await makeWirePath();
+    const persistence = new FileSystemAgentRecordPersistence(wirePath);
+    const records = new AgentRecords(() => {}, persistence);
+
+    records.logRecord({
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: 'hello' }],
+      origin: { kind: 'user' },
+    });
+    await records.flush();
+
+    const lines = await readLines(wirePath);
+    expect(lines).toHaveLength(2);
+    const meta = JSON.parse(lines[0]!) as Record<string, unknown>;
+    expect(meta).toMatchObject({
+      type: 'metadata',
+      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+    });
+    expect(typeof meta['created_at']).toBe('number');
+    expect(JSON.parse(lines[1]!)['type']).toBe('turn.prompt');
+  });
+
+  it('does not write metadata when replaying an empty stream', async () => {
+    const wirePath = await makeWirePath();
+    const persistence = new FileSystemAgentRecordPersistence(wirePath);
+    const records = new AgentRecords(() => {}, persistence);
+
+    await records.replay();
+    records.logRecord({
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: 'one' }],
+      origin: { kind: 'user' },
+    });
+    await records.flush();
+
+    const lines = await readLines(wirePath);
+    expect(lines).toHaveLength(2);
+    expect(lines.map((line) => JSON.parse(line)['type'])).toEqual([
+      'metadata',
+      'turn.prompt',
+    ]);
   });
 });

@@ -14,6 +14,7 @@ import {
 } from '../../../src/agent';
 import type { CompactionStrategy } from '../../../src/agent/compaction';
 import type { ApprovalResponse } from '../../../src/agent/permission';
+import { InMemoryAgentRecordPersistence } from '../../../src/agent/records';
 import type { KimiConfig } from '../../../src/config';
 import type { ExecutableToolResult } from '../../../src/loop';
 import type { Logger } from '../../../src/logging';
@@ -283,7 +284,7 @@ export class AgentTestContext {
       providerManager: this.agent.providerManager,
       generate: failOnResumeGenerate,
       compactionStrategy: this.options.compactionStrategy,
-      persistence: new ReplayAgentPersistence(this.recordHistory),
+      persistence: new InMemoryAgentRecordPersistence(this.recordHistory.map(cloneRecord)),
     });
 
     await resumed.agent.resume();
@@ -439,6 +440,7 @@ export class AgentTestContext {
     return {
       read: () => this.readAndCapturePersistence(persistence),
       append: (event) => persistence.append(event),
+      rewrite: (records) => persistence.rewrite(records),
       flush: () => persistence.flush(),
       close: () => persistence.close(),
     };
@@ -481,24 +483,6 @@ export class AgentTestContext {
       },
     }) as unknown as PromiseAgentAPI;
   }
-}
-
-class ReplayAgentPersistence implements AgentRecordPersistence {
-  constructor(private readonly events: readonly AgentRecord[]) {}
-
-  async *read(): AsyncIterable<AgentRecord> {
-    for (const event of this.events) {
-      yield cloneRecord(event);
-    }
-  }
-
-  async append(_event: AgentRecord): Promise<void> {
-    throw new Error('Resume replay unexpectedly appended a record');
-  }
-
-  async flush(): Promise<void> {}
-
-  async close(): Promise<void> {}
 }
 
 const failOnResumeGenerate: GenerateFn = async () => {
