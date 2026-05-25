@@ -25,12 +25,18 @@ import type {
   GetBackgroundOutputPathPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
+  GetPluginInfoPayload,
+  InstallPluginPayload,
   ListSessionsPayload,
   McpServerInfo,
   McpStartupMetrics,
+  PluginInfo,
+  PluginSummary,
   PromptPayload,
   ReconnectMcpServerPayload,
+  ReloadPluginsResult,
   RemoveKimiProviderPayload,
+  RemovePluginPayload,
   RenameSessionPayload,
   ResumeSessionPayload,
   RegisterToolPayload,
@@ -39,6 +45,7 @@ import type {
   SetModelPayload,
   SetModelResult,
   SetPermissionPayload,
+  SetPluginEnabledPayload,
   SetThinkingPayload,
   SkillSummary,
   SteerPayload,
@@ -548,6 +555,42 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   generateAgentsMd({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>): Promise<void> {
     return this.sessionApi(sessionId).generateAgentsMd(payload);
+  }
+
+  async installPlugin(payload: InstallPluginPayload): Promise<PluginSummary> {
+    await this.pluginsReady;
+    const record = await this.plugins.install(payload.root);
+    return this.plugins.summaries().find((s) => s.id === record.id)!;
+  }
+
+  listPlugins(_: EmptyPayload): readonly PluginSummary[] {
+    return this.plugins.summaries();
+  }
+
+  async setPluginEnabled({ id, enabled }: SetPluginEnabledPayload): Promise<void> {
+    await this.pluginsReady;
+    await this.plugins.setEnabled(id, enabled);
+  }
+
+  async removePlugin({ id }: RemovePluginPayload): Promise<void> {
+    await this.pluginsReady;
+    await this.plugins.remove(id);
+  }
+
+  async reloadPlugins(_: EmptyPayload): Promise<ReloadPluginsResult> {
+    return this.plugins.reload();
+  }
+
+  getPluginInfo({ id }: GetPluginInfoPayload): PluginInfo {
+    const info = this.plugins.info(id);
+    if (info === undefined) {
+      throw new KimiError(
+        ErrorCodes.MCP_SERVER_NOT_FOUND,
+        `Plugin "${id}" is not installed`,
+        { details: { id } },
+      );
+    }
+    return info;
   }
 
   private async resolveRuntime(config: KimiConfig): Promise<RuntimeConfig> {
