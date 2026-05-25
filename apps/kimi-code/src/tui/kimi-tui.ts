@@ -5124,8 +5124,10 @@ export class KimiTUI {
     if (wire === undefined) return;
     const baseUrl = catalogBaseUrl(entry, wire);
 
-    // Remove stale provider config first so old model aliases are fully
-    // cleared (setConfig patch merge cannot delete nested keys).
+    // Remove stale provider config first: setConfig is a deep-merge patch that
+    // cannot delete keys, and applyCatalogProvider's in-memory cleanup below
+    // does not survive that merge — removeProvider is the only step that
+    // actually drops old model aliases from disk.
     const existingConfig = await this.harness.getConfig();
     if (existingConfig.providers[providerId] !== undefined) {
       await this.harness.removeProvider(providerId);
