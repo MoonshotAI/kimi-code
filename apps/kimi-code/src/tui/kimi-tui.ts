@@ -227,6 +227,7 @@ import {
 } from './utils/mcp-server-status';
 import { openUrl } from './utils/open-url';
 import { setProcessTitle } from './utils/proctitle';
+import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
 import { createTerminalState, type TerminalState } from './utils/terminal-state';
@@ -1866,14 +1867,7 @@ export class KimiTUI {
     this.state.loadingSessions = true;
     try {
       const sessions = await this.harness.listSessions({ workDir: this.state.appState.workDir });
-      this.state.sessions = sessions.map((session) => ({
-        id: session.id,
-        title: session.title ?? null,
-        last_prompt: session.lastPrompt ?? null,
-        work_dir: session.workDir,
-        updated_at: session.updatedAt ?? session.createdAt ?? 0,
-        metadata: session.metadata,
-      }));
+      this.state.sessions = sessionRowsForPicker(sessions, this.state.appState.sessionId);
     } catch {
       /* silently ignore */
     } finally {
