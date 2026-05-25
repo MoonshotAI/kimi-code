@@ -7,6 +7,7 @@ Thanks for taking the time to contribute! This project moves quickly, and though
 - Open an issue or discussion before making changes larger than ~100 lines so we can align on direction early.
 - We only merge PRs that are aligned with the roadmap — drive-by refactors without context are unlikely to land.
 - Code quality bar: as good as code written by a strong human engineer or a competent coding agent. We hold AI-assisted contributions to the same standard as hand-written ones.
+- You must understand the code you submit. If you cannot explain what changed, how it behaves at the edges, and why it fits this codebase, the PR is not ready for review.
 
 ## Project Layout
 
@@ -79,6 +80,21 @@ Before requesting review, make sure your PR ticks the following:
 - [ ] Updated user-facing docs in `docs/` if behavior changed
 
 The `.github/pull_request_template.md` checklist is a shorter subset of this — both must pass.
+
+## Pull Request Description
+
+Review time is limited, and AI tools can generate changes much faster than maintainers can review them. A PR description should make the change easy to evaluate, not just summarize the diff.
+
+Every non-trivial PR should clearly explain:
+
+- Problem: what user-visible bug, limitation, or need this PR addresses.
+- Cause: for bug fixes, why the problem happened. Point to the relevant code path when possible.
+- Solution: what changed and why this approach fits the existing design.
+- Behavior: what users, CLI output, docs, APIs, or compatibility guarantees are affected.
+- Verification: which tests, checks, or manual steps you ran, with enough detail for reviewers to trust the result.
+- Release notes: whether docs and changesets were updated, or why they are not needed.
+
+AI-assisted PRs are welcome only when a human has reviewed, edited, tested, and understood the result. Do not submit bulk generated code, generic PR text, or tests that do not prove the behavior.
 
 ## Code Style
 

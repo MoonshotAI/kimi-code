@@ -55,6 +55,14 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 - Prefer `rg` / `rg --files` when reading code.
 - When designing changes, follow existing boundaries and local patterns first.
 - When creating a PR, the PR title must follow Conventional Commit style, e.g. `chore: remove legacy format commands`.
+- When creating or updating a PR description, make it reviewable by including:
+  - what problem or user need the PR addresses;
+  - the cause of the problem, for bug fixes;
+  - how the implementation solves it;
+  - user-visible behavior changes and compatibility risks;
+  - tests, checks, or manual verification performed;
+  - docs and changeset status.
+- Do not submit vague AI-generated PR text. The human author must understand the change well enough to explain the code, edge cases, and why the approach fits this repository.
 - After finishing a task and before submitting a PR, you must run the `gen-changesets` skill (see `.agents/skills/gen-changesets/SKILL.md`) and generate a changeset under `.changeset/` according to its rules.
 - When generating a changeset, **never** decide on a `major` bump on your own. When you judge a change to meet the major criteria (breaking changes, incompatible user configuration, renamed or removed commands/arguments, changed behavior semantics, etc.), you must stop and explain it to the user and ask for confirmation. **Only write `major` after the user has explicitly agreed.** Otherwise default to `minor` (and fall back to `patch` if `minor` is unclear). See the "Hard rule: confirm with the user before writing `major`" section in `.agents/skills/gen-changesets/SKILL.md` for details.
 - Prefer importing via `import ... from '#/...'`, which serves the same purpose as `import ... from '@/...'`.
