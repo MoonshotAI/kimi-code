@@ -1,6 +1,7 @@
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import {
   Container,
+  fuzzyFilter,
   Key,
   matchesKey,
   truncateToWidth,
@@ -10,8 +11,12 @@ import chalk from 'chalk';
 
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '#/constant/app';
 import type { ColorPalette } from '#/tui/theme/colors';
+import { pageView } from '#/tui/utils/paging';
+import { isPrintableChar, printableChar } from '#/tui/utils/printable-key';
 
 import type { ChoiceOption } from './choice-picker';
+
+const DEFAULT_PAGE_SIZE = 8;
 
 type ThinkingAvailability = 'toggle' | 'always-on' | 'unsupported';
 
@@ -51,6 +56,10 @@ export interface ModelSelectorOptions {
   readonly selectedValue?: string;
   readonly currentThinking: boolean;
   readonly colors: ColorPalette;
+  /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
+  readonly searchable?: boolean;
+  /** Items per page. Lists longer than this paginate (PgUp/PgDn). */
+  readonly pageSize?: number;
   readonly onSelect: (selection: ModelSelection) => void;
   readonly onCancel: () => void;
 }
@@ -83,6 +92,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
   private readonly choices: readonly ModelChoice[];
   private selectedIndex: number;
   private thinkingDraft: boolean;
+  private query = '';
 
   constructor(opts: ModelSelectorOptions) {
     super();
@@ -94,8 +104,27 @@ export class ModelSelectorComponent extends Container implements Focusable {
     this.thinkingDraft = opts.currentThinking;
   }
 
+  private get pageSize(): number {
+    return this.opts.pageSize ?? DEFAULT_PAGE_SIZE;
+  }
+
+  private filteredChoices(): readonly ModelChoice[] {
+    if (this.query.length === 0) return this.choices;
+    return fuzzyFilter([...this.choices], this.query, (c) => c.label);
+  }
+
   handleInput(data: string): void {
+    const choices = this.filteredChoices();
+    const lastIndex = Math.max(0, choices.length - 1);
+    const searchable = this.opts.searchable === true;
+    const selected = choices[this.selectedIndex];
+
     if (matchesKey(data, Key.escape)) {
+      if (searchable && this.query.length > 0) {
+        this.query = '';
+        this.selectedIndex = 0;
+        return;
+      }
       this.opts.onCancel();
       return;
     }
@@ -104,10 +133,17 @@ export class ModelSelectorComponent extends Container implements Focusable {
       return;
     }
     if (matchesKey(data, Key.down)) {
-      this.selectedIndex = Math.max(0, Math.min(this.choices.length - 1, this.selectedIndex + 1));
+      this.selectedIndex = Math.min(lastIndex, this.selectedIndex + 1);
       return;
     }
-    const selected = this.selectedChoice();
+    if (matchesKey(data, Key.pageDown)) {
+      this.selectedIndex = Math.min(lastIndex, this.selectedIndex + this.pageSize);
+      return;
+    }
+    if (matchesKey(data, Key.pageUp)) {
+      this.selectedIndex = Math.max(0, this.selectedIndex - this.pageSize);
+      return;
+    }
     if (selected !== undefined && thinkingAvailability(selected.model) === 'toggle') {
       if (matchesKey(data, Key.left)) {
         this.thinkingDraft = true;
@@ -124,21 +160,52 @@ export class ModelSelectorComponent extends Container implements Focusable {
         alias: selected.alias,
         thinking: effectiveThinking(selected.model, this.thinkingDraft),
       });
+      return;
+    }
+    if (!searchable) return;
+    if (matchesKey(data, Key.backspace)) {
+      if (this.query.length > 0) {
+        this.query = this.query.slice(0, -1);
+        this.selectedIndex = 0;
+      }
+      return;
+    }
+    const ch = printableChar(data);
+    if (isPrintableChar(ch)) {
+      this.query += ch;
+      this.selectedIndex = 0;
     }
   }
 
   override render(width: number): string[] {
     const { colors } = this.opts;
+    const searchable = this.opts.searchable === true;
+    const choices = this.filteredChoices();
+    const view = pageView(choices.length, this.selectedIndex, this.pageSize);
+    const selectedIndex = Math.min(this.selectedIndex, Math.max(0, choices.length - 1));
+
+    const navParts = ['↑↓ model', '←→ thinking'];
+    if (view.pageCount > 1) navParts.push('PgUp/PgDn page');
+    navParts.push('Enter apply', 'Esc cancel');
+
+    const titleSuffix =
+      searchable && this.query.length === 0 ? chalk.hex(colors.textMuted)('  (type to search)') : '';
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
-      chalk.hex(colors.primary).bold(' Select a model'),
-      chalk.hex(colors.textMuted)(' ↑↓ model · ←→ thinking · Enter apply · Esc cancel'),
-      '',
+      chalk.hex(colors.primary).bold(' Select a model') + titleSuffix,
     ];
+    if (searchable && this.query.length > 0) {
+      lines.push(chalk.hex(colors.primary)(' Search: ') + chalk.hex(colors.text)(this.query));
+    }
+    lines.push(chalk.hex(colors.textMuted)(` ${navParts.join(' · ')}`));
+    lines.push('');
 
-    for (let i = 0; i < this.choices.length; i++) {
-      const choice = this.choices[i]!;
-      const isSelected = i === this.selectedIndex;
+    if (choices.length === 0) {
+      lines.push(chalk.hex(colors.textMuted)('   No matches'));
+    }
+    for (let i = view.start; i < view.end; i++) {
+      const choice = choices[i]!;
+      const isSelected = i === selectedIndex;
       const isCurrent = choice.alias === this.opts.currentValue;
       const pointer = isSelected ? '❯' : ' ';
       const labelStyle = isSelected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
@@ -152,17 +219,18 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
     lines.push('');
     lines.push(chalk.hex(colors.textMuted)(' Thinking'));
-    const selected = this.selectedChoice();
+    const selected = choices[selectedIndex];
     if (selected !== undefined) {
       lines.push(this.renderThinkingControl(selected.model));
     }
     lines.push('');
+    if (view.pageCount > 1) {
+      lines.push(
+        chalk.hex(colors.textMuted)(` Page ${String(view.page + 1)}/${String(view.pageCount)}`),
+      );
+    }
     lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width));
-  }
-
-  private selectedChoice(): ModelChoice | undefined {
-    return this.choices[this.selectedIndex];
   }
 
   private renderThinkingControl(model: ModelAlias): string {

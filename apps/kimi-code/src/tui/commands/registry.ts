@@ -142,6 +142,12 @@ export const BUILTIN_SLASH_COMMANDS = [
     priority: 40,
   },
   {
+    name: 'connect',
+    aliases: [],
+    description: 'Connect a provider from a model catalog',
+    priority: 40,
+  },
+  {
     name: 'exit',
     aliases: ['quit', 'q'],
     description: 'Exit the application',

@@ -16,5 +16,3 @@ export interface ParsedSlashInput {
 }
 
 export type SlashCommandBusyReason = 'streaming' | 'compacting';
-
-export type SlashCommandInvalidReason = 'unknown';

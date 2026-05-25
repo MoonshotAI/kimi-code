@@ -10,6 +10,7 @@
 
 import {
   Container,
+  fuzzyFilter,
   matchesKey,
   Key,
   truncateToWidth,
@@ -19,6 +20,8 @@ import {
 import chalk from 'chalk';
 
 import type { ColorPalette } from '#/tui/theme/colors';
+import { pageView } from '#/tui/utils/paging';
+import { isPrintableChar, printableChar } from '#/tui/utils/printable-key';
 
 export interface ChoiceOption {
   /** Value passed to onSelect (e.g. the actual editor command string). */
@@ -35,11 +38,16 @@ export interface ChoicePickerOptions {
   readonly options: readonly ChoiceOption[];
   readonly currentValue?: string;
   readonly colors: ColorPalette;
+  /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
+  readonly searchable?: boolean;
+  /** Items per page. Lists longer than this paginate. */
+  readonly pageSize?: number;
   readonly onSelect: (value: string) => void;
   readonly onCancel: () => void;
 }
 
 const CURRENT_MARK = '← current';
+const DEFAULT_PAGE_SIZE = 8;
 
 function wrapDescription(text: string, width: number): string[] {
   const maxWidth = Math.max(1, width);
@@ -68,6 +76,7 @@ export class ChoicePickerComponent extends Container implements Focusable {
   focused = false;
   private readonly opts: ChoicePickerOptions;
   private selectedIndex: number;
+  private query = '';
 
   constructor(opts: ChoicePickerOptions) {
     super();
@@ -76,8 +85,30 @@ export class ChoicePickerComponent extends Container implements Focusable {
     this.selectedIndex = Math.max(currentIdx, 0);
   }
 
+  private get pageSize(): number {
+    return this.opts.pageSize ?? DEFAULT_PAGE_SIZE;
+  }
+
+  private filteredOptions(): readonly ChoiceOption[] {
+    if (this.query.length === 0) return this.opts.options;
+    return fuzzyFilter(
+      [...this.opts.options],
+      this.query,
+      (o) => `${o.label} ${o.description ?? ''}`,
+    );
+  }
+
   handleInput(data: string): void {
+    const options = this.filteredOptions();
+    const lastIndex = Math.max(0, options.length - 1);
+    const searchable = this.opts.searchable === true;
+
     if (matchesKey(data, Key.escape)) {
+      if (searchable && this.query.length > 0) {
+        this.query = '';
+        this.selectedIndex = 0;
+        return;
+      }
       this.opts.onCancel();
       return;
     }
@@ -86,29 +117,67 @@ export class ChoicePickerComponent extends Container implements Focusable {
       return;
     }
     if (matchesKey(data, Key.down)) {
-      this.selectedIndex = Math.min(this.opts.options.length - 1, this.selectedIndex + 1);
+      this.selectedIndex = Math.min(lastIndex, this.selectedIndex + 1);
+      return;
+    }
+    if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.right)) {
+      this.selectedIndex = Math.min(lastIndex, this.selectedIndex + this.pageSize);
+      return;
+    }
+    if (matchesKey(data, Key.pageUp) || matchesKey(data, Key.left)) {
+      this.selectedIndex = Math.max(0, this.selectedIndex - this.pageSize);
       return;
     }
     if (matchesKey(data, Key.enter)) {
-      const chosen = this.opts.options[this.selectedIndex];
+      const chosen = options[this.selectedIndex];
       if (chosen !== undefined) this.opts.onSelect(chosen.value);
       return;
+    }
+    if (!searchable) return;
+    if (matchesKey(data, Key.backspace)) {
+      if (this.query.length > 0) {
+        this.query = this.query.slice(0, -1);
+        this.selectedIndex = 0;
+      }
+      return;
+    }
+    const ch = printableChar(data);
+    if (isPrintableChar(ch)) {
+      this.query += ch;
+      this.selectedIndex = 0;
     }
   }
 
   override render(width: number): string[] {
     const { colors } = this.opts;
-    const hint = this.opts.hint ?? '↑↓ navigate · Enter select · Esc cancel';
+    const searchable = this.opts.searchable === true;
+    const options = this.filteredOptions();
+    const view = pageView(options.length, this.selectedIndex, this.pageSize);
+    const selectedIndex = Math.min(this.selectedIndex, Math.max(0, options.length - 1));
+
+    const navParts = ['↑↓ navigate'];
+    if (view.pageCount > 1) navParts.push('←→ page');
+    navParts.push('Enter select', 'Esc cancel');
+    const hint = this.opts.hint ?? navParts.join(' · ');
+
+    const titleSuffix =
+      searchable && this.query.length === 0 ? chalk.hex(colors.textMuted)('  (type to search)') : '';
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
-      chalk.hex(colors.primary).bold(` ${this.opts.title}`),
-      chalk.hex(colors.textMuted)(` ${hint}`),
-      '',
+      chalk.hex(colors.primary).bold(` ${this.opts.title}`) + titleSuffix,
     ];
+    if (searchable && this.query.length > 0) {
+      lines.push(chalk.hex(colors.primary)(` Search: `) + chalk.hex(colors.text)(this.query));
+    }
+    lines.push(chalk.hex(colors.textMuted)(` ${hint}`));
+    lines.push('');
 
-    for (let i = 0; i < this.opts.options.length; i++) {
-      const opt = this.opts.options[i]!;
-      const isSelected = i === this.selectedIndex;
+    if (options.length === 0) {
+      lines.push(chalk.hex(colors.textMuted)('   No matches'));
+    }
+    for (let i = view.start; i < view.end; i++) {
+      const opt = options[i]!;
+      const isSelected = i === selectedIndex;
       const isCurrent = opt.value === this.opts.currentValue;
       const pointer = isSelected ? '❯' : ' ';
       const labelStyle = isSelected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
@@ -127,6 +196,13 @@ export class ChoicePickerComponent extends Container implements Focusable {
     }
 
     lines.push('');
+    if (view.pageCount > 1) {
+      lines.push(
+        chalk.hex(colors.textMuted)(
+          ` Page ${String(view.page + 1)}/${String(view.pageCount)}`,
+        ),
+      );
+    }
     lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width));
   }
