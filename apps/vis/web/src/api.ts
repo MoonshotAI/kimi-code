@@ -1,13 +1,7 @@
 import type {
   SessionSummary,
   SessionDetail,
-  WireResponse,
-  ContextResponse,
-  SubagentTreeResponse,
-  SubagentMetaResponse,
-  ToolResultFileResponse,
   DeleteSessionResponse,
-  ClearSessionsResponse,
   ApiError,
 } from './types';
 
@@ -87,33 +81,17 @@ function del<T>(path: string): Promise<T> {
 
 const enc = encodeURIComponent;
 
+interface SessionsListResponse {
+  sessions: SessionSummary[];
+}
+
 export const api = {
-  listSessions: () => get<SessionSummary[]>('/api/sessions'),
+  listSessions: async (): Promise<SessionSummary[]> => {
+    const r = await get<SessionsListResponse>('/api/sessions');
+    return r.sessions;
+  },
 
   getSession: (id: string) => get<SessionDetail>(`/api/sessions/${enc(id)}`),
 
   deleteSession: (id: string) => del<DeleteSessionResponse>(`/api/sessions/${enc(id)}`),
-
-  clearSessions: () => del<ClearSessionsResponse>('/api/sessions'),
-
-  getWire: (id: string) => get<WireResponse>(`/api/sessions/${enc(id)}/wire`),
-
-  getContext: (id: string) => get<ContextResponse>(`/api/sessions/${enc(id)}/context`),
-
-  getSubagents: (id: string) => get<SubagentTreeResponse>(`/api/sessions/${enc(id)}/subagents`),
-
-  getSubagentWire: (id: string, agentId: string) =>
-    get<WireResponse>(`/api/sessions/${enc(id)}/subagents/${enc(agentId)}/wire`),
-
-  getSubagentContext: (id: string, agentId: string) =>
-    get<ContextResponse>(`/api/sessions/${enc(id)}/subagents/${enc(agentId)}/context`),
-
-  getSubagentMeta: (id: string, agentId: string) =>
-    get<SubagentMetaResponse>(`/api/sessions/${enc(id)}/subagents/${enc(agentId)}/meta`),
-
-  getToolResult: (id: string, toolCallId: string) =>
-    get<ToolResultFileResponse>(`/api/sessions/${enc(id)}/tool-results/${enc(toolCallId)}`),
-
-  getArchive: (id: string, filename: string) =>
-    get<WireResponse>(`/api/sessions/${enc(id)}/archives/${enc(filename)}`),
 };
