@@ -4334,7 +4334,10 @@ export class KimiTUI {
   private showModelPicker(selectedValue: string = this.state.appState.model): void {
     const entries = Object.entries(this.state.appState.availableModels);
     if (entries.length === 0) {
-      this.showError('No models configured.');
+      this.showNotice(
+        'No models configured',
+        'Run /login to sign in to Kimi, or /connect to add another provider from a model catalog.',
+      );
       return;
     }
     this.mountEditorReplacement(
