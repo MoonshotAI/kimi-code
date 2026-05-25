@@ -2,6 +2,7 @@ import type {
   SessionSummary,
   SessionDetail,
   DeleteSessionResponse,
+  WireResponse,
   ApiError,
 } from './types';
 
@@ -92,6 +93,9 @@ export const api = {
   },
 
   getSession: (id: string) => get<SessionDetail>(`/api/sessions/${enc(id)}`),
+
+  getWire: (id: string, agentId: string) =>
+    get<WireResponse>(`/api/sessions/${enc(id)}/wire?agent=${enc(agentId)}`),
 
   deleteSession: (id: string) => del<DeleteSessionResponse>(`/api/sessions/${enc(id)}`),
 };
