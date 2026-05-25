@@ -1,5 +1,6 @@
 import { parseManifest, type ParsedManifestResult } from './manifest';
 import { readInstalled, writeInstalled, type InstalledRecord } from './store';
+import { applyCompatShims } from './superpowers';
 import {
   type EnabledBootstrap,
   type PluginInfo,
@@ -159,7 +160,7 @@ function recordFrom(input: {
 }): PluginRecord {
   const { parsed } = input;
   const hasError = parsed.diagnostics.some((d) => d.severity === 'error');
-  return {
+  const base: PluginRecord = {
     id: input.id,
     root: input.root,
     source: 'local-path',
@@ -173,6 +174,7 @@ function recordFrom(input: {
     recognizedFields: parsed.recognizedFields,
     diagnostics: parsed.diagnostics,
   };
+  return applyCompatShims(base);
 }
 
 function recordToSummary(record: PluginRecord): PluginSummary {
