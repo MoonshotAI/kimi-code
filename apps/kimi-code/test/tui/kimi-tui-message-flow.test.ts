@@ -1421,6 +1421,61 @@ describe('KimiTUI message flow', () => {
     });
   });
 
+  it('does not create a thinking component for empty thinking deltas', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.isStreaming = true;
+    driver.state.appState.streamingStartTime = 1;
+
+    // An empty thinking delta — as emitted by providers like Anthropic
+    // (signature_delta → think: '') — must not create a ThinkingComponent
+    // whose spinner would leak past turn end.
+    driver.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        delta: '',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.activeThinkingComponent).toBeUndefined();
+  });
+
+  it('finalizes an orphaned thinking component on turn end', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.isStreaming = true;
+    driver.state.appState.streamingStartTime = 1;
+    const sendQueued = vi.fn();
+
+    // Simulate a ThinkingComponent that leaked into state without
+    // corresponding thinkingDraft content (the exact scenario that
+    // could happen without the empty-delta guard above).
+    const { ThinkingComponent } = await import('../../src/tui/components/messages/thinking');
+    driver.state.activeThinkingComponent = new ThinkingComponent(
+      '',
+      driver.state.theme.colors,
+      true,
+      'live',
+      driver.state.ui,
+    );
+
+    driver.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'completed',
+      } as Event,
+      sendQueued,
+    );
+
+    // flushThinkingToTranscript must finalize the component even when
+    // thinkingDraft is empty, so the spinner does not outlive the turn.
+    expect(driver.state.activeThinkingComponent).toBeUndefined();
+  });
+
   it('renders newly streamed thinking expanded when ctrl+o toggle was already active', async () => {
     const { driver } = await makeDriver();
     driver.state.toolOutputExpanded = true;

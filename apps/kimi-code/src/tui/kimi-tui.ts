@@ -1907,6 +1907,12 @@ export class KimiTUI {
   private flushThinkingToTranscript(nextMode: LivePaneState['mode'] = 'idle'): void {
     this.flushStreamingUiUpdatesNow();
     if (this.state.thinkingDraft.length === 0) {
+      // A live ThinkingComponent may still exist with a running spinner
+      // (e.g. created by an empty thinking delta). Finalize it here so
+      // the spinner does not leak past the thinking phase.
+      if (this.state.activeThinkingComponent !== undefined) {
+        this.onThinkingEnd();
+      }
       this.patchLivePane({ mode: nextMode });
       return;
     }
@@ -3273,6 +3279,9 @@ export class KimiTUI {
 
   // Creates or updates the live thinking transcript component.
   private onThinkingUpdate(fullText: string): void {
+    // Avoid creating a component whose spinner will never stop when the text
+    // is empty and there is no existing component to update.
+    if (fullText.length === 0 && this.state.activeThinkingComponent === undefined) return;
     if (this.state.activeThinkingComponent === undefined) {
       this.state.pendingAgentGroup = null;
       this.state.pendingReadGroup = null;
