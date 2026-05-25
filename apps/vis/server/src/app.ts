@@ -86,8 +86,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono> {
   api.route('/sessions', sessionsRoute());
   api.route('/sessions', sessionDetailRoute());
   api.route('/sessions', wireRoute());
-  api.route('/sessions', contextRoute());
   api.route('/sessions', subagentsRoute());
+  // Mount contextRoute last because it currently uses a catch-all stub
+  // (Phase C scope) that would otherwise shadow more specific routes
+  // registered below it.
+  api.route('/sessions', contextRoute());
 
   app.route('/api', api);
 
