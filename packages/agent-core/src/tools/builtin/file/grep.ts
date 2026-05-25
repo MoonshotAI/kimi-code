@@ -31,7 +31,7 @@ import type { PathClass } from '../../policies/path-access';
 import { isSensitiveFile, SENSITIVE_DOT_VARIANT_SUFFIXES } from '../../policies/sensitive';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { ensureRgPath, rgUnavailableMessage } from '../../support/rg-locator';
-import { matchesRuleSubject } from '../../support/rule-match';
+import { matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';
 import type { WorkspaceConfig } from '../../support/workspace';
 import GREP_DESCRIPTION from './grep.md';
@@ -192,7 +192,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
       accesses: ToolAccesses.searchTree(searchPaths[0]!),
       description: `Searching for '${args.pattern}' in ${searchPath}`,
       display: { kind: 'file_io', operation: 'grep', path: searchPaths[0]! },
-      matchesRule: (ruleArgs) => matchesRuleSubject(ruleArgs, args.pattern),
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
       execute: ({ signal }) => this.execution(args, signal, searchPaths),
     };
   }

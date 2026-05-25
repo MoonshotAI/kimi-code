@@ -13,6 +13,7 @@
 - 用户配置规则的括号参数由 `execution.matchesRule(ruleArgs)` 解释
 - `matchesRule` 接收 `ToolName(...)` 括号内的原始字符串，不由通用 rule parser 拆分逗号或解释字段语义
 - `matchesRule` 必须是同步纯函数，只基于 `resolveExecution(args)` 已经解析好的信息判断，不做 IO
+- 内置 tool 提供 `matchesRule` 时沿用 permission DSL 的旧匹配语义：空 pattern 命中，leading `!` 表示取反；路径 subject 使用 path glob 语义，普通字符串 subject 使用 glob 语义
 - 如果 execution 没有提供 `matchesRule`，则使用稳定序列化后的完整 tool args 作为 fallback subject；匹配语义参考 kimi-cli hook matcher：空 pattern 命中，非空 pattern 按 regex search 判断，非法 regex 不命中
 - fallback matching 是兼容机制，不表达 tool 专属语义；需要自然、精确的参数规则时，tool 应实现 `matchesRule`
 - approval UI 使用 `execution.display` / `execution.description`；需要状态型审批 UI 的 tool（例如 `ExitPlanMode` 的 plan 内容与选项）也必须由自己的 `resolveExecution` 返回展示信息；`PermissionPolicy` 不返回、不拼接、不改写 UI 展示文本

@@ -8,7 +8,7 @@ import { renderPrompt } from '../../../utils/render-prompt';
 import { resolvePathAccessPath } from '../../policies/path-access';
 import { MEDIA_SNIFF_BYTES, detectFileType } from '../../support/file-type';
 import { toInputJsonSchema } from '../../support/input-schema';
-import { matchesAnyRuleSubject } from '../../support/rule-match';
+import { matchesAnyPathRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
 import { makeCarriageReturnsVisible, type LineEndingStyle } from './line-endings';
 import readDescriptionTemplate from './read.md';
@@ -185,7 +185,14 @@ export class ReadTool implements BuiltinTool<ReadInput> {
       accesses: ToolAccesses.readFile(path),
       description: `Reading ${args.path}`,
       display: { kind: 'file_io', operation: 'read', path },
-      matchesRule: (ruleArgs) => matchesAnyRuleSubject(ruleArgs, [path, args.path]),
+      matchesRule: (ruleArgs) =>
+        matchesAnyPathRuleSubject(ruleArgs, [path, args.path], {
+          pathOptions: {
+            cwd: this.workspace.workspaceDir,
+            pathClass: this.kaos.pathClass(),
+            homeDir: this.kaos.gethome(),
+          },
+        }),
       execute: () => this.execution(args, path),
     };
   }

@@ -12,7 +12,7 @@ import type { BuiltinTool } from '../../../agent/tool';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
-import { matchesRuleSubject } from '../../support/rule-match';
+import { matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';
 import DESCRIPTION from './fetch-url.md';
 
@@ -76,7 +76,7 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
       accesses: ToolAccesses.none(),
       description: `Fetching: ${preview}`,
       display: { kind: 'url_fetch', url: args.url },
-      matchesRule: (ruleArgs) => matchesRuleSubject(ruleArgs, args.url),
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.url),
       execute: (ctx) => this.execution(args, ctx),
     };
   }

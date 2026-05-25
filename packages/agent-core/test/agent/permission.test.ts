@@ -18,7 +18,10 @@ import type { PermissionPolicyContext } from '../../src/agent/permission/policy'
 import { stableToolArgsKey } from '../../src/agent/permission/stable-args';
 import { ToolAccesses } from '../../src/loop';
 import type { ToolInputDisplay } from '../../src/tools/display';
-import { matchesRuleSubject } from '../../src/tools/support/rule-match';
+import {
+  matchesAnyPathRuleSubject,
+  matchesGlobRuleSubject,
+} from '../../src/tools/support/rule-match';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { createCommandKaos, testAgent } from './harness/agent';
 
@@ -1769,33 +1772,49 @@ describe('Permission rule helpers', () => {
 
   it('matches rules against the tool-specific argument fields', () => {
     expect(
-      matchesRule(permissionRule('Bash(git .*)'), 'Bash', { command: 'git status' }, {
-        matchesRule: (ruleArgs) => matchesRuleSubject(ruleArgs, 'git status'),
+      matchesRule(permissionRule('Bash(git *)'), 'Bash', { command: 'git status' }, {
+        matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, 'git status'),
       }),
     ).toBe(true);
     expect(
-      matchesRule(permissionRule('Bash(git .*)'), 'Bash', { command: 'npm test' }, {
-        matchesRule: (ruleArgs) => matchesRuleSubject(ruleArgs, 'npm test'),
+      matchesRule(permissionRule('Bash(git *)'), 'Bash', { command: 'npm test' }, {
+        matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, 'npm test'),
       }),
     ).toBe(false);
     expect(
-      matchesRule(permissionRule('Read(/etc/.*)'), 'Read', { path: '/etc/passwd' }, {
-        matchesRule: (ruleArgs) => matchesRuleSubject(ruleArgs, '/etc/passwd'),
+      matchesRule(permissionRule('Read(/etc/**)'), 'Read', { path: '/etc/passwd' }, {
+        matchesRule: (ruleArgs) => matchesAnyPathRuleSubject(ruleArgs, ['/etc/passwd']),
       }),
     ).toBe(true);
     expect(
-      matchesRule(permissionRule('Agent(review-.*)'), 'Agent', {
+      matchesRule(permissionRule('Edit(!./src/**)'), 'Edit', { path: './README.md' }, {
+        matchesRule: (ruleArgs) =>
+          matchesAnyPathRuleSubject(ruleArgs, ['/workspace/README.md', './README.md'], {
+            pathOptions: { cwd: '/workspace', pathClass: 'posix' },
+          }),
+      }),
+    ).toBe(true);
+    expect(
+      matchesRule(permissionRule('Edit(!./src/**)'), 'Edit', { path: './src/a.ts' }, {
+        matchesRule: (ruleArgs) =>
+          matchesAnyPathRuleSubject(ruleArgs, ['/workspace/src/a.ts', './src/a.ts'], {
+            pathOptions: { cwd: '/workspace', pathClass: 'posix' },
+          }),
+      }),
+    ).toBe(false);
+    expect(
+      matchesRule(permissionRule('Agent(review-*)'), 'Agent', {
         subagent_type: 'review-code',
       }, {
-        matchesRule: (ruleArgs) => matchesRuleSubject(ruleArgs, 'review-code'),
+        matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, 'review-code'),
       }),
     ).toBe(true);
     expect(matchesRule(permissionRule('mcp__github__*'), 'mcp__github__list_issues', {})).toBe(
       true,
     );
     expect(
-      matchesRule(permissionRule('Bash(git .*)'), 'Bash', { command: 42 }, {
-        matchesRule: (ruleArgs) => matchesRuleSubject(ruleArgs, '42'),
+      matchesRule(permissionRule('Bash(git *)'), 'Bash', { command: 42 }, {
+        matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, '42'),
       }),
     ).toBe(false);
     expect(matchesRule(permissionRule('Bad(unclosed'), 'Bad', {})).toBe(false);

@@ -7,7 +7,7 @@ import { z } from 'zod';
 import type { BuiltinTool } from '../../agent/tool';
 import type { ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
-import { matchesRuleSubject } from '../support/rule-match';
+import { matchesGlobRuleSubject } from '../support/rule-match';
 import { isBackgroundTaskTerminal, type BackgroundProcessManager } from './manager';
 import TASK_STOP_DESCRIPTION from './task-stop.md';
 
@@ -36,7 +36,7 @@ export class TaskStopTool implements BuiltinTool<TaskStopInput> {
   resolveExecution(args: TaskStopInput): ToolExecution {
     return {
       description: `Stopping task ${args.task_id}`,
-      matchesRule: (ruleArgs) => matchesRuleSubject(ruleArgs, args.task_id),
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.task_id),
       execute: async () => {
         await this.manager.settlePendingExits();
         const info = this.manager.getTask(args.task_id);

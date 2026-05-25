@@ -35,7 +35,7 @@ import type { Environment } from '../../../utils/environment';
 import { renderPrompt } from '../../../utils/render-prompt';
 import type { BackgroundProcessManager } from '../../background/manager';
 import { toInputJsonSchema } from '../../support/input-schema';
-import { matchesRuleSubject } from '../../support/rule-match';
+import { matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';
 import bashDescriptionTemplate from './bash.md';
 
@@ -181,7 +181,7 @@ export class BashTool implements BuiltinTool<BashInput> {
         description: args.description,
         language: 'bash',
       },
-      matchesRule: (ruleArgs) => matchesRuleSubject(ruleArgs, args.command),
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
       execute: ({ signal }) => this.execution(args, signal),
     };
   }

@@ -27,7 +27,7 @@ import type { SessionSubagentHost, SubagentHandle } from '../../../session/subag
 import { createDeadlineAbortSignal, type DeadlineAbortSignal } from '../../../utils/abort';
 import type { BackgroundProcessManager } from '../../background/manager';
 import { toInputJsonSchema } from '../../support/input-schema';
-import { matchesRuleSubject } from '../../support/rule-match';
+import { matchesGlobRuleSubject } from '../../support/rule-match';
 import AGENT_BACKGROUND_DISABLED_DESCRIPTION from './agent-background-disabled.md';
 import AGENT_BACKGROUND_DESCRIPTION from './agent-background-enabled.md';
 import AGENT_DESCRIPTION_BASE from './agent.md';
@@ -151,7 +151,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         prompt: args.prompt,
         background: args.run_in_background,
       },
-      matchesRule: (ruleArgs) => matchesRuleSubject(ruleArgs, profileName),
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, profileName),
       execute: (ctx) => this.execution(args, ctx),
     };
   }
