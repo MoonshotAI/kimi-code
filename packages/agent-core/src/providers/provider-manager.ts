@@ -114,7 +114,7 @@ export class ProviderManager {
 
   resolveThinkingLevel(requestedThinking?: string): ThinkingEffort {
     return resolveThinkingEffort(
-      requestedThinking ?? defaultThinkingDisableOverride(this.state.config.defaultThinking),
+      resolveRuntimeThinkingRequest(requestedThinking, this.state.config.defaultThinking),
       this.state.config.thinking,
     );
   }
@@ -141,6 +141,11 @@ function normalizeString(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function defaultThinkingDisableOverride(defaultThinking: boolean | undefined): string | undefined {
+function resolveRuntimeThinkingRequest(
+  requestedThinking: string | undefined,
+  defaultThinking: boolean | undefined,
+): string | undefined {
+  const normalized = normalizeString(requestedThinking);
+  if (normalized !== undefined) return normalized;
   return defaultThinking === false ? 'off' : undefined;
 }
