@@ -13,52 +13,97 @@ import { builtInCatalogDefine } from '../../../scripts/built-in-catalog.mjs';
 describe('resolveConnectCatalogRequest', () => {
   it('prefers the built-in catalog by default and keeps online fetch as fallback', () => {
     expect(resolveConnectCatalogRequest('')).toEqual({
-      url: DEFAULT_CATALOG_URL,
-      preferBuiltIn: true,
-      allowBuiltInFallback: true,
+      kind: 'ok',
+      request: {
+        url: DEFAULT_CATALOG_URL,
+        preferBuiltIn: true,
+        allowBuiltInFallback: true,
+      },
     });
     expect(resolveConnectCatalogRequest('ignored text')).toEqual({
-      url: DEFAULT_CATALOG_URL,
-      preferBuiltIn: true,
-      allowBuiltInFallback: true,
+      kind: 'ok',
+      request: {
+        url: DEFAULT_CATALOG_URL,
+        preferBuiltIn: true,
+        allowBuiltInFallback: true,
+      },
     });
   });
 
   it('forces an online fetch when --refresh is requested', () => {
     expect(resolveConnectCatalogRequest('--refresh')).toEqual({
-      url: DEFAULT_CATALOG_URL,
-      preferBuiltIn: false,
-      allowBuiltInFallback: true,
+      kind: 'ok',
+      request: {
+        url: DEFAULT_CATALOG_URL,
+        preferBuiltIn: false,
+        allowBuiltInFallback: true,
+      },
     });
     expect(resolveConnectCatalogRequest('  --refresh  ')).toEqual({
-      url: DEFAULT_CATALOG_URL,
-      preferBuiltIn: false,
-      allowBuiltInFallback: true,
+      kind: 'ok',
+      request: {
+        url: DEFAULT_CATALOG_URL,
+        preferBuiltIn: false,
+        allowBuiltInFallback: true,
+      },
     });
   });
 
   it('treats explicit catalog URLs as authoritative and ignores --refresh on them', () => {
     expect(resolveConnectCatalogRequest('--url=https://internal.example/catalog.json')).toEqual({
-      url: 'https://internal.example/catalog.json',
-      preferBuiltIn: false,
-      allowBuiltInFallback: false,
+      kind: 'ok',
+      request: {
+        url: 'https://internal.example/catalog.json',
+        preferBuiltIn: false,
+        allowBuiltInFallback: false,
+      },
     });
     expect(resolveConnectCatalogRequest('--url https://internal.example/catalog.json')).toEqual({
-      url: 'https://internal.example/catalog.json',
-      preferBuiltIn: false,
-      allowBuiltInFallback: false,
+      kind: 'ok',
+      request: {
+        url: 'https://internal.example/catalog.json',
+        preferBuiltIn: false,
+        allowBuiltInFallback: false,
+      },
     });
     expect(resolveConnectCatalogRequest('https://internal.example/catalog.json')).toEqual({
-      url: 'https://internal.example/catalog.json',
-      preferBuiltIn: false,
-      allowBuiltInFallback: false,
+      kind: 'ok',
+      request: {
+        url: 'https://internal.example/catalog.json',
+        preferBuiltIn: false,
+        allowBuiltInFallback: false,
+      },
     });
     expect(
       resolveConnectCatalogRequest('--refresh --url=https://internal.example/catalog.json'),
     ).toEqual({
-      url: 'https://internal.example/catalog.json',
-      preferBuiltIn: false,
-      allowBuiltInFallback: false,
+      kind: 'ok',
+      request: {
+        url: 'https://internal.example/catalog.json',
+        preferBuiltIn: false,
+        allowBuiltInFallback: false,
+      },
+    });
+  });
+
+  it('rejects --url when no value is provided', () => {
+    const expectedMessage =
+      '--url requires a value, e.g. /connect --url=https://example.com/catalog.json';
+    expect(resolveConnectCatalogRequest('--url')).toEqual({
+      kind: 'error',
+      message: expectedMessage,
+    });
+    expect(resolveConnectCatalogRequest('--url=')).toEqual({
+      kind: 'error',
+      message: expectedMessage,
+    });
+    expect(resolveConnectCatalogRequest('  --url  ')).toEqual({
+      kind: 'error',
+      message: expectedMessage,
+    });
+    expect(resolveConnectCatalogRequest('--refresh --url')).toEqual({
+      kind: 'error',
+      message: expectedMessage,
     });
   });
 });

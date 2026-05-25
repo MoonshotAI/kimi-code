@@ -5096,7 +5096,12 @@ export class KimiTUI {
   // (context size, capabilities) comes from the catalog, so users do not
   // hand-write it.
   private async handleConnectCommand(args: string): Promise<void> {
-    const { url, preferBuiltIn, allowBuiltInFallback } = resolveConnectCatalogRequest(args);
+    const resolution = resolveConnectCatalogRequest(args);
+    if (resolution.kind === 'error') {
+      this.showError(resolution.message);
+      return;
+    }
+    const { url, preferBuiltIn, allowBuiltInFallback } = resolution.request;
 
     let catalog: Catalog | undefined;
 
@@ -5315,6 +5320,7 @@ export class KimiTUI {
         .toSorted((a, b) => a.label.localeCompare(b.label));
 
       if (options.length === 0) {
+        this.showError('Catalog has no providers with supported wire types.');
         resolve(undefined);
         return;
       }
