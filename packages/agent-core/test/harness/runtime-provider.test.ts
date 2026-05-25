@@ -585,16 +585,29 @@ describe('ProviderManager thinking level', () => {
     const manager = new ProviderManager({
       config: {
         providers: {},
+        defaultThinking: false,
         thinking: { effort: 'medium', mode: 'auto' },
       },
     });
     expect(manager.resolveThinkingLevel('on')).toBe('medium');
     expect(manager.resolveThinkingLevel('off')).toBe('off');
     expect(manager.resolveThinkingLevel('low')).toBe('low');
-    expect(manager.resolveThinkingLevel()).toBe('medium');
+    expect(manager.resolveThinkingLevel()).toBe('off');
+    expect(manager.resolveThinkingLevel('')).toBe('off');
+    expect(manager.resolveThinkingLevel('   ')).toBe('off');
+
+    const managerOnByDefault = new ProviderManager({
+      config: {
+        providers: {},
+        defaultThinking: true,
+        thinking: { effort: 'medium', mode: 'auto' },
+      },
+    });
+    expect(managerOnByDefault.resolveThinkingLevel()).toBe('medium');
+    expect(managerOnByDefault.resolveThinkingLevel('   ')).toBe('medium');
 
     const managerWithoutEffort = new ProviderManager({
-      config: { providers: {}, thinking: { mode: 'auto' } },
+      config: { providers: {}, defaultThinking: true, thinking: { mode: 'auto' } },
     });
     expect(managerWithoutEffort.resolveThinkingLevel('on')).toBe('high');
     expect(managerWithoutEffort.resolveThinkingLevel()).toBe('high');
@@ -603,6 +616,16 @@ describe('ProviderManager thinking level', () => {
       config: { providers: {}, thinking: { mode: 'off' } },
     });
     expect(managerOffByDefault.resolveThinkingLevel()).toBe('off');
+
+    const managerWithModeOffAndDefaultThinking = new ProviderManager({
+      config: {
+        providers: {},
+        defaultThinking: true,
+        thinking: { effort: 'medium', mode: 'off' },
+      },
+    });
+    expect(managerWithModeOffAndDefaultThinking.resolveThinkingLevel()).toBe('off');
+    expect(managerWithModeOffAndDefaultThinking.resolveThinkingLevel('   ')).toBe('off');
 
     const managerWithoutThinking = new ProviderManager({ config: { providers: {} } });
     expect(managerWithoutThinking.resolveThinkingLevel()).toBe('high');

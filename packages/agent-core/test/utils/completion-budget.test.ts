@@ -45,45 +45,55 @@ function makeTool(name: string, asciiCharsInDescription: number): Tool {
 }
 
 describe('computeCompletionBudgetCap', () => {
-  it('returns desired when context size is unknown', () => {
+  it('uses fallback when context size is unknown and no hard cap is set', () => {
     const cap = computeCompletionBudgetCap({
-      budget: { desired: 8192 },
+      budget: { fallback: 8192 },
       capability: undefined,
       messages: makeMessages(100),
     });
     expect(cap).toBe(8192);
   });
 
-  it('preserves a small desired when context size is unknown — no artificial floor', () => {
+  it('uses an explicit hard cap when context size is unknown', () => {
     const cap = computeCompletionBudgetCap({
-      budget: { desired: 10 },
+      budget: { hardCap: 10, fallback: 8192 },
       capability: makeCapability(0),
       messages: makeMessages(100),
     });
     expect(cap).toBe(10);
   });
 
-  it('floors at 1 when desired is zero or negative', () => {
+  it('floors at 1 when hard cap is zero or negative', () => {
     expect(
       computeCompletionBudgetCap({
-        budget: { desired: 0 },
+        budget: { hardCap: 0 },
         capability: undefined,
         messages: makeMessages(10),
       }),
     ).toBe(1);
     expect(
       computeCompletionBudgetCap({
-        budget: { desired: -100 },
+        budget: { hardCap: -100 },
         capability: undefined,
         messages: makeMessages(10),
       }),
     ).toBe(1);
   });
 
-  it('clamps desired down to the remaining context window', () => {
+  it('uses the remaining context window when no hard cap is set', () => {
+    const maxCtx = 100000;
+    const cap = computeCompletionBudgetCap({
+      budget: { fallback: 32000 },
+      capability: makeCapability(maxCtx),
+      messages: makeMessages(1000),
+    });
+    expect(cap).toBe(maxCtx - 1001 - 1024);
+  });
+
+  it('clamps explicit hard cap down to the remaining context window', () => {
     // max_context_tokens 10000, input ~ 1000, safetyMargin 1024 → remaining ~ 7976
     const cap = computeCompletionBudgetCap({
-      budget: { desired: 32000 },
+      budget: { hardCap: 32000 },
       capability: makeCapability(10000),
       messages: makeMessages(1000),
     });
@@ -93,7 +103,7 @@ describe('computeCompletionBudgetCap', () => {
 
   it('returns 1 when input already exceeds context minus margin', () => {
     const cap = computeCompletionBudgetCap({
-      budget: { desired: 32000 },
+      budget: { fallback: 32000 },
       capability: makeCapability(10000),
       messages: makeMessages(11000),
     });
@@ -105,7 +115,7 @@ describe('computeCompletionBudgetCap', () => {
     // The cap MUST stay <= remaining so the request does not overflow.
     const maxCtx = 10000;
     const cap = computeCompletionBudgetCap({
-      budget: { desired: 32000 },
+      budget: { fallback: 32000 },
       capability: makeCapability(maxCtx),
       messages: makeMessages(8900),
     });
@@ -115,7 +125,7 @@ describe('computeCompletionBudgetCap', () => {
 
   it('respects custom safetyMargin', () => {
     const cap = computeCompletionBudgetCap({
-      budget: { desired: 32000, safetyMargin: 4096 },
+      budget: { fallback: 32000, safetyMargin: 4096 },
       capability: makeCapability(20000),
       messages: makeMessages(1000),
     });
@@ -123,9 +133,9 @@ describe('computeCompletionBudgetCap', () => {
     expect(cap).toBe(14903);
   });
 
-  it('keeps desired when smaller than remaining', () => {
+  it('keeps explicit hard cap when smaller than remaining', () => {
     const cap = computeCompletionBudgetCap({
-      budget: { desired: 1024 },
+      budget: { hardCap: 1024 },
       capability: makeCapability(100000),
       messages: makeMessages(1000),
     });
@@ -137,7 +147,7 @@ describe('computeCompletionBudgetCap', () => {
     const safetyMargin = 1024;
     const systemPrompt = 'a'.repeat(2000 * 4); // ~2000 tokens
     const cap = computeCompletionBudgetCap({
-      budget: { desired: 32000, safetyMargin },
+      budget: { fallback: 32000, safetyMargin },
       capability: makeCapability(maxCtx),
       messages: makeMessages(1000),
       systemPrompt,
@@ -155,13 +165,13 @@ describe('computeCompletionBudgetCap', () => {
       makeTool('tool_b', 4000),
     ];
     const capWithTools = computeCompletionBudgetCap({
-      budget: { desired: 32000, safetyMargin },
+      budget: { fallback: 32000, safetyMargin },
       capability: makeCapability(maxCtx),
       messages: makeMessages(1000),
       tools,
     });
     const capWithoutTools = computeCompletionBudgetCap({
-      budget: { desired: 32000, safetyMargin },
+      budget: { fallback: 32000, safetyMargin },
       capability: makeCapability(maxCtx),
       messages: makeMessages(1000),
     });
@@ -210,7 +220,7 @@ describe('applyCompletionBudget', () => {
     const opaque = rest as unknown as ChatProvider;
     const result = applyCompletionBudget({
       provider: opaque,
-      budget: { desired: 8192 },
+      budget: { hardCap: 8192 },
       capability: makeCapability(10000),
       messages: makeMessages(100),
     });
@@ -220,7 +230,7 @@ describe('applyCompletionBudget', () => {
   it('clones the provider with the clamped cap when budget is configured', () => {
     const result = applyCompletionBudget({
       provider: original,
-      budget: { desired: 32000 },
+      budget: { fallback: 32000 },
       capability: makeCapability(10000),
       messages: makeMessages(1000),
     });
@@ -236,7 +246,7 @@ describe('applyCompletionBudget', () => {
     const systemPrompt = 'a'.repeat(4000); // ~1000 tokens
     applyCompletionBudget({
       provider: original,
-      budget: { desired: 32000 },
+      budget: { fallback: 32000 },
       capability: makeCapability(10000),
       messages: makeMessages(1000),
       systemPrompt,
@@ -246,7 +256,7 @@ describe('applyCompletionBudget', () => {
     withMaxCompletionTokens.mockClear();
     applyCompletionBudget({
       provider: original,
-      budget: { desired: 32000 },
+      budget: { fallback: 32000 },
       capability: makeCapability(10000),
       messages: makeMessages(1000),
     });
@@ -264,7 +274,7 @@ describe('resolveCompletionBudget', () => {
         KIMI_MODEL_MAX_TOKENS: '2048',
       },
     });
-    expect(budget?.desired).toBe(4096);
+    expect(budget?.hardCap).toBe(4096);
   });
 
   it('falls back to legacy KIMI_MODEL_MAX_TOKENS when the new var is unset', () => {
@@ -272,20 +282,22 @@ describe('resolveCompletionBudget', () => {
       reservedContextSize: 1000,
       env: { KIMI_MODEL_MAX_TOKENS: '2048' },
     });
-    expect(budget?.desired).toBe(2048);
+    expect(budget?.hardCap).toBe(2048);
   });
 
-  it('uses reservedContextSize when no env var is set', () => {
+  it('uses reservedContextSize as the unknown-context fallback when no env var is set', () => {
     const budget = resolveCompletionBudget({
       reservedContextSize: 12345,
       env: {},
     });
-    expect(budget?.desired).toBe(12345);
+    expect(budget?.hardCap).toBeUndefined();
+    expect(budget?.fallback).toBe(12345);
   });
 
-  it('falls back to the historical default 32000 when nothing is configured', () => {
+  it('falls back to 32000 only for unknown context when nothing is configured', () => {
     const budget = resolveCompletionBudget({ env: {} });
-    expect(budget?.desired).toBe(32000);
+    expect(budget?.hardCap).toBeUndefined();
+    expect(budget?.fallback).toBe(32000);
   });
 
   it('ignores reservedContextSize when it is 0', () => {
@@ -293,7 +305,8 @@ describe('resolveCompletionBudget', () => {
       reservedContextSize: 0,
       env: {},
     });
-    expect(budget?.desired).toBe(32000);
+    expect(budget?.hardCap).toBeUndefined();
+    expect(budget?.fallback).toBe(32000);
   });
 
   it('treats non-positive KIMI_MODEL_MAX_COMPLETION_TOKENS as an opt-out', () => {
@@ -327,13 +340,14 @@ describe('resolveCompletionBudget', () => {
         KIMI_MODEL_MAX_TOKENS: '-1',
       },
     });
-    expect(budget?.desired).toBe(4096);
+    expect(budget?.hardCap).toBe(4096);
   });
 
   it('falls back to defaults when the env var is non-numeric garbage', () => {
     const budget = resolveCompletionBudget({
       env: { KIMI_MODEL_MAX_COMPLETION_TOKENS: 'not-a-number' },
     });
-    expect(budget?.desired).toBe(32000);
+    expect(budget?.hardCap).toBeUndefined();
+    expect(budget?.fallback).toBe(32000);
   });
 });
