@@ -5,7 +5,7 @@ import {
   type BuiltinSlashCommandName,
 } from './registry';
 import { parseSlashInput } from './parse';
-import type { SlashCommandBusyReason } from './types';
+import type { SlashCommandBusyReason, SlashCommandInvalidReason } from './types';
 
 export type SlashCommandIntent =
   | { readonly kind: 'not-command' }
@@ -26,6 +26,11 @@ export type SlashCommandIntent =
       readonly kind: 'blocked';
       readonly commandName: string;
       readonly reason: SlashCommandBusyReason;
+    }
+  | {
+      readonly kind: 'invalid';
+      readonly commandName: string;
+      readonly reason: SlashCommandInvalidReason;
     };
 
 export interface ResolveSlashCommandInput {
