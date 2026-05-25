@@ -366,7 +366,7 @@ export class TurnFlow {
       const model = this.agent.config.model;
       const provider = this.agent.config.provider.withThinking(this.agent.config.thinkingLevel);
       const loopControl = this.agent.providerManager?.config.loopControl;
-      const completionBudget = resolveCompletionBudget({
+      const completionBudgetConfig = resolveCompletionBudget({
         reservedContextSize: loopControl?.reservedContextSize,
       });
 
@@ -380,7 +380,7 @@ export class TurnFlow {
             systemPrompt: this.agent.config.systemPrompt,
             capability: this.agent.config.modelCapabilities,
             generate: this.agent.generate,
-            completionBudget,
+            completionBudgetConfig,
           }),
           buildMessages: () => this.agent.context.messages,
           dispatchEvent: this.buildDispatchEvent(turnId),
