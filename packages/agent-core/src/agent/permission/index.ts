@@ -4,23 +4,17 @@ import type { TelemetryProperties } from '../../telemetry';
 import type { ToolInputDisplay } from '../../tools/display';
 import { createPermissionDecisionPolicies } from './policies';
 import type {
-  PermissionDecisionReason,
-  PermissionPolicy,
-  PermissionPolicyContext,
-  PermissionPolicyResolution,
-  PermissionPolicyResult,
-  PermissionReasonValue,
-} from './policy';
-import type {
   ApprovalResponse,
   PermissionApprovalResultRecord,
   PermissionData,
   PermissionMode,
-  PermissionRule,
+  PermissionPolicy,
+  PermissionPolicyContext,
+  PermissionPolicyResolution,
+  PermissionPolicyResult,
+  PermissionRule
 } from './types';
-import { stableToolArgsKey } from './stable-args';
 
-export * from './policy';
 export * from './types';
 
 export interface PermissionManagerOptions {
@@ -37,7 +31,7 @@ export class PermissionManager {
   rules: PermissionRule[] = [];
   private modeOverride: PermissionMode | undefined;
   private readonly parent: PermissionManager | undefined;
-  private readonly sessionApprovedKeys = new Set<string>();
+  private readonly localSessionApprovalRulePatterns = new Set<string>();
   private readonly policies: readonly PermissionPolicy[];
 
   constructor(
@@ -89,12 +83,16 @@ export class PermissionManager {
     if (record.result.decision !== 'approved' || record.result.scope !== 'session') {
       return;
     }
-    if (record.sessionApprovalKey === undefined) return;
-    this.sessionApprovedKeys.add(record.sessionApprovalKey);
+    const pattern = record.sessionApprovalRule;
+    if (pattern === undefined) return;
+    this.addSessionApprovalRule(pattern);
   }
 
-  hasSessionApprovedKey(key: string): boolean {
-    return this.sessionApprovedKeys.has(key) || this.parent?.hasSessionApprovedKey(key) === true;
+  sessionApprovalRulePatterns(): readonly string[] {
+    return [
+      ...this.localSessionApprovalRulePatterns,
+      ...(this.parent?.sessionApprovalRulePatterns() ?? []),
+    ];
   }
 
   async beforeToolCall(
@@ -121,7 +119,6 @@ export class PermissionManager {
     const name = context.toolCall.name;
     const display = approvalDisplayForExecution(name, context.execution);
     const action = approvalActionForExecution(name, context.execution);
-    const sessionApprovalKey = stableToolArgsKey(name, context.args);
     const startedAt = Date.now();
 
     let response: ApprovalResponse;
@@ -151,12 +148,17 @@ export class PermissionManager {
         : this.permissionPolicyResolutionToPrepare(resolved, context, policyName);
     }
 
+    const sessionApprovalRule =
+      response.decision === 'approved' && response.scope === 'session'
+        ? context.execution.approvalRule
+        : undefined;
+
     this.recordApprovalResult({
       turnId: Number(context.turnId),
       toolCallId: id,
       toolName: name,
       action,
-      sessionApprovalKey,
+      sessionApprovalRule,
       result: response,
     });
     this.trackApprovalResult({
@@ -165,7 +167,7 @@ export class PermissionManager {
       display,
       result: approvalTelemetryResult(response),
       durationMs: Date.now() - startedAt,
-      sessionCacheWritten: response.decision === 'approved' && response.scope === 'session',
+      sessionCacheWritten: sessionApprovalRule !== undefined,
       hasFeedback: response.feedback !== undefined && response.feedback.length > 0,
     });
 
@@ -198,6 +200,10 @@ export class PermissionManager {
 
   private effectiveRules(): PermissionRule[] {
     return [...this.rules, ...(this.parent?.effectiveRules() ?? [])];
+  }
+
+  private addSessionApprovalRule(pattern: string): void {
+    this.localSessionApprovalRulePatterns.add(pattern);
   }
 
   private permissionPolicyResolutionToPrepare(
@@ -255,20 +261,13 @@ export class PermissionManager {
     context: PermissionPolicyContext,
     result: PermissionPolicyResult,
   ): void {
-    const properties: Record<string, TelemetryProperties[string]> = {
+    this.agent.telemetry.track('permission_policy_decision', {
       policy_name: policyName,
       tool_name: context.toolCall.name,
       permission_mode: this.mode,
       decision: result.kind,
-    };
-    addReasonProperties(properties, result.reason);
-    if (result.kind === 'ask') {
-      properties['approval_surface'] = context.execution.display?.kind ?? null;
-    }
-    if (result.kind === 'approve') {
-      properties['has_execution_metadata'] = result.executionMetadata !== undefined;
-    }
-    this.agent.telemetry.track('permission_policy_decision', properties);
+      ...result.reason,
+    });
   }
 
   private trackApprovalResult(input: {
@@ -318,24 +317,4 @@ function approvalTelemetryResult(
 ): 'approved' | 'approved_for_session' | 'rejected' | 'cancelled' {
   if (result.decision === 'approved' && result.scope === 'session') return 'approved_for_session';
   return result.decision;
-}
-
-function addReasonProperties(
-  properties: Record<string, TelemetryProperties[string]>,
-  reason: PermissionDecisionReason | undefined,
-): void {
-  if (reason === undefined) return;
-  for (const [key, value] of Object.entries(reason)) {
-    if (!isReasonTelemetryValue(value)) continue;
-    properties[key] = value;
-  }
-}
-
-function isReasonTelemetryValue(value: unknown): value is PermissionReasonValue {
-  return (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean'
-  );
 }

@@ -136,7 +136,7 @@ describe('Agent config', () => {
 
     ctx.mockNextResponse({ type: 'text', text: 'Still using the original turn config.' });
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
-      [wire] permission.record_approval_result   { "turnId": 0, "toolCallId": "call_bash", "toolName": "Bash", "action": "Running: printf original-result", "sessionApprovalKey": "Bash:341e4c93e26d07e53e31de388f1f8495277a790b02023ae0dfabae4844bf60de", "result": { "decision": "approved", "selectedLabel": "approve" }, "time": "<time>" }
+      [wire] permission.record_approval_result   { "turnId": 0, "toolCallId": "call_bash", "toolName": "Bash", "action": "Running: printf original-result", "result": { "decision": "approved", "selectedLabel": "approve" }, "time": "<time>" }
       [wire] config.update                       { "modelAlias": "changed-model", "time": "<time>" }
       [emit] agent.status.updated                { "model": "changed-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "permission": "manual" }
       [wire] config.update                       { "systemPrompt": "Changed system prompt.", "time": "<time>" }

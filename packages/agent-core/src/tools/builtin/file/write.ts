@@ -18,7 +18,7 @@ import {
   resolvePathAccessPath,
 } from '../../policies/path-access';
 import { toInputJsonSchema } from '../../support/input-schema';
-import { matchesAnyPathRuleSubject } from '../../support/rule-match';
+import { literalRulePattern, matchesAnyPathRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
 import WRITE_DESCRIPTION from './write.md';
 
@@ -78,6 +78,7 @@ export class WriteTool implements BuiltinTool<WriteInput> {
       accesses: ToolAccesses.writeFile(path),
       description: `Writing ${args.path}`,
       display: { kind: 'file_io', operation: 'write', path },
+      approvalRule: literalRulePattern(this.name, path),
       matchesRule: (ruleArgs) =>
         matchesAnyPathRuleSubject(ruleArgs, [path, args.path], {
           pathOptions: {

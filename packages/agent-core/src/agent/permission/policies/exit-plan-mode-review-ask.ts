@@ -1,6 +1,5 @@
 import type { Agent } from '../..';
-import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../policy';
-import type { ApprovalResponse } from '../types';
+import type { ApprovalResponse, PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../types';
 
 interface ExitPlanModeOption {
   readonly label: string;
@@ -13,7 +12,7 @@ export class ExitPlanModeReviewAskPermissionPolicy implements PermissionPolicy {
   constructor(private readonly agent: Agent) {}
 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
-    if (context.toolCall.function.name !== 'ExitPlanMode') return undefined;
+    if (context.toolCall.name !== 'ExitPlanMode') return undefined;
     if (this.agent.permission.mode === 'auto') return undefined;
     if (!this.agent.planMode.isActive) return undefined;
     const display = context.execution.display;

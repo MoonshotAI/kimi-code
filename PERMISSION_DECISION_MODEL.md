@@ -13,6 +13,8 @@
 - 用户配置规则的括号参数由 `execution.matchesRule(ruleArgs)` 解释
 - `matchesRule` 接收 `ToolName(...)` 括号内的原始字符串，不由通用 rule parser 拆分逗号或解释字段语义
 - `matchesRule` 必须是同步纯函数，只基于 `resolveExecution(args)` 已经解析好的信息判断，不做 IO
+- `Approve for session` 的可记忆对象由 `execution.approvalRule` 表达，值是完整的 permission rule 字符串，例如 `Bash(git status)` / `Read(/repo/a.txt)`
+- `approvalRule` 由 tool 根据自己的语义生成；permission policy 不从 raw args 推导命令、路径、搜索表达式、agent type、skill identity 等字段
 - 内置 tool 提供 `matchesRule` 时沿用 permission DSL 的旧匹配语义：空 pattern 命中，leading `!` 表示取反；路径 subject 使用 path glob 语义，普通字符串 subject 使用 glob 语义
 - 如果 execution 没有提供 `matchesRule`，则使用稳定序列化后的完整 tool args 作为 fallback subject；匹配语义参考 kimi-cli hook matcher：空 pattern 命中，非空 pattern 按 regex search 判断，非法 regex 不命中
 - fallback matching 是兼容机制，不表达 tool 专属语义；需要自然、精确的参数规则时，tool 应实现 `matchesRule`
@@ -77,7 +79,7 @@
 ## exit-plan-mode-review-ask: ExitPlanMode Review Ask
 
 - `ExitPlanMode` 且 plan mode active 且 plan 内容非空且 `permissionMode!=auto` -> `ask`
-- 本 policy 必须在 Session Approval Memorized History 之前执行；plan review 的审批对象包含当前 plan 内容，而 session history 只记 tool name + tool args，不能表达“这份新 plan 已经被 review”
+- 本 policy 必须在 Session Approval Memorized History 之前执行；plan review 的审批对象包含当前 plan 内容，普通 session history rule 不能表达“这份新 plan 已经被 review”
 
 ## user-configured-allow: User Configured Allow Rules
 
@@ -86,11 +88,11 @@
 
 ## session-approval-history: Session Approval Memorized History
 
-- `Approve for session` 记住的是本次 tool call 的 exact key：tool name + 完整 tool args
-- 后续请求只有在 tool name 相同，且规范化后的完整 tool args 与已记住记录完全一致时 -> `approve`
-- tool args 比较使用结构化数据的稳定序列化结果；object key 顺序不应影响匹配，数组顺序和字符串内容必须保持精确匹配
-- 当用户选择 `Approve for session` 时，把本次 tool name + 完整 tool args 写入 session history
-- session history 只表达用户在本 session 内对同一 tool call 参数的临时批准，不等价于用户配置的 allow rule；持久化或跨 session 的信任应进入用户配置规则
+- `Approve for session` 记住的是本次 `execution.approvalRule`
+- 后续请求用 `approvalRule` 生成的 `session-runtime` rule 走与用户配置 rule 相同的 parser / matcher；命中 -> `approve`
+- `session-runtime` rule 只在本 session replay / parent-child 继承中生效，不作为用户配置 rule 参与 `user-configured-*` policies
+- 如果 `execution.approvalRule` 缺失，则本次 approval 仍可 approve once，但不会写入 session history
+- v1.1 -> v1.2 wire migration 会把缺少 `sessionApprovalRule` 的 legacy session approval record 按旧 action label 尽力补成 rule；runtime 不再做 legacy record 兼容
 
 ## plan-mode-tool-approve: Plan Mode Tool Approve
 

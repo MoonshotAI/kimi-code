@@ -5,8 +5,8 @@ import {
   PermissionManager,
   type ApprovalResponse,
   type PermissionMode,
+  type PermissionPolicyContext,
 } from '../../../src/agent/permission';
-import type { PermissionPolicyContext } from '../../../src/agent/permission/policy';
 import {
   ExitPlanModeTool,
   type ExitPlanModeInput,

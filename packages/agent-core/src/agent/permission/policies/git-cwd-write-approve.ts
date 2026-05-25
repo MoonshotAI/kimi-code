@@ -5,7 +5,7 @@ import {
   findGitWorkTreeMarker,
   type GitWorkTreeMarker,
 } from '../../../tools/support/git-worktree';
-import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../policy';
+import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../types';
 
 export class GitCwdWriteApprovePermissionPolicy implements PermissionPolicy {
   private readonly gitMarkerCache = new Map<string, GitWorkTreeMarker | null>();
@@ -14,7 +14,7 @@ export class GitCwdWriteApprovePermissionPolicy implements PermissionPolicy {
   constructor(private readonly agent: Agent) {}
 
   async evaluate(context: PermissionPolicyContext): Promise<PermissionPolicyResult | undefined> {
-    const toolName = context.toolCall.function.name;
+    const toolName = context.toolCall.name;
     if (toolName !== 'Write' && toolName !== 'Edit') return undefined;
     if (this.agent.runtime.kaos.pathClass() !== 'posix') return undefined;
 

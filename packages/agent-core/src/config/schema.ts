@@ -1,5 +1,5 @@
 import { HOOK_EVENT_TYPES } from '#/agent/hooks/types';
-import { parsePattern } from '#/agent/permission/parse-pattern';
+import { parsePattern } from '#/agent/permission/matches-rule';
 import { ErrorCodes, KimiError } from '#/errors';
 import { z } from 'zod';
 

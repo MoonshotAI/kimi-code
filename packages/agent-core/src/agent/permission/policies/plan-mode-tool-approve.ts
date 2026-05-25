@@ -1,6 +1,6 @@
 import type { Agent } from '../..';
 import type { ToolResourceAccess } from '../../../loop/tool-access';
-import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../policy';
+import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../types';
 
 export class PlanModeToolApprovePermissionPolicy implements PermissionPolicy {
   readonly name = 'plan-mode-tool-approve';
@@ -8,7 +8,7 @@ export class PlanModeToolApprovePermissionPolicy implements PermissionPolicy {
   constructor(private readonly agent: Agent) {}
 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
-    const toolName = context.toolCall.function.name;
+    const toolName = context.toolCall.name;
     if (toolName === 'EnterPlanMode') {
       return {
         kind: 'approve',

@@ -3,7 +3,7 @@ import * as win32Path from 'node:path/win32';
 
 import picomatch from 'picomatch';
 
-import { canonicalizePath, type PathClass } from '../../tools/policies/path-access';
+import { canonicalizePath, type PathClass } from '../policies/path-access';
 
 export interface PermissionPathMatchOptions {
   readonly cwd?: string;

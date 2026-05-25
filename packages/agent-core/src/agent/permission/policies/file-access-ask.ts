@@ -9,7 +9,7 @@ import {
   findGitWorkTreeMarker,
   type GitWorkTreeMarker,
 } from '../../../tools/support/git-worktree';
-import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../policy';
+import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../types';
 
 export class SensitiveFileAccessAskPermissionPolicy implements PermissionPolicy {
   readonly name = 'sensitive-file-access-ask';

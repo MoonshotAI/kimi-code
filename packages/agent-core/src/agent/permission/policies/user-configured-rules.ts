@@ -3,8 +3,14 @@ import {
   matchPermissionRule,
   type PermissionRuleMatch,
 } from '../matches-rule';
-import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../policy';
-import type { PermissionRule, PermissionRuleDecision, PermissionRuleScope } from '../types';
+import type {
+  PermissionPolicy,
+  PermissionPolicyContext,
+  PermissionPolicyResult,
+  PermissionRule,
+  PermissionRuleDecision,
+  PermissionRuleScope,
+} from '../types';
 
 const USER_CONFIGURED_SCOPES = new Set<PermissionRuleScope>([
   'turn-override',
@@ -24,7 +30,7 @@ export class UserConfiguredDenyPermissionPolicy implements PermissionPolicy {
       kind: 'deny',
       reason: userRuleReason('deny', match),
       message: formatPermissionRuleDenyMessage(
-        context.toolCall.function.name,
+        context.toolCall.name,
         match.rule.reason,
         this.agent.type,
       ),
@@ -74,7 +80,7 @@ function firstMatchingRule(
     if (rule.decision !== decision) continue;
     const match = matchPermissionRule({
       rule,
-      toolName: context.toolCall.function.name,
+      toolName: context.toolCall.name,
       args: context.args,
       execution: context.execution,
     });

@@ -22,7 +22,7 @@ import {
   type BackgroundTaskStatus,
 } from './manager';
 import { toInputJsonSchema } from '../support/input-schema';
-import { matchesGlobRuleSubject } from '../support/rule-match';
+import { literalRulePattern, matchesGlobRuleSubject } from '../support/rule-match';
 import TASK_OUTPUT_DESCRIPTION from './task-output.md';
 
 /**
@@ -76,6 +76,7 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
   resolveExecution(args: TaskOutputInput): ToolExecution {
     return {
       description: `Reading output of task ${args.task_id}`,
+      approvalRule: literalRulePattern(this.name, args.task_id),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.task_id),
       execute: () => this.execute(args),
     };

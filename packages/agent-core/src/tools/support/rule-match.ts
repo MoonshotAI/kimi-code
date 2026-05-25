@@ -2,7 +2,17 @@ import {
   globMatch,
   pathGlobMatch,
   type PermissionPathMatchOptions,
-} from '../../agent/permission/path-glob-match';
+} from './path-glob-match';
+
+const GLOB_LITERAL_SPECIAL = /[\\*?[\]{}()!+@|]/g;
+
+export function literalRulePattern(toolName: string, subject: string): string {
+  return `${toolName}(${escapeRuleSubjectLiteral(subject)})`;
+}
+
+export function escapeRuleSubjectLiteral(subject: string): string {
+  return subject.replace(GLOB_LITERAL_SPECIAL, '\\$&');
+}
 
 export function matchesRuleSubject(ruleArgs: string, subject: string): boolean {
   if (ruleArgs.length === 0) return true;

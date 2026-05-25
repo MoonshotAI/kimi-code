@@ -8,7 +8,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent } from '../../src/agent';
 import { AGENT_WIRE_PROTOCOL_VERSION } from '../../src/agent/records';
-import { stableToolArgsKey } from '../../src/agent/permission/stable-args';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
@@ -692,10 +691,7 @@ describe('Session resume permission parent chain', () => {
     const workDir = join(dir, 'work');
     const mainDir = join(sessionDir, 'agents', 'main');
     const childDir = join(sessionDir, 'agents', 'agent-0');
-    const sessionApprovalKey = stableToolArgsKey('Bash', {
-      command: 'printf parent',
-      timeout: 60,
-    });
+    const sessionApprovalRule = 'Bash(printf parent)';
     await mkdir(workDir, { recursive: true });
     await mkdir(sessionDir, { recursive: true });
     await writeFile(
@@ -736,7 +732,7 @@ describe('Session resume permission parent chain', () => {
         toolCallId: 'call_parent_bash',
         toolName: 'Bash',
         action: 'run command',
-        sessionApprovalKey,
+        sessionApprovalRule,
         result: {
           decision: 'approved',
           scope: 'session',
@@ -762,7 +758,7 @@ describe('Session resume permission parent chain', () => {
       expect(child?.permission.mode).toBe('yolo');
       expect(child?.permission.rules).toEqual([]);
       expect(child?.permission.data().rules).toEqual([]);
-      expect(child?.permission.hasSessionApprovedKey(sessionApprovalKey)).toBe(true);
+      expect(child?.permission.sessionApprovalRulePatterns()).toContain(sessionApprovalRule);
     } finally {
       await session.close();
     }

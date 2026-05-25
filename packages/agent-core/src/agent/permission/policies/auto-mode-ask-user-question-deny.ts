@@ -1,5 +1,5 @@
 import type { Agent } from '../..';
-import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../policy';
+import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../types';
 
 export class AutoModeAskUserQuestionDenyPermissionPolicy implements PermissionPolicy {
   readonly name = 'auto-mode-ask-user-question-deny';
@@ -8,7 +8,7 @@ export class AutoModeAskUserQuestionDenyPermissionPolicy implements PermissionPo
 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
     if (this.agent.permission.mode !== 'auto') return undefined;
-    if (context.toolCall.function.name !== 'AskUserQuestion') return undefined;
+    if (context.toolCall.name !== 'AskUserQuestion') return undefined;
     return {
       kind: 'deny',
       message:

@@ -2,12 +2,12 @@ import type { ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Agent } from '../../src/agent';
-import { PlanModeGuardDenyPermissionPolicy } from '../../src/agent/permission/policies/plan-mode-guard-deny';
-import type { PermissionMode } from '../../src/agent/permission/types';
 import type {
+  PermissionMode,
   PermissionPolicyContext,
   PermissionPolicyResult,
-} from '../../src/agent/permission/policy';
+} from '../../src/agent/permission';
+import { PlanModeGuardDenyPermissionPolicy } from '../../src/agent/permission/policies/plan-mode-guard-deny';
 import { PlanMode } from '../../src/agent/plan';
 import { ToolAccesses } from '../../src/loop';
 import type { ToolExecutionHookContext } from '../../src/loop';

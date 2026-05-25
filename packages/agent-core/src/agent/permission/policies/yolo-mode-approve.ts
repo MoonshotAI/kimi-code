@@ -1,5 +1,5 @@
 import type { Agent } from '../..';
-import type { PermissionPolicy, PermissionPolicyResult } from '../policy';
+import type { PermissionPolicy, PermissionPolicyResult } from '../types';
 
 export class YoloModeApprovePermissionPolicy implements PermissionPolicy {
   readonly name = 'yolo-mode-approve';

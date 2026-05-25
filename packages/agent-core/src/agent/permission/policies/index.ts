@@ -1,5 +1,5 @@
 import type { Agent } from '../..';
-import type { PermissionPolicy } from '../policy';
+import type { PermissionPolicy } from '../types';
 import { AutoModeApprovePermissionPolicy } from './auto-mode-approve';
 import { AutoModeAskUserQuestionDenyPermissionPolicy } from './auto-mode-ask-user-question-deny';
 import { DefaultToolApprovePermissionPolicy } from './default-tool-approve';

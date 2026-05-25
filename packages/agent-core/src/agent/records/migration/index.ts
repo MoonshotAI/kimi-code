@@ -1,7 +1,8 @@
 import { migrateV1_0ToV1_1 } from './v1.1';
+import { migrateV1_1ToV1_2 } from './v1.2';
 
 // Wire protocol versions currently support only the `number.number` format.
-export const AGENT_WIRE_PROTOCOL_VERSION = '1.1';
+export const AGENT_WIRE_PROTOCOL_VERSION = '1.2';
 
 export interface WireMigrationRecord {
   readonly type: string;
@@ -14,7 +15,7 @@ export interface WireMigration {
   migrateRecord(record: WireMigrationRecord): WireMigrationRecord;
 }
 
-const MIGRATIONS: readonly WireMigration[] = [migrateV1_0ToV1_1];
+const MIGRATIONS: readonly WireMigration[] = [migrateV1_0ToV1_1, migrateV1_1ToV1_2];
 
 export function resolveWireMigrations(readVersion: string): readonly WireMigration[] {
   if (compareWireVersions(readVersion, AGENT_WIRE_PROTOCOL_VERSION) === 0) {

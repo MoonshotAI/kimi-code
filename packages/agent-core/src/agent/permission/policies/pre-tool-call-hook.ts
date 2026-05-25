@@ -1,5 +1,5 @@
 import type { Agent } from '../..';
-import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../policy';
+import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../types';
 
 export class PreToolCallHookPermissionPolicy implements PermissionPolicy {
   readonly name = 'pre-tool-call-hook';
@@ -8,10 +8,10 @@ export class PreToolCallHookPermissionPolicy implements PermissionPolicy {
 
   async evaluate(context: PermissionPolicyContext): Promise<PermissionPolicyResult | undefined> {
     const hookResult = await this.agent.hooks?.triggerBlock('PreToolUse', {
-      matcherValue: context.toolCall.function.name,
+      matcherValue: context.toolCall.name,
       signal: context.signal,
       inputData: {
-        toolName: context.toolCall.function.name,
+        toolName: context.toolCall.name,
         toolInput: toolInputRecord(context.args),
         toolCallId: context.toolCall.id,
       },

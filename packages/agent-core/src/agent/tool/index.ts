@@ -1,8 +1,8 @@
 import { uniq } from '@antfu/utils';
 import type { ChatProvider, Tool } from '@moonshot-ai/kosong';
+import picomatch from 'picomatch';
 
 import type { Agent } from '..';
-import { globMatch } from '../permission/path-glob-match';
 import { makeErrorPayload } from '../../errors';
 import type { ExecutableTool } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
@@ -298,7 +298,7 @@ export class ToolManager {
   }
 
   private isMcpToolEnabled(name: string): boolean {
-    return this.mcpAccessPatterns.some((pattern) => globMatch(name, pattern));
+    return this.mcpAccessPatterns.some((pattern) => picomatch.isMatch(name, pattern));
   }
 
   *toolInfos(): Iterable<ToolInfo> {

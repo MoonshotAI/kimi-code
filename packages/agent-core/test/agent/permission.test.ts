@@ -9,16 +9,19 @@ import {
   PermissionManager,
   type ApprovalResponse,
   type PermissionMode,
+  type PermissionPolicyContext,
   type PermissionRule,
 } from '../../src/agent/permission';
-import { matchesRule } from '../../src/agent/permission/matches-rule';
-import { parsePattern } from '../../src/agent/permission/parse-pattern';
+import {
+  matchPermissionRule,
+  parsePattern,
+  type PermissionRuleMatchExecution,
+} from '../../src/agent/permission/matches-rule';
 import { createPermissionDecisionPolicies } from '../../src/agent/permission/policies';
-import type { PermissionPolicyContext } from '../../src/agent/permission/policy';
-import { stableToolArgsKey } from '../../src/agent/permission/stable-args';
 import { ToolAccesses } from '../../src/loop';
 import type { ToolInputDisplay } from '../../src/tools/display';
 import {
+  literalRulePattern,
   matchesAnyPathRuleSubject,
   matchesGlobRuleSubject,
 } from '../../src/tools/support/rule-match';
@@ -218,7 +221,7 @@ describe('Agent permission', () => {
 
     ctx.mockNextResponse({ type: 'text', text: 'I will not run the command.' });
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
-      [wire] permission.record_approval_result   { "turnId": 0, "toolCallId": "call_bash", "toolName": "Bash", "action": "Running: printf should-not-run", "sessionApprovalKey": "Bash:72b1d6d3beeb60c93c5997c0e72131c53a226db8b4ce2f7dac97829e6e440d5c", "result": { "decision": "rejected", "selectedLabel": "reject" }, "time": "<time>" }
+      [wire] permission.record_approval_result   { "turnId": 0, "toolCallId": "call_bash", "toolName": "Bash", "action": "Running: printf should-not-run", "result": { "decision": "rejected", "selectedLabel": "reject" }, "time": "<time>" }
       [wire] context.append_loop_event           { "event": { "type": "tool.call", "uuid": "call_bash", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf should-not-run", "timeout": 60 }, "description": "Running: printf should-not-run", "display": { "kind": "command", "command": "printf should-not-run", "cwd": "<cwd>", "language": "bash" } }, "time": "<time>" }
       [emit] tool.call.started                   { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf should-not-run", "timeout": 60 }, "description": "Running: printf should-not-run", "display": { "kind": "command", "command": "printf should-not-run", "cwd": "<cwd>", "language": "bash" } }
       [wire] context.append_loop_event           { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "Tool \\"Bash\\" was not run because the user rejected the approval request.", "isError": true } }, "time": "<time>" }
@@ -627,9 +630,7 @@ describe('Permission auto mode', () => {
     await expect(call()).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(manager.hasSessionApprovedKey(stableToolArgsKey('Read', { path: '/tmp/notes.md' }))).toBe(
-      true,
-    );
+    expect(manager.sessionApprovalRulePatterns()).toEqual(['Read(/tmp/notes.md)']);
     expect(manager.data().rules).toEqual([]);
   });
 });
@@ -726,6 +727,23 @@ describe('Permission live derive', () => {
     expect(childDeny.requestApproval).not.toHaveBeenCalled();
   });
 
+  it('ignores legacy session-runtime rules in user-configured matching', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    manager.rules.push({
+      decision: 'allow',
+      scope: 'session-runtime',
+      pattern: 'Bash',
+      reason: 'legacy approve for session',
+    });
+
+    await expect(manager.beforeToolCall(hookContext({ id: 'call_legacy_session_rule' }))).resolves
+      .toBeUndefined();
+
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+  });
+
   it('falls back to parent rules and session approvals when no child rule matches', async () => {
     const parent = makePermissionManager(async () => ({ decision: 'approved' }));
     parent.manager.recordApprovalResult({
@@ -733,7 +751,7 @@ describe('Permission live derive', () => {
       toolCallId: 'call_parent',
       toolName: 'Bash',
       action: 'run command',
-      sessionApprovalKey: stableToolArgsKey('Bash', { command: 'printf first', timeout: 60 }),
+      sessionApprovalRule: 'Bash(printf first)',
       result: {
         decision: 'approved',
         scope: 'session',
@@ -750,10 +768,7 @@ describe('Permission live derive', () => {
     expect(child.requestApproval).not.toHaveBeenCalled();
     expect(child.manager.rules).toEqual([]);
     expect(child.manager.data().rules).toEqual([]);
-    expect(child.manager.hasSessionApprovedKey(stableToolArgsKey('Bash', {
-      command: 'printf first',
-      timeout: 60,
-    }))).toBe(true);
+    expect(child.manager.sessionApprovalRulePatterns()).toContain('Bash(printf first)');
   });
 
   it('uses child local mode for inherited non-deny decisions', async () => {
@@ -815,7 +830,7 @@ describe('Plan mode Bash permission policy', () => {
       toolCallId: 'call_ordinary_bash',
       toolName: 'Bash',
       action: 'run command',
-      sessionApprovalKey: stableToolArgsKey('Bash', { command: 'ls -la', timeout: 60 }),
+      sessionApprovalRule: 'Bash(ls -la)',
       result: {
         decision: 'approved',
         scope: 'session',
@@ -835,10 +850,7 @@ describe('Plan mode Bash permission policy', () => {
 
     expect(requestApproval).not.toHaveBeenCalled();
     expect(manager.data().rules).toEqual([]);
-    expect(manager.hasSessionApprovedKey(stableToolArgsKey('Bash', {
-      command: 'ls -la',
-      timeout: 60,
-    }))).toBe(true);
+    expect(manager.sessionApprovalRulePatterns()).toContain('Bash(ls -la)');
   });
 
   it.each(['yolo', 'auto'] as const)(
@@ -926,7 +938,7 @@ describe('ExitPlanMode permission policy', () => {
       toolCallId: 'call_exit',
       toolName: 'ExitPlanMode',
       action: 'Presenting plan and exiting plan mode',
-      sessionApprovalKey: stableToolArgsKey('ExitPlanMode', { options: planOptions }),
+      sessionApprovalRule: undefined,
       result: { decision: 'approved', selectedLabel: 'Approach B' },
     });
     expect(result).toMatchObject({
@@ -947,7 +959,7 @@ describe('ExitPlanMode permission policy', () => {
       toolCallId: 'previous_exit',
       toolName: 'ExitPlanMode',
       action: 'Presenting plan and exiting plan mode',
-      sessionApprovalKey: stableToolArgsKey('ExitPlanMode', {}),
+      sessionApprovalRule: 'ExitPlanMode',
       result: { decision: 'approved', scope: 'session' },
     });
 
@@ -1089,14 +1101,14 @@ describe('ExitPlanMode permission policy', () => {
 });
 
 describe('Agent-local approve for session', () => {
-  it('turns approved session-scoped responses into an agent-local exact-key cache', async () => {
+  it('turns approved session-scoped responses into an agent-local runtime rule cache', async () => {
     const { manager, record, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
       decision: 'approved',
       scope: 'session',
       selectedLabel: 'Approve for this session',
     }));
     const firstArgs = { command: 'printf first', timeout: 60 };
-    const firstKey = stableToolArgsKey('Bash', firstArgs);
+    const firstRule = 'Bash(printf first)';
 
     await expect(manager.beforeToolCall(hookContext({ id: 'call_1' }))).resolves.toBeUndefined();
 
@@ -1129,7 +1141,7 @@ describe('Agent-local approve for session', () => {
       toolCallId: 'call_1',
       toolName: 'Bash',
       action: 'run command',
-      sessionApprovalKey: firstKey,
+      sessionApprovalRule: firstRule,
       result: {
         decision: 'approved',
         scope: 'session',
@@ -1137,7 +1149,7 @@ describe('Agent-local approve for session', () => {
       },
     });
     expect(manager.data().rules).toEqual([]);
-    expect(manager.hasSessionApprovedKey(firstKey)).toBe(true);
+    expect(manager.sessionApprovalRulePatterns()).toContain(firstRule);
 
     await expect(
       manager.beforeToolCall(
@@ -1170,6 +1182,33 @@ describe('Agent-local approve for session', () => {
     expect(requestApproval).toHaveBeenCalledTimes(2);
   });
 
+  it('stores runtime rules with literal glob escaping', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+      scope: 'session',
+    }));
+
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: 'call_literal',
+          args: { command: 'printf *', timeout: 60 },
+        }),
+      ),
+    ).resolves.toBeUndefined();
+
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: 'call_other',
+          args: { command: 'printf hello', timeout: 60 },
+        }),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(requestApproval).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps approved once responses one-shot', async () => {
     const { manager, record, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
@@ -1186,7 +1225,7 @@ describe('Agent-local approve for session', () => {
       toolCallId: 'call_1',
       toolName: 'Bash',
       action: 'run command',
-      sessionApprovalKey: stableToolArgsKey('Bash', { command: 'printf first', timeout: 60 }),
+      sessionApprovalRule: undefined,
       result: {
         decision: 'approved',
       },
@@ -1197,7 +1236,7 @@ describe('Agent-local approve for session', () => {
       toolCallId: 'call_2',
       toolName: 'Bash',
       action: 'run command',
-      sessionApprovalKey: stableToolArgsKey('Bash', { command: 'printf first', timeout: 60 }),
+      sessionApprovalRule: undefined,
       result: {
         decision: 'approved',
       },
@@ -1214,7 +1253,7 @@ describe('Agent-local approve for session', () => {
       toolCallId: 'call_session',
       toolName: 'Bash',
       action: 'run command',
-      sessionApprovalKey: stableToolArgsKey('Bash', { command: 'printf first', timeout: 60 }),
+      sessionApprovalRule: 'Bash(printf first)',
       result: {
         decision: 'approved',
         scope: 'session',
@@ -1238,10 +1277,7 @@ describe('Agent-local approve for session', () => {
 
   it('replays session approval wire events into agent permission state', () => {
     const ctx = testAgent();
-    const sessionApprovalKey = stableToolArgsKey('Bash', {
-      command: 'printf first',
-      timeout: 60,
-    });
+    const sessionApprovalRule = 'Bash(printf first)';
 
     ctx.dispatch({
       type: 'permission.record_approval_result',
@@ -1249,7 +1285,7 @@ describe('Agent-local approve for session', () => {
       toolCallId: 'call_replay',
       toolName: 'Bash',
       action: 'run command',
-      sessionApprovalKey,
+      sessionApprovalRule,
       result: {
         decision: 'approved',
         scope: 'session',
@@ -1258,7 +1294,7 @@ describe('Agent-local approve for session', () => {
     });
 
     expect(ctx.agent.permission.data().rules).toEqual([]);
-    expect(ctx.agent.permission.hasSessionApprovedKey(sessionApprovalKey)).toBe(true);
+    expect(ctx.agent.permission.sessionApprovalRulePatterns()).toContain(sessionApprovalRule);
   });
 
   it('replays one-shot approval wire events without adding session rules', () => {
@@ -1883,22 +1919,22 @@ describe('Permission rule helpers', () => {
 
   it('matches rules against the tool-specific argument fields', () => {
     expect(
-      matchesRule(permissionRule('Bash(git *)'), 'Bash', { command: 'git status' }, {
+      ruleMatches(permissionRule('Bash(git *)'), 'Bash', { command: 'git status' }, {
         matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, 'git status'),
       }),
     ).toBe(true);
     expect(
-      matchesRule(permissionRule('Bash(git *)'), 'Bash', { command: 'npm test' }, {
+      ruleMatches(permissionRule('Bash(git *)'), 'Bash', { command: 'npm test' }, {
         matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, 'npm test'),
       }),
     ).toBe(false);
     expect(
-      matchesRule(permissionRule('Read(/etc/**)'), 'Read', { path: '/etc/passwd' }, {
+      ruleMatches(permissionRule('Read(/etc/**)'), 'Read', { path: '/etc/passwd' }, {
         matchesRule: (ruleArgs) => matchesAnyPathRuleSubject(ruleArgs, ['/etc/passwd']),
       }),
     ).toBe(true);
     expect(
-      matchesRule(permissionRule('Edit(!./src/**)'), 'Edit', { path: './README.md' }, {
+      ruleMatches(permissionRule('Edit(!./src/**)'), 'Edit', { path: './README.md' }, {
         matchesRule: (ruleArgs) =>
           matchesAnyPathRuleSubject(ruleArgs, ['/workspace/README.md', './README.md'], {
             pathOptions: { cwd: '/workspace', pathClass: 'posix' },
@@ -1906,7 +1942,7 @@ describe('Permission rule helpers', () => {
       }),
     ).toBe(true);
     expect(
-      matchesRule(permissionRule('Edit(!./src/**)'), 'Edit', { path: './src/a.ts' }, {
+      ruleMatches(permissionRule('Edit(!./src/**)'), 'Edit', { path: './src/a.ts' }, {
         matchesRule: (ruleArgs) =>
           matchesAnyPathRuleSubject(ruleArgs, ['/workspace/src/a.ts', './src/a.ts'], {
             pathOptions: { cwd: '/workspace', pathClass: 'posix' },
@@ -1914,42 +1950,42 @@ describe('Permission rule helpers', () => {
       }),
     ).toBe(false);
     expect(
-      matchesRule(permissionRule('Agent(review-*)'), 'Agent', {
+      ruleMatches(permissionRule('Agent(review-*)'), 'Agent', {
         subagent_type: 'review-code',
       }, {
         matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, 'review-code'),
       }),
     ).toBe(true);
-    expect(matchesRule(permissionRule('mcp__github__*'), 'mcp__github__list_issues', {})).toBe(
+    expect(ruleMatches(permissionRule('mcp__github__*'), 'mcp__github__list_issues', {})).toBe(
       true,
     );
     expect(
-      matchesRule(permissionRule('Bash(git *)'), 'Bash', { command: 42 }, {
+      ruleMatches(permissionRule('Bash(git *)'), 'Bash', { command: 42 }, {
         matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, '42'),
       }),
     ).toBe(false);
-    expect(matchesRule(permissionRule('Bad(unclosed'), 'Bad', {})).toBe(false);
+    expect(ruleMatches(permissionRule('Bad(unclosed'), 'Bad', {})).toBe(false);
   });
 
   it('falls back to stable args and single-field matching when execution has no matcher', () => {
     expect(
-      matchesRule(permissionRule('Bash("command":"git status")'), 'Bash', {
+      ruleMatches(permissionRule('Bash("command":"git status")'), 'Bash', {
         command: 'git status',
       }),
     ).toBe(true);
     expect(
-      matchesRule(permissionRule('Bash(^git status$)'), 'Bash', {
+      ruleMatches(permissionRule('Bash(^git status$)'), 'Bash', {
         command: 'git status',
       }),
     ).toBe(true);
     expect(
-      matchesRule(permissionRule('Bash(^git status$)'), 'Bash', {
+      ruleMatches(permissionRule('Bash(^git status$)'), 'Bash', {
         command: 'npm test',
       }),
     ).toBe(false);
-    expect(matchesRule(permissionRule('Read()'), 'Read', { path: '/workspace/a.ts' })).toBe(true);
+    expect(ruleMatches(permissionRule('Read()'), 'Read', { path: '/workspace/a.ts' })).toBe(true);
     expect(
-      matchesRule(permissionRule('Read([invalid'), 'Read', {
+      ruleMatches(permissionRule('Read([invalid'), 'Read', {
         path: '/workspace/a.ts',
       }),
     ).toBe(false);
@@ -1961,11 +1997,11 @@ describe('Permission rule helpers', () => {
     };
 
     expect(
-      matchesRule(permissionRule('Read(semantic match)'), 'Read', { path: '/workspace/a.ts' }, execution),
+      ruleMatches(permissionRule('Read(semantic match)'), 'Read', { path: '/workspace/a.ts' }, execution),
     ).toBe(true);
     expect(execution.matchesRule).toHaveBeenCalledWith('semantic match');
     expect(
-      matchesRule(permissionRule('Read(other)'), 'Read', { path: '/workspace/a.ts' }, execution),
+      ruleMatches(permissionRule('Read(other)'), 'Read', { path: '/workspace/a.ts' }, execution),
     ).toBe(false);
   });
 
@@ -2111,6 +2147,15 @@ function permissionRule(
   };
 }
 
+function ruleMatches(
+  rule: PermissionRule,
+  toolName: string,
+  args: unknown,
+  execution: PermissionRuleMatchExecution = {},
+): boolean {
+  return matchPermissionRule({ rule, toolName, args, execution }) !== undefined;
+}
+
 function genericDisplay(): ToolInputDisplay {
   return { kind: 'generic', summary: 'Approve tool', detail: {} };
 }
@@ -2137,12 +2182,53 @@ function testExecution(
   toolName: string,
   args: Record<string, unknown>,
 ): PermissionPolicyContext['execution'] {
+  const ruleSubject = testRuleSubject(toolName, args);
   return {
     description: testDescription(toolName, args),
     display: testDisplay(toolName, args),
     accesses: testAccesses(toolName, args),
+    approvalRule:
+      ruleSubject === undefined ? undefined : literalRulePattern(toolName, ruleSubject),
+    matchesRule:
+      ruleSubject === undefined
+        ? undefined
+        : (ruleArgs) => testMatchesRuleSubject(toolName, args, ruleArgs, ruleSubject),
     execute: async () => ({ output: '' }),
   };
+}
+
+function testRuleSubject(toolName: string, args: Record<string, unknown>): string | undefined {
+  switch (toolName) {
+    case 'Bash':
+      return stringArg(args, 'command');
+    case 'Read':
+    case 'ReadMediaFile':
+    case 'Write':
+    case 'Edit':
+      return canonicalTestPath(stringArg(args, 'path', '/workspace/file.txt'));
+    case 'Grep':
+    case 'Glob':
+      return stringArg(args, 'pattern');
+    default:
+      return undefined;
+  }
+}
+
+function testMatchesRuleSubject(
+  toolName: string,
+  args: Record<string, unknown>,
+  ruleArgs: string,
+  ruleSubject: string,
+): boolean {
+  switch (toolName) {
+    case 'Read':
+    case 'ReadMediaFile':
+    case 'Write':
+    case 'Edit':
+      return matchesAnyPathRuleSubject(ruleArgs, [ruleSubject, stringArg(args, 'path')]);
+    default:
+      return matchesGlobRuleSubject(ruleArgs, ruleSubject);
+  }
 }
 
 function testDescription(toolName: string, args: Record<string, unknown>): string {
