@@ -15,6 +15,10 @@ export type {
   PromptOrigin,
   TokenUsage,
   PermissionMode,
+  LoopRecordedEvent,
+  ContentPart,
+  Message,
+  ToolCall,
 } from '../../server/src/lib/agent-record-types';
 
 export interface DeleteSessionResponse {
