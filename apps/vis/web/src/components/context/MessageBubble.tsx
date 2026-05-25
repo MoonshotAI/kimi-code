@@ -1,104 +1,105 @@
 import { useState, type ReactNode } from 'react';
-import type { AnnotatedMessage, ContentPart, ToolCallEntry } from '../../types';
+
+import type {
+  ContentPart,
+  ProjectedMessage,
+  ToolCall,
+} from '../../types';
 import { Pill } from '../shared/Pill';
-import { PersistedOutputLink } from './PersistedOutputLink';
 
 interface MessageBubbleProps {
-  message: AnnotatedMessage;
-  sessionId: string;
+  message: ProjectedMessage;
 }
 
-export function MessageBubble({ message, sessionId }: MessageBubbleProps) {
-  const { role } = message.message;
+export function MessageBubble({ message }: MessageBubbleProps) {
+  const role = message.message.role;
   if (role === 'user') return <UserBubble m={message} />;
   if (role === 'assistant') return <AssistantBubble m={message} />;
-  return <ToolBubble m={message} sessionId={sessionId} />;
+  if (role === 'tool') return <ToolBubble m={message} />;
+  return <SystemBubble m={message} />;
 }
 
-function baseClass(out: boolean): string {
-  return [
-    'relative flex max-w-full min-w-0 flex-col border-l-[3px] bg-surface-1 px-3 py-2',
-    out ? 'opacity-50 line-through decoration-[var(--color-sev-error)] decoration-dashed' : '',
-  ].join(' ');
+function baseClass(): string {
+  return 'relative flex max-w-full min-w-0 flex-col border-l-[3px] bg-surface-1 px-3 py-2';
 }
 
-function UserBubble({ m }: { m: AnnotatedMessage }) {
+function UserBubble({ m }: { m: ProjectedMessage }) {
+  const origin = m.message.origin;
+  const originKind = origin?.kind;
+  const showsOriginBadge =
+    originKind === 'system_trigger' || originKind === 'injection' || originKind === 'hook_result';
   return (
-    <article
-      className={baseClass(m.out_of_context)}
-      style={{ borderLeftColor: 'var(--color-user)' }}
-    >
+    <article className={baseClass()} style={{ borderLeftColor: 'var(--color-user)' }}>
       <header className="mb-1 flex items-center gap-2">
         <Pill tone="user" variant="solid">user</Pill>
-        <span className="font-mono text-[10px] text-fg-3 tabular">seq {m.seq}</span>
-        {m.out_of_context ? <Pill tone="error" variant="outline">out-of-context</Pill> : null}
+        <span className="font-mono text-[10px] text-fg-3 tabular">line {m.lineNo}</span>
+        {showsOriginBadge ? (
+          <Pill tone="meta" variant="outline">{originKind}</Pill>
+        ) : null}
+        {m.message.isError ? <Pill tone="error" variant="outline">error</Pill> : null}
       </header>
       <MessageContent parts={m.message.content} />
     </article>
   );
 }
 
-function AssistantBubble({ m }: { m: AnnotatedMessage }) {
+function AssistantBubble({ m }: { m: ProjectedMessage }) {
   const thinkPart = m.message.content.find((p) => p.type === 'think');
-  const think = thinkPart ? (thinkPart['think'] as string | undefined) : undefined;
-  const textParts = m.message.content.filter((p) => p.type !== 'think');
+  const think = thinkPart && thinkPart.type === 'think' ? thinkPart.think : undefined;
+  const visibleParts = m.message.content.filter((p) => p.type !== 'think');
+  const toolCalls = m.message.toolCalls;
   return (
-    <article
-      className={baseClass(m.out_of_context)}
-      style={{ borderLeftColor: 'var(--color-assistant)' }}
-    >
+    <article className={baseClass()} style={{ borderLeftColor: 'var(--color-assistant)' }}>
       <header className="mb-1 flex items-center gap-2">
         <Pill tone="assistant" variant="solid">assistant</Pill>
-        <span className="font-mono text-[10px] text-fg-3 tabular">seq {m.seq}</span>
+        <span className="font-mono text-[10px] text-fg-3 tabular">line {m.lineNo}</span>
         {think ? <Pill tone="config" variant="outline">think</Pill> : null}
-        {m.message.tool_calls.length > 0 ? (
+        {toolCalls.length > 0 ? (
           <Pill tone="tools" variant="outline">
-            {m.message.tool_calls.length} tool call{m.message.tool_calls.length > 1 ? 's' : ''}
+            {toolCalls.length} tool call{toolCalls.length > 1 ? 's' : ''}
           </Pill>
         ) : null}
-        {m.out_of_context ? <Pill tone="error" variant="outline">out-of-context</Pill> : null}
+        {m.message.partial ? <Pill tone="warning" variant="outline">partial</Pill> : null}
       </header>
       {think ? <ThinkBlock text={think} /> : null}
-      <MessageContent parts={textParts} />
-      {m.message.tool_calls.length > 0 ? (
+      <MessageContent parts={visibleParts} />
+      {toolCalls.length > 0 ? (
         <div className="mt-2 space-y-1">
-          {m.message.tool_calls.map((tc) => <ToolCallCard key={tc.id} call={tc} />)}
+          {toolCalls.map((tc) => (
+            <ToolCallCard key={tc.id} call={tc} />
+          ))}
         </div>
       ) : null}
     </article>
   );
 }
 
-function ToolBubble({ m, sessionId }: { m: AnnotatedMessage; sessionId: string }) {
-  const firstTextPart = m.message.content.find((p) => p.type === 'text');
-  const text = firstTextPart ? ((firstTextPart['text'] as string | undefined) ?? '') : '';
-  const hasPersisted = !!m.persisted_output_path && m.message.tool_call_id;
+function ToolBubble({ m }: { m: ProjectedMessage }) {
   return (
-    <article
-      className={baseClass(m.out_of_context)}
-      style={{ borderLeftColor: 'var(--color-tool)' }}
-    >
+    <article className={baseClass()} style={{ borderLeftColor: 'var(--color-tool)' }}>
       <header className="mb-1 flex items-center gap-2">
         <Pill tone="tool" variant="solid">tool</Pill>
-        {m.message.tool_call_id ? (
+        {m.message.toolCallId ? (
           <span className="font-mono text-[11px] text-fg-1">
-            call {m.message.tool_call_id.slice(0, 12)}
+            call {m.message.toolCallId.slice(0, 12)}
           </span>
         ) : null}
-        <span className="font-mono text-[10px] text-fg-3 tabular">seq {m.seq}</span>
-        {m.out_of_context ? <Pill tone="error" variant="outline">out-of-context</Pill> : null}
+        <span className="font-mono text-[10px] text-fg-3 tabular">line {m.lineNo}</span>
+        {m.message.isError ? <Pill tone="error" variant="outline">error</Pill> : null}
       </header>
-      {hasPersisted ? (
-        <PersistedOutputLink
-          sessionId={sessionId}
-          toolCallId={m.message.tool_call_id!}
-          path={m.persisted_output_path!}
-        />
-      ) : (
-        <pre className="whitespace-pre-wrap break-words font-mono text-[12px] text-fg-1">
-          {text}
-        </pre>
-      )}
+      <MessageContent parts={m.message.content} />
+    </article>
+  );
+}
+
+function SystemBubble({ m }: { m: ProjectedMessage }) {
+  return (
+    <article className={baseClass()} style={{ borderLeftColor: 'var(--color-cat-config)' }}>
+      <header className="mb-1 flex items-center gap-2">
+        <Pill tone="config" variant="solid">system</Pill>
+        <span className="font-mono text-[10px] text-fg-3 tabular">line {m.lineNo}</span>
+      </header>
+      <MessageContent parts={m.message.content} />
     </article>
   );
 }
@@ -108,7 +109,9 @@ function ThinkBlock({ text }: { text: string }) {
   return (
     <div className="mb-2 border border-border bg-surface-0">
       <button
-        onClick={() =>{  setOpen((v) => !v); }}
+        onClick={() => {
+          setOpen((v) => !v);
+        }}
         className="flex w-full items-center gap-2 px-2 py-1 text-left font-mono text-[11px] text-fg-2 hover:text-fg-1"
       >
         <span className="text-fg-3">{open ? '▾' : '▸'}</span>
@@ -124,13 +127,15 @@ function ThinkBlock({ text }: { text: string }) {
   );
 }
 
-function ToolCallCard({ call }: { call: ToolCallEntry }) {
+function ToolCallCard({ call }: { call: ToolCall }) {
   const [open, setOpen] = useState(false);
   const argsStr = call.arguments ?? '';
   return (
     <div className="border border-border bg-surface-0">
       <button
-        onClick={() =>{  setOpen((v) => !v); }}
+        onClick={() => {
+          setOpen((v) => !v);
+        }}
         className="flex w-full items-center gap-2 px-2 py-1 text-left font-mono text-[11px] hover:bg-surface-2"
       >
         <span className="text-fg-3">{open ? '▾' : '▸'}</span>
@@ -158,21 +163,38 @@ function MessageContent({ parts }: { parts: readonly ContentPart[] }): ReactNode
               key={i}
               className="whitespace-pre-wrap break-words font-mono text-[12.5px] leading-[1.55] text-fg-0"
             >
-              {(p['text'] as string) ?? ''}
+              {p.text}
             </pre>
           );
         }
+        if (p.type === 'think') {
+          return <ThinkBlock key={i} text={p.think} />;
+        }
         if (p.type === 'image_url') {
-          const url = (p['image_url'] as { url?: string } | undefined)?.url;
-          return <div key={i} className="text-fg-2 font-mono text-[11px]">[image: {url ?? '—'}]</div>;
+          return (
+            <div key={i} className="font-mono text-[11px] text-fg-2">
+              [image: {p.imageUrl.url}]
+            </div>
+          );
+        }
+        if (p.type === 'audio_url') {
+          return (
+            <div key={i} className="font-mono text-[11px] text-fg-2">
+              [audio: {p.audioUrl.url}]
+            </div>
+          );
         }
         if (p.type === 'video_url') {
-          const url = (p['video_url'] as { url?: string } | undefined)?.url;
-          return <div key={i} className="text-fg-2 font-mono text-[11px]">[video: {url ?? '—'}]</div>;
+          return (
+            <div key={i} className="font-mono text-[11px] text-fg-2">
+              [video: {p.videoUrl.url ?? '—'}]
+            </div>
+          );
         }
+        // Exhaustive — anything else is unexpected for ContentPart.
         return (
-          <div key={i} className="text-fg-3 font-mono text-[11px]">
-            [{p.type}]
+          <div key={i} className="font-mono text-[11px] text-fg-3">
+            [{(p as { type: string }).type}]
           </div>
         );
       })}
