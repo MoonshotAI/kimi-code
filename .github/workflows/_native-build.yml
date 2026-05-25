@@ -78,7 +78,11 @@ jobs:
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
 
       - name: Generate built-in catalog (release artifacts)
-        if: inputs.sign-macos
+        # Match the macOS-signed release-profile build below — only that
+        # path consumes the bundled catalog. Running this on Linux/Windows
+        # would make their builds fail on transient models.dev outages
+        # without providing any benefit.
+        if: runner.os == 'macOS' && inputs.sign-macos
         shell: bash
         run: |
           CATALOG_FILE="$RUNNER_TEMP/kimi-code-built-in-catalog.json"
