@@ -1,11 +1,15 @@
 import type { Agent } from '..';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
-  type AgentRecord,
-  type AgentRecordPersistence,
-} from './types';
+  migrateWireRecord,
+  resolveWireMigrations,
+  type WireMigration,
+  type WireMigrationRecord,
+} from './migration';
+import type { AgentRecord, AgentRecordPersistence } from './types';
 
 export * from './types';
+export { AGENT_WIRE_PROTOCOL_VERSION } from './migration';
 export {
   FileSystemAgentRecordPersistence,
   InMemoryAgentRecordPersistence,
@@ -138,11 +142,37 @@ export class AgentRecords {
 
   async replay(): Promise<void> {
     if (!this.persistence) throw new Error('No persistence provided for AgentRecords');
+    let migrations: readonly WireMigration[] = [];
+    let hasMetadata = false;
+    let shouldRewrite = false;
+    const replayedRecords: AgentRecord[] = [];
     for await (const record of this.persistence.read()) {
-      if (!this.metadataInitialized) {
+      if (!hasMetadata) {
+        if (record.type !== 'metadata') {
+          throw new Error('AgentRecords replay expected metadata as the first record');
+        }
+        hasMetadata = true;
         this.metadataInitialized = true;
+        const readVersion = record.protocol_version;
+        migrations = resolveWireMigrations(readVersion);
+        shouldRewrite = readVersion !== AGENT_WIRE_PROTOCOL_VERSION;
       }
-      this.restore(record);
+      let migratedRecord = migrateWireRecord(
+        record as WireMigrationRecord,
+        migrations,
+      ) as AgentRecord;
+      if (migratedRecord.type === 'metadata') {
+        migratedRecord = {
+          ...migratedRecord,
+          protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        };
+      }
+      replayedRecords.push(migratedRecord);
+      this.restore(migratedRecord);
+    }
+    if (shouldRewrite) {
+      this.persistence.rewrite(replayedRecords);
+      await this.persistence.flush();
     }
   }
 

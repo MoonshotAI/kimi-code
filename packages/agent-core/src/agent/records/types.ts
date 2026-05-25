@@ -86,8 +86,6 @@ export type AgentRecordOf<K extends keyof AgentRecordEvents> = Extract<
   { readonly type: K }
 >;
 
-export const AGENT_WIRE_PROTOCOL_VERSION = '1.0';
-
 export interface AgentRecordPersistence {
   read(): AsyncIterable<AgentRecord>;
   append(input: AgentRecord): void;

@@ -5,7 +5,10 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentRecord } from '../../src/agent';
-import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
+import {
+  AGENT_WIRE_PROTOCOL_VERSION,
+  InMemoryAgentRecordPersistence,
+} from '../../src/agent/records';
 import { appendTaskOutput, writeTask } from '../../src/tools/background/persist';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { testAgent } from './harness/agent';
@@ -286,10 +289,26 @@ describe('Agent resume', () => {
 class RecordingAgentPersistence extends InMemoryAgentRecordPersistence {
   readonly appended: AgentRecord[] = [];
 
+  constructor(events: readonly AgentRecord[]) {
+    super(withMetadata(events));
+  }
+
   override append(input: AgentRecord): void {
     this.appended.push(input);
     super.append(input);
   }
+}
+
+function withMetadata(events: readonly AgentRecord[]): readonly AgentRecord[] {
+  if (events.length === 0 || events[0]?.type === 'metadata') return events;
+  return [
+    {
+      type: 'metadata',
+      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+      created_at: 1,
+    },
+    ...events,
+  ];
 }
 
 function resumeHistory(): AgentRecord[] {
