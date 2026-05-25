@@ -7,6 +7,7 @@ import type { ToolCall } from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent } from '../../src/agent';
+import { AGENT_WIRE_PROTOCOL_VERSION } from '../../src/agent/records';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
@@ -1049,7 +1050,18 @@ function stat(kind: 'dir' | 'file') {
 
 async function writeWire(homedir: string, records: readonly Record<string, unknown>[]) {
   await mkdir(homedir, { recursive: true });
-  const text = records.map((record) => JSON.stringify(record)).join('\n');
+  const wireRecords =
+    records.length === 0
+      ? []
+      : [
+          {
+            type: 'metadata',
+            protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+            created_at: 1,
+          },
+          ...records,
+        ];
+  const text = wireRecords.map((record) => JSON.stringify(record)).join('\n');
   await writeFile(join(homedir, 'wire.jsonl'), text.length === 0 ? '' : `${text}\n`, 'utf-8');
 }
 
