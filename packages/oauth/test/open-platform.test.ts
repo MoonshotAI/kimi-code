@@ -8,6 +8,7 @@ import {
   getOpenPlatformById,
   isOpenPlatformId,
   OPEN_PLATFORMS,
+  OpenPlatformApiError,
   removeOpenPlatformConfig,
   type ManagedKimiConfigShape,
 } from '../src/open-platform';
@@ -95,13 +96,22 @@ describe('fetchOpenPlatformModels', () => {
     );
   });
 
-  it('throws on HTTP error', async () => {
-    const fetchMock = vi.fn(async () => new Response('Unauthorized', { status: 401 }));
+  it('surfaces API error messages and status on HTTP error', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: { message: 'invalid API key' } }), { status: 401 }),
+    );
     const platform = getOpenPlatformById('moonshot-cn')!;
 
-    await expect(
-      fetchOpenPlatformModels(platform, 'sk-bad', fetchMock as unknown as typeof fetch),
-    ).rejects.toThrow('Failed to list models (HTTP 401).');
+    const error = await fetchOpenPlatformModels(
+      platform,
+      'sk-bad',
+      fetchMock as unknown as typeof fetch,
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(OpenPlatformApiError);
+    expect((error as OpenPlatformApiError).status).toBe(401);
+    expect((error as Error).message).toBe('invalid API key');
   });
 
   it('throws on unexpected response shape', async () => {

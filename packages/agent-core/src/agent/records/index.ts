@@ -1,15 +1,28 @@
 import type { Agent } from '..';
+import {
+  AGENT_WIRE_PROTOCOL_VERSION,
+  migrateWireRecord,
+  resolveWireMigrations,
+  type WireMigration,
+  type WireMigrationRecord,
+} from './migration';
 import type { AgentRecord, AgentRecordPersistence } from './types';
 
 export * from './types';
-export { FileSystemAgentRecordPersistence } from './wire-file';
-export type { FileSystemAgentRecordPersistenceOptions } from './wire-file';
+export { AGENT_WIRE_PROTOCOL_VERSION } from './migration';
+export {
+  FileSystemAgentRecordPersistence,
+  InMemoryAgentRecordPersistence,
+} from './persistence';
+export type { FileSystemAgentRecordPersistenceOptions } from './persistence';
 
 // Contract: restore MUST NOT emit UI events, call the LLM, execute tools, or
 // touch the filesystem in a way that triggers external side effects. Each case
 // should reproduce the in-memory state the live handler left behind, nothing more.
 export function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
   switch (input.type) {
+    case 'metadata':
+      return;
     case 'turn.prompt':
       agent.turn.restorePrompt();
       return;
@@ -82,10 +95,9 @@ export function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
 }
 
 export class AgentRecords {
-  private readonly records: AgentRecord[] = [];
   private _restoring = false;
+  private metadataInitialized = false;
   onRecord?: (record: AgentRecord) => void;
-  onError?: (error: unknown, record: AgentRecord) => void;
 
   constructor(
     private readonly restoreRecord: (record: AgentRecord) => void,
@@ -100,11 +112,23 @@ export class AgentRecords {
     if (this._restoring) return;
     const stamped: AgentRecord =
       record.time !== undefined ? record : { ...record, time: Date.now() };
-    this.records.push(stamped);
+    if (
+      this.persistence !== undefined &&
+      !this.metadataInitialized &&
+      stamped.type !== 'metadata'
+    ) {
+      this.persistence.append({
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: Date.now(),
+      });
+      this.metadataInitialized = true;
+    }
+    if (stamped.type === 'metadata') {
+      this.metadataInitialized = true;
+    }
+    this.persistence?.append(stamped);
     this.onRecord?.(stamped);
-    void this.persistence?.append(stamped).catch((error) => {
-      this.onError?.(error, stamped);
-    });
   }
 
   restore(record: AgentRecord): void {
@@ -118,19 +142,38 @@ export class AgentRecords {
 
   async replay(): Promise<void> {
     if (!this.persistence) throw new Error('No persistence provided for AgentRecords');
+    let migrations: readonly WireMigration[] = [];
+    let hasMetadata = false;
+    let shouldRewrite = false;
+    const replayedRecords: AgentRecord[] = [];
     for await (const record of this.persistence.read()) {
-      this.records.push(record);
-      this._restoring = true;
-      try {
-        this.restoreRecord(record);
-      } finally {
-        this._restoring = false;
+      if (!hasMetadata) {
+        if (record.type !== 'metadata') {
+          throw new Error('AgentRecords replay expected metadata as the first record');
+        }
+        hasMetadata = true;
+        this.metadataInitialized = true;
+        const readVersion = record.protocol_version;
+        migrations = resolveWireMigrations(readVersion);
+        shouldRewrite = readVersion !== AGENT_WIRE_PROTOCOL_VERSION;
       }
+      let migratedRecord = migrateWireRecord(
+        record as WireMigrationRecord,
+        migrations,
+      ) as AgentRecord;
+      if (migratedRecord.type === 'metadata') {
+        migratedRecord = {
+          ...migratedRecord,
+          protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        };
+      }
+      replayedRecords.push(migratedRecord);
+      this.restore(migratedRecord);
     }
-  }
-
-  snapshot(): readonly AgentRecord[] {
-    return [...this.records];
+    if (shouldRewrite) {
+      this.persistence.rewrite(replayedRecords);
+      await this.persistence.flush();
+    }
   }
 
   async flush(): Promise<void> {

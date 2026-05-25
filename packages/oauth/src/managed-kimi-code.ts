@@ -1,3 +1,4 @@
+import { readApiErrorMessage } from './api-error';
 import { kimiCodeBaseUrl } from './managed-usage';
 import { isRecord } from './utils';
 
@@ -167,7 +168,12 @@ export async function fetchManagedKimiCodeModels(
     },
   });
   if (!response.ok) {
-    throw new Error(`Failed to list Kimi Code models (HTTP ${response.status}).`);
+    throw new Error(
+      await readApiErrorMessage(
+        response,
+        `Failed to list Kimi Code models (HTTP ${response.status}).`,
+      ),
+    );
   }
   const payload: unknown = await response.json();
   if (!isRecord(payload) || !Array.isArray(payload['data'])) {

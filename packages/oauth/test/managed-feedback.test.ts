@@ -70,7 +70,7 @@ describe('fetchSubmitFeedback', () => {
   it('returns an error with status when the server responds 401', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response('nope', { status: 401 })),
+      vi.fn(async () => new Response('', { status: 401 })),
     );
 
     const result = await fetchSubmitFeedback(
@@ -85,10 +85,34 @@ describe('fetchSubmitFeedback', () => {
     expect(result.message).toMatch(/401/);
   });
 
+  it('surfaces API error messages from failed submissions', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'feedback rejected' } }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    );
+
+    const result = await fetchSubmitFeedback(
+      'https://api.example/feedback',
+      'access-token',
+      SAMPLE_BODY,
+    );
+
+    expect(result.kind).toBe('error');
+    if (result.kind !== 'error') return;
+    expect(result.status).toBe(400);
+    expect(result.message).toBe('feedback rejected');
+  });
+
   it('returns an error with status when the server responds 500', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response('boom', { status: 500 })),
+      vi.fn(async () => new Response('', { status: 500 })),
     );
 
     const result = await fetchSubmitFeedback(
@@ -100,6 +124,7 @@ describe('fetchSubmitFeedback', () => {
     expect(result.kind).toBe('error');
     if (result.kind !== 'error') return;
     expect(result.status).toBe(500);
+    expect(result.message).toBe('Failed to submit feedback: HTTP 500');
   });
 
   it('returns a timeout error when the request aborts', async () => {

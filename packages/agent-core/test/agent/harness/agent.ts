@@ -14,6 +14,10 @@ import {
 } from '../../../src/agent';
 import type { CompactionStrategy } from '../../../src/agent/compaction';
 import type { ApprovalResponse } from '../../../src/agent/permission';
+import {
+  AGENT_WIRE_PROTOCOL_VERSION,
+  InMemoryAgentRecordPersistence,
+} from '../../../src/agent/records';
 import type { KimiConfig } from '../../../src/config';
 import type { ExecutableToolResult } from '../../../src/loop';
 import type { Logger } from '../../../src/logging';
@@ -283,7 +287,9 @@ export class AgentTestContext {
       providerManager: this.agent.providerManager,
       generate: failOnResumeGenerate,
       compactionStrategy: this.options.compactionStrategy,
-      persistence: new ReplayAgentPersistence(this.recordHistory),
+      persistence: new InMemoryAgentRecordPersistence(
+        withMetadata(this.recordHistory.map(cloneRecord)),
+      ),
     });
 
     await resumed.agent.resume();
@@ -438,7 +444,12 @@ export class AgentTestContext {
   private wrapPersistence(persistence: AgentRecordPersistence): AgentRecordPersistence {
     return {
       read: () => this.readAndCapturePersistence(persistence),
-      append: (event) => persistence.append(event),
+      append: (event) => {
+        persistence.append(event);
+      },
+      rewrite: (records) => {
+        persistence.rewrite(records);
+      },
       flush: () => persistence.flush(),
       close: () => persistence.close(),
     };
@@ -481,24 +492,6 @@ export class AgentTestContext {
       },
     }) as unknown as PromiseAgentAPI;
   }
-}
-
-class ReplayAgentPersistence implements AgentRecordPersistence {
-  constructor(private readonly events: readonly AgentRecord[]) {}
-
-  async *read(): AsyncIterable<AgentRecord> {
-    for (const event of this.events) {
-      yield cloneRecord(event);
-    }
-  }
-
-  async append(_event: AgentRecord): Promise<void> {
-    throw new Error('Resume replay unexpectedly appended a record');
-  }
-
-  async flush(): Promise<void> {}
-
-  async close(): Promise<void> {}
 }
 
 const failOnResumeGenerate: GenerateFn = async () => {
@@ -634,4 +627,16 @@ function buildSkillPrompt(content: string, args: string | undefined): string {
 
 function cloneRecord(event: AgentRecord): AgentRecord {
   return structuredClone(event);
+}
+
+function withMetadata(events: readonly AgentRecord[]): readonly AgentRecord[] {
+  if (events.length === 0 || events[0]?.type === 'metadata') return events;
+  return [
+    {
+      type: 'metadata',
+      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+      created_at: 1,
+    },
+    ...events,
+  ];
 }

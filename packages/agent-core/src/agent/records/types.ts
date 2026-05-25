@@ -10,6 +10,11 @@ import type { UserToolRegistration } from '../tool';
 import type { UsageRecordScope } from '../usage';
 
 export interface AgentRecordEvents {
+  metadata: {
+    protocol_version: string;
+    created_at: number;
+  };
+
   'turn.prompt': {
     input: readonly ContentPart[];
     origin: PromptOrigin;
@@ -81,11 +86,10 @@ export type AgentRecordOf<K extends keyof AgentRecordEvents> = Extract<
   { readonly type: K }
 >;
 
-export const AGENT_WIRE_PROTOCOL_VERSION = '1.0';
-
 export interface AgentRecordPersistence {
   read(): AsyncIterable<AgentRecord>;
-  append(input: AgentRecord): Promise<void>;
+  append(input: AgentRecord): void;
+  rewrite(records: readonly AgentRecord[]): void;
   flush(): Promise<void>;
   close(): Promise<void>;
 }
