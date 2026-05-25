@@ -5065,40 +5065,54 @@ export class KimiTUI {
   // (context size, capabilities) comes from the catalog, so users do not
   // hand-write it.
   private async handleConnectCommand(args: string): Promise<void> {
-    const { url, allowBuiltInFallback } = resolveConnectCatalogRequest(args);
-
-    const controller = new AbortController();
-    const cancel = (): void => {
-      controller.abort();
-    };
-    this.cancelInFlight = cancel;
+    const { url, preferBuiltIn, allowBuiltInFallback } = resolveConnectCatalogRequest(args);
 
     let catalog: Catalog | undefined;
-    const spinner = this.showLoginProgressSpinner(`Fetching catalog from ${url}`);
-    try {
-      catalog = await fetchCatalog(url, controller.signal);
-      spinner.stop({ ok: true, label: 'Catalog loaded.' });
-    } catch (error) {
-      if (controller.signal.aborted) {
-        spinner.stop({ ok: false, label: 'Aborted.' });
-      } else {
-        const hint = error instanceof CatalogFetchError ? ` (HTTP ${error.status})` : '';
-        if (!allowBuiltInFallback) {
-          spinner.stop({ ok: false, label: 'Failed to load catalog.' });
-          this.showError(`Failed to fetch catalog${hint}: ${formatErrorMessage(error)}`);
+
+    // Default path: serve the bundled catalog so /connect works without a
+    // live network and is not gated by models.dev availability. The source
+    // placeholder is undefined in dev builds, so dev falls through to fetch.
+    if (preferBuiltIn) {
+      const builtIn = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
+      if (builtIn !== undefined) {
+        this.showStatus('Loaded built-in catalog. Run /connect --refresh for the latest.');
+        catalog = builtIn;
+      }
+    }
+
+    if (catalog === undefined) {
+      const controller = new AbortController();
+      const cancel = (): void => {
+        controller.abort();
+      };
+      this.cancelInFlight = cancel;
+
+      const spinner = this.showLoginProgressSpinner(`Fetching catalog from ${url}`);
+      try {
+        catalog = await fetchCatalog(url, controller.signal);
+        spinner.stop({ ok: true, label: 'Catalog loaded.' });
+      } catch (error) {
+        if (controller.signal.aborted) {
+          spinner.stop({ ok: false, label: 'Aborted.' });
         } else {
-          const fallback = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
-          if (fallback !== undefined) {
-            spinner.stop({ ok: true, label: 'Using built-in catalog (offline mode).' });
-            catalog = fallback;
-          } else {
+          const hint = error instanceof CatalogFetchError ? ` (HTTP ${error.status})` : '';
+          if (!allowBuiltInFallback) {
             spinner.stop({ ok: false, label: 'Failed to load catalog.' });
             this.showError(`Failed to fetch catalog${hint}: ${formatErrorMessage(error)}`);
+          } else {
+            const fallback = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
+            if (fallback !== undefined) {
+              spinner.stop({ ok: true, label: 'Using built-in catalog (offline mode).' });
+              catalog = fallback;
+            } else {
+              spinner.stop({ ok: false, label: 'Failed to load catalog.' });
+              this.showError(`Failed to fetch catalog${hint}: ${formatErrorMessage(error)}`);
+            }
           }
         }
+      } finally {
+        if (this.cancelInFlight === cancel) this.cancelInFlight = undefined;
       }
-    } finally {
-      if (this.cancelInFlight === cancel) this.cancelInFlight = undefined;
     }
 
     if (catalog === undefined) return;
