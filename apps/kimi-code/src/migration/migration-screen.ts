@@ -304,6 +304,7 @@ export class MigrationScreenComponent extends Container implements Focusable {
       if (sum.config.migratedHooks > 0) migratedKinds.push('hooks');
       if (sum.mcp.mergedServers.length > 0) migratedKinds.push('MCP');
       if (sum.userHistory.copied > 0) migratedKinds.push('REPL history');
+      if (sum.skills.copied > 0) migratedKinds.push('skills');
       if (migratedKinds.length > 0) {
         lines.push(chalk.hex(colors.success)(`  ✓ ${migratedKinds.join(' · ')}`));
       }

@@ -37,6 +37,7 @@ describe('writeReport', () => {
         },
         mcp: { mergedServers: [], keptNewForConflicts: [], droppedServers: [], wroteSiblingDueToConflict: false },
         userHistory: { copied: 0, skippedExisting: 0 },
+        skills: { copied: 0, skippedExisting: 0 },
         sessions: {
           scope: 'all',
           bucketsScanned: 0,
