@@ -1416,7 +1416,7 @@ describe('AnthropicChatProvider', () => {
         { type: 'message_stop' },
       ]);
 
-      (provider as any)._client.messages.stream = vi.fn().mockReturnValue(stream) as never;
+      (provider as any)._client.messages.create = vi.fn().mockResolvedValue(stream) as never;
 
       const result = await provider.generate(
         '',
@@ -1477,7 +1477,7 @@ describe('AnthropicChatProvider', () => {
         { type: 'message_stop' },
       ]);
 
-      (provider as any)._client.messages.stream = vi.fn().mockReturnValue(stream) as never;
+      (provider as any)._client.messages.create = vi.fn().mockResolvedValue(stream) as never;
 
       const result = await provider.generate(
         '',
@@ -1536,7 +1536,7 @@ describe('AnthropicChatProvider', () => {
         { type: 'message_stop' },
       ]);
 
-      (provider as any)._client.messages.stream = vi.fn().mockReturnValue(stream) as never;
+      (provider as any)._client.messages.create = vi.fn().mockResolvedValue(stream) as never;
 
       const result = await provider.generate(
         '',
@@ -1610,7 +1610,7 @@ describe('AnthropicChatProvider', () => {
         { type: 'message_stop' },
       ]);
 
-      (provider as any)._client.messages.stream = vi.fn().mockReturnValue(stream) as never;
+      (provider as any)._client.messages.create = vi.fn().mockResolvedValue(stream) as never;
 
       const result = await provider.generate(
         '',
@@ -1694,7 +1694,7 @@ describe('AnthropicChatProvider', () => {
         { type: 'message_stop' },
       ]);
 
-      (provider as any)._client.messages.stream = vi.fn().mockReturnValue(stream) as never;
+      (provider as any)._client.messages.create = vi.fn().mockResolvedValue(stream) as never;
 
       const { message } = await generate(
         provider,
@@ -1731,7 +1731,7 @@ describe('AnthropicChatProvider', () => {
         },
       };
 
-      (provider as any)._client.messages.stream = vi.fn().mockReturnValue(errorStream) as never;
+      (provider as any)._client.messages.create = vi.fn().mockResolvedValue(errorStream) as never;
 
       const result = await provider.generate(
         '',
@@ -1771,7 +1771,7 @@ describe('AnthropicChatProvider', () => {
         { type: 'message_stop' },
       ]);
 
-      (provider as any)._client.messages.stream = vi.fn().mockReturnValue(stream) as never;
+      (provider as any)._client.messages.create = vi.fn().mockResolvedValue(stream) as never;
 
       const result = await provider.generate(
         '',
@@ -1807,7 +1807,7 @@ describe('AnthropicChatProvider', () => {
         { type: 'message_stop' },
       ]);
 
-      (provider as any)._client.messages.stream = vi.fn().mockReturnValue(stream) as never;
+      (provider as any)._client.messages.create = vi.fn().mockResolvedValue(stream) as never;
 
       const result = await provider.generate(
         '',
@@ -1826,7 +1826,7 @@ describe('AnthropicChatProvider', () => {
   });
 
   describe('stream option', () => {
-    it('defaults to stream: true and calls messages.stream', async () => {
+    it('defaults to stream: true and calls messages.create with stream enabled', async () => {
       const provider = new AnthropicChatProvider({
         model: 'k25',
         apiKey: 'test-key',
@@ -1843,8 +1843,8 @@ describe('AnthropicChatProvider', () => {
         { type: 'message_stop' },
       ]);
 
-      const streamFn = vi.fn().mockReturnValue(stream);
-      (provider as any)._client.messages.stream = streamFn as never;
+      const createFn = vi.fn().mockResolvedValue(stream);
+      (provider as any)._client.messages.create = createFn as never;
 
       const result = await provider.generate(
         '',
@@ -1853,7 +1853,8 @@ describe('AnthropicChatProvider', () => {
       );
       await collectParts(result);
 
-      expect(streamFn).toHaveBeenCalledTimes(1);
+      expect(createFn).toHaveBeenCalledTimes(1);
+      expect(createFn.mock.calls[0]?.[0]).toMatchObject({ stream: true });
     });
 
     it('stream: false calls messages.create', async () => {
