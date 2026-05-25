@@ -456,8 +456,10 @@ class PromptTranscriptWriter implements PromptTurnWriter {
 interface PromptJsonToolCall {
   type: 'function';
   id: string;
-  name: string;
-  arguments: string;
+  function: {
+    name: string;
+    arguments: string;
+  };
 }
 
 interface PromptJsonAssistantMessage {
@@ -495,15 +497,17 @@ class PromptJsonWriter implements PromptTurnWriter {
   writeToolCall(toolCallId: string, name: string, args: unknown): void {
     const existing = this.toolCalls.find((toolCall) => toolCall.id === toolCallId);
     if (existing !== undefined) {
-      existing.name = name;
-      existing.arguments = stringifyJsonValue(args);
+      existing.function.name = name;
+      existing.function.arguments = stringifyJsonValue(args);
       return;
     }
     this.toolCalls.push({
       type: 'function',
       id: toolCallId,
-      name,
-      arguments: stringifyJsonValue(args),
+      function: {
+        name,
+        arguments: stringifyJsonValue(args),
+      },
     });
   }
 
@@ -514,10 +518,10 @@ class PromptJsonWriter implements PromptTurnWriter {
   ): void {
     const toolCall = this.findOrCreateToolCall(toolCallId, name ?? '');
     if (name !== undefined) {
-      toolCall.name = name;
+      toolCall.function.name = name;
     }
     if (argumentsPart !== undefined) {
-      toolCall.arguments += argumentsPart;
+      toolCall.function.arguments += argumentsPart;
     }
   }
 
@@ -556,8 +560,10 @@ class PromptJsonWriter implements PromptTurnWriter {
     const toolCall: PromptJsonToolCall = {
       type: 'function',
       id: toolCallId,
-      name,
-      arguments: '',
+      function: {
+        name,
+        arguments: '',
+      },
     };
     this.toolCalls.push(toolCall);
     return toolCall;

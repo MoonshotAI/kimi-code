@@ -432,7 +432,7 @@ describe('runPrompt', () => {
 
     expect(stdout.text()).toBe(
       [
-        '{"role":"assistant","content":"checking","tool_calls":[{"type":"function","id":"tc_1","name":"Shell","arguments":"{\\"command\\":\\"ls\\"}"}]}',
+        '{"role":"assistant","content":"checking","tool_calls":[{"type":"function","id":"tc_1","function":{"name":"Shell","arguments":"{\\"command\\":\\"ls\\"}"}}]}',
         '{"role":"tool","tool_call_id":"tc_1","content":"file1.py\\nfile2.py"}',
         '{"role":"assistant","content":"done"}',
         '',
