@@ -1,6 +1,8 @@
+import type { Agent } from '../..';
 import type { ExecutableToolResult } from '../../../loop';
 import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../policy';
 import type { ApprovalResponse } from '../types';
+import { readStringField } from './utils';
 
 interface ExitPlanModeOption {
   readonly label: string;
@@ -13,33 +15,38 @@ interface ExitPlanModeExecutionMetadata {
   readonly planTelemetryResolved: true;
 }
 
-export const EnterPlanModePermissionPolicy: PermissionPolicy = {
-  name: 'plan.enter-plan-mode',
-  evaluate({ toolCallContext }) {
-    if (toolCallContext.toolCall.function.name !== 'EnterPlanMode') return undefined;
+export class EnterPlanModePermissionPolicy implements PermissionPolicy {
+  readonly name = 'plan.enter-plan-mode';
+
+  evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
+    if (context.toolCall.function.name !== 'EnterPlanMode') return undefined;
     return { kind: 'allow' };
-  },
-};
+  }
+}
 
-export const ExitPlanModePermissionPolicy: PermissionPolicy = {
-  name: 'plan.exit-plan-mode',
-  async evaluate(context) {
-    if (context.toolCallContext.toolCall.function.name !== 'ExitPlanMode') return undefined;
-    if (context.mode === 'auto') return { kind: 'allow' };
+export class ExitPlanModePermissionPolicy implements PermissionPolicy {
+  readonly name = 'plan.exit-plan-mode';
 
-    const review = await resolveExitPlanModeReview(context);
+  constructor(private readonly agent: Agent) {}
+
+  async evaluate(context: PermissionPolicyContext): Promise<PermissionPolicyResult | undefined> {
+    const agent = this.agent;
+    if (context.toolCall.function.name !== 'ExitPlanMode') return undefined;
+    if (agent.permission.mode === 'auto') return { kind: 'allow' };
+
+    const review = await resolveExitPlanModeReview(agent, context);
     if (review === null) return { kind: 'allow' };
 
     const action = exitPlanModeAction(review.options);
-    context.agent.telemetry.track('plan_submitted', {
+    agent.telemetry.track('plan_submitted', {
       has_options: review.options !== undefined,
     });
     let result: ApprovalResponse;
     try {
-      result = await context.agent.rpc.requestApproval(
+      result = await agent.rpc.requestApproval(
         {
-          turnId: Number(context.toolCallContext.turnId),
-          toolCallId: context.toolCallContext.toolCall.id,
+          turnId: Number(context.turnId),
+          toolCallId: context.toolCall.id,
           toolName: 'ExitPlanMode',
           action,
           display: {
@@ -49,41 +56,43 @@ export const ExitPlanModePermissionPolicy: PermissionPolicy = {
             options: review.options,
           },
         },
-        { signal: context.toolCallContext.signal },
+        { signal: context.signal },
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Plan approval failed.';
       return {
         kind: 'result',
-        result: {
-          syntheticResult: {
-            isError: true,
-            output: `Plan approval failed: ${message}`,
-          },
+        syntheticResult: {
+          isError: true,
+          output: `Plan approval failed: ${message}`,
         },
       };
     }
 
-    context.recordApprovalResult({
-      turnId: Number(context.toolCallContext.turnId),
-      toolCallId: context.toolCallContext.toolCall.id,
+    agent.permission.recordApprovalResult({
+      turnId: Number(context.turnId),
+      toolCallId: context.toolCall.id,
       toolName: 'ExitPlanMode',
       action,
       result,
     });
 
-    trackExitPlanModeResolution(context, result);
-    return exitPlanModeApprovalResult(context, result, review.options);
-  },
-};
+    trackExitPlanModeResolution(agent, result);
+    return exitPlanModeApprovalResult(agent, result, review.options);
+  }
+}
 
-export const PlanModeGuardPermissionPolicy: PermissionPolicy = {
-  name: 'plan.mode-guard',
-  evaluate({ agent, toolCallContext }) {
+export class PlanModeGuardPermissionPolicy implements PermissionPolicy {
+  readonly name = 'plan.mode-guard';
+
+  constructor(private readonly agent: Agent) {}
+
+  evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
+    const agent = this.agent;
     if (!agent.planMode.isActive) return undefined;
 
-    const name = toolCallContext.toolCall.function.name;
-    const args = toolCallContext.args;
+    const name = context.toolCall.function.name;
+    const args = context.args;
 
     if (name === 'Write' || name === 'Edit') {
       const path = readStringField(args, 'path');
@@ -92,49 +101,45 @@ export const PlanModeGuardPermissionPolicy: PermissionPolicy = {
       if (planFilePath !== null && path === planFilePath) return { kind: 'allow' };
       return {
         kind: 'result',
-        result: {
-          block: true,
-          reason:
-            `Plan mode is active. You may only write to the current plan file: ${planFilePath ?? '(no plan file selected yet)'}. ` +
-            'Call ExitPlanMode to exit plan mode before editing other files.',
-        },
+        block: true,
+        reason:
+          `Plan mode is active. You may only write to the current plan file: ${planFilePath ?? '(no plan file selected yet)'}. ` +
+          'Call ExitPlanMode to exit plan mode before editing other files.',
       };
     }
 
     if (name === 'TaskStop') {
       return {
         kind: 'result',
-        result: {
-          block: true,
-          reason:
-            'TaskStop is not available in plan mode. ' +
-            'Call ExitPlanMode to exit plan mode before stopping a background task.',
-        },
+        block: true,
+        reason:
+          'TaskStop is not available in plan mode. ' +
+          'Call ExitPlanMode to exit plan mode before stopping a background task.',
       };
     }
 
     return undefined;
-  },
-};
+  }
+}
 
-export function createPlanPermissionPolicies(): readonly PermissionPolicy[] {
+export function createPlanPermissionPolicies(agent: Agent): readonly PermissionPolicy[] {
   return [
-    EnterPlanModePermissionPolicy,
-    ExitPlanModePermissionPolicy,
-    PlanModeGuardPermissionPolicy,
+    new EnterPlanModePermissionPolicy(),
+    new ExitPlanModePermissionPolicy(agent),
+    new PlanModeGuardPermissionPolicy(agent),
   ];
 }
 
-async function resolveExitPlanModeReview(context: PermissionPolicyContext): Promise<{
+async function resolveExitPlanModeReview(agent: Agent, context: PermissionPolicyContext): Promise<{
   readonly plan: string;
   readonly path?: string | undefined;
   readonly options?: readonly ExitPlanModeOption[] | undefined;
 } | null> {
-  if (!context.agent.planMode.isActive) return null;
+  if (!agent.planMode.isActive) return null;
 
-  let data: Awaited<ReturnType<PermissionPolicyContext['agent']['planMode']['data']>>;
+  let data: Awaited<ReturnType<Agent['planMode']['data']>>;
   try {
-    data = await context.agent.planMode.data();
+    data = await agent.planMode.data();
   } catch {
     return null;
   }
@@ -143,12 +148,12 @@ async function resolveExitPlanModeReview(context: PermissionPolicyContext): Prom
   return {
     plan: data.content,
     path: data.path,
-    options: exitPlanModeOptions(context.toolCallContext.args),
+    options: exitPlanModeOptions(context.args),
   };
 }
 
 function exitPlanModeApprovalResult(
-  context: PermissionPolicyContext,
+  agent: Agent,
   result: ApprovalResponse,
   options: readonly ExitPlanModeOption[] | undefined,
 ): PermissionPolicyResult {
@@ -163,27 +168,23 @@ function exitPlanModeApprovalResult(
   if (result.decision === 'cancelled') {
     return {
       kind: 'result',
-      result: {
-        syntheticResult: {
-          isError: false,
-          output: 'Plan approval dismissed. Plan mode remains active.',
-        },
+      syntheticResult: {
+        isError: false,
+        output: 'Plan approval dismissed. Plan mode remains active.',
       },
     };
   }
 
   if (result.selectedLabel === 'Reject and Exit') {
-    const failed = exitPlanModeForRejectedPlan(context);
+    const failed = exitPlanModeForRejectedPlan(agent);
     return {
       kind: 'result',
-      result: {
-        syntheticResult:
-          failed ?? {
-            isError: true,
-            stopTurn: true,
-            output: 'Plan rejected by user. Plan mode deactivated.',
-          },
-      },
+      syntheticResult:
+        failed ?? {
+          isError: true,
+          stopTurn: true,
+          output: 'Plan rejected by user. Plan mode deactivated.',
+        },
     };
   }
 
@@ -191,26 +192,22 @@ function exitPlanModeApprovalResult(
   if (result.selectedLabel === 'Revise' || feedback.length > 0) {
     return {
       kind: 'result',
-      result: {
-        syntheticResult: {
-          isError: false,
-          output:
-            feedback.length > 0
-              ? `User rejected the plan. Feedback:\n\n${feedback}`
-              : 'User requested revisions. Plan mode remains active.',
-        },
+      syntheticResult: {
+        isError: false,
+        output:
+          feedback.length > 0
+            ? `User rejected the plan. Feedback:\n\n${feedback}`
+            : 'User requested revisions. Plan mode remains active.',
       },
     };
   }
 
   return {
     kind: 'result',
-    result: {
-      syntheticResult: {
-        isError: true,
-        stopTurn: true,
-        output: 'Plan rejected by user. Plan mode remains active.',
-      },
+    syntheticResult: {
+      isError: true,
+      stopTurn: true,
+      output: 'Plan rejected by user. Plan mode remains active.',
     },
   };
 }
@@ -225,53 +222,48 @@ function exitPlanModeExecutionMetadata(
   };
 }
 
-function trackExitPlanModeResolution(
-  context: PermissionPolicyContext,
-  result: ApprovalResponse,
-): void {
+function trackExitPlanModeResolution(agent: Agent, result: ApprovalResponse): void {
   const selectedLabel = result.selectedLabel ?? '';
   const normalizedSelectedLabel = normalizeOptionLabel(selectedLabel);
   const feedback = result.feedback ?? '';
   const hasFeedback = feedback.length > 0;
 
   if (result.decision === 'cancelled') {
-    context.agent.telemetry.track('plan_resolved', { outcome: 'dismissed' });
+    agent.telemetry.track('plan_resolved', { outcome: 'dismissed' });
     return;
   }
 
   if (result.decision === 'approved') {
     if (selectedLabel.length > 0) {
-      context.agent.telemetry.track('plan_resolved', {
+      agent.telemetry.track('plan_resolved', {
         outcome: 'approved',
         chosen_option: selectedLabel,
       });
       return;
     }
-    context.agent.telemetry.track('plan_resolved', { outcome: 'approved' });
+    agent.telemetry.track('plan_resolved', { outcome: 'approved' });
     return;
   }
 
   if (normalizedSelectedLabel === 'reject and exit') {
-    context.agent.telemetry.track('plan_resolved', { outcome: 'rejected_and_exited' });
+    agent.telemetry.track('plan_resolved', { outcome: 'rejected_and_exited' });
     return;
   }
 
   if (normalizedSelectedLabel === 'revise' || hasFeedback) {
-    context.agent.telemetry.track('plan_resolved', {
+    agent.telemetry.track('plan_resolved', {
       outcome: 'revise',
       has_feedback: hasFeedback,
     });
     return;
   }
 
-  context.agent.telemetry.track('plan_resolved', { outcome: 'rejected' });
+  agent.telemetry.track('plan_resolved', { outcome: 'rejected' });
 }
 
-function exitPlanModeForRejectedPlan(
-  context: PermissionPolicyContext,
-): ExecutableToolResult | undefined {
+function exitPlanModeForRejectedPlan(agent: Agent): ExecutableToolResult | undefined {
   try {
-    context.agent.planMode.exit();
+    agent.planMode.exit();
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to exit plan mode.';
     return {
@@ -290,8 +282,6 @@ function exitPlanModeOptions(args: unknown): readonly ExitPlanModeOption[] | und
     if (option === null || typeof option !== 'object') return undefined;
     const label = (option as { readonly label?: unknown }).label;
     if (typeof label !== 'string') return undefined;
-    // `description` is optional in the ExitPlanMode schema (defaults to ''),
-    // so an option that omits it is still valid.
     const description = (option as { readonly description?: unknown }).description;
     if (description !== undefined && typeof description !== 'string') return undefined;
     parsed.push({ label, description: description ?? '' });
@@ -315,10 +305,4 @@ function exitPlanModeAction(options: readonly ExitPlanModeOption[] | undefined):
 
 function normalizeOptionLabel(label: string): string {
   return label.trim().toLowerCase();
-}
-
-function readStringField(args: unknown, key: string): string | undefined {
-  if (args === null || typeof args !== 'object') return undefined;
-  const value = (args as Record<string, unknown>)[key];
-  return typeof value === 'string' ? value : undefined;
 }

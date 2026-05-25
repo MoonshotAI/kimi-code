@@ -6,7 +6,7 @@ import type { ToolInputDisplay } from '../../tools/display';
 import { actionToRulePattern, describeApprovalAction } from './action-label';
 import { checkMatchingRules, type CheckRulesResult } from './check-rules';
 import type { PermissionPathMatchOptions } from './path-glob-match';
-import { createBuiltinPermissionPolicies } from './policies';
+import { createPermissionDecisionPolicies } from './policies';
 import type { PermissionPolicy, PermissionPolicyResult } from './policy';
 import type {
   PermissionApprovalResultRecord,
@@ -38,7 +38,7 @@ export class PermissionManager {
   ) {
     this.rules = [...(options.initialRules ?? [])];
     this.parent = options.parent;
-    this.policies = options.policies ?? createBuiltinPermissionPolicies();
+    this.policies = options.policies ?? createPermissionDecisionPolicies(this.agent);
   }
 
   get mode(): PermissionMode {
@@ -212,13 +212,8 @@ export class PermissionManager {
   ): Promise<PermissionPolicyResult | undefined> {
     for (const policy of this.policies) {
       const result = await policy.evaluate({
-        agent: this.agent,
-        mode: this.mode,
-        toolCallContext: context,
+        ...context,
         matchedRule,
-        recordApprovalResult: (record) => {
-          this.recordApprovalResult(record);
-        },
       });
       if (result !== undefined) return result;
     }
@@ -267,8 +262,10 @@ export class PermissionManager {
           : { executionMetadata: result.executionMetadata };
       case 'ask':
         return this.requestToolApproval(context, result);
-      case 'result':
-        return result.result;
+      case 'result': {
+        const { kind: _kind, ...prepareResult } = result;
+        return prepareResult;
+      }
     }
   }
 

@@ -523,7 +523,7 @@ describe('Permission auto mode', () => {
 
 describe('Permission policy chain', () => {
   it('keeps plan-specific policies under the permission module plan namespace', () => {
-    expect(createPlanPermissionPolicies().map((policy) => policy.name)).toEqual([
+    expect(createPlanPermissionPolicies({} as Agent).map((policy) => policy.name)).toEqual([
       'plan.enter-plan-mode',
       'plan.exit-plan-mode',
       'plan.mode-guard',
@@ -535,10 +535,8 @@ describe('Permission policy chain', () => {
       name: 'test.block-bash',
       evaluate: vi.fn(async (): Promise<PermissionPolicyResult> => ({
         kind: 'result',
-        result: {
-          block: true,
-          reason: 'blocked by custom policy',
-        },
+        block: true,
+        reason: 'blocked by custom policy',
       })),
     };
     const { manager, requestApproval } = makePermissionManager(
@@ -552,11 +550,8 @@ describe('Permission policy chain', () => {
     });
     expect(policy.evaluate).toHaveBeenCalledWith(
       expect.objectContaining({
-        agent: expect.any(Object),
-        mode: 'manual',
-        toolCallContext: expect.objectContaining({
-          toolCall: expect.objectContaining({ id: 'call_policy' }),
-        }),
+        toolCall: expect.objectContaining({ id: 'call_policy' }),
+        matchedRule: undefined,
       }),
     );
     expect(requestApproval).not.toHaveBeenCalled();
@@ -1842,6 +1837,7 @@ function makePermissionManager(
     },
   } as unknown as Agent;
   manager = new PermissionManager(agent, options);
+  Object.assign(agent, { permission: manager });
   return { manager, record, requestApproval, telemetryTrack };
 }
 
@@ -1892,6 +1888,7 @@ function makePlanPermissionManager(input: {
     },
   } as unknown as Agent;
   const manager = new PermissionManager(agent);
+  Object.assign(agent, { permission: manager });
   manager.mode = input.mode;
   return { manager, record, requestApproval, exit };
 }

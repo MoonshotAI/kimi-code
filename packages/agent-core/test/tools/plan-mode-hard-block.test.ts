@@ -47,18 +47,23 @@ function hookContext(toolName: string, args: unknown): ToolExecutionHookContext 
 }
 
 function policyContext(
+  toolName: string,
+  args: unknown,
+  _mode: PermissionMode = 'manual',
+): PermissionPolicyContext {
+  return {
+    ...hookContext(toolName, args),
+    matchedRule: undefined,
+  };
+}
+
+function evaluatePlanPolicy(
   agent: Agent,
   toolName: string,
   args: unknown,
   mode: PermissionMode = 'manual',
-): PermissionPolicyContext {
-  return {
-    agent,
-    mode,
-    toolCallContext: hookContext(toolName, args),
-    matchedRule: undefined,
-    recordApprovalResult: vi.fn(),
-  };
+) {
+  return new PlanModeGuardPermissionPolicy(agent).evaluate(policyContext(toolName, args, mode));
 }
 
 describe('Plan mode permission policy', () => {
@@ -68,15 +73,17 @@ describe('Plan mode permission policy', () => {
     if (planPath === null) throw new Error('expected plan path');
 
     expect(
-      await PlanModeGuardPermissionPolicy.evaluate(policyContext(agent, 'Write', { path: planPath })),
+      await evaluatePlanPolicy(agent, 'Write', { path: planPath }),
     ).toEqual({ kind: 'allow' });
     expect(
-      await PlanModeGuardPermissionPolicy.evaluate(
-        policyContext(agent, 'Edit', {
+      await evaluatePlanPolicy(
+        agent,
+        'Edit',
+        {
           path: planPath,
           old_string: 'A',
           new_string: 'B',
-        }),
+        },
       ),
     ).toEqual({ kind: 'allow' });
   });
@@ -84,41 +91,38 @@ describe('Plan mode permission policy', () => {
   it('blocks Write and Edit to non-plan files before permission approval', async () => {
     const { agent } = await activePlanAgent();
 
-    const write = await PlanModeGuardPermissionPolicy.evaluate(
-      policyContext(agent, 'Write', { path: '/workspace/src/main.ts', content: 'x' }),
-    );
-    const edit = await PlanModeGuardPermissionPolicy.evaluate(
-      policyContext(agent, 'Edit', {
-        path: '/workspace/src/main.ts',
-        old_string: 'A',
-        new_string: 'B',
-      }),
-    );
+    const write = await evaluatePlanPolicy(agent, 'Write', {
+      path: '/workspace/src/main.ts',
+      content: 'x',
+    });
+    const edit = await evaluatePlanPolicy(agent, 'Edit', {
+      path: '/workspace/src/main.ts',
+      old_string: 'A',
+      new_string: 'B',
+    });
 
-    expect(write).toMatchObject({ kind: 'result', result: { block: true } });
-    expect(write?.kind === 'result' ? write.result.reason : '').toContain('current plan file');
-    expect(write?.kind === 'result' ? write.result.reason : '').toContain('ExitPlanMode');
-    expect(edit).toMatchObject({ kind: 'result', result: { block: true } });
-    expect(edit?.kind === 'result' ? edit.result.reason : '').toContain('current plan file');
+    expect(write).toMatchObject({ kind: 'result', block: true });
+    expect(write?.kind === 'result' ? write.reason : '').toContain('current plan file');
+    expect(write?.kind === 'result' ? write.reason : '').toContain('ExitPlanMode');
+    expect(edit).toMatchObject({ kind: 'result', block: true });
+    expect(edit?.kind === 'result' ? edit.reason : '').toContain('current plan file');
   });
 
   it('blocks file edits when plan mode has no selected plan file path', async () => {
     const { agent, planMode } = await activePlanAgent();
     (planMode as unknown as { _planFilePath: string | null })._planFilePath = null;
 
-    const result = await PlanModeGuardPermissionPolicy.evaluate(
-      policyContext(agent, 'Edit', {
-        path: '/workspace/src/other.ts',
-        old_string: 'A',
-        new_string: 'B',
-      }),
-    );
+    const result = await evaluatePlanPolicy(agent, 'Edit', {
+      path: '/workspace/src/other.ts',
+      old_string: 'A',
+      new_string: 'B',
+    });
 
-    expect(result).toMatchObject({ kind: 'result', result: { block: true } });
-    expect(result?.kind === 'result' ? result.result.reason : '').toContain(
+    expect(result).toMatchObject({ kind: 'result', block: true });
+    expect(result?.kind === 'result' ? result.reason : '').toContain(
       '(no plan file selected yet)',
     );
-    expect(result?.kind === 'result' ? result.result.reason : '').toContain('ExitPlanMode');
+    expect(result?.kind === 'result' ? result.reason : '').toContain('ExitPlanMode');
   });
 
   it.each(['manual', 'yolo', 'auto'] as const)(
@@ -127,14 +131,10 @@ describe('Plan mode permission policy', () => {
       const { agent } = await activePlanAgent();
 
       expect(
-        await PlanModeGuardPermissionPolicy.evaluate(
-          policyContext(agent, 'Bash', { command: 'rm foo.txt' }, mode),
-        ),
+        await evaluatePlanPolicy(agent, 'Bash', { command: 'rm foo.txt' }, mode),
       ).toBeUndefined();
       expect(
-        await PlanModeGuardPermissionPolicy.evaluate(
-          policyContext(agent, 'Bash', { command: 'ls -la' }, mode),
-        ),
+        await evaluatePlanPolicy(agent, 'Bash', { command: 'ls -la' }, mode),
       ).toBeUndefined();
     },
   );
@@ -144,13 +144,16 @@ describe('Plan mode permission policy', () => {
     async (mode) => {
       const { agent } = await activePlanAgent();
 
-      const result = await PlanModeGuardPermissionPolicy.evaluate(
-        policyContext(agent, 'TaskStop', { task_id: 'bash-abc12345' }, mode),
+      const result = await evaluatePlanPolicy(
+        agent,
+        'TaskStop',
+        { task_id: 'bash-abc12345' },
+        mode,
       );
 
-      expect(result).toMatchObject({ kind: 'result', result: { block: true } });
-      expect(result?.kind === 'result' ? result.result.reason : '').toContain('plan mode');
-      expect(result?.kind === 'result' ? result.result.reason : '').toContain('ExitPlanMode');
+      expect(result).toMatchObject({ kind: 'result', block: true });
+      expect(result?.kind === 'result' ? result.reason : '').toContain('plan mode');
+      expect(result?.kind === 'result' ? result.reason : '').toContain('ExitPlanMode');
     },
   );
 
@@ -159,19 +162,13 @@ describe('Plan mode permission policy', () => {
     planMode.exit();
 
     expect(
-      await PlanModeGuardPermissionPolicy.evaluate(
-        policyContext(agent, 'Write', { path: '/workspace/src/main.ts' }),
-      ),
+      await evaluatePlanPolicy(agent, 'Write', { path: '/workspace/src/main.ts' }),
     ).toBeUndefined();
     expect(
-      await PlanModeGuardPermissionPolicy.evaluate(
-        policyContext(agent, 'Bash', { command: 'rm foo.txt' }),
-      ),
+      await evaluatePlanPolicy(agent, 'Bash', { command: 'rm foo.txt' }),
     ).toBeUndefined();
     expect(
-      await PlanModeGuardPermissionPolicy.evaluate(
-        policyContext(agent, 'TaskStop', { task_id: 'bash-abc12345' }),
-      ),
+      await evaluatePlanPolicy(agent, 'TaskStop', { task_id: 'bash-abc12345' }),
     ).toBeUndefined();
   });
 });

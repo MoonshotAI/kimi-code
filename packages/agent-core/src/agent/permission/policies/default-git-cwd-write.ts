@@ -2,6 +2,7 @@ import * as posixPath from 'node:path/posix';
 
 import type { Kaos } from '@moonshot-ai/kaos';
 
+import type { Agent } from '../..';
 import {
   DEFAULT_WORKSPACE_ACCESS_POLICY,
   isWithinDirectory,
@@ -12,72 +13,76 @@ import {
   findGitWorkTreeMarker,
   type GitWorkTreeMarker,
 } from '../../../tools/support/git-worktree';
-import type { PermissionPolicy } from '../policy';
+import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../policy';
 
 const AUTO_REASON = 'default_git_cwd_write';
 const S_IFMT = 0o170000;
 const S_IFLNK = 0o120000;
 
-export function createDefaultGitCwdWritePolicy(): PermissionPolicy {
+export class DefaultGitCwdWritePermissionPolicy implements PermissionPolicy {
   // Cache positive marker lookups only. A session that starts in a non-git
   // directory and later `git init`s should pick up the new work tree on the
   // next call; negative results pay one extra stat per call, which is
   // acceptable.
-  const cache = new Map<string, GitWorkTreeMarker>();
+  private readonly cache = new Map<string, GitWorkTreeMarker>();
+  readonly name = 'default.git-cwd-write';
 
-  return {
-    name: 'default.git-cwd-write',
-    async evaluate({ agent, mode, matchedRule, toolCallContext }) {
-      if (mode !== 'manual') return undefined;
-      if (matchedRule !== undefined) return undefined;
+  constructor(private readonly agent: Agent) {}
 
-      const toolName = toolCallContext.toolCall.function.name;
-      if (toolName !== 'Write' && toolName !== 'Edit') return undefined;
+  async evaluate({
+    matchedRule,
+    toolCall,
+    args,
+  }: PermissionPolicyContext): Promise<PermissionPolicyResult | undefined> {
+    if (this.agent.permission.mode !== 'manual') return undefined;
+    if (matchedRule !== undefined) return undefined;
 
-      const kaos = agent.runtime.kaos;
-      const pathClass = kaos.pathClass();
-      if (pathClass !== 'posix') return undefined;
+    const name = toolCall.function.name;
+    if (name !== 'Write' && name !== 'Edit') return undefined;
 
-      const cwd = agent.config.cwd;
-      if (cwd.length === 0) return undefined;
+    const kaos = this.agent.runtime.kaos;
+    const pathClass = kaos.pathClass();
+    if (pathClass !== 'posix') return undefined;
 
-      const path = readStringField(toolCallContext.args, 'path');
-      if (path === undefined) return undefined;
+    const cwd = this.agent.config.cwd;
+    if (cwd.length === 0) return undefined;
 
-      let access;
-      try {
-        access = resolvePathAccess(
-          path,
-          cwd,
-          { workspaceDir: cwd, additionalDirs: [] },
-          {
-            operation: 'write',
-            pathClass,
-            homeDir: kaos.gethome(),
-            policy: DEFAULT_WORKSPACE_ACCESS_POLICY,
-          },
-        );
-      } catch {
-        return undefined;
-      }
-      if (access.outsideWorkspace) return undefined;
+    const path = readStringField(args, 'path');
+    if (path === undefined) return undefined;
 
-      const marker = cache.get(cwd) ?? (await findGitWorkTreeMarker(kaos, cwd));
-      if (marker === null) return undefined;
-      cache.set(cwd, marker);
+    let access;
+    try {
+      access = resolvePathAccess(
+        path,
+        cwd,
+        { workspaceDir: cwd, additionalDirs: [] },
+        {
+          operation: 'write',
+          pathClass,
+          homeDir: kaos.gethome(),
+          policy: DEFAULT_WORKSPACE_ACCESS_POLICY,
+        },
+      );
+    } catch {
+      return undefined;
+    }
+    if (access.outsideWorkspace) return undefined;
 
-      if (isGitControlPath(access.path, cwd, marker)) return undefined;
-      if (isSensitiveFile(access.path.toLowerCase(), 'posix')) return undefined;
-      if (await hasSymlinkInPath(kaos, cwd, access.path)) return undefined;
+    const marker = this.cache.get(cwd) ?? (await findGitWorkTreeMarker(kaos, cwd));
+    if (marker === null) return undefined;
+    this.cache.set(cwd, marker);
 
-      agent.telemetry.track('tool_approved', {
-        tool_name: toolName,
-        approval_mode: 'manual',
-        auto_reason: AUTO_REASON,
-      });
-      return { kind: 'allow' };
-    },
-  };
+    if (isGitControlPath(access.path, cwd, marker)) return undefined;
+    if (isSensitiveFile(access.path.toLowerCase(), 'posix')) return undefined;
+    if (await hasSymlinkInPath(kaos, cwd, access.path)) return undefined;
+
+    this.agent.telemetry.track('tool_approved', {
+      tool_name: name,
+      approval_mode: 'manual',
+      auto_reason: AUTO_REASON,
+    });
+    return { kind: 'allow' };
+  }
 }
 
 function readStringField(args: unknown, key: string): string | undefined {
