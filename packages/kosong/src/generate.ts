@@ -133,10 +133,10 @@ export async function generate(
       if (arrayIdx !== undefined) {
         const target = message.toolCalls[arrayIdx];
         if (target !== undefined && part.argumentsPart !== null) {
-          target.function.arguments =
-            target.function.arguments === null
+          target.arguments =
+            target.arguments === null
               ? part.argumentsPart
-              : target.function.arguments + part.argumentsPart;
+              : target.arguments + part.argumentsPart;
         }
         continue;
       }
@@ -261,7 +261,8 @@ function flushPart(
     const stored: StoredToolCall = {
       type: 'function',
       id: part.id,
-      function: part.function,
+      name: part.name,
+      arguments: part.arguments,
       extras: part.extras,
     };
     const ordinal = message.toolCalls.length;

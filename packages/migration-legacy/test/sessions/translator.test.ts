@@ -47,7 +47,7 @@ describe('translateContextLines', () => {
     const [msg] = translateContextLines([line]);
     expect(msg!.role).toBe('assistant');
     expect(msg!.toolCalls).toEqual([
-      { type: 'function', id: 'Shell:0', function: { name: 'Shell', arguments: '{}' } },
+      { type: 'function', id: 'Shell:0', name: 'Shell', arguments: '{}' },
     ]);
   });
 

@@ -6,7 +6,7 @@ function assistantWithCall(id: string): NormalizedMessage {
   return {
     role: 'assistant',
     content: [],
-    toolCalls: [{ type: 'function', id, function: { name: 'Shell', arguments: '{}' } }],
+    toolCalls: [{ type: 'function', id, name: 'Shell', arguments: '{}' }],
   };
 }
 

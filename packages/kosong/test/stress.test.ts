@@ -77,7 +77,7 @@ describe('stress: large ToolCall arguments (10KB)', () => {
       {
         type: 'function',
         id: 'large-tc-1',
-        function: { name: 'big_tool', arguments: null },
+        name: 'big_tool', arguments: null,
       },
       ...chunks.map(
         (chunk): StreamedMessagePart => ({
@@ -93,11 +93,11 @@ describe('stress: large ToolCall arguments (10KB)', () => {
     const result = await generate(provider, '', [], []);
 
     expect(result.message.toolCalls).toHaveLength(1);
-    expect(result.message.toolCalls[0]!.function.arguments).toBe(fullArgs);
-    expect(result.message.toolCalls[0]!.function.arguments!.length).toBe(fullArgs.length);
+    expect(result.message.toolCalls[0]!.arguments).toBe(fullArgs);
+    expect(result.message.toolCalls[0]!.arguments!.length).toBe(fullArgs.length);
 
     // Verify the JSON is parseable and correct
-    const parsed = JSON.parse(result.message.toolCalls[0]!.function.arguments!) as {
+    const parsed = JSON.parse(result.message.toolCalls[0]!.arguments!) as {
       data: string;
     };
     expect(parsed.data).toBe(largeValue);
@@ -109,17 +109,17 @@ describe('stress: concurrent tool dispatch', () => {
     const tc1: ToolCall = {
       type: 'function',
       id: 'call-1',
-      function: { name: 'slow_tool', arguments: '{"delay": 1}' },
+      name: 'slow_tool', arguments: '{"delay": 1}',
     };
     const tc2: ToolCall = {
       type: 'function',
       id: 'call-2',
-      function: { name: 'slow_tool', arguments: '{"delay": 2}' },
+      name: 'slow_tool', arguments: '{"delay": 2}',
     };
     const tc3: ToolCall = {
       type: 'function',
       id: 'call-3',
-      function: { name: 'slow_tool', arguments: '{"delay": 3}' },
+      name: 'slow_tool', arguments: '{"delay": 3}',
     };
 
     const stream = createMockStream([tc1, tc2, tc3]);
@@ -169,7 +169,7 @@ describe('stress: tool handler throws exception', () => {
     const tc: ToolCall = {
       type: 'function',
       id: 'crash-call',
-      function: { name: 'crasher', arguments: '{}' },
+      name: 'crasher', arguments: '{}',
     };
 
     const stream = createMockStream([{ type: 'text', text: 'calling tool' }, tc]);
@@ -203,12 +203,12 @@ describe('stress: tool handler throws exception', () => {
     const tc1: ToolCall = {
       type: 'function',
       id: 'ok-call',
-      function: { name: 'good_tool', arguments: '{}' },
+      name: 'good_tool', arguments: '{}',
     };
     const tc2: ToolCall = {
       type: 'function',
       id: 'bad-call',
-      function: { name: 'bad_tool', arguments: '{}' },
+      name: 'bad_tool', arguments: '{}',
     };
 
     const stream = createMockStream([tc1, tc2]);
@@ -285,7 +285,7 @@ describe('stress: consecutive different type parts', () => {
       {
         type: 'function',
         id: 'tc-1',
-        function: { name: 'search', arguments: null },
+        name: 'search', arguments: null,
       },
       { type: 'tool_call_part', argumentsPart: '{"q":' }, // merges into ToolCall
       { type: 'tool_call_part', argumentsPart: '"test"}' }, // merges into ToolCall
@@ -315,7 +315,7 @@ describe('stress: consecutive different type parts', () => {
     expect(result.message.toolCalls[0]).toEqual({
       type: 'function',
       id: 'tc-1',
-      function: { name: 'search', arguments: '{"q":"test"}' },
+      name: 'search', arguments: '{"q":"test"}',
     });
   });
 
@@ -344,12 +344,12 @@ describe('stress: consecutive different type parts', () => {
       {
         type: 'function',
         id: 'tc-1',
-        function: { name: 'tool_a', arguments: '{"x":1}' },
+        name: 'tool_a', arguments: '{"x":1}',
       },
       {
         type: 'function',
         id: 'tc-2',
-        function: { name: 'tool_b', arguments: '{"y":2}' },
+        name: 'tool_b', arguments: '{"y":2}',
       },
     ];
 

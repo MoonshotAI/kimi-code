@@ -223,7 +223,7 @@ function parseToolCall(payload: string, lineno: number, rawLine: string): ToolCa
   return {
     type: 'function',
     id: toolCallId,
-    function: { name, arguments: args ?? null },
+    name, arguments: args ?? null,
   };
 }
 

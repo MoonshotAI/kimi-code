@@ -82,7 +82,7 @@ describe('regression', () => {
           {
             type: 'function',
             id: 'call-1',
-            function: { name: 'search', arguments: '{}' },
+            name: 'search', arguments: '{}',
           },
         ],
       );
@@ -90,7 +90,7 @@ describe('regression', () => {
         {
           type: 'function',
           id: 'call-1',
-          function: { name: 'search', arguments: '{}' },
+          name: 'search', arguments: '{}',
         },
       ]);
     });

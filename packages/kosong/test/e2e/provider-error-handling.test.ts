@@ -216,7 +216,7 @@ describe('e2e: provider error handling (extended)', () => {
       const tc: ToolCall = {
         type: 'function',
         id: 'tc_sfx',
-        function: { name: 'side_effect', arguments: '{}' },
+        name: 'side_effect', arguments: '{}',
       };
 
       const provider = createMidStreamThrowingProvider(
@@ -246,7 +246,7 @@ describe('e2e: provider error handling (extended)', () => {
         {
           type: 'function',
           id: 'tc_search',
-          function: { name: 'search', arguments: null },
+          name: 'search', arguments: null,
           _streamIndex: 0,
         },
         { type: 'tool_call_part', argumentsPart: '{"q":', index: 0 },
@@ -306,7 +306,7 @@ describe('e2e: provider error handling (extended)', () => {
       const tc: ToolCall = {
         type: 'function',
         id: 'tc_only',
-        function: { name: 'no_op', arguments: '{}' },
+        name: 'no_op', arguments: '{}',
       };
       const provider = createProvider(createStream([tc]));
 

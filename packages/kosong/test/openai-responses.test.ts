@@ -376,7 +376,7 @@ describe('OpenAIResponsesChatProvider', () => {
             {
               type: 'function',
               id: 'call_x',
-              function: { name: 'lookup', arguments: '{}' },
+              name: 'lookup', arguments: '{}',
             },
           ],
         },
@@ -417,12 +417,12 @@ describe('OpenAIResponsesChatProvider', () => {
             {
               type: 'function',
               id: 'call_add',
-              function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+              name: 'add', arguments: '{"a": 2, "b": 3}',
             },
             {
               type: 'function',
               id: 'call_mul',
-              function: { name: 'multiply', arguments: '{"a": 4, "b": 5}' },
+              name: 'multiply', arguments: '{"a": 4, "b": 5}',
             },
           ],
         },
@@ -552,7 +552,7 @@ describe('OpenAIResponsesChatProvider', () => {
       const toolCall: ToolCall = {
         type: 'function',
         id: 'call_abc123',
-        function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+        name: 'add', arguments: '{"a": 2, "b": 3}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
@@ -652,7 +652,7 @@ describe('OpenAIResponsesChatProvider', () => {
       const toolCall: ToolCall = {
         type: 'function',
         id: 'call_audio',
-        function: { name: 'tts', arguments: '{"text":"hi"}' },
+        name: 'tts', arguments: '{"text":"hi"}',
       };
       const dataUrl = 'data:audio/mp3;base64,QUJD';
       const httpsUrl = 'https://example.com/speech.wav';
@@ -695,7 +695,7 @@ describe('OpenAIResponsesChatProvider', () => {
       const toolCall: ToolCall = {
         type: 'function',
         id: 'call_abc123',
-        function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+        name: 'add', arguments: '{"a": 2, "b": 3}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
@@ -920,7 +920,7 @@ describe('OpenAIResponsesChatProvider', () => {
         {
           type: 'function',
           id: 'call_xyz',
-          function: { name: 'lookup', arguments: '{"q":"hi"}' },
+          name: 'lookup', arguments: '{"q":"hi"}',
         },
       ]);
     });
@@ -1221,7 +1221,7 @@ describe('OpenAIResponsesChatProvider', () => {
         {
           type: 'function',
           id: 'call_123',
-          function: { name: 'add', arguments: '' },
+          name: 'add', arguments: '',
           _streamIndex: 'item_123',
         },
         { type: 'tool_call_part', argumentsPart: '{"a":', index: 'item_123' },
@@ -1277,7 +1277,7 @@ describe('OpenAIResponsesChatProvider', () => {
         {
           type: 'function',
           id: 'call_done_only',
-          function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+          name: 'add', arguments: '{"a": 2, "b": 3}',
           extras: undefined,
         },
       ]);

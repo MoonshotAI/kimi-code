@@ -520,12 +520,12 @@ function collectMessageContent(target: OpenAssistant, content: readonly ContentP
 
 function toolCallFromMessage(rawToolCall: ToolCall): ToolCallBlockData | undefined {
   const id = rawToolCall.id;
-  const name = rawToolCall.function.name;
+  const name = rawToolCall.name;
   if (id.length === 0 || name.length === 0) return undefined;
   return {
     id,
     name,
-    args: parseToolArguments(rawToolCall.function.arguments),
+    args: parseToolArguments(rawToolCall.arguments),
   };
 }
 

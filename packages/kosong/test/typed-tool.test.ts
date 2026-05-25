@@ -100,7 +100,7 @@ describe('createTypedTool', () => {
     const result = await toolset.handle({
       type: 'function',
       id: 'tc_001',
-      function: { name: 'echo', arguments: JSON.stringify({ text: 'hello' }) },
+      name: 'echo', arguments: JSON.stringify({ text: 'hello' }),
     });
 
     expect(result.returnValue.isError).toBe(false);

@@ -156,8 +156,8 @@ function preflightToolCall(
   tools: readonly ExecutableTool[] | undefined,
   toolCall: ToolCall,
 ): PreflightedToolCall {
-  const toolName = toolCall.function.name;
-  const parsedArgs = parseToolCallArguments(toolCall.function.arguments);
+  const toolName = toolCall.name;
+  const parsedArgs = parseToolCallArguments(toolCall.arguments);
   const args = parsedArgs.success ? parsedArgs.data : {};
   const tool = tools?.find((candidate) => candidate.name === toolName);
   if (tool === undefined) {

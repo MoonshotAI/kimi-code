@@ -66,7 +66,7 @@ describe('e2e: toolset advanced', () => {
       const tc: ToolCall = {
         type: 'function',
         id: 'tc-null',
-        function: { name: 'my_tool', arguments: null },
+        name: 'my_tool', arguments: null,
       };
 
       const provider = new QueuedProvider([
@@ -98,7 +98,7 @@ describe('e2e: toolset advanced', () => {
       const tc: ToolCall = {
         type: 'function',
         id: 'tc-empty',
-        function: { name: 'my_tool', arguments: '' },
+        name: 'my_tool', arguments: '',
       };
 
       const provider = new QueuedProvider([
@@ -125,7 +125,7 @@ describe('e2e: toolset advanced', () => {
       const tc: ToolCall = {
         type: 'function',
         id: 'tc-string-null',
-        function: { name: 'my_tool', arguments: 'null' },
+        name: 'my_tool', arguments: 'null',
       };
 
       const provider = new QueuedProvider([
@@ -156,7 +156,7 @@ describe('e2e: toolset advanced', () => {
       const tc: ToolCall = {
         type: 'function',
         id: 'tc-array',
-        function: { name: 'my_tool', arguments: '[]' },
+        name: 'my_tool', arguments: '[]',
       };
 
       const provider = new QueuedProvider([
@@ -188,7 +188,7 @@ describe('e2e: toolset advanced', () => {
       const tc: ToolCall = {
         type: 'function',
         id: 'tc-unicode',
-        function: { name: 'my_tool', arguments: args },
+        name: 'my_tool', arguments: args,
       };
 
       const provider = new QueuedProvider([
@@ -221,17 +221,17 @@ describe('e2e: toolset advanced', () => {
       const tc1: ToolCall = {
         type: 'function',
         id: 'tc-slow',
-        function: { name: 'delayed', arguments: '{"delay":100,"label":"slow"}' },
+        name: 'delayed', arguments: '{"delay":100,"label":"slow"}',
       };
       const tc2: ToolCall = {
         type: 'function',
         id: 'tc-fast',
-        function: { name: 'delayed', arguments: '{"delay":10,"label":"fast"}' },
+        name: 'delayed', arguments: '{"delay":10,"label":"fast"}',
       };
       const tc3: ToolCall = {
         type: 'function',
         id: 'tc-mid',
-        function: { name: 'delayed', arguments: '{"delay":50,"label":"mid"}' },
+        name: 'delayed', arguments: '{"delay":50,"label":"mid"}',
       };
 
       const provider = new QueuedProvider([
@@ -270,17 +270,17 @@ describe('e2e: toolset advanced', () => {
       const tc1: ToolCall = {
         type: 'function',
         id: 'tc-slow',
-        function: { name: 'delayed', arguments: '{"delay":80,"label":"slow"}' },
+        name: 'delayed', arguments: '{"delay":80,"label":"slow"}',
       };
       const tc2: ToolCall = {
         type: 'function',
         id: 'tc-fast',
-        function: { name: 'delayed', arguments: '{"delay":10,"label":"fast"}' },
+        name: 'delayed', arguments: '{"delay":10,"label":"fast"}',
       };
       const tc3: ToolCall = {
         type: 'function',
         id: 'tc-mid',
-        function: { name: 'delayed', arguments: '{"delay":40,"label":"mid"}' },
+        name: 'delayed', arguments: '{"delay":40,"label":"mid"}',
       };
 
       const provider = new QueuedProvider([
@@ -339,7 +339,7 @@ describe('e2e: toolset advanced', () => {
           yield {
             type: 'function',
             id: 'tc-doomed',
-            function: { name: 'slow_tool', arguments: '{}' },
+            name: 'slow_tool', arguments: '{}',
           } satisfies ToolCall;
           yield { type: 'text', text: 'processing...' };
           throw new Error('stream connection lost');
@@ -389,7 +389,7 @@ describe('e2e: toolset advanced', () => {
       const tc: ToolCall = {
         type: 'function',
         id: 'tc-error',
-        function: { name: 'bad_tool', arguments: '{}' },
+        name: 'bad_tool', arguments: '{}',
       };
 
       const provider = new QueuedProvider([

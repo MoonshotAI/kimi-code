@@ -149,17 +149,17 @@ export class SimpleToolset implements Toolset {
   }
 
   handle(toolCall: ToolCall, _options?: { signal?: AbortSignal }): Promise<ToolResult> {
-    const entry = this.toolMap.get(toolCall.function.name);
+    const entry = this.toolMap.get(toolCall.name);
     if (entry === undefined) {
       return Promise.resolve({
         toolCallId: toolCall.id,
-        returnValue: toolNotFoundError(toolCall.function.name),
+        returnValue: toolNotFoundError(toolCall.name),
       });
     }
 
     let args: JsonValue;
     try {
-      args = JSON.parse(toolCall.function.arguments ?? '{}') as JsonValue;
+      args = JSON.parse(toolCall.arguments ?? '{}') as JsonValue;
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
       return Promise.resolve({

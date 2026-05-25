@@ -47,11 +47,11 @@ describe('createAssistantMessage', () => {
     const tc: ToolCall = {
       type: 'function',
       id: 'call-1',
-      function: { name: 'search', arguments: '{"q":"ts"}' },
+      name: 'search', arguments: '{"q":"ts"}',
     };
     const msg = createAssistantMessage([{ type: 'text', text: 'ok' }], [tc]);
     expect(msg.toolCalls).toHaveLength(1);
-    expect(msg.toolCalls[0]!.function.name).toBe('search');
+    expect(msg.toolCalls[0]!.name).toBe('search');
   });
 
   it('defaults toolCalls to empty array when not provided', () => {
@@ -250,7 +250,7 @@ describe('type guards', () => {
     const part: StreamedMessagePart = {
       type: 'function',
       id: 'c1',
-      function: { name: 'f', arguments: null },
+      name: 'f', arguments: null,
     };
     expect(isContentPart(part)).toBe(false);
   });
@@ -264,7 +264,7 @@ describe('type guards', () => {
     const part: StreamedMessagePart = {
       type: 'function',
       id: 'c1',
-      function: { name: 'f', arguments: null },
+      name: 'f', arguments: null,
     };
     expect(isToolCall(part)).toBe(true);
   });
@@ -318,33 +318,33 @@ describe('mergeInPlace', () => {
     const target: ToolCall = {
       type: 'function',
       id: 'c1',
-      function: { name: 'f', arguments: null },
+      name: 'f', arguments: null,
     };
     const source: ToolCallPart = { type: 'tool_call_part', argumentsPart: '{"a":' };
     expect(mergeInPlace(target, source)).toBe(true);
-    expect(target.function.arguments).toBe('{"a":');
+    expect(target.arguments).toBe('{"a":');
   });
 
   it('merges ToolCall + ToolCallPart (append)', () => {
     const target: ToolCall = {
       type: 'function',
       id: 'c1',
-      function: { name: 'f', arguments: '{"a":' },
+      name: 'f', arguments: '{"a":',
     };
     const source: ToolCallPart = { type: 'tool_call_part', argumentsPart: '1}' };
     expect(mergeInPlace(target, source)).toBe(true);
-    expect(target.function.arguments).toBe('{"a":1}');
+    expect(target.arguments).toBe('{"a":1}');
   });
 
   it('merges ToolCall + ToolCallPart with null argumentsPart (no-op)', () => {
     const target: ToolCall = {
       type: 'function',
       id: 'c1',
-      function: { name: 'f', arguments: '{"x":1}' },
+      name: 'f', arguments: '{"x":1}',
     };
     const source: ToolCallPart = { type: 'tool_call_part', argumentsPart: null };
     expect(mergeInPlace(target, source)).toBe(true);
-    expect(target.function.arguments).toBe('{"x":1}');
+    expect(target.arguments).toBe('{"x":1}');
   });
 
   it('returns false for TextPart + ThinkPart', () => {
@@ -369,7 +369,7 @@ describe('mergeInPlace', () => {
     const target: ToolCall = {
       type: 'function',
       id: 'c1',
-      function: { name: 'f', arguments: null },
+      name: 'f', arguments: null,
     };
     const source: TextPart = { type: 'text', text: 'x' };
     expect(mergeInPlace(target, source)).toBe(false);
@@ -394,12 +394,12 @@ describe('Message optional fields', () => {
         {
           type: 'function',
           id: 'call-1',
-          function: { name: 'search', arguments: '{"q":"test"}' },
+          name: 'search', arguments: '{"q":"test"}',
         },
       ],
     };
     expect(msg.toolCalls).toHaveLength(1);
-    expect(msg.toolCalls[0]!.function.name).toBe('search');
+    expect(msg.toolCalls[0]!.name).toBe('search');
   });
 
   it('message can have partial flag', () => {
@@ -416,7 +416,7 @@ describe('Message optional fields', () => {
     const tc: ToolCall = {
       type: 'function',
       id: 'call-1',
-      function: { name: 'search', arguments: '{}' },
+      name: 'search', arguments: '{}',
       extras: { provider_id: 'anthropic-123' },
     };
     expect(tc.extras).toEqual({ provider_id: 'anthropic-123' });

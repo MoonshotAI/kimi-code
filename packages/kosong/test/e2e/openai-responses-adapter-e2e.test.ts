@@ -96,7 +96,7 @@ describe('e2e: openai-responses adapter', () => {
             {
               type: 'function',
               id: 'call_weather',
-              function: { name: 'lookup_weather', arguments: '{"city":"Shanghai"}' },
+              name: 'lookup_weather', arguments: '{"city":"Shanghai"}',
             } satisfies ToolCall,
           ],
         },
@@ -168,7 +168,7 @@ describe('e2e: openai-responses adapter', () => {
       expect(result.parts[1]).toMatchObject({
         type: 'function',
         id: 'call_weather',
-        function: { name: 'lookup_weather', arguments: '{"city":"Shanghai"}' },
+        name: 'lookup_weather', arguments: '{"city":"Shanghai"}',
       });
     });
   });

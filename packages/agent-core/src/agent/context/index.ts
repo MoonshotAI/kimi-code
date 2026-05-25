@@ -178,10 +178,8 @@ export class ContextMemory {
         openStep.toolCalls.push({
           type: 'function',
           id: event.toolCallId,
-          function: {
-            name: event.name,
-            arguments: event.args === undefined ? null : JSON.stringify(event.args),
-          },
+          name: event.name,
+          arguments: event.args === undefined ? null : JSON.stringify(event.args),
         });
         this.pendingToolResultIds.add(event.toolCallId);
         return;

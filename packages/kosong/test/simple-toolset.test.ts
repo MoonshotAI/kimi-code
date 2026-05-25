@@ -7,7 +7,7 @@ function makeToolCall(id: string, name: string, args: string | null): ToolCall {
   return {
     type: 'function',
     id,
-    function: { name, arguments: args },
+    name, arguments: args,
   };
 }
 describe('SimpleToolset', () => {

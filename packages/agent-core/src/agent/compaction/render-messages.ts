@@ -52,8 +52,8 @@ function renderContentPartToText(part: Message['content'][number]): string {
 
 function renderToolCallToText(toolCall: Message['toolCalls'][number]): string {
   const lines = [
-    `- ${toolCall.id}: ${toolCall.function.name}`,
-    renderBlock('arguments', renderToolCallArguments(toolCall.function.arguments)),
+    `- ${toolCall.id}: ${toolCall.name}`,
+    renderBlock('arguments', renderToolCallArguments(toolCall.arguments)),
   ];
 
   if (toolCall.extras !== undefined) {

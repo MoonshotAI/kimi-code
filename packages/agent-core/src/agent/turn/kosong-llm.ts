@@ -191,15 +191,15 @@ function buildKosongCallbacks(params: LLMChatParams): GenerateCallbacks {
         return;
       }
       if (part.type === 'function') {
-        const identity = { toolCallId: part.id, name: part.function.name };
+        const identity = { toolCallId: part.id, name: part.name };
         lastToolCallIdentity = identity;
         if (part._streamIndex !== undefined) {
           toolCallIdentities.set(part._streamIndex, identity);
         }
         emitToolCallDelta({
           toolCallId: part.id,
-          name: part.function.name,
-          ...(part.function.arguments !== null ? { argumentsPart: part.function.arguments } : {}),
+          name: part.name,
+          ...(part.arguments !== null ? { argumentsPart: part.arguments } : {}),
         });
         if (part._streamIndex !== undefined) {
           const pendingDeltas = pendingIndexedToolCallDeltas.get(part._streamIndex);

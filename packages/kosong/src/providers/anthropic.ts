@@ -477,9 +477,9 @@ function convertMessage(message: Message): MessageParam {
   if (message.toolCalls.length > 0) {
     for (const tc of message.toolCalls) {
       let toolInput: Record<string, unknown> = {};
-      if (tc.function.arguments) {
+      if (tc.arguments) {
         try {
-          const parsed: unknown = JSON.parse(tc.function.arguments);
+          const parsed: unknown = JSON.parse(tc.arguments);
           if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
             toolInput = parsed as Record<string, unknown>;
           } else {
@@ -493,7 +493,7 @@ function convertMessage(message: Message): MessageParam {
       blocks.push({
         type: 'tool_use',
         id: tc.id,
-        name: tc.function.name,
+        name: tc.name,
         input: toolInput,
       } satisfies ToolUseBlockParam);
     }
@@ -648,10 +648,8 @@ class AnthropicStreamedMessage implements StreamedMessage {
           yield {
             type: 'function',
             id: block.id ?? crypto.randomUUID(),
-            function: {
-              name: block.name ?? '',
-              arguments: block.input !== undefined ? JSON.stringify(block.input) : null,
-            },
+            name: block.name ?? '',
+            arguments: block.input !== undefined ? JSON.stringify(block.input) : null,
           } satisfies ToolCall;
           break;
       }
@@ -703,10 +701,8 @@ class AnthropicStreamedMessage implements StreamedMessage {
               yield {
                 type: 'function',
                 id: block.id,
-                function: {
-                  name: block.name,
-                  arguments: '',
-                },
+                name: block.name,
+                arguments: '',
                 // Carry the Anthropic block index so parallel tool_use
                 // blocks' interleaved input_json_delta chunks can be routed
                 // to the correct ToolCall by the generate loop.

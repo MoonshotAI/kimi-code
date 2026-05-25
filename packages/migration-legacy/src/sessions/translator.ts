@@ -6,7 +6,8 @@ export interface NormalizedMessage {
   readonly toolCalls: ReadonlyArray<{
     readonly type: 'function';
     readonly id: string;
-    readonly function: { readonly name: string; readonly arguments: string };
+    readonly name: string;
+    readonly arguments: string;
   }>;
   readonly toolCallId?: string;
 }
@@ -146,7 +147,8 @@ function buildTool(obj: Record<string, unknown>): NormalizedMessage {
 interface RawToolCall {
   readonly type: 'function';
   readonly id: string;
-  readonly function: { readonly name: string; readonly arguments: string };
+  readonly name: string;
+  readonly arguments: string;
 }
 
 function parseToolCall(raw: unknown): RawToolCall | undefined {
@@ -162,7 +164,8 @@ function parseToolCall(raw: unknown): RawToolCall | undefined {
   return {
     type: 'function',
     id: r['id'],
-    function: { name: f['name'], arguments: args },
+    name: f['name'],
+    arguments: args,
   };
 }
 

@@ -1478,10 +1478,8 @@ function missingToolCall(): ToolCall {
   return {
     type: 'function',
     id: 'call_missing',
-    function: {
-      name: 'MissingTool',
-      arguments: '{}',
-    },
+    name: 'MissingTool',
+    arguments: '{}',
   };
 }
 

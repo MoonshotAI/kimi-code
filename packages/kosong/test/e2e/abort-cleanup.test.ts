@@ -30,7 +30,7 @@ function clonePart(part: StreamedMessagePart): StreamedMessagePart {
     return {
       type: 'function',
       id: part.id,
-      function: { name: part.function.name, arguments: part.function.arguments },
+      name: part.name, arguments: part.arguments,
       ...(part.extras !== undefined ? { extras: { ...part.extras } } : {}),
       _streamIndex: part._streamIndex,
     };
@@ -169,7 +169,7 @@ describe('e2e: abort cleanup', () => {
       {
         type: 'function',
         id: 'tc_slow',
-        function: { name: 'slow', arguments: '{}' },
+        name: 'slow', arguments: '{}',
       },
     ];
     const provider = new TrackingProvider(parts, 0);

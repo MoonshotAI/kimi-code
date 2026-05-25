@@ -46,8 +46,8 @@ export function estimateTokensForMessage(message: Message): number {
   }
   if (message.toolCalls !== undefined) {
     for (const call of message.toolCalls) {
-      total += estimateTokens(call.function.name);
-      total += estimateTokens(JSON.stringify(call.function.arguments));
+      total += estimateTokens(call.name);
+      total += estimateTokens(JSON.stringify(call.arguments));
     }
   }
   return total;

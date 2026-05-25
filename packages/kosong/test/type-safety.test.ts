@@ -27,7 +27,7 @@ function processPartSafely(part: StreamedMessagePart): string {
     case 'video_url':
       return part.videoUrl.url; // VideoURLPart.videoUrl.url -> string
     case 'function':
-      return part.function.name; // ToolCall.function.name -> string
+      return part.name; // ToolCall.name -> string
     case 'tool_call_part':
       return part.argumentsPart ?? ''; // ToolCallPart.argumentsPart -> string | null
     default: {
@@ -76,7 +76,7 @@ describe('StreamedMessagePart discriminated union narrowing', () => {
     const part: StreamedMessagePart = {
       type: 'function',
       id: 'call-1',
-      function: { name: 'search', arguments: '{"q":"test"}' },
+      name: 'search', arguments: '{"q":"test"}',
     };
     expect(processPartSafely(part)).toBe('search');
   });
@@ -111,7 +111,7 @@ describe('exhaustiveness check', () => {
       { type: 'image_url', imageUrl: { url: 'c' } },
       { type: 'audio_url', audioUrl: { url: 'd' } },
       { type: 'video_url', videoUrl: { url: 'e' } },
-      { type: 'function', id: 'f', function: { name: 'g', arguments: null } },
+      { type: 'function', id: 'f', name: 'g', arguments: null },
       { type: 'tool_call_part', argumentsPart: 'h' },
     ];
     for (const part of allParts) {
@@ -151,7 +151,7 @@ describe('type assignability', () => {
   });
 
   it('ToolCall is assignable to StreamedMessagePart', () => {
-    const tc: ToolCall = { type: 'function', id: 'c', function: { name: 'f', arguments: null } };
+    const tc: ToolCall = { type: 'function', id: 'c', name: 'f', arguments: null };
     const _part: StreamedMessagePart = tc;
     expect(_part.type).toBe('function');
   });

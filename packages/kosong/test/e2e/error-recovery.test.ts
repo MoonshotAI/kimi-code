@@ -181,7 +181,7 @@ describe('e2e: error recovery', () => {
       const tc: ToolCall = {
         type: 'function',
         id: 'tc-1',
-        function: { name: 'slow_tool', arguments: '{}' },
+        name: 'slow_tool', arguments: '{}',
       };
 
       const provider = createStreamErrorProvider(
@@ -219,17 +219,17 @@ describe('e2e: error recovery', () => {
       const tc1: ToolCall = {
         type: 'function',
         id: 'tc-ok',
-        function: { name: 'good_tool', arguments: '{}' },
+        name: 'good_tool', arguments: '{}',
       };
       const tc2: ToolCall = {
         type: 'function',
         id: 'tc-fail',
-        function: { name: 'bad_tool', arguments: '{}' },
+        name: 'bad_tool', arguments: '{}',
       };
       const tc3: ToolCall = {
         type: 'function',
         id: 'tc-ok-2',
-        function: { name: 'good_tool', arguments: '{}' },
+        name: 'good_tool', arguments: '{}',
       };
 
       const stream = createMockStream([tc1, tc2, tc3]);
@@ -276,7 +276,7 @@ describe('e2e: error recovery', () => {
       const tc: ToolCall = {
         type: 'function',
         id: 'tc-missing',
-        function: { name: 'nonexistent_tool', arguments: '{}' },
+        name: 'nonexistent_tool', arguments: '{}',
       };
 
       const stream = createMockStream([{ type: 'text', text: 'calling' }, tc]);
@@ -297,7 +297,7 @@ describe('e2e: error recovery', () => {
       const tc: ToolCall = {
         type: 'function',
         id: 'tc-bad-json',
-        function: { name: 'my_tool', arguments: '{invalid json' },
+        name: 'my_tool', arguments: '{invalid json',
       };
 
       const stream = createMockStream([{ type: 'text', text: 'calling' }, tc]);
@@ -326,7 +326,7 @@ describe('e2e: error recovery', () => {
       const tc: ToolCall = {
         type: 'function',
         id: 'tc-str-throw',
-        function: { name: 'throws_string', arguments: '{}' },
+        name: 'throws_string', arguments: '{}',
       };
 
       const stream = createMockStream([tc]);
@@ -357,7 +357,7 @@ describe('e2e: error recovery', () => {
       const tc: ToolCall = {
         type: 'function',
         id: 'tc-cleanup',
-        function: { name: 'cleanup_test', arguments: '{}' },
+        name: 'cleanup_test', arguments: '{}',
       };
 
       let handlerInvoked = false;

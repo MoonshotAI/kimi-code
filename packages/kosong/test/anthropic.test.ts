@@ -274,7 +274,7 @@ describe('AnthropicChatProvider', () => {
       const toolCall: ToolCall = {
         type: 'function',
         id: 'call_abc123',
-        function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+        name: 'add', arguments: '{"a": 2, "b": 3}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
@@ -326,7 +326,7 @@ describe('AnthropicChatProvider', () => {
       const toolCall: ToolCall = {
         type: 'function',
         id: 'call_abc123',
-        function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+        name: 'add', arguments: '{"a": 2, "b": 3}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
@@ -373,12 +373,12 @@ describe('AnthropicChatProvider', () => {
       const tcAdd: ToolCall = {
         type: 'function',
         id: 'call_add',
-        function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+        name: 'add', arguments: '{"a": 2, "b": 3}',
       };
       const tcMul: ToolCall = {
         type: 'function',
         id: 'call_mul',
-        function: { name: 'multiply', arguments: '{"a": 4, "b": 5}' },
+        name: 'multiply', arguments: '{"a": 4, "b": 5}',
       };
       const history: Message[] = [
         {
@@ -481,12 +481,12 @@ describe('AnthropicChatProvider', () => {
       const tcAdd: ToolCall = {
         type: 'function',
         id: 'call_add',
-        function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+        name: 'add', arguments: '{"a": 2, "b": 3}',
       };
       const tcMul: ToolCall = {
         type: 'function',
         id: 'call_mul',
-        function: { name: 'multiply', arguments: '{"a": 4, "b": 5}' },
+        name: 'multiply', arguments: '{"a": 4, "b": 5}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Calculate 2+3 and 4*5' }], toolCalls: [] },
@@ -537,7 +537,7 @@ describe('AnthropicChatProvider', () => {
       const tcAdd: ToolCall = {
         type: 'function',
         id: 'call_add',
-        function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+        name: 'add', arguments: '{"a": 2, "b": 3}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'What is 2+3?' }], toolCalls: [] },
@@ -571,7 +571,7 @@ describe('AnthropicChatProvider', () => {
       const makeTc = (id: string, name: string): ToolCall => ({
         type: 'function',
         id,
-        function: { name, arguments: '{"a": 1, "b": 1}' },
+        name, arguments: '{"a": 1, "b": 1}',
       });
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Do three things' }], toolCalls: [] },
@@ -605,12 +605,12 @@ describe('AnthropicChatProvider', () => {
       const tcAdd: ToolCall = {
         type: 'function',
         id: 'call_add',
-        function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+        name: 'add', arguments: '{"a": 2, "b": 3}',
       };
       const tcMul: ToolCall = {
         type: 'function',
         id: 'call_mul',
-        function: { name: 'multiply', arguments: '{"a": 4, "b": 5}' },
+        name: 'multiply', arguments: '{"a": 4, "b": 5}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Do both' }], toolCalls: [] },
@@ -1386,7 +1386,7 @@ describe('AnthropicChatProvider', () => {
         {
           type: 'function',
           id: 'tool_1',
-          function: { name: 'add', arguments: '{"a":2,"b":3}' },
+          name: 'add', arguments: '{"a":2,"b":3}',
         },
       ]);
       expect(stream.usage).toEqual({
@@ -1552,7 +1552,7 @@ describe('AnthropicChatProvider', () => {
         {
           type: 'function',
           id: 'toolu_abc',
-          function: { name: 'add', arguments: '' },
+          name: 'add', arguments: '',
           _streamIndex: 1,
         },
         { type: 'tool_call_part', argumentsPart: '{"a":', index: 1 },
@@ -1626,13 +1626,13 @@ describe('AnthropicChatProvider', () => {
         {
           type: 'function',
           id: 'toolu_a',
-          function: { name: 'tool_a', arguments: '' },
+          name: 'tool_a', arguments: '',
           _streamIndex: 0,
         },
         {
           type: 'function',
           id: 'toolu_b',
-          function: { name: 'tool_b', arguments: '' },
+          name: 'tool_b', arguments: '',
           _streamIndex: 1,
         },
         { type: 'tool_call_part', argumentsPart: '{"x":', index: 0 },
@@ -1705,11 +1705,11 @@ describe('AnthropicChatProvider', () => {
 
       expect(message.toolCalls.length).toBe(2);
       expect(message.toolCalls[0]!.id).toBe('toolu_a');
-      expect(message.toolCalls[0]!.function.name).toBe('tool_a');
-      expect(message.toolCalls[0]!.function.arguments).toBe('{"x":1}');
+      expect(message.toolCalls[0]!.name).toBe('tool_a');
+      expect(message.toolCalls[0]!.arguments).toBe('{"x":1}');
       expect(message.toolCalls[1]!.id).toBe('toolu_b');
-      expect(message.toolCalls[1]!.function.name).toBe('tool_b');
-      expect(message.toolCalls[1]!.function.arguments).toBe('{"y":2}');
+      expect(message.toolCalls[1]!.name).toBe('tool_b');
+      expect(message.toolCalls[1]!.arguments).toBe('{"y":2}');
       // _streamIndex should be stripped from stored tool calls.
       expect(
         (message.toolCalls[0] as ToolCall & { _streamIndex?: number })._streamIndex,

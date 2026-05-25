@@ -46,10 +46,8 @@ export function convertChatCompletionStreamToolCall(
         {
           type: 'function',
           id: toolCall.id ?? crypto.randomUUID(),
-          function: {
-            name: functionName,
-            arguments: functionArguments ?? null,
-          },
+          name: functionName,
+          arguments: functionArguments ?? null,
         } satisfies ToolCall,
       ];
     }
@@ -88,10 +86,8 @@ export function convertChatCompletionStreamToolCall(
     const toolCallHeader: ToolCall = {
       type: 'function',
       id: buffered.id ?? toolCall.id ?? crypto.randomUUID(),
-      function: {
-        name: functionName,
-        arguments: initialArguments,
-      },
+      name: functionName,
+      arguments: initialArguments,
       _streamIndex: streamIndex,
     };
     return [toolCallHeader];

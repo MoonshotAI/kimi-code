@@ -86,10 +86,8 @@ function permissionContext(args: ExitPlanModeInput): ToolExecutionHookContext {
     toolCall: {
       id: 'call_exit_plan',
       type: 'function',
-      function: {
-        name: 'ExitPlanMode',
+      name: 'ExitPlanMode',
         arguments: JSON.stringify(args),
-      },
     },
     args,
   };

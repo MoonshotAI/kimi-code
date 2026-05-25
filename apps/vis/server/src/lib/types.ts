@@ -607,7 +607,7 @@ export interface ContentPart {
 export interface ToolCallEntry {
   type: 'function';
   id: string;
-  function: { name: string; arguments: string | null };
+  name: string; arguments: string | null;
 }
 
 export type MessageOrigin =

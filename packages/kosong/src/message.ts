@@ -35,15 +35,11 @@ export interface VideoURLPart {
  */
 export type ContentPart = TextPart | ThinkPart | ImageURLPart | AudioURLPart | VideoURLPart;
 
-export interface ToolCallFunction {
-  name: string;
-  arguments: string | null;
-}
-
 export interface ToolCall {
   type: 'function';
   id: string;
-  function: ToolCallFunction;
+  name: string;
+  arguments: string | null;
   extras?: Record<string, unknown>;
   /**
    * Provider-specific streaming index used to route argument deltas to the
@@ -164,10 +160,10 @@ export function mergeInPlace(target: StreamedMessagePart, source: StreamedMessag
   // ToolCall + ToolCallPart
   if (target.type === 'function' && source.type === 'tool_call_part') {
     if (source.argumentsPart !== null) {
-      target.function.arguments =
-        target.function.arguments === null
+      target.arguments =
+        target.arguments === null
           ? source.argumentsPart
-          : target.function.arguments + source.argumentsPart;
+          : target.arguments + source.argumentsPart;
     }
     return true;
   }

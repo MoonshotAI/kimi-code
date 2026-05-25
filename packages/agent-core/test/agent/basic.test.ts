@@ -77,10 +77,8 @@ it('runs an agent turn through builtin tool approval and execution', async () =>
   const bashCall: ToolCall = {
     type: 'function',
     id: 'call_bash',
-    function: {
-      name: 'Bash',
-      arguments: '{"command":"printf lookup-result","timeout":60}',
-    },
+    name: 'Bash',
+    arguments: '{"command":"printf lookup-result","timeout":60}',
   };
   const ctx = testAgent({ kaos: createCommandKaos('lookup-result') });
   ctx.configure({ tools: ['Bash'] });

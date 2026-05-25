@@ -112,8 +112,7 @@ describe('e2e: kosong toolchain bridges', () => {
         {
           type: 'function',
           id: 'tc-route',
-          function: {
-            name: 'route_address',
+          name: 'route_address',
             arguments: JSON.stringify({
               shipment: {
                 id: 'pkg-42',
@@ -121,7 +120,6 @@ describe('e2e: kosong toolchain bridges', () => {
               },
               urgent: true,
             }),
-          },
         },
       ]),
       createStream([{ type: 'text', text: 'Shipment routed.' }]),
@@ -199,13 +197,11 @@ describe('e2e: kosong toolchain bridges', () => {
         {
           type: 'function',
           id: 'tc-ship',
-          function: {
-            name: 'ship_package',
+          name: 'ship_package',
             arguments: JSON.stringify({
               shipping: { city: 'Hangzhou', zip: '310000' },
               billing: { city: 'Shenzhen', zip: '518000' },
             }),
-          },
         },
       ]),
       createStream([{ type: 'text', text: 'Shipment booked.' }]),
