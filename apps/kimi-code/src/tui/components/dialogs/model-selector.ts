@@ -1,7 +1,6 @@
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import {
   Container,
-  fuzzyFilter,
   Key,
   matchesKey,
   truncateToWidth,
@@ -11,12 +10,9 @@ import chalk from 'chalk';
 
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '#/constant/app';
 import type { ColorPalette } from '#/tui/theme/colors';
-import { pageView } from '#/tui/utils/paging';
-import { isPrintableChar, printableChar } from '#/tui/utils/printable-key';
+import { SearchableList } from '#/tui/utils/searchable-list';
 
 import type { ChoiceOption } from './choice-picker';
-
-const DEFAULT_PAGE_SIZE = 8;
 
 type ThinkingAvailability = 'toggle' | 'always-on' | 'unsupported';
 
@@ -89,61 +85,34 @@ function effectiveThinking(model: ModelAlias, thinkingDraft: boolean): boolean {
 export class ModelSelectorComponent extends Container implements Focusable {
   focused = false;
   private readonly opts: ModelSelectorOptions;
-  private readonly choices: readonly ModelChoice[];
-  private selectedIndex: number;
+  private readonly list: SearchableList<ModelChoice>;
   private thinkingDraft: boolean;
-  private query = '';
 
   constructor(opts: ModelSelectorOptions) {
     super();
     this.opts = opts;
-    this.choices = createModelChoices(opts.models);
+    const choices = createModelChoices(opts.models);
     const selectedValue = opts.selectedValue ?? opts.currentValue;
-    const selectedIdx = this.choices.findIndex((choice) => choice.alias === selectedValue);
-    this.selectedIndex = Math.max(selectedIdx, 0);
+    const selectedIdx = choices.findIndex((choice) => choice.alias === selectedValue);
+    this.list = new SearchableList({
+      items: choices,
+      toSearchText: (c) => c.label,
+      pageSize: opts.pageSize,
+      initialIndex: Math.max(selectedIdx, 0),
+      searchable: opts.searchable === true,
+    });
     this.thinkingDraft = opts.currentThinking;
   }
 
-  private get pageSize(): number {
-    return this.opts.pageSize ?? DEFAULT_PAGE_SIZE;
-  }
-
-  private filteredChoices(): readonly ModelChoice[] {
-    if (this.query.length === 0) return this.choices;
-    return fuzzyFilter([...this.choices], this.query, (c) => c.label);
-  }
-
   handleInput(data: string): void {
-    const choices = this.filteredChoices();
-    const lastIndex = Math.max(0, choices.length - 1);
-    const searchable = this.opts.searchable === true;
-    const selected = choices[this.selectedIndex];
-
     if (matchesKey(data, Key.escape)) {
-      if (searchable && this.query.length > 0) {
-        this.query = '';
-        this.selectedIndex = 0;
-        return;
-      }
+      if (this.list.clearQuery()) return;
       this.opts.onCancel();
       return;
     }
-    if (matchesKey(data, Key.up)) {
-      this.selectedIndex = Math.max(0, this.selectedIndex - 1);
-      return;
-    }
-    if (matchesKey(data, Key.down)) {
-      this.selectedIndex = Math.min(lastIndex, this.selectedIndex + 1);
-      return;
-    }
-    if (matchesKey(data, Key.pageDown)) {
-      this.selectedIndex = Math.min(lastIndex, this.selectedIndex + this.pageSize);
-      return;
-    }
-    if (matchesKey(data, Key.pageUp)) {
-      this.selectedIndex = Math.max(0, this.selectedIndex - this.pageSize);
-      return;
-    }
+    const selected = this.list.selected();
+    // Left/Right toggle thinking (only when the model supports it); paging is on
+    // PgUp/PgDn so the horizontal arrows stay free for the thinking control.
     if (selected !== undefined && thinkingAvailability(selected.model) === 'toggle') {
       if (matchesKey(data, Key.left)) {
         this.thinkingDraft = true;
@@ -162,40 +131,27 @@ export class ModelSelectorComponent extends Container implements Focusable {
       });
       return;
     }
-    if (!searchable) return;
-    if (matchesKey(data, Key.backspace)) {
-      if (this.query.length > 0) {
-        this.query = this.query.slice(0, -1);
-        this.selectedIndex = 0;
-      }
-      return;
-    }
-    const ch = printableChar(data);
-    if (isPrintableChar(ch)) {
-      this.query += ch;
-      this.selectedIndex = 0;
-    }
+    this.list.handleKey(data);
   }
 
   override render(width: number): string[] {
     const { colors } = this.opts;
     const searchable = this.opts.searchable === true;
-    const choices = this.filteredChoices();
-    const view = pageView(choices.length, this.selectedIndex, this.pageSize);
-    const selectedIndex = Math.min(this.selectedIndex, Math.max(0, choices.length - 1));
+    const view = this.list.view();
+    const choices = view.items;
 
     const navParts = ['↑↓ model', '←→ thinking'];
-    if (view.pageCount > 1) navParts.push('PgUp/PgDn page');
+    if (view.page.pageCount > 1) navParts.push('PgUp/PgDn page');
     navParts.push('Enter apply', 'Esc cancel');
 
     const titleSuffix =
-      searchable && this.query.length === 0 ? chalk.hex(colors.textMuted)('  (type to search)') : '';
+      searchable && view.query.length === 0 ? chalk.hex(colors.textMuted)('  (type to search)') : '';
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(' Select a model') + titleSuffix,
     ];
-    if (searchable && this.query.length > 0) {
-      lines.push(chalk.hex(colors.primary)(' Search: ') + chalk.hex(colors.text)(this.query));
+    if (searchable && view.query.length > 0) {
+      lines.push(chalk.hex(colors.primary)(' Search: ') + chalk.hex(colors.text)(view.query));
     }
     lines.push(chalk.hex(colors.textMuted)(` ${navParts.join(' · ')}`));
     lines.push('');
@@ -203,9 +159,9 @@ export class ModelSelectorComponent extends Container implements Focusable {
     if (choices.length === 0) {
       lines.push(chalk.hex(colors.textMuted)('   No matches'));
     }
-    for (let i = view.start; i < view.end; i++) {
+    for (let i = view.page.start; i < view.page.end; i++) {
       const choice = choices[i]!;
-      const isSelected = i === selectedIndex;
+      const isSelected = i === view.selectedIndex;
       const isCurrent = choice.alias === this.opts.currentValue;
       const pointer = isSelected ? '❯' : ' ';
       const labelStyle = isSelected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
@@ -219,14 +175,16 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
     lines.push('');
     lines.push(chalk.hex(colors.textMuted)(' Thinking'));
-    const selected = choices[selectedIndex];
+    const selected = choices[view.selectedIndex];
     if (selected !== undefined) {
       lines.push(this.renderThinkingControl(selected.model));
     }
     lines.push('');
-    if (view.pageCount > 1) {
+    if (view.page.pageCount > 1) {
       lines.push(
-        chalk.hex(colors.textMuted)(` Page ${String(view.page + 1)}/${String(view.pageCount)}`),
+        chalk.hex(colors.textMuted)(
+          ` Page ${String(view.page.page + 1)}/${String(view.page.pageCount)}`,
+        ),
       );
     }
     lines.push(chalk.hex(colors.primary)('─'.repeat(width)));

@@ -10,7 +10,6 @@
 
 import {
   Container,
-  fuzzyFilter,
   matchesKey,
   Key,
   truncateToWidth,
@@ -20,8 +19,7 @@ import {
 import chalk from 'chalk';
 
 import type { ColorPalette } from '#/tui/theme/colors';
-import { pageView } from '#/tui/utils/paging';
-import { isPrintableChar, printableChar } from '#/tui/utils/printable-key';
+import { SearchableList } from '#/tui/utils/searchable-list';
 
 export interface ChoiceOption {
   /** Value passed to onSelect (e.g. the actual editor command string). */
@@ -47,7 +45,6 @@ export interface ChoicePickerOptions {
 }
 
 const CURRENT_MARK = '← current';
-const DEFAULT_PAGE_SIZE = 8;
 
 function wrapDescription(text: string, width: number): string[] {
   const maxWidth = Math.max(1, width);
@@ -75,99 +72,63 @@ function wrapDescription(text: string, width: number): string[] {
 export class ChoicePickerComponent extends Container implements Focusable {
   focused = false;
   private readonly opts: ChoicePickerOptions;
-  private selectedIndex: number;
-  private query = '';
+  private readonly list: SearchableList<ChoiceOption>;
 
   constructor(opts: ChoicePickerOptions) {
     super();
     this.opts = opts;
     const currentIdx = opts.options.findIndex((o) => o.value === opts.currentValue);
-    this.selectedIndex = Math.max(currentIdx, 0);
-  }
-
-  private get pageSize(): number {
-    return this.opts.pageSize ?? DEFAULT_PAGE_SIZE;
-  }
-
-  private filteredOptions(): readonly ChoiceOption[] {
-    if (this.query.length === 0) return this.opts.options;
-    return fuzzyFilter(
-      [...this.opts.options],
-      this.query,
-      (o) => `${o.label} ${o.description ?? ''}`,
-    );
+    this.list = new SearchableList({
+      items: opts.options,
+      toSearchText: (o) => `${o.label} ${o.description ?? ''}`,
+      pageSize: opts.pageSize,
+      initialIndex: Math.max(currentIdx, 0),
+      searchable: opts.searchable === true,
+    });
   }
 
   handleInput(data: string): void {
-    const options = this.filteredOptions();
-    const lastIndex = Math.max(0, options.length - 1);
-    const searchable = this.opts.searchable === true;
-
     if (matchesKey(data, Key.escape)) {
-      if (searchable && this.query.length > 0) {
-        this.query = '';
-        this.selectedIndex = 0;
-        return;
-      }
+      if (this.list.clearQuery()) return;
       this.opts.onCancel();
       return;
     }
-    if (matchesKey(data, Key.up)) {
-      this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+    // Left/Right page through the list (this picker has no horizontal control).
+    if (matchesKey(data, Key.left)) {
+      this.list.pageUp();
       return;
     }
-    if (matchesKey(data, Key.down)) {
-      this.selectedIndex = Math.min(lastIndex, this.selectedIndex + 1);
-      return;
-    }
-    if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.right)) {
-      this.selectedIndex = Math.min(lastIndex, this.selectedIndex + this.pageSize);
-      return;
-    }
-    if (matchesKey(data, Key.pageUp) || matchesKey(data, Key.left)) {
-      this.selectedIndex = Math.max(0, this.selectedIndex - this.pageSize);
+    if (matchesKey(data, Key.right)) {
+      this.list.pageDown();
       return;
     }
     if (matchesKey(data, Key.enter)) {
-      const chosen = options[this.selectedIndex];
+      const chosen = this.list.selected();
       if (chosen !== undefined) this.opts.onSelect(chosen.value);
       return;
     }
-    if (!searchable) return;
-    if (matchesKey(data, Key.backspace)) {
-      if (this.query.length > 0) {
-        this.query = this.query.slice(0, -1);
-        this.selectedIndex = 0;
-      }
-      return;
-    }
-    const ch = printableChar(data);
-    if (isPrintableChar(ch)) {
-      this.query += ch;
-      this.selectedIndex = 0;
-    }
+    this.list.handleKey(data);
   }
 
   override render(width: number): string[] {
     const { colors } = this.opts;
     const searchable = this.opts.searchable === true;
-    const options = this.filteredOptions();
-    const view = pageView(options.length, this.selectedIndex, this.pageSize);
-    const selectedIndex = Math.min(this.selectedIndex, Math.max(0, options.length - 1));
+    const view = this.list.view();
+    const options = view.items;
 
     const navParts = ['↑↓ navigate'];
-    if (view.pageCount > 1) navParts.push('←→ page');
+    if (view.page.pageCount > 1) navParts.push('←→ page');
     navParts.push('Enter select', 'Esc cancel');
     const hint = this.opts.hint ?? navParts.join(' · ');
 
     const titleSuffix =
-      searchable && this.query.length === 0 ? chalk.hex(colors.textMuted)('  (type to search)') : '';
+      searchable && view.query.length === 0 ? chalk.hex(colors.textMuted)('  (type to search)') : '';
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(` ${this.opts.title}`) + titleSuffix,
     ];
-    if (searchable && this.query.length > 0) {
-      lines.push(chalk.hex(colors.primary)(` Search: `) + chalk.hex(colors.text)(this.query));
+    if (searchable && view.query.length > 0) {
+      lines.push(chalk.hex(colors.primary)(` Search: `) + chalk.hex(colors.text)(view.query));
     }
     lines.push(chalk.hex(colors.textMuted)(` ${hint}`));
     lines.push('');
@@ -175,9 +136,9 @@ export class ChoicePickerComponent extends Container implements Focusable {
     if (options.length === 0) {
       lines.push(chalk.hex(colors.textMuted)('   No matches'));
     }
-    for (let i = view.start; i < view.end; i++) {
+    for (let i = view.page.start; i < view.page.end; i++) {
       const opt = options[i]!;
-      const isSelected = i === selectedIndex;
+      const isSelected = i === view.selectedIndex;
       const isCurrent = opt.value === this.opts.currentValue;
       const pointer = isSelected ? '❯' : ' ';
       const labelStyle = isSelected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
@@ -196,10 +157,10 @@ export class ChoicePickerComponent extends Container implements Focusable {
     }
 
     lines.push('');
-    if (view.pageCount > 1) {
+    if (view.page.pageCount > 1) {
       lines.push(
         chalk.hex(colors.textMuted)(
-          ` Page ${String(view.page + 1)}/${String(view.pageCount)}`,
+          ` Page ${String(view.page.page + 1)}/${String(view.page.pageCount)}`,
         ),
       );
     }
