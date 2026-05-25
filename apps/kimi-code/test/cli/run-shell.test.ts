@@ -165,6 +165,7 @@ describe('runShell', () => {
       model: undefined,
       outputFormat: undefined,
       prompt: undefined,
+      promptInteractive: undefined,
       skillsDirs: [],
     };
 
@@ -252,6 +253,7 @@ describe('runShell', () => {
         model: undefined,
         outputFormat: undefined,
         prompt: undefined,
+        promptInteractive: undefined,
         skillsDirs: [],
       },
       '1.2.3-test',
@@ -282,6 +284,7 @@ describe('runShell', () => {
         model: undefined,
         outputFormat: undefined,
         prompt: undefined,
+        promptInteractive: undefined,
         skillsDirs: [],
       },
       '1.2.3-test',
@@ -318,6 +321,7 @@ describe('runShell', () => {
         model: undefined,
         outputFormat: undefined,
         prompt: undefined,
+        promptInteractive: undefined,
         skillsDirs: [],
       },
       '1.2.3-test',
@@ -350,6 +354,7 @@ describe('runShell', () => {
         model: undefined,
         outputFormat: undefined,
         prompt: undefined,
+        promptInteractive: undefined,
         skillsDirs: [],
       },
       '1.2.3-test',
@@ -400,6 +405,7 @@ describe('runShell', () => {
         model: undefined,
         outputFormat: undefined,
         prompt: undefined,
+        promptInteractive: undefined,
         skillsDirs: [],
       },
       '1.2.3-test',
@@ -436,6 +442,7 @@ describe('runShell', () => {
           model: undefined,
           outputFormat: undefined,
           prompt: undefined,
+          promptInteractive: undefined,
           skillsDirs: [],
         },
         '1.2.3-test',
@@ -472,6 +479,7 @@ describe('runShell', () => {
           model: undefined,
           outputFormat: undefined,
           prompt: undefined,
+          promptInteractive: undefined,
           skillsDirs: [],
         },
         '1.2.3-test',
@@ -524,6 +532,7 @@ describe('runShell', () => {
           model: undefined,
           outputFormat: undefined,
           prompt: undefined,
+          promptInteractive: undefined,
           skillsDirs: [],
         },
         '1.2.3-test',
@@ -531,5 +540,59 @@ describe('runShell', () => {
       ),
     ).rejects.toThrow('Invalid configuration');
     expect(mocks.tuiStart).not.toHaveBeenCalled();
+  });
+
+  it('forwards promptInteractive as initialCommand in KimiTUIStartupInput', async () => {
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+
+    await runShell(
+      {
+        session: undefined,
+        continue: false,
+        yolo: false,
+        plan: false,
+        model: undefined,
+        outputFormat: undefined,
+        prompt: undefined,
+        promptInteractive: 'hello world',
+        skillsDirs: [],
+      },
+      '1.2.3-test',
+    );
+
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput.initialCommand).toBe('hello world');
+  });
+
+  it('passes undefined initialCommand when promptInteractive is not set', async () => {
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+
+    await runShell(
+      {
+        session: undefined,
+        continue: false,
+        yolo: false,
+        plan: false,
+        model: undefined,
+        outputFormat: undefined,
+        prompt: undefined,
+        promptInteractive: undefined,
+        skillsDirs: [],
+      },
+      '1.2.3-test',
+    );
+
+    const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
+    expect(startupInput.initialCommand).toBeUndefined();
   });
 });

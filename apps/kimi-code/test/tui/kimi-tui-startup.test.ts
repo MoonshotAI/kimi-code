@@ -57,6 +57,7 @@ function makeStartupInput(
       model: undefined,
       outputFormat: undefined,
       prompt: undefined,
+      promptInteractive: undefined,
       skillsDirs: [],
       ...cliOptions,
     },
@@ -674,5 +675,54 @@ describe("KimiTUI startup", () => {
     const driver = makeDriver(harness, makeStartupInput());
 
     await expect(driver.init()).rejects.toThrow("provider config is invalid");
+  });
+
+  it("stores initialCommand from startup input for --prompt-interactive", async () => {
+    const harness = makeHarness();
+    const input = {
+      ...makeStartupInput(),
+      initialCommand: "hello from startup",
+    };
+    const driver = new KimiTUI(harness as never, input) as unknown as {
+      initialCommand: string | undefined;
+    };
+
+    expect(driver.initialCommand).toBe("hello from startup");
+  });
+
+  it("has undefined initialCommand when not provided", async () => {
+    const harness = makeHarness();
+    const input = makeStartupInput();
+    const driver = new KimiTUI(harness as never, input) as unknown as {
+      initialCommand: string | undefined;
+    };
+
+    expect(driver.initialCommand).toBeUndefined();
+  });
+
+  it("pre-fills editor with initialCommand when session or model is not available", () => {
+    const harness = makeHarness();
+    const input = { ...makeStartupInput(), initialCommand: "hello" };
+    const editorSetText = vi.fn();
+    const tui = new KimiTUI(harness as never, input) as unknown as {
+      session: unknown;
+      state: {
+        appState: { model: string };
+        editor: { setText: (text: string) => void };
+      };
+      submitInitialCommand(): void;
+      initialCommand: string | undefined;
+    };
+
+    // Simulate OAuth login required: session undefined, model empty
+    tui.session = undefined;
+    tui.state.appState.model = '';
+    tui.state.editor = { setText: editorSetText };
+
+    tui.submitInitialCommand();
+
+    // Command should be placed in editor, and cleared from the field
+    expect(editorSetText).toHaveBeenCalledWith("hello");
+    expect(tui.initialCommand).toBeUndefined();
   });
 });

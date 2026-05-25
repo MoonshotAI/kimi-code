@@ -211,6 +211,68 @@ describe('CLI options parsing', () => {
     });
   });
 
+  describe('--prompt-interactive / -P', () => {
+    it('parses -P as shell mode with promptInteractive set', () => {
+      const opts = parse(['-P', 'hello world']);
+      expect(opts.promptInteractive).toBe('hello world');
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+
+    it('parses --prompt-interactive=value', () => {
+      const opts = parse(['--prompt-interactive=hello world']);
+      expect(opts.promptInteractive).toBe('hello world');
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+
+    it('rejects empty promptInteractive values', () => {
+      const opts = parse(['-P', '   ']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow('Prompt cannot be empty.');
+    });
+
+    it('rejects --prompt combined with --prompt-interactive', () => {
+      const opts = parse(['-p', 'run', '-P', 'hello']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow('Cannot combine --prompt with --prompt-interactive.');
+    });
+
+    it('allows --prompt-interactive with --yolo', () => {
+      const opts = parse(['-P', 'hello', '--yolo']);
+      expect(opts.promptInteractive).toBe('hello');
+      expect(opts.yolo).toBe(true);
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+
+    it('allows --prompt-interactive with --plan', () => {
+      const opts = parse(['-P', 'hello', '--plan']);
+      expect(opts.promptInteractive).toBe('hello');
+      expect(opts.plan).toBe(true);
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+
+    it('rejects --prompt-interactive with bare --session (no id)', () => {
+      const opts = parse(['-P', 'hello', '--session']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow(
+        'Cannot use --prompt-interactive with --session without an id.',
+      );
+    });
+
+    it('allows --prompt-interactive with a concrete --session id', () => {
+      const opts = parse(['-P', 'hello', '--session', 'ses_123']);
+      expect(opts.promptInteractive).toBe('hello');
+      expect(opts.session).toBe('ses_123');
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+
+    it('allows --prompt-interactive with --continue', () => {
+      const opts = parse(['-P', 'hello', '--continue']);
+      expect(opts.promptInteractive).toBe('hello');
+      expect(opts.continue).toBe(true);
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+  });
+
   describe('--skills-dir', () => {
     it('collects repeated skill directories', () => {
       expect(parse(['--skills-dir', '/one', '--skills-dir=/two']).skillsDirs).toEqual([

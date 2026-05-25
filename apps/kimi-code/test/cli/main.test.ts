@@ -72,6 +72,7 @@ function defaultOpts(): CLIOptions {
     model: undefined,
     outputFormat: undefined,
     prompt: undefined,
+    promptInteractive: undefined,
     skillsDirs: [],
   };
 }

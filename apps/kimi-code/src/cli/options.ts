@@ -9,6 +9,7 @@ export interface CLIOptions {
   model: string | undefined;
   outputFormat: PromptOutputFormat | undefined;
   prompt: string | undefined;
+  promptInteractive: string | undefined;
   skillsDirs: string[];
 }
 
@@ -27,7 +28,16 @@ export class OptionConflictError extends Error {
 export function validateOptions(opts: CLIOptions): ValidatedOptions {
   const prompt = opts.prompt;
   const promptMode = prompt !== undefined;
+  const promptInteractive = opts.promptInteractive;
+  const promptInteractiveMode = promptInteractive !== undefined;
+
+  if (promptMode && promptInteractiveMode) {
+    throw new OptionConflictError('Cannot combine --prompt with --prompt-interactive.');
+  }
   if (promptMode && prompt.trim().length === 0) {
+    throw new OptionConflictError('Prompt cannot be empty.');
+  }
+  if (promptInteractiveMode && promptInteractive.trim().length === 0) {
     throw new OptionConflictError('Prompt cannot be empty.');
   }
   if (opts.model !== undefined && opts.model.trim().length === 0) {
@@ -44,6 +54,11 @@ export function validateOptions(opts: CLIOptions): ValidatedOptions {
   }
   if (promptMode && opts.session === '') {
     throw new OptionConflictError('Cannot use --session without an id in prompt mode.');
+  }
+  if (promptInteractiveMode && opts.session === '') {
+    throw new OptionConflictError(
+      'Cannot use --prompt-interactive with --session without an id.',
+    );
   }
   if (opts.continue && opts.session !== undefined) {
     throw new OptionConflictError('Cannot combine --continue, --session.');

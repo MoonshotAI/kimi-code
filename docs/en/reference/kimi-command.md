@@ -19,6 +19,7 @@ The table below lists all options supported by the `kimi` main command. All flag
 | `--continue` | `-C` | Continue the most recent session in the current working directory, without manually specifying an ID. |
 | `--model <model>` | `-m` | Use a model alias for this invocation. When omitted, new sessions use `default_model` from the config file, and resumed sessions use the session's current model. |
 | `--prompt <prompt>` | `-p` | Run one prompt non-interactively and stream assistant output to stdout. This mode uses `auto` permission for tool calls and does not open the TUI. |
+| `--prompt-interactive <prompt>` | `-P` | Send an initial prompt to the agent, then keep the interactive session open for follow-up conversation. Cannot be combined with `--prompt` or bare `--session` without an ID. |
 | `--output-format <format>` | | Set the non-interactive output format. Supported values are `text` and `stream-json`. Only valid with `--prompt`; defaults to `text`. |
 | `--yolo` | `-y` | Auto-approve ordinary tool calls, skipping approval requests; Plan mode `Bash` approval and Plan mode exit approval are not skipped. |
 | `--plan` | | Start a new session in Plan mode, where the AI favors read-only tools for exploration and planning and can write the current plan file; Plan mode `Bash` is handled separately according to the permission mode. |
@@ -37,8 +38,9 @@ The following combinations are rejected at startup:
 - `--continue` and `--session` are mutually exclusive: both mean "resume a previous session" and overlap in meaning.
 - `--yolo` cannot be combined with `--continue` or `--session`: when resuming a session, the original session's approval settings are preserved. This rule only applies to interactive mode; in `--prompt` mode, `--yolo` is rejected earlier because it is mutually exclusive with `--prompt`.
 - `--plan` cannot be combined with `--continue` or `--session`: Plan mode only applies to new sessions.
-- `--prompt` cannot be combined with `--yolo` or `--plan`: non-interactive mode always uses `auto` permission and does not enter Plan mode.
+- `--prompt` cannot be combined with `--yolo`, `--plan`, or `--prompt-interactive`: non-interactive mode always uses `auto` permission and does not enter Plan mode.
 - `--prompt` can be combined with `--continue` or `--session <id>` with an ID; bare `--session` without an ID would open the interactive picker and therefore cannot be used in non-interactive mode.
+- `--prompt-interactive` cannot be combined with `--prompt` or bare `--session` without an ID. Can be combined with `--yolo`, `--plan`, `--continue`, or `--session <id>` with an ID.
 - `--output-format` can only be used with `--prompt`; the interactive TUI does not support writing the full event stream as stdout JSONL.
 
 If you need to force YOLO or Plan mode while resuming a session, switch into them from inside the interactive session via slash commands instead.
@@ -110,6 +112,22 @@ kimi -p "List changed files" --output-format stream-json
 ```
 
 In `stream-json` mode, each stdout line is one JSON object. Ordinary replies are emitted as assistant messages. If the model calls tools, the output first includes an assistant message with `tool_calls`, then the corresponding tool message, followed by later assistant messages. Thinking content is not written to JSONL; tool progress and the resume-session hint still go to stderr.
+
+## Prompt then interact
+
+Use `-P` to send an initial prompt and stay in the interactive TUI for follow-up conversation:
+
+```sh
+kimi -P "Analyze this project's structure"
+```
+
+The initial prompt runs immediately after startup, like `-p`, but the shell remains open afterward so you can continue the conversation. You can combine `-P` with `-y` (YOLO mode), `--plan`, `-m <model>`, `-C`, or `-S <session-id>`. The prompt text supports the same content as a normal message: plain text and file mentions.
+
+`-P` differs from `-p` in several ways:
+
+- **Stays interactive**: after the first response, the prompt stays open — unlike `-p` which exits.
+- **Runs in the TUI**: all thinking, tool progress, and approvals render in the full TUI interface.
+- **Retains session**: you can use slash commands, switch models, or start a new session just like starting `kimi` without arguments.
 
 ## Subcommands
 

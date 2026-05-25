@@ -118,6 +118,7 @@ function opts(overrides: Partial<Parameters<typeof runPrompt>[0]> = {}) {
     model: undefined,
     outputFormat: undefined,
     prompt: 'say hello',
+    promptInteractive: undefined,
     skillsDirs: [],
     ...overrides,
   };

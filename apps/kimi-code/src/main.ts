@@ -68,6 +68,7 @@ const MIGRATE_CLI_OPTIONS: CLIOptions = {
   model: undefined,
   outputFormat: undefined,
   prompt: undefined,
+  promptInteractive: undefined,
   skillsDirs: [],
 };
 

@@ -245,6 +245,8 @@ export interface KimiTUIStartupInput {
   readonly migrationPlan?: MigrationPlan | null;
   /** When true, run only the migration screen, then exit (the `kimi migrate` command). */
   readonly migrateOnly?: boolean;
+  /** Initial command to send after startup (--prompt-interactive). */
+  readonly initialCommand?: string;
 }
 
 export interface PendingExit {
@@ -564,6 +566,8 @@ export class KimiTUI {
   private readonly migrationPlan: MigrationPlan | null;
   // When true, the migration screen is the whole session: run it, then exit.
   private readonly migrateOnly: boolean;
+  // Initial command supplied via --prompt-interactive, sent after startup.
+  private initialCommand: string | undefined;
 
   public onExit?: (exitCode?: number) => Promise<void>;
 
@@ -592,6 +596,7 @@ export class KimiTUI {
     this.options = tuiOptions;
     this.migrationPlan = startupInput.migrationPlan ?? null;
     this.migrateOnly = startupInput.migrateOnly ?? false;
+    this.initialCommand = startupInput.initialCommand;
     this.state = createTUIState(tuiOptions);
     this.gitLsFilesCache = createGitLsFilesCache(tuiOptions.initialAppState.workDir);
 
@@ -735,6 +740,18 @@ export class KimiTUI {
     }
   }
 
+  // Sends the initial command from --prompt-interactive after startup completes.
+  private submitInitialCommand(): void {
+    if (!this.initialCommand || this.initialCommand.trim().length === 0) return;
+    const command = this.initialCommand;
+    this.initialCommand = undefined;
+    if (!this.session || this.state.appState.model.trim().length === 0) {
+      this.state.editor.setText(command);
+      return;
+    }
+    this.handleUserInput(command);
+  }
+
   // Creates/resumes the session, renders the Welcome banner, configures
   // autocomplete and input history, and mounts the editor. Returns whether
   // transcript history should be replayed.
@@ -786,6 +803,7 @@ export class KimiTUI {
       this.refreshSessionTitle();
     }
     void this.refreshSkillCommands(this.session);
+    this.submitInitialCommand();
   }
 
   // Warns tmux users when modified Enter shortcuts are likely to be swallowed.

@@ -94,6 +94,7 @@ export async function runShell(
     resolvedTheme,
     migrationPlan,
     migrateOnly: runOptions.migrateOnly,
+    initialCommand: opts.promptInteractive,
   });
 
   let firstLaunch = false;

@@ -54,6 +54,12 @@ export function createProgram(
     )
     .addOption(
       new Option(
+        '-P, --prompt-interactive <prompt>',
+        'Send prompt to the agent then keep the interactive session open.',
+      ),
+    )
+    .addOption(
+      new Option(
         '--output-format <format>',
         'Output format for prompt mode. Defaults to text.',
       ).choices(['text', 'stream-json']),
@@ -88,6 +94,7 @@ export function createProgram(
       model: raw['model'] as string | undefined,
       outputFormat: raw['outputFormat'] as CLIOptions['outputFormat'],
       prompt: raw['prompt'] as string | undefined,
+      promptInteractive: raw['promptInteractive'] as string | undefined,
       skillsDirs: raw['skillsDir'] as string[],
     };
 

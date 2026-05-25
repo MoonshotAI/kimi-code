@@ -19,6 +19,7 @@ kimi <subcommand> [options]
 | `--continue` | `-C` | 继续当前工作目录下最近一次的会话，无需手动指定 ID。 |
 | `--model <model>` | `-m` | 为本次启动指定模型别名。省略时，新会话使用配置文件中的 `default_model`，恢复会话使用会话当前模型。 |
 | `--prompt <prompt>` | `-p` | 非交互执行单次 prompt，并把 Assistant 输出流式写到 stdout。该模式会使用 `auto` 权限处理工具调用，不会打开 TUI。 |
+| `--prompt-interactive <prompt>` | `-P` | 向 Agent 发送一条初始 prompt，然后保持交互式会话继续对话。不能与 `--prompt` 或不带 ID 的 `--session` 同时使用。 |
 | `--output-format <format>` | | 设置非交互输出格式，支持 `text` 与 `stream-json`。仅可与 `--prompt` 一起使用，默认 `text`。 |
 | `--yolo` | `-y` | 自动批准普通工具调用，跳过审批请求；Plan 模式中的 `Bash` 审批和退出审批不会被跳过。 |
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划，可以写入当前计划文件；Plan 模式中的 `Bash` 按权限模式单独处理。 |
@@ -37,8 +38,9 @@ kimi <subcommand> [options]
 - `--continue` 与 `--session` 互斥：两者都表示"恢复历史会话"，含义重叠。
 - `--yolo` 不能与 `--continue` 或 `--session` 同时使用：恢复会话时会沿用原会话的审批设置。此规则仅适用于交互式模式；在 `--prompt` 模式下，`--yolo` 已因与 `--prompt` 互斥而被更早拦截。
 - `--plan` 不能与 `--continue` 或 `--session` 同时使用：Plan 模式只对新会话生效。
-- `--prompt` 不能与 `--yolo` 或 `--plan` 同时使用：非交互模式固定使用 `auto` 权限，并且不进入 Plan 模式。
+- `--prompt` 不能与 `--yolo`、`--plan` 或 `--prompt-interactive` 同时使用：非交互模式固定使用 `auto` 权限，并且不进入 Plan 模式。
 - `--prompt` 可以与 `--continue` 或带 ID 的 `--session <id>` 一起使用；不带 ID 的 `--session` 会尝试打开选择器，因此不能用于非交互模式。
+- `--prompt-interactive` 不能与 `--prompt` 或不带 ID 的 `--session` 同时使用。可以与 `--yolo`、`--plan`、`--continue` 或带 ID 的 `--session <id>` 组合使用。
 - `--output-format` 只能与 `--prompt` 一起使用；交互式 TUI 不支持把完整事件流写成 stdout JSONL。
 
 如果需要在恢复会话时强制使用 YOLO 或 Plan 模式，请改在交互式会话内通过斜杠命令切换。
@@ -110,6 +112,22 @@ kimi -p "List changed files" --output-format stream-json
 ```
 
 `stream-json` 模式下，stdout 每行都是一个 JSON 对象。普通回复会输出 Assistant 消息；如果模型调用工具，会先输出带 `tool_calls` 的 Assistant 消息，再输出对应的 Tool 消息，最后继续输出后续 Assistant 消息。thinking 内容不会写入 JSONL；工具进度和恢复会话提示仍然写到 stderr。
+
+## 发送 prompt 后保持交互
+
+需要先发送一条初始 prompt 然后留在交互式 TUI 中继续对话时，使用 `-P`：
+
+```sh
+kimi -P "分析这个项目的结构"
+```
+
+初始 prompt 在启动后立即执行，类似 `-p`，但 shell 会保持打开状态，方便后续追问。`-P` 可以与 `-y`（YOLO 模式）、`--plan`、`-m <model>`、`-C` 或 `-S <session-id>` 组合使用。prompt 文本支持与普通消息相同的内容：纯文本和文件提及。
+
+`-P` 与 `-p` 的主要区别：
+
+- **保持交互**：首次响应后，prompt 保持打开，而 `-p` 会退出。
+- **在 TUI 中运行**：所有 thinking、工具进度和审批都在完整的 TUI 界面中呈现。
+- **保留会话**：可以像不带参数启动 `kimi` 一样使用斜杠命令、切换模型或开始新会话。
 
 ## 子命令
 
