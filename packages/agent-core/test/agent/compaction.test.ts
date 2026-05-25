@@ -435,6 +435,48 @@ describe('Agent compaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('retries compaction responses with empty summaries before applying context', async () => {
+    vi.useFakeTimers();
+    const firstEmptySummary = deferred<void>();
+    let attempts = 0;
+    const generate: GenerateFn = async () => {
+      attempts += 1;
+      if (attempts <= 2) {
+        if (attempts === 1) firstEmptySummary.resolve();
+        return textResult(attempts === 1 ? '' : '   \n');
+      }
+      return textResult('Recovered compacted summary.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
+    appendExchange(ctx, 2, 'recent user two', 'recent assistant two', 80);
+    const compacted = once(ctx, 'context.apply_compaction');
+
+    await ctx.rpc.beginCompaction({});
+    await firstEmptySummary.promise;
+    await vi.advanceTimersByTimeAsync(10_000);
+    await compacted;
+
+    expect(attempts).toBe(3);
+    expect(compactHistory(ctx)).toEqual([
+      { role: 'assistant', text: 'Recovered compacted summary.' },
+      { role: 'user', text: 'recent user two' },
+      { role: 'assistant', text: 'recent assistant two' },
+    ]);
+    expect(
+      ctx.allEvents.filter((event) => event.event === 'full_compaction.complete'),
+    ).toEqual([
+      expect.objectContaining({
+        args: expect.objectContaining({ summary: 'Recovered compacted summary.' }),
+      }),
+    ]);
+    await ctx.expectResumeMatches();
+  });
+
   it('waits before retrying compaction generation after a retryable failure', async () => {
     vi.useFakeTimers();
     const firstAttemptFailed = deferred<void>();
