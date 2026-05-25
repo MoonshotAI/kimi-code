@@ -286,10 +286,6 @@ describe('Agent resume', () => {
 class RecordingAgentPersistence extends InMemoryAgentRecordPersistence {
   readonly appended: AgentRecord[] = [];
 
-  constructor(events: readonly AgentRecord[]) {
-    super(events);
-  }
-
   override append(input: AgentRecord): void {
     this.appended.push(input);
     super.append(input);
