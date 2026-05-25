@@ -1,3 +1,4 @@
+// Wire protocol versions currently support only the `number.number` format.
 export const AGENT_WIRE_PROTOCOL_VERSION = '1.0';
 
 export interface WireMigrationRecord {
