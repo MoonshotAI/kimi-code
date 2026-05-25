@@ -4,14 +4,27 @@ import type { ExecutableToolResult } from '../../loop/types';
 
 import { canonicalTelemetryArgs } from './canonical-args';
 
-const CROSS_STEP_DEDUP_TRIGGER_COUNT = 7;
-
-const REMINDER_TEXT =
+const REMINDER_TEXT_1 =
   '\n\n<system-reminder>\n' +
   'You are repeating the exact same tool call with identical parameters.' +
   ' Please carefully analyze the previous result. If the task is not yet complete,' +
   ' try a different method or parameters instead of repeating the same call.' +
   '\n</system-reminder>';
+
+function makeReminderText2(toolName: string, repeatCount: number, args: unknown): string {
+  const argsStr = canonicalTelemetryArgs(args);
+  return (
+    '\n\n<system-reminder>\n' +
+    'You have repeatedly called the same tool with identical parameters many times.\n' +
+    'Repeated tool call detected:\n' +
+    `- tool: ${toolName}\n` +
+    `- repeated_times: ${String(repeatCount)}\n` +
+    `- arguments: ${argsStr}\n` +
+    'The previous repeated calls did not make progress. Do not call this exact same tool with the exact same arguments again.\n' +
+    'Carefully inspect the latest tool result and choose a different next action, different parameters, or finish the task if enough evidence has been gathered.' +
+    '\n</system-reminder>'
+  );
+}
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -30,18 +43,18 @@ function makeKey(toolName: string, args: unknown): string {
   return `${toolName} ${canonicalTelemetryArgs(args)}`;
 }
 
-function appendReminder(result: ExecutableToolResult): ExecutableToolResult {
+function appendReminder(result: ExecutableToolResult, reminderText: string): ExecutableToolResult {
   const output = result.output;
   let newOutput: string | ContentPart[];
   if (typeof output === 'string') {
-    newOutput = output + REMINDER_TEXT;
+    newOutput = output + reminderText;
   } else {
     const arr: ContentPart[] = [...output];
     const last = arr.at(-1);
     if (last !== undefined && last.type === 'text') {
-      arr[arr.length - 1] = { type: 'text', text: last.text + REMINDER_TEXT };
+      arr[arr.length - 1] = { type: 'text', text: last.text + reminderText };
     } else {
-      arr.push({ type: 'text', text: REMINDER_TEXT });
+      arr.push({ type: 'text', text: reminderText });
     }
     newOutput = arr;
   }
@@ -67,10 +80,10 @@ const DEDUP_PLACEHOLDER_RESULT: ExecutableToolResult = { output: '' };
  * Two behaviours are layered:
  * - Same-step dedup: a duplicate `(toolName, args)` issued in the same LLM step
  *   reuses the original call's result instead of executing the tool twice.
- * - Cross-step dedup: when the exact same call is repeated for
- *   `CROSS_STEP_DEDUP_TRIGGER_COUNT` consecutive occurrences (counting across
- *   steps), the result returned to the model is suffixed with a system reminder
- *   nudging it to try a different approach.
+ * - Cross-step dedup: when the exact same call is repeated consecutively
+ *   across steps, the result returned to the model is suffixed with a system
+ *   reminder at specific streak thresholds (3, 5, and 8) to nudge the model
+ *   to try a different approach.
  */
 export class ToolCallDeduplicator {
   private stepDeferreds = new Map<string, Deferred<ExecutableToolResult>>();
@@ -150,8 +163,8 @@ export class ToolCallDeduplicator {
    */
   async finalizeResult(
     toolCallId: string,
-    _toolName: string,
-    _args: unknown,
+    toolName: string,
+    args: unknown,
     result: ExecutableToolResult,
   ): Promise<ExecutableToolResult> {
     // Use the key recorded at registration time, NOT a fresh key from the args
@@ -181,8 +194,12 @@ export class ToolCallDeduplicator {
       }
     }
 
-    const finalResult =
-      streak >= CROSS_STEP_DEDUP_TRIGGER_COUNT ? appendReminder(result) : result;
+    let finalResult = result;
+    if (streak === 3) {
+      finalResult = appendReminder(result, REMINDER_TEXT_1);
+    } else if (streak === 5 || streak === 8) {
+      finalResult = appendReminder(result, makeReminderText2(toolName, streak, args));
+    }
 
     this.stepDeferreds.get(key)?.resolve(finalResult);
     return finalResult;
@@ -190,6 +207,6 @@ export class ToolCallDeduplicator {
 }
 
 export const __testing = {
-  CROSS_STEP_DEDUP_TRIGGER_COUNT,
-  REMINDER_TEXT,
+  REMINDER_TEXT_1,
+  makeReminderText2,
 };

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { ExecutableToolResult } from '../../../src/loop/types';
 import { ToolCallDeduplicator, __testing } from '../../../src/agent/turn/tool-dedup';
 
-const { REMINDER_TEXT, CROSS_STEP_DEDUP_TRIGGER_COUNT } = __testing;
+const { REMINDER_TEXT_1, makeReminderText2 } = __testing;
 
 function okResult(text: string): ExecutableToolResult {
   return { output: text };
@@ -73,10 +73,10 @@ describe('ToolCallDeduplicator', () => {
   });
 
   describe('cross-step streak', () => {
-    it(`does not inject reminder below ${String(CROSS_STEP_DEDUP_TRIGGER_COUNT)} consecutive`, async () => {
+    it('does not inject reminder below 3 consecutive', async () => {
       const dedup = new ToolCallDeduplicator();
       let last: ExecutableToolResult | undefined;
-      for (let i = 0; i < CROSS_STEP_DEDUP_TRIGGER_COUNT - 1; i += 1) {
+      for (let i = 0; i < 2; i += 1) {
         dedup.beginStep();
         last = await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
         dedup.endStep();
@@ -85,22 +85,72 @@ describe('ToolCallDeduplicator', () => {
       expect(last!.output as string).not.toContain('<system-reminder>');
     });
 
-    it(`injects reminder at exactly ${String(CROSS_STEP_DEDUP_TRIGGER_COUNT)} consecutive`, async () => {
+    it('injects reminder1 at exactly 3 consecutive', async () => {
       const dedup = new ToolCallDeduplicator();
       let last: ExecutableToolResult | undefined;
-      for (let i = 0; i < CROSS_STEP_DEDUP_TRIGGER_COUNT; i += 1) {
+      for (let i = 0; i < 3; i += 1) {
         dedup.beginStep();
         last = await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
         dedup.endStep();
       }
       expect(last!.output as string).toContain('<system-reminder>');
       expect(last!.output as string).toContain('repeating the exact same tool call');
+      expect(last!.output as string).not.toContain('repeated_times');
+    });
+
+    it('does not inject reminder at 4 consecutive', async () => {
+      const dedup = new ToolCallDeduplicator();
+      let last: ExecutableToolResult | undefined;
+      for (let i = 0; i < 4; i += 1) {
+        dedup.beginStep();
+        last = await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
+        dedup.endStep();
+      }
+      expect(last!.output as string).not.toContain('<system-reminder>');
+    });
+
+    it('injects reminder2 at exactly 5 consecutive', async () => {
+      const dedup = new ToolCallDeduplicator();
+      let last: ExecutableToolResult | undefined;
+      for (let i = 0; i < 5; i += 1) {
+        dedup.beginStep();
+        last = await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
+        dedup.endStep();
+      }
+      expect(last!.output as string).toContain('<system-reminder>');
+      expect(last!.output as string).toContain('repeated_times: 5');
+      expect(last!.output as string).toContain('tool: Read');
+      expect(last!.output as string).toContain('arguments:');
+    });
+
+    it('does not inject reminder at 6 or 7 consecutive', async () => {
+      const dedup = new ToolCallDeduplicator();
+      let last: ExecutableToolResult | undefined;
+      for (let i = 0; i < 7; i += 1) {
+        dedup.beginStep();
+        last = await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
+        dedup.endStep();
+      }
+      expect(last!.output as string).not.toContain('<system-reminder>');
+    });
+
+    it('injects reminder2 at exactly 8 consecutive', async () => {
+      const dedup = new ToolCallDeduplicator();
+      let last: ExecutableToolResult | undefined;
+      for (let i = 0; i < 8; i += 1) {
+        dedup.beginStep();
+        last = await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
+        dedup.endStep();
+      }
+      expect(last!.output as string).toContain('<system-reminder>');
+      expect(last!.output as string).toContain('repeated_times: 8');
+      expect(last!.output as string).toContain('tool: Read');
     });
 
     it('resets streak when a different call is interleaved', async () => {
       const dedup = new ToolCallDeduplicator();
-      // 6× Read({p:1}) — should NOT trigger yet
-      for (let i = 0; i < 6; i += 1) {
+      // 2× Read({p:1}) — should NOT trigger yet
+      for (let i = 0; i < 2; i += 1) {
         dedup.beginStep();
         await runOriginal(dedup, `a${String(i)}`, 'Read', { p: 1 }, okResult('R'));
         dedup.endStep();
@@ -116,15 +166,15 @@ describe('ToolCallDeduplicator', () => {
       expect(last.output as string).not.toContain('<system-reminder>');
     });
 
-    it('same-step dups inherit the reminder when streak triggers on original', async () => {
+    it('same-step dups inherit reminder1 when streak triggers on original', async () => {
       const dedup = new ToolCallDeduplicator();
-      // Build streak up to N-1 across previous steps.
-      for (let i = 0; i < CROSS_STEP_DEDUP_TRIGGER_COUNT - 1; i += 1) {
+      // Build streak up to 2 across previous steps.
+      for (let i = 0; i < 2; i += 1) {
         dedup.beginStep();
         await runOriginal(dedup, `p${String(i)}`, 'Read', { p: 1 }, okResult('R'));
         dedup.endStep();
       }
-      // Next step: same call appears twice. First is the original (triggers reminder),
+      // Next step: same call appears twice. First is the original (triggers reminder1 at streak=3),
       // second is a same-step dup that should inherit it.
       dedup.beginStep();
       const original = await runOriginal(
@@ -140,18 +190,20 @@ describe('ToolCallDeduplicator', () => {
       dedup.endStep();
 
       expect(original.output as string).toContain('<system-reminder>');
+      expect(original.output as string).toContain('repeating the exact same tool call');
       expect(finalDup.output as string).toContain('<system-reminder>');
+      expect(finalDup.output as string).toContain('repeating the exact same tool call');
     });
 
     it('same-step spam alone does not trigger reminder', async () => {
       const dedup = new ToolCallDeduplicator();
-      // 7 occurrences of the same call within a single step, but no prior
+      // 8 occurrences of the same call within a single step, but no prior
       // streak — the trigger is about sustained behaviour across steps, not
       // intra-step spam. Same-step dedup already short-circuits execution.
       dedup.beginStep();
       const cached = dedup.checkSameStep('orig', 'Read', { p: 1 });
       expect(cached).toBeNull();
-      for (let i = 0; i < CROSS_STEP_DEDUP_TRIGGER_COUNT - 1; i += 1) {
+      for (let i = 0; i < 7; i += 1) {
         dedup.checkSameStep(`dup${String(i)}`, 'Read', { p: 1 });
       }
       const final = await dedup.finalizeResult('orig', 'Read', { p: 1 }, okResult('R'));
@@ -160,13 +212,13 @@ describe('ToolCallDeduplicator', () => {
   });
 
   describe('reminder injection into ContentPart[] outputs', () => {
-    it('appends to a trailing text part', async () => {
+    it('appends reminder1 to a trailing text part at streak 3', async () => {
       const dedup = new ToolCallDeduplicator();
       const arrayResult: ExecutableToolResult = {
         output: [{ type: 'text', text: 'hello' }],
       };
-      // Force streak = trigger by running N-1 prior steps then this one.
-      for (let i = 0; i < CROSS_STEP_DEDUP_TRIGGER_COUNT - 1; i += 1) {
+      // Build streak up to 2 prior steps then this one (streak=3).
+      for (let i = 0; i < 2; i += 1) {
         dedup.beginStep();
         await runOriginal(dedup, `p${String(i)}`, 'X', {}, okResult('R'));
         dedup.endStep();
@@ -177,7 +229,27 @@ describe('ToolCallDeduplicator', () => {
       const arr = final.output as Array<{ type: string; text: string }>;
       expect(arr).toHaveLength(1);
       expect(arr[0]!.type).toBe('text');
-      expect(arr[0]!.text).toBe('hello' + REMINDER_TEXT);
+      expect(arr[0]!.text).toBe('hello' + REMINDER_TEXT_1);
+    });
+
+    it('appends reminder2 to a trailing text part at streak 5', async () => {
+      const dedup = new ToolCallDeduplicator();
+      const arrayResult: ExecutableToolResult = {
+        output: [{ type: 'text', text: 'hello' }],
+      };
+      // Build streak up to 4 prior steps then this one (streak=5).
+      for (let i = 0; i < 4; i += 1) {
+        dedup.beginStep();
+        await runOriginal(dedup, `p${String(i)}`, 'X', { a: 1 }, okResult('R'));
+        dedup.endStep();
+      }
+      dedup.beginStep();
+      const final = await runOriginal(dedup, 'final', 'X', { a: 1 }, arrayResult);
+      dedup.endStep();
+      const arr = final.output as Array<{ type: string; text: string }>;
+      expect(arr).toHaveLength(1);
+      expect(arr[0]!.type).toBe('text');
+      expect(arr[0]!.text).toBe('hello' + makeReminderText2('X', 5, { a: 1 }));
     });
 
     it('pushes a new text part when trailing part is non-text', async () => {
@@ -185,7 +257,8 @@ describe('ToolCallDeduplicator', () => {
       const arrayResult: ExecutableToolResult = {
         output: [{ type: 'image_url', imageUrl: { url: 'data:foo' } }],
       };
-      for (let i = 0; i < CROSS_STEP_DEDUP_TRIGGER_COUNT - 1; i += 1) {
+      // Build streak to 3.
+      for (let i = 0; i < 2; i += 1) {
         dedup.beginStep();
         await runOriginal(dedup, `p${String(i)}`, 'X', {}, okResult('R'));
         dedup.endStep();
@@ -197,12 +270,13 @@ describe('ToolCallDeduplicator', () => {
       expect(arr).toHaveLength(2);
       expect(arr[0]!.type).toBe('image_url');
       expect(arr[1]!.type).toBe('text');
-      expect(arr[1]!.text).toBe(REMINDER_TEXT);
+      expect(arr[1]!.text).toBe(REMINDER_TEXT_1);
     });
 
     it('preserves isError flag when injecting reminder', async () => {
       const dedup = new ToolCallDeduplicator();
-      for (let i = 0; i < CROSS_STEP_DEDUP_TRIGGER_COUNT - 1; i += 1) {
+      // Build streak to 3.
+      for (let i = 0; i < 2; i += 1) {
         dedup.beginStep();
         await runOriginal(dedup, `p${String(i)}`, 'X', {}, errResult('boom'));
         dedup.endStep();
