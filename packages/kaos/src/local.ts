@@ -58,7 +58,7 @@ class LocalProcess implements KaosProcess {
     this.pid = child.pid ?? -1;
 
     this._exitPromise = new Promise<number>((resolve, reject) => {
-      child.on('close', (code: number | null) => {
+      child.on('exit', (code: number | null) => {
         this._exitCode = code ?? -1;
         resolve(this._exitCode);
       });
