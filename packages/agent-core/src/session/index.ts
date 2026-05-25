@@ -194,9 +194,10 @@ export class Session {
     });
     if (keepAliveOnExit) return;
     await Promise.all(
-      Array.from(this.agents.values(), (agent) =>
-        agent.background.stopAll('Session closed'),
-      ),
+      Array.from(this.agents.values(), async (agent) => {
+        await agent.background.stopAll('Session closed');
+        await agent.background.settleTerminalNotifications();
+      }),
     );
   }
 
