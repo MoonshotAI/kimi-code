@@ -13,6 +13,8 @@ body:
 
         Please try to include as much information as possible.
 
+        If you plan to submit a fix: link this issue in your PR. Small, reproducible bugs can go straight to a PR; for broader or uncertain fixes, wait for maintainer feedback first.
+
   - type: input
     id: version
     attributes:

@@ -4,10 +4,24 @@ Thanks for taking the time to contribute! This project moves quickly, and though
 
 ## Before You Start
 
-- Open an issue or discussion before making changes larger than ~100 lines so we can align on direction early.
-- We only merge PRs that are aligned with the roadmap — drive-by refactors without context are unlikely to land.
-- Code quality bar: as good as code written by a strong human engineer or a competent coding agent. We hold AI-assisted contributions to the same standard as hand-written ones.
-- You must understand the code you submit. If you cannot explain what changed, how it behaves at the edges, and why it fits this codebase, the PR is not ready for review.
+Kimi Code already has opinions on CLI/TUI behavior, agent workflows, and public APIs. If your change shifts that direction, open an issue first so we can align before you invest time in a PR.
+
+We hold AI-assisted contributions to the same standard as hand-written ones. **You should understand what you submit** — what changed, how it behaves at the edges, and why it fits this codebase. If you cannot explain that, the PR is not ready for review.
+
+We only merge PRs aligned with the roadmap. Drive-by refactors without context are unlikely to land.
+
+**Discuss first** — open an issue before coding. PRs without prior discussion may be closed without review:
+
+- New features or user-visible behavior changes (regardless of size)
+- Refactors or other changes larger than ~100 lines
+- Public API or compatibility changes
+- Bug fixes where the cause or fix approach is still unclear
+
+**Can open a PR directly** — link an existing issue when there is one:
+
+- Clear, reproducible bug fixes with a focused diff
+- Typos, documentation-only changes, and small CI/build fixes
+- Small changes that clearly match an existing issue or maintainer request
 
 ## Project Layout
 
@@ -66,35 +80,13 @@ This repo uses [changesets](https://github.com/changesets/changesets) to manage 
 - Every PR that affects release artifacts (code, behavior, public API) **must** include a changeset.
 - Docs-only, test-only, or CI-only PRs may skip changesets.
 - Generate one with `pnpm changeset` and follow the prompts (which packages are touched, which bump level).
-- For repo-specific conventions, see `.changeset/README.md`.
+- For repo-specific conventions on package selection and bump levels, see `.changeset/README.md`. When working in this repo with coding agents, use the `gen-changesets` skill.
 
-## Pull Request Checklist
+## Pull Requests
 
-Before requesting review, make sure your PR ticks the following:
+Use the [PR template](.github/pull_request_template.md) when opening a pull request. Fill in each section so reviewers can evaluate the change without re-deriving intent from the diff alone.
 
-- [ ] Linked an issue (for non-trivial changes)
-- [ ] PR title follows Conventional Commits
-- [ ] Added or updated tests
-- [ ] Added a changeset if the PR affects release artifacts
-- [ ] Ran `pnpm lint && pnpm typecheck && pnpm test` locally
-- [ ] Updated user-facing docs in `docs/` if behavior changed
-
-The `.github/pull_request_template.md` checklist is a shorter subset of this — both must pass.
-
-## Pull Request Description
-
-Review time is limited, and AI tools can generate changes much faster than maintainers can review them. A PR description should make the change easy to evaluate, not just summarize the diff.
-
-Every non-trivial PR should clearly explain:
-
-- Problem: what user-visible bug, limitation, or need this PR addresses.
-- Cause: for bug fixes, why the problem happened. Point to the relevant code path when possible.
-- Solution: what changed and why this approach fits the existing design.
-- Behavior: what users, CLI output, docs, APIs, or compatibility guarantees are affected.
-- Verification: which tests, checks, or manual steps you ran, with enough detail for reviewers to trust the result.
-- Release notes: whether docs and changesets were updated, or why they are not needed.
-
-AI-assisted PRs are welcome only when a human has reviewed, edited, tested, and understood the result. Do not submit bulk generated code, generic PR text, or tests that do not prove the behavior.
+PR titles must follow [Conventional Commits](#commit-convention); CI runs `pnpm lint`, `pnpm typecheck`, and `pnpm test` on every PR. Update user-facing docs in `docs/` when behavior changes — use the `gen-docs` skill when working with coding agents.
 
 ## Code Style
 
