@@ -11,61 +11,41 @@ import {
   estimateTokensForTools,
 } from './tokens';
 
-/**
- * Desired completion-token budget for the next LLM step.
- *
- * The budget is a request, not a guarantee: it is clamped against the
- * current input size and the model's context window before being applied
- * to the provider. This avoids two failure modes for Kimi reasoning
- * models:
- *   1. A small cap can return HTTP 200 with empty `content` because the
- *      whole budget was spent on `reasoning_content`.
- *   2. A large cap may exceed the remaining context window and trigger
- *      `Invalid request: Your request exceeded model token limit`.
- */
-export interface CompletionBudget {
-  /** Desired completion budget when the model context window allows it. */
-  readonly desired: number;
-  /**
-   * Safety margin reserved between current input and the context limit,
-   * to absorb tokenizer estimation error and provider-side overhead.
-   */
-  readonly safetyMargin?: number | undefined;
+/** Completion-token budget for the next LLM request. */
+export interface CompletionBudgetConfig {
+  /** Explicit user-configured maximum. */
+  readonly hardCap?: number;
+  /** Conservative cap for providers/models whose context window is unknown. */
+  readonly fallback?: number;
+  /** Tokens kept out of the output budget to absorb estimation drift. */
+  readonly safetyMargin?: number;
 }
 
 const MIN_FLOOR = 1;
 const DEFAULT_SAFETY_MARGIN = 1024;
-const DEFAULT_DESIRED_BUDGET = 32000;
+const DEFAULT_UNKNOWN_CONTEXT_FALLBACK = 32000;
 
 /**
- * Resolve the completion budget for a turn from configuration and Kimi
- * environment variables.
- *
- * Priority (first wins): `KIMI_MODEL_MAX_COMPLETION_TOKENS`,
- * `KIMI_MODEL_MAX_TOKENS` (legacy alias), `reservedContextSize`,
- * `DEFAULT_DESIRED_BUDGET` (32000, preserves pre-PR-2332 behavior).
- *
- * Operators can opt out of clamping entirely by setting the env var to
- * `0` or a negative integer; in that case this function returns
- * `undefined`, which `applyCompletionBudget` treats as a no-op.
+ * Resolve configured completion budget. Env values are explicit hard caps;
+ * non-positive env values disable clamping.
  */
 export function resolveCompletionBudget(args: {
-  readonly reservedContextSize?: number | undefined;
-  readonly env?: NodeJS.ProcessEnv | undefined;
-}): CompletionBudget | undefined {
+  readonly reservedContextSize?: number;
+  readonly env?: NodeJS.ProcessEnv;
+}): CompletionBudgetConfig | undefined {
   const env = args.env ?? process.env;
   const fromNew = parseEnvBudget(env['KIMI_MODEL_MAX_COMPLETION_TOKENS']);
   if (fromNew !== 'absent') {
-    return fromNew === 'disabled' ? undefined : { desired: fromNew };
+    return fromNew === 'disabled' ? undefined : { hardCap: fromNew };
   }
   const fromLegacy = parseEnvBudget(env['KIMI_MODEL_MAX_TOKENS']);
   if (fromLegacy !== 'absent') {
-    return fromLegacy === 'disabled' ? undefined : { desired: fromLegacy };
+    return fromLegacy === 'disabled' ? undefined : { hardCap: fromLegacy };
   }
   if (args.reservedContextSize !== undefined && args.reservedContextSize > 0) {
-    return { desired: args.reservedContextSize };
+    return { fallback: args.reservedContextSize };
   }
-  return { desired: DEFAULT_DESIRED_BUDGET };
+  return { fallback: DEFAULT_UNKNOWN_CONTEXT_FALLBACK };
 }
 
 type EnvBudget = number | 'disabled' | 'absent';
@@ -79,37 +59,23 @@ function parseEnvBudget(raw: string | undefined): EnvBudget {
 }
 
 /**
- * Compute the effective `max_completion_tokens` cap for the next request.
- *
- *   cap = clamp(desired, MIN_FLOOR, max_context_tokens - input - safetyMargin)
- *
- * `input` accounts for everything the provider will actually serialize:
- * the conversation history, the system prompt, and the tool schemas.
- * Counting only `messages` underestimates by enough to push a near-limit
- * request past the model context window.
- *
- * When the model context size is unknown, the desired value is returned
- * unchanged (floored at `MIN_FLOOR`).
- *
- * When the remaining window is non-positive (input already at or above
- * the limit), `MIN_FLOOR` is returned — we can't honor a meaningful cap
- * and the API will surface the overflow on its own.
- *
- * Note: the floor never exceeds `remaining`, so a near-full context
- * cannot be pushed past the limit by `MIN_FLOOR` itself.
+ * Compute the effective `max_completion_tokens` cap. Known-context requests
+ * use the remaining window unless a hard cap is configured.
  */
 export function computeCompletionBudgetCap(args: {
-  readonly budget: CompletionBudget;
+  readonly budget: CompletionBudgetConfig;
   readonly capability: ModelCapability | undefined;
   readonly messages: readonly Message[];
-  readonly systemPrompt?: string | undefined;
-  readonly tools?: readonly Tool[] | undefined;
+  readonly systemPrompt?: string;
+  readonly tools?: readonly Tool[];
 }): number {
-  const desired = args.budget.desired;
   const safetyMargin = args.budget.safetyMargin ?? DEFAULT_SAFETY_MARGIN;
   const maxCtx = args.capability?.max_context_tokens ?? 0;
   if (maxCtx <= 0) {
-    return Math.max(MIN_FLOOR, desired);
+    return Math.max(
+      MIN_FLOOR,
+      args.budget.hardCap ?? args.budget.fallback ?? DEFAULT_UNKNOWN_CONTEXT_FALLBACK,
+    );
   }
   const input =
     estimateTokensForMessages([...args.messages]) +
@@ -119,7 +85,10 @@ export function computeCompletionBudgetCap(args: {
   if (remaining <= 0) {
     return MIN_FLOOR;
   }
-  return Math.max(MIN_FLOOR, Math.min(desired, remaining));
+  if (args.budget.hardCap === undefined) {
+    return Math.max(MIN_FLOOR, remaining);
+  }
+  return Math.max(MIN_FLOOR, Math.min(args.budget.hardCap, remaining));
 }
 
 /**
@@ -134,11 +103,11 @@ export function computeCompletionBudgetCap(args: {
  */
 export function applyCompletionBudget(args: {
   readonly provider: ChatProvider;
-  readonly budget: CompletionBudget | undefined;
+  readonly budget: CompletionBudgetConfig | undefined;
   readonly capability: ModelCapability | undefined;
   readonly messages: readonly Message[];
-  readonly systemPrompt?: string | undefined;
-  readonly tools?: readonly Tool[] | undefined;
+  readonly systemPrompt?: string;
+  readonly tools?: readonly Tool[];
 }): ChatProvider {
   if (args.budget === undefined) return args.provider;
   if (args.provider.withMaxCompletionTokens === undefined) return args.provider;

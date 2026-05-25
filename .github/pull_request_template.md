@@ -1,25 +1,28 @@
 <!--
 Thank you for your contribution to Kimi Code!
-Please make sure you already discussed the feature or bugfix you are proposing in an issue with the maintainers.
-Please understand that if you have not gotten confirmation from the maintainers, your pull request may be closed or ignored without further review due to limited bandwidth.
+Please open an issue before sending a feature PR — PRs without prior discussion may be closed without review.
 
 See https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md for more.
 -->
 
 ## Related Issue
 
-<!-- Please link to the issue here. -->
+<!-- Link the issue this feature came from. If there is no issue, explain the problem in the next section instead. -->
 
 Resolve #(issue_number)
 
-## Description
+## Problem
 
-<!-- Please describe your changes in detail. -->
+<!-- What user need or limitation does this address? If the linked issue already covers this, write "See linked issue". -->
+
+## What changed
+
+<!-- What did you implement, and why does this approach fit Kimi Code? -->
 
 ## Checklist
 
 - [ ] I have read the [CONTRIBUTING](https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md) document.
-- [ ] I have linked the related issue, if any.
-- [ ] I have added tests that prove my fix is effective or that my feature works.
+- [ ] I have linked a related issue, or explained the problem above.
+- [ ] I have added tests that prove my feature works.
 - [ ] Ran `gen-changesets` skill, or this PR needs no changeset.
 - [ ] Ran `gen-docs` skill, or this PR needs no doc update.
