@@ -33,6 +33,9 @@ import type {
   McpServerInfo,
   McpStartupMetrics,
   PermissionMode,
+  PluginInfo,
+  PluginSummary,
+  ReloadSummary,
   CompactOptions,
   SessionPlan,
   SessionStatus,
@@ -419,6 +422,36 @@ export class SDKRpcClient {
   async reconnectMcpServer(input: ReconnectMcpServerRpcInput): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.reconnectMcpServer({ sessionId: input.sessionId, name: input.name });
+  }
+
+  async listPlugins(): Promise<readonly PluginSummary[]> {
+    const rpc = await this.getRpc();
+    return rpc.listPlugins({});
+  }
+
+  async installPlugin(root: string): Promise<PluginSummary> {
+    const rpc = await this.getRpc();
+    return rpc.installPlugin({ root });
+  }
+
+  async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.setPluginEnabled({ id, enabled });
+  }
+
+  async removePlugin(id: string): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.removePlugin({ id });
+  }
+
+  async reloadPlugins(): Promise<ReloadSummary> {
+    const rpc = await this.getRpc();
+    return rpc.reloadPlugins({});
+  }
+
+  async getPluginInfo(id: string): Promise<PluginInfo> {
+    const rpc = await this.getRpc();
+    return rpc.getPluginInfo({ id });
   }
 
   async activateSkill(input: ActivateSkillRpcInput): Promise<void> {
