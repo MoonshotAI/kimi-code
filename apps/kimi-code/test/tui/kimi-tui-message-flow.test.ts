@@ -616,6 +616,125 @@ describe('KimiTUI message flow', () => {
     }
   });
 
+  it('coalesces assistant delta component updates', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver } = await makeDriver();
+      vi.mocked(driver.state.ui.requestRender).mockClear();
+
+      driver.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: 'a',
+        } as Event,
+        vi.fn(),
+      );
+      const component = driver.state.streamingComponent;
+      if (component === undefined) throw new Error('expected streaming component');
+      const updateSpy = vi.spyOn(component, 'updateContent');
+
+      driver.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: 'b',
+        } as Event,
+        vi.fn(),
+      );
+      driver.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: 'c',
+        } as Event,
+        vi.fn(),
+      );
+
+      expect(updateSpy).not.toHaveBeenCalled();
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+      expect(updateSpy).toHaveBeenLastCalledWith('abc');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('flushes pending assistant deltas before turn completion', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver } = await makeDriver();
+      const sendQueued = vi.fn();
+      driver.state.appState.isStreaming = true;
+
+      driver.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: 'done',
+        } as Event,
+        sendQueued,
+      );
+      driver.handleEvent(
+        {
+          type: 'turn.ended',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          reason: 'completed',
+        } as Event,
+        sendQueued,
+      );
+
+      expect(stripSgr(renderTranscript(driver))).toContain('done');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('coalesces streaming tool-call argument preview updates', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver } = await makeDriver();
+      driver.state.currentTurnId = '1';
+      driver.state.currentStep = 1;
+
+      driver.handleEvent(
+        {
+          type: 'tool.call.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: 'call_bash',
+          name: 'Bash',
+          argumentsPart: '{"command":"echo hi"}',
+        } as Event,
+        vi.fn(),
+      );
+
+      expect(driver.state.pendingToolComponents.has('call_bash')).toBe(false);
+      expect(driver.state.activeToolCalls.has('call_bash')).toBe(false);
+
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(driver.state.pendingToolComponents.has('call_bash')).toBe(true);
+      expect(driver.state.activeToolCalls.get('call_bash')?.args).toMatchObject({
+        command: 'echo hi',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('cancels manual compaction from the editor', async () => {
     const { driver, session } = await makeDriver();
     driver.handleEvent(

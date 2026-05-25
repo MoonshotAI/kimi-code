@@ -12,10 +12,14 @@ import chalk from 'chalk';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
 import { COMMAND_PREVIEW_LINES } from '#/tui/constant/rendering';
-import { STREAMING_ARGS_FIELD_RE } from '#/tui/constant/streaming';
+import {
+  STREAMING_ARGS_FIELD_RE,
+  STREAMING_ARGS_PREVIEW_MAX_CHARS,
+} from '#/tui/constant/streaming';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
+import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
 
 import { PlanBoxComponent } from './plan-box';
@@ -278,10 +282,14 @@ function extractPartialStringField(text: string, key: string): string | undefine
 }
 
 function parseArgsPreview(value: string): Record<string, unknown> {
-  if (value.trim().length === 0) return {};
-  if (value.trimEnd().endsWith('}')) {
+  const previewText = value.slice(0, STREAMING_ARGS_PREVIEW_MAX_CHARS);
+  if (previewText.trim().length === 0) return {};
+  if (
+    value.length <= STREAMING_ARGS_PREVIEW_MAX_CHARS &&
+    previewText.trimEnd().endsWith('}')
+  ) {
     try {
-      const parsed = JSON.parse(value) as unknown;
+      const parsed = JSON.parse(previewText) as unknown;
       if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
         return parsed as Record<string, unknown>;
       }
@@ -290,7 +298,7 @@ function parseArgsPreview(value: string): Record<string, unknown> {
     }
   }
   const result: Record<string, unknown> = {};
-  for (const match of value.matchAll(STREAMING_ARGS_FIELD_RE)) {
+  for (const match of previewText.matchAll(STREAMING_ARGS_FIELD_RE)) {
     const key = match[1];
     const rawValue = match[2];
     if (key === undefined || rawValue === undefined) continue;
@@ -933,7 +941,10 @@ export class ToolCallComponent extends Container {
     argumentsPart: string | null;
   }): void {
     const existing = this.ongoingSubCalls.get(delta.id);
-    const nextArgsText = `${existing?.streamingArguments ?? ''}${delta.argumentsPart ?? ''}`;
+    const nextArgsText = appendStreamingArgsPreview(
+      existing?.streamingArguments,
+      delta.argumentsPart,
+    );
     const parsed = parseArgsPreview(nextArgsText);
     this.ongoingSubCalls.set(delta.id, {
       name: delta.name ?? existing?.name ?? 'Tool',
@@ -1429,18 +1440,18 @@ export class ToolCallComponent extends Container {
    * `extractPartialStringField`) and render a stable high-signal
    * preview: Write's `content` as highlighted code, Edit's argument
    * receive progress, Bash's `$ command`, etc. While args are still
-   * streaming we render the body in full (no 10-line cap) — once the
-   * result lands, the preview snaps to the collapsed cap unless the user
-   * has expanded.
+   * streaming we render from a bounded preview buffer; once the result lands,
+   * the preview snaps to the collapsed cap unless the user has expanded.
    */
   private buildStreamingPreview(streamText: string): void {
     const name = this.toolCall.name;
+    const previewText = streamText.slice(0, STREAMING_ARGS_PREVIEW_MAX_CHARS);
     if (name === 'Write') {
-      const content = extractPartialStringField(streamText, 'content');
+      const content = extractPartialStringField(previewText, 'content');
       if (content === undefined || content.length === 0) return;
       const filePath =
-        extractPartialStringField(streamText, 'file_path') ??
-        extractPartialStringField(streamText, 'path') ??
+        extractPartialStringField(previewText, 'file_path') ??
+        extractPartialStringField(previewText, 'path') ??
         '';
       const lang = langFromPath(filePath);
       const allLines = highlightLines(content, lang);
@@ -1452,10 +1463,10 @@ export class ToolCallComponent extends Container {
     }
     if (name === 'Edit') {
       const filePath =
-        extractPartialStringField(streamText, 'file_path') ??
-        extractPartialStringField(streamText, 'path') ??
+        extractPartialStringField(previewText, 'file_path') ??
+        extractPartialStringField(previewText, 'path') ??
         '';
-      const bytes = Buffer.byteLength(streamText, 'utf8');
+      const bytes = Buffer.byteLength(previewText, 'utf8');
       const startedAtMs = this.toolCall.streamingStartedAtMs;
       const elapsedSeconds =
         startedAtMs === undefined ? 0 : Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000));
@@ -1467,7 +1478,7 @@ export class ToolCallComponent extends Container {
       return;
     }
     if (name === 'Bash') {
-      const cmd = extractPartialStringField(streamText, 'command');
+      const cmd = extractPartialStringField(previewText, 'command');
       if (cmd === undefined || cmd.length === 0) return;
       this.addChild(
         new ShellExecutionComponent({
