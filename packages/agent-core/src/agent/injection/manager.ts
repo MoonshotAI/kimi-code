@@ -2,12 +2,17 @@ import type { Agent } from '..';
 import type { DynamicInjector } from './injector';
 import { PermissionModeInjector } from './permission-mode';
 import { PlanModeInjector } from './plan-mode';
+import { PluginsBootstrapInjector } from './plugins-bootstrap';
 
 export class InjectionManager {
   private readonly injectors: DynamicInjector[];
 
   constructor(protected readonly agent: Agent) {
-    this.injectors = [new PlanModeInjector(agent), new PermissionModeInjector(agent)];
+    this.injectors = [
+      new PluginsBootstrapInjector(agent),
+      new PlanModeInjector(agent),
+      new PermissionModeInjector(agent),
+    ];
   }
 
   async inject(): Promise<void> {

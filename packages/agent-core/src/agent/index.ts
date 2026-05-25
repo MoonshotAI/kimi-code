@@ -12,6 +12,8 @@ import {
   type Tool,
 } from '@moonshot-ai/kosong';
 
+import type { EnabledBootstrap } from '#/plugin';
+
 import type { McpConnectionManager } from '../mcp';
 import {
   resolveSystemPromptCwd,
@@ -81,12 +83,14 @@ export interface AgentConfig {
   /** Parent logger; the agent appends its own ctx (agentId already bound by session). */
   readonly log?: Logger;
   readonly telemetry?: TelemetryClient | undefined;
+  readonly pluginBootstraps?: readonly EnabledBootstrap[];
 }
 
 export class Agent {
   readonly runtime: RuntimeConfig;
   readonly homedir?: string;
   readonly skills?: SkillManager;
+  readonly pluginBootstraps: readonly EnabledBootstrap[];
   readonly rawGenerate: typeof generate;
   readonly rpc: SDKAgentRPC;
   readonly telemetry: TelemetryClient;
@@ -119,6 +123,7 @@ export class Agent {
     if (config.skills !== undefined) {
       this.skills = new SkillManager(this, config.skills);
     }
+    this.pluginBootstraps = config.pluginBootstraps ?? [];
     this.rawGenerate = config.generate ?? generate;
     this.providerManager =
       config.sessionId === undefined
