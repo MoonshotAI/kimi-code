@@ -11,6 +11,7 @@ export {
   DEFAULT_CATALOG_URL,
   fetchCatalog,
   inferWireType,
+  loadBuiltInCatalog,
 } from '#/catalog';
 export type {
   ApplyCatalogProviderOptions,

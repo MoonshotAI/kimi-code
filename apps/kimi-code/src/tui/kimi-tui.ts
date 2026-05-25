@@ -45,8 +45,10 @@ import {
   DEFAULT_CATALOG_URL,
   fetchCatalog,
   inferWireType,
+  loadBuiltInCatalog,
   log,
 } from '@moonshot-ai/kimi-code-sdk';
+import { BUILT_IN_CATALOG_JSON } from '../built-in-catalog';
 import type {
   AgentStatusUpdatedEvent,
   ApprovalRequest,
@@ -5073,20 +5075,30 @@ export class KimiTUI {
     };
     this.cancelInFlight = cancel;
 
-    let catalog: Catalog;
+    let catalog: Catalog | undefined;
     const spinner = this.showLoginProgressSpinner(`Fetching catalog from ${url}`);
     try {
       catalog = await fetchCatalog(url, controller.signal);
       spinner.stop({ ok: true, label: 'Catalog loaded.' });
     } catch (error) {
-      spinner.stop({ ok: false, label: 'Failed to load catalog.' });
-      if (controller.signal.aborted) return;
-      const hint = error instanceof CatalogFetchError ? ` (HTTP ${error.status})` : '';
-      this.showError(`Failed to fetch catalog${hint}: ${formatErrorMessage(error)}`);
-      return;
+      if (controller.signal.aborted) {
+        spinner.stop({ ok: false, label: 'Aborted.' });
+      } else {
+        const hint = error instanceof CatalogFetchError ? ` (HTTP ${error.status})` : '';
+        const fallback = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
+        if (fallback !== undefined) {
+          spinner.stop({ ok: true, label: 'Using built-in catalog (offline mode).' });
+          catalog = fallback;
+        } else {
+          spinner.stop({ ok: false, label: 'Failed to load catalog.' });
+          this.showError(`Failed to fetch catalog${hint}: ${formatErrorMessage(error)}`);
+        }
+      }
     } finally {
       if (this.cancelInFlight === cancel) this.cancelInFlight = undefined;
     }
+
+    if (catalog === undefined) return;
 
     const providerId = await this.promptCatalogProviderSelection(catalog);
     if (providerId === undefined) return;

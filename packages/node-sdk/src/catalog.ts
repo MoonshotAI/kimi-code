@@ -78,6 +78,20 @@ export interface ApplyCatalogProviderOptions {
  * metadata (context window, output limit, capabilities) comes from the
  * catalog, so the user does not hand-write it. Returns the default model key.
  */
+/**
+ * Parses an optional pruned models.dev catalog string — typically the
+ * `__KIMI_CODE_BUILT_IN_CATALOG__` constant injected by tsdown at build
+ * time. Returns `undefined` when the argument is missing or invalid.
+ */
+export function loadBuiltInCatalog(text?: string): Catalog | undefined {
+  if (typeof text !== 'string' || text.length === 0) return undefined;
+  try {
+    return JSON.parse(text) as Catalog;
+  } catch {
+    return undefined;
+  }
+}
+
 export function applyCatalogProvider(
   config: KimiConfig,
   options: ApplyCatalogProviderOptions,
