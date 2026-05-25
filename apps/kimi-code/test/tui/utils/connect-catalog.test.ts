@@ -86,9 +86,9 @@ describe('resolveConnectCatalogRequest', () => {
     });
   });
 
-  it('rejects --url when no value is provided', () => {
+  it('rejects --url when no value or a non-URL value is provided', () => {
     const expectedMessage =
-      '--url requires a value, e.g. /connect --url=https://example.com/catalog.json';
+      '--url requires an http(s) URL value, e.g. /connect --url=https://example.com/catalog.json';
     expect(resolveConnectCatalogRequest('--url')).toEqual({
       kind: 'error',
       message: expectedMessage,
@@ -102,6 +102,20 @@ describe('resolveConnectCatalogRequest', () => {
       message: expectedMessage,
     });
     expect(resolveConnectCatalogRequest('--refresh --url')).toEqual({
+      kind: 'error',
+      message: expectedMessage,
+    });
+    // Flag-like tokens after --url must not be swallowed as the URL value.
+    expect(resolveConnectCatalogRequest('--url --refresh')).toEqual({
+      kind: 'error',
+      message: expectedMessage,
+    });
+    // Plain non-URL tokens must also be rejected, not silently used.
+    expect(resolveConnectCatalogRequest('--url not-a-url')).toEqual({
+      kind: 'error',
+      message: expectedMessage,
+    });
+    expect(resolveConnectCatalogRequest('--url=ftp://example.com/x')).toEqual({
       kind: 'error',
       message: expectedMessage,
     });

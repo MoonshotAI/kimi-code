@@ -1,6 +1,6 @@
 import { DEFAULT_CATALOG_URL } from '@moonshot-ai/kimi-code-sdk';
 
-const CATALOG_URL_FLAG_RE = /--url(?:=|\s+)(\S+)/;
+const CATALOG_URL_FLAG_RE = /--url(?:=|\s+)(https?:\/\/\S+)/;
 const URL_FLAG_PRESENT_RE = /(?:^|\s)--url(?=\s|=|$)/;
 const REFRESH_FLAG_RE = /(?:^|\s)--refresh(?=\s|$)/;
 const BARE_HTTP_URL_RE = /^https?:\/\/\S+$/;
@@ -35,7 +35,8 @@ export function resolveConnectCatalogRequest(args: string): ConnectCatalogResolu
   if (URL_FLAG_PRESENT_RE.test(trimmed)) {
     return {
       kind: 'error',
-      message: '--url requires a value, e.g. /connect --url=https://example.com/catalog.json',
+      message:
+        '--url requires an http(s) URL value, e.g. /connect --url=https://example.com/catalog.json',
     };
   }
 
