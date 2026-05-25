@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { localKaos } from '@moonshot-ai/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
-import { Agent } from '../../src/agent';
+import { Agent, type AgentRecord } from '../../src/agent';
 import { ProviderManager } from '../../src/providers/provider-manager';
 import type { ApprovalResponse, SDKAgentRPC, SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
@@ -136,6 +136,10 @@ describe('ToolManager SkillTool registration', () => {
     const skills = new SkillRegistry();
     skills.register(makeSkill('review'));
     const agent = makeAgent(skills);
+    const wireRecords: AgentRecord[] = [];
+    agent.records.onRecord = (record) => {
+      wireRecords.push(record);
+    };
     const skillTool = agent.tools.loopTools.find((tool) => tool.name === 'Skill');
     if (!(skillTool instanceof SkillTool)) {
       throw new Error('Expected SkillTool to be active');
@@ -149,9 +153,7 @@ describe('ToolManager SkillTool registration', () => {
     });
 
     expect(result.output).toContain('loaded inline');
-    expect(
-      agent.records.snapshot().find((record) => record.type === 'context.append_message'),
-    ).toMatchObject({
+    expect(wireRecords.find((record) => record.type === 'context.append_message')).toMatchObject({
       type: 'context.append_message',
       message: {
         role: 'user',

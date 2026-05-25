@@ -178,13 +178,11 @@ import {
   FEEDBACK_ISSUE_URL,
   FEEDBACK_STATUS_CANCELLED,
   FEEDBACK_STATUS_FALLBACK,
-  FEEDBACK_STATUS_NETWORK_ERROR,
   FEEDBACK_STATUS_NOT_SIGNED_IN,
   FEEDBACK_STATUS_SUBMITTING,
   FEEDBACK_STATUS_SUCCESS,
   FEEDBACK_TELEMETRY_EVENT,
   errorReportHintLine,
-  feedbackHttpErrorMessage,
   feedbackSessionLine,
   withFeedbackVersionPrefix,
 } from './constant/feedback';
@@ -244,10 +242,12 @@ import {
 } from './utils/mcp-server-status';
 import { openUrl } from './utils/open-url';
 import { setProcessTitle } from './utils/proctitle';
+import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
 import { createTerminalState, type TerminalState } from './utils/terminal-state';
 import { installTerminalThemeTracking } from './utils/terminal-theme';
+import { detectTmuxKeyboardWarning } from './utils/tmux-keyboard';
 import { nextTranscriptId } from './utils/transcript-id';
 
 export interface KimiTUIStartupInput {
@@ -779,6 +779,7 @@ export class KimiTUI {
       this.showStatus(this.state.startupNotice);
       this.state.startupNotice = undefined;
     }
+    void this.showTmuxKeyboardWarningIfNeeded();
     if (this.state.startupState === 'picker') {
       void this.bootstrapFromPicker();
       // resumeSession (fired on picker select) owns post-pick init; nothing
@@ -800,6 +801,13 @@ export class KimiTUI {
       this.refreshSessionTitle();
     }
     void this.refreshSkillCommands(this.session);
+  }
+
+  // Warns tmux users when modified Enter shortcuts are likely to be swallowed.
+  private async showTmuxKeyboardWarningIfNeeded(): Promise<void> {
+    const warning = await detectTmuxKeyboardWarning();
+    if (warning === undefined || this.aborted) return;
+    this.showStatus(warning, this.state.theme.colors.warning);
   }
 
   // Creates or resumes the startup session and reports whether history should replay.
@@ -1886,14 +1894,11 @@ export class KimiTUI {
     this.state.loadingSessions = true;
     try {
       const sessions = await this.harness.listSessions({ workDir: this.state.appState.workDir });
-      this.state.sessions = sessions.map((session) => ({
-        id: session.id,
-        title: session.title ?? null,
-        last_prompt: session.lastPrompt ?? null,
-        work_dir: session.workDir,
-        updated_at: session.updatedAt ?? session.createdAt ?? 0,
-        metadata: session.metadata,
-      }));
+      this.state.sessions = sessionRowsForPicker(
+        sessions,
+        this.state.appState.sessionId,
+        this.hasSessionContent(),
+      );
     } catch {
       /* silently ignore */
     } finally {
@@ -4366,20 +4371,16 @@ export class KimiTUI {
       return;
     }
 
-    if (alias === this.state.appState.model && thinking === this.state.appState.thinking) {
-      this.showStatus(`Already using ${alias} with thinking ${thinking ? 'on' : 'off'}.`);
-      return;
-    }
-
     const level = thinking ? 'on' : 'off';
     const prevModel = this.state.appState.model;
     const prevThinking = this.state.appState.thinking;
+    const runtimeChanged = alias !== prevModel || thinking !== prevThinking;
 
+    const session = this.session;
     try {
-      const session = this.session;
-      if (session === undefined) {
+      if (session === undefined && runtimeChanged) {
         await this.activateModelAfterLogin(alias, thinking);
-      } else {
+      } else if (session !== undefined) {
         if (alias !== prevModel) {
           await session.setModel(alias);
         }
@@ -4387,23 +4388,50 @@ export class KimiTUI {
           await session.setThinking(level);
         }
       }
-      this.setAppState({ model: alias, thinking });
-      if (session === undefined) {
-        if (alias !== prevModel) {
-          this.track('model_switch', { model: alias });
-        }
-        if (thinking !== prevThinking) {
-          this.track('thinking_toggle', { enabled: thinking });
-        }
-      }
-      this.showStatus(
-        `Switched to ${alias} with thinking ${level}.`,
-        this.state.theme.colors.success,
-      );
     } catch (error) {
       const msg = formatErrorMessage(error);
       this.showError(`Failed to switch model: ${msg}`);
+      return;
     }
+
+    this.setAppState({ model: alias, thinking });
+    if (session === undefined && runtimeChanged) {
+      if (alias !== prevModel) {
+        this.track('model_switch', { model: alias });
+      }
+      if (thinking !== prevThinking) {
+        this.track('thinking_toggle', { enabled: thinking });
+      }
+    }
+
+    let persisted = false;
+    try {
+      persisted = await this.persistModelSelection(alias, thinking);
+    } catch (error) {
+      const msg = formatErrorMessage(error);
+      this.showError(`Switched to ${alias}, but failed to save default: ${msg}`);
+      return;
+    }
+
+    const status = runtimeChanged
+      ? `Switched to ${alias} with thinking ${level}.`
+      : persisted
+        ? `Saved ${alias} with thinking ${level} as default.`
+        : `Already using ${alias} with thinking ${level}.`;
+    this.showStatus(status, this.state.theme.colors.success);
+  }
+
+  // Persists the selected model and thinking state as the startup defaults.
+  private async persistModelSelection(alias: string, thinking: boolean): Promise<boolean> {
+    const config = await this.harness.getConfig({ reload: true });
+    if (config.defaultModel === alias && config.defaultThinking === thinking) {
+      return false;
+    }
+    await this.harness.setConfig({
+      defaultModel: alias,
+      defaultThinking: thinking,
+    });
+    return true;
   }
 
   // Shows the theme selector.
@@ -5211,11 +5239,7 @@ export class KimiTUI {
       return;
     }
 
-    const failLabel =
-      res.status !== undefined
-        ? feedbackHttpErrorMessage(res.status)
-        : FEEDBACK_STATUS_NETWORK_ERROR;
-    spinner.stop({ ok: false, label: failLabel });
+    spinner.stop({ ok: false, label: res.message });
     fallback(FEEDBACK_STATUS_FALLBACK);
   }
 

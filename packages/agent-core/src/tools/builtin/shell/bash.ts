@@ -275,6 +275,17 @@ export class BashTool implements BuiltinTool<BashInput> {
           /* ignore */
         }
       }
+
+      try {
+        proc.stdout.destroy();
+      } catch {
+        /* ignore */
+      }
+      try {
+        proc.stderr.destroy();
+      } catch {
+        /* ignore */
+      }
     };
 
     const onAbort = (): void => {

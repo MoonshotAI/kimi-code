@@ -15,6 +15,8 @@ import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui
 import type { QueuedMessage } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
+vi.mock('#/tui/utils/open-url', () => ({ openUrl: vi.fn() }));
+
 function stripSgr(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
 }
@@ -130,6 +132,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
         k2: { model: 'moonshot-v1', maxContextSize: 100 },
       },
     })),
+    setConfig: vi.fn(async () => ({ providers: {} })),
     createSession: vi.fn(async () => session),
     resumeSession: vi.fn(async () => session),
     forkSession: vi.fn(async () => session),
@@ -143,7 +146,11 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       login: vi.fn(),
       logout: vi.fn(),
       getManagedUsage: vi.fn(),
-      submitFeedback: vi.fn(async () => ({ kind: 'ok' })),
+      submitFeedback: vi.fn(
+        async (): Promise<{ kind: 'ok' } | { kind: 'error'; status?: number; message: string }> => ({
+          kind: 'ok',
+        }),
+      ),
     },
     ...overrides,
   };
@@ -212,7 +219,7 @@ describe('KimiTUI message flow', () => {
     const { driver, harness } = await makeDriver();
     harness.track.mockClear();
 
-    driver.state.editor.handleInput('\n');
+    driver.state.editor.handleInput('\u001B[106;5u');
     driver.state.editor.handleInput('\u001F');
     delete process.env['VISUAL'];
     delete process.env['EDITOR'];
@@ -287,6 +294,37 @@ describe('KimiTUI message flow', () => {
       }),
     );
     expect(harness.track).toHaveBeenCalledWith('feedback_submitted', undefined);
+  });
+
+  it('shows feedback API error messages without replacing them with HTTP status text', async () => {
+    const { driver, harness } = await makeDriver(
+      makeSession(),
+      {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              model: 'moonshot-v1',
+              maxContextSize: 100,
+              provider: 'managed:kimi-code',
+            },
+          },
+        })),
+      },
+    );
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    feedbackDriver.promptFeedbackInput = vi.fn(async () => 'useful feedback');
+    harness.auth.submitFeedback.mockResolvedValueOnce({
+      kind: 'error',
+      status: 500,
+      message: 'backend says no',
+    });
+
+    await feedbackDriver.handleFeedbackCommand();
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('backend says no');
+    expect(transcript).toContain('Opening GitHub Issues as fallback');
+    expect(transcript).not.toContain('Failed to submit feedback (HTTP 500).');
   });
 
   it('does not track feedback when the dialog is cancelled', async () => {
@@ -1004,6 +1042,7 @@ describe('KimiTUI message flow', () => {
 
   it('applies /model selection with inline thinking state', async () => {
     const session = makeSession();
+    const setConfig = vi.fn(async () => ({ providers: {} }));
     const { driver } = await makeDriver(session, {
       getConfig: vi.fn(async () => ({
         models: {
@@ -1022,7 +1061,10 @@ describe('KimiTUI message flow', () => {
             capabilities: ['thinking'],
           },
         },
+        defaultModel: 'k2',
+        defaultThinking: false,
       })),
+      setConfig,
     });
 
     driver.handleUserInput('/model turbo');
@@ -1044,9 +1086,49 @@ describe('KimiTUI message flow', () => {
     await vi.waitFor(() => {
       expect(session.setModel).toHaveBeenCalledWith('turbo');
       expect(session.setThinking).toHaveBeenCalledWith('on');
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'turbo',
+        defaultThinking: true,
+      });
     });
     expect(driver.state.appState.model).toBe('turbo');
     expect(driver.state.appState.thinking).toBe(true);
+  });
+
+  it('persists /model selection even when runtime state is unchanged', async () => {
+    const session = makeSession();
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+          },
+        },
+        defaultModel: 'old-default',
+        defaultThinking: true,
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/model k2');
+
+    const picker = driver.state.editorContainer.children[0];
+    expect(picker).toBeInstanceOf(ModelSelectorComponent);
+    (picker as ModelSelectorComponent).handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'k2',
+        defaultThinking: false,
+      });
+    });
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(session.setThinking).not.toHaveBeenCalled();
   });
 
   it('enables search in the shared model selector helper', async () => {

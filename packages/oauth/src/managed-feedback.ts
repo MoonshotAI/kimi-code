@@ -6,6 +6,7 @@
  * backend can identify this client.
  */
 
+import { readApiErrorMessage } from './api-error';
 import { kimiCodeBaseUrl } from './managed-usage';
 
 export interface SubmitFeedbackBody {
@@ -57,7 +58,10 @@ export async function fetchSubmitFeedback(
       return {
         kind: 'error',
         status: res.status,
-        message: `Failed to submit feedback: HTTP ${String(res.status)}`,
+        message: await readApiErrorMessage(
+          res,
+          `Failed to submit feedback: HTTP ${String(res.status)}`,
+        ),
       };
     }
     return { kind: 'ok' };

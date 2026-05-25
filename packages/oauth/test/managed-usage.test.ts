@@ -103,6 +103,57 @@ describe('fetchManagedUsage', () => {
     expect(headers.get('user-agent')).toBeNull();
     expect(headers.get('x-msh-platform')).toBeNull();
   });
+
+  it('surfaces JSON API error messages with status', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ message: 'usage quota unavailable' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    );
+
+    const result = await fetchManagedUsage('https://api.example/usages', 'access-token');
+
+    expect(result.kind).toBe('error');
+    if (result.kind !== 'error') return;
+    expect(result.status).toBe(401);
+    expect(result.message).toBe('usage quota unavailable');
+  });
+
+  it('surfaces nested JSON API error messages', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: { message: 'usage endpoint moved' } }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    );
+
+    const result = await fetchManagedUsage('https://api.example/usages', 'access-token');
+
+    expect(result.kind).toBe('error');
+    if (result.kind !== 'error') return;
+    expect(result.status).toBe(404);
+    expect(result.message).toBe('usage endpoint moved');
+  });
+
+  it('falls back to local usage hints when the API error body is empty', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
+
+    const result = await fetchManagedUsage('https://api.example/usages', 'access-token');
+
+    expect(result.kind).toBe('error');
+    if (result.kind !== 'error') return;
+    expect(result.status).toBe(404);
+    expect(result.message).toBe('Usage endpoint not available. Try Kimi For Coding.');
+  });
 });
 
 describe('formatDuration', () => {

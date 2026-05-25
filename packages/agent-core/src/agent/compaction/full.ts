@@ -369,7 +369,7 @@ export class FullCompaction {
           toolCalls: [],
         } satisfies Message,
       ];
-      const { response, retryCount } = await this.generateCompactionResponse({
+      const { response, retryCount, summary } = await this.generateCompactionResponse({
         messages,
         signal,
         onRetry: (count) => {
@@ -379,13 +379,6 @@ export class FullCompaction {
       if (response.usage !== null) {
         this.agent.usage.record(model, response.usage);
       }
-
-      const summary =
-        typeof response.message.content === 'string'
-          ? response.message.content
-          : response.message.content
-              .map((part) => (part.type === 'text' ? part.text : ''))
-              .join('');
 
       const newHistory = this.agent.context.history;
       for (let i = 0; i < originalHistory.length; i++) {
@@ -443,7 +436,11 @@ export class FullCompaction {
     readonly messages: Message[];
     readonly signal: AbortSignal;
     readonly onRetry?: ((retryCount: number) => void) | undefined;
-  }): Promise<{ readonly response: GenerateResult; readonly retryCount: number }> {
+  }): Promise<{
+    readonly response: GenerateResult;
+    readonly summary: string;
+    readonly retryCount: number;
+  }> {
     const maxAttempts =
       this.agent.providerManager?.config.loopControl?.maxRetriesPerStep ??
       DEFAULT_MAX_RETRY_ATTEMPTS;
@@ -478,7 +475,8 @@ export class FullCompaction {
           undefined,
           { signal },
         );
-        return { response, retryCount };
+        const summary = extractCompactionSummary(response);
+        return { response, summary, retryCount };
       } catch (error) {
         if (attempt >= maxAttempts || !isRetryableCompactionError(error)) {
           throw error;
@@ -528,6 +526,20 @@ export class FullCompaction {
       this.strategy.computeCompactCount(history, this.maxContextSize),
     );
   }
+}
+
+function extractCompactionSummary(response: GenerateResult): string {
+  const summary =
+    typeof response.message.content === 'string'
+      ? response.message.content
+      : response.message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+
+  if (summary.trim().length === 0) {
+    throw new APIEmptyResponseError(
+      'The compaction response did not contain a non-empty summary.',
+    );
+  }
+  return summary;
 }
 
 export const COMPACTION_INSTRUCTION = (customInstruction = ''): string =>
