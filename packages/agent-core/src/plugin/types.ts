@@ -1,5 +1,3 @@
-// packages/agent-core/src/plugin/types.ts
-
 export type PluginDiagnosticSeverity = 'error' | 'warn' | 'info';
 
 export interface PluginDiagnostic {
