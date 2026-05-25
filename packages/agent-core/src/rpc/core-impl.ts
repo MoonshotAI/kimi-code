@@ -143,7 +143,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const config = this.reloadProviderManager();
     const id = options.id ?? createSessionId();
     const modelName = this.providerManager.resolveSelectedModel(options.model);
-    const thinkingLevel = this.providerManager.resolveThinkingLevel(options.thinking);
+    const thinkingLevel = this.providerManager.resolveThinkingLevel(
+      options.thinking ?? defaultThinkingToRuntime(config.defaultThinking),
+    );
     const permissionMode = options.permission ?? config.defaultPermissionMode;
     const mcpConfig = await resolveSessionMcpConfig({
       cwd: workDir,
@@ -394,11 +396,16 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     ...payload
   }: SessionAgentPayload<SetModelPayload>): Promise<SetModelResult> {
     this.reloadProviderManager();
-    return this.sessionApi(sessionId).setModel(payload);
+    const result = await this.sessionApi(sessionId).setModel(payload);
+    await this.persistDefaultModel(result.model);
+    return result;
   }
 
-  setThinking({ sessionId, ...payload }: SessionAgentPayload<SetThinkingPayload>) {
-    return this.sessionApi(sessionId).setThinking(payload);
+  async setThinking({ sessionId, ...payload }: SessionAgentPayload<SetThinkingPayload>) {
+    const api = this.sessionApi(sessionId);
+    await api.setThinking(payload);
+    const config = await api.getConfig({ agentId: payload.agentId });
+    await this.persistDefaultThinking(config.thinkingLevel !== 'off');
   }
 
   setPermission({ sessionId, ...payload }: SessionAgentPayload<SetPermissionPayload>) {
@@ -572,6 +579,18 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return config;
   }
 
+  private async persistDefaultModel(model: string): Promise<void> {
+    const config = readConfigFile(this.configPath);
+    if (config.defaultModel === model) return;
+    await this.setKimiConfig({ defaultModel: model });
+  }
+
+  private async persistDefaultThinking(defaultThinking: boolean): Promise<void> {
+    const config = readConfigFile(this.configPath);
+    if (config.defaultThinking === defaultThinking) return;
+    await this.setKimiConfig({ defaultThinking });
+  }
+
   private async refreshSessionRuntimeConfig(
     session: Session,
     config: KimiConfig,
@@ -678,6 +697,11 @@ function requiredWorkDir(operation: string, value: string): string {
     throw new KimiError(ErrorCodes.REQUEST_WORK_DIR_REQUIRED, `${operation} requires workDir`);
   }
   return normalizeWorkDir(value);
+}
+
+function defaultThinkingToRuntime(defaultThinking: boolean | undefined): string | undefined {
+  if (defaultThinking === undefined) return undefined;
+  return defaultThinking ? 'on' : 'off';
 }
 
 function createSessionId(): string {
