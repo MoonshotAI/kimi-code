@@ -7,6 +7,7 @@ import type {
 import { migrateConfigStep } from './steps/config.js';
 import { migrateMcpStep } from './steps/mcp.js';
 import { migrateUserHistoryStep } from './steps/user-history.js';
+import { migrateSkillsStep } from './steps/skills.js';
 import { migrateSessionsStep } from './sessions/index.js';
 import { writeReport } from './report.js';
 import { writeMigrationErrorsLog } from './migration-errors-log.js';
@@ -64,6 +65,11 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
     : { copied: 0, skippedExisting: 0 };
   log('user-history done');
 
+  const skills = input.scope.skills
+    ? await migrateSkillsStep({ sourceHome: input.source, targetHome: input.target })
+    : { copied: 0, skippedExisting: 0 };
+  log('skills done');
+
   const sessions: SessionsSummary = input.scope.sessions
     ? await migrateSessionsStep({
         sourceHome: input.source,
@@ -85,6 +91,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
       config,
       mcp,
       userHistory,
+      skills,
       sessions,
     },
     notices: {
@@ -110,6 +117,7 @@ export async function runMigration(input: RunMigrationInput): Promise<MigrationR
     config,
     mcp,
     userHistory,
+    skills,
     sessions,
   };
 

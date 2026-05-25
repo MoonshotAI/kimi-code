@@ -39,6 +39,7 @@ export interface MigrationScope {
   readonly config: boolean;
   readonly mcp: boolean;
   readonly userHistory: boolean;
+  readonly skills: boolean;
   readonly sessions: boolean;
 }
 
@@ -98,6 +99,7 @@ export interface MigrationSummary {
     readonly wroteSiblingDueToConflict: boolean;
   };
   readonly userHistory: { readonly copied: number; readonly skippedExisting: number };
+  readonly skills: { readonly copied: number; readonly skippedExisting: number };
   readonly sessions: SessionsSummary;
 }
 

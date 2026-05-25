@@ -46,10 +46,11 @@ describe('MigrationScreenComponent — ask phase', () => {
     expect(out).toContain('Never ask again');
   });
 
-  it('ask1 summary shows the kimi-cli login hint when OAuth credentials are detected', async () => {
-    // OAuth credentials are detected but not migrated — surface that up front
-    // so the pre-migration summary is consistent with the result screen's
-    // "⚠ kimi-cli login not migrated — run /login" line.
+  it('ask1 summary does not mention kimi-cli login (oauth is not a migrated kind)', async () => {
+    // OAuth credentials are deliberately never migrated, so the pre-migration
+    // summary must not list "kimi-cli login" alongside the real migratable
+    // data classes — that framing makes users believe their session will
+    // carry over, which it does not.
     const c = new MigrationScreenComponent({
       plan: makePlan(),
       sourceHome: '/x/.kimi',
@@ -58,30 +59,8 @@ describe('MigrationScreenComponent — ask phase', () => {
       onComplete: () => {},
     });
     const out = render(c);
-    expect(out).toContain('kimi-cli login');
-  });
-
-  it('ask1 renders a non-empty summary when the only detected data is an OAuth login', async () => {
-    // Legacy install with nothing but `credentials/*.json` would otherwise
-    // render the summary line as blank — `summarizePlan` no longer treats
-    // OAuth as a migrated kind. The OAuth hint must keep that line useful.
-    const c = new MigrationScreenComponent({
-      plan: makePlan({
-        hasConfig: false,
-        hasMcp: false,
-        hasUserHistory: false,
-        totalSessions: 0,
-        workdirs: [],
-      }),
-      sourceHome: '/x/.kimi',
-      targetHome: '/y/.kimi-code',
-      colors: darkColors,
-      onComplete: () => {},
-    });
-    const out = render(c);
-    expect(out).toContain('kimi-cli login');
-    // ...and the summary line is not blank — the OAuth hint is its content.
-    expect(out).toMatch(/Found an existing kimi-cli installation:\n\s+\S/);
+    expect(out).not.toContain('kimi-cli login');
+    expect(out).not.toContain('/login');
   });
 
   it('picking "Ask me later" at ask1 completes with decision=later', () => {
@@ -298,6 +277,7 @@ function makeReport(
       },
       mcp: { mergedServers: [], keptNewForConflicts: [], droppedServers: [], wroteSiblingDueToConflict: false },
       userHistory: { copied: 12, skippedExisting: 0 },
+      skills: { copied: 0, skippedExisting: 0 },
       sessions: {
         scope: 'all',
         bucketsScanned: 0,

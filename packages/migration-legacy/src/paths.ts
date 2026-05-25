@@ -4,6 +4,7 @@ import { join } from 'node:path';
 export const sourceCredentialsDir = (src: string): string => join(src, 'credentials');
 export const sourceSessionsDir = (src: string): string => join(src, 'sessions');
 export const sourceUserHistoryDir = (src: string): string => join(src, 'user-history');
+export const sourceSkillsDir = (src: string): string => join(src, 'skills');
 export const sourceKimiJson = (src: string): string => join(src, 'kimi.json');
 export const sourceConfigToml = (src: string): string => join(src, 'config.toml');
 export const sourceMcpJson = (src: string): string => join(src, 'mcp.json');
@@ -14,6 +15,7 @@ export const migratedMarker = (src: string): string => join(src, '.migrated-to-k
 // Target (~/.kimi-code/) paths
 export const targetSessionsDir = (tgt: string): string => join(tgt, 'sessions');
 export const targetUserHistoryDir = (tgt: string): string => join(tgt, 'user-history');
+export const targetSkillsDir = (tgt: string): string => join(tgt, 'skills');
 export const targetConfigFile = (tgt: string): string => join(tgt, 'config.toml');
 export const targetTuiFile = (tgt: string): string => join(tgt, 'tui.toml');
 export const targetMcpFile = (tgt: string): string => join(tgt, 'mcp.json');

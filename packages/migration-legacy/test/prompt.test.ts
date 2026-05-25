@@ -10,6 +10,7 @@ describe('resolveMigrationScope', () => {
       config: true,
       mcp: true,
       userHistory: true,
+      skills: true,
       sessions: false,
     });
   });
@@ -21,6 +22,7 @@ describe('resolveMigrationScope', () => {
       config: true,
       mcp: true,
       userHistory: true,
+      skills: true,
       sessions: true,
     });
   });
