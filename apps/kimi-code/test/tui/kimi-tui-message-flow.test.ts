@@ -117,6 +117,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
         k2: { model: 'moonshot-v1', maxContextSize: 100 },
       },
     })),
+    setConfig: vi.fn(async () => ({ providers: {} })),
     createSession: vi.fn(async () => session),
     resumeSession: vi.fn(async () => session),
     forkSession: vi.fn(async () => session),
@@ -1145,6 +1146,7 @@ describe('KimiTUI message flow', () => {
 
   it('applies /model selection with inline thinking state', async () => {
     const session = makeSession();
+    const setConfig = vi.fn(async () => ({ providers: {} }));
     const { driver } = await makeDriver(session, {
       getConfig: vi.fn(async () => ({
         models: {
@@ -1163,7 +1165,10 @@ describe('KimiTUI message flow', () => {
             capabilities: ['thinking'],
           },
         },
+        defaultModel: 'k2',
+        defaultThinking: false,
       })),
+      setConfig,
     });
 
     driver.handleUserInput('/model turbo');
@@ -1179,9 +1184,49 @@ describe('KimiTUI message flow', () => {
     await vi.waitFor(() => {
       expect(session.setModel).toHaveBeenCalledWith('turbo');
       expect(session.setThinking).toHaveBeenCalledWith('on');
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'turbo',
+        defaultThinking: true,
+      });
     });
     expect(driver.state.appState.model).toBe('turbo');
     expect(driver.state.appState.thinking).toBe(true);
+  });
+
+  it('persists /model selection even when runtime state is unchanged', async () => {
+    const session = makeSession();
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+          },
+        },
+        defaultModel: 'old-default',
+        defaultThinking: true,
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/model k2');
+
+    const picker = driver.state.editorContainer.children[0];
+    expect(picker).toBeInstanceOf(ModelSelectorComponent);
+    (picker as ModelSelectorComponent).handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'k2',
+        defaultThinking: false,
+      });
+    });
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(session.setThinking).not.toHaveBeenCalled();
   });
 
   it('deletes Kitty inline images when /new clears the transcript', async () => {
