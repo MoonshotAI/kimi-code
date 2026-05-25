@@ -11,6 +11,7 @@ body:
         Before you submit a feature:
         1. Search existing issues for similar features. If you find one, 👍 it rather than opening a new one.
         2. The Kimi Code team will try to balance the varying needs of the community when prioritizing or rejecting new features. Please understand that not all features will be accepted.
+        3. Do not open a feature PR until maintainers have had a chance to respond here. PRs without prior discussion may be closed without review.
 
   - type: textarea
     id: feature

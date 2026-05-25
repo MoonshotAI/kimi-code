@@ -113,7 +113,10 @@ export class ProviderManager {
   }
 
   resolveThinkingLevel(requestedThinking?: string): ThinkingEffort {
-    return resolveThinkingEffort(requestedThinking, this.state.config.thinking);
+    return resolveThinkingEffort(
+      resolveRuntimeThinkingRequest(requestedThinking, this.state.config.defaultThinking),
+      this.state.config.thinking,
+    );
   }
 
   resolveSelectedModel(requestedModel: string | undefined): string | undefined {
@@ -136,4 +139,13 @@ function normalizeString(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function resolveRuntimeThinkingRequest(
+  requestedThinking: string | undefined,
+  defaultThinking: boolean | undefined,
+): string | undefined {
+  const normalized = normalizeString(requestedThinking);
+  if (normalized !== undefined) return normalized;
+  return defaultThinking === false ? 'off' : undefined;
 }

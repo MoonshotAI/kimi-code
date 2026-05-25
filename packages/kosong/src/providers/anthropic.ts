@@ -26,6 +26,7 @@ import type {
   Tool as AnthropicTool,
   ContentBlockParam,
   MessageCreateParams,
+  MessageCreateParamsStreaming,
   MessageParam,
   MessageStreamEvent,
   RawContentBlockDeltaEvent,
@@ -968,10 +969,12 @@ export class AnthropicChatProvider implements ChatProvider {
     const client = this._createClient(options?.auth);
 
     if (this._stream) {
-      // Streaming mode: use client.messages.stream() which returns an AsyncIterable<MessageStreamEvent>
+      // Use the raw Messages stream instead of the SDK MessageStream helper.
+      // The helper reparses accumulated input_json_delta buffers on every chunk,
+      // which becomes synchronous O(n^2) work for large streamed tool arguments.
       try {
-        const stream = client.messages.stream(
-          createParams as unknown as MessageCreateParams,
+        const stream = await client.messages.create(
+          { ...createParams, stream: true } as unknown as MessageCreateParamsStreaming,
           finalRequestOptions,
         );
         return new AnthropicStreamedMessage(stream, true);

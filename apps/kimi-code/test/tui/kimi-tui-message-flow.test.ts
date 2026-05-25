@@ -117,6 +117,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
         k2: { model: 'moonshot-v1', maxContextSize: 100 },
       },
     })),
+    setConfig: vi.fn(async () => ({ providers: {} })),
     createSession: vi.fn(async () => session),
     resumeSession: vi.fn(async () => session),
     forkSession: vi.fn(async () => session),
@@ -616,6 +617,125 @@ describe('KimiTUI message flow', () => {
     }
   });
 
+  it('coalesces assistant delta component updates', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver } = await makeDriver();
+      vi.mocked(driver.state.ui.requestRender).mockClear();
+
+      driver.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: 'a',
+        } as Event,
+        vi.fn(),
+      );
+      const component = driver.state.streamingComponent;
+      if (component === undefined) throw new Error('expected streaming component');
+      const updateSpy = vi.spyOn(component, 'updateContent');
+
+      driver.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: 'b',
+        } as Event,
+        vi.fn(),
+      );
+      driver.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: 'c',
+        } as Event,
+        vi.fn(),
+      );
+
+      expect(updateSpy).not.toHaveBeenCalled();
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+      expect(updateSpy).toHaveBeenLastCalledWith('abc');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('flushes pending assistant deltas before turn completion', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver } = await makeDriver();
+      const sendQueued = vi.fn();
+      driver.state.appState.isStreaming = true;
+
+      driver.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: 'done',
+        } as Event,
+        sendQueued,
+      );
+      driver.handleEvent(
+        {
+          type: 'turn.ended',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          reason: 'completed',
+        } as Event,
+        sendQueued,
+      );
+
+      expect(stripSgr(renderTranscript(driver))).toContain('done');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('coalesces streaming tool-call argument preview updates', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver } = await makeDriver();
+      driver.state.currentTurnId = '1';
+      driver.state.currentStep = 1;
+
+      driver.handleEvent(
+        {
+          type: 'tool.call.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: 'call_bash',
+          name: 'Bash',
+          argumentsPart: '{"command":"echo hi"}',
+        } as Event,
+        vi.fn(),
+      );
+
+      expect(driver.state.pendingToolComponents.has('call_bash')).toBe(false);
+      expect(driver.state.activeToolCalls.has('call_bash')).toBe(false);
+
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(driver.state.pendingToolComponents.has('call_bash')).toBe(true);
+      expect(driver.state.activeToolCalls.get('call_bash')?.args).toMatchObject({
+        command: 'echo hi',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('cancels manual compaction from the editor', async () => {
     const { driver, session } = await makeDriver();
     driver.handleEvent(
@@ -1026,6 +1146,7 @@ describe('KimiTUI message flow', () => {
 
   it('applies /model selection with inline thinking state', async () => {
     const session = makeSession();
+    const setConfig = vi.fn(async () => ({ providers: {} }));
     const { driver } = await makeDriver(session, {
       getConfig: vi.fn(async () => ({
         models: {
@@ -1044,7 +1165,10 @@ describe('KimiTUI message flow', () => {
             capabilities: ['thinking'],
           },
         },
+        defaultModel: 'k2',
+        defaultThinking: false,
       })),
+      setConfig,
     });
 
     driver.handleUserInput('/model turbo');
@@ -1060,9 +1184,49 @@ describe('KimiTUI message flow', () => {
     await vi.waitFor(() => {
       expect(session.setModel).toHaveBeenCalledWith('turbo');
       expect(session.setThinking).toHaveBeenCalledWith('on');
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'turbo',
+        defaultThinking: true,
+      });
     });
     expect(driver.state.appState.model).toBe('turbo');
     expect(driver.state.appState.thinking).toBe(true);
+  });
+
+  it('persists /model selection even when runtime state is unchanged', async () => {
+    const session = makeSession();
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+          },
+        },
+        defaultModel: 'old-default',
+        defaultThinking: true,
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/model k2');
+
+    const picker = driver.state.editorContainer.children[0];
+    expect(picker).toBeInstanceOf(ModelSelectorComponent);
+    (picker as ModelSelectorComponent).handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'k2',
+        defaultThinking: false,
+      });
+    });
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(session.setThinking).not.toHaveBeenCalled();
   });
 
   it('deletes Kitty inline images when /new clears the transcript', async () => {
