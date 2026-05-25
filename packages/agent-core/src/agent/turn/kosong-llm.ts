@@ -32,7 +32,7 @@ import {
 import type { LLM, LLMChatParams, LLMChatResponse, LLMRequestLogContext } from '../../loop';
 import {
   applyCompletionBudget,
-  type CompletionBudget,
+  type CompletionBudgetConfig,
 } from '../../utils/completion-budget';
 
 export const GENERATE_REQUEST_LOG_CONTEXT = '__kimiRequestLogContext';
@@ -56,12 +56,10 @@ export interface KosongLLMConfig {
    */
   readonly generate?: GenerateFn | undefined;
   /**
-   * Per-request completion-token budget. When set, each `chat()` call
-   * clones the configured provider with a clamped `max_completion_tokens`
-   * derived from the current input size and model context window. The
-   * clone is local to the call and never replaces `this.provider`.
+   * Completion budget config resolved from agent/provider settings. The
+   * final cap is computed per request from the current messages and tools.
    */
-  readonly completionBudget?: CompletionBudget | undefined;
+  readonly completionBudgetConfig?: CompletionBudgetConfig | undefined;
 }
 
 export class KosongLLM implements LLM {
@@ -71,7 +69,7 @@ export class KosongLLM implements LLM {
 
   private readonly provider: ChatProvider;
   private readonly generate: GenerateFn;
-  private readonly completionBudget: CompletionBudget | undefined;
+  private readonly completionBudgetConfig: CompletionBudgetConfig | undefined;
 
   constructor(config: KosongLLMConfig) {
     this.provider = config.provider;
@@ -79,7 +77,7 @@ export class KosongLLM implements LLM {
     this.systemPrompt = config.systemPrompt;
     this.capability = config.capability;
     this.generate = config.generate ?? kosongGenerate;
-    this.completionBudget = config.completionBudget;
+    this.completionBudgetConfig = config.completionBudgetConfig;
   }
 
   async chat(params: LLMChatParams): Promise<LLMChatResponse> {
@@ -98,7 +96,7 @@ export class KosongLLM implements LLM {
     // context can still slip past the limit.
     const effectiveProvider = applyCompletionBudget({
       provider: this.provider,
-      budget: this.completionBudget,
+      budget: this.completionBudgetConfig,
       capability: this.capability,
       messages: params.messages,
       systemPrompt: this.systemPrompt,
