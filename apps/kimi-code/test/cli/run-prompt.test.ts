@@ -634,7 +634,9 @@ describe('runPrompt', () => {
         stdout: { write: vi.fn(() => true) },
         stderr: { write: vi.fn(() => true) },
       }),
-    ).rejects.toThrow('No model configured. Set default_model in config.toml.');
+    ).rejects.toThrow(
+      'No model configured. Run `kimi` and use /login to sign in, then retry; or set default_model in config.toml.',
+    );
 
     expect(mocks.harnessClose).toHaveBeenCalled();
   });
