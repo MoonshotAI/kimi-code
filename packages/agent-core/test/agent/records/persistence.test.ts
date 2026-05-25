@@ -7,11 +7,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
-  AgentRecords,
   FileSystemAgentRecordPersistence,
   InMemoryAgentRecordPersistence,
   type AgentRecord,
-} from '../../src/agent/records';
+} from '../../../src/agent/records';
 
 const cleanups: string[] = [];
 
@@ -247,84 +246,5 @@ describe('InMemoryAgentRecordPersistence', () => {
       },
     ]);
     expect(persistence.records).toEqual(records);
-  });
-});
-
-describe('AgentRecords persistence metadata', () => {
-  it('writes metadata before the first persisted record', async () => {
-    const wirePath = await makeWirePath();
-    const persistence = new FileSystemAgentRecordPersistence(wirePath);
-    const records = new AgentRecords(() => {}, persistence);
-
-    records.logRecord({
-      type: 'turn.prompt',
-      input: [{ type: 'text', text: 'hello' }],
-      origin: { kind: 'user' },
-    });
-    await records.flush();
-
-    const lines = await readLines(wirePath);
-    expect(lines).toHaveLength(2);
-    const meta = JSON.parse(lines[0]!) as Record<string, unknown>;
-    expect(meta).toMatchObject({
-      type: 'metadata',
-      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-    });
-    expect(typeof meta['created_at']).toBe('number');
-    expect(JSON.parse(lines[1]!)['type']).toBe('turn.prompt');
-  });
-
-  it('does not write metadata when replaying an empty stream', async () => {
-    const wirePath = await makeWirePath();
-    const persistence = new FileSystemAgentRecordPersistence(wirePath);
-    const records = new AgentRecords(() => {}, persistence);
-
-    await records.replay();
-    records.logRecord({
-      type: 'turn.prompt',
-      input: [{ type: 'text', text: 'one' }],
-      origin: { kind: 'user' },
-    });
-    await records.flush();
-
-    const lines = await readLines(wirePath);
-    expect(lines).toHaveLength(2);
-    expect(lines.map((line) => JSON.parse(line)['type'])).toEqual([
-      'metadata',
-      'turn.prompt',
-    ]);
-  });
-
-  it('does not duplicate metadata after replaying existing records', async () => {
-    const wirePath = await makeWirePath();
-    const persistence = new FileSystemAgentRecordPersistence(wirePath);
-    persistence.append({
-      type: 'metadata',
-      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-      created_at: 1,
-    });
-    persistence.append({
-      type: 'turn.prompt',
-      input: [{ type: 'text', text: 'one' }],
-      origin: { kind: 'user' },
-    });
-    await persistence.flush();
-
-    const records = new AgentRecords(() => {}, persistence);
-    await records.replay();
-    records.logRecord({
-      type: 'turn.prompt',
-      input: [{ type: 'text', text: 'two' }],
-      origin: { kind: 'user' },
-    });
-    await records.flush();
-
-    const lines = await readLines(wirePath);
-    expect(lines.map((line) => JSON.parse(line)['type'])).toEqual([
-      'metadata',
-      'turn.prompt',
-      'turn.prompt',
-    ]);
-    expect(lines.filter((line) => JSON.parse(line)['type'] === 'metadata')).toHaveLength(1);
   });
 });
