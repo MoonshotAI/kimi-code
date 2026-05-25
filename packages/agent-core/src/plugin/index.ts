@@ -3,3 +3,5 @@ export { parseManifest } from './manifest';
 export type { ParsedManifestResult } from './manifest';
 export { readInstalled, writeInstalled } from './store';
 export type { InstalledFile, InstalledRecord } from './store';
+export { PluginManager } from './manager';
+export type { PluginManagerOptions } from './manager';
