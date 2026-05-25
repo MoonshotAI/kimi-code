@@ -235,6 +235,7 @@ import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
 import { createTerminalState, type TerminalState } from './utils/terminal-state';
 import { installTerminalThemeTracking } from './utils/terminal-theme';
+import { outputTokensPerSecond } from './utils/token-throughput';
 import { detectTmuxKeyboardWarning } from './utils/tmux-keyboard';
 import { nextTranscriptId } from './utils/transcript-id';
 
@@ -380,6 +381,8 @@ export interface TUIState {
   externalEditorRunning: boolean;
   currentTurnId: string | undefined;
   currentStep: number;
+  currentStepStartedAtMs: number;
+  currentStepModelFinishedAtMs: number | undefined;
   assistantDraft: string;
   assistantStreamActive: boolean;
   thinkingDraft: string;
@@ -405,6 +408,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     contextUsage: 0,
     contextTokens: 0,
     maxContextTokens: 0,
+    outputTokensPerSecond: null,
     isStreaming: false,
     isCompacting: false,
     isReplaying: false,
@@ -491,6 +495,8 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     externalEditorRunning: false,
     currentTurnId: undefined,
     currentStep: 0,
+    currentStepStartedAtMs: 0,
+    currentStepModelFinishedAtMs: undefined,
     assistantDraft: '',
     assistantStreamActive: false,
     thinkingDraft: '',
@@ -947,6 +953,7 @@ export class KimiTUI {
       contextTokens: 0,
       maxContextTokens: 0,
       contextUsage: 0,
+      outputTokensPerSecond: null,
       sessionTitle: null,
     });
     this.state.startupNotice = combineStartupNotice(
@@ -994,6 +1001,7 @@ export class KimiTUI {
       sessionId: '',
       model: '',
       sessionTitle: null,
+      outputTokensPerSecond: null,
     });
     await this.refreshSkillCommands();
   }
@@ -1037,6 +1045,7 @@ export class KimiTUI {
       maxContextTokens: 0,
       contextUsage: 0,
       contextTokens: 0,
+      outputTokensPerSecond: null,
     });
   }
 
@@ -1545,6 +1554,8 @@ export class KimiTUI {
   // Resets request-scoped state before submitting work to the active session.
   private beginSessionRequest(): void {
     this.state.currentTurnId = undefined;
+    this.state.currentStepStartedAtMs = Date.now();
+    this.state.currentStepModelFinishedAtMs = undefined;
     this.resetLiveTextRuntime();
     this.resetLiveToolUiState();
     this.resetToolCallState();
@@ -1558,6 +1569,7 @@ export class KimiTUI {
       isStreaming: true,
       streamingPhase: 'waiting',
       streamingStartTime: Date.now(),
+      outputTokensPerSecond: null,
     });
   }
 
@@ -1938,6 +1950,7 @@ export class KimiTUI {
       contextTokens: status.contextTokens,
       maxContextTokens: status.maxContextTokens,
       contextUsage: status.contextUsage,
+      outputTokensPerSecond: null,
       sessionTitle: session.summary?.title ?? null,
     });
   }
@@ -2033,6 +2046,8 @@ export class KimiTUI {
     this.setTodoList([]);
     this.state.currentTurnId = undefined;
     this.state.currentStep = 0;
+    this.state.currentStepStartedAtMs = 0;
+    this.state.currentStepModelFinishedAtMs = undefined;
     this.resetLiveTextRuntime();
     this.updateQueueDisplay();
   }
@@ -2355,6 +2370,8 @@ export class KimiTUI {
     void _event;
     this.resetLiveToolUiState();
     this.state.currentStep = 0;
+    this.state.currentStepStartedAtMs = Date.now();
+    this.state.currentStepModelFinishedAtMs = undefined;
     this.patchLivePane({
       mode: 'waiting',
       pendingApproval: null,
@@ -2364,6 +2381,7 @@ export class KimiTUI {
       isStreaming: true,
       streamingPhase: 'waiting',
       streamingStartTime: Date.now(),
+      outputTokensPerSecond: null,
     });
   }
 
@@ -2383,6 +2401,8 @@ export class KimiTUI {
   private handleStepBegin(event: TurnStepStartedEvent): void {
     this.flushStreamingUiUpdatesNow();
     this.state.currentStep = event.step;
+    this.state.currentStepStartedAtMs = Date.now();
+    this.state.currentStepModelFinishedAtMs = undefined;
     this.resetLiveToolUiState();
     this.finalizeLiveTextBuffers('waiting');
     this.patchLivePane({
@@ -2393,6 +2413,7 @@ export class KimiTUI {
     this.setAppState({
       streamingPhase: 'waiting',
       streamingStartTime: Date.now(),
+      outputTokensPerSecond: null,
     });
   }
 
@@ -2406,6 +2427,7 @@ export class KimiTUI {
   // notice pointing at the config knob.
   private handleStepCompleted(event: TurnStepCompletedEvent): void {
     this.flushStreamingUiUpdatesNow();
+    this.updateOutputTokenThroughput(event.usage);
     if (event.finishReason !== 'max_tokens') return;
 
     // Scope the truncation marking to tool calls that belong to the
@@ -2441,6 +2463,18 @@ export class KimiTUI {
       ? 'If this limit is wrong for your model, set `max_output_size` on the model alias in your kimi-code config.'
       : undefined;
     this.showNotice(title, detail);
+  }
+
+  private updateOutputTokenThroughput(usage: TurnStepCompletedEvent['usage']): void {
+    if (this.state.currentStepStartedAtMs <= 0) return;
+    const endedAtMs = this.state.currentStepModelFinishedAtMs ?? Date.now();
+    const tokensPerSecond = outputTokensPerSecond(
+      usage,
+      this.state.currentStepStartedAtMs,
+      endedAtMs,
+    );
+    if (tokensPerSecond === null) return;
+    this.setAppState({ outputTokensPerSecond: tokensPerSecond });
   }
 
   private isAnthropicSessionActive(): boolean {
@@ -2526,6 +2560,7 @@ export class KimiTUI {
   // Starts or updates a rendered tool call from a tool-call start event.
   private handleToolCall(event: ToolCallStartedEvent): void {
     this.flushStreamingUiUpdatesNow();
+    this.state.currentStepModelFinishedAtMs ??= Date.now();
     const toolCall: ToolCallBlockData = {
       id: event.toolCallId,
       name: event.name,

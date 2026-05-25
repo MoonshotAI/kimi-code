@@ -21,6 +21,7 @@ export interface AppState {
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;
+  outputTokensPerSecond: number | null;
   isStreaming: boolean;
   isCompacting: boolean;
   isReplaying: boolean;

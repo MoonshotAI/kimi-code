@@ -19,7 +19,7 @@ import {
   type GitStatus,
   type GitStatusCache,
 } from '#/utils/git/git-status';
-import { safeUsageRatio } from '#/utils/usage/usage-format';
+import { formatTokenCount, safeUsageRatio } from '#/utils/usage/usage-format';
 
 const MAX_CWD_SEGMENTS = 3;
 
@@ -83,12 +83,6 @@ function shortenCwd(path: string): string {
   return `…/${tail}`;
 }
 
-function formatTokenCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
-
 function safeUsage(usage: number): number {
   return safeUsageRatio(usage);
 }
@@ -99,6 +93,24 @@ function formatContextStatus(usage: number, tokens?: number, maxTokens?: number)
     return `context: ${pct} (${formatTokenCount(tokens)}/${formatTokenCount(maxTokens)})`;
   }
   return `context: ${pct}`;
+}
+
+function formatTokenThroughput(tokensPerSecond: number | null): string | undefined {
+  if (
+    tokensPerSecond === null ||
+    !Number.isFinite(tokensPerSecond) ||
+    tokensPerSecond <= 0
+  ) {
+    return undefined;
+  }
+
+  const value =
+    tokensPerSecond >= 100
+      ? String(Math.round(tokensPerSecond))
+      : tokensPerSecond >= 10
+        ? tokensPerSecond.toFixed(1)
+        : tokensPerSecond.toFixed(2);
+  return `speed: ${value} tok/s`;
 }
 
 export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): string {
@@ -236,7 +248,7 @@ export class FooterComponent implements Component {
       line1 = truncateToWidth(leftLine, width, '…');
     }
 
-    // ── Line 2: transient hint (bottom-left) + context (right) ──
+    // ── Line 2: transient hint / token speed (bottom-left) + context (right) ──
     const contextText = formatContextStatus(
       state.contextUsage,
       state.contextTokens,
@@ -244,18 +256,22 @@ export class FooterComponent implements Component {
     );
     const contextWidth = visibleWidth(contextText);
     let line2: string;
-    if (this.transientHint) {
+    const throughputText = formatTokenThroughput(state.outputTokensPerSecond);
+    const leftStatus = this.transientHint ?? throughputText;
+    if (leftStatus) {
       const maxHintWidth = Math.max(0, width - contextWidth - 1);
       const shownHint =
-        visibleWidth(this.transientHint) <= maxHintWidth
-          ? this.transientHint
-          : truncateToWidth(this.transientHint, maxHintWidth, '…');
+        visibleWidth(leftStatus) <= maxHintWidth
+          ? leftStatus
+          : truncateToWidth(leftStatus, maxHintWidth, '…');
       const hintWidth = visibleWidth(shownHint);
       const pad = Math.max(0, width - hintWidth - contextWidth);
+      const statusStyle =
+        this.transientHint === null
+          ? chalk.hex(colors.textMuted)
+          : chalk.hex(colors.warning).bold;
       line2 =
-        chalk.hex(colors.warning).bold(shownHint) +
-        ' '.repeat(pad) +
-        chalk.hex(colors.text)(contextText);
+        statusStyle(shownHint) + ' '.repeat(pad) + chalk.hex(colors.text)(contextText);
     } else {
       const leftPad = Math.max(0, width - contextWidth);
       line2 = ' '.repeat(leftPad) + chalk.hex(colors.text)(contextText);

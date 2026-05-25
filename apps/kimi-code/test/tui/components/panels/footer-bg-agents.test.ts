@@ -21,6 +21,7 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
     contextUsage: 0,
     contextTokens: 0,
     maxContextTokens: 200_000,
+    outputTokensPerSecond: null,
     isStreaming: false,
     isCompacting: false,
     isReplaying: false,

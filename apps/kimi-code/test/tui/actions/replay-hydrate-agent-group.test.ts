@@ -21,6 +21,7 @@ function makeAppState(): AppState {
     contextUsage: 0,
     contextTokens: 0,
     maxContextTokens: 100,
+    outputTokensPerSecond: null,
     isStreaming: false,
     isCompacting: false,
     isReplaying: false,

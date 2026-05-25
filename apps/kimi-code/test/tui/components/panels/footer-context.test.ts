@@ -30,6 +30,7 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
     contextUsage: 0,
     contextTokens: 0,
     maxContextTokens: 0,
+    outputTokensPerSecond: null,
     isStreaming: false,
     isCompacting: false,
     isReplaying: false,
@@ -113,6 +114,27 @@ describe('FooterComponent — context NaN resilience', () => {
     const [, line2] = footer.render(120);
     expect(strip(line2 ?? '')).toContain('Press Ctrl-C again to exit');
     expect(strip(line2 ?? '')).toContain('context: 0.0%');
+  });
+
+  it('renders recent output token throughput on the context line', () => {
+    const footer = new FooterComponent(
+      baseState({ outputTokensPerSecond: 24.62, contextUsage: 0.125 }),
+      darkColors,
+    );
+
+    const [, line2] = footer.render(120);
+    expect(strip(line2 ?? '')).toContain('speed: 24.6 tok/s');
+    expect(strip(line2 ?? '')).toContain('context: 12.5%');
+  });
+
+  it('lets transient hints temporarily replace token throughput', () => {
+    const footer = new FooterComponent(baseState({ outputTokensPerSecond: 24.62 }), darkColors);
+
+    footer.setTransientHint('Press Ctrl-C again to exit');
+
+    const [, line2] = footer.render(120);
+    expect(strip(line2 ?? '')).toContain('Press Ctrl-C again to exit');
+    expect(strip(line2 ?? '')).not.toContain('tok/s');
   });
 
   it('highlights the pull request badge separately from git status text', () => {
