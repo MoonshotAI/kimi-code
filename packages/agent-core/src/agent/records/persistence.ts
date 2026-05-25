@@ -40,6 +40,7 @@ export class FileSystemAgentRecordPersistence implements AgentRecordPersistence 
   private shouldClear = false;
   private directorySynced = false;
   private flushPromise: Promise<void> | undefined;
+  private error: unknown;
 
   constructor(
     private readonly filePath: string,
@@ -86,23 +87,27 @@ export class FileSystemAgentRecordPersistence implements AgentRecordPersistence 
   }
 
   append(input: AgentRecord): void {
+    this.throwIfError();
     this.pendingRecords.push(input);
     this.scheduleFlush();
   }
 
   rewrite(records: readonly AgentRecord[]): void {
+    this.throwIfError();
     this.shouldClear = true;
     this.pendingRecords.splice(0, this.pendingRecords.length, ...records);
     this.scheduleFlush();
   }
 
   async flush(): Promise<void> {
+    this.throwIfError();
     while (
       this.flushPromise !== undefined ||
       this.shouldClear ||
       this.pendingRecords.length > 0
     ) {
       await this.ensureFlush();
+      this.throwIfError();
     }
   }
 
@@ -119,16 +124,30 @@ export class FileSystemAgentRecordPersistence implements AgentRecordPersistence 
   private ensureFlush(): Promise<void> {
     if (this.flushPromise !== undefined) return this.flushPromise;
 
-    const promise = this.drainPendingRecords().finally(() => {
-      if (this.flushPromise === promise) {
-        this.flushPromise = undefined;
-      }
-      if (this.shouldClear || this.pendingRecords.length > 0) {
-        this.scheduleFlush();
-      }
-    });
+    const promise = this.drainPendingRecords()
+      .catch((error: unknown) => {
+        this.error = error;
+        // oxlint-disable-next-line typescript-eslint/only-throw-error
+        throw error;
+      })
+      .finally(() => {
+        if (this.flushPromise === promise) {
+          this.flushPromise = undefined;
+        }
+        if (
+          this.error === undefined &&
+          (this.shouldClear || this.pendingRecords.length > 0)
+        ) {
+          this.scheduleFlush();
+        }
+      });
     this.flushPromise = promise;
     return promise;
+  }
+
+  private throwIfError(): void {
+    // oxlint-disable-next-line typescript-eslint/only-throw-error
+    if (this.error !== undefined) throw this.error;
   }
 
   private async drainPendingRecords(): Promise<void> {

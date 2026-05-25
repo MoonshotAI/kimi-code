@@ -187,6 +187,37 @@ describe('FileSystemAgentRecordPersistence', () => {
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0]!)['type']).toBe('turn.prompt');
   });
+
+  it('enters error state after a write failure', async () => {
+    const wirePath = await makeWirePath();
+    await mkdir(wirePath);
+    const persistence = new FileSystemAgentRecordPersistence(wirePath);
+
+    persistence.append({
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: 'first' }],
+      origin: { kind: 'user' },
+    });
+    await expect(persistence.flush()).rejects.toBeInstanceOf(Error);
+
+    expect(() => {
+      persistence.append({
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'second' }],
+        origin: { kind: 'user' },
+      });
+    }).toThrow();
+    expect(() => {
+      persistence.rewrite([
+        {
+          type: 'turn.prompt',
+          input: [{ type: 'text', text: 'rewrite' }],
+          origin: { kind: 'user' },
+        },
+      ]);
+    }).toThrow();
+    await expect(persistence.flush()).rejects.toBeInstanceOf(Error);
+  });
 });
 
 describe('InMemoryAgentRecordPersistence', () => {
