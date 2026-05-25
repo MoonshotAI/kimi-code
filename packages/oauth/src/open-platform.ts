@@ -1,3 +1,4 @@
+import { readApiErrorMessage } from './api-error';
 import { isRecord } from './utils';
 import type {
   ManagedKimiCodeModelInfo,
@@ -93,7 +94,10 @@ export async function fetchOpenPlatformModels(
     signal,
   });
   if (!res.ok) {
-    throw new OpenPlatformApiError(`Failed to list models (HTTP ${res.status}).`, res.status);
+    throw new OpenPlatformApiError(
+      await readApiErrorMessage(res, `Failed to list models (HTTP ${res.status}).`),
+      res.status,
+    );
   }
   const payload: unknown = await res.json();
   if (!isRecord(payload) || !Array.isArray(payload['data'])) {

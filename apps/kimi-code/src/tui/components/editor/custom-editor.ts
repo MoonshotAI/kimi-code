@@ -81,8 +81,10 @@ function stripSgr(s: string): string {
   return s.replace(ANSI_SGR, '');
 }
 
-function isNewlineShortcut(data: string): boolean {
-  return data === '\n' || data === '\u001B\r' || data === '\u001B[13;2~';
+function getNewlineInput(data: string): string | undefined {
+  if (data === '\n' || data === '\u001B\r' || data === '\u001B[13;2~') return data;
+  if (matchesKey(data, Key.ctrl('j'))) return '\n';
+  return undefined;
 }
 
 export class CustomEditor extends Editor {
@@ -249,8 +251,11 @@ export class CustomEditor extends Editor {
       this.onUndo?.();
     }
 
-    if (isNewlineShortcut(normalized)) {
+    const newlineInput = getNewlineInput(normalized);
+    if (newlineInput !== undefined) {
       this.onInsertNewline?.();
+      super.handleInput(newlineInput);
+      return;
     }
 
     if (matchesKey(normalized, Key.up)) {

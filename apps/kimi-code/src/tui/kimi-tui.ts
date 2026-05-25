@@ -164,13 +164,11 @@ import {
   FEEDBACK_ISSUE_URL,
   FEEDBACK_STATUS_CANCELLED,
   FEEDBACK_STATUS_FALLBACK,
-  FEEDBACK_STATUS_NETWORK_ERROR,
   FEEDBACK_STATUS_NOT_SIGNED_IN,
   FEEDBACK_STATUS_SUBMITTING,
   FEEDBACK_STATUS_SUCCESS,
   FEEDBACK_TELEMETRY_EVENT,
   errorReportHintLine,
-  feedbackHttpErrorMessage,
   feedbackSessionLine,
   withFeedbackVersionPrefix,
 } from './constant/feedback';
@@ -5078,11 +5076,7 @@ export class KimiTUI {
       return;
     }
 
-    const failLabel =
-      res.status !== undefined
-        ? feedbackHttpErrorMessage(res.status)
-        : FEEDBACK_STATUS_NETWORK_ERROR;
-    spinner.stop({ ok: false, label: failLabel });
+    spinner.stop({ ok: false, label: res.message });
     fallback(FEEDBACK_STATUS_FALLBACK);
   }
 

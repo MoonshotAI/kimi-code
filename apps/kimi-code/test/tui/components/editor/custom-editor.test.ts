@@ -85,18 +85,27 @@ describe('CustomEditor Kitty key release handling', () => {
 });
 
 describe('CustomEditor shortcut telemetry hooks', () => {
-  it('reports newline and undo shortcuts before delegating to the base editor', () => {
+  it('reports newline shortcuts, including Ctrl-J, before delegating to the base editor', () => {
     const editor = makeEditor();
     const onInsertNewline = vi.fn();
-    const onUndo = vi.fn();
     editor.onInsertNewline = onInsertNewline;
-    editor.onUndo = onUndo;
 
     editor.handleInput('a');
     editor.handleInput('\n');
+    editor.handleInput('\u001B[106;5u');
+
+    expect(onInsertNewline).toHaveBeenCalledTimes(2);
+    expect(editor.getText()).toBe('a\n\n');
+  });
+
+  it('reports undo shortcuts before delegating to the base editor', () => {
+    const editor = makeEditor();
+    const onUndo = vi.fn();
+    editor.onUndo = onUndo;
+
+    editor.handleInput('a');
     editor.handleInput('\u001F');
 
-    expect(onInsertNewline).toHaveBeenCalledOnce();
     expect(onUndo).toHaveBeenCalledOnce();
   });
 });

@@ -37,7 +37,7 @@ export const DEFAULT_KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
   // { keys: 'Ctrl-G', description: 'Edit in external editor ($VISUAL / $EDITOR)' },
   { keys: 'Ctrl-O', description: 'Toggle tool output expansion' },
   { keys: 'Ctrl-S', description: 'Steer — inject a follow-up during streaming' },
-  { keys: 'Shift-Enter', description: 'Insert newline' },
+  { keys: 'Shift-Enter / Ctrl-J', description: 'Insert newline' },
   { keys: 'Ctrl-C', description: 'Interrupt stream / clear input' },
   { keys: 'Ctrl-D', description: 'Exit (on empty input)' },
   { keys: 'Esc', description: 'Close dialogs / interrupt streaming' },
