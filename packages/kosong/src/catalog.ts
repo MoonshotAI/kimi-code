@@ -9,6 +9,7 @@ import type { ProviderType } from './providers';
 export interface CatalogModelEntry {
   readonly id?: string;
   readonly name?: string;
+  readonly family?: string;
   readonly limit?: { readonly context?: number; readonly output?: number };
   readonly tool_call?: boolean;
   readonly reasoning?: boolean;
@@ -56,12 +57,28 @@ function isWireType(value: unknown): value is ProviderType {
   return typeof value === 'string' && (KNOWN_WIRE_TYPES as readonly string[]).includes(value);
 }
 
+function hasEmbeddingMarker(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  const lower = value.toLowerCase();
+  return lower.includes('embedding') || /(?:^|[-_/])embed(?:$|[-_/])/.test(lower);
+}
+
+function isUsableChatModel(model: CatalogModelEntry): boolean {
+  const outputModalities = model.modalities?.output;
+  if (outputModalities !== undefined && !outputModalities.includes('text')) return false;
+  return (
+    !hasEmbeddingMarker(model.family) &&
+    !hasEmbeddingMarker(model.id) &&
+    !hasEmbeddingMarker(model.name)
+  );
+}
+
 /**
- * Resolves a catalog provider entry to a wire type. Honors an explicit `type`,
- * otherwise infers from `npm`/`id`. The openai vs openai_responses split is
- * per-model, so provider-level inference resolves OpenAI-compatible to `openai`.
+ * Resolves a catalog provider entry to a supported wire type. Honors an
+ * explicit `type`, otherwise infers from `npm`/`id`. Unknown providers return
+ * `undefined` so callers can omit them instead of writing an invalid config.
  */
-export function inferWireType(entry: CatalogProviderEntry): ProviderType {
+export function inferWireType(entry: CatalogProviderEntry): ProviderType | undefined {
   if (isWireType(entry.type)) return entry.type;
   const npm = (entry.npm ?? '').toLowerCase();
   const id = (entry.id ?? '').toLowerCase();
@@ -72,7 +89,8 @@ export function inferWireType(entry: CatalogProviderEntry): ProviderType {
   if (npm.includes('google') || id.includes('google') || id.includes('gemini')) {
     return 'google-genai';
   }
-  return 'openai';
+  if (npm.includes('openai') || id.includes('openai')) return 'openai';
+  return undefined;
 }
 
 /**
@@ -101,6 +119,7 @@ export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel
   if (typeof model.id !== 'string' || model.id.length === 0) return undefined;
   const context = model.limit?.context;
   if (typeof context !== 'number' || !Number.isInteger(context) || context <= 0) return undefined;
+  if (!isUsableChatModel(model)) return undefined;
   const inputs = model.modalities?.input ?? [];
   const output = model.limit?.output;
   return {

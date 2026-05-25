@@ -14,7 +14,7 @@ const outFile = resolve(scriptDir, "../src/built-in-catalog.ts");
 const modelsUrl = process.env.MODELS_DEV_URL || "https://models.dev/api.json";
 
 const KEEP_PROVIDER = new Set(["id", "name", "api", "env", "npm", "type", "models"]);
-const KEEP_MODEL = new Set(["id", "name", "limit", "tool_call", "reasoning", "modalities"]);
+const KEEP_MODEL = new Set(["id", "name", "family", "limit", "tool_call", "reasoning", "modalities"]);
 
 function stripModel(model) {
   if (typeof model !== "object" || model === null) return undefined;

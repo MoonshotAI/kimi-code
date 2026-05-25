@@ -22,9 +22,9 @@ describe('inferWireType', () => {
     expect(inferWireType({ id: 'google-vertex' })).toBe('vertexai');
   });
 
-  it('falls back to openai for unknown / invalid type', () => {
-    expect(inferWireType({ id: 'some-proxy' })).toBe('openai');
-    expect(inferWireType({ id: 'x', type: 'not-a-wire' })).toBe('openai');
+  it('returns undefined for unknown / invalid wire types', () => {
+    expect(inferWireType({ id: 'some-proxy' })).toBeUndefined();
+    expect(inferWireType({ id: 'x', type: 'not-a-wire' })).toBeUndefined();
   });
 });
 
@@ -91,6 +91,36 @@ describe('catalogModelToCapability', () => {
     );
     expect(catalogModelToCapability({ id: 'm' })).toBeUndefined();
     expect(catalogModelToCapability({ id: 'm', limit: { context: 0 } })).toBeUndefined();
+  });
+
+  it('skips embedding and non-text-output models that cannot serve as chat defaults', () => {
+    expect(
+      catalogModelToCapability({
+        id: 'text-embedding-3-large',
+        name: 'text-embedding-3-large',
+        family: 'text-embedding',
+        limit: { context: 8192, output: 1536 },
+        modalities: { input: ['text'], output: ['text'] },
+      }),
+    ).toBeUndefined();
+    expect(
+      catalogModelToCapability({
+        id: 'grok-imagine-image',
+        name: 'Grok Imagine Image',
+        family: 'grok',
+        limit: { context: 8000 },
+        modalities: { input: ['text', 'image'], output: ['image', 'pdf'] },
+      }),
+    ).toBeUndefined();
+    expect(
+      catalogModelToCapability({
+        id: 'mimo-v2-tts',
+        name: 'MiMo-V2-TTS',
+        family: 'mimo',
+        limit: { context: 8192, output: 16384 },
+        modalities: { input: ['text'], output: ['audio'] },
+      }),
+    ).toBeUndefined();
   });
 });
 

@@ -73,12 +73,6 @@ export interface ApplyCatalogProviderOptions {
 }
 
 /**
- * Writes a catalog-selected provider and its model aliases into config,
- * replacing any stale aliases that belonged to the same provider. Model
- * metadata (context window, output limit, capabilities) comes from the
- * catalog, so the user does not hand-write it. Returns the default model key.
- */
-/**
  * Parses an optional pruned models.dev catalog string — typically the
  * `__KIMI_CODE_BUILT_IN_CATALOG__` constant injected by tsdown at build
  * time. Returns `undefined` when the argument is missing or invalid.
@@ -92,6 +86,18 @@ export function loadBuiltInCatalog(text?: string): Catalog | undefined {
   }
 }
 
+/**
+ * Writes a catalog-selected provider and its model aliases into `config` and
+ * marks it the default. Model metadata (context, output limit, capabilities)
+ * comes from the catalog, so the user does not hand-write it. Returns the
+ * default model key.
+ *
+ * NOTE: the same-provider cleanup below mutates the passed-in `config` only.
+ * It clears stale aliases on disk solely when the caller overwrites the whole
+ * config. Callers persisting via `setConfig` — a deep-merge patch that cannot
+ * delete keys — must call `removeProvider` first, or removed aliases reappear
+ * after the merge.
+ */
 export function applyCatalogProvider(
   config: KimiConfig,
   options: ApplyCatalogProviderOptions,

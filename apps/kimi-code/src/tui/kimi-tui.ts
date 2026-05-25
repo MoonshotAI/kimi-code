@@ -42,7 +42,6 @@ import {
   catalogModelToAlias,
   catalogProviderModels,
   CatalogFetchError,
-  DEFAULT_CATALOG_URL,
   fetchCatalog,
   inferWireType,
   loadBuiltInCatalog,
@@ -224,6 +223,7 @@ import {
 import { formatBackgroundAgentTranscript } from './utils/background-agent-status';
 import { formatBackgroundTaskTranscript } from './utils/background-task-status';
 import { hasDispose, isExpandable, isPlanExpandable } from './utils/component-capabilities';
+import { resolveConnectCatalogRequest } from './utils/connect-catalog';
 import {
   argsRecord,
   formatErrorMessage,
@@ -4344,6 +4344,7 @@ export class KimiTUI {
         selectedValue,
         currentThinking: this.state.appState.thinking,
         colors: this.state.theme.colors,
+        searchable: true,
         onSelect: ({ alias, thinking }) => {
           this.restoreEditor();
           void this.performModelSwitch(alias, thinking);
@@ -5064,10 +5065,7 @@ export class KimiTUI {
   // (context size, capabilities) comes from the catalog, so users do not
   // hand-write it.
   private async handleConnectCommand(args: string): Promise<void> {
-    const trimmed = args.trim();
-    const urlMatch = trimmed.match(/--url(?:=|\s+)(\S+)/);
-    const url =
-      urlMatch?.[1] ?? (/^https?:\/\/\S+$/.test(trimmed) ? trimmed : DEFAULT_CATALOG_URL);
+    const { url, allowBuiltInFallback } = resolveConnectCatalogRequest(args);
 
     const controller = new AbortController();
     const cancel = (): void => {
@@ -5085,13 +5083,18 @@ export class KimiTUI {
         spinner.stop({ ok: false, label: 'Aborted.' });
       } else {
         const hint = error instanceof CatalogFetchError ? ` (HTTP ${error.status})` : '';
-        const fallback = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
-        if (fallback !== undefined) {
-          spinner.stop({ ok: true, label: 'Using built-in catalog (offline mode).' });
-          catalog = fallback;
-        } else {
+        if (!allowBuiltInFallback) {
           spinner.stop({ ok: false, label: 'Failed to load catalog.' });
           this.showError(`Failed to fetch catalog${hint}: ${formatErrorMessage(error)}`);
+        } else {
+          const fallback = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
+          if (fallback !== undefined) {
+            spinner.stop({ ok: true, label: 'Using built-in catalog (offline mode).' });
+            catalog = fallback;
+          } else {
+            spinner.stop({ ok: false, label: 'Failed to load catalog.' });
+            this.showError(`Failed to fetch catalog${hint}: ${formatErrorMessage(error)}`);
+          }
         }
       }
     } finally {
@@ -5118,6 +5121,7 @@ export class KimiTUI {
     if (apiKey === undefined) return;
 
     const wire = inferWireType(entry);
+    if (wire === undefined) return;
     const baseUrl = catalogBaseUrl(entry, wire);
 
     // Remove stale provider config first so old model aliases are fully
@@ -5258,6 +5262,7 @@ export class KimiTUI {
   private promptCatalogProviderSelection(catalog: Catalog): Promise<string | undefined> {
     return new Promise((resolve) => {
       const options: ChoiceOption[] = Object.entries(catalog)
+        .filter(([, entry]) => inferWireType(entry) !== undefined)
         .map(([id, entry]) => ({
           value: id,
           label: entry.name ?? id,
@@ -5349,6 +5354,7 @@ export class KimiTUI {
         currentValue: firstAlias,
         currentThinking: initialThinking,
         colors: this.state.theme.colors,
+        searchable: true,
         onSelect: ({ alias, thinking }) => {
           this.restoreEditor();
           resolve({ alias, thinking });
