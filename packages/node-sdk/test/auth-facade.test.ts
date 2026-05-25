@@ -290,7 +290,13 @@ oauth = { storage = "file", key = "oauth/kimi-code" }
     await new FileTokenStorage(join(homeDir, 'credentials')).save('kimi-code', freshToken());
     vi.stubGlobal(
       'fetch',
-      vi.fn<FetchMock>(async () => new Response('nope', { status: 401 })),
+      vi.fn<FetchMock>(
+        async () =>
+          new Response(JSON.stringify({ message: 'feedback API rejected the request' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
     );
 
     const harness = new KimiHarness({ homeDir });
@@ -305,5 +311,6 @@ oauth = { storage = "file", key = "oauth/kimi-code" }
     expect(result.kind).toBe('error');
     if (result.kind !== 'error') return;
     expect(result.status).toBe(401);
+    expect(result.message).toBe('feedback API rejected the request');
   });
 });

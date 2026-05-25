@@ -15,6 +15,8 @@ import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui
 import type { QueuedMessage } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
+vi.mock('#/tui/utils/open-url', () => ({ openUrl: vi.fn() }));
+
 function stripSgr(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
 }
@@ -128,7 +130,11 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       login: vi.fn(),
       logout: vi.fn(),
       getManagedUsage: vi.fn(),
-      submitFeedback: vi.fn(async () => ({ kind: 'ok' })),
+      submitFeedback: vi.fn(
+        async (): Promise<{ kind: 'ok' } | { kind: 'error'; status?: number; message: string }> => ({
+          kind: 'ok',
+        }),
+      ),
     },
     ...overrides,
   };
@@ -272,6 +278,37 @@ describe('KimiTUI message flow', () => {
       }),
     );
     expect(harness.track).toHaveBeenCalledWith('feedback_submitted', undefined);
+  });
+
+  it('shows feedback API error messages without replacing them with HTTP status text', async () => {
+    const { driver, harness } = await makeDriver(
+      makeSession(),
+      {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              model: 'moonshot-v1',
+              maxContextSize: 100,
+              provider: 'managed:kimi-code',
+            },
+          },
+        })),
+      },
+    );
+    const feedbackDriver = driver as unknown as FeedbackDriver;
+    feedbackDriver.promptFeedbackInput = vi.fn(async () => 'useful feedback');
+    harness.auth.submitFeedback.mockResolvedValueOnce({
+      kind: 'error',
+      status: 500,
+      message: 'backend says no',
+    });
+
+    await feedbackDriver.handleFeedbackCommand();
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('backend says no');
+    expect(transcript).toContain('Opening GitHub Issues as fallback');
+    expect(transcript).not.toContain('Failed to submit feedback (HTTP 500).');
   });
 
   it('does not track feedback when the dialog is cancelled', async () => {

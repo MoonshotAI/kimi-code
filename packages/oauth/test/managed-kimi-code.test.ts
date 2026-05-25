@@ -467,6 +467,23 @@ describe('provisionManagedKimiCodeConfig', () => {
     ).rejects.toThrow(/positive context_length/);
   });
 
+  it('surfaces API error messages from model listing failures', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: { message: 'quota exceeded' } }), {
+          status: 429,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    ) as unknown as typeof fetch;
+
+    await expect(
+      fetchManagedKimiCodeModels({
+        accessToken: 'oauth-access-token',
+        fetchImpl,
+      }),
+    ).rejects.toThrow('quota exceeded');
+  });
+
   it('clears managed provider, models, default model, and services on logout', () => {
     const config: ManagedKimiConfigShape = {
       providers: {
