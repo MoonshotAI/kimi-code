@@ -29,7 +29,6 @@ import {
   fetchOpenPlatformModels,
   filterModelsByPrefix,
   getOpenPlatformById,
-  isOpenPlatformId,
   OpenPlatformApiError,
   type DeviceAuthorization,
   type ManagedKimiCodeModelInfo,
@@ -5274,7 +5273,11 @@ export class KimiTUI {
       return;
     }
 
-    if (isOpenPlatformId(currentProvider)) {
+    // Any other provider written into config — OpenPlatform OAuth targets and
+    // /connect-configured catalog providers both go through removeProvider,
+    // which drops the provider entry and its model aliases together.
+    const existingConfig = await this.harness.getConfig();
+    if (existingConfig.providers[currentProvider] !== undefined) {
       await this.harness.removeProvider(currentProvider);
       await this.refreshConfigAfterLogout();
       await this.clearActiveSessionAfterLogout();
