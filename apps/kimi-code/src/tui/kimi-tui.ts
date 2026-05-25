@@ -184,6 +184,7 @@ import {
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
 } from './constant/kimi-tui';
+import { STREAMING_UI_FLUSH_MS } from './constant/streaming';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
 import { ApprovalController } from './reverse-rpc/approval/controller';
 import { createApprovalRequestHandler } from './reverse-rpc/approval/handler';
@@ -208,6 +209,7 @@ import { formatBackgroundAgentTranscript } from './utils/background-agent-status
 import { formatBackgroundTaskTranscript } from './utils/background-task-status';
 import { hasDispose, isExpandable, isPlanExpandable } from './utils/component-capabilities';
 import {
+  appendStreamingArgsPreview,
   argsRecord,
   formatErrorMessage,
   isTodoItemShape,
@@ -225,6 +227,7 @@ import {
   type McpServerStatusSnapshot,
   selectMcpStartupStatusRows,
 } from './utils/mcp-server-status';
+import { hasPatchChanges } from './utils/object-patch';
 import { openUrl } from './utils/open-url';
 import { setProcessTitle } from './utils/proctitle';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
@@ -564,6 +567,13 @@ export class KimiTUI {
   private readonly migrationPlan: MigrationPlan | null;
   // When true, the migration screen is the whole session: run it, then exit.
   private readonly migrateOnly: boolean;
+  // High-frequency model/tool deltas update draft state immediately, then use
+  // these flags to coalesce expensive component rebuilds into periodic flushes.
+  private streamingUiFlushTimer: ReturnType<typeof setTimeout> | undefined;
+  private lastStreamingUiFlushAt: number | undefined;
+  private pendingAssistantFlush = false;
+  private pendingThinkingFlush = false;
+  private readonly pendingToolCallFlushIds = new Set<string>();
 
   public onExit?: (exitCode?: number) => Promise<void>;
 
@@ -864,6 +874,7 @@ export class KimiTUI {
   // Stops UI resources, active sessions, reverse-RPC handlers, and the harness.
   async stop(): Promise<void> {
     this.aborted = true;
+    this.discardPendingStreamingUiUpdates();
     if (this.pendingExit) {
       clearTimeout(this.pendingExit.timer);
       this.pendingExit = null;
@@ -1659,8 +1670,107 @@ export class KimiTUI {
     });
   }
 
+  private hasPendingStreamingUiUpdates(): boolean {
+    return (
+      this.pendingAssistantFlush ||
+      this.pendingThinkingFlush ||
+      this.pendingToolCallFlushIds.size > 0
+    );
+  }
+
+  private clearStreamingUiFlushTimer(): void {
+    if (this.streamingUiFlushTimer === undefined) return;
+    clearTimeout(this.streamingUiFlushTimer);
+    this.streamingUiFlushTimer = undefined;
+  }
+
+  private clearStreamingUiFlushTimerIfIdle(): void {
+    if (this.hasPendingStreamingUiUpdates()) return;
+    this.clearStreamingUiFlushTimer();
+  }
+
+  private discardPendingStreamingUiUpdates(): void {
+    this.clearStreamingUiFlushTimer();
+    this.pendingAssistantFlush = false;
+    this.pendingThinkingFlush = false;
+    this.pendingToolCallFlushIds.clear();
+  }
+
+  // Schedule trailing UI work for streaming deltas. Terminal drawing is already
+  // coalesced by pi-tui; this avoids doing our own markdown/tool preview rebuild
+  // work on every chunk before pi-tui even gets a chance to render.
+  private scheduleStreamingUiFlush(): void {
+    if (!this.hasPendingStreamingUiUpdates()) return;
+    if (this.streamingUiFlushTimer !== undefined) return;
+    const delay =
+      this.lastStreamingUiFlushAt === undefined
+        ? 0
+        : Math.max(0, STREAMING_UI_FLUSH_MS - (Date.now() - this.lastStreamingUiFlushAt));
+    this.streamingUiFlushTimer = setTimeout(() => {
+      this.streamingUiFlushTimer = undefined;
+      this.flushStreamingUiUpdates();
+    }, delay);
+  }
+
+  // Final events such as tool.result or turn.ended must observe all streamed
+  // draft content, so they bypass the timer and drain pending UI work first.
+  private flushStreamingUiUpdatesNow(): void {
+    this.clearStreamingUiFlushTimer();
+    this.flushStreamingUiUpdates();
+  }
+
+  private flushStreamingUiUpdates(): void {
+    if (!this.hasPendingStreamingUiUpdates()) return;
+    this.lastStreamingUiFlushAt = Date.now();
+    const shouldFlushThinking = this.pendingThinkingFlush;
+    const shouldFlushAssistant = this.pendingAssistantFlush;
+    const toolCallIds = [...this.pendingToolCallFlushIds];
+    this.pendingThinkingFlush = false;
+    this.pendingAssistantFlush = false;
+    this.pendingToolCallFlushIds.clear();
+
+    if (shouldFlushThinking && this.state.thinkingDraft.length > 0) {
+      this.onThinkingUpdate(this.state.thinkingDraft);
+    }
+    if (shouldFlushAssistant) {
+      this.onStreamingTextUpdate(this.state.assistantDraft);
+    }
+    for (const id of toolCallIds) {
+      this.flushStreamingToolCallPreview(id);
+    }
+  }
+
+  // Materializes the latest bounded argument preview for one in-flight tool
+  // call. The final tool.call event still replaces this with authoritative args.
+  private flushStreamingToolCallPreview(id: string): void {
+    const streaming = this.state.streamingToolCallArguments.get(id);
+    if (streaming === undefined) return;
+    const toolCall: ToolCallBlockData = {
+      id,
+      name: streaming.name ?? this.state.activeToolCalls.get(id)?.name ?? 'Tool',
+      args: parseStreamingArgs(streaming.argumentsText),
+      streamingArguments: streaming.argumentsText,
+      streamingStartedAtMs: streaming.startedAtMs,
+      step: this.state.currentStep,
+      turnId: this.state.currentTurnId,
+    };
+    this.state.activeToolCalls.set(id, toolCall);
+
+    if (this.state.thinkingDraft.length > 0 || this.state.assistantStreamActive) {
+      this.finalizeLiveTextBuffers('tool');
+    }
+
+    const existingComponent = this.state.pendingToolComponents.get(id);
+    if (existingComponent !== undefined) {
+      existingComponent.updateToolCall(toolCall);
+    } else if (toolCall.name !== 'Agent') {
+      this.onToolCallStart(toolCall);
+    }
+  }
+
   // Finalizes live thinking output and moves the live pane to the next mode.
   private flushThinkingToTranscript(nextMode: LivePaneState['mode'] = 'idle'): void {
+    this.flushStreamingUiUpdatesNow();
     if (this.state.thinkingDraft.length === 0) {
       this.patchLivePane({ mode: nextMode });
       return;
@@ -1672,6 +1782,7 @@ export class KimiTUI {
 
   // Finalizes live assistant text and clears streaming component state.
   private finalizeAssistantStream(): void {
+    this.flushStreamingUiUpdatesNow();
     if (this.state.assistantStreamActive) {
       this.onStreamingTextEnd();
       this.state.assistantStreamActive = false;
@@ -1683,6 +1794,9 @@ export class KimiTUI {
 
   // Discards live thinking and assistant text state without finalizing transcript output.
   private resetLiveTextRuntime(): void {
+    this.pendingAssistantFlush = false;
+    this.pendingThinkingFlush = false;
+    this.clearStreamingUiFlushTimerIfIdle();
     this.state.assistantDraft = '';
     this.state.assistantStreamActive = false;
     this.state.streamingComponent = undefined;
@@ -1693,6 +1807,8 @@ export class KimiTUI {
 
   // Clears live tool UI state while preserving active tool-call tracking.
   private resetLiveToolUiState(): void {
+    this.pendingToolCallFlushIds.clear();
+    this.clearStreamingUiFlushTimerIfIdle();
     this.state.streamingToolCallArguments.clear();
     this.disposeAndClearPendingToolComponents();
     this.state.pendingAgentGroup = null;
@@ -1747,6 +1863,7 @@ export class KimiTUI {
 
   // Applies app-state changes and refreshes dependent UI surfaces.
   private setAppState(patch: Partial<AppState>): void {
+    if (!hasPatchChanges(this.state.appState, patch)) return;
     const busyChanged = 'isStreaming' in patch || 'isCompacting' in patch;
     Object.assign(this.state.appState, patch);
     if ('planMode' in patch) this.updateEditorBorderHighlight();
@@ -1758,6 +1875,7 @@ export class KimiTUI {
 
   // Applies live-pane changes and refreshes activity presentation.
   private patchLivePane(patch: Partial<LivePaneState>): void {
+    if (!hasPatchChanges(this.state.livePane, patch)) return;
     Object.assign(this.state.livePane, patch);
     this.updateActivityPane();
     this.state.ui.requestRender();
@@ -1896,6 +2014,7 @@ export class KimiTUI {
   // Resets turn, tool, queue, and background-agent state for a session switch.
   private resetSessionRuntime(): void {
     this.aborted = false;
+    this.discardPendingStreamingUiUpdates();
     this.state.queuedMessages = [];
     this.harness.interactiveAgentId = MAIN_AGENT_ID;
     this.resetToolCallState();
@@ -2251,6 +2370,7 @@ export class KimiTUI {
   // Finalizes turn-scoped state when the SDK completes a turn.
   private handleTurnEnd(_event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
     void _event;
+    this.flushStreamingUiUpdatesNow();
     const todos = this.state.todoPanel.getTodos();
     if (todos.length > 0 && todos.every((t) => t.status === 'done')) {
       this.setTodoList([]);
@@ -2261,6 +2381,7 @@ export class KimiTUI {
 
   // Resets live render state for a new turn step.
   private handleStepBegin(event: TurnStepStartedEvent): void {
+    this.flushStreamingUiUpdatesNow();
     this.state.currentStep = event.step;
     this.resetLiveToolUiState();
     this.finalizeLiveTextBuffers('waiting');
@@ -2284,6 +2405,7 @@ export class KimiTUI {
   // wrong. Flip those into a visible 'Truncated' state and append a
   // notice pointing at the config knob.
   private handleStepCompleted(event: TurnStepCompletedEvent): void {
+    this.flushStreamingUiUpdatesNow();
     if (event.finishReason !== 'max_tokens') return;
 
     // Scope the truncation marking to tool calls that belong to the
@@ -2329,6 +2451,7 @@ export class KimiTUI {
 
   // Renders user-facing status for an interrupted turn step.
   private handleStepInterrupted(event: TurnStepInterruptedEvent): void {
+    this.flushStreamingUiUpdatesNow();
     this.resetLiveToolUiState();
     this.finalizeLiveTextBuffers('idle');
     const reason = event.reason;
@@ -2347,9 +2470,12 @@ export class KimiTUI {
   // Appends a thinking delta to the live thinking block.
   private handleThinkingDelta(event: ThinkingDeltaEvent): void {
     this.state.thinkingDraft += event.delta;
-    this.onThinkingUpdate(this.state.thinkingDraft);
+    this.pendingThinkingFlush = true;
     this.patchLivePane({ mode: 'idle' });
-    this.setAppState({ streamingPhase: 'thinking' });
+    if (this.state.appState.streamingPhase !== 'thinking') {
+      this.setAppState({ streamingPhase: 'thinking', streamingStartTime: Date.now() });
+    }
+    this.scheduleStreamingUiFlush();
   }
 
   // Appends an assistant text delta to the live assistant block.
@@ -2364,20 +2490,21 @@ export class KimiTUI {
     }
 
     this.state.assistantDraft += event.delta;
-    this.onStreamingTextUpdate(this.state.assistantDraft);
+    this.pendingAssistantFlush = true;
 
     this.patchLivePane({
       mode: 'idle',
       pendingApproval: null,
       pendingQuestion: null,
     });
-    this.setAppState({
-      streamingPhase: 'composing',
-      streamingStartTime: Date.now(),
-    });
+    if (this.state.appState.streamingPhase !== 'composing') {
+      this.setAppState({ streamingPhase: 'composing', streamingStartTime: Date.now() });
+    }
+    this.scheduleStreamingUiFlush();
   }
 
   private handleHookResult(event: HookResultEvent): void {
+    this.flushStreamingUiUpdatesNow();
     if (this.state.thinkingDraft.length > 0) {
       this.flushThinkingToTranscript('idle');
     }
@@ -2398,6 +2525,7 @@ export class KimiTUI {
 
   // Starts or updates a rendered tool call from a tool-call start event.
   private handleToolCall(event: ToolCallStartedEvent): void {
+    this.flushStreamingUiUpdatesNow();
     const toolCall: ToolCallBlockData = {
       id: event.toolCallId,
       name: event.name,
@@ -2409,6 +2537,7 @@ export class KimiTUI {
     };
     const existing = this.state.activeToolCalls.get(event.toolCallId);
     this.state.activeToolCalls.set(event.toolCallId, toolCall);
+    this.pendingToolCallFlushIds.delete(event.toolCallId);
     this.state.streamingToolCallArguments.delete(event.toolCallId);
     const existingComponent = this.state.pendingToolComponents.get(event.toolCallId);
     if (existingComponent !== undefined) {
@@ -2431,42 +2560,24 @@ export class KimiTUI {
     if (event.toolCallId.length === 0) return;
     const id = event.toolCallId;
     const existing = this.state.streamingToolCallArguments.get(id);
-    const argumentsText = `${existing?.argumentsText ?? ''}${event.argumentsPart ?? ''}`;
+    const argumentsText = appendStreamingArgsPreview(
+      existing?.argumentsText,
+      event.argumentsPart,
+    );
     const name = event.name ?? existing?.name ?? this.state.activeToolCalls.get(id)?.name ?? 'Tool';
     const startedAtMs = existing?.startedAtMs ?? Date.now();
     this.state.streamingToolCallArguments.set(id, { name, argumentsText, startedAtMs });
-
-    const toolCall: ToolCallBlockData = {
-      id,
-      name,
-      args: parseStreamingArgs(argumentsText),
-      streamingArguments: argumentsText,
-      streamingStartedAtMs: startedAtMs,
-      step: this.state.currentStep,
-      turnId: this.state.currentTurnId,
-    };
-    this.state.activeToolCalls.set(id, toolCall);
-
-    if (this.state.thinkingDraft.length > 0 || this.state.assistantStreamActive) {
-      this.finalizeLiveTextBuffers('tool');
-    }
-
-    const existingComponent = this.state.pendingToolComponents.get(id);
-    if (existingComponent !== undefined) {
-      existingComponent.updateToolCall(toolCall);
-    } else if (name !== 'Agent') {
-      this.onToolCallStart(toolCall);
-    }
+    this.pendingToolCallFlushIds.add(id);
 
     this.patchLivePane({
       mode: 'tool',
       pendingApproval: null,
       pendingQuestion: null,
     });
-    this.setAppState({
-      streamingPhase: 'composing',
-      streamingStartTime: Date.now(),
-    });
+    if (this.state.appState.streamingPhase !== 'composing') {
+      this.setAppState({ streamingPhase: 'composing', streamingStartTime: Date.now() });
+    }
+    this.scheduleStreamingUiFlush();
   }
 
   // Streams a `{kind:'status'}` progress text into the live tool box so
@@ -2485,6 +2596,7 @@ export class KimiTUI {
 
   // Completes a tool call and applies any tool-specific UI side effects.
   private handleToolResult(event: ToolResultEvent): void {
+    this.flushStreamingUiUpdatesNow();
     const matchedCall = this.state.activeToolCalls.get(event.toolCallId);
     const resultData: ToolResultBlockData = {
       tool_call_id: event.toolCallId,
@@ -2537,6 +2649,7 @@ export class KimiTUI {
 
   // Finalizes live buffers and renders a session error.
   private handleSessionError(event: ErrorEvent): void {
+    this.flushStreamingUiUpdatesNow();
     this.resetLiveToolUiState();
     this.finalizeLiveTextBuffers('idle');
     if (event.code === OAUTH_LOGIN_REQUIRED_CODE) {
@@ -3407,6 +3520,7 @@ export class KimiTUI {
 
   // Clears transcript-related state and redraws the welcome view.
   private clearTranscriptAndRedraw(): void {
+    this.discardPendingStreamingUiUpdates();
     this.state.transcriptEntries = [];
     this.disposeActiveCompactionBlock();
     this.resetLiveTextRuntime();
@@ -4349,20 +4463,16 @@ export class KimiTUI {
       return;
     }
 
-    if (alias === this.state.appState.model && thinking === this.state.appState.thinking) {
-      this.showStatus(`Already using ${alias} with thinking ${thinking ? 'on' : 'off'}.`);
-      return;
-    }
-
     const level = thinking ? 'on' : 'off';
     const prevModel = this.state.appState.model;
     const prevThinking = this.state.appState.thinking;
+    const runtimeChanged = alias !== prevModel || thinking !== prevThinking;
 
+    const session = this.session;
     try {
-      const session = this.session;
-      if (session === undefined) {
+      if (session === undefined && runtimeChanged) {
         await this.activateModelAfterLogin(alias, thinking);
-      } else {
+      } else if (session !== undefined) {
         if (alias !== prevModel) {
           await session.setModel(alias);
         }
@@ -4370,23 +4480,50 @@ export class KimiTUI {
           await session.setThinking(level);
         }
       }
-      this.setAppState({ model: alias, thinking });
-      if (session === undefined) {
-        if (alias !== prevModel) {
-          this.track('model_switch', { model: alias });
-        }
-        if (thinking !== prevThinking) {
-          this.track('thinking_toggle', { enabled: thinking });
-        }
-      }
-      this.showStatus(
-        `Switched to ${alias} with thinking ${level}.`,
-        this.state.theme.colors.success,
-      );
     } catch (error) {
       const msg = formatErrorMessage(error);
       this.showError(`Failed to switch model: ${msg}`);
+      return;
     }
+
+    this.setAppState({ model: alias, thinking });
+    if (session === undefined && runtimeChanged) {
+      if (alias !== prevModel) {
+        this.track('model_switch', { model: alias });
+      }
+      if (thinking !== prevThinking) {
+        this.track('thinking_toggle', { enabled: thinking });
+      }
+    }
+
+    let persisted = false;
+    try {
+      persisted = await this.persistModelSelection(alias, thinking);
+    } catch (error) {
+      const msg = formatErrorMessage(error);
+      this.showError(`Switched to ${alias}, but failed to save default: ${msg}`);
+      return;
+    }
+
+    const status = runtimeChanged
+      ? `Switched to ${alias} with thinking ${level}.`
+      : persisted
+        ? `Saved ${alias} with thinking ${level} as default.`
+        : `Already using ${alias} with thinking ${level}.`;
+    this.showStatus(status, this.state.theme.colors.success);
+  }
+
+  // Persists the selected model and thinking state as the startup defaults.
+  private async persistModelSelection(alias: string, thinking: boolean): Promise<boolean> {
+    const config = await this.harness.getConfig({ reload: true });
+    if (config.defaultModel === alias && config.defaultThinking === thinking) {
+      return false;
+    }
+    await this.harness.setConfig({
+      defaultModel: alias,
+      defaultThinking: thinking,
+    });
+    return true;
   }
 
   // Shows the theme selector.
