@@ -143,9 +143,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const config = this.reloadProviderManager();
     const id = options.id ?? createSessionId();
     const modelName = this.providerManager.resolveSelectedModel(options.model);
-    const thinkingLevel = this.providerManager.resolveThinkingLevel(
-      options.thinking ?? defaultThinkingToRuntime(config.defaultThinking),
-    );
+    const thinkingLevel = this.providerManager.resolveThinkingLevel(options.thinking);
     const permissionMode = options.permission ?? config.defaultPermissionMode;
     const mcpConfig = await resolveSessionMcpConfig({
       cwd: workDir,
@@ -680,11 +678,6 @@ function requiredWorkDir(operation: string, value: string): string {
     throw new KimiError(ErrorCodes.REQUEST_WORK_DIR_REQUIRED, `${operation} requires workDir`);
   }
   return normalizeWorkDir(value);
-}
-
-function defaultThinkingToRuntime(defaultThinking: boolean | undefined): string | undefined {
-  if (defaultThinking === undefined) return undefined;
-  return defaultThinking ? 'on' : 'off';
 }
 
 function createSessionId(): string {

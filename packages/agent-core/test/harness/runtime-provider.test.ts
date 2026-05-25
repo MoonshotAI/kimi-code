@@ -585,16 +585,26 @@ describe('ProviderManager thinking level', () => {
     const manager = new ProviderManager({
       config: {
         providers: {},
+        defaultThinking: false,
         thinking: { effort: 'medium', mode: 'auto' },
       },
     });
     expect(manager.resolveThinkingLevel('on')).toBe('medium');
     expect(manager.resolveThinkingLevel('off')).toBe('off');
     expect(manager.resolveThinkingLevel('low')).toBe('low');
-    expect(manager.resolveThinkingLevel()).toBe('medium');
+    expect(manager.resolveThinkingLevel()).toBe('off');
+
+    const managerOnByDefault = new ProviderManager({
+      config: {
+        providers: {},
+        defaultThinking: true,
+        thinking: { effort: 'medium', mode: 'auto' },
+      },
+    });
+    expect(managerOnByDefault.resolveThinkingLevel()).toBe('medium');
 
     const managerWithoutEffort = new ProviderManager({
-      config: { providers: {}, thinking: { mode: 'auto' } },
+      config: { providers: {}, defaultThinking: true, thinking: { mode: 'auto' } },
     });
     expect(managerWithoutEffort.resolveThinkingLevel('on')).toBe('high');
     expect(managerWithoutEffort.resolveThinkingLevel()).toBe('high');
