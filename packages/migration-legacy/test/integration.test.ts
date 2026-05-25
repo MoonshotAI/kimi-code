@@ -33,6 +33,7 @@ describe('runMigration (end-to-end on multi-workdir fixture)', () => {
         config: true,
         mcp: true,
         userHistory: true,
+        skills: true,
         sessions: true,
       },
       source: SOURCE_HOME,
@@ -55,7 +56,7 @@ describe('runMigration (end-to-end on multi-workdir fixture)', () => {
     const plan = await detectMigration({ sourcePath: SOURCE_HOME });
     const report = await runMigration({
       plan,
-      scope: { config: true, mcp: true, userHistory: true, sessions: true },
+      scope: { config: true, mcp: true, userHistory: true, skills: true, sessions: true },
       source: SOURCE_HOME,
       target: tgt,
     });
@@ -74,6 +75,7 @@ describe('runMigration (end-to-end on multi-workdir fixture)', () => {
         config: true,
         mcp: true,
         userHistory: true,
+        skills: true,
         sessions: false,
       },
       source: SOURCE_HOME,
@@ -81,6 +83,59 @@ describe('runMigration (end-to-end on multi-workdir fixture)', () => {
     });
     expect(report.summary.sessions.scope).toBe('config-only');
     expect(report.summary.sessions.sessionsMigrated).toBe(0);
+  });
+
+  it('migrates user skills bundles end-to-end and surfaces them in the report', async () => {
+    // Drive the full pipeline against a synthetic source so the assertion
+    // tests integration (run-migration wiring + paths + summary plumbing),
+    // not just the step in isolation.
+    const src = await mkdtemp(join(tmpdir(), 'skills-e2e-src-'));
+    try {
+      await mkdir(join(src, 'skills', 'my-bundle'), { recursive: true });
+      await writeFile(
+        join(src, 'skills', 'my-bundle', 'SKILL.md'),
+        '---\nname: my-bundle\ndescription: e2e\n---\n',
+      );
+      await writeFile(join(src, 'skills', 'flat.md'), '---\nname: flat\ndescription: e2e\n---\n');
+
+      const plan = await detectMigration({ sourcePath: src });
+      const report = await runMigration({
+        plan,
+        scope: { config: true, mcp: true, userHistory: true, skills: true, sessions: false },
+        source: src,
+        target: tgt,
+      });
+
+      expect(report.summary.skills.copied).toBe(2);
+      expect(report.summary.skills.skippedExisting).toBe(0);
+      await expect(
+        readFile(join(tgt, 'skills', 'my-bundle', 'SKILL.md'), 'utf-8'),
+      ).resolves.toContain('my-bundle');
+      await expect(readFile(join(tgt, 'skills', 'flat.md'), 'utf-8')).resolves.toContain('flat');
+    } finally {
+      await rm(src, { recursive: true, force: true });
+    }
+  });
+
+  it('skips skills migration when scope.skills is false', async () => {
+    const src = await mkdtemp(join(tmpdir(), 'skills-off-src-'));
+    try {
+      await mkdir(join(src, 'skills', 'mine'), { recursive: true });
+      await writeFile(join(src, 'skills', 'mine', 'SKILL.md'), 'x');
+
+      const plan = await detectMigration({ sourcePath: src });
+      const report = await runMigration({
+        plan,
+        scope: { config: true, mcp: true, userHistory: true, skills: false, sessions: false },
+        source: src,
+        target: tgt,
+      });
+
+      expect(report.summary.skills).toEqual({ copied: 0, skippedExisting: 0 });
+      await expect(readFile(join(tgt, 'skills', 'mine', 'SKILL.md'))).rejects.toThrow();
+    } finally {
+      await rm(src, { recursive: true, force: true });
+    }
   });
 
   it('does not copy OAuth credentials into the target', async () => {
@@ -105,7 +160,7 @@ describe('runMigration (end-to-end on multi-workdir fixture)', () => {
       const plan = await detectMigration({ sourcePath: src });
       const report = await runMigration({
         plan,
-        scope: { config: true, mcp: true, userHistory: true, sessions: false },
+        scope: { config: true, mcp: true, userHistory: true, skills: true, sessions: false },
         source: src,
         target: tgt,
       });

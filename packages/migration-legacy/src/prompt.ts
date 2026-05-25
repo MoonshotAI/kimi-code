@@ -42,6 +42,7 @@ export function resolveMigrationScope(
       config: true,
       mcp: true,
       userHistory: true,
+      skills: true,
       sessions: c2 === 'all-sessions',
     },
   };

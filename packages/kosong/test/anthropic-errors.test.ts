@@ -232,9 +232,9 @@ describe('stream error propagation', () => {
   it('APIConnectionTimeoutError during stream iteration is converted', async () => {
     const provider = createStreamProvider();
     const sdkError = new AnthropicTimeoutError({ message: 'stream timed out' });
-    (provider as any)._client.messages.stream = vi
+    (provider as any)._client.messages.create = vi
       .fn()
-      .mockReturnValue(makeErrorStream(sdkError)) as never;
+      .mockResolvedValue(makeErrorStream(sdkError)) as never;
 
     const result = await provider.generate(
       '',
@@ -254,9 +254,9 @@ describe('stream error propagation', () => {
   it('APIConnectionError during stream iteration is converted', async () => {
     const provider = createStreamProvider();
     const sdkError = new AnthropicConnectionError({ message: 'connection reset' });
-    (provider as any)._client.messages.stream = vi
+    (provider as any)._client.messages.create = vi
       .fn()
-      .mockReturnValue(makeErrorStream(sdkError)) as never;
+      .mockResolvedValue(makeErrorStream(sdkError)) as never;
 
     const result = await provider.generate(
       '',
@@ -280,9 +280,9 @@ describe('stream error propagation', () => {
       'internal error',
       new Headers(),
     );
-    (provider as any)._client.messages.stream = vi
+    (provider as any)._client.messages.create = vi
       .fn()
-      .mockReturnValue(makeErrorStream(sdkError)) as never;
+      .mockResolvedValue(makeErrorStream(sdkError)) as never;
 
     const result = await provider.generate(
       '',
@@ -306,9 +306,9 @@ describe('stream error propagation', () => {
       'too many requests',
       new Headers(),
     );
-    (provider as any)._client.messages.stream = vi
+    (provider as any)._client.messages.create = vi
       .fn()
-      .mockReturnValue(makeErrorStream(sdkError)) as never;
+      .mockResolvedValue(makeErrorStream(sdkError)) as never;
 
     const result = await provider.generate(
       '',
@@ -334,9 +334,9 @@ describe('stream error propagation', () => {
       'invalid',
       new Headers(),
     );
-    (provider as any)._client.messages.stream = vi
+    (provider as any)._client.messages.create = vi
       .fn()
-      .mockReturnValue(makeErrorStream(sdkError)) as never;
+      .mockResolvedValue(makeErrorStream(sdkError)) as never;
 
     const result = await provider.generate(
       '',
