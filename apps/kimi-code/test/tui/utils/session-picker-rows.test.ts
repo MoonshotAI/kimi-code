@@ -20,19 +20,20 @@ function summary(input: {
 }
 
 describe('sessionRowsForPicker', () => {
-  it('omits the empty current session from the picker rows', () => {
+  it('omits the current session when the TUI session has no content', () => {
     const rows = sessionRowsForPicker(
       [
         summary({ id: 'ses_current', title: 'New Session' }),
         summary({ id: 'ses_previous', title: 'New Session' }),
       ],
       'ses_current',
+      false,
     );
 
     expect(rows.map((row) => row.id)).toEqual(['ses_previous']);
   });
 
-  it('keeps the current session after prompt metadata exists', () => {
+  it('keeps the current session when the TUI session has content', () => {
     const rows = sessionRowsForPicker(
       [
         summary({
@@ -42,17 +43,22 @@ describe('sessionRowsForPicker', () => {
         }),
       ],
       'ses_current',
+      true,
     );
 
     expect(rows.map((row) => row.id)).toEqual(['ses_current']);
   });
 
-  it('keeps a current session with a non-default title', () => {
+  it('does not filter empty historical sessions', () => {
     const rows = sessionRowsForPicker(
-      [summary({ id: 'ses_current', title: 'Pinned workspace' })],
+      [
+        summary({ id: 'ses_current', title: 'New Session' }),
+        summary({ id: 'ses_previous_empty', title: 'New Session' }),
+      ],
       'ses_current',
+      false,
     );
 
-    expect(rows.map((row) => row.id)).toEqual(['ses_current']);
+    expect(rows.map((row) => row.id)).toEqual(['ses_previous_empty']);
   });
 });

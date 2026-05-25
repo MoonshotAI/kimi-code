@@ -1867,7 +1867,11 @@ export class KimiTUI {
     this.state.loadingSessions = true;
     try {
       const sessions = await this.harness.listSessions({ workDir: this.state.appState.workDir });
-      this.state.sessions = sessionRowsForPicker(sessions, this.state.appState.sessionId);
+      this.state.sessions = sessionRowsForPicker(
+        sessions,
+        this.state.appState.sessionId,
+        this.hasSessionContent(),
+      );
     } catch {
       /* silently ignore */
     } finally {
