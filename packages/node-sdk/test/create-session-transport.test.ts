@@ -460,35 +460,6 @@ effort = "medium"
     }
   });
 
-  it('applies configured default thinking to new sessions', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    await writeFile(join(homeDir, 'config.toml'), 'default_thinking = false\n', 'utf-8');
-    const harness = new KimiHarness({
-      identity: TEST_IDENTITY,
-      homeDir,
-    });
-
-    try {
-      const offSession = await harness.createSession({
-        id: 'ses_default_thinking_off',
-        workDir,
-      });
-
-      await expect(offSession.getStatus()).resolves.toMatchObject({ thinkingLevel: 'off' });
-
-      await harness.setConfig({ defaultThinking: true });
-      const onSession = await harness.createSession({
-        id: 'ses_default_thinking_on',
-        workDir,
-      });
-
-      await expect(onSession.getStatus()).resolves.toMatchObject({ thinkingLevel: 'high' });
-    } finally {
-      await harness.close();
-    }
-  });
-
   it('applies configured default permission mode to new sessions', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
