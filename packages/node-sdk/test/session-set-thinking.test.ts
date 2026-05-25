@@ -33,38 +33,6 @@ describe('Session.setThinking', () => {
         type: 'config.update',
         thinkingLevel: 'low',
       });
-      await expect(harness.getConfig({ reload: true })).resolves.toMatchObject({
-        defaultThinking: true,
-      });
-    } finally {
-      await harness.close();
-    }
-  });
-
-  it('persists default thinking off from the effective thinking state', async () => {
-    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-thinking-home-');
-    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-thinking-work-');
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
-
-    try {
-      const session = await harness.createSession({ id: 'ses_thinking_off', workDir });
-
-      await session.setThinking('off');
-
-      await expect(
-        waitForAgentWireEvent(
-          homeDir,
-          session.id,
-          'config.update',
-          (event) => event['thinkingLevel'] === 'off',
-        ),
-      ).resolves.toMatchObject({
-        type: 'config.update',
-        thinkingLevel: 'off',
-      });
-      await expect(harness.getConfig({ reload: true })).resolves.toMatchObject({
-        defaultThinking: false,
-      });
     } finally {
       await harness.close();
     }

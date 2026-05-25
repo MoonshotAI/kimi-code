@@ -41,9 +41,6 @@ describe('Session.setModel', () => {
       await session.setModel('next-model');
 
       await expect(session.getStatus()).resolves.toMatchObject({ model: 'next-model' });
-      await expect(harness.getConfig({ reload: true })).resolves.toMatchObject({
-        defaultModel: 'next-model',
-      });
       const configEvent = await waitForAgentWireEvent(
         homeDir,
         session.id,
@@ -100,9 +97,6 @@ describe('Session.setModel', () => {
 
       await expect(session.getStatus()).resolves.toMatchObject({
         model: 'kimi-code/kimi-for-coding',
-      });
-      await expect(harness.getConfig({ reload: true })).resolves.toMatchObject({
-        defaultModel: 'kimi-code/kimi-for-coding',
       });
       const configEvent = await waitForAgentWireEvent(
         homeDir,

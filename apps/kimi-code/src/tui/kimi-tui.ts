@@ -4349,20 +4349,16 @@ export class KimiTUI {
       return;
     }
 
-    if (alias === this.state.appState.model && thinking === this.state.appState.thinking) {
-      this.showStatus(`Already using ${alias} with thinking ${thinking ? 'on' : 'off'}.`);
-      return;
-    }
-
     const level = thinking ? 'on' : 'off';
     const prevModel = this.state.appState.model;
     const prevThinking = this.state.appState.thinking;
+    const runtimeChanged = alias !== prevModel || thinking !== prevThinking;
 
+    const session = this.session;
     try {
-      const session = this.session;
-      if (session === undefined) {
+      if (session === undefined && runtimeChanged) {
         await this.activateModelAfterLogin(alias, thinking);
-      } else {
+      } else if (session !== undefined) {
         if (alias !== prevModel) {
           await session.setModel(alias);
         }
@@ -4370,23 +4366,50 @@ export class KimiTUI {
           await session.setThinking(level);
         }
       }
-      this.setAppState({ model: alias, thinking });
-      if (session === undefined) {
-        if (alias !== prevModel) {
-          this.track('model_switch', { model: alias });
-        }
-        if (thinking !== prevThinking) {
-          this.track('thinking_toggle', { enabled: thinking });
-        }
-      }
-      this.showStatus(
-        `Switched to ${alias} with thinking ${level}.`,
-        this.state.theme.colors.success,
-      );
     } catch (error) {
       const msg = formatErrorMessage(error);
       this.showError(`Failed to switch model: ${msg}`);
+      return;
     }
+
+    this.setAppState({ model: alias, thinking });
+    if (session === undefined && runtimeChanged) {
+      if (alias !== prevModel) {
+        this.track('model_switch', { model: alias });
+      }
+      if (thinking !== prevThinking) {
+        this.track('thinking_toggle', { enabled: thinking });
+      }
+    }
+
+    let persisted = false;
+    try {
+      persisted = await this.persistModelSelection(alias, thinking);
+    } catch (error) {
+      const msg = formatErrorMessage(error);
+      this.showError(`Switched to ${alias}, but failed to save default: ${msg}`);
+      return;
+    }
+
+    const status = runtimeChanged
+      ? `Switched to ${alias} with thinking ${level}.`
+      : persisted
+        ? `Saved ${alias} with thinking ${level} as default.`
+        : `Already using ${alias} with thinking ${level}.`;
+    this.showStatus(status, this.state.theme.colors.success);
+  }
+
+  // Persists the selected model and thinking state as the startup defaults.
+  private async persistModelSelection(alias: string, thinking: boolean): Promise<boolean> {
+    const config = await this.harness.getConfig({ reload: true });
+    if (config.defaultModel === alias && config.defaultThinking === thinking) {
+      return false;
+    }
+    await this.harness.setConfig({
+      defaultModel: alias,
+      defaultThinking: thinking,
+    });
+    return true;
   }
 
   // Shows the theme selector.
