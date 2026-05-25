@@ -17,6 +17,7 @@
  * `reset_at`, `duration+timeUnit` window labels, etc.).
  */
 
+import { readApiErrorMessage } from './api-error';
 import { isRecord } from './utils';
 
 const MANAGED_PREFIX = 'managed:';
@@ -219,7 +220,7 @@ export async function fetchManagedUsage(
           : status === 404
             ? 'Usage endpoint not available. Try Kimi For Coding.'
             : `Failed to fetch usage: HTTP ${String(status)}`;
-      return { kind: 'error', status, message: hint };
+      return { kind: 'error', status, message: await readApiErrorMessage(res, hint) };
     }
     const json: unknown = await res.json();
     return { kind: 'ok', parsed: parseManagedUsagePayload(json) };

@@ -266,6 +266,15 @@ describe('requestDeviceAuthorization', () => {
     await expect(requestAuth()).rejects.toBeInstanceOf(OAuthError);
   });
 
+  it('surfaces message fields from failed device authorization responses', async () => {
+    server.enqueue('/api/oauth/device_authorization', {
+      status: 400,
+      body: { message: 'device authorization disabled' },
+    });
+
+    await expect(requestAuth()).rejects.toThrow(/device authorization disabled/);
+  });
+
   it('throws when device_code is missing (required-field validation)', async () => {
     server.enqueue('/api/oauth/device_authorization', {
       status: 200,
@@ -382,6 +391,15 @@ describe('pollDeviceToken', () => {
     await expect(pollToken(flowConfig(), 'd')).rejects.toBeInstanceOf(OAuthError);
   });
 
+  it('surfaces nested API error messages from failed polling responses', async () => {
+    server.enqueue('/api/oauth/token', {
+      status: 400,
+      body: { error: { code: 'invalid_request', message: 'poll rejected by server' } },
+    });
+
+    await expect(pollToken(flowConfig(), 'd')).rejects.toThrow(/poll rejected by server/);
+  });
+
   it('throws when success response is missing refresh_token (required-field validation)', async () => {
     server.enqueue('/api/oauth/token', {
       status: 200,
@@ -478,6 +496,15 @@ describe('refreshAccessToken', () => {
     await expect(refreshToken(flowConfig(), 'old-rt')).rejects.toBeInstanceOf(
       OAuthUnauthorizedError,
     );
+  });
+
+  it('surfaces nested API error messages from unauthorized refresh responses', async () => {
+    server.enqueue('/api/oauth/token', {
+      status: 401,
+      body: { error: { message: 'refresh token revoked' } },
+    });
+
+    await expect(refreshToken(flowConfig(), 'old-rt')).rejects.toThrow(/refresh token revoked/);
   });
 
   it('throws OAuthUnauthorizedError on invalid_grant refresh responses', async () => {
