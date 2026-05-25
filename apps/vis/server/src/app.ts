@@ -8,7 +8,6 @@ import { contextRoute } from './routes/context';
 import { sessionDetailRoute } from './routes/session-detail';
 import { sessionsRoute } from './routes/sessions';
 import { subagentsRoute } from './routes/subagents';
-import { toolResultsRoute } from './routes/tool-results';
 import { wireRoute } from './routes/wire';
 
 /** Resolve the SPA bundle directory next to the compiled server.mjs, if it
@@ -89,7 +88,6 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono> {
   api.route('/sessions', wireRoute());
   api.route('/sessions', contextRoute());
   api.route('/sessions', subagentsRoute());
-  api.route('/sessions', toolResultsRoute());
 
   app.route('/api', api);
 
