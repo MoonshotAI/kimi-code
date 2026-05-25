@@ -140,6 +140,38 @@ describe('FileSystemAgentRecordPersistence', () => {
     expect(JSON.parse(lines[2]!)['input'][0]['text']).toBe('later');
   });
 
+  it('rewrites already flushed records from the beginning', async () => {
+    const wirePath = await makeWirePath();
+    const persistence = new FileSystemAgentRecordPersistence(wirePath);
+    persistence.append({
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: 'old' }],
+      origin: { kind: 'user' },
+    });
+    await persistence.flush();
+
+    persistence.rewrite([
+      {
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+      },
+      {
+        type: 'turn.prompt',
+        input: [{ type: 'text', text: 'new' }],
+        origin: { kind: 'user' },
+      },
+    ]);
+    await persistence.flush();
+
+    const lines = await readLines(wirePath);
+    expect(lines.map((line) => JSON.parse(line)['type'])).toEqual([
+      'metadata',
+      'turn.prompt',
+    ]);
+    expect(JSON.parse(lines[1]!)['input'][0]['text']).toBe('new');
+  });
+
   it('flushes pending records on close', async () => {
     const wirePath = await makeWirePath();
     const persistence = new FileSystemAgentRecordPersistence(wirePath);
@@ -230,5 +262,38 @@ describe('AgentRecords persistence metadata', () => {
       'metadata',
       'turn.prompt',
     ]);
+  });
+
+  it('does not duplicate metadata after replaying existing records', async () => {
+    const wirePath = await makeWirePath();
+    const persistence = new FileSystemAgentRecordPersistence(wirePath);
+    persistence.append({
+      type: 'metadata',
+      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+      created_at: 1,
+    });
+    persistence.append({
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: 'one' }],
+      origin: { kind: 'user' },
+    });
+    await persistence.flush();
+
+    const records = new AgentRecords(() => {}, persistence);
+    await records.replay();
+    records.logRecord({
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: 'two' }],
+      origin: { kind: 'user' },
+    });
+    await records.flush();
+
+    const lines = await readLines(wirePath);
+    expect(lines.map((line) => JSON.parse(line)['type'])).toEqual([
+      'metadata',
+      'turn.prompt',
+      'turn.prompt',
+    ]);
+    expect(lines.filter((line) => JSON.parse(line)['type'] === 'metadata')).toHaveLength(1);
   });
 });
