@@ -37,34 +37,27 @@ export const migrateV1_0ToV1_1: WireMigration = {
   sourceVersion: '1.0',
   targetVersion: '1.1',
   migrateRecord(record: WireMigrationRecord): WireMigrationRecord {
-    // Recursively replace old-style ToolCall objects in-place.
-    const migrate = (value: unknown): unknown => {
-      if (Array.isArray(value)) {
-        for (let i = 0; i < value.length; i++) {
-          const item = value[i];
-          if (isLegacyToolCall(item)) {
-            value[i] = migrateToolCall(item);
-          } else {
-            migrate(item);
-          }
-        }
-        return value;
-      }
+    if (record.type !== 'context.append_message') return record;
 
-      if (isRecord(value)) {
-        for (const key of Object.keys(value)) {
-          const v = value[key];
-          if (isLegacyToolCall(v)) {
-            value[key] = migrateToolCall(v);
-          } else {
-            migrate(v);
-          }
-        }
-      }
-
-      return value;
+    const message = record['message'] as {
+      readonly toolCalls: readonly unknown[];
     };
 
-    return migrate(record) as WireMigrationRecord;
+    let changed = false;
+    const toolCalls = message.toolCalls.map((toolCall) => {
+      if (!isLegacyToolCall(toolCall)) return toolCall;
+      changed = true;
+      return migrateToolCall(toolCall);
+    });
+
+    if (!changed) return record;
+
+    return {
+      ...record,
+      message: {
+        ...message,
+        toolCalls,
+      },
+    };
   },
 };
