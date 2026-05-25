@@ -232,6 +232,7 @@ import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
 import { createTerminalState, type TerminalState } from './utils/terminal-state';
 import { installTerminalThemeTracking } from './utils/terminal-theme';
+import { detectTmuxKeyboardWarning } from './utils/tmux-keyboard';
 import { nextTranscriptId } from './utils/transcript-id';
 
 export interface KimiTUIStartupInput {
@@ -763,6 +764,7 @@ export class KimiTUI {
       this.showStatus(this.state.startupNotice);
       this.state.startupNotice = undefined;
     }
+    void this.showTmuxKeyboardWarningIfNeeded();
     if (this.state.startupState === 'picker') {
       void this.bootstrapFromPicker();
       // resumeSession (fired on picker select) owns post-pick init; nothing
@@ -784,6 +786,13 @@ export class KimiTUI {
       this.refreshSessionTitle();
     }
     void this.refreshSkillCommands(this.session);
+  }
+
+  // Warns tmux users when modified Enter shortcuts are likely to be swallowed.
+  private async showTmuxKeyboardWarningIfNeeded(): Promise<void> {
+    const warning = await detectTmuxKeyboardWarning();
+    if (warning === undefined || this.aborted) return;
+    this.showStatus(warning, this.state.theme.colors.warning);
   }
 
   // Creates or resumes the startup session and reports whether history should replay.
