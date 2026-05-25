@@ -35,7 +35,6 @@ const NOTIFICATION_TAIL_BYTES = 3_000;
 export class BackgroundManager extends BackgroundProcessManager {
   private readonly scheduledNotificationKeys = new Set<string>();
   private readonly deliveredNotificationKeys = new Set<string>();
-  private readonly terminalNotificationPromises = new Set<Promise<void>>();
 
   constructor(
     public readonly agent: Agent,
@@ -86,18 +85,7 @@ export class BackgroundManager extends BackgroundProcessManager {
   }
 
   protected override onLiveTaskTerminal(info: BackgroundTaskInfo): void | Promise<void> {
-    const promise = this.notifyBackgroundTask(info).catch(() => {});
-    this.terminalNotificationPromises.add(promise);
-    void promise.finally(() => {
-      this.terminalNotificationPromises.delete(promise);
-    });
-    return promise;
-  }
-
-  async settleTerminalNotifications(): Promise<void> {
-    while (this.terminalNotificationPromises.size > 0) {
-      await Promise.all(Array.from(this.terminalNotificationPromises));
-    }
+    return this.notifyBackgroundTask(info);
   }
 
   private async restoreBackgroundTaskNotifications(): Promise<void> {
@@ -195,7 +183,6 @@ export class BackgroundManager extends BackgroundProcessManager {
     super._reset();
     this.scheduledNotificationKeys.clear();
     this.deliveredNotificationKeys.clear();
-    this.terminalNotificationPromises.clear();
   }
 }
 
