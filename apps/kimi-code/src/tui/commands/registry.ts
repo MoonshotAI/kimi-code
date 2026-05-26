@@ -34,7 +34,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Switch LLM model',
     priority: 100,
-    availability: 'always',
   },
   {
     name: 'help',
@@ -54,7 +53,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: ['resume'],
     description: 'Browse and resume sessions',
     priority: 80,
-    availability: 'always',
   },
   {
     name: 'tasks',
@@ -131,14 +129,20 @@ export const BUILTIN_SLASH_COMMANDS = [
   },
   {
     name: 'logout',
-    aliases: [],
-    description: 'Clear credentials for the current platform',
+    aliases: ['disconnect'],
+    description: 'Log out of a configured provider',
     priority: 40,
   },
   {
     name: 'login',
     aliases: [],
     description: 'Select a platform and authenticate',
+    priority: 40,
+  },
+  {
+    name: 'connect',
+    aliases: [],
+    description: 'Connect a provider from a model catalog',
     priority: 40,
   },
   {

@@ -19,6 +19,7 @@ import {
 import chalk from 'chalk';
 
 import type { ColorPalette } from '#/tui/theme/colors';
+import { SearchableList } from '#/tui/utils/searchable-list';
 
 export interface ChoiceOption {
   /** Value passed to onSelect (e.g. the actual editor command string). */
@@ -35,6 +36,10 @@ export interface ChoicePickerOptions {
   readonly options: readonly ChoiceOption[];
   readonly currentValue?: string;
   readonly colors: ColorPalette;
+  /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
+  readonly searchable?: boolean;
+  /** Items per page. Lists longer than this paginate. */
+  readonly pageSize?: number;
   readonly onSelect: (value: string) => void;
   readonly onCancel: () => void;
 }
@@ -67,48 +72,73 @@ function wrapDescription(text: string, width: number): string[] {
 export class ChoicePickerComponent extends Container implements Focusable {
   focused = false;
   private readonly opts: ChoicePickerOptions;
-  private selectedIndex: number;
+  private readonly list: SearchableList<ChoiceOption>;
 
   constructor(opts: ChoicePickerOptions) {
     super();
     this.opts = opts;
     const currentIdx = opts.options.findIndex((o) => o.value === opts.currentValue);
-    this.selectedIndex = Math.max(currentIdx, 0);
+    this.list = new SearchableList({
+      items: opts.options,
+      toSearchText: (o) => `${o.label} ${o.description ?? ''}`,
+      pageSize: opts.pageSize,
+      initialIndex: Math.max(currentIdx, 0),
+      searchable: opts.searchable === true,
+    });
   }
 
   handleInput(data: string): void {
     if (matchesKey(data, Key.escape)) {
+      if (this.list.clearQuery()) return;
       this.opts.onCancel();
       return;
     }
-    if (matchesKey(data, Key.up)) {
-      this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+    // Left/Right page through the list (this picker has no horizontal control).
+    if (matchesKey(data, Key.left)) {
+      this.list.pageUp();
       return;
     }
-    if (matchesKey(data, Key.down)) {
-      this.selectedIndex = Math.min(this.opts.options.length - 1, this.selectedIndex + 1);
+    if (matchesKey(data, Key.right)) {
+      this.list.pageDown();
       return;
     }
     if (matchesKey(data, Key.enter)) {
-      const chosen = this.opts.options[this.selectedIndex];
+      const chosen = this.list.selected();
       if (chosen !== undefined) this.opts.onSelect(chosen.value);
       return;
     }
+    this.list.handleKey(data);
   }
 
   override render(width: number): string[] {
     const { colors } = this.opts;
-    const hint = this.opts.hint ?? '↑↓ navigate · Enter select · Esc cancel';
+    const searchable = this.opts.searchable === true;
+    const view = this.list.view();
+    const options = view.items;
+
+    const navParts = ['↑↓ navigate'];
+    if (view.page.pageCount > 1) navParts.push('←→ page');
+    navParts.push('Enter select', 'Esc cancel');
+    const hint = this.opts.hint ?? navParts.join(' · ');
+
+    const titleSuffix =
+      searchable && view.query.length === 0 ? chalk.hex(colors.textMuted)('  (type to search)') : '';
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
-      chalk.hex(colors.primary).bold(` ${this.opts.title}`),
-      chalk.hex(colors.textMuted)(` ${hint}`),
-      '',
+      chalk.hex(colors.primary).bold(` ${this.opts.title}`) + titleSuffix,
     ];
+    if (searchable && view.query.length > 0) {
+      lines.push(chalk.hex(colors.primary)(` Search: `) + chalk.hex(colors.text)(view.query));
+    }
+    lines.push(chalk.hex(colors.textMuted)(` ${hint}`));
+    lines.push('');
 
-    for (let i = 0; i < this.opts.options.length; i++) {
-      const opt = this.opts.options[i]!;
-      const isSelected = i === this.selectedIndex;
+    if (options.length === 0) {
+      lines.push(chalk.hex(colors.textMuted)('   No matches'));
+    }
+    for (let i = view.page.start; i < view.page.end; i++) {
+      const opt = options[i]!;
+      const isSelected = i === view.selectedIndex;
       const isCurrent = opt.value === this.opts.currentValue;
       const pointer = isSelected ? '❯' : ' ';
       const labelStyle = isSelected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
@@ -127,6 +157,13 @@ export class ChoicePickerComponent extends Container implements Focusable {
     }
 
     lines.push('');
+    if (view.page.pageCount > 1) {
+      lines.push(
+        chalk.hex(colors.textMuted)(
+          ` Page ${String(view.page.page + 1)}/${String(view.page.pageCount)}`,
+        ),
+      );
+    }
     lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width));
   }

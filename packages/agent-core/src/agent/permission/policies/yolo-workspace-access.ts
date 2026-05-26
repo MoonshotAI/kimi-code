@@ -23,7 +23,7 @@ export const YoloOutsideWorkspacePermissionPolicy: PermissionPolicy = {
   evaluate({ agent, mode, toolCallContext }) {
     if (mode !== 'yolo') return undefined;
 
-    const toolName = toolCallContext.toolCall.function.name;
+    const toolName = toolCallContext.toolCall.name;
     const toolAccess = FILE_ACCESS_TOOLS[toolName];
     if (toolAccess === undefined) return undefined;
     const [operation, displayOperation] = toolAccess;

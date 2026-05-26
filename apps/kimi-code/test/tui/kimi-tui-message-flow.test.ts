@@ -36,6 +36,21 @@ interface FeedbackDriver extends MessageDriver {
   promptFeedbackInput(): Promise<string | undefined>;
 }
 
+interface ModelSelectorDriver extends MessageDriver {
+  runModelSelector(
+    models: Record<
+      string,
+      {
+        provider: string;
+        model: string;
+        maxContextSize: number;
+        displayName?: string;
+        capabilities?: string[];
+      }
+    >,
+  ): Promise<{ alias: string; thinking: boolean } | undefined>;
+}
+
 function makeStartupInput(): KimiTUIStartupInput {
   return {
     cliOptions: {
@@ -117,6 +132,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
         k2: { model: 'moonshot-v1', maxContextSize: 100 },
       },
     })),
+    setConfig: vi.fn(async () => ({ providers: {} })),
     createSession: vi.fn(async () => session),
     resumeSession: vi.fn(async () => session),
     forkSession: vi.fn(async () => session),
@@ -339,16 +355,21 @@ describe('KimiTUI message flow', () => {
   it('tracks blocked slash commands as invalid without counting them as executed commands', async () => {
     const { driver, harness } = await makeDriver();
     driver.state.appState.isStreaming = true;
-    harness.track.mockClear();
 
-    driver.handleUserInput('/new');
-    await Promise.resolve();
+    for (const command of ['/new', '/model', '/sessions']) {
+      harness.track.mockClear();
 
-    expect(harness.track).toHaveBeenCalledWith('input_command_invalid', {
-      reason: 'blocked',
-      command: 'new',
-    });
-    expect(harness.track).not.toHaveBeenCalledWith('input_command', { command: 'new' });
+      driver.handleUserInput(command);
+      await Promise.resolve();
+
+      expect(harness.track).toHaveBeenCalledWith('input_command_invalid', {
+        reason: 'blocked',
+        command: command.slice(1),
+      });
+      expect(harness.track).not.toHaveBeenCalledWith('input_command', {
+        command: command.slice(1),
+      });
+    }
   });
 
   it('does not re-enter plan mode after creating a plan-mode session', async () => {
@@ -671,6 +692,125 @@ describe('KimiTUI message flow', () => {
       expect(sendQueued).toHaveBeenCalledWith({ text: 'next' });
       expect(driver.state.queuedMessages).toEqual([]);
       expect(driver.state.appState.isStreaming).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('coalesces assistant delta component updates', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver } = await makeDriver();
+      vi.mocked(driver.state.ui.requestRender).mockClear();
+
+      driver.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: 'a',
+        } as Event,
+        vi.fn(),
+      );
+      const component = driver.state.streamingComponent;
+      if (component === undefined) throw new Error('expected streaming component');
+      const updateSpy = vi.spyOn(component, 'updateContent');
+
+      driver.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: 'b',
+        } as Event,
+        vi.fn(),
+      );
+      driver.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: 'c',
+        } as Event,
+        vi.fn(),
+      );
+
+      expect(updateSpy).not.toHaveBeenCalled();
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+      expect(updateSpy).toHaveBeenLastCalledWith('abc');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('flushes pending assistant deltas before turn completion', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver } = await makeDriver();
+      const sendQueued = vi.fn();
+      driver.state.appState.isStreaming = true;
+
+      driver.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: 'done',
+        } as Event,
+        sendQueued,
+      );
+      driver.handleEvent(
+        {
+          type: 'turn.ended',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          reason: 'completed',
+        } as Event,
+        sendQueued,
+      );
+
+      expect(stripSgr(renderTranscript(driver))).toContain('done');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('coalesces streaming tool-call argument preview updates', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver } = await makeDriver();
+      driver.state.currentTurnId = '1';
+      driver.state.currentStep = 1;
+
+      driver.handleEvent(
+        {
+          type: 'tool.call.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: 'call_bash',
+          name: 'Bash',
+          argumentsPart: '{"command":"echo hi"}',
+        } as Event,
+        vi.fn(),
+      );
+
+      expect(driver.state.pendingToolComponents.has('call_bash')).toBe(false);
+      expect(driver.state.activeToolCalls.has('call_bash')).toBe(false);
+
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(driver.state.pendingToolComponents.has('call_bash')).toBe(true);
+      expect(driver.state.activeToolCalls.get('call_bash')?.args).toMatchObject({
+        command: 'echo hi',
+      });
     } finally {
       vi.useRealTimers();
     }
@@ -1086,6 +1226,7 @@ describe('KimiTUI message flow', () => {
 
   it('applies /model selection with inline thinking state', async () => {
     const session = makeSession();
+    const setConfig = vi.fn(async () => ({ providers: {} }));
     const { driver } = await makeDriver(session, {
       getConfig: vi.fn(async () => ({
         models: {
@@ -1104,7 +1245,10 @@ describe('KimiTUI message flow', () => {
             capabilities: ['thinking'],
           },
         },
+        defaultModel: 'k2',
+        defaultThinking: false,
       })),
+      setConfig,
     });
 
     driver.handleUserInput('/model turbo');
@@ -1114,15 +1258,96 @@ describe('KimiTUI message flow', () => {
     const pickerOutput = stripSgr((picker as ModelSelectorComponent).render(120).join('\n'));
     expect(pickerOutput).toContain('Kimi K2 (Kimi Code) ← current');
     expect(pickerOutput).toContain('❯ Kimi Turbo (Kimi Code)');
+    (picker as ModelSelectorComponent).handleInput('t');
+    (picker as ModelSelectorComponent).handleInput('u');
+    const filteredOutput = stripSgr((picker as ModelSelectorComponent).render(120).join('\n'));
+    expect(filteredOutput).toContain('Search: tu');
+    expect(filteredOutput).toContain('Kimi Turbo (Kimi Code)');
+    expect(filteredOutput).not.toContain('Kimi K2 (Kimi Code)');
     (picker as ModelSelectorComponent).handleInput('\u001B[D');
     (picker as ModelSelectorComponent).handleInput('\r');
 
     await vi.waitFor(() => {
       expect(session.setModel).toHaveBeenCalledWith('turbo');
       expect(session.setThinking).toHaveBeenCalledWith('on');
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'turbo',
+        defaultThinking: true,
+      });
     });
     expect(driver.state.appState.model).toBe('turbo');
     expect(driver.state.appState.thinking).toBe(true);
+  });
+
+  it('persists /model selection even when runtime state is unchanged', async () => {
+    const session = makeSession();
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            displayName: 'Kimi K2',
+            capabilities: ['thinking'],
+          },
+        },
+        defaultModel: 'old-default',
+        defaultThinking: true,
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/model k2');
+
+    const picker = driver.state.editorContainer.children[0];
+    expect(picker).toBeInstanceOf(ModelSelectorComponent);
+    (picker as ModelSelectorComponent).handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'k2',
+        defaultThinking: false,
+      });
+    });
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(session.setThinking).not.toHaveBeenCalled();
+  });
+
+  it('enables search in the shared model selector helper', async () => {
+    const { driver } = await makeDriver();
+    const selectorDriver = driver as unknown as ModelSelectorDriver;
+    const selection = selectorDriver.runModelSelector({
+      alpha: {
+        provider: 'managed:kimi-code',
+        model: 'kimi-alpha',
+        maxContextSize: 100,
+        displayName: 'Kimi Alpha',
+        capabilities: ['thinking'],
+      },
+      turbo: {
+        provider: 'managed:kimi-code',
+        model: 'kimi-turbo',
+        maxContextSize: 100,
+        displayName: 'Kimi Turbo',
+        capabilities: ['thinking'],
+      },
+    });
+
+    const picker = driver.state.editorContainer.children[0];
+    expect(picker).toBeInstanceOf(ModelSelectorComponent);
+    (picker as ModelSelectorComponent).handleInput('t');
+    (picker as ModelSelectorComponent).handleInput('u');
+
+    const output = stripSgr((picker as ModelSelectorComponent).render(120).join('\n'));
+    expect(output).toContain('Search: tu');
+    expect(output).toContain('Kimi Turbo (Kimi Code)');
+    expect(output).not.toContain('Kimi Alpha (Kimi Code)');
+
+    (picker as ModelSelectorComponent).handleInput('\u001B');
+    (picker as ModelSelectorComponent).handleInput('\u001B');
+    await expect(selection).resolves.toBeUndefined();
   });
 
   it('deletes Kitty inline images when /new clears the transcript', async () => {

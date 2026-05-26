@@ -31,7 +31,7 @@ export function createDefaultGitCwdWritePolicy(): PermissionPolicy {
       if (mode !== 'manual') return undefined;
       if (matchedRule !== undefined) return undefined;
 
-      const toolName = toolCallContext.toolCall.function.name;
+      const toolName = toolCallContext.toolCall.name;
       if (toolName !== 'Write' && toolName !== 'Edit') return undefined;
 
       const kaos = agent.runtime.kaos;

@@ -1,5 +1,7 @@
+import { migrateV1_0ToV1_1 } from './v1.1';
+
 // Wire protocol versions currently support only the `number.number` format.
-export const AGENT_WIRE_PROTOCOL_VERSION = '1.0';
+export const AGENT_WIRE_PROTOCOL_VERSION = '1.1';
 
 export interface WireMigrationRecord {
   readonly type: string;
@@ -12,16 +14,15 @@ export interface WireMigration {
   migrateRecord(record: WireMigrationRecord): WireMigrationRecord;
 }
 
-const MIGRATIONS: readonly WireMigration[] = [];
+const MIGRATIONS: readonly WireMigration[] = [migrateV1_0ToV1_1];
+
+export function isNewerWireVersion(readVersion: string): boolean {
+  return compareWireVersions(readVersion, AGENT_WIRE_PROTOCOL_VERSION) > 0;
+}
 
 export function resolveWireMigrations(readVersion: string): readonly WireMigration[] {
-  if (compareWireVersions(readVersion, AGENT_WIRE_PROTOCOL_VERSION) === 0) {
+  if (compareWireVersions(readVersion, AGENT_WIRE_PROTOCOL_VERSION) >= 0) {
     return [];
-  }
-  if (compareWireVersions(readVersion, AGENT_WIRE_PROTOCOL_VERSION) > 0) {
-    throw new Error(
-      `Unsupported wire protocol version: ${readVersion} (current: ${AGENT_WIRE_PROTOCOL_VERSION})`,
-    );
   }
 
   const migrations: WireMigration[] = [];
@@ -46,6 +47,15 @@ export function migrateWireRecord(
     (current, migration) => migration.migrateRecord(current),
     record,
   );
+}
+
+export function migrateWireRecords(
+  records: readonly WireMigrationRecord[],
+  readVersion: string | undefined,
+): WireMigrationRecord[] {
+  const migrations =
+    readVersion === undefined ? MIGRATIONS : resolveWireMigrations(readVersion);
+  return records.map((record) => migrateWireRecord(record, migrations));
 }
 
 function findMigration(sourceVersion: string): WireMigration | undefined {

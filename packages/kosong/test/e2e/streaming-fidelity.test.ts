@@ -124,7 +124,7 @@ describe('e2e: streaming fidelity', () => {
         {
           type: 'function',
           id: 'tc-1',
-          function: { name: 'search', arguments: null },
+          name: 'search', arguments: null,
         } satisfies ToolCall,
       ];
 
@@ -142,10 +142,10 @@ describe('e2e: streaming fidelity', () => {
       const result = await generate(provider, '', [], []);
 
       expect(result.message.toolCalls).toHaveLength(1);
-      expect(result.message.toolCalls[0]!.function.arguments).toBe(fullArgs);
+      expect(result.message.toolCalls[0]!.arguments).toBe(fullArgs);
 
       // Verify JSON is parseable and complete
-      const parsed = JSON.parse(result.message.toolCalls[0]!.function.arguments!) as Record<
+      const parsed = JSON.parse(result.message.toolCalls[0]!.arguments!) as Record<
         string,
         unknown
       >;
@@ -162,7 +162,7 @@ describe('e2e: streaming fidelity', () => {
         {
           type: 'function',
           id: 'tc-a',
-          function: { name: 'read_file', arguments: null },
+          name: 'read_file', arguments: null,
         } satisfies ToolCall,
         { type: 'tool_call_part', argumentsPart: args1.slice(0, 5) },
         { type: 'tool_call_part', argumentsPart: args1.slice(5) },
@@ -170,7 +170,7 @@ describe('e2e: streaming fidelity', () => {
         {
           type: 'function',
           id: 'tc-b',
-          function: { name: 'read_file', arguments: null },
+          name: 'read_file', arguments: null,
         } satisfies ToolCall,
         { type: 'tool_call_part', argumentsPart: args2.slice(0, 5) },
         { type: 'tool_call_part', argumentsPart: args2.slice(5) },
@@ -182,8 +182,8 @@ describe('e2e: streaming fidelity', () => {
       const result = await generate(provider, '', [], []);
 
       expect(result.message.toolCalls).toHaveLength(2);
-      expect(result.message.toolCalls[0]!.function.arguments).toBe(args1);
-      expect(result.message.toolCalls[1]!.function.arguments).toBe(args2);
+      expect(result.message.toolCalls[0]!.arguments).toBe(args1);
+      expect(result.message.toolCalls[1]!.arguments).toBe(args2);
     });
 
     it('ToolCallPart with null argumentsPart does not corrupt arguments', async () => {
@@ -191,7 +191,7 @@ describe('e2e: streaming fidelity', () => {
         {
           type: 'function',
           id: 'tc-null',
-          function: { name: 'tool_x', arguments: null },
+          name: 'tool_x', arguments: null,
         } satisfies ToolCall,
         { type: 'tool_call_part', argumentsPart: null },
         { type: 'tool_call_part', argumentsPart: '{"key":' },
@@ -204,7 +204,7 @@ describe('e2e: streaming fidelity', () => {
       const result = await generate(provider, '', [], []);
 
       expect(result.message.toolCalls).toHaveLength(1);
-      expect(result.message.toolCalls[0]!.function.arguments).toBe('{"key":"val"}');
+      expect(result.message.toolCalls[0]!.arguments).toBe('{"key":"val"}');
     });
   });
 
@@ -264,7 +264,7 @@ describe('e2e: streaming fidelity', () => {
         {
           type: 'function',
           id: 'tc-1',
-          function: { name: 'tool', arguments: null },
+          name: 'tool', arguments: null,
         } satisfies ToolCall,
         { type: 'tool_call_part', argumentsPart: '{"a":' },
         { type: 'tool_call_part', argumentsPart: '1}' },
@@ -295,7 +295,7 @@ describe('e2e: streaming fidelity', () => {
         {
           type: 'function',
           id: 'tc-1',
-          function: { name: 'search', arguments: null },
+          name: 'search', arguments: null,
         } satisfies ToolCall,
         { type: 'tool_call_part', argumentsPart: '{"query' },
         { type: 'tool_call_part', argumentsPart: '":"test' },
@@ -318,7 +318,7 @@ describe('e2e: streaming fidelity', () => {
           // Track when onMessagePart sees the ToolCall
           if (part.type === 'function') {
             const tc = part;
-            toolCallSnapshots.push(`onMessagePart:args=${tc.function.arguments}`);
+            toolCallSnapshots.push(`onMessagePart:args=${tc.arguments}`);
           }
         },
       });
@@ -333,12 +333,12 @@ describe('e2e: streaming fidelity', () => {
         {
           type: 'function',
           id: 'tc-a',
-          function: { name: 'tool_a', arguments: '{"x":1}' },
+          name: 'tool_a', arguments: '{"x":1}',
         } satisfies ToolCall,
         {
           type: 'function',
           id: 'tc-b',
-          function: { name: 'tool_b', arguments: '{"y":2}' },
+          name: 'tool_b', arguments: '{"y":2}',
         } satisfies ToolCall,
         { type: 'text', text: 'done' },
       ];
@@ -388,7 +388,7 @@ describe('e2e: streaming fidelity', () => {
         parts.push({
           type: 'function',
           id: `tc-${i}`,
-          function: { name: 'task', arguments: null },
+          name: 'task', arguments: null,
         } satisfies ToolCall);
         // Stream args in 3 chunks
         const chunk = Math.ceil(args.length / 3);
@@ -409,7 +409,7 @@ describe('e2e: streaming fidelity', () => {
 
       for (let i = 0; i < 5; i++) {
         expect(result.message.toolCalls[i]!.id).toBe(`tc-${i}`);
-        const parsed = JSON.parse(result.message.toolCalls[i]!.function.arguments!) as {
+        const parsed = JSON.parse(result.message.toolCalls[i]!.arguments!) as {
           index: number;
         };
         expect(parsed.index).toBe(i);

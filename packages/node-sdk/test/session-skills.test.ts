@@ -192,7 +192,7 @@ describe('Session skills', () => {
     }
   });
 
-  it('uses KIMI_CODE_HOME as the user skill home through the SDK harness', async () => {
+  it('resolves user skills from the OS home directory, independently of KIMI_CODE_HOME', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-home-');
     const processHome = await makeTempDir(tempDirs, 'kimi-sdk-skills-process-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-work-');
@@ -206,8 +206,8 @@ describe('Session skills', () => {
       const session = await harness.createSession({ id: 'ses_sdk_skill_env_home', workDir });
       const names = new Set((await session.listSkills()).map((skill) => skill.name));
 
-      expect(names.has('sdk-sandbox-only')).toBe(true);
-      expect(names.has('sdk-real-home-only')).toBe(false);
+      expect(names.has('sdk-real-home-only')).toBe(true);
+      expect(names.has('sdk-sandbox-only')).toBe(false);
     } finally {
       await harness.close();
     }

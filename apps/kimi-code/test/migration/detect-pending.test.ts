@@ -40,6 +40,27 @@ describe('detectPendingMigration', () => {
     expect(plan).toBeNull();
   });
 
+  it('returns null when the only source data is OAuth credentials', async () => {
+    // OAuth credentials are deliberately never migrated. An install whose
+    // only legacy data is `credentials/*.json` therefore has nothing to
+    // offer the migration screen — kimi-code's own /login flow handles
+    // re-auth on first use.
+    await mkdir(join(src, 'credentials'), { recursive: true });
+    await writeFile(
+      join(src, 'credentials', 'kimi-code.json'),
+      JSON.stringify({
+        access_token: 'a',
+        refresh_token: 'r',
+        expires_at: 1,
+        scope: 's',
+        token_type: 'Bearer',
+      }),
+      'utf-8',
+    );
+    const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });
+    expect(plan).toBeNull();
+  });
+
   it('returns a MigrationPlan when source has migratable data', async () => {
     await writeFile(join(src, 'config.toml'), 'default_thinking = true\n', 'utf-8');
     const plan = await detectPendingMigration({ sourceHome: src, targetHome: tgt });

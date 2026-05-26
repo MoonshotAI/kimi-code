@@ -115,7 +115,8 @@ describe('e2e: openai-legacy adapter', () => {
             {
               type: 'function',
               id: 'call_weather',
-              function: { name: 'lookup_weather', arguments: '{"city":"Shanghai"}' },
+              name: 'lookup_weather',
+              arguments: '{"city":"Shanghai"}',
             } satisfies ToolCall,
           ],
         },
@@ -180,7 +181,8 @@ describe('e2e: openai-legacy adapter', () => {
       expect(result.parts[1]).toMatchObject({
         type: 'function',
         id: 'call_weather',
-        function: { name: 'lookup_weather', arguments: '{"city":"' },
+        name: 'lookup_weather',
+        arguments: '{"city":"',
       });
       expect(result.parts[1]).toHaveProperty('_streamIndex', 0);
       expect(result.parts[2]).toMatchObject({

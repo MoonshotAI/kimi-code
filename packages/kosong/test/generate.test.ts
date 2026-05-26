@@ -53,7 +53,7 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'get_weather#123',
-        function: { name: 'get_weather', arguments: null },
+        name: 'get_weather', arguments: null,
       },
       { type: 'tool_call_part', argumentsPart: '{' },
       { type: 'tool_call_part', argumentsPart: '"city":' },
@@ -74,7 +74,7 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'get_weather#123',
-        function: { name: 'get_weather', arguments: '{"city":"Beijing"}' },
+        name: 'get_weather', arguments: '{"city":"Beijing"}',
       },
     ]);
   });
@@ -87,7 +87,7 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'get_weather#123',
-        function: { name: 'get_weather', arguments: null },
+        name: 'get_weather', arguments: null,
       },
       { type: 'tool_call_part', argumentsPart: '{' },
       { type: 'tool_call_part', argumentsPart: '"city":' },
@@ -96,7 +96,7 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'get_time#123',
-        function: { name: 'get_time', arguments: '' },
+        name: 'get_time', arguments: '',
       },
     ];
     const stream = createMockStream(inputParts);
@@ -153,7 +153,7 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'tool-1',
-        function: { name: 'search', arguments: '{}' },
+        name: 'search', arguments: '{}',
         extras: {
           metadata: { provider: 'kimi' },
           tags: ['a', 'b'],
@@ -176,7 +176,7 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'tool-1',
-        function: { name: 'search', arguments: '{}' },
+        name: 'search', arguments: '{}',
         extras: {
           metadata: { provider: 'kimi' },
           tags: ['a', 'b'],
@@ -230,7 +230,7 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'tool#1',
-        function: { name: 'read_file', arguments: '{"path": "/tmp"}' },
+        name: 'read_file', arguments: '{"path": "/tmp"}',
       },
     ]);
     const provider = createMockProvider(stream);
@@ -283,13 +283,13 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'tc-1',
-        function: { name: 'read_file', arguments: null },
+        name: 'read_file', arguments: null,
       },
       { type: 'tool_call_part', argumentsPart: '{"path":"/a"}' },
       {
         type: 'function',
         id: 'tc-2',
-        function: { name: 'read_file', arguments: null },
+        name: 'read_file', arguments: null,
       },
       { type: 'tool_call_part', argumentsPart: '{"path":"/b"}' },
     ]);
@@ -301,12 +301,12 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'tc-1',
-        function: { name: 'read_file', arguments: '{"path":"/a"}' },
+        name: 'read_file', arguments: '{"path":"/a"}',
       },
       {
         type: 'function',
         id: 'tc-2',
-        function: { name: 'read_file', arguments: '{"path":"/b"}' },
+        name: 'read_file', arguments: '{"path":"/b"}',
       },
     ]);
   });
@@ -316,7 +316,7 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'tc-1',
-        function: { name: 'search', arguments: null },
+        name: 'search', arguments: null,
       },
       { type: 'tool_call_part', argumentsPart: '{"q' },
       { type: 'tool_call_part', argumentsPart: '":"hello"}' },
@@ -329,7 +329,7 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'tc-1',
-        function: { name: 'search', arguments: '{"q":"hello"}' },
+        name: 'search', arguments: '{"q":"hello"}',
       },
     ]);
   });
@@ -346,13 +346,13 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'tc-a',
-        function: { name: 'read_file', arguments: null },
+        name: 'read_file', arguments: null,
         _streamIndex: 0,
       },
       {
         type: 'function',
         id: 'tc-b',
-        function: { name: 'read_file', arguments: null },
+        name: 'read_file', arguments: null,
         _streamIndex: 1,
       },
       // Interleaved argument deltas across the two tool calls.
@@ -371,12 +371,12 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'tc-a',
-        function: { name: 'read_file', arguments: '{"path":"/a"}' },
+        name: 'read_file', arguments: '{"path":"/a"}',
       },
       {
         type: 'function',
         id: 'tc-b',
-        function: { name: 'read_file', arguments: '{"path":"/b"}' },
+        name: 'read_file', arguments: '{"path":"/b"}',
       },
     ]);
     // _streamIndex must NOT leak into the stored ToolCall.
@@ -391,13 +391,13 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'call_a',
-        function: { name: 'read_file', arguments: null },
+        name: 'read_file', arguments: null,
         _streamIndex: 'item_abc',
       },
       {
         type: 'function',
         id: 'call_b',
-        function: { name: 'read_file', arguments: null },
+        name: 'read_file', arguments: null,
         _streamIndex: 'item_xyz',
       },
       { type: 'tool_call_part', argumentsPart: '{"p":"/x"}', index: 'item_xyz' },
@@ -411,12 +411,12 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'call_a',
-        function: { name: 'read_file', arguments: '{"p":"/a"}' },
+        name: 'read_file', arguments: '{"p":"/a"}',
       },
       {
         type: 'function',
         id: 'call_b',
-        function: { name: 'read_file', arguments: '{"p":"/x"}' },
+        name: 'read_file', arguments: '{"p":"/x"}',
       },
     ]);
   });
@@ -428,14 +428,14 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'tc-1',
-        function: { name: 'search', arguments: null },
+        name: 'search', arguments: null,
       },
       { type: 'tool_call_part', argumentsPart: '{"q":' },
       { type: 'tool_call_part', argumentsPart: '"hi"}' },
       {
         type: 'function',
         id: 'tc-2',
-        function: { name: 'search', arguments: null },
+        name: 'search', arguments: null,
       },
       { type: 'tool_call_part', argumentsPart: '{"q":"bye"}' },
     ]);
@@ -447,12 +447,12 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'tc-1',
-        function: { name: 'search', arguments: '{"q":"hi"}' },
+        name: 'search', arguments: '{"q":"hi"}',
       },
       {
         type: 'function',
         id: 'tc-2',
-        function: { name: 'search', arguments: '{"q":"bye"}' },
+        name: 'search', arguments: '{"q":"bye"}',
       },
     ]);
   });
@@ -465,7 +465,7 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'tc-0',
-        function: { name: 'write', arguments: null },
+        name: 'write', arguments: null,
         _streamIndex: 0,
       },
       { type: 'tool_call_part', argumentsPart: '{"a":', index: 0 },
@@ -473,7 +473,7 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'tc-1',
-        function: { name: 'write', arguments: null },
+        name: 'write', arguments: null,
         _streamIndex: 1,
       },
       { type: 'tool_call_part', argumentsPart: '{"b":2}', index: 1 },
@@ -488,12 +488,12 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'tc-0',
-        function: { name: 'write', arguments: '{"a":1}' },
+        name: 'write', arguments: '{"a":1}',
       },
       {
         type: 'function',
         id: 'tc-1',
-        function: { name: 'write', arguments: '{"b":2}' },
+        name: 'write', arguments: '{"b":2}',
       },
     ]);
   });
@@ -503,7 +503,7 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'tc-1',
-        function: { name: 'f', arguments: null },
+        name: 'f', arguments: null,
         _streamIndex: 0,
       },
       { type: 'tool_call_part', argumentsPart: '{}', index: 0 },
@@ -521,7 +521,7 @@ describe('generate()', () => {
     expect(received[0]).toEqual({
       type: 'function',
       id: 'tc-1',
-      function: { name: 'f', arguments: '{}' },
+      name: 'f', arguments: '{}',
     });
     expect(received[0]).not.toHaveProperty('_streamIndex');
   });
@@ -533,7 +533,7 @@ describe('generate()', () => {
   // Previously the generate loop fired onToolCall the moment a second
   // ToolCall header forced a flush of the first. At that point tc0's
   // arguments had not yet been received, so any consumer that parsed
-  // `tc.function.arguments` inside the callback (e.g. step() dispatching
+  // `tc.arguments` inside the callback (e.g. step() dispatching
   // the tool) would hit a JSON parse error on an empty/partial string.
   //
   // `onToolCall` must stay deferred until the stream has drained.
@@ -544,13 +544,13 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'call_a',
-        function: { name: 'tool_a', arguments: null },
+        name: 'tool_a', arguments: null,
         _streamIndex: 0,
       },
       {
         type: 'function',
         id: 'call_b',
-        function: { name: 'tool_b', arguments: null },
+        name: 'tool_b', arguments: null,
         _streamIndex: 1,
       },
       { type: 'tool_call_part', argumentsPart: '{"x":', index: 0 },
@@ -566,7 +566,7 @@ describe('generate()', () => {
 
     const result = await generate(provider, '', [], [], {
       async onToolCall(tc: ToolCall): Promise<void> {
-        callbackSnapshots.push({ id: tc.id, args: tc.function.arguments });
+        callbackSnapshots.push({ id: tc.id, args: tc.arguments });
       },
     });
 
@@ -582,12 +582,12 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'call_a',
-        function: { name: 'tool_a', arguments: '{"x":1}' },
+        name: 'tool_a', arguments: '{"x":1}',
       },
       {
         type: 'function',
         id: 'call_b',
-        function: { name: 'tool_b', arguments: '{"y":2}' },
+        name: 'tool_b', arguments: '{"y":2}',
       },
     ]);
   });
@@ -601,19 +601,19 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'call_a',
-        function: { name: 'tool_a', arguments: null },
+        name: 'tool_a', arguments: null,
         _streamIndex: 0,
       },
       {
         type: 'function',
         id: 'call_b',
-        function: { name: 'tool_b', arguments: null },
+        name: 'tool_b', arguments: null,
         _streamIndex: 1,
       },
       {
         type: 'function',
         id: 'call_c',
-        function: { name: 'tool_c', arguments: null },
+        name: 'tool_c', arguments: null,
         _streamIndex: 2,
       },
       // Heavily interleaved argument deltas.
@@ -636,12 +636,12 @@ describe('generate()', () => {
         if (msg === null) {
           // First callback: we don't have a message reference yet
           // because `generate` hasn't returned. But the invariant we
-          // care about is that `tc.function.arguments` is complete
+          // care about is that `tc.arguments` is complete
           // JSON — verify that directly.
           observations.push({
             id: tc.id,
             totalToolCalls: -1, // unknown — message ref not yet bound
-            allComplete: tc.function.arguments !== null && tc.function.arguments.endsWith('}'),
+            allComplete: tc.arguments !== null && tc.arguments.endsWith('}'),
           });
           return;
         }
@@ -649,7 +649,7 @@ describe('generate()', () => {
           id: tc.id,
           totalToolCalls: msg.toolCalls.length,
           allComplete: msg.toolCalls.every(
-            (c) => c.function.arguments !== null && c.function.arguments.endsWith('}'),
+            (c) => c.arguments !== null && c.arguments.endsWith('}'),
           ),
         });
       },
@@ -664,7 +664,7 @@ describe('generate()', () => {
     expect(observations.map((o) => o.id)).toEqual(['call_a', 'call_b', 'call_c']);
 
     // The final assembled arguments match the index-based routing.
-    expect(result.message.toolCalls.map((tc) => tc.function.arguments)).toEqual([
+    expect(result.message.toolCalls.map((tc) => tc.arguments)).toEqual([
       '{"k":1}',
       '{"k":2}',
       '{"k":3}',
@@ -754,7 +754,7 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'call-1',
-        function: { name: 'plus', arguments: null },
+        name: 'plus', arguments: null,
       },
       { type: 'tool_call_part', argumentsPart: '{"a":1}' },
       { type: 'text', text: 'done' },
@@ -828,13 +828,13 @@ describe('generate()', () => {
       {
         type: 'function',
         id: 'first',
-        function: { name: 'f', arguments: null },
+        name: 'f', arguments: null,
       },
       { type: 'tool_call_part', argumentsPart: '{"i":1}' },
       {
         type: 'function',
         id: 'second',
-        function: { name: 'g', arguments: null },
+        name: 'g', arguments: null,
       },
       { type: 'tool_call_part', argumentsPart: '{"i":2}' },
     ]);

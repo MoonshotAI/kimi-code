@@ -155,10 +155,8 @@ describe('Agent tools', () => {
     const lookupCall: ToolCall = {
       type: 'function',
       id: 'call_lookup',
-      function: {
-        name: 'Lookup',
-        arguments: '{"query":"moon"}',
-      },
+      name: 'Lookup',
+      arguments: '{"query":"moon"}',
     };
     const resolved: Array<[string, string, string]> = [];
     const hookEngine = new HookEngine(
@@ -255,10 +253,8 @@ describe('Agent tools', () => {
     const lookupCall: ToolCall = {
       type: 'function',
       id: 'call_lookup',
-      function: {
-        name: 'Lookup',
-        arguments: '{"query":"moon"}',
-      },
+      name: 'Lookup',
+      arguments: '{"query":"moon"}',
     };
     const ctx = testAgent();
     ctx.configure();
@@ -367,10 +363,8 @@ function bashCall(): ToolCall {
   return {
     type: 'function',
     id: 'call_bash',
-    function: {
-      name: 'Bash',
-      arguments: '{"command":"printf hook-output","timeout":60}',
-    },
+    name: 'Bash',
+    arguments: '{"command":"printf hook-output","timeout":60}',
   };
 }
 
@@ -378,14 +372,12 @@ function agentCall(): ToolCall {
   return {
     type: 'function',
     id: 'call_agent',
-    function: {
-      name: 'Agent',
-      arguments: JSON.stringify({
+    name: 'Agent',
+    arguments: JSON.stringify({
         prompt: 'Investigate deeply',
         description: 'Investigate deeply',
         subagent_type: 'coder',
       }),
-    },
   };
 }
 

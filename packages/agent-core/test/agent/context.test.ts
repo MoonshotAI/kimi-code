@@ -736,7 +736,8 @@ function assistantToolCallMessage(ids: readonly string[]): Message {
     toolCalls: ids.map((id) => ({
       type: 'function',
       id,
-      function: { name: 'Lookup', arguments: '{}' },
+      name: 'Lookup',
+      arguments: '{}',
     })),
   };
 }

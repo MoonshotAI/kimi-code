@@ -38,10 +38,8 @@ function hookContext(toolName: string, args: unknown): ToolExecutionHookContext 
     toolCall: {
       type: 'function',
       id: `call_${toolName}`,
-      function: {
-        name: toolName,
+      name: toolName,
         arguments: JSON.stringify(args),
-      },
     } satisfies ToolCall,
   } as ToolExecutionHookContext;
 }

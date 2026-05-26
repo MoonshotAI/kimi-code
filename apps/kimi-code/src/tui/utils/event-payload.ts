@@ -1,6 +1,20 @@
 import { isKimiError } from '@moonshot-ai/kimi-code-sdk';
 
-import { STREAMING_ARGS_FIELD_RE } from '#/tui/constant/streaming';
+import {
+  STREAMING_ARGS_FIELD_RE,
+  STREAMING_ARGS_PREVIEW_MAX_CHARS,
+} from '#/tui/constant/streaming';
+
+export function appendStreamingArgsPreview(
+  current: string | undefined,
+  next: string | null | undefined,
+): string {
+  const existing = (current ?? '').slice(0, STREAMING_ARGS_PREVIEW_MAX_CHARS);
+  if (next === null || next === undefined || next.length === 0) return existing;
+  const remaining = STREAMING_ARGS_PREVIEW_MAX_CHARS - existing.length;
+  if (remaining <= 0) return existing;
+  return `${existing}${next.slice(0, remaining)}`;
+}
 
 function unescapeJsonString(s: string): string {
   return s.replaceAll(/\\(["\\/bfnrt])/g, (_, ch: string) => {
@@ -28,10 +42,14 @@ function unescapeJsonString(s: string): string {
 }
 
 export function parseStreamingArgs(argumentsText: string): Record<string, unknown> {
-  if (argumentsText.trim().length === 0) return {};
-  if (argumentsText.trimEnd().endsWith('}')) {
+  const previewText = argumentsText.slice(0, STREAMING_ARGS_PREVIEW_MAX_CHARS);
+  if (previewText.trim().length === 0) return {};
+  if (
+    argumentsText.length <= STREAMING_ARGS_PREVIEW_MAX_CHARS &&
+    previewText.trimEnd().endsWith('}')
+  ) {
     try {
-      const parsed = JSON.parse(argumentsText) as unknown;
+      const parsed = JSON.parse(previewText) as unknown;
       if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
         return parsed as Record<string, unknown>;
       }
@@ -40,7 +58,7 @@ export function parseStreamingArgs(argumentsText: string): Record<string, unknow
     }
   }
   const result: Record<string, unknown> = {};
-  for (const match of argumentsText.matchAll(STREAMING_ARGS_FIELD_RE)) {
+  for (const match of previewText.matchAll(STREAMING_ARGS_FIELD_RE)) {
     const key = match[1];
     const rawValue = match[2];
     if (key === undefined || rawValue === undefined) continue;

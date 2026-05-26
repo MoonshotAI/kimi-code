@@ -128,6 +128,45 @@ describe('Agent resume', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('applies wire migrations while replaying persisted records', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'metadata',
+        protocol_version: '1.0',
+        created_at: 1,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'call_legacy_bash',
+              function: {
+                name: 'Bash',
+                arguments: '{"command":"pwd"}',
+              },
+            },
+          ],
+        },
+      } as unknown as AgentRecord,
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    const toolCall = ctx.agent.context.messages[0]?.toolCalls[0] as
+      | { name?: string; arguments?: string | null; function?: unknown }
+      | undefined;
+    expect(toolCall).toMatchObject({
+      name: 'Bash',
+      arguments: '{"command":"pwd"}',
+    });
+    expect(toolCall?.function).toBeUndefined();
+  });
+
   it('keeps delivered background notifications indexed after compaction replay', async () => {
     const origin = {
       kind: 'background_task',
@@ -288,6 +327,7 @@ describe('Agent resume', () => {
 
 class RecordingAgentPersistence extends InMemoryAgentRecordPersistence {
   readonly appended: AgentRecord[] = [];
+  rewritten: readonly AgentRecord[] | undefined;
 
   constructor(events: readonly AgentRecord[]) {
     super(withMetadata(events));
@@ -296,6 +336,11 @@ class RecordingAgentPersistence extends InMemoryAgentRecordPersistence {
   override append(input: AgentRecord): void {
     this.appended.push(input);
     super.append(input);
+  }
+
+  override rewrite(records: readonly AgentRecord[]): void {
+    this.rewritten = records;
+    super.rewrite(records);
   }
 }
 

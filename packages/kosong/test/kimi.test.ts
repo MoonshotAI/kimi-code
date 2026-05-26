@@ -322,7 +322,8 @@ describe('KimiChatProvider', () => {
       const toolCall: ToolCall = {
         type: 'function',
         id: 'call_abc123',
-        function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+        name: 'add',
+        arguments: '{"a": 2, "b": 3}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
@@ -362,7 +363,8 @@ describe('KimiChatProvider', () => {
       const toolCall: ToolCall = {
         type: 'function',
         id: 'call_abc123',
-        function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+        name: 'add',
+        arguments: '{"a": 2, "b": 3}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
@@ -404,12 +406,14 @@ describe('KimiChatProvider', () => {
             {
               type: 'function',
               id: 'call_add',
-              function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+              name: 'add',
+              arguments: '{"a": 2, "b": 3}',
             },
             {
               type: 'function',
               id: 'call_mul',
-              function: { name: 'multiply', arguments: '{"a": 4, "b": 5}' },
+              name: 'multiply',
+              arguments: '{"a": 4, "b": 5}',
             },
           ],
         },
@@ -935,7 +939,8 @@ describe('KimiChatProvider', () => {
         {
           type: 'function',
           id: 'call_delayed',
-          function: { name: 'foo', arguments: '{"a":1}' },
+          name: 'foo',
+          arguments: '{"a":1}',
         },
       ]);
     });
@@ -968,7 +973,7 @@ describe('KimiChatProvider', () => {
             }
           },
           onToolCall(toolCall): void {
-            events.push(`ready:${toolCall.id}:${toolCall.function.arguments ?? ''}`);
+            events.push(`ready:${toolCall.id}:${toolCall.arguments ?? ''}`);
           },
         },
       );
@@ -1023,7 +1028,8 @@ describe('KimiChatProvider', () => {
         {
           type: 'function',
           id: 'call_noidx',
-          function: { name: 'foo', arguments: '{"a":1}' },
+          name: 'foo',
+          arguments: '{"a":1}',
         },
       ]);
     });
@@ -1131,7 +1137,8 @@ describe('KimiChatProvider', () => {
       expect(toolCall).toMatchObject({
         type: 'function',
         id: 'call_ns_a',
-        function: { name: 'lookup', arguments: '{"q":"hi"}' },
+        name: 'lookup',
+        arguments: '{"q":"hi"}',
       });
     });
 
@@ -1264,7 +1271,8 @@ describe('KimiChatProvider', () => {
     const toolCall: ToolCall = {
       type: 'function',
       id: 'call_xyz',
-      function: { name: 'add', arguments: '{}' },
+      name: 'add',
+      arguments: '{}',
     };
 
     it('omits content when assistant tool call content is empty', async () => {

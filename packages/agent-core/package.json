@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/agent-core",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "description": "The unified agent engine for Kimi",
   "license": "MIT",
@@ -36,6 +36,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./agent/records/migration": {
+      "types": "./src/agent/records/migration/index.ts",
+      "default": "./src/agent/records/migration/index.ts"
     },
     "./session/store": {
       "types": "./src/session/store/index.ts",

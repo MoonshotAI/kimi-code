@@ -43,6 +43,7 @@ describe('Event public types', () => {
         case 'session.meta.updated':
         case 'skill.activated':
         case 'error':
+        case 'warning':
         case 'turn.started':
         case 'turn.ended':
         case 'turn.step.started':

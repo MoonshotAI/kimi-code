@@ -44,7 +44,7 @@ const msg4: Message = {
 const tc1: ToolCall = {
   type: 'function',
   id: 'call-1',
-  function: { name: 'test', arguments: null },
+  name: 'test', arguments: null,
   extras: undefined,
 };
 // Accessing a property from the wrong variant should fail.

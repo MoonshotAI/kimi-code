@@ -139,6 +139,10 @@ function hydrateTodoPanelFromResume(
   const todos = rawTodos
     .filter((todo): todo is TodoItem => isTodoItemShape(todo))
     .map((todo) => ({ title: todo.title, status: todo.status }));
+  if (todos.length > 0 && todos.every((t) => t.status === 'done')) {
+    hooks.setTodoList([]);
+    return;
+  }
   hooks.setTodoList(todos);
 }
 
@@ -520,12 +524,12 @@ function collectMessageContent(target: OpenAssistant, content: readonly ContentP
 
 function toolCallFromMessage(rawToolCall: ToolCall): ToolCallBlockData | undefined {
   const id = rawToolCall.id;
-  const name = rawToolCall.function.name;
+  const name = rawToolCall.name;
   if (id.length === 0 || name.length === 0) return undefined;
   return {
     id,
     name,
-    args: parseToolArguments(rawToolCall.function.arguments),
+    args: parseToolArguments(rawToolCall.arguments),
   };
 }
 

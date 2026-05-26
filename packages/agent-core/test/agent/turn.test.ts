@@ -206,10 +206,8 @@ describe('Agent turn flow', () => {
     ctx.mockNextResponse({
       type: 'function',
       id: 'call_missing',
-      function: {
-        name: 'MissingTool',
-        arguments: '{}',
-      },
+      name: 'MissingTool',
+      arguments: '{}',
     });
     ctx.mockNextResponse({ type: 'text', text: 'done' });
 
@@ -255,6 +253,7 @@ describe('Agent turn flow', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello without login' }] });
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
+      [wire] metadata                 { "protocol_version": "1.1", "created_at": "<time>" }
       [wire] turn.prompt              { "input": [ { "type": "text", "text": "Hello without login" } ], "origin": { "kind": "user" }, "time": "<time>" }
       [emit] turn.started             { "turnId": 0, "origin": { "kind": "user" } }
       [wire] context.append_message   { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello without login" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
@@ -860,10 +859,8 @@ describe('Agent turn flow', () => {
     const bashCall: ToolCall = {
       id: 'call_bash',
       type: 'function',
-      function: {
-        name: 'Bash',
-        arguments: '{"command":"printf loop-output","timeout":60}',
-      },
+      name: 'Bash',
+      arguments: '{"command":"printf loop-output","timeout":60}',
     };
     ctx.mockNextResponse(bashCall);
 
@@ -1261,10 +1258,8 @@ describe('Agent turn flow', () => {
     const bashCall: ToolCall = {
       type: 'function',
       id: 'call_bash',
-      function: {
-        name: 'Bash',
-        arguments: '{"command":"printf approved","timeout":60}',
-      },
+      name: 'Bash',
+      arguments: '{"command":"printf approved","timeout":60}',
     };
     const ctx = testAgent({
       kaos: createCommandKaos('approved'),
@@ -1388,10 +1383,8 @@ function bashCallWithId(id: string, command: string): ToolCall {
   return {
     type: 'function',
     id,
-    function: {
-      name: 'Bash',
-      arguments: JSON.stringify({ command, timeout: 60 }),
-    },
+    name: 'Bash',
+    arguments: JSON.stringify({ command, timeout: 60 }),
   };
 }
 

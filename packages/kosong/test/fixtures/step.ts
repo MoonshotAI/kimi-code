@@ -17,7 +17,7 @@ export interface StepCallbacks {
  *
  * A step comprises one LLM generation followed by dispatch of any tool
  * calls the model requested. Tools are dispatched once the stream has
- * fully drained — this guarantees `toolCall.function.arguments` is
+ * fully drained — this guarantees `toolCall.arguments` is
  * complete JSON even when a provider interleaves parallel tool call
  * argument deltas. Call {@link toolResults} to await all pending tool
  * executions in order.

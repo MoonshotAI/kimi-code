@@ -6,11 +6,12 @@ import {
   InMemoryAgentRecordPersistence,
   type AgentRecord,
 } from '../../../src/agent/records';
+import { testAgent } from '../harness/agent';
 
 describe('AgentRecords persistence metadata', () => {
   it('writes metadata before the first persisted record', async () => {
     const persistence = new InMemoryAgentRecordPersistence();
-    const records = new AgentRecords(() => {}, persistence);
+    const records = testAgent({ persistence }).agent.records;
 
     records.logRecord({
       type: 'turn.prompt',
@@ -29,7 +30,7 @@ describe('AgentRecords persistence metadata', () => {
 
   it('does not write metadata when replaying an empty stream', async () => {
     const persistence = new InMemoryAgentRecordPersistence();
-    const records = new AgentRecords(() => {}, persistence);
+    const records = testAgent({ persistence }).agent.records;
 
     await records.replay();
     records.logRecord({
@@ -53,7 +54,7 @@ describe('AgentRecords persistence metadata', () => {
         origin: { kind: 'user' },
       },
     ]);
-    const records = new AgentRecords(() => {}, persistence);
+    const records = testAgent({ persistence }).agent.records;
 
     await expect(records.replay()).rejects.toThrow(
       'AgentRecords replay expected metadata as the first record',
@@ -73,7 +74,7 @@ describe('AgentRecords persistence metadata', () => {
         origin: { kind: 'user' },
       },
     ]);
-    const records = new AgentRecords(() => {}, persistence);
+    const records = testAgent({ persistence }).agent.records;
 
     await records.replay();
     records.logRecord({
@@ -104,14 +105,60 @@ describe('AgentRecords persistence metadata', () => {
         origin: { kind: 'user' },
       },
     ]);
-    const records = new AgentRecords(() => {}, persistence);
+    const records = testAgent({ persistence }).agent.records;
 
     await records.replay();
 
     expect(persistence.rewrites).toEqual([]);
   });
 
-  it('rejects replaying records from a newer wire version', async () => {
+  it('rewrites migrated records to the current wire version after replay', async () => {
+    const persistence = new RecordingInMemoryAgentRecordPersistence([
+      {
+        type: 'metadata',
+        protocol_version: '1.0',
+        created_at: 1,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'call_legacy_bash',
+              function: {
+                name: 'Bash',
+                arguments: '{"command":"pwd"}',
+              },
+            },
+          ],
+        },
+      } as unknown as AgentRecord,
+    ]);
+    const records = testAgent({ persistence }).agent.records;
+
+    await records.replay();
+
+    expect(persistence.rewrites).toHaveLength(1);
+    expect(persistence.records[0]).toMatchObject({
+      type: 'metadata',
+      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+    });
+    const migrated = persistence.records[1] as unknown as {
+      readonly message: {
+        readonly toolCalls: readonly Record<string, unknown>[];
+      };
+    };
+    expect(migrated.message.toolCalls[0]).toMatchObject({
+      name: 'Bash',
+      arguments: '{"command":"pwd"}',
+    });
+    expect(migrated.message.toolCalls[0]?.['function']).toBeUndefined();
+  });
+
+  it('warns but continues when replaying records from a newer wire version', async () => {
     const persistence = new InMemoryAgentRecordPersistence([
       {
         type: 'metadata',
@@ -119,11 +166,11 @@ describe('AgentRecords persistence metadata', () => {
         created_at: 1,
       },
     ]);
-    const records = new AgentRecords(() => {}, persistence);
+    const records = testAgent({ persistence }).agent.records;
 
-    await expect(records.replay()).rejects.toThrow(
-      `Unsupported wire protocol version: 9.9 (current: ${AGENT_WIRE_PROTOCOL_VERSION})`,
-    );
+    const result = await records.replay();
+    expect(result.warning).toContain('9.9');
+    expect(result.warning).toContain(AGENT_WIRE_PROTOCOL_VERSION);
   });
 
   it('rejects replaying records without a registered migration path', async () => {
@@ -134,7 +181,7 @@ describe('AgentRecords persistence metadata', () => {
         created_at: 1,
       },
     ]);
-    const records = new AgentRecords(() => {}, persistence);
+    const records = testAgent({ persistence }).agent.records;
 
     await expect(records.replay()).rejects.toThrow('Missing wire migration for version 0.9');
   });

@@ -29,14 +29,24 @@ import {
   fetchOpenPlatformModels,
   filterModelsByPrefix,
   getOpenPlatformById,
-  isOpenPlatformId,
   OpenPlatformApiError,
   type DeviceAuthorization,
   type ManagedKimiCodeModelInfo,
   type ManagedKimiConfigShape,
   type OpenPlatformDefinition,
 } from '@moonshot-ai/kimi-code-oauth';
-import { log } from '@moonshot-ai/kimi-code-sdk';
+import {
+  applyCatalogProvider,
+  catalogBaseUrl,
+  catalogModelToAlias,
+  catalogProviderModels,
+  CatalogFetchError,
+  fetchCatalog,
+  inferWireType,
+  loadBuiltInCatalog,
+  log,
+} from '@moonshot-ai/kimi-code-sdk';
+import { BUILT_IN_CATALOG_JSON } from '../built-in-catalog';
 import type {
   AgentStatusUpdatedEvent,
   ApprovalRequest,
@@ -46,6 +56,8 @@ import type {
   BackgroundTaskStartedEvent,
   BackgroundTaskTerminatedEvent,
   BackgroundTaskUpdatedEvent,
+  Catalog,
+  CatalogModel,
   CompactionCancelledEvent,
   CompactionCompletedEvent,
   CompactionStartedEvent,
@@ -76,6 +88,7 @@ import type {
   TurnStepCompletedEvent,
   TurnStepInterruptedEvent,
   TurnStepStartedEvent,
+  WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 
@@ -124,6 +137,7 @@ import {
   type FeedbackInputDialogResult,
 } from './components/dialogs/feedback-input-dialog';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
+import { ChoicePickerComponent, type ChoiceOption } from './components/dialogs/choice-picker';
 import { ModelSelectorComponent } from './components/dialogs/model-selector';
 import { PlatformSelectorComponent } from './components/dialogs/platform-selector';
 import { PermissionSelectorComponent } from './components/dialogs/permission-selector';
@@ -183,7 +197,9 @@ import {
   NO_ACTIVE_SESSION_MESSAGE,
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
+  PRODUCT_NAME,
 } from './constant/kimi-tui';
+import { STREAMING_UI_FLUSH_MS } from './constant/streaming';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
 import { ApprovalController } from './reverse-rpc/approval/controller';
 import { createApprovalRequestHandler } from './reverse-rpc/approval/handler';
@@ -207,7 +223,10 @@ import {
 import { formatBackgroundAgentTranscript } from './utils/background-agent-status';
 import { formatBackgroundTaskTranscript } from './utils/background-task-status';
 import { hasDispose, isExpandable, isPlanExpandable } from './utils/component-capabilities';
+import { resolveConnectCatalogRequest } from './utils/connect-catalog';
+import { isDeadTerminalError } from './utils/dead-terminal';
 import {
+  appendStreamingArgsPreview,
   argsRecord,
   formatErrorMessage,
   isTodoItemShape,
@@ -225,6 +244,7 @@ import {
   type McpServerStatusSnapshot,
   selectMcpStartupStatusRows,
 } from './utils/mcp-server-status';
+import { hasPatchChanges } from './utils/object-patch';
 import { openUrl } from './utils/open-url';
 import { setProcessTitle } from './utils/proctitle';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
@@ -560,10 +580,24 @@ export class KimiTUI {
   private aborted = false;
   private terminalFocusTrackingDispose: (() => void) | undefined;
   private terminalThemeTrackingDispose: (() => void) | undefined;
+  // Cleanup callbacks for SIGHUP/SIGTERM listeners and stdout/stderr 'error'
+  // listeners installed by `registerSignalHandlers()`. Drained on shutdown so
+  // we never leave dangling listeners on the host `process`.
+  private signalCleanupHandlers: Array<() => void> = [];
+  // Guards `stop()` and `emergencyTerminalExit()` so a signal arriving mid-
+  // shutdown does not race with itself.
+  private isShuttingDown = false;
   // First-launch migration plan detected pre-TUI; null when nothing to migrate.
   private readonly migrationPlan: MigrationPlan | null;
   // When true, the migration screen is the whole session: run it, then exit.
   private readonly migrateOnly: boolean;
+  // High-frequency model/tool deltas update draft state immediately, then use
+  // these flags to coalesce expensive component rebuilds into periodic flushes.
+  private streamingUiFlushTimer: ReturnType<typeof setTimeout> | undefined;
+  private lastStreamingUiFlushAt: number | undefined;
+  private pendingAssistantFlush = false;
+  private pendingThinkingFlush = false;
+  private readonly pendingToolCallFlushIds = new Set<string>();
 
   public onExit?: (exitCode?: number) => Promise<void>;
 
@@ -684,53 +718,67 @@ export class KimiTUI {
 
   // Starts the TUI, performs startup routing, and begins session event handling.
   async start(): Promise<void> {
-    // Migration path: the migration screen is a pi-tui component, so the event
-    // loop must run first. It then renders as the very first thing on screen,
-    // before the session is created and the Welcome banner is drawn.
-    if (this.migrationPlan !== null) {
-      this.startEventLoop();
-      try {
-        const migrationResult = await this.runMigrationScreen(this.migrationPlan);
-        if (this.migrateOnly) {
-          // Explicit `kimi migrate`: the screen is the whole command — exit
-          // instead of continuing into the chat TUI. A migration that ran but
-          // failed exits non-zero so scripted callers can detect it.
-          const failed =
-            migrationResult.decision === 'now' && migrationResult.migrated === false;
-          // Restore the terminal before `onExit` calls `process.exit`: dispose
-          // the focus/theme tracking `startEventLoop()` installed, then stop
-          // the pi-tui loop. Skipping either leaves the terminal in raw mode
-          // or still emitting focus/OSC sequences after the command finishes.
+    // Arm SIGHUP/SIGTERM and stdout/stderr 'error' handlers before touching the
+    // terminal: once raw mode is on and timers start firing, a dying parent
+    // shell can pin a CPU core on EIO write retries unless we can self-exit.
+    this.registerSignalHandlers();
+    // Outer try ensures the signal handlers are rolled back if any startup
+    // path throws. Without this, callers that retry `start()` in the same
+    // Node process (tests, embedded use) would accumulate listeners on
+    // `process` and trip `MaxListenersExceededWarning`. Inner catch blocks
+    // still own their UI/focus cleanup; this only handles the listener half.
+    try {
+      // Migration path: the migration screen is a pi-tui component, so the
+      // event loop must run first. It then renders as the very first thing on
+      // screen, before the session is created and the Welcome banner is drawn.
+      if (this.migrationPlan !== null) {
+        this.startEventLoop();
+        try {
+          const migrationResult = await this.runMigrationScreen(this.migrationPlan);
+          if (this.migrateOnly) {
+            // Explicit `kimi migrate`: the screen is the whole command — exit
+            // instead of continuing into the chat TUI. A migration that ran
+            // but failed exits non-zero so scripted callers can detect it.
+            const failed =
+              migrationResult.decision === 'now' && migrationResult.migrated === false;
+            // Restore the terminal before `onExit` calls `process.exit`: dispose
+            // the focus/theme tracking `startEventLoop()` installed, then stop
+            // the pi-tui loop. Skipping either leaves the terminal in raw mode
+            // or still emitting focus/OSC sequences after the command finishes.
+            this.disposeTerminalTracking();
+            this.state.ui.stop();
+            await this.onExit?.(failed ? 1 : 0);
+            return;
+          }
+          const shouldReplayHistory = await this.initMainTui();
+          await this.finishStartup(shouldReplayHistory);
+        } catch (error) {
+          // The pi-tui loop is running and startEventLoop() installed focus/
+          // theme tracking; a startup failure must tear all of it down before
+          // the exception propagates, otherwise the terminal is left in raw
+          // mode or still emitting focus/OSC sequences.
           this.disposeTerminalTracking();
           this.state.ui.stop();
-          await this.onExit?.(failed ? 1 : 0);
-          return;
+          throw error;
         }
-        const shouldReplayHistory = await this.initMainTui();
+        return;
+      }
+
+      // No-migration path: ordering is identical to the original `start()`.
+      const shouldReplayHistory = await this.initMainTui();
+      this.startEventLoop();
+      try {
         await this.finishStartup(shouldReplayHistory);
       } catch (error) {
-        // The pi-tui loop is running and startEventLoop() installed focus/
-        // theme tracking; a startup failure must tear all of it down before
-        // the exception propagates, otherwise the terminal is left in raw
-        // mode or still emitting focus/OSC sequences.
+        // The pi-tui loop is running and startEventLoop() installed focus/theme
+        // tracking; tear all of it down so a finishStartup failure does not
+        // leave the terminal in raw mode or emitting focus/OSC sequences.
         this.disposeTerminalTracking();
         this.state.ui.stop();
         throw error;
       }
-      return;
-    }
-
-    // No-migration path: ordering is identical to the original `start()`.
-    const shouldReplayHistory = await this.initMainTui();
-    this.startEventLoop();
-    try {
-      await this.finishStartup(shouldReplayHistory);
     } catch (error) {
-      // The pi-tui loop is running and startEventLoop() installed focus/theme
-      // tracking; tear all of it down so a finishStartup failure does not
-      // leave the terminal in raw mode or emitting focus/OSC sequences.
-      this.disposeTerminalTracking();
-      this.state.ui.stop();
+      this.unregisterSignalHandlers();
       throw error;
     }
   }
@@ -777,6 +825,10 @@ export class KimiTUI {
         this.replayHydrationHooks(),
         this.requireSession(),
       );
+    }
+    const resumeState = this.session?.getResumeState();
+    if (resumeState?.warning !== undefined) {
+      this.showStatus(`Warning: ${resumeState.warning}`, this.state.theme.colors.warning);
     }
     if (this.session !== undefined) {
       this.startSessionEventSubscription();
@@ -862,8 +914,16 @@ export class KimiTUI {
   }
 
   // Stops UI resources, active sessions, reverse-RPC handlers, and the harness.
-  async stop(): Promise<void> {
+  // `exitCode` is forwarded to `onExit`; it defaults to the conventional 0 for
+  // user-initiated exits (e.g. `/exit`). Signal-driven shutdown paths pass the
+  // POSIX 128 + signum value so supervisors can tell signal exits from clean
+  // exits.
+  async stop(exitCode?: number): Promise<void> {
+    if (this.isShuttingDown) return;
+    this.isShuttingDown = true;
+    this.unregisterSignalHandlers();
     this.aborted = true;
+    this.discardPendingStreamingUiUpdates();
     if (this.pendingExit) {
       clearTimeout(this.pendingExit.timer);
       this.pendingExit = null;
@@ -878,8 +938,91 @@ export class KimiTUI {
     this.stopAllMcpServerStatusSpinners();
     this.state.ui.stop();
     if (this.onExit) {
-      await this.onExit();
+      await this.onExit(exitCode);
     }
+  }
+
+  // Installs SIGHUP/SIGTERM signal handlers and stdout/stderr 'error' listeners
+  // so the process can self-terminate when the controlling terminal goes away.
+  //
+  // SIGHUP and EIO/EPIPE/ENOTCONN on stdout/stderr both mean "the terminal is
+  // gone". Running the normal `stop()` path in that state writes restore
+  // sequences (cursor show, bracketed paste off, Kitty protocol off) which
+  // re-trigger EIO and have been observed to pin a CPU core for days.
+  // `emergencyTerminalExit()` is the safe response: it bypasses cleanup.
+  //
+  // SIGTERM is treated as a graceful shutdown request and routes through the
+  // normal `stop()` path so telemetry and session state get flushed.
+  //
+  // `prependListener` ensures we run before any subsequent listener a feature
+  // might register later in startup, since responsiveness here is critical.
+  private registerSignalHandlers(): void {
+    this.unregisterSignalHandlers();
+
+    const signals: NodeJS.Signals[] = ['SIGTERM'];
+    if (process.platform !== 'win32') {
+      signals.push('SIGHUP');
+    }
+
+    for (const signal of signals) {
+      const handler = (): void => {
+        if (signal === 'SIGHUP') {
+          this.emergencyTerminalExit();
+          return;
+        }
+        // SIGTERM: preserve the POSIX 128 + SIGTERM(15) = 143 convention so
+        // supervisors (launchd, systemd, pm2, parent shells) can distinguish
+        // signal-driven exit from a normal `/exit`. Registering a listener
+        // disables Node's default 143 termination, so we must reinstate it
+        // explicitly. Forcing `process.exit(143)` after `stop()` resolves
+        // also guards the defensive case where `onExit` was never wired up.
+        // On cleanup failure we exit 143 too — the process must not hang
+        // on pending I/O once `isShuttingDown` has been latched.
+        this.stop(143).then(
+          () => {
+            process.exit(143);
+          },
+          () => {
+            this.emergencyTerminalExit(143);
+          },
+        );
+      };
+      process.prependListener(signal, handler);
+      this.signalCleanupHandlers.push(() => {
+        process.off(signal, handler);
+      });
+    }
+
+    const terminalErrorHandler = (error: Error): void => {
+      if (isDeadTerminalError(error)) {
+        this.emergencyTerminalExit();
+      }
+    };
+    process.stdout.on('error', terminalErrorHandler);
+    process.stderr.on('error', terminalErrorHandler);
+    this.signalCleanupHandlers.push(() => {
+      process.stdout.off('error', terminalErrorHandler);
+    });
+    this.signalCleanupHandlers.push(() => {
+      process.stderr.off('error', terminalErrorHandler);
+    });
+  }
+
+  private unregisterSignalHandlers(): void {
+    const handlers = this.signalCleanupHandlers;
+    this.signalCleanupHandlers = [];
+    for (const cleanup of handlers) cleanup();
+  }
+
+  // Bails out without running normal shutdown. Reserved for SIGHUP / dead-
+  // terminal write errors where every additional stdout write risks looping
+  // on EIO. The default exit code 129 follows the POSIX 128 + SIGHUP(1)
+  // convention; SIGTERM cleanup failures pass 143 (128 + SIGTERM(15)) so
+  // supervisors still see signal-conventional exits.
+  private emergencyTerminalExit(exitCode = 129): never {
+    this.isShuttingDown = true;
+    this.unregisterSignalHandlers();
+    process.exit(exitCode);
   }
 
   // Tears down the terminal focus + theme tracking installed by
@@ -1425,6 +1568,9 @@ export class KimiTUI {
       case 'login':
         await this.handleLoginCommand();
         return;
+      case 'connect':
+        await this.handleConnectCommand(args);
+        return;
       case 'logout':
         await this.handleLogoutCommand();
         return;
@@ -1659,8 +1805,107 @@ export class KimiTUI {
     });
   }
 
+  private hasPendingStreamingUiUpdates(): boolean {
+    return (
+      this.pendingAssistantFlush ||
+      this.pendingThinkingFlush ||
+      this.pendingToolCallFlushIds.size > 0
+    );
+  }
+
+  private clearStreamingUiFlushTimer(): void {
+    if (this.streamingUiFlushTimer === undefined) return;
+    clearTimeout(this.streamingUiFlushTimer);
+    this.streamingUiFlushTimer = undefined;
+  }
+
+  private clearStreamingUiFlushTimerIfIdle(): void {
+    if (this.hasPendingStreamingUiUpdates()) return;
+    this.clearStreamingUiFlushTimer();
+  }
+
+  private discardPendingStreamingUiUpdates(): void {
+    this.clearStreamingUiFlushTimer();
+    this.pendingAssistantFlush = false;
+    this.pendingThinkingFlush = false;
+    this.pendingToolCallFlushIds.clear();
+  }
+
+  // Schedule trailing UI work for streaming deltas. Terminal drawing is already
+  // coalesced by pi-tui; this avoids doing our own markdown/tool preview rebuild
+  // work on every chunk before pi-tui even gets a chance to render.
+  private scheduleStreamingUiFlush(): void {
+    if (!this.hasPendingStreamingUiUpdates()) return;
+    if (this.streamingUiFlushTimer !== undefined) return;
+    const delay =
+      this.lastStreamingUiFlushAt === undefined
+        ? 0
+        : Math.max(0, STREAMING_UI_FLUSH_MS - (Date.now() - this.lastStreamingUiFlushAt));
+    this.streamingUiFlushTimer = setTimeout(() => {
+      this.streamingUiFlushTimer = undefined;
+      this.flushStreamingUiUpdates();
+    }, delay);
+  }
+
+  // Final events such as tool.result or turn.ended must observe all streamed
+  // draft content, so they bypass the timer and drain pending UI work first.
+  private flushStreamingUiUpdatesNow(): void {
+    this.clearStreamingUiFlushTimer();
+    this.flushStreamingUiUpdates();
+  }
+
+  private flushStreamingUiUpdates(): void {
+    if (!this.hasPendingStreamingUiUpdates()) return;
+    this.lastStreamingUiFlushAt = Date.now();
+    const shouldFlushThinking = this.pendingThinkingFlush;
+    const shouldFlushAssistant = this.pendingAssistantFlush;
+    const toolCallIds = [...this.pendingToolCallFlushIds];
+    this.pendingThinkingFlush = false;
+    this.pendingAssistantFlush = false;
+    this.pendingToolCallFlushIds.clear();
+
+    if (shouldFlushThinking && this.state.thinkingDraft.length > 0) {
+      this.onThinkingUpdate(this.state.thinkingDraft);
+    }
+    if (shouldFlushAssistant) {
+      this.onStreamingTextUpdate(this.state.assistantDraft);
+    }
+    for (const id of toolCallIds) {
+      this.flushStreamingToolCallPreview(id);
+    }
+  }
+
+  // Materializes the latest bounded argument preview for one in-flight tool
+  // call. The final tool.call event still replaces this with authoritative args.
+  private flushStreamingToolCallPreview(id: string): void {
+    const streaming = this.state.streamingToolCallArguments.get(id);
+    if (streaming === undefined) return;
+    const toolCall: ToolCallBlockData = {
+      id,
+      name: streaming.name ?? this.state.activeToolCalls.get(id)?.name ?? 'Tool',
+      args: parseStreamingArgs(streaming.argumentsText),
+      streamingArguments: streaming.argumentsText,
+      streamingStartedAtMs: streaming.startedAtMs,
+      step: this.state.currentStep,
+      turnId: this.state.currentTurnId,
+    };
+    this.state.activeToolCalls.set(id, toolCall);
+
+    if (this.state.thinkingDraft.length > 0 || this.state.assistantStreamActive) {
+      this.finalizeLiveTextBuffers('tool');
+    }
+
+    const existingComponent = this.state.pendingToolComponents.get(id);
+    if (existingComponent !== undefined) {
+      existingComponent.updateToolCall(toolCall);
+    } else if (toolCall.name !== 'Agent') {
+      this.onToolCallStart(toolCall);
+    }
+  }
+
   // Finalizes live thinking output and moves the live pane to the next mode.
   private flushThinkingToTranscript(nextMode: LivePaneState['mode'] = 'idle'): void {
+    this.flushStreamingUiUpdatesNow();
     if (this.state.thinkingDraft.length === 0) {
       this.patchLivePane({ mode: nextMode });
       return;
@@ -1672,6 +1917,7 @@ export class KimiTUI {
 
   // Finalizes live assistant text and clears streaming component state.
   private finalizeAssistantStream(): void {
+    this.flushStreamingUiUpdatesNow();
     if (this.state.assistantStreamActive) {
       this.onStreamingTextEnd();
       this.state.assistantStreamActive = false;
@@ -1683,6 +1929,9 @@ export class KimiTUI {
 
   // Discards live thinking and assistant text state without finalizing transcript output.
   private resetLiveTextRuntime(): void {
+    this.pendingAssistantFlush = false;
+    this.pendingThinkingFlush = false;
+    this.clearStreamingUiFlushTimerIfIdle();
     this.state.assistantDraft = '';
     this.state.assistantStreamActive = false;
     this.state.streamingComponent = undefined;
@@ -1693,6 +1942,8 @@ export class KimiTUI {
 
   // Clears live tool UI state while preserving active tool-call tracking.
   private resetLiveToolUiState(): void {
+    this.pendingToolCallFlushIds.clear();
+    this.clearStreamingUiFlushTimerIfIdle();
     this.state.streamingToolCallArguments.clear();
     this.disposeAndClearPendingToolComponents();
     this.state.pendingAgentGroup = null;
@@ -1747,6 +1998,7 @@ export class KimiTUI {
 
   // Applies app-state changes and refreshes dependent UI surfaces.
   private setAppState(patch: Partial<AppState>): void {
+    if (!hasPatchChanges(this.state.appState, patch)) return;
     const busyChanged = 'isStreaming' in patch || 'isCompacting' in patch;
     Object.assign(this.state.appState, patch);
     if ('planMode' in patch) this.updateEditorBorderHighlight();
@@ -1758,6 +2010,7 @@ export class KimiTUI {
 
   // Applies live-pane changes and refreshes activity presentation.
   private patchLivePane(patch: Partial<LivePaneState>): void {
+    if (!hasPatchChanges(this.state.livePane, patch)) return;
     Object.assign(this.state.livePane, patch);
     this.updateActivityPane();
     this.state.ui.requestRender();
@@ -1894,6 +2147,7 @@ export class KimiTUI {
   // Resets turn, tool, queue, and background-agent state for a session switch.
   private resetSessionRuntime(): void {
     this.aborted = false;
+    this.discardPendingStreamingUiUpdates();
     this.state.queuedMessages = [];
     this.harness.interactiveAgentId = MAIN_AGENT_ID;
     this.resetToolCallState();
@@ -1963,6 +2217,10 @@ export class KimiTUI {
       this.showError(`Failed to replay session history: ${msg}`);
     } finally {
       this.startSessionEventSubscription();
+    }
+    const resumeState = session.getResumeState();
+    if (resumeState?.warning !== undefined) {
+      this.showStatus(`Warning: ${resumeState.warning}`, this.state.theme.colors.warning);
     }
     this.showStatus(statusMessage);
   }
@@ -2123,6 +2381,9 @@ export class KimiTUI {
       case 'error':
         this.handleSessionError(event);
         break;
+      case 'warning':
+        this.handleSessionWarning(event);
+        break;
       case 'compaction.started':
         this.handleCompactionBegin(event);
         break;
@@ -2250,6 +2511,7 @@ export class KimiTUI {
   // Finalizes turn-scoped state when the SDK completes a turn.
   private handleTurnEnd(_event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
     void _event;
+    this.flushStreamingUiUpdatesNow();
     const todos = this.state.todoPanel.getTodos();
     if (todos.length > 0 && todos.every((t) => t.status === 'done')) {
       this.setTodoList([]);
@@ -2260,6 +2522,7 @@ export class KimiTUI {
 
   // Resets live render state for a new turn step.
   private handleStepBegin(event: TurnStepStartedEvent): void {
+    this.flushStreamingUiUpdatesNow();
     this.state.currentStep = event.step;
     this.resetLiveToolUiState();
     this.finalizeLiveTextBuffers('waiting');
@@ -2283,6 +2546,7 @@ export class KimiTUI {
   // wrong. Flip those into a visible 'Truncated' state and append a
   // notice pointing at the config knob.
   private handleStepCompleted(event: TurnStepCompletedEvent): void {
+    this.flushStreamingUiUpdatesNow();
     if (event.finishReason !== 'max_tokens') return;
 
     // Scope the truncation marking to tool calls that belong to the
@@ -2328,6 +2592,7 @@ export class KimiTUI {
 
   // Renders user-facing status for an interrupted turn step.
   private handleStepInterrupted(event: TurnStepInterruptedEvent): void {
+    this.flushStreamingUiUpdatesNow();
     this.resetLiveToolUiState();
     this.finalizeLiveTextBuffers('idle');
     const reason = event.reason;
@@ -2346,9 +2611,12 @@ export class KimiTUI {
   // Appends a thinking delta to the live thinking block.
   private handleThinkingDelta(event: ThinkingDeltaEvent): void {
     this.state.thinkingDraft += event.delta;
-    this.onThinkingUpdate(this.state.thinkingDraft);
+    this.pendingThinkingFlush = true;
     this.patchLivePane({ mode: 'idle' });
-    this.setAppState({ streamingPhase: 'thinking' });
+    if (this.state.appState.streamingPhase !== 'thinking') {
+      this.setAppState({ streamingPhase: 'thinking', streamingStartTime: Date.now() });
+    }
+    this.scheduleStreamingUiFlush();
   }
 
   // Appends an assistant text delta to the live assistant block.
@@ -2363,20 +2631,21 @@ export class KimiTUI {
     }
 
     this.state.assistantDraft += event.delta;
-    this.onStreamingTextUpdate(this.state.assistantDraft);
+    this.pendingAssistantFlush = true;
 
     this.patchLivePane({
       mode: 'idle',
       pendingApproval: null,
       pendingQuestion: null,
     });
-    this.setAppState({
-      streamingPhase: 'composing',
-      streamingStartTime: Date.now(),
-    });
+    if (this.state.appState.streamingPhase !== 'composing') {
+      this.setAppState({ streamingPhase: 'composing', streamingStartTime: Date.now() });
+    }
+    this.scheduleStreamingUiFlush();
   }
 
   private handleHookResult(event: HookResultEvent): void {
+    this.flushStreamingUiUpdatesNow();
     if (this.state.thinkingDraft.length > 0) {
       this.flushThinkingToTranscript('idle');
     }
@@ -2397,6 +2666,7 @@ export class KimiTUI {
 
   // Starts or updates a rendered tool call from a tool-call start event.
   private handleToolCall(event: ToolCallStartedEvent): void {
+    this.flushStreamingUiUpdatesNow();
     const toolCall: ToolCallBlockData = {
       id: event.toolCallId,
       name: event.name,
@@ -2408,6 +2678,7 @@ export class KimiTUI {
     };
     const existing = this.state.activeToolCalls.get(event.toolCallId);
     this.state.activeToolCalls.set(event.toolCallId, toolCall);
+    this.pendingToolCallFlushIds.delete(event.toolCallId);
     this.state.streamingToolCallArguments.delete(event.toolCallId);
     const existingComponent = this.state.pendingToolComponents.get(event.toolCallId);
     if (existingComponent !== undefined) {
@@ -2430,42 +2701,24 @@ export class KimiTUI {
     if (event.toolCallId.length === 0) return;
     const id = event.toolCallId;
     const existing = this.state.streamingToolCallArguments.get(id);
-    const argumentsText = `${existing?.argumentsText ?? ''}${event.argumentsPart ?? ''}`;
+    const argumentsText = appendStreamingArgsPreview(
+      existing?.argumentsText,
+      event.argumentsPart,
+    );
     const name = event.name ?? existing?.name ?? this.state.activeToolCalls.get(id)?.name ?? 'Tool';
     const startedAtMs = existing?.startedAtMs ?? Date.now();
     this.state.streamingToolCallArguments.set(id, { name, argumentsText, startedAtMs });
-
-    const toolCall: ToolCallBlockData = {
-      id,
-      name,
-      args: parseStreamingArgs(argumentsText),
-      streamingArguments: argumentsText,
-      streamingStartedAtMs: startedAtMs,
-      step: this.state.currentStep,
-      turnId: this.state.currentTurnId,
-    };
-    this.state.activeToolCalls.set(id, toolCall);
-
-    if (this.state.thinkingDraft.length > 0 || this.state.assistantStreamActive) {
-      this.finalizeLiveTextBuffers('tool');
-    }
-
-    const existingComponent = this.state.pendingToolComponents.get(id);
-    if (existingComponent !== undefined) {
-      existingComponent.updateToolCall(toolCall);
-    } else if (name !== 'Agent') {
-      this.onToolCallStart(toolCall);
-    }
+    this.pendingToolCallFlushIds.add(id);
 
     this.patchLivePane({
       mode: 'tool',
       pendingApproval: null,
       pendingQuestion: null,
     });
-    this.setAppState({
-      streamingPhase: 'composing',
-      streamingStartTime: Date.now(),
-    });
+    if (this.state.appState.streamingPhase !== 'composing') {
+      this.setAppState({ streamingPhase: 'composing', streamingStartTime: Date.now() });
+    }
+    this.scheduleStreamingUiFlush();
   }
 
   // Streams a `{kind:'status'}` progress text into the live tool box so
@@ -2484,6 +2737,7 @@ export class KimiTUI {
 
   // Completes a tool call and applies any tool-specific UI side effects.
   private handleToolResult(event: ToolResultEvent): void {
+    this.flushStreamingUiUpdatesNow();
     const matchedCall = this.state.activeToolCalls.get(event.toolCallId);
     const resultData: ToolResultBlockData = {
       tool_call_id: event.toolCallId,
@@ -2536,6 +2790,7 @@ export class KimiTUI {
 
   // Finalizes live buffers and renders a session error.
   private handleSessionError(event: ErrorEvent): void {
+    this.flushStreamingUiUpdatesNow();
     this.resetLiveToolUiState();
     this.finalizeLiveTextBuffers('idle');
     if (event.code === OAUTH_LOGIN_REQUIRED_CODE) {
@@ -2547,6 +2802,10 @@ export class KimiTUI {
     if (sessionId.length > 0) {
       this.showStatus(errorReportHintLine(sessionId));
     }
+  }
+
+  private handleSessionWarning(event: WarningEvent): void {
+    this.showStatus(`Warning: ${event.message}`, this.state.theme.colors.warning);
   }
 
   private renderMcpServerStatus(server: McpServerStatusSnapshot): void {
@@ -3406,6 +3665,7 @@ export class KimiTUI {
 
   // Clears transcript-related state and redraws the welcome view.
   private clearTranscriptAndRedraw(): void {
+    this.discardPendingStreamingUiUpdates();
     this.state.transcriptEntries = [];
     this.disposeActiveCompactionBlock();
     this.resetLiveTextRuntime();
@@ -4320,7 +4580,10 @@ export class KimiTUI {
   private showModelPicker(selectedValue: string = this.state.appState.model): void {
     const entries = Object.entries(this.state.appState.availableModels);
     if (entries.length === 0) {
-      this.showError('No models configured.');
+      this.showNotice(
+        'No models configured',
+        'Run /login to sign in to Kimi, or /connect to add another provider from a model catalog.',
+      );
       return;
     }
     this.mountEditorReplacement(
@@ -4330,6 +4593,7 @@ export class KimiTUI {
         selectedValue,
         currentThinking: this.state.appState.thinking,
         colors: this.state.theme.colors,
+        searchable: true,
         onSelect: ({ alias, thinking }) => {
           this.restoreEditor();
           void this.performModelSwitch(alias, thinking);
@@ -4348,20 +4612,16 @@ export class KimiTUI {
       return;
     }
 
-    if (alias === this.state.appState.model && thinking === this.state.appState.thinking) {
-      this.showStatus(`Already using ${alias} with thinking ${thinking ? 'on' : 'off'}.`);
-      return;
-    }
-
     const level = thinking ? 'on' : 'off';
     const prevModel = this.state.appState.model;
     const prevThinking = this.state.appState.thinking;
+    const runtimeChanged = alias !== prevModel || thinking !== prevThinking;
 
+    const session = this.session;
     try {
-      const session = this.session;
-      if (session === undefined) {
+      if (session === undefined && runtimeChanged) {
         await this.activateModelAfterLogin(alias, thinking);
-      } else {
+      } else if (session !== undefined) {
         if (alias !== prevModel) {
           await session.setModel(alias);
         }
@@ -4369,23 +4629,50 @@ export class KimiTUI {
           await session.setThinking(level);
         }
       }
-      this.setAppState({ model: alias, thinking });
-      if (session === undefined) {
-        if (alias !== prevModel) {
-          this.track('model_switch', { model: alias });
-        }
-        if (thinking !== prevThinking) {
-          this.track('thinking_toggle', { enabled: thinking });
-        }
-      }
-      this.showStatus(
-        `Switched to ${alias} with thinking ${level}.`,
-        this.state.theme.colors.success,
-      );
     } catch (error) {
       const msg = formatErrorMessage(error);
       this.showError(`Failed to switch model: ${msg}`);
+      return;
     }
+
+    this.setAppState({ model: alias, thinking });
+    if (session === undefined && runtimeChanged) {
+      if (alias !== prevModel) {
+        this.track('model_switch', { model: alias });
+      }
+      if (thinking !== prevThinking) {
+        this.track('thinking_toggle', { enabled: thinking });
+      }
+    }
+
+    let persisted = false;
+    try {
+      persisted = await this.persistModelSelection(alias, thinking);
+    } catch (error) {
+      const msg = formatErrorMessage(error);
+      this.showError(`Switched to ${alias}, but failed to save default: ${msg}`);
+      return;
+    }
+
+    const status = runtimeChanged
+      ? `Switched to ${alias} with thinking ${level}.`
+      : persisted
+        ? `Saved ${alias} with thinking ${level} as default.`
+        : `Already using ${alias} with thinking ${level}.`;
+    this.showStatus(status, this.state.theme.colors.success);
+  }
+
+  // Persists the selected model and thinking state as the startup defaults.
+  private async persistModelSelection(alias: string, thinking: boolean): Promise<boolean> {
+    const config = await this.harness.getConfig({ reload: true });
+    if (config.defaultModel === alias && config.defaultThinking === thinking) {
+      return false;
+    }
+    await this.harness.setConfig({
+      defaultModel: alias,
+      defaultThinking: thinking,
+    });
+    return true;
   }
 
   // Shows the theme selector.
@@ -5044,6 +5331,122 @@ export class KimiTUI {
     this.showStatus(`Setup complete: ${platform.name} · ${selection.model.id}`);
   }
 
+  // Handles the /connect command — fetches a model catalog (default
+  // models.dev), lets the user pick a provider + model, prompts for an API
+  // key, then writes the provider config + model aliases. Model metadata
+  // (context size, capabilities) comes from the catalog, so users do not
+  // hand-write it.
+  private async handleConnectCommand(args: string): Promise<void> {
+    const resolution = resolveConnectCatalogRequest(args);
+    if (resolution.kind === 'error') {
+      this.showError(resolution.message);
+      return;
+    }
+    const { url, preferBuiltIn, allowBuiltInFallback } = resolution.request;
+
+    let catalog: Catalog | undefined;
+
+    // Default path: serve the bundled catalog so /connect works without a
+    // live network and is not gated by models.dev availability. The source
+    // placeholder is undefined in dev builds, so dev falls through to fetch.
+    if (preferBuiltIn) {
+      const builtIn = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
+      if (builtIn !== undefined) {
+        this.showStatus('Loaded built-in catalog. Run /connect refresh for the latest.');
+        catalog = builtIn;
+      }
+    }
+
+    if (catalog === undefined) {
+      const controller = new AbortController();
+      const cancel = (): void => {
+        controller.abort();
+      };
+      this.cancelInFlight = cancel;
+
+      const spinner = this.showLoginProgressSpinner(`Fetching catalog from ${url}`);
+      try {
+        catalog = await fetchCatalog(url, controller.signal);
+        spinner.stop({ ok: true, label: 'Catalog loaded.' });
+      } catch (error) {
+        if (controller.signal.aborted) {
+          spinner.stop({ ok: false, label: 'Aborted.' });
+        } else {
+          const hint = error instanceof CatalogFetchError ? ` (HTTP ${error.status})` : '';
+          if (!allowBuiltInFallback) {
+            spinner.stop({ ok: false, label: 'Failed to load catalog.' });
+            this.showError(`Failed to fetch catalog${hint}: ${formatErrorMessage(error)}`);
+          } else {
+            const fallback = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
+            if (fallback !== undefined) {
+              spinner.stop({ ok: true, label: 'Using built-in catalog (offline mode).' });
+              catalog = fallback;
+            } else {
+              spinner.stop({ ok: false, label: 'Failed to load catalog.' });
+              this.showError(`Failed to fetch catalog${hint}: ${formatErrorMessage(error)}`);
+            }
+          }
+        }
+      } finally {
+        if (this.cancelInFlight === cancel) this.cancelInFlight = undefined;
+      }
+    }
+
+    if (catalog === undefined) return;
+
+    const providerId = await this.promptCatalogProviderSelection(catalog);
+    if (providerId === undefined) return;
+    const entry = catalog[providerId];
+    if (entry === undefined) return;
+
+    const models = catalogProviderModels(entry);
+    if (models.length === 0) {
+      this.showError(`Provider "${providerId}" has no usable models in this catalog.`);
+      return;
+    }
+
+    const selection = await this.promptModelSelectionForCatalog(providerId, models);
+    if (selection === undefined) return;
+
+    const apiKey = await this.promptApiKey(entry.name ?? providerId);
+    if (apiKey === undefined) return;
+
+    const wire = inferWireType(entry);
+    if (wire === undefined) return;
+    const baseUrl = catalogBaseUrl(entry, wire);
+
+    // Remove stale provider config first: setConfig is a deep-merge patch that
+    // cannot delete keys, and applyCatalogProvider's in-memory cleanup below
+    // does not survive that merge — removeProvider is the only step that
+    // actually drops old model aliases from disk.
+    const existingConfig = await this.harness.getConfig();
+    if (existingConfig.providers[providerId] !== undefined) {
+      await this.harness.removeProvider(providerId);
+    }
+
+    const config = await this.harness.getConfig();
+    applyCatalogProvider(config, {
+      providerId,
+      wire,
+      baseUrl,
+      apiKey,
+      models,
+      selectedModelId: selection.model.id,
+      thinking: selection.thinking,
+    });
+
+    await this.harness.setConfig({
+      providers: config.providers,
+      models: config.models,
+      defaultModel: config.defaultModel,
+      defaultThinking: config.defaultThinking,
+    });
+
+    await this.refreshConfigAfterLogin();
+    this.track('connect', { provider: providerId, model: selection.model.id });
+    this.showStatus(`Connected: ${entry.name ?? providerId} · ${selection.model.id}`);
+  }
+
   // Handles the /feedback command — opens an inline input dialog and POSTs
   // the result to the managed Kimi Code platform. Falls back to the GitHub
   // Issues page when the user is not signed in or the request fails.
@@ -5098,30 +5501,102 @@ export class KimiTUI {
     });
   }
 
-  // Handles the /logout command.
+  // Handles the /logout command. Lists every credential currently held — the
+  // Kimi Code OAuth token (or a stale config entry for it) plus each configured
+  // API-key provider — and lets the user pick which one to drop. OAuth tokens
+  // go through auth.logout for proper revocation, everything else through
+  // removeProvider.
   private async handleLogoutCommand(): Promise<void> {
+    const oauthStatus = await this.harness.auth.status(DEFAULT_OAUTH_PROVIDER_NAME);
+    const hasOAuthToken = oauthStatus.providers.some(
+      (p) => p.providerName === DEFAULT_OAUTH_PROVIDER_NAME && p.hasToken,
+    );
+    const config = await this.harness.getConfig();
+    // Offer the managed provider whenever something points at it — either a
+    // live OAuth token or a stale providers[] entry left over from a previous
+    // login. auth.logout cleans the config regardless of whether the token
+    // is still present, so this avoids leaving residue with no way to reach it.
+    const hasManagedRemnant =
+      hasOAuthToken || config.providers[DEFAULT_OAUTH_PROVIDER_NAME] !== undefined;
+    const apiKeyProviderIds = Object.keys(config.providers ?? {})
+      .filter((id) => id !== DEFAULT_OAUTH_PROVIDER_NAME)
+      .toSorted();
+
+    const options: ChoiceOption[] = [];
+    if (hasManagedRemnant) {
+      options.push({
+        value: DEFAULT_OAUTH_PROVIDER_NAME,
+        label: PRODUCT_NAME,
+        description: 'OAuth login',
+      });
+    }
+    for (const id of apiKeyProviderIds) {
+      const baseUrl = config.providers[id]?.baseUrl;
+      options.push({
+        value: id,
+        label: id,
+        description: typeof baseUrl === 'string' && baseUrl.length > 0 ? baseUrl : undefined,
+      });
+    }
+
+    if (options.length === 0) {
+      this.showStatus('Nothing to logout.');
+      return;
+    }
+
     const currentModel = this.state.appState.model.trim();
     const currentProvider = this.state.appState.availableModels[currentModel]?.provider;
 
-    if (currentProvider === undefined || currentProvider === DEFAULT_OAUTH_PROVIDER_NAME) {
+    const target = await this.promptLogoutProviderSelection(options, currentProvider);
+    if (target === undefined) return;
+
+    if (target === DEFAULT_OAUTH_PROVIDER_NAME) {
       await this.harness.auth.logout(DEFAULT_OAUTH_PROVIDER_NAME);
-      await this.refreshConfigAfterLogout();
-      await this.clearActiveSessionAfterLogout();
-      this.track('logout', { provider: DEFAULT_OAUTH_PROVIDER_NAME });
-      this.showStatus('Logged out.');
-      return;
+    } else {
+      await this.harness.removeProvider(target);
     }
 
-    if (isOpenPlatformId(currentProvider)) {
-      await this.harness.removeProvider(currentProvider);
+    if (target === currentProvider) {
+      // The active session is backed by the provider we just removed, so it
+      // can no longer make requests — tear it down along with the model state.
       await this.refreshConfigAfterLogout();
       await this.clearActiveSessionAfterLogout();
-      this.track('logout', { provider: currentProvider });
-      this.showStatus(`Logged out from ${currentProvider}.`);
-      return;
+    } else {
+      // Refresh provider/model listings so the picker reflects the change,
+      // but leave the user's current session running.
+      const updated = await this.harness.getConfig({ reload: true });
+      this.setAppState({
+        availableModels: updated.models ?? {},
+        availableProviders: updated.providers ?? {},
+      });
     }
 
-    this.showStatus('Nothing to logout.');
+    this.track('logout', { provider: target });
+    const label = target === DEFAULT_OAUTH_PROVIDER_NAME ? PRODUCT_NAME : target;
+    this.showStatus(`Logged out from ${label}.`);
+  }
+
+  private promptLogoutProviderSelection(
+    options: readonly ChoiceOption[],
+    currentValue: string | undefined,
+  ): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      const picker = new ChoicePickerComponent({
+        title: 'Select a provider to log out',
+        options,
+        currentValue,
+        colors: this.state.theme.colors,
+        onSelect: (value) => {
+          this.restoreEditor();
+          resolve(value);
+        },
+        onCancel: () => {
+          this.restoreEditor();
+          resolve(undefined);
+        },
+      });
+      this.mountEditorReplacement(picker);
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -5145,6 +5620,42 @@ export class KimiTUI {
     });
   }
 
+  private promptCatalogProviderSelection(catalog: Catalog): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      const options: ChoiceOption[] = Object.entries(catalog)
+        .filter(([, entry]) => inferWireType(entry) !== undefined)
+        .map(([id, entry]) => ({
+          value: id,
+          label: entry.name ?? id,
+          description:
+            typeof entry.api === 'string' && entry.api.length > 0 ? entry.api : undefined,
+        }))
+        .toSorted((a, b) => a.label.localeCompare(b.label));
+
+      if (options.length === 0) {
+        this.showError('Catalog has no providers with supported wire types.');
+        resolve(undefined);
+        return;
+      }
+
+      const picker = new ChoicePickerComponent({
+        title: 'Select a provider',
+        options,
+        colors: this.state.theme.colors,
+        searchable: true,
+        onSelect: (value) => {
+          this.restoreEditor();
+          resolve(value);
+        },
+        onCancel: () => {
+          this.restoreEditor();
+          resolve(undefined);
+        },
+      });
+      this.mountEditorReplacement(picker);
+    });
+  }
+
   private promptApiKey(platformName: string): Promise<string | undefined> {
     return new Promise((resolve) => {
       const dialog = new ApiKeyInputDialogComponent(
@@ -5159,39 +5670,56 @@ export class KimiTUI {
     });
   }
 
-  private promptModelSelectionForOpenPlatform(
+  private async promptModelSelectionForOpenPlatform(
     models: ManagedKimiCodeModelInfo[],
     platform: OpenPlatformDefinition,
   ): Promise<{ model: ManagedKimiCodeModelInfo; thinking: boolean } | undefined> {
+    const modelDict: Record<string, ModelAlias> = {};
+    for (const m of models) {
+      modelDict[`${platform.id}/${m.id}`] = {
+        provider: platform.id,
+        model: m.id,
+        maxContextSize: m.contextLength,
+        capabilities: capabilitiesForModel(m),
+        displayName: m.displayName,
+      };
+    }
+    const selection = await this.runModelSelector(modelDict);
+    if (selection === undefined) return undefined;
+    const model = models.find((m) => `${platform.id}/${m.id}` === selection.alias);
+    return model ? { model, thinking: selection.thinking } : undefined;
+  }
+
+  private async promptModelSelectionForCatalog(
+    providerId: string,
+    models: CatalogModel[],
+  ): Promise<{ model: CatalogModel; thinking: boolean } | undefined> {
+    const modelDict: Record<string, ModelAlias> = {};
+    for (const m of models) {
+      modelDict[`${providerId}/${m.id}`] = catalogModelToAlias(providerId, m);
+    }
+    const selection = await this.runModelSelector(modelDict);
+    if (selection === undefined) return undefined;
+    const model = models.find((m) => `${providerId}/${m.id}` === selection.alias);
+    return model ? { model, thinking: selection.thinking } : undefined;
+  }
+
+  private runModelSelector(
+    modelDict: Record<string, ModelAlias>,
+  ): Promise<{ alias: string; thinking: boolean } | undefined> {
     return new Promise((resolve) => {
-      const modelDict: Record<string, ModelAlias> = {};
-      for (const m of models) {
-        const alias = `${platform.id}/${m.id}`;
-        modelDict[alias] = {
-          provider: platform.id,
-          model: m.id,
-          maxContextSize: m.contextLength,
-          capabilities: capabilitiesForModel(m),
-          displayName: m.displayName,
-        };
-      }
-
       const firstAlias = Object.keys(modelDict)[0] ?? '';
-      const firstModel = modelDict[firstAlias];
-      const initialThinking = (() => {
-        const caps = firstModel?.capabilities ?? [];
-        return caps.includes('always_thinking') || caps.includes('thinking');
-      })();
-
+      const caps = modelDict[firstAlias]?.capabilities ?? [];
+      const initialThinking = caps.includes('always_thinking') || caps.includes('thinking');
       const selector = new ModelSelectorComponent({
         models: modelDict,
         currentValue: firstAlias,
         currentThinking: initialThinking,
         colors: this.state.theme.colors,
+        searchable: true,
         onSelect: ({ alias, thinking }) => {
           this.restoreEditor();
-          const model = models.find((m) => `${platform.id}/${m.id}` === alias);
-          resolve(model ? { model, thinking } : undefined);
+          resolve({ alias, thinking });
         },
         onCancel: () => {
           this.restoreEditor();

@@ -424,7 +424,7 @@ function createAnthropicStreamProvider(events: unknown[]): AnthropicChatProvider
     clientFactory: () =>
       ({
         messages: {
-          stream: vi.fn().mockReturnValue(anthropicMockStream(events)),
+          create: vi.fn().mockResolvedValue(anthropicMockStream(events)),
         },
       }) as never,
   });

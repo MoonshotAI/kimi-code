@@ -39,12 +39,15 @@ export async function detectPendingMigration(
     return null;
   }
 
+  // OAuth credentials are deliberately not migrated, so an install whose
+  // only data is `credentials/*.json` has nothing to offer — kimi-code's own
+  // /login flow will pick up the auth conversation when the user first uses
+  // the app. Treat oauth-only as "nothing to migrate".
   const nothingToMigrate =
     plan.totalSessions === 0 &&
     !plan.hasConfig &&
     !plan.hasMcp &&
-    !plan.hasUserHistory &&
-    plan.oauthCredentials.length === 0;
+    !plan.hasUserHistory;
   if (nothingToMigrate) return null;
 
   return plan;

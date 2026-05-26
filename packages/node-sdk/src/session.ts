@@ -395,6 +395,7 @@ function resumeStateFromSummary(
   return {
     sessionMetadata: summary.sessionMetadata,
     agents: summary.agents,
+    warning: summary.warning,
   };
 }
 

@@ -7,12 +7,15 @@
  * production state.
  */
 
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { arch, hostname, release, type } from 'node:os';
 import { join } from 'node:path';
 
 import type { DeviceHeaders } from './types';
+
+export const KIMI_CODE_PLATFORM = 'kimi_code_cli';
 
 export interface KimiHostIdentity {
   readonly userAgentProduct: string;
@@ -65,7 +68,7 @@ export function createKimiDeviceHeaders(options: {
   readonly version: string;
 }): DeviceHeaders {
   return {
-    'X-Msh-Platform': 'kimi-code-cli',
+    'X-Msh-Platform': KIMI_CODE_PLATFORM,
     'X-Msh-Version': requiredAsciiHeader(options.version, 'Kimi identity version'),
     'X-Msh-Device-Name': asciiHeader(hostname()),
     'X-Msh-Device-Model': asciiHeader(deviceModel()),
@@ -111,9 +114,21 @@ function deviceModel(): string {
   const os = type();
   const version = release();
   const osArch = arch();
-  if (os === 'Darwin') return `macOS ${version} ${osArch}`;
+  if (os === 'Darwin') return `macOS ${macOsProductVersion() ?? version} ${osArch}`;
   if (os === 'Windows_NT') return `Windows ${version} ${osArch}`;
   return `${os} ${version} ${osArch}`.trim();
+}
+
+function macOsProductVersion(): string | undefined {
+  try {
+    const version = execFileSync('/usr/bin/sw_vers', ['-productVersion'], {
+      encoding: 'utf-8',
+      timeout: 1000,
+    }).trim();
+    return version.length > 0 ? version : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function asciiHeader(value: string, fallback = 'unknown'): string {

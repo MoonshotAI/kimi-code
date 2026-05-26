@@ -62,7 +62,7 @@ describe('ScriptedEchoChatProvider', () => {
       {
         type: 'function',
         id: 'call-1',
-        function: { name: 'search', arguments: '{"q":"python"' },
+        name: 'search', arguments: '{"q":"python"',
       } satisfies ToolCall,
       { type: 'tool_call_part', argumentsPart: '}' } satisfies ToolCallPart,
     ]);
@@ -177,7 +177,7 @@ describe('ScriptedEchoChatProvider', () => {
 
     const tc = result.message.toolCalls[0]!;
     expect(tc.id).toBe('call-1');
-    expect(tc.function.name).toBe('search');
-    expect(tc.function.arguments).toBe('{"q":"python"}');
+    expect(tc.name).toBe('search');
+    expect(tc.arguments).toBe('{"q":"python"}');
   });
 });

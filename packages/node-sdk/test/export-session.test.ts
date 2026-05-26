@@ -12,7 +12,10 @@ import {
   type SessionSummary,
 } from '#/index';
 import { resolveGlobalLogPath } from '../../agent-core/src/logging/logger';
-import { exportSessionDirectory } from '../../agent-core/src/session/export';
+import {
+  WIRE_PROTOCOL_VERSION,
+  exportSessionDirectory,
+} from '../../agent-core/src/session/export';
 import { recordingTelemetry, type TelemetryRecord } from './telemetry';
 import { TEST_IDENTITY } from './test-identity';
 
@@ -136,7 +139,7 @@ describe('exportSessionDirectory', () => {
     ]);
     expect(result.manifest).toMatchObject({
       sessionId: sid,
-      wireProtocolVersion: '1.0',
+      wireProtocolVersion: WIRE_PROTOCOL_VERSION,
       sessionFirstActivity: '2026-04-18T10:00:00.000Z',
       sessionLastActivity: '2026-04-18T10:00:03.000Z',
       title: 'Export Test',

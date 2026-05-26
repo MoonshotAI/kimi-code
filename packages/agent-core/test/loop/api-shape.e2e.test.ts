@@ -296,14 +296,14 @@ function _typeOnlyChecks(): void {
 
   const toolCallHookContext: ToolExecutionHookContext = {
     ...stepHookContext,
-    toolCall: { type: 'function', id: 'tc1', function: { name: 'echo', arguments: '{}' } },
+    toolCall: { type: 'function', id: 'tc1', name: 'echo', arguments: '{}' },
     args: {},
   };
   void toolCallHookContext;
 
   const _badToolExecutionHookContext: ToolExecutionHookContext = {
     ...stepHookContext,
-    toolCall: { type: 'function', id: 'tc1', function: { name: 'echo', arguments: '{}' } },
+    toolCall: { type: 'function', id: 'tc1', name: 'echo', arguments: '{}' },
     // @ts-expect-error — tool hooks receive `args`, not the old `input` field.
     input: {},
   };
@@ -401,12 +401,12 @@ function _typeOnlyChecks(): void {
   const toolCall: ToolCall = {
     type: 'function',
     id: 'tc1',
-    function: { name: 'echo', arguments: '{"text":"hi"}' },
+    name: 'echo', arguments: '{"text":"hi"}',
   };
   void toolCall;
   const _badToolCall: ToolCall = {
-    // @ts-expect-error — the loop no longer owns a parsed `{ name, args }` tool-call shape.
     name: 'echo',
+    // @ts-expect-error — ToolCall has `name` but no `args` property.
     args: {},
   };
   void _badToolCall;

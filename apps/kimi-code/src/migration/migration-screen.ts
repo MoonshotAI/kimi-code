@@ -304,6 +304,7 @@ export class MigrationScreenComponent extends Container implements Focusable {
       if (sum.config.migratedHooks > 0) migratedKinds.push('hooks');
       if (sum.mcp.mergedServers.length > 0) migratedKinds.push('MCP');
       if (sum.userHistory.copied > 0) migratedKinds.push('REPL history');
+      if (sum.skills.copied > 0) migratedKinds.push('skills');
       if (migratedKinds.length > 0) {
         lines.push(chalk.hex(colors.success)(`  ✓ ${migratedKinds.join(' · ')}`));
       }
@@ -317,13 +318,10 @@ export class MigrationScreenComponent extends Container implements Focusable {
           ),
         );
       }
-      if (r.notices.oauthLoginsRequiringRelogin.length > 0) {
-        lines.push(
-          chalk.hex(colors.warning)(
-            '  ⚠ kimi-cli login not migrated — run /login in kimi-code to sign in',
-          ),
-        );
-      }
+      // OAuth credentials are deliberately not migrated (refresh tokens cannot
+      // safely be held by two installs at once). kimi-code's normal auth flow
+      // will prompt for /login when the user first picks a model — surfacing a
+      // separate notice here reads as a migration limitation, which it is not.
       if (sum.config.droppedHooks > 0) {
         lines.push(
           chalk.hex(colors.warning)(
@@ -495,12 +493,6 @@ function summarizePlan(plan: MigrationPlan): string {
   if (plan.hasConfig) parts.push('config.toml');
   if (plan.hasMcp) parts.push('mcp.json');
   if (plan.hasUserHistory) parts.push('REPL history');
-  // OAuth credentials are detected but not migrated (refresh tokens rotate;
-  // re-login in kimi-code is the right answer). Surface the detection up
-  // front so an install whose only data is `credentials/*.json` does not
-  // render this line blank, and so the pre-migration screen stays consistent
-  // with the result screen's "kimi-cli login not migrated — run /login" line.
-  if (plan.oauthCredentials.length > 0) parts.push('kimi-cli login (needs /login)');
   return parts.join(' · ');
 }
 

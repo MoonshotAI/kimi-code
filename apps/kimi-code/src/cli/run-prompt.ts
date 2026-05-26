@@ -1,6 +1,4 @@
-import { createKimiDeviceId, KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import {
-  initializeTelemetry,
   setCrashPhase,
   setTelemetryContext,
   shutdownTelemetry,
@@ -17,9 +15,10 @@ import {
   type TelemetryClient,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
+import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
 
 import type { CLIOptions, PromptOutputFormat } from './options';
+import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
 
 interface PromptOutput {
@@ -54,12 +53,14 @@ export async function runPrompt(
   const stderr = io.stderr ?? process.stderr;
   const promptProcess = io.process ?? process;
   const workDir = process.cwd();
+  const telemetryBootstrap = createCliTelemetryBootstrap();
   const telemetryClient: TelemetryClient = {
     track,
     withContext: withTelemetryContext,
     setContext: setTelemetryContext,
   };
   const harness = new KimiHarness({
+    homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
     uiMode: PROMPT_UI_MODE,
     skillDirs: opts.skillsDirs,
@@ -112,17 +113,13 @@ export async function runPrompt(
     );
     restorePromptSessionPermission = restorePermission;
 
-    const deviceId = createKimiDeviceId(harness.homeDir);
-    initializeTelemetry({
-      homeDir: harness.homeDir,
-      deviceId,
-      enabled: config.telemetry !== false,
-      appName: CLI_USER_AGENT_PRODUCT,
+    initializeCliTelemetry({
+      harness,
+      bootstrap: telemetryBootstrap,
+      config,
       version,
       uiMode: PROMPT_UI_MODE,
       model: telemetryModel,
-      getAccessToken: async () =>
-        (await harness.auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
     });
     setCrashPhase('runtime');
 
@@ -133,8 +130,9 @@ export async function runPrompt(
       afk: true,
     });
 
-    await runPromptTurn(session, opts.prompt!, opts.outputFormat ?? 'text', stdout, stderr);
-    stderr.write(`To resume this session: kimi -r ${session.id}\n`);
+    const outputFormat = opts.outputFormat ?? 'text';
+    await runPromptTurn(session, opts.prompt!, outputFormat, stdout, stderr);
+    writeResumeHint(session.id, outputFormat, stdout, stderr);
 
     withTelemetryContext({ sessionId: session.id }).track('exit', {
       duration_s: (Date.now() - startedAt) / 1000,
@@ -233,7 +231,9 @@ async function forcePromptPermission(
 function requireConfiguredModel(...models: readonly (string | undefined)[]): string {
   const model = configuredModel(...models);
   if (model === undefined) {
-    throw new Error('No model configured. Set default_model in config.toml.');
+    throw new Error(
+      'No model configured. Run `kimi` and use /login to sign in, then retry; or set default_model in config.toml.',
+    );
   }
   return model;
 }
@@ -472,6 +472,36 @@ interface PromptJsonToolMessage {
   role: 'tool';
   tool_call_id: string;
   content: string;
+}
+
+interface PromptJsonResumeMetaMessage {
+  role: 'meta';
+  type: 'session.resume_hint';
+  session_id: string;
+  command: string;
+  content: string;
+}
+
+function writeResumeHint(
+  sessionId: string,
+  outputFormat: PromptOutputFormat,
+  stdout: PromptOutput,
+  stderr: PromptOutput,
+): void {
+  const command = `kimi -r ${sessionId}`;
+  const content = `To resume this session: ${command}`;
+  if (outputFormat === 'stream-json') {
+    const message: PromptJsonResumeMetaMessage = {
+      role: 'meta',
+      type: 'session.resume_hint',
+      session_id: sessionId,
+      command,
+      content,
+    };
+    stdout.write(`${JSON.stringify(message)}\n`);
+    return;
+  }
+  stderr.write(`${content}\n`);
 }
 
 class PromptJsonWriter implements PromptTurnWriter {

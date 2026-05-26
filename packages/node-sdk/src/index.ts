@@ -3,6 +3,24 @@ export { Session } from '#/session';
 export { KimiAuthFacade } from '#/auth';
 
 export {
+  applyCatalogProvider,
+  catalogBaseUrl,
+  catalogModelToAlias,
+  catalogProviderModels,
+  CatalogFetchError,
+  DEFAULT_CATALOG_URL,
+  fetchCatalog,
+  inferWireType,
+  loadBuiltInCatalog,
+} from '#/catalog';
+export type {
+  ApplyCatalogProviderOptions,
+  Catalog,
+  CatalogModel,
+  CatalogProviderEntry,
+} from '#/catalog';
+
+export {
   ErrorCodes,
   KimiError,
   type KimiErrorCode,
