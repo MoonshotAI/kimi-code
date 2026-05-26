@@ -52,6 +52,7 @@ Some commands are only available in the idle state. Running them while the sessi
 | `/help` | `/h`, `/?` | Show keyboard shortcuts and all available commands. | Yes |
 | `/usage` | — | Show token usage, context consumption, and quota information. | Yes |
 | `/status` | — | Show the current session runtime status, including version, model, working directory, and permission mode. | Yes |
+| `/skills` | — | Search and inspect skills loaded in the current session, including their source, path, type, and manual-only state. | Yes |
 | `/mcp` | — | List the MCP servers in the current session and their connection status. | Yes |
 | `/version` | — | Show the Kimi Code CLI version number. | Yes |
 | `/feedback` | — | Submit feedback to help improve Kimi Code CLI. | Yes |
@@ -73,6 +74,8 @@ In addition to the built-in commands, user-activatable skills are automatically 
 For example, `/skill:code-style` loads the content of the `code-style` skill and sends it to the agent; any text after the command is appended to the skill prompt, as in `/skill:git-commits fix the login failure issue`.
 
 For convenience, skill commands also support a short form `/<name>` that omits the `skill:` prefix, provided the name is not already taken by a built-in command. In other words, `/code-style` falls back to matching `/skill:code-style`.
+
+Use `/skills` to search and inspect the skills that are loaded for the current session. The picker shows each skill's source, type, path, description, and whether it is manual-only. Press `Enter` on a skill to insert `/skill:<name>` into the editor; the command is not submitted until you press `Enter` again from the editor.
 
 Kimi Code CLI ships with a built-in `mcp-config` skill for configuring MCP servers and handling MCP OAuth login. It still belongs to the skill namespace in completion and help (`/skill:mcp-config`), and it can also be invoked directly as `/mcp-config`.
 

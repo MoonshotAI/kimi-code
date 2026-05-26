@@ -93,6 +93,7 @@ describe('built-in slash command registry', () => {
         'plan',
         'sessions',
         'settings',
+        'skills',
         'status',
         'theme',
         'title',

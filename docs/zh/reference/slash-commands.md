@@ -52,6 +52,7 @@
 | `/help` | `/h`、`/?` | 显示快捷键和所有可用命令。 | 是 |
 | `/usage` | — | 显示 token 用量、上下文占用以及配额信息。 | 是 |
 | `/status` | — | 显示当前会话运行时状态，包括版本、模型、工作目录和权限模式等。 | 是 |
+| `/skills` | — | 搜索并查看当前会话已加载的 Skills，包括来源、路径、类型和是否只能手动调用。 | 是 |
 | `/mcp` | — | 列出当前会话中的 MCP server 及其连接状态。 | 是 |
 | `/version` | — | 显示 Kimi Code CLI 版本号。 | 是 |
 | `/feedback` | — | 提交反馈以改进 Kimi Code CLI。 | 是 |
@@ -73,6 +74,8 @@
 例如 `/skill:code-style` 会加载名为 `code-style` 的 Skill 内容并发送给 Agent；命令后附带的文本会拼接到 Skill 提示词之后，例如 `/skill:git-commits 修复登录失败的问题`。
 
 为方便输入，Skill 命令同时支持省略 `skill:` 前缀的简写形式 `/<name>`，前提是该名称未被内置命令占用。也就是说，`/code-style` 会回退匹配到 `/skill:code-style`。
+
+使用 `/skills` 可以搜索并查看当前会话已加载的 Skills。选择器会展示每个 Skill 的来源、类型、路径、描述，以及该 Skill 是否只能手动调用。在某个 Skill 上按 `Enter` 会把 `/skill:<name>` 插入输入框；只有回到输入框后再次按 `Enter` 才会提交执行。
 
 Kimi Code CLI 随包内置了 `mcp-config` Skill，用于配置 MCP server 和处理 MCP OAuth 登录。它在补全和帮助里仍属于 Skill 命名空间（`/skill:mcp-config`），也可以直接输入 `/mcp-config` 调用。
 

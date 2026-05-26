@@ -75,6 +75,7 @@ import type {
   SessionStatus,
   SessionUsage,
   SkillActivatedEvent,
+  SkillSummary,
   SubagentCompletedEvent,
   SubagentFailedEvent,
   SubagentSpawnedEvent,
@@ -158,6 +159,11 @@ import { BackgroundAgentStatusComponent } from './components/messages/background
 import { buildMcpStatusReportLines } from './components/messages/mcp-status-panel';
 import { ReadGroupComponent } from './components/messages/read-group';
 import { SkillActivationComponent } from './components/messages/skill-activation';
+import {
+  buildSkillsReportLines,
+  displaySkillPath,
+  formatSkillCapability,
+} from './components/messages/skills-panel';
 import {
   NoticeMessageComponent,
   StatusMessageComponent,
@@ -406,6 +412,42 @@ export interface TUIState {
     { name?: string; argumentsText: string; startedAtMs: number }
   >;
   queuedMessages: QueuedMessage[];
+}
+
+const SKILL_SOURCE_LABELS = {
+  project: 'Project',
+  user: 'User',
+  extra: 'Extra',
+  builtin: 'Built-in',
+} satisfies Record<SkillSummary['source'], string>;
+
+const SKILL_SOURCE_ORDER = {
+  project: 0,
+  user: 1,
+  extra: 2,
+  builtin: 3,
+} satisfies Record<SkillSummary['source'], number>;
+
+function buildSkillChoiceOptions(
+  skills: readonly SkillSummary[],
+  workDir: string,
+): readonly ChoiceOption[] {
+  return [...skills]
+    .toSorted((a, b) => {
+      const sourceDiff = SKILL_SOURCE_ORDER[a.source] - SKILL_SOURCE_ORDER[b.source];
+      return sourceDiff === 0 ? a.name.localeCompare(b.name) : sourceDiff;
+    })
+    .map((skill) => {
+      const description = skill.description.trim();
+      const path = displaySkillPath(skill.path, workDir);
+      const details = `${SKILL_SOURCE_LABELS[skill.source]} · ${formatSkillCapability(skill)}`;
+      return {
+        value: skill.name,
+        label: `${skill.name}  ${details}`,
+        description:
+          description.length > 0 ? `${description} path: ${path}` : `path: ${path}`,
+      };
+    });
 }
 
 // Builds the app-state snapshot used before a session is attached.
@@ -1540,6 +1582,9 @@ export class KimiTUI {
         return;
       case 'usage':
         void this.showUsage();
+        return;
+      case 'skills':
+        void this.showSkills();
         return;
       case 'status':
         void this.showStatusReport();
@@ -4821,6 +4866,52 @@ export class KimiTUI {
     const panel = new UsagePanelComponent(lines, this.state.theme.colors.primary);
     this.state.transcriptContainer.addChild(panel);
     this.state.ui.requestRender();
+  }
+
+  // Loads and renders skills visible to the current session.
+  private async showSkills(): Promise<void> {
+    let skills: readonly SkillSummary[];
+    try {
+      skills = await this.requireSession().listSkills();
+    } catch (error) {
+      this.showError(`Failed to load skills: ${formatErrorMessage(error)}`);
+      return;
+    }
+
+    if (skills.length > 0) {
+      this.showSkillsPicker(skills);
+      return;
+    }
+
+    const lines = buildSkillsReportLines({
+      colors: this.state.theme.colors,
+      skills,
+      workDir: this.state.appState.workDir,
+    });
+    const title = skills.length > 0 ? ` Skills (${skills.length}) ` : ' Skills ';
+    const panel = new UsagePanelComponent(lines, this.state.theme.colors.primary, title);
+    this.state.transcriptContainer.addChild(panel);
+    this.state.ui.requestRender();
+  }
+
+  private showSkillsPicker(skills: readonly SkillSummary[]): void {
+    const options = buildSkillChoiceOptions(skills, this.state.appState.workDir);
+    const picker = new ChoicePickerComponent({
+      title: `Skills (${skills.length})`,
+      hint: 'type to filter · ↑↓ navigate · Enter insert command · Esc close',
+      options,
+      colors: this.state.theme.colors,
+      searchable: true,
+      onSelect: (skillName) => {
+        this.restoreEditor();
+        this.state.editor.setText(`/skill:${skillName} `);
+        this.state.ui.requestRender();
+      },
+      onCancel: () => {
+        this.restoreEditor();
+      },
+    });
+    this.mountEditorReplacement(picker);
   }
 
   // Loads and renders current runtime status.

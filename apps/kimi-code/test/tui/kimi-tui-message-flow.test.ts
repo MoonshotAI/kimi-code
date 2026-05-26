@@ -7,9 +7,15 @@ import {
   resetCapabilitiesCache,
   setCapabilities,
 } from '@earendil-works/pi-tui';
-import type { ApprovalRequest, ApprovalResponse, Event } from '@moonshot-ai/kimi-code-sdk';
+import type {
+  ApprovalRequest,
+  ApprovalResponse,
+  Event,
+  SkillSummary,
+} from '@moonshot-ai/kimi-code-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { QueuedMessage } from '#/tui/types';
@@ -1221,6 +1227,70 @@ describe('KimiTUI message flow', () => {
     await vi.waitFor(() => {
       const output = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
       expect(output).toContain('Error: Failed to load MCP servers: rpc unavailable');
+    });
+  });
+
+  it('opens a searchable skills picker and inserts the selected skill command', async () => {
+    const skills: SkillSummary[] = [
+      {
+        name: 'review',
+        description: 'Review code changes',
+        path: '/tmp/proj-a/.agents/skills/review/SKILL.md',
+        source: 'project',
+        type: 'prompt',
+      },
+      {
+        name: 'mcp-config',
+        description: 'Configure MCP servers',
+        path: '/tmp/builtin/mcp-config/SKILL.md',
+        source: 'builtin',
+        type: 'inline',
+        disableModelInvocation: true,
+      },
+    ];
+    const session = makeSession({
+      listSkills: vi.fn(async () => skills),
+    });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/skills');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ChoicePickerComponent);
+    });
+    const picker = driver.state.editorContainer.children[0] as ChoicePickerComponent;
+    const output = stripSgr(picker.render(140).join('\n'));
+    expect(output).toContain('Skills (2)');
+    expect(output).toContain('review  Project · type: prompt');
+    expect(output).toContain('Review code changes path: .agents/skills/review/SKILL.md');
+    expect(output).toContain('mcp-config  Built-in · type: inline | manual only');
+
+    for (const ch of 'config') picker.handleInput(ch);
+    const filteredOutput = stripSgr(picker.render(140).join('\n'));
+    expect(filteredOutput).toContain('Search: config');
+    expect(filteredOutput).toContain('mcp-config');
+    expect(filteredOutput).not.toContain('review');
+
+    picker.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editor.getText()).toBe('/skill:mcp-config ');
+    });
+  });
+
+  it('renders /skills list failures as command boundary errors', async () => {
+    const session = makeSession({
+      listSkills: vi.fn(async () => {
+        throw new Error('skills unavailable');
+      }),
+    });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/skills');
+
+    await vi.waitFor(() => {
+      const output = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+      expect(output).toContain('Error: Failed to load skills: skills unavailable');
     });
   });
 

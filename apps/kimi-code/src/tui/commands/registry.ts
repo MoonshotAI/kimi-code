@@ -100,6 +100,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'skills',
+    aliases: [],
+    description: 'Show loaded skills and slash commands',
+    priority: 60,
+    availability: 'always',
+  },
+  {
     name: 'status',
     aliases: [],
     description: 'Show current session and runtime status',
