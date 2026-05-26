@@ -99,6 +99,7 @@ describe('Session.init', () => {
         agentId: 'main',
         subagentId: 'agent-0',
         parentToolCallId: 'generate-agents-md',
+        contextTokens: expect.any(Number),
       }),
     );
     expect(scripted.calls[0]?.history).toMatchObject([
