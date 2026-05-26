@@ -3,4 +3,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix user skills in ~/.agents/ not being loaded, only the builtin mcp-config skill was visible.
+Fix user skills in ~/.agents/ not being loaded.
