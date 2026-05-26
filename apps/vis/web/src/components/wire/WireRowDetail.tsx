@@ -173,7 +173,7 @@ function ContentPartView({ part }: { part: ContentPart }) {
 }
 
 function ToolCallView({ call }: { call: ToolCall }) {
-  const args = call.function.arguments ?? '';
+  const args = call.arguments ?? '';
   let parsed: unknown = null;
   if (typeof args === 'string' && args.length > 0) {
     try {
@@ -185,7 +185,7 @@ function ToolCallView({ call }: { call: ToolCall }) {
   return (
     <div className="border border-[var(--color-cat-tools)]/40 bg-surface-0 p-2">
       <div className="flex items-center justify-between gap-2">
-        <Mono className="text-[var(--color-cat-tools)]">{call.function.name}</Mono>
+        <Mono className="text-[var(--color-cat-tools)]">{call.name}</Mono>
         <Mono className="text-fg-3 text-[10px]">#{call.id}</Mono>
       </div>
       <div className="mt-1">

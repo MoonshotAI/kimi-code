@@ -6,7 +6,7 @@ import type { AgentRecord } from './agent-record-types';
 // Hardcoded to keep vitest from pulling agent-core's full runtime (which
 // imports a .yaml asset) when this module is loaded in test environments.
 // Kept in sync with agent-core's AGENT_WIRE_PROTOCOL_VERSION constant.
-const AGENT_WIRE_PROTOCOL_VERSION = '1.0';
+const AGENT_WIRE_PROTOCOL_VERSION = '1.1';
 
 export interface WireReadResult {
   metadata: { protocolVersion: string; createdAt: number };

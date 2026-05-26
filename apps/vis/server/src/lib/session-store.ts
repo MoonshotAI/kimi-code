@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline';
 import type { SessionSummary, SessionDetail, AgentInfo, SessionHealth } from './agent-record-types';
 
 const SESSION_ID_RE = /^session_[A-Za-z0-9._-]+$/;
-const SUPPORTED_PROTOCOL = '1.0';
+const SUPPORTED_PROTOCOL = '1.1';
 
 interface StateJson {
   createdAt?: string;

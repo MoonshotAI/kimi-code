@@ -14,7 +14,7 @@ describe('wire-reader', () => {
     const { sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
     const result = await readAgentWire(join(sessionDir, 'agents', 'main', 'wire.jsonl'));
-    expect(result.metadata.protocolVersion).toBe('1.0');
+    expect(result.metadata.protocolVersion).toBe('1.1');
     expect(result.records[0]!._lineNo).toBe(2); // metadata is line 1, first record is line 2
     expect(result.records.at(-1)!._lineNo).toBe(11);
     expect(result.records.map((r) => r.type)).toEqual([

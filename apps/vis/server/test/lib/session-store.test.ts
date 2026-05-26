@@ -19,7 +19,7 @@ describe('session-store', () => {
     expect(s.agentCount).toBe(2);
     expect(s.mainAgentExists).toBe(true);
     expect(s.mainWireRecordCount).toBe(11);  // 11 lines in main wire incl. metadata
-    expect(s.wireProtocolVersion).toBe('1.0');
+    expect(s.wireProtocolVersion).toBe('1.1');
     expect(s.health).toBe('ok');
     expect(s.createdAt).toBe(Date.parse('2026-05-20T05:59:51.085Z'));
     expect(s.updatedAt).toBe(Date.parse('2026-05-21T03:12:08.000Z'));

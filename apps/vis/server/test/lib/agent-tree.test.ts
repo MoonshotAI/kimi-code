@@ -9,7 +9,7 @@ function info(overrides: Partial<AgentInfo> & Pick<AgentInfo, 'agentId'>): Agent
     homedir: `/tmp/${overrides.agentId}`,
     wireExists: true,
     wireRecordCount: 0,
-    wireProtocolVersion: '1.0',
+    wireProtocolVersion: '1.1',
     ...overrides,
   };
 }
