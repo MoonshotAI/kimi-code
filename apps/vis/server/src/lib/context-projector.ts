@@ -150,14 +150,21 @@ export function projectContext(entries: ReadonlyArray<WireEntry>): ContextProjec
         break;
       case 'context.apply_compaction':
         openSteps = new Map();
+        // Mirror agent-core's actual `applyCompaction` behaviour: the
+        // summary is inserted as an *assistant* message tagged with
+        // `origin.kind = 'compaction_summary'` (see
+        // `packages/agent-core/src/agent/context/index.ts`). Using
+        // 'system' here would skew role counts and any downstream tool
+        // that diffs the projected timeline against agent-core history.
         messages = [{
           lineNo: entry.lineNo,
           time: rec.time,
           source: 'compaction_summary',
           message: {
-            role: 'system',
+            role: 'assistant',
             content: [{ type: 'text', text: rec.summary }],
             toolCalls: [],
+            origin: { kind: 'compaction_summary' },
           } as ContextMessage,
           toolStepUuids: [],
         }];

@@ -146,6 +146,10 @@ describe('context-projector', () => {
     ];
     const proj = projectContext(entries as any);
     expect(proj.messages[0]!.source).toBe('compaction_summary');
+    // Compaction summary is an assistant message (agent-core's own
+    // representation), not a synthetic system message.
+    expect(proj.messages[0]!.message.role).toBe('assistant');
+    expect(proj.messages[0]!.message.origin).toEqual({ kind: 'compaction_summary' });
     expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'old stuff' });
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'new' });
   });
