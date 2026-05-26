@@ -15,7 +15,7 @@ export class SessionApprovalHistoryPermissionPolicy implements PermissionPolicy 
   constructor(private readonly agent: Agent) {}
 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
-    const match = matchSessionApprovalRule(this.agent, context);
+    const match = this.matchSessionApprovalRule(context);
     if (match === undefined) return;
     return {
       kind: 'approve',
@@ -25,23 +25,22 @@ export class SessionApprovalHistoryPermissionPolicy implements PermissionPolicy 
       },
     };
   }
-}
 
-function matchSessionApprovalRule(
-  agent: Agent,
-  context: PermissionPolicyContext,
-): PermissionRuleMatch | undefined {
-  for (const pattern of agent.permission.sessionApprovalRulePatterns) {
-    const match = matchPermissionRule({
-      rule: {
-        decision: 'allow',
-        scope: 'session-runtime',
-        pattern,
-        reason: 'approve for session',
-      },
-      toolName: context.toolCall.name,
-      execution: context.execution,
-    });
-    if (match !== undefined) return match;
+  private matchSessionApprovalRule(
+    context: PermissionPolicyContext,
+  ): PermissionRuleMatch | undefined {
+    for (const pattern of this.agent.permission.sessionApprovalRulePatterns) {
+      const match = matchPermissionRule({
+        rule: {
+          decision: 'allow',
+          scope: 'session-runtime',
+          pattern,
+          reason: 'approve for session',
+        },
+        toolName: context.toolCall.name,
+        execution: context.execution,
+      });
+      if (match !== undefined) return match;
+    }
   }
 }

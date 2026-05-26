@@ -38,19 +38,12 @@ export class PlanModeToolApprovePermissionPolicy implements PermissionPolicy {
   }
 }
 
-type FileAccess = Extract<ToolResourceAccess, { kind: 'file' }>;
-
 function writesOnlyPlanFile(
   context: PermissionPolicyContext,
   planFilePath: string | null,
 ): boolean {
   if (planFilePath === null) return false;
-  const writeAccesses =
-    context.execution.accesses?.filter(
-      (access): access is FileAccess =>
-        access.kind === 'file' &&
-        (access.operation === 'write' || access.operation === 'readwrite'),
-    ) ?? [];
+  const writeAccesses = writeFileAccesses(context);
   if (writeAccesses.length === 0) return false;
   return writeAccesses.every((access) => access.path === planFilePath);
 }

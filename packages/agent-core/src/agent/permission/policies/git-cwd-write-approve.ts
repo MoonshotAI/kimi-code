@@ -5,7 +5,7 @@ import {
   type GitWorkTreeMarker,
 } from '../../../tools/support/git-worktree';
 import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../types';
-import { writeFileAccesses, type FileAccess } from './file-access-ask';
+import { writeFileAccesses } from './file-access-ask';
 
 export class GitCwdWriteApprovePermissionPolicy implements PermissionPolicy {
   private readonly gitMarkerCache = new Map<string, GitWorkTreeMarker | null>();
@@ -21,12 +21,7 @@ export class GitCwdWriteApprovePermissionPolicy implements PermissionPolicy {
     const cwd = this.agent.config.cwd;
     if (cwd.length === 0) return;
 
-    const writeAccesses =
-      context.execution.accesses?.filter(
-        (access): access is FileAccess =>
-          access.kind === 'file' &&
-          (access.operation === 'write' || access.operation === 'readwrite'),
-      ) ?? [];
+    const writeAccesses = writeFileAccesses(context);
     if (writeAccesses.length === 0) return;
     if (!writeAccesses.every((access) => isWithinDirectory(access.path, cwd, 'posix'))) {
       return;
@@ -48,4 +43,3 @@ export class GitCwdWriteApprovePermissionPolicy implements PermissionPolicy {
   }
 }
 
-type FileAccess = Extract<ToolResourceAccess, { kind: 'file' }>;

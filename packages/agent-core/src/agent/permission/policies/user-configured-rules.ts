@@ -18,13 +18,37 @@ const USER_CONFIGURED_SCOPES = new Set<PermissionRuleScope>([
   'user',
 ]);
 
-export class UserConfiguredDenyPermissionPolicy implements PermissionPolicy {
+abstract class UserConfiguredPermissionPolicy {
+  constructor(protected readonly agent: Agent) {}
+
+  protected firstMatchingRule(
+    context: PermissionPolicyContext,
+    decision: PermissionRuleDecision,
+  ): PermissionRuleMatch | undefined {
+    const rules = this.agent.permission.data().rules.filter((rule): rule is PermissionRule =>
+      USER_CONFIGURED_SCOPES.has(rule.scope),
+    );
+    for (const rule of rules) {
+      if (rule.decision !== decision) continue;
+      const match = matchPermissionRule({
+        rule,
+        toolName: context.toolCall.name,
+        execution: context.execution,
+      });
+      if (match !== undefined) return match;
+    }
+    return;
+  }
+}
+
+export class UserConfiguredDenyPermissionPolicy
+  extends UserConfiguredPermissionPolicy
+  implements PermissionPolicy
+{
   readonly name = 'user-configured-deny';
 
-  constructor(private readonly agent: Agent) {}
-
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
-    const match = firstMatchingRule(this.agent, context, 'deny');
+    const match = this.firstMatchingRule(context, 'deny');
     if (match === undefined) return;
     return {
       kind: 'deny',
@@ -38,13 +62,14 @@ export class UserConfiguredDenyPermissionPolicy implements PermissionPolicy {
   }
 }
 
-export class UserConfiguredAllowPermissionPolicy implements PermissionPolicy {
+export class UserConfiguredAllowPermissionPolicy
+  extends UserConfiguredPermissionPolicy
+  implements PermissionPolicy
+{
   readonly name = 'user-configured-allow';
 
-  constructor(private readonly agent: Agent) {}
-
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
-    const match = firstMatchingRule(this.agent, context, 'allow');
+    const match = this.firstMatchingRule(context, 'allow');
     if (match === undefined) return;
     return {
       kind: 'approve',
@@ -53,39 +78,20 @@ export class UserConfiguredAllowPermissionPolicy implements PermissionPolicy {
   }
 }
 
-export class UserConfiguredAskPermissionPolicy implements PermissionPolicy {
+export class UserConfiguredAskPermissionPolicy
+  extends UserConfiguredPermissionPolicy
+  implements PermissionPolicy
+{
   readonly name = 'user-configured-ask';
 
-  constructor(private readonly agent: Agent) {}
-
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
-    const match = firstMatchingRule(this.agent, context, 'ask');
+    const match = this.firstMatchingRule(context, 'ask');
     if (match === undefined) return;
     return {
       kind: 'ask',
       reason: userRuleReason('ask', match),
     };
   }
-}
-
-function firstMatchingRule(
-  agent: Agent,
-  context: PermissionPolicyContext,
-  decision: PermissionRuleDecision,
-): PermissionRuleMatch | undefined {
-  const rules = agent.permission.data().rules.filter((rule): rule is PermissionRule =>
-    USER_CONFIGURED_SCOPES.has(rule.scope),
-  );
-  for (const rule of rules) {
-    if (rule.decision !== decision) continue;
-    const match = matchPermissionRule({
-      rule,
-      toolName: context.toolCall.name,
-      execution: context.execution,
-    });
-    if (match !== undefined) return match;
-  }
-  return;
 }
 
 function userRuleReason(decision: PermissionRuleDecision, match: PermissionRuleMatch) {

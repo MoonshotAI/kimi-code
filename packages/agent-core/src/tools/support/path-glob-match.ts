@@ -10,6 +10,7 @@ export interface PermissionPathMatchOptions {
   readonly pathClass?: PathClass;
   readonly homeDir?: string;
   readonly caseInsensitivePaths?: boolean;
+  readonly conservativeCaseFold?: boolean;
 }
 
 interface PathMatchSemantics {
@@ -44,13 +45,12 @@ export function pathGlobMatch(
   pattern: string,
   options: {
     readonly pathOptions?: PermissionPathMatchOptions;
-    readonly conservativeCaseFold: boolean;
-  },
+  } = {},
 ): boolean {
   const semantics = pathMatchSemantics(value, pattern, options.pathOptions);
   const nocase =
     options.pathOptions?.caseInsensitivePaths ??
-    (semantics.pathClass === 'win32' || options.conservativeCaseFold);
+    (semantics.pathClass === 'win32' || options.pathOptions?.conservativeCaseFold);
 
   if (globMatch(value, pattern, { nocase })) return true;
 

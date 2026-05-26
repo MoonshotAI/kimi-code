@@ -21,16 +21,10 @@ export function matchesGlobRuleSubject(ruleArgs: string, subject: string): boole
 export function matchesPathRuleSubject(
   ruleArgs: string,
   subject: string,
-  options: {
-    readonly pathOptions?: PermissionPathMatchOptions;
-    readonly conservativeCaseFold?: boolean;
-  } = {},
+  options?: PermissionPathMatchOptions,
 ): boolean {
   return matchRuleSubjects(ruleArgs, [subject], (pattern, value) =>
-    pathGlobMatch(value, pattern, {
-      pathOptions: options.pathOptions,
-      conservativeCaseFold: options.conservativeCaseFold ?? false,
-    }),
+    pathGlobMatch(value, pattern, { pathOptions: options }),
   );
 }
 

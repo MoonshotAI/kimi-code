@@ -81,11 +81,9 @@ export class WriteTool implements BuiltinTool<WriteInput> {
       approvalRule: literalRulePattern(this.name, path),
       matchesRule: (ruleArgs) =>
         matchesPathRuleSubject(ruleArgs, path, {
-          pathOptions: {
-            cwd: this.workspace.workspaceDir,
-            pathClass: this.kaos.pathClass(),
-            homeDir: this.kaos.gethome(),
-          },
+          cwd: this.workspace.workspaceDir,
+          pathClass: this.kaos.pathClass(),
+          homeDir: this.kaos.gethome(),
         }),
       execute: () => this.execution(args, path),
     };

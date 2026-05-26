@@ -41,17 +41,10 @@ function writesOnlyPlanFile(
   context: PermissionPolicyContext,
   planFilePath: string,
 ): boolean {
-  const writeAccesses =
-    context.execution.accesses?.filter(
-      (access): access is FileAccess =>
-        access.kind === 'file' &&
-        (access.operation === 'write' || access.operation === 'readwrite'),
-    ) ?? [];
+  const writeAccesses = writeFileAccesses(context);
   if (writeAccesses.length === 0) return false;
   return writeAccesses.every((access) => access.path === planFilePath);
 }
-
-type FileAccess = Extract<ToolResourceAccess, { kind: 'file' }>;
 
 function planModeWriteDeniedMessage(planFilePath: string | null): string {
   return (

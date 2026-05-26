@@ -92,7 +92,7 @@ export class CwdOutsideFileAccessAskPermissionPolicy implements PermissionPolicy
   }
 }
 
-type FileAccess = Extract<ToolResourceAccess, { kind: 'file' }>;
+export type FileAccess = Extract<ToolResourceAccess, { kind: 'file' }>;
 
 function firstFileAccess(
   context: PermissionPolicyContext,

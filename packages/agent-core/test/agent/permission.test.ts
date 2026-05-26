@@ -1964,7 +1964,8 @@ describe('Permission rule helpers', () => {
       ruleMatches(permissionRule('Edit(!./src/**)'), 'Edit', { path: './README.md' }, {
         matchesRule: (ruleArgs) =>
           matchesPathRuleSubject(ruleArgs, '/workspace/README.md', {
-            pathOptions: { cwd: '/workspace', pathClass: 'posix' },
+            cwd: '/workspace',
+            pathClass: 'posix',
           }),
       }),
     ).toBe(true);
@@ -1972,7 +1973,8 @@ describe('Permission rule helpers', () => {
       ruleMatches(permissionRule('Edit(!./src/**)'), 'Edit', { path: './src/a.ts' }, {
         matchesRule: (ruleArgs) =>
           matchesPathRuleSubject(ruleArgs, '/workspace/src/a.ts', {
-            pathOptions: { cwd: '/workspace', pathClass: 'posix' },
+            cwd: '/workspace',
+            pathClass: 'posix',
           }),
       }),
     ).toBe(false);
