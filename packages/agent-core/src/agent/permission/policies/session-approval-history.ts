@@ -7,7 +7,6 @@ import type {
   PermissionPolicy,
   PermissionPolicyContext,
   PermissionPolicyResult,
-  PermissionRule,
 } from '../types';
 
 export class SessionApprovalHistoryPermissionPolicy implements PermissionPolicy {
@@ -17,7 +16,7 @@ export class SessionApprovalHistoryPermissionPolicy implements PermissionPolicy 
 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
     const match = matchSessionApprovalRule(this.agent, context);
-    if (match === undefined) return undefined;
+    if (match === undefined) return;
     return {
       kind: 'approve',
       reason: {
@@ -34,21 +33,16 @@ function matchSessionApprovalRule(
 ): PermissionRuleMatch | undefined {
   for (const pattern of agent.permission.sessionApprovalRulePatterns()) {
     const match = matchPermissionRule({
-      rule: sessionApprovalRule(pattern),
+      rule: {
+        decision: 'allow',
+        scope: 'session-runtime',
+        pattern,
+        reason: 'approve for session',
+      },
       toolName: context.toolCall.name,
       args: context.args,
       execution: context.execution,
     });
     if (match !== undefined) return match;
   }
-  return undefined;
-}
-
-function sessionApprovalRule(pattern: string): PermissionRule {
-  return {
-    decision: 'allow',
-    scope: 'session-runtime',
-    pattern,
-    reason: 'approve for session',
-  };
 }

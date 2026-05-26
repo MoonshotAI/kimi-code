@@ -25,13 +25,13 @@ export class PlanModeToolApprovePermissionPolicy implements PermissionPolicy {
       };
     }
 
-    if (toolName !== 'ExitPlanMode') return undefined;
+    if (toolName !== 'ExitPlanMode') return;
     if (context.execution.display?.kind !== 'plan_review') {
       return {
         kind: 'approve',
       };
     }
-    if (context.execution.display.plan.trim().length > 0) return undefined;
+    if (context.execution.display.plan.trim().length > 0) return;
     return {
       kind: 'approve',
     };

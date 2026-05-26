@@ -12,25 +12,15 @@ export class PreToolCallHookPermissionPolicy implements PermissionPolicy {
       signal: context.signal,
       inputData: {
         toolName: context.toolCall.name,
-        toolInput: toolInputRecord(context.args),
+        toolInput: context.args,
         toolCallId: context.toolCall.id,
       },
     });
     context.signal.throwIfAborted();
-    if (hookResult === undefined) return undefined;
+    if (hookResult === undefined) return;
     return {
       kind: 'deny',
       message: hookResult.reason,
     };
   }
-}
-
-function toolInputRecord(args: unknown): Record<string, unknown> {
-  return isPlainRecord(args) ? args : {};
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== 'object') return false;
-  const proto = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
 }

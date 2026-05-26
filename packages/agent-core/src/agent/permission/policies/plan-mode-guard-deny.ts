@@ -8,7 +8,7 @@ export class PlanModeGuardDenyPermissionPolicy implements PermissionPolicy {
   constructor(private readonly agent: Agent) {}
 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
-    if (!this.agent.planMode.isActive) return undefined;
+    if (!this.agent.planMode.isActive) return;
 
     const toolName = context.toolCall.name;
     if (toolName === 'Write' || toolName === 'Edit') {
@@ -20,7 +20,7 @@ export class PlanModeGuardDenyPermissionPolicy implements PermissionPolicy {
         };
       }
       if (writesOnlyPlanFile(context, planFilePath)) {
-        return undefined;
+        return;
       }
       return {
         kind: 'deny',
@@ -28,7 +28,7 @@ export class PlanModeGuardDenyPermissionPolicy implements PermissionPolicy {
       };
     }
 
-    if (toolName !== 'TaskStop') return undefined;
+    if (toolName !== 'TaskStop') return;
     return {
       kind: 'deny',
       message:

@@ -25,7 +25,7 @@ export class UserConfiguredDenyPermissionPolicy implements PermissionPolicy {
 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
     const match = firstMatchingRule(this.agent, context, 'deny');
-    if (match === undefined) return undefined;
+    if (match === undefined) return;
     return {
       kind: 'deny',
       reason: userRuleReason('deny', match),
@@ -45,7 +45,7 @@ export class UserConfiguredAllowPermissionPolicy implements PermissionPolicy {
 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
     const match = firstMatchingRule(this.agent, context, 'allow');
-    if (match === undefined) return undefined;
+    if (match === undefined) return;
     return {
       kind: 'approve',
       reason: userRuleReason('allow', match),
@@ -60,7 +60,7 @@ export class UserConfiguredAskPermissionPolicy implements PermissionPolicy {
 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
     const match = firstMatchingRule(this.agent, context, 'ask');
-    if (match === undefined) return undefined;
+    if (match === undefined) return;
     return {
       kind: 'ask',
       reason: userRuleReason('ask', match),
@@ -86,7 +86,7 @@ function firstMatchingRule(
     });
     if (match !== undefined) return match;
   }
-  return undefined;
+  return;
 }
 
 function userRuleReason(decision: PermissionRuleDecision, match: PermissionRuleMatch) {

@@ -21,7 +21,7 @@ export class SensitiveFileAccessAskPermissionPolicy implements PermissionPolicy 
     const access = firstFileAccess(context, (fileAccess) =>
       fileAccess.path === undefined ? false : isSensitiveFile(fileAccess.path, pathClass),
     );
-    if (access === undefined) return undefined;
+    if (access === undefined) return;
     return {
       kind: 'ask',
       reason: fileAccessReason(access, { sensitive_path: true }),
@@ -37,10 +37,10 @@ export class GitControlPathAccessAskPermissionPolicy implements PermissionPolicy
 
   async evaluate(context: PermissionPolicyContext): Promise<PermissionPolicyResult | undefined> {
     const cwd = this.agent.config.cwd;
-    if (cwd.length === 0) return undefined;
+    if (cwd.length === 0) return;
     const pathClass = this.agent.runtime.kaos.pathClass();
     const accesses = fileAccesses(context);
-    if (accesses.length === 0) return undefined;
+    if (accesses.length === 0) return;
 
     const directGitAccess = accesses.find((fileAccess) => {
       if (fileAccess.path === undefined) return false;
@@ -54,12 +54,12 @@ export class GitControlPathAccessAskPermissionPolicy implements PermissionPolicy
     }
 
     const marker = await this.findGitMarker(cwd);
-    if (marker === null) return undefined;
+    if (marker === null) return;
     const access = accesses.find((fileAccess) => {
       if (fileAccess.path === undefined) return false;
       return isGitControlPath(fileAccess.path, marker, pathClass);
     });
-    if (access === undefined) return undefined;
+    if (access === undefined) return;
     return {
       kind: 'ask',
       reason: fileAccessReason(access, { git_control_path: true }),
@@ -81,13 +81,13 @@ export class CwdOutsideFileAccessAskPermissionPolicy implements PermissionPolicy
 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
     const cwd = this.agent.config.cwd;
-    if (cwd.length === 0) return undefined;
+    if (cwd.length === 0) return;
     const pathClass = this.agent.runtime.kaos.pathClass();
     const access = firstFileAccess(context, (fileAccess) => {
       if (fileAccess.path === undefined) return false;
       return !isWithinDirectory(fileAccess.path, cwd, pathClass);
     });
-    if (access === undefined) return undefined;
+    if (access === undefined) return;
     return {
       kind: 'ask',
       reason: fileAccessReason(access, { cwd_outside: true }),

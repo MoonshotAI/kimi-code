@@ -7,7 +7,7 @@ export class AutoModeApprovePermissionPolicy implements PermissionPolicy {
   constructor(private readonly agent: Agent) {}
 
   evaluate(): PermissionPolicyResult | undefined {
-    if (this.agent.permission.mode !== 'auto') return undefined;
+    if (this.agent.permission.mode !== 'auto') return;
     return {
       kind: 'approve',
     };

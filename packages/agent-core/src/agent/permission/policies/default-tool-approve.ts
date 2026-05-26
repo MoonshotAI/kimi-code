@@ -5,7 +5,6 @@ const DEFAULT_APPROVE_TOOLS = new Set([
   'Grep',
   'Glob',
   'ReadMediaFile',
-  'Think',
   'SetTodoList',
   'TodoList',
   'TaskList',
@@ -21,7 +20,7 @@ export class DefaultToolApprovePermissionPolicy implements PermissionPolicy {
   readonly name = 'default-tool-approve';
 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
-    if (!DEFAULT_APPROVE_TOOLS.has(context.toolCall.name)) return undefined;
+    if (!DEFAULT_APPROVE_TOOLS.has(context.toolCall.name)) return;
     return {
       kind: 'approve',
     };

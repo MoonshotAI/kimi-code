@@ -15,11 +15,11 @@ export class GitCwdWriteApprovePermissionPolicy implements PermissionPolicy {
 
   async evaluate(context: PermissionPolicyContext): Promise<PermissionPolicyResult | undefined> {
     const toolName = context.toolCall.name;
-    if (toolName !== 'Write' && toolName !== 'Edit') return undefined;
-    if (this.agent.runtime.kaos.pathClass() !== 'posix') return undefined;
+    if (toolName !== 'Write' && toolName !== 'Edit') return;
+    if (this.agent.runtime.kaos.pathClass() !== 'posix') return;
 
     const cwd = this.agent.config.cwd;
-    if (cwd.length === 0) return undefined;
+    if (cwd.length === 0) return;
 
     const writeAccesses =
       context.execution.accesses?.filter(
@@ -28,13 +28,13 @@ export class GitCwdWriteApprovePermissionPolicy implements PermissionPolicy {
           access.path !== undefined &&
           (access.operation === 'write' || access.operation === 'readwrite'),
       ) ?? [];
-    if (writeAccesses.length === 0) return undefined;
+    if (writeAccesses.length === 0) return;
     if (!writeAccesses.every((access) => isWithinDirectory(access.path, cwd, 'posix'))) {
-      return undefined;
+      return;
     }
 
     const marker = await this.findGitMarker(cwd);
-    if (marker === null) return undefined;
+    if (marker === null) return;
 
     return {
       kind: 'approve',

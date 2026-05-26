@@ -12,12 +12,12 @@ export class ExitPlanModeReviewAskPermissionPolicy implements PermissionPolicy {
   constructor(private readonly agent: Agent) {}
 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
-    if (context.toolCall.name !== 'ExitPlanMode') return undefined;
-    if (this.agent.permission.mode === 'auto') return undefined;
-    if (!this.agent.planMode.isActive) return undefined;
+    if (context.toolCall.name !== 'ExitPlanMode') return;
+    if (this.agent.permission.mode === 'auto') return;
+    if (!this.agent.planMode.isActive) return;
     const display = context.execution.display;
-    if (display?.kind !== 'plan_review') return undefined;
-    if (display.plan.trim().length === 0) return undefined;
+    if (display?.kind !== 'plan_review') return;
+    if (display.plan.trim().length === 0) return;
     return {
       kind: 'ask',
       reason: {
@@ -131,7 +131,7 @@ function selectedExitPlanModeOption(
   options: readonly ExitPlanModeOption[] | undefined,
   label: string | undefined,
 ): ExitPlanModeOption | undefined {
-  if (options === undefined || label === undefined) return undefined;
+  if (options === undefined || label === undefined) return;
   return options.find((option) => option.label === label);
 }
 

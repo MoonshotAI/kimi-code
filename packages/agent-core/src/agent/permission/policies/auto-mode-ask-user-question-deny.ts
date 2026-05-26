@@ -7,8 +7,8 @@ export class AutoModeAskUserQuestionDenyPermissionPolicy implements PermissionPo
   constructor(private readonly agent: Agent) {}
 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
-    if (this.agent.permission.mode !== 'auto') return undefined;
-    if (context.toolCall.name !== 'AskUserQuestion') return undefined;
+    if (this.agent.permission.mode !== 'auto') return;
+    if (context.toolCall.name !== 'AskUserQuestion') return;
     return {
       kind: 'deny',
       message:

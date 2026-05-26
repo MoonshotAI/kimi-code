@@ -7,7 +7,7 @@ export class YoloModeApprovePermissionPolicy implements PermissionPolicy {
   constructor(private readonly agent: Agent) {}
 
   evaluate(): PermissionPolicyResult | undefined {
-    if (this.agent.permission.mode !== 'yolo') return undefined;
+    if (this.agent.permission.mode !== 'yolo') return;
     return {
       kind: 'approve',
     };
