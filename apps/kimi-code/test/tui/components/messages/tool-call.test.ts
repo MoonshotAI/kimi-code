@@ -733,7 +733,7 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain('Used Agent');
   });
 
-  it('renders the full Write content during the streaming delta window (no cap)', () => {
+  it('scrolls the Write streaming preview to the last COMMAND_PREVIEW_LINES', () => {
     const lines: string[] = [];
     for (let i = 1; i <= 30; i++) lines.push(`line${String(i)}`);
     const escaped = lines.join('\\n');
@@ -750,10 +750,14 @@ describe('ToolCallComponent', () => {
 
     const out = strip(component.render(100).join('\n'));
     expect(out).toContain('Using Write');
-    // All 30 lines must be present — no 10-line cap during streaming.
-    expect(out).toContain('line1');
-    expect(out).toContain('line25');
+    // Streaming preview caps at COMMAND_PREVIEW_LINES (10) and shows the tail.
+    expect(out).not.toContain('line1');
+    expect(out).not.toContain('line20');
+    expect(out).toContain('line21');
     expect(out).toContain('line30');
+    // Line numbers should reflect actual file positions.
+    expect(out).toContain('  21');
+    expect(out).toContain('  30');
     expect(out).not.toContain('ctrl+o to expand');
   });
 
@@ -824,12 +828,15 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain('ctrl+o to expand');
   });
 
-  it('keeps Write preview uncapped between finalized args and result (approval window)', () => {
+  it('caps the Write preview between finalized args and result to keep transcript height stable', () => {
     // The wire sequence is: tool.call.delta → ... → tool.call (final
-    // args, no streamingArguments) → approval pending ... → tool.result.
-    // Between tool.call and tool.result the user may sit in an approval
-    // panel; the preview must stay fully visible during that gap, only
-    // collapsing once setResult fires (bullet turns green).
+    // args, no streamingArguments) → tool.result. Between tool.call and
+    // tool.result we briefly sit with finalized args and no result yet —
+    // even without an approval panel, at least one render tick can land
+    // in this state. The preview must stay capped so the transcript
+    // height does not balloon and then snap back when the result lands;
+    // a big shrink triggers pi-tui's full-redraw path which wipes the
+    // terminal scrollback (history before TUI start).
     const lines: string[] = [];
     for (let i = 1; i <= 30; i++) lines.push(`line${String(i)}`);
     const component = new ToolCallComponent(
@@ -844,9 +851,10 @@ describe('ToolCallComponent', () => {
     );
     const out = strip(component.render(100).join('\n'));
     expect(out).toContain('line1');
-    expect(out).toContain('line25');
-    expect(out).toContain('line30');
-    expect(out).not.toContain('ctrl+o to expand');
+    expect(out).toContain('line10');
+    expect(out).not.toContain('line11');
+    expect(out).not.toContain('line25');
+    expect(out).toContain('ctrl+o to expand');
   });
 
   it('snaps a long Write preview to the collapsed cap when the result arrives', () => {
