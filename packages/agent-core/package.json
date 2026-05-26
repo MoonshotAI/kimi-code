@@ -65,6 +65,7 @@
     "linkedom": "^0.18.12",
     "nunjucks": "^3.2.4",
     "open": "^10.2.0",
+    "pathe": "^2.0.3",
     "picomatch": "^4.0.4",
     "proper-lockfile": "^4.1.2",
     "regexp.escape": "^2.0.1",

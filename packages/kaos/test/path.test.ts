@@ -216,15 +216,15 @@ describe('KaosPath', () => {
     });
 
     it('should use win32 separators when the current kaos reports win32', async () => {
-      // Build a minimal Kaos mock that claims win32 path semantics. Canonical
-      // must not hard-code POSIX separators — it should use win32's resolver
-      // so relative paths joined with the Windows cwd use backslashes.
+      // Build a minimal Kaos mock that claims win32 path semantics. All
+      // paths produced by KaosPath must use forward slashes, even when the
+      // underlying path class is win32.
       const winKaos: Kaos = {
         name: 'mock-win32',
         pathClass: () => 'win32',
-        normpath: (p: string) => win32Path.normalize(p),
-        gethome: () => 'C:\\Users\\test',
-        getcwd: () => 'C:\\work\\project',
+        normpath: (p: string) => win32Path.normalize(p).replaceAll('\\', '/'),
+        gethome: () => 'C:/Users/test',
+        getcwd: () => 'C:/work/project',
         chdir: async () => {},
         stat: async () => ({
           stMode: 0,
@@ -259,13 +259,12 @@ describe('KaosPath', () => {
       const innerToken = setCurrentKaos(winKaos);
       try {
         const rel = new KaosPath('foo\\bar').canonical();
-        // Resolved against 'C:\\work\\project' → 'C:\\work\\project\\foo\\bar'.
-        // Critically: NO forward slashes in the result.
-        expect(rel.toString()).toBe('C:\\work\\project\\foo\\bar');
-        expect(rel.toString().includes('/')).toBe(false);
+        // Resolved against 'C:/work/project' → 'C:/work/project/foo/bar'.
+        expect(rel.toString()).toBe('C:/work/project/foo/bar');
+        expect(rel.toString().includes('\\')).toBe(false);
 
         const abs = new KaosPath('C:\\foo\\..\\bar').canonical();
-        expect(abs.toString()).toBe('C:\\bar');
+        expect(abs.toString()).toBe('C:/bar');
 
         expect(() => new KaosPath('D:\\logs').relativeTo(new KaosPath('C:\\work'))).toThrow(
           /not within/,
@@ -274,10 +273,10 @@ describe('KaosPath', () => {
           new KaosPath('C:\\Work\\Project').relativeTo(new KaosPath('c:\\work')).toString(),
         ).toBe('Project');
 
-        expect(new KaosPath('C:\\base').joinpath('D:\\logs').toString()).toBe('D:\\logs');
-        expect(new KaosPath('C:\\base').joinpath('\\rooted').toString()).toBe('C:\\rooted');
+        expect(new KaosPath('C:\\base').joinpath('D:\\logs').toString()).toBe('D:/logs');
+        expect(new KaosPath('C:\\base').joinpath('\\rooted').toString()).toBe('C:/rooted');
         expect(new KaosPath('C:\\base').joinpath('C:relative').toString()).toBe(
-          'C:\\base\\relative',
+          'C:/base/relative',
         );
         expect(new KaosPath('C:\\base').joinpath('D:relative').toString()).toBe('D:relative');
         expect(() => new KaosPath('D:relative').canonical()).toThrow(/drive-relative/);
@@ -460,7 +459,10 @@ describe('KaosPath', () => {
       const innerToken = setCurrentKaos(makeMockKaos('win32'));
       try {
         const winPath = new KaosPath('C:\\workspace');
-        expect(posixPath.toString()).toBe(winPath.toString());
+        // win32 paths are normalised to forward slashes; posix keeps the raw
+        // backslash because it is treated as a literal filename character.
+        expect(posixPath.toString()).toBe('C:\\workspace');
+        expect(winPath.toString()).toBe('C:/workspace');
         expect(posixPath.equals(winPath)).toBe(false);
       } finally {
         resetCurrentKaos(innerToken);

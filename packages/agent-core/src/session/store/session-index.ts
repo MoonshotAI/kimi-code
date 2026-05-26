@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'pathe';
 
 export interface SessionIndexEntry {
   readonly sessionId: string;

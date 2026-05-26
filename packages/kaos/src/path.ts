@@ -26,7 +26,7 @@ function splitPathLexically(pathMod: PathModule, path: string): { root: string; 
   const tail = root.length > 0 ? path.slice(root.length) : path;
   return {
     root,
-    parts: tail.split(pathMod.sep).filter((part) => part.length > 0),
+    parts: tail.split('/').filter((part) => part.length > 0),
   };
 }
 
@@ -154,13 +154,14 @@ export class KaosPath {
     if (args.length === 0) {
       this._path = '.';
     } else {
-      this._path = joinPure(this._pathClass, args);
+      const raw = joinPure(this._pathClass, args);
+      this._path = this._pathClass === 'win32' ? raw.replaceAll('\\', '/') : raw;
     }
   }
 
   private static _from(path: string, pathClass: PathClass): KaosPath {
     const ret = new KaosPath();
-    ret._path = path;
+    ret._path = pathClass === 'win32' ? path.replaceAll('\\', '/') : path;
     ret._pathClass = pathClass;
     return ret;
   }
@@ -266,7 +267,7 @@ export class KaosPath {
 
     const relParts = target.parts.slice(base.parts.length);
     return KaosPath._from(
-      relParts.length === 0 ? '.' : relParts.join(pathMod.sep),
+      relParts.length === 0 ? '.' : relParts.join('/'),
       this._pathClass,
     );
   }

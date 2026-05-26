@@ -168,8 +168,8 @@ describe('path access policy', () => {
       policy: DEFAULT_WORKSPACE_ACCESS_POLICY,
     });
 
-    expect(result).toEqual({ path: 'C:\\workspace\\file.txt', outsideWorkspace: false });
-    expect(isWithinDirectory('C:\\WORKSPACE\\file.txt', 'c:\\workspace', 'win32')).toBe(true);
+    expect(result).toEqual({ path: 'C:/workspace/file.txt', outsideWorkspace: false });
+    expect(isWithinDirectory('C:/WORKSPACE/file.txt', 'c:/workspace', 'win32')).toBe(true);
   });
 
   it('converts Git Bash POSIX drive paths before applying win32 workspace checks', () => {
@@ -180,7 +180,7 @@ describe('path access policy', () => {
       homeDir: 'C:\\Users\\test',
     });
 
-    expect(result).toEqual({ path: 'C:\\workspace\\file.txt', outsideWorkspace: false });
+    expect(result).toEqual({ path: 'C:/workspace/file.txt', outsideWorkspace: false });
   });
 
   it('uses the provided path class when deciding whether an outside path is absolute', () => {
@@ -190,7 +190,7 @@ describe('path access policy', () => {
       policy: DEFAULT_WORKSPACE_ACCESS_POLICY,
     });
 
-    expect(result).toEqual({ path: 'C:\\outside\\file.txt', outsideWorkspace: true });
+    expect(result).toEqual({ path: 'C:/outside/file.txt', outsideWorkspace: true });
   });
 
   it('expands leading tilde paths with the provided win32 home directory', () => {
@@ -202,7 +202,7 @@ describe('path access policy', () => {
     });
 
     expect(result).toEqual({
-      path: 'C:\\Users\\test\\notes\\today.txt',
+      path: 'C:/Users/test/notes/today.txt',
       outsideWorkspace: true,
     });
   });
@@ -313,26 +313,26 @@ describe('path access policy', () => {
 
   describe('normalizeUserPath on win32', () => {
     it('rewrites MSYS-style drive paths to native form', () => {
-      expect(normalizeUserPath('/c/Users/foo/file.txt', 'win32')).toBe('C:\\Users\\foo\\file.txt');
+      expect(normalizeUserPath('/c/Users/foo/file.txt', 'win32')).toBe('C:/Users/foo/file.txt');
     });
 
     it('rewrites a bare MSYS drive root to native form', () => {
-      expect(normalizeUserPath('/c/', 'win32')).toBe('C:\\');
-      expect(normalizeUserPath('/c', 'win32')).toBe('C:\\');
+      expect(normalizeUserPath('/c/', 'win32')).toBe('C:/');
+      expect(normalizeUserPath('/c', 'win32')).toBe('C:/');
     });
 
     it('canonicalizes the drive letter to uppercase', () => {
-      expect(normalizeUserPath('/C/Users/foo', 'win32')).toBe('C:\\Users\\foo');
+      expect(normalizeUserPath('/C/Users/foo', 'win32')).toBe('C:/Users/foo');
     });
 
     it('rewrites cygdrive-style paths to native form', () => {
-      expect(normalizeUserPath('/cygdrive/c/Users/foo', 'win32')).toBe('C:\\Users\\foo');
-      expect(normalizeUserPath('/cygdrive/d/Projects', 'win32')).toBe('D:\\Projects');
+      expect(normalizeUserPath('/cygdrive/c/Users/foo', 'win32')).toBe('C:/Users/foo');
+      expect(normalizeUserPath('/cygdrive/d/Projects', 'win32')).toBe('D:/Projects');
     });
 
-    it('rewrites UNC paths by flipping every slash', () => {
-      expect(normalizeUserPath('//server/share/file', 'win32')).toBe('\\\\server\\share\\file');
-      expect(normalizeUserPath('//server/share', 'win32')).toBe('\\\\server\\share');
+    it('rewrites UNC paths to forward slashes', () => {
+      expect(normalizeUserPath('//server/share/file', 'win32')).toBe('//server/share/file');
+      expect(normalizeUserPath('//server/share', 'win32')).toBe('//server/share');
     });
 
     it('leaves already-native windows paths untouched', () => {
@@ -365,15 +365,15 @@ describe('path access policy', () => {
 
   describe('normalizeUserPath full posix-to-windows coverage', () => {
     const cases: ReadonlyArray<readonly [string, string]> = [
-      ['/c/Users/foo', 'C:\\Users\\foo'],
-      ['/d/Projects/kimi', 'D:\\Projects\\kimi'],
-      ['/C/Users/foo', 'C:\\Users\\foo'],
-      ['/c/', 'C:\\'],
-      ['/c', 'C:\\'],
-      ['/cygdrive/c/Users/foo', 'C:\\Users\\foo'],
-      ['/cygdrive/d/Projects', 'D:\\Projects'],
-      ['//server/share', '\\\\server\\share'],
-      ['//server/share/file.txt', '\\\\server\\share\\file.txt'],
+      ['/c/Users/foo', 'C:/Users/foo'],
+      ['/d/Projects/kimi', 'D:/Projects/kimi'],
+      ['/C/Users/foo', 'C:/Users/foo'],
+      ['/c/', 'C:/'],
+      ['/c', 'C:/'],
+      ['/cygdrive/c/Users/foo', 'C:/Users/foo'],
+      ['/cygdrive/d/Projects', 'D:/Projects'],
+      ['//server/share', '//server/share'],
+      ['//server/share/file.txt', '//server/share/file.txt'],
       ['relative/path/file.txt', 'relative/path/file.txt'],
       ['relative\\already\\windows', 'relative\\already\\windows'],
       ['filename.txt', 'filename.txt'],
@@ -388,10 +388,10 @@ describe('path access policy', () => {
 
   it('aggressively rewrites short-input forms on win32', () => {
     // Pathological short inputs: empty, lone slash, and a single character.
-    // Treated as a divergence lockdown — the bare "/" branch differs from
-    // the upstream raw helper which flips the slash.
+    // The bare "/" branch returns a forward slash so downstream pathe
+    // operations stay uniform.
     expect(normalizeUserPath('', 'win32')).toBe('');
-    expect(normalizeUserPath('/', 'win32')).toBe('\\');
+    expect(normalizeUserPath('/', 'win32')).toBe('/');
     expect(normalizeUserPath('a', 'win32')).toBe('a');
   });
 

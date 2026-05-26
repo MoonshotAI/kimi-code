@@ -222,6 +222,9 @@ importers:
       open:
         specifier: ^10.2.0
         version: 10.2.0
+      pathe:
+        specifier: ^2.0.3
+        version: 2.0.3
       picomatch:
         specifier: ^4.0.4
         version: 4.0.4
@@ -280,6 +283,9 @@ importers:
 
   packages/kaos:
     dependencies:
+      pathe:
+        specifier: ^2.0.3
+        version: 2.0.3
       ssh2:
         specifier: ^1.17.0
         version: 1.17.0

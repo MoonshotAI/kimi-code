@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join } from 'pathe';
 
 export function resolveKimiHome(homeDir?: string | undefined): string {
   return homeDir ?? process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code');

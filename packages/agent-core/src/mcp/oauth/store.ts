@@ -25,7 +25,7 @@ import {
   writeSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, join } from 'pathe';
 
 export function mcpCredentialsDir(kimiHomeDir: string): string {
   return join(kimiHomeDir, 'credentials', 'mcp');

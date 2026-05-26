@@ -11,8 +11,7 @@
  *   - Truncated levels show "... and N more" so the LLM knows more exists.
  */
 
-import * as posixPath from 'node:path/posix';
-import * as win32Path from 'node:path/win32';
+import { basename, join } from 'pathe';
 
 import type { Kaos } from '@moonshot-ai/kaos';
 
@@ -35,7 +34,7 @@ async function collectEntries(
   const all: Entry[] = [];
   try {
     for await (const fullPath of kaos.iterdir(dirPath)) {
-      const name = basename(fullPath, pathClass);
+      const name = basename(fullPath);
       let isDir = false;
       try {
         const st = await kaos.stat(fullPath);
@@ -55,14 +54,6 @@ async function collectEntries(
     return a.name.localeCompare(b.name);
   });
   return { entries: all.slice(0, maxWidth), total: all.length, readable: true };
-}
-
-function pathMod(pathClass: PathClass): typeof posixPath {
-  return pathClass === 'win32' ? win32Path : posixPath;
-}
-
-function basename(p: string, pathClass: PathClass): string {
-  return pathMod(pathClass).basename(p);
 }
 
 /**
@@ -92,7 +83,7 @@ export async function listDirectory(kaos: Kaos, workDir: string): Promise<string
     if (isDir) {
       lines.push(`${connector}${name}/`);
       const childPrefix = isLast ? '    ' : '│   ';
-      const childDir = joinPath(workDir, name, pathClass);
+      const childDir = join(workDir, name);
       const child = await collectEntries(kaos, childDir, LIST_DIR_CHILD_WIDTH, pathClass);
       if (!child.readable) {
         lines.push(`${childPrefix}└── [not readable]`);
@@ -122,6 +113,4 @@ export async function listDirectory(kaos: Kaos, workDir: string): Promise<string
   return lines.length > 0 ? lines.join('\n') : '(empty directory)';
 }
 
-function joinPath(parent: string, child: string, pathClass: PathClass): string {
-  return pathMod(pathClass).join(parent, child);
-}
+

@@ -11,7 +11,7 @@
 
 import { statSync } from 'node:fs';
 import { appendFile, mkdir, open, readFile, readdir, rm, stat, unlink } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join } from 'pathe';
 
 import { atomicWrite } from '../../utils/fs';
 import type { BackgroundTaskStatus } from './manager';
