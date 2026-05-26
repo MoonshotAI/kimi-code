@@ -447,11 +447,11 @@ export class FullCompaction {
     const delays = retryBackoffDelays(maxAttempts);
     let retryCount = 0;
 
-    // Clamp the completion budget against the compaction input. Compaction
-    // is triggered when context is already near full, so an unbounded
-    // default cap is most at risk of either exceeding the model limit or
-    // returning empty `content` on reasoning models. The cloned provider
-    // is local to this call and never persisted back to agent state.
+    // Clamp the completion budget against the context count tracked from
+    // provider usage. `tokenCountWithPending` keeps real tokens for covered
+    // history and estimates only messages added since the last usage update.
+    // The cloned provider is local to this call and never persisted back to
+    // agent state.
     const completionBudget = resolveCompletionBudget({
       reservedContextSize:
         this.agent.providerManager?.config.loopControl?.reservedContextSize,
@@ -460,9 +460,7 @@ export class FullCompaction {
       provider: this.agent.config.provider,
       budget: completionBudget,
       capability: this.agent.config.modelCapabilities,
-      messages,
-      systemPrompt: this.agent.config.systemPrompt,
-      tools: this.agent.tools.loopTools,
+      inputTokenCount: this.tokenCountWithPending,
     });
 
     for (let attempt = 1; ; attempt += 1) {

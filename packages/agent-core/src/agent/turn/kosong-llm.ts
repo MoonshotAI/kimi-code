@@ -57,9 +57,11 @@ export interface KosongLLMConfig {
   readonly generate?: GenerateFn | undefined;
   /**
    * Completion budget config resolved from agent/provider settings. The
-   * final cap is computed per request from the current messages and tools.
+   * final cap is computed per request from the current input token count.
    */
   readonly completionBudgetConfig?: CompletionBudgetConfig | undefined;
+  /** Current input token count, including pending context not yet covered by usage. */
+  readonly inputTokenCount?: (() => number) | undefined;
 }
 
 export class KosongLLM implements LLM {
@@ -70,6 +72,7 @@ export class KosongLLM implements LLM {
   private readonly provider: ChatProvider;
   private readonly generate: GenerateFn;
   private readonly completionBudgetConfig: CompletionBudgetConfig | undefined;
+  private readonly inputTokenCount: (() => number) | undefined;
 
   constructor(config: KosongLLMConfig) {
     this.provider = config.provider;
@@ -78,6 +81,7 @@ export class KosongLLM implements LLM {
     this.capability = config.capability;
     this.generate = config.generate ?? kosongGenerate;
     this.completionBudgetConfig = config.completionBudgetConfig;
+    this.inputTokenCount = config.inputTokenCount;
   }
 
   async chat(params: LLMChatParams): Promise<LLMChatResponse> {
@@ -91,16 +95,11 @@ export class KosongLLM implements LLM {
     // throwaway shallow clone. `effectiveProvider` is local to this call
     // and never written back to `this.provider`, so retries (handled at
     // a higher layer) keep using the same long-lived provider/client.
-    // The clamp must see every input the provider will serialize on the
-    // wire — system prompt and tool schemas included — or a near-full
-    // context can still slip past the limit.
     const effectiveProvider = applyCompletionBudget({
       provider: this.provider,
       budget: this.completionBudgetConfig,
       capability: this.capability,
-      messages: params.messages,
-      systemPrompt: this.systemPrompt,
-      tools: params.tools,
+      inputTokenCount: this.inputTokenCount?.() ?? 0,
     });
 
     const result = await this.generate(

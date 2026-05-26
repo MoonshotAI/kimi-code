@@ -1,15 +1,4 @@
-import type {
-  ChatProvider,
-  Message,
-  ModelCapability,
-  Tool,
-} from '@moonshot-ai/kosong';
-
-import {
-  estimateTokens,
-  estimateTokensForMessages,
-  estimateTokensForTools,
-} from './tokens';
+import type { ChatProvider, ModelCapability } from '@moonshot-ai/kosong';
 
 /** Completion-token budget for the next LLM request. */
 export interface CompletionBudgetConfig {
@@ -65,9 +54,7 @@ function parseEnvBudget(raw: string | undefined): EnvBudget {
 export function computeCompletionBudgetCap(args: {
   readonly budget: CompletionBudgetConfig;
   readonly capability: ModelCapability | undefined;
-  readonly messages: readonly Message[];
-  readonly systemPrompt?: string;
-  readonly tools?: readonly Tool[];
+  readonly inputTokenCount: number;
 }): number {
   const safetyMargin = args.budget.safetyMargin ?? DEFAULT_SAFETY_MARGIN;
   const maxCtx = args.capability?.max_context_tokens ?? 0;
@@ -77,11 +64,7 @@ export function computeCompletionBudgetCap(args: {
       args.budget.hardCap ?? args.budget.fallback ?? DEFAULT_UNKNOWN_CONTEXT_FALLBACK,
     );
   }
-  const input =
-    estimateTokensForMessages([...args.messages]) +
-    estimateTokens(args.systemPrompt ?? '') +
-    estimateTokensForTools(args.tools ?? []);
-  const remaining = maxCtx - input - safetyMargin;
+  const remaining = maxCtx - args.inputTokenCount - safetyMargin;
   if (remaining <= 0) {
     return MIN_FLOOR;
   }
@@ -105,18 +88,14 @@ export function applyCompletionBudget(args: {
   readonly provider: ChatProvider;
   readonly budget: CompletionBudgetConfig | undefined;
   readonly capability: ModelCapability | undefined;
-  readonly messages: readonly Message[];
-  readonly systemPrompt?: string;
-  readonly tools?: readonly Tool[];
+  readonly inputTokenCount: number;
 }): ChatProvider {
   if (args.budget === undefined) return args.provider;
   if (args.provider.withMaxCompletionTokens === undefined) return args.provider;
   const cap = computeCompletionBudgetCap({
     budget: args.budget,
     capability: args.capability,
-    messages: args.messages,
-    systemPrompt: args.systemPrompt,
-    tools: args.tools,
+    inputTokenCount: args.inputTokenCount,
   });
   return args.provider.withMaxCompletionTokens(cap);
 }
