@@ -59,11 +59,14 @@ interface WireTabProps {
 
 export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
   const [agentId, setAgentId] = useState<string>(initialAgentId);
-  // Re-sync when the route changes the prop while this component stays
-  // mounted (e.g. navigating between /sessions/x/agents/a → /agents/b).
+  // Re-sync when the route changes either the session or the agent id
+  // while this component stays mounted. Without `sessionId` in the deps,
+  // navigating /sessions/A → /sessions/B (with default initialAgentId)
+  // would preserve a subagent selection from the previous session and
+  // 404 on the new one.
   useEffect(() => {
     setAgentId(initialAgentId);
-  }, [initialAgentId]);
+  }, [sessionId, initialAgentId]);
   const { data: detail } = useSession(sessionId);
   const { data: wire, isLoading, error } = useWire(sessionId, agentId);
   const parentRef = useRef<HTMLDivElement>(null);

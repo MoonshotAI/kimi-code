@@ -15,11 +15,11 @@ interface ContextTabProps {
 
 export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabProps) {
   const [agentId, setAgentId] = useState<string>(initialAgentId);
-  // Re-sync when the route changes the prop while this component stays
-  // mounted (e.g. navigating between /sessions/x/agents/a → /agents/b).
+  // Re-sync on session OR agent id change — see WireTab for the same
+  // rationale (session navigation must reset a stale subagent pick).
   useEffect(() => {
     setAgentId(initialAgentId);
-  }, [initialAgentId]);
+  }, [sessionId, initialAgentId]);
   const { data: detail } = useSession(sessionId);
   const { data: ctx, isLoading, error } = useContext(sessionId, agentId);
 
