@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { runBundleStep } from './01-bundle.mjs';
@@ -5,6 +6,9 @@ import { runInjectStep } from './03-inject.mjs';
 import { runSeaBlobStep } from './02-sea-blob.mjs';
 import { runSignStep } from './04-sign.mjs';
 import { runVerifyStep } from './05-verify.mjs';
+import { run } from './exec.mjs';
+import { appRoot, nativeIntermediatesDir } from './paths.mjs';
+import { BUILT_IN_CATALOG_ENV } from '../built-in-catalog.mjs';
 
 const { values } = parseArgs({
   options: {
@@ -30,6 +34,12 @@ function ensureNodeVersion() {
 
 ensureNodeVersion();
 console.log(`==> Native build (profile=${profile})`);
+
+if (profile === 'release' && process.env[BUILT_IN_CATALOG_ENV] === undefined) {
+  const catalogPath = resolve(nativeIntermediatesDir(), 'built-in-catalog.json');
+  await run(process.execPath, [resolve(appRoot, 'scripts/update-catalog.mjs'), '--out', catalogPath]);
+  process.env[BUILT_IN_CATALOG_ENV] = catalogPath;
+}
 
 await runBundleStep();
 await runSeaBlobStep();

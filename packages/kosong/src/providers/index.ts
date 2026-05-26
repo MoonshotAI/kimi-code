@@ -13,6 +13,8 @@ export type ProviderConfig =
   | ({ type: 'openai_responses' } & OpenAIResponsesOptions)
   | ({ type: 'vertexai' } & GoogleGenAIOptions);
 
+export type ProviderType = ProviderConfig['type'];
+
 export function createProvider(config: ProviderConfig): ChatProvider {
   switch (config.type) {
     case 'anthropic':

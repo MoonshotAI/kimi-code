@@ -26,11 +26,20 @@ export type {
 // Provider interfaces
 export * from './provider';
 export { createProvider } from './providers';
-export type { ProviderConfig } from './providers';
+export type { ProviderConfig, ProviderType } from './providers';
 
 // Model capability matrix
 export { UNKNOWN_CAPABILITY, isUnknownCapability } from './capability';
 export type { ModelCapability } from './capability';
+
+// Model catalog (models.dev-style) metadata
+export {
+  catalogBaseUrl,
+  catalogModelToCapability,
+  catalogProviderModels,
+  inferWireType,
+} from './catalog';
+export type { Catalog, CatalogModel, CatalogModelEntry, CatalogProviderEntry } from './catalog';
 
 // Core functions
 export { generate } from './generate';

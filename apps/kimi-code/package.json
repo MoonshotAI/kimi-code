@@ -44,6 +44,7 @@
   },
   "scripts": {
     "build": "tsdown",
+    "catalog:update": "node scripts/update-catalog.mjs --out dist/built-in-catalog.json",
     "smoke": "node scripts/smoke.mjs",
     "build:native:js": "node scripts/native/01-bundle.mjs",
     "build:native:sea": "node scripts/native/build.mjs --profile=local",

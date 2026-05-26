@@ -29,14 +29,24 @@ import {
   fetchOpenPlatformModels,
   filterModelsByPrefix,
   getOpenPlatformById,
-  isOpenPlatformId,
   OpenPlatformApiError,
   type DeviceAuthorization,
   type ManagedKimiCodeModelInfo,
   type ManagedKimiConfigShape,
   type OpenPlatformDefinition,
 } from '@moonshot-ai/kimi-code-oauth';
-import { log } from '@moonshot-ai/kimi-code-sdk';
+import {
+  applyCatalogProvider,
+  catalogBaseUrl,
+  catalogModelToAlias,
+  catalogProviderModels,
+  CatalogFetchError,
+  fetchCatalog,
+  inferWireType,
+  loadBuiltInCatalog,
+  log,
+} from '@moonshot-ai/kimi-code-sdk';
+import { BUILT_IN_CATALOG_JSON } from '../built-in-catalog';
 import type {
   AgentStatusUpdatedEvent,
   ApprovalRequest,
@@ -46,6 +56,8 @@ import type {
   BackgroundTaskStartedEvent,
   BackgroundTaskTerminatedEvent,
   BackgroundTaskUpdatedEvent,
+  Catalog,
+  CatalogModel,
   CompactionCancelledEvent,
   CompactionCompletedEvent,
   CompactionStartedEvent,
@@ -124,6 +136,7 @@ import {
   type FeedbackInputDialogResult,
 } from './components/dialogs/feedback-input-dialog';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
+import { ChoicePickerComponent, type ChoiceOption } from './components/dialogs/choice-picker';
 import { ModelSelectorComponent } from './components/dialogs/model-selector';
 import { PlatformSelectorComponent } from './components/dialogs/platform-selector';
 import { PermissionSelectorComponent } from './components/dialogs/permission-selector';
@@ -208,6 +221,7 @@ import {
 import { formatBackgroundAgentTranscript } from './utils/background-agent-status';
 import { formatBackgroundTaskTranscript } from './utils/background-task-status';
 import { hasDispose, isExpandable, isPlanExpandable } from './utils/component-capabilities';
+import { resolveConnectCatalogRequest } from './utils/connect-catalog';
 import {
   appendStreamingArgsPreview,
   argsRecord,
@@ -1435,6 +1449,9 @@ export class KimiTUI {
         return;
       case 'login':
         await this.handleLoginCommand();
+        return;
+      case 'connect':
+        await this.handleConnectCommand(args);
         return;
       case 'logout':
         await this.handleLogoutCommand();
@@ -4435,7 +4452,10 @@ export class KimiTUI {
   private showModelPicker(selectedValue: string = this.state.appState.model): void {
     const entries = Object.entries(this.state.appState.availableModels);
     if (entries.length === 0) {
-      this.showError('No models configured.');
+      this.showNotice(
+        'No models configured',
+        'Run /login to sign in to Kimi, or /connect to add another provider from a model catalog.',
+      );
       return;
     }
     this.mountEditorReplacement(
@@ -4445,6 +4465,7 @@ export class KimiTUI {
         selectedValue,
         currentThinking: this.state.appState.thinking,
         colors: this.state.theme.colors,
+        searchable: true,
         onSelect: ({ alias, thinking }) => {
           this.restoreEditor();
           void this.performModelSwitch(alias, thinking);
@@ -5182,6 +5203,122 @@ export class KimiTUI {
     this.showStatus(`Setup complete: ${platform.name} · ${selection.model.id}`);
   }
 
+  // Handles the /connect command — fetches a model catalog (default
+  // models.dev), lets the user pick a provider + model, prompts for an API
+  // key, then writes the provider config + model aliases. Model metadata
+  // (context size, capabilities) comes from the catalog, so users do not
+  // hand-write it.
+  private async handleConnectCommand(args: string): Promise<void> {
+    const resolution = resolveConnectCatalogRequest(args);
+    if (resolution.kind === 'error') {
+      this.showError(resolution.message);
+      return;
+    }
+    const { url, preferBuiltIn, allowBuiltInFallback } = resolution.request;
+
+    let catalog: Catalog | undefined;
+
+    // Default path: serve the bundled catalog so /connect works without a
+    // live network and is not gated by models.dev availability. The source
+    // placeholder is undefined in dev builds, so dev falls through to fetch.
+    if (preferBuiltIn) {
+      const builtIn = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
+      if (builtIn !== undefined) {
+        this.showStatus('Loaded built-in catalog. Run /connect --refresh for the latest.');
+        catalog = builtIn;
+      }
+    }
+
+    if (catalog === undefined) {
+      const controller = new AbortController();
+      const cancel = (): void => {
+        controller.abort();
+      };
+      this.cancelInFlight = cancel;
+
+      const spinner = this.showLoginProgressSpinner(`Fetching catalog from ${url}`);
+      try {
+        catalog = await fetchCatalog(url, controller.signal);
+        spinner.stop({ ok: true, label: 'Catalog loaded.' });
+      } catch (error) {
+        if (controller.signal.aborted) {
+          spinner.stop({ ok: false, label: 'Aborted.' });
+        } else {
+          const hint = error instanceof CatalogFetchError ? ` (HTTP ${error.status})` : '';
+          if (!allowBuiltInFallback) {
+            spinner.stop({ ok: false, label: 'Failed to load catalog.' });
+            this.showError(`Failed to fetch catalog${hint}: ${formatErrorMessage(error)}`);
+          } else {
+            const fallback = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
+            if (fallback !== undefined) {
+              spinner.stop({ ok: true, label: 'Using built-in catalog (offline mode).' });
+              catalog = fallback;
+            } else {
+              spinner.stop({ ok: false, label: 'Failed to load catalog.' });
+              this.showError(`Failed to fetch catalog${hint}: ${formatErrorMessage(error)}`);
+            }
+          }
+        }
+      } finally {
+        if (this.cancelInFlight === cancel) this.cancelInFlight = undefined;
+      }
+    }
+
+    if (catalog === undefined) return;
+
+    const providerId = await this.promptCatalogProviderSelection(catalog);
+    if (providerId === undefined) return;
+    const entry = catalog[providerId];
+    if (entry === undefined) return;
+
+    const models = catalogProviderModels(entry);
+    if (models.length === 0) {
+      this.showError(`Provider "${providerId}" has no usable models in this catalog.`);
+      return;
+    }
+
+    const selection = await this.promptModelSelectionForCatalog(providerId, models);
+    if (selection === undefined) return;
+
+    const apiKey = await this.promptApiKey(entry.name ?? providerId);
+    if (apiKey === undefined) return;
+
+    const wire = inferWireType(entry);
+    if (wire === undefined) return;
+    const baseUrl = catalogBaseUrl(entry, wire);
+
+    // Remove stale provider config first: setConfig is a deep-merge patch that
+    // cannot delete keys, and applyCatalogProvider's in-memory cleanup below
+    // does not survive that merge — removeProvider is the only step that
+    // actually drops old model aliases from disk.
+    const existingConfig = await this.harness.getConfig();
+    if (existingConfig.providers[providerId] !== undefined) {
+      await this.harness.removeProvider(providerId);
+    }
+
+    const config = await this.harness.getConfig();
+    applyCatalogProvider(config, {
+      providerId,
+      wire,
+      baseUrl,
+      apiKey,
+      models,
+      selectedModelId: selection.model.id,
+      thinking: selection.thinking,
+    });
+
+    await this.harness.setConfig({
+      providers: config.providers,
+      models: config.models,
+      defaultModel: config.defaultModel,
+      defaultThinking: config.defaultThinking,
+    });
+
+    await this.refreshConfigAfterLogin();
+    this.track('connect', { provider: providerId, model: selection.model.id });
+    this.showStatus(`Connected: ${entry.name ?? providerId} · ${selection.model.id}`);
+  }
+
   // Handles the /feedback command — opens an inline input dialog and POSTs
   // the result to the managed Kimi Code platform. Falls back to the GitHub
   // Issues page when the user is not signed in or the request fails.
@@ -5250,7 +5387,11 @@ export class KimiTUI {
       return;
     }
 
-    if (isOpenPlatformId(currentProvider)) {
+    // Any other provider written into config — OpenPlatform OAuth targets and
+    // /connect-configured catalog providers both go through removeProvider,
+    // which drops the provider entry and its model aliases together.
+    const existingConfig = await this.harness.getConfig();
+    if (existingConfig.providers[currentProvider] !== undefined) {
       await this.harness.removeProvider(currentProvider);
       await this.refreshConfigAfterLogout();
       await this.clearActiveSessionAfterLogout();
@@ -5283,6 +5424,42 @@ export class KimiTUI {
     });
   }
 
+  private promptCatalogProviderSelection(catalog: Catalog): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      const options: ChoiceOption[] = Object.entries(catalog)
+        .filter(([, entry]) => inferWireType(entry) !== undefined)
+        .map(([id, entry]) => ({
+          value: id,
+          label: entry.name ?? id,
+          description:
+            typeof entry.api === 'string' && entry.api.length > 0 ? entry.api : undefined,
+        }))
+        .toSorted((a, b) => a.label.localeCompare(b.label));
+
+      if (options.length === 0) {
+        this.showError('Catalog has no providers with supported wire types.');
+        resolve(undefined);
+        return;
+      }
+
+      const picker = new ChoicePickerComponent({
+        title: 'Select a provider',
+        options,
+        colors: this.state.theme.colors,
+        searchable: true,
+        onSelect: (value) => {
+          this.restoreEditor();
+          resolve(value);
+        },
+        onCancel: () => {
+          this.restoreEditor();
+          resolve(undefined);
+        },
+      });
+      this.mountEditorReplacement(picker);
+    });
+  }
+
   private promptApiKey(platformName: string): Promise<string | undefined> {
     return new Promise((resolve) => {
       const dialog = new ApiKeyInputDialogComponent(
@@ -5297,39 +5474,56 @@ export class KimiTUI {
     });
   }
 
-  private promptModelSelectionForOpenPlatform(
+  private async promptModelSelectionForOpenPlatform(
     models: ManagedKimiCodeModelInfo[],
     platform: OpenPlatformDefinition,
   ): Promise<{ model: ManagedKimiCodeModelInfo; thinking: boolean } | undefined> {
+    const modelDict: Record<string, ModelAlias> = {};
+    for (const m of models) {
+      modelDict[`${platform.id}/${m.id}`] = {
+        provider: platform.id,
+        model: m.id,
+        maxContextSize: m.contextLength,
+        capabilities: capabilitiesForModel(m),
+        displayName: m.displayName,
+      };
+    }
+    const selection = await this.runModelSelector(modelDict);
+    if (selection === undefined) return undefined;
+    const model = models.find((m) => `${platform.id}/${m.id}` === selection.alias);
+    return model ? { model, thinking: selection.thinking } : undefined;
+  }
+
+  private async promptModelSelectionForCatalog(
+    providerId: string,
+    models: CatalogModel[],
+  ): Promise<{ model: CatalogModel; thinking: boolean } | undefined> {
+    const modelDict: Record<string, ModelAlias> = {};
+    for (const m of models) {
+      modelDict[`${providerId}/${m.id}`] = catalogModelToAlias(providerId, m);
+    }
+    const selection = await this.runModelSelector(modelDict);
+    if (selection === undefined) return undefined;
+    const model = models.find((m) => `${providerId}/${m.id}` === selection.alias);
+    return model ? { model, thinking: selection.thinking } : undefined;
+  }
+
+  private runModelSelector(
+    modelDict: Record<string, ModelAlias>,
+  ): Promise<{ alias: string; thinking: boolean } | undefined> {
     return new Promise((resolve) => {
-      const modelDict: Record<string, ModelAlias> = {};
-      for (const m of models) {
-        const alias = `${platform.id}/${m.id}`;
-        modelDict[alias] = {
-          provider: platform.id,
-          model: m.id,
-          maxContextSize: m.contextLength,
-          capabilities: capabilitiesForModel(m),
-          displayName: m.displayName,
-        };
-      }
-
       const firstAlias = Object.keys(modelDict)[0] ?? '';
-      const firstModel = modelDict[firstAlias];
-      const initialThinking = (() => {
-        const caps = firstModel?.capabilities ?? [];
-        return caps.includes('always_thinking') || caps.includes('thinking');
-      })();
-
+      const caps = modelDict[firstAlias]?.capabilities ?? [];
+      const initialThinking = caps.includes('always_thinking') || caps.includes('thinking');
       const selector = new ModelSelectorComponent({
         models: modelDict,
         currentValue: firstAlias,
         currentThinking: initialThinking,
         colors: this.state.theme.colors,
+        searchable: true,
         onSelect: ({ alias, thinking }) => {
           this.restoreEditor();
-          const model = models.find((m) => `${platform.id}/${m.id}` === alias);
-          resolve(model ? { model, thinking } : undefined);
+          resolve({ alias, thinking });
         },
         onCancel: () => {
           this.restoreEditor();

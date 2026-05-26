@@ -36,6 +36,21 @@ interface FeedbackDriver extends MessageDriver {
   promptFeedbackInput(): Promise<string | undefined>;
 }
 
+interface ModelSelectorDriver extends MessageDriver {
+  runModelSelector(
+    models: Record<
+      string,
+      {
+        provider: string;
+        model: string;
+        maxContextSize: number;
+        displayName?: string;
+        capabilities?: string[];
+      }
+    >,
+  ): Promise<{ alias: string; thinking: boolean } | undefined>;
+}
+
 function makeStartupInput(): KimiTUIStartupInput {
   return {
     cliOptions: {
@@ -1178,6 +1193,12 @@ describe('KimiTUI message flow', () => {
     const pickerOutput = stripSgr((picker as ModelSelectorComponent).render(120).join('\n'));
     expect(pickerOutput).toContain('Kimi K2 (Kimi Code) ← current');
     expect(pickerOutput).toContain('❯ Kimi Turbo (Kimi Code)');
+    (picker as ModelSelectorComponent).handleInput('t');
+    (picker as ModelSelectorComponent).handleInput('u');
+    const filteredOutput = stripSgr((picker as ModelSelectorComponent).render(120).join('\n'));
+    expect(filteredOutput).toContain('Search: tu');
+    expect(filteredOutput).toContain('Kimi Turbo (Kimi Code)');
+    expect(filteredOutput).not.toContain('Kimi K2 (Kimi Code)');
     (picker as ModelSelectorComponent).handleInput('\u001B[D');
     (picker as ModelSelectorComponent).handleInput('\r');
 
@@ -1227,6 +1248,41 @@ describe('KimiTUI message flow', () => {
     });
     expect(session.setModel).not.toHaveBeenCalled();
     expect(session.setThinking).not.toHaveBeenCalled();
+  });
+
+  it('enables search in the shared model selector helper', async () => {
+    const { driver } = await makeDriver();
+    const selectorDriver = driver as unknown as ModelSelectorDriver;
+    const selection = selectorDriver.runModelSelector({
+      alpha: {
+        provider: 'managed:kimi-code',
+        model: 'kimi-alpha',
+        maxContextSize: 100,
+        displayName: 'Kimi Alpha',
+        capabilities: ['thinking'],
+      },
+      turbo: {
+        provider: 'managed:kimi-code',
+        model: 'kimi-turbo',
+        maxContextSize: 100,
+        displayName: 'Kimi Turbo',
+        capabilities: ['thinking'],
+      },
+    });
+
+    const picker = driver.state.editorContainer.children[0];
+    expect(picker).toBeInstanceOf(ModelSelectorComponent);
+    (picker as ModelSelectorComponent).handleInput('t');
+    (picker as ModelSelectorComponent).handleInput('u');
+
+    const output = stripSgr((picker as ModelSelectorComponent).render(120).join('\n'));
+    expect(output).toContain('Search: tu');
+    expect(output).toContain('Kimi Turbo (Kimi Code)');
+    expect(output).not.toContain('Kimi Alpha (Kimi Code)');
+
+    (picker as ModelSelectorComponent).handleInput('\u001B');
+    (picker as ModelSelectorComponent).handleInput('\u001B');
+    await expect(selection).resolves.toBeUndefined();
   });
 
   it('deletes Kitty inline images when /new clears the transcript', async () => {

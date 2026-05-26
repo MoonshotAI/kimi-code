@@ -77,6 +77,14 @@ jobs:
           certificate-p12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
 
+      - name: Generate built-in catalog (release artifacts)
+        if: inputs.sign-macos
+        shell: bash
+        run: |
+          CATALOG_FILE="$RUNNER_TEMP/kimi-code-built-in-catalog.json"
+          node apps/kimi-code/scripts/update-catalog.mjs --out "$CATALOG_FILE"
+          echo "KIMI_CODE_BUILT_IN_CATALOG_FILE=$CATALOG_FILE" >> "$GITHUB_ENV"
+
       - name: Build native executable (release profile, macOS signed)
         if: runner.os == 'macOS' && inputs.sign-macos
         run: pnpm --filter @moonshot-ai/kimi-code run build:native:release
