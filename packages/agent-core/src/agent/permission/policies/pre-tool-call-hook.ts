@@ -1,4 +1,5 @@
 import type { Agent } from '../..';
+import { isPlainRecord } from '../../turn/canonical-args';
 import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../types';
 
 export class PreToolCallHookPermissionPolicy implements PermissionPolicy {
@@ -12,7 +13,7 @@ export class PreToolCallHookPermissionPolicy implements PermissionPolicy {
       signal: context.signal,
       inputData: {
         toolName: context.toolCall.name,
-        toolInput: context.args,
+        toolInput: isPlainRecord(context.args) ? context.args : {},
         toolCallId: context.toolCall.id,
       },
     });
