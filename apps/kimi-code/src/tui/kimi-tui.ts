@@ -721,53 +721,63 @@ export class KimiTUI {
     // terminal: once raw mode is on and timers start firing, a dying parent
     // shell can pin a CPU core on EIO write retries unless we can self-exit.
     this.registerSignalHandlers();
-    // Migration path: the migration screen is a pi-tui component, so the event
-    // loop must run first. It then renders as the very first thing on screen,
-    // before the session is created and the Welcome banner is drawn.
-    if (this.migrationPlan !== null) {
-      this.startEventLoop();
-      try {
-        const migrationResult = await this.runMigrationScreen(this.migrationPlan);
-        if (this.migrateOnly) {
-          // Explicit `kimi migrate`: the screen is the whole command — exit
-          // instead of continuing into the chat TUI. A migration that ran but
-          // failed exits non-zero so scripted callers can detect it.
-          const failed =
-            migrationResult.decision === 'now' && migrationResult.migrated === false;
-          // Restore the terminal before `onExit` calls `process.exit`: dispose
-          // the focus/theme tracking `startEventLoop()` installed, then stop
-          // the pi-tui loop. Skipping either leaves the terminal in raw mode
-          // or still emitting focus/OSC sequences after the command finishes.
+    // Outer try ensures the signal handlers are rolled back if any startup
+    // path throws. Without this, callers that retry `start()` in the same
+    // Node process (tests, embedded use) would accumulate listeners on
+    // `process` and trip `MaxListenersExceededWarning`. Inner catch blocks
+    // still own their UI/focus cleanup; this only handles the listener half.
+    try {
+      // Migration path: the migration screen is a pi-tui component, so the
+      // event loop must run first. It then renders as the very first thing on
+      // screen, before the session is created and the Welcome banner is drawn.
+      if (this.migrationPlan !== null) {
+        this.startEventLoop();
+        try {
+          const migrationResult = await this.runMigrationScreen(this.migrationPlan);
+          if (this.migrateOnly) {
+            // Explicit `kimi migrate`: the screen is the whole command — exit
+            // instead of continuing into the chat TUI. A migration that ran
+            // but failed exits non-zero so scripted callers can detect it.
+            const failed =
+              migrationResult.decision === 'now' && migrationResult.migrated === false;
+            // Restore the terminal before `onExit` calls `process.exit`: dispose
+            // the focus/theme tracking `startEventLoop()` installed, then stop
+            // the pi-tui loop. Skipping either leaves the terminal in raw mode
+            // or still emitting focus/OSC sequences after the command finishes.
+            this.disposeTerminalTracking();
+            this.state.ui.stop();
+            await this.onExit?.(failed ? 1 : 0);
+            return;
+          }
+          const shouldReplayHistory = await this.initMainTui();
+          await this.finishStartup(shouldReplayHistory);
+        } catch (error) {
+          // The pi-tui loop is running and startEventLoop() installed focus/
+          // theme tracking; a startup failure must tear all of it down before
+          // the exception propagates, otherwise the terminal is left in raw
+          // mode or still emitting focus/OSC sequences.
           this.disposeTerminalTracking();
           this.state.ui.stop();
-          await this.onExit?.(failed ? 1 : 0);
-          return;
+          throw error;
         }
-        const shouldReplayHistory = await this.initMainTui();
+        return;
+      }
+
+      // No-migration path: ordering is identical to the original `start()`.
+      const shouldReplayHistory = await this.initMainTui();
+      this.startEventLoop();
+      try {
         await this.finishStartup(shouldReplayHistory);
       } catch (error) {
-        // The pi-tui loop is running and startEventLoop() installed focus/
-        // theme tracking; a startup failure must tear all of it down before
-        // the exception propagates, otherwise the terminal is left in raw
-        // mode or still emitting focus/OSC sequences.
+        // The pi-tui loop is running and startEventLoop() installed focus/theme
+        // tracking; tear all of it down so a finishStartup failure does not
+        // leave the terminal in raw mode or emitting focus/OSC sequences.
         this.disposeTerminalTracking();
         this.state.ui.stop();
         throw error;
       }
-      return;
-    }
-
-    // No-migration path: ordering is identical to the original `start()`.
-    const shouldReplayHistory = await this.initMainTui();
-    this.startEventLoop();
-    try {
-      await this.finishStartup(shouldReplayHistory);
     } catch (error) {
-      // The pi-tui loop is running and startEventLoop() installed focus/theme
-      // tracking; tear all of it down so a finishStartup failure does not
-      // leave the terminal in raw mode or emitting focus/OSC sequences.
-      this.disposeTerminalTracking();
-      this.state.ui.stop();
+      this.unregisterSignalHandlers();
       throw error;
     }
   }

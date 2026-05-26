@@ -296,4 +296,32 @@ describe('KimiTUI signal handlers', () => {
     await tui.stop();
     expect(process.listenerCount('SIGTERM')).toBe(beforeSigterm);
   });
+
+  it('start() unregisters signal handlers when initialization throws', async () => {
+    const { tui } = makeDriver();
+    // Force the very first awaited call inside start() to reject. We don't
+    // care which method blows up — only that the failure surfaces and any
+    // listeners we installed up front get cleaned up before the throw escapes.
+    vi.spyOn(tui as unknown as { initMainTui(): Promise<boolean> }, 'initMainTui').mockRejectedValue(
+      new Error('init boom'),
+    );
+    // Stub state.ui.stop so the failure-path cleanup does not touch the real
+    // event loop.
+    vi.spyOn(
+      (tui as unknown as { state: { ui: { stop(): void } } }).state.ui,
+      'stop',
+    ).mockImplementation(() => {});
+
+    const beforeSigterm = process.listenerCount('SIGTERM');
+    const beforeSighup = process.listenerCount('SIGHUP');
+    const beforeStdout = process.stdout.listenerCount('error');
+    const beforeStderr = process.stderr.listenerCount('error');
+
+    await expect(tui.start()).rejects.toThrow(/init boom/);
+
+    expect(process.listenerCount('SIGTERM')).toBe(beforeSigterm);
+    expect(process.listenerCount('SIGHUP')).toBe(beforeSighup);
+    expect(process.stdout.listenerCount('error')).toBe(beforeStdout);
+    expect(process.stderr.listenerCount('error')).toBe(beforeStderr);
+  });
 });
