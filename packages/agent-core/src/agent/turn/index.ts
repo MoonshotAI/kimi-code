@@ -33,6 +33,7 @@ import type { AgentEvent, TurnEndedEvent } from '../../rpc';
 import type { TelemetryPropertyValue } from '../../telemetry';
 import { abortable } from '../../utils/abort';
 import { resolveCompletionBudget } from '../../utils/completion-budget';
+import { estimateTokens, estimateTokensForTools } from '../../utils/tokens';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
@@ -366,6 +367,9 @@ export class TurnFlow {
       const model = this.agent.config.model;
       const provider = this.agent.config.provider.withThinking(this.agent.config.thinkingLevel);
       const loopControl = this.agent.providerManager?.config.loopControl;
+      const requestOverheadTokenCount =
+        estimateTokens(this.agent.config.systemPrompt) +
+        estimateTokensForTools(this.agent.tools.loopTools);
       const completionBudgetConfig = resolveCompletionBudget({
         reservedContextSize: loopControl?.reservedContextSize,
       });
@@ -381,7 +385,9 @@ export class TurnFlow {
             capability: this.agent.config.modelCapabilities,
             generate: this.agent.generate,
             completionBudgetConfig,
-            inputTokenCount: () => this.agent.context.tokenCountWithPending,
+            inputTokenCount: () =>
+              this.agent.context.tokenCountWithPending +
+              (this.agent.context.hasProviderTokenUsage ? 0 : requestOverheadTokenCount),
           }),
           buildMessages: () => this.agent.context.messages,
           dispatchEvent: this.buildDispatchEvent(turnId),
