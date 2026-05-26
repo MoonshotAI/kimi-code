@@ -31,7 +31,7 @@ function matchSessionApprovalRule(
   agent: Agent,
   context: PermissionPolicyContext,
 ): PermissionRuleMatch | undefined {
-  for (const pattern of agent.permission.sessionApprovalRulePatterns()) {
+  for (const pattern of agent.permission.sessionApprovalRulePatterns) {
     const match = matchPermissionRule({
       rule: {
         decision: 'allow',

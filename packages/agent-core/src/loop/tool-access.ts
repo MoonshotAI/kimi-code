@@ -4,11 +4,8 @@ export type ToolResourceAccess =
   | {
       readonly kind: 'file';
       readonly operation: ToolFileAccessOperation;
-      /**
-       * Canonical file path when the access can be narrowed. Omitted means the
-       * operation may touch any file in the backend file namespace.
-       */
-      readonly path?: string;
+      /** Canonical file path for the accessed file or tree. */
+      readonly path: string;
       readonly recursive?: boolean;
     }
   | {
@@ -33,16 +30,15 @@ export const ToolAccesses = {
 
   file(
     operation: ToolFileAccessOperation,
-    path?: string,
+    path: string,
     options: { readonly recursive?: boolean } = {},
   ): ToolAccesses {
     const access: {
       kind: 'file';
       operation: ToolFileAccessOperation;
-      path?: string;
+      path: string;
       recursive?: boolean;
-    } = { kind: 'file', operation };
-    if (path !== undefined) access.path = path;
+    } = { kind: 'file', operation, path };
     if (options.recursive !== undefined) access.recursive = options.recursive;
     return [access];
   },
@@ -55,20 +51,12 @@ export const ToolAccesses = {
     return ToolAccesses.file('read', path, { recursive: true });
   },
 
-  readAnyFile(): ToolAccesses {
-    return ToolAccesses.file('read');
-  },
-
   writeFile(path: string): ToolAccesses {
     return ToolAccesses.file('write', path);
   },
 
   writeTree(path: string): ToolAccesses {
     return ToolAccesses.file('write', path, { recursive: true });
-  },
-
-  writeAnyFile(): ToolAccesses {
-    return ToolAccesses.file('write');
   },
 
   readWriteFile(path: string): ToolAccesses {
@@ -79,16 +67,8 @@ export const ToolAccesses = {
     return ToolAccesses.file('readwrite', path, { recursive: true });
   },
 
-  readWriteAnyFile(): ToolAccesses {
-    return ToolAccesses.file('readwrite');
-  },
-
   searchTree(path: string): ToolAccesses {
     return ToolAccesses.file('search', path, { recursive: true });
-  },
-
-  searchAnyFile(): ToolAccesses {
-    return ToolAccesses.file('search');
   },
 
   conflict(left: ToolAccesses, right: ToolAccesses): boolean {
@@ -126,8 +106,6 @@ function fileAccessesOverlap(
   left: Extract<ToolResourceAccess, { kind: 'file' }>,
   right: Extract<ToolResourceAccess, { kind: 'file' }>,
 ): boolean {
-  if (left.path === undefined || right.path === undefined) return true;
-
   const leftPath = normalizePath(left.path);
   const rightPath = normalizePath(right.path);
   if (leftPath === rightPath) return true;

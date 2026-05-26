@@ -758,7 +758,7 @@ describe('Session resume permission parent chain', () => {
       expect(child?.permission.mode).toBe('yolo');
       expect(child?.permission.rules).toEqual([]);
       expect(child?.permission.data().rules).toEqual([]);
-      expect(child?.permission.sessionApprovalRulePatterns()).toContain(sessionApprovalRule);
+      expect(child?.permission.sessionApprovalRulePatterns).toContain(sessionApprovalRule);
     } finally {
       await session.close();
     }

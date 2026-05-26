@@ -629,7 +629,7 @@ describe('Permission auto mode', () => {
     await expect(call()).resolves.toBeUndefined();
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(manager.sessionApprovalRulePatterns()).toEqual(['Read(/tmp/notes.md)']);
+    expect(manager.sessionApprovalRulePatterns).toEqual(['Read(/tmp/notes.md)']);
     expect(manager.data().rules).toEqual([]);
   });
 });
@@ -767,7 +767,7 @@ describe('Permission live derive', () => {
     expect(child.requestApproval).not.toHaveBeenCalled();
     expect(child.manager.rules).toEqual([]);
     expect(child.manager.data().rules).toEqual([]);
-    expect(child.manager.sessionApprovalRulePatterns()).toContain('Bash(printf first)');
+    expect(child.manager.sessionApprovalRulePatterns).toContain('Bash(printf first)');
   });
 
   it('uses child local mode for inherited non-deny decisions', async () => {
@@ -849,7 +849,7 @@ describe('Plan mode Bash permission policy', () => {
 
     expect(requestApproval).not.toHaveBeenCalled();
     expect(manager.data().rules).toEqual([]);
-    expect(manager.sessionApprovalRulePatterns()).toContain('Bash(ls -la)');
+    expect(manager.sessionApprovalRulePatterns).toContain('Bash(ls -la)');
   });
 
   it.each(['yolo', 'auto'] as const)(
@@ -1147,7 +1147,7 @@ describe('Agent-local approve for session', () => {
       },
     });
     expect(manager.data().rules).toEqual([]);
-    expect(manager.sessionApprovalRulePatterns()).toContain(firstRule);
+    expect(manager.sessionApprovalRulePatterns).toContain(firstRule);
 
     await expect(
       manager.beforeToolCall(
@@ -1292,7 +1292,7 @@ describe('Agent-local approve for session', () => {
     });
 
     expect(ctx.agent.permission.data().rules).toEqual([]);
-    expect(ctx.agent.permission.sessionApprovalRulePatterns()).toContain(sessionApprovalRule);
+    expect(ctx.agent.permission.sessionApprovalRulePatterns).toContain(sessionApprovalRule);
   });
 
   it('replays one-shot approval wire events without adding session rules', () => {

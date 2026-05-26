@@ -1,7 +1,5 @@
 import type { Agent } from '..';
 import type { PrepareToolExecutionResult } from '../../loop';
-import type { TelemetryProperties } from '../../telemetry';
-import type { ToolInputDisplay } from '../../tools/display';
 import { createPermissionDecisionPolicies } from './policies';
 import type {
   ApprovalResponse,
@@ -54,7 +52,7 @@ export class PermissionManager {
   data(): PermissionData {
     return {
       mode: this.mode,
-      rules: this.effectiveRules(),
+      rules: this.effectiveRules,
     };
   }
 
@@ -85,13 +83,13 @@ export class PermissionManager {
     }
     const pattern = record.sessionApprovalRule;
     if (pattern === undefined) return;
-    this.addSessionApprovalRule(pattern);
+    this.localSessionApprovalRulePatterns.add(pattern);
   }
 
-  sessionApprovalRulePatterns(): readonly string[] {
+  get sessionApprovalRulePatterns(): readonly string[] {
     return [
       ...this.localSessionApprovalRulePatterns,
-      ...(this.parent?.sessionApprovalRulePatterns() ?? []),
+      ...(this.parent?.sessionApprovalRulePatterns ?? []),
     ];
   }
 
@@ -101,7 +99,13 @@ export class PermissionManager {
     const evaluation = await this.evaluatePolicies(context);
     if (evaluation === undefined) return undefined;
 
-    this.trackPolicyDecision(evaluation.policyName, context, evaluation.result);
+    this.agent.telemetry.track('permission_policy_decision', {
+      policy_name: evaluation.policyName,
+      tool_name: context.toolCall.name,
+      permission_mode: this.mode,
+      decision: evaluation.result.kind,
+      ...evaluation.result.reason,
+    });
     return this.permissionPolicyResolutionToPrepare(
       evaluation.result,
       context,
@@ -117,8 +121,12 @@ export class PermissionManager {
     const { signal } = context;
     const id = context.toolCall.id;
     const name = context.toolCall.name;
-    const display = approvalDisplayForExecution(name, context.execution);
-    const action = approvalActionForExecution(name, context.execution);
+    const display =
+      context.execution.display ?? {
+        kind: 'generic',
+        summary: context.execution.description ?? `Approve ${name}`,
+      };
+    const action = context.execution.description ?? `Call ${name}`;
     const startedAt = Date.now();
 
     let response: ApprovalResponse;
@@ -134,13 +142,15 @@ export class PermissionManager {
         { signal },
       );
     } catch (error) {
-      this.trackApprovalResult({
-        policyName,
-        toolName: name,
-        display,
+      this.agent.telemetry.track('permission_approval_result', {
+        policy_name: policyName ?? null,
+        tool_name: name,
+        permission_mode: this.mode,
         result: 'error',
-        durationMs: Date.now() - startedAt,
-        sessionCacheWritten: false,
+        approval_surface: display.kind,
+        duration_ms: Date.now() - startedAt,
+        session_cache_written: false,
+        has_feedback: false,
       });
       const resolved = result.resolveError?.(error);
       return resolved === undefined
@@ -161,14 +171,18 @@ export class PermissionManager {
       sessionApprovalRule,
       result: response,
     });
-    this.trackApprovalResult({
-      policyName,
-      toolName: name,
-      display,
-      result: approvalTelemetryResult(response),
-      durationMs: Date.now() - startedAt,
-      sessionCacheWritten: sessionApprovalRule !== undefined,
-      hasFeedback: response.feedback !== undefined && response.feedback.length > 0,
+    this.agent.telemetry.track('permission_approval_result', {
+      policy_name: policyName ?? null,
+      tool_name: name,
+      permission_mode: this.mode,
+      result:
+        response.decision === 'approved' && response.scope === 'session'
+          ? 'approved_for_session'
+          : response.decision,
+      approval_surface: display.kind,
+      duration_ms: Date.now() - startedAt,
+      session_cache_written: sessionApprovalRule !== undefined,
+      has_feedback: response.feedback !== undefined && response.feedback.length > 0,
     });
 
     const resolved = result.resolveApproval?.(response);
@@ -198,12 +212,8 @@ export class PermissionManager {
     return undefined;
   }
 
-  private effectiveRules(): PermissionRule[] {
-    return [...this.rules, ...(this.parent?.effectiveRules() ?? [])];
-  }
-
-  private addSessionApprovalRule(pattern: string): void {
-    this.localSessionApprovalRulePatterns.add(pattern);
+  private get effectiveRules(): PermissionRule[] {
+    return [...this.rules, ...(this.parent?.effectiveRules ?? [])];
   }
 
   private permissionPolicyResolutionToPrepare(
@@ -255,66 +265,4 @@ export class PermissionManager {
     }
     return prefix;
   }
-
-  private trackPolicyDecision(
-    policyName: string,
-    context: PermissionPolicyContext,
-    result: PermissionPolicyResult,
-  ): void {
-    this.agent.telemetry.track('permission_policy_decision', {
-      policy_name: policyName,
-      tool_name: context.toolCall.name,
-      permission_mode: this.mode,
-      decision: result.kind,
-      ...result.reason,
-    });
-  }
-
-  private trackApprovalResult(input: {
-    readonly policyName: string | undefined;
-    readonly toolName: string;
-    readonly display: ToolInputDisplay;
-    readonly result: 'approved' | 'approved_for_session' | 'rejected' | 'cancelled' | 'error';
-    readonly durationMs: number;
-    readonly sessionCacheWritten: boolean;
-    readonly hasFeedback?: boolean;
-  }): void {
-    const properties: Record<string, TelemetryProperties[string]> = {
-      policy_name: input.policyName ?? null,
-      tool_name: input.toolName,
-      permission_mode: this.mode,
-      result: input.result,
-      approval_surface: input.display.kind,
-      duration_ms: input.durationMs,
-      session_cache_written: input.sessionCacheWritten,
-      has_feedback: input.hasFeedback === true,
-    };
-    this.agent.telemetry.track('permission_approval_result', properties);
-  }
-}
-
-function approvalDisplayForExecution(
-  toolName: string,
-  execution: PermissionPolicyContext['execution'],
-): ToolInputDisplay {
-  return (
-    execution.display ?? {
-      kind: 'generic',
-      summary: execution.description ?? `Approve ${toolName}`,
-    }
-  );
-}
-
-function approvalActionForExecution(
-  toolName: string,
-  execution: PermissionPolicyContext['execution'],
-): string {
-  return execution.description ?? `Call ${toolName}`;
-}
-
-function approvalTelemetryResult(
-  result: ApprovalResponse,
-): 'approved' | 'approved_for_session' | 'rejected' | 'cancelled' {
-  if (result.decision === 'approved' && result.scope === 'session') return 'approved_for_session';
-  return result.decision;
 }
