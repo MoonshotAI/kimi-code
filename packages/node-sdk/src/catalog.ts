@@ -59,6 +59,7 @@ export function catalogModelToAlias(providerId: string, model: CatalogModel): Mo
     maxOutputSize: model.maxOutputSize,
     capabilities: capabilityToStrings(model.capability),
     displayName: model.name,
+    reasoningKey: model.reasoningKey,
   };
 }
 

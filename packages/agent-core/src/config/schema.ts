@@ -42,6 +42,7 @@ export const ModelAliasSchema = z.object({
   maxOutputSize: z.number().int().min(1).optional(),
   capabilities: z.array(z.string()).optional(),
   displayName: z.string().optional(),
+  reasoningKey: z.string().optional(),
 });
 
 export type ModelAlias = z.infer<typeof ModelAliasSchema>;
