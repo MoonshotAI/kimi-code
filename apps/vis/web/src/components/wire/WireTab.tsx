@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useSession } from '../../hooks/useSession';
 import { useWire } from '../../hooks/useWire';
@@ -16,6 +16,11 @@ interface WireTabProps {
 
 export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
   const [agentId, setAgentId] = useState<string>(initialAgentId);
+  // Re-sync when the route changes the prop while this component stays
+  // mounted (e.g. navigating between /sessions/x/agents/a → /agents/b).
+  useEffect(() => {
+    setAgentId(initialAgentId);
+  }, [initialAgentId]);
   const { data: detail } = useSession(sessionId);
   const { data: wire, isLoading, error } = useWire(sessionId, agentId);
   const parentRef = useRef<HTMLDivElement>(null);

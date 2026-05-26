@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { useContext } from '../../hooks/useContext';
 import { useSession } from '../../hooks/useSession';
@@ -15,6 +15,11 @@ interface ContextTabProps {
 
 export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabProps) {
   const [agentId, setAgentId] = useState<string>(initialAgentId);
+  // Re-sync when the route changes the prop while this component stays
+  // mounted (e.g. navigating between /sessions/x/agents/a → /agents/b).
+  useEffect(() => {
+    setAgentId(initialAgentId);
+  }, [initialAgentId]);
   const { data: detail } = useSession(sessionId);
   const { data: ctx, isLoading, error } = useContext(sessionId, agentId);
 
