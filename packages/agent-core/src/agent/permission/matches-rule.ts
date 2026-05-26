@@ -1,8 +1,6 @@
 import picomatch from 'picomatch';
-import regexpEscape from 'regexp.escape';
 
 import type { RunnableToolExecution } from '../../loop/types';
-import { matchesRuleSubject } from '../../tools/support/rule-match';
 import type { PermissionRule } from './types';
 
 /**
@@ -11,7 +9,7 @@ import type { PermissionRule } from './types';
  * Grammar:
  *   pattern    := toolName ( "(" argPattern ")" )?
  *   toolName   := identifier characters (e.g. `Bash`, `mcp__github__*`)
- *   argPattern := any string (may start with `!` for negation)
+ *   argPattern := any string interpreted only by a tool-provided matcher
  *
  * Examples:
  *   "Write"            -> { toolName: "Write" }
@@ -26,15 +24,9 @@ export interface ParsedPattern {
 
 export interface PermissionRuleMatchExecution {
   readonly matchesRule?: RunnableToolExecution['matchesRule'];
-  readonly cwd?: unknown;
-  readonly pathClass?: unknown;
 }
 
-export type PermissionRuleMatchStrategy =
-  | 'tool_name_only'
-  | 'matches_rule'
-  | 'stable_args_fallback'
-  | 'single_field_fallback';
+export type PermissionRuleMatchStrategy = 'tool_name_only' | 'matches_rule';
 
 export interface PermissionRuleMatch {
   readonly rule: PermissionRule;
@@ -45,7 +37,6 @@ export interface PermissionRuleMatch {
 export interface PermissionRuleMatchInput {
   readonly rule: PermissionRule;
   readonly toolName: string;
-  readonly args: unknown;
   readonly execution: PermissionRuleMatchExecution;
 }
 
@@ -79,7 +70,6 @@ export function parsePattern(pattern: string): ParsedPattern {
 export function matchPermissionRule({
   rule,
   toolName,
-  args,
   execution,
 }: PermissionRuleMatchInput): PermissionRuleMatch | undefined {
   let parsed;
@@ -97,60 +87,7 @@ export function matchPermissionRule({
     return { rule, strategy: 'tool_name_only', hasRuleArgs: false };
   }
 
-  if (execution.matchesRule !== undefined) {
-    return execution.matchesRule(parsed.argPattern)
-      ? { rule, strategy: 'matches_rule', hasRuleArgs: true }
-      : undefined;
-  }
-
-  if (matchesRuleSubject(parsed.argPattern, stableSerialize(args))) {
-    return { rule, strategy: 'stable_args_fallback', hasRuleArgs: true };
-  }
-
-  const singleField = singleActualFieldValue(args);
-  if (
-    singleField !== undefined &&
-    matchesRuleSubject(parsed.argPattern, singleFieldSubject(singleField))
-  ) {
-    return { rule, strategy: 'single_field_fallback', hasRuleArgs: true };
-  }
-
-  return undefined;
-}
-
-export function exactArgsRulePattern(toolName: string, args: unknown): string {
-  return `${toolName}(^${regexpEscape(stableSerialize(args))}$)`;
-}
-
-function singleActualFieldValue(args: unknown): unknown {
-  if (args === null || typeof args !== 'object' || Array.isArray(args)) return undefined;
-  const entries = Object.entries(args as Record<string, unknown>).filter(
-    ([, value]) => value !== undefined,
-  );
-  return entries.length === 1 ? entries[0]![1] : undefined;
-}
-
-function singleFieldSubject(value: unknown): string {
-  return typeof value === 'string' ? value : stableSerialize(value);
-}
-
-function stableSerialize(value: unknown): string {
-  if (value === null) return 'null';
-  if (typeof value === 'string') return JSON.stringify(value);
-  if (typeof value === 'number' || typeof value === 'boolean') return JSON.stringify(value);
-  if (value === undefined) return 'undefined';
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableSerialize(item)).join(',')}]`;
-  }
-  if (typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>).toSorted(([left], [right]) =>
-      left.localeCompare(right),
-    );
-    return `{${entries
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableSerialize(item)}`)
-      .join(',')}}`;
-  }
-  if (typeof value === 'bigint') return JSON.stringify(value.toString());
-  if (typeof value === 'symbol') return JSON.stringify(value.description ?? '');
-  return JSON.stringify('[function]');
+  return execution.matchesRule?.(parsed.argPattern) === true
+    ? { rule, strategy: 'matches_rule', hasRuleArgs: true }
+    : undefined;
 }

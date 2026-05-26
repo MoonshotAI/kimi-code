@@ -23,8 +23,8 @@ export type PermissionMode = 'manual' | 'yolo' | 'auto';
 
 /**
  * A single permission rule. `pattern` is the DSL form (`Read(/etc/**)`,
- * `Bash(rm *)`, or bare `Write`). See `matches-rule.ts` for the parser
- * and `matches-rule.ts` for the matcher.
+ * `Bash(rm *)`, or bare `Write`). Rule arguments are interpreted only by
+ * tools that provide a matcher; other tools match by name only.
  */
 export interface PermissionRule {
   readonly decision: PermissionRuleDecision;

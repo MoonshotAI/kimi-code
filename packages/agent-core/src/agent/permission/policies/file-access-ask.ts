@@ -19,7 +19,7 @@ export class SensitiveFileAccessAskPermissionPolicy implements PermissionPolicy 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
     const pathClass = this.agent.runtime.kaos.pathClass();
     const access = firstFileAccess(context, (fileAccess) =>
-      fileAccess.path === undefined ? false : isSensitiveFile(fileAccess.path, pathClass),
+      isSensitiveFile(fileAccess.path, pathClass),
     );
     if (access === undefined) return;
     return {
@@ -43,7 +43,6 @@ export class GitControlPathAccessAskPermissionPolicy implements PermissionPolicy
     if (accesses.length === 0) return;
 
     const directGitAccess = accesses.find((fileAccess) => {
-      if (fileAccess.path === undefined) return false;
       return hasGitPathComponent(fileAccess.path, cwd, pathClass);
     });
     if (directGitAccess !== undefined) {
@@ -56,7 +55,6 @@ export class GitControlPathAccessAskPermissionPolicy implements PermissionPolicy
     const marker = await this.findGitMarker(cwd);
     if (marker === null) return;
     const access = accesses.find((fileAccess) => {
-      if (fileAccess.path === undefined) return false;
       return isGitControlPath(fileAccess.path, marker, pathClass);
     });
     if (access === undefined) return;
@@ -84,7 +82,6 @@ export class CwdOutsideFileAccessAskPermissionPolicy implements PermissionPolicy
     if (cwd.length === 0) return;
     const pathClass = this.agent.runtime.kaos.pathClass();
     const access = firstFileAccess(context, (fileAccess) => {
-      if (fileAccess.path === undefined) return false;
       return !isWithinDirectory(fileAccess.path, cwd, pathClass);
     });
     if (access === undefined) return;

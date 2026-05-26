@@ -28,7 +28,7 @@ import {
   EchoTool,
   FailingTool,
   GatedTool,
-  markReadAnyFileAccesses,
+  markReadFileAccesses,
   ProgressTool,
   StrictArgsTool,
 } from './fixtures/tools';
@@ -304,8 +304,8 @@ describe('runTurn — tool-call behaviour', () => {
     // Two GatedTools start, each blocks until released. If the loop executed
     // them serially we could not have both `started` promises resolve
     // before releasing either.
-    const a = markReadAnyFileAccesses(new GatedTool('gated-a'));
-    const b = markReadAnyFileAccesses(new GatedTool('gated-b'));
+    const a = markReadFileAccesses(new GatedTool('gated-a'));
+    const b = markReadFileAccesses(new GatedTool('gated-b'));
 
     const turnPromise = runTurn({
       tools: [a, b],

@@ -81,7 +81,6 @@ function firstMatchingRule(
     const match = matchPermissionRule({
       rule,
       toolName: context.toolCall.name,
-      args: context.args,
       execution: context.execution,
     });
     if (match !== undefined) return match;

@@ -40,7 +40,6 @@ function matchSessionApprovalRule(
         reason: 'approve for session',
       },
       toolName: context.toolCall.name,
-      args: context.args,
       execution: context.execution,
     });
     if (match !== undefined) return match;

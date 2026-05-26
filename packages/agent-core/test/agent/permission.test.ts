@@ -13,7 +13,6 @@ import {
   type PermissionRule,
 } from '../../src/agent/permission';
 import {
-  exactArgsRulePattern,
   matchPermissionRule,
   parsePattern,
   type PermissionRuleMatchExecution,
@@ -1180,6 +1179,36 @@ describe('Agent-local approve for session', () => {
     expect(requestApproval).toHaveBeenCalledTimes(2);
   });
 
+  it('caches session approvals for tools without argument matchers at tool granularity', async () => {
+    const { manager, requestApproval } = makePermissionManager(async () => ({
+      decision: 'approved',
+      scope: 'session',
+      selectedLabel: 'Approve for this session',
+    }));
+
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: 'call_custom_1',
+          toolName: 'Custom',
+          args: { query: 'first' },
+        }),
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: 'call_custom_2',
+          toolName: 'Custom',
+          args: { query: 'second' },
+        }),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+    expect(manager.sessionApprovalRulePatterns).toContain('Custom');
+  });
+
   it('stores runtime rules with literal glob escaping', async () => {
     const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
@@ -1965,39 +1994,29 @@ describe('Permission rule helpers', () => {
     expect(ruleMatches(permissionRule('Bad(unclosed'), 'Bad', {})).toBe(false);
   });
 
-  it('falls back to stable args and single-field matching when execution has no matcher', () => {
-    const exactArgsPattern = exactArgsRulePattern('Custom', {
-      query: 'a.b',
-      nested: { value: 1 },
-    });
+  it('does not match rule arguments without an execution matcher', () => {
     expect(
-      ruleMatches(permissionRule(exactArgsPattern), 'Custom', {
+      ruleMatches(permissionRule('Custom("query":"a.b")'), 'Custom', {
         nested: { value: 1 },
         query: 'a.b',
-      }),
-    ).toBe(true);
-    expect(
-      ruleMatches(permissionRule(exactArgsPattern), 'Custom', {
-        nested: { value: 1 },
-        query: 'axb',
       }),
     ).toBe(false);
     expect(
       ruleMatches(permissionRule('Bash("command":"git status")'), 'Bash', {
         command: 'git status',
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       ruleMatches(permissionRule('Bash(^git status$)'), 'Bash', {
         command: 'git status',
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       ruleMatches(permissionRule('Bash(^git status$)'), 'Bash', {
         command: 'npm test',
       }),
     ).toBe(false);
-    expect(ruleMatches(permissionRule('Read()'), 'Read', { path: '/workspace/a.ts' })).toBe(true);
+    expect(ruleMatches(permissionRule('Read()'), 'Read', { path: '/workspace/a.ts' })).toBe(false);
     expect(
       ruleMatches(permissionRule('Read([invalid'), 'Read', {
         path: '/workspace/a.ts',
@@ -2167,7 +2186,8 @@ function ruleMatches(
   args: unknown,
   execution: PermissionRuleMatchExecution = {},
 ): boolean {
-  return matchPermissionRule({ rule, toolName, args, execution }) !== undefined;
+  void args;
+  return matchPermissionRule({ rule, toolName, execution }) !== undefined;
 }
 
 function genericDisplay(): ToolInputDisplay {
@@ -2202,10 +2222,7 @@ function testExecution(
     description: testDescription(toolName, args),
     display: testDisplay(toolName, args),
     accesses: testAccesses(toolName, args),
-    approvalRule:
-      ruleSubject === undefined
-        ? exactArgsRulePattern(toolName, args)
-        : literalRulePattern(toolName, ruleSubject),
+    approvalRule: ruleSubject === undefined ? toolName : literalRulePattern(toolName, ruleSubject),
     matchesRule:
       ruleSubject === undefined
         ? undefined
