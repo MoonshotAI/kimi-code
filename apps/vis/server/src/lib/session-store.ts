@@ -21,6 +21,7 @@ interface StateJson {
 export async function listSessions(home: string): Promise<SessionSummary[]> {
   const sessionsDir = join(home, 'sessions');
   const buckets = await readdir(sessionsDir, { withFileTypes: true }).catch(() => []);
+  const index = await readSessionIndex(home);
   const out: SessionSummary[] = [];
   for (const bucket of buckets) {
     if (!bucket.isDirectory()) continue;
@@ -28,7 +29,9 @@ export async function listSessions(home: string): Promise<SessionSummary[]> {
     const sessionDirs = await readdir(bucketDir, { withFileTypes: true }).catch(() => []);
     for (const entry of sessionDirs) {
       if (!entry.isDirectory() || !SESSION_ID_RE.test(entry.name)) continue;
-      const summary = await tryReadSummary(join(bucketDir, entry.name), entry.name, bucket.name);
+      const sessionDir = join(bucketDir, entry.name);
+      const workDir = index.get(entry.name)?.workDir ?? '';
+      const summary = await tryReadSummary(sessionDir, entry.name, workDir);
       if (summary !== null) out.push(summary);
     }
   }
@@ -42,19 +45,20 @@ export async function readSessionDetail(home: string, sessionId: string): Promis
   const state = await readState(sessionDir);
   if (state === null) return null;
   if (state.custom?.['imported_from_kimi_cli'] === true) return null;
+  const index = await readSessionIndex(home);
   const agents = await inventoryAgents(sessionDir, state);
   return {
     sessionId,
-    workDir: '',  // filled by route from index
+    workDir: index.get(sessionId)?.workDir ?? '',
     state,
     agents,
   };
 }
 
-async function tryReadSummary(sessionDir: string, sessionId: string, bucketName: string): Promise<SessionSummary | null> {
+async function tryReadSummary(sessionDir: string, sessionId: string, workDir: string): Promise<SessionSummary | null> {
   const state = await readState(sessionDir);
   if (state === null) {
-    return brokenStateSummary(sessionDir, sessionId, bucketName);
+    return brokenStateSummary(sessionDir, sessionId, workDir);
   }
   if (state.custom?.['imported_from_kimi_cli'] === true) return null;
 
@@ -77,7 +81,7 @@ async function tryReadSummary(sessionDir: string, sessionId: string, bucketName:
   return {
     sessionId,
     sessionDir,
-    workDir: '', // filled in by caller via session_index lookup
+    workDir,
     title: state.title ?? null,
     lastPrompt: state.lastPrompt ?? null,
     isCustomTitle: state.isCustomTitle ?? false,
@@ -91,14 +95,40 @@ async function tryReadSummary(sessionDir: string, sessionId: string, bucketName:
   };
 }
 
-function brokenStateSummary(sessionDir: string, sessionId: string, _bucket: string): SessionSummary {
+function brokenStateSummary(sessionDir: string, sessionId: string, workDir: string): SessionSummary {
   return {
-    sessionId, sessionDir, workDir: '',
+    sessionId, sessionDir, workDir,
     title: null, lastPrompt: null, isCustomTitle: false,
     createdAt: 0, updatedAt: 0,
     agentCount: 0, mainAgentExists: false, mainWireRecordCount: 0,
     wireProtocolVersion: null, health: 'broken_state',
   };
+}
+
+interface SessionIndexEntry {
+  sessionDir: string;
+  workDir: string;
+}
+
+async function readSessionIndex(home: string): Promise<Map<string, SessionIndexEntry>> {
+  const out = new Map<string, SessionIndexEntry>();
+  let raw: string;
+  try {
+    raw = await readFile(join(home, 'session_index.jsonl'), 'utf8');
+  } catch { return out; }
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line) as { sessionId?: string; sessionDir?: string; workDir?: string };
+      if (typeof entry.sessionId === 'string' && typeof entry.sessionDir === 'string') {
+        out.set(entry.sessionId, {
+          sessionDir: entry.sessionDir,
+          workDir: typeof entry.workDir === 'string' ? entry.workDir : '',
+        });
+      }
+    } catch { /* skip malformed */ }
+  }
+  return out;
 }
 
 async function inventoryAgents(sessionDir: string, state: StateJson): Promise<AgentInfo[]> {

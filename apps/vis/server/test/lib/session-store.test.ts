@@ -21,8 +21,20 @@ describe('session-store', () => {
     expect(s.mainWireRecordCount).toBe(11);  // 11 lines in main wire incl. metadata
     expect(s.wireProtocolVersion).toBe('1.1');
     expect(s.health).toBe('ok');
+    expect(s.workDir).toBe('/tmp/work');
     expect(s.createdAt).toBe(Date.parse('2026-05-20T05:59:51.085Z'));
     expect(s.updatedAt).toBe(Date.parse('2026-05-21T03:12:08.000Z'));
+  });
+
+  it('falls back to empty workDir when session is not in the index', async () => {
+    const { home, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    const { rm } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    await rm(join(home, 'session_index.jsonl'));
+    const sessions = await listSessions(home);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]!.workDir).toBe('');
   });
 
   it('skips imported_from_kimi_cli sessions', async () => {
@@ -43,6 +55,7 @@ describe('session-store', () => {
     cleanup = c;
     const d = await readSessionDetail(home, 'session_fixture');
     expect(d).not.toBeNull();
+    expect(d!.workDir).toBe('/tmp/work');
     expect(d!.agents.map((a) => a.agentId).sort()).toEqual(['agent-0', 'main']);
     const main = d!.agents.find((a) => a.agentId === 'main')!;
     expect(main.type).toBe('main');
