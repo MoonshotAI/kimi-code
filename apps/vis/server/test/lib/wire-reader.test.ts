@@ -1,4 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildSessionFixture } from '../fixtures/build';
 import { readAgentWire } from '../../src/lib/wire-reader';
@@ -29,6 +31,46 @@ describe('wire-reader', () => {
       'context.append_message',
       'usage.record',
     ]);
+  });
+
+  it('accepts v1.0 wire and migrates nested tool calls to flat shape', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vis-v10-'));
+    const path = join(dir, 'wire.jsonl');
+    const lines = [
+      JSON.stringify({ type: 'metadata', protocol_version: '1.0', created_at: 1 }),
+      JSON.stringify({
+        type: 'context.append_message',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'calling' }],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'call_1',
+              function: { name: 'Read', arguments: '{"path":"/x"}' },
+            },
+          ],
+        },
+      }),
+    ];
+    await writeFile(path, lines.join('\n') + '\n');
+    try {
+      const result = await readAgentWire(path);
+      expect(result.metadata.protocolVersion).toBe('1.0');
+      const rec = result.records[0]!;
+      expect(rec.type).toBe('context.append_message');
+      const msg = (rec as { message: { toolCalls: unknown[] } }).message;
+      expect(msg.toolCalls).toHaveLength(1);
+      expect(msg.toolCalls[0]).toEqual({
+        type: 'function',
+        id: 'call_1',
+        name: 'Read',
+        arguments: '{"path":"/x"}',
+      });
+      expect(msg.toolCalls[0]).not.toHaveProperty('function');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('rejects unsupported protocol version', async () => {

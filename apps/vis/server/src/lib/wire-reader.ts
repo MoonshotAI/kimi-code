@@ -1,12 +1,13 @@
 import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 
-import type { AgentRecord } from './agent-record-types';
+import {
+  migrateWireRecord,
+  resolveWireMigrations,
+  type WireMigration,
+} from '@moonshot-ai/agent-core/agent/records/migration';
 
-// Hardcoded to keep vitest from pulling agent-core's full runtime (which
-// imports a .yaml asset) when this module is loaded in test environments.
-// Kept in sync with agent-core's AGENT_WIRE_PROTOCOL_VERSION constant.
-const AGENT_WIRE_PROTOCOL_VERSION = '1.1';
+import type { AgentRecord } from './agent-record-types';
 
 export interface WireReadResult {
   metadata: { protocolVersion: string; createdAt: number };
@@ -14,11 +15,18 @@ export interface WireReadResult {
   warnings: string[];
 }
 
+/** Read a single agent's `wire.jsonl`.
+ *
+ *  Each record is migrated to the current `AgentRecord` shape using
+ *  `agent-core`'s migration chain, so older-but-supported wire files
+ *  (e.g. protocol 1.0) are transparently upgraded on read. The metadata
+ *  header retains the on-disk version so the UI can surface it. */
 export async function readAgentWire(path: string): Promise<WireReadResult> {
   const stream = createReadStream(path, { encoding: 'utf8' });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
   let lineNo = 0;
   let metadata: WireReadResult['metadata'] | null = null;
+  let migrations: readonly WireMigration[] = [];
   const records: (AgentRecord & { _lineNo: number })[] = [];
   const warnings: string[] = [];
 
@@ -45,15 +53,23 @@ export async function readAgentWire(path: string): Promise<WireReadResult> {
       if (typeof pv !== 'string' || typeof ca !== 'number') {
         throw new Error(`Wire metadata malformed at line ${lineNo}`);
       }
-      if (pv !== AGENT_WIRE_PROTOCOL_VERSION) {
+      try {
+        migrations = resolveWireMigrations(pv);
+      } catch (err) {
+        // Wrap so the route's error classifier still recognises this case
+        // via the "unsupported protocol" substring.
         throw new Error(
-          `Unsupported protocol version "${pv}" (vis supports ${AGENT_WIRE_PROTOCOL_VERSION})`,
+          `Unsupported protocol version "${pv}": ${(err as Error).message}`,
         );
       }
       metadata = { protocolVersion: pv, createdAt: ca };
       continue;
     }
-    records.push({ ...(parsed as AgentRecord), _lineNo: lineNo });
+    const migrated =
+      migrations.length === 0
+        ? (parsed as Record<string, unknown>)
+        : (migrateWireRecord(parsed as Record<string, unknown> & { type: string }, migrations) as Record<string, unknown>);
+    records.push({ ...(migrated as AgentRecord), _lineNo: lineNo });
   }
   if (metadata === null) {
     throw new Error('Wire file is empty (no metadata)');
