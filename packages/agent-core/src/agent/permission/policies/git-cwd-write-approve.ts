@@ -1,14 +1,10 @@
 import type { Agent } from '../..';
 import { isWithinDirectory } from '../../../tools/policies/path-access';
-import {
-  findGitWorkTreeMarker,
-  type GitWorkTreeMarker,
-} from '../../../tools/support/git-worktree';
+import { findGitWorkTreeMarker } from '../../../tools/support/git-worktree';
 import type { PermissionPolicy, PermissionPolicyContext, PermissionPolicyResult } from '../types';
 import { writeFileAccesses } from './file-access-ask';
 
 export class GitCwdWriteApprovePermissionPolicy implements PermissionPolicy {
-  private readonly gitMarkerCache = new Map<string, GitWorkTreeMarker | null>();
   readonly name = 'git-cwd-write-approve';
 
   constructor(private readonly agent: Agent) {}
@@ -27,18 +23,11 @@ export class GitCwdWriteApprovePermissionPolicy implements PermissionPolicy {
       return;
     }
 
-    const marker = await this.findGitMarker(cwd);
+    const marker = await findGitWorkTreeMarker(this.agent.runtime.kaos, cwd);
     if (marker === null) return;
 
     return {
       kind: 'approve',
     };
-  }
-
-  private async findGitMarker(cwd: string): Promise<GitWorkTreeMarker | null> {
-    if (this.gitMarkerCache.has(cwd)) return this.gitMarkerCache.get(cwd) ?? null;
-    const marker = await findGitWorkTreeMarker(this.agent.runtime.kaos, cwd);
-    this.gitMarkerCache.set(cwd, marker);
-    return marker;
   }
 }

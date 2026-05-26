@@ -1554,7 +1554,7 @@ describe('Default git CWD Write/Edit permission', () => {
     );
   });
 
-  it('caches missing git marker checks across repeated Write/Edit calls in the same cwd', async () => {
+  it('rechecks missing git marker checks across repeated Write/Edit calls in the same cwd', async () => {
     const stat = vi.fn<Kaos['stat']>().mockRejectedValue(new Error('ENOENT'));
     const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
@@ -1572,6 +1572,10 @@ describe('Default git CWD Write/Edit permission', () => {
 
     expect(requestApproval).toHaveBeenCalledTimes(2);
     expect(stat.mock.calls.map(([path]) => path)).toEqual([
+      '/workspace/.git',
+      '/.git',
+      '/workspace/.git',
+      '/.git',
       '/workspace/.git',
       '/.git',
       '/workspace/.git',
@@ -1687,6 +1691,62 @@ describe('Default git CWD Write/Edit permission', () => {
       expect.objectContaining({ policy_name: 'git-cwd-write-approve' }),
     );
   });
+
+  it.each([
+    [
+      'Read',
+      { path: '/workspace/src/a.ts' },
+      { path: '/workspace/.gitdir/config' },
+    ],
+    [
+      'Grep',
+      { pattern: 'TODO', path: '/workspace/src' },
+      { pattern: 'TODO', path: '/workspace/.gitdir' },
+    ],
+    [
+      'Glob',
+      { pattern: '**/*.ts', path: '/workspace/src' },
+      { pattern: '*', path: '/workspace/.gitdir' },
+    ],
+  ] as const)(
+    'rechecks git marker changes before default-approving %s access',
+    async (toolName, firstArgs, secondArgs) => {
+      let markerReady = false;
+      const stat = vi.fn<Kaos['stat']>(async (path) => {
+        if (markerReady && path === '/workspace/.git') return statResult(FILE_MODE);
+        throw notFound(path);
+      });
+      const readText = vi.fn<Kaos['readText']>(async (path) => {
+        if (path === '/workspace/.git') return 'gitdir: .gitdir\n';
+        throw notFound(path);
+      });
+      const { manager, requestApproval, telemetryTrack } = makePermissionManager(
+        async () => ({ decision: 'approved' }),
+        { kaos: createFakeKaos({ stat, readText }) },
+      );
+
+      await expect(
+        manager.beforeToolCall(hookContext({ id: `call_${toolName}_before`, toolName, args: firstArgs })),
+      ).resolves.toBeUndefined();
+      expect(requestApproval).not.toHaveBeenCalled();
+
+      markerReady = true;
+      await expect(
+        manager.beforeToolCall(hookContext({ id: `call_${toolName}_after`, toolName, args: secondArgs })),
+      ).resolves.toBeUndefined();
+
+      expect(requestApproval).toHaveBeenCalledTimes(1);
+      expect(telemetryTrack).toHaveBeenCalledWith(
+        'permission_policy_decision',
+        expect.objectContaining({
+          policy_name: 'git-control-path-access-ask',
+          tool_name: toolName,
+          permission_mode: 'manual',
+          decision: 'ask',
+        }),
+      );
+    },
+  );
 
   it('bypasses approval for a lexical path inside git cwd without resolving parent symlinks', async () => {
     const { kaos } = gitKaos({
@@ -1914,7 +1974,7 @@ describe('Default git CWD Write/Edit permission', () => {
     );
   });
 
-  it('caches git marker checks across repeated Write/Edit calls in the same cwd', async () => {
+  it('rechecks git marker hits across repeated Write/Edit calls in the same cwd', async () => {
     const { kaos, stat } = gitKaos();
     const { manager, requestApproval } = makePermissionManager(
       async () => ({ decision: 'approved' }),
@@ -1930,7 +1990,7 @@ describe('Default git CWD Write/Edit permission', () => {
 
     expect(requestApproval).not.toHaveBeenCalled();
     const markerCalls = stat.mock.calls.filter(([path]) => path === '/workspace/.git');
-    expect(markerCalls).toHaveLength(2);
+    expect(markerCalls).toHaveLength(4);
   });
 });
 

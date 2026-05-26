@@ -30,7 +30,6 @@ export class SensitiveFileAccessAskPermissionPolicy implements PermissionPolicy 
 }
 
 export class GitControlPathAccessAskPermissionPolicy implements PermissionPolicy {
-  private readonly gitMarkerCache = new Map<string, GitWorkTreeMarker | null>();
   readonly name = 'git-control-path-access-ask';
 
   constructor(private readonly agent: Agent) {}
@@ -52,7 +51,7 @@ export class GitControlPathAccessAskPermissionPolicy implements PermissionPolicy
       };
     }
 
-    const marker = await this.findGitMarker(cwd);
+    const marker = await findGitWorkTreeMarker(this.agent.runtime.kaos, cwd);
     if (marker === null) return;
     const access = accesses.find((fileAccess) => {
       return isGitControlPath(fileAccess.path, marker, pathClass);
@@ -62,13 +61,6 @@ export class GitControlPathAccessAskPermissionPolicy implements PermissionPolicy
       kind: 'ask',
       reason: fileAccessReason(access, { git_control_path: true }),
     };
-  }
-
-  private async findGitMarker(cwd: string): Promise<GitWorkTreeMarker | null> {
-    if (this.gitMarkerCache.has(cwd)) return this.gitMarkerCache.get(cwd) ?? null;
-    const marker = await findGitWorkTreeMarker(this.agent.runtime.kaos, cwd);
-    this.gitMarkerCache.set(cwd, marker);
-    return marker;
   }
 }
 
