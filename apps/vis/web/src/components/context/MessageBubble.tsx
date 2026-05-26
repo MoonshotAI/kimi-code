@@ -5,6 +5,7 @@ import type {
   ProjectedMessage,
   ToolCall,
 } from '../../types';
+import { ImagePreview } from '../shared/ImagePreview';
 import { Pill } from '../shared/Pill';
 
 interface MessageBubbleProps {
@@ -199,11 +200,7 @@ function MessageContent({ parts }: { parts: readonly ContentPart[] }): ReactNode
           return <ThinkBlock key={i} text={p.think} />;
         }
         if (p.type === 'image_url') {
-          return (
-            <div key={i} className="font-mono text-[11px] text-fg-2">
-              [image: {p.imageUrl.url}]
-            </div>
-          );
+          return <ImagePreview key={i} url={p.imageUrl.url} />;
         }
         if (p.type === 'audio_url') {
           return (

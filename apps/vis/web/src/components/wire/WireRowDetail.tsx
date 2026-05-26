@@ -9,6 +9,7 @@ import type {
   WireEntry,
 } from '../../types';
 import { CopyButton } from '../shared/CopyButton';
+import { ImagePreview } from '../shared/ImagePreview';
 import { JsonViewer } from '../shared/JsonViewer';
 import { SizePreview } from '../shared/SizePreview';
 
@@ -100,6 +101,27 @@ function renderFriendly(record: AgentRecord) {
       return <MessageDetail message={record.message} />;
     case 'context.append_loop_event':
       return <LoopEventDetail event={record.event} />;
+    case 'turn.prompt':
+    case 'turn.steer':
+      return (
+        <div className="space-y-2">
+          <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+            <FieldRow label="origin" wide>
+              <JsonViewer value={record.origin} defaultOpenDepth={2} />
+            </FieldRow>
+          </div>
+          <div>
+            <div className="mb-1 text-fg-2">
+              input ({record.input.length} part{record.input.length === 1 ? '' : 's'})
+            </div>
+            <div className="space-y-1">
+              {record.input.map((part, i) => (
+                <ContentPartView key={i} part={part} />
+              ))}
+            </div>
+          </div>
+        </div>
+      );
     case 'context.apply_compaction':
     case 'full_compaction.complete':
       return (
@@ -197,12 +219,7 @@ function ContentPartView({ part }: { part: ContentPart }) {
         </div>
       );
     case 'image_url':
-      return (
-        <div className="border border-border bg-surface-0 p-2">
-          <div className="mb-1 text-fg-3">image_url</div>
-          <Mono className="break-all">{part.imageUrl.url}</Mono>
-        </div>
-      );
+      return <ImagePreview url={part.imageUrl.url} />;
     case 'audio_url':
       return (
         <div className="border border-border bg-surface-0 p-2">
