@@ -125,6 +125,7 @@ export class PermissionManager {
       context.execution.display ?? {
         kind: 'generic',
         summary: context.execution.description ?? `Approve ${name}`,
+        detail: context.args,
       };
     const action = context.execution.description ?? `Call ${name}`;
     const startedAt = Date.now();
