@@ -7,7 +7,10 @@ import type {
   McpServerInfo,
   McpStartupMetrics,
   PermissionMode,
+  PluginInfo,
+  PluginSummary,
   PromptInput,
+  ReloadSummary,
   ResumedSessionState,
   SessionPlan,
   SessionStatus,
@@ -273,6 +276,45 @@ export class Session {
   async reconnectMcpServer(name: string): Promise<void> {
     this.ensureOpen();
     await this.rpc.reconnectMcpServer({ sessionId: this.id, name });
+  }
+
+  async listPlugins(): Promise<readonly PluginSummary[]> {
+    this.ensureOpen();
+    return this.rpc.listPlugins();
+  }
+
+  async installPlugin(source: string): Promise<PluginSummary> {
+    this.ensureOpen();
+    return this.rpc.installPlugin(source);
+  }
+
+  async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.setPluginEnabled(id, enabled);
+  }
+
+  async setPluginMcpServerEnabled(
+    id: string,
+    server: string,
+    enabled: boolean,
+  ): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.setPluginMcpServerEnabled(id, server, enabled);
+  }
+
+  async removePlugin(id: string): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.removePlugin(id);
+  }
+
+  async reloadPlugins(): Promise<ReloadSummary> {
+    this.ensureOpen();
+    return this.rpc.reloadPlugins();
+  }
+
+  async getPluginInfo(id: string): Promise<PluginInfo> {
+    this.ensureOpen();
+    return this.rpc.getPluginInfo(id);
   }
 
   async activateSkill(name: string, args?: string | undefined): Promise<void> {

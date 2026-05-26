@@ -25,12 +25,18 @@ import type {
   GetBackgroundOutputPathPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
+  GetPluginInfoPayload,
+  InstallPluginPayload,
   ListSessionsPayload,
   McpServerInfo,
   McpStartupMetrics,
+  PluginInfo,
+  PluginSummary,
   PromptPayload,
   ReconnectMcpServerPayload,
+  ReloadPluginsResult,
   RemoveKimiProviderPayload,
+  RemovePluginPayload,
   RenameSessionPayload,
   ResumeSessionPayload,
   RegisterToolPayload,
@@ -39,6 +45,8 @@ import type {
   SetModelPayload,
   SetModelResult,
   SetPermissionPayload,
+  SetPluginEnabledPayload,
+  SetPluginMcpServerEnabledPayload,
   SetThinkingPayload,
   SkillSummary,
   SteerPayload,
@@ -53,7 +61,9 @@ import type { SDKRPC } from './sdk-api';
 import { proxyWithExtraPayload } from './types';
 import type { PromisableMethods } from '#/utils/types';
 
-import { resolveSessionMcpConfig } from '../mcp';
+import { PluginManager } from '#/plugin';
+
+import { resolveSessionMcpConfig, type SessionMcpConfig } from '../mcp';
 import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
 import { SessionAPIImpl } from '../session/rpc';
 import {
@@ -109,6 +119,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private readonly skillDirs: readonly string[];
   private readonly providerManager: ProviderManager;
   private readonly sessionStore: SessionStore;
+  readonly plugins: PluginManager;
+  private pluginsReady: Promise<void>;
+  private pluginsLoadError: Error | undefined;
 
   constructor(
     protected readonly rpcClient: CoreRPCClient,
@@ -133,6 +146,15 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       resolveOAuthTokenProvider: this.resolveOAuthTokenProvider,
     });
     this.sessionStore = new SessionStore(this.homeDir);
+    this.plugins = new PluginManager({ kimiHomeDir: this.homeDir });
+    // 临时阅读注释：插件状态启动时异步加载；显式 /plugins RPC 会暴露加载错误，普通建 session 尽量不被坏插件状态拖垮。
+    // Capture the error rather than swallow it: mutators and explicit /plugins
+    // reads rethrow so the user sees what's wrong; createSession/resumeSession
+    // degrade silently (no plugin skills, no sessionStart injections) so the harness still
+    // starts. Reload clears the error on success.
+    this.pluginsReady = this.plugins.load().catch((error: unknown) => {
+      this.pluginsLoadError = error instanceof Error ? error : new Error(String(error));
+    });
 
     this.sdk = rpcClient(this);
   }
@@ -145,7 +167,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const modelName = this.providerManager.resolveSelectedModel(options.model);
     const thinkingLevel = this.providerManager.resolveThinkingLevel(options.thinking);
     const permissionMode = options.permission ?? config.defaultPermissionMode;
-    const mcpConfig = await resolveSessionMcpConfig({
+    const baseMcpConfig = await resolveSessionMcpConfig({
       cwd: workDir,
       homeDir: this.homeDir,
     });
@@ -157,6 +179,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       ...summary,
       metadata: options.metadata,
     };
+
+    await this.pluginsReady;
+    const pluginSessionStarts = this.plugins.enabledSessionStarts();
+    const mcpConfig = this.mergePluginMcpConfig(baseMcpConfig);
 
     // Session ctor attaches its own log sink. If anything in the setup-after-
     // ctor block throws, `session.close()` releases the sink (and mcp).
@@ -174,6 +200,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       skills: this.resolveSessionSkillConfig(config),
       mcpConfig,
       telemetry: withTelemetryContext(this.telemetry, { sessionId: summary.id }),
+      pluginSessionStarts,
     });
     try {
       session.metadata = {
@@ -232,10 +259,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     }
 
     const config = this.reloadProviderManager();
-    const mcpConfig = await resolveSessionMcpConfig({
+    const baseMcpConfig = await resolveSessionMcpConfig({
       cwd: summary.workDir,
       homeDir: this.homeDir,
     });
+    await this.pluginsReady;
+    const pluginSessionStarts = this.plugins.enabledSessionStarts();
+    const mcpConfig = this.mergePluginMcpConfig(baseMcpConfig);
     const session = new Session({
       runtime: await this.resolveRuntime(config),
       id: summary.id,
@@ -251,6 +281,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       mcpConfig,
       telemetry: withTelemetryContext(this.telemetry, { sessionId: summary.id }),
       initializeMainAgent: false,
+      pluginSessionStarts,
     });
     try {
       await session.resume();
@@ -535,6 +566,81 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).generateAgentsMd(payload);
   }
 
+  async installPlugin(payload: InstallPluginPayload): Promise<PluginSummary> {
+    // 临时阅读注释：Core RPC 是 TUI/SDK 进入 PluginManager 的唯一通道。
+    await this.pluginsReady;
+    this.assertPluginsLoaded();
+    const record = await this.plugins.install(payload.source);
+    return this.plugins.summaries().find((s) => s.id === record.id)!;
+  }
+
+  async listPlugins(_: EmptyPayload): Promise<readonly PluginSummary[]> {
+    await this.pluginsReady;
+    this.assertPluginsLoaded();
+    return this.plugins.summaries();
+  }
+
+  async setPluginEnabled({ id, enabled }: SetPluginEnabledPayload): Promise<void> {
+    await this.pluginsReady;
+    this.assertPluginsLoaded();
+    await this.plugins.setEnabled(id, enabled);
+  }
+
+  async setPluginMcpServerEnabled({
+    id,
+    server,
+    enabled,
+  }: SetPluginMcpServerEnabledPayload): Promise<void> {
+    await this.pluginsReady;
+    this.assertPluginsLoaded();
+    await this.plugins.setMcpServerEnabled(id, server, enabled);
+  }
+
+  async removePlugin({ id }: RemovePluginPayload): Promise<void> {
+    await this.pluginsReady;
+    this.assertPluginsLoaded();
+    await this.plugins.remove(id);
+  }
+
+  async reloadPlugins(_: EmptyPayload): Promise<ReloadPluginsResult> {
+    try {
+      const summary = await this.plugins.reload();
+      this.pluginsLoadError = undefined;
+      return summary;
+    } catch (error) {
+      this.pluginsLoadError = error instanceof Error ? error : new Error(String(error));
+      throw new KimiError(
+        ErrorCodes.PLUGIN_LOAD_FAILED,
+        `Failed to reload plugins: ${this.pluginsLoadError.message}`,
+        { cause: error, details: { kimiHomeDir: this.homeDir } },
+      );
+    }
+  }
+
+  async getPluginInfo({ id }: GetPluginInfoPayload): Promise<PluginInfo> {
+    await this.pluginsReady;
+    this.assertPluginsLoaded();
+    const info = this.plugins.info(id);
+    if (info === undefined) {
+      throw new KimiError(
+        ErrorCodes.PLUGIN_NOT_FOUND,
+        `Plugin "${id}" is not installed`,
+        { details: { id } },
+      );
+    }
+    return info;
+  }
+
+  private assertPluginsLoaded(): void {
+    if (this.pluginsLoadError === undefined) return;
+    throw new KimiError(
+      ErrorCodes.PLUGIN_LOAD_FAILED,
+      `Plugin state failed to load: ${this.pluginsLoadError.message}. ` +
+        `Fix the file at ${this.homeDir}/plugins/installed.json and run /plugins reload.`,
+      { cause: this.pluginsLoadError, details: { kimiHomeDir: this.homeDir } },
+    );
+  }
+
   private async resolveRuntime(config: KimiConfig): Promise<RuntimeConfig> {
     if (this.runtime !== undefined) return this.runtime;
     const runtime = await createRuntimeConfig({
@@ -552,7 +658,20 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       userHomeDir: this.userHomeDir,
       explicitDirs,
       extraDirs: config.extraSkillDirs,
+      // 临时阅读注释：插件 skills 用 pluginSkillRoots 传入，原因是这些 root 还携带插件级 skillInstructions。
+      pluginSkillRoots: this.plugins.pluginSkillRoots(),
       mergeAllAvailableSkills: config.mergeAllAvailableSkills,
+    };
+  }
+
+  private mergePluginMcpConfig(base: SessionMcpConfig | undefined): SessionMcpConfig | undefined {
+    const pluginServers = this.plugins.enabledMcpServers();
+    if (Object.keys(pluginServers).length === 0) return base;
+    return {
+      servers: {
+        ...(base?.servers ?? {}),
+        ...pluginServers,
+      },
     };
   }
 

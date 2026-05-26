@@ -19,6 +19,7 @@ export interface SkillDefinition {
   readonly content: string;
   readonly metadata: SkillMetadata;
   readonly source: SkillSource;
+  readonly plugin?: SkillPluginContext;
   readonly mermaid?: string | undefined;
   readonly d2?: string;
 }
@@ -35,6 +36,12 @@ export interface SkillSummary {
 export interface SkillRoot {
   readonly path: string;
   readonly source: SkillSource;
+  readonly plugin?: SkillPluginContext;
+}
+
+export interface SkillPluginContext {
+  readonly id: string;
+  readonly instructions?: string;
 }
 
 export interface SkippedSkill {

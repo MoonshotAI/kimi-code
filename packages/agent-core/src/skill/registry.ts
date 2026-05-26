@@ -67,12 +67,23 @@ export class SkillRegistry {
   }
 
   renderSkillPrompt(skill: SkillDefinition, rawArgs: string): string {
+    // 临时阅读注释：所有 Skill 工具加载 skill 的内容最终都会走这里，包括插件贡献的 skill。
     const argumentNames = skillArgumentNames(skill.metadata);
-    return expandSkillParameters(skill.content, rawArgs, {
+    const content = expandSkillParameters(skill.content, rawArgs, {
       skillDir: skill.dir,
       sessionId: this.sessionId,
       argumentNames,
     });
+    const plugin = skill.plugin;
+    if (plugin === undefined) return content;
+    const instructions = plugin.instructions;
+    if (instructions === undefined || instructions.trim().length === 0) return content;
+    // 临时阅读注释：插件专属说明必须贴在 skill 正文旁边；这比只在 session 开头提醒更稳定。
+    return (
+      `<kimi-plugin-instructions plugin="${escapeAttr(plugin.id)}">\n` +
+      `${instructions}\n` +
+      `</kimi-plugin-instructions>\n\n${content}`
+    );
   }
 
   listSkills(): readonly SkillDefinition[] {
@@ -147,4 +158,8 @@ function formatModelSkill(skill: SkillDefinition): readonly string[] {
 
 function truncate(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
+}
+
+function escapeAttr(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
 }

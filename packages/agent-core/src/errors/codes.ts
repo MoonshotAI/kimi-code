@@ -58,6 +58,9 @@ export const ErrorCodes = {
   MCP_STARTUP_FAILED: 'mcp.startup_failed',
   MCP_TOOL_NAME_COLLISION: 'mcp.tool_name_collision',
 
+  PLUGIN_NOT_FOUND: 'plugin.not_found',
+  PLUGIN_LOAD_FAILED: 'plugin.load_failed',
+
   REQUEST_INVALID: 'request.invalid',
   REQUEST_WORK_DIR_REQUIRED: 'request.work_dir_required',
   REQUEST_PROMPT_INPUT_EMPTY: 'request.prompt_input_empty',
@@ -334,6 +337,19 @@ export const KIMI_ERROR_INFO = {
     retryable: false,
     public: true,
     action: 'Rename one of the colliding MCP tools or servers so their qualified names are unique.',
+  },
+
+  'plugin.not_found': {
+    title: 'Plugin not found',
+    retryable: false,
+    public: true,
+    action: 'List installed plugins via /plugins and check the requested id.',
+  },
+  'plugin.load_failed': {
+    title: 'Plugin state failed to load',
+    retryable: true,
+    public: true,
+    action: 'Fix the installed.json file under $KIMI_CODE_HOME/plugins/ and run /plugins reload.',
   },
 
   'request.invalid': {

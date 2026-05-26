@@ -9,6 +9,7 @@ import type { SessionMeta } from '#/session';
 import type { BackgroundTaskInfo } from '#/tools/builtin';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
+import type { PluginInfo, PluginSummary, ReloadSummary } from '#/plugin';
 import type { UsageStatus } from './events';
 import type { WithAgentId, WithSessionId } from './types';
 
@@ -200,6 +201,32 @@ export interface ReconnectMcpServerPayload {
   readonly name: string;
 }
 
+export interface InstallPluginPayload {
+  readonly source: string;
+}
+
+export interface SetPluginEnabledPayload {
+  readonly id: string;
+  readonly enabled: boolean;
+}
+
+export interface SetPluginMcpServerEnabledPayload {
+  readonly id: string;
+  readonly server: string;
+  readonly enabled: boolean;
+}
+
+export interface RemovePluginPayload {
+  readonly id: string;
+}
+
+export interface GetPluginInfoPayload {
+  readonly id: string;
+}
+
+export type ReloadPluginsResult = ReloadSummary;
+export type { PluginSummary, PluginInfo };
+
 export interface RenameSessionPayload {
   readonly title: string;
 }
@@ -270,4 +297,11 @@ export interface CoreAPI extends SessionAPIWithId {
   forkSession: (payload: ForkSessionPayload) => ResumeSessionResult;
   listSessions: (payload: ListSessionsPayload) => readonly SessionSummary[];
   exportSession: (payload: ExportSessionPayload) => ExportSessionResult;
+  listPlugins: (payload: EmptyPayload) => readonly PluginSummary[];
+  installPlugin: (payload: InstallPluginPayload) => PluginSummary;
+  setPluginEnabled: (payload: SetPluginEnabledPayload) => void;
+  setPluginMcpServerEnabled: (payload: SetPluginMcpServerEnabledPayload) => void;
+  removePlugin: (payload: RemovePluginPayload) => void;
+  reloadPlugins: (payload: EmptyPayload) => ReloadPluginsResult;
+  getPluginInfo: (payload: GetPluginInfoPayload) => PluginInfo;
 }

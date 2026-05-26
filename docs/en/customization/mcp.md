@@ -17,6 +17,8 @@ Project entries override user-level entries with the same name.
 
 The easiest entry point is running `/mcp-config` in the TUI, which guides you through adding, editing, or removing servers. To check connection status, run `/mcp`.
 
+Plugins can also declare MCP servers in `plugin.json`. Plugin-declared servers are not started when the plugin is installed; enable each server explicitly with `/plugins mcp enable <plugin-id> <server>` and start a new session. See [Plugins](./plugins.md) for details.
+
 The top-level shape of `mcp.json` is:
 
 ```json

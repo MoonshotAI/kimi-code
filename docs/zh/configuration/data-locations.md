@@ -28,6 +28,9 @@ export KIMI_CODE_HOME="$HOME/.config/kimi-code"
 $KIMI_CODE_HOME  (默认 ~/.kimi-code)
 ├── config.toml             # 用户配置
 ├── mcp.json                # 用户级 MCP server 声明（可选）
+├── plugins/
+│   ├── installed.json      # 已安装 plugin 记录与能力状态
+│   └── managed/            # Kimi Code CLI 管理的 zip 安装 plugins
 ├── session_index.jsonl     # 会话索引
 ├── credentials/            # OAuth 凭据根目录（目录 0o700、文件 0o600）
 │   ├── <name>.json         # 托管 Kimi / Open Platform 等 provider OAuth 凭据
@@ -68,6 +71,8 @@ $KIMI_CODE_HOME  (默认 ~/.kimi-code)
 `config.toml` 是 Kimi Code CLI 的主配置文件，存放供应商、模型、循环控制等用户级设置。详见 [配置文件](./config-files.md)。
 
 `mcp.json` 是用户级 MCP server 声明，会与项目内的 `.kimi-code/mcp.json` 合并加载。字段与项目级文件相同，详见 [MCP](../customization/mcp.md)。
+
+`plugins/installed.json` 记录已安装的 plugins、每个 plugin 是否启用，以及通过 `/plugins mcp enable` 显式启用的 plugin MCP servers 等能力状态。本地 plugin 安装只保存源路径；Zip URL 安装会解压到 `plugins/managed/<id>/`。详见 [Plugins](../customization/plugins.md)。
 
 OAuth 凭据以文件形式存放在数据根下的 `credentials/` 子目录，目录权限 `0o700`、文件权限 `0o600`，仅当前用户可读写。其中：
 
@@ -128,4 +133,5 @@ Kimi Code CLI 在首次需要 ripgrep 时会自动下载并缓存。下载过程
 | 清除托管 Kimi / Open Platform OAuth 登录态 | 运行 `/logout`（仅清理当前供应商的 OAuth），或删除对应 `~/.kimi-code/credentials/<name>.json` |
 | 清除 MCP server OAuth 登录态 | 删除 `~/.kimi-code/credentials/mcp/` 目录；`/logout` **不会**清理 MCP 的 OAuth 凭据 |
 | 移除用户级 MCP 声明 | 删除 `~/.kimi-code/mcp.json` |
+| 清理 plugin 安装记录和托管 zip plugins | 删除 `~/.kimi-code/plugins/` 目录；本地 plugin 源码目录不会被删除 |
 | 清空用户级 Skills | 删除 `~/.kimi-code/skills/` 目录 |
