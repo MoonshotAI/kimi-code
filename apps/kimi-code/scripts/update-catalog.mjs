@@ -15,7 +15,16 @@ const outFile = resolveOutputFile(process.argv.slice(2));
 const modelsUrl = process.env.MODELS_DEV_URL || "https://models.dev/api.json";
 
 const KEEP_PROVIDER = new Set(["id", "name", "api", "env", "npm", "type", "models"]);
-const KEEP_MODEL = new Set(["id", "name", "family", "limit", "tool_call", "reasoning", "modalities"]);
+const KEEP_MODEL = new Set([
+  "id",
+  "name",
+  "family",
+  "limit",
+  "tool_call",
+  "reasoning",
+  "interleaved",
+  "modalities",
+]);
 
 function resolveOutputFile(args) {
   const index = args.indexOf("--out");

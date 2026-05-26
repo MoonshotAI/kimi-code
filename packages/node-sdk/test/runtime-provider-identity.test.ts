@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { KimiConfig } from '@moonshot-ai/agent-core';
-import { createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
+import { createKimiDefaultHeaders, KIMI_CODE_PLATFORM } from '@moonshot-ai/kimi-code-oauth';
 
 import { resolveRuntimeProvider } from '../../agent-core/src/providers/runtime-provider';
 import { TEST_IDENTITY } from './test-identity';
@@ -52,7 +52,7 @@ describe('runtime provider identity headers', () => {
       type: 'kimi',
       defaultHeaders: expect.objectContaining({
         'User-Agent': 'kimi-code-cli/0.0.0-test',
-        'X-Msh-Platform': 'kimi-code-cli',
+        'X-Msh-Platform': KIMI_CODE_PLATFORM,
         'X-Msh-Version': '0.0.0-test',
         'X-Msh-Device-Name': expect.any(String),
         'X-Msh-Device-Model': expect.any(String),
@@ -97,7 +97,7 @@ describe('runtime provider identity headers', () => {
       defaultHeaders: expect.objectContaining({
         'User-Agent': 'Custom/1',
         'X-Msh-Version': 'override-version',
-        'X-Msh-Platform': 'kimi-code-cli',
+        'X-Msh-Platform': KIMI_CODE_PLATFORM,
       }),
     });
   });

@@ -350,3 +350,66 @@ describe('hydrateProjectedEntries', () => {
     expect(out).toContain('✗ Failed');
   });
 });
+
+describe('hydrateTodoPanelFromResume', () => {
+  function makeHooks(state: TUIState) {
+    return {
+      setAppState: vi.fn(),
+      appendEntry: vi.fn(),
+      setTodoList: (todos: Parameters<typeof setTodoList>[1]) => setTodoList(state, todos),
+      emitError: vi.fn(),
+    };
+  }
+
+  it('clears the panel when all resumed todos are done', async () => {
+    const state = makeTuiState();
+    const session = sessionWithToolStore({
+      todo: [
+        { title: 'A', status: 'done' },
+        { title: 'B', status: 'done' },
+      ],
+    });
+    await hydrateTranscriptFromReplay(state, makeHooks(state), session);
+    expect(state.todoPanel.isEmpty()).toBe(true);
+    expect(state.todoPanelContainer.children.length).toBe(0);
+  });
+
+  it('restores pending and in-progress todos', async () => {
+    const state = makeTuiState();
+    const session = sessionWithToolStore({
+      todo: [
+        { title: 'A', status: 'done' },
+        { title: 'B', status: 'in_progress' },
+      ],
+    });
+    await hydrateTranscriptFromReplay(state, makeHooks(state), session);
+    expect(state.todoPanel.getTodos()).toEqual([
+      { title: 'A', status: 'done' },
+      { title: 'B', status: 'in_progress' },
+    ]);
+    expect(state.todoPanelContainer.children.length).toBe(1);
+  });
+
+  it('clears the panel when the tool store has no todo key', async () => {
+    const state = makeTuiState();
+    const session = sessionWithToolStore({});
+    await hydrateTranscriptFromReplay(state, makeHooks(state), session);
+    expect(state.todoPanel.isEmpty()).toBe(true);
+    expect(state.todoPanelContainer.children.length).toBe(0);
+  });
+
+  it('filters out malformed todo items', async () => {
+    const state = makeTuiState();
+    const session = sessionWithToolStore({
+      todo: [
+        { title: 'Valid', status: 'pending' },
+        { title: '', status: 'done' },
+        { status: 'in_progress' },
+        'not-an-object',
+      ],
+    });
+    await hydrateTranscriptFromReplay(state, makeHooks(state), session);
+    expect(state.todoPanel.getTodos()).toEqual([{ title: 'Valid', status: 'pending' }]);
+    expect(state.todoPanelContainer.children.length).toBe(1);
+  });
+});

@@ -139,6 +139,10 @@ function hydrateTodoPanelFromResume(
   const todos = rawTodos
     .filter((todo): todo is TodoItem => isTodoItemShape(todo))
     .map((todo) => ({ title: todo.title, status: todo.status }));
+  if (todos.length > 0 && todos.every((t) => t.status === 'done')) {
+    hooks.setTodoList([]);
+    return;
+  }
   hooks.setTodoList(todos);
 }
 

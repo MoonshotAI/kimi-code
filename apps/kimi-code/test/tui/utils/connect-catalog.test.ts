@@ -20,18 +20,10 @@ describe('resolveConnectCatalogRequest', () => {
         allowBuiltInFallback: true,
       },
     });
-    expect(resolveConnectCatalogRequest('ignored text')).toEqual({
-      kind: 'ok',
-      request: {
-        url: DEFAULT_CATALOG_URL,
-        preferBuiltIn: true,
-        allowBuiltInFallback: true,
-      },
-    });
   });
 
-  it('forces an online fetch when --refresh is requested', () => {
-    expect(resolveConnectCatalogRequest('--refresh')).toEqual({
+  it('forces an online fetch when refresh is requested', () => {
+    expect(resolveConnectCatalogRequest('refresh')).toEqual({
       kind: 'ok',
       request: {
         url: DEFAULT_CATALOG_URL,
@@ -39,7 +31,7 @@ describe('resolveConnectCatalogRequest', () => {
         allowBuiltInFallback: true,
       },
     });
-    expect(resolveConnectCatalogRequest('  --refresh  ')).toEqual({
+    expect(resolveConnectCatalogRequest('  refresh  ')).toEqual({
       kind: 'ok',
       request: {
         url: DEFAULT_CATALOG_URL,
@@ -49,23 +41,7 @@ describe('resolveConnectCatalogRequest', () => {
     });
   });
 
-  it('treats explicit catalog URLs as authoritative and ignores --refresh on them', () => {
-    expect(resolveConnectCatalogRequest('--url=https://internal.example/catalog.json')).toEqual({
-      kind: 'ok',
-      request: {
-        url: 'https://internal.example/catalog.json',
-        preferBuiltIn: false,
-        allowBuiltInFallback: false,
-      },
-    });
-    expect(resolveConnectCatalogRequest('--url https://internal.example/catalog.json')).toEqual({
-      kind: 'ok',
-      request: {
-        url: 'https://internal.example/catalog.json',
-        preferBuiltIn: false,
-        allowBuiltInFallback: false,
-      },
-    });
+  it('treats explicit catalog URLs as authoritative and ignores refresh on them', () => {
     expect(resolveConnectCatalogRequest('https://internal.example/catalog.json')).toEqual({
       kind: 'ok',
       request: {
@@ -75,7 +51,17 @@ describe('resolveConnectCatalogRequest', () => {
       },
     });
     expect(
-      resolveConnectCatalogRequest('--refresh --url=https://internal.example/catalog.json'),
+      resolveConnectCatalogRequest('refresh https://internal.example/catalog.json'),
+    ).toEqual({
+      kind: 'ok',
+      request: {
+        url: 'https://internal.example/catalog.json',
+        preferBuiltIn: false,
+        allowBuiltInFallback: false,
+      },
+    });
+    expect(
+      resolveConnectCatalogRequest('https://internal.example/catalog.json refresh'),
     ).toEqual({
       kind: 'ok',
       request: {
@@ -86,38 +72,36 @@ describe('resolveConnectCatalogRequest', () => {
     });
   });
 
-  it('rejects --url when no value or a non-URL value is provided', () => {
-    const expectedMessage =
-      '--url requires an http(s) URL value, e.g. /connect --url=https://example.com/catalog.json';
-    expect(resolveConnectCatalogRequest('--url')).toEqual({
+  it('rejects unsupported flags', () => {
+    const flagMessage = (flag: string) =>
+      `Unexpected flag "${flag}". Use /connect [url] [refresh] instead.`;
+    expect(resolveConnectCatalogRequest('--refresh')).toEqual({
       kind: 'error',
-      message: expectedMessage,
+      message: flagMessage('--refresh'),
     });
-    expect(resolveConnectCatalogRequest('--url=')).toEqual({
+    expect(resolveConnectCatalogRequest('--url=https://internal.example/catalog.json')).toEqual({
       kind: 'error',
-      message: expectedMessage,
+      message: flagMessage('--url=https://internal.example/catalog.json'),
     });
-    expect(resolveConnectCatalogRequest('  --url  ')).toEqual({
+    expect(resolveConnectCatalogRequest('--url https://internal.example/catalog.json')).toEqual({
       kind: 'error',
-      message: expectedMessage,
+      message: flagMessage('--url'),
     });
-    expect(resolveConnectCatalogRequest('--refresh --url')).toEqual({
+  });
+
+  it('rejects non-URL bare tokens', () => {
+    expect(resolveConnectCatalogRequest('ignored text')).toEqual({
       kind: 'error',
-      message: expectedMessage,
+      message: 'Unknown argument "ignored". Usage: /connect [url] [refresh]',
     });
-    // Flag-like tokens after --url must not be swallowed as the URL value.
-    expect(resolveConnectCatalogRequest('--url --refresh')).toEqual({
+  });
+
+  it('rejects multiple URLs', () => {
+    expect(
+      resolveConnectCatalogRequest('https://a.com/x.json https://b.com/y.json'),
+    ).toEqual({
       kind: 'error',
-      message: expectedMessage,
-    });
-    // Plain non-URL tokens must also be rejected, not silently used.
-    expect(resolveConnectCatalogRequest('--url not-a-url')).toEqual({
-      kind: 'error',
-      message: expectedMessage,
-    });
-    expect(resolveConnectCatalogRequest('--url=ftp://example.com/x')).toEqual({
-      kind: 'error',
-      message: expectedMessage,
+      message: 'Only one catalog URL can be provided. Got "https://a.com/x.json" and "https://b.com/y.json".',
     });
   });
 });

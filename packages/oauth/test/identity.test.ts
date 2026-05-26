@@ -9,6 +9,7 @@ import {
   createKimiDeviceHeaders,
   createKimiDeviceId,
   createKimiUserAgent,
+  KIMI_CODE_PLATFORM,
 } from '../src/identity';
 
 const tmpRoots: string[] = [];
@@ -48,7 +49,7 @@ describe('Kimi identity factories', () => {
       version: '1.2.3-test',
     });
 
-    expect(headers['X-Msh-Platform']).toBe('kimi-code-cli');
+    expect(headers['X-Msh-Platform']).toBe(KIMI_CODE_PLATFORM);
     expect(headers['X-Msh-Version']).toBe('1.2.3-test');
     expect(headers['X-Msh-Device-Name']).toBeTruthy();
     expect(headers['X-Msh-Device-Model']).toBeTruthy();

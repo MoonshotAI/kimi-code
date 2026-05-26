@@ -31,6 +31,7 @@ export {
   createKimiDeviceHeaders,
   createKimiDeviceId,
   createKimiUserAgent,
+  KIMI_CODE_PLATFORM,
 } from './identity';
 export type { KimiHostIdentity, KimiIdentityOptions } from './identity';
 

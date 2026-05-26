@@ -9,10 +9,17 @@ export interface FileSystemAgentRecordPersistenceOptions {
   readonly onError?: ((error: unknown) => void) | undefined;
 }
 
+export interface InMemoryAgentRecordPersistenceOptions {
+  readonly onRecord?: ((record: AgentRecord) => void) | undefined;
+}
+
 export class InMemoryAgentRecordPersistence implements AgentRecordPersistence {
   readonly records: AgentRecord[] = [];
 
-  constructor(records: readonly AgentRecord[] = []) {
+  constructor(
+    records: readonly AgentRecord[] = [],
+    private readonly options: InMemoryAgentRecordPersistenceOptions = {},
+  ) {
     this.records.push(...records);
   }
 
@@ -24,6 +31,7 @@ export class InMemoryAgentRecordPersistence implements AgentRecordPersistence {
 
   append(input: AgentRecord): void {
     this.records.push(input);
+    this.options.onRecord?.(input);
   }
 
   rewrite(records: readonly AgentRecord[]): void {

@@ -355,16 +355,21 @@ describe('KimiTUI message flow', () => {
   it('tracks blocked slash commands as invalid without counting them as executed commands', async () => {
     const { driver, harness } = await makeDriver();
     driver.state.appState.isStreaming = true;
-    harness.track.mockClear();
 
-    driver.handleUserInput('/new');
-    await Promise.resolve();
+    for (const command of ['/new', '/model', '/sessions']) {
+      harness.track.mockClear();
 
-    expect(harness.track).toHaveBeenCalledWith('input_command_invalid', {
-      reason: 'blocked',
-      command: 'new',
-    });
-    expect(harness.track).not.toHaveBeenCalledWith('input_command', { command: 'new' });
+      driver.handleUserInput(command);
+      await Promise.resolve();
+
+      expect(harness.track).toHaveBeenCalledWith('input_command_invalid', {
+        reason: 'blocked',
+        command: command.slice(1),
+      });
+      expect(harness.track).not.toHaveBeenCalledWith('input_command', {
+        command: command.slice(1),
+      });
+    }
   });
 
   it('tracks Shift-Tab mode switches through the editor handler', async () => {

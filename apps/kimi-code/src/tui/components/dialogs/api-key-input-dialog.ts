@@ -106,7 +106,7 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
     const subtitleLine = truncateToWidth(subtitleStyled, innerWidth, '…');
     const footerLine = truncateToWidth(footerStyled, innerWidth, '…');
     const rawInputLine = this.input.render(innerWidth)[0] ?? '> ';
-    const inputLine = maskInputLine(rawInputLine);
+    const inputLine = this.input.getValue() === '' ? rawInputLine : maskInputLine(rawInputLine);
 
     const contentLines: string[] = [titleLine, '', subtitleLine, '', inputLine, '', footerLine];
 

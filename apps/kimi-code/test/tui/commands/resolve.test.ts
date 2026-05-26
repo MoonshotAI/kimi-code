@@ -48,6 +48,39 @@ describe('resolveSlashCommandInput', () => {
       commandName: 'init',
       reason: 'streaming',
     });
+    expect(resolve('/model', { isStreaming: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'model',
+      reason: 'streaming',
+    });
+    expect(resolve('/sessions', { isStreaming: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'sessions',
+      reason: 'streaming',
+    });
+    expect(resolve('/resume', { isStreaming: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'resume',
+      reason: 'streaming',
+    });
+  });
+
+  it('blocks model and session pickers while compacting', () => {
+    expect(resolve('/model', { isCompacting: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'model',
+      reason: 'compacting',
+    });
+    expect(resolve('/sessions', { isCompacting: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'sessions',
+      reason: 'compacting',
+    });
+    expect(resolve('/resume', { isCompacting: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'resume',
+      reason: 'compacting',
+    });
   });
 
   it('allows always-available built-ins while streaming', () => {

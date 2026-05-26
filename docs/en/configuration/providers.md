@@ -29,6 +29,19 @@ ANTHROPIC_BASE_URL = "https://my-proxy.example.com"
 
 The most common ways to switch providers are: use the `/model` slash command inside the TUI to pick from already-configured models, or edit `config.toml` directly to adjust the `[providers.*]` and `[models.*]` tables. See [Config files](./config-files.md) for the full field reference.
 
+## `/connect` and the model catalog
+
+Instead of writing `[providers.*]` and `[models.*]` tables by hand, run the `/connect` slash command inside the TUI to add a provider from a **model catalog**. The catalog lists known providers and models together with their context window, output limit, and capabilities. `/connect` prompts you to pick a provider and a model, asks for an API key, and writes the resulting `[providers.<name>]` and `[models.<alias>]` entries to `config.toml`.
+
+The default catalog is bundled with the CLI, so `/connect` works offline. Two flags change the catalog source:
+
+- `/connect --refresh` fetches the latest catalog from [models.dev](https://models.dev/) before showing the picker.
+- `/connect --url=<catalog-url>` reads the catalog from a custom URL that follows the same format. Only `http://` and `https://` URLs are accepted.
+
+`/connect` only configures the provider types listed in the table above. For other provider types, configure them by hand in `config.toml` as described in the per-type sections below.
+
+`/logout` works on `/connect`-configured providers too: it removes the corresponding `[providers.<name>]` entry from `config.toml`.
+
 ## `kimi`
 
 `kimi` connects to the Moonshot AI API using the OpenAI-compatible protocol.
@@ -74,6 +87,8 @@ max_context_size = 200000
 ## `openai`
 
 `openai` corresponds to the OpenAI Chat Completions protocol and can also be used to connect to any third-party service that speaks the same protocol (simply override `base_url`). Thinking, vision, and tool-call capabilities are inferred automatically from the model name.
+
+Third-party reasoner models (DeepSeek, Qwen, One API and other gateway-fronted services) work out of the box: thinking content is round-tripped under the de facto `reasoning_content` field, and `reasoning_effort` is auto-injected when the conversation contains prior thinking so gateways with strict validation accept the request. If a gateway uses a non-standard field name, override it via `reasoning_key` on the model alias — see [`config-files.md`](./config-files.md#models).
 
 - Default `base_url`: `https://api.openai.com/v1`
 - Environment variables: `OPENAI_API_KEY`, `OPENAI_BASE_URL`

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import { KIMI_CODE_PLATFORM } from '@moonshot-ai/kimi-code-oauth';
 import type * as KosongModule from '@moonshot-ai/kosong';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -214,7 +215,7 @@ describe('Session.prompt events', () => {
       expect(fakeProviderState.providerConfigs[0]).toMatchObject({
         type: 'kimi',
         defaultHeaders: expect.objectContaining({
-          'X-Msh-Platform': 'kimi-code-cli',
+          'X-Msh-Platform': KIMI_CODE_PLATFORM,
           'User-Agent': 'kimi-code-cli/0.0.0-test',
         }),
       });

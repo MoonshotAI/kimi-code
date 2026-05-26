@@ -1,6 +1,9 @@
+import type { createKimiDeviceId as createKimiDeviceIdFn } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { runPrompt } from '#/cli/run-prompt';
+
+type CreateKimiDeviceId = typeof createKimiDeviceIdFn;
 
 const mocks = vi.hoisted(() => {
   const eventHandlers = new Set<(event: any) => void>();
@@ -64,6 +67,9 @@ const mocks = vi.hoisted(() => {
     setTelemetryContext: vi.fn(),
     lifecycleTrack: vi.fn(),
     withTelemetryContext: vi.fn(() => ({ track: vi.fn() })),
+    createKimiDeviceId: vi.fn<CreateKimiDeviceId>(() => 'device-1'),
+    resolveKimiHome: vi.fn((homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home'),
+    harnessCreatesDeviceIdOnConstruction: false,
   };
 });
 
@@ -71,8 +77,9 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();
   return {
     ...actual,
+    resolveKimiHome: mocks.resolveKimiHome,
     KimiHarness: class {
-      homeDir = '/tmp/kimi-code-test-home';
+      homeDir: string;
       auth = { getCachedAccessToken: mocks.harnessGetCachedAccessToken };
       ensureConfigFile = mocks.harnessEnsureConfigFile;
       getConfig = mocks.harnessGetConfig;
@@ -83,6 +90,11 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
       track = mocks.harnessTrack;
 
       constructor(...args: unknown[]) {
+        const options = args[0] as { readonly homeDir?: string } | undefined;
+        this.homeDir = options?.homeDir ?? '/tmp/kimi-code-test-home';
+        if (mocks.harnessCreatesDeviceIdOnConstruction) {
+          mocks.createKimiDeviceId(this.homeDir);
+        }
         mocks.kimiHarnessConstructor(...args);
       }
     },
@@ -95,7 +107,7 @@ vi.mock('@moonshot-ai/kimi-code-oauth', async () => {
   );
   return {
     ...actual,
-    createKimiDeviceId: vi.fn(() => 'device-1'),
+    createKimiDeviceId: mocks.createKimiDeviceId,
     KIMI_CODE_PROVIDER_NAME: 'kimi-code',
   };
 });
@@ -169,6 +181,11 @@ describe('runPrompt', () => {
   afterEach(() => {
     vi.clearAllMocks();
     mocks.eventHandlers.clear();
+    mocks.createKimiDeviceId.mockImplementation(() => 'device-1');
+    mocks.resolveKimiHome.mockImplementation(
+      (homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home',
+    );
+    mocks.harnessCreatesDeviceIdOnConstruction = false;
   });
 
   it('creates a fresh auto-permission session and streams assistant output to stdout', async () => {
@@ -209,6 +226,37 @@ describe('runPrompt', () => {
     expect(mocks.initializeTelemetry).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'kimi-code/k2.5' }),
     );
+  });
+
+  it('tracks first launch in prompt mode before harness construction can create the device id', async () => {
+    mocks.harnessCreatesDeviceIdOnConstruction = true;
+    const createdHomes = new Set<string>();
+    mocks.createKimiDeviceId.mockImplementation((homeDir, options) => {
+      const deviceId = `device-for-${homeDir}`;
+      if (!createdHomes.has(homeDir)) {
+        createdHomes.add(homeDir);
+        options?.onFirstLaunch?.(deviceId);
+      }
+      return deviceId;
+    });
+
+    await runPrompt(opts(), '1.2.3-test', {
+      stdout: { write: vi.fn(() => true) },
+      stderr: { write: vi.fn(() => true) },
+    });
+
+    expect(mocks.createKimiDeviceId).toHaveBeenNthCalledWith(
+      1,
+      '/tmp/kimi-code-test-home',
+      expect.objectContaining({ onFirstLaunch: expect.any(Function) }),
+    );
+    expect(mocks.createKimiDeviceId.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.kimiHarnessConstructor.mock.invocationCallOrder[0]!,
+    );
+    expect(mocks.kimiHarnessConstructor).toHaveBeenCalledWith(
+      expect.objectContaining({ homeDir: '/tmp/kimi-code-test-home' }),
+    );
+    expect(mocks.harnessTrack).toHaveBeenCalledWith('first_launch');
   });
 
   it('formats thinking and assistant output as transcript blocks', async () => {
@@ -387,14 +435,20 @@ describe('runPrompt', () => {
     );
   });
 
-  it('writes stream-json output as assistant JSONL without transcript bullets', async () => {
+  it('writes stream-json output as assistant JSONL with resume meta without transcript bullets', async () => {
     const stdout = writer();
     const stderr = writer();
 
     await runPrompt(opts({ outputFormat: 'stream-json' }), '1.2.3-test', { stdout, stderr });
 
-    expect(stdout.text()).toBe('{"role":"assistant","content":"hello world"}\n');
-    expect(stderr.text()).toBe('To resume this session: kimi -r ses_prompt\n');
+    expect(stdout.text()).toBe(
+      [
+        '{"role":"assistant","content":"hello world"}',
+        '{"role":"meta","type":"session.resume_hint","session_id":"ses_prompt","command":"kimi -r ses_prompt","content":"To resume this session: kimi -r ses_prompt"}',
+        '',
+      ].join('\n'),
+    );
+    expect(stderr.text()).toBe('');
   });
 
   it('writes stream-json tool calls and tool results as JSONL messages', async () => {
@@ -435,6 +489,7 @@ describe('runPrompt', () => {
         '{"role":"assistant","content":"checking","tool_calls":[{"type":"function","id":"tc_1","function":{"name":"Shell","arguments":"{\\"command\\":\\"ls\\"}"}}]}',
         '{"role":"tool","tool_call_id":"tc_1","content":"file1.py\\nfile2.py"}',
         '{"role":"assistant","content":"done"}',
+        '{"role":"meta","type":"session.resume_hint","session_id":"ses_prompt","command":"kimi -r ses_prompt","content":"To resume this session: kimi -r ses_prompt"}',
         '',
       ].join('\n'),
     );

@@ -114,9 +114,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     protected readonly rpcClient: CoreRPCClient,
     options: KimiCoreOptions = {},
   ) {
-    const explicitHomeDir = options.homeDir ?? process.env['KIMI_CODE_HOME'];
     this.homeDir = resolveKimiHome(options.homeDir);
-    this.userHomeDir = explicitHomeDir ?? homedir();
+    this.userHomeDir = homedir();
     this.configPath = resolveConfigPath({
       homeDir: this.homeDir,
       configPath: options.configPath,
@@ -252,8 +251,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       telemetry: withTelemetryContext(this.telemetry, { sessionId: summary.id }),
       initializeMainAgent: false,
     });
+    let warning: string | undefined;
     try {
-      await session.resume();
+      const resumeResult = await session.resume();
+      warning = resumeResult.warning;
       await this.refreshSessionRuntimeConfig(session, config);
     } catch (error) {
       await session.close().catch(() => {});
@@ -263,7 +264,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       throw error;
     }
     this.sessions.set(summary.id, session);
-    return resumeSessionResult(summary, session);
+    return resumeSessionResult(summary, session, warning);
   }
 
   async forkSession(input: ForkSessionPayload): Promise<ResumeSessionResult> {
@@ -693,6 +694,7 @@ function telemetryErrorReason(error: unknown): string {
 async function resumeSessionResult(
   summary: SessionSummary,
   session: Session,
+  warning?: string,
 ): Promise<ResumeSessionResult> {
   const api = new SessionAPIImpl(session);
   const agents: Record<string, ResumedAgentState> = {};
@@ -719,6 +721,7 @@ async function resumeSessionResult(
     ...summary,
     sessionMetadata: api.getSessionMetadata({}),
     agents,
+    warning,
   };
 }
 

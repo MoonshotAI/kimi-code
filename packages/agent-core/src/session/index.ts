@@ -148,15 +148,20 @@ export class Session {
     return agent;
   }
 
-  async resume() {
+  async resume(): Promise<{ warning?: string }> {
     await this.skillsReady;
     const { agents } = await this.readMetadata();
     this.agents.clear();
+    let warning: string | undefined;
     const resumeTasks = Object.keys(agents).map(async (id) => {
       const agent = this.ensureResumeAgentInstantiated(id, agents);
-      await agent.resume();
+      const result = await agent.resume();
+      if (result.warning !== undefined && warning === undefined) {
+        warning = result.warning;
+      }
     });
     await Promise.all(resumeTasks);
+    const resumeWarning = warning;
     // A session migrated from an external tool ships a wire without the
     // `config.update` bootstrap events a natively-created agent writes, so the
     // main agent comes back with an empty system prompt and no tools. Apply the
@@ -168,6 +173,7 @@ export class Session {
       await this.bootstrapAgentProfile(main, profile);
     }
     await this.triggerSessionStart('resume');
+    return { warning: resumeWarning };
   }
 
   async close(): Promise<void> {

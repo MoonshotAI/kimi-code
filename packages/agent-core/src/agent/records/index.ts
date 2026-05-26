@@ -1,6 +1,7 @@
 import type { Agent } from '..';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
+  isNewerWireVersion,
   migrateWireRecord,
   resolveWireMigrations,
   type WireMigration,
@@ -19,7 +20,7 @@ export type { FileSystemAgentRecordPersistenceOptions } from './persistence';
 // Contract: restore MUST NOT emit UI events, call the LLM, execute tools, or
 // touch the filesystem in a way that triggers external side effects. Each case
 // should reproduce the in-memory state the live handler left behind, nothing more.
-export function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
+function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
   switch (input.type) {
     case 'metadata':
       return;
@@ -97,10 +98,9 @@ export function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
 export class AgentRecords {
   private _restoring = false;
   private metadataInitialized = false;
-  onRecord?: (record: AgentRecord) => void;
 
   constructor(
-    private readonly restoreRecord: (record: AgentRecord) => void,
+    private readonly agent: Agent,
     private readonly persistence?: AgentRecordPersistence,
   ) {}
 
@@ -128,23 +128,23 @@ export class AgentRecords {
       this.metadataInitialized = true;
     }
     this.persistence?.append(stamped);
-    this.onRecord?.(stamped);
   }
 
   restore(record: AgentRecord): void {
     this._restoring = true;
     try {
-      this.restoreRecord(record);
+      restoreAgentRecord(this.agent, record);
     } finally {
       this._restoring = false;
     }
   }
 
-  async replay(): Promise<void> {
+  async replay(): Promise<{ warning?: string }> {
     if (!this.persistence) throw new Error('No persistence provided for AgentRecords');
     let migrations: readonly WireMigration[] = [];
     let hasMetadata = false;
     let shouldRewrite = false;
+    let warning: string | undefined;
     const replayedRecords: AgentRecord[] = [];
     for await (const record of this.persistence.read()) {
       if (!hasMetadata) {
@@ -154,8 +154,13 @@ export class AgentRecords {
         hasMetadata = true;
         this.metadataInitialized = true;
         const readVersion = record.protocol_version;
-        migrations = resolveWireMigrations(readVersion);
-        shouldRewrite = readVersion !== AGENT_WIRE_PROTOCOL_VERSION;
+        if (isNewerWireVersion(readVersion)) {
+          warning = `Session wire protocol version ${readVersion} is newer than the current version ${AGENT_WIRE_PROTOCOL_VERSION}. Records will be replayed without migration.`;
+          shouldRewrite = false;
+        } else {
+          migrations = resolveWireMigrations(readVersion);
+          shouldRewrite = readVersion !== AGENT_WIRE_PROTOCOL_VERSION;
+        }
       }
       let migratedRecord = migrateWireRecord(
         record as WireMigrationRecord,
@@ -174,6 +179,7 @@ export class AgentRecords {
       this.persistence.rewrite(replayedRecords);
       await this.persistence.flush();
     }
+    return { warning };
   }
 
   async flush(): Promise<void> {

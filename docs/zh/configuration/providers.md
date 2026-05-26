@@ -29,6 +29,19 @@ ANTHROPIC_BASE_URL = "https://my-proxy.example.com"
 
 切换供应商最常见的方式有两种：在 TUI 里用 `/model` 斜杠命令选择已配置的模型，或者直接编辑 `config.toml` 调整 `[providers.*]` 与 `[models.*]` 表。完整字段说明见 [配置文件](./config-files.md)。
 
+## `/connect` 与模型目录
+
+除了在 `config.toml` 中手写 `[providers.*]` 与 `[models.*]` 表，你也可以在 TUI 中运行 `/connect` 斜杠命令，从 **模型目录**（model catalog）添加供应商。模型目录记录了已知的供应商和模型，以及它们的上下文长度、输出长度和能力。`/connect` 会引导你选择供应商、选择模型、输入 API 密钥，然后把对应的 `[providers.<name>]` 与 `[models.<alias>]` 写入 `config.toml`。
+
+CLI 已经内置了默认的模型目录，因此 `/connect` 无需联网即可使用。如果想换用别的来源，可以传入以下参数：
+
+- `/connect --refresh`：在打开选择器之前，从 [models.dev](https://models.dev/) 拉取最新模型目录。
+- `/connect --url=<catalog-url>`：从自定义地址读取模型目录（格式需与默认目录一致），只接受 `http://` 或 `https://` 的 URL。
+
+`/connect` 只能配置上表列出的供应商类型；不在目录范围内的供应商类型，请按下面各小节的说明，在 `config.toml` 中手写配置。
+
+对通过 `/connect` 配置的供应商，`/logout` 同样有效：它会从 `config.toml` 中删除对应的 `[providers.<name>]` 配置块。
+
 ## `kimi`
 
 `kimi` 通过 OpenAI 兼容协议对接 Moonshot AI。
@@ -73,6 +86,8 @@ max_context_size = 200000
 ## `openai`
 
 `openai` 对应 OpenAI Chat Completions 协议，也可用来连接任何兼容该协议的第三方服务（自行覆盖 `base_url` 即可）。thinking、视觉、工具调用等能力按模型名自动推断。
+
+第三方推理模型（DeepSeek、Qwen、One API 等网关托管服务）开箱即用：思考内容会以约定字段 `reasoning_content` 回传给服务端，且当对话历史中已有思考片段时会自动注入 `reasoning_effort`，避免严格校验的网关返回错误。如果你的网关使用非标准字段名，可以在模型别名上设置 `reasoning_key` 覆盖 —— 详见 [`config-files.md`](./config-files.md#models)。
 
 - 默认 `base_url`：`https://api.openai.com/v1`
 - 环境变量：`OPENAI_API_KEY`、`OPENAI_BASE_URL`
