@@ -381,7 +381,6 @@ export class TurnFlow {
             capability: this.agent.config.modelCapabilities,
             generate: this.agent.generate,
             completionBudgetConfig,
-            inputTokenCount: () => this.agent.context.tokenCountWithPending,
           }),
           buildMessages: () => this.agent.context.messages,
           dispatchEvent: this.buildDispatchEvent(turnId),

@@ -57,11 +57,9 @@ export interface KosongLLMConfig {
   readonly generate?: GenerateFn | undefined;
   /**
    * Completion budget config resolved from agent/provider settings. The
-   * final cap is computed per request from the current input token count.
+   * final cap is applied to each request.
    */
   readonly completionBudgetConfig?: CompletionBudgetConfig | undefined;
-  /** Current input token count, including pending context not yet covered by usage. */
-  readonly inputTokenCount?: (() => number) | undefined;
 }
 
 export class KosongLLM implements LLM {
@@ -72,7 +70,6 @@ export class KosongLLM implements LLM {
   private readonly provider: ChatProvider;
   private readonly generate: GenerateFn;
   private readonly completionBudgetConfig: CompletionBudgetConfig | undefined;
-  private readonly inputTokenCount: (() => number) | undefined;
 
   constructor(config: KosongLLMConfig) {
     this.provider = config.provider;
@@ -81,7 +78,6 @@ export class KosongLLM implements LLM {
     this.capability = config.capability;
     this.generate = config.generate ?? kosongGenerate;
     this.completionBudgetConfig = config.completionBudgetConfig;
-    this.inputTokenCount = config.inputTokenCount;
   }
 
   async chat(params: LLMChatParams): Promise<LLMChatResponse> {
@@ -99,7 +95,6 @@ export class KosongLLM implements LLM {
       provider: this.provider,
       budget: this.completionBudgetConfig,
       capability: this.capability,
-      inputTokenCount: this.inputTokenCount?.() ?? 0,
     });
 
     const result = await this.generate(

@@ -85,7 +85,7 @@ describe('KosongLLM streaming tool-call deltas', () => {
 });
 
 describe('KosongLLM completion budget', () => {
-  it('uses the supplied input token count when applying the completion cap', async () => {
+  it('applies the model context window as the completion cap', async () => {
     let appliedCap: number | undefined;
     let generatedProvider: ChatProvider | undefined;
     const providerWithBudget: ChatProvider = {
@@ -111,7 +111,6 @@ describe('KosongLLM completion budget', () => {
       systemPrompt: 'system',
       capability: makeCapability(10000),
       completionBudgetConfig: { fallback: 32000 },
-      inputTokenCount: () => 3000,
       generate,
     });
 
@@ -121,7 +120,7 @@ describe('KosongLLM completion budget', () => {
       signal: new AbortController().signal,
     });
 
-    expect(appliedCap).toBe(5976);
+    expect(appliedCap).toBe(10000);
     expect(generatedProvider).not.toBe(providerWithBudget);
   });
 });

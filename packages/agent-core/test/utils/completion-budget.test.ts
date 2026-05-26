@@ -23,7 +23,6 @@ describe('computeCompletionBudgetCap', () => {
     const cap = computeCompletionBudgetCap({
       budget: { fallback: 8192 },
       capability: undefined,
-      inputTokenCount: 100,
     });
     expect(cap).toBe(8192);
   });
@@ -32,7 +31,6 @@ describe('computeCompletionBudgetCap', () => {
     const cap = computeCompletionBudgetCap({
       budget: { hardCap: 10, fallback: 8192 },
       capability: makeCapability(0),
-      inputTokenCount: 100,
     });
     expect(cap).toBe(10);
   });
@@ -42,89 +40,47 @@ describe('computeCompletionBudgetCap', () => {
       computeCompletionBudgetCap({
         budget: { hardCap: 0 },
         capability: undefined,
-        inputTokenCount: 10,
       }),
     ).toBe(1);
     expect(
       computeCompletionBudgetCap({
         budget: { hardCap: -100 },
         capability: undefined,
-        inputTokenCount: 10,
       }),
     ).toBe(1);
   });
 
-  it('uses the remaining context window when no hard cap is set', () => {
+  it('uses the model context window when no hard cap is set', () => {
     const maxCtx = 100000;
-    const inputTokenCount = 1000;
     const cap = computeCompletionBudgetCap({
       budget: { fallback: 32000 },
       capability: makeCapability(maxCtx),
-      inputTokenCount,
     });
-    expect(cap).toBe(maxCtx - inputTokenCount - 1024);
+    expect(cap).toBe(maxCtx);
   });
 
-  it('clamps explicit hard cap down to the remaining context window', () => {
-    const inputTokenCount = 1000;
+  it('uses the explicit hard cap when configured', () => {
     const cap = computeCompletionBudgetCap({
       budget: { hardCap: 32000 },
       capability: makeCapability(10000),
-      inputTokenCount,
     });
-    expect(cap).toBeLessThanOrEqual(10000 - inputTokenCount - 1024);
-    expect(cap).toBeGreaterThan(7000);
+    expect(cap).toBe(32000);
   });
 
-  it('returns 1 when input already exceeds context minus margin', () => {
+  it('ignores fallback when the model context window is known', () => {
     const cap = computeCompletionBudgetCap({
       budget: { fallback: 32000 },
       capability: makeCapability(10000),
-      inputTokenCount: 11000,
     });
-    expect(cap).toBe(1);
-  });
-
-  it('never exceeds remaining context, even when remaining is below the historical floor', () => {
-    const maxCtx = 10000;
-    const inputTokenCount = 8900;
-    const cap = computeCompletionBudgetCap({
-      budget: { fallback: 32000 },
-      capability: makeCapability(maxCtx),
-      inputTokenCount,
-    });
-    expect(cap).toBe(76);
-  });
-
-  it('respects custom safetyMargin', () => {
-    const inputTokenCount = 1000;
-    const cap = computeCompletionBudgetCap({
-      budget: { fallback: 32000, safetyMargin: 4096 },
-      capability: makeCapability(20000),
-      inputTokenCount,
-    });
-    expect(cap).toBe(20000 - inputTokenCount - 4096);
+    expect(cap).toBe(10000);
   });
 
   it('keeps explicit hard cap when smaller than remaining', () => {
     const cap = computeCompletionBudgetCap({
       budget: { hardCap: 1024 },
       capability: makeCapability(100000),
-      inputTokenCount: 1000,
     });
     expect(cap).toBe(1024);
-  });
-
-  it('uses the caller-provided real plus pending input token count', () => {
-    const maxCtx = 10000;
-    const safetyMargin = 1024;
-    const inputTokenCount = 3001;
-    const cap = computeCompletionBudgetCap({
-      budget: { fallback: 32000, safetyMargin },
-      capability: makeCapability(maxCtx),
-      inputTokenCount,
-    });
-    expect(cap).toBe(5975);
   });
 });
 
@@ -155,7 +111,6 @@ describe('applyCompletionBudget', () => {
       provider: original,
       budget: undefined,
       capability: makeCapability(10000),
-      inputTokenCount: 100,
     });
     expect(result).toBe(original);
     expect(withMaxCompletionTokens).not.toHaveBeenCalled();
@@ -169,43 +124,31 @@ describe('applyCompletionBudget', () => {
       provider: opaque,
       budget: { hardCap: 8192 },
       capability: makeCapability(10000),
-      inputTokenCount: 100,
     });
     expect(result).toBe(opaque);
   });
 
-  it('clones the provider with the clamped cap when budget is configured', () => {
-    const inputTokenCount = 1000;
+  it('clones the provider with the model context window when budget is configured', () => {
     const result = applyCompletionBudget({
       provider: original,
       budget: { fallback: 32000 },
       capability: makeCapability(10000),
-      inputTokenCount,
     });
     expect(withMaxCompletionTokens).toHaveBeenCalledOnce();
     const cap = withMaxCompletionTokens.mock.calls[0]?.[0] as number;
-    expect(cap).toBeLessThanOrEqual(10000 - inputTokenCount - 1024);
-    expect(cap).toBeGreaterThan(7000);
+    expect(cap).toBe(10000);
     expect(result).not.toBe(original);
   });
 
-  it('uses the provided input token count for the cap computation', () => {
-    applyCompletionBudget({
+  it('uses the explicit hard cap when configured', () => {
+    const result = applyCompletionBudget({
       provider: original,
-      budget: { fallback: 32000 },
+      budget: { hardCap: 8192 },
       capability: makeCapability(10000),
-      inputTokenCount: 3000,
     });
-    const capWithMoreInput = withMaxCompletionTokens.mock.calls[0]?.[0] as number;
-    withMaxCompletionTokens.mockClear();
-    applyCompletionBudget({
-      provider: original,
-      budget: { fallback: 32000 },
-      capability: makeCapability(10000),
-      inputTokenCount: 1000,
-    });
-    const capWithLessInput = withMaxCompletionTokens.mock.calls[0]?.[0] as number;
-    expect(capWithMoreInput).toBeLessThan(capWithLessInput);
+    expect(withMaxCompletionTokens).toHaveBeenCalledOnce();
+    expect(withMaxCompletionTokens.mock.calls[0]?.[0]).toBe(8192);
+    expect(result).not.toBe(original);
   });
 });
 

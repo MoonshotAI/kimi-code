@@ -3,4 +3,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Use reported context usage when clamping completion tokens in long conversations.
+Avoid overly small local completion caps that can truncate reasoning before summaries are produced.

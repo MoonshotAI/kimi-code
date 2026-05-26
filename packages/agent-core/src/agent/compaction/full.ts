@@ -447,9 +447,6 @@ export class FullCompaction {
     const delays = retryBackoffDelays(maxAttempts);
     let retryCount = 0;
 
-    // Use an optimistic cap for compaction. Local tool/schema estimates can
-    // overcount and starve summary generation; the provider can clamp against
-    // the actual serialized request if the cap is too large.
     const completionBudget = resolveCompletionBudget({
       reservedContextSize:
         this.agent.providerManager?.config.loopControl?.reservedContextSize,
@@ -458,7 +455,6 @@ export class FullCompaction {
       provider: this.agent.config.provider,
       budget: completionBudget,
       capability: this.agent.config.modelCapabilities,
-      inputTokenCount: 0,
     });
 
     for (let attempt = 1; ; attempt += 1) {

@@ -6,12 +6,9 @@ export interface CompletionBudgetConfig {
   readonly hardCap?: number;
   /** Conservative cap for providers/models whose context window is unknown. */
   readonly fallback?: number;
-  /** Tokens kept out of the output budget to absorb estimation drift. */
-  readonly safetyMargin?: number;
 }
 
 const MIN_FLOOR = 1;
-const DEFAULT_SAFETY_MARGIN = 1024;
 const DEFAULT_UNKNOWN_CONTEXT_FALLBACK = 32000;
 
 /**
@@ -48,30 +45,20 @@ function parseEnvBudget(raw: string | undefined): EnvBudget {
 }
 
 /**
- * Compute the effective `max_completion_tokens` cap. Known-context requests
- * use the remaining window unless a hard cap is configured.
+ * Compute the effective `max_completion_tokens` cap.
  */
 export function computeCompletionBudgetCap(args: {
   readonly budget: CompletionBudgetConfig;
   readonly capability: ModelCapability | undefined;
-  readonly inputTokenCount: number;
 }): number {
-  const safetyMargin = args.budget.safetyMargin ?? DEFAULT_SAFETY_MARGIN;
   const maxCtx = args.capability?.max_context_tokens ?? 0;
-  if (maxCtx <= 0) {
-    return Math.max(
-      MIN_FLOOR,
-      args.budget.hardCap ?? args.budget.fallback ?? DEFAULT_UNKNOWN_CONTEXT_FALLBACK,
-    );
-  }
-  const remaining = maxCtx - args.inputTokenCount - safetyMargin;
-  if (remaining <= 0) {
-    return MIN_FLOOR;
-  }
-  if (args.budget.hardCap === undefined) {
-    return Math.max(MIN_FLOOR, remaining);
-  }
-  return Math.max(MIN_FLOOR, Math.min(args.budget.hardCap, remaining));
+  // The provider backend computes the safe request-specific value from the
+  // serialized prompt. Locally using the largest cap avoids cutting off
+  // thinking before the model produces a summary.
+  const cap =
+    args.budget.hardCap ??
+    (maxCtx > 0 ? maxCtx : args.budget.fallback ?? DEFAULT_UNKNOWN_CONTEXT_FALLBACK);
+  return Math.max(MIN_FLOOR, cap);
 }
 
 /**
@@ -88,14 +75,12 @@ export function applyCompletionBudget(args: {
   readonly provider: ChatProvider;
   readonly budget: CompletionBudgetConfig | undefined;
   readonly capability: ModelCapability | undefined;
-  readonly inputTokenCount: number;
 }): ChatProvider {
   if (args.budget === undefined) return args.provider;
   if (args.provider.withMaxCompletionTokens === undefined) return args.provider;
   const cap = computeCompletionBudgetCap({
     budget: args.budget,
     capability: args.capability,
-    inputTokenCount: args.inputTokenCount,
   });
   return args.provider.withMaxCompletionTokens(cap);
 }

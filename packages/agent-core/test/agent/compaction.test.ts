@@ -245,8 +245,7 @@ describe('Agent compaction', () => {
     await ctx.rpc.beginCompaction({ instruction: 'Keep the important test facts.' });
     await compacted;
 
-    expect(appliedCap).toBe(maxContextTokens - 1024);
-    expect(appliedCap).toBeGreaterThan(1);
+    expect(appliedCap).toBe(maxContextTokens);
   });
 
   it('projects the compacted prefix before sending the summary request', async () => {
