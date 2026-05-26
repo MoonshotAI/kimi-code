@@ -144,7 +144,7 @@ export class Session {
 
   async createMain() {
     const { agent } = await this.createAgent(
-      { type: MAIN_AGENT_ID },
+      { type: 'main' },
       DEFAULT_AGENT_PROFILES['agent'],
     );
     await this.triggerSessionStart('startup');
@@ -209,8 +209,8 @@ export class Session {
     parentAgentId?: string | undefined,
   ): Promise<{ readonly id: string; readonly agent: Agent }> {
     await this.skillsReady;
-    const type = config.type ?? MAIN_AGENT_ID;
-    const id = type === MAIN_AGENT_ID ? MAIN_AGENT_ID : this.nextGeneratedAgentId();
+    const type = config.type ?? 'main';
+    const id = type === 'main' ? MAIN_AGENT_ID : this.nextGeneratedAgentId();
     const homedir = config.homedir ?? join(this.config.homedir, 'agents', id);
     const agent = this.instantiateAgent(id, homedir, type, config, parentAgentId ?? null);
     if (profile) {

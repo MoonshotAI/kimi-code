@@ -67,9 +67,9 @@ export async function migrateSkillsStep(input: SkillsStepInput): Promise<SkillsS
     try {
       await cp(srcPath, tmpPath, { recursive: true, errorOnExist: false, force: true });
       await rename(tmpPath, tgtPath);
-    } catch (err) {
+    } catch (error) {
       await rm(tmpPath, { recursive: true, force: true }).catch(() => {});
-      throw err;
+      throw error;
     }
     copied++;
   }

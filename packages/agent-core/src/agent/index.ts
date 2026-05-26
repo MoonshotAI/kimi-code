@@ -6,17 +6,17 @@ import { log } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
 import type { AgentAPI, AgentEvent, SDKAgentRPC, UsageStatus } from '#/rpc';
 import {
-  generate,
-  type ChatProvider,
-  type Message,
-  type Tool,
+    generate,
+    type ChatProvider,
+    type Message,
+    type Tool,
 } from '@moonshot-ai/kosong';
 
 import type { McpConnectionManager } from '../mcp';
 import {
-  resolveSystemPromptCwd,
-  type PreparedSystemPromptContext,
-  type ResolvedAgentProfile,
+    resolveSystemPromptCwd,
+    type PreparedSystemPromptContext,
+    type ResolvedAgentProfile,
 } from '../profile';
 import type { ProviderManager } from '../providers/provider-manager';
 import { withProviderRequestAuth } from '../providers/request-auth';
@@ -25,9 +25,9 @@ import type { SessionSubagentHost } from '../session/subagent-host';
 import type { SkillRegistry } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
 import {
-  estimateTokens,
-  estimateTokensForMessages,
-  estimateTokensForTools,
+    estimateTokens,
+    estimateTokensForMessages,
+    estimateTokensForTools,
 } from '../utils/tokens';
 import type { PromisableMethods } from '../utils/types';
 import { BackgroundManager } from './background';
@@ -39,19 +39,19 @@ import { InjectionManager } from './injection/manager';
 import { PermissionManager, type PermissionManagerOptions } from './permission';
 import { PlanMode } from './plan';
 import {
-  AgentRecords,
-  FileSystemAgentRecordPersistence,
-  restoreAgentRecord,
-  type AgentRecord,
-  type AgentRecordPersistence,
+    AgentRecords,
+    FileSystemAgentRecordPersistence,
+    restoreAgentRecord,
+    type AgentRecord,
+    type AgentRecordPersistence,
 } from './records';
 import { ReplayBuilder } from './replay';
 import { SkillManager } from './skill';
 import { ToolManager } from './tool/index';
 import { TurnFlow } from './turn';
 import {
-  GENERATE_REQUEST_LOG_CONTEXT,
-  type GenerateOptionsWithRequestLog,
+    GENERATE_REQUEST_LOG_CONTEXT,
+    type GenerateOptionsWithRequestLog,
 } from './turn/kosong-llm';
 import { UsageRecorder } from './usage';
 
@@ -129,7 +129,7 @@ export class Agent {
     this.mcp = config.mcp;
     this.hooks = config.hookEngine;
 
-    this.type = config.type ?? MAIN_AGENT_ID;
+    this.type = config.type ?? 'main';
 
     this.rpc = config.rpc;
     this.telemetry = config.telemetry ?? noopTelemetryClient;
