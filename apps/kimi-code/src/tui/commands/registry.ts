@@ -131,8 +131,8 @@ export const BUILTIN_SLASH_COMMANDS = [
   },
   {
     name: 'logout',
-    aliases: [],
-    description: 'Clear credentials for the current platform',
+    aliases: ['disconnect'],
+    description: 'Log out of a configured provider',
     priority: 40,
   },
   {
