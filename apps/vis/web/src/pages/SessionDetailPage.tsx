@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 
+import { api } from '../api';
 import { CopyButton } from '../components/shared/CopyButton';
 import { TabBar, useActiveTab } from '../components/layout/TabBar';
 import { ContextTab } from '../components/context/ContextTab';
@@ -49,6 +51,10 @@ export function SessionDetailPage() {
           {state?.title ? (
             <span className="font-mono text-[12px] text-fg-1">"{state.title}"</span>
           ) : null}
+          <span className="ml-auto flex items-center gap-2">
+            <RevealButton sessionId={sessionId} />
+            <CopyButton value={session.sessionDir} label="copy path" />
+          </span>
         </div>
         <div className="mt-1 flex items-center gap-3 font-mono text-[11px] text-fg-2">
           {state?.updatedAt ? (
@@ -62,6 +68,12 @@ export function SessionDetailPage() {
               · {session.workDir}
             </span>
           ) : null}
+        </div>
+        <div
+          className="mt-1 truncate font-mono text-[10px] text-fg-3"
+          title={session.sessionDir}
+        >
+          {session.sessionDir}
         </div>
         {state?.lastPrompt ? (
           <div className="mt-1 truncate font-mono text-[11px] text-fg-3" title={state.lastPrompt}>
@@ -87,5 +99,40 @@ export function SessionDetailPage() {
         {active === 'state' ? <StateTab state={session.state} /> : null}
       </div>
     </div>
+  );
+}
+
+function RevealButton({ sessionId }: { sessionId: string }) {
+  const [state, setState] = useState<'idle' | 'opening' | 'err'>('idle');
+  const [errMsg, setErrMsg] = useState<string | null>(null);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        setState('opening');
+        setErrMsg(null);
+        api
+          .revealSession(sessionId)
+          .then(() => {
+            setState('idle');
+          })
+          .catch((err: unknown) => {
+            setState('err');
+            setErrMsg(err instanceof Error ? err.message : String(err));
+            setTimeout(() => {
+              setState('idle');
+              setErrMsg(null);
+            }, 2500);
+          });
+      }}
+      className={`border border-border px-2 py-0.5 font-mono text-[11px] ${
+        state === 'err'
+          ? 'text-[var(--color-sev-error)]'
+          : 'text-fg-2 hover:border-border-strong hover:text-fg-0'
+      }`}
+      title={state === 'err' && errMsg ? errMsg : 'reveal session folder in OS file manager'}
+    >
+      {state === 'opening' ? 'opening…' : state === 'err' ? '✗ failed' : '↗ open folder'}
+    </button>
   );
 }

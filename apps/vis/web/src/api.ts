@@ -55,7 +55,7 @@ function authToken(): string | null {
   return window.localStorage.getItem(TOKEN_STORAGE_KEY);
 }
 
-async function request<T>(path: string, method: 'GET' | 'DELETE'): Promise<T> {
+async function request<T>(path: string, method: 'GET' | 'POST' | 'DELETE'): Promise<T> {
   const headers: Record<string, string> = { accept: 'application/json' };
   const token = authToken();
   if (token !== null && token.length > 0) {
@@ -76,6 +76,10 @@ async function request<T>(path: string, method: 'GET' | 'DELETE'): Promise<T> {
 
 function get<T>(path: string): Promise<T> {
   return request<T>(path, 'GET');
+}
+
+function post<T>(path: string): Promise<T> {
+  return request<T>(path, 'POST');
 }
 
 function del<T>(path: string): Promise<T> {
@@ -106,4 +110,10 @@ export const api = {
     get<AgentTreeResponse>(`/api/sessions/${enc(id)}/agents`),
 
   deleteSession: (id: string) => del<DeleteSessionResponse>(`/api/sessions/${enc(id)}`),
+
+  /** Open the session's on-disk folder in the OS file manager. Side
+   *  effect runs on the server, so this only makes sense for local
+   *  development against a loopback vis-server. */
+  revealSession: (id: string) =>
+    post<{ sessionId: string; opened: string }>(`/api/sessions/${enc(id)}/reveal`),
 };
