@@ -5,11 +5,11 @@ import type { Issue, IssueSeverity } from '../../lib/issues';
 interface IssuesDrawerProps {
   issues: Issue[];
   onClose: () => void;
-  onJumpTo?: (seq: number) => void;
-  /** Optional predicate: "is this seq currently visible under the active
-   *  filter?". When provided, jump buttons for filtered-out seqs are
+  onJumpTo?: (lineNo: number) => void;
+  /** Optional predicate: "is this line currently visible under the active
+   *  filter?". When provided, jump buttons for filtered-out lines are
    *  disabled and flagged. */
-  isSeqVisible?: (seq: number) => boolean;
+  isLineVisible?: (lineNo: number) => boolean;
 }
 
 const SEV_COLOR: Record<IssueSeverity, string> = {
@@ -19,35 +19,35 @@ const SEV_COLOR: Record<IssueSeverity, string> = {
 };
 
 const KIND_LABEL: Record<Issue['kind'], string> = {
-  subagent_failed: 'subagent failed',
-  tool_error: 'tool error',
-  tool_denied: 'tool denied',
-  turn_failed: 'turn failed',
-  step_truncated: 'step truncated',
+  orphan_tool_call: 'orphan tool.call',
+  missing_tool_result: 'missing tool.result',
+  incomplete_step: 'incomplete step',
+  incomplete_compaction: 'incomplete compaction',
+  active_plan_mode: 'plan mode active',
+  rejected_approval: 'approval rejected',
   wire_warning: 'wire warning',
 };
 
-export function IssuesDrawer({ issues, onClose, onJumpTo, isSeqVisible }: IssuesDrawerProps) {
+export function IssuesDrawer({ issues, onClose, onJumpTo, isLineVisible }: IssuesDrawerProps) {
   // ESC closes — standard drawer affordance.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKey);
-    return () =>{  window.removeEventListener('keydown', onKey); };
+    return () => {
+      window.removeEventListener('keydown', onKey);
+    };
   }, [onClose]);
 
   return (
     <>
-      {/* Backdrop — click outside drawer to dismiss. Subtle tint so the
-          underlying Wire timeline is still readable. */}
       <button
         type="button"
         aria-label="close issues"
         onClick={onClose}
         className="absolute inset-0 z-10 bg-black/20"
       />
-      {/* Drawer — slides from the right. 320px wide, full height. */}
       <aside
         className="absolute right-0 top-0 bottom-0 z-20 flex w-[360px] flex-col border-l border-border bg-surface-1 shadow-[-8px_0_32px_rgba(0,0,0,0.25)]"
         role="dialog"
@@ -74,11 +74,11 @@ export function IssuesDrawer({ issues, onClose, onJumpTo, isSeqVisible }: Issues
             <ul className="divide-y divide-border">
               {issues.map((iss, i) => (
                 <IssueItem
-                  key={`${iss.kind}-${iss.seq ?? 'w'}-${i}`}
+                  key={`${iss.kind}-${iss.lineNo ?? 'w'}-${i}`}
                   issue={iss}
                   onJumpTo={onJumpTo}
                   onClose={onClose}
-                  isSeqVisible={isSeqVisible}
+                  isLineVisible={isLineVisible}
                 />
               ))}
             </ul>
@@ -93,17 +93,17 @@ function IssueItem({
   issue,
   onJumpTo,
   onClose,
-  isSeqVisible,
+  isLineVisible,
 }: {
   issue: Issue;
-  onJumpTo?: (seq: number) => void;
+  onJumpTo?: (lineNo: number) => void;
   onClose: () => void;
-  isSeqVisible?: (seq: number) => boolean;
+  isLineVisible?: (lineNo: number) => boolean;
 }) {
   const color = SEV_COLOR[issue.severity];
-  const seq = issue.seq;
-  const hidden = seq !== null && isSeqVisible !== undefined && !isSeqVisible(seq);
-  const canJump = seq !== null && onJumpTo !== undefined && !hidden;
+  const lineNo = issue.lineNo;
+  const hidden = lineNo !== null && isLineVisible !== undefined && !isLineVisible(lineNo);
+  const canJump = lineNo !== null && onJumpTo !== undefined && !hidden;
   return (
     <li className="px-3 py-2 hover:bg-surface-2">
       <div className="flex items-center gap-2 font-mono text-[11px]">
@@ -113,19 +113,19 @@ function IssueItem({
           aria-hidden="true"
         />
         <span className="text-fg-1">{KIND_LABEL[issue.kind]}</span>
-        {seq !== null ? (
+        {lineNo !== null ? (
           <>
             <span className="text-fg-3">·</span>
-            <span className="tabular text-fg-3">seq {seq}</span>
+            <span className="tabular text-fg-3">line {lineNo}</span>
           </>
         ) : null}
         {hidden ? <span className="text-fg-3">(filtered out)</span> : null}
-        {seq !== null ? (
+        {lineNo !== null ? (
           <button
             type="button"
             disabled={!canJump}
             onClick={() => {
-              if (canJump) onJumpTo?.(seq);
+              if (canJump) onJumpTo?.(lineNo);
               onClose();
             }}
             className="ml-auto text-fg-3 hover:text-fg-0 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-fg-3"

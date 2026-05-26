@@ -8,7 +8,7 @@
   "scripts": {
     "build:deps": "pnpm --filter @moonshot-ai/agent-core... build",
     "predev": "pnpm run build:deps",
-    "dev": "concurrently -k -n server,web -c cyan,magenta \"pnpm --filter @moonshot-ai/vis-server dev\" \"pnpm --filter @moonshot-ai/vis-web dev\"",
+    "dev": "node scripts/dev.mjs",
     "build": "pnpm run build:deps && pnpm --filter @moonshot-ai/vis-server build && pnpm --filter @moonshot-ai/vis-web build && node scripts/copy-web-dist.mjs",
     "prestart": "pnpm run build",
     "start": "node server/dist/server.mjs"

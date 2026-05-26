@@ -113,6 +113,7 @@ export function resolveRuntimeProvider(
     resolvedModel,
     input.kimiRequestHeaders,
     alias.maxOutputSize,
+    alias.reasoningKey,
     input.promptCacheKey,
   );
   const modelCapabilities = resolveModelCapabilities(alias, provider);
@@ -229,6 +230,7 @@ function toKosongProviderConfig(
   model: string,
   kimiRequestHeaders?: Record<string, string> | undefined,
   maxOutputSize?: number | undefined,
+  reasoningKey?: string | undefined,
   promptCacheKey?: string,
 ): KosongProviderConfig {
   switch (provider.type) {
@@ -247,6 +249,7 @@ function toKosongProviderConfig(
         model,
         baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
+        reasoningKey,
         ...defaultHeadersField(provider.customHeaders),
       };
     case 'kimi': {

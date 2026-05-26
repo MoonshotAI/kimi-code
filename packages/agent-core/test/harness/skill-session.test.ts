@@ -100,7 +100,7 @@ describe('HarnessAPI session skills', () => {
     expect(JSON.stringify(skills)).not.toContain('Your tool list contains one synthetic tool');
   });
 
-  it('uses the explicit core home as user skill home instead of the process home', async () => {
+  it('resolves user skills from the OS home directory, not from the kimi home', async () => {
     const processHome = join(tmp, 'process-home');
     vi.stubEnv('HOME', processHome);
     await writeUserSkill(processHome, 'real-home-only', 'Real home skill');
@@ -110,11 +110,11 @@ describe('HarnessAPI session skills', () => {
 
     const names = new Set((await rpc.listSkills({ sessionId: created.id })).map((skill) => skill.name));
 
-    expect(names.has('sandbox-only')).toBe(true);
-    expect(names.has('real-home-only')).toBe(false);
+    expect(names.has('real-home-only')).toBe(true);
+    expect(names.has('sandbox-only')).toBe(false);
   });
 
-  it('uses KIMI_CODE_HOME as user skill home when core home comes from env', async () => {
+  it('resolves user skills from the OS home directory even when KIMI_CODE_HOME is set', async () => {
     const processHome = join(tmp, 'env-process-home');
     vi.stubEnv('HOME', processHome);
     vi.stubEnv('KIMI_CODE_HOME', homeDir);
@@ -125,8 +125,8 @@ describe('HarnessAPI session skills', () => {
 
     const names = new Set((await rpc.listSkills({ sessionId: created.id })).map((skill) => skill.name));
 
-    expect(names.has('env-sandbox-only')).toBe(true);
-    expect(names.has('env-real-home-only')).toBe(false);
+    expect(names.has('env-real-home-only')).toBe(true);
+    expect(names.has('env-sandbox-only')).toBe(false);
   });
 
   it('activates an inline skill through core and records display origin metadata', async () => {

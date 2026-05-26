@@ -355,16 +355,81 @@ describe('KimiTUI message flow', () => {
   it('tracks blocked slash commands as invalid without counting them as executed commands', async () => {
     const { driver, harness } = await makeDriver();
     driver.state.appState.isStreaming = true;
-    harness.track.mockClear();
+
+    for (const command of ['/new', '/model', '/sessions']) {
+      harness.track.mockClear();
+
+      driver.handleUserInput(command);
+      await Promise.resolve();
+
+      expect(harness.track).toHaveBeenCalledWith('input_command_invalid', {
+        reason: 'blocked',
+        command: command.slice(1),
+      });
+      expect(harness.track).not.toHaveBeenCalledWith('input_command', {
+        command: command.slice(1),
+      });
+    }
+  });
+
+  it('does not re-enter plan mode after creating a plan-mode session', async () => {
+    const session = makeSession({
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingLevel: 'off',
+        permission: 'manual',
+        planMode: true,
+        contextTokens: 0,
+        maxContextTokens: 100,
+        contextUsage: 0,
+      })),
+      setPlanMode: vi.fn(async () => {
+        throw new Error('Already in plan mode');
+      }),
+    });
+    const { driver, harness } = await makeDriver(session);
+    harness.createSession.mockClear();
+    session.setPlanMode.mockClear();
+    driver.state.appState.planMode = true;
 
     driver.handleUserInput('/new');
-    await Promise.resolve();
 
-    expect(harness.track).toHaveBeenCalledWith('input_command_invalid', {
-      reason: 'blocked',
-      command: 'new',
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledWith({
+        workDir: '/tmp/proj-a',
+        model: 'k2',
+        thinking: 'off',
+        permission: 'manual',
+        planMode: true,
+      });
     });
-    expect(harness.track).not.toHaveBeenCalledWith('input_command', { command: 'new' });
+    expect(session.setPlanMode).not.toHaveBeenCalled();
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Post-create setup failed');
+  });
+
+  it('keeps the new session subscribed when post-create setup fails', async () => {
+    const initialSession = makeSession({ id: 'ses-initial' });
+    const failedSession = makeSession({
+      id: 'ses-failed',
+      setPermission: vi.fn(async () => {
+        throw new Error('permission setup failed');
+      }),
+    });
+    const createSession = vi
+      .fn()
+      .mockResolvedValueOnce(initialSession)
+      .mockResolvedValueOnce(failedSession);
+    const { driver } = await makeDriver(initialSession, { createSession });
+    vi.mocked(failedSession.onEvent).mockClear();
+
+    driver.handleUserInput('/new');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Post-create setup failed: permission setup failed',
+      );
+    });
+    expect(failedSession.onEvent).toHaveBeenCalledOnce();
   });
 
   it('tracks Shift-Tab mode switches through the editor handler', async () => {
