@@ -25,7 +25,12 @@ import {
 import { PathSecurityError } from '../tools/policies/path-access';
 
 import { errorMessage, isAbortError } from './errors';
-import type { LoopEventDispatcher, LoopToolCallEvent } from './events';
+import type {
+  LoopEventDispatcher,
+  LoopLiveOnlyEvent,
+  LoopRecordedEvent,
+  LoopToolCallEvent,
+} from './events';
 import type { LLM, LLMChatResponse } from './llm';
 import { ToolAccesses } from './tool-access';
 import { ToolScheduler, type ToolCallTask } from './tool-scheduler';
@@ -110,16 +115,38 @@ export async function runToolCallBatch(
   const pendingResults: Array<Promise<PendingToolResult>> = [];
   let stopTurn = false;
 
+  // Pairing invariant: every `tool.call` event must get a paired `tool.result`.
+  // The wrapper tracks ids so a throw between dispatching the call and
+  // dispatching its result still produces a compensating result in `finally`.
+  // An orphan `tool.call` would otherwise make the next provider request fail
+  // with "tool_call_id did not have response messages".
+  const unpairedCallIds = new Set<string>();
+  function dispatchAndTrack(event: LoopRecordedEvent): Promise<void>;
+  function dispatchAndTrack(event: LoopLiveOnlyEvent): void;
+  function dispatchAndTrack(
+    event: LoopRecordedEvent | LoopLiveOnlyEvent,
+  ): Promise<void> | void {
+    if (event.type === 'tool.call') unpairedCallIds.add(event.toolCallId);
+    else if (event.type === 'tool.result') unpairedCallIds.delete(event.toolCallId);
+    return (
+      step.dispatchEvent as (e: LoopRecordedEvent | LoopLiveOnlyEvent) => Promise<void> | void
+    )(event);
+  }
+  const trackingStep: ToolCallStepContext = {
+    ...step,
+    dispatchEvent: dispatchAndTrack as LoopEventDispatcher,
+  };
+
   try {
     for (let index = 0; index < calls.length; index += 1) {
       const call = calls[index]!;
-      const prepared = await prepareToolCall(step, call);
+      const prepared = await prepareToolCall(trackingStep, call);
       pendingResults.push(scheduler.add(prepared.task));
 
       if (prepared.stopBatchAfterThis === true) {
         stopTurn = true;
         for (const skippedCall of calls.slice(index + 1)) {
-          const skippedTask = await prepareSkippedToolCall(step, skippedCall);
+          const skippedTask = await prepareSkippedToolCall(trackingStep, skippedCall);
           pendingResults.push(scheduler.add(skippedTask));
         }
         break;
@@ -130,9 +157,9 @@ export async function runToolCallBatch(
     // provider order. Await all tasks so each recorded `tool.call` gets a
     // paired `tool.result`; the caller checks abort before writing `step.end`.
     for (const pendingResult of pendingResults) {
-      const result = await finalizePendingToolResult(step, await pendingResult);
+      const result = await finalizePendingToolResult(trackingStep, await pendingResult);
       if (result.stopTurn === true) stopTurn = true;
-      await step.dispatchEvent({
+      await trackingStep.dispatchEvent({
         type: 'tool.result',
         parentUuid: result.toolCall.id,
         toolCallId: result.toolCall.id,
@@ -144,6 +171,27 @@ export async function runToolCallBatch(
     // Always settle spawned tasks before the caller continues so rejected
     // execute promises cannot surface as detached unhandled rejections.
     await Promise.allSettled(pendingResults);
+    if (unpairedCallIds.size > 0) {
+      for (const toolCallId of unpairedCallIds) {
+        try {
+          await step.dispatchEvent({
+            type: 'tool.result',
+            parentUuid: toolCallId,
+            toolCallId,
+            result: {
+              output: `Tool call "${toolCallId}" was interrupted before producing a result.`,
+              isError: true,
+            },
+          });
+        } catch (compensateError) {
+          step.log?.warn('failed to compensate orphan tool.call', {
+            toolCallId,
+            error: compensateError,
+          });
+        }
+      }
+      unpairedCallIds.clear();
+    }
   }
   return { stopTurn };
 }
@@ -411,7 +459,8 @@ async function runRunnableToolCall(
 
   let toolResult: ExecutableToolResult;
   try {
-    toolResult = await executeTool(step, execution, toolCall, toolName, metadata);
+    const raw = await executeTool(step, execution, toolCall, toolName, metadata);
+    toolResult = coerceToolResult(raw, toolName);
   } catch (error) {
     const aborted = isAbortError(error) || signal.aborted;
     if (!aborted) {
@@ -550,28 +599,56 @@ function isMediaContentPart(part: ContentPart): boolean {
   return part.type === 'image_url' || part.type === 'audio_url' || part.type === 'video_url';
 }
 
+/**
+ * Validate a tool's raw return against the {@link ExecutableToolResult} contract.
+ * A tool that returns `undefined`, a primitive, or an object without a valid
+ * `output` field is coerced into an `isError: true` result so the loop can still
+ * emit a paired `tool.result` event. This is the trust boundary between
+ * arbitrary tool implementations and the rest of the loop.
+ */
+function coerceToolResult(value: unknown, toolName: string): ExecutableToolResult {
+  if (value === null || value === undefined) {
+    return { output: `Tool "${toolName}" returned no result.`, isError: true };
+  }
+  if (typeof value !== 'object') {
+    return {
+      output: `Tool "${toolName}" returned a ${typeof value} instead of a tool result.`,
+      isError: true,
+    };
+  }
+  const candidate = value as { output?: unknown };
+  if (typeof candidate.output !== 'string' && !Array.isArray(candidate.output)) {
+    return {
+      output: `Tool "${toolName}" returned a result with a missing or malformed "output" field.`,
+      isError: true,
+    };
+  }
+  return value as ExecutableToolResult;
+}
+
 function normalizeToolResult(r: ExecutableToolResult): ExecutableToolResult {
+  const safe = coerceToolResult(r, '<unknown>');
   let output: ExecutableToolResult['output'];
-  if (typeof r.output === 'string') {
-    output = r.output.length > 0 ? r.output : TOOL_OUTPUT_EMPTY;
-  } else if (r.output.length === 0) {
+  if (typeof safe.output === 'string') {
+    output = safe.output.length > 0 ? safe.output : TOOL_OUTPUT_EMPTY;
+  } else if (safe.output.length === 0) {
     output = TOOL_OUTPUT_EMPTY;
   } else {
-    const hasMediaBlock = r.output.some(isMediaContentPart);
+    const hasMediaBlock = safe.output.some(isMediaContentPart);
     if (hasMediaBlock) {
-      const hasNonEmptyText = r.output.some((c) => c.type === 'text' && c.text.length > 0);
+      const hasNonEmptyText = safe.output.some((c) => c.type === 'text' && c.text.length > 0);
       output = hasNonEmptyText
-        ? r.output
-        : [{ type: 'text', text: TOOL_OUTPUT_NON_TEXT }, ...r.output];
+        ? safe.output
+        : [{ type: 'text', text: TOOL_OUTPUT_NON_TEXT }, ...safe.output];
     } else {
-      const textJoined = r.output
+      const textJoined = safe.output
         .filter((c): c is Extract<typeof c, { type: 'text' }> => c.type === 'text')
         .map((c) => c.text)
         .join('');
       output = textJoined.length > 0 ? textJoined : TOOL_OUTPUT_EMPTY;
     }
   }
-  return r.isError === true ? { output, isError: true } : { output };
+  return safe.isError === true ? { output, isError: true } : { output };
 }
 
 function makeToolResult(
@@ -589,6 +666,7 @@ function makeToolResult(
 }
 
 function toolResultStopsTurn(result: ExecutableToolResult): boolean {
+  if (result === null || typeof result !== 'object') return false;
   return result.isError === true && result.stopTurn === true;
 }
 

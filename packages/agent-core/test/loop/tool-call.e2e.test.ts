@@ -219,6 +219,89 @@ describe('runTurn — tool-call behaviour', () => {
     );
   });
 
+  it('coerces an undefined tool return into an error tool.result without breaking pairing', async () => {
+    const undef: ExecutableTool = {
+      name: 'undef',
+      description: 'returns undefined',
+      parameters: { type: 'object', additionalProperties: true },
+      resolveExecution: () => ({
+        execute: async () => undefined as unknown as ExecutableToolResult,
+      }),
+    };
+    const { sink, context } = await runTurn({
+      tools: [undef],
+      responses: [
+        makeToolUseResponse([makeToolCall('undef', {}, 'tc-U')]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+    const callIds = sink.byType('tool.call').map((e) => e.toolCallId);
+    const resultIds = sink.byType('tool.result').map((e) => e.toolCallId);
+    expect(resultIds).toEqual(callIds);
+    const result = context.toolResults()[0]?.result;
+    expect(result?.isError).toBe(true);
+    expect(expectTextOutput(result?.output)).toContain('Tool "undef" returned no result');
+  });
+
+  it('coerces a tool returning an object without "output" into an error tool.result', async () => {
+    const noout: ExecutableTool = {
+      name: 'noout',
+      description: 'returns {}',
+      parameters: { type: 'object', additionalProperties: true },
+      resolveExecution: () => ({
+        execute: async () => ({}) as ExecutableToolResult,
+      }),
+    };
+    const { sink, context } = await runTurn({
+      tools: [noout],
+      responses: [
+        makeToolUseResponse([makeToolCall('noout', {}, 'tc-N')]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+    expect(sink.byType('tool.result').length).toBe(1);
+    const result = context.toolResults()[0]?.result;
+    expect(result?.isError).toBe(true);
+    expect(expectTextOutput(result?.output)).toContain('missing or malformed "output" field');
+  });
+
+  it('keeps every tool.call paired when one parallel tool returns a corrupt result', async () => {
+    const undef: ExecutableTool = {
+      name: 'undef',
+      description: 'returns undefined',
+      parameters: { type: 'object', additionalProperties: true },
+      resolveExecution: () => ({
+        execute: async () => undefined as unknown as ExecutableToolResult,
+      }),
+    };
+    const echo = new EchoTool();
+    const { sink, context } = await runTurn({
+      tools: [undef, echo],
+      responses: [
+        makeToolUseResponse([
+          makeToolCall('undef', {}, 'tc-U'),
+          makeToolCall('echo', { text: 'a' }, 'tc-E1'),
+          makeToolCall('echo', { text: 'b' }, 'tc-E2'),
+        ]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+    const callIds = sink
+      .byType('tool.call')
+      .map((e) => e.toolCallId)
+      .toSorted();
+    const resultIds = sink
+      .byType('tool.result')
+      .map((e) => e.toolCallId)
+      .toSorted();
+    expect(callIds).toEqual(['tc-E1', 'tc-E2', 'tc-U']);
+    expect(resultIds).toEqual(callIds);
+    expect(context.toolResults().find((r) => r.toolCallId === 'tc-U')?.result.isError).toBe(true);
+    expect(context.toolResults().find((r) => r.toolCallId === 'tc-E1')?.result.isError).not.toBe(
+      true,
+    );
+  });
+
   it('does not duplicate prepare hook failures in the diagnostic log', async () => {
     const echo = new EchoTool();
     const { log, entries } = makeTestLogger();
