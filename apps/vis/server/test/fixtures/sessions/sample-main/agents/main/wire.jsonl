@@ -7,5 +7,4 @@
 {"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"s1","turnId":"t1","step":0},"time":1779256800100}
 {"type":"context.append_loop_event","event":{"type":"content.part","uuid":"c1","turnId":"t1","step":0,"stepUuid":"s1","part":{"type":"text","text":"hello"}},"time":1779256800200}
 {"type":"context.append_loop_event","event":{"type":"step.end","uuid":"s1","turnId":"t1","step":0,"usage":{"inputOther":10,"output":5,"inputCacheRead":0,"inputCacheCreation":0},"finishReason":"end_turn"},"time":1779256800300}
-{"type":"context.append_message","message":{"role":"assistant","content":[{"type":"text","text":"hello"}],"toolCalls":[]},"time":1779256800301}
 {"type":"usage.record","model":"kimi-k2","usage":{"inputOther":10,"output":5,"inputCacheRead":0,"inputCacheCreation":0},"usageScope":"turn","time":1779256800302}

@@ -18,7 +18,7 @@ describe('session-store', () => {
     expect(s.lastPrompt).toBe('say hi');
     expect(s.agentCount).toBe(2);
     expect(s.mainAgentExists).toBe(true);
-    expect(s.mainWireRecordCount).toBe(11);  // 11 lines in main wire incl. metadata
+    expect(s.mainWireRecordCount).toBe(10);  // 10 lines in main wire incl. metadata
     expect(s.wireProtocolVersion).toBe('1.1');
     expect(s.health).toBe('ok');
     expect(s.workDir).toBe('/tmp/work');
@@ -128,7 +128,7 @@ describe('session-store', () => {
     expect(main.type).toBe('main');
     expect(main.parentAgentId).toBeNull();
     expect(main.wireExists).toBe(true);
-    expect(main.wireRecordCount).toBe(11);
+    expect(main.wireRecordCount).toBe(10);
     const sub = d!.agents.find((a) => a.agentId === 'agent-0')!;
     expect(sub.parentAgentId).toBe('main');
   });

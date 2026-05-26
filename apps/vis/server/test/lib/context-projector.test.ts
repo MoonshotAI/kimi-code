@@ -17,7 +17,10 @@ describe('context-projector', () => {
 
     expect(proj.messages).toHaveLength(2);
     expect(proj.messages[0]!.message.role).toBe('user');
+    // The assistant message is reconstructed from step.begin/content.part/step.end,
+    // not from a separate `context.append_message` (agent-core never emits one).
     expect(proj.messages[1]!.message.role).toBe('assistant');
+    expect(proj.messages[1]!.message.content).toEqual([{ type: 'text', text: 'hello' }]);
 
     expect(proj.usage.byScope.turn).toEqual({
       inputOther: 10, output: 5, inputCacheRead: 0, inputCacheCreation: 0,
@@ -30,6 +33,98 @@ describe('context-projector', () => {
     expect(proj.config.profileName).toBe('agent');
     expect(proj.permission.mode).toBe('manual');
     expect(proj.planMode.active).toBe(false);
+  });
+
+  it('reconstructs assistant tool-call messages and separates tool results', async () => {
+    const entries = [
+      {
+        lineNo: 2,
+        data: {
+          type: 'context.append_message' as const,
+          message: {
+            role: 'user' as const,
+            content: [{ type: 'text' as const, text: 'list files' }],
+            toolCalls: [],
+          },
+        },
+        raw: {},
+      },
+      {
+        lineNo: 3,
+        data: {
+          type: 'context.append_loop_event' as const,
+          event: { type: 'step.begin' as const, uuid: 's1', turnId: 't1', step: 0 },
+        },
+        raw: {},
+      },
+      {
+        lineNo: 4,
+        data: {
+          type: 'context.append_loop_event' as const,
+          event: {
+            type: 'content.part' as const,
+            uuid: 'c1', turnId: 't1', step: 0, stepUuid: 's1',
+            part: { type: 'text' as const, text: 'Let me check' },
+          },
+        },
+        raw: {},
+      },
+      {
+        lineNo: 5,
+        data: {
+          type: 'context.append_loop_event' as const,
+          event: {
+            type: 'tool.call' as const,
+            uuid: 'tc1', turnId: 't1', step: 0, stepUuid: 's1',
+            toolCallId: 'call_1', name: 'LS', args: '{"path":"/"}',
+          },
+        },
+        raw: {},
+      },
+      {
+        lineNo: 6,
+        data: {
+          type: 'context.append_loop_event' as const,
+          event: { type: 'step.end' as const, uuid: 's1', turnId: 't1', step: 0 },
+        },
+        raw: {},
+      },
+      {
+        lineNo: 7,
+        data: {
+          type: 'context.append_loop_event' as const,
+          event: {
+            type: 'tool.result' as const,
+            parentUuid: 'tc1',
+            toolCallId: 'call_1',
+            result: { output: 'file1.txt\nfile2.txt' },
+          },
+        },
+        raw: {},
+      },
+    ];
+
+    const proj = projectContext(entries as any);
+    expect(proj.messages).toHaveLength(3);
+
+    expect(proj.messages[0]!.message.role).toBe('user');
+
+    expect(proj.messages[1]!.message.role).toBe('assistant');
+    expect(proj.messages[1]!.message.content).toEqual([{ type: 'text', text: 'Let me check' }]);
+    expect(proj.messages[1]!.message.toolCalls).toEqual([
+      { type: 'function', id: 'call_1', name: 'LS', arguments: '{"path":"/"}' },
+    ]);
+    // The assistant message was opened by step.begin (line 3), so its
+    // anchor lineNo is that of step.begin even though content/toolCalls
+    // were appended later.
+    expect(proj.messages[1]!.lineNo).toBe(3);
+    expect(proj.messages[1]!.toolStepUuids).toEqual(['s1']);
+
+    expect(proj.messages[2]!.message.role).toBe('tool');
+    expect(proj.messages[2]!.message.toolCallId).toBe('call_1');
+    expect(proj.messages[2]!.message.content).toEqual([
+      { type: 'text', text: 'file1.txt\nfile2.txt' },
+    ]);
   });
 
   it('clears messages on context.clear', async () => {

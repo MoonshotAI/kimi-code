@@ -18,7 +18,7 @@ describe('wire-reader', () => {
     const result = await readAgentWire(join(sessionDir, 'agents', 'main', 'wire.jsonl'));
     expect(result.metadata.protocolVersion).toBe('1.1');
     expect(result.records[0]!.lineNo).toBe(2); // metadata is line 1, first record is line 2
-    expect(result.records.at(-1)!.lineNo).toBe(11);
+    expect(result.records.at(-1)!.lineNo).toBe(10);
     expect(result.records.map((r) => r.data.type)).toEqual([
       'config.update',
       'tools.set_active_tools',
@@ -28,7 +28,6 @@ describe('wire-reader', () => {
       'context.append_loop_event',
       'context.append_loop_event',
       'context.append_loop_event',
-      'context.append_message',
       'usage.record',
     ]);
     // No vis annotation should leak into the data/raw bodies.
@@ -110,6 +109,6 @@ describe('wire-reader', () => {
     await appendFile(path, 'not json\n');
     const result = await readAgentWire(path);
     expect(result.warnings.length).toBe(1);
-    expect(result.warnings[0]).toMatch(/line 12/);
+    expect(result.warnings[0]).toMatch(/line 11/);
   });
 });
