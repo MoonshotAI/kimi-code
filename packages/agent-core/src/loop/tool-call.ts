@@ -300,6 +300,15 @@ async function prepareToolCall(
   }
 
   const authorization = await runAuthorizeToolExecutionHook(step, call, effectiveArgs, execution);
+  if (step.signal.aborted) {
+    await dispatchToolCall(step, call, effectiveArgs, displayFields);
+    return {
+      task: makeResolvedToolCallTask(
+        makeErrorToolResult(call, effectiveArgs, `Tool "${call.toolName}" was aborted`),
+      ),
+    };
+  }
+
   if (authorization?.block === true) {
     await dispatchToolCall(step, call, effectiveArgs, displayFields);
     return {

@@ -42,4 +42,3 @@ export class GitCwdWriteApprovePermissionPolicy implements PermissionPolicy {
     return marker;
   }
 }
-
