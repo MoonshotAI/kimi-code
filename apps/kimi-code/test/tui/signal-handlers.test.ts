@@ -182,7 +182,7 @@ describe('KimiTUI signal handlers', () => {
     driver.unregisterSignalHandlers();
   });
 
-  it('SIGTERM handler falls back to emergency exit when stop() rejects', async () => {
+  it('SIGTERM handler falls back to emergency exit (code 143) when stop() rejects', async () => {
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     const { driver, tui } = makeDriver();
     const stopSpy = vi.spyOn(tui, 'stop').mockRejectedValue(new Error('cleanup boom'));
@@ -196,17 +196,24 @@ describe('KimiTUI signal handlers', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(stopSpy).toHaveBeenCalledTimes(1);
-    expect(exitSpy).toHaveBeenCalledWith(129);
+    // 143 = 128 + SIGTERM(15). Supervisors key off this to detect signal-driven
+    // exits; we must not collapse it to the SIGHUP code (129) or to 0.
+    expect(stopSpy).toHaveBeenCalledWith(143);
+    expect(exitSpy).toHaveBeenCalledWith(143);
+    expect(exitSpy).not.toHaveBeenCalledWith(129);
+    expect(exitSpy).not.toHaveBeenCalledWith(0);
 
     stopSpy.mockRestore();
     captured.restore();
     driver.unregisterSignalHandlers();
   });
 
-  it('SIGTERM handler routes through stop() and does not call emergency exit', async () => {
+  it('SIGTERM handler routes through stop(143) and forces exit 143 on success', async () => {
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     const { driver, tui } = makeDriver();
+    // `stop()` resolving without exiting models the defensive fallback path
+    // where `onExit` was not wired up. The handler must still exit 143 so
+    // supervisors see signal termination.
     const stopSpy = vi.spyOn(tui, 'stop').mockResolvedValue(undefined);
     const captured = captureHandlers(driver);
 
@@ -214,15 +221,24 @@ describe('KimiTUI signal handlers', () => {
     expect(sigterm).toBeDefined();
     sigterm?.();
 
-    // The handler awaits stop() via `void`, give it a microtask to run.
+    await Promise.resolve();
     await Promise.resolve();
 
-    expect(stopSpy).toHaveBeenCalledTimes(1);
-    expect(exitSpy).not.toHaveBeenCalledWith(129);
+    expect(stopSpy).toHaveBeenCalledWith(143);
+    expect(exitSpy).toHaveBeenCalledWith(143);
+    expect(exitSpy).not.toHaveBeenCalledWith(0);
 
     stopSpy.mockRestore();
     captured.restore();
     driver.unregisterSignalHandlers();
+  });
+
+  it('emergencyTerminalExit accepts a custom exit code', () => {
+    const { driver } = makeDriver();
+    (driver as unknown as { emergencyTerminalExit(code?: number): never }).emergencyTerminalExit(
+      143,
+    );
+    expect(exitSpy).toHaveBeenCalledWith(143);
   });
 
   it('stdout EIO error triggers emergency exit; ENOENT does not', () => {

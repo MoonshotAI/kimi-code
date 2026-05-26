@@ -903,7 +903,11 @@ export class KimiTUI {
   }
 
   // Stops UI resources, active sessions, reverse-RPC handlers, and the harness.
-  async stop(): Promise<void> {
+  // `exitCode` is forwarded to `onExit`; it defaults to the conventional 0 for
+  // user-initiated exits (e.g. `/exit`). Signal-driven shutdown paths pass the
+  // POSIX 128 + signum value so supervisors can tell signal exits from clean
+  // exits.
+  async stop(exitCode?: number): Promise<void> {
     if (this.isShuttingDown) return;
     this.isShuttingDown = true;
     this.unregisterSignalHandlers();
@@ -923,7 +927,7 @@ export class KimiTUI {
     this.stopAllMcpServerStatusSpinners();
     this.state.ui.stop();
     if (this.onExit) {
-      await this.onExit();
+      await this.onExit(exitCode);
     }
   }
 
@@ -955,14 +959,22 @@ export class KimiTUI {
           this.emergencyTerminalExit();
           return;
         }
-        // SIGTERM: try the graceful path, but if cleanup rejects (e.g. session
-        // close fails and leaves open fds) fall back to emergency exit so the
-        // process does not hang on pending I/O. `stop()` has already latched
-        // `isShuttingDown` by the time this catch can fire, so retrying is
-        // not safe — emergency exit is the only correct response.
-        this.stop().catch(() => {
-          this.emergencyTerminalExit();
-        });
+        // SIGTERM: preserve the POSIX 128 + SIGTERM(15) = 143 convention so
+        // supervisors (launchd, systemd, pm2, parent shells) can distinguish
+        // signal-driven exit from a normal `/exit`. Registering a listener
+        // disables Node's default 143 termination, so we must reinstate it
+        // explicitly. Forcing `process.exit(143)` after `stop()` resolves
+        // also guards the defensive case where `onExit` was never wired up.
+        // On cleanup failure we exit 143 too — the process must not hang
+        // on pending I/O once `isShuttingDown` has been latched.
+        this.stop(143).then(
+          () => {
+            process.exit(143);
+          },
+          () => {
+            this.emergencyTerminalExit(143);
+          },
+        );
       };
       process.prependListener(signal, handler);
       this.signalCleanupHandlers.push(() => {
@@ -993,11 +1005,13 @@ export class KimiTUI {
 
   // Bails out without running normal shutdown. Reserved for SIGHUP / dead-
   // terminal write errors where every additional stdout write risks looping
-  // on EIO. Exit code 129 follows the POSIX 128 + SIGHUP(1) convention.
-  private emergencyTerminalExit(): never {
+  // on EIO. The default exit code 129 follows the POSIX 128 + SIGHUP(1)
+  // convention; SIGTERM cleanup failures pass 143 (128 + SIGTERM(15)) so
+  // supervisors still see signal-conventional exits.
+  private emergencyTerminalExit(exitCode = 129): never {
     this.isShuttingDown = true;
     this.unregisterSignalHandlers();
-    process.exit(129);
+    process.exit(exitCode);
   }
 
   // Tears down the terminal focus + theme tracking installed by
