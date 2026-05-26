@@ -18,8 +18,6 @@ import type { Kaos } from '@moonshot-ai/kaos';
 export const LIST_DIR_ROOT_WIDTH = 30;
 export const LIST_DIR_CHILD_WIDTH = 10;
 
-type PathClass = 'posix' | 'win32';
-
 interface Entry {
   readonly name: string;
   readonly isDir: boolean;
@@ -29,7 +27,6 @@ async function collectEntries(
   kaos: Kaos,
   dirPath: string,
   maxWidth: number,
-  pathClass: PathClass,
 ): Promise<{ entries: Entry[]; total: number; readable: boolean }> {
   const all: Entry[] = [];
   try {
@@ -63,12 +60,10 @@ async function collectEntries(
  */
 export async function listDirectory(kaos: Kaos, workDir: string): Promise<string> {
   const lines: string[] = [];
-  const pathClass = kaos.pathClass();
   const { entries, total, readable } = await collectEntries(
     kaos,
     workDir,
     LIST_DIR_ROOT_WIDTH,
-    pathClass,
   );
   if (!readable) return '[not readable]';
   const remaining = total - entries.length;
@@ -84,7 +79,7 @@ export async function listDirectory(kaos: Kaos, workDir: string): Promise<string
       lines.push(`${connector}${name}/`);
       const childPrefix = isLast ? '    ' : '│   ';
       const childDir = join(workDir, name);
-      const child = await collectEntries(kaos, childDir, LIST_DIR_CHILD_WIDTH, pathClass);
+      const child = await collectEntries(kaos, childDir, LIST_DIR_CHILD_WIDTH);
       if (!child.readable) {
         lines.push(`${childPrefix}└── [not readable]`);
         continue;

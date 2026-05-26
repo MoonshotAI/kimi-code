@@ -7,8 +7,6 @@ import * as pathe from 'pathe';
 
 import type { Kaos } from '@moonshot-ai/kaos';
 
-import type { PathClass } from '../policies/path-access';
-
 const S_IFMT = 0o170000;
 const S_IFDIR = 0o040000;
 const S_IFREG = 0o100000;
