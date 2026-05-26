@@ -88,6 +88,8 @@ max_context_size = 200000
 
 `openai` corresponds to the OpenAI Chat Completions protocol and can also be used to connect to any third-party service that speaks the same protocol (simply override `base_url`). Thinking, vision, and tool-call capabilities are inferred automatically from the model name.
 
+Third-party reasoner models (DeepSeek, Qwen, One API and other gateway-fronted services) work out of the box: thinking content is round-tripped under the de facto `reasoning_content` field, and `reasoning_effort` is auto-injected when the conversation contains prior thinking so gateways with strict validation accept the request. If a gateway uses a non-standard field name, override it via `reasoning_key` on the model alias — see [`config-files.md`](./config-files.md#models).
+
 - Default `base_url`: `https://api.openai.com/v1`
 - Environment variables: `OPENAI_API_KEY`, `OPENAI_BASE_URL`
 

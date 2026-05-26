@@ -126,6 +126,7 @@ custom_headers = { "X-Custom-Header" = "value" }
 | `max_output_size` | `integer` | 否 | 单次请求的输出预算上限（即请求层面的 `max_tokens`）。目前仅 `anthropic` 供应商会读取该字段。当别名能识别到具体的 Claude 家族时，覆盖值不会超过模型允许的上限，避免超出服务端限制。省略时使用模型推导出的默认值，详见 [`providers.md`](./providers.md#anthropic)。 |
 | `capabilities` | `array<string>` | 否 | 显式追加的模型能力标签，例如 `thinking`、`image_in`、`video_in`、`audio_in`、`tool_use` |
 | `display_name` | `string` | 否 | 在 UI 中显示的名称，未设置时回退到 `model` |
+| `reasoning_key` | `string` | 否 | 仅 `openai` 供应商。覆盖推理内容所用的字段名。默认情况下供应商会自动识别响应中的 `reasoning_content`、`reasoning_details`、`reasoning`，并以 `reasoning_content` 回传思考内容 —— 只有当网关使用非标准字段名时才需要设置 |
 
 `capabilities` 与供应商 capability registry 按模型名前缀自动匹配出来的能力做并集 —— 只能追加、不能移除。通常无需手写；只有当模型未被 registry 覆盖、或希望强制启用某项能力时才用得到。
 

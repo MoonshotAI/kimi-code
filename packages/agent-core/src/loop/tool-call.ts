@@ -238,10 +238,11 @@ async function prepareToolCall(
     result: ExecutableToolResult,
     displayFields?: ToolCallDisplayFields,
   ): Promise<PreparedToolCallTask> => {
+    const coerced = coerceToolResult(result, call.toolName);
     await dispatchToolCall(step, call, args, displayFields);
     return {
-      task: makeResolvedToolCallTask(makeToolResult(call, args, result)),
-      stopBatchAfterThis: toolResultStopsTurn(result),
+      task: makeResolvedToolCallTask(makeToolResult(call, args, coerced)),
+      stopBatchAfterThis: toolResultStopsTurn(coerced),
     };
   };
 
@@ -456,7 +457,8 @@ async function runRunnableToolCall(
 
   let toolResult: ExecutableToolResult;
   try {
-    toolResult = await executeTool(step, execution, toolCall, toolName, metadata);
+    const raw = await executeTool(step, execution, toolCall, toolName, metadata);
+    toolResult = coerceToolResult(raw, toolName);
   } catch (error) {
     const aborted = isAbortError(error) || signal.aborted;
     if (!aborted) {
@@ -494,7 +496,10 @@ async function finalizePendingToolResult(
       signal,
       llm,
     });
-    const effectiveResult = finalizedResult ?? pendingResult.result;
+    const effectiveResult = coerceToolResult(
+      finalizedResult ?? pendingResult.result,
+      pendingResult.toolName,
+    );
     return {
       ...pendingResult,
       stopTurn: pendingResult.stopTurn === true || toolResultStopsTurn(effectiveResult),
@@ -593,6 +598,33 @@ async function raceExecuteWithGraceTimeout(
 
 function isMediaContentPart(part: ContentPart): boolean {
   return part.type === 'image_url' || part.type === 'audio_url' || part.type === 'video_url';
+}
+
+/**
+ * Validate a tool's raw return against the {@link ExecutableToolResult} contract.
+ * A tool that returns `undefined`, a primitive, or an object without a valid
+ * `output` field is coerced into an `isError: true` result so the loop can still
+ * emit a paired `tool.result` event. This is the trust boundary between
+ * arbitrary tool implementations and the rest of the loop.
+ */
+function coerceToolResult(value: unknown, toolName: string): ExecutableToolResult {
+  if (value === null || value === undefined) {
+    return { output: `Tool "${toolName}" returned no result.`, isError: true };
+  }
+  if (typeof value !== 'object') {
+    return {
+      output: `Tool "${toolName}" returned a ${typeof value} instead of a tool result.`,
+      isError: true,
+    };
+  }
+  const candidate = value as { output?: unknown };
+  if (typeof candidate.output !== 'string' && !Array.isArray(candidate.output)) {
+    return {
+      output: `Tool "${toolName}" returned a result with a missing or malformed "output" field.`,
+      isError: true,
+    };
+  }
+  return value as ExecutableToolResult;
 }
 
 function normalizeToolResult(r: ExecutableToolResult): ExecutableToolResult {

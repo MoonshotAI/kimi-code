@@ -1390,10 +1390,6 @@ export class ToolCallComponent extends Container {
       this.buildStreamingPreview(this.toolCall.streamingArguments);
       return;
     }
-    // Collapse only kicks in once the result lands (bullet turns
-    // green). Between args-finalize and result we may sit in approval
-    // for a while — keep the preview fully visible during that gap so
-    // the user reviews the full change in context.
     const shouldCap = this.result !== undefined && !this.expanded;
     if (name === 'Write') {
       const content = str(this.toolCall.args['content']);
@@ -1401,13 +1397,18 @@ export class ToolCallComponent extends Container {
       const filePath = str(this.toolCall.args['file_path'] ?? this.toolCall.args['path']);
       const lang = langFromPath(filePath);
       const allLines = highlightLines(content, lang);
-      const shown = shouldCap ? allLines.slice(0, COMMAND_PREVIEW_LINES) : allLines;
+      // Cap as soon as args finalize, not just when result lands. Otherwise the
+      // brief render tick between finalized args and result draws the full file,
+      // and the snap back to the collapsed cap triggers pi-tui's full-redraw
+      // path which wipes the terminal scrollback (pre-TUI history).
+      const writeShouldCap = !this.expanded;
+      const shown = writeShouldCap ? allLines.slice(0, COMMAND_PREVIEW_LINES) : allLines;
       const remaining = allLines.length - shown.length;
       for (const [i, line] of shown.entries()) {
         const lineNum = chalk.dim(String(i + 1).padStart(4) + '  ');
         this.addChild(new Text(lineNum + line, 2, 0));
       }
-      if (shouldCap && remaining > 0) {
+      if (writeShouldCap && remaining > 0) {
         this.addChild(
           new Text(
             chalk.dim(
@@ -1455,8 +1456,17 @@ export class ToolCallComponent extends Container {
         '';
       const lang = langFromPath(filePath);
       const allLines = highlightLines(content, lang);
-      for (const [i, line] of allLines.entries()) {
-        const lineNum = chalk.dim(String(i + 1).padStart(4) + '  ');
+      const maxLines = COMMAND_PREVIEW_LINES;
+      const scrollLines =
+        allLines.length > maxLines
+          ? allLines.slice(allLines.length - maxLines)
+          : allLines;
+      for (const [i, line] of scrollLines.entries()) {
+        const originalLineNumber =
+          allLines.length > maxLines
+            ? allLines.length - maxLines + i
+            : i;
+        const lineNum = chalk.dim(String(originalLineNumber + 1).padStart(4) + '  ');
         this.addChild(new Text(lineNum + line, 2, 0));
       }
       return;

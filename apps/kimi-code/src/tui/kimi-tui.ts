@@ -197,6 +197,7 @@ import {
   NO_ACTIVE_SESSION_MESSAGE,
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
+  PRODUCT_NAME,
 } from './constant/kimi-tui';
 import { STREAMING_UI_FLUSH_MS } from './constant/streaming';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
@@ -223,6 +224,7 @@ import { formatBackgroundAgentTranscript } from './utils/background-agent-status
 import { formatBackgroundTaskTranscript } from './utils/background-task-status';
 import { hasDispose, isExpandable, isPlanExpandable } from './utils/component-capabilities';
 import { resolveConnectCatalogRequest } from './utils/connect-catalog';
+import { isDeadTerminalError } from './utils/dead-terminal';
 import {
   appendStreamingArgsPreview,
   argsRecord,
@@ -578,6 +580,13 @@ export class KimiTUI {
   private aborted = false;
   private terminalFocusTrackingDispose: (() => void) | undefined;
   private terminalThemeTrackingDispose: (() => void) | undefined;
+  // Cleanup callbacks for SIGHUP/SIGTERM listeners and stdout/stderr 'error'
+  // listeners installed by `registerSignalHandlers()`. Drained on shutdown so
+  // we never leave dangling listeners on the host `process`.
+  private signalCleanupHandlers: Array<() => void> = [];
+  // Guards `stop()` and `emergencyTerminalExit()` so a signal arriving mid-
+  // shutdown does not race with itself.
+  private isShuttingDown = false;
   // First-launch migration plan detected pre-TUI; null when nothing to migrate.
   private readonly migrationPlan: MigrationPlan | null;
   // When true, the migration screen is the whole session: run it, then exit.
@@ -709,53 +718,67 @@ export class KimiTUI {
 
   // Starts the TUI, performs startup routing, and begins session event handling.
   async start(): Promise<void> {
-    // Migration path: the migration screen is a pi-tui component, so the event
-    // loop must run first. It then renders as the very first thing on screen,
-    // before the session is created and the Welcome banner is drawn.
-    if (this.migrationPlan !== null) {
-      this.startEventLoop();
-      try {
-        const migrationResult = await this.runMigrationScreen(this.migrationPlan);
-        if (this.migrateOnly) {
-          // Explicit `kimi migrate`: the screen is the whole command — exit
-          // instead of continuing into the chat TUI. A migration that ran but
-          // failed exits non-zero so scripted callers can detect it.
-          const failed =
-            migrationResult.decision === 'now' && migrationResult.migrated === false;
-          // Restore the terminal before `onExit` calls `process.exit`: dispose
-          // the focus/theme tracking `startEventLoop()` installed, then stop
-          // the pi-tui loop. Skipping either leaves the terminal in raw mode
-          // or still emitting focus/OSC sequences after the command finishes.
+    // Arm SIGHUP/SIGTERM and stdout/stderr 'error' handlers before touching the
+    // terminal: once raw mode is on and timers start firing, a dying parent
+    // shell can pin a CPU core on EIO write retries unless we can self-exit.
+    this.registerSignalHandlers();
+    // Outer try ensures the signal handlers are rolled back if any startup
+    // path throws. Without this, callers that retry `start()` in the same
+    // Node process (tests, embedded use) would accumulate listeners on
+    // `process` and trip `MaxListenersExceededWarning`. Inner catch blocks
+    // still own their UI/focus cleanup; this only handles the listener half.
+    try {
+      // Migration path: the migration screen is a pi-tui component, so the
+      // event loop must run first. It then renders as the very first thing on
+      // screen, before the session is created and the Welcome banner is drawn.
+      if (this.migrationPlan !== null) {
+        this.startEventLoop();
+        try {
+          const migrationResult = await this.runMigrationScreen(this.migrationPlan);
+          if (this.migrateOnly) {
+            // Explicit `kimi migrate`: the screen is the whole command — exit
+            // instead of continuing into the chat TUI. A migration that ran
+            // but failed exits non-zero so scripted callers can detect it.
+            const failed =
+              migrationResult.decision === 'now' && migrationResult.migrated === false;
+            // Restore the terminal before `onExit` calls `process.exit`: dispose
+            // the focus/theme tracking `startEventLoop()` installed, then stop
+            // the pi-tui loop. Skipping either leaves the terminal in raw mode
+            // or still emitting focus/OSC sequences after the command finishes.
+            this.disposeTerminalTracking();
+            this.state.ui.stop();
+            await this.onExit?.(failed ? 1 : 0);
+            return;
+          }
+          const shouldReplayHistory = await this.initMainTui();
+          await this.finishStartup(shouldReplayHistory);
+        } catch (error) {
+          // The pi-tui loop is running and startEventLoop() installed focus/
+          // theme tracking; a startup failure must tear all of it down before
+          // the exception propagates, otherwise the terminal is left in raw
+          // mode or still emitting focus/OSC sequences.
           this.disposeTerminalTracking();
           this.state.ui.stop();
-          await this.onExit?.(failed ? 1 : 0);
-          return;
+          throw error;
         }
-        const shouldReplayHistory = await this.initMainTui();
+        return;
+      }
+
+      // No-migration path: ordering is identical to the original `start()`.
+      const shouldReplayHistory = await this.initMainTui();
+      this.startEventLoop();
+      try {
         await this.finishStartup(shouldReplayHistory);
       } catch (error) {
-        // The pi-tui loop is running and startEventLoop() installed focus/
-        // theme tracking; a startup failure must tear all of it down before
-        // the exception propagates, otherwise the terminal is left in raw
-        // mode or still emitting focus/OSC sequences.
+        // The pi-tui loop is running and startEventLoop() installed focus/theme
+        // tracking; tear all of it down so a finishStartup failure does not
+        // leave the terminal in raw mode or emitting focus/OSC sequences.
         this.disposeTerminalTracking();
         this.state.ui.stop();
         throw error;
       }
-      return;
-    }
-
-    // No-migration path: ordering is identical to the original `start()`.
-    const shouldReplayHistory = await this.initMainTui();
-    this.startEventLoop();
-    try {
-      await this.finishStartup(shouldReplayHistory);
     } catch (error) {
-      // The pi-tui loop is running and startEventLoop() installed focus/theme
-      // tracking; tear all of it down so a finishStartup failure does not
-      // leave the terminal in raw mode or emitting focus/OSC sequences.
-      this.disposeTerminalTracking();
-      this.state.ui.stop();
+      this.unregisterSignalHandlers();
       throw error;
     }
   }
@@ -891,7 +914,14 @@ export class KimiTUI {
   }
 
   // Stops UI resources, active sessions, reverse-RPC handlers, and the harness.
-  async stop(): Promise<void> {
+  // `exitCode` is forwarded to `onExit`; it defaults to the conventional 0 for
+  // user-initiated exits (e.g. `/exit`). Signal-driven shutdown paths pass the
+  // POSIX 128 + signum value so supervisors can tell signal exits from clean
+  // exits.
+  async stop(exitCode?: number): Promise<void> {
+    if (this.isShuttingDown) return;
+    this.isShuttingDown = true;
+    this.unregisterSignalHandlers();
     this.aborted = true;
     this.discardPendingStreamingUiUpdates();
     if (this.pendingExit) {
@@ -908,8 +938,91 @@ export class KimiTUI {
     this.stopAllMcpServerStatusSpinners();
     this.state.ui.stop();
     if (this.onExit) {
-      await this.onExit();
+      await this.onExit(exitCode);
     }
+  }
+
+  // Installs SIGHUP/SIGTERM signal handlers and stdout/stderr 'error' listeners
+  // so the process can self-terminate when the controlling terminal goes away.
+  //
+  // SIGHUP and EIO/EPIPE/ENOTCONN on stdout/stderr both mean "the terminal is
+  // gone". Running the normal `stop()` path in that state writes restore
+  // sequences (cursor show, bracketed paste off, Kitty protocol off) which
+  // re-trigger EIO and have been observed to pin a CPU core for days.
+  // `emergencyTerminalExit()` is the safe response: it bypasses cleanup.
+  //
+  // SIGTERM is treated as a graceful shutdown request and routes through the
+  // normal `stop()` path so telemetry and session state get flushed.
+  //
+  // `prependListener` ensures we run before any subsequent listener a feature
+  // might register later in startup, since responsiveness here is critical.
+  private registerSignalHandlers(): void {
+    this.unregisterSignalHandlers();
+
+    const signals: NodeJS.Signals[] = ['SIGTERM'];
+    if (process.platform !== 'win32') {
+      signals.push('SIGHUP');
+    }
+
+    for (const signal of signals) {
+      const handler = (): void => {
+        if (signal === 'SIGHUP') {
+          this.emergencyTerminalExit();
+          return;
+        }
+        // SIGTERM: preserve the POSIX 128 + SIGTERM(15) = 143 convention so
+        // supervisors (launchd, systemd, pm2, parent shells) can distinguish
+        // signal-driven exit from a normal `/exit`. Registering a listener
+        // disables Node's default 143 termination, so we must reinstate it
+        // explicitly. Forcing `process.exit(143)` after `stop()` resolves
+        // also guards the defensive case where `onExit` was never wired up.
+        // On cleanup failure we exit 143 too — the process must not hang
+        // on pending I/O once `isShuttingDown` has been latched.
+        this.stop(143).then(
+          () => {
+            process.exit(143);
+          },
+          () => {
+            this.emergencyTerminalExit(143);
+          },
+        );
+      };
+      process.prependListener(signal, handler);
+      this.signalCleanupHandlers.push(() => {
+        process.off(signal, handler);
+      });
+    }
+
+    const terminalErrorHandler = (error: Error): void => {
+      if (isDeadTerminalError(error)) {
+        this.emergencyTerminalExit();
+      }
+    };
+    process.stdout.on('error', terminalErrorHandler);
+    process.stderr.on('error', terminalErrorHandler);
+    this.signalCleanupHandlers.push(() => {
+      process.stdout.off('error', terminalErrorHandler);
+    });
+    this.signalCleanupHandlers.push(() => {
+      process.stderr.off('error', terminalErrorHandler);
+    });
+  }
+
+  private unregisterSignalHandlers(): void {
+    const handlers = this.signalCleanupHandlers;
+    this.signalCleanupHandlers = [];
+    for (const cleanup of handlers) cleanup();
+  }
+
+  // Bails out without running normal shutdown. Reserved for SIGHUP / dead-
+  // terminal write errors where every additional stdout write risks looping
+  // on EIO. The default exit code 129 follows the POSIX 128 + SIGHUP(1)
+  // convention; SIGTERM cleanup failures pass 143 (128 + SIGTERM(15)) so
+  // supervisors still see signal-conventional exits.
+  private emergencyTerminalExit(exitCode = 129): never {
+    this.isShuttingDown = true;
+    this.unregisterSignalHandlers();
+    process.exit(exitCode);
   }
 
   // Tears down the terminal focus + theme tracking installed by
@@ -5389,34 +5502,102 @@ export class KimiTUI {
     });
   }
 
-  // Handles the /logout command.
+  // Handles the /logout command. Lists every credential currently held — the
+  // Kimi Code OAuth token (or a stale config entry for it) plus each configured
+  // API-key provider — and lets the user pick which one to drop. OAuth tokens
+  // go through auth.logout for proper revocation, everything else through
+  // removeProvider.
   private async handleLogoutCommand(): Promise<void> {
+    const oauthStatus = await this.harness.auth.status(DEFAULT_OAUTH_PROVIDER_NAME);
+    const hasOAuthToken = oauthStatus.providers.some(
+      (p) => p.providerName === DEFAULT_OAUTH_PROVIDER_NAME && p.hasToken,
+    );
+    const config = await this.harness.getConfig();
+    // Offer the managed provider whenever something points at it — either a
+    // live OAuth token or a stale providers[] entry left over from a previous
+    // login. auth.logout cleans the config regardless of whether the token
+    // is still present, so this avoids leaving residue with no way to reach it.
+    const hasManagedRemnant =
+      hasOAuthToken || config.providers[DEFAULT_OAUTH_PROVIDER_NAME] !== undefined;
+    const apiKeyProviderIds = Object.keys(config.providers ?? {})
+      .filter((id) => id !== DEFAULT_OAUTH_PROVIDER_NAME)
+      .toSorted();
+
+    const options: ChoiceOption[] = [];
+    if (hasManagedRemnant) {
+      options.push({
+        value: DEFAULT_OAUTH_PROVIDER_NAME,
+        label: PRODUCT_NAME,
+        description: 'OAuth login',
+      });
+    }
+    for (const id of apiKeyProviderIds) {
+      const baseUrl = config.providers[id]?.baseUrl;
+      options.push({
+        value: id,
+        label: id,
+        description: typeof baseUrl === 'string' && baseUrl.length > 0 ? baseUrl : undefined,
+      });
+    }
+
+    if (options.length === 0) {
+      this.showStatus('Nothing to logout.');
+      return;
+    }
+
     const currentModel = this.state.appState.model.trim();
     const currentProvider = this.state.appState.availableModels[currentModel]?.provider;
 
-    if (currentProvider === undefined || currentProvider === DEFAULT_OAUTH_PROVIDER_NAME) {
+    const target = await this.promptLogoutProviderSelection(options, currentProvider);
+    if (target === undefined) return;
+
+    if (target === DEFAULT_OAUTH_PROVIDER_NAME) {
       await this.harness.auth.logout(DEFAULT_OAUTH_PROVIDER_NAME);
-      await this.refreshConfigAfterLogout();
-      await this.clearActiveSessionAfterLogout();
-      this.track('logout', { provider: DEFAULT_OAUTH_PROVIDER_NAME });
-      this.showStatus('Logged out.');
-      return;
+    } else {
+      await this.harness.removeProvider(target);
     }
 
-    // Any other provider written into config — OpenPlatform OAuth targets and
-    // /connect-configured catalog providers both go through removeProvider,
-    // which drops the provider entry and its model aliases together.
-    const existingConfig = await this.harness.getConfig();
-    if (existingConfig.providers[currentProvider] !== undefined) {
-      await this.harness.removeProvider(currentProvider);
+    if (target === currentProvider) {
+      // The active session is backed by the provider we just removed, so it
+      // can no longer make requests — tear it down along with the model state.
       await this.refreshConfigAfterLogout();
       await this.clearActiveSessionAfterLogout();
-      this.track('logout', { provider: currentProvider });
-      this.showStatus(`Logged out from ${currentProvider}.`);
-      return;
+    } else {
+      // Refresh provider/model listings so the picker reflects the change,
+      // but leave the user's current session running.
+      const updated = await this.harness.getConfig({ reload: true });
+      this.setAppState({
+        availableModels: updated.models ?? {},
+        availableProviders: updated.providers ?? {},
+      });
     }
 
-    this.showStatus('Nothing to logout.');
+    this.track('logout', { provider: target });
+    const label = target === DEFAULT_OAUTH_PROVIDER_NAME ? PRODUCT_NAME : target;
+    this.showStatus(`Logged out from ${label}.`);
+  }
+
+  private promptLogoutProviderSelection(
+    options: readonly ChoiceOption[],
+    currentValue: string | undefined,
+  ): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      const picker = new ChoicePickerComponent({
+        title: 'Select a provider to log out',
+        options,
+        currentValue,
+        colors: this.state.theme.colors,
+        onSelect: (value) => {
+          this.restoreEditor();
+          resolve(value);
+        },
+        onCancel: () => {
+          this.restoreEditor();
+          resolve(undefined);
+        },
+      });
+      this.mountEditorReplacement(picker);
+    });
   }
 
   // ---------------------------------------------------------------------------
