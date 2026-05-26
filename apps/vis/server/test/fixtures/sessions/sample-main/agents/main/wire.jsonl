@@ -1,0 +1,10 @@
+{"type":"metadata","protocol_version":"1.1","created_at":1779256791085}
+{"type":"config.update","cwd":"/tmp/work","profileName":"agent","systemPrompt":"You are Kimi.","time":1779256791100}
+{"type":"tools.set_active_tools","names":["Read","Write"],"time":1779256791101}
+{"type":"permission.set_mode","mode":"manual","time":1779256791102}
+{"type":"turn.prompt","input":[{"type":"text","text":"hi"}],"origin":{"kind":"user"},"time":1779256800000}
+{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"hi"}],"toolCalls":[]},"time":1779256800001}
+{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"s1","turnId":"t1","step":0},"time":1779256800100}
+{"type":"context.append_loop_event","event":{"type":"content.part","uuid":"c1","turnId":"t1","step":0,"stepUuid":"s1","part":{"type":"text","text":"hello"}},"time":1779256800200}
+{"type":"context.append_loop_event","event":{"type":"step.end","uuid":"s1","turnId":"t1","step":0,"usage":{"inputOther":10,"output":5,"inputCacheRead":0,"inputCacheCreation":0},"finishReason":"end_turn"},"time":1779256800300}
+{"type":"usage.record","model":"kimi-k2","usage":{"inputOther":10,"output":5,"inputCacheRead":0,"inputCacheCreation":0},"usageScope":"turn","time":1779256800302}

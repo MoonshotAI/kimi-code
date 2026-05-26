@@ -13,6 +13,7 @@ export interface CatalogModelEntry {
   readonly limit?: { readonly context?: number; readonly output?: number };
   readonly tool_call?: boolean;
   readonly reasoning?: boolean;
+  readonly interleaved?: boolean | { readonly field?: string };
   readonly modalities?: {
     readonly input?: readonly string[];
     readonly output?: readonly string[];
@@ -41,6 +42,7 @@ export interface CatalogModel {
   readonly id: string;
   readonly name?: string;
   readonly maxOutputSize?: number;
+  readonly reasoningKey?: string;
   readonly capability: ModelCapability;
 }
 
@@ -126,6 +128,7 @@ export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel
     id: model.id,
     name: typeof model.name === 'string' && model.name.length > 0 ? model.name : undefined,
     maxOutputSize: typeof output === 'number' && output > 0 ? output : undefined,
+    reasoningKey: catalogReasoningKey(model.interleaved),
     capability: {
       image_in: inputs.includes('image'),
       video_in: inputs.includes('video'),
@@ -135,6 +138,16 @@ export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel
       max_context_tokens: context,
     },
   };
+}
+
+function catalogReasoningKey(interleaved: CatalogModelEntry['interleaved']): string | undefined {
+  // models.dev allows `interleaved: true` as "general support" — read it as
+  // the default `reasoning_content` field so providers without an explicit
+  // field name (e.g. some openai-compatible gateways) still round-trip.
+  if (interleaved === true) return 'reasoning_content';
+  if (typeof interleaved !== 'object' || interleaved === null) return undefined;
+  const field = interleaved.field?.trim();
+  return field !== undefined && field.length > 0 ? field : undefined;
 }
 
 /** Extracts the valid, normalized models from a catalog provider entry. */

@@ -23,23 +23,9 @@ export function useDeleteSession() {
     mutationFn: (sessionId: string) => api.deleteSession(sessionId),
     onSuccess: (_result, sessionId) => {
       qc.setQueryData<SessionSummary[]>(['sessions'], (old) =>
-        old?.filter((s) => s.session_id !== sessionId),
+        old?.filter((s) => s.sessionId !== sessionId),
       );
       qc.removeQueries({ queryKey: ['session', sessionId] });
-      void qc.invalidateQueries({ queryKey: ['sessions'] });
-    },
-  });
-}
-
-export function useClearSessions() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => api.clearSessions(),
-    onSuccess: (result) => {
-      if (result.failed.length === 0) {
-        qc.setQueryData<SessionSummary[]>(['sessions'], []);
-        qc.removeQueries({ queryKey: ['session'] });
-      }
       void qc.invalidateQueries({ queryKey: ['sessions'] });
     },
   });

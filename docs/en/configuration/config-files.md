@@ -126,6 +126,7 @@ Each entry in the `models` table defines a model alias, keyed by a unique name.
 | `max_output_size` | `integer` | No | Per-request output budget cap (`max_tokens` on the wire). Only the `anthropic` provider currently honors it. When the alias resolves to a known Claude family, the value is clamped to that model's documented ceiling to avoid exceeding the server-side limit. Omit to use the per-model default — see [`providers.md`](./providers.md#anthropic). |
 | `capabilities` | `array<string>` | No | Capability tags to add explicitly, for example `thinking`, `image_in`, `video_in`, `audio_in`, `tool_use` |
 | `display_name` | `string` | No | Name shown in the UI; falls back to `model` when unset |
+| `reasoning_key` | `string` | No | `openai` provider only. Override the field name used for reasoning content. By default the provider auto-detects `reasoning_content`, `reasoning_details`, and `reasoning` on incoming responses and serializes thinking back as `reasoning_content` — set this only if your gateway uses a non-standard field name |
 
 `capabilities` is unioned with the capabilities that the provider capability registry matches by model-name prefix — entries can only be added, never removed. You usually do not need to set this by hand; reach for it only when the model is not covered by the registry, or when you want to force-enable a particular capability.
 
