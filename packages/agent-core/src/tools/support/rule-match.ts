@@ -24,7 +24,7 @@ export function matchesPathRuleSubject(
   options?: PermissionPathMatchOptions,
 ): boolean {
   return matchRuleSubjects(ruleArgs, [subject], (pattern, value) =>
-    pathGlobMatch(value, pattern, { pathOptions: options }),
+    pathGlobMatch(value, pattern, options),
   );
 }
 

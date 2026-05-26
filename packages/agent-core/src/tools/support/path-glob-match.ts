@@ -43,19 +43,17 @@ function stripLeadingDotSlash(value: string): string {
 export function pathGlobMatch(
   value: string,
   pattern: string,
-  options: {
-    readonly pathOptions?: PermissionPathMatchOptions;
-  } = {},
+  pathOptions?: PermissionPathMatchOptions,
 ): boolean {
-  const semantics = pathMatchSemantics(value, pattern, options.pathOptions);
+  const semantics = pathMatchSemantics(value, pattern, pathOptions);
   const nocase =
-    options.pathOptions?.caseInsensitivePaths ??
-    (semantics.pathClass === 'win32' || options.pathOptions?.conservativeCaseFold);
+    pathOptions?.caseInsensitivePaths ??
+    (semantics.pathClass === 'win32' || pathOptions?.conservativeCaseFold);
 
   if (globMatch(value, pattern, { nocase })) return true;
 
-  for (const valueVariant of pathVariants(value, semantics, options.pathOptions)) {
-    for (const patternVariant of pathVariants(pattern, semantics, options.pathOptions)) {
+  for (const valueVariant of pathVariants(value, semantics, pathOptions)) {
+    for (const patternVariant of pathVariants(pattern, semantics, pathOptions)) {
       if (globMatch(valueVariant, patternVariant, { nocase })) return true;
     }
   }
