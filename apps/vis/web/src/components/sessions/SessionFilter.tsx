@@ -21,7 +21,8 @@ const SORT_OPTIONS: { value: SessionSortKey; label: string }[] = [
 const HEALTH_OPTIONS: { value: HealthFilter; label: string }[] = [
   { value: 'all', label: 'any' },
   { value: 'ok', label: 'ok' },
-  { value: 'broken_state', label: 'broken' },
+  { value: 'broken_state', label: 'broken state' },
+  { value: 'broken_main_wire', label: 'broken wire' },
   { value: 'missing_main_wire', label: 'no wire' },
   { value: 'unsupported_protocol', label: 'old proto' },
 ];
