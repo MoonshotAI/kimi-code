@@ -17,14 +17,13 @@ export interface WireMigration {
 
 const MIGRATIONS: readonly WireMigration[] = [migrateV1_0ToV1_1, migrateV1_1ToV1_2];
 
+export function isNewerWireVersion(readVersion: string): boolean {
+  return compareWireVersions(readVersion, AGENT_WIRE_PROTOCOL_VERSION) > 0;
+}
+
 export function resolveWireMigrations(readVersion: string): readonly WireMigration[] {
-  if (compareWireVersions(readVersion, AGENT_WIRE_PROTOCOL_VERSION) === 0) {
+  if (compareWireVersions(readVersion, AGENT_WIRE_PROTOCOL_VERSION) >= 0) {
     return [];
-  }
-  if (compareWireVersions(readVersion, AGENT_WIRE_PROTOCOL_VERSION) > 0) {
-    throw new Error(
-      `Unsupported wire protocol version: ${readVersion} (current: ${AGENT_WIRE_PROTOCOL_VERSION})`,
-    );
   }
 
   const migrations: WireMigration[] = [];

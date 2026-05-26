@@ -88,6 +88,7 @@ import type {
   TurnStepCompletedEvent,
   TurnStepInterruptedEvent,
   TurnStepStartedEvent,
+  WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 
@@ -801,6 +802,10 @@ export class KimiTUI {
         this.replayHydrationHooks(),
         this.requireSession(),
       );
+    }
+    const resumeState = this.session?.getResumeState();
+    if (resumeState?.warning !== undefined) {
+      this.showStatus(`Warning: ${resumeState.warning}`, this.state.theme.colors.warning);
     }
     if (this.session !== undefined) {
       this.startSessionEventSubscription();
@@ -2102,6 +2107,10 @@ export class KimiTUI {
     } finally {
       this.startSessionEventSubscription();
     }
+    const resumeState = session.getResumeState();
+    if (resumeState?.warning !== undefined) {
+      this.showStatus(`Warning: ${resumeState.warning}`, this.state.theme.colors.warning);
+    }
     this.showStatus(statusMessage);
   }
 
@@ -2259,6 +2268,9 @@ export class KimiTUI {
         break;
       case 'error':
         this.handleSessionError(event);
+        break;
+      case 'warning':
+        this.handleSessionWarning(event);
         break;
       case 'compaction.started':
         this.handleCompactionBegin(event);
@@ -2678,6 +2690,10 @@ export class KimiTUI {
     if (sessionId.length > 0) {
       this.showStatus(errorReportHintLine(sessionId));
     }
+  }
+
+  private handleSessionWarning(event: WarningEvent): void {
+    this.showStatus(`Warning: ${event.message}`, this.state.theme.colors.warning);
   }
 
   private renderMcpServerStatus(server: McpServerStatusSnapshot): void {
@@ -5224,7 +5240,7 @@ export class KimiTUI {
     if (preferBuiltIn) {
       const builtIn = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
       if (builtIn !== undefined) {
-        this.showStatus('Loaded built-in catalog. Run /connect --refresh for the latest.');
+        this.showStatus('Loaded built-in catalog. Run /connect refresh for the latest.');
         catalog = builtIn;
       }
     }

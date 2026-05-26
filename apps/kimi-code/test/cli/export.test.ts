@@ -36,26 +36,36 @@ const mocks = vi.hoisted(() => ({
   })),
   harnessGetCachedAccessToken: vi.fn(),
   harnessExportSession: vi.fn(),
+  harnessTrack: vi.fn(),
   createKimiDeviceId: vi.fn<CreateKimiDeviceId>(() => 'device-1'),
   initializeTelemetry: vi.fn(),
   shutdownTelemetry: vi.fn(),
   telemetryTrack: vi.fn(),
   setTelemetryContext: vi.fn(),
   withTelemetryContext: vi.fn(),
+  resolveKimiHome: vi.fn((homeDir?: string) => homeDir ?? '/tmp/kimi-export-home'),
+  harnessCreatesDeviceIdOnConstruction: false,
 }));
 
 vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();
   return {
     ...actual,
+    resolveKimiHome: mocks.resolveKimiHome,
     KimiHarness: class {
-      homeDir = '/tmp/kimi-export-home';
+      homeDir: string;
       auth = {
         getCachedAccessToken: mocks.harnessGetCachedAccessToken,
       };
       ensureConfigFile = mocks.harnessEnsureConfigFile;
       getConfig = mocks.harnessGetConfig;
+      track = mocks.harnessTrack;
       constructor(...args: unknown[]) {
+        const options = args[0] as { readonly homeDir?: string } | undefined;
+        this.homeDir = options?.homeDir ?? '/tmp/kimi-export-home';
+        if (mocks.harnessCreatesDeviceIdOnConstruction) {
+          mocks.createKimiDeviceId(this.homeDir);
+        }
         mocks.kimiHarnessConstructor(...args);
       }
 
@@ -95,6 +105,11 @@ afterEach(() => {
     defaultModel: 'k2',
     telemetry: true,
   });
+  mocks.createKimiDeviceId.mockImplementation(() => 'device-1');
+  mocks.resolveKimiHome.mockImplementation(
+    (homeDir?: string) => homeDir ?? '/tmp/kimi-export-home',
+  );
+  mocks.harnessCreatesDeviceIdOnConstruction = false;
 });
 
 function makeSummary(id: string, overrides: Partial<SessionSummary> = {}): SessionSummary {
@@ -383,7 +398,10 @@ describe('kimi export', () => {
     );
     expect(mocks.harnessEnsureConfigFile).toHaveBeenCalledOnce();
     expect(mocks.harnessGetConfig).toHaveBeenCalledOnce();
-    expect(mocks.createKimiDeviceId).toHaveBeenCalledWith('/tmp/kimi-export-home');
+    expect(mocks.createKimiDeviceId).toHaveBeenCalledWith(
+      '/tmp/kimi-export-home',
+      expect.objectContaining({ onFirstLaunch: expect.any(Function) }),
+    );
     expect(mocks.initializeTelemetry).toHaveBeenCalledWith({
       homeDir: '/tmp/kimi-export-home',
       deviceId: 'device-1',
@@ -442,5 +460,54 @@ describe('kimi export', () => {
       }),
     );
     expect(mocks.shutdownTelemetry).toHaveBeenCalledWith({ timeoutMs: 3000 });
+  });
+
+  it('tracks first launch around default export telemetry before harness construction can create the device id', async () => {
+    const program = new Command('kimi');
+    const output = join(tmp, 'telemetry-first-launch.zip');
+    mocks.harnessCreatesDeviceIdOnConstruction = true;
+    const createdHomes = new Set<string>();
+    mocks.createKimiDeviceId.mockImplementation((homeDir, options) => {
+      const deviceId = `device-for-${homeDir}`;
+      if (!createdHomes.has(homeDir)) {
+        createdHomes.add(homeDir);
+        options?.onFirstLaunch?.(deviceId);
+      }
+      return deviceId;
+    });
+    mocks.harnessExportSession.mockResolvedValue(makeResult('ses_first_launch', output));
+
+    registerExportCommand(program, {
+      cwd: () => tmp,
+      stdout: {
+        write: () => true,
+      },
+      stderr: {
+        write: () => true,
+      },
+      exit: ((code: number) => {
+        throw new ExitCalled(code);
+      }) as ExportDeps['exit'],
+    });
+
+    await program.parseAsync(['node', 'kimi', 'export', 'ses_first_launch', '--output', output], {
+      from: 'node',
+    });
+
+    expect(mocks.createKimiDeviceId).toHaveBeenNthCalledWith(
+      1,
+      '/tmp/kimi-export-home',
+      expect.objectContaining({ onFirstLaunch: expect.any(Function) }),
+    );
+    expect(mocks.createKimiDeviceId.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.kimiHarnessConstructor.mock.invocationCallOrder[0]!,
+    );
+    expect(mocks.kimiHarnessConstructor).toHaveBeenCalledWith(
+      expect.objectContaining({ homeDir: '/tmp/kimi-export-home' }),
+    );
+    expect(mocks.harnessTrack).toHaveBeenCalledWith('first_launch');
+    expect(mocks.initializeTelemetry.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.harnessTrack.mock.invocationCallOrder[0]!,
+    );
   });
 });

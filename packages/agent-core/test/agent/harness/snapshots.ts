@@ -281,7 +281,7 @@ function normalizeObjectField(
   value: unknown,
   uuidLabels: Map<string, string>,
 ): unknown {
-  if (key === 'time' && typeof value === 'number') return '<time>';
+  if ((key === 'time' || key === 'created_at') && typeof value === 'number') return '<time>';
   if (key === 'cwd' && typeof value === 'string') return '<cwd>';
   return normalizeValue(value, uuidLabels);
 }
