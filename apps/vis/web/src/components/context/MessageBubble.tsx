@@ -75,9 +75,25 @@ function AssistantBubble({ m }: { m: ProjectedMessage }) {
 }
 
 function ToolBubble({ m }: { m: ProjectedMessage }) {
+  // Tool outputs are often huge (file contents, command stdout). Collapse
+  // by default so the conversation flow stays readable. Errors open by
+  // default — that's the case where the user actually needs to read.
+  const [open, setOpen] = useState(m.message.isError === true);
+  const totalChars = m.message.content.reduce((acc, p) => {
+    if (p.type === 'text') return acc + p.text.length;
+    return acc;
+  }, 0);
+  const preview = firstTextPreview(m.message.content);
   return (
     <article className={baseClass()} style={{ borderLeftColor: 'var(--color-tool)' }}>
-      <header className="mb-1 flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => {
+          setOpen((v) => !v);
+        }}
+        className="flex w-full items-center gap-2 text-left"
+      >
+        <span className="text-fg-3">{open ? '▾' : '▸'}</span>
         <Pill tone="tool" variant="solid">tool</Pill>
         {m.message.toolCallId ? (
           <span className="font-mono text-[11px] text-fg-1">
@@ -86,8 +102,20 @@ function ToolBubble({ m }: { m: ProjectedMessage }) {
         ) : null}
         <span className="font-mono text-[10px] text-fg-3 tabular">line {m.lineNo}</span>
         {m.message.isError ? <Pill tone="error" variant="outline">error</Pill> : null}
-      </header>
-      <MessageContent parts={m.message.content} />
+        {!open ? (
+          <span className="ml-1 flex min-w-0 flex-1 items-center gap-2 font-mono text-[11px] text-fg-3">
+            <span className="truncate">{preview}</span>
+            <span className="shrink-0 tabular">
+              · {totalChars.toLocaleString()} chars
+            </span>
+          </span>
+        ) : null}
+      </button>
+      {open ? (
+        <div className="mt-2 max-h-[60vh] overflow-auto">
+          <MessageContent parts={m.message.content} />
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -204,6 +232,19 @@ function MessageContent({ parts }: { parts: readonly ContentPart[] }): ReactNode
 
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n) + '…';
+}
+
+function firstTextPreview(parts: readonly ContentPart[]): string {
+  for (const p of parts) {
+    if (p.type === 'text' && p.text.length > 0) {
+      const firstLine = p.text.split('\n', 1)[0] ?? '';
+      return truncate(firstLine, 100);
+    }
+    if (p.type === 'image_url') return '[image]';
+    if (p.type === 'audio_url') return '[audio]';
+    if (p.type === 'video_url') return '[video]';
+  }
+  return '(empty)';
 }
 
 function prettyJson(s: string): string {
