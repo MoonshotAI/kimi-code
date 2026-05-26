@@ -1,6 +1,7 @@
 import { Link, useParams } from 'react-router-dom';
 import { useSession } from '../hooks/useSession';
 import { TabBar, useActiveTab } from '../components/layout/TabBar';
+import { ContextTab } from '../components/context/ContextTab';
 import { WireTab } from '../components/wire/WireTab';
 import { Pill, type PillTone } from '../components/shared/Pill';
 import type { AgentInfo } from '../types';
@@ -108,7 +109,11 @@ export function SubagentDetailPage() {
         ) : null}
 
         {active === 'context' ? (
-          <Centered>context tab pending</Centered>
+          agent === null || !agent.wireExists ? (
+            <Centered>no context for this agent</Centered>
+          ) : (
+            <ContextTab sessionId={sessionId} initialAgentId={agentId} />
+          )
         ) : null}
       </div>
     </div>
