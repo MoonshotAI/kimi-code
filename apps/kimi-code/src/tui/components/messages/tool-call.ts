@@ -879,7 +879,9 @@ export class ToolCallComponent extends Container {
   }): void {
     this.subagentPhase = 'done';
     this.subagentEndedAtMs ??= Date.now();
-    this.subagentContextTokens = payload.contextTokens;
+    if (payload.contextTokens !== undefined && payload.contextTokens > 0) {
+      this.subagentContextTokens = payload.contextTokens;
+    }
     this.subagentUsage = payload.usage;
     this.subagentResultSummary =
       payload.resultSummary.length > 0 ? payload.resultSummary : undefined;
