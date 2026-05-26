@@ -192,10 +192,10 @@ function SystemPromptBubble({ text }: { text: string }) {
           {open ? '▾ collapse' : '▸ show full'}
         </span>
       </button>
-      <div className="relative px-3 pb-2">
+      <div className="relative min-w-0 px-3 pb-2">
         <pre
           className={[
-            'whitespace-pre-wrap break-words font-mono text-[12.5px] text-fg-0',
+            'min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[12.5px] text-fg-0',
             open ? '' : 'max-h-[9em] overflow-hidden',
           ].join(' ')}
         >
