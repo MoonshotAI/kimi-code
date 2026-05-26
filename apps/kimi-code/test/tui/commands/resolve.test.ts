@@ -66,6 +66,11 @@ describe('resolveSlashCommandInput', () => {
       name: 'mcp',
       args: '',
     });
+    expect(resolve('/skills', { isStreaming: true })).toMatchObject({
+      kind: 'builtin',
+      name: 'skills',
+      args: '',
+    });
   });
 
   it('blocks plan clear while compacting because it is idle-only', () => {

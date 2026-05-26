@@ -73,6 +73,7 @@ import type {
   Session,
   SessionMetaUpdatedEvent,
   SessionStatus,
+  SkillSummary,
   SessionUsage,
   SkillActivatedEvent,
   SubagentCompletedEvent,
@@ -155,6 +156,7 @@ import { AgentGroupComponent } from './components/messages/agent-group';
 import { AssistantMessageComponent } from './components/messages/assistant-message';
 import { BackgroundAgentStatusComponent } from './components/messages/background-agent-status';
 import { buildMcpStatusReportLines } from './components/messages/mcp-status-panel';
+import { buildSkillsReportLines } from './components/messages/skills-panel';
 import { ReadGroupComponent } from './components/messages/read-group';
 import { SkillActivationComponent } from './components/messages/skill-activation';
 import {
@@ -1404,6 +1406,9 @@ export class KimiTUI {
         return;
       case 'mcp':
         void this.showMcpServers();
+        return;
+      case 'skills':
+        void this.showSkills();
         return;
       case 'editor':
         await this.handleEditorCommand(args, {});
@@ -4732,6 +4737,26 @@ export class KimiTUI {
       servers,
     });
     const title = servers.length > 0 ? ` MCP (${servers.length}) ` : ' MCP ';
+    const panel = new UsagePanelComponent(lines, this.state.theme.colors.primary, title);
+    this.state.transcriptContainer.addChild(panel);
+    this.state.ui.requestRender();
+  }
+
+  // Loads and renders available skills.
+  private async showSkills(): Promise<void> {
+    let skills: readonly SkillSummary[];
+    try {
+      skills = await this.requireSession().listSkills();
+    } catch (error) {
+      this.showError(`Failed to load skills: ${formatErrorMessage(error)}`);
+      return;
+    }
+
+    const lines = buildSkillsReportLines({
+      colors: this.state.theme.colors,
+      skills,
+    });
+    const title = skills.length > 0 ? ` Skills (${skills.length}) ` : ' Skills ';
     const panel = new UsagePanelComponent(lines, this.state.theme.colors.primary, title);
     this.state.transcriptContainer.addChild(panel);
     this.state.ui.requestRender();
