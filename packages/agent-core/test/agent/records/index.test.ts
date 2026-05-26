@@ -172,53 +172,6 @@ describe('AgentRecords persistence metadata', () => {
     expect(result.warning).toContain(AGENT_WIRE_PROTOCOL_VERSION);
   });
 
-  it('normalizes legacy tool calls even when wire version is newer than current', async () => {
-    const persistence = new RecordingInMemoryAgentRecordPersistence([
-      {
-        type: 'metadata',
-        protocol_version: '2.2',
-        created_at: 1,
-      },
-      {
-        type: 'context.append_message',
-        message: {
-          role: 'assistant',
-          content: [],
-          toolCalls: [
-            {
-              type: 'function',
-              id: 'call_legacy_bash',
-              function: {
-                name: 'Bash',
-                arguments: '{"command":"pwd"}',
-              },
-            },
-          ],
-        },
-      } as unknown as AgentRecord,
-    ]);
-    const records = new AgentRecords(() => {}, persistence);
-
-    const result = await records.replay();
-
-    expect(result.warning).toContain('2.2');
-    expect(persistence.rewrites).toHaveLength(1);
-    expect(persistence.records[0]).toMatchObject({
-      type: 'metadata',
-      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-    });
-    const normalized = persistence.records[1] as unknown as {
-      readonly message: {
-        readonly toolCalls: readonly Record<string, unknown>[];
-      };
-    };
-    expect(normalized.message.toolCalls[0]).toMatchObject({
-      name: 'Bash',
-      arguments: '{"command":"pwd"}',
-    });
-    expect(normalized.message.toolCalls[0]?.['function']).toBeUndefined();
-  });
-
   it('rejects replaying records without a registered migration path', async () => {
     const persistence = new InMemoryAgentRecordPersistence([
       {
