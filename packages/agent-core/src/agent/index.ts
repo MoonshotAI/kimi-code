@@ -41,7 +41,6 @@ import { PlanMode } from './plan';
 import {
   AgentRecords,
   FileSystemAgentRecordPersistence,
-  restoreAgentRecord,
   type AgentRecord,
   type AgentRecordPersistence,
 } from './records';
@@ -77,7 +76,6 @@ export interface AgentConfig {
   readonly backgroundMaxRunningTasks?: number;
   readonly backgroundSessionDir?: string;
   readonly permission?: PermissionManagerOptions | undefined;
-  readonly onRecord?: ((record: AgentRecord) => void) | undefined;
   /** Parent logger; the agent appends its own ctx (agentId already bound by session). */
   readonly log?: Logger;
   readonly telemetry?: TelemetryClient | undefined;
@@ -133,9 +131,7 @@ export class Agent {
     this.rpc = config.rpc;
     this.telemetry = config.telemetry ?? noopTelemetryClient;
     this.records = new AgentRecords(
-      (record) => {
-        restoreAgentRecord(this, record);
-      },
+      this,
       config.persistence ??
         (config.homedir
           ? new FileSystemAgentRecordPersistence(join(config.homedir, 'wire.jsonl'), {
@@ -145,7 +141,6 @@ export class Agent {
             })
           : undefined),
     );
-    this.records.onRecord = config.onRecord;
     this.fullCompaction = new FullCompaction(this, config.compactionStrategy);
     this.context = new ContextMemory(this);
     this.config = new ConfigState(this);
