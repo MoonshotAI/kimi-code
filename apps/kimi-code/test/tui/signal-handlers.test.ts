@@ -182,6 +182,28 @@ describe('KimiTUI signal handlers', () => {
     driver.unregisterSignalHandlers();
   });
 
+  it('SIGTERM handler falls back to emergency exit when stop() rejects', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    const { driver, tui } = makeDriver();
+    const stopSpy = vi.spyOn(tui, 'stop').mockRejectedValue(new Error('cleanup boom'));
+    const captured = captureHandlers(driver);
+
+    const sigterm = captured.signalHandlers.get('SIGTERM');
+    expect(sigterm).toBeDefined();
+    sigterm?.();
+
+    // Allow the rejected stop() promise to settle so the .catch() chain runs.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(exitSpy).toHaveBeenCalledWith(129);
+
+    stopSpy.mockRestore();
+    captured.restore();
+    driver.unregisterSignalHandlers();
+  });
+
   it('SIGTERM handler routes through stop() and does not call emergency exit', async () => {
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     const { driver, tui } = makeDriver();

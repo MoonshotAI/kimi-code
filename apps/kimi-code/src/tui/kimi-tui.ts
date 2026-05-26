@@ -955,7 +955,14 @@ export class KimiTUI {
           this.emergencyTerminalExit();
           return;
         }
-        void this.stop();
+        // SIGTERM: try the graceful path, but if cleanup rejects (e.g. session
+        // close fails and leaves open fds) fall back to emergency exit so the
+        // process does not hang on pending I/O. `stop()` has already latched
+        // `isShuttingDown` by the time this catch can fire, so retrying is
+        // not safe — emergency exit is the only correct response.
+        this.stop().catch(() => {
+          this.emergencyTerminalExit();
+        });
       };
       process.prependListener(signal, handler);
       this.signalCleanupHandlers.push(() => {
