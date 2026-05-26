@@ -43,3 +43,33 @@ export type {
   BearerTokenProvider,
   OAuthTokenProviderResolver,
 } from './providers/runtime-provider';
+
+// ─── Wire records (for in-monorepo consumers like apps/vis) ────────────────
+export type {
+  AgentRecord,
+  AgentRecordEvents,
+  AgentRecordOf,
+  AgentRecordPersistence,
+} from './agent/records';
+export { AGENT_WIRE_PROTOCOL_VERSION } from './agent/records';
+export type { AgentConfigUpdateData } from './agent/config';
+export type { CompactionBeginData, CompactionResult } from './agent/compaction';
+export type {
+  PermissionApprovalResultRecord,
+  PermissionMode,
+} from './agent/permission';
+export type { UsageRecordScope } from './agent/usage';
+export type { ToolStoreUpdate } from './tools/store';
+export type {
+  LoopRecordedEvent,
+  LoopStepBeginEvent,
+  LoopStepEndEvent,
+  LoopContentPartEvent,
+  LoopToolCallEvent,
+  LoopToolResultEvent,
+} from './loop';
+export type {
+  ExecutableToolResult,
+  ExecutableToolSuccessResult,
+  ExecutableToolErrorResult,
+} from './loop/types';

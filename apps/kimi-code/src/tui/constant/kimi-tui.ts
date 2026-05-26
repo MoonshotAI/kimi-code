@@ -1,6 +1,6 @@
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
 
-export { DEFAULT_OAUTH_PROVIDER_NAME, OAUTH_LOGIN_REQUIRED_CODE } from '#/constant/app';
+export { DEFAULT_OAUTH_PROVIDER_NAME, OAUTH_LOGIN_REQUIRED_CODE, PRODUCT_NAME } from '#/constant/app';
 
 export const LLM_NOT_SET_MESSAGE = 'LLM not set, send "/login" to login';
 export const NO_ACTIVE_SESSION_MESSAGE = 'No active session. Send /login to login.';
