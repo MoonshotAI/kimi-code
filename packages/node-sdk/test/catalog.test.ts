@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   applyCatalogProvider,
   catalogModelToAlias,
+  catalogProviderModels,
   CatalogFetchError,
   fetchCatalog,
   type CatalogModel,
@@ -88,6 +89,40 @@ describe('applyCatalogProvider', () => {
     });
     expect(config.defaultModel).toBe('anthropic/m1');
     expect(config.defaultThinking).toBe(true);
+  });
+
+  it('writes interleaved reasoning key from a catalog-selected model alias', () => {
+    const models = catalogProviderModels({
+      id: 'deepseek',
+      models: {
+        'deepseek-v4-pro': {
+          id: 'deepseek-v4-pro',
+          name: 'DeepSeek V4 Pro',
+          family: 'deepseek-thinking',
+          limit: { context: 1000000, output: 384000 },
+          reasoning: true,
+          tool_call: true,
+          interleaved: { field: 'reasoning_content' },
+        },
+      },
+    });
+    const config = { providers: {} } as KimiConfig;
+
+    applyCatalogProvider(config, {
+      providerId: 'deepseek',
+      wire: 'openai',
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'sk',
+      models,
+      selectedModelId: 'deepseek-v4-pro',
+      thinking: true,
+    });
+
+    expect(config.models?.['deepseek/deepseek-v4-pro']).toMatchObject({
+      provider: 'deepseek',
+      model: 'deepseek-v4-pro',
+      reasoningKey: 'reasoning_content',
+    });
   });
 
   it('clears stale aliases for the same provider but keeps others', () => {
