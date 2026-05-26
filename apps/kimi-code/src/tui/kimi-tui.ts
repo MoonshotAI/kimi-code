@@ -223,6 +223,7 @@ import { formatBackgroundAgentTranscript } from './utils/background-agent-status
 import { formatBackgroundTaskTranscript } from './utils/background-task-status';
 import { hasDispose, isExpandable, isPlanExpandable } from './utils/component-capabilities';
 import { resolveConnectCatalogRequest } from './utils/connect-catalog';
+import { isDeadTerminalError } from './utils/dead-terminal';
 import {
   appendStreamingArgsPreview,
   argsRecord,
@@ -578,6 +579,13 @@ export class KimiTUI {
   private aborted = false;
   private terminalFocusTrackingDispose: (() => void) | undefined;
   private terminalThemeTrackingDispose: (() => void) | undefined;
+  // Cleanup callbacks for SIGHUP/SIGTERM listeners and stdout/stderr 'error'
+  // listeners installed by `registerSignalHandlers()`. Drained on shutdown so
+  // we never leave dangling listeners on the host `process`.
+  private signalCleanupHandlers: Array<() => void> = [];
+  // Guards `stop()` and `emergencyTerminalExit()` so a signal arriving mid-
+  // shutdown does not race with itself.
+  private isShuttingDown = false;
   // First-launch migration plan detected pre-TUI; null when nothing to migrate.
   private readonly migrationPlan: MigrationPlan | null;
   // When true, the migration screen is the whole session: run it, then exit.
@@ -709,6 +717,10 @@ export class KimiTUI {
 
   // Starts the TUI, performs startup routing, and begins session event handling.
   async start(): Promise<void> {
+    // Arm SIGHUP/SIGTERM and stdout/stderr 'error' handlers before touching the
+    // terminal: once raw mode is on and timers start firing, a dying parent
+    // shell can pin a CPU core on EIO write retries unless we can self-exit.
+    this.registerSignalHandlers();
     // Migration path: the migration screen is a pi-tui component, so the event
     // loop must run first. It then renders as the very first thing on screen,
     // before the session is created and the Welcome banner is drawn.
@@ -892,6 +904,9 @@ export class KimiTUI {
 
   // Stops UI resources, active sessions, reverse-RPC handlers, and the harness.
   async stop(): Promise<void> {
+    if (this.isShuttingDown) return;
+    this.isShuttingDown = true;
+    this.unregisterSignalHandlers();
     this.aborted = true;
     this.discardPendingStreamingUiUpdates();
     if (this.pendingExit) {
@@ -910,6 +925,72 @@ export class KimiTUI {
     if (this.onExit) {
       await this.onExit();
     }
+  }
+
+  // Installs SIGHUP/SIGTERM signal handlers and stdout/stderr 'error' listeners
+  // so the process can self-terminate when the controlling terminal goes away.
+  //
+  // SIGHUP and EIO/EPIPE/ENOTCONN on stdout/stderr both mean "the terminal is
+  // gone". Running the normal `stop()` path in that state writes restore
+  // sequences (cursor show, bracketed paste off, Kitty protocol off) which
+  // re-trigger EIO and have been observed to pin a CPU core for days.
+  // `emergencyTerminalExit()` is the safe response: it bypasses cleanup.
+  //
+  // SIGTERM is treated as a graceful shutdown request and routes through the
+  // normal `stop()` path so telemetry and session state get flushed.
+  //
+  // `prependListener` ensures we run before any subsequent listener a feature
+  // might register later in startup, since responsiveness here is critical.
+  private registerSignalHandlers(): void {
+    this.unregisterSignalHandlers();
+
+    const signals: NodeJS.Signals[] = ['SIGTERM'];
+    if (process.platform !== 'win32') {
+      signals.push('SIGHUP');
+    }
+
+    for (const signal of signals) {
+      const handler = (): void => {
+        if (signal === 'SIGHUP') {
+          this.emergencyTerminalExit();
+          return;
+        }
+        void this.stop();
+      };
+      process.prependListener(signal, handler);
+      this.signalCleanupHandlers.push(() => {
+        process.off(signal, handler);
+      });
+    }
+
+    const terminalErrorHandler = (error: Error): void => {
+      if (isDeadTerminalError(error)) {
+        this.emergencyTerminalExit();
+      }
+    };
+    process.stdout.on('error', terminalErrorHandler);
+    process.stderr.on('error', terminalErrorHandler);
+    this.signalCleanupHandlers.push(() => {
+      process.stdout.off('error', terminalErrorHandler);
+    });
+    this.signalCleanupHandlers.push(() => {
+      process.stderr.off('error', terminalErrorHandler);
+    });
+  }
+
+  private unregisterSignalHandlers(): void {
+    const handlers = this.signalCleanupHandlers;
+    this.signalCleanupHandlers = [];
+    for (const cleanup of handlers) cleanup();
+  }
+
+  // Bails out without running normal shutdown. Reserved for SIGHUP / dead-
+  // terminal write errors where every additional stdout write risks looping
+  // on EIO. Exit code 129 follows the POSIX 128 + SIGHUP(1) convention.
+  private emergencyTerminalExit(): never {
+    this.isShuttingDown = true;
+    this.unregisterSignalHandlers();
+    process.exit(129);
   }
 
   // Tears down the terminal focus + theme tracking installed by

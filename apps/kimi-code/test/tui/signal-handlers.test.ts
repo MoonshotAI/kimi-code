@@ -1,0 +1,261 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { KimiTUI, type KimiTUIStartupInput } from '#/tui/kimi-tui';
+
+interface SignalDriver {
+  registerSignalHandlers(): void;
+  unregisterSignalHandlers(): void;
+  emergencyTerminalExit(): never;
+  stop(): Promise<void>;
+}
+
+function makeStartupInput(): KimiTUIStartupInput {
+  return {
+    cliOptions: {
+      session: undefined,
+      continue: false,
+      yolo: false,
+      plan: false,
+      model: undefined,
+      outputFormat: undefined,
+      prompt: undefined,
+      skillsDirs: [],
+    },
+    tuiConfig: {
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    },
+    version: '0.0.0-test',
+    workDir: '/tmp/proj-signals',
+    resolvedTheme: 'dark',
+  };
+}
+
+function makeHarness() {
+  return {
+    getConfig: vi.fn(async () => ({})),
+    createSession: vi.fn(),
+    resumeSession: vi.fn(),
+    listSessions: vi.fn(async () => []),
+    close: vi.fn(async () => {}),
+    track: vi.fn(),
+    setTelemetryContext: vi.fn(),
+    auth: {
+      status: vi.fn(async () => ({ providers: [] })),
+      login: vi.fn(),
+      logout: vi.fn(),
+      getManagedUsage: vi.fn(),
+    },
+  };
+}
+
+function makeDriver(): { driver: SignalDriver; tui: KimiTUI } {
+  const tui = new KimiTUI(makeHarness() as never, makeStartupInput());
+  const driver = tui as unknown as SignalDriver;
+  return { driver, tui };
+}
+
+// Capture handlers via process.prependListener spy so we can invoke them
+// directly without going through `process.emit`. Routing through emit also
+// fires unrelated listeners that vitest installs on its worker process, and
+// those listeners exit the worker.
+interface CapturedHandlers {
+  signalHandlers: Map<NodeJS.Signals, (...args: unknown[]) => void>;
+  stdoutErrorHandler?: (error: Error) => void;
+  stderrErrorHandler?: (error: Error) => void;
+  restore: () => void;
+}
+
+function captureHandlers(driver: SignalDriver): CapturedHandlers {
+  const signalHandlers = new Map<NodeJS.Signals, (...args: unknown[]) => void>();
+  // The Node typings give `process.prependListener` a long list of overloads
+  // (one per signal). We bypass that by typing the spy through `unknown`.
+  const prependSpy = vi.spyOn(process, 'prependListener');
+  (prependSpy as unknown as { mockImplementation: (fn: unknown) => unknown }).mockImplementation(
+    (event: string | symbol, listener: (...args: unknown[]) => void): NodeJS.Process => {
+      if (event === 'SIGTERM' || event === 'SIGHUP') {
+        signalHandlers.set(event, listener);
+      }
+      return process;
+    },
+  );
+
+  let stdoutErrorHandler: ((error: Error) => void) | undefined;
+  let stderrErrorHandler: ((error: Error) => void) | undefined;
+  const stdoutOnSpy = vi.spyOn(process.stdout, 'on');
+  (stdoutOnSpy as unknown as { mockImplementation: (fn: unknown) => unknown }).mockImplementation(
+    (event: string | symbol, listener: (...args: unknown[]) => void) => {
+      if (event === 'error') {
+        stdoutErrorHandler = listener as (error: Error) => void;
+      }
+      return process.stdout;
+    },
+  );
+  const stderrOnSpy = vi.spyOn(process.stderr, 'on');
+  (stderrOnSpy as unknown as { mockImplementation: (fn: unknown) => unknown }).mockImplementation(
+    (event: string | symbol, listener: (...args: unknown[]) => void) => {
+      if (event === 'error') {
+        stderrErrorHandler = listener as (error: Error) => void;
+      }
+      return process.stderr;
+    },
+  );
+
+  driver.registerSignalHandlers();
+
+  return {
+    signalHandlers,
+    get stdoutErrorHandler() {
+      return stdoutErrorHandler;
+    },
+    get stderrErrorHandler() {
+      return stderrErrorHandler;
+    },
+    restore: () => {
+      prependSpy.mockRestore();
+      stdoutOnSpy.mockRestore();
+      stderrOnSpy.mockRestore();
+    },
+  } as unknown as CapturedHandlers;
+}
+
+describe('KimiTUI signal handlers', () => {
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+  let platformDescriptor: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    exitSpy = vi
+      .spyOn(process, 'exit')
+      .mockImplementation((() => undefined) as unknown as typeof process.exit);
+    platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  });
+
+  afterEach(() => {
+    exitSpy.mockRestore();
+    if (platformDescriptor !== undefined) {
+      Object.defineProperty(process, 'platform', platformDescriptor);
+    }
+  });
+
+  it('emergencyTerminalExit exits with code 129', () => {
+    const { driver } = makeDriver();
+    driver.emergencyTerminalExit();
+    expect(exitSpy).toHaveBeenCalledWith(129);
+  });
+
+  it('registers SIGTERM and SIGHUP on POSIX, only SIGTERM on Windows', () => {
+    // POSIX
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    const posix = makeDriver();
+    const posixCaptured = captureHandlers(posix.driver);
+    expect(posixCaptured.signalHandlers.has('SIGTERM')).toBe(true);
+    expect(posixCaptured.signalHandlers.has('SIGHUP')).toBe(true);
+    posixCaptured.restore();
+    posix.driver.unregisterSignalHandlers();
+
+    // Windows
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    const win = makeDriver();
+    const winCaptured = captureHandlers(win.driver);
+    expect(winCaptured.signalHandlers.has('SIGTERM')).toBe(true);
+    expect(winCaptured.signalHandlers.has('SIGHUP')).toBe(false);
+    winCaptured.restore();
+    win.driver.unregisterSignalHandlers();
+  });
+
+  it('SIGHUP handler calls emergencyTerminalExit (process.exit(129)) without going through stop()', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    const { driver, tui } = makeDriver();
+    const stopSpy = vi.spyOn(tui, 'stop').mockResolvedValue(undefined);
+    const captured = captureHandlers(driver);
+
+    const sighup = captured.signalHandlers.get('SIGHUP');
+    expect(sighup).toBeDefined();
+    sighup?.();
+
+    expect(exitSpy).toHaveBeenCalledWith(129);
+    expect(stopSpy).not.toHaveBeenCalled();
+
+    stopSpy.mockRestore();
+    captured.restore();
+    driver.unregisterSignalHandlers();
+  });
+
+  it('SIGTERM handler routes through stop() and does not call emergency exit', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    const { driver, tui } = makeDriver();
+    const stopSpy = vi.spyOn(tui, 'stop').mockResolvedValue(undefined);
+    const captured = captureHandlers(driver);
+
+    const sigterm = captured.signalHandlers.get('SIGTERM');
+    expect(sigterm).toBeDefined();
+    sigterm?.();
+
+    // The handler awaits stop() via `void`, give it a microtask to run.
+    await Promise.resolve();
+
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(exitSpy).not.toHaveBeenCalledWith(129);
+
+    stopSpy.mockRestore();
+    captured.restore();
+    driver.unregisterSignalHandlers();
+  });
+
+  it('stdout EIO error triggers emergency exit; ENOENT does not', () => {
+    const { driver } = makeDriver();
+    const captured = captureHandlers(driver);
+
+    const eio = Object.assign(new Error('write EIO'), { code: 'EIO' });
+    captured.stdoutErrorHandler?.(eio);
+    expect(exitSpy).toHaveBeenCalledWith(129);
+
+    exitSpy.mockClear();
+    const enoent = Object.assign(new Error('not found'), { code: 'ENOENT' });
+    captured.stdoutErrorHandler?.(enoent);
+    expect(exitSpy).not.toHaveBeenCalled();
+
+    captured.restore();
+    driver.unregisterSignalHandlers();
+  });
+
+  it('stderr EPIPE error triggers emergency exit', () => {
+    const { driver } = makeDriver();
+    const captured = captureHandlers(driver);
+
+    const epipe = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+    captured.stderrErrorHandler?.(epipe);
+    expect(exitSpy).toHaveBeenCalledWith(129);
+
+    captured.restore();
+    driver.unregisterSignalHandlers();
+  });
+
+  it('registerSignalHandlers is idempotent (second call replaces first)', () => {
+    const { driver } = makeDriver();
+    const beforeSigterm = process.listenerCount('SIGTERM');
+
+    driver.registerSignalHandlers();
+    driver.registerSignalHandlers();
+
+    expect(process.listenerCount('SIGTERM')).toBe(beforeSigterm + 1);
+
+    driver.unregisterSignalHandlers();
+    expect(process.listenerCount('SIGTERM')).toBe(beforeSigterm);
+  });
+
+  it('stop() unregisters previously-installed signal handlers', async () => {
+    const { driver, tui } = makeDriver();
+    // Suppress real stop work for this test — focus on the cleanup contract.
+    vi.spyOn(tui, 'stop').mockImplementation(async () => {
+      (tui as unknown as SignalDriver).unregisterSignalHandlers();
+    });
+    const beforeSigterm = process.listenerCount('SIGTERM');
+    driver.registerSignalHandlers();
+    expect(process.listenerCount('SIGTERM')).toBe(beforeSigterm + 1);
+
+    await tui.stop();
+    expect(process.listenerCount('SIGTERM')).toBe(beforeSigterm);
+  });
+});
