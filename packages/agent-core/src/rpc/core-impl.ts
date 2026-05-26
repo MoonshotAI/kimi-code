@@ -1,79 +1,80 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 
-import { localKaos } from '@moonshot-ai/kaos';
 import { ErrorCodes, KimiError } from '#/errors';
 import { getRootLogger, log } from '#/logging/logger';
 import { LocalFetchURLProvider } from '#/tools/providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from '#/tools/providers/moonshot-fetch-url';
 import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search';
 import { detectEnvironmentFromNode } from '#/utils/environment';
+import type { PromisableMethods } from '#/utils/types';
 import { getCoreVersion } from '#/version';
-import type {
-  ActivateSkillPayload,
-  BeginCompactionPayload,
-  CancelPayload,
-  CancelPlanPayload,
-  CloseSessionPayload,
-  CoreAPI,
-  CoreInfo,
-  CreateSessionPayload,
-  EmptyPayload,
-  ExportSessionPayload,
-  ExportSessionResult,
-  ForkSessionPayload,
-  GetBackgroundOutputPathPayload,
-  GetBackgroundOutputPayload,
-  GetBackgroundPayload,
-  ListSessionsPayload,
-  McpServerInfo,
-  McpStartupMetrics,
-  PromptPayload,
-  ReconnectMcpServerPayload,
-  RemoveKimiProviderPayload,
-  RenameSessionPayload,
-  ResumeSessionPayload,
-  RegisterToolPayload,
-  SetKimiConfigPayload,
-  SetActiveToolsPayload,
-  SetModelPayload,
-  SetModelResult,
-  SetPermissionPayload,
-  SetThinkingPayload,
-  SkillSummary,
-  SteerPayload,
-  StopBackgroundPayload,
-  SessionSummary,
-  UnregisterToolPayload,
-  UpdateSessionMetadataPayload,
-} from './core-api';
+import { localKaos } from '@moonshot-ai/kaos';
 import type { CoreRPCClient } from './client';
+import type {
+    ActivateSkillPayload,
+    BeginCompactionPayload,
+    CancelPayload,
+    CancelPlanPayload,
+    CloseSessionPayload,
+    CoreAPI,
+    CoreInfo,
+    CreateSessionPayload,
+    EmptyPayload,
+    ExportSessionPayload,
+    ExportSessionResult,
+    ForkSessionPayload,
+    GetBackgroundOutputPathPayload,
+    GetBackgroundOutputPayload,
+    GetBackgroundPayload,
+    ListSessionsPayload,
+    McpServerInfo,
+    McpStartupMetrics,
+    PromptPayload,
+    ReconnectMcpServerPayload,
+    RegisterToolPayload,
+    RemoveKimiProviderPayload,
+    RenameSessionPayload,
+    ResumeSessionPayload,
+    SessionSummary,
+    SetActiveToolsPayload,
+    SetKimiConfigPayload,
+    SetModelPayload,
+    SetModelResult,
+    SetPermissionPayload,
+    SetThinkingPayload,
+    SkillSummary,
+    SteerPayload,
+    StopBackgroundPayload,
+    UnregisterToolPayload,
+    UpdateSessionMetadataPayload,
+} from './core-api';
 import type { ResumedAgentState, ResumeSessionResult } from './resumed';
 import type { SDKRPC } from './sdk-api';
 import { proxyWithExtraPayload } from './types';
-import type { PromisableMethods } from '#/utils/types';
 
-import { resolveSessionMcpConfig } from '../mcp';
-import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
-import { SessionAPIImpl } from '../session/rpc';
+import { MAIN_AGENT_ID } from '../agent';
 import {
-  ensureKimiHome,
-  mergeConfigPatch,
-  readConfigFile,
-  resolveConfigPath,
-  resolveKimiHome,
-  writeConfigFile,
-  type KimiConfig,
-  type MoonshotServiceConfig,
+    ensureKimiHome,
+    mergeConfigPatch,
+    readConfigFile,
+    resolveConfigPath,
+    resolveKimiHome,
+    writeConfigFile,
+    type KimiConfig,
+    type MoonshotServiceConfig,
 } from '../config';
-import { exportSessionDirectory } from '../session/export';
+import type { Logger } from '../logging/types';
+import { resolveSessionMcpConfig } from '../mcp';
 import { ProviderManager } from '../providers/provider-manager';
 import {
-  type BearerTokenProvider,
-  type OAuthTokenProviderResolver,
+    type BearerTokenProvider,
+    type OAuthTokenProviderResolver,
 } from '../providers/runtime-provider';
-import type { Logger } from '../logging/types';
 import type { RuntimeConfig } from '../runtime-types';
+import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
+import { exportSessionDirectory } from '../session/export';
+import { SessionAPIImpl } from '../session/rpc';
 import { normalizeWorkDir, SessionStore } from '../session/store';
 import { noopTelemetryClient, withTelemetryContext, type TelemetryClient } from '../telemetry';
 
@@ -581,12 +582,12 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     // session may reference a model alias that no longer exists in config.toml.
     // Try the session's own model first, then fall back to the configured
     // default, so resume degrades gracefully instead of hard-failing.
-    const requested = (await api.getModel({ agentId: 'main' })).trim();
+    const requested = (await api.getModel({ agentId: MAIN_AGENT_ID })).trim();
     const fallback = config.defaultModel?.trim() ?? '';
     const candidates = [...new Set([requested, fallback].filter((model) => model.length > 0))];
     for (const model of candidates) {
       try {
-        await api.setModel({ agentId: 'main', model });
+        await api.setModel({ agentId: MAIN_AGENT_ID, model });
         await session.flushMetadata();
         return;
       } catch (error) {
@@ -612,7 +613,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     // selection whose next prompt fails with a config error. Not persisted:
     // `refreshSessionRuntimeConfig` re-derives this on every resume.
     if (requested.length > 0) {
-      session.agents.get('main')?.config.update({ modelAlias: undefined });
+      session.agents.get(MAIN_AGENT_ID)?.config.update({ modelAlias: undefined });
     }
   }
 }

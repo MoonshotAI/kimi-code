@@ -7,7 +7,7 @@ import type { Logger, SessionLogHandle } from '#/logging/types';
 import type { SDKSessionRPC } from '#/rpc';
 import { proxyWithExtraPayload } from '#/rpc/types';
 
-import { Agent, type AgentConfig, type AgentType } from '../agent';
+import { Agent, MAIN_AGENT_ID, type AgentConfig, type AgentType } from '../agent';
 import { HookEngine, type HookDef } from '../agent/hooks';
 import type { PermissionManagerOptions, PermissionRule } from '../agent/permission';
 import { parseBooleanEnv, resolveConfigValue, type BackgroundConfig } from '../config';
@@ -143,7 +143,10 @@ export class Session {
   }
 
   async createMain() {
-    const { agent } = await this.createAgent({ type: 'main' }, DEFAULT_AGENT_PROFILES['agent']);
+    const { agent } = await this.createAgent(
+      { type: MAIN_AGENT_ID },
+      DEFAULT_AGENT_PROFILES['agent'],
+    );
     await this.triggerSessionStart('startup');
     return agent;
   }
@@ -162,7 +165,7 @@ export class Session {
     // main agent comes back with an empty system prompt and no tools. Apply the
     // default profile so the resumed session is usable. Native sessions always
     // replay a non-empty system prompt and never enter this branch.
-    const main = this.agents.get('main');
+    const main = this.agents.get(MAIN_AGENT_ID);
     const profile = DEFAULT_AGENT_PROFILES['agent'];
     if (main !== undefined && profile !== undefined && main.config.systemPrompt === '') {
       await this.bootstrapAgentProfile(main, profile);
@@ -206,8 +209,8 @@ export class Session {
     parentAgentId?: string | undefined,
   ): Promise<{ readonly id: string; readonly agent: Agent }> {
     await this.skillsReady;
-    const type = config.type ?? 'main';
-    const id = type === 'main' ? 'main' : this.nextGeneratedAgentId();
+    const type = config.type ?? MAIN_AGENT_ID;
+    const id = type === MAIN_AGENT_ID ? MAIN_AGENT_ID : this.nextGeneratedAgentId();
     const homedir = config.homedir ?? join(this.config.homedir, 'agents', id);
     const agent = this.instantiateAgent(id, homedir, type, config, parentAgentId ?? null);
     if (profile) {
@@ -356,7 +359,7 @@ export class Session {
     this.log.error('mcp initial load failed', error);
     void this.rpc.emitEvent({
       type: 'error',
-      agentId: 'main',
+      agentId: MAIN_AGENT_ID,
       ...makeErrorPayload(ErrorCodes.MCP_STARTUP_FAILED, message),
     });
   }
@@ -366,7 +369,7 @@ export class Session {
     // can keep its dashboard in sync, even before the main agent exists.
     void this.rpc.emitEvent({
       type: 'mcp.server.status',
-      agentId: 'main',
+      agentId: MAIN_AGENT_ID,
       server: {
         name: entry.name,
         transport: entry.transport,
@@ -472,7 +475,7 @@ export class Session {
   }
 
   private requireMainAgent(): Agent {
-    const agent = this.agents.get('main');
+    const agent = this.agents.get(MAIN_AGENT_ID);
     if (agent === undefined) {
       throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
     }

@@ -20,6 +20,7 @@ export {
 export {
   flushDiagnosticLogs,
   log,
+  MAIN_AGENT_ID,
   redact,
   resolveGlobalLogPath,
   resolveKimiHome,

@@ -3,6 +3,7 @@ import {
   ErrorCodes,
   KimiCore,
   makeErrorPayload,
+  MAIN_AGENT_ID,
   resolveKimiHome,
   type ApprovalRequest,
   type ApprovalResponse,
@@ -46,8 +47,6 @@ import type {
   Unsubscribe,
   KimiHostIdentity,
 } from '#/types';
-
-const MAIN_AGENT_ID = 'main';
 
 export interface SDKRpcClientOptions {
   readonly homeDir?: string | undefined;

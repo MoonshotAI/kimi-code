@@ -58,6 +58,7 @@ import { UsageRecorder } from './usage';
 export type { AgentRecord, AgentRecordPersistence } from './records';
 export type { BuiltinTool, ToolInfo, ToolSource, UserToolRegistration } from './tool';
 
+export const MAIN_AGENT_ID = 'main';
 export type AgentType = 'main' | 'sub' | 'independent';
 
 export interface AgentConfig {
@@ -128,7 +129,7 @@ export class Agent {
     this.mcp = config.mcp;
     this.hooks = config.hookEngine;
 
-    this.type = config.type ?? 'main';
+    this.type = config.type ?? MAIN_AGENT_ID;
 
     this.rpc = config.rpc;
     this.telemetry = config.telemetry ?? noopTelemetryClient;

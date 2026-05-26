@@ -1,38 +1,39 @@
 import { ErrorCodes, KimiError } from '#/errors';
 import type {
-  ActivateSkillPayload,
-  AgentAPI,
-  BeginCompactionPayload,
-  CancelPayload,
-  CancelPlanPayload,
-  EmptyPayload,
-  GetBackgroundOutputPathPayload,
-  GetBackgroundOutputPayload,
-  GetBackgroundPayload,
-  McpServerInfo,
-  McpStartupMetrics,
-  PromptPayload,
-  ReconnectMcpServerPayload,
-  RenameSessionPayload,
-  RegisterToolPayload,
-  SessionAPI,
-  SetActiveToolsPayload,
-  SetModelPayload,
-  SetPermissionPayload,
-  SetThinkingPayload,
-  SkillSummary,
-  SteerPayload,
-  StopBackgroundPayload,
-  UnregisterToolPayload,
-  UpdateSessionMetadataPayload,
+    ActivateSkillPayload,
+    AgentAPI,
+    BeginCompactionPayload,
+    CancelPayload,
+    CancelPlanPayload,
+    EmptyPayload,
+    GetBackgroundOutputPathPayload,
+    GetBackgroundOutputPayload,
+    GetBackgroundPayload,
+    McpServerInfo,
+    McpStartupMetrics,
+    PromptPayload,
+    ReconnectMcpServerPayload,
+    RegisterToolPayload,
+    RenameSessionPayload,
+    SessionAPI,
+    SetActiveToolsPayload,
+    SetModelPayload,
+    SetPermissionPayload,
+    SetThinkingPayload,
+    SkillSummary,
+    SteerPayload,
+    StopBackgroundPayload,
+    UnregisterToolPayload,
+    UpdateSessionMetadataPayload,
 } from '#/rpc';
 import type { PromisableMethods } from '#/utils/types';
 
 import type { Session, SessionMeta } from '.';
+import { MAIN_AGENT_ID } from '../agent';
 import {
-  promptMetadataTextFromPayload,
-  promptMetadataTextFromSkill,
-  titleFromPromptMetadataText,
+    promptMetadataTextFromPayload,
+    promptMetadataTextFromSkill,
+    titleFromPromptMetadataText,
 } from './prompt-metadata';
 
 type AgentScopedPayload<T> = T & { agentId: string };
@@ -89,7 +90,7 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
   }
 
   async prompt({ agentId, ...payload }: AgentScopedPayload<PromptPayload>) {
-    if (agentId === 'main') {
+    if (agentId === MAIN_AGENT_ID) {
       await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
     }
     return this.getAgent(agentId).prompt(payload);
@@ -161,7 +162,7 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async activateSkill({ agentId, ...payload }: AgentScopedPayload<ActivateSkillPayload>) {
     await this.getAgent(agentId).activateSkill(payload);
-    if (agentId === 'main') {
+    if (agentId === MAIN_AGENT_ID) {
       await this.updatePromptMetadata(promptMetadataTextFromSkill(payload));
     }
   }
@@ -240,7 +241,7 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     await this.session.writeMetadata();
     await this.session.rpc.emitEvent({
       type: 'session.meta.updated',
-      agentId: 'main',
+      agentId: MAIN_AGENT_ID,
       title,
       patch: {
         title,

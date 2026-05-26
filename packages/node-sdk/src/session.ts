@@ -1,23 +1,26 @@
-import { ErrorCodes, KimiError, type KimiErrorCode } from '@moonshot-ai/agent-core';
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
 import type { SDKRpcClient } from '#/rpc';
 import type {
-  BackgroundTaskInfo,
-  CompactOptions,
-  McpServerInfo,
-  McpStartupMetrics,
-  PermissionMode,
-  PromptInput,
-  ResumedSessionState,
-  SessionPlan,
-  SessionStatus,
-  SessionSummary,
-  SessionUsage,
-  SkillSummary,
-  Unsubscribe,
+    BackgroundTaskInfo,
+    CompactOptions,
+    McpServerInfo,
+    McpStartupMetrics,
+    PermissionMode,
+    PromptInput,
+    ResumedSessionState,
+    SessionPlan,
+    SessionStatus,
+    SessionSummary,
+    SessionUsage,
+    SkillSummary,
+    Unsubscribe,
 } from '#/types';
-
-const MAIN_AGENT_ID = 'main';
+import {
+    ErrorCodes,
+    KimiError,
+    MAIN_AGENT_ID,
+    type KimiErrorCode,
+} from '@moonshot-ai/agent-core';
 
 export interface SessionOptions {
   readonly id: string;
