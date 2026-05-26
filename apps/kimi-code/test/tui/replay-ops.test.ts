@@ -279,14 +279,12 @@ describe('projectReplayRecords', () => {
           {
             type: 'function',
             id: 'call_agent',
-            function: {
-              name: 'Agent',
+            name: 'Agent',
               arguments: JSON.stringify({
                 description: 'Optimize summary',
                 subagent_type: 'coder',
                 run_in_background: true,
               }),
-            },
           },
         ],
       }),
@@ -400,10 +398,8 @@ describe('projectReplayRecords', () => {
           {
             type: 'function',
             id: 'tc_1',
-            function: {
-              name: 'Bash',
+            name: 'Bash',
               arguments: '{"command":"pwd"}',
-            },
           },
         ],
       }),
@@ -427,10 +423,8 @@ describe('projectReplayRecords', () => {
           {
             type: 'function',
             id: 'tc_1',
-            function: {
-              name: 'Bash',
+            name: 'Bash',
               arguments: '{"command":"false"}',
-            },
           },
         ],
       }),
@@ -461,10 +455,8 @@ describe('projectReplayRecords', () => {
             {
               type: 'function',
               id: 'call_resume_bash',
-              function: {
-                name: 'Bash',
+              name: 'Bash',
                 arguments: '{"command":"echo ok"}',
-              },
             },
           ],
         },
@@ -500,10 +492,8 @@ describe('projectReplayRecords', () => {
           {
             type: 'function',
             id: 'tc_media',
-            function: {
-              name: 'ReadMediaFile',
+            name: 'ReadMediaFile',
               arguments: '{"path":"/tmp/a.png"}',
-            },
           },
         ],
       }),

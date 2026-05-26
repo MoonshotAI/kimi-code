@@ -162,10 +162,8 @@ describe('runTurn — tool-call behaviour', () => {
           {
             type: 'function',
             id: 'tc-1',
-            function: {
-              name: 'echo',
+            name: 'echo',
               arguments: '{',
-            },
           },
         ]),
         makeEndTurnResponse('done'),

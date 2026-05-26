@@ -27,7 +27,8 @@ describe('KosongLLM streaming tool-call deltas', () => {
       {
         type: 'function',
         id: 'call_bash',
-        function: { name: 'Bash', arguments: null },
+        name: 'Bash',
+        arguments: null,
         _streamIndex: 0,
       },
       { type: 'tool_call_part', argumentsPart: '{"command"', index: 0 },
@@ -47,7 +48,8 @@ describe('KosongLLM streaming tool-call deltas', () => {
       {
         type: 'function',
         id: 'call_bash',
-        function: { name: 'Bash', arguments: null },
+        name: 'Bash',
+        arguments: null,
         _streamIndex: 0,
       },
       { type: 'tool_call_part', argumentsPart: ':"pwd"}', index: 0 },
@@ -66,7 +68,8 @@ describe('KosongLLM streaming tool-call deltas', () => {
       {
         type: 'function',
         id: 'call_write',
-        function: { name: 'Write', arguments: null },
+        name: 'Write',
+        arguments: null,
       },
       { type: 'tool_call_part', argumentsPart: '{"path"' },
       { type: 'tool_call_part', argumentsPart: ':"a.txt"}' },
@@ -124,10 +127,6 @@ function isToolCall(part: StreamedMessagePart): part is ToolCall {
 }
 
 function stripStreamIndex(toolCall: ToolCall): ToolCall {
-  return {
-    type: 'function',
-    id: toolCall.id,
-    function: { ...toolCall.function },
-    ...(toolCall.extras !== undefined ? { extras: toolCall.extras } : {}),
-  };
+  const { _streamIndex: _, ...rest } = toolCall;
+  return rest;
 }

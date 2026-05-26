@@ -199,9 +199,7 @@ export function makeToolCall(name: string, args: unknown, id?: string): ToolCall
   return {
     type: 'function',
     id: id ?? `call_${Math.random().toString(36).slice(2, 10)}`,
-    function: {
-      name,
+    name,
       arguments: JSON.stringify(args),
-    },
   };
 }

@@ -131,7 +131,8 @@ describe('e2e: kimi adapter', () => {
             {
               type: 'function',
               id: 'call_weather',
-              function: { name: 'lookup_weather', arguments: '{"city":"Shanghai"}' },
+              name: 'lookup_weather',
+              arguments: '{"city":"Shanghai"}',
             } satisfies ToolCall,
           ],
         },
@@ -185,7 +186,8 @@ describe('e2e: kimi adapter', () => {
       expect(result.parts[2]).toMatchObject({
         type: 'function',
         id: 'call_weather',
-        function: { name: 'lookup_weather', arguments: '{"city":"' },
+        name: 'lookup_weather',
+        arguments: '{"city":"',
       });
       expect(result.parts[2]).toHaveProperty('_streamIndex', 0);
       expect(result.parts[3]).toMatchObject({

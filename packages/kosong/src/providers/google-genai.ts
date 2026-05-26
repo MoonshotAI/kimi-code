@@ -251,9 +251,9 @@ function messageToGoogleGenAI(message: Message): GoogleContent {
   // Handle tool calls
   for (const toolCall of message.toolCalls) {
     let args: Record<string, unknown> = {};
-    if (toolCall.function.arguments) {
+    if (toolCall.arguments) {
       try {
-        const parsed: unknown = JSON.parse(toolCall.function.arguments);
+        const parsed: unknown = JSON.parse(toolCall.arguments);
         if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
           args = parsed as Record<string, unknown>;
         } else {
@@ -267,7 +267,7 @@ function messageToGoogleGenAI(message: Message): GoogleContent {
 
     const functionCallPart: GooglePart = {
       function_call: {
-        name: toolCall.function.name,
+        name: toolCall.name,
         args,
       },
     };
@@ -373,7 +373,7 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
       contents.push(messageToGoogleGenAI(message));
       const expectedToolCallIds: string[] = [];
       for (const toolCall of message.toolCalls) {
-        toolNameById.set(toolCall.id, toolCall.function.name);
+        toolNameById.set(toolCall.id, toolCall.name);
         expectedToolCallIds.push(toolCall.id);
       }
 
@@ -542,10 +542,8 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
           parts.push({
             type: 'function',
             id: toolCallId,
-            function: {
-              name,
-              arguments: fc['args'] ? JSON.stringify(fc['args']) : '{}',
-            },
+            name,
+            arguments: fc['args'] ? JSON.stringify(fc['args']) : '{}',
             ...(thoughtSigB64
               ? { extras: { thought_signature_b64: thoughtSigB64 as string } }
               : {}),

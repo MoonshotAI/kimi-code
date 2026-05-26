@@ -69,10 +69,8 @@ describe('manual plan entry', () => {
     const enterPlanModeCall: ToolCall = {
       type: 'function',
       id: 'call_enter_plan',
-      function: {
-        name: 'EnterPlanMode',
-        arguments: '{}',
-      },
+      name: 'EnterPlanMode',
+      arguments: '{}',
     };
     const ctx = testAgent({
       kaos: createPlanKaos({
@@ -147,10 +145,8 @@ describe('plan exit tool', () => {
     const exitPlanModeCall: ToolCall = {
       type: 'function',
       id: 'call_exit_plan',
-      function: {
-        name: 'ExitPlanMode',
-        arguments: '{}',
-      },
+      name: 'ExitPlanMode',
+      arguments: '{}',
     };
     ctx.mockNextResponse({ type: 'text', text: 'I will present the plan.' }, exitPlanModeCall);
     ctx.mockNextResponse({ type: 'text', text: 'I can execute after approval.' });
@@ -185,10 +181,8 @@ describe('plan exit tool', () => {
     const exitPlanModeCall: ToolCall = {
       type: 'function',
       id: 'call_exit_reject',
-      function: {
-        name: 'ExitPlanMode',
-        arguments: '{}',
-      },
+      name: 'ExitPlanMode',
+      arguments: '{}',
     };
     ctx.mockNextResponse({ type: 'text', text: 'I will present the plan.' }, exitPlanModeCall);
     ctx.mockNextResponse({ type: 'text', text: 'This response must not be requested.' });
@@ -225,18 +219,14 @@ describe('plan exit tool', () => {
     const exitPlanModeCall: ToolCall = {
       type: 'function',
       id: 'call_exit_reject_and_exit',
-      function: {
-        name: 'ExitPlanMode',
-        arguments: '{}',
-      },
+      name: 'ExitPlanMode',
+      arguments: '{}',
     };
     const bashCall: ToolCall = {
       type: 'function',
       id: 'call_bash_after_reject',
-      function: {
-        name: 'Bash',
-        arguments: '{"command":"touch should-not-run","timeout":60}',
-      },
+      name: 'Bash',
+      arguments: '{"command":"touch should-not-run","timeout":60}',
     };
     ctx.mockNextResponse(
       { type: 'text', text: 'I will present the plan and then run a command.' },
@@ -271,10 +261,8 @@ describe('plan exit tool', () => {
     const exitPlanModeCall: ToolCall = {
       type: 'function',
       id: 'call_exit_empty_plan',
-      function: {
-        name: 'ExitPlanMode',
-        arguments: '{}',
-      },
+      name: 'ExitPlanMode',
+      arguments: '{}',
     };
     ctx.mockNextResponse(
       { type: 'text', text: 'I will present the empty plan.' },
@@ -308,8 +296,7 @@ describe('plan exit tool options', () => {
     const exitPlanModeCall: ToolCall = {
       type: 'function',
       id: 'call_exit_options',
-      function: {
-        name: 'ExitPlanMode',
+      name: 'ExitPlanMode',
         // The second option omits `description` — valid input after the
         // schema relaxation. The approval policy must still surface both.
         arguments: JSON.stringify({
@@ -318,7 +305,6 @@ describe('plan exit tool options', () => {
             { label: 'Approach B' },
           ],
         }),
-      },
     };
     ctx.mockNextResponse({ type: 'text', text: 'I will present the plan.' }, exitPlanModeCall);
     ctx.mockNextResponse({ type: 'text', text: 'I can execute after approval.' });
@@ -368,10 +354,8 @@ describe('plan allows safe tool flow', () => {
       const writePlanCall: ToolCall = {
         type: 'function',
         id: `call_${toolName.toLowerCase()}_plan`,
-        function: {
-          name: toolName,
+        name: toolName,
           arguments: JSON.stringify(args),
-        },
       };
 
       ctx.mockNextResponse({ type: 'text', text: 'I will update the plan file.' }, writePlanCall);
@@ -413,10 +397,8 @@ describe('plan allows safe tool flow', () => {
     const writePlanCall: ToolCall = {
       type: 'function',
       id: 'call_write_plan_with_deny',
-      function: {
-        name: 'Write',
-        arguments: JSON.stringify({ path: planPath, content }),
-      },
+      name: 'Write',
+      arguments: JSON.stringify({ path: planPath, content }),
     };
 
     ctx.mockNextResponse({ type: 'text', text: 'I will update the plan file.' }, writePlanCall);
@@ -439,10 +421,8 @@ describe('plan allows safe tool flow', () => {
     const bashCall: ToolCall = {
       type: 'function',
       id: 'call_bash',
-      function: {
-        name: 'Bash',
-        arguments: '{"command":"printf plan-safe","timeout":60}',
-      },
+      name: 'Bash',
+      arguments: '{"command":"printf plan-safe","timeout":60}',
     };
     const ctx = testAgent({ kaos: createCommandKaos('plan-safe') });
     ctx.configure({ tools: ['Bash'] });
@@ -493,10 +473,8 @@ describe('plan mode Bash ordinary permission behavior', () => {
     const bashCall: ToolCall = {
       type: 'function',
       id: 'call_bash',
-      function: {
-        name: 'Bash',
-        arguments: '{"command":"rm forbidden.txt","timeout":60}',
-      },
+      name: 'Bash',
+      arguments: '{"command":"rm forbidden.txt","timeout":60}',
     };
     const ctx = testAgent({ kaos: createCommandKaos('removed') });
     ctx.configure({ tools: ['Bash'] });

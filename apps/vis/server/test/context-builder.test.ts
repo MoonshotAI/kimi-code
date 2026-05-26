@@ -215,7 +215,7 @@ describe('context-builder', () => {
       | undefined;
     expect(text?.text).toBe('hello!');
     expect(m?.message.tool_calls).toHaveLength(1);
-    expect(m?.message.tool_calls[0]?.function.name).toBe('Bash');
+    expect(m?.message.tool_calls[0]?.name).toBe('Bash');
   });
 
   it('builds correct origin tagging on a synthetic session with system_reminder', async () => {

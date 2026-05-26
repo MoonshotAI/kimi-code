@@ -1,5 +1,10 @@
 import { readFile } from 'node:fs/promises';
 
+import {
+  migrateWireRecords,
+  type WireMigrationRecord,
+} from '@moonshot-ai/agent-core/agent/records/migration';
+
 import type {
   ContentPartRecord,
   NotificationRecord,
@@ -52,6 +57,22 @@ export async function replayWire(wirePath: string): Promise<ReplayWireResult> {
       continue;
     }
     rawRecords.push({ seq, raw: parsed });
+  }
+
+  // Extract source version from metadata (if any) and apply wire migrations.
+  let sourceVersion: string | undefined;
+  for (const record of rawRecords) {
+    if (record.raw['type'] === 'metadata') {
+      const meta = record.raw as unknown as WireFileMetadata;
+      sourceVersion ??= meta.protocol_version;
+    }
+  }
+  const migrated = migrateWireRecords(
+    rawRecords.map((r) => r.raw as WireMigrationRecord),
+    sourceVersion,
+  );
+  for (const [i, rawRecord] of rawRecords.entries()) {
+    rawRecord.raw = migrated[i]!;
   }
 
   for (const [recordIndex, record] of rawRecords.entries()) {

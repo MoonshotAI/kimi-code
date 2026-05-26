@@ -193,7 +193,7 @@ describe('e2e: Anthropic adapter bridge', () => {
         {
           type: 'function',
           id: 'toolu_1',
-          function: { name: 'add', arguments: '' },
+          name: 'add', arguments: '',
           _streamIndex: 1,
         } satisfies ToolCall,
         { type: 'tool_call_part', argumentsPart: '{"a":2', index: 1 },

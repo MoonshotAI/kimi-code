@@ -145,12 +145,12 @@ describe('e2e: Google GenAI adapter bridge', () => {
             {
               type: 'function',
               id: 'call_add',
-              function: { name: 'add', arguments: '{"a":2,"b":3}' },
+              name: 'add', arguments: '{"a":2,"b":3}',
             },
             {
               type: 'function',
               id: 'call_mul',
-              function: { name: 'multiply', arguments: '{"a":4,"b":5}' },
+              name: 'multiply', arguments: '{"a":4,"b":5}',
             },
           ],
         },
@@ -180,7 +180,7 @@ describe('e2e: Google GenAI adapter bridge', () => {
         {
           type: 'function',
           id: 'notify_call-1',
-          function: { name: 'notify', arguments: '{"ok":true}' },
+          name: 'notify', arguments: '{"ok":true}',
           extras: { thought_signature_b64: 'sig-1' },
         } satisfies ToolCall,
       ]);

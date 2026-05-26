@@ -206,10 +206,8 @@ describe('Agent turn flow', () => {
     ctx.mockNextResponse({
       type: 'function',
       id: 'call_missing',
-      function: {
-        name: 'MissingTool',
-        arguments: '{}',
-      },
+      name: 'MissingTool',
+      arguments: '{}',
     });
     ctx.mockNextResponse({ type: 'text', text: 'done' });
 
@@ -860,10 +858,8 @@ describe('Agent turn flow', () => {
     const bashCall: ToolCall = {
       id: 'call_bash',
       type: 'function',
-      function: {
-        name: 'Bash',
-        arguments: '{"command":"printf loop-output","timeout":60}',
-      },
+      name: 'Bash',
+      arguments: '{"command":"printf loop-output","timeout":60}',
     };
     ctx.mockNextResponse(bashCall);
 
@@ -1261,10 +1257,8 @@ describe('Agent turn flow', () => {
     const bashCall: ToolCall = {
       type: 'function',
       id: 'call_bash',
-      function: {
-        name: 'Bash',
-        arguments: '{"command":"printf approved","timeout":60}',
-      },
+      name: 'Bash',
+      arguments: '{"command":"printf approved","timeout":60}',
     };
     const ctx = testAgent({
       kaos: createCommandKaos('approved'),
@@ -1388,10 +1382,8 @@ function bashCallWithId(id: string, command: string): ToolCall {
   return {
     type: 'function',
     id,
-    function: {
-      name: 'Bash',
-      arguments: JSON.stringify({ command, timeout: 60 }),
-    },
+    name: 'Bash',
+    arguments: JSON.stringify({ command, timeout: 60 }),
   };
 }
 

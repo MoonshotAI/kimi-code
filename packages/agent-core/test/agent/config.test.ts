@@ -98,10 +98,8 @@ describe('Agent config', () => {
     const bashCall: ToolCall = {
       type: 'function',
       id: 'call_bash',
-      function: {
-        name: 'Bash',
-        arguments: '{"command":"printf original-result","timeout":60}',
-      },
+      name: 'Bash',
+      arguments: '{"command":"printf original-result","timeout":60}',
     };
     const ctx = testAgent({ kaos: createCommandKaos('original-result') });
     ctx.configure({ tools: ['Bash'] });

@@ -139,7 +139,7 @@ function convertMessage(
     result.tool_calls = message.toolCalls.map((tc) => ({
       type: tc.type,
       id: tc.id,
-      function: { name: tc.function.name, arguments: tc.function.arguments },
+      function: { name: tc.name, arguments: tc.arguments },
     }));
   }
 
@@ -236,10 +236,8 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
         yield {
           type: 'function',
           id: toolCall.id || crypto.randomUUID(),
-          function: {
-            name: toolCall.function.name,
-            arguments: toolCall.function.arguments,
-          },
+          name: toolCall.function.name,
+          arguments: toolCall.function.arguments,
         } satisfies ToolCall;
       }
     }

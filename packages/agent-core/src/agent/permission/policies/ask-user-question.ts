@@ -4,7 +4,7 @@ export const AskUserQuestionAutoPermissionPolicy: PermissionPolicy = {
   name: 'auto.ask-user-question',
   evaluate({ mode, toolCallContext }) {
     if (mode !== 'auto') return undefined;
-    if (toolCallContext.toolCall.function.name !== 'AskUserQuestion') return undefined;
+    if (toolCallContext.toolCall.name !== 'AskUserQuestion') return undefined;
     return {
       kind: 'result',
       result: {

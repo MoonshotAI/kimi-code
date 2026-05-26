@@ -1069,10 +1069,8 @@ function bashCall(): ToolCall {
   return {
     type: 'function',
     id: 'call_bash',
-    function: {
-      name: 'Bash',
+    name: 'Bash',
       arguments: '{"command":"printf should-not-run","timeout":60}',
-    },
   };
 }
 

@@ -16,7 +16,7 @@ interface ExitPlanModeExecutionMetadata {
 export const EnterPlanModePermissionPolicy: PermissionPolicy = {
   name: 'plan.enter-plan-mode',
   evaluate({ toolCallContext }) {
-    if (toolCallContext.toolCall.function.name !== 'EnterPlanMode') return undefined;
+    if (toolCallContext.toolCall.name !== 'EnterPlanMode') return undefined;
     return { kind: 'allow' };
   },
 };
@@ -24,7 +24,7 @@ export const EnterPlanModePermissionPolicy: PermissionPolicy = {
 export const ExitPlanModePermissionPolicy: PermissionPolicy = {
   name: 'plan.exit-plan-mode',
   async evaluate(context) {
-    if (context.toolCallContext.toolCall.function.name !== 'ExitPlanMode') return undefined;
+    if (context.toolCallContext.toolCall.name !== 'ExitPlanMode') return undefined;
     if (context.mode === 'auto') return { kind: 'allow' };
 
     const review = await resolveExitPlanModeReview(context);
@@ -82,7 +82,7 @@ export const PlanModeGuardPermissionPolicy: PermissionPolicy = {
   evaluate({ agent, toolCallContext }) {
     if (!agent.planMode.isActive) return undefined;
 
-    const name = toolCallContext.toolCall.function.name;
+    const name = toolCallContext.toolCall.name;
     const args = toolCallContext.args;
 
     if (name === 'Write' || name === 'Edit') {

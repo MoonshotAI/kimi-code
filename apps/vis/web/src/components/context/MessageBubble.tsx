@@ -126,7 +126,7 @@ function ThinkBlock({ text }: { text: string }) {
 
 function ToolCallCard({ call }: { call: ToolCallEntry }) {
   const [open, setOpen] = useState(false);
-  const argsStr = call.function.arguments ?? '';
+  const argsStr = call.arguments ?? '';
   return (
     <div className="border border-border bg-surface-0">
       <button
@@ -135,7 +135,7 @@ function ToolCallCard({ call }: { call: ToolCallEntry }) {
       >
         <span className="text-fg-3">{open ? '▾' : '▸'}</span>
         <Pill tone="tools" variant="soft">call</Pill>
-        <span className="text-fg-0">{call.function.name}</span>
+        <span className="text-fg-0">{call.name}</span>
         <span className="truncate text-fg-3">{truncate(argsStr, 80)}</span>
         <span className="ml-auto text-fg-3 tabular text-[10px]">{call.id.slice(0, 10)}</span>
       </button>

@@ -112,7 +112,7 @@ describe('e2e: multi-step agent loop', () => {
     const toolCall: ToolCall = {
       type: 'function',
       id: 'tc-1',
-      function: { name: 'search', arguments: '{"query":"vitest"}' },
+      name: 'search', arguments: '{"query":"vitest"}',
     };
 
     const provider = new QueuedMockProvider([
@@ -147,12 +147,12 @@ describe('e2e: multi-step agent loop', () => {
     const tcSearch: ToolCall = {
       type: 'function',
       id: 'tc-search',
-      function: { name: 'search', arguments: '{"query":"vitest"}' },
+      name: 'search', arguments: '{"query":"vitest"}',
     };
     const tcRead: ToolCall = {
       type: 'function',
       id: 'tc-read',
-      function: { name: 'read_file', arguments: '{"path":"/docs/vitest.md"}' },
+      name: 'read_file', arguments: '{"path":"/docs/vitest.md"}',
     };
 
     const provider = new QueuedMockProvider([
@@ -183,17 +183,17 @@ describe('e2e: multi-step agent loop', () => {
     const tc1: ToolCall = {
       type: 'function',
       id: 'tc-a',
-      function: { name: 'fetch_url', arguments: '{"url":"https://a.com"}' },
+      name: 'fetch_url', arguments: '{"url":"https://a.com"}',
     };
     const tc2: ToolCall = {
       type: 'function',
       id: 'tc-b',
-      function: { name: 'fetch_url', arguments: '{"url":"https://b.com"}' },
+      name: 'fetch_url', arguments: '{"url":"https://b.com"}',
     };
     const tc3: ToolCall = {
       type: 'function',
       id: 'tc-c',
-      function: { name: 'fetch_url', arguments: '{"url":"https://c.com"}' },
+      name: 'fetch_url', arguments: '{"url":"https://c.com"}',
     };
 
     const provider = new QueuedMockProvider([
@@ -236,12 +236,12 @@ describe('e2e: multi-step agent loop', () => {
     const tcList: ToolCall = {
       type: 'function',
       id: 'tc-list',
-      function: { name: 'list_files', arguments: '{"dir":"/src"}' },
+      name: 'list_files', arguments: '{"dir":"/src"}',
     };
     const tcRead: ToolCall = {
       type: 'function',
       id: 'tc-read',
-      function: { name: 'read_file', arguments: '{"path":"/src/main.ts"}' },
+      name: 'read_file', arguments: '{"path":"/src/main.ts"}',
     };
 
     // The provider sees history growing—tool A result is in history when
@@ -277,12 +277,12 @@ describe('e2e: multi-step agent loop', () => {
     const tc1: ToolCall = {
       type: 'function',
       id: 'tc-1',
-      function: { name: 'calc', arguments: '{"expr":"2+2"}' },
+      name: 'calc', arguments: '{"expr":"2+2"}',
     };
     const tc2: ToolCall = {
       type: 'function',
       id: 'tc-2',
-      function: { name: 'calc', arguments: '{"expr":"4*3"}' },
+      name: 'calc', arguments: '{"expr":"4*3"}',
     };
 
     const provider = new QueuedMockProvider([
@@ -338,7 +338,7 @@ describe('e2e: multi-step agent loop', () => {
     const tc: ToolCall = {
       type: 'function',
       id: 'tc-no-args',
-      function: { name: 'get_time', arguments: null },
+      name: 'get_time', arguments: null,
     };
 
     const provider = new QueuedMockProvider([

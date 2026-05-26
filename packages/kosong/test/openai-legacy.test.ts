@@ -209,7 +209,8 @@ describe('OpenAILegacyChatProvider', () => {
       const toolCall: ToolCall = {
         type: 'function',
         id: 'call_abc123',
-        function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+        name: 'add',
+        arguments: '{"a": 2, "b": 3}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
@@ -254,7 +255,8 @@ describe('OpenAILegacyChatProvider', () => {
       const toolCall: ToolCall = {
         type: 'function',
         id: 'call_abc123',
-        function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+        name: 'add',
+        arguments: '{"a": 2, "b": 3}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
@@ -297,12 +299,14 @@ describe('OpenAILegacyChatProvider', () => {
             {
               type: 'function',
               id: 'call_add',
-              function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+              name: 'add',
+              arguments: '{"a": 2, "b": 3}',
             },
             {
               type: 'function',
               id: 'call_mul',
-              function: { name: 'multiply', arguments: '{"a": 4, "b": 5}' },
+              name: 'multiply',
+              arguments: '{"a": 4, "b": 5}',
             },
           ],
         },
@@ -471,7 +475,8 @@ describe('OpenAILegacyChatProvider', () => {
       const toolCall: ToolCall = {
         type: 'function',
         id: 'call_abc123',
-        function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+        name: 'add',
+        arguments: '{"a": 2, "b": 3}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
@@ -505,7 +510,8 @@ describe('OpenAILegacyChatProvider', () => {
       const toolCall: ToolCall = {
         type: 'function',
         id: 'call_audio',
-        function: { name: 'fetch_audio', arguments: '{}' },
+        name: 'fetch_audio',
+        arguments: '{}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Play it' }], toolCalls: [] },
@@ -534,7 +540,8 @@ describe('OpenAILegacyChatProvider', () => {
       const toolCall: ToolCall = {
         type: 'function',
         id: 'call_video',
-        function: { name: 'fetch_video', arguments: '{}' },
+        name: 'fetch_video',
+        arguments: '{}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Show it' }], toolCalls: [] },
@@ -563,7 +570,8 @@ describe('OpenAILegacyChatProvider', () => {
       const toolCall: ToolCall = {
         type: 'function',
         id: 'call_text',
-        function: { name: 'add', arguments: '{"a":1,"b":2}' },
+        name: 'add',
+        arguments: '{"a":1,"b":2}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Add 1 2' }], toolCalls: [] },
@@ -590,7 +598,8 @@ describe('OpenAILegacyChatProvider', () => {
       const toolCall: ToolCall = {
         type: 'function',
         id: 'call_abc123',
-        function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+        name: 'add',
+        arguments: '{"a": 2, "b": 3}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
@@ -772,12 +781,14 @@ describe('OpenAILegacyChatProvider', () => {
       {
         type: 'function',
         id: 'call_a',
-        function: { name: 'read_file', arguments: '{"path":"/a.txt"}' },
+        name: 'read_file',
+        arguments: '{"path":"/a.txt"}',
       },
       {
         type: 'function',
         id: 'call_b',
-        function: { name: 'write_file', arguments: '{"path":"/b.txt","content":"hi"}' },
+        name: 'write_file',
+        arguments: '{"path":"/b.txt","content":"hi"}',
       },
     ]);
 
@@ -824,7 +835,7 @@ describe('OpenAILegacyChatProvider', () => {
           }
         },
         onToolCall(toolCall: ToolCall): void {
-          events.push(`ready:${toolCall.id}:${toolCall.function.arguments ?? ''}`);
+          events.push(`ready:${toolCall.id}:${toolCall.arguments ?? ''}`);
         },
       },
     );
@@ -841,12 +852,14 @@ describe('OpenAILegacyChatProvider', () => {
       {
         type: 'function',
         id: 'call_a',
-        function: { name: 'read_file', arguments: '{"path":"a.txt"} ' },
+        name: 'read_file',
+        arguments: '{"path":"a.txt"} ',
       },
       {
         type: 'function',
         id: 'call_b',
-        function: { name: 'read_file', arguments: '{"path":"b.txt"}' },
+        name: 'read_file',
+        arguments: '{"path":"b.txt"}',
       },
     ]);
   });
@@ -926,7 +939,8 @@ describe('OpenAILegacyChatProvider', () => {
       {
         type: 'function',
         id: 'call_delayed',
-        function: { name: 'foo', arguments: '{"a":1}' },
+        name: 'foo',
+        arguments: '{"a":1}',
       },
     ]);
   });
@@ -1009,7 +1023,8 @@ describe('OpenAILegacyChatProvider — non-stream response parsing', () => {
     expect(toolCall).toMatchObject({
       type: 'function',
       id: 'call_x',
-      function: { name: 'lookup', arguments: '{"q":"hi"}' },
+      name: 'lookup',
+      arguments: '{"q":"hi"}',
     });
   });
 
@@ -1114,7 +1129,8 @@ describe('OpenAILegacyChatProvider — non-indexed streaming tool_calls', () => 
       {
         type: 'function',
         id: 'call_noidx',
-        function: { name: 'foo', arguments: '{"a":1}' },
+        name: 'foo',
+        arguments: '{"a":1}',
       },
     ]);
   });

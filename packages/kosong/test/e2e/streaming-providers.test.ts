@@ -77,7 +77,7 @@ describe('integration: streaming provider contracts', () => {
         {
           type: 'function',
           id: 'tc-kimi-1',
-          function: { name: 'search', arguments: null },
+          name: 'search', arguments: null,
         } satisfies ToolCall,
         { type: 'tool_call_part', argumentsPart: '{"query":' },
         { type: 'tool_call_part', argumentsPart: '"vitest"}' },
@@ -109,7 +109,7 @@ describe('integration: streaming provider contracts', () => {
 
       // ToolCall assembled correctly
       expect(result.message.toolCalls).toHaveLength(1);
-      expect(result.message.toolCalls[0]!.function.arguments).toBe('{"query":"vitest"}');
+      expect(result.message.toolCalls[0]!.arguments).toBe('{"query":"vitest"}');
 
       // Usage extracted from the stream metadata
       expect(result.usage).toEqual(usage);
@@ -157,7 +157,7 @@ describe('integration: streaming provider contracts', () => {
         {
           type: 'function',
           id: 'toolu_01',
-          function: { name: 'read_file', arguments: '' },
+          name: 'read_file', arguments: '',
         } satisfies ToolCall,
         // content_block_delta(input_json_delta)
         { type: 'tool_call_part', argumentsPart: '{"path":"/src/main.ts"}' },
@@ -189,8 +189,8 @@ describe('integration: streaming provider contracts', () => {
       // ToolCall assembled
       expect(result.message.toolCalls).toHaveLength(1);
       expect(result.message.toolCalls[0]!.id).toBe('toolu_01');
-      expect(result.message.toolCalls[0]!.function.name).toBe('read_file');
-      expect(result.message.toolCalls[0]!.function.arguments).toBe('{"path":"/src/main.ts"}');
+      expect(result.message.toolCalls[0]!.name).toBe('read_file');
+      expect(result.message.toolCalls[0]!.arguments).toBe('{"path":"/src/main.ts"}');
     });
 
     it('redacted_thinking yields ThinkPart with encrypted and empty think', async () => {
@@ -256,7 +256,7 @@ describe('integration: streaming provider contracts', () => {
         {
           type: 'function',
           id: 'search_12345',
-          function: { name: 'search', arguments: '{"query":"vitest docs"}' },
+          name: 'search', arguments: '{"query":"vitest docs"}',
         } satisfies ToolCall,
       ];
 
@@ -285,8 +285,8 @@ describe('integration: streaming provider contracts', () => {
       const tc = result.message.toolCalls[0]!;
       expect(tc.id).toBe('search_12345');
       expect(tc.id).toMatch(/^search_\d+$/);
-      expect(tc.function.name).toBe('search');
-      expect(tc.function.arguments).toBe('{"query":"vitest docs"}');
+      expect(tc.name).toBe('search');
+      expect(tc.arguments).toBe('{"query":"vitest docs"}');
     });
 
     it('Google function_call ID format: {name}_{id}', async () => {
@@ -294,7 +294,7 @@ describe('integration: streaming provider contracts', () => {
         {
           type: 'function',
           id: 'read_file_9876',
-          function: { name: 'read_file', arguments: '{"path":"/tmp/test.ts"}' },
+          name: 'read_file', arguments: '{"path":"/tmp/test.ts"}',
         } satisfies ToolCall,
         { type: 'text', text: 'Reading the file.' },
       ];
@@ -306,7 +306,7 @@ describe('integration: streaming provider contracts', () => {
       expect(result.message.toolCalls).toHaveLength(1);
       const tc = result.message.toolCalls[0]!;
       // Verify the ID follows the {name}_{id} pattern
-      expect(tc.id.startsWith(`${tc.function.name}_`)).toBe(true);
+      expect(tc.id.startsWith(`${tc.name}_`)).toBe(true);
     });
 
     it('Google multiple function calls in single response', async () => {
@@ -315,17 +315,17 @@ describe('integration: streaming provider contracts', () => {
         {
           type: 'function',
           id: 'read_file_001',
-          function: { name: 'read_file', arguments: '{"path":"a.ts"}' },
+          name: 'read_file', arguments: '{"path":"a.ts"}',
         } satisfies ToolCall,
         {
           type: 'function',
           id: 'read_file_002',
-          function: { name: 'read_file', arguments: '{"path":"b.ts"}' },
+          name: 'read_file', arguments: '{"path":"b.ts"}',
         } satisfies ToolCall,
         {
           type: 'function',
           id: 'write_file_003',
-          function: { name: 'write_file', arguments: '{"path":"c.ts","content":"x"}' },
+          name: 'write_file', arguments: '{"path":"c.ts","content":"x"}',
         } satisfies ToolCall,
       ];
 

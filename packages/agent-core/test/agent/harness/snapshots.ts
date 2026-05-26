@@ -229,7 +229,7 @@ function formatText(text: string): string {
 }
 
 function formatToolCall(call: Message['toolCalls'][number]): string {
-  return `${call.id}:${call.function.name} ${formatToolCallArguments(call.function.arguments)}`;
+  return `${call.id}:${call.name} ${formatToolCallArguments(call.arguments)}`;
 }
 
 function formatToolCallArguments(args: string | null): string {

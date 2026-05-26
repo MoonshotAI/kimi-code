@@ -56,14 +56,14 @@ describe('integration: parallel tool calls through SimpleToolset', () => {
       {
         type: 'function',
         id: 'tc_read_a',
-        function: { name: 'read_file', arguments: '' },
+        name: 'read_file', arguments: '',
         _streamIndex: 0,
       },
       { type: 'tool_call_part', argumentsPart: '{"path":"a.txt"}', index: 0 },
       {
         type: 'function',
         id: 'tc_read_b',
-        function: { name: 'read_file', arguments: '' },
+        name: 'read_file', arguments: '',
         _streamIndex: 1,
       },
       { type: 'tool_call_part', argumentsPart: '{"path":"b.txt"}', index: 1 },
@@ -83,7 +83,7 @@ describe('integration: parallel tool calls through SimpleToolset', () => {
         }
       },
       onToolCall(toolCall): void {
-        events.push(`ready:${toolCall.id}:${toolCall.function.arguments ?? ''}`);
+        events.push(`ready:${toolCall.id}:${toolCall.arguments ?? ''}`);
       },
     });
 
@@ -105,19 +105,19 @@ describe('integration: parallel tool calls through SimpleToolset', () => {
       {
         type: 'function',
         id: 'tc_read',
-        function: { name: 'read_file', arguments: null },
+        name: 'read_file', arguments: null,
         _streamIndex: 0,
       },
       {
         type: 'function',
         id: 'tc_write',
-        function: { name: 'write_file', arguments: null },
+        name: 'write_file', arguments: null,
         _streamIndex: 1,
       },
       {
         type: 'function',
         id: 'tc_list',
-        function: { name: 'list_dir', arguments: null },
+        name: 'list_dir', arguments: null,
         _streamIndex: 2,
       },
       // Interleaved argument deltas. Arguments for each call, arriving
@@ -194,14 +194,14 @@ describe('integration: parallel tool calls through SimpleToolset', () => {
 
     // Three tool calls, in stream order.
     expect(result.toolCalls).toHaveLength(3);
-    expect(result.toolCalls[0]!.function.name).toBe('read_file');
-    expect(result.toolCalls[1]!.function.name).toBe('write_file');
-    expect(result.toolCalls[2]!.function.name).toBe('list_dir');
+    expect(result.toolCalls[0]!.name).toBe('read_file');
+    expect(result.toolCalls[1]!.name).toBe('write_file');
+    expect(result.toolCalls[2]!.name).toBe('list_dir');
 
     // Fully-assembled arguments — no cross-contamination.
-    expect(result.toolCalls[0]!.function.arguments).toBe('{"path":"a.txt"}');
-    expect(result.toolCalls[1]!.function.arguments).toBe('{"path":"b.txt","data":"X"}');
-    expect(result.toolCalls[2]!.function.arguments).toBe('{"path":"/tmp"}');
+    expect(result.toolCalls[0]!.arguments).toBe('{"path":"a.txt"}');
+    expect(result.toolCalls[1]!.arguments).toBe('{"path":"b.txt","data":"X"}');
+    expect(result.toolCalls[2]!.arguments).toBe('{"path":"/tmp"}');
 
     // Each handler saw the correct parsed JSON arguments.
     const toolResults = await result.toolResults();
@@ -233,19 +233,19 @@ describe('integration: parallel tool calls through SimpleToolset', () => {
       {
         type: 'function',
         id: 'tc_a',
-        function: { name: 'slow', arguments: '{"id":"a"}' },
+        name: 'slow', arguments: '{"id":"a"}',
         _streamIndex: 0,
       },
       {
         type: 'function',
         id: 'tc_b',
-        function: { name: 'slow', arguments: '{"id":"b"}' },
+        name: 'slow', arguments: '{"id":"b"}',
         _streamIndex: 1,
       },
       {
         type: 'function',
         id: 'tc_c',
-        function: { name: 'slow', arguments: '{"id":"c"}' },
+        name: 'slow', arguments: '{"id":"c"}',
         _streamIndex: 2,
       },
     ];
@@ -298,19 +298,19 @@ describe('integration: parallel tool calls through SimpleToolset', () => {
       {
         type: 'function',
         id: 'tc_slow',
-        function: { name: 'sleep_tool', arguments: '{"ms":100,"tag":"slow"}' },
+        name: 'sleep_tool', arguments: '{"ms":100,"tag":"slow"}',
         _streamIndex: 0,
       },
       {
         type: 'function',
         id: 'tc_med',
-        function: { name: 'sleep_tool', arguments: '{"ms":50,"tag":"med"}' },
+        name: 'sleep_tool', arguments: '{"ms":50,"tag":"med"}',
         _streamIndex: 1,
       },
       {
         type: 'function',
         id: 'tc_fast',
-        function: { name: 'sleep_tool', arguments: '{"ms":1,"tag":"fast"}' },
+        name: 'sleep_tool', arguments: '{"ms":1,"tag":"fast"}',
         _streamIndex: 2,
       },
     ];
@@ -355,19 +355,19 @@ describe('integration: parallel tool calls through SimpleToolset', () => {
       {
         type: 'function',
         id: 'tc_ok_1',
-        function: { name: 'good', arguments: '{"i":1}' },
+        name: 'good', arguments: '{"i":1}',
         _streamIndex: 0,
       },
       {
         type: 'function',
         id: 'tc_bad',
-        function: { name: 'bad', arguments: '{}' },
+        name: 'bad', arguments: '{}',
         _streamIndex: 1,
       },
       {
         type: 'function',
         id: 'tc_ok_2',
-        function: { name: 'good', arguments: '{"i":2}' },
+        name: 'good', arguments: '{"i":2}',
         _streamIndex: 2,
       },
     ];
@@ -414,13 +414,13 @@ describe('integration: parallel tool calls through SimpleToolset', () => {
       {
         type: 'function',
         id: 'tc_alpha',
-        function: { name: 't', arguments: null },
+        name: 't', arguments: null,
         _streamIndex: 'item_alpha',
       },
       {
         type: 'function',
         id: 'tc_beta',
-        function: { name: 't', arguments: null },
+        name: 't', arguments: null,
         _streamIndex: 'item_beta',
       },
       { type: 'tool_call_part', argumentsPart: '{"k":', index: 'item_alpha' },
@@ -440,8 +440,8 @@ describe('integration: parallel tool calls through SimpleToolset', () => {
     });
 
     expect(result.message.toolCalls).toHaveLength(2);
-    expect(result.message.toolCalls[0]!.function.arguments).toBe('{"k":"A"}');
-    expect(result.message.toolCalls[1]!.function.arguments).toBe('{"k":"B"}');
+    expect(result.message.toolCalls[0]!.arguments).toBe('{"k":"A"}');
+    expect(result.message.toolCalls[1]!.arguments).toBe('{"k":"B"}');
     // onToolCall fired once per fully-assembled call after stream drained.
     expect(seen).toHaveLength(2);
     expect(seen[0]!.id).toBe('tc_alpha');

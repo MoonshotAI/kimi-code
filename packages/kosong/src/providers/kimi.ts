@@ -140,7 +140,7 @@ function convertMessage(message: Message): OpenAIMessage {
       const mapped: OpenAIToolCallOut = {
         type: tc.type,
         id: tc.id,
-        function: { name: tc.function.name, arguments: tc.function.arguments },
+        function: { name: tc.name, arguments: tc.arguments },
       };
       if (tc.extras !== undefined) {
         mapped.extras = tc.extras;
@@ -281,10 +281,8 @@ class KimiStreamedMessage implements StreamedMessage {
         yield {
           type: 'function',
           id: toolCall.id || crypto.randomUUID(),
-          function: {
-            name: toolCall.function.name,
-            arguments: toolCall.function.arguments,
-          },
+          name: toolCall.function.name,
+          arguments: toolCall.function.arguments,
         } satisfies ToolCall;
       }
     }

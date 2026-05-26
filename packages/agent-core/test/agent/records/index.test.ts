@@ -111,6 +111,52 @@ describe('AgentRecords persistence metadata', () => {
     expect(persistence.rewrites).toEqual([]);
   });
 
+  it('rewrites migrated records to the current wire version after replay', async () => {
+    const persistence = new RecordingInMemoryAgentRecordPersistence([
+      {
+        type: 'metadata',
+        protocol_version: '1.0',
+        created_at: 1,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'call_legacy_bash',
+              function: {
+                name: 'Bash',
+                arguments: '{"command":"pwd"}',
+              },
+            },
+          ],
+        },
+      } as unknown as AgentRecord,
+    ]);
+    const records = new AgentRecords(() => {}, persistence);
+
+    await records.replay();
+
+    expect(persistence.rewrites).toHaveLength(1);
+    expect(persistence.records[0]).toMatchObject({
+      type: 'metadata',
+      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+    });
+    const migrated = persistence.records[1] as unknown as {
+      readonly message: {
+        readonly toolCalls: readonly Record<string, unknown>[];
+      };
+    };
+    expect(migrated.message.toolCalls[0]).toMatchObject({
+      name: 'Bash',
+      arguments: '{"command":"pwd"}',
+    });
+    expect(migrated.message.toolCalls[0]?.['function']).toBeUndefined();
+  });
+
   it('rejects replaying records from a newer wire version', async () => {
     const persistence = new InMemoryAgentRecordPersistence([
       {

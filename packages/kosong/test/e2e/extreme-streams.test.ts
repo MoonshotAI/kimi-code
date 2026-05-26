@@ -78,7 +78,7 @@ describe('e2e: extreme streaming scenarios', () => {
         parts.push({
           type: 'function',
           id: `tc_${i}`,
-          function: { name: 'f', arguments: null },
+          name: 'f', arguments: null,
           _streamIndex: i,
         });
       }
@@ -105,8 +105,8 @@ describe('e2e: extreme streaming scenarios', () => {
       for (let i = 0; i < n; i++) {
         const tc = result.message.toolCalls[i]!;
         expect(tc.id).toBe(`tc_${i}`);
-        expect(tc.function.name).toBe('f');
-        expect(tc.function.arguments).toBe(`{"i":${i}}`);
+        expect(tc.name).toBe('f');
+        expect(tc.arguments).toBe(`{"i":${i}}`);
         // _streamIndex must be stripped from the stored ToolCall.
         expect(tc).not.toHaveProperty('_streamIndex');
       }
@@ -119,7 +119,7 @@ describe('e2e: extreme streaming scenarios', () => {
         {
           type: 'function',
           id: 'tc_big',
-          function: { name: 'writeBlob', arguments: '{"blob":"' },
+          name: 'writeBlob', arguments: '{"blob":"',
           _streamIndex: 0,
         },
       ];
@@ -134,7 +134,7 @@ describe('e2e: extreme streaming scenarios', () => {
       const elapsed = Date.now() - t0;
 
       expect(result.message.toolCalls).toHaveLength(1);
-      const args = result.message.toolCalls[0]!.function.arguments;
+      const args = result.message.toolCalls[0]!.arguments;
       if (args === null) {
         throw new Error('Expected assembled tool-call arguments');
       }
@@ -159,7 +159,7 @@ describe('e2e: extreme streaming scenarios', () => {
         parts.push({
           type: 'function',
           id: `tc_${i}`,
-          function: { name: 'f', arguments: null },
+          name: 'f', arguments: null,
           _streamIndex: i,
         });
       }
@@ -175,7 +175,7 @@ describe('e2e: extreme streaming scenarios', () => {
       for (let i = 0; i < n; i++) {
         const tc = result.message.toolCalls[i]!;
         // Assembled args preserve the per-call routing contract.
-        expect(tc.function.arguments).toBe(`{"idx":${i}}`);
+        expect(tc.arguments).toBe(`{"idx":${i}}`);
       }
     });
   });

@@ -19,7 +19,6 @@ export type {
   TextPart,
   ThinkPart,
   ToolCall,
-  ToolCallFunction,
   ToolCallPart,
   VideoURLPart,
 } from './message';

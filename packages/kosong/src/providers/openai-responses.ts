@@ -451,9 +451,9 @@ function convertMessage(
   // Handle tool calls
   for (const toolCall of message.toolCalls) {
     result.push({
-      arguments: toolCall.function.arguments ?? '{}',
+      arguments: toolCall.arguments ?? '{}',
       call_id: toolCall.id,
-      name: toolCall.function.name,
+      name: toolCall.name,
       type: 'function_call',
     });
   }
@@ -556,10 +556,8 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
         yield {
           type: 'function',
           id: functionCallId(outputItem.callId),
-          function: {
-            name: requireFunctionCallName(outputItem),
-            arguments: outputItem.arguments ?? null,
-          },
+          name: requireFunctionCallName(outputItem),
+          arguments: outputItem.arguments ?? null,
         } satisfies ToolCall;
       } else if (outputItem.type === 'reasoning') {
         for (const summary of outputItem.summary) {
@@ -701,10 +699,8 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
               const tc: ToolCall = {
                 type: 'function',
                 id: functionCallId(item.callId),
-                function: {
-                  name: requireFunctionCallName(item),
-                  arguments: item.arguments ?? null,
-                },
+                name: requireFunctionCallName(item),
+                arguments: item.arguments ?? null,
               };
               if (streamIndex !== undefined) {
                 tc._streamIndex = streamIndex;

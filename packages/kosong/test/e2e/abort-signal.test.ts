@@ -114,7 +114,7 @@ describe('e2e: abort signal', () => {
         {
           type: 'function',
           id: 'tool-1',
-          function: { name: 'slow-tool', arguments: '{}' },
+          name: 'slow-tool', arguments: '{}',
         },
       ]);
 

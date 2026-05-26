@@ -101,7 +101,7 @@ export class PermissionManager {
   async beforeToolCall(
     context: ToolExecutionHookContext,
   ): Promise<PrepareToolExecutionResult | undefined> {
-    const name = context.toolCall.function.name;
+    const name = context.toolCall.name;
     const args = context.args;
 
     const mode = this.mode;
@@ -151,7 +151,7 @@ export class PermissionManager {
   ): Promise<PrepareToolExecutionResult | undefined> {
     const { signal } = context;
     const id = context.toolCall.id;
-    const name = context.toolCall.function.name;
+    const name = context.toolCall.name;
     const args = context.args;
     const display =
       options.display ?? ({

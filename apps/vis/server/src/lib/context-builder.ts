@@ -190,10 +190,8 @@ export function buildAnnotatedMessages(
         currentStep.tool_calls.push({
           type: 'function',
           id: r.data.tool_call_id,
-          function: {
-            name: r.data.tool_name,
-            arguments: r.data.args === undefined ? null : JSON.stringify(r.data.args),
-          },
+          name: r.data.tool_name,
+          arguments: r.data.args === undefined ? null : JSON.stringify(r.data.args),
         });
         break;
       }

@@ -279,7 +279,7 @@ describe('GoogleGenAIChatProvider', () => {
       const toolCall: ToolCall = {
         type: 'function',
         id: 'call_abc123',
-        function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+        name: 'add', arguments: '{"a": 2, "b": 3}',
       };
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Add 2 and 3' }], toolCalls: [] },
@@ -337,7 +337,7 @@ describe('GoogleGenAIChatProvider', () => {
             {
               type: 'function',
               id: 'add_call_sig',
-              function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+              name: 'add', arguments: '{"a": 2, "b": 3}',
               extras: { thought_signature_b64: 'dGhvdWdodF9zaWduYXR1cmVfZGF0YQ==' },
             },
           ],
@@ -365,7 +365,7 @@ describe('GoogleGenAIChatProvider', () => {
             {
               type: 'function',
               id: 'tc_001',
-              function: { name: 'fetch_image', arguments: '{}' },
+              name: 'fetch_image', arguments: '{}',
             },
           ],
         },
@@ -418,7 +418,7 @@ describe('GoogleGenAIChatProvider', () => {
             {
               type: 'function',
               id: 'tc_002',
-              function: { name: 'fetch_media', arguments: '{}' },
+              name: 'fetch_media', arguments: '{}',
             },
           ],
         },
@@ -498,12 +498,12 @@ describe('GoogleGenAIChatProvider', () => {
             {
               type: 'function',
               id: 'call_add',
-              function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+              name: 'add', arguments: '{"a": 2, "b": 3}',
             },
             {
               type: 'function',
               id: 'call_mul',
-              function: { name: 'multiply', arguments: '{"a": 4, "b": 5}' },
+              name: 'multiply', arguments: '{"a": 4, "b": 5}',
             },
           ],
         },
@@ -685,7 +685,7 @@ describe('GoogleGenAIChatProvider', () => {
             {
               type: 'function',
               id: 'call_xyz',
-              function: { name: 'add', arguments: '{"a": 2, "b": 3}' },
+              name: 'add', arguments: '{"a": 2, "b": 3}',
             },
           ],
         },
@@ -973,7 +973,7 @@ describe('GoogleGenAIChatProvider', () => {
         {
           type: 'function',
           id: 'add_call_1',
-          function: { name: 'add', arguments: '{"a":2,"b":3}' },
+          name: 'add', arguments: '{"a":2,"b":3}',
         },
       ]);
     });
@@ -1003,7 +1003,7 @@ describe('GoogleGenAIChatProvider', () => {
         {
           type: 'function',
           id: 'search_fc_1',
-          function: { name: 'search', arguments: '{"q":"test"}' },
+          name: 'search', arguments: '{"q":"test"}',
           extras: { thought_signature_b64: 'sig_abc123' },
         },
       ]);
@@ -1074,7 +1074,7 @@ describe('GoogleGenAIChatProvider', () => {
       expect(parts[1]).toEqual({ type: 'text', text: 'answer' });
       expect(parts[2]).toMatchObject({
         type: 'function',
-        function: { name: 'calc' },
+        name: 'calc',
       });
     });
 
@@ -1192,7 +1192,7 @@ describe('GoogleGenAIChatProvider', () => {
             {
               type: 'function',
               id: 'call_known',
-              function: { name: 'add', arguments: '{"a":1,"b":2}' },
+              name: 'add', arguments: '{"a":1,"b":2}',
             },
           ],
         },
@@ -1226,12 +1226,12 @@ describe('GoogleGenAIChatProvider', () => {
             {
               type: 'function',
               id: 'call_a',
-              function: { name: 'tool_a', arguments: '{}' },
+              name: 'tool_a', arguments: '{}',
             },
             {
               type: 'function',
               id: 'call_b',
-              function: { name: 'tool_b', arguments: '{}' },
+              name: 'tool_b', arguments: '{}',
             },
           ],
         },
@@ -1261,7 +1261,7 @@ describe('GoogleGenAIChatProvider', () => {
             {
               type: 'function',
               id: 'call_a',
-              function: { name: 'tool_a', arguments: '{}' },
+              name: 'tool_a', arguments: '{}',
             },
           ],
         },
@@ -1483,7 +1483,7 @@ describe('messagesToGoogleGenAIContents - error branches', () => {
           {
             type: 'function',
             id: 'tc_arr',
-            function: { name: 'foo', arguments: '[1,2,3]' },
+            name: 'foo', arguments: '[1,2,3]',
           },
         ],
       },
@@ -1502,7 +1502,7 @@ describe('messagesToGoogleGenAIContents - error branches', () => {
           {
             type: 'function',
             id: 'tc_1',
-            function: { name: 'foo', arguments: '{}' },
+            name: 'foo', arguments: '{}',
           },
         ],
       },
@@ -1527,7 +1527,7 @@ describe('messagesToGoogleGenAIContents - error branches', () => {
           {
             type: 'function',
             id: 'tc_dup',
-            function: { name: 'foo', arguments: '{}' },
+            name: 'foo', arguments: '{}',
           },
         ],
       },
@@ -1556,12 +1556,12 @@ describe('messagesToGoogleGenAIContents - error branches', () => {
           {
             type: 'function',
             id: 'tc_expected',
-            function: { name: 'foo', arguments: '{}' },
+            name: 'foo', arguments: '{}',
           },
           {
             type: 'function',
             id: 'tc_missing',
-            function: { name: 'bar', arguments: '{}' },
+            name: 'bar', arguments: '{}',
           },
         ],
       },
@@ -1584,7 +1584,7 @@ describe('messagesToGoogleGenAIContents - error branches', () => {
           {
             type: 'function',
             id: 'tc_known',
-            function: { name: 'foo', arguments: '{}' },
+            name: 'foo', arguments: '{}',
           },
         ],
       },
@@ -1615,7 +1615,7 @@ describe('messagesToGoogleGenAIContents - extra branches', () => {
           {
             type: 'function',
             id: 'tc_bad',
-            function: { name: 'foo', arguments: 'not valid {json' },
+            name: 'foo', arguments: 'not valid {json',
           },
         ],
       },
