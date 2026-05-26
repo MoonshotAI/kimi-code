@@ -141,6 +141,10 @@ export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel
 }
 
 function catalogReasoningKey(interleaved: CatalogModelEntry['interleaved']): string | undefined {
+  // models.dev allows `interleaved: true` as "general support" — read it as
+  // the default `reasoning_content` field so providers without an explicit
+  // field name (e.g. some openai-compatible gateways) still round-trip.
+  if (interleaved === true) return 'reasoning_content';
   if (typeof interleaved !== 'object' || interleaved === null) return undefined;
   const field = interleaved.field?.trim();
   return field !== undefined && field.length > 0 ? field : undefined;
