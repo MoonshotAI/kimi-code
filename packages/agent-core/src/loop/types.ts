@@ -148,12 +148,15 @@ export interface ResolvedToolExecutionHookContext extends ToolExecutionHookConte
   readonly execution: RunnableToolExecution;
 }
 
-export interface PrepareToolExecutionResult {
+export interface AuthorizeToolExecutionResult {
   readonly block?: boolean | undefined;
   readonly reason?: string | undefined;
-  readonly updatedArgs?: unknown;
   readonly syntheticResult?: ExecutableToolResult | undefined;
   readonly executionMetadata?: unknown;
+}
+
+export interface PrepareToolExecutionResult extends AuthorizeToolExecutionResult {
+  readonly updatedArgs?: unknown;
 }
 
 export interface FinalizeToolResultContext extends ToolExecutionHookContext {
@@ -189,7 +192,7 @@ export type PrepareToolExecutionHook = (
 
 export type AuthorizeToolExecutionHook = (
   ctx: ResolvedToolExecutionHookContext,
-) => Promise<PrepareToolExecutionResult | undefined>;
+) => Promise<AuthorizeToolExecutionResult | undefined>;
 
 export type FinalizeToolResultHook = (
   ctx: FinalizeToolResultContext,

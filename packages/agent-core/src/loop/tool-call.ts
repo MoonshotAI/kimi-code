@@ -30,6 +30,7 @@ import type { LLM, LLMChatResponse } from './llm';
 import { ToolAccesses } from './tool-access';
 import { ToolScheduler, type ToolCallTask } from './tool-scheduler';
 import type {
+  AuthorizeToolExecutionResult,
   ExecutableTool,
   LoopHooks,
   ToolCall,
@@ -398,7 +399,7 @@ async function runAuthorizeToolExecutionHook(
   call: RunnableToolCall,
   args: unknown,
   execution: RunnableToolExecution,
-): Promise<PrepareToolExecutionResult | undefined> {
+): Promise<AuthorizeToolExecutionResult | undefined> {
   const { hooks, signal, turnId, currentStep, llm } = step;
   if (hooks?.authorizeToolExecution === undefined) return undefined;
 
