@@ -4,9 +4,52 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSession } from '../../hooks/useSession';
 import { useWire } from '../../hooks/useWire';
 import { computeIssues, topSeverity } from '../../lib/issues';
-import type { WireEntry } from '../../types';
+import type { AgentRecord, WireEntry } from '../../types';
 import { IssuesDrawer } from './IssuesDrawer';
-import { WireRow } from './WireRow';
+import { WireRow, type PairHint } from './WireRow';
+
+interface PairRecord {
+  callLineNo: number | null;
+  resultLineNo: number | null;
+}
+
+/** Scan all entries and pair every `tool.call` with its `tool.result`
+ *  by `toolCallId`. Used to render the inline "→ #N" / "← #N" cross-
+ *  references and to drive the hover-pair highlight. */
+function computePairMap(entries: readonly WireEntry[]): Map<string, PairRecord> {
+  const map = new Map<string, PairRecord>();
+  const ensure = (id: string): PairRecord => {
+    const existing = map.get(id);
+    if (existing) return existing;
+    const fresh: PairRecord = { callLineNo: null, resultLineNo: null };
+    map.set(id, fresh);
+    return fresh;
+  };
+  for (const entry of entries) {
+    if (entry.data.type !== 'context.append_loop_event') continue;
+    const ev = entry.data.event;
+    if (ev.type === 'tool.call') {
+      ensure(ev.toolCallId).callLineNo = entry.lineNo;
+    } else if (ev.type === 'tool.result') {
+      ensure(ev.toolCallId).resultLineNo = entry.lineNo;
+    }
+  }
+  return map;
+}
+
+function pairInfoFor(record: AgentRecord, map: Map<string, PairRecord>): PairHint | undefined {
+  if (record.type !== 'context.append_loop_event') return undefined;
+  const ev = record.event;
+  if (ev.type !== 'tool.call' && ev.type !== 'tool.result') return undefined;
+  const entry = map.get(ev.toolCallId);
+  if (entry === undefined) return undefined;
+  return {
+    toolCallId: ev.toolCallId,
+    kind: ev.type === 'tool.call' ? 'call' : 'result',
+    callLineNo: entry.callLineNo,
+    resultLineNo: entry.resultLineNo,
+  };
+}
 
 interface WireTabProps {
   sessionId: string;
@@ -28,11 +71,28 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [hoveredPairId, setHoveredPairId] = useState<string | null>(null);
 
   const entries: WireEntry[] = useMemo(() => {
     return (wire?.records ?? []) as WireEntry[];
   }, [wire?.records]);
   const warnings = wire?.warnings ?? [];
+
+  const pairMap = useMemo(() => computePairMap(entries), [entries]);
+  // Precompute the per-entry PairHint so the object identity is stable
+  // across hover state changes. Without this, every hover would create
+  // fresh pair objects and bust WireRow's memo for every tool row.
+  const pairByLineNo = useMemo(() => {
+    const m = new Map<number, PairHint>();
+    for (const entry of entries) {
+      const p = pairInfoFor(entry.data, pairMap);
+      if (p !== undefined) m.set(entry.lineNo, p);
+    }
+    return m;
+  }, [entries, pairMap]);
+  const onHoverPair = useCallback((id: string | null) => {
+    setHoveredPairId(id);
+  }, []);
 
   const filtered = useMemo(() => {
     if (search.length === 0) return entries;
@@ -192,6 +252,9 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
               {virt.getVirtualItems().map((vi) => {
                 const e = filtered[vi.index];
                 if (!e) return null;
+                const pair = pairByLineNo.get(e.lineNo);
+                const highlighted =
+                  pair !== undefined && hoveredPairId === pair.toolCallId;
                 return (
                   <div
                     key={vi.key}
@@ -212,6 +275,9 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
                         toggle(e.lineNo);
                       }}
                       onJumpTo={jumpToLine}
+                      pair={pair}
+                      highlighted={highlighted}
+                      onHoverPair={onHoverPair}
                     />
                   </div>
                 );
