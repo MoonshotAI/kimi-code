@@ -1,22 +1,22 @@
 export type ToolFileAccessOperation = 'read' | 'write' | 'readwrite' | 'search';
 
-export type ToolResourceAccess =
-  | {
-      readonly kind: 'file';
-      readonly operation: ToolFileAccessOperation;
-      readonly path: string;
-      readonly recursive?: boolean;
-    }
-  | {
-      /**
-       * Arbitrary side effects or resources that cannot be represented as a
-       * file access. This is intentionally operation-less and globally
-       * exclusive for concurrency.
-       */
-      readonly kind: 'all';
-    };
+export interface ToolFileAccess {
+  readonly kind: 'file';
+  readonly operation: ToolFileAccessOperation;
+  readonly path: string;
+  readonly recursive?: boolean;
+}
 
-export type ToolFileAccess = Extract<ToolResourceAccess, { kind: 'file' }>;
+export interface ToolResourceAccessAll {
+  /**
+   * Arbitrary side effects or resources that cannot be represented as a
+   * file access. This is intentionally operation-less and globally
+   * exclusive for concurrency.
+   */
+  readonly kind: 'all';
+}
+
+export type ToolResourceAccess = ToolFileAccess | ToolResourceAccessAll;
 export type ToolAccesses = readonly ToolResourceAccess[];
 
 export const ToolAccesses = {
@@ -33,14 +33,7 @@ export const ToolAccesses = {
     path: string,
     options: { readonly recursive?: boolean } = {},
   ): ToolAccesses {
-    const access: {
-      kind: 'file';
-      operation: ToolFileAccessOperation;
-      path: string;
-      recursive?: boolean;
-    } = { kind: 'file', operation, path };
-    if (options.recursive !== undefined) access.recursive = options.recursive;
-    return [access];
+    return [{ kind: 'file', operation, path, recursive: options.recursive }];
   },
 
   readFile(path: string): ToolAccesses {
