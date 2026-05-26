@@ -7,7 +7,7 @@ import { formatStartupBanner } from './startup-banner';
 async function main(): Promise<void> {
   const host = resolveHost();
   const authToken = resolveVisAuthToken(host);
-  const app = await createApp({ authToken });
+  const app = await createApp({ authToken, host, allowedHosts: process.env['VIS_ALLOWED_HOSTS'] });
   const port = resolvePort();
   serve({ fetch: app.fetch, hostname: host, port }, (info) => {
     // Startup banner.

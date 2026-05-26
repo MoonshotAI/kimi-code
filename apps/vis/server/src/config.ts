@@ -29,13 +29,20 @@ export function resolveHost(): string {
   return host !== undefined && host.length > 0 ? host : '127.0.0.1';
 }
 
+/** Strict dotted-quad match for the 127.0.0.0/8 loopback range. Anchored so a
+ *  hostname that merely *starts with* `127.` (e.g. `127.0.0.1.nip.io`) is not
+ *  mistaken for a loopback address. */
+const LOOPBACK_IPV4 = /^127\.(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){2}$/u;
+
 export function isLoopbackHost(host: string): boolean {
   const normalized = host.trim().toLowerCase().replaceAll('[', '').replaceAll(']', '');
   return (
     normalized === 'localhost' ||
+    // RFC 6761: `localhost.` and any `*.localhost` name resolves to loopback.
+    normalized.endsWith('.localhost') ||
     normalized === '::1' ||
     normalized === '0:0:0:0:0:0:0:1' ||
-    normalized.startsWith('127.')
+    LOOPBACK_IPV4.test(normalized)
   );
 }
 

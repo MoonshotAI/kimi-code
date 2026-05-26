@@ -4,6 +4,8 @@ import { join, resolve } from 'node:path';
 
 import { Hono } from 'hono';
 
+import { resolveHost } from './config';
+import { hostGuard } from './host-guard';
 import { contextRoute } from './routes/context';
 import { sessionDetailRoute } from './routes/session-detail';
 import { sessionsRoute } from './routes/sessions';
@@ -51,6 +53,11 @@ function mimeFor(path: string): string {
 
 export interface CreateAppOptions {
   readonly authToken?: string;
+  /** Host the server is bound to; used by the no-token DNS-rebinding guard.
+   *  Defaults to resolveHost(). */
+  readonly host?: string;
+  /** Raw comma-separated VIS_ALLOWED_HOSTS value for the no-token guard. */
+  readonly allowedHosts?: string;
 }
 
 function bearerToken(value: string | undefined): string | null {
@@ -69,9 +76,22 @@ function tokenMatches(actual: string, expected: string): boolean {
 export async function createApp(options: CreateAppOptions = {}): Promise<Hono> {
   const app = new Hono();
 
+  const authToken = options.authToken;
+
+  // DNS-rebinding guard. Only meaningful in the no-token loopback mode: when a
+  // token is configured (required for any non-loopback bind), the token is the
+  // access control and a rebinding attacker cannot read it cross-origin, so a
+  // Host allow-list would only break legitimate LAN / wildcard access. Mounted
+  // before the routes so it covers /api/* and the static fallback alike.
+  if (authToken === undefined || authToken.length === 0) {
+    app.use(
+      '*',
+      hostGuard({ bindHost: options.host ?? resolveHost(), allowedHosts: options.allowedHosts }),
+    );
+  }
+
   // /api/* handlers.
   const api = new Hono();
-  const authToken = options.authToken;
   if (authToken !== undefined && authToken.length > 0) {
     api.use('*', async (c, next) => {
       const token = bearerToken(c.req.header('authorization'));
