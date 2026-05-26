@@ -235,7 +235,13 @@ export class Agent {
   }
 
   async resume(): Promise<void> {
-    await this.records.replay();
+    const result = await this.records.replay();
+    if (result.warning !== undefined) {
+      this.emitEvent({
+        type: 'warning',
+        message: result.warning,
+      });
+    }
     await this.background.loadFromDisk();
     await this.background.reconcile();
     this.turn.finishResume();

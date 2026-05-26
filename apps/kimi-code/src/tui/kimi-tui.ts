@@ -88,6 +88,7 @@ import type {
   TurnStepCompletedEvent,
   TurnStepInterruptedEvent,
   TurnStepStartedEvent,
+  WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 
@@ -2260,6 +2261,9 @@ export class KimiTUI {
       case 'error':
         this.handleSessionError(event);
         break;
+      case 'warning':
+        this.handleSessionWarning(event);
+        break;
       case 'compaction.started':
         this.handleCompactionBegin(event);
         break;
@@ -2678,6 +2682,10 @@ export class KimiTUI {
     if (sessionId.length > 0) {
       this.showStatus(errorReportHintLine(sessionId));
     }
+  }
+
+  private handleSessionWarning(event: WarningEvent): void {
+    this.showStatus(`Warning: ${event.message}`, this.state.theme.colors.warning);
   }
 
   private renderMcpServerStatus(server: McpServerStatusSnapshot): void {

@@ -157,7 +157,7 @@ describe('AgentRecords persistence metadata', () => {
     expect(migrated.message.toolCalls[0]?.['function']).toBeUndefined();
   });
 
-  it('rejects replaying records from a newer wire version', async () => {
+  it('warns but continues when replaying records from a newer wire version', async () => {
     const persistence = new InMemoryAgentRecordPersistence([
       {
         type: 'metadata',
@@ -167,9 +167,9 @@ describe('AgentRecords persistence metadata', () => {
     ]);
     const records = new AgentRecords(() => {}, persistence);
 
-    await expect(records.replay()).rejects.toThrow(
-      `Unsupported wire protocol version: 9.9 (current: ${AGENT_WIRE_PROTOCOL_VERSION})`,
-    );
+    const result = await records.replay();
+    expect(result.warning).toContain('9.9');
+    expect(result.warning).toContain(AGENT_WIRE_PROTOCOL_VERSION);
   });
 
   it('rejects replaying records without a registered migration path', async () => {

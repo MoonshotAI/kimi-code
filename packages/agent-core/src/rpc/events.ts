@@ -69,8 +69,12 @@ export interface SkillActivatedEvent {
 
 export interface ErrorEvent extends KimiErrorPayload {
   readonly type: 'error';
-  readonly sessionId?: string | undefined;
-  readonly agentId?: string | undefined;
+}
+
+export interface WarningEvent {
+  readonly type: 'warning';
+  readonly message: string;
+  readonly code?: string | undefined;
 }
 
 export interface TurnStartedEvent {
@@ -265,6 +269,7 @@ export interface McpServerStatusPayload {
 
 export type AgentEvent =
   | ErrorEvent
+  | WarningEvent
   | AgentStatusUpdatedEvent
   | SessionMetaUpdatedEvent
   | SkillActivatedEvent

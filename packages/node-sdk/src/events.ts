@@ -16,6 +16,7 @@ export type {
   SessionMetaUpdatedEvent,
   SkillActivatedEvent,
   ErrorEvent,
+  WarningEvent,
   UsageStatus,
 } from '@moonshot-ai/agent-core';
 
