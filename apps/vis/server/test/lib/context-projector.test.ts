@@ -33,23 +33,23 @@ describe('context-projector', () => {
   });
 
   it('clears messages on context.clear', async () => {
-    const records = [
-      { type: 'context.append_message' as const, message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'a' }], toolCalls: [] }, _lineNo: 2 },
-      { type: 'context.clear' as const, _lineNo: 3 },
-      { type: 'context.append_message' as const, message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'b' }], toolCalls: [] }, _lineNo: 4 },
+    const entries = [
+      { lineNo: 2, data: { type: 'context.append_message' as const, message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'a' }], toolCalls: [] } }, raw: {} },
+      { lineNo: 3, data: { type: 'context.clear' as const }, raw: {} },
+      { lineNo: 4, data: { type: 'context.append_message' as const, message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'b' }], toolCalls: [] } }, raw: {} },
     ];
-    const proj = projectContext(records as any);
+    const proj = projectContext(entries as any);
     expect(proj.messages).toHaveLength(1);
     expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'b' });
   });
 
   it('applies compaction summary as a synthetic message', async () => {
-    const records = [
-      { type: 'context.append_message' as const, message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'old' }], toolCalls: [] }, _lineNo: 2 },
-      { type: 'context.apply_compaction' as const, summary: 'old stuff', compactedCount: 1, tokensBefore: 100, tokensAfter: 30, _lineNo: 3 },
-      { type: 'context.append_message' as const, message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'new' }], toolCalls: [] }, _lineNo: 4 },
+    const entries = [
+      { lineNo: 2, data: { type: 'context.append_message' as const, message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'old' }], toolCalls: [] } }, raw: {} },
+      { lineNo: 3, data: { type: 'context.apply_compaction' as const, summary: 'old stuff', compactedCount: 1, tokensBefore: 100, tokensAfter: 30 }, raw: {} },
+      { lineNo: 4, data: { type: 'context.append_message' as const, message: { role: 'user' as const, content: [{ type: 'text' as const, text: 'new' }], toolCalls: [] } }, raw: {} },
     ];
-    const proj = projectContext(records as any);
+    const proj = projectContext(entries as any);
     expect(proj.messages[0]!.source).toBe('compaction_summary');
     expect(proj.messages[0]!.message.content[0]).toMatchObject({ text: 'old stuff' });
     expect(proj.messages[1]!.message.content[0]).toMatchObject({ text: 'new' });

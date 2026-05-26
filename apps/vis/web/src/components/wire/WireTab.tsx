@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSession } from '../../hooks/useSession';
 import { useWire } from '../../hooks/useWire';
 import { computeIssues, topSeverity } from '../../lib/issues';
-import type { WireLine } from '../../types';
+import type { WireEntry } from '../../types';
 import { IssuesDrawer } from './IssuesDrawer';
 import { WireRow } from './WireRow';
 
@@ -29,25 +29,25 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const records: WireLine[] = useMemo(() => {
-    return (wire?.records ?? []) as WireLine[];
+  const entries: WireEntry[] = useMemo(() => {
+    return (wire?.records ?? []) as WireEntry[];
   }, [wire?.records]);
   const warnings = wire?.warnings ?? [];
 
   const filtered = useMemo(() => {
-    if (search.length === 0) return records;
+    if (search.length === 0) return entries;
     const needle = search.toLowerCase();
-    return records.filter((r) => {
-      if (r.type.toLowerCase().includes(needle)) return true;
+    return entries.filter((e) => {
+      if (e.data.type.toLowerCase().includes(needle)) return true;
       try {
-        return JSON.stringify(r).toLowerCase().includes(needle);
+        return JSON.stringify(e.data).toLowerCase().includes(needle);
       } catch {
         return false;
       }
     });
-  }, [records, search]);
+  }, [entries, search]);
 
-  const issues = useMemo(() => computeIssues(records, warnings), [records, warnings]);
+  const issues = useMemo(() => computeIssues(entries, warnings), [entries, warnings]);
   const issuesSeverity = topSeverity(issues);
 
   const virt = useVirtualizer({
@@ -55,7 +55,7 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
     getScrollElement: () => parentRef.current,
     estimateSize: () => 28,
     overscan: 10,
-    getItemKey: (i) => filtered[i]?._lineNo ?? i,
+    getItemKey: (i) => filtered[i]?.lineNo ?? i,
   });
 
   const toggle = useCallback((lineNo: number) => {
@@ -70,8 +70,8 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
   const filteredLineIdx = useMemo(() => {
     const m = new Map<number, number>();
     for (let i = 0; i < filtered.length; i += 1) {
-      const r = filtered[i];
-      if (r !== undefined) m.set(r._lineNo, i);
+      const e = filtered[i];
+      if (e !== undefined) m.set(e.lineNo, i);
     }
     return m;
   }, [filtered]);
@@ -87,7 +87,7 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
   );
 
   const expandAll = () => {
-    setExpanded(new Set(filtered.map((r) => r._lineNo)));
+    setExpanded(new Set(filtered.map((e) => e.lineNo)));
   };
   const collapseAll = () => {
     setExpanded(new Set());
@@ -128,7 +128,7 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
         />
         <div className="ml-auto flex items-center gap-3 font-mono text-[11px] text-fg-2">
           <span className="tabular">
-            {filtered.length} / {records.length} ev
+            {filtered.length} / {entries.length} ev
           </span>
           {issues.length > 0 && issuesSeverity !== null ? (
             <button
@@ -190,8 +190,8 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
               }}
             >
               {virt.getVirtualItems().map((vi) => {
-                const r = filtered[vi.index];
-                if (!r) return null;
+                const e = filtered[vi.index];
+                if (!e) return null;
                 return (
                   <div
                     key={vi.key}
@@ -206,10 +206,10 @@ export function WireTab({ sessionId, initialAgentId = 'main' }: WireTabProps) {
                     }}
                   >
                     <WireRow
-                      record={r}
-                      expanded={expanded.has(r._lineNo)}
+                      entry={e}
+                      expanded={expanded.has(e.lineNo)}
                       onToggle={() => {
-                        toggle(r._lineNo);
+                        toggle(e.lineNo);
                       }}
                       onJumpTo={jumpToLine}
                     />

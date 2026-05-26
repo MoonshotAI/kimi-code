@@ -7,27 +7,43 @@ import {
   type WireMigration,
 } from '@moonshot-ai/agent-core/agent/records/migration';
 
-import type { AgentRecord } from './agent-record-types';
+import type { AgentRecord, WireEntry } from './agent-record-types';
 
 export interface WireReadResult {
   metadata: { protocolVersion: string; createdAt: number };
-  records: ReadonlyArray<AgentRecord & { _lineNo: number }>;
+  records: ReadonlyArray<WireEntry>;
   warnings: string[];
+}
+
+/** Best-effort fallback when a wire file declares a protocol_version that
+ *  `agent-core` does not know about (e.g. the historic "2.2" alias that
+ *  pre-dates the 1.x renumber). We try to apply the chain *starting* from
+ *  the oldest known version (1.0) and warn the caller. If even that fails
+ *  we just pass records through unchanged. */
+function bestEffortMigrations(): readonly WireMigration[] {
+  try {
+    return resolveWireMigrations('1.0');
+  } catch {
+    return [];
+  }
 }
 
 /** Read a single agent's `wire.jsonl`.
  *
- *  Each record is migrated to the current `AgentRecord` shape using
- *  `agent-core`'s migration chain, so older-but-supported wire files
- *  (e.g. protocol 1.0) are transparently upgraded on read. The metadata
- *  header retains the on-disk version so the UI can surface it. */
+ *  Each record is returned as a `WireEntry` containing both the
+ *  on-disk parsed form (`raw`) and the migrated current-protocol form
+ *  (`data`). For wires that declare a protocol version `agent-core`
+ *  does not recognise (historic 2.x labels, or truly future versions),
+ *  the reader falls back to a best-effort path: records are run
+ *  through the 1.0-onwards migration chain and a warning is added to
+ *  `warnings[]` so the UI can surface the caveat. */
 export async function readAgentWire(path: string): Promise<WireReadResult> {
   const stream = createReadStream(path, { encoding: 'utf8' });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
   let lineNo = 0;
   let metadata: WireReadResult['metadata'] | null = null;
   let migrations: readonly WireMigration[] = [];
-  const records: (AgentRecord & { _lineNo: number })[] = [];
+  const records: WireEntry[] = [];
   const warnings: string[] = [];
 
   for await (const line of rl) {
@@ -56,20 +72,33 @@ export async function readAgentWire(path: string): Promise<WireReadResult> {
       try {
         migrations = resolveWireMigrations(pv);
       } catch (err) {
-        // Wrap so the route's error classifier still recognises this case
-        // via the "unsupported protocol" substring.
-        throw new Error(
-          `Unsupported protocol version "${pv}": ${(err as Error).message}`,
+        warnings.push(
+          `unrecognised protocol_version "${pv}" — parsing as best-effort (${(err as Error).message})`,
         );
+        migrations = bestEffortMigrations();
       }
       metadata = { protocolVersion: pv, createdAt: ca };
       continue;
     }
-    const migrated =
-      migrations.length === 0
-        ? (parsed as Record<string, unknown>)
-        : (migrateWireRecord(parsed as Record<string, unknown> & { type: string }, migrations) as Record<string, unknown>);
-    records.push({ ...(migrated as AgentRecord), _lineNo: lineNo });
+    const raw = parsed as Record<string, unknown>;
+    let migrated: Record<string, unknown>;
+    try {
+      migrated =
+        migrations.length === 0
+          ? raw
+          : (migrateWireRecord(
+              raw as Record<string, unknown> & { type: string },
+              migrations,
+            ) as Record<string, unknown>);
+    } catch (err) {
+      // A single record that won't migrate is not fatal — keep the raw
+      // payload so the UI can still render whatever fields it understands.
+      warnings.push(
+        `line ${lineNo}: migration failed (${(err as Error).message}); using raw record`,
+      );
+      migrated = raw;
+    }
+    records.push({ lineNo, data: migrated as AgentRecord, raw });
   }
   if (metadata === null) {
     throw new Error('Wire file is empty (no metadata)');

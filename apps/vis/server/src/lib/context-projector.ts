@@ -1,12 +1,10 @@
 import type {
-  AgentRecord,
   ContextMessage,
   PermissionMode,
   AgentConfigUpdateData,
   TokenUsage,
+  WireEntry,
 } from './agent-record-types';
-
-type WireLine = AgentRecord & { _lineNo: number };
 
 export interface ProjectedMessage {
   lineNo: number;
@@ -39,7 +37,7 @@ export interface ContextProjection {
 
 const ZERO: TokenUsage = { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 };
 
-export function projectContext(records: ReadonlyArray<WireLine>): ContextProjection {
+export function projectContext(entries: ReadonlyArray<WireEntry>): ContextProjection {
   let messages: ProjectedMessage[] = [];
   const usage: UsageTotals = {
     byScope: { session: { ...ZERO }, turn: { ...ZERO } },
@@ -50,11 +48,12 @@ export function projectContext(records: ReadonlyArray<WireLine>): ContextProject
   let planActive = false;
   let planId: string | undefined;
 
-  for (const rec of records) {
+  for (const entry of entries) {
+    const rec = entry.data;
     switch (rec.type) {
       case 'context.append_message':
         messages.push({
-          lineNo: rec._lineNo,
+          lineNo: entry.lineNo,
           time: rec.time,
           source: 'append_message',
           message: rec.message,
@@ -66,7 +65,7 @@ export function projectContext(records: ReadonlyArray<WireLine>): ContextProject
         break;
       case 'context.apply_compaction':
         messages = [{
-          lineNo: rec._lineNo,
+          lineNo: entry.lineNo,
           time: rec.time,
           source: 'compaction_summary',
           message: {

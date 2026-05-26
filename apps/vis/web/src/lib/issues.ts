@@ -11,7 +11,7 @@
 //
 // Wire-file parse warnings are appended as info-level entries with no lineNo.
 
-import type { WireLine } from '../types';
+import type { WireEntry } from '../types';
 
 export type IssueSeverity = 'error' | 'warning' | 'info';
 
@@ -27,7 +27,7 @@ export type IssueKind =
 export interface Issue {
   severity: IssueSeverity;
   kind: IssueKind;
-  /** _lineNo of the offending record. `null` for file-level warnings. */
+  /** Line number of the offending record. `null` for file-level warnings. */
   lineNo: number | null;
   /** Short summary shown on a single line. */
   summary: string;
@@ -44,7 +44,7 @@ const SEVERITY_ORDER: Record<IssueSeverity, number> = {
 /** Scan `records` + `warnings` and produce an ordered issue list.
  *  Sorted by severity first, then lineNo ascending. Warnings (no lineNo) go last. */
 export function computeIssues(
-  records: readonly WireLine[],
+  entries: readonly WireEntry[],
   warnings: readonly string[],
 ): Issue[] {
   const out: Issue[] = [];
@@ -56,13 +56,15 @@ export function computeIssues(
   let lastCompactionBegin: { lineNo: number; source: string } | null = null;
   let lastPlanEnter: { lineNo: number; id: string } | null = null;
 
-  for (const r of records) {
+  for (const entry of entries) {
+    const r = entry.data;
+    const lineNo = entry.lineNo;
     switch (r.type) {
       case 'context.append_loop_event': {
         const ev = r.event;
         if (ev.type === 'tool.call') {
           // New in-flight tool call.
-          toolCallById.set(ev.toolCallId, { lineNo: r._lineNo, name: ev.name });
+          toolCallById.set(ev.toolCallId, { lineNo, name: ev.name });
         } else if (ev.type === 'tool.result') {
           const open = toolCallById.get(ev.toolCallId);
           if (open !== undefined) {
@@ -71,14 +73,14 @@ export function computeIssues(
             out.push({
               severity: 'warning',
               kind: 'missing_tool_result',
-              lineNo: r._lineNo,
+              lineNo,
               summary: `orphan tool.result for #${ev.toolCallId.slice(-8)}`,
               detail: 'no preceding tool.call seen',
             });
           }
         } else if (ev.type === 'step.begin') {
           stepBeginByUuid.set(ev.uuid, {
-            lineNo: r._lineNo,
+            lineNo,
             step: ev.step,
             turnId: ev.turnId,
           });
@@ -89,7 +91,7 @@ export function computeIssues(
       }
 
       case 'full_compaction.begin':
-        lastCompactionBegin = { lineNo: r._lineNo, source: r.source };
+        lastCompactionBegin = { lineNo, source: r.source };
         break;
       case 'full_compaction.complete':
       case 'full_compaction.cancel':
@@ -97,7 +99,7 @@ export function computeIssues(
         break;
 
       case 'plan_mode.enter':
-        lastPlanEnter = { lineNo: r._lineNo, id: r.id };
+        lastPlanEnter = { lineNo, id: r.id };
         break;
       case 'plan_mode.cancel':
       case 'plan_mode.exit':
@@ -109,7 +111,7 @@ export function computeIssues(
           out.push({
             severity: 'info',
             kind: 'rejected_approval',
-            lineNo: r._lineNo,
+            lineNo,
             summary: `${r.toolName}#${r.toolCallId.slice(-8)} rejected`,
             detail: r.result.feedback,
           });

@@ -78,19 +78,31 @@ export interface SessionDetail {
   agents: AgentInfo[];
 }
 
-export type WireLine = { _lineNo: number } & {
-  // structural unification with AgentRecord; preserves discriminant
-  [K in keyof import('@moonshot-ai/agent-core').AgentRecordEvents]: import('@moonshot-ai/agent-core').AgentRecordOf<K> & {
-    _lineNo: number;
-  };
-}[keyof import('@moonshot-ai/agent-core').AgentRecordEvents];
+/** One line of `wire.jsonl` after vis has parsed (and possibly migrated)
+ *  it. `lineNo` is internal plumbing — used as a stable React key, for
+ *  "jump to line" navigation, and for pairing events — and MUST NOT be
+ *  rendered as part of the record body. The detail panel surfaces it via
+ *  the row header, not inside the JSON view. */
+export interface WireEntry {
+  /** 1-indexed line number in the underlying `wire.jsonl` file. */
+  lineNo: number;
+  /** The record as projected by vis: JSON-parsed AND run through the
+   *  upstream migration chain. Every consumer reads from this. */
+  data: AgentRecord;
+  /** The record exactly as written on disk: `JSON.parse` of the line,
+   *  with NO migration and NO vis annotations. Equal to `data` for
+   *  current-protocol records; diverges when a migration applied (e.g.
+   *  nested `toolCalls[*].function.name` → flat `name` on v1.0 wires).
+   *  Used by the detail panel to show "as written vs as projected". */
+  raw: unknown;
+}
 
 export interface WireResponse {
   sessionId: string;
   agentId: string;
   protocolVersion: string;
   metadata: { protocolVersion: string; createdAt: number };
-  records: readonly WireLine[];
+  records: readonly WireEntry[];
   warnings: string[];
 }
 

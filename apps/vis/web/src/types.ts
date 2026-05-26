@@ -10,7 +10,7 @@ export type {
   AgentTreeResponse,
   SessionHealth,
   WireResponse,
-  WireLine,
+  WireEntry,
   ApiError,
   AgentRecord,
   ContextMessage,

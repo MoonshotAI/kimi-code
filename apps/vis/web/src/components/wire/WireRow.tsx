@@ -1,13 +1,13 @@
 import { memo } from 'react';
 
-import type { WireLine } from '../../types';
+import type { WireEntry } from '../../types';
 import { formatWallClock } from '../../util/time';
 import { TypeBadge } from './TypeBadge';
 import { renderHeadline } from './WireHeadline';
 import { WireRowDetail } from './WireRowDetail';
 
 interface WireRowProps {
-  record: WireLine;
+  entry: WireEntry;
   expanded: boolean;
   onToggle: () => void;
   /** Scroll to a line and expand it — wired by the Wire tab via the virtualizer. */
@@ -15,11 +15,12 @@ interface WireRowProps {
 }
 
 export const WireRow = memo(function WireRow({
-  record,
+  entry,
   expanded,
   onToggle,
   onJumpTo,
 }: WireRowProps) {
+  const record = entry.data;
   const h = renderHeadline(record);
   const timeTitle = formatTimeTitle(record.time);
 
@@ -36,7 +37,7 @@ export const WireRow = memo(function WireRow({
           className="flex w-full items-center gap-3 px-2 py-[5px] text-left min-h-[28px]"
         >
           <span className="font-mono text-[11px] text-fg-3 tabular w-[52px] shrink-0 text-right">
-            {record._lineNo}
+            {entry.lineNo}
           </span>
           <span
             className="font-mono text-[11px] text-fg-3 tabular w-[68px] shrink-0"
@@ -55,7 +56,7 @@ export const WireRow = memo(function WireRow({
         </button>
         {expanded ? (
           <div className="border-t border-border bg-surface-1 px-2 pb-2 pt-1">
-            <WireRowDetail record={record} onJumpTo={onJumpTo} />
+            <WireRowDetail entry={entry} onJumpTo={onJumpTo} />
           </div>
         ) : null}
       </div>
