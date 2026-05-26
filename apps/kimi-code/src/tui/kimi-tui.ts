@@ -1824,13 +1824,11 @@ export class KimiTUI {
     });
   }
 
-  // Applies current permission and plan settings to the active session.
+  // Applies current permission to the active session. Plan mode is applied by
+  // createSession when requested, so post-create setup must not enter it again.
   private async activateRuntime(): Promise<void> {
     const session = this.requireSession();
     await session.setPermission(this.state.appState.permissionMode);
-    if (this.state.appState.planMode) {
-      await session.setPlanMode(true);
-    }
     await this.syncRuntimeState(session);
   }
 
@@ -1992,6 +1990,7 @@ export class KimiTUI {
       await this.activateRuntime();
       await this.syncRuntimeState(session);
     } catch (error) {
+      this.startSessionEventSubscription();
       const msg = formatErrorMessage(error);
       this.showError(`Post-create setup failed: ${msg}`);
       return;
