@@ -163,11 +163,13 @@ export class AgentTestContext {
       kaos: options.kaos ?? localKaos,
       osEnv: TEST_OS_ENV,
     };
+    const persistence = this.wrapPersistence(
+      options.persistence ?? new InMemoryAgentRecordPersistence(),
+    );
     this.agent = new Agent({
       runtime,
       rpc: this.createRpcProxy(),
-      persistence:
-        options.persistence === undefined ? undefined : this.wrapPersistence(options.persistence),
+      persistence,
       generate: options.generate ?? this.scriptedGenerate.generate,
       compactionStrategy: options.compactionStrategy,
       providerManager,
@@ -179,9 +181,6 @@ export class AgentTestContext {
       telemetry: options.telemetry,
       log: options.log,
     });
-    this.agent.records.onRecord = (event) => {
-      this.captureRecord(event);
-    };
     this.rpc = this.createPromiseAgentApi(this.agent);
   }
 
@@ -445,6 +444,7 @@ export class AgentTestContext {
     return {
       read: () => this.readAndCapturePersistence(persistence),
       append: (event) => {
+        this.captureRecord(event);
         persistence.append(event);
       },
       rewrite: (records) => {

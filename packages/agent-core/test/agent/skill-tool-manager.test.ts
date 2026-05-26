@@ -6,6 +6,8 @@ import { localKaos } from '@moonshot-ai/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Agent, type AgentRecord } from '../../src/agent';
+import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
+import type { AgentRecordPersistence } from '../../src/agent/records';
 import { ProviderManager } from '../../src/providers/provider-manager';
 import type { ApprovalResponse, SDKAgentRPC, SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
@@ -40,7 +42,10 @@ function makeSkill(name: string, metadata: SkillDefinition['metadata'] = {}): Sk
   };
 }
 
-function makeAgent(skills?: SkillRegistry): Agent {
+function makeAgent(
+  skills?: SkillRegistry,
+  persistence?: AgentRecordPersistence,
+): Agent {
   const rpc = {
     emitEvent: vi.fn(),
     requestApproval: vi.fn(),
@@ -54,6 +59,7 @@ function makeAgent(skills?: SkillRegistry): Agent {
     },
     rpc,
     skills,
+    persistence,
     providerManager: testProviderManager(),
   });
   agent.config.update({
@@ -135,11 +141,11 @@ describe('ToolManager SkillTool registration', () => {
   it('persists model-invoked inline skill reminders through agent wire', async () => {
     const skills = new SkillRegistry();
     skills.register(makeSkill('review'));
-    const agent = makeAgent(skills);
     const wireRecords: AgentRecord[] = [];
-    agent.records.onRecord = (record) => {
-      wireRecords.push(record);
-    };
+    const persistence = new InMemoryAgentRecordPersistence([], {
+      onRecord: (record) => wireRecords.push(record),
+    });
+    const agent = makeAgent(skills, persistence);
     const skillTool = agent.tools.loopTools.find((tool) => tool.name === 'Skill');
     if (!(skillTool instanceof SkillTool)) {
       throw new Error('Expected SkillTool to be active');
