@@ -25,12 +25,7 @@ import {
 import { PathSecurityError } from '../tools/policies/path-access';
 
 import { errorMessage, isAbortError } from './errors';
-import type {
-  LoopEventDispatcher,
-  LoopLiveOnlyEvent,
-  LoopRecordedEvent,
-  LoopToolCallEvent,
-} from './events';
+import type { LoopEventDispatcher, LoopToolCallEvent } from './events';
 import type { LLM, LLMChatResponse } from './llm';
 import { ToolAccesses } from './tool-access';
 import { ToolScheduler, type ToolCallTask } from './tool-scheduler';
@@ -115,38 +110,16 @@ export async function runToolCallBatch(
   const pendingResults: Array<Promise<PendingToolResult>> = [];
   let stopTurn = false;
 
-  // Pairing invariant: every `tool.call` event must get a paired `tool.result`.
-  // The wrapper tracks ids so a throw between dispatching the call and
-  // dispatching its result still produces a compensating result in `finally`.
-  // An orphan `tool.call` would otherwise make the next provider request fail
-  // with "tool_call_id did not have response messages".
-  const unpairedCallIds = new Set<string>();
-  function dispatchAndTrack(event: LoopRecordedEvent): Promise<void>;
-  function dispatchAndTrack(event: LoopLiveOnlyEvent): void;
-  function dispatchAndTrack(
-    event: LoopRecordedEvent | LoopLiveOnlyEvent,
-  ): Promise<void> | void {
-    if (event.type === 'tool.call') unpairedCallIds.add(event.toolCallId);
-    else if (event.type === 'tool.result') unpairedCallIds.delete(event.toolCallId);
-    return (
-      step.dispatchEvent as (e: LoopRecordedEvent | LoopLiveOnlyEvent) => Promise<void> | void
-    )(event);
-  }
-  const trackingStep: ToolCallStepContext = {
-    ...step,
-    dispatchEvent: dispatchAndTrack as LoopEventDispatcher,
-  };
-
   try {
     for (let index = 0; index < calls.length; index += 1) {
       const call = calls[index]!;
-      const prepared = await prepareToolCall(trackingStep, call);
+      const prepared = await prepareToolCall(step, call);
       pendingResults.push(scheduler.add(prepared.task));
 
       if (prepared.stopBatchAfterThis === true) {
         stopTurn = true;
         for (const skippedCall of calls.slice(index + 1)) {
-          const skippedTask = await prepareSkippedToolCall(trackingStep, skippedCall);
+          const skippedTask = await prepareSkippedToolCall(step, skippedCall);
           pendingResults.push(scheduler.add(skippedTask));
         }
         break;
@@ -157,9 +130,9 @@ export async function runToolCallBatch(
     // provider order. Await all tasks so each recorded `tool.call` gets a
     // paired `tool.result`; the caller checks abort before writing `step.end`.
     for (const pendingResult of pendingResults) {
-      const result = await finalizePendingToolResult(trackingStep, await pendingResult);
+      const result = await finalizePendingToolResult(step, await pendingResult);
       if (result.stopTurn === true) stopTurn = true;
-      await trackingStep.dispatchEvent({
+      await step.dispatchEvent({
         type: 'tool.result',
         parentUuid: result.toolCall.id,
         toolCallId: result.toolCall.id,
@@ -171,27 +144,6 @@ export async function runToolCallBatch(
     // Always settle spawned tasks before the caller continues so rejected
     // execute promises cannot surface as detached unhandled rejections.
     await Promise.allSettled(pendingResults);
-    if (unpairedCallIds.size > 0) {
-      for (const toolCallId of unpairedCallIds) {
-        try {
-          await step.dispatchEvent({
-            type: 'tool.result',
-            parentUuid: toolCallId,
-            toolCallId,
-            result: {
-              output: `Tool call "${toolCallId}" was interrupted before producing a result.`,
-              isError: true,
-            },
-          });
-        } catch (compensateError) {
-          step.log?.warn('failed to compensate orphan tool.call', {
-            toolCallId,
-            error: compensateError,
-          });
-        }
-      }
-      unpairedCallIds.clear();
-    }
   }
   return { stopTurn };
 }
@@ -293,9 +245,10 @@ async function prepareToolCall(
 
   if (decision.kind === 'synthetic') {
     await dispatchToolCall(step, call, decision.args);
+    const coerced = coerceToolResult(decision.result, call.toolName);
     return {
-      task: makeResolvedToolCallTask(makeToolResult(call, decision.args, decision.result)),
-      stopBatchAfterThis: toolResultStopsTurn(decision.result),
+      task: makeResolvedToolCallTask(makeToolResult(call, decision.args, coerced)),
+      stopBatchAfterThis: toolResultStopsTurn(coerced),
     };
   }
 
@@ -498,7 +451,10 @@ async function finalizePendingToolResult(
       signal,
       llm,
     });
-    const effectiveResult = finalizedResult ?? pendingResult.result;
+    const effectiveResult = coerceToolResult(
+      finalizedResult ?? pendingResult.result,
+      pendingResult.toolName,
+    );
     return {
       ...pendingResult,
       stopTurn: pendingResult.stopTurn === true || toolResultStopsTurn(effectiveResult),
@@ -627,28 +583,27 @@ function coerceToolResult(value: unknown, toolName: string): ExecutableToolResul
 }
 
 function normalizeToolResult(r: ExecutableToolResult): ExecutableToolResult {
-  const safe = coerceToolResult(r, '<unknown>');
   let output: ExecutableToolResult['output'];
-  if (typeof safe.output === 'string') {
-    output = safe.output.length > 0 ? safe.output : TOOL_OUTPUT_EMPTY;
-  } else if (safe.output.length === 0) {
+  if (typeof r.output === 'string') {
+    output = r.output.length > 0 ? r.output : TOOL_OUTPUT_EMPTY;
+  } else if (r.output.length === 0) {
     output = TOOL_OUTPUT_EMPTY;
   } else {
-    const hasMediaBlock = safe.output.some(isMediaContentPart);
+    const hasMediaBlock = r.output.some(isMediaContentPart);
     if (hasMediaBlock) {
-      const hasNonEmptyText = safe.output.some((c) => c.type === 'text' && c.text.length > 0);
+      const hasNonEmptyText = r.output.some((c) => c.type === 'text' && c.text.length > 0);
       output = hasNonEmptyText
-        ? safe.output
-        : [{ type: 'text', text: TOOL_OUTPUT_NON_TEXT }, ...safe.output];
+        ? r.output
+        : [{ type: 'text', text: TOOL_OUTPUT_NON_TEXT }, ...r.output];
     } else {
-      const textJoined = safe.output
+      const textJoined = r.output
         .filter((c): c is Extract<typeof c, { type: 'text' }> => c.type === 'text')
         .map((c) => c.text)
         .join('');
       output = textJoined.length > 0 ? textJoined : TOOL_OUTPUT_EMPTY;
     }
   }
-  return safe.isError === true ? { output, isError: true } : { output };
+  return r.isError === true ? { output, isError: true } : { output };
 }
 
 function makeToolResult(
@@ -666,7 +621,6 @@ function makeToolResult(
 }
 
 function toolResultStopsTurn(result: ExecutableToolResult): boolean {
-  if (result === null || typeof result !== 'object') return false;
   return result.isError === true && result.stopTurn === true;
 }
 

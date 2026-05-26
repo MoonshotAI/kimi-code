@@ -302,6 +302,25 @@ describe('runTurn — tool-call behaviour', () => {
     );
   });
 
+  it('coerces a corrupt finalizeToolResult hook return into an error result', async () => {
+    const echo = new EchoTool();
+    const hooks: LoopHooks = {
+      finalizeToolResult: async () => ({}) as ExecutableToolResult,
+    };
+    const { sink, context } = await runTurn({
+      tools: [echo],
+      hooks,
+      responses: [
+        makeToolUseResponse([makeToolCall('echo', { text: 'hi' }, 'tc-E')]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+    expect(sink.byType('tool.result').length).toBe(1);
+    const result = context.toolResults()[0]?.result;
+    expect(result?.isError).toBe(true);
+    expect(expectTextOutput(result?.output)).toContain('missing or malformed "output" field');
+  });
+
   it('does not duplicate prepare hook failures in the diagnostic log', async () => {
     const echo = new EchoTool();
     const { log, entries } = makeTestLogger();
