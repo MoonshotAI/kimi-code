@@ -6,6 +6,12 @@ interface ExitPlanModeOption {
   readonly description: string;
 }
 
+interface PlanReviewDisplay {
+  readonly plan: string;
+  readonly path?: string | undefined;
+  readonly options?: readonly ExitPlanModeOption[] | undefined;
+}
+
 export class ExitPlanModeReviewAskPermissionPolicy implements PermissionPolicy {
   readonly name = 'exit-plan-mode-review-ask';
 
@@ -18,39 +24,54 @@ export class ExitPlanModeReviewAskPermissionPolicy implements PermissionPolicy {
     const display = context.execution.display;
     if (display?.kind !== 'plan_review') return;
     if (display.plan.trim().length === 0) return;
+    this.agent.telemetry.track('plan_submitted', {
+      has_options: display.options !== undefined && display.options.length >= 2,
+    });
     return {
       kind: 'ask',
       reason: {
         has_options: display.options !== undefined,
       },
-      resolveApproval: (result) => this.exitPlanModeApprovalResult(result, display.options),
-      resolveError: (error) => {
-        const message = error instanceof Error ? error.message : 'Plan approval failed.';
-        return {
-          kind: 'result',
-          syntheticResult: {
-            isError: true,
-            output: `Plan approval failed: ${message}`,
-          },
-        };
-      },
+      resolveApproval: (result) =>
+        this.exitPlanModeApprovalResult(result, {
+          plan: display.plan,
+          path: display.path,
+          options: display.options,
+        }),
     };
   }
 
-  private exitPlanModeApprovalResult(
-    result: ApprovalResponse,
-    options: readonly ExitPlanModeOption[] | undefined,
-  ) {
-    const selected = selectedExitPlanModeOption(options, result.selectedLabel);
+  private exitPlanModeApprovalResult(result: ApprovalResponse, display: PlanReviewDisplay) {
     if (result.decision !== 'approved') {
       return this.rejectedExitPlanModeApprovalResult(result);
     }
 
+    const selected = selectedExitPlanModeOption(display.options, result.selectedLabel);
+    if (result.selectedLabel !== undefined && result.selectedLabel.length > 0) {
+      this.agent.telemetry.track('plan_resolved', {
+        outcome: 'approved',
+        chosen_option: result.selectedLabel,
+      });
+    } else {
+      this.agent.telemetry.track('plan_resolved', { outcome: 'approved' });
+    }
+
+    const failed = this.exitPlanMode();
+    if (failed !== undefined) {
+      return { kind: 'result' as const, syntheticResult: failed };
+    }
+
+    const optionPrefix =
+      selected === undefined
+        ? ''
+        : `Selected approach: ${selected.label}\nExecute ONLY the selected approach. Do not execute any unselected alternatives.\n\n`;
+    const savedTo = display.path !== undefined ? `Plan saved to: ${display.path}\n\n` : '';
+    const formattedPlan = `Plan mode deactivated. All tools are now available.\n${savedTo}## Approved Plan:\n${display.plan}`;
     return {
-      kind: 'approve' as const,
-      executionMetadata: {
-        planApproval: approvalMetadata(result),
-        selectedOption: selected,
+      kind: 'result' as const,
+      syntheticResult: {
+        isError: false,
+        output: `Exited plan mode. ${optionPrefix}${formattedPlan}`,
       },
     };
   }
@@ -69,7 +90,7 @@ export class ExitPlanModeReviewAskPermissionPolicy implements PermissionPolicy {
     }
 
     if (result.selectedLabel === 'Reject and Exit') {
-      const failed = this.exitPlanModeForRejectedPlan();
+      const failed = this.exitPlanMode();
       return {
         kind: 'result' as const,
         syntheticResult:
@@ -105,7 +126,7 @@ export class ExitPlanModeReviewAskPermissionPolicy implements PermissionPolicy {
     };
   }
 
-  private exitPlanModeForRejectedPlan(): { isError: true; output: string } | undefined {
+  private exitPlanMode(): { isError: true; output: string } | undefined {
     try {
       this.agent.planMode.exit();
     } catch (error) {
@@ -139,14 +160,6 @@ export class ExitPlanModeReviewAskPermissionPolicy implements PermissionPolicy {
 
     this.agent.telemetry.track('plan_resolved', { outcome: 'rejected' });
   }
-}
-
-function approvalMetadata(result: ApprovalResponse) {
-  return {
-    decision: result.decision,
-    selectedLabel: result.selectedLabel,
-    feedback: result.feedback,
-  };
 }
 
 function selectedExitPlanModeOption(

@@ -894,8 +894,8 @@ describe('ExitPlanMode permission policy', () => {
     expect(requestApproval).not.toHaveBeenCalled();
   });
 
-  it('requests plan-review approval in yolo mode and returns selected option metadata', async () => {
-    const { manager, record, requestApproval } = makePlanPermissionManager({
+  it('requests plan-review approval in yolo mode and returns formatted output', async () => {
+    const { manager, record, requestApproval, exit } = makePlanPermissionManager({
       mode: 'yolo',
       plan: '# Plan\n\n- Step',
       path: '/tmp/plan.md',
@@ -939,15 +939,17 @@ describe('ExitPlanMode permission policy', () => {
       sessionApprovalRule: undefined,
       result: { decision: 'approved', selectedLabel: 'Approach B' },
     });
+    expect(exit).toHaveBeenCalled();
     expect(result).toMatchObject({
-      executionMetadata: {
-        selectedOption: planOptions[1],
+      syntheticResult: {
+        isError: false,
+        output: expect.stringContaining('Selected approach: Approach B'),
       },
     });
   });
 
   it('keeps plan review ahead of matching session approval history', async () => {
-    const { manager, requestApproval } = makePlanPermissionManager({
+    const { manager, requestApproval, exit } = makePlanPermissionManager({
       mode: 'manual',
       plan: '# Updated Plan',
       approval: { decision: 'approved' },
@@ -971,11 +973,11 @@ describe('ExitPlanMode permission policy', () => {
     );
 
     expect(requestApproval).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalled();
     expect(result).toMatchObject({
-      executionMetadata: {
-        planApproval: {
-          decision: 'approved',
-        },
+      syntheticResult: {
+        isError: false,
+        output: expect.stringContaining('Exited plan mode.'),
       },
     });
     expect(requestApproval).toHaveBeenCalledWith(
@@ -1049,23 +1051,19 @@ describe('ExitPlanMode permission policy', () => {
       approvalError: new Error('approval transport closed'),
     });
 
-    const result = await manager.beforeToolCall(
-      hookContext({
-        id: 'call_exit',
-        toolName: 'ExitPlanMode',
-        args: {},
-        execution: planReviewExecution({ plan: '# Draft Plan', path: '/tmp/plan.md' }),
-      }),
-    );
+    await expect(
+      manager.beforeToolCall(
+        hookContext({
+          id: 'call_exit',
+          toolName: 'ExitPlanMode',
+          args: {},
+          execution: planReviewExecution({ plan: '# Draft Plan', path: '/tmp/plan.md' }),
+        }),
+      ),
+    ).rejects.toThrow('approval transport closed');
 
     expect(exit).not.toHaveBeenCalled();
     expect(record).not.toHaveBeenCalled();
-    expect(result).toMatchObject({
-      syntheticResult: {
-        isError: true,
-        output: 'Plan approval failed: approval transport closed',
-      },
-    });
   });
 
   it('keeps plan mode active and returns revision feedback as a synthetic result', async () => {
