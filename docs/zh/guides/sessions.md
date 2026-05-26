@@ -63,7 +63,7 @@ kimi --session
 - `/fork`：派生当前会话（详见下文）。
 - `/title <text>`（`/rename`）：设置会话标题，方便识别。不带参数时显示当前标题。
 
-`/sessions` 在流式输出期间也能浏览，但切换前需先按 `Esc` 或 `Ctrl-C` 中断。`/new`、`/fork`、`/compact` 仅在空闲时可用。
+`/sessions`、`/new`、`/fork`、`/compact` 仅在空闲时可用。流式输出或上下文压缩期间，需先按 `Esc` 或 `Ctrl-C` 中断当前操作。
 
 ## 上下文压缩
 
