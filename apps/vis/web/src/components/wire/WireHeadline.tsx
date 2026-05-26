@@ -351,6 +351,15 @@ export function renderHeadline(r: AgentRecord): HeadlineRender {
         ),
       };
   }
+  // `r` is `never` here under TypeScript exhaustiveness, but at runtime
+  // best-effort parsing of unknown/future protocols can deliver records
+  // whose `type` is outside the AgentRecord union. Without this fallback
+  // WireRow would dereference `undefined` and crash the whole tab.
+  return {
+    main: (
+      <Dim>(unknown record type: {(r as { type: string }).type})</Dim>
+    ),
+  };
 }
 
 // ─── tiny presentational helpers ───
