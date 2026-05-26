@@ -5224,7 +5224,7 @@ export class KimiTUI {
     if (preferBuiltIn) {
       const builtIn = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
       if (builtIn !== undefined) {
-        this.showStatus('Loaded built-in catalog. Run /connect --refresh for the latest.');
+        this.showStatus('Loaded built-in catalog. Run /connect refresh for the latest.');
         catalog = builtIn;
       }
     }

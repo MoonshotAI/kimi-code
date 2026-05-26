@@ -1,8 +1,5 @@
 import { DEFAULT_CATALOG_URL } from '@moonshot-ai/kimi-code-sdk';
 
-const CATALOG_URL_FLAG_RE = /--url(?:=|\s+)(https?:\/\/\S+)/;
-const URL_FLAG_PRESENT_RE = /(?:^|\s)--url(?=\s|=|$)/;
-const REFRESH_FLAG_RE = /(?:^|\s)--refresh(?=\s|$)/;
 const BARE_HTTP_URL_RE = /^https?:\/\/\S+$/;
 
 export interface ConnectCatalogRequest {
@@ -17,9 +14,51 @@ export type ConnectCatalogResolution =
 
 export function resolveConnectCatalogRequest(args: string): ConnectCatalogResolution {
   const trimmed = args.trim();
-  const urlMatch = CATALOG_URL_FLAG_RE.exec(trimmed);
-  const bareUrl = BARE_HTTP_URL_RE.test(trimmed) ? trimmed : undefined;
-  const explicitUrl = urlMatch?.[1] ?? bareUrl;
+
+  if (trimmed === '') {
+    return {
+      kind: 'ok',
+      request: {
+        url: DEFAULT_CATALOG_URL,
+        preferBuiltIn: true,
+        allowBuiltInFallback: true,
+      },
+    };
+  }
+
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  let explicitUrl: string | undefined;
+  let refreshRequested = false;
+
+  for (const token of tokens) {
+    if (token.toLowerCase() === 'refresh') {
+      refreshRequested = true;
+      continue;
+    }
+
+    if (BARE_HTTP_URL_RE.test(token)) {
+      if (explicitUrl !== undefined) {
+        return {
+          kind: 'error',
+          message: `Only one catalog URL can be provided. Got "${explicitUrl}" and "${token}".`,
+        };
+      }
+      explicitUrl = token;
+      continue;
+    }
+
+    if (token.startsWith('--')) {
+      return {
+        kind: 'error',
+        message: `Unexpected flag "${token}". Use /connect [url] [refresh] instead.`,
+      };
+    }
+
+    return {
+      kind: 'error',
+      message: `Unknown argument "${token}". Usage: /connect [url] [refresh]`,
+    };
+  }
 
   if (explicitUrl !== undefined) {
     return {
@@ -32,15 +71,6 @@ export function resolveConnectCatalogRequest(args: string): ConnectCatalogResolu
     };
   }
 
-  if (URL_FLAG_PRESENT_RE.test(trimmed)) {
-    return {
-      kind: 'error',
-      message:
-        '--url requires an http(s) URL value, e.g. /connect --url=https://example.com/catalog.json',
-    };
-  }
-
-  const refreshRequested = REFRESH_FLAG_RE.test(trimmed);
   return {
     kind: 'ok',
     request: {
