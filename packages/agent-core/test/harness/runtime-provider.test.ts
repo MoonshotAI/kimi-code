@@ -26,7 +26,7 @@ const BASE_CONFIG: KimiConfig = {
 
 const TEST_KIMI_HEADERS = {
   'User-Agent': 'kimi-code-cli/0.0.0-test',
-  'X-Msh-Platform': 'kimi-code-cli',
+  'X-Msh-Platform': 'kimi_code_cli',
   'X-Msh-Version': '0.0.0-test',
 };
 
@@ -379,7 +379,7 @@ describe('resolveRuntimeProvider Kimi request headers', () => {
       type: 'kimi',
       defaultHeaders: {
         'User-Agent': 'Custom/1',
-        'X-Msh-Platform': 'kimi-code-cli',
+        'X-Msh-Platform': 'kimi_code_cli',
         'X-Msh-Version': 'override-version',
       },
     });
