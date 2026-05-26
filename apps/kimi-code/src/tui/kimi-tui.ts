@@ -5375,23 +5375,28 @@ export class KimiTUI {
   }
 
   // Handles the /logout command. Lists every credential currently held — the
-  // Kimi Code OAuth token (when present) plus each configured API-key provider
-  // — and lets the user pick which one to drop. managed:kimi-code is also
-  // written into config.providers, so it must be filtered out of the API-key
-  // list to avoid showing twice; OAuth tokens go through auth.logout for
-  // proper revocation, everything else through removeProvider.
+  // Kimi Code OAuth token (or a stale config entry for it) plus each configured
+  // API-key provider — and lets the user pick which one to drop. OAuth tokens
+  // go through auth.logout for proper revocation, everything else through
+  // removeProvider.
   private async handleLogoutCommand(): Promise<void> {
     const oauthStatus = await this.harness.auth.status(DEFAULT_OAUTH_PROVIDER_NAME);
-    const hasOAuth = oauthStatus.providers.some(
+    const hasOAuthToken = oauthStatus.providers.some(
       (p) => p.providerName === DEFAULT_OAUTH_PROVIDER_NAME && p.hasToken,
     );
     const config = await this.harness.getConfig();
+    // Offer the managed provider whenever something points at it — either a
+    // live OAuth token or a stale providers[] entry left over from a previous
+    // login. auth.logout cleans the config regardless of whether the token
+    // is still present, so this avoids leaving residue with no way to reach it.
+    const hasManagedRemnant =
+      hasOAuthToken || config.providers[DEFAULT_OAUTH_PROVIDER_NAME] !== undefined;
     const apiKeyProviderIds = Object.keys(config.providers ?? {})
       .filter((id) => id !== DEFAULT_OAUTH_PROVIDER_NAME)
       .toSorted();
 
     const options: ChoiceOption[] = [];
-    if (hasOAuth) {
+    if (hasManagedRemnant) {
       options.push({
         value: DEFAULT_OAUTH_PROVIDER_NAME,
         label: PRODUCT_NAME,
@@ -5423,8 +5428,22 @@ export class KimiTUI {
     } else {
       await this.harness.removeProvider(target);
     }
-    await this.refreshConfigAfterLogout();
-    await this.clearActiveSessionAfterLogout();
+
+    if (target === currentProvider) {
+      // The active session is backed by the provider we just removed, so it
+      // can no longer make requests — tear it down along with the model state.
+      await this.refreshConfigAfterLogout();
+      await this.clearActiveSessionAfterLogout();
+    } else {
+      // Refresh provider/model listings so the picker reflects the change,
+      // but leave the user's current session running.
+      const updated = await this.harness.getConfig({ reload: true });
+      this.setAppState({
+        availableModels: updated.models ?? {},
+        availableProviders: updated.providers ?? {},
+      });
+    }
+
     this.track('logout', { provider: target });
     const label = target === DEFAULT_OAUTH_PROVIDER_NAME ? PRODUCT_NAME : target;
     this.showStatus(`Logged out from ${label}.`);
