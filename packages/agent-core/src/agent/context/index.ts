@@ -23,7 +23,6 @@ const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
 export class ContextMemory {
   private _history: ContextMessage[] = [];
   private _tokenCount = 0;
-  private _hasProviderTokenUsage = false;
   private tokenCountCoveredMessageCount = 0;
   private openSteps: Map<string, ContextMessage> = new Map();
   private pendingToolResultIds = new Set<string>();
@@ -73,7 +72,6 @@ export class ContextMemory {
     this.agent.records.logRecord({ type: 'context.clear' });
     this._history = [];
     this._tokenCount = 0;
-    this._hasProviderTokenUsage = false;
     this.tokenCountCoveredMessageCount = 0;
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
@@ -99,7 +97,6 @@ export class ContextMemory {
     this.openSteps.clear();
     this.flushDeferredMessagesIfToolExchangeClosed();
     this._tokenCount = summary.tokensAfter;
-    this._hasProviderTokenUsage = false;
     this.tokenCountCoveredMessageCount = this._history.length;
     this.agent.injection.onContextCompacted(summary.compactedCount);
     this.agent.emitStatusUpdated();
@@ -119,10 +116,6 @@ export class ContextMemory {
   get tokenCountWithPending(): number {
     const pendingMessages = this._history.slice(this.tokenCountCoveredMessageCount);
     return this._tokenCount + estimateTokensForMessages(project(pendingMessages));
-  }
-
-  get hasProviderTokenUsage(): boolean {
-    return this._hasProviderTokenUsage;
   }
 
   get history(): readonly ContextMessage[] {
@@ -159,7 +152,6 @@ export class ContextMemory {
             event.usage.inputCacheCreation +
             event.usage.inputOther +
             event.usage.output;
-          this._hasProviderTokenUsage = true;
           this.tokenCountCoveredMessageCount =
             openStepIndex === -1 ? this._history.length : openStepIndex + 1;
         }

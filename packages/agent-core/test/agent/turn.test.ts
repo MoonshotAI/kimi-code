@@ -10,7 +10,6 @@ import {
   APIStatusError,
   APITimeoutError,
   type ChatProvider,
-  type Message,
   type ModelCapability,
   type ToolCall,
 } from '@moonshot-ai/kosong';
@@ -56,52 +55,6 @@ function captureLogs(): { logger: Logger; entries: CapturedLogEntry[] } {
 }
 
 describe('Agent turn flow', () => {
-  it('adds system prompt and tool schemas to the first completion budget only until usage is available', async () => {
-    const maxContextTokens = 50_000;
-    const appliedCaps: number[] = [];
-    const expectedCaps: number[] = [];
-    const generate: GenerateFn = async (provider, systemPrompt, tools, history) => {
-      const cap = (provider as { readonly modelParameters?: Record<string, unknown> })
-        .modelParameters?.['max_completion_tokens'];
-      if (typeof cap !== 'number') throw new Error('Expected max_completion_tokens to be applied');
-      appliedCaps.push(cap);
-
-      const estimatedInput =
-        estimateTokens(systemPrompt) +
-        estimateTokensForMessages(history) +
-        estimateTokensForTools(tools);
-      expectedCaps.push(maxContextTokens - estimatedInput - 1024);
-
-      const message: Message = {
-        role: 'assistant',
-        content: [{ type: 'text', text: `answer ${String(appliedCaps.length)}` }],
-        toolCalls: [],
-      };
-      return {
-        id: `mock-${String(appliedCaps.length)}`,
-        message,
-        usage: {
-          inputOther: estimatedInput,
-          output: estimateTokensForMessages([message]),
-          inputCacheRead: 0,
-          inputCacheCreation: 0,
-        },
-        finishReason: 'completed',
-        rawFinishReason: 'stop',
-      };
-    };
-    const ctx = testAgent({ generate });
-    ctx.configure({ modelCapabilities: makeCapability(maxContextTokens) });
-    await ctx.rpc.setActiveTools({ names: ['Bash'] });
-
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first prompt' }] });
-    await ctx.untilTurnEnd();
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'second prompt' }] });
-    await ctx.untilTurnEnd();
-
-    expect(appliedCaps).toEqual(expectedCaps);
-  });
-
   it('tracks turn_started and turn_interrupted telemetry', async () => {
     const records: TelemetryRecord[] = [];
     const ctx = testAgent({ telemetry: recordingTelemetry(records) });
@@ -1486,17 +1439,6 @@ async function waitForFile(path: string): Promise<void> {
     await delay(10);
   }
   throw new Error(`Timed out waiting for ${path}`);
-}
-
-function makeCapability(maxContextTokens: number): ModelCapability {
-  return {
-    image_in: false,
-    video_in: false,
-    audio_in: false,
-    thinking: false,
-    tool_use: true,
-    max_context_tokens: maxContextTokens,
-  };
 }
 
 function mediaCapabilities(): ModelCapability {
