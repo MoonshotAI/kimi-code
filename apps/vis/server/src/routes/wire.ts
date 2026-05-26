@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { join } from 'node:path';
 
 import { KIMI_CODE_HOME } from '../config';
-import { readSessionDetail } from '../lib/session-store';
+import { isSafeAgentId, readSessionDetail } from '../lib/session-store';
 import { readAgentWire } from '../lib/wire-reader';
 
 export function wireRoute(): Hono {
@@ -10,6 +10,9 @@ export function wireRoute(): Hono {
   r.get('/:id/wire', async (c) => {
     const id = c.req.param('id');
     const agentId = c.req.query('agent') ?? 'main';
+    if (!isSafeAgentId(agentId)) {
+      return c.json({ error: 'invalid agent id', code: 'BAD_REQUEST' }, 400);
+    }
     const detail = await readSessionDetail(KIMI_CODE_HOME, id);
     if (!detail) {
       return c.json({ error: 'session not found', code: 'NOT_FOUND' }, 404);
