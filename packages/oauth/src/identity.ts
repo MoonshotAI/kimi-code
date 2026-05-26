@@ -7,6 +7,7 @@
  * production state.
  */
 
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { arch, hostname, release, type } from 'node:os';
@@ -111,9 +112,21 @@ function deviceModel(): string {
   const os = type();
   const version = release();
   const osArch = arch();
-  if (os === 'Darwin') return `macOS ${version} ${osArch}`;
+  if (os === 'Darwin') return `macOS ${macOsProductVersion() ?? version} ${osArch}`;
   if (os === 'Windows_NT') return `Windows ${version} ${osArch}`;
   return `${os} ${version} ${osArch}`.trim();
+}
+
+function macOsProductVersion(): string | undefined {
+  try {
+    const version = execFileSync('/usr/bin/sw_vers', ['-productVersion'], {
+      encoding: 'utf-8',
+      timeout: 1000,
+    }).trim();
+    return version.length > 0 ? version : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function asciiHeader(value: string, fallback = 'unknown'): string {
