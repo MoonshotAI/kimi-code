@@ -29,18 +29,18 @@ ANTHROPIC_BASE_URL = "https://my-proxy.example.com"
 
 切换供应商最常见的方式有两种：在 TUI 里用 `/model` 斜杠命令选择已配置的模型，或者直接编辑 `config.toml` 调整 `[providers.*]` 与 `[models.*]` 表。完整字段说明见 [配置文件](./config-files.md)。
 
-## `/connect` 与模型 catalog
+## `/connect` 与模型目录
 
-除了在 `config.toml` 里手写 `[providers.*]` 与 `[models.*]` 表外，也可以在 TUI 内运行 `/connect` 斜杠命令，从 **模型 catalog** 中添加供应商。catalog 列出了已知的供应商与模型，以及它们的上下文长度、输出长度和能力；`/connect` 让你挑选供应商、挑选模型、填入 API 密钥，然后把对应的 `[providers.<name>]` 与 `[models.<alias>]` 写回 `config.toml`。
+除了在 `config.toml` 中手写 `[providers.*]` 与 `[models.*]` 表，你也可以在 TUI 中运行 `/connect` 斜杠命令，从 **模型目录**（model catalog）添加供应商。模型目录记录了已知的供应商和模型，以及它们的上下文长度、输出长度和能力。`/connect` 会引导你选择供应商、选择模型、输入 API 密钥，然后把对应的 `[providers.<name>]` 与 `[models.<alias>]` 写入 `config.toml`。
 
-默认 catalog 随 CLI 内置，因此 `/connect` 离线可用。两个 flag 用来切换 catalog 来源：
+CLI 已经内置了默认的模型目录，因此 `/connect` 无需联网即可使用。如果想换用别的来源，可以传入以下参数：
 
-- `/connect --refresh`：在显示选择器前，从 [models.dev](https://models.dev/) 拉取最新 catalog。
-- `/connect --url=<catalog-url>`：从自定义 catalog 端点读取（要求遵循同一格式）。只接受 `http://` 或 `https://` 的 URL。
+- `/connect --refresh`：在打开选择器之前，从 [models.dev](https://models.dev/) 拉取最新模型目录。
+- `/connect --url=<catalog-url>`：从自定义地址读取模型目录（格式需与默认目录一致），只接受 `http://` 或 `https://` 的 URL。
 
-`/connect` 只会呈现上表所列的供应商类型；catalog 未覆盖的供应商类型，请按下面各小节的说明，在 `config.toml` 里手写配置。
+`/connect` 只能配置上表列出的供应商类型；不在目录范围内的供应商类型，请按下面各小节的说明，在 `config.toml` 中手写配置。
 
-`/logout` 同样适用于通过 `/connect` 配置的供应商：执行后会从 `config.toml` 移除对应的 `[providers.<name>]` 表项。
+对通过 `/connect` 配置的供应商，`/logout` 同样有效：它会从 `config.toml` 中删除对应的 `[providers.<name>]` 配置块。
 
 ## `kimi`
 
