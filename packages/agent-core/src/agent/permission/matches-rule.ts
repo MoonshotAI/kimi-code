@@ -64,6 +64,11 @@ export function parsePattern(pattern: string): ParsedPattern {
   if (toolName.length === 0) {
     throw new Error(`permission pattern: empty tool name in "${pattern}"`);
   }
+  // `Tool()` parses to no arg pattern so it stays tool-name-only — tools without
+  // a `matchesRule` matcher (user/MCP/custom) would otherwise stop matching it.
+  if (argPattern.length === 0) {
+    return { toolName };
+  }
   return { toolName, argPattern };
 }
 

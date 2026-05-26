@@ -1937,7 +1937,7 @@ describe('Permission rule helpers', () => {
       argPattern: '!./src/**',
     });
     expect(parsePattern('  mcp__github__*  ')).toEqual({ toolName: 'mcp__github__*' });
-    expect(parsePattern('Read()')).toEqual({ toolName: 'Read', argPattern: '' });
+    expect(parsePattern('Read()')).toEqual({ toolName: 'Read' });
     expect(() => parsePattern('Read(/etc/**')).toThrow(/missing closing paren/);
     expect(() => parsePattern('')).toThrow(/empty string/);
   });
@@ -2016,12 +2016,17 @@ describe('Permission rule helpers', () => {
         command: 'npm test',
       }),
     ).toBe(false);
-    expect(ruleMatches(permissionRule('Read()'), 'Read', { path: '/workspace/a.ts' })).toBe(false);
     expect(
       ruleMatches(permissionRule('Read([invalid'), 'Read', {
         path: '/workspace/a.ts',
       }),
     ).toBe(false);
+  });
+
+  it('treats empty arg patterns as tool-name-only matches', () => {
+    expect(ruleMatches(permissionRule('Read()'), 'Read', { path: '/workspace/a.ts' })).toBe(true);
+    expect(ruleMatches(permissionRule('Custom()'), 'Custom', { anything: 1 })).toBe(true);
+    expect(ruleMatches(permissionRule('Read()'), 'Write', { path: '/workspace/a.ts' })).toBe(false);
   });
 
   it('delegates rule argument semantics to execution.matchesRule when available', () => {
