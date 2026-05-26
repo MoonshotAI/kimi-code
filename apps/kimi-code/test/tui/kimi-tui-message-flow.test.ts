@@ -702,6 +702,113 @@ describe('KimiTUI message flow', () => {
     }
   });
 
+  it('computes output throughput from the streamed model delta window', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver } = await makeDriver();
+      driver.state.appState.isStreaming = true;
+      vi.setSystemTime(1_000);
+      driver.handleEvent(
+        {
+          type: 'turn.step.started',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          step: 1,
+        } as Event,
+        vi.fn(),
+      );
+
+      vi.setSystemTime(2_000);
+      driver.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: 'a',
+        } as Event,
+        vi.fn(),
+      );
+      vi.setSystemTime(5_000);
+      driver.handleEvent(
+        {
+          type: 'assistant.delta',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          delta: 'b',
+        } as Event,
+        vi.fn(),
+      );
+
+      vi.setSystemTime(12_000);
+      driver.handleEvent(
+        {
+          type: 'turn.step.completed',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          step: 1,
+          usage: {
+            inputOther: 0,
+            inputCacheRead: 0,
+            inputCacheCreation: 0,
+            output: 60,
+          },
+          finishReason: 'tool_use',
+        } as Event,
+        vi.fn(),
+      );
+
+      expect(driver.state.appState.outputTokensPerSecond).toBe(20);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not show throughput when no model deltas were observed', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver } = await makeDriver();
+      driver.state.appState.isStreaming = true;
+      vi.setSystemTime(1_000);
+      driver.handleEvent(
+        {
+          type: 'turn.step.started',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          step: 1,
+        } as Event,
+        vi.fn(),
+      );
+
+      vi.setSystemTime(12_000);
+      driver.handleEvent(
+        {
+          type: 'turn.step.completed',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          step: 1,
+          usage: {
+            inputOther: 0,
+            inputCacheRead: 0,
+            inputCacheCreation: 0,
+            output: 60,
+          },
+          finishReason: 'tool_use',
+        } as Event,
+        vi.fn(),
+      );
+
+      expect(driver.state.appState.outputTokensPerSecond).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('coalesces streaming tool-call argument preview updates', async () => {
     vi.useFakeTimers();
     try {

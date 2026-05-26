@@ -381,8 +381,8 @@ export interface TUIState {
   externalEditorRunning: boolean;
   currentTurnId: string | undefined;
   currentStep: number;
-  currentStepStartedAtMs: number;
-  currentStepModelFinishedAtMs: number | undefined;
+  currentStepFirstDeltaAtMs: number | undefined;
+  currentStepLastDeltaAtMs: number | undefined;
   assistantDraft: string;
   assistantStreamActive: boolean;
   thinkingDraft: string;
@@ -495,8 +495,8 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     externalEditorRunning: false,
     currentTurnId: undefined,
     currentStep: 0,
-    currentStepStartedAtMs: 0,
-    currentStepModelFinishedAtMs: undefined,
+    currentStepFirstDeltaAtMs: undefined,
+    currentStepLastDeltaAtMs: undefined,
     assistantDraft: '',
     assistantStreamActive: false,
     thinkingDraft: '',
@@ -1554,8 +1554,7 @@ export class KimiTUI {
   // Resets request-scoped state before submitting work to the active session.
   private beginSessionRequest(): void {
     this.state.currentTurnId = undefined;
-    this.state.currentStepStartedAtMs = Date.now();
-    this.state.currentStepModelFinishedAtMs = undefined;
+    this.resetCurrentStepModelTiming();
     this.resetLiveTextRuntime();
     this.resetLiveToolUiState();
     this.resetToolCallState();
@@ -2046,8 +2045,7 @@ export class KimiTUI {
     this.setTodoList([]);
     this.state.currentTurnId = undefined;
     this.state.currentStep = 0;
-    this.state.currentStepStartedAtMs = 0;
-    this.state.currentStepModelFinishedAtMs = undefined;
+    this.resetCurrentStepModelTiming();
     this.resetLiveTextRuntime();
     this.updateQueueDisplay();
   }
@@ -2370,8 +2368,7 @@ export class KimiTUI {
     void _event;
     this.resetLiveToolUiState();
     this.state.currentStep = 0;
-    this.state.currentStepStartedAtMs = Date.now();
-    this.state.currentStepModelFinishedAtMs = undefined;
+    this.resetCurrentStepModelTiming();
     this.patchLivePane({
       mode: 'waiting',
       pendingApproval: null,
@@ -2401,8 +2398,7 @@ export class KimiTUI {
   private handleStepBegin(event: TurnStepStartedEvent): void {
     this.flushStreamingUiUpdatesNow();
     this.state.currentStep = event.step;
-    this.state.currentStepStartedAtMs = Date.now();
-    this.state.currentStepModelFinishedAtMs = undefined;
+    this.resetCurrentStepModelTiming();
     this.resetLiveToolUiState();
     this.finalizeLiveTextBuffers('waiting');
     this.patchLivePane({
@@ -2466,15 +2462,27 @@ export class KimiTUI {
   }
 
   private updateOutputTokenThroughput(usage: TurnStepCompletedEvent['usage']): void {
-    if (this.state.currentStepStartedAtMs <= 0) return;
-    const endedAtMs = this.state.currentStepModelFinishedAtMs ?? Date.now();
+    const startedAtMs = this.state.currentStepFirstDeltaAtMs;
+    const endedAtMs = this.state.currentStepLastDeltaAtMs;
+    if (startedAtMs === undefined || endedAtMs === undefined) return;
     const tokensPerSecond = outputTokensPerSecond(
       usage,
-      this.state.currentStepStartedAtMs,
+      startedAtMs,
       endedAtMs,
     );
     if (tokensPerSecond === null) return;
     this.setAppState({ outputTokensPerSecond: tokensPerSecond });
+  }
+
+  private resetCurrentStepModelTiming(): void {
+    this.state.currentStepFirstDeltaAtMs = undefined;
+    this.state.currentStepLastDeltaAtMs = undefined;
+  }
+
+  private recordCurrentStepModelDelta(): void {
+    const now = Date.now();
+    this.state.currentStepFirstDeltaAtMs ??= now;
+    this.state.currentStepLastDeltaAtMs = now;
   }
 
   private isAnthropicSessionActive(): boolean {
@@ -2503,6 +2511,9 @@ export class KimiTUI {
 
   // Appends a thinking delta to the live thinking block.
   private handleThinkingDelta(event: ThinkingDeltaEvent): void {
+    if (event.delta.length > 0) {
+      this.recordCurrentStepModelDelta();
+    }
     this.state.thinkingDraft += event.delta;
     this.pendingThinkingFlush = true;
     this.patchLivePane({ mode: 'idle' });
@@ -2514,6 +2525,9 @@ export class KimiTUI {
 
   // Appends an assistant text delta to the live assistant block.
   private handleAssistantDelta(event: AssistantDeltaEvent): void {
+    if (event.delta.length > 0) {
+      this.recordCurrentStepModelDelta();
+    }
     if (this.state.thinkingDraft.length > 0) {
       this.flushThinkingToTranscript('idle');
     }
@@ -2560,7 +2574,6 @@ export class KimiTUI {
   // Starts or updates a rendered tool call from a tool-call start event.
   private handleToolCall(event: ToolCallStartedEvent): void {
     this.flushStreamingUiUpdatesNow();
-    this.state.currentStepModelFinishedAtMs ??= Date.now();
     const toolCall: ToolCallBlockData = {
       id: event.toolCallId,
       name: event.name,
@@ -2593,6 +2606,9 @@ export class KimiTUI {
   // Accumulates streaming tool-call arguments and updates the rendered call.
   private handleToolCallDelta(event: ToolCallDeltaEvent): void {
     if (event.toolCallId.length === 0) return;
+    if ((event.argumentsPart?.length ?? 0) > 0 || (event.name?.length ?? 0) > 0) {
+      this.recordCurrentStepModelDelta();
+    }
     const id = event.toolCallId;
     const existing = this.state.streamingToolCallArguments.get(id);
     const argumentsText = appendStreamingArgsPreview(
