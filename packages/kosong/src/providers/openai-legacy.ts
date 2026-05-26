@@ -411,8 +411,10 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     // Auto-enable reasoning_effort when the history contains ThinkPart but reasoning
     // was not explicitly configured. This prevents server validation errors from APIs
     // (e.g. One API) that require reasoning_effort when messages contain reasoning_content.
+    // Skip when the caller already pinned reasoning_effort via withGenerationKwargs —
+    // their value would otherwise be silently overwritten below.
     // See: https://github.com/MoonshotAI/kimi-code/issues/1616
-    if (reasoningEffort === undefined) {
+    if (reasoningEffort === undefined && kwargs['reasoning_effort'] === undefined) {
       const hasThinkPart = history.some((message) =>
         message.content.some((part) => part.type === 'think'),
       );

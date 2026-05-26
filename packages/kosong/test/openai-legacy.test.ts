@@ -702,6 +702,30 @@ describe('OpenAILegacyChatProvider', () => {
 
       expect(body['reasoning_effort']).toBe('medium');
     });
+
+    it('does not overwrite reasoning_effort pinned via withGenerationKwargs', async () => {
+      // Auto-injection must yield to an explicit caller-set reasoning_effort,
+      // otherwise multi-turn requests silently downgrade a 'high' / 'low'
+      // setting back to 'medium' once the history contains ThinkPart.
+      const provider = createProvider({ model: 'some-model' }).withGenerationKwargs({
+        reasoning_effort: 'high',
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'thinking' },
+            { type: 'text', text: 'Hi!' },
+          ],
+          toolCalls: [],
+        },
+        { role: 'user', content: [{ type: 'text', text: 'Again?' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBe('high');
+    });
   });
 
   describe('default reasoning protocol (no explicit reasoningKey)', () => {
