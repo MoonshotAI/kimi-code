@@ -231,4 +231,41 @@ describe('ExitPlanMode telemetry', () => {
       }),
     );
   });
+
+  it('does not track auto_approved when exitPlanMode fails', async () => {
+    const { agent, telemetryTrack, exitPlanMode } = makeAgent({ mode: 'auto' });
+    exitPlanMode.mockImplementation(() => {
+      throw new Error('state transition failure');
+    });
+
+    const result = await execute(agent);
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('Failed to exit plan mode');
+    expect(exitPlanMode).toHaveBeenCalledTimes(1);
+    expect(telemetryTrack).toHaveBeenCalledWith('plan_submitted', { has_options: false });
+    expect(telemetryTrack).not.toHaveBeenCalledWith('plan_resolved', {
+      outcome: 'auto_approved',
+    });
+  });
+
+  it('does not track approved when exitPlanMode fails', async () => {
+    const { agent, telemetryTrack, exitPlanMode } = makeAgent({
+      mode: 'manual',
+      approval: { decision: 'approved' },
+    });
+    exitPlanMode.mockImplementation(() => {
+      throw new Error('state transition failure');
+    });
+
+    const result = await execute(agent);
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('Failed to exit plan mode');
+    expect(exitPlanMode).toHaveBeenCalledTimes(1);
+    expect(telemetryTrack).toHaveBeenCalledWith('plan_submitted', { has_options: false });
+    expect(telemetryTrack).not.toHaveBeenCalledWith('plan_resolved', {
+      outcome: 'approved',
+    });
+  });
 });

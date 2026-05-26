@@ -47,6 +47,12 @@ export class ExitPlanModeReviewAskPermissionPolicy implements PermissionPolicy {
     }
 
     const selected = selectedExitPlanModeOption(display.options, result.selectedLabel);
+
+    const failed = this.exitPlanMode();
+    if (failed !== undefined) {
+      return { kind: 'result' as const, syntheticResult: failed };
+    }
+
     if (result.selectedLabel !== undefined && result.selectedLabel.length > 0) {
       this.agent.telemetry.track('plan_resolved', {
         outcome: 'approved',
@@ -54,11 +60,6 @@ export class ExitPlanModeReviewAskPermissionPolicy implements PermissionPolicy {
       });
     } else {
       this.agent.telemetry.track('plan_resolved', { outcome: 'approved' });
-    }
-
-    const failed = this.exitPlanMode();
-    if (failed !== undefined) {
-      return { kind: 'result' as const, syntheticResult: failed };
     }
 
     const optionPrefix =

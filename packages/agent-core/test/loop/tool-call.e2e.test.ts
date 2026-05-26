@@ -225,6 +225,7 @@ describe('runTurn — tool-call behaviour', () => {
       description: 'returns undefined',
       parameters: { type: 'object', additionalProperties: true },
       resolveExecution: () => ({
+        approvalRule: 'undef',
         execute: async () => undefined as unknown as ExecutableToolResult,
       }),
     };
@@ -249,6 +250,7 @@ describe('runTurn — tool-call behaviour', () => {
       description: 'returns {}',
       parameters: { type: 'object', additionalProperties: true },
       resolveExecution: () => ({
+        approvalRule: 'noout',
         execute: async () => ({}) as ExecutableToolResult,
       }),
     };
@@ -271,6 +273,7 @@ describe('runTurn — tool-call behaviour', () => {
       description: 'returns undefined',
       parameters: { type: 'object', additionalProperties: true },
       resolveExecution: () => ({
+        approvalRule: 'undef',
         execute: async () => undefined as unknown as ExecutableToolResult,
       }),
     };
