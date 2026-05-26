@@ -234,17 +234,12 @@ export class Agent {
     this.tools.setActiveTools(profile.tools);
   }
 
-  async resume(): Promise<void> {
+  async resume(): Promise<{ warning?: string }> {
     const result = await this.records.replay();
-    if (result.warning !== undefined) {
-      this.emitEvent({
-        type: 'warning',
-        message: result.warning,
-      });
-    }
     await this.background.loadFromDisk();
     await this.background.reconcile();
     this.turn.finishResume();
+    return result;
   }
 
   get rpcMethods(): PromisableMethods<AgentAPI> {

@@ -803,6 +803,10 @@ export class KimiTUI {
         this.requireSession(),
       );
     }
+    const resumeState = this.session?.getResumeState();
+    if (resumeState?.warning !== undefined) {
+      this.showStatus(`Warning: ${resumeState.warning}`, this.state.theme.colors.warning);
+    }
     if (this.session !== undefined) {
       this.startSessionEventSubscription();
     }
@@ -2102,6 +2106,10 @@ export class KimiTUI {
       this.showError(`Failed to replay session history: ${msg}`);
     } finally {
       this.startSessionEventSubscription();
+    }
+    const resumeState = session.getResumeState();
+    if (resumeState?.warning !== undefined) {
+      this.showStatus(`Warning: ${resumeState.warning}`, this.state.theme.colors.warning);
     }
     this.showStatus(statusMessage);
   }

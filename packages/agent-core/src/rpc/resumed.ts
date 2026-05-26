@@ -36,4 +36,5 @@ export interface ResumedAgentState {
 export interface ResumeSessionResult extends SessionSummary {
   readonly sessionMetadata: SessionMeta;
   readonly agents: Readonly<Record<string, ResumedAgentState>>;
+  readonly warning?: string | undefined;
 }
