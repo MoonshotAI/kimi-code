@@ -114,9 +114,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     protected readonly rpcClient: CoreRPCClient,
     options: KimiCoreOptions = {},
   ) {
-    const explicitHomeDir = options.homeDir ?? process.env['KIMI_CODE_HOME'];
     this.homeDir = resolveKimiHome(options.homeDir);
-    this.userHomeDir = explicitHomeDir ?? homedir();
+    this.userHomeDir = homedir();
     this.configPath = resolveConfigPath({
       homeDir: this.homeDir,
       configPath: options.configPath,
