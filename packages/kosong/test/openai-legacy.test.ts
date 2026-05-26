@@ -791,6 +791,58 @@ describe('OpenAILegacyChatProvider', () => {
         { type: 'text', text: 'final' },
       ]);
     });
+
+    it('treats blank reasoning_key as unset so defaults still apply', async () => {
+      // ModelAliasSchema accepts `reasoning_key = ""` (z.string().optional()).
+      // A blank value must not route reads/writes through an empty property
+      // name — it should fall back to the default protocol behavior.
+      const provider = createProvider({ model: 'm', reasoningKey: '' });
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'thinking' },
+            { type: 'text', text: 'answer' },
+          ],
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+      const messages = body['messages'] as Record<string, unknown>[];
+
+      expect(messages[0]).toEqual({
+        role: 'assistant',
+        content: 'answer',
+        reasoning_content: 'thinking',
+      });
+      expect(Object.keys(messages[0] ?? {})).not.toContain('');
+    });
+
+    it('trims whitespace around explicit reasoning_key before use', async () => {
+      const provider = createProvider({
+        model: 'm',
+        reasoningKey: '  reasoning_details  ',
+      });
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'thinking' },
+            { type: 'text', text: 'answer' },
+          ],
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+      const messages = body['messages'] as Record<string, unknown>[];
+
+      expect(messages[0]).toEqual({
+        role: 'assistant',
+        content: 'answer',
+        reasoning_details: 'thinking',
+      });
+      expect(Object.keys(messages[0] ?? {})).not.toContain('  reasoning_details  ');
+    });
   });
   // argument deltas. Each delta carries `index` to identify the owning
   // tool call. The provider must preserve `index` on the yielded

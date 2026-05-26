@@ -346,7 +346,15 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     this._defaultHeaders = options.defaultHeaders;
     this._model = options.model;
     this._stream = options.stream ?? true;
-    this._reasoningKey = options.reasoningKey;
+    // Normalize blank/whitespace reasoningKey to unset. ModelAliasSchema
+    // accepts `z.string().optional()`, so `reasoning_key = ""` in config.toml
+    // would otherwise disable the default field scan and route reads/writes
+    // through an empty property name.
+    const normalizedReasoningKey = options.reasoningKey?.trim();
+    this._reasoningKey =
+      normalizedReasoningKey !== undefined && normalizedReasoningKey.length > 0
+        ? normalizedReasoningKey
+        : undefined;
     this._reasoningEffort = undefined;
     this._generationKwargs = {};
     if (options.maxTokens !== undefined) {
