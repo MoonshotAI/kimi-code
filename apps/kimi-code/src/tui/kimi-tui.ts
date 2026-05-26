@@ -9,9 +9,9 @@
 
 import { writeFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { release as osRelease, type as osType } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { homedir as osHomedir, release as osRelease, type as osType } from 'node:os';
 
 import {
   Container,
@@ -175,6 +175,10 @@ import {
 import { buildStatusReportLines } from './components/messages/status-panel';
 import { ThinkingComponent } from './components/messages/thinking';
 import { ToolCallComponent } from './components/messages/tool-call';
+import {
+  buildPluginsInfoLines,
+  buildPluginsListLines,
+} from './components/messages/plugins-status-panel';
 import {
   buildUsageReportLines,
   UsagePanelComponent,
@@ -1549,6 +1553,9 @@ export class KimiTUI {
         return;
       case 'mcp':
         void this.showMcpServers();
+        return;
+      case 'plugins':
+        void this.handlePluginsCommand(args);
         return;
       case 'editor':
         await this.handleEditorCommand(args, {});
@@ -5295,6 +5302,113 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
+  private async handlePluginsCommand(rawArgs: string): Promise<void> {
+    // 临时阅读注释：/plugins 的所有用户入口都在这里分发；TUI 只负责解析命令和展示结果，真正状态变更交给 SDK/RPC。
+    const args = rawArgs.trim().split(/\s+/).filter((part) => part.length > 0);
+    const sub = args[0];
+    const rest = args.slice(1);
+    const session = this.requireSession();
+
+    try {
+      if (sub === undefined || sub === 'list') {
+        // 临时阅读注释：默认 /plugins 就是 list，用面板展示当前 installed.json 里的插件快照。
+        const plugins = await session.listPlugins();
+        const lines = buildPluginsListLines({ colors: this.state.theme.colors, plugins });
+        const title = ` Plugins (${plugins.length}) `;
+        const panel = new UsagePanelComponent(lines, this.state.theme.colors.primary, title);
+        this.state.transcriptContainer.addChild(panel);
+        this.state.ui.requestRender();
+        return;
+      }
+      if (sub === 'install') {
+        // 临时阅读注释：安装接受本地路径或 zip URL；成功后不会热更新当前 session，需要 /new 重新加载 skills。
+        const source = rest[0];
+        if (source === undefined) {
+          this.showError('Usage: /plugins install <path-or-zip-url>');
+          return;
+        }
+        const summary = await session.installPlugin(
+          resolvePluginInstallSource(source, this.state.appState.workDir),
+        );
+        const mcpHint =
+          summary.mcpServerCount > summary.enabledMcpServerCount
+            ? ` It declares ${summary.mcpServerCount} MCP server${summary.mcpServerCount === 1 ? '' : 's'}; enable one with /plugins mcp enable ${summary.id} <server>.`
+            : '';
+        this.showStatus(
+          `Installed ${summary.displayName} (${summary.id}).${mcpHint} Run /new to apply plugin changes.`,
+        );
+        return;
+      }
+      if (sub === 'info') {
+        // 临时阅读注释：info 是排查入口，manifest 路径、ignored 字段、diagnostics 都靠这里暴露给用户。
+        const id = rest[0];
+        if (id === undefined) {
+          this.showError('Usage: /plugins info <id>');
+          return;
+        }
+        const info = await session.getPluginInfo(id);
+        const lines = buildPluginsInfoLines({ colors: this.state.theme.colors, info });
+        const panel = new UsagePanelComponent(lines, this.state.theme.colors.primary, ` ${info.id} `);
+        this.state.transcriptContainer.addChild(panel);
+        this.state.ui.requestRender();
+        return;
+      }
+      if (sub === 'mcp') {
+        const action = rest[0];
+        if (action !== 'enable' && action !== 'disable') {
+          this.showError('Usage: /plugins mcp enable|disable <id> <server>');
+          return;
+        }
+        const id = rest[1];
+        const server = rest[2];
+        if (id === undefined || server === undefined) {
+          this.showError('Usage: /plugins mcp enable|disable <id> <server>');
+          return;
+        }
+        await session.setPluginMcpServerEnabled(id, server, action === 'enable');
+        this.showStatus(
+          `${action === 'enable' ? 'Enabled' : 'Disabled'} MCP server ${server} for ${id}. Run /new to apply.`,
+        );
+        return;
+      }
+      if (sub === 'enable' || sub === 'disable') {
+        // 临时阅读注释：enable/disable 只改安装记录；新的 skill 集合同样要等下一次 /new 生效。
+        const id = rest[0];
+        if (id === undefined) {
+          this.showError(`Usage: /plugins ${sub} <id>`);
+          return;
+        }
+        await session.setPluginEnabled(id, sub === 'enable');
+        this.showStatus(
+          `${sub === 'enable' ? 'Enabled' : 'Disabled'} ${id}. Run /new to apply.`,
+        );
+        return;
+      }
+      if (sub === 'remove') {
+        // 临时阅读注释：remove 不删除插件源码目录，只从 installed.json 里摘掉这条记录。
+        const id = rest[0];
+        if (id === undefined) {
+          this.showError('Usage: /plugins remove <id>');
+          return;
+        }
+        await session.removePlugin(id);
+        this.showStatus(`Removed ${id} (source directory left in place).`);
+        return;
+      }
+      if (sub === 'reload') {
+        // 临时阅读注释：reload 重读 installed.json 和 manifest；已存在 session 不会被热更新。
+        const summary = await session.reloadPlugins();
+        const line = `Reload: +${summary.added.length} -${summary.removed.length}` +
+          (summary.errors.length > 0 ? ` (${summary.errors.length} errors)` : '');
+        this.showStatus(line);
+        return;
+      }
+      this.showError(`Unknown /plugins subcommand: ${sub}`);
+    } catch (error) {
+      this.showError(`/plugins ${sub ?? ''} failed: ${formatErrorMessage(error)}`);
+    }
+  }
+
   // Loads and renders current MCP server status.
   private async showMcpServers(): Promise<void> {
     let servers: readonly McpServerInfo[];
@@ -6252,4 +6366,29 @@ export class KimiTUI {
       this.mountEditorReplacement(selector);
     });
   }
+}
+
+function resolvePluginInstallSource(source: string, workDir: string): string {
+  const trimmed = source.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+  if (trimmed === '~') return osHomedir();
+  if (trimmed.startsWith('~/')) return join(osHomedir(), trimmed.slice(2));
+  return isAbsolute(trimmed) ? trimmed : resolve(workDir, trimmed);
+}
+
+function formatHookResultMarkdown(event: HookResultEvent): string {
+  return `*${formatHookResultTitle(event)}*\n\n${formatHookResultBody(event)}`;
+}
+
+function formatHookResultPlain(event: HookResultEvent): string {
+  return `${formatHookResultTitle(event)}\n\n${formatHookResultBody(event)}`;
+}
+
+function formatHookResultTitle(event: HookResultEvent): string {
+  return `${event.hookEvent} hook${event.blocked === true ? ' blocked' : ''}`;
+}
+
+function formatHookResultBody(event: HookResultEvent): string {
+  const content = event.content.trim();
+  return content.length === 0 ? '(empty)' : content;
 }

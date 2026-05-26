@@ -1,0 +1,1519 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kimi Code /plugins 功能调研报告</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8f3;
+      --panel: #ffffff;
+      --ink: #18211f;
+      --muted: #65716c;
+      --line: #d9dfd4;
+      --soft: #eef2ea;
+      --accent: #0b6b57;
+      --accent-2: #7d4f12;
+      --accent-3: #285f9f;
+      --danger: #a33b2c;
+      --warn: #946200;
+      --ok: #23734a;
+      --code: #17201d;
+      --code-bg: #eef3ef;
+      --shadow: 0 1px 2px rgba(22, 32, 28, 0.08);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.62;
+    }
+
+    a {
+      color: var(--accent-3);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    code, pre, kbd {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    pre {
+      margin: 0;
+      overflow: auto;
+      padding: 14px 16px;
+      background: var(--code-bg);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--code);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    code {
+      background: var(--code-bg);
+      border: 1px solid #dce4dd;
+      border-radius: 5px;
+      padding: 1px 5px;
+      font-size: 0.92em;
+    }
+
+    pre code {
+      background: transparent;
+      border: 0;
+      padding: 0;
+      font-size: inherit;
+    }
+
+    .page {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .hero {
+      background: #10231f;
+      color: #f4fbf5;
+      border-bottom: 1px solid #183f36;
+    }
+
+    .hero-inner {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 44px 22px 32px;
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      color: #9bd5c2;
+      font-size: 13px;
+      letter-spacing: 0;
+      font-weight: 700;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 960px;
+      font-size: clamp(30px, 6vw, 54px);
+      line-height: 1.06;
+      letter-spacing: 0;
+    }
+
+    .hero-summary {
+      margin: 18px 0 0;
+      max-width: 920px;
+      color: #dcebe5;
+      font-size: 18px;
+    }
+
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 22px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: rgba(255, 255, 255, 0.08);
+      color: #e9f7ef;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .layout {
+      max-width: 1180px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 22px;
+      display: grid;
+      grid-template-columns: 250px minmax(0, 1fr);
+      gap: 24px;
+    }
+
+    .toc {
+      position: sticky;
+      top: 16px;
+      align-self: start;
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 14px;
+      max-height: calc(100vh - 32px);
+      overflow: auto;
+    }
+
+    .toc-title {
+      margin: 0 0 10px;
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .toc a {
+      display: block;
+      padding: 7px 8px;
+      border-radius: 6px;
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    .toc a:hover, .toc a.active {
+      background: var(--soft);
+      text-decoration: none;
+      color: var(--accent);
+    }
+
+    main {
+      min-width: 0;
+    }
+
+    section {
+      scroll-margin-top: 18px;
+      margin-bottom: 22px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 22px;
+    }
+
+    section.plain {
+      background: transparent;
+      border: 0;
+      box-shadow: none;
+      padding: 0;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 24px;
+      line-height: 1.22;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 20px 0 10px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    h4 {
+      margin: 18px 0 8px;
+      font-size: 15px;
+      color: var(--muted);
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 8px 0 12px;
+    }
+
+    ul, ol {
+      margin: 8px 0 12px;
+      padding-left: 22px;
+    }
+
+    li + li {
+      margin-top: 6px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfa;
+      padding: 14px;
+    }
+
+    .card h3 {
+      margin-top: 0;
+    }
+
+    .metric {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .metric strong {
+      color: var(--accent);
+      font-size: 28px;
+      line-height: 1;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: #eef8f3;
+      padding: 12px 14px;
+      border-radius: 0 8px 8px 0;
+      margin: 14px 0;
+    }
+
+    .callout.warn {
+      border-left-color: var(--warn);
+      background: #fff7df;
+    }
+
+    .callout.danger {
+      border-left-color: var(--danger);
+      background: #fff0ed;
+    }
+
+    .tag-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 8px 0 12px;
+    }
+
+    .tag {
+      border: 1px solid var(--line);
+      background: var(--soft);
+      color: #36433f;
+      border-radius: 999px;
+      padding: 3px 9px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .tag.ok {
+      color: var(--ok);
+      border-color: #b8d7c7;
+      background: #eef8f2;
+    }
+
+    .tag.warn {
+      color: var(--warn);
+      border-color: #e0c27a;
+      background: #fff8e8;
+    }
+
+    .tag.no {
+      color: var(--danger);
+      border-color: #e2bbb4;
+      background: #fff2ef;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 780px;
+    }
+
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #f0f4ed;
+      color: #2d3935;
+      font-weight: 800;
+      z-index: 1;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 14px;
+    }
+
+    .tab {
+      appearance: none;
+      border: 1px solid var(--line);
+      border-bottom: 0;
+      border-radius: 8px 8px 0 0;
+      background: #f8faf6;
+      padding: 8px 12px;
+      cursor: pointer;
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .tab.active {
+      background: #ffffff;
+      color: var(--accent);
+      border-color: #b8d5cb;
+    }
+
+    .tab-panel {
+      display: none;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(130px, 1fr));
+      gap: 10px;
+      margin: 14px 0;
+    }
+
+    .flow-step {
+      position: relative;
+      padding: 12px;
+      border: 1px solid #cfd9d2;
+      border-radius: 8px;
+      background: #f9fbf8;
+      min-height: 120px;
+    }
+
+    .flow-step strong {
+      display: block;
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+
+    .flow-step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      right: -11px;
+      top: 50%;
+      width: 12px;
+      height: 1px;
+      background: #9fb0a6;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfa;
+      padding: 10px 12px;
+      margin: 10px 0;
+    }
+
+    summary {
+      cursor: pointer;
+      font-weight: 800;
+      color: #26322f;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 12px 0;
+      align-items: center;
+    }
+
+    input[type="search"] {
+      width: min(420px, 100%);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 10px;
+      font: inherit;
+      background: #fff;
+      color: var(--ink);
+    }
+
+    button.copy {
+      border: 1px solid #b8c8bf;
+      background: #fff;
+      color: var(--accent);
+      border-radius: 8px;
+      padding: 7px 10px;
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    .code-block {
+      position: relative;
+      margin: 12px 0;
+    }
+
+    .code-block button.copy {
+      position: absolute;
+      right: 8px;
+      top: 8px;
+    }
+
+    .checklist {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .check-item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    .check-item[data-hidden="true"] {
+      display: none;
+    }
+
+    .phase {
+      border-left: 4px solid var(--accent-3);
+      padding: 10px 12px;
+      margin: 10px 0;
+      background: #f0f6fd;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .phase strong {
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    .footnote {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    @media (max-width: 900px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .toc {
+        position: relative;
+        top: auto;
+        max-height: none;
+      }
+
+      .grid, .grid.two, .checklist {
+        grid-template-columns: 1fr;
+      }
+
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .flow-step:not(:last-child)::after {
+        display: none;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .hero-inner, .layout {
+        padding-left: 14px;
+        padding-right: 14px;
+      }
+
+      section {
+        padding: 16px;
+      }
+
+      h1 {
+        font-size: 34px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <div class="hero-inner">
+        <p class="eyebrow">Kimi Code · /plugins 功能调研</p>
+        <h1>把插件做成“安装、管理、接入现有能力”的入口，而不是第一期就重写一个扩展平台</h1>
+        <p class="hero-summary">
+          结论：当前仓库已经有 slash 命令、Skills、MCP、hooks、SDK RPC 和旧 kimi-cli 插件迁移探测。推荐第一期让
+          <code>/plugins</code> 管理本地插件包，并把插件包里的 <code>SKILL.md</code>、可执行工具、MCP 配置接到现有能力上；
+          marketplace、自动更新、分享和复杂 UI 扩展放到后续阶段。
+        </p>
+        <div class="meta-row">
+          <span class="pill">调研日期：2026-05-25</span>
+          <span class="pill">当前仓库：/Users/moonshot/code/kimi-code</span>
+          <span class="pill">参考源码：kimi-cli / claude-code / codex / pi</span>
+          <span class="pill">交付物：自包含 HTML</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav class="toc" aria-label="目录">
+        <p class="toc-title">目录</p>
+        <a href="#summary">1. 先给结论</a>
+        <a href="#repo">2. 当前仓库是什么</a>
+        <a href="#existing">3. 已有可复用能力</a>
+        <a href="#references">4. 参考实现对比</a>
+        <a href="#requirements">5. /plugins 应该解决什么</a>
+        <a href="#shape">6. 插件包形态</a>
+        <a href="#architecture">7. 推荐实现方案</a>
+        <a href="#plan">8. 分阶段落地</a>
+        <a href="#security">9. 风险和安全边界</a>
+        <a href="#tests">10. 测试清单</a>
+        <a href="#questions">11. 需要先拍板的问题</a>
+        <a href="#sources">12. 调研来源</a>
+      </nav>
+
+      <main>
+        <section id="summary">
+          <h2>1. 先给结论</h2>
+          <div class="callout">
+            <strong>推荐方向：</strong>
+            <code>/plugins</code> 第一版做成 TUI 里的插件管理页：看已安装插件、看能力清单、看错误、启用/禁用、卸载、从本地路径安装。
+            插件本身先是一个目录包，里面可以带 <code>plugin.json</code>、<code>SKILL.md</code>、工具脚本和可选 MCP 配置。
+          </div>
+
+          <div class="grid">
+            <div class="card">
+              <div class="metric"><strong>先做</strong><span>本地插件</span></div>
+              <p>沿用 old kimi-cli 的 <code>plugin.json</code> 思路，并和当前 Kimi Code 的 Skills / MCP / tool 执行体系对接。</p>
+            </div>
+            <div class="card">
+              <div class="metric"><strong>不要急</strong><span>marketplace</span></div>
+              <p>Claude 和 Codex 的 marketplace、分享、自动升级很完整，但会明显扩大实现和安全面，适合第二阶段以后。</p>
+            </div>
+            <div class="card">
+              <div class="metric"><strong>最关键</strong><span>安全边界</span></div>
+              <p>插件工具不能绕开权限确认，远程安装必须显式触发，manifest 路径必须限制在插件目录内。</p>
+            </div>
+          </div>
+
+          <h3>一句话拆解</h3>
+          <p>
+            现在的 Kimi Code 已经有“能力被发现、展示、执行”的基础。缺的是一个稳定的插件包格式、安装位置、管理界面，以及把插件声明的能力接入
+            <code>Session</code> 的 RPC。做 <code>/plugins</code> 时，不应该让 TUI 直接读 <code>agent-core</code>，而是走
+            <code>packages/node-sdk</code> 暴露出的会话 API。
+          </p>
+
+          <h3>第一期成功标准</h3>
+          <ul>
+            <li>用户输入 <code>/plugins</code> 后，可以看到插件列表、插件来源、启用状态、能力摘要和加载错误。</li>
+            <li>用户可以从本地目录安装一个插件，也可以禁用、启用、卸载已安装插件。</li>
+            <li>插件里的 skill 可以出现在现有的 skill 列表和 slash 补全里。</li>
+            <li>插件声明的工具如果被模型调用，走现有权限/确认机制，不能静默执行。</li>
+            <li>旧 kimi-cli 的 <code>~/.kimi/plugins</code> 至少有清楚的迁移提示，最好能做验证后迁移。</li>
+          </ul>
+        </section>
+
+        <section id="repo">
+          <h2>2. 当前仓库是什么</h2>
+          <p>
+            <code>/Users/moonshot/code/kimi-code</code> 是一个 TypeScript monorepo。核心产品是终端里的 Kimi Code CLI/TUI，
+            底层由 SDK 和 agent-core 提供会话、skills、tools、MCP、权限、后台任务等能力。
+          </p>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>路径</th>
+                  <th>作用</th>
+                  <th>和 /plugins 的关系</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>apps/kimi-code</code></td>
+                  <td>CLI / TUI 应用，用户直接交互的地方。</td>
+                  <td>新增 <code>/plugins</code> slash 命令、插件管理 UI、安装/卸载操作入口。</td>
+                </tr>
+                <tr>
+                  <td><code>packages/node-sdk</code></td>
+                  <td>公开 TypeScript SDK 和 TUI 使用的 harness/session 包装。</td>
+                  <td>TUI 不直接依赖 <code>agent-core</code>，插件列表和操作应该通过这里暴露。</td>
+                </tr>
+                <tr>
+                  <td><code>packages/agent-core</code></td>
+                  <td>Agent、Session、skills、tools、MCP、权限、records 等核心能力。</td>
+                  <td>插件扫描、manifest 解析、工具注册、skill roots 扩展应主要落在这里。</td>
+                </tr>
+                <tr>
+                  <td><code>packages/migration-legacy</code></td>
+                  <td>旧 kimi-cli 迁移探测和迁移材料。</td>
+                  <td>已经检测旧 <code>~/.kimi/plugins</code>，当前显示为“not yet supported”。</td>
+                </tr>
+                <tr>
+                  <td><code>docs/en/customization</code></td>
+                  <td>Skills、MCP 等用户文档。</td>
+                  <td>插件上线后需要新增或更新用户文档，说明插件和 skill/MCP 的区别。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="callout warn">
+            <strong>边界提醒：</strong>
+            <code>apps/kimi-code</code> 的仓库级规则要求它通过 <code>@moonshot-ai/kimi-code-sdk</code> 消费核心能力，不直接依赖
+            <code>@moonshot-ai/agent-core</code>。所以 <code>/plugins</code> 的 UI 可以在 app 里，但真正的插件扫描和执行不能只写在 TUI 里。
+          </div>
+        </section>
+
+        <section id="existing">
+          <h2>3. 当前已有可复用能力</h2>
+          <div class="grid two">
+            <div class="card">
+              <h3>Slash 命令</h3>
+              <p>
+                <code>apps/kimi-code/src/tui/commands/registry.ts</code> 存内置命令列表；
+                <code>resolve.ts</code> 先解析内置命令，再解析 skill 命令；未知 slash 会被当普通消息发送。
+              </p>
+              <p><strong>对 /plugins：</strong>新增 <code>plugins</code> 内置命令，再在 <code>KimiTUI</code> 的命令分发里打开管理界面。</p>
+            </div>
+            <div class="card">
+              <h3>Skills</h3>
+              <p>
+                <code>packages/agent-core/src/skill/scanner.ts</code> 负责扫描 <code>.kimi-code/skills</code>、
+                <code>.agents/skills</code>、显式目录和 built-in 目录。
+              </p>
+              <p><strong>对 /plugins：</strong>插件目录可以作为额外 skill root，让插件内的 <code>SKILL.md</code> 自动进入 slash 补全和模型可见列表。</p>
+            </div>
+            <div class="card">
+              <h3>MCP</h3>
+              <p>
+                当前已有 <code>/mcp</code> 状态面板和 <code>/mcp-config</code> 内置 skill，用户文档说明 MCP 配置来自用户和项目目录。
+              </p>
+              <p><strong>对 /plugins：</strong>插件可以后续声明 MCP server，但第一期可以只展示，不急着自动合并执行。</p>
+            </div>
+            <div class="card">
+              <h3>SDK RPC</h3>
+              <p>
+                <code>packages/node-sdk/src/session.ts</code> 已经有 <code>listSkills()</code>、<code>activateSkill()</code> 这类会话 API。
+              </p>
+              <p><strong>对 /plugins：</strong>新增 <code>listPlugins()</code>、<code>installPlugin()</code>、<code>setPluginEnabled()</code>、<code>removePlugin()</code> 比较自然。</p>
+            </div>
+            <div class="card">
+              <h3>旧迁移探测</h3>
+              <p>
+                <code>packages/migration-legacy/src/detect.ts</code> 和 <code>paths.ts</code> 已经会找旧
+                <code>~/.kimi/plugins</code>。
+              </p>
+              <p><strong>对 /plugins：</strong>这里是兼容 old kimi-cli 插件的入口，不需要从零设计迁移发现。</p>
+            </div>
+            <div class="card">
+              <h3>现有 TUI 面板</h3>
+              <p>
+                <code>tasks-browser.ts</code>、<code>help-panel.ts</code>、<code>mcp-status-panel.ts</code> 已经展示了搜索、选择、状态面板的写法。
+              </p>
+              <p><strong>对 /plugins：</strong>可以照着任务浏览器做一个插件浏览器，不必重做整套交互控件。</p>
+            </div>
+          </div>
+
+          <details>
+            <summary>当前发现的一个小坑：TUI 可能没有传递 --skills-dir</summary>
+            <p>
+              <code>apps/kimi-code/src/cli/commands.ts</code> 定义了可重复的 <code>--skills-dir &lt;dir&gt;</code>；
+              <code>run-prompt.ts</code> 会把它传给 <code>KimiHarness</code>。但交互式
+              <code>run-shell.ts</code> 当前构造 <code>KimiHarness</code> 时没有明显传入 <code>skillDirs</code>。
+              如果 <code>/plugins</code> 复用“额外目录”接入 skills，需要顺手覆盖这个路径，避免 TUI 和非交互模式行为不一致。
+            </p>
+          </details>
+        </section>
+
+        <section id="references">
+          <h2>4. 参考实现对比</h2>
+          <p>
+            下面四套参考实现的关注点不一样：old kimi-cli 最像第一期本地插件；Claude Code 是完整扩展平台；
+            Codex 是 marketplace 和 <code>/plugins</code> UI 的强参考；Pi 展示了 TypeScript 扩展系统的另一种边界。
+          </p>
+
+          <div class="tabs" data-tabs="refs">
+            <button class="tab active" data-tab="matrix">总览对比</button>
+            <button class="tab" data-tab="kimi-cli">kimi-cli</button>
+            <button class="tab" data-tab="claude">Claude Code</button>
+            <button class="tab" data-tab="codex">Codex</button>
+            <button class="tab" data-tab="pi">Pi</button>
+          </div>
+
+          <div class="tab-panel active" data-panel="matrix">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>项目</th>
+                    <th>用户入口</th>
+                    <th>插件包形态</th>
+                    <th>能扩展什么</th>
+                    <th>对 Kimi 的启发</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>kimi-cli Python</strong></td>
+                    <td><code>kimi plugin install/list/remove/info</code></td>
+                    <td>目录或 zip/git，根目录 <code>plugin.json</code>，可带 <code>SKILL.md</code>。</td>
+                    <td>可执行工具，启动时还把插件目录并入 skill roots。</td>
+                    <td>最适合第一期兼容；实现简单，工具用 stdin JSON、stdout 文本。</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Claude Code</strong></td>
+                    <td><code>/plugin</code>、CLI plugin 命令、<code>--plugin-dir</code>、<code>/reload-plugins</code></td>
+                    <td>manifest + commands/agents/skills/hooks/outputStyles/MCP/LSP/userConfig/marketplace。</td>
+                    <td>几乎所有用户可见能力：slash、agents、skills、hooks、MCP、LSP、样式和配置。</td>
+                    <td>适合作为长期目标，但第一期照搬会过重；可借鉴“纯操作层 + TUI/CLI 包装”。</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Codex</strong></td>
+                    <td><code>/plugins</code> TUI、app-server plugin RPC、配置里的 enable/disable。</td>
+                    <td><code>.codex-plugin/plugin.json</code>，路径字段必须以 <code>./</code> 开头。</td>
+                    <td>skills、MCP servers、apps、hooks、marketplace、share/install/uninstall。</td>
+                    <td>最像目标 UI；可借鉴 feature gate、cache 清理、插件 ID 和路径校验。</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Pi</strong></td>
+                    <td>skills 命令、<code>--extension</code>、自动发现、<code>/reload</code>。</td>
+                    <td>skills 是标准目录；extensions 是 TS 模块或带 <code>pi</code> 字段的 package。</td>
+                    <td>工具、命令、事件拦截、UI、prompt、provider、资源发现。</td>
+                    <td>提醒我们区分“插件包管理”和“运行时扩展 API”；热刷新和来源标记值得借鉴。</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="tab-panel" data-panel="kimi-cli">
+            <h3>old kimi-cli Python：最贴近第一期</h3>
+            <div class="tag-list">
+              <span class="tag ok">plugin.json</span>
+              <span class="tag ok">本地安装</span>
+              <span class="tag ok">工具执行</span>
+              <span class="tag warn">会写入注入配置</span>
+            </div>
+            <p>
+              文档在 <code>/Users/moonshot/code/kimi-cli/docs/en/customization/plugins.md</code>。
+              源码集中在 <code>src/kimi_cli/plugin/</code> 和 <code>src/kimi_cli/cli/plugin.py</code>。
+            </p>
+            <ul>
+              <li>插件是目录包，根目录必须有 <code>plugin.json</code>。</li>
+              <li><code>plugin.json</code> 主要字段是 <code>name</code>、<code>version</code>、<code>description</code>、<code>config_file</code>、<code>inject</code>、<code>tools</code>。</li>
+              <li>工具命令运行在插件目录，stdin 是 JSON 参数，stdout 作为工具结果返回，非零退出和 stderr 会转成错误。</li>
+              <li>安装支持本地目录、zip、远程 zip、git URL、repo 子目录和分支 URL。</li>
+              <li>安装位置是旧的 <code>~/.kimi/plugins</code>；Kimi Code 应该使用新的 <code>~/.kimi-code/plugins</code>。</li>
+              <li>启动时会刷新插件配置，把 host 的 <code>api_key</code>、<code>base_url</code> 注入配置文件或运行时 env。</li>
+              <li>插件目录也会被纳入 skill roots，因此一个插件可以同时带工具和 <code>SKILL.md</code>。</li>
+            </ul>
+            <div class="callout warn">
+              <strong>不建议照搬的点：</strong>
+              old kimi-cli 会把凭证写入插件配置文件。Kimi Code 第一版建议只做运行时环境变量注入，避免把密钥落盘到插件目录。
+            </div>
+          </div>
+
+          <div class="tab-panel" data-panel="claude">
+            <h3>Claude Code：完整插件平台参考</h3>
+            <div class="tag-list">
+              <span class="tag ok">/plugin UI</span>
+              <span class="tag ok">marketplace</span>
+              <span class="tag ok">skills/commands/hooks/MCP</span>
+              <span class="tag warn">范围很大</span>
+            </div>
+            <p>
+              主要源码在 <code>/Users/moonshot/code/claude-code/src/utils/plugins/</code>、
+              <code>src/services/plugins/</code> 和 <code>src/commands/plugin/</code>。
+            </p>
+            <ul>
+              <li><code>PluginManifestSchema</code> 支持 commands、agents、skills、hooks、outputStyles、MCP、LSP、userConfig、channels、dependencies。</li>
+              <li><code>/plugin</code> 打开交互设置页，包含发现、已安装、marketplaces、错误等视图；还有 <code>/reload-plugins</code>。</li>
+              <li>CLI 与 TUI 复用 <code>pluginOperations.ts</code>，CLI 只负责命令行输出和退出码。</li>
+              <li><code>--plugin-dir</code> 可以加载 session-only 插件，适合调试。</li>
+              <li>插件缓存目录默认在 <code>~/.claude/plugins</code>，带 marketplace 和版本分层。</li>
+              <li>userConfig 支持敏感值和模板替换，MCP/LSP/hooks/skills/agents 都可能引用配置。</li>
+            </ul>
+            <div class="callout">
+              <strong>可借鉴：</strong>
+              把安装、卸载、启用、读取 manifest 等逻辑放在纯操作层，让 CLI 和 TUI 共享；这样后续加非交互命令不会重复实现。
+            </div>
+          </div>
+
+          <div class="tab-panel" data-panel="codex">
+            <h3>Codex：/plugins UI 和 marketplace 参考</h3>
+            <div class="tag-list">
+              <span class="tag ok">/plugins</span>
+              <span class="tag ok">app-server RPC</span>
+              <span class="tag ok">enable/disable config</span>
+              <span class="tag warn">功能开关</span>
+            </div>
+            <p>
+              主要源码在 <code>/Users/moonshot/code/codex/codex-rs/app-server-protocol/src/protocol/v2/plugin.rs</code>、
+              <code>app-server/src/request_processors/plugins.rs</code>、
+              <code>tui/src/chatwidget/plugins.rs</code> 和 <code>core-plugins/src/manifest.rs</code>。
+            </p>
+            <ul>
+              <li><code>/plugins</code> 是 TUI 弹窗，支持 All Plugins、Installed、marketplace tab、Add Marketplace、搜索、详情、安装、卸载。</li>
+              <li>插件 API 走 app-server protocol：list/read/install/uninstall/share/marketplace add/remove/upgrade。</li>
+              <li>安装或卸载后会清 plugin/skill cache，并触发已有 thread 的 MCP refresh。</li>
+              <li>配置用 <code>[plugins."plugin@marketplace"] enabled = true/false</code> 记录启用状态。</li>
+              <li>插件 ID 形如 <code>&lt;plugin&gt;@&lt;marketplace&gt;</code>，两个段只允许 ASCII 字母、数字、<code>_</code>、<code>-</code>。</li>
+              <li>manifest 路径字段必须以 <code>./</code> 开头，不能包含 <code>..</code>，保证不会越过插件根目录。</li>
+            </ul>
+            <div class="callout">
+              <strong>可借鉴：</strong>
+              功能开关、错误态、搜索态、缓存刷新和路径校验。Kimi Code 不一定需要 app-server，但需要同样清晰的 SDK/core API 边界。
+            </div>
+          </div>
+
+          <div class="tab-panel" data-panel="pi">
+            <h3>Pi：扩展 API 和热刷新参考</h3>
+            <div class="tag-list">
+              <span class="tag ok">skills 标准</span>
+              <span class="tag ok">TS extensions</span>
+              <span class="tag ok">/reload</span>
+              <span class="tag warn">更像运行时扩展，不是插件商店</span>
+            </div>
+            <p>
+              主要源码在 <code>/Users/moonshot/code/pi/packages/coding-agent/src/core/skills.ts</code>、
+              <code>src/core/extensions/loader.ts</code>、<code>src/core/extensions/runner.ts</code> 和
+              <code>docs/extensions.md</code>。
+            </p>
+            <ul>
+              <li>skills 兼容 Agent Skills 标准，扫描 <code>~/.pi/agent/skills</code>、<code>.pi/skills</code>、<code>.agents/skills</code>、package 和 settings 指定目录。</li>
+              <li>extension 是 TypeScript 模块，可以注册工具、命令、快捷键、provider、事件处理、UI、消息渲染。</li>
+              <li>extension 自动发现目录是 <code>~/.pi/agent/extensions</code> 和 <code>.pi/extensions</code>，也可通过 <code>--extension</code> 临时加载。</li>
+              <li><code>/reload</code> 会重新加载 keybindings、extensions、skills、prompts、themes。</li>
+              <li>多个 extension 注册同名 slash command 时，Pi 会保留多个并加数字后缀；工具则 first registration wins。</li>
+            </ul>
+            <div class="callout">
+              <strong>可借鉴：</strong>
+              资源来源 <code>sourceInfo</code> 很重要；插件列表里要告诉用户“这个能力来自哪个插件、哪个文件”，不要只显示名字。
+            </div>
+          </div>
+        </section>
+
+        <section id="requirements">
+          <h2>5. /plugins 应该解决什么</h2>
+          <p>
+            对用户来说，<code>/plugins</code> 不应该只是列一个目录。它要回答四个问题：我装了什么、它能做什么、它有没有问题、我能怎么处理。
+          </p>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>需求</th>
+                  <th>第一期建议</th>
+                  <th>后续再做</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>查看插件</td>
+                  <td>显示 installed / disabled / error；展示 name、version、description、source path、能力数量。</td>
+                  <td>按 marketplace、作者、分类、更新时间过滤。</td>
+                </tr>
+                <tr>
+                  <td>查看详情</td>
+                  <td>详情页显示 skills、tools、MCP、hooks、manifest 错误、安装路径。</td>
+                  <td>展示 screenshots、README、版本历史、更新日志。</td>
+                </tr>
+                <tr>
+                  <td>安装</td>
+                  <td>从本地目录安装；可选支持本地 zip。</td>
+                  <td>远程 zip、git、GitHub marketplace、npm 包。</td>
+                </tr>
+                <tr>
+                  <td>启用/禁用</td>
+                  <td>记录到 <code>~/.kimi-code/config.toml</code> 或插件状态文件；当前 session 尽量刷新，否则明确提示重启或 <code>/new</code>。</td>
+                  <td>按项目启用、workspace policy、管理员策略。</td>
+                </tr>
+                <tr>
+                  <td>卸载</td>
+                  <td>删除安装目录前确认；禁用状态和错误记录同步清理。</td>
+                  <td>保留插件 data dir、版本回滚。</td>
+                </tr>
+                <tr>
+                  <td>错误处理</td>
+                  <td>manifest 解析错误、路径越界、工具名冲突、缺少入口文件都展示清楚。</td>
+                  <td>自动修复建议、诊断导出。</td>
+                </tr>
+                <tr>
+                  <td>迁移</td>
+                  <td>识别 old kimi-cli <code>~/.kimi/plugins</code>，提供一键迁移或清楚提示。</td>
+                  <td>迁移后自动转换 manifest 格式和配置注入方式。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>用户流程建议</h3>
+          <div class="flow">
+            <div class="flow-step">
+              <strong>输入 /plugins</strong>
+              <span>打开插件浏览器。没有插件时展示安装入口和旧插件迁移提示。</span>
+            </div>
+            <div class="flow-step">
+              <strong>选择插件</strong>
+              <span>看描述、路径、状态、skills、tools、MCP、错误。</span>
+            </div>
+            <div class="flow-step">
+              <strong>安装/启用</strong>
+              <span>用户显式选择本地目录；解析 manifest；预览能力和风险。</span>
+            </div>
+            <div class="flow-step">
+              <strong>刷新能力</strong>
+              <span>更新 skills、plugin tools、MCP cache；无法热刷新时提示重启。</span>
+            </div>
+            <div class="flow-step">
+              <strong>使用能力</strong>
+              <span>skill 进入 slash 补全；工具被模型调用时按权限流程执行。</span>
+            </div>
+          </div>
+        </section>
+
+        <section id="shape">
+          <h2>6. 插件包形态</h2>
+          <p>
+            最小可用的插件包应该容易手写，也能兼容 old kimi-cli 的目录插件。建议第一期固定根目录
+            <code>plugin.json</code>，允许同时带 <code>SKILL.md</code> 和工具脚本。
+          </p>
+
+          <div class="grid two">
+            <div class="card">
+              <h3>推荐目录结构</h3>
+              <div class="code-block">
+                <button class="copy" data-copy="#tree">复制</button>
+                <pre id="tree"><code>my-plugin/
+├── plugin.json
+├── SKILL.md
+├── tools/
+│   └── search.js
+└── mcp.json       # 可选，建议第二期再自动接入</code></pre>
+              </div>
+            </div>
+            <div class="card">
+              <h3>第一期 manifest 建议</h3>
+              <p>字段尽量少，先保证安装、展示和工具执行能闭环。</p>
+              <div class="tag-list">
+                <span class="tag ok">name</span>
+                <span class="tag ok">version</span>
+                <span class="tag ok">description</span>
+                <span class="tag ok">tools</span>
+                <span class="tag warn">skills</span>
+                <span class="tag warn">mcpServers</span>
+              </div>
+            </div>
+          </div>
+
+          <h3>推荐 plugin.json 示例</h3>
+          <div class="code-block">
+            <button class="copy" data-copy="#manifest">复制</button>
+            <pre id="manifest"><code>{
+  "name": "repo-search",
+  "version": "0.1.0",
+  "description": "Search repository files and summarize matches.",
+  "skills": "./skills",
+  "tools": [
+    {
+      "name": "search",
+      "description": "Search files with ripgrep and return compact matches.",
+      "command": ["node", "./tools/search.js"],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The ripgrep query."
+          }
+        },
+        "required": ["query"]
+      }
+    }
+  ]
+}</code></pre>
+          </div>
+
+          <h3>字段建议</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>字段</th>
+                  <th>是否第一期支持</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>name</code></td>
+                  <td><span class="tag ok">必须</span></td>
+                  <td>插件名。建议 lowercase + 数字 + <code>-</code>，避免路径和展示混乱。</td>
+                </tr>
+                <tr>
+                  <td><code>version</code></td>
+                  <td><span class="tag ok">必须</span></td>
+                  <td>用于展示、未来升级和迁移判断。</td>
+                </tr>
+                <tr>
+                  <td><code>description</code></td>
+                  <td><span class="tag ok">必须</span></td>
+                  <td>展示给用户，也可作为模型理解插件能力的简短说明。</td>
+                </tr>
+                <tr>
+                  <td><code>skills</code></td>
+                  <td><span class="tag warn">可选</span></td>
+                  <td>推荐路径字段必须以 <code>./</code> 开头；也可以第一期默认扫描插件根目录里的 <code>SKILL.md</code>。</td>
+                </tr>
+                <tr>
+                  <td><code>tools</code></td>
+                  <td><span class="tag ok">可选但核心</span></td>
+                  <td>每个工具有 name、description、command、parameters。执行时 stdin JSON，stdout 文本。</td>
+                </tr>
+                <tr>
+                  <td><code>mcpServers</code></td>
+                  <td><span class="tag warn">建议延后</span></td>
+                  <td>可以先解析和展示，不自动执行。后续再合并到 MCP 配置。</td>
+                </tr>
+                <tr>
+                  <td><code>inject</code> / <code>config_file</code></td>
+                  <td><span class="tag no">不建议第一期写配置</span></td>
+                  <td>old kimi-cli 有这个能力，但 Kimi Code 第一版不应默认把密钥写入插件目录。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="architecture">
+          <h2>7. 推荐实现方案</h2>
+          <p>
+            实现上建议分三层：core 负责发现和执行，SDK 负责暴露会话 API，TUI 负责展示和用户操作。
+          </p>
+
+          <div class="flow">
+            <div class="flow-step">
+              <strong>TUI</strong>
+              <span><code>/plugins</code> 打开浏览器，调用 SDK，不直接读 core。</span>
+            </div>
+            <div class="flow-step">
+              <strong>node-sdk</strong>
+              <span>新增 session 方法和 RPC 类型，转发 list/install/enable/remove。</span>
+            </div>
+            <div class="flow-step">
+              <strong>agent-core</strong>
+              <span>解析 manifest、管理安装目录、注册 skills 和 tools。</span>
+            </div>
+            <div class="flow-step">
+              <strong>runtime</strong>
+              <span>工具执行走权限确认、超时、stdout 限制和错误记录。</span>
+            </div>
+            <div class="flow-step">
+              <strong>storage</strong>
+              <span><code>~/.kimi-code/plugins</code> 保存安装包，config 记录启用状态。</span>
+            </div>
+          </div>
+
+          <h3>建议新增/修改路径</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>路径</th>
+                  <th>改动</th>
+                  <th>原因</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>packages/agent-core/src/plugin/manifest.ts</code></td>
+                  <td>新增 manifest schema、路径校验、错误诊断。</td>
+                  <td>插件格式要有唯一入口，路径必须限制在插件根目录内。</td>
+                </tr>
+                <tr>
+                  <td><code>packages/agent-core/src/plugin/manager.ts</code></td>
+                  <td>新增 list/install/remove/enable/disable，管理 <code>~/.kimi-code/plugins</code>。</td>
+                  <td>不要把文件系统逻辑散到 TUI。</td>
+                </tr>
+                <tr>
+                  <td><code>packages/agent-core/src/plugin/tool.ts</code></td>
+                  <td>把 manifest tools 转成 agent-core tool，处理 stdin/stdout/timeout/权限。</td>
+                  <td>old kimi-cli 的可执行工具模型可以复用，但要接入当前权限体系。</td>
+                </tr>
+                <tr>
+                  <td><code>packages/agent-core/src/skill/scanner.ts</code></td>
+                  <td>把已启用插件的 skill roots 加入扫描结果。</td>
+                  <td>插件里的 skill 才能进入 <code>/skill:name</code> 和短 slash。</td>
+                </tr>
+                <tr>
+                  <td><code>packages/agent-core/src/session/rpc.ts</code></td>
+                  <td>新增 plugin RPC handler。</td>
+                  <td>让 SDK/TUI 可以管理插件。</td>
+                </tr>
+                <tr>
+                  <td><code>packages/node-sdk/src/session.ts</code></td>
+                  <td>新增 <code>listPlugins()</code>、<code>installPlugin()</code>、<code>setPluginEnabled()</code>、<code>removePlugin()</code>。</td>
+                  <td>保持 app 只通过 SDK 使用 core 能力。</td>
+                </tr>
+                <tr>
+                  <td><code>apps/kimi-code/src/tui/commands/registry.ts</code></td>
+                  <td>新增 <code>plugins</code> 内置 slash 命令。</td>
+                  <td>进入 <code>/plugins</code> 补全和帮助。</td>
+                </tr>
+                <tr>
+                  <td><code>apps/kimi-code/src/tui/kimi-tui.ts</code></td>
+                  <td>新增 <code>case "plugins"</code> 和 <code>showPluginsBrowser()</code>。</td>
+                  <td>接入现有命令分发。</td>
+                </tr>
+                <tr>
+                  <td><code>apps/kimi-code/src/tui/components/dialogs/plugins-browser.ts</code></td>
+                  <td>新增插件管理界面。</td>
+                  <td>展示列表、详情、安装、禁用、卸载、错误。</td>
+                </tr>
+                <tr>
+                  <td><code>packages/migration-legacy</code> 与 <code>apps/kimi-code/src/migration</code></td>
+                  <td>把旧 plugins 从“未支持”改成可迁移或可引导。</td>
+                  <td>用户从 old kimi-cli 升级时不会丢失插件。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>工具命名建议</h3>
+          <div class="callout">
+            <strong>推荐：</strong>
+            插件工具在内部命名为 <code>plugin__&lt;plugin&gt;__&lt;tool&gt;</code>，展示时仍可以显示 <code>&lt;plugin&gt; / &lt;tool&gt;</code>。
+            这样不会和内置工具、MCP 工具、其他插件工具撞名。
+          </div>
+          <p>
+            old kimi-cli 遇到工具名冲突时直接跳过插件工具。这个做法简单，但用户很难发现为什么工具不可用。
+            新实现更应该在 <code>/plugins</code> 里明确显示“工具名冲突”或采用命名空间避免冲突。
+          </p>
+
+          <h3>安装目录和配置建议</h3>
+          <ul>
+            <li>安装目录：<code>~/.kimi-code/plugins/&lt;plugin-name&gt;</code>。</li>
+            <li>临时安装 staging：<code>~/.kimi-code/plugins/.tmp-&lt;random&gt;</code>，验证成功后原子替换。</li>
+            <li>启用状态：优先写入现有 config，例如 <code>[plugins."repo-search"] enabled = true</code>。</li>
+            <li>插件私有数据：后续可以加 <code>~/.kimi-code/plugin-data/&lt;plugin-name&gt;</code>，卸载时询问是否保留。</li>
+            <li>远程 marketplace：第一期不建缓存层，第二期再考虑 <code>plugins/cache/&lt;source&gt;/&lt;name&gt;/&lt;version&gt;</code>。</li>
+          </ul>
+        </section>
+
+        <section id="plan">
+          <h2>8. 分阶段落地</h2>
+          <div class="phase">
+            <strong>Phase 0：确认范围</strong>
+            <span>先决定第一期是否只支持本地目录，以及是否要立刻兼容 old kimi-cli 工具执行。</span>
+          </div>
+          <div class="phase">
+            <strong>Phase 1：只读 /plugins 浏览器</strong>
+            <span>实现 manifest 解析、安装目录扫描、SDK <code>listPlugins()</code>、TUI 列表/详情/错误态。不先执行任何插件工具。</span>
+          </div>
+          <div class="phase">
+            <strong>Phase 2：skill 接入</strong>
+            <span>把已启用插件里的 <code>SKILL.md</code> 或 <code>skills/</code> 加到 skill roots，保证 slash 补全和模型提示正常。</span>
+          </div>
+          <div class="phase">
+            <strong>Phase 3：工具执行</strong>
+            <span>支持 <code>tools</code> 字段，工具执行走权限确认、超时、stdout 限制和错误展示。</span>
+          </div>
+          <div class="phase">
+            <strong>Phase 4：安装、禁用、卸载和迁移</strong>
+            <span>支持本地目录安装、禁用/启用、卸载；把旧 <code>~/.kimi/plugins</code> 纳入迁移。</span>
+          </div>
+          <div class="phase">
+            <strong>Phase 5：远程来源和 marketplace</strong>
+            <span>在本地模型稳定后再做 git/zip/npm/marketplace、更新、分享、签名或 allowlist。</span>
+          </div>
+
+          <h3>最小第一 PR 建议</h3>
+          <ol>
+            <li>新增 <code>packages/agent-core/src/plugin/manifest.ts</code>，只支持本地已安装目录扫描和错误收集。</li>
+            <li>新增 SDK/RPC <code>listPlugins()</code>，返回结构化列表，不做安装/执行。</li>
+            <li>新增 <code>/plugins</code> 命令和只读 TUI 浏览器。</li>
+            <li>补测试：manifest 成功/失败、路径越界、TUI slash 注册、空列表 UI。</li>
+          </ol>
+          <p>
+            这个 PR 小，能先把用户界面和数据模型定下来；后续再接 skill、tools、安装操作，不会一口气改太多核心路径。
+          </p>
+        </section>
+
+        <section id="security">
+          <h2>9. 风险和安全边界</h2>
+          <div class="callout danger">
+            <strong>核心原则：</strong>
+            插件是用户安装的代码和提示词包。它既能影响模型行为，也可能执行本地命令，所以默认必须按“不可信输入”处理。
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>风险</th>
+                  <th>具体症状</th>
+                  <th>建议防线</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>路径越界</td>
+                  <td>manifest 里写 <code>../secret</code>、zip 解压覆盖外部文件。</td>
+                  <td>所有路径必须归一化并确认在插件根目录内；zip 解压逐项检查。</td>
+                </tr>
+                <tr>
+                  <td>静默执行命令</td>
+                  <td>模型调用插件工具后直接跑本地脚本。</td>
+                  <td>插件工具走和 shell/MCP 类似的权限确认；显示插件名、工具名、参数摘要。</td>
+                </tr>
+                <tr>
+                  <td>密钥落盘</td>
+                  <td>安装时把 API key 写进插件目录配置。</td>
+                  <td>第一期不要写密钥文件；只允许运行时 env 注入，且 UI 明确展示。</td>
+                </tr>
+                <tr>
+                  <td>工具名冲突</td>
+                  <td>插件工具覆盖内置工具或 MCP 工具。</td>
+                  <td>内部命名空间化；冲突在 <code>/plugins</code> 里作为诊断展示。</td>
+                </tr>
+                <tr>
+                  <td>远程安装投毒</td>
+                  <td>用户粘贴远程 URL，内容变化或来源伪装。</td>
+                  <td>第一期只本地路径；远程来源需要显式确认、校验、缓存和来源展示。</td>
+                </tr>
+                <tr>
+                  <td>输出过大</td>
+                  <td>插件工具 stdout 很大，撑爆上下文或 UI。</td>
+                  <td>限制 stdout 字节数和行数；超出时截断并提示。</td>
+                </tr>
+                <tr>
+                  <td>长时间卡住</td>
+                  <td>插件工具不退出。</td>
+                  <td>默认 timeout，例如 120 秒；支持 abort signal。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>第一期明确不要做</h3>
+          <ul>
+            <li>不要支持自动安装远程 marketplace 插件。</li>
+            <li>不要让插件声明任意 hook 并在启动时直接执行。</li>
+            <li>不要默认把用户密钥写入插件配置文件。</li>
+            <li>不要允许插件工具裸名覆盖内置工具。</li>
+            <li>不要让 TUI 绕过 SDK 直接操作 core 内部对象。</li>
+          </ul>
+        </section>
+
+        <section id="tests">
+          <h2>10. 测试清单</h2>
+          <div class="toolbar">
+            <input id="testSearch" type="search" placeholder="筛选测试项，例如 manifest、TUI、工具、迁移" />
+          </div>
+          <div class="checklist" id="testList">
+            <div class="check-item" data-keywords="manifest parser path traversal schema">
+              <strong>manifest 解析</strong>
+              <p>合法 manifest、缺少必填字段、未知字段、路径不是 <code>./</code>、路径包含 <code>..</code>。</p>
+            </div>
+            <div class="check-item" data-keywords="install atomic rollback local dir zip">
+              <strong>安装流程</strong>
+              <p>本地目录安装、重复安装、staging 失败回滚、卸载后状态清理。</p>
+            </div>
+            <div class="check-item" data-keywords="skill scanner roots slash activation">
+              <strong>skill 接入</strong>
+              <p>已启用插件的 <code>SKILL.md</code> 被扫描；禁用后不出现；短 slash 不覆盖内置命令。</p>
+            </div>
+            <div class="check-item" data-keywords="tool stdin stdout nonzero timeout env approval">
+              <strong>工具执行</strong>
+              <p>stdin JSON、stdout 返回、非零退出、stderr、timeout、env 注入、权限拒绝。</p>
+            </div>
+            <div class="check-item" data-keywords="tool conflict namespace mcp builtin">
+              <strong>命名冲突</strong>
+              <p>插件工具与内置工具、MCP 工具、其他插件工具同名时可诊断或命名空间化。</p>
+            </div>
+            <div class="check-item" data-keywords="sdk rpc session list install remove enable disable">
+              <strong>SDK/RPC</strong>
+              <p><code>Session.listPlugins()</code> 等 API 返回稳定结构；错误不会让会话崩掉。</p>
+            </div>
+            <div class="check-item" data-keywords="TUI plugins browser empty loading error search detail">
+              <strong>TUI 浏览器</strong>
+              <p>空列表、loading、error、search、详情、启用/禁用/卸载确认。</p>
+            </div>
+            <div class="check-item" data-keywords="migration legacy kimi-cli plugins">
+              <strong>旧插件迁移</strong>
+              <p>检测 <code>~/.kimi/plugins</code>；提示或迁移到 <code>~/.kimi-code/plugins</code>；无效插件可跳过并报告。</p>
+            </div>
+            <div class="check-item" data-keywords="config toml enabled disabled project user">
+              <strong>配置写入</strong>
+              <p>启用状态写入后可重新读取；保留未知 config 字段；禁用插件不加载工具和 skills。</p>
+            </div>
+            <div class="check-item" data-keywords="docs slash commands mcp skills">
+              <strong>文档</strong>
+              <p>说明插件、skills、MCP 的区别；说明安全风险和安装来源；更新 slash command 文档。</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="questions">
+          <h2>11. 需要先拍板的问题</h2>
+          <ol>
+            <li><strong>第一期是否只支持本地插件？</strong>我建议是。远程 git/zip/marketplace 放第二期。</li>
+            <li><strong>是否兼容 old kimi-cli 的 <code>plugin.json</code>？</strong>我建议兼容核心字段，尤其是 <code>tools</code> 和顶层 <code>SKILL.md</code>。</li>
+            <li><strong>插件工具是否允许裸工具名？</strong>我建议内部强制命名空间，UI 里再展示友好名。</li>
+            <li><strong>安装后是否必须热刷新当前 session？</strong>最好支持，但可以第一期提示“新会话生效”；如果做工具执行，热刷新体验更重要。</li>
+            <li><strong>MCP 是否第一期自动接入？</strong>我建议第一期只解析和展示，第二期再合并执行。</li>
+            <li><strong>启用状态是全局还是项目级？</strong>第一期全局更简单；项目级适合有 workspace policy 后再做。</li>
+          </ol>
+        </section>
+
+        <section id="sources">
+          <h2>12. 调研来源</h2>
+          <p>本报告基于本机源码和文档检索，不依赖远程网络资料。下面是主要证据路径。</p>
+
+          <h3>Kimi Code 当前仓库</h3>
+          <ul>
+            <li><code>/Users/moonshot/code/kimi-code/apps/kimi-code/AGENTS.md</code></li>
+            <li><code>/Users/moonshot/code/kimi-code/apps/kimi-code/src/tui/commands/registry.ts</code></li>
+            <li><code>/Users/moonshot/code/kimi-code/apps/kimi-code/src/tui/commands/resolve.ts</code></li>
+            <li><code>/Users/moonshot/code/kimi-code/apps/kimi-code/src/tui/commands/skills.ts</code></li>
+            <li><code>/Users/moonshot/code/kimi-code/apps/kimi-code/src/tui/kimi-tui.ts</code></li>
+            <li><code>/Users/moonshot/code/kimi-code/packages/node-sdk/src/session.ts</code></li>
+            <li><code>/Users/moonshot/code/kimi-code/packages/node-sdk/src/rpc.ts</code></li>
+            <li><code>/Users/moonshot/code/kimi-code/packages/agent-core/src/session/rpc.ts</code></li>
+            <li><code>/Users/moonshot/code/kimi-code/packages/agent-core/src/session/index.ts</code></li>
+            <li><code>/Users/moonshot/code/kimi-code/packages/agent-core/src/skill/scanner.ts</code></li>
+            <li><code>/Users/moonshot/code/kimi-code/packages/agent-core/src/skill/parser.ts</code></li>
+            <li><code>/Users/moonshot/code/kimi-code/packages/migration-legacy/src/detect.ts</code></li>
+            <li><code>/Users/moonshot/code/kimi-code/apps/kimi-code/src/migration/migration-screen.ts</code></li>
+            <li><code>/Users/moonshot/code/kimi-code/docs/en/customization/skills.md</code></li>
+            <li><code>/Users/moonshot/code/kimi-code/docs/en/customization/mcp.md</code></li>
+            <li><code>/Users/moonshot/code/kimi-code/docs/en/reference/slash-commands.md</code></li>
+          </ul>
+
+          <h3>参考实现</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>项目</th>
+                  <th>路径</th>
+                  <th>看点</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>kimi-cli Python</td>
+                  <td><code>/Users/moonshot/code/kimi-cli/docs/en/customization/plugins.md</code><br><code>/Users/moonshot/code/kimi-cli/src/kimi_cli/plugin/</code><br><code>/Users/moonshot/code/kimi-cli/src/kimi_cli/cli/plugin.py</code></td>
+                  <td>旧插件格式、安装、工具执行、配置注入、skill roots。</td>
+                </tr>
+                <tr>
+                  <td>Claude Code</td>
+                  <td><code>/Users/moonshot/code/claude-code/src/utils/plugins/</code><br><code>/Users/moonshot/code/claude-code/src/services/plugins/</code><br><code>/Users/moonshot/code/claude-code/src/commands/plugin/</code></td>
+                  <td>完整插件平台、marketplace、UI、纯操作层、reload。</td>
+                </tr>
+                <tr>
+                  <td>Codex</td>
+                  <td><code>/Users/moonshot/code/codex/codex-rs/tui/src/chatwidget/plugins.rs</code><br><code>/Users/moonshot/code/codex/codex-rs/app-server-protocol/src/protocol/v2/plugin.rs</code><br><code>/Users/moonshot/code/codex/codex-rs/core-plugins/src/manifest.rs</code></td>
+                  <td><code>/plugins</code> UI、plugin RPC、manifest 路径安全、配置启用状态。</td>
+                </tr>
+                <tr>
+                  <td>Pi</td>
+                  <td><code>/Users/moonshot/code/pi/packages/coding-agent/docs/skills.md</code><br><code>/Users/moonshot/code/pi/packages/coding-agent/docs/extensions.md</code><br><code>/Users/moonshot/code/pi/packages/coding-agent/src/core/extensions/loader.ts</code></td>
+                  <td>Agent Skills 标准、TS extension、热刷新、动态工具和命令。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="footnote">
+            注：本文里的“第一期/第二期”是实现建议，不代表已有产品承诺。真正开工前建议先用上面的“需要拍板的问题”确认范围。
+          </p>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    const tocLinks = Array.from(document.querySelectorAll(".toc a"));
+    const sections = tocLinks
+      .map((link) => document.querySelector(link.getAttribute("href")))
+      .filter(Boolean);
+
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (!visible) return;
+      tocLinks.forEach((link) => {
+        link.classList.toggle("active", link.getAttribute("href") === `#${visible.target.id}`);
+      });
+    }, { rootMargin: "-20% 0px -70% 0px", threshold: [0.05, 0.2, 0.5] });
+
+    sections.forEach((section) => observer.observe(section));
+
+    document.querySelectorAll("[data-tabs]").forEach((root) => {
+      const buttons = Array.from(root.querySelectorAll("[data-tab]"));
+      const container = root.parentElement;
+      const panels = Array.from(container.querySelectorAll("[data-panel]"));
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => {
+          const target = button.getAttribute("data-tab");
+          buttons.forEach((item) => item.classList.toggle("active", item === button));
+          panels.forEach((panel) => panel.classList.toggle("active", panel.getAttribute("data-panel") === target));
+        });
+      });
+    });
+
+    document.querySelectorAll("button.copy").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const selector = button.getAttribute("data-copy");
+        const target = selector ? document.querySelector(selector) : null;
+        const text = target ? target.textContent : "";
+        try {
+          await navigator.clipboard.writeText(text);
+          const old = button.textContent;
+          button.textContent = "已复制";
+          window.setTimeout(() => {
+            button.textContent = old;
+          }, 1000);
+        } catch {
+          button.textContent = "复制失败";
+        }
+      });
+    });
+
+    const search = document.querySelector("#testSearch");
+    const testItems = Array.from(document.querySelectorAll("#testList .check-item"));
+    if (search) {
+      search.addEventListener("input", () => {
+        const query = search.value.trim().toLowerCase();
+        testItems.forEach((item) => {
+          const text = `${item.textContent} ${item.getAttribute("data-keywords")}`.toLowerCase();
+          item.dataset.hidden = query && !text.includes(query) ? "true" : "false";
+        });
+      });
+    }
+  </script>
+</body>
+</html>

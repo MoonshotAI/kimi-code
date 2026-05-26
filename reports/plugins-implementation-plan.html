@@ -1,0 +1,1531 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kimi Code /plugins 实现计划</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7f8fb;
+        --surface: #ffffff;
+        --surface-2: #f1f4f8;
+        --ink: #17202a;
+        --muted: #5b6675;
+        --line: #d9e0ea;
+        --blue: #2563eb;
+        --green: #13795b;
+        --amber: #b45309;
+        --red: #b42318;
+        --violet: #6d28d9;
+        --teal: #0f766e;
+        --shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+        --radius: 8px;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        line-height: 1.62;
+      }
+
+      a {
+        color: var(--blue);
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      code,
+      pre {
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace, monospace;
+      }
+
+      code {
+        padding: 0.1rem 0.32rem;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: #f8fafc;
+        color: #1d2939;
+        font-size: 0.92em;
+      }
+
+      pre {
+        overflow: auto;
+        margin: 0.75rem 0 0;
+        padding: 0.95rem;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #0f172a;
+        color: #e5edf8;
+        font-size: 0.88rem;
+        line-height: 1.55;
+      }
+
+      pre code {
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font-size: inherit;
+      }
+
+      .page {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 28px 18px 64px;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 18px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(247, 248, 251, 0.94);
+        backdrop-filter: blur(10px);
+      }
+
+      .topbar strong {
+        font-size: 0.95rem;
+      }
+
+      .topbar nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        justify-content: flex-end;
+      }
+
+      .topbar a {
+        padding: 0.28rem 0.55rem;
+        border-radius: 6px;
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+
+      .topbar a:hover {
+        background: var(--surface-2);
+        color: var(--ink);
+        text-decoration: none;
+      }
+
+      header {
+        padding: 24px 0 18px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 12px;
+        color: var(--teal);
+        font-size: 0.9rem;
+        font-weight: 700;
+      }
+
+      h1 {
+        max-width: 980px;
+        margin: 0;
+        font-size: clamp(2rem, 4vw, 3.35rem);
+        line-height: 1.08;
+        letter-spacing: 0;
+      }
+
+      .subtitle {
+        max-width: 920px;
+        margin: 14px 0 0;
+        color: var(--muted);
+        font-size: 1.06rem;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 16px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0.2rem 0.52rem;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--surface);
+        color: var(--muted);
+        font-size: 0.84rem;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      .pill.ok {
+        border-color: #a7f3d0;
+        background: #ecfdf3;
+        color: var(--green);
+      }
+
+      .pill.warn {
+        border-color: #fed7aa;
+        background: #fff7ed;
+        color: var(--amber);
+      }
+
+      .pill.stop {
+        border-color: #fecaca;
+        background: #fff1f2;
+        color: var(--red);
+      }
+
+      .grid {
+        display: grid;
+        gap: 14px;
+      }
+
+      .grid.cols-3 {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .grid.cols-2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .panel,
+      .card {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .panel {
+        margin-top: 18px;
+        padding: 22px;
+      }
+
+      .card {
+        padding: 16px;
+      }
+
+      .card h3,
+      .panel h2 {
+        margin: 0;
+      }
+
+      h2 {
+        font-size: 1.36rem;
+        line-height: 1.24;
+        letter-spacing: 0;
+      }
+
+      h3 {
+        font-size: 1.04rem;
+        line-height: 1.32;
+        letter-spacing: 0;
+      }
+
+      .section-lead {
+        margin: 8px 0 0;
+        color: var(--muted);
+      }
+
+      .callout {
+        margin-top: 14px;
+        padding: 14px 16px;
+        border-left: 4px solid var(--blue);
+        border-radius: var(--radius);
+        background: #eff6ff;
+      }
+
+      .callout strong {
+        color: #1e3a8a;
+      }
+
+      .callout.warn {
+        border-left-color: var(--amber);
+        background: #fff7ed;
+      }
+
+      .callout.stop {
+        border-left-color: var(--red);
+        background: #fff1f2;
+      }
+
+      .decision {
+        display: grid;
+        grid-template-columns: 190px 1fr;
+        gap: 12px;
+        align-items: start;
+        padding: 12px 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .decision:first-child {
+        border-top: 0;
+        padding-top: 0;
+      }
+
+      .decision b {
+        color: var(--ink);
+      }
+
+      .decision span {
+        color: var(--muted);
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin: 14px 0;
+      }
+
+      button,
+      .button {
+        min-height: 34px;
+        padding: 0.42rem 0.74rem;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--surface);
+        color: var(--ink);
+        font: inherit;
+        font-size: 0.9rem;
+        font-weight: 650;
+        cursor: pointer;
+      }
+
+      button:hover,
+      .button:hover {
+        border-color: #aab7c8;
+        background: var(--surface-2);
+        text-decoration: none;
+      }
+
+      button.active {
+        border-color: var(--blue);
+        background: #eff6ff;
+        color: #1d4ed8;
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+      }
+
+      table {
+        width: 100%;
+        min-width: 820px;
+        border-collapse: collapse;
+        background: var(--surface);
+      }
+
+      th,
+      td {
+        padding: 11px 12px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        position: sticky;
+        top: 45px;
+        z-index: 1;
+        background: #f8fafc;
+        color: #334155;
+        font-size: 0.82rem;
+        text-transform: uppercase;
+        letter-spacing: 0;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      td small {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+      }
+
+      .tag {
+        display: inline-flex;
+        margin: 0 4px 4px 0;
+        padding: 0.12rem 0.38rem;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: #f8fafc;
+        color: var(--muted);
+        font-size: 0.78rem;
+        font-weight: 650;
+      }
+
+      .tag.green {
+        border-color: #bbf7d0;
+        background: #f0fdf4;
+        color: var(--green);
+      }
+
+      .tag.amber {
+        border-color: #fde68a;
+        background: #fffbeb;
+        color: var(--amber);
+      }
+
+      .tag.red {
+        border-color: #fecaca;
+        background: #fff1f2;
+        color: var(--red);
+      }
+
+      .tag.blue {
+        border-color: #bfdbfe;
+        background: #eff6ff;
+        color: #1d4ed8;
+      }
+
+      .tag.violet {
+        border-color: #ddd6fe;
+        background: #f5f3ff;
+        color: var(--violet);
+      }
+
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .step {
+        position: relative;
+        min-height: 112px;
+        padding: 13px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+
+      .step:not(:last-child)::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        right: -10px;
+        width: 10px;
+        height: 1px;
+        background: var(--line);
+      }
+
+      .step b {
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      .step small {
+        color: var(--muted);
+      }
+
+      .lane {
+        display: grid;
+        grid-template-columns: 160px 1fr;
+        gap: 12px;
+        align-items: stretch;
+        margin-top: 10px;
+      }
+
+      .lane-label {
+        display: flex;
+        align-items: center;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #f8fafc;
+        font-weight: 750;
+      }
+
+      .lane-items {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .mini {
+        padding: 11px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+
+      .mini b {
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      .mini span {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      details {
+        margin-top: 10px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+
+      summary {
+        cursor: pointer;
+        padding: 12px 14px;
+        font-weight: 750;
+      }
+
+      details .detail-body {
+        padding: 0 14px 14px;
+        color: var(--muted);
+      }
+
+      .source-list {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .source-list div {
+        padding: 11px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #f8fafc;
+      }
+
+      .source-list code {
+        word-break: break-all;
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      #copyStatus {
+        color: var(--green);
+        font-size: 0.9rem;
+        font-weight: 700;
+      }
+
+      .print-note {
+        display: none;
+      }
+
+      @media (max-width: 900px) {
+        .grid.cols-3,
+        .grid.cols-2,
+        .flow,
+        .source-list {
+          grid-template-columns: 1fr;
+        }
+
+        .lane {
+          grid-template-columns: 1fr;
+        }
+
+        .lane-items {
+          grid-template-columns: 1fr;
+        }
+
+        .step:not(:last-child)::after {
+          display: none;
+        }
+
+        .decision {
+          grid-template-columns: 1fr;
+        }
+
+        .topbar {
+          position: static;
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        th {
+          position: static;
+        }
+      }
+
+      @media print {
+        body {
+          background: #fff;
+        }
+
+        .topbar,
+        .toolbar,
+        button {
+          display: none;
+        }
+
+        .page {
+          max-width: none;
+          padding: 0;
+        }
+
+        .panel,
+        .card,
+        .step,
+        .mini {
+          box-shadow: none;
+          break-inside: avoid;
+        }
+
+        .print-note {
+          display: block;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="topbar">
+      <strong>Kimi Code /plugins 实现计划</strong>
+      <nav aria-label="目录">
+        <a href="#summary">结论</a>
+        <a href="#compat">兼容矩阵</a>
+        <a href="#superpowers">Superpowers</a>
+        <a href="#architecture">实现设计</a>
+        <a href="#ui">/plugins</a>
+        <a href="#milestones">计划</a>
+        <a href="#tests">验收</a>
+      </nav>
+    </div>
+
+    <main class="page">
+      <header>
+        <div class="eyebrow">本地源码调研版 · 2026-05-25</div>
+        <h1>给 Kimi Code 增加 `/plugins`：先兼容 Superpowers，再逐步扩展到 Claude / Codex / kimi-cli / OpenCode / Kilo</h1>
+        <p class="subtitle">
+          这份文档把已经下载到 <code>/Users/moonshot/code</code> 的源码和文档串起来，给出可以落地的实现顺序。
+          核心判断很简单：第一版不要直接运行 OpenCode/Kilo 的任意 JS 插件；先把插件当成“可安装的能力包”读取，
+          把 skills、工具声明、界面元数据接进 Kimi Code。
+        </p>
+        <div class="meta">
+          <span class="pill ok">第一目标：Superpowers 可用</span>
+          <span class="pill ok">推荐入口：Codex manifest</span>
+          <span class="pill warn">OpenCode/Kilo 代码插件延后</span>
+          <span class="pill stop">默认不执行第三方 JS</span>
+        </div>
+      </header>
+
+      <section id="summary" class="panel">
+        <h2>一页结论</h2>
+        <p class="section-lead">
+          Kimi Code 现有的 skills 和工具系统已经能承接大部分插件价值。真正需要新增的是插件发现、安装、启停、兼容适配和 `/plugins` 管理界面。
+        </p>
+
+        <div class="grid cols-3" style="margin-top: 16px">
+          <article class="card">
+            <span class="tag green">M1-M2</span>
+            <h3>Superpowers 先做成可用闭环</h3>
+            <p>
+              读取 <code>/Users/moonshot/code/superpowers/.codex-plugin/plugin.json</code>，把
+              <code>skills: "./skills/"</code> 加到 Kimi 的额外 skill roots，并为
+              <code>using-superpowers</code> 做一次启动提示注入。
+            </p>
+          </article>
+
+          <article class="card">
+            <span class="tag blue">M3</span>
+            <h3>kimi-cli 老插件作为工具兼容</h3>
+            <p>
+              老 <code>kimi-cli</code> 的 <code>plugin.json</code> 本质是“命令行工具声明”：工具参数走
+              <code>stdin</code>，结果走 <code>stdout</code>。这和 Kimi 的 tool manager 最容易对接。
+            </p>
+          </article>
+
+          <article class="card">
+            <span class="tag amber">M6+</span>
+            <h3>OpenCode / Kilo JS 插件不要第一版执行</h3>
+            <p>
+              它们的插件能拦截消息、工具、权限、配置和 shell env。Kimi 还没有等价的 hook 边界，直接运行会把安全和调试成本拉高。
+            </p>
+          </article>
+        </div>
+
+        <div class="callout">
+          <strong>推荐路线：</strong>
+          第一版实现“插件包读取 + 本地安装 + skills 注册 + kimi-cli 工具适配 + `/plugins` UI”。OpenCode/Kilo 的代码插件只做识别和提示，
+          不作为默认可执行能力。这样可以马上兼容 Superpowers，同时不把 Kimi 绑到另一个 agent 的运行时。
+        </div>
+
+        <div style="margin-top: 16px">
+          <div class="decision">
+            <b>兼容目标怎么定义</b>
+            <span>
+              分成四档：能读取元数据、能注册 skills、能执行声明式工具、能运行代码 hook。前两档可以马上做；第四档必须等 Kimi 自己的 hook API
+              定清楚以后再做。
+            </span>
+          </div>
+          <div class="decision">
+            <b>Superpowers 用哪条路径</b>
+            <span>
+              优先用 <code>.codex-plugin/plugin.json</code>。Superpowers 的 OpenCode 插件实际做两件事：注册 skills 路径和注入 bootstrap；
+              这两件事 Kimi 可以原生完成，不需要运行它的 JS。
+            </span>
+          </div>
+          <div class="decision">
+            <b>Claude Code 兼容度</b>
+            <span>
+              Claude 插件 schema 很完整，覆盖 commands、agents、skills、hooks、MCP、LSP、userConfig、channels、dependencies。
+              Kimi 第一版只应读取 metadata/skills/hooks 声明并展示诊断；完整行为兼容要拆阶段。
+            </span>
+          </div>
+          <div class="decision">
+            <b>Codex 兼容度</b>
+            <span>
+              Codex manifest 比 Claude 小，字段和 Superpowers 正好匹配。Kimi 第一版可兼容 <code>skills</code> 和
+              <code>interface</code>；<code>hooks</code>、<code>apps</code>、<code>mcpServers</code> 先解析展示，暂不执行。
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>当前 Kimi Code 可复用的基础</h2>
+        <p class="section-lead">
+          这部分决定了实现要贴哪里。结论是：不要先新造一整套插件运行时，先把插件能力接到已有的 skills、tool、RPC 和 TUI 命令。
+        </p>
+
+        <div class="flow" aria-label="Kimi Code 插件接入流程">
+          <div class="step">
+            <b>插件目录</b>
+            <small><code>~/.kimi-code/plugins</code> 和项目级目录，保存 manifest、状态和安装来源。</small>
+          </div>
+          <div class="step">
+            <b>manifest 读取</b>
+            <small>识别 Codex、Claude、kimi-cli、Superpowers、OpenCode/Kilo 包。</small>
+          </div>
+          <div class="step">
+            <b>能力归一</b>
+            <small>转换成 Kimi 内部的 skills、tools、bootstrap、diagnostics。</small>
+          </div>
+          <div class="step">
+            <b>Session 接入</b>
+            <small>插件 skill dirs 进入 <code>resolveSkillRoots.extraDirs</code>，工具注册进 ToolManager。</small>
+          </div>
+          <div class="step">
+            <b>/plugins UI</b>
+            <small>安装、启停、查看详情、reload、展示不兼容原因。</small>
+          </div>
+        </div>
+
+        <div class="grid cols-2" style="margin-top: 16px">
+          <article class="card">
+            <h3>已有 skills 路径可以直接承接插件 skills</h3>
+            <p>
+              <code>packages/agent-core/src/skill/scanner.ts</code> 已支持
+              <code>explicitDirs</code> 和 <code>extraDirs</code>。插件第一版可以把 skill 目录作为
+              <code>extra</code> source 注入，避免一开始就改动 skill 类型和展示规则。
+            </p>
+          </article>
+          <article class="card">
+            <h3>工具层已有命名和权限经验</h3>
+            <p>
+              <code>packages/agent-core/src/agent/tool/index.ts</code> 已管理 builtin、user、MCP 工具。
+              插件工具建议使用 <code>plugin__&lt;plugin&gt;__&lt;tool&gt;</code> 的名字，和 MCP 的
+              <code>mcp__server__tool</code> 思路保持一致。
+            </p>
+          </article>
+          <article class="card">
+            <h3>现有 TUI slash 命令没有 /plugins</h3>
+            <p>
+              <code>apps/kimi-code/src/tui/commands/registry.ts</code> 目前已有
+              <code>/settings</code>、<code>/mcp</code>、<code>/tasks</code>、<code>/sessions</code> 等命令。
+              <code>/plugins</code> 应该作为一级命令加入，并在 detail view 里显示兼容状态。
+            </p>
+          </article>
+          <article class="card">
+            <h3>SDK/RPC 要先补管理 API</h3>
+            <p>
+              <code>packages/node-sdk/src/session.ts</code> 已有 <code>listSkills</code> 和
+              <code>activateSkill</code>。插件管理更适合放在 harness/core RPC 层：list/install/enable/disable/remove/reload。
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="compat" class="panel">
+        <h2>兼容矩阵</h2>
+        <p class="section-lead">
+          这里把“兼容”拆成可落地动作。可以导入并不等于可以执行；第一版要把边界说清楚。
+        </p>
+
+        <div class="toolbar" role="group" aria-label="筛选兼容矩阵">
+          <button class="active" data-filter="all">全部</button>
+          <button data-filter="v1">第一版</button>
+          <button data-filter="v2">第二阶段</button>
+          <button data-filter="later">后续</button>
+          <button id="copyPlan">复制 Markdown 摘要</button>
+          <span id="copyStatus" aria-live="polite"></span>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>格式 / 项目</th>
+                <th>本地证据</th>
+                <th>能直接读取什么</th>
+                <th>第一版动作</th>
+                <th>不能第一版承诺的部分</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-phase="v1">
+                <td>
+                  <strong>Superpowers</strong>
+                  <small><span class="tag green">必须第一时间兼容</span></small>
+                </td>
+                <td>
+                  <code>/Users/moonshot/code/superpowers/.codex-plugin/plugin.json</code><br />
+                  <code>/Users/moonshot/code/superpowers/skills/</code><br />
+                  <code>/Users/moonshot/code/superpowers/.opencode/plugins/superpowers.js</code>
+                </td>
+                <td>
+                  元数据、<code>interface</code>、<code>skills</code>、<code>using-superpowers</code>。
+                  OpenCode JS 的实际行为也能用源码读出来：注册 skills 路径，并向第一条用户消息注入 bootstrap。
+                </td>
+                <td>
+                  用 Codex manifest 安装；注册 skills；把 bootstrap 作为 Kimi 原生 session 注入；显示为
+                  <code>format=codex+superpowers</code>。
+                </td>
+                <td>
+                  不执行 <code>.opencode/plugins/superpowers.js</code>。它依赖 OpenCode 的
+                  <code>config</code> 和 <code>experimental.chat.messages.transform</code> hook。
+                </td>
+              </tr>
+
+              <tr data-phase="v1">
+                <td>
+                  <strong>Codex plugin</strong>
+                  <small><span class="tag green">第一版可兼容子集</span></small>
+                </td>
+                <td>
+                  <code>/Users/moonshot/code/codex/codex-rs/core-plugins/src/manifest.rs</code><br />
+                  <code>/Users/moonshot/code/codex/codex-rs/utils/plugins/src/plugin_namespace.rs</code>
+                </td>
+                <td>
+                  <code>.codex-plugin/plugin.json</code>；也能识别 <code>.claude-plugin/plugin.json</code>。
+                  支持 <code>skills</code>、<code>mcpServers</code>、<code>apps</code>、<code>hooks</code>、<code>interface</code>。
+                </td>
+                <td>
+                  先支持 <code>skills</code> 和 <code>interface</code>。路径必须是 <code>./</code> 开头，并且不能逃出 plugin root。
+                </td>
+                <td>
+                  <code>hooks</code>、<code>apps</code>、<code>mcpServers</code> 先解析展示，不执行。
+                </td>
+              </tr>
+
+              <tr data-phase="v2">
+                <td>
+                  <strong>kimi-cli Python plugin</strong>
+                  <small><span class="tag blue">工具适配最直接</span></small>
+                </td>
+                <td>
+                  <code>/Users/moonshot/code/kimi-cli/docs/en/customization/plugins.md</code><br />
+                  <code>/Users/moonshot/code/kimi-cli/src/kimi_cli/plugin/</code>
+                </td>
+                <td>
+                  <code>plugin.json</code>，字段包括 <code>tools</code>、<code>command</code>、<code>parameters</code>、
+                  <code>config_file</code>、<code>inject</code>。
+                </td>
+                <td>
+                  转成 Kimi plugin tools：stdin 写 JSON 参数，stdout 返回文本；工具默认需要权限确认；超时、输出大小和 cwd 固定。
+                </td>
+                <td>
+                  旧版凭据写入 <code>config_file</code> 可以先不做，第一步用环境变量更安全。
+                </td>
+              </tr>
+
+              <tr data-phase="v2">
+                <td>
+                  <strong>Claude Code plugin</strong>
+                  <small><span class="tag amber">先导入，后兼容行为</span></small>
+                </td>
+                <td>
+                  <code>/Users/moonshot/code/claude-code/src/utils/plugins/schemas.ts</code><br />
+                  <code>/Users/moonshot/code/claude-code/src/services/plugins/</code>
+                </td>
+                <td>
+                  元数据、commands、agents、skills、hooks、outputStyles、MCP、LSP、userConfig、channels、dependencies、marketplace。
+                </td>
+                <td>
+                  先解析 metadata 和 skills；如果 manifest 没写 skills，但 root 有 <code>skills/</code>，对 Superpowers 这类包给出可用 fallback。
+                </td>
+                <td>
+                  Claude 的 hooks、commands、agents、userConfig 不能假装等价。需要逐项映射到 Kimi 的功能以后再启用。
+                </td>
+              </tr>
+
+              <tr data-phase="later">
+                <td>
+                  <strong>OpenCode plugin</strong>
+                  <small><span class="tag amber">代码运行延后</span></small>
+                </td>
+                <td>
+                  <code>/Users/moonshot/code/opencode/packages/web/src/content/docs/plugins.mdx</code><br />
+                  <code>/Users/moonshot/code/opencode/packages/plugin/src/index.ts</code><br />
+                  <code>/Users/moonshot/code/opencode/packages/opencode/src/plugin/</code>
+                </td>
+                <td>
+                  本地 <code>.opencode/plugins/*.js</code>、npm package spec、hooks、custom tools、TUI plugins、themes。
+                </td>
+                <td>
+                  第一版只识别并显示“不执行代码插件”。对 Superpowers 走 Codex manifest 专用路径。
+                </td>
+                <td>
+                  <code>tool.execute.before</code>、<code>permission.ask</code>、
+                  <code>experimental.chat.messages.transform</code> 等 hook 没有 Kimi 等价边界。
+                </td>
+              </tr>
+
+              <tr data-phase="later">
+                <td>
+                  <strong>Kilo plugin</strong>
+                  <small><span class="tag amber">OpenCode 分支同类</span></small>
+                </td>
+                <td>
+                  <code>/Users/moonshot/code/kilocode/packages/plugin/src/index.ts</code><br />
+                  <code>/Users/moonshot/code/kilocode/packages/opencode/src/plugin/index.ts</code>
+                </td>
+                <td>
+                  和 OpenCode 基本同形，只是 SDK/包名换成 <code>@kilocode/*</code>，并增加 Kilo 自己的 internal plugins。
+                </td>
+                <td>
+                  和 OpenCode 一样先识别、展示、提示。可借鉴它的 pure mode：默认跳过外部代码插件。
+                </td>
+                <td>
+                  不承诺直接运行 Kilo server/TUI plugin。否则会把 Kilo 的 runtime 假设带进 Kimi。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="superpowers" class="panel">
+        <h2>Superpowers 兼容方案</h2>
+        <p class="section-lead">
+          Superpowers 是最适合作为第一版验收目标的插件，因为它已经同时提供 Codex、Claude、Cursor、OpenCode 入口，并且核心能力主要是 skills。
+        </p>
+
+        <div class="grid cols-2" style="margin-top: 16px">
+          <article class="card">
+            <h3>本地仓库结构</h3>
+            <pre><code>superpowers/
+├── .codex-plugin/plugin.json      # Kimi 第一版优先读取
+├── .claude-plugin/plugin.json     # Claude metadata，字段较少
+├── .cursor-plugin/plugin.json     # Cursor 有 skills/agents/commands/hooks
+├── .opencode/plugins/superpowers.js
+├── hooks/session-start            # Claude/Cursor/Copilot 入口
+└── skills/*/SKILL.md              # 真正的主体能力</code></pre>
+          </article>
+
+          <article class="card">
+            <h3>Kimi 应该复刻的行为</h3>
+            <p>
+              OpenCode 版 Superpowers 做了两件事：把 <code>skills/</code> 加入 OpenCode 配置；读取
+              <code>skills/using-superpowers/SKILL.md</code>，去掉 frontmatter 后注入第一条 user message。
+              Kimi 需要实现同样效果，但用自己的 session 和 skill registry 完成。
+            </p>
+            <div class="callout warn">
+              <strong>注意：</strong>
+              <code>docs/README.opencode.md</code> 说使用 <code>experimental.chat.system.transform</code>，
+              但源码当前是 <code>experimental.chat.messages.transform</code>。实现时以源码为准。
+            </div>
+          </article>
+        </div>
+
+        <div class="lane">
+          <div class="lane-label">Superpowers 到 Kimi 的映射</div>
+          <div class="lane-items">
+            <div class="mini">
+              <b><code>skills/</code></b>
+              <span>作为插件 skill root 加入 <code>extraDirs</code>。</span>
+            </div>
+            <div class="mini">
+              <b><code>using-superpowers</code></b>
+              <span>作为 session bootstrap 注入一次，并防重复。</span>
+            </div>
+            <div class="mini">
+              <b><code>Skill</code> tool</b>
+              <span>映射到 Kimi 的 <code>SkillTool</code> 和 slash skill 命令。</span>
+            </div>
+            <div class="mini">
+              <b><code>Task</code></b>
+              <span>映射到 Kimi 的 <code>AgentTool</code>；没有 subagent 时显示降级提示。</span>
+            </div>
+          </div>
+        </div>
+
+        <details open>
+          <summary>建议的 Kimi bootstrap 文案形状</summary>
+          <div class="detail-body">
+            <p>
+              不建议把完整文案硬编码在代码里。应从 <code>skills/using-superpowers/SKILL.md</code> 读取正文，
+              在运行时追加 Kimi tool mapping。注入内容只出现一次，并打上内部标记，避免 compact、fork 或重放时重复。
+            </p>
+            <pre><code>&lt;EXTREMELY_IMPORTANT&gt;
+You have superpowers.
+
+The using-superpowers skill content is already loaded. Do not load it again.
+
+{content from skills/using-superpowers/SKILL.md without frontmatter}
+
+Tool Mapping for Kimi Code:
+- TodoWrite -> TodoList
+- Task with subagents -> Agent
+- Skill tool -> Skill
+- Read, Write, Edit, Bash -> native Kimi tools
+&lt;/EXTREMELY_IMPORTANT&gt;</code></pre>
+          </div>
+        </details>
+
+        <details>
+          <summary>为什么不用 OpenCode JS 直接跑 Superpowers</summary>
+          <div class="detail-body">
+            <p>
+              <code>.opencode/plugins/superpowers.js</code> 的输入是 OpenCode 的 <code>PluginInput</code>，
+              返回 OpenCode 的 hooks。Kimi 没有相同的 <code>config</code> hook 和 message transform hook。
+              为了两件简单行为去模拟整套 OpenCode runtime，不划算，也会让插件能修改 Kimi 的消息和工具执行流程。
+            </p>
+          </div>
+        </details>
+      </section>
+
+      <section id="architecture" class="panel">
+        <h2>实现设计</h2>
+        <p class="section-lead">
+          第一版的关键词是“读得准、装得上、可关闭、可诊断”。代码运行能力只接声明式工具，不接任意 hook。
+        </p>
+
+        <div class="grid cols-2" style="margin-top: 16px">
+          <article class="card">
+            <h3>新增模块建议</h3>
+            <pre><code>packages/agent-core/src/plugin/
+├── types.ts              # 内部 PluginCandidate / PluginCapability
+├── paths.ts              # ~/.kimi-code/plugins 和项目插件目录
+├── detect.ts             # 识别 manifest 格式
+├── manifest-codex.ts     # .codex-plugin/plugin.json
+├── manifest-claude.ts    # .claude-plugin/plugin.json 子集
+├── manifest-kimi-cli.ts  # plugin.json tools
+├── manifest-opencode.ts  # 只读识别
+├── manager.ts            # list/install/remove/enable/reload
+├── skill-roots.ts        # 计算启用插件的 skills 目录
+├── tool-adapter.ts       # kimi-cli tool -> Kimi Tool
+└── bootstrap.ts          # Superpowers / manifest bootstrap</code></pre>
+          </article>
+
+          <article class="card">
+            <h3>内部数据形状</h3>
+            <pre><code>type PluginFormat =
+  | 'kimi'
+  | 'codex'
+  | 'claude'
+  | 'kimi-cli'
+  | 'opencode'
+  | 'kilo'
+  | 'superpowers'
+  | 'unknown';
+
+interface PluginCandidate {
+  id: string;
+  name: string;
+  version?: string;
+  description?: string;
+  root: string;
+  source: 'installed' | 'local-path' | 'git' | 'zip' | 'npm';
+  formats: readonly PluginFormat[];
+  capabilities: PluginCapabilities;
+  diagnostics: readonly PluginDiagnostic[];
+}</code></pre>
+          </article>
+        </div>
+
+        <div class="grid cols-2" style="margin-top: 14px">
+          <article class="card">
+            <h3>配置建议</h3>
+            <p>
+              放在 core config，而不是 TUI config。TUI config 只管界面偏好；插件会影响 agent 能力，应该由
+              <code>~/.kimi-code/config.toml</code> 和 core SDK 统一管理。
+            </p>
+            <pre><code>[plugins]
+dirs = ["~/.kimi-code/plugins", ".kimi-code/plugins"]
+experimental_code_plugins = false
+
+[plugins.enabled]
+superpowers = true</code></pre>
+          </article>
+
+          <article class="card">
+            <h3>安装状态文件</h3>
+            <p>
+              建议在 <code>~/.kimi-code/plugins/installed.json</code> 存来源、版本、启停状态和校验信息。
+              插件正文可以 copy 到本地缓存，也可以保留 local path 引用；第一版本地路径安装可以先引用，远程安装再 copy。
+            </p>
+            <pre><code>{
+  "plugins": [
+    {
+      "id": "superpowers",
+      "root": "/Users/moonshot/code/superpowers",
+      "source": "local-path",
+      "enabled": true,
+      "formats": ["codex", "superpowers"]
+    }
+  ]
+}</code></pre>
+          </article>
+        </div>
+
+        <h3 style="margin-top: 20px">关键接入点</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>代码区域</th>
+                <th>要做什么</th>
+                <th>为什么放这里</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>packages/agent-core/src/config/schema.ts</code></td>
+                <td>增加 <code>plugins</code> config schema 和 patch schema。</td>
+                <td>插件是运行能力，不是纯 UI 偏好。</td>
+              </tr>
+              <tr>
+                <td><code>packages/agent-core/src/rpc/core-impl.ts</code></td>
+                <td>新增 plugin manager，并在创建 session 时把启用插件的 skill dirs 传给 <code>extraSkillDirs</code>。</td>
+                <td>Session 现在已经从 core RPC 汇总 skills 配置。</td>
+              </tr>
+              <tr>
+                <td><code>packages/agent-core/src/session/index.ts</code></td>
+                <td>接收插件 bootstrap，并在新 session 的首轮上下文注入一次。</td>
+                <td>Superpowers 的“已加载 using-superpowers”需要 session 级语义。</td>
+              </tr>
+              <tr>
+                <td><code>packages/agent-core/src/agent/tool/index.ts</code></td>
+                <td>增加 plugin tool source，注册 <code>plugin__name__tool</code>。</td>
+                <td>kimi-cli 老插件工具需要进入模型可调用工具列表。</td>
+              </tr>
+              <tr>
+                <td><code>packages/node-sdk/src/rpc.ts</code></td>
+                <td>暴露 <code>listPlugins</code>、<code>installPlugin</code>、<code>setPluginEnabled</code>、<code>removePlugin</code>、<code>reloadPlugins</code>。</td>
+                <td>TUI 和未来非 TUI 调用都走同一套 API。</td>
+              </tr>
+              <tr>
+                <td><code>apps/kimi-code/src/tui/commands/registry.ts</code></td>
+                <td>增加 <code>/plugins</code> slash command。</td>
+                <td>和 <code>/mcp</code>、<code>/settings</code> 同级，符合用户预期。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout stop">
+          <strong>安全边界：</strong>
+          默认只执行 Kimi 自己适配的声明式工具。OpenCode/Kilo/Claude hooks 不能默认执行；即使后续支持，也必须在
+          <code>experimental_code_plugins = true</code> 之类的显式配置下打开。
+        </div>
+      </section>
+
+      <section id="ui" class="panel">
+        <h2><code>/plugins</code> 用户体验</h2>
+        <p class="section-lead">
+          `/plugins` 不是单纯列表。它要回答三个问题：装了什么、现在能用什么、为什么某些能力没启用。
+        </p>
+
+        <div class="grid cols-3" style="margin-top: 16px">
+          <article class="card">
+            <h3>列表页</h3>
+            <p>
+              展示 name、version、来源、enabled、format、skills/tools 数量、诊断 badge。对 Superpowers 显示
+              <span class="tag green">Ready</span> 和 <span class="tag blue">Codex manifest</span>。
+            </p>
+          </article>
+          <article class="card">
+            <h3>详情页</h3>
+            <p>
+              分区显示 metadata、skills、tools、unsupported hooks、安装路径、来源、最近一次 reload 错误。
+              对不支持的 hooks 给明确原因，不只报“unsupported”。
+            </p>
+          </article>
+          <article class="card">
+            <h3>安装入口</h3>
+            <p>
+              第一版先支持 local path：<code>/plugins install /Users/moonshot/code/superpowers</code>。
+              后续再做 git/zip/npm/marketplace。
+            </p>
+          </article>
+        </div>
+
+        <details open>
+          <summary>建议命令集</summary>
+          <div class="detail-body">
+            <pre><code>/plugins
+/plugins install /Users/moonshot/code/superpowers
+/plugins info superpowers
+/plugins enable superpowers
+/plugins disable superpowers
+/plugins remove superpowers
+/plugins reload</code></pre>
+            <p>
+              如果当前 TUI 不适合一次做完整交互界面，可以先用 slash command + dialog 组合实现；核心 API 稳定后再美化列表交互。
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>界面诊断文案示例</summary>
+          <div class="detail-body">
+            <pre><code>superpowers 5.1.0
+Status: enabled
+Formats: codex, superpowers
+Skills: 12 loaded from /Users/moonshot/code/superpowers/skills
+Bootstrap: using-superpowers injected once per new session
+
+Unsupported:
+- .opencode/plugins/superpowers.js was detected but not executed.
+  Reason: OpenCode message/config hooks are not part of Kimi plugin runtime.</code></pre>
+          </div>
+        </details>
+      </section>
+
+      <section id="milestones" class="panel">
+        <h2>分阶段实现计划</h2>
+        <p class="section-lead">
+          计划按“能被用户看到的行为”拆，不按内部模块堆任务。每个阶段都应该能独立 review。
+        </p>
+
+        <div class="table-wrap" style="margin-top: 14px">
+          <table>
+            <thead>
+              <tr>
+                <th>阶段</th>
+                <th>目标</th>
+                <th>主要改动</th>
+                <th>验收方式</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-phase="v1">
+                <td><strong>M1</strong><br /><span class="tag green">插件模型和检测</span></td>
+                <td>能识别本地插件目录，输出统一的 plugin candidate。</td>
+                <td>
+                  新增 <code>packages/agent-core/src/plugin</code>；支持 Codex manifest、Claude manifest 子集、kimi-cli
+                  <code>plugin.json</code>、OpenCode/Kilo 只读识别。
+                </td>
+                <td>
+                  fixture 覆盖 6 类格式；路径逃逸、空 name、坏 JSON 都有诊断；不会执行任何插件代码。
+                </td>
+              </tr>
+              <tr data-phase="v1">
+                <td><strong>M2</strong><br /><span class="tag green">Superpowers 可用</span></td>
+                <td>从本地路径安装 Superpowers 后，新 session 能看到并使用它的 skills。</td>
+                <td>
+                  安装 local path；注册 <code>skills/</code>；读取 <code>using-superpowers</code> 注入一次；增加 tool mapping。
+                </td>
+                <td>
+                  <code>/plugins install /Users/moonshot/code/superpowers</code> 后，
+                  <code>listSkills</code> 出现 Superpowers skills；问 “Tell me about your superpowers” 有正确上下文。
+                </td>
+              </tr>
+              <tr data-phase="v2">
+                <td><strong>M3</strong><br /><span class="tag blue">kimi-cli 工具</span></td>
+                <td>旧版 <code>plugin.json</code> 的工具能被 Kimi 调用。</td>
+                <td>
+                  转 JSON Schema；注册 plugin tools；stdin/stdout 适配；超时、cwd、env、输出大小限制；权限默认 ask。
+                </td>
+                <td>
+                  一个 Python 示例插件能接收 JSON 参数并返回结果；禁用插件后工具从新 session 消失。
+                </td>
+              </tr>
+              <tr data-phase="v2">
+                <td><strong>M4</strong><br /><span class="tag blue">完整管理闭环</span></td>
+                <td>用户能安装、启停、删除、reload、查看诊断。</td>
+                <td>
+                  SDK/RPC 补齐管理 API；TUI 详情页；状态文件；reload 后刷新 skills/tools。
+                </td>
+                <td>
+                  `/plugins` 列表和详情能解释每个插件为什么 ready、partial 或 unsupported。
+                </td>
+              </tr>
+              <tr data-phase="later">
+                <td><strong>M5</strong><br /><span class="tag amber">Claude/Codex 扩展</span></td>
+                <td>更完整地导入 Claude/Codex 插件声明。</td>
+                <td>
+                  Claude commands 到 Kimi slash commands 的映射评估；MCP 配置导入；hooks 配置只读展示升级为可确认导入。
+                </td>
+                <td>
+                  对 2-3 个真实 Claude 插件给出可用能力和不可用能力列表，不误报可执行。
+                </td>
+              </tr>
+              <tr data-phase="later">
+                <td><strong>M6</strong><br /><span class="tag amber">OpenCode/Kilo 实验</span></td>
+                <td>只在显式开启时运行非常小的安全子集。</td>
+                <td>
+                  先考虑只支持 <code>config</code> 追加 skill paths 和只读 message bootstrap；其他 hooks 保持禁用。
+                </td>
+                <td>
+                  默认关闭；打开后有清晰风险提示；失败不会影响普通 Kimi session。
+                </td>
+              </tr>
+              <tr data-phase="later">
+                <td><strong>M7</strong><br /><span class="tag violet">远程安装和市场</span></td>
+                <td>支持 git/zip/npm/marketplace。</td>
+                <td>
+                  下载、校验、缓存、更新、锁版本；借鉴 Claude marketplace 和 Codex remote plugin 的设计。
+                </td>
+                <td>
+                  可安装固定 tag；更新前能展示 diff/版本；失败可回滚。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tests" class="panel">
+        <h2>验收标准和测试</h2>
+        <p class="section-lead">
+          这类功能最怕“看起来装上了，但 session 里没生效”。测试要覆盖真实路径，不只测 parser。
+        </p>
+
+        <div class="grid cols-2" style="margin-top: 16px">
+          <article class="card">
+            <h3>第一版必须通过的验收</h3>
+            <ul>
+              <li><code>/plugins install /Users/moonshot/code/superpowers</code> 后列表显示 enabled、version、skills 数量。</li>
+              <li>Superpowers skills 进入 <code>session.listSkills()</code>，并能被 <code>SkillTool</code> 使用。</li>
+              <li>新 session 只注入一次 <code>using-superpowers</code> bootstrap，重复 reload 不重复。</li>
+              <li>检测到 OpenCode JS，但显示为未执行，并解释原因。</li>
+              <li>禁用插件后，新 session 不再加载它的 skills 和 bootstrap。</li>
+            </ul>
+          </article>
+
+          <article class="card">
+            <h3>测试文件建议</h3>
+            <ul>
+              <li>在 <code>packages/agent-core</code> 现有测试附近增加 plugin parser/manager 测试，不要散落太多新文件。</li>
+              <li>Superpowers fixture 只保留最小结构：<code>.codex-plugin/plugin.json</code> + 两个 <code>SKILL.md</code>。</li>
+              <li>kimi-cli fixture 覆盖 stdout 成功、非 0 退出、超时、坏 JSON 参数。</li>
+              <li>TUI command 先测 command resolution 和 RPC 调用，不强行测复杂渲染内部。</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="callout">
+          <strong>建议最小手测脚本：</strong>
+          安装 Superpowers 本地路径，启动新 session，运行 <code>/plugins</code> 查看状态，再问
+          <code>Tell me about your superpowers</code>，最后 disable 并开启新 session 确认 skills 消失。
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>主要风险和处理方式</h2>
+        <div class="table-wrap" style="margin-top: 14px">
+          <table>
+            <thead>
+              <tr>
+                <th>风险</th>
+                <th>影响</th>
+                <th>处理方式</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>第三方代码插件改写消息或工具参数</td>
+                <td>用户很难知道模型到底收到了什么，也难以 debug。</td>
+                <td>第一版不执行 OpenCode/Kilo/Claude hooks；后续必须显式开启并记录诊断。</td>
+              </tr>
+              <tr>
+                <td>插件工具和内置工具重名</td>
+                <td>可能误调用高权限工具。</td>
+                <td>插件工具统一加 <code>plugin__</code> 前缀；详情页展示原始工具名。</td>
+              </tr>
+              <tr>
+                <td>manifest path 逃逸</td>
+                <td>插件可能读取根目录外的文件作为技能或资源。</td>
+                <td>沿用 Codex 的约束：相对路径必须 <code>./</code> 开头，resolve 后必须在 plugin root 内。</td>
+              </tr>
+              <tr>
+                <td>Superpowers bootstrap 重复注入</td>
+                <td>token 膨胀，模型重复收到同一段强提示。</td>
+                <td>注入时加内部标记；session/fork/compact 流程里检查是否已存在。</td>
+              </tr>
+              <tr>
+                <td>Claude manifest 字段太多</td>
+                <td>容易把“能解析”误说成“能执行”。</td>
+                <td>详情页按 capability 分组：loaded、recognized、unsupported；默认保守。</td>
+              </tr>
+              <tr>
+                <td>远程安装供应链风险</td>
+                <td>自动拉取和执行远程内容会扩大攻击面。</td>
+                <td>远程安装放 M7；第一版 local path；远程需要 pin 版本、缓存、校验和回滚。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>待确认问题</h2>
+        <p class="section-lead">
+          这些问题不阻塞 M1/M2，但会影响后续兼容面和用户配置形态。
+        </p>
+        <div class="grid cols-2" style="margin-top: 16px">
+          <article class="card">
+            <h3>安装策略</h3>
+            <p>
+              本地路径安装是“引用原目录”还是“copy 到 <code>~/.kimi-code/plugins</code>”？开发期引用更方便，发布版 copy 更稳定。
+              建议第一版支持引用，并在远程安装阶段引入 copy/cache。
+            </p>
+          </article>
+          <article class="card">
+            <h3>Superpowers bootstrap 是否泛化</h3>
+            <p>
+              可以先做成 Superpowers adapter。等出现第二个需要同类行为的插件，再把它提升为 manifest 字段，例如
+              <code>bootstrapSkill</code>。
+            </p>
+          </article>
+          <article class="card">
+            <h3>插件启用范围</h3>
+            <p>
+              全局启用、项目启用、单 session 启用的优先级要明确。建议先全局 + 项目两级，项目覆盖全局。
+            </p>
+          </article>
+          <article class="card">
+            <h3>Claude hooks 怎么处理</h3>
+            <p>
+              第一版建议“识别但不执行”，详情页列出 hooks。未来如果支持，要先定义 Kimi 的 hook 输入输出，而不是照搬 Claude JSON。
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>调研来源</h2>
+        <p class="section-lead">
+          以下是本计划直接引用的本地源码和文档位置。路径都来自 <code>/Users/moonshot/code</code> 下已下载仓库。
+        </p>
+        <div class="source-list">
+          <div>
+            <strong>Kimi Code 当前实现</strong><br />
+            <code>/Users/moonshot/code/kimi-code/packages/agent-core/src/skill/scanner.ts</code><br />
+            <code>/Users/moonshot/code/kimi-code/packages/agent-core/src/agent/tool/index.ts</code><br />
+            <code>/Users/moonshot/code/kimi-code/apps/kimi-code/src/tui/commands/registry.ts</code>
+          </div>
+          <div>
+            <strong>Superpowers</strong><br />
+            <code>/Users/moonshot/code/superpowers/.codex-plugin/plugin.json</code><br />
+            <code>/Users/moonshot/code/superpowers/.opencode/plugins/superpowers.js</code><br />
+            <code>/Users/moonshot/code/superpowers/hooks/session-start</code><br />
+            <code>/Users/moonshot/code/superpowers/docs/README.opencode.md</code>
+          </div>
+          <div>
+            <strong>Codex plugins</strong><br />
+            <code>/Users/moonshot/code/codex/codex-rs/core-plugins/src/manifest.rs</code><br />
+            <code>/Users/moonshot/code/codex/codex-rs/utils/plugins/src/plugin_namespace.rs</code>
+          </div>
+          <div>
+            <strong>Claude Code plugins</strong><br />
+            <code>/Users/moonshot/code/claude-code/src/utils/plugins/schemas.ts</code><br />
+            <code>/Users/moonshot/code/claude-code/src/services/plugins/</code>
+          </div>
+          <div>
+            <strong>kimi-cli Python plugins</strong><br />
+            <code>/Users/moonshot/code/kimi-cli/docs/en/customization/plugins.md</code><br />
+            <code>/Users/moonshot/code/kimi-cli/src/kimi_cli/plugin/</code>
+          </div>
+          <div>
+            <strong>OpenCode / Kilo</strong><br />
+            <code>/Users/moonshot/code/opencode/packages/web/src/content/docs/plugins.mdx</code><br />
+            <code>/Users/moonshot/code/opencode/packages/plugin/src/index.ts</code><br />
+            <code>/Users/moonshot/code/opencode/packages/opencode/src/plugin/</code><br />
+            <code>/Users/moonshot/code/kilocode/packages/plugin/src/index.ts</code>
+          </div>
+        </div>
+      </section>
+
+      <textarea id="markdownPlan" class="hidden" aria-hidden="true">
+# Kimi Code /plugins implementation plan
+
+## Recommendation
+Start with a plugin package reader and manager, not a general JavaScript hook runtime.
+
+## Phase order
+1. M1: Plugin model and local manifest detection for Codex, Claude, kimi-cli, OpenCode/Kilo read-only, and Superpowers.
+2. M2: Superpowers first-class compatibility through `.codex-plugin/plugin.json`, `skills/`, and a Kimi-native `using-superpowers` bootstrap.
+3. M3: Old kimi-cli `plugin.json` tools through stdin/stdout subprocess adapter.
+4. M4: `/plugins` management UI and SDK/RPC APIs.
+5. M5: Broaden Claude/Codex import support.
+6. M6+: Consider OpenCode/Kilo code plugin runtime only behind an explicit experimental flag.
+
+## First acceptance target
+`/plugins install /Users/moonshot/code/superpowers` should enable Superpowers skills in a new Kimi session, inject the `using-superpowers` bootstrap once, and clearly show that `.opencode/plugins/superpowers.js` was detected but not executed.
+      </textarea>
+
+      <p class="print-note">本页为自包含 HTML，可直接离线查看。</p>
+    </main>
+
+    <script>
+      const filterButtons = Array.from(document.querySelectorAll("[data-filter]"));
+      const phaseRows = Array.from(document.querySelectorAll("tr[data-phase]"));
+      const copyButton = document.getElementById("copyPlan");
+      const copyStatus = document.getElementById("copyStatus");
+      const markdownPlan = document.getElementById("markdownPlan");
+
+      function applyFilter(filter) {
+        filterButtons.forEach((button) => {
+          button.classList.toggle("active", button.dataset.filter === filter);
+        });
+        phaseRows.forEach((row) => {
+          row.classList.toggle("hidden", filter !== "all" && row.dataset.phase !== filter);
+        });
+      }
+
+      filterButtons.forEach((button) => {
+        button.addEventListener("click", () => applyFilter(button.dataset.filter));
+      });
+
+      copyButton.addEventListener("click", async () => {
+        const text = markdownPlan.value.trim();
+        try {
+          await navigator.clipboard.writeText(text);
+          copyStatus.textContent = "已复制";
+        } catch {
+          markdownPlan.classList.remove("hidden");
+          markdownPlan.focus();
+          markdownPlan.select();
+          copyStatus.textContent = "请选择文本复制";
+        }
+        window.setTimeout(() => {
+          copyStatus.textContent = "";
+        }, 1800);
+      });
+    </script>
+  </body>
+</html>

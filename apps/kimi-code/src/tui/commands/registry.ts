@@ -69,6 +69,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'plugins',
+    aliases: [],
+    description: 'Manage plugins',
+    priority: 60,
+    availability: 'always',
+  },
+  {
     name: 'compact',
     aliases: [],
     description: 'Compact the conversation context',
