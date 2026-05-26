@@ -15,7 +15,7 @@ Some commands are only available in the idle state. Running them while the sessi
 | `/login` | — | Pick an account or platform and sign in: Kimi Code uses the OAuth device code flow, while the Moonshot AI Open Platform signs in with an API key. | No |
 | `/logout` | — | Clear the credentials of the currently selected account (Kimi Code OAuth credentials, or the corresponding open platform provider config). | No |
 | `/connect [--refresh] [--url=<catalog-url>]` | — | Configure a provider and model from a model catalog. The default catalog is bundled with the CLI; pass `--refresh` to fetch the latest catalog from models.dev, or `--url` to read it from a custom URL. See [Providers and models — `/connect` and the model catalog](../configuration/providers.md#connect-and-the-model-catalog). | No |
-| `/model` | — | Switch the LLM model used by the current session. | Yes |
+| `/model` | — | Switch the LLM model used by the current session. | No |
 | `/settings` | `/config` | Open the settings panel inside the TUI. | Yes |
 | `/permission` | — | Choose a permission mode. | Yes |
 | `/editor` | — | Configure the external editor launched by `Ctrl-G`. | Yes |
@@ -26,7 +26,7 @@ Some commands are only available in the idle state. Running them while the sessi
 | Command | Alias | Description | Always available |
 | --- | --- | --- | --- |
 | `/new` | `/clear` | Start a brand-new session, discarding the current context. | No |
-| `/sessions` | `/resume` | Browse historical sessions and switch to or resume one. | Yes |
+| `/sessions` | `/resume` | Browse historical sessions and switch to or resume one. | No |
 | `/tasks` | `/task` | Browse the background task list. | Yes |
 | `/fork` | — | Fork a new session from the current one, preserving the full conversation history. | No |
 | `/title [<text>]` | `/rename` | Without arguments, show the current session title; with an argument, set it as the new title (up to 200 characters). | Yes |
