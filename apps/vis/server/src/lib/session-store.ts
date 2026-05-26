@@ -3,22 +3,9 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
-import { resolveWireMigrations } from '@moonshot-ai/agent-core/agent/records/migration';
-
 import type { SessionSummary, SessionDetail, AgentInfo, SessionHealth } from './agent-record-types';
 
 const SESSION_ID_RE = /^session_[A-Za-z0-9._-]+$/;
-
-/** Any wire version that `resolveWireMigrations` can resolve to the current
- *  one is supported (the wire-reader migrates on read). */
-function isSupportedProtocol(version: string): boolean {
-  try {
-    resolveWireMigrations(version);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 interface StateJson {
   createdAt?: string;
@@ -87,9 +74,8 @@ async function tryReadSummary(sessionDir: string, sessionId: string, workDir: st
       const info = await scanWire(mainWirePath);
       mainCount = info.count;
       protocolVersion = info.protocolVersion;
-      if (protocolVersion !== null && !isSupportedProtocol(protocolVersion)) {
-        health = 'unsupported_protocol';
-      }
+      // Note: the protocol version is not used to gate health any more —
+      // the wire-reader best-efforts unknown versions with a warning.
     } catch {
       // A single unreadable wire file must not fail the whole list.
       health = 'broken_main_wire';

@@ -40,6 +40,20 @@ describe('session-store', () => {
     expect(sessions[0]!.wireProtocolVersion).toBe('1.0');
   });
 
+  it('treats unknown protocol versions as healthy (wire-reader best-efforts)', async () => {
+    const { home, sessionDir, cleanup: c } = await buildSessionFixture('sample-main');
+    cleanup = c;
+    const { readFile, writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const wirePath = join(sessionDir, 'agents', 'main', 'wire.jsonl');
+    const lines = (await readFile(wirePath, 'utf8')).split('\n');
+    lines[0] = JSON.stringify({ type: 'metadata', protocol_version: '2.2', created_at: 1 });
+    await writeFile(wirePath, lines.join('\n'));
+    const sessions = await listSessions(home);
+    expect(sessions[0]!.health).toBe('ok');
+    expect(sessions[0]!.wireProtocolVersion).toBe('2.2');
+  });
+
   it('falls back to empty workDir when session is not in the index', async () => {
     const { home, cleanup: c } = await buildSessionFixture('sample-main');
     cleanup = c;
