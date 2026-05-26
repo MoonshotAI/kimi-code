@@ -2,7 +2,6 @@ import type { MouseEvent } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import type { SessionSummary } from '../../types';
 import { formatRelativeTime } from '../../util/time';
-import { Pill } from '../shared/Pill';
 
 interface SessionCardProps {
   session: SessionSummary;
@@ -12,13 +11,13 @@ interface SessionCardProps {
 
 export function SessionCard({ session, onDelete, deleting }: SessionCardProps) {
   const { sessionId } = useParams<{ sessionId: string }>();
-  const selected = sessionId === session.session_id;
-  const dirty = session.last_exit_code === 'dirty';
-  const workspaceLabel = session.workspace_dir
-    ? session.workspace_dir.split('/').slice(-2).join('/')
+  const selected = sessionId === session.sessionId;
+  const workspaceLabel = session.workDir
+    ? session.workDir.split('/').slice(-2).join('/')
     : '(no workspace)';
-  const shortId = session.session_id.replace(/^session_/, '').slice(0, 10);
-  const title = session.title ?? session.custom_title;
+  const shortId = session.sessionId.replace(/^session_/, '').slice(0, 10);
+  const title = session.title;
+  const subagentCount = Math.max(0, session.agentCount - 1);
 
   function handleDeleteClick(e: MouseEvent<HTMLButtonElement>) {
     e.preventDefault();
@@ -30,56 +29,35 @@ export function SessionCard({ session, onDelete, deleting }: SessionCardProps) {
     <div
       className={[
         'group relative border-b border-border transition-colors',
-        selected
-          ? 'bg-surface-2'
-          : 'hover:bg-surface-1',
-        session.archived ? 'opacity-60' : '',
+        selected ? 'bg-surface-2' : 'hover:bg-surface-1',
       ].join(' ')}
     >
       {selected ? (
         <span className="absolute inset-y-0 left-0 w-[2px] bg-[var(--color-cat-conversation)]" />
       ) : null}
-      <Link to={`/sessions/${session.session_id}`} className="block px-3 py-2 pr-10">
+      <Link to={`/sessions/${session.sessionId}`} className="block px-3 py-2 pr-10">
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
             <span
               className="inline-block h-[7px] w-[7px] shrink-0 rounded-full"
-              style={{
-                backgroundColor: dirty ? 'var(--color-sev-warning)' : 'var(--color-fg-3)',
-              }}
-              title={dirty ? 'dirty exit' : 'clean or unknown exit'}
+              style={{ backgroundColor: 'var(--color-fg-3)' }}
             />
             <span className="shrink-0 font-mono text-[12px] text-fg-0">{shortId}</span>
-            {session.model ? (
-              <Pill tone="config" variant="soft" className="!py-0">
-                {session.model}
-              </Pill>
-            ) : null}
-            {session.archived ? (
-              <Pill tone="warning" variant="soft" className="!py-0">
-                archived
-              </Pill>
-            ) : null}
           </div>
           <span className="shrink-0 font-mono text-[10.5px] text-fg-3 tabular">
-            {formatRelativeTime(session.updated_at)}
+            {formatRelativeTime(session.updatedAt)}
           </span>
         </div>
         <div className="mt-1 flex items-center gap-3 font-mono text-[10.5px] text-fg-2">
-          <span className="truncate" title={session.workspace_dir ?? ''}>
+          <span className="truncate" title={session.workDir ?? ''}>
             {workspaceLabel}
           </span>
           <span className="tabular text-fg-3">
-            {session.wire_record_count}ev
+            {session.mainWireRecordCount}ev
           </span>
-          {session.subagent_count > 0 ? (
+          {subagentCount > 0 ? (
             <span className="tabular text-[var(--color-cat-subagent)]">
-              {session.subagent_count}sub
-            </span>
-          ) : null}
-          {session.archive_count > 0 ? (
-            <span className="tabular text-[var(--color-compaction)]">
-              {session.archive_count}arch
+              {subagentCount}sub
             </span>
           ) : null}
           {session.health !== 'ok' ? (
@@ -93,9 +71,9 @@ export function SessionCard({ session, onDelete, deleting }: SessionCardProps) {
             {title}
           </div>
         ) : null}
-        {session.last_prompt ? (
-          <div className="mt-1 truncate font-mono text-[10.5px] text-fg-3" title={session.last_prompt}>
-            prompt · {session.last_prompt}
+        {session.lastPrompt ? (
+          <div className="mt-1 truncate font-mono text-[10.5px] text-fg-3" title={session.lastPrompt}>
+            prompt · {session.lastPrompt}
           </div>
         ) : null}
       </Link>
@@ -104,8 +82,8 @@ export function SessionCard({ session, onDelete, deleting }: SessionCardProps) {
         onClick={handleDeleteClick}
         disabled={deleting}
         className="absolute right-2 top-2 flex h-5 w-5 items-center justify-center border border-transparent text-fg-3 transition-colors hover:border-[var(--color-sev-error)] hover:text-[var(--color-sev-error)] disabled:cursor-not-allowed disabled:opacity-40"
-        title={`Delete session ${session.session_id}`}
-        aria-label={`Delete session ${session.session_id}`}
+        title={`Delete session ${session.sessionId}`}
+        aria-label={`Delete session ${session.sessionId}`}
       >
         <TrashIcon />
       </button>

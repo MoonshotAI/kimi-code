@@ -567,12 +567,30 @@ describe("KimiTUI startup", () => {
 
   it("tracks logout after managed credentials and session state are cleared", async () => {
     const session = makeSession();
-    const harness = makeHarness(session);
+    const harness = makeHarness(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: { provider: "managed:kimi-code", model: "moonshot-v1", maxContextSize: 100 },
+        },
+        providers: { "managed:kimi-code": { type: "kimi" } },
+      })),
+      auth: {
+        status: vi.fn(async () => ({
+          providers: [{ providerName: "managed:kimi-code", hasToken: true }],
+        })),
+        login: vi.fn(async () => {}),
+        logout: vi.fn(),
+        getManagedUsage: vi.fn(),
+      },
+    });
     const driver = makeDriver(harness, makeStartupInput());
 
     await expect(driver.init()).resolves.toBe(false);
     harness.track.mockClear();
 
+    vi.spyOn(driver as any, "promptLogoutProviderSelection").mockResolvedValue(
+      "managed:kimi-code",
+    );
     await driver.handleLogoutCommand();
 
     expect(harness.auth.logout).toHaveBeenCalledWith("managed:kimi-code");
@@ -583,6 +601,79 @@ describe("KimiTUI startup", () => {
       sessionTitle: null,
     });
     expect(harness.track).toHaveBeenCalledWith("logout", { provider: "managed:kimi-code" });
+  });
+
+  it("keeps the active session when logging out a different provider", async () => {
+    const session = makeSession();
+    const removeProvider = vi.fn(async () => {});
+    const harness = makeHarness(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: { provider: "managed:kimi-code", model: "moonshot-v1", maxContextSize: 100 },
+        },
+        providers: {
+          "managed:kimi-code": { type: "kimi" },
+          openai: { type: "openai", baseUrl: "https://api.openai.com/v1" },
+        },
+      })),
+      removeProvider,
+      auth: {
+        status: vi.fn(async () => ({
+          providers: [{ providerName: "managed:kimi-code", hasToken: true }],
+        })),
+        login: vi.fn(async () => {}),
+        logout: vi.fn(),
+        getManagedUsage: vi.fn(),
+      },
+    });
+    const driver = makeDriver(harness, makeStartupInput());
+
+    await expect(driver.init()).resolves.toBe(false);
+    harness.track.mockClear();
+
+    vi.spyOn(driver as any, "promptLogoutProviderSelection").mockResolvedValue("openai");
+    await driver.handleLogoutCommand();
+
+    expect(removeProvider).toHaveBeenCalledWith("openai");
+    expect(harness.auth.logout).not.toHaveBeenCalled();
+    expect(session.close).not.toHaveBeenCalled();
+    expect(driver.state.appState).toMatchObject({
+      sessionId: "ses-1",
+      model: "k2",
+    });
+    expect(harness.track).toHaveBeenCalledWith("logout", { provider: "openai" });
+  });
+
+  it("can log out a stale managed entry even after the OAuth token is gone", async () => {
+    const session = makeSession();
+    const harness = makeHarness(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: { provider: "managed:kimi-code", model: "moonshot-v1", maxContextSize: 100 },
+        },
+        providers: { "managed:kimi-code": { type: "kimi" } },
+      })),
+      auth: {
+        // Token gone (e.g. credentials file deleted) but the managed entry
+        // is still sitting in config.providers.
+        status: vi.fn(async () => ({
+          providers: [{ providerName: "managed:kimi-code", hasToken: false }],
+        })),
+        login: vi.fn(async () => {}),
+        logout: vi.fn(),
+        getManagedUsage: vi.fn(),
+      },
+    });
+    const driver = makeDriver(harness, makeStartupInput());
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    vi.spyOn(driver as any, "promptLogoutProviderSelection").mockResolvedValue(
+      "managed:kimi-code",
+    );
+    await driver.handleLogoutCommand();
+
+    expect(harness.auth.logout).toHaveBeenCalledWith("managed:kimi-code");
   });
 
   it("starts TUI without replaying when --continue needs OAuth login", async () => {

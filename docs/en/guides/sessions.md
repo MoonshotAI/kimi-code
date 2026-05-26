@@ -63,7 +63,7 @@ kimi --session
 - `/fork`: fork the current session (see below).
 - `/title <text>` (`/rename`): set a session title for easier recognition. Without an argument, shows the current title.
 
-`/sessions` works even while streaming, but switching requires interrupting the turn first with `Esc` or `Ctrl-C`. `/new`, `/fork`, and `/compact` are only available while idle.
+`/sessions`, `/new`, `/fork`, and `/compact` are only available while idle. During streaming output or context compaction, interrupt the current operation first with `Esc` or `Ctrl-C`.
 
 ## Context compaction
 

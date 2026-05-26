@@ -5,6 +5,7 @@ import {
   catalogModelToCapability,
   catalogProviderModels,
   inferWireType,
+  type CatalogModelEntry,
 } from '../src/catalog';
 
 describe('inferWireType', () => {
@@ -121,6 +122,20 @@ describe('catalogModelToCapability', () => {
         modalities: { input: ['text'], output: ['audio'] },
       }),
     ).toBeUndefined();
+  });
+
+  it.each<[CatalogModelEntry['interleaved'], string | undefined]>([
+    [undefined, undefined],
+    [true, 'reasoning_content'],
+    [false, undefined],
+    [{}, undefined],
+    [{ field: '' }, undefined],
+    [{ field: 'reasoning_content' }, 'reasoning_content'],
+    [{ field: 'reasoning_details' }, 'reasoning_details'],
+    [{ field: '  reasoning_content  ' }, 'reasoning_content'],
+  ])('derives reasoningKey from interleaved=%j → %j', (interleaved, expected) => {
+    const model = catalogModelToCapability({ id: 'm', limit: { context: 1000 }, interleaved });
+    expect(model?.reasoningKey).toBe(expected);
   });
 });
 

@@ -1,22 +1,34 @@
 // Aggregate every "something went wrong" signal from a wire timeline
 // into a flat list consumable by the Issues drawer. Pure — no React.
+//
+// Detection rules for the new agent-core wire protocol:
+//   - tool.call without paired tool.result (orphan tool.call)
+//   - tool.result without preceding tool.call (orphan tool.result)
+//   - step.begin without paired step.end (incomplete step)
+//   - full_compaction.begin without complete/cancel (incomplete compaction)
+//   - plan_mode.enter without exit/cancel (still in plan mode)
+//   - permission.record_approval_result with decision='rejected' (info)
+//
+// Wire-file parse warnings are appended as info-level entries with no lineNo.
 
-import type { VisWireRecord } from '../types';
+import type { WireEntry } from '../types';
 
 export type IssueSeverity = 'error' | 'warning' | 'info';
 
+export type IssueKind =
+  | 'orphan_tool_call'
+  | 'missing_tool_result'
+  | 'incomplete_step'
+  | 'incomplete_compaction'
+  | 'active_plan_mode'
+  | 'rejected_approval'
+  | 'wire_warning';
+
 export interface Issue {
   severity: IssueSeverity;
-  /** Human-readable kind — shown as the row's title. */
-  kind:
-    | 'subagent_failed'
-    | 'tool_error'
-    | 'tool_denied'
-    | 'turn_failed'
-    | 'step_truncated'
-    | 'wire_warning';
-  /** Seq of the offending record. `null` for file-level warnings. */
-  seq: number | null;
+  kind: IssueKind;
+  /** Line number of the offending record. `null` for file-level warnings. */
+  lineNo: number | null;
   /** Short summary shown on a single line. */
   summary: string;
   /** Optional second line / tooltip detail. */
@@ -30,127 +42,128 @@ const SEVERITY_ORDER: Record<IssueSeverity, number> = {
 };
 
 /** Scan `records` + `warnings` and produce an ordered issue list.
- *  Sorted by severity first, then seq ascending. Warnings (no seq) go last. */
+ *  Sorted by severity first, then lineNo ascending. Warnings (no lineNo) go last. */
 export function computeIssues(
-  records: readonly VisWireRecord[],
+  entries: readonly WireEntry[],
   warnings: readonly string[],
 ): Issue[] {
   const out: Issue[] = [];
 
-  for (const r of records) {
+  // Track in-flight tool calls keyed by toolCallId, step begins by uuid,
+  // compaction begin lineNo, and plan mode enter id.
+  const toolCallById = new Map<string, { lineNo: number; name: string }>();
+  const stepBeginByUuid = new Map<string, { lineNo: number; step: number; turnId: string }>();
+  let lastCompactionBegin: { lineNo: number; source: string } | null = null;
+  let lastPlanEnter: { lineNo: number; id: string } | null = null;
+
+  for (const entry of entries) {
+    const r = entry.data;
+    const lineNo = entry.lineNo;
     switch (r.type) {
-      case 'subagent_failed': {
-        const d = (r as { data?: { error?: string; agent_id?: string } }).data ?? {};
-        out.push({
-          severity: 'error',
-          kind: 'subagent_failed',
-          seq: r.seq,
-          summary: firstLine(d.error ?? '(no error message)'),
-          detail: d.agent_id ? `agent ${d.agent_id}` : undefined,
-        });
-        break;
-      }
-      case 'tool_result': {
-        const rec = r as { is_error?: boolean; output?: unknown; tool_call_id?: string };
-        if (rec.is_error === true) {
-          const text =
-            typeof rec.output === 'string'
-              ? rec.output
-              : rec.output !== undefined
-                ? (() => {
-                    try {
-                      return JSON.stringify(rec.output);
-                    } catch {
-                      return '(unserializable output)';
-                    }
-                  })()
-                : '';
-          out.push({
-            severity: 'error',
-            kind: 'tool_error',
-            seq: r.seq,
-            summary: firstLine(text) || '(no output)',
-            detail: rec.tool_call_id ? `call ${rec.tool_call_id}` : undefined,
+      case 'context.append_loop_event': {
+        const ev = r.event;
+        if (ev.type === 'tool.call') {
+          // New in-flight tool call.
+          toolCallById.set(ev.toolCallId, { lineNo, name: ev.name });
+        } else if (ev.type === 'tool.result') {
+          const open = toolCallById.get(ev.toolCallId);
+          if (open !== undefined) {
+            toolCallById.delete(ev.toolCallId);
+          } else {
+            out.push({
+              severity: 'warning',
+              kind: 'missing_tool_result',
+              lineNo,
+              summary: `orphan tool.result for #${ev.toolCallId.slice(-8)}`,
+              detail: 'no preceding tool.call seen',
+            });
+          }
+        } else if (ev.type === 'step.begin') {
+          stepBeginByUuid.set(ev.uuid, {
+            lineNo,
+            step: ev.step,
+            turnId: ev.turnId,
           });
+        } else if (ev.type === 'step.end') {
+          stepBeginByUuid.delete(ev.uuid);
         }
         break;
       }
-      case 'tool_denied': {
-        const d =
-          (r as { data?: { tool_name?: string; reason?: string; rule_id?: string } }).data ?? {};
-        out.push({
-          severity: 'warning',
-          kind: 'tool_denied',
-          seq: r.seq,
-          summary: `${d.tool_name ?? 'tool'} — ${firstLine(d.reason ?? '(no reason)')}`,
-          detail: d.rule_id ? `rule ${d.rule_id}` : undefined,
-        });
+
+      case 'full_compaction.begin':
+        lastCompactionBegin = { lineNo, source: r.source };
         break;
-      }
-      case 'turn_end': {
-        const rec = r as {
-          success?: boolean;
-          reason?: string;
-          turn_id?: string;
-          synthetic?: boolean;
-        };
-        if (rec.success === false || rec.reason === 'error' || rec.reason === 'interrupted') {
-          out.push({
-            severity: 'warning',
-            kind: 'turn_failed',
-            seq: r.seq,
-            summary: `turn ${rec.turn_id ?? ''} — ${rec.reason ?? 'unknown'}`,
-            detail: rec.synthetic === true ? 'synthetic' : undefined,
-          });
-        }
+      case 'full_compaction.complete':
+      case 'full_compaction.cancel':
+        lastCompactionBegin = null;
         break;
-      }
-      case 'step_end': {
-        const rec = r as { finish_reason?: string; turn_id?: string };
-        if (rec.finish_reason === 'length' || rec.finish_reason === 'error') {
+
+      case 'plan_mode.enter':
+        lastPlanEnter = { lineNo, id: r.id };
+        break;
+      case 'plan_mode.cancel':
+      case 'plan_mode.exit':
+        lastPlanEnter = null;
+        break;
+
+      case 'permission.record_approval_result':
+        if (r.result.decision === 'rejected') {
           out.push({
             severity: 'info',
-            kind: 'step_truncated',
-            seq: r.seq,
-            summary: `step finished with "${rec.finish_reason}"`,
-            detail: rec.turn_id ? `turn ${rec.turn_id}` : undefined,
+            kind: 'rejected_approval',
+            lineNo,
+            summary: `${r.toolName}#${r.toolCallId.slice(-8)} rejected`,
+            detail: r.result.feedback,
           });
         }
         break;
-      }
-      case 'approval_request':
-      case 'approval_response':
-      case 'compaction':
-      case 'content_part':
-      case 'context_cleared':
-      case 'context_edit':
-      case 'metadata':
-      case 'notification':
-      case 'ownership_changed':
-      case 'session_initialized':
-      case 'skill_completed':
-      case 'skill_invoked':
-      case 'step_begin':
-      case 'subagent_completed':
-      case 'subagent_spawned':
-      case 'system_prompt_changed':
-      case 'system_reminder':
-      case 'team_mail':
-      case 'tool_call':
-      case 'tools_changed':
-      case 'turn_begin':
-      case 'user_message':
-        break;
+
       default:
         break;
     }
   }
 
-  for (const w of warnings) {
+  // Drain unmatched in-flight entries.
+  for (const [id, info] of toolCallById) {
     out.push({
       severity: 'warning',
+      kind: 'orphan_tool_call',
+      lineNo: info.lineNo,
+      summary: `${info.name}#${id.slice(-8)} has no tool.result`,
+      detail: 'tool.call recorded but no matching tool.result found',
+    });
+  }
+  for (const [uuid, info] of stepBeginByUuid) {
+    out.push({
+      severity: 'warning',
+      kind: 'incomplete_step',
+      lineNo: info.lineNo,
+      summary: `step ${info.step} (turn ${info.turnId}) has no step.end`,
+      detail: `uuid ${uuid.slice(-8)}`,
+    });
+  }
+  if (lastCompactionBegin !== null) {
+    out.push({
+      severity: 'warning',
+      kind: 'incomplete_compaction',
+      lineNo: lastCompactionBegin.lineNo,
+      summary: `${lastCompactionBegin.source} compaction never completed`,
+    });
+  }
+  if (lastPlanEnter !== null) {
+    out.push({
+      severity: 'info',
+      kind: 'active_plan_mode',
+      lineNo: lastPlanEnter.lineNo,
+      summary: `plan mode still active: ${lastPlanEnter.id}`,
+    });
+  }
+
+  for (const w of warnings) {
+    out.push({
+      severity: 'info',
       kind: 'wire_warning',
-      seq: null,
+      lineNo: null,
       summary: firstLine(w),
     });
   }
@@ -158,8 +171,8 @@ export function computeIssues(
   out.sort((a, b) => {
     const d = SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity];
     if (d !== 0) return d;
-    const sa = a.seq ?? Number.POSITIVE_INFINITY;
-    const sb = b.seq ?? Number.POSITIVE_INFINITY;
+    const sa = a.lineNo ?? Number.POSITIVE_INFINITY;
+    const sb = b.lineNo ?? Number.POSITIVE_INFINITY;
     return sa - sb;
   });
 
