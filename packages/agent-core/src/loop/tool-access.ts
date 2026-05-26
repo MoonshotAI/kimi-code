@@ -4,7 +4,6 @@ export type ToolResourceAccess =
   | {
       readonly kind: 'file';
       readonly operation: ToolFileAccessOperation;
-      /** Canonical file path for the accessed file or tree. */
       readonly path: string;
       readonly recursive?: boolean;
     }
