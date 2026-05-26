@@ -34,7 +34,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Switch LLM model',
     priority: 100,
-    availability: 'always',
   },
   {
     name: 'help',
@@ -54,7 +53,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: ['resume'],
     description: 'Browse and resume sessions',
     priority: 80,
-    availability: 'always',
   },
   {
     name: 'tasks',

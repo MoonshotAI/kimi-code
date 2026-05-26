@@ -20,7 +20,7 @@ export type { FileSystemAgentRecordPersistenceOptions } from './persistence';
 // Contract: restore MUST NOT emit UI events, call the LLM, execute tools, or
 // touch the filesystem in a way that triggers external side effects. Each case
 // should reproduce the in-memory state the live handler left behind, nothing more.
-export function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
+function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
   switch (input.type) {
     case 'metadata':
       return;
@@ -98,10 +98,9 @@ export function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
 export class AgentRecords {
   private _restoring = false;
   private metadataInitialized = false;
-  onRecord?: (record: AgentRecord) => void;
 
   constructor(
-    private readonly restoreRecord: (record: AgentRecord) => void,
+    private readonly agent: Agent,
     private readonly persistence?: AgentRecordPersistence,
   ) {}
 
@@ -129,13 +128,12 @@ export class AgentRecords {
       this.metadataInitialized = true;
     }
     this.persistence?.append(stamped);
-    this.onRecord?.(stamped);
   }
 
   restore(record: AgentRecord): void {
     this._restoring = true;
     try {
-      this.restoreRecord(record);
+      restoreAgentRecord(this.agent, record);
     } finally {
       this._restoring = false;
     }

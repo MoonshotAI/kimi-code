@@ -15,7 +15,7 @@
 | `/login` | — | 选择账号或平台并登录：Kimi Code 走 OAuth device code 流程，Moonshot AI 开放平台通过 API 密钥登录。 | 否 |
 | `/logout` | — | 清除当前所选账号的凭据（Kimi Code OAuth 凭据，或对应开放平台的供应商配置）。 | 否 |
 | `/connect [--refresh] [--url=<catalog-url>]` | — | 从模型目录中选择并配置供应商与模型。CLI 已内置默认目录；传入 `--refresh` 可从 models.dev 拉取最新目录，传入 `--url` 可指向自定义目录地址。详见 [平台与模型 — `/connect` 与模型目录](../configuration/providers.md#connect-与模型目录)。 | 否 |
-| `/model` | — | 切换当前会话使用的 LLM 模型。 | 是 |
+| `/model` | — | 切换当前会话使用的 LLM 模型。 | 否 |
 | `/settings` | `/config` | 打开 TUI 内的设置面板。 | 是 |
 | `/permission` | — | 选择权限模式（permission mode）。 | 是 |
 | `/editor` | — | 配置 `Ctrl-G` 调起的外部编辑器。 | 是 |
@@ -26,7 +26,7 @@
 | 命令 | 别名 | 说明 | 随时可用 |
 | --- | --- | --- | --- |
 | `/new` | `/clear` | 开启一个全新会话，丢弃当前上下文。 | 否 |
-| `/sessions` | `/resume` | 浏览历史会话并切换/恢复。 | 是 |
+| `/sessions` | `/resume` | 浏览历史会话并切换/恢复。 | 否 |
 | `/tasks` | `/task` | 浏览后台任务列表。 | 是 |
 | `/fork` | — | 基于当前会话 fork 一份新会话，保留完整对话历史。 | 否 |
 | `/title [<text>]` | `/rename` | 不带参数时显示当前会话标题；带参数时将其设置为新标题（最长 200 个字符）。 | 是 |
