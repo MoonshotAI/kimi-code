@@ -10,6 +10,7 @@
 import { writeFileSync } from 'node:fs';
 import { release as osRelease, type as osType } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import {
   Container,
@@ -100,6 +101,7 @@ import chalk from 'chalk';
 import type { CLIOptions } from '#/cli/options';
 import { detectInstallSource } from '#/cli/update/source';
 import { detectShellEnvironment } from '#/utils/process/shell-env';
+import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/index';
 import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
 import type { GitLsFilesCache } from '#/utils/git/git-ls-files';
@@ -5547,7 +5549,8 @@ export class KimiTUI {
         shellEnv,
         includeGlobalLog: true,
       });
-      this.showNotice('Export complete', result.zipPath);
+      const linked = toTerminalHyperlink(result.zipPath, pathToFileURL(result.zipPath).href);
+      this.showNotice('Export complete', linked);
     } catch (error) {
       const msg = formatErrorMessage(error);
       this.showError(`Failed to export session: ${msg}`);

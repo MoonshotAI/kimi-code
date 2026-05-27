@@ -11,6 +11,8 @@ import type { Component, MarkdownTheme } from '@earendil-works/pi-tui';
 import { Markdown, visibleWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
+import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
+
 const LEFT_MARGIN = 2; // two-space indent matching other tool call children
 const SIDE_PADDING = 1; // space between the │ and the content on each side
 const TITLE_PREFIX = ' plan: ';
@@ -132,8 +134,4 @@ export class PlanBoxComponent implements Component {
     if (status === undefined || status.label.length === 0) return '';
     return ` · ${chalk.hex(status.colorHex)(status.label)}`;
   }
-}
-
-function toTerminalHyperlink(text: string, url: string): string {
-  return `\u001B]8;;${url}\u0007${text}\u001B]8;;\u0007`;
 }
