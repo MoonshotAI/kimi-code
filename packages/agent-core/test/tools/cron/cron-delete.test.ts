@@ -20,6 +20,7 @@ import type {
 import {
   createAgentStub,
   createClocks,
+  scrubCronOutput,
   type AgentStub,
 } from '../../agent/cron/harness/stub';
 
@@ -96,7 +97,9 @@ describe('CronDeleteTool', () => {
 
     const out = assertSuccess(await runTool(tool, { id: task.id }));
 
-    expect(out).toBe(`Deleted cron job ${task.id}.`);
+    expect(scrubCronOutput(out)).toMatchInlineSnapshot(
+      `"Deleted cron job <id>."`,
+    );
     expect(manager.store.list()).toHaveLength(0);
 
     // Exactly one telemetry event, keyed on the deleted id.
@@ -112,9 +115,8 @@ describe('CronDeleteTool', () => {
   it('reports an error when the id is well-formed but absent, with no telemetry', async () => {
     const { stub, manager, tool } = makeHarness();
     // No tasks seeded — the lookup miss is the path under test.
-    const result = await runTool(tool, { id: '0123abcd' });
-    const msg = assertError(result);
-    expect(msg).toBe('No cron job with id 0123abcd.');
+    const msg = assertError(await runTool(tool, { id: '0123abcd' }));
+    expect(msg).toMatchInlineSnapshot(`"No cron job with id 0123abcd."`);
 
     expect(manager.store.list()).toHaveLength(0);
     expect(stub.telemetryCalls).toHaveLength(0);
@@ -123,16 +125,18 @@ describe('CronDeleteTool', () => {
   it('rejects an uppercase id (format check, no store mutation)', async () => {
     const { stub, manager, tool } = makeHarness();
     // Seed a real task so we can confirm the malformed id never reaches
-    // the store. (Even though the seeded id won't collide with the
-    // uppercase one, this guards against a regression that bypasses
-    // the format check entirely and somehow clears the store.)
+    // the store. (The seeded id won't collide with the uppercase one,
+    // but this guards against a regression that bypasses the format
+    // check entirely and somehow clears the store.)
     manager.store.add(
       { cron: '*/5 * * * *', prompt: 'hi', recurring: true },
       manager.clocks.wallNow(),
     );
 
     const msg = assertError(await runTool(tool, { id: 'ABCD1234' }));
-    expect(msg).toContain('must be 8 lowercase hex');
+    expect(msg).toMatchInlineSnapshot(
+      `"Invalid cron job id "ABCD1234" — must be 8 lowercase hex characters."`,
+    );
 
     expect(manager.store.list()).toHaveLength(1);
     expect(stub.telemetryCalls).toHaveLength(0);
@@ -141,7 +145,9 @@ describe('CronDeleteTool', () => {
   it('rejects a too-short id', async () => {
     const { stub, manager, tool } = makeHarness();
     const msg = assertError(await runTool(tool, { id: 'abc' }));
-    expect(msg).toContain('must be 8 lowercase hex');
+    expect(msg).toMatchInlineSnapshot(
+      `"Invalid cron job id "abc" — must be 8 lowercase hex characters."`,
+    );
 
     expect(manager.store.list()).toHaveLength(0);
     expect(stub.telemetryCalls).toHaveLength(0);
@@ -150,7 +156,9 @@ describe('CronDeleteTool', () => {
   it('rejects a non-hex id of the right length', async () => {
     const { stub, manager, tool } = makeHarness();
     const msg = assertError(await runTool(tool, { id: 'zzzzzzzz' }));
-    expect(msg).toContain('must be 8 lowercase hex');
+    expect(msg).toMatchInlineSnapshot(
+      `"Invalid cron job id "zzzzzzzz" — must be 8 lowercase hex characters."`,
+    );
 
     expect(manager.store.list()).toHaveLength(0);
     expect(stub.telemetryCalls).toHaveLength(0);
@@ -159,7 +167,9 @@ describe('CronDeleteTool', () => {
   it('rejects an empty id', async () => {
     const { stub, manager, tool } = makeHarness();
     const msg = assertError(await runTool(tool, { id: '' }));
-    expect(msg).toContain('must be 8 lowercase hex');
+    expect(msg).toMatchInlineSnapshot(
+      `"Invalid cron job id "" — must be 8 lowercase hex characters."`,
+    );
 
     expect(manager.store.list()).toHaveLength(0);
     expect(stub.telemetryCalls).toHaveLength(0);

@@ -23,6 +23,7 @@ import type {
 import {
   createAgentStub,
   createClocks,
+  scrubCronOutput,
   type AgentStub,
 } from '../../agent/cron/harness/stub';
 
@@ -102,17 +103,17 @@ describe('CronCreateTool', () => {
     });
     const out = assertSuccess(result);
 
-    // Output shape — line-by-line. id is 8-hex; nextFireAt is an ISO
-    // string we don't pin to an exact value (jitter is off but we
-    // don't want to depend on TZ rendering for the assertion).
-    expect(out).toMatch(/^id: [0-9a-f]{8}$/m);
-    expect(out).toContain('cron: */5 * * * *');
-    expect(out).toMatch(/^humanSchedule: every 5 minutes$/m);
-    expect(out).toMatch(/^recurring: true$/m);
-    expect(out).toMatch(/^durable: false$/m);
-    expect(out).toMatch(/^nextFireAt: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/m);
+    // id is randomly generated, nextFireAt depends on the host TZ —
+    // both are scrubbed so the snapshot pins the structural format.
+    expect(scrubCronOutput(out)).toMatchInlineSnapshot(`
+      "id: <id>
+      cron: */5 * * * *
+      humanSchedule: every 5 minutes
+      recurring: true
+      durable: false
+      nextFireAt: <iso>"
+    `);
 
-    // Side effects.
     expect(manager.store.list()).toHaveLength(1);
     expect(stub.telemetryCalls).toHaveLength(1);
     expect(stub.telemetryCalls[0]!.event).toBe(CRON_SCHEDULED);
@@ -131,8 +132,14 @@ describe('CronCreateTool', () => {
       durable: false,
     });
     const out = assertSuccess(result);
-    expect(out).toMatch(/^recurring: false$/m);
-    expect(out).toMatch(/^durable: false$/m);
+    expect(scrubCronOutput(out)).toMatchInlineSnapshot(`
+      "id: <id>
+      cron: 0 12 * * *
+      humanSchedule: at 12:00 every day
+      recurring: false
+      durable: false
+      nextFireAt: <iso>"
+    `);
 
     const tasks = manager.store.list();
     expect(tasks).toHaveLength(1);
@@ -144,14 +151,17 @@ describe('CronCreateTool', () => {
 
   it('rejects an unparseable cron expression', async () => {
     const { manager, tool, stub } = makeHarness();
-    const result = await runTool(tool, {
-      cron: 'not a cron',
-      prompt: 'x',
-      recurring: true,
-      durable: false,
-    });
-    const msg = assertError(result);
-    expect(msg).toMatch(/^Invalid cron expression/);
+    const msg = assertError(
+      await runTool(tool, {
+        cron: 'not a cron',
+        prompt: 'x',
+        recurring: true,
+        durable: false,
+      }),
+    );
+    expect(msg).toMatchInlineSnapshot(
+      `"Invalid cron expression: cron expression must have exactly 5 fields (minute hour day-of-month month day-of-week); got 3"`,
+    );
 
     expect(manager.store.list()).toHaveLength(0);
     expect(stub.telemetryCalls).toHaveLength(0);
@@ -160,14 +170,17 @@ describe('CronCreateTool', () => {
   it('rejects a legal-but-never-fires cron expression', async () => {
     const { manager, tool, stub } = makeHarness();
     // Feb 31st — parses fine, never fires.
-    const result = await runTool(tool, {
-      cron: '0 0 31 2 *',
-      prompt: 'never',
-      recurring: false,
-      durable: false,
-    });
-    const msg = assertError(result);
-    expect(msg).toContain('no fire within 5 years');
+    const msg = assertError(
+      await runTool(tool, {
+        cron: '0 0 31 2 *',
+        prompt: 'never',
+        recurring: false,
+        durable: false,
+      }),
+    );
+    expect(msg).toMatchInlineSnapshot(
+      `"Cron expression "0 0 31 2 *" has no fire within 5 years; refusing to schedule."`,
+    );
 
     expect(manager.store.list()).toHaveLength(0);
     expect(stub.telemetryCalls).toHaveLength(0);
@@ -176,14 +189,17 @@ describe('CronCreateTool', () => {
   it('returns an error when KIMI_DISABLE_CRON=1', async () => {
     vi.stubEnv('KIMI_DISABLE_CRON', '1');
     const { manager, tool, stub } = makeHarness();
-    const result = await runTool(tool, {
-      cron: '*/5 * * * *',
-      prompt: 'hi',
-      recurring: true,
-      durable: false,
-    });
-    const msg = assertError(result);
-    expect(msg).toContain('disabled');
+    const msg = assertError(
+      await runTool(tool, {
+        cron: '*/5 * * * *',
+        prompt: 'hi',
+        recurring: true,
+        durable: false,
+      }),
+    );
+    expect(msg).toMatchInlineSnapshot(
+      `"Cron scheduling is disabled (KIMI_DISABLE_CRON=1)."`,
+    );
 
     expect(manager.store.list()).toHaveLength(0);
     expect(stub.telemetryCalls).toHaveLength(0);
@@ -191,14 +207,17 @@ describe('CronCreateTool', () => {
 
   it('rejects durable=true (Phase 2 not implemented)', async () => {
     const { manager, tool, stub } = makeHarness();
-    const result = await runTool(tool, {
-      cron: '*/5 * * * *',
-      prompt: 'x',
-      recurring: true,
-      durable: true,
-    });
-    const msg = assertError(result);
-    expect(msg).toContain('durable=true is not supported');
+    const msg = assertError(
+      await runTool(tool, {
+        cron: '*/5 * * * *',
+        prompt: 'x',
+        recurring: true,
+        durable: true,
+      }),
+    );
+    expect(msg).toMatchInlineSnapshot(
+      `"durable=true is not supported in this build. Use durable=false (session-only) for now."`,
+    );
 
     expect(manager.store.list()).toHaveLength(0);
     expect(stub.telemetryCalls).toHaveLength(0);
@@ -217,14 +236,17 @@ describe('CronCreateTool', () => {
     }
     expect(manager.store.list()).toHaveLength(MAX_CRON_JOBS_PER_SESSION);
 
-    const result = await runTool(tool, {
-      cron: '*/5 * * * *',
-      prompt: 'overflow',
-      recurring: true,
-      durable: false,
-    });
-    const msg = assertError(result);
-    expect(msg).toContain('cap reached');
+    const msg = assertError(
+      await runTool(tool, {
+        cron: '*/5 * * * *',
+        prompt: 'overflow',
+        recurring: true,
+        durable: false,
+      }),
+    );
+    expect(msg).toMatchInlineSnapshot(
+      `"Cron job cap reached (max 50 per session)."`,
+    );
 
     expect(manager.store.list()).toHaveLength(MAX_CRON_JOBS_PER_SESSION);
     expect(stub.telemetryCalls).toHaveLength(0);
@@ -236,14 +258,17 @@ describe('CronCreateTool', () => {
     // zod's `.max(8192)` is in code units and would accept this — the
     // byte check inside the tool catches it.
     const prompt = '汉'.repeat(3000);
-    const result = await runTool(tool, {
-      cron: '*/5 * * * *',
-      prompt,
-      recurring: true,
-      durable: false,
-    });
-    const msg = assertError(result);
-    expect(msg).toMatch(/Prompt exceeds 8192 bytes/);
+    const msg = assertError(
+      await runTool(tool, {
+        cron: '*/5 * * * *',
+        prompt,
+        recurring: true,
+        durable: false,
+      }),
+    );
+    expect(msg).toMatchInlineSnapshot(
+      `"Prompt exceeds 8192 bytes (got 9000)."`,
+    );
 
     expect(manager.store.list()).toHaveLength(0);
     expect(stub.telemetryCalls).toHaveLength(0);
