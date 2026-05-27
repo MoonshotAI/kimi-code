@@ -104,9 +104,9 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
-    appendExchange(ctx, 2, 'old user two', 'old assistant two', 40);
-    appendExchange(ctx, 3, 'recent user three', 'recent assistant three', 120);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'old user two', 'old assistant two', 40);
+    ctx.appendExchange(3, 'recent user three', 'recent assistant three', 120);
     const compacted = new Promise<void>((resolve) => {
       ctx.emitter.once('context.apply_compaction', () => {
         resolve();
@@ -140,7 +140,7 @@ describe('Agent compaction', () => {
         assistant: text "old assistant two"
         user: text <compaction-instruction>
     `);
-    expect(compactHistory(ctx)).toMatchInlineSnapshot(`
+    expect(ctx.compactHistory()).toMatchInlineSnapshot(`
       [
         {
           "role": "assistant",
@@ -235,7 +235,7 @@ describe('Agent compaction', () => {
         max_context_tokens: maxContextTokens,
       },
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', maxContextTokens - 100);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', maxContextTokens - 100);
     const compacted = new Promise<void>((resolve) => {
       ctx.emitter.once('context.apply_compaction', () => {
         resolve();
@@ -254,12 +254,12 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.dispatch({
       type: 'context.append_loop_event',
       event: { type: 'step.begin', uuid: 'empty-placeholder', turnId: '', step: 2 },
     });
-    appendExchange(ctx, 3, 'old user two', 'old assistant two', 40);
+    ctx.appendExchange(3, 'old user two', 'old assistant two', 40);
     const compacted = new Promise<void>((resolve) => {
       ctx.emitter.once('context.apply_compaction', () => {
         resolve();
@@ -313,9 +313,9 @@ describe('Agent compaction', () => {
     ctx.configure();
     await ctx.rpc.setModel({ model: 'kimi-code' });
     ctx.newEvents();
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
-    appendExchange(ctx, 2, 'recent user two', 'recent assistant two', 80);
-    const outcome = onceAny(ctx, ['context.apply_compaction', 'error']);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const outcome = ctx.onceAny(['context.apply_compaction', 'error']);
 
     await ctx.rpc.beginCompaction({});
 
@@ -334,21 +334,21 @@ describe('Agent compaction', () => {
     );
     expect(authKeys).toEqual(['fresh-token', 'forced-refresh-token']);
     expect(tokenCalls).toEqual([undefined, undefined, true]);
-    expect(compactHistory(ctx)).toEqual([
+    expect(ctx.compactHistory()).toEqual([
       { role: 'user', text: 'old user one' },
       { role: 'assistant', text: 'old assistant one' },
       { role: 'user', text: 'recent user two' },
       { role: 'assistant', text: 'recent assistant two' },
     ]);
 
-    const retryOutcome = onceAny(ctx, ['context.apply_compaction', 'error']);
+    const retryOutcome = ctx.onceAny(['context.apply_compaction', 'error']);
 
     await ctx.rpc.beginCompaction({});
 
     expect(await retryOutcome).toBe('context.apply_compaction');
     expect(authKeys).toEqual(['fresh-token', 'forced-refresh-token', 'fresh-token']);
     expect(tokenCalls).toEqual([undefined, undefined, true, undefined]);
-    expect(compactHistory(ctx)).toEqual([
+    expect(ctx.compactHistory()).toEqual([
       { role: 'assistant', text: 'Recovered compacted summary.' },
       { role: 'user', text: 'recent user two' },
       { role: 'assistant', text: 'recent assistant two' },
@@ -373,10 +373,10 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
-    appendExchange(ctx, 2, 'old user two', 'old assistant two', 40);
-    appendExchange(ctx, 3, 'recent user three', 'recent assistant three', 120);
-    const compacted = once(ctx, 'context.apply_compaction');
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'old user two', 'old assistant two', 40);
+    ctx.appendExchange(3, 'recent user three', 'recent assistant three', 120);
+    const compacted = ctx.once('context.apply_compaction');
 
     ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
     ctx.agent.fullCompaction.begin({ source: 'auto', instruction: undefined });
@@ -426,14 +426,14 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
-    appendExchange(ctx, 2, 'recent user two', 'recent assistant two', 80);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
 
     ctx.agent.fullCompaction.begin({ source: 'manual', instruction: undefined });
     await vi.waitFor(() => {
       expect(preCompactSignal).toBeInstanceOf(AbortSignal);
     });
-    const canceled = once(ctx, 'compaction.cancelled');
+    const canceled = ctx.once('compaction.cancelled');
     ctx.agent.fullCompaction.cancel();
     await canceled;
 
@@ -463,9 +463,9 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
-    appendExchange(ctx, 2, 'recent user two', 'recent assistant two', 80);
-    const compacted = once(ctx, 'context.apply_compaction');
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const compacted = ctx.once('context.apply_compaction');
 
     await ctx.rpc.beginCompaction({});
     await compacted;
@@ -499,9 +499,9 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
-    appendExchange(ctx, 2, 'recent user two', 'recent assistant two', 80);
-    const compacted = once(ctx, 'context.apply_compaction');
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const compacted = ctx.once('context.apply_compaction');
 
     await ctx.rpc.beginCompaction({});
     await firstEmptySummary.promise;
@@ -509,7 +509,7 @@ describe('Agent compaction', () => {
     await compacted;
 
     expect(attempts).toBe(3);
-    expect(compactHistory(ctx)).toEqual([
+    expect(ctx.compactHistory()).toEqual([
       { role: 'assistant', text: 'Recovered compacted summary.' },
       { role: 'user', text: 'recent user two' },
       { role: 'assistant', text: 'recent assistant two' },
@@ -541,9 +541,9 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
-    appendExchange(ctx, 2, 'recent user two', 'recent assistant two', 80);
-    const compacted = once(ctx, 'context.apply_compaction');
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const compacted = ctx.once('context.apply_compaction');
 
     await ctx.rpc.beginCompaction({});
     await firstAttemptFailed.promise;
@@ -574,9 +574,9 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
-    appendExchange(ctx, 2, 'recent user two', 'recent assistant two', 80);
-    const cancelled = once(ctx, 'compaction.cancelled');
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const cancelled = ctx.once('compaction.cancelled');
 
     await ctx.rpc.beginCompaction({});
     await firstAttemptFailed.promise;
@@ -599,9 +599,9 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
-    appendExchange(ctx, 2, 'recent user two', 'recent assistant two', 80);
-    const failed = once(ctx, 'error');
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const failed = ctx.once('error');
 
     await ctx.rpc.beginCompaction({});
     await failed;
@@ -615,7 +615,7 @@ describe('Agent compaction', () => {
       ]),
     );
     expect(eventIndex(events, 'compaction.cancelled')).toBeLessThan(eventIndex(events, 'error'));
-    expect(compactHistory(ctx)).toEqual([
+    expect(ctx.compactHistory()).toEqual([
       { role: 'user', text: 'old user one' },
       { role: 'assistant', text: 'old assistant one' },
       { role: 'user', text: 'recent user two' },
@@ -649,9 +649,9 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
-    appendExchange(ctx, 2, 'recent user two', 'recent assistant two', 80);
-    const failed = once(ctx, 'error');
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const failed = ctx.once('error');
 
     await ctx.rpc.beginCompaction({});
     await failed;
@@ -676,7 +676,7 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    appendRichToolExchange(ctx);
+    ctx.appendRichToolExchange();
     const compacted = new Promise<void>((resolve) => {
       ctx.emitter.once('context.apply_compaction', () => {
         resolve();
@@ -724,9 +724,9 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
-    appendPartiallyResolvedParallelToolExchange(ctx);
-    const compacted = once(ctx, 'context.apply_compaction');
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendPartiallyResolvedParallelToolExchange();
+    const compacted = ctx.once('context.apply_compaction');
 
     ctx.mockNextResponse({ type: 'text', text: 'Compacted before open tools.' });
     await ctx.rpc.beginCompaction({ instruction: 'Keep stable facts.' });
@@ -755,9 +755,9 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
-    appendExchange(ctx, 2, 'recent user two', 'recent assistant two', 80);
-    const compacted = once(ctx, 'context.apply_compaction');
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const compacted = ctx.once('context.apply_compaction');
 
     ctx.mockNextResponse({ type: 'text', text: 'Compacted prefix.' });
     await ctx.rpc.beginCompaction({});
@@ -785,7 +785,7 @@ describe('Agent compaction', () => {
         assistant: text "old assistant one"
         user: text <compaction-instruction>
     `);
-    expect(compactHistory(ctx)).toMatchInlineSnapshot(`
+    expect(ctx.compactHistory()).toMatchInlineSnapshot(`
       [
         {
           "role": "assistant",
@@ -814,9 +814,9 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
-    appendExchange(ctx, 2, 'recent user two', 'recent assistant two', 80);
-    const canceled = once(ctx, 'full_compaction.cancel');
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const canceled = ctx.once('full_compaction.cancel');
 
     ctx.mockNextResponse({ type: 'text', text: 'Stale summary.' });
     await ctx.rpc.beginCompaction({});
@@ -843,7 +843,7 @@ describe('Agent compaction', () => {
         assistant: text "old assistant one"
         user: text <compaction-instruction>
     `);
-    expect(compactHistory(ctx)).toMatchInlineSnapshot(`[]`);
+    expect(ctx.compactHistory()).toMatchInlineSnapshot(`[]`);
     await ctx.expectResumeMatches();
   });
 
@@ -854,9 +854,9 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 100);
-    appendExchange(ctx, 2, 'old user two', 'old assistant two', 200);
-    appendExchange(ctx, 3, 'recent user three', 'recent assistant three', 950_000);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 100);
+    ctx.appendExchange(2, 'old user two', 'old assistant two', 200);
+    ctx.appendExchange(3, 'recent user three', 'recent assistant three', 950_000);
 
     ctx.mockNextResponse({ type: 'text', text: 'Auto compacted summary.' });
     ctx.mockNextResponse({ type: 'text', text: 'I can answer after compaction.' });
@@ -947,7 +947,7 @@ describe('Agent compaction', () => {
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'only pending user' }]);
-    const canceled = once(ctx, 'compaction.cancelled');
+    const canceled = ctx.once('compaction.cancelled');
 
     await ctx.rpc.beginCompaction({});
     await canceled;
@@ -955,16 +955,16 @@ describe('Agent compaction', () => {
     expect(ctx.llmCalls).toHaveLength(0);
 
     ctx.agent.context.clear();
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
-    appendExchange(ctx, 2, 'recent user two', 'recent assistant two', 80);
-    const compacted = once(ctx, 'context.apply_compaction');
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const compacted = ctx.once('context.apply_compaction');
 
     ctx.mockNextResponse({ type: 'text', text: 'Compacted after no-op cancel.' });
     await ctx.rpc.beginCompaction({});
     await compacted;
 
     expect(ctx.llmCalls).toHaveLength(1);
-    expect(compactHistory(ctx)).toEqual([
+    expect(ctx.compactHistory()).toEqual([
       { role: 'assistant', text: 'Compacted after no-op cancel.' },
       { role: 'user', text: 'recent user two' },
       { role: 'assistant', text: 'recent assistant two' },
@@ -989,7 +989,7 @@ describe('Agent compaction', () => {
         max_context_tokens: 32_000,
       },
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 1_000);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 1_000);
 
     ctx.mockNextResponse({ type: 'text', text: 'I can answer without reserved compaction.' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'small prompt' }] });
@@ -1019,7 +1019,7 @@ describe('Agent compaction', () => {
         max_context_tokens: 2_000,
       },
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 1_400);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 1_400);
 
     ctx.mockNextResponse({ type: 'text', text: 'Reserved compacted summary.' });
     ctx.mockNextResponse({ type: 'text', text: 'I can answer after reserved compaction.' });
@@ -1042,7 +1042,7 @@ describe('Agent compaction', () => {
         max_context_tokens: 2_000,
       },
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 1_650);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 1_650);
     const oversizedPrompt = `keep-this-pending-verbatim:${'x'.repeat(1_800)}`;
 
     ctx.mockNextResponse({ type: 'text', text: 'Oversized prompt summary.' });
@@ -1069,7 +1069,7 @@ describe('Agent compaction', () => {
         max_context_tokens: 1_000_000,
       },
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 840_000);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 840_000);
     const pendingPrompt = `ratio-pending-verbatim:${'x'.repeat(60_000)}`;
 
     ctx.mockNextResponse({ type: 'text', text: 'Ratio compacted summary.' });
@@ -1114,7 +1114,7 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.newEvents();
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry after provider overflow' }] });
@@ -1197,7 +1197,7 @@ describe('Agent compaction', () => {
         : { ...resolved, modelCapabilities: UNKNOWN_CAPABILITY };
     };
     expect(ctx.agent.config.modelCapabilities.max_context_tokens).toBe(0);
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.newEvents();
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry without known model window' }] });
@@ -1243,7 +1243,7 @@ describe('Agent compaction', () => {
         max_context_tokens: 2_000,
       },
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     const oversizedPrompt = `uncompactable-pending:${'x'.repeat(9_000)}`;
     ctx.newEvents();
 
@@ -1297,7 +1297,7 @@ describe('Agent compaction', () => {
         max_context_tokens: 14,
       },
     });
-    appendExchange(ctx, 1, 'old user one', 'old assistant one', 1);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 1);
     const promptThatFitsWithoutPlaceholder = 'x'.repeat(40);
     ctx.newEvents();
 
@@ -1388,24 +1388,6 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function once(ctx: TestAgentContext, type: string): Promise<void> {
-  return new Promise((resolve) => {
-    ctx.emitter.once(type, () => {
-      resolve();
-    });
-  });
-}
-
-function onceAny(ctx: TestAgentContext, types: readonly string[]): Promise<string> {
-  return new Promise((resolve) => {
-    for (const type of types) {
-      ctx.emitter.once(type, () => {
-        resolve(type);
-      });
-    }
-  });
-}
-
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -1468,51 +1450,6 @@ function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
   };
 }
 
-function appendExchange(
-  ctx: TestAgentContext,
-  step: number,
-  userText: string,
-  assistantText: string,
-  tokenTotal: number,
-) {
-  const stepUuid = `step-${String(step)}`;
-  ctx.agent.context.appendUserMessage([{ type: 'text', text: userText }]);
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: { type: 'step.begin', uuid: stepUuid, turnId: '', step },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'content.part',
-      uuid: `part-${String(step)}`,
-      turnId: '',
-      step,
-      stepUuid,
-      part: {
-        type: 'text',
-        text: assistantText,
-      },
-    },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'step.end',
-      uuid: stepUuid,
-      turnId: '',
-      step,
-      usage: {
-        inputOther: tokenTotal - 1,
-        output: 1,
-        inputCacheRead: 0,
-        inputCacheCreation: 0,
-      },
-      finishReason: 'end_turn',
-    },
-  });
-}
-
 const alwaysCompactOnce: CompactionStrategy = {
   shouldCompact: () => true,
   shouldBlock: () => true,
@@ -1528,13 +1465,6 @@ function missingToolCall(): ToolCall {
     name: 'MissingTool',
     arguments: '{}',
   };
-}
-
-function compactHistory(ctx: TestAgentContext) {
-  return ctx.agent.context.history.map((message) => ({
-    role: message.role,
-    text: message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''),
-  }));
 }
 
 function testCompactionStrategy(): DefaultCompactionStrategy {
@@ -1603,136 +1533,4 @@ function inputHistorySnapshot(history: readonly Message[]): string[] {
 
 function normalizeInputText(text: string): string {
   return text.includes('compact this conversation context') ? '<compaction-instruction>' : text;
-}
-
-function appendRichToolExchange(ctx: TestAgentContext) {
-  const stepUuid = 'rich-step';
-  ctx.agent.context.appendUserMessage([
-    { type: 'text', text: 'inspect this image' },
-    { type: 'image_url', imageUrl: { url: 'ms://image-1', id: 'image-1' } },
-  ]);
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: 1 },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'content.part',
-      uuid: 'rich-think',
-      turnId: '',
-      step: 1,
-      stepUuid,
-      part: {
-        type: 'think',
-        think: 'checking metadata',
-      },
-    },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'content.part',
-      uuid: 'rich-text',
-      turnId: '',
-      step: 1,
-      stepUuid,
-      part: {
-        type: 'text',
-        text: 'I will call Lookup.',
-      },
-    },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'tool.call',
-      uuid: 'rich-tool-call',
-      turnId: '',
-      step: 1,
-      stepUuid,
-      toolCallId: 'call_lookup',
-      name: 'Lookup',
-      args: {
-        query: 'moon',
-        limit: 2,
-      },
-    },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'step.end',
-      uuid: stepUuid,
-      turnId: '',
-      step: 1,
-      usage: {
-        inputOther: 50,
-        output: 10,
-        inputCacheRead: 0,
-        inputCacheCreation: 0,
-      },
-      finishReason: 'tool_use',
-    },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'tool.result',
-      parentUuid: 'rich-tool-call',
-      toolCallId: 'call_lookup',
-      result: {
-        output: [
-          { type: 'text', text: 'lookup result' },
-          { type: 'video_url', videoUrl: { url: 'ms://video-1', id: 'video-1' } },
-        ],
-      },
-    },
-  });
-}
-
-function appendPartiallyResolvedParallelToolExchange(ctx: TestAgentContext) {
-  const stepUuid = 'partial-tool-step';
-  ctx.agent.context.appendUserMessage([{ type: 'text', text: 'run both tools' }]);
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: 2 },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'tool.call',
-      uuid: 'call_open_one',
-      turnId: '',
-      step: 2,
-      stepUuid,
-      toolCallId: 'call_open_one',
-      name: 'LookupOne',
-      args: { query: 'one' },
-    },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'tool.call',
-      uuid: 'call_open_two',
-      turnId: '',
-      step: 2,
-      stepUuid,
-      toolCallId: 'call_open_two',
-      name: 'LookupTwo',
-      args: { query: 'two' },
-    },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'tool.result',
-      parentUuid: 'call_open_one',
-      toolCallId: 'call_open_one',
-      result: {
-        output: 'one result',
-      },
-    },
-  });
 }

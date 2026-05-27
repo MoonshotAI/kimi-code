@@ -275,6 +275,436 @@ export class AgentTestContext {
     }
   }
 
+  once(type: string): Promise<void> {
+    return new Promise((resolve) => {
+      this.emitter.once(type, () => {
+        resolve();
+      });
+    });
+  }
+
+  onceAny(types: readonly string[]): Promise<string> {
+    return new Promise((resolve) => {
+      for (const type of types) {
+        this.emitter.once(type, () => {
+          resolve(type);
+        });
+      }
+    });
+  }
+
+  appendExchange(
+    step: number,
+    userText: string,
+    assistantText: string,
+    tokenTotal: number,
+  ): void {
+    const stepUuid = `step-${String(step)}`;
+    this.agent.context.appendUserMessage([{ type: 'text', text: userText }]);
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '', step },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'content.part',
+        uuid: `part-${String(step)}`,
+        turnId: '',
+        step,
+        stepUuid,
+        part: {
+          type: 'text',
+          text: assistantText,
+        },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '',
+        step,
+        usage: {
+          inputOther: tokenTotal - 1,
+          output: 1,
+          inputCacheRead: 0,
+          inputCacheCreation: 0,
+        },
+        finishReason: 'end_turn',
+      },
+    });
+  }
+
+  appendAssistantText(step: number, text: string): void {
+    this.appendAssistantTextWithUsage(step, text);
+  }
+
+  appendAssistantTextWithUsage(step: number, text: string, tokenTotal?: number): void {
+    const stepUuid = `context-step-${String(step)}`;
+    const usage =
+      tokenTotal === undefined
+        ? undefined
+        : {
+            inputOther: tokenTotal - 1,
+            output: 1,
+            inputCacheRead: 0,
+            inputCacheCreation: 0,
+          };
+    this.agent.context.appendUserMessage([
+      { type: 'text', text: `user before step ${String(step)}` },
+    ]);
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '', step },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'content.part',
+        uuid: `context-part-${String(step)}`,
+        turnId: '',
+        step,
+        stepUuid,
+        part: {
+          type: 'text',
+          text,
+        },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '',
+        step,
+        usage,
+        finishReason: 'end_turn',
+      },
+    });
+  }
+
+  appendAssistantTurn(step: number, text: string): void {
+    const stepUuid = `plan-injection-step-${String(step)}`;
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '', step },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'content.part',
+        uuid: `plan-injection-part-${String(step)}`,
+        turnId: '',
+        step,
+        stepUuid,
+        part: { type: 'text', text },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '',
+        step,
+        finishReason: 'end_turn',
+      },
+    });
+  }
+
+  appendToolExchange(): void {
+    const stepUuid = 'context-tool-step';
+    this.agent.context.appendUserMessage([{ type: 'text', text: 'lookup something' }]);
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: 2 },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'content.part',
+        uuid: 'context-tool-part',
+        turnId: '',
+        step: 2,
+        stepUuid,
+        part: {
+          type: 'text',
+          text: 'I will call Lookup.',
+        },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'context-tool-call',
+        turnId: '',
+        step: 2,
+        stepUuid,
+        toolCallId: 'call_lookup',
+        name: 'Lookup',
+        args: {
+          query: 'moon',
+        },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '',
+        step: 2,
+        finishReason: 'tool_use',
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'context-tool-call',
+        toolCallId: 'call_lookup',
+        result: { output: 'lookup result' },
+      },
+    });
+  }
+
+  appendUnresolvedToolExchange(resolvedToolResults: 0 | 1): void {
+    const stepUuid = `unresolved-tool-step-${String(resolvedToolResults)}`;
+    this.agent.context.appendUserMessage([{ type: 'text', text: 'run unresolved tools' }]);
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: 2 },
+    });
+    for (const [toolCallId, name] of [
+      ['call_unresolved_one', 'LookupOne'],
+      ['call_unresolved_two', 'LookupTwo'],
+    ] as const) {
+      this.dispatch({
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: toolCallId,
+          turnId: '',
+          step: 2,
+          stepUuid,
+          toolCallId,
+          name,
+          args: {},
+        },
+      });
+    }
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '',
+        step: 2,
+        finishReason: 'tool_use',
+      },
+    });
+    if (resolvedToolResults === 1) {
+      this.dispatch({
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.result',
+          parentUuid: 'call_unresolved_one',
+          toolCallId: 'call_unresolved_one',
+          result: { output: 'one result' },
+        },
+      });
+    }
+  }
+
+  appendRichToolExchange(): void {
+    const stepUuid = 'rich-step';
+    this.agent.context.appendUserMessage([
+      { type: 'text', text: 'inspect this image' },
+      { type: 'image_url', imageUrl: { url: 'ms://image-1', id: 'image-1' } },
+    ]);
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: 1 },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'content.part',
+        uuid: 'rich-think',
+        turnId: '',
+        step: 1,
+        stepUuid,
+        part: {
+          type: 'think',
+          think: 'checking metadata',
+        },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'content.part',
+        uuid: 'rich-text',
+        turnId: '',
+        step: 1,
+        stepUuid,
+        part: {
+          type: 'text',
+          text: 'I will call Lookup.',
+        },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'rich-tool-call',
+        turnId: '',
+        step: 1,
+        stepUuid,
+        toolCallId: 'call_lookup',
+        name: 'Lookup',
+        args: {
+          query: 'moon',
+          limit: 2,
+        },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '',
+        step: 1,
+        usage: {
+          inputOther: 50,
+          output: 10,
+          inputCacheRead: 0,
+          inputCacheCreation: 0,
+        },
+        finishReason: 'tool_use',
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'rich-tool-call',
+        toolCallId: 'call_lookup',
+        result: {
+          output: [
+            { type: 'text', text: 'lookup result' },
+            { type: 'video_url', videoUrl: { url: 'ms://video-1', id: 'video-1' } },
+          ],
+        },
+      },
+    });
+  }
+
+  appendContextPartiallyResolvedParallelToolExchange(): void {
+    const stepUuid = 'context-partial-tool-step';
+    this.agent.context.appendUserMessage([{ type: 'text', text: 'run both tools' }]);
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: 2 },
+    });
+    for (const [toolCallId, name] of [
+      ['call_open_one', 'LookupOne'],
+      ['call_open_two', 'LookupTwo'],
+    ] as const) {
+      this.dispatch({
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: toolCallId,
+          turnId: '',
+          step: 2,
+          stepUuid,
+          toolCallId,
+          name,
+          args: {},
+        },
+      });
+    }
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '',
+        step: 2,
+        finishReason: 'tool_use',
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'call_open_one',
+        toolCallId: 'call_open_one',
+        result: { output: 'one result' },
+      },
+    });
+  }
+
+  appendPartiallyResolvedParallelToolExchange(): void {
+    const stepUuid = 'partial-tool-step';
+    this.agent.context.appendUserMessage([{ type: 'text', text: 'run both tools' }]);
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: 2 },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'call_open_one',
+        turnId: '',
+        step: 2,
+        stepUuid,
+        toolCallId: 'call_open_one',
+        name: 'LookupOne',
+        args: { query: 'one' },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'call_open_two',
+        turnId: '',
+        step: 2,
+        stepUuid,
+        toolCallId: 'call_open_two',
+        name: 'LookupTwo',
+        args: { query: 'two' },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'call_open_one',
+        toolCallId: 'call_open_one',
+        result: {
+          output: 'one result',
+        },
+      },
+    });
+  }
+
+  compactHistory(): Array<{ readonly role: string; readonly text: string }> {
+    return this.agent.context.history.map((message) => ({
+      role: message.role,
+      text: message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''),
+    }));
+  }
+
   async expectResumeMatches(): Promise<void> {
     const resumed = testAgent({
       runtime: {

@@ -5,7 +5,6 @@ import { sliceCompleteMessages } from '../../src/agent/context/complete-slice';
 import { renderNotificationXml } from '../../src/agent/context/notification-xml';
 import { project } from '../../src/agent/context/projector';
 import { estimateTokensForMessages } from '../../src/utils/tokens';
-import type { TestAgentContext } from './harness/agent';
 import { testAgent } from './harness/agent';
 
 describe('Agent context', () => {
@@ -159,8 +158,8 @@ describe('Agent context', () => {
   it('projects user, assistant, tool call, and tool result records into LLM history', async () => {
     const ctx = testAgent();
     ctx.configure();
-    appendAssistantText(ctx, 1, 'earlier assistant');
-    appendToolExchange(ctx);
+    ctx.appendAssistantText(1, 'earlier assistant');
+    ctx.appendToolExchange();
 
     ctx.mockNextResponse({ type: 'text', text: 'done' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
@@ -302,7 +301,7 @@ describe('Agent context', () => {
     ctx.configure();
 
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'old prompt' }]);
-    appendPartiallyResolvedParallelToolExchange(ctx);
+    ctx.appendContextPartiallyResolvedParallelToolExchange();
 
     ctx.agent.context.appendSystemReminder('first reminder', {
       kind: 'injection',
@@ -403,7 +402,7 @@ describe('Agent context', () => {
   it('includes new user messages as pending until the next usage update', () => {
     const ctx = testAgent();
     ctx.configure();
-    appendAssistantTextWithUsage(ctx, 1, 'previous answer', 1_000);
+    ctx.appendAssistantTextWithUsage(1, 'previous answer', 1_000);
     expect(ctx.agent.context.tokenCountWithPending).toBe(1_000);
 
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'next user prompt'.repeat(20) }]);
@@ -557,161 +556,6 @@ describe('Agent context notification projection', () => {
     expect(textOf(messages[1]!)).toBe('Actual user prompt');
   });
 });
-
-function appendAssistantText(ctx: TestAgentContext, step: number, text: string) {
-  appendAssistantTextWithUsage(ctx, step, text);
-}
-
-function appendAssistantTextWithUsage(
-  ctx: TestAgentContext,
-  step: number,
-  text: string,
-  tokenTotal?: number,
-) {
-  const stepUuid = `context-step-${String(step)}`;
-  const usage =
-    tokenTotal === undefined
-      ? undefined
-      : {
-          inputOther: tokenTotal - 1,
-          output: 1,
-          inputCacheRead: 0,
-          inputCacheCreation: 0,
-        };
-  ctx.agent.context.appendUserMessage([{ type: 'text', text: `user before step ${String(step)}` }]);
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: { type: 'step.begin', uuid: stepUuid, turnId: '', step },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'content.part',
-      uuid: `context-part-${String(step)}`,
-      turnId: '',
-      step,
-      stepUuid,
-      part: {
-        type: 'text',
-        text,
-      },
-    },
-  });
-  ctx.dispatch({
-      type: 'context.append_loop_event',
-      event: {
-        type: 'step.end',
-        uuid: stepUuid,
-        turnId: '',
-        step,
-        usage,
-        finishReason: 'end_turn',
-      },
-    });
-}
-
-function appendToolExchange(ctx: TestAgentContext) {
-  const stepUuid = 'context-tool-step';
-  ctx.agent.context.appendUserMessage([{ type: 'text', text: 'lookup something' }]);
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: 2 },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'content.part',
-      uuid: 'context-tool-part',
-      turnId: '',
-      step: 2,
-      stepUuid,
-      part: {
-        type: 'text',
-        text: 'I will call Lookup.',
-      },
-    },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'tool.call',
-      uuid: 'context-tool-call',
-      turnId: '',
-      step: 2,
-      stepUuid,
-      toolCallId: 'call_lookup',
-      name: 'Lookup',
-      args: {
-        query: 'moon',
-      },
-    },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'step.end',
-      uuid: stepUuid,
-      turnId: '',
-      step: 2,
-      finishReason: 'tool_use',
-    },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'tool.result',
-      parentUuid: 'context-tool-call',
-      toolCallId: 'call_lookup',
-      result: { output: 'lookup result' },
-    },
-  });
-}
-
-function appendPartiallyResolvedParallelToolExchange(ctx: TestAgentContext) {
-  const stepUuid = 'context-partial-tool-step';
-  ctx.agent.context.appendUserMessage([{ type: 'text', text: 'run both tools' }]);
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: 2 },
-  });
-  for (const [toolCallId, name] of [
-    ['call_open_one', 'LookupOne'],
-    ['call_open_two', 'LookupTwo'],
-  ] as const) {
-    ctx.dispatch({
-      type: 'context.append_loop_event',
-      event: {
-        type: 'tool.call',
-        uuid: toolCallId,
-        turnId: '',
-        step: 2,
-        stepUuid,
-        toolCallId,
-        name,
-        args: {},
-      },
-    });
-  }
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'step.end',
-      uuid: stepUuid,
-      turnId: '',
-      step: 2,
-      finishReason: 'tool_use',
-    },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'tool.result',
-      parentUuid: 'call_open_one',
-      toolCallId: 'call_open_one',
-      result: { output: 'one result' },
-    },
-  });
-}
 
 function userMessage(text: string): Message {
   return {
