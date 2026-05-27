@@ -115,6 +115,15 @@ describe('ReadTool', () => {
     ).toBe(false);
   });
 
+  it('matches permission args with glob path semantics', () => {
+    const tool = toolWithContent('');
+    const execution = tool.resolveExecution({ path: '/etc/passwd' });
+    if (execution.isError === true) throw new TypeError('expected runnable execution');
+
+    expect(execution.matchesRule?.('/etc/**')).toBe(true);
+    expect(execution.matchesRule?.('/var/**')).toBe(false);
+  });
+
   it('reads text content with stable one-based line numbers', async () => {
     const tool = toolWithContent('alpha\nbeta\n');
 

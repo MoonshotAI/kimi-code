@@ -90,6 +90,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
   resolveExecution(args: AskUserQuestionInput): ToolExecution {
     return {
       description: 'Asking user questions',
+      approvalRule: this.name,
       execute: (ctx) => this.execution(args, ctx),
     };
   }

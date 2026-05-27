@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
-  AgentRecords,
   InMemoryAgentRecordPersistence,
   type AgentRecord,
 } from '../../../src/agent/records';

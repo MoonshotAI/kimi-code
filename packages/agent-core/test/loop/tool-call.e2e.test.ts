@@ -28,7 +28,7 @@ import {
   EchoTool,
   FailingTool,
   GatedTool,
-  markReadAnyFileAccesses,
+  markReadFileAccesses,
   ProgressTool,
   StrictArgsTool,
 } from './fixtures/tools';
@@ -225,6 +225,7 @@ describe('runTurn — tool-call behaviour', () => {
       description: 'returns undefined',
       parameters: { type: 'object', additionalProperties: true },
       resolveExecution: () => ({
+        approvalRule: 'undef',
         execute: async () => undefined as unknown as ExecutableToolResult,
       }),
     };
@@ -249,6 +250,7 @@ describe('runTurn — tool-call behaviour', () => {
       description: 'returns {}',
       parameters: { type: 'object', additionalProperties: true },
       resolveExecution: () => ({
+        approvalRule: 'noout',
         execute: async () => ({}) as ExecutableToolResult,
       }),
     };
@@ -271,6 +273,7 @@ describe('runTurn — tool-call behaviour', () => {
       description: 'returns undefined',
       parameters: { type: 'object', additionalProperties: true },
       resolveExecution: () => ({
+        approvalRule: 'undef',
         execute: async () => undefined as unknown as ExecutableToolResult,
       }),
     };
@@ -406,8 +409,8 @@ describe('runTurn — tool-call behaviour', () => {
     // Two GatedTools start, each blocks until released. If the loop executed
     // them serially we could not have both `started` promises resolve
     // before releasing either.
-    const a = markReadAnyFileAccesses(new GatedTool('gated-a'));
-    const b = markReadAnyFileAccesses(new GatedTool('gated-b'));
+    const a = markReadFileAccesses(new GatedTool('gated-a'));
+    const b = markReadFileAccesses(new GatedTool('gated-b'));
 
     const turnPromise = runTurn({
       tools: [a, b],
@@ -676,6 +679,7 @@ class PathLockedGatedTool implements ExecutableTool<PathLockedInput> {
   resolveExecution(input: PathLockedInput): ToolExecution {
     return {
       accesses: ToolAccesses.writeFile(input.path),
+      approvalRule: this.name,
       execute: async (ctx): Promise<ExecutableToolResult> => {
         this.calls.push({
           id: ctx.toolCallId,

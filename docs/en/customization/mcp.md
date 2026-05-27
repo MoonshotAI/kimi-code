@@ -54,7 +54,7 @@ Stdio entries in a project-level `.kimi-code/mcp.json` execute local commands wh
 
 ## Tool naming and permissions
 
-MCP tools are exposed using the naming convention `mcp__<server>__<tool>`. Permission matching supports `*` and `**` wildcards, so `mcp__github__*` covers every tool from the `github` server.
+MCP tools are exposed using the naming convention `mcp__<server>__<tool>`. Permission matching supports `*` and `**` wildcards in tool names, so `mcp__github__*` covers every tool from the `github` server. MCP tool arguments are not part of permission matching; allow or deny the exact MCP tool name, or use a tool-name wildcard.
 
 Calls that do not match any rule trigger an approval request. Choosing "Approve for this session" in the approval prompt auto-approves subsequent matching calls.
 

@@ -441,6 +441,7 @@ function _typeOnlyChecks(): void {
     description: 'x',
     parameters: { type: 'object' },
     resolveExecution: () => ({
+      approvalRule: 'x',
       execute: async (_ctx: ExecutableToolContext) => ({ output: 'ok' }),
     }),
   };
@@ -452,6 +453,7 @@ function _typeOnlyChecks(): void {
     resolveExecution: (args) => ({
       accesses: ToolAccesses.none(),
       description: `Running ${args.text}`,
+      approvalRule: 'x',
       execute: async (_ctx: ExecutableToolContext) => ({ output: 'ok' }),
     }),
   };
@@ -461,6 +463,7 @@ function _typeOnlyChecks(): void {
     description: 'x',
     parameters: { type: 'object' },
     resolveExecution: () => ({
+      approvalRule: 'x',
       execute: async (_ctx: ExecutableToolContext) => ({ output: 'ok' }),
     }),
     // @ts-expect-error — there is no second Zod schema source on ExecutableTool.

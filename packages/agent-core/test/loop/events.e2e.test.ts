@@ -9,7 +9,7 @@ import type { LoopEvent, LoopLiveEventEmitter } from '../../src/loop/index';
 import { CollectingSink } from './fixtures/collecting-sink';
 import { makeEndTurnResponse, makeToolCall, makeToolUseResponse } from './fixtures/fake-llm';
 import { runTurn } from './fixtures/helpers';
-import { EchoTool, markReadAnyFileAccesses, ProgressTool } from './fixtures/tools';
+import { EchoTool, markReadFileAccesses, ProgressTool } from './fixtures/tools';
 
 describe('runTurn — LoopEventDispatcher live event containment', () => {
   it('contains synchronous emit() throws', async () => {
@@ -98,8 +98,8 @@ describe('runTurn — LoopEventDispatcher live event containment', () => {
   });
 
   it('emits a documented full event sequence for one tool-bearing turn', async () => {
-    const echo = markReadAnyFileAccesses(new EchoTool());
-    const progress = markReadAnyFileAccesses(
+    const echo = markReadFileAccesses(new EchoTool());
+    const progress = markReadFileAccesses(
       new ProgressTool([{ kind: 'progress', percent: 50 }]),
     );
     const { sink } = await runTurn({

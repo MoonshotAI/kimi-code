@@ -270,14 +270,22 @@ function normalizeValue(value: unknown, uuidLabels: Map<string, string>): unknow
         .filter(([key]) => !isVolatileDurationKey(key))
         .map(([key, nested]) => [
           key,
-          (key === 'time' || key === 'created_at') && typeof nested === 'number'
-            ? '<time>'
-            : normalizeValue(nested, uuidLabels),
+          normalizeObjectField(key, nested, uuidLabels),
         ]),
     );
   }
 
   return value;
+}
+
+function normalizeObjectField(
+  key: string,
+  value: unknown,
+  uuidLabels: Map<string, string>,
+): unknown {
+  if ((key === 'time' || key === 'created_at') && typeof value === 'number') return '<time>';
+  if (key === 'cwd' && typeof value === 'string') return '<cwd>';
+  return normalizeValue(value, uuidLabels);
 }
 
 function stripUndefined(value: unknown): unknown {

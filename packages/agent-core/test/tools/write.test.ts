@@ -58,6 +58,21 @@ describe('WriteTool', () => {
     expect(params.properties.path.description).toMatch(/absolute/i);
   });
 
+  it('matches permission args with negated glob path semantics', () => {
+    const tool = new WriteTool(createFakeKaos(), {
+      workspaceDir: '/workspace',
+      additionalDirs: [],
+    });
+    const insideSrc = tool.resolveExecution({ path: './src/a.ts', content: 'x' });
+    const outsideSrc = tool.resolveExecution({ path: './README.md', content: 'x' });
+    if (insideSrc.isError === true || outsideSrc.isError === true) {
+      throw new TypeError('expected runnable execution');
+    }
+
+    expect(insideSrc.matchesRule?.('!./src/**')).toBe(false);
+    expect(outsideSrc.matchesRule?.('!./src/**')).toBe(true);
+  });
+
   it('guides batching large content across multiple write calls', () => {
     const tool = new WriteTool(createFakeKaos(), PERMISSIVE_WORKSPACE);
 

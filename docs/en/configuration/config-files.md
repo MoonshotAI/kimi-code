@@ -203,7 +203,7 @@ Rules are written as a `[[permission.rules]]` array of tables, where each rule c
 | --- | --- | --- | --- |
 | `decision` | `string` | Yes | Decision result; one of `allow`, `deny`, `ask` |
 | `scope` | `string` | No | Rule scope; one of `turn-override`, `session-runtime`, `project`, `user`; defaults to `user` |
-| `pattern` | `string` | Yes | Match pattern in the form `ToolName` or `ToolName(arg-pattern)`. `ToolName` must match the runtime tool name exactly — built-in tools are `Read`, `Write`, `Edit`, `Bash`, `Grep`, and so on (see [Built-in tools](../reference/tools.md)) |
+| `pattern` | `string` | Yes | Match pattern in the form `ToolName` or `ToolName(arg-pattern)`. `ToolName` must match the runtime tool name exactly — built-in tools are `Read`, `Write`, `Edit`, `Bash`, `Grep`, and so on (see [Built-in tools](../reference/tools.md)). Argument patterns are interpreted only by tools with built-in argument matchers, such as `Bash`, file tools, and search tools; MCP tools and custom tools match by tool name only |
 | `reason` | `string` | No | Rule description for debugging or auditing |
 
 Example:

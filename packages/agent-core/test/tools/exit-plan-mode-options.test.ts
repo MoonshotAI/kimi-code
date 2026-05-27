@@ -148,27 +148,6 @@ describe('ExitPlanMode options schema', () => {
 });
 
 describe('ExitPlanMode option output', () => {
-  it('uses permission metadata to report the selected option', async () => {
-    const { agent, requestApproval, emit } = makeAgent({
-      plan: 'plan from file',
-    });
-
-    const result = await execute(
-      new ExitPlanModeTool(agent),
-      { options },
-      {
-        selectedOption: options[1],
-      },
-    );
-
-    expect(requestApproval).not.toHaveBeenCalled();
-    expect(emit).toHaveBeenCalledWith({ type: 'plan_mode.exit' });
-    expect(result).toMatchObject({ isError: false });
-    expect(result.output).toContain('Selected approach: Approach B');
-    expect(result.output).toContain('Execute ONLY the selected approach');
-    expect(result.output).toContain('plan from file');
-  });
-
   it('treats a single option as plain plan approval', async () => {
     const { agent, requestApproval, emit } = makeAgent({
       plan: 'single option plan',
