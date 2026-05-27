@@ -1,13 +1,7 @@
 /**
- * Tests for `tools/cron/cron-expr.ts`. Mirrors the layout of
- * `clock.test.ts` (lives under `test/` because the package's vitest
- * config scopes `include` to `test/**`).
- *
- * Local-time semantics matter: `new Date('2024-06-01T12:00:30')` in JS
- * land is interpreted as local time when the string has no timezone
- * suffix (and as UTC when it has one). We construct dates explicitly
- * via `new Date(year, monthIndex, day, hour, minute, second)` so the
- * tests are stable regardless of the test process's TZ.
+ * Tests for `tools/cron/cron-expr.ts`. Dates are constructed via
+ * `new Date(year, monthIndex, day, h, m, s)` so the suite is stable
+ * regardless of the host TZ (cron expressions evaluate in local time).
  */
 import { describe, expect, it } from 'vitest';
 

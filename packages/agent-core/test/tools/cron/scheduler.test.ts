@@ -1,14 +1,7 @@
 /**
- * Tests for `tools/cron/scheduler.ts`.
- *
- * The scheduler is session-only at this commit: no file I/O, no
- * locks. Every test injects a `ClockSources` whose `wallNow` /
- * `monoNowMs` are driven by hand via the `advance(ms)` helper, so
- * scenarios run in simulated time without `setTimeout`.
- *
- * For the recurring tests we deliberately use `KIMI_CRON_NO_JITTER=1`
- * so the assertions can pin exact fire counts. The one jitter-aware
- * test gives a generous slack window.
+ * Tests for `tools/cron/scheduler.ts`. Time is injected via
+ * `ClockSources`; `KIMI_CRON_NO_JITTER=1` pins fire counts on the
+ * recurring tests.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 

@@ -1,10 +1,5 @@
 /**
  * Tests for `tools/cron/clock.ts`.
- *
- * Lives under `test/tools/cron/` because the package's `vitest.config.ts`
- * scopes its `include` to `test/**`. Colocated `src/**\/*.test.ts` would
- * not run in CI. The plan doc names the file `src/tools/cron/clock.test.ts`;
- * we put it here so the test actually runs.
  */
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
