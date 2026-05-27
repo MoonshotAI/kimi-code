@@ -6,10 +6,8 @@ import {
   toKimiErrorPayload,
 } from '#/errors';
 import {
-  APIConnectionError,
   APIEmptyResponseError,
-  APIStatusError,
-  APITimeoutError,
+  isRetryableGenerateError,
   inputTotal,
   type GenerateResult,
   type Message,
@@ -478,7 +476,7 @@ export class FullCompaction {
         const summary = extractCompactionSummary(response);
         return { response, summary, retryCount };
       } catch (error) {
-        if (attempt >= maxAttempts || !isRetryableCompactionError(error)) {
+        if (attempt >= maxAttempts || !isRetryableGenerateError(error)) {
           throw error;
         }
         retryCount += 1;
@@ -554,16 +552,4 @@ function compactionTelemetryTrigger(
     return 'manual-with-prompt';
   }
   return trigger;
-}
-
-function isRetryableCompactionError(error: unknown): boolean {
-  if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
-    return true;
-  }
-  if (error instanceof APIEmptyResponseError) {
-    return true;
-  }
-  if (!(error instanceof APIStatusError)) return false;
-  const statusCode = (error as { readonly statusCode?: unknown }).statusCode;
-  return typeof statusCode === 'number' && [429, 500, 502, 503, 504].includes(statusCode);
 }

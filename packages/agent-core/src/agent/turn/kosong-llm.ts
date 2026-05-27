@@ -16,12 +16,9 @@
  */
 
 import {
-  APIConnectionError,
-  APIEmptyResponseError,
-  APIStatusError,
-  APITimeoutError,
   emptyUsage,
   generate as kosongGenerate,
+  isRetryableGenerateError,
   type ChatProvider,
   type GenerateCallbacks,
   type Message,
@@ -81,10 +78,6 @@ export class KosongLLM implements LLM {
   }
 
   async chat(params: LLMChatParams): Promise<LLMChatResponse> {
-    return this.chatOnce(params);
-  }
-
-  private async chatOnce(params: LLMChatParams): Promise<LLMChatResponse> {
     const callbacks = buildKosongCallbacks(params);
 
     // Compute and apply the per-request completion budget against a
@@ -127,8 +120,8 @@ export class KosongLLM implements LLM {
 
     const response: LLMChatResponse = {
       toolCalls: [...result.message.toolCalls],
-      ...(result.finishReason !== null ? { providerFinishReason: result.finishReason } : {}),
-      ...(result.rawFinishReason !== null ? { rawFinishReason: result.rawFinishReason } : {}),
+      providerFinishReason: result.finishReason ?? undefined,
+      rawFinishReason: result.rawFinishReason ?? undefined,
       usage: result.usage ?? emptyUsage(),
     };
 
@@ -136,13 +129,7 @@ export class KosongLLM implements LLM {
   }
 
   isRetryableError(error: unknown): boolean {
-    if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
-      return true;
-    }
-    if (error instanceof APIEmptyResponseError) {
-      return true;
-    }
-    return error instanceof APIStatusError && [429, 500, 502, 503, 504].includes(error.statusCode);
+    return isRetryableGenerateError(error);
   }
 }
 
