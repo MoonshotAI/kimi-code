@@ -183,6 +183,8 @@ export class SDKRpcClient {
       outputPath: input.outputPath,
       includeGlobalLog: input.includeGlobalLog,
       version: input.version,
+      installSource: input.installSource,
+      shellEnv: input.shellEnv,
     });
   }
 
