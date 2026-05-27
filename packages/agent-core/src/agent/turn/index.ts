@@ -32,11 +32,9 @@ import {
 import type { AgentEvent, TurnEndedEvent } from '../../rpc';
 import type { TelemetryPropertyValue } from '../../telemetry';
 import { abortable } from '../../utils/abort';
-import { resolveCompletionBudget } from '../../utils/completion-budget';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
-import { KosongLLM } from './kosong-llm';
 import { ToolCallDeduplicator } from './tool-dedup';
 
 interface ActiveTurn {
@@ -364,24 +362,12 @@ export class TurnFlow {
     while (true) {
       signal.throwIfAborted();
       const model = this.agent.config.model;
-      const provider = this.agent.config.provider.withThinking(this.agent.config.thinkingLevel);
       const loopControl = this.agent.providerManager?.config.loopControl;
-      const completionBudgetConfig = resolveCompletionBudget({
-        reservedContextSize: loopControl?.reservedContextSize,
-      });
-
       try {
         const result = await runTurn({
           turnId: String(turnId),
           signal,
-          llm: new KosongLLM({
-            provider,
-            modelName: model,
-            systemPrompt: this.agent.config.systemPrompt,
-            capability: this.agent.config.modelCapabilities,
-            generate: this.agent.generate,
-            completionBudgetConfig,
-          }),
+          llm: this.agent.llm,
           buildMessages: () => this.agent.context.messages,
           dispatchEvent: this.buildDispatchEvent(turnId),
           tools: this.agent.tools.loopTools,
@@ -632,6 +618,8 @@ function mapLoopEvent(event: LoopEvent, turnId: number): AgentEvent | undefined 
         stepId: event.uuid,
         usage: event.usage,
         finishReason: event.finishReason,
+        llmFirstTokenLatencyMs: event.llmFirstTokenLatencyMs,
+        llmStreamDurationMs: event.llmStreamDurationMs,
         providerFinishReason: event.providerFinishReason,
         rawFinishReason: event.rawFinishReason,
       };

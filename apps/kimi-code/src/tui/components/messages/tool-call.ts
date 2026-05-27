@@ -19,6 +19,7 @@ import {
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
+import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
 
@@ -37,13 +38,6 @@ const PROGRESS_URL_RE = /https?:\/\/\S+/g;
 
 type SubagentTextKind = 'thinking' | 'text';
 
-interface SubagentTokenUsage {
-  readonly input?: number | undefined;
-  readonly inputOther?: number | undefined;
-  readonly inputCacheRead?: number | undefined;
-  readonly inputCacheCreation?: number | undefined;
-  readonly output: number;
-}
 
 interface FinishedSubCall {
   readonly name: string;
@@ -106,16 +100,23 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
 
-function usageInputTotal(usage: SubagentTokenUsage): number {
-  return (
-    usage.input ??
-    (usage.inputOther ?? 0) + (usage.inputCacheRead ?? 0) + (usage.inputCacheCreation ?? 0)
-  );
+function formatSubagentContextTokens(contextTokens: number | undefined): string | undefined {
+  if (contextTokens === undefined || contextTokens <= 0) return undefined;
+  const formatted = contextTokens >= 1000 ? `${(contextTokens / 1000).toFixed(1)}k` : String(contextTokens);
+  return `${formatted} tok`;
 }
 
-function formatSubagentTokens(usage: SubagentTokenUsage | undefined): string | undefined {
-  if (usage === undefined) return undefined;
-  const total = usageInputTotal(usage) + usage.output;
+function usageInputTotal(usage: TokenUsage): number {
+  return (usage.inputOther ?? 0) + (usage.inputCacheRead ?? 0) + (usage.inputCacheCreation ?? 0);
+}
+
+function usageTotal(usage: TokenUsage | undefined): number {
+  if (usage === undefined) return 0;
+  return usageInputTotal(usage) + usage.output;
+}
+
+function formatSubagentTokens(usage: TokenUsage | undefined): string | undefined {
+  const total = usageTotal(usage);
   if (total <= 0) return undefined;
   const formatted = total >= 1000 ? `${(total / 1000).toFixed(1)}k` : String(total);
   return `${formatted} tok`;
@@ -188,6 +189,16 @@ function interpretExitPlanModeOutcome(output: string): ExitPlanModeOutcome {
       : { kind: 'approved', chosen: optionMatch[1] };
   }
   return path !== undefined && path.length > 0 ? { kind: 'approved', path } : { kind: 'approved' };
+}
+
+function isExitPlanModeOutcomeOutput(output: string): boolean {
+  return (
+    output.startsWith(REJECT_PREFIX) ||
+    output.startsWith(PLAN_REJECT_PREFIX) ||
+    output.startsWith('Exited plan mode.') ||
+    APPROVED_OPTION_RE.test(output) ||
+    output.includes(APPROVED_PLAN_MARKER)
+  );
 }
 
 function unescapeJsonString(s: string): string {
@@ -463,7 +474,8 @@ export class ToolCallComponent extends Container {
   private subagentThinkingText = '';
   // ── Subagent lifecycle state from subagent.spawned/completed/failed ──
   private subagentPhase: 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded' | undefined;
-  private subagentUsage: SubagentTokenUsage | undefined;
+  private subagentContextTokens: number | undefined;
+  private subagentUsage: TokenUsage | undefined;
   private subagentResultSummary: string | undefined;
   private subagentError: string | undefined;
   private streamingProgressTimer: ReturnType<typeof setInterval> | undefined;
@@ -672,10 +684,11 @@ export class ToolCallComponent extends Container {
 
   getSubagentSnapshot(): ToolCallSubagentSnapshot {
     const finished = this.finishedSubCalls.length + this.hiddenSubCallCount;
+    const contextTokens = this.subagentContextTokens;
     const tokens =
-      this.subagentUsage === undefined
-        ? 0
-        : usageInputTotal(this.subagentUsage) + this.subagentUsage.output;
+      contextTokens && contextTokens > 0
+        ? contextTokens
+        : (this.subagentUsage === undefined ? 0 : usageTotal(this.subagentUsage));
     const latestActivity = computeLatestActivity(
       this.ongoingSubCalls,
       this.finishedSubCalls,
@@ -870,11 +883,15 @@ export class ToolCallComponent extends Container {
    * token usage plus the result summary for the header chip and tail summary.
    */
   onSubagentCompleted(payload: {
-    usage?: SubagentTokenUsage | undefined;
+    contextTokens?: number | undefined;
+    usage?: TokenUsage | undefined;
     resultSummary: string;
   }): void {
     this.subagentPhase = 'done';
     this.subagentEndedAtMs ??= Date.now();
+    if (payload.contextTokens !== undefined && payload.contextTokens > 0) {
+      this.subagentContextTokens = payload.contextTokens;
+    }
     this.subagentUsage = payload.usage;
     this.subagentResultSummary =
       payload.resultSummary.length > 0 ? payload.resultSummary : undefined;
@@ -884,6 +901,23 @@ export class ToolCallComponent extends Container {
     this.syncSubagentElapsedTimer();
     this.headerText.setText(this.buildHeader());
     this.rebuildContent();
+    this.notifySnapshotChange();
+    this.ui?.requestRender();
+  }
+
+  /** Handles SDK `agent.status.updated` from the child agent. */
+  updateSubagentMetrics(payload: {
+    contextTokens?: number | undefined;
+    usage?: TokenUsage | undefined;
+  }): void {
+    if (payload.contextTokens !== undefined && payload.contextTokens > 0) {
+      this.subagentContextTokens = payload.contextTokens;
+    }
+    if (payload.usage !== undefined) {
+      this.subagentUsage = payload.usage;
+    }
+    this.headerText.setText(this.buildHeader());
+    this.invalidate();
     this.notifySnapshotChange();
     this.ui?.requestRender();
   }
@@ -1018,7 +1052,7 @@ export class ToolCallComponent extends Container {
             : 'Approved';
         return `${label}${chalk.hex(colors.success)(` · ${chipText}`)}`;
       }
-      return `${label}${chalk.hex(colors.error)(' · Rejected')}`;
+      return label;
     }
 
     if (toolCall.name === 'AskUserQuestion') {
@@ -1210,7 +1244,9 @@ export class ToolCallComponent extends Container {
         parts.push(chalk.hex(this.colors.success)('✓ done'));
         const toolCount = this.finishedSubCalls.length + this.hiddenSubCallCount;
         if (toolCount > 0) parts.push(`${String(toolCount)} tool${toolCount > 1 ? 's' : ''}`);
-        const tokens = formatSubagentTokens(this.subagentUsage);
+        const tokens =
+          formatSubagentContextTokens(this.subagentContextTokens) ??
+          formatSubagentTokens(this.subagentUsage);
         if (tokens !== undefined) parts.push(tokens);
         break;
       }
@@ -1304,6 +1340,13 @@ export class ToolCallComponent extends Container {
     ];
     const elapsed = this.getSubagentElapsedSeconds();
     if (elapsed !== undefined) parts.push(formatElapsed(elapsed));
+    const tokens =
+      this.subagentContextTokens && this.subagentContextTokens > 0
+        ? this.subagentContextTokens
+        : this.subagentUsage === undefined
+          ? 0
+          : usageTotal(this.subagentUsage);
+    if (tokens > 0) parts.push(formatTokens(tokens));
     return ` · ${parts.join(' · ')}`;
   }
 
@@ -1516,6 +1559,7 @@ export class ToolCallComponent extends Container {
         new PlanBoxComponent(plan, this.markdownTheme, this.colors.success, path, {
           maxContentLines: this.computePlanBoxMaxContentLines(),
           expanded: this.planExpanded,
+          status: this.resolvePlanBoxStatus(),
         }),
       );
     } else {
@@ -1549,6 +1593,15 @@ export class ToolCallComponent extends Container {
     return this.planPath;
   }
 
+  private resolvePlanBoxStatus(): { label: string; colorHex: string } | undefined {
+    const result = this.result;
+    if (this.toolCall.name !== 'ExitPlanMode' || result === undefined) return undefined;
+    if (!isExitPlanModeOutcomeOutput(result.output)) return undefined;
+    const outcome = interpretExitPlanModeOutcome(result.output);
+    if (outcome.kind !== 'rejected') return undefined;
+    return { label: 'Rejected', colorHex: this.colors.error };
+  }
+
   private buildContent(): void {
     const { result } = this;
     if (result === undefined || !result.output) return;
@@ -1564,7 +1617,7 @@ export class ToolCallComponent extends Container {
       return;
     }
 
-    if (this.toolCall.name === 'ExitPlanMode' && !result.is_error) {
+    if (this.toolCall.name === 'ExitPlanMode' && isExitPlanModeOutcomeOutput(result.output)) {
       // Approved plans are already rendered by buildCallPreview via
       // resolvePlanForPreview. Rejected or revise feedback uses a warning label
       // plus normal body text so it remains visible in the transcript.
@@ -1683,6 +1736,12 @@ function computeLatestActivity(
     if (tail !== undefined) return tail.trim();
   }
   return undefined;
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M tok`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k tok`;
+  return `${String(n)} tok`;
 }
 
 function formatActivityLine(

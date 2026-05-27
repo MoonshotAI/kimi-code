@@ -266,10 +266,12 @@ function normalizeValue(value: unknown, uuidLabels: Map<string, string>): unknow
 
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(
-      Object.entries(value).map(([key, nested]) => [
-        key,
-        normalizeObjectField(key, nested, uuidLabels),
-      ]),
+      Object.entries(value)
+        .filter(([key]) => !isVolatileDurationKey(key))
+        .map(([key, nested]) => [
+          key,
+          normalizeObjectField(key, nested, uuidLabels),
+        ]),
     );
   }
 
@@ -304,6 +306,10 @@ function stripUndefined(value: unknown): unknown {
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isVolatileDurationKey(key: string): boolean {
+  return key === 'llmFirstTokenLatencyMs' || key === 'llmStreamDurationMs';
 }
 
 function isPlanModeReminder(value: string): boolean {

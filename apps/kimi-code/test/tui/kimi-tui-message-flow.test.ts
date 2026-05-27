@@ -10,6 +10,7 @@ import {
 import type { ApprovalRequest, ApprovalResponse, Event } from '@moonshot-ai/kimi-code-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { QueuedMessage } from '#/tui/types';
@@ -17,8 +18,13 @@ import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
 vi.mock('#/tui/utils/open-url', () => ({ openUrl: vi.fn() }));
 
+const ESC = String.fromCodePoint(0x1b);
+const BEL = String.fromCodePoint(0x07);
+
 function stripSgr(text: string): string {
-  return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
+  return text
+    .replaceAll(/\u001B\[[0-9;]*m/g, '')
+    .replaceAll(new RegExp(`${ESC}\\]8;;[^${BEL}]*${BEL}`, 'g'), '');
 }
 
 interface MessageDriver {
@@ -1105,6 +1111,82 @@ describe('KimiTUI message flow', () => {
     });
   });
 
+  it('shows plan review reject on the plan card without an approval notice', async () => {
+    const planContent = '# Reject Plan\n\n- keep this plan visible after reject';
+    const session = makeSession({
+      getPlan: vi.fn(async () => ({
+        id: 'reject-plan',
+        content: planContent,
+        path: '/tmp/reject-plan.md',
+      })),
+    });
+    const { driver } = await makeDriver(session);
+
+    driver.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_exit_reject_plan',
+        name: 'ExitPlanMode',
+        args: {},
+      } as Event,
+      vi.fn(),
+    );
+
+    await vi.waitFor(() => {
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(transcript).toContain('Reject Plan');
+      expect(countOccurrences(transcript, 'keep this plan visible after reject')).toBe(1);
+    });
+
+    const approvalHandler = vi.mocked(session.setApprovalHandler).mock.calls[0]?.[0] as
+      | ((request: ApprovalRequest) => Promise<ApprovalResponse>)
+      | undefined;
+    if (approvalHandler === undefined) throw new Error('expected approval handler');
+    const response = approvalHandler({
+      turnId: 1,
+      toolCallId: 'call_exit_reject_plan',
+      toolName: 'ExitPlanMode',
+      action: 'Review plan',
+      display: {
+        kind: 'plan_review',
+        plan: planContent,
+        path: '/tmp/reject-plan.md',
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ApprovalPanelComponent);
+    });
+    (driver.state.editorContainer.children[0] as ApprovalPanelComponent).handleInput('2');
+    await expect(response).resolves.toMatchObject({ decision: 'rejected' });
+
+    driver.handleEvent(
+      {
+        type: 'tool.result',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_exit_reject_plan',
+        output: 'Plan rejected by user. Plan mode remains active.',
+        isError: true,
+      } as Event,
+      vi.fn(),
+    );
+
+    await vi.waitFor(() => {
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(transcript).toContain('plan: reject-plan.md · Rejected');
+      expect(transcript).toContain('Reject Plan');
+      expect(countOccurrences(transcript, 'keep this plan visible after reject')).toBe(1);
+      expect(transcript).not.toContain('Rejected: Review plan');
+      expect(transcript).not.toContain('Plan rejected by user.');
+      expect(transcript).not.toContain('Plan mode remains active.');
+    });
+  });
+
   it('renders /status using the active session runtime status', async () => {
     const session = makeSession({
       getStatus: vi.fn(async () => ({
@@ -1394,7 +1476,7 @@ describe('KimiTUI message flow', () => {
       expect(forked.onEvent).toHaveBeenCalledOnce();
       expect(harness.resumeSession).not.toHaveBeenCalled();
       expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
-        'Session forked (ses-fork).',
+        'Session forked (ses-fork). To return to the original session: kimi -r ses-source',
       );
     } finally {
       process.title = originalTitle;
@@ -1419,6 +1501,61 @@ describe('KimiTUI message flow', () => {
         'Failed to fork session: fork unavailable',
       );
     });
+  });
+
+  it('does not create a thinking component for empty thinking deltas', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.isStreaming = true;
+    driver.state.appState.streamingStartTime = 1;
+
+    // An empty thinking delta — as emitted by providers like Anthropic
+    // (signature_delta → think: '') — must not create a ThinkingComponent
+    // whose spinner would leak past turn end.
+    driver.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        delta: '',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.activeThinkingComponent).toBeUndefined();
+  });
+
+  it('finalizes an orphaned thinking component on turn end', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.isStreaming = true;
+    driver.state.appState.streamingStartTime = 1;
+    const sendQueued = vi.fn();
+
+    // Simulate a ThinkingComponent that leaked into state without
+    // corresponding thinkingDraft content (the exact scenario that
+    // could happen without the empty-delta guard above).
+    const { ThinkingComponent } = await import('../../src/tui/components/messages/thinking');
+    driver.state.activeThinkingComponent = new ThinkingComponent(
+      '',
+      driver.state.theme.colors,
+      true,
+      'live',
+      driver.state.ui,
+    );
+
+    driver.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'completed',
+      } as Event,
+      sendQueued,
+    );
+
+    // flushThinkingToTranscript must finalize the component even when
+    // thinkingDraft is empty, so the spinner does not outlive the turn.
+    expect(driver.state.activeThinkingComponent).toBeUndefined();
   });
 
   it('renders newly streamed thinking expanded when ctrl+o toggle was already active', async () => {

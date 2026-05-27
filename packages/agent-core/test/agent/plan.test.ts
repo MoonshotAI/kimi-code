@@ -536,8 +536,8 @@ describe('plan mode injection cadence', () => {
     await ctx.agent.injection.inject();
     expect(ctx.agent.context.history).toHaveLength(afterFull);
 
-    appendAssistantTurn(ctx, 1, 'assistant one');
-    appendAssistantTurn(ctx, 2, 'assistant two');
+    ctx.appendAssistantTurn(1, 'assistant one');
+    ctx.appendAssistantTurn(2, 'assistant two');
     await ctx.agent.injection.inject();
 
     expect(lastUserText(ctx.agent.context.history)).toContain('Plan mode still active');
@@ -583,35 +583,6 @@ describe('plan mode injection cadence', () => {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function appendAssistantTurn(ctx: ReturnType<typeof testAgent>, step: number, text: string): void {
-  const stepUuid = `plan-injection-step-${String(step)}`;
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: { type: 'step.begin', uuid: stepUuid, turnId: '', step },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'content.part',
-      uuid: `plan-injection-part-${String(step)}`,
-      turnId: '',
-      step,
-      stepUuid,
-      part: { type: 'text', text },
-    },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'step.end',
-      uuid: stepUuid,
-      turnId: '',
-      step,
-      finishReason: 'end_turn',
-    },
-  });
 }
 
 function lastUserText(history: readonly { role: string; content: readonly unknown[] }[]): string {

@@ -81,6 +81,7 @@ describe('built-in slash command registry', () => {
         'compact',
         'editor',
         'exit',
+        'export-debug-zip',
         'fork',
         'help',
         'init',

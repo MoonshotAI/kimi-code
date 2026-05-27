@@ -1,9 +1,4 @@
-import type {
-  ChatProvider,
-  Message,
-  ModelCapability,
-  Tool,
-} from '@moonshot-ai/kosong';
+import type { ChatProvider, ModelCapability } from '@moonshot-ai/kosong';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -11,19 +6,6 @@ import {
   computeCompletionBudgetCap,
   resolveCompletionBudget,
 } from '../../src/utils/completion-budget';
-
-function makeMessages(approxAsciiTokens: number): Message[] {
-  // estimateTokens treats ASCII as ~4 chars/token. Pad with a single
-  // string so the message lands near the requested count.
-  const charCount = approxAsciiTokens * 4;
-  return [
-    {
-      role: 'user',
-      content: [{ type: 'text', text: 'a'.repeat(charCount) }],
-      toolCalls: [],
-    },
-  ];
-}
 
 function makeCapability(maxContextTokens: number): ModelCapability {
   return {
@@ -36,20 +18,11 @@ function makeCapability(maxContextTokens: number): ModelCapability {
   };
 }
 
-function makeTool(name: string, asciiCharsInDescription: number): Tool {
-  return {
-    name,
-    description: 'd'.repeat(asciiCharsInDescription),
-    parameters: { type: 'object', properties: {} },
-  };
-}
-
 describe('computeCompletionBudgetCap', () => {
   it('uses fallback when context size is unknown and no hard cap is set', () => {
     const cap = computeCompletionBudgetCap({
       budget: { fallback: 8192 },
       capability: undefined,
-      messages: makeMessages(100),
     });
     expect(cap).toBe(8192);
   });
@@ -58,7 +31,6 @@ describe('computeCompletionBudgetCap', () => {
     const cap = computeCompletionBudgetCap({
       budget: { hardCap: 10, fallback: 8192 },
       capability: makeCapability(0),
-      messages: makeMessages(100),
     });
     expect(cap).toBe(10);
   });
@@ -68,116 +40,47 @@ describe('computeCompletionBudgetCap', () => {
       computeCompletionBudgetCap({
         budget: { hardCap: 0 },
         capability: undefined,
-        messages: makeMessages(10),
       }),
     ).toBe(1);
     expect(
       computeCompletionBudgetCap({
         budget: { hardCap: -100 },
         capability: undefined,
-        messages: makeMessages(10),
       }),
     ).toBe(1);
   });
 
-  it('uses the remaining context window when no hard cap is set', () => {
+  it('uses the model context window when no hard cap is set', () => {
     const maxCtx = 100000;
     const cap = computeCompletionBudgetCap({
       budget: { fallback: 32000 },
       capability: makeCapability(maxCtx),
-      messages: makeMessages(1000),
     });
-    expect(cap).toBe(maxCtx - 1001 - 1024);
+    expect(cap).toBe(maxCtx);
   });
 
-  it('clamps explicit hard cap down to the remaining context window', () => {
-    // max_context_tokens 10000, input ~ 1000, safetyMargin 1024 → remaining ~ 7976
+  it('uses the explicit hard cap when configured', () => {
     const cap = computeCompletionBudgetCap({
       budget: { hardCap: 32000 },
       capability: makeCapability(10000),
-      messages: makeMessages(1000),
     });
-    expect(cap).toBeLessThanOrEqual(10000 - 1000 - 1024);
-    expect(cap).toBeGreaterThan(7000);
+    expect(cap).toBe(32000);
   });
 
-  it('returns 1 when input already exceeds context minus margin', () => {
+  it('ignores fallback when the model context window is known', () => {
     const cap = computeCompletionBudgetCap({
       budget: { fallback: 32000 },
       capability: makeCapability(10000),
-      messages: makeMessages(11000),
     });
-    expect(cap).toBe(1);
-  });
-
-  it('never exceeds remaining context, even when remaining is below the historical floor', () => {
-    // input ~ 8900, safetyMargin 1024 → remaining ~ 75 (positive but below 256).
-    // The cap MUST stay <= remaining so the request does not overflow.
-    const maxCtx = 10000;
-    const cap = computeCompletionBudgetCap({
-      budget: { fallback: 32000 },
-      capability: makeCapability(maxCtx),
-      messages: makeMessages(8900),
-    });
-    expect(cap).toBeGreaterThanOrEqual(1);
-    expect(cap).toBeLessThanOrEqual(maxCtx - 8900 - 1024);
-  });
-
-  it('respects custom safetyMargin', () => {
-    const cap = computeCompletionBudgetCap({
-      budget: { fallback: 32000, safetyMargin: 4096 },
-      capability: makeCapability(20000),
-      messages: makeMessages(1000),
-    });
-    // remaining = 20000 - (1000 + 1 for 'user' role) - 4096 = 14903
-    expect(cap).toBe(14903);
+    expect(cap).toBe(10000);
   });
 
   it('keeps explicit hard cap when smaller than remaining', () => {
     const cap = computeCompletionBudgetCap({
       budget: { hardCap: 1024 },
       capability: makeCapability(100000),
-      messages: makeMessages(1000),
     });
     expect(cap).toBe(1024);
-  });
-
-  it('counts the system prompt as input', () => {
-    const maxCtx = 10000;
-    const safetyMargin = 1024;
-    const systemPrompt = 'a'.repeat(2000 * 4); // ~2000 tokens
-    const cap = computeCompletionBudgetCap({
-      budget: { fallback: 32000, safetyMargin },
-      capability: makeCapability(maxCtx),
-      messages: makeMessages(1000),
-      systemPrompt,
-    });
-    // remaining = 10000 - (1001 + 2000) - 1024 = 5975
-    expect(cap).toBeLessThanOrEqual(maxCtx - 1001 - 2000 - safetyMargin);
-    expect(cap).toBeGreaterThan(5500);
-  });
-
-  it('counts tool schemas as input', () => {
-    const maxCtx = 10000;
-    const safetyMargin = 1024;
-    const tools: Tool[] = [
-      makeTool('tool_a', 4000), // ~1000 tokens of description per tool
-      makeTool('tool_b', 4000),
-    ];
-    const capWithTools = computeCompletionBudgetCap({
-      budget: { fallback: 32000, safetyMargin },
-      capability: makeCapability(maxCtx),
-      messages: makeMessages(1000),
-      tools,
-    });
-    const capWithoutTools = computeCompletionBudgetCap({
-      budget: { fallback: 32000, safetyMargin },
-      capability: makeCapability(maxCtx),
-      messages: makeMessages(1000),
-    });
-    expect(capWithTools).toBeLessThan(capWithoutTools);
-    // Tool descriptions add ~2000 tokens, so cap should drop by roughly that.
-    expect(capWithoutTools - capWithTools).toBeGreaterThan(1500);
   });
 });
 
@@ -208,7 +111,6 @@ describe('applyCompletionBudget', () => {
       provider: original,
       budget: undefined,
       capability: makeCapability(10000),
-      messages: makeMessages(100),
     });
     expect(result).toBe(original);
     expect(withMaxCompletionTokens).not.toHaveBeenCalled();
@@ -222,46 +124,31 @@ describe('applyCompletionBudget', () => {
       provider: opaque,
       budget: { hardCap: 8192 },
       capability: makeCapability(10000),
-      messages: makeMessages(100),
     });
     expect(result).toBe(opaque);
   });
 
-  it('clones the provider with the clamped cap when budget is configured', () => {
+  it('clones the provider with the model context window when budget is configured', () => {
     const result = applyCompletionBudget({
       provider: original,
       budget: { fallback: 32000 },
       capability: makeCapability(10000),
-      messages: makeMessages(1000),
     });
     expect(withMaxCompletionTokens).toHaveBeenCalledOnce();
     const cap = withMaxCompletionTokens.mock.calls[0]?.[0] as number;
-    expect(cap).toBeLessThanOrEqual(10000 - 1000 - 1024);
-    expect(cap).toBeGreaterThan(7000);
+    expect(cap).toBe(10000);
     expect(result).not.toBe(original);
   });
 
-  it('forwards systemPrompt and tools to the cap computation', () => {
-    const tools: Tool[] = [makeTool('tool_a', 4000)];
-    const systemPrompt = 'a'.repeat(4000); // ~1000 tokens
-    applyCompletionBudget({
+  it('uses the explicit hard cap when configured', () => {
+    const result = applyCompletionBudget({
       provider: original,
-      budget: { fallback: 32000 },
+      budget: { hardCap: 8192 },
       capability: makeCapability(10000),
-      messages: makeMessages(1000),
-      systemPrompt,
-      tools,
     });
-    const capWithExtras = withMaxCompletionTokens.mock.calls[0]?.[0] as number;
-    withMaxCompletionTokens.mockClear();
-    applyCompletionBudget({
-      provider: original,
-      budget: { fallback: 32000 },
-      capability: makeCapability(10000),
-      messages: makeMessages(1000),
-    });
-    const capBare = withMaxCompletionTokens.mock.calls[0]?.[0] as number;
-    expect(capWithExtras).toBeLessThan(capBare);
+    expect(withMaxCompletionTokens).toHaveBeenCalledOnce();
+    expect(withMaxCompletionTokens.mock.calls[0]?.[0]).toBe(8192);
+    expect(result).not.toBe(original);
   });
 });
 

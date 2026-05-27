@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, open } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname } from 'pathe';
 
 import { ErrorCodes, KimiError } from '#/errors';
 import {

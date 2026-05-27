@@ -7,11 +7,7 @@
  * like `.env.example` are explicitly allowed.
  */
 
-import * as nativePath from 'node:path';
-import * as posixPath from 'node:path/posix';
-import * as win32Path from 'node:path/win32';
-
-import type { PathClass } from './path-access';
+import { basename } from 'pathe';
 
 const SENSITIVE_BASENAMES = new Set<string>([
   '.env',
@@ -45,19 +41,12 @@ export const SENSITIVE_DOT_VARIANT_SUFFIXES = [
 ] as const;
 const SENSITIVE_DOT_VARIANT_SUFFIX_SET = new Set<string>(SENSITIVE_DOT_VARIANT_SUFFIXES);
 
-const DEFAULT_PATH_CLASS: PathClass = nativePath.sep === '\\' ? 'win32' : 'posix';
-
-function pathMod(pathClass: PathClass): typeof posixPath {
-  return pathClass === 'win32' ? win32Path : posixPath;
-}
-
 function comparable(path: string): string {
   return path.toLowerCase();
 }
 
-export function isSensitiveFile(path: string, pathClass: PathClass = DEFAULT_PATH_CLASS): boolean {
-  const mod = pathMod(pathClass);
-  const name = mod.basename(path);
+export function isSensitiveFile(path: string): boolean {
+  const name = basename(path);
   const comparableName = comparable(name);
   const comparablePath = comparable(path);
 
@@ -79,11 +68,11 @@ export function isSensitiveFile(path: string, pathClass: PathClass = DEFAULT_PAT
   }
 
   for (const suffixParts of SENSITIVE_PATH_SUFFIXES) {
-    const suffix = suffixParts.join(mod.sep);
+    const suffix = suffixParts.join('/');
     const comparableSuffix = comparable(suffix);
     if (
-      comparablePath.endsWith(`${mod.sep}${comparableSuffix}`) ||
-      comparablePath.includes(`${mod.sep}${comparableSuffix}${mod.sep}`)
+      comparablePath.endsWith(`/${comparableSuffix}`) ||
+      comparablePath.includes(`/${comparableSuffix}/`)
     ) {
       return true;
     }

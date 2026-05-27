@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Improve the Write tool UX.
+Refactor TUI resume replay logic.

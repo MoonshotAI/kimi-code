@@ -60,6 +60,7 @@ export {
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
+  isRetryableGenerateError,
 } from './errors';
 
 /**

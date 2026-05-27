@@ -40,6 +40,32 @@ describe('PlanBoxComponent', () => {
     expect(top).not.toContain('…/');
   });
 
+  it('renders a status chip in the top border', () => {
+    const box = new PlanBoxComponent('# Hello', theme, darkColors.success, undefined, {
+      status: { label: 'Rejected', colorHex: darkColors.error },
+    });
+    const out = strip(box.render(60).join('\n'));
+    const top = out.split('\n')[0]!;
+    expect(top).toContain(' plan · Rejected ');
+  });
+
+  it('keeps path status title to the basename without leaking directories', () => {
+    const box = new PlanBoxComponent(
+      '# Hello',
+      theme,
+      darkColors.success,
+      '/tmp/projects/foo/.kimi-code/plans/rejected-plan.md',
+      {
+        status: { label: 'Rejected', colorHex: darkColors.error },
+      },
+    );
+    const out = strip(box.render(80).join('\n'));
+    const top = out.split('\n')[0]!;
+    expect(top).toContain(' plan: rejected-plan.md · Rejected ');
+    expect(top).not.toContain('/tmp/');
+    expect(top).not.toContain('…/');
+  });
+
   it('wraps the basename in an OSC 8 hyperlink targeting file://', () => {
     const box = new PlanBoxComponent('# Hello', theme, darkColors.success, '/tmp/plan.md');
     const top = box.render(60)[0]!;

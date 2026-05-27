@@ -1,6 +1,6 @@
 import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join } from 'pathe';
 
 import type { ContentPart } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';

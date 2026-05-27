@@ -71,6 +71,18 @@ describe('LocalKaos', () => {
       await kaos.writeText(filePath, 'content');
       await expect(kaos.chdir(filePath)).rejects.toThrow(/Not a directory/);
     });
+
+    it('should accept backslashes as path separators', async () => {
+      const nested = join(tempDir, 'backslash-test');
+      await kaos.mkdir(nested);
+      const filePath = join(nested, 'file.txt');
+      await kaos.writeText(filePath, 'hello');
+
+      // Use backslashes — they should be treated as forward slashes.
+      const backslashPath = filePath.replaceAll('/', '\\');
+      const statResult = await kaos.stat(backslashPath);
+      expect(statResult.stSize).toBe(Buffer.byteLength('hello', 'utf-8'));
+    });
   });
 
   describe('iterdir path normalization', () => {

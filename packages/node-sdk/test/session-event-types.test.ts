@@ -21,6 +21,15 @@ describe('Event public types', () => {
     expectTypeOf<EventByType<'tool.call.started'>['args']>().toEqualTypeOf<unknown>();
   });
 
+  it('exposes LLM stream timing on step completion events', () => {
+    expectTypeOf<EventByType<'turn.step.completed'>['llmFirstTokenLatencyMs']>().toEqualTypeOf<
+      number | undefined
+    >();
+    expectTypeOf<EventByType<'turn.step.completed'>['llmStreamDurationMs']>().toEqualTypeOf<
+      number | undefined
+    >();
+  });
+
   it('narrows subagent lifecycle events by type', () => {
     expectTypeOf<EventByType<'subagent.spawned'>['subagentId']>().toEqualTypeOf<string>();
     expectTypeOf<EventByType<'subagent.spawned'>['runInBackground']>().toEqualTypeOf<boolean>();

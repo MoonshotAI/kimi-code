@@ -103,6 +103,7 @@ export async function generate(
     throwAbortError();
   }
 
+  options?.onRequestStart?.();
   const stream = await provider.generate(systemPrompt, tools, history, options);
 
   // Post-await abort check: `provider.generate()` may have resolved before
@@ -156,6 +157,7 @@ export async function generate(
   }
 
   await throwIfAborted(options?.signal, stream);
+  options?.onStreamEnd?.();
 
   // Flush the last pending part.
   if (pendingPart !== null) {

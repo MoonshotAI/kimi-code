@@ -18,7 +18,7 @@ import { randomBytes } from 'node:crypto';
 import { closeSync, fsyncSync, openSync } from 'node:fs';
 import * as nodeFs from 'node:fs';
 import { open, rename, unlink } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname } from 'pathe';
 
 /**
  * Open a directory read-only and fsync it, then close. Used to make a

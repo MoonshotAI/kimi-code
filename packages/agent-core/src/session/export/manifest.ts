@@ -1,6 +1,6 @@
 import { AGENT_WIRE_PROTOCOL_VERSION } from '../../agent/records';
 import type { SessionWireScan } from '#/session/export/wire-scan';
-import type { ExportSessionManifest, SessionSummary } from '#/rpc/core-api';
+import type { ExportSessionManifest, ShellEnvironment, SessionSummary } from '#/rpc/core-api';
 
 export const WIRE_PROTOCOL_VERSION = AGENT_WIRE_PROTOCOL_VERSION;
 
@@ -12,6 +12,8 @@ export function buildExportManifest(args: {
   readonly sessionScan: SessionWireScan;
   readonly sessionLogPath?: string | undefined;
   readonly globalLogPath?: string | undefined;
+  readonly installSource?: string | undefined;
+  readonly shellEnv?: ShellEnvironment | undefined;
 }): ExportSessionManifest {
   return {
     sessionId: args.summary.id,
@@ -32,5 +34,7 @@ export function buildExportManifest(args: {
     workspaceDir: args.summary.workDir,
     sessionLogPath: args.sessionLogPath,
     globalLogPath: args.globalLogPath,
+    installSource: args.installSource,
+    shellEnv: args.shellEnv,
   };
 }

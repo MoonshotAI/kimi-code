@@ -12,7 +12,7 @@
 
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join } from 'pathe';
 import { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 
