@@ -137,9 +137,8 @@ export class StreamingUIController {
 
   finalizeAssistantStream(): void {
     this.flushNow();
-    if (this.host.state.assistantStreamActive) {
+    if (this.host.state.streamingBlock !== null) {
       this.onStreamingTextEnd();
-      this.host.state.assistantStreamActive = false;
     }
     this.host.state.assistantDraft = '';
     this.host.updateActivityPane();
@@ -151,9 +150,7 @@ export class StreamingUIController {
     this.pendingThinkingFlush = false;
     this.clearFlushTimerIfIdle();
     this.host.state.assistantDraft = '';
-    this.host.state.assistantStreamActive = false;
-    this.host.state.streamingComponent = undefined;
-    this.host.state.streamingTranscriptEntry = undefined;
+    this.host.state.streamingBlock = null;
     this.host.state.thinkingDraft = '';
     this.host.disposeActiveThinkingComponent();
   }
@@ -178,7 +175,7 @@ export class StreamingUIController {
 
   finalizeTurn(sendQueued: (item: QueuedMessage) => void): void {
     const { state } = this.host;
-    if (!state.appState.isStreaming) return;
+    if (state.appState.streamingPhase === 'idle') return;
     this.host.deferUserMessages = false;
     const completedTurnKey =
       state.currentTurnId ?? `local:${String(state.appState.streamingStartTime)}`;
@@ -189,7 +186,7 @@ export class StreamingUIController {
     if (state.queuedMessages.length > 0) {
       const [next, ...rest] = state.queuedMessages;
       state.queuedMessages = rest;
-      this.host.setAppState({ isStreaming: false, streamingPhase: 'idle' });
+      this.host.setAppState({ streamingPhase: 'idle' });
       this.host.resetLivePane();
       if (next !== undefined) {
         setTimeout(() => {
@@ -199,7 +196,7 @@ export class StreamingUIController {
       return;
     }
 
-    this.host.setAppState({ isStreaming: false, streamingPhase: 'idle' });
+    this.host.setAppState({ streamingPhase: 'idle' });
     this.host.resetLivePane();
     notifyTerminalOnce(state, `turn-complete:${completedTurnKey}`, {
       title: 'Kimi Code task complete',
@@ -222,30 +219,28 @@ export class StreamingUIController {
       renderMode: 'markdown' as const,
       content: '',
     };
-    state.streamingComponent = new AssistantMessageComponent(
+    const component = new AssistantMessageComponent(
       state.theme.markdownTheme,
       state.theme.colors,
     );
-    state.streamingTranscriptEntry = entry;
+    state.streamingBlock = { component, entry };
     state.transcriptEntries.push(entry);
-    state.transcriptContainer.addChild(state.streamingComponent);
+    state.transcriptContainer.addChild(component);
     state.ui.requestRender();
   }
 
   onStreamingTextUpdate(fullText: string): void {
     const { state } = this.host;
-    if (state.streamingTranscriptEntry !== undefined) {
-      state.streamingTranscriptEntry.content = fullText;
-    }
-    if (state.streamingComponent) {
-      state.streamingComponent.updateContent(fullText);
+    const block = state.streamingBlock;
+    if (block !== null) {
+      block.entry.content = fullText;
+      block.component.updateContent(fullText);
       state.ui.requestRender();
     }
   }
 
   onStreamingTextEnd(): void {
-    this.host.state.streamingComponent = undefined;
-    this.host.state.streamingTranscriptEntry = undefined;
+    this.host.state.streamingBlock = null;
   }
 
   onThinkingUpdate(fullText: string): void {
@@ -399,7 +394,7 @@ export class StreamingUIController {
     };
     state.activeToolCalls.set(id, toolCall);
 
-    if (state.thinkingDraft.length > 0 || state.assistantStreamActive) {
+    if (state.thinkingDraft.length > 0 || state.streamingBlock !== null) {
       this.finalizeLiveTextBuffers('tool');
     }
 

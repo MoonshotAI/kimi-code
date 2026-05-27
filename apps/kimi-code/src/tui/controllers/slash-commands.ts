@@ -194,10 +194,10 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
   let enabled: boolean;
   if (args === 'on') enabled = true;
   else if (args === 'off') enabled = false;
-  else enabled = !host.state.appState.yolo;
+  else enabled = host.state.appState.permissionMode !== 'yolo';
 
   await session.setPermission(enabled ? 'yolo' : 'manual');
-  host.setAppState({ yolo: enabled, permissionMode: enabled ? 'yolo' : 'manual' });
+  host.setAppState({ permissionMode: enabled ? 'yolo' : 'manual' });
   if (enabled) {
     host.showNotice(
       'YOLO mode: ON',
@@ -341,7 +341,7 @@ export async function handleInitCommand(host: SlashCommandHost): Promise<void> {
     });
   } catch (error) {
     if (isAbortError(error)) {
-      host.setAppState({ isStreaming: false, streamingPhase: 'idle' });
+      host.setAppState({ streamingPhase: 'idle' });
       host.resetLivePane();
       return;
     }
@@ -788,7 +788,7 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
 }
 
 async function performModelSwitch(host: SlashCommandHost, alias: string, thinking: boolean): Promise<void> {
-  if (host.state.appState.isStreaming) {
+  if (host.state.appState.streamingPhase !== 'idle') {
     host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
     return;
   }
@@ -930,7 +930,7 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
     return;
   }
 
-  host.setAppState({ permissionMode: mode, yolo: mode === 'yolo' });
+  host.setAppState({ permissionMode: mode });
   host.showNotice(`Permission mode: ${mode}`);
 }
 
@@ -1095,7 +1095,7 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
   const intent = resolveSlashCommandInput({
     input,
     skillCommandMap: host.skillCommandMap,
-    isStreaming: host.state.appState.isStreaming,
+    isStreaming: host.state.appState.streamingPhase !== 'idle',
     isCompacting: host.state.appState.isCompacting,
   });
 

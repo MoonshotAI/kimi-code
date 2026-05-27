@@ -9,14 +9,12 @@ function fakeInitialAppState(): AppState {
     model: 'test-model',
     workDir: '/tmp/kimi-test',
     sessionId: 'sess-1',
-    yolo: false,
     permissionMode: 'manual',
     planMode: false,
     thinking: false,
     contextUsage: 0,
     contextTokens: 0,
     maxContextTokens: 0,
-    isStreaming: false,
     isCompacting: false,
     isReplaying: false,
     streamingPhase: 'idle',
@@ -62,7 +60,6 @@ describe('createTUIState', () => {
     expect(state.appState.model).toBe('test-model');
     expect(state.appState.sessionId).toBe('sess-1');
     expect(state.startupState).toBe('pending');
-    expect(state.startupNotice).toBeUndefined();
 
     // LivePane defaults.
     expect(state.livePane.mode).toBe('idle');
@@ -75,27 +72,20 @@ describe('createTUIState', () => {
     expect(state.pendingToolComponents.size).toBe(0);
     expect(state.activeToolCalls.size).toBe(0);
     expect(state.streamingToolCallArguments.size).toBe(0);
-    expect(state.backgroundAgents.size).toBe(0);
     expect(state.backgroundAgentMetadata.size).toBe(0);
     expect(state.renderedSkillActivationIds.size).toBe(0);
 
     // Boolean, counter, and optional-field defaults.
     expect(state.toolOutputExpanded).toBe(false);
-    expect(state.showingSessionPicker).toBe(false);
-    expect(state.showingHelpPanel).toBe(false);
+    expect(state.activeDialog).toBeNull();
     expect(state.externalEditorRunning).toBe(false);
     expect(state.loadingSessions).toBe(false);
     expect(state.currentTurnId).toBeUndefined();
     expect(state.currentStep).toBe(0);
-    expect(state.assistantStreamActive).toBe(false);
     expect(state.assistantDraft).toBe('');
     expect(state.thinkingDraft).toBe('');
-    expect(state.lastHistoryContent).toBeUndefined();
-    expect(state.lastActivityMode).toBeUndefined();
-    expect(state.activitySpinner).toBeUndefined();
-    expect(state.activitySpinnerStyle).toBeUndefined();
-    expect(state.streamingComponent).toBeUndefined();
-    expect(state.streamingTranscriptEntry).toBeUndefined();
+    expect(state.activitySpinner).toBeNull();
+    expect(state.streamingBlock).toBeNull();
     expect(state.activeCompactionBlock).toBeUndefined();
     expect(state.pendingAgentGroup).toBeNull();
     expect(state.pendingReadGroup).toBeNull();

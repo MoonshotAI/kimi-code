@@ -208,9 +208,10 @@ export class SessionEventHandler {
     if (subagentId === MAIN_AGENT_ID) return false;
 
     const { state } = this.host;
-    const parentToolCallId = state.subagentParentToolCallIds.get(subagentId);
-    if (parentToolCallId === undefined || parentToolCallId.length === 0) return true;
-    const sourceName = state.subagentNames.get(subagentId);
+    const info = state.subagentInfo.get(subagentId);
+    if (info === undefined || info.parentToolCallId.length === 0) return true;
+    const { parentToolCallId } = info;
+    const sourceName = info.name;
     const toolCall = state.pendingToolComponents.get(parentToolCallId);
     if (toolCall === undefined) return true;
     toolCall.setSubagentMeta(subagentId, sourceName);
@@ -293,7 +294,6 @@ export class SessionEventHandler {
       pendingQuestion: null,
     });
     this.host.setAppState({
-      isStreaming: true,
       streamingPhase: 'waiting',
       streamingStartTime: Date.now(),
     });
@@ -398,8 +398,7 @@ export class SessionEventHandler {
       this.host.streamingUI.flushThinkingToTranscript('idle');
     }
 
-    if (!state.assistantStreamActive) {
-      state.assistantStreamActive = true;
+    if (state.streamingBlock === null) {
       this.host.streamingUI.onStreamingTextStart();
     }
 
@@ -540,7 +539,6 @@ export class SessionEventHandler {
     if (event.planMode !== undefined) patch.planMode = event.planMode;
     if (event.permission !== undefined) {
       patch.permissionMode = event.permission;
-      patch.yolo = event.permission === 'yolo';
     }
     if (event.model !== undefined) patch.model = event.model;
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
@@ -690,7 +688,8 @@ export class SessionEventHandler {
 
   private finishCompaction(sendQueued: (item: QueuedMessage) => void): void {
     const { state } = this.host;
-    if (!state.appState.isStreaming) {
+    const hasActiveTurn = state.currentTurnId !== undefined;
+    if (!hasActiveTurn) {
       this.host.setAppState({
         isCompacting: false,
         streamingPhase: 'idle',
@@ -712,13 +711,14 @@ export class SessionEventHandler {
 
   private handleSubagentSpawned(event: SubagentSpawnedEvent): void {
     const { state, streamingUI } = this.host;
-    state.subagentParentToolCallIds.set(event.subagentId, event.parentToolCallId);
-    state.subagentNames.set(event.subagentId, event.subagentName);
+    state.subagentInfo.set(event.subagentId, {
+      parentToolCallId: event.parentToolCallId,
+      name: event.subagentName,
+    });
 
     if (event.runInBackground) {
       const meta = this.buildBackgroundAgentMetadata(event);
       state.backgroundAgentMetadata.set(event.subagentId, meta);
-      state.backgroundAgents.add(event.subagentId);
       this.appendBackgroundAgentEntry('started', meta);
       this.syncBackgroundAgentBadge();
       return;
@@ -744,11 +744,9 @@ export class SessionEventHandler {
   private handleSubagentCompleted(event: SubagentCompletedEvent): void {
     const { state } = this.host;
     const backgroundMeta = state.backgroundAgentMetadata.get(event.subagentId);
-    if (state.backgroundAgents.delete(event.subagentId)) {
-      this.syncBackgroundAgentBadge();
-    }
     if (backgroundMeta !== undefined) {
       state.backgroundAgentMetadata.delete(event.subagentId);
+      this.syncBackgroundAgentBadge();
       const taskId = this.findAgentTaskId(event.subagentId);
       if (taskId !== undefined && state.backgroundTaskTranscriptedTerminal.has(taskId)) {
         return;
@@ -776,11 +774,9 @@ export class SessionEventHandler {
   private handleSubagentFailed(event: SubagentFailedEvent): void {
     const { state } = this.host;
     const backgroundMeta = state.backgroundAgentMetadata.get(event.subagentId);
-    if (state.backgroundAgents.delete(event.subagentId)) {
-      this.syncBackgroundAgentBadge();
-    }
     if (backgroundMeta !== undefined) {
       state.backgroundAgentMetadata.delete(event.subagentId);
+      this.syncBackgroundAgentBadge();
       const taskId = this.findAgentTaskId(event.subagentId);
       if (taskId !== undefined && state.backgroundTaskTranscriptedTerminal.has(taskId)) {
         return;

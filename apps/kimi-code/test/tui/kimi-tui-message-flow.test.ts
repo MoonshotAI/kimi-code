@@ -372,7 +372,7 @@ describe('KimiTUI message flow', () => {
 
   it('tracks blocked slash commands as invalid without counting them as executed commands', async () => {
     const { driver, harness } = await makeDriver();
-    driver.state.appState.isStreaming = true;
+    driver.state.appState.streamingPhase = 'waiting';
 
     for (const command of ['/new', '/model', '/sessions']) {
       harness.track.mockClear();
@@ -473,7 +473,6 @@ describe('KimiTUI message flow', () => {
       expect(session.setPermission).toHaveBeenCalledWith('yolo');
     });
     expect(driver.state.appState).toMatchObject({
-      yolo: true,
       permissionMode: 'yolo',
     });
     expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'yolo' });
@@ -626,7 +625,7 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput('hello');
 
     expect(session.prompt).toHaveBeenCalledWith('hello');
-    expect(driver.state.appState.isStreaming).toBe(true);
+    expect(driver.state.appState.streamingPhase).not.toBe('idle');
     expect(driver.state.appState.streamingPhase).toBe('waiting');
     expect(driver.state.livePane.mode).toBe('waiting');
     expect(driver.state.transcriptEntries).toEqual([
@@ -659,7 +658,7 @@ describe('KimiTUI message flow', () => {
 
   it('queues editor input instead of prompting while a turn is already streaming', async () => {
     const { driver, session, harness } = await makeDriver();
-    driver.state.appState.isStreaming = true;
+    driver.state.appState.streamingPhase = 'waiting';
     harness.track.mockClear();
 
     driver.handleUserInput('queued message');
@@ -673,13 +672,13 @@ describe('KimiTUI message flow', () => {
   it('cancels active streaming from Escape and Ctrl-C editor shortcuts', async () => {
     const { driver, session } = await makeDriver();
 
-    driver.state.appState.isStreaming = true;
+    driver.state.appState.streamingPhase = 'waiting';
     driver.state.editor.onEscape?.();
 
     expect(session.cancel).toHaveBeenCalledTimes(1);
 
     session.cancel.mockClear();
-    driver.state.appState.isStreaming = true;
+    driver.state.appState.streamingPhase = 'waiting';
     driver.state.editor.onCtrlC?.();
 
     expect(session.cancel).toHaveBeenCalledTimes(1);
@@ -690,7 +689,7 @@ describe('KimiTUI message flow', () => {
     try {
       const { driver } = await makeDriver();
       const sendQueued = vi.fn();
-      driver.state.appState.isStreaming = true;
+      driver.state.appState.streamingPhase = 'waiting';
       driver.state.appState.streamingStartTime = 1;
       driver.state.currentTurnId = '1';
       driver.state.queuedMessages = [{ text: 'next' }];
@@ -709,7 +708,7 @@ describe('KimiTUI message flow', () => {
 
       expect(sendQueued).toHaveBeenCalledWith({ text: 'next' });
       expect(driver.state.queuedMessages).toEqual([]);
-      expect(driver.state.appState.isStreaming).toBe(false);
+      expect(driver.state.appState.streamingPhase).toBe('idle');
     } finally {
       vi.useRealTimers();
     }
@@ -731,7 +730,7 @@ describe('KimiTUI message flow', () => {
         } as Event,
         vi.fn(),
       );
-      const component = driver.state.streamingComponent;
+      const component = driver.state.streamingBlock?.component;
       if (component === undefined) throw new Error('expected streaming component');
       const updateSpy = vi.spyOn(component, 'updateContent');
 
@@ -771,7 +770,7 @@ describe('KimiTUI message flow', () => {
     try {
       const { driver } = await makeDriver();
       const sendQueued = vi.fn();
-      driver.state.appState.isStreaming = true;
+      driver.state.appState.streamingPhase = 'waiting';
 
       driver.sessionEventHandler.handleEvent(
         {
@@ -924,13 +923,13 @@ describe('KimiTUI message flow', () => {
       expect(session.init).toHaveBeenCalledTimes(1);
     });
     expect(session.prompt).not.toHaveBeenCalled();
-    expect(driver.state.appState.isStreaming).toBe(true);
+    expect(driver.state.appState.streamingPhase).not.toBe('idle');
     expect(driver.state.livePane.mode).toBe('waiting');
 
     resolveInit?.();
 
     await vi.waitFor(() => {
-      expect(driver.state.appState.isStreaming).toBe(false);
+      expect(driver.state.appState.streamingPhase).toBe('idle');
     });
     expect(driver.state.livePane.mode).toBe('idle');
     expect(harness.track).toHaveBeenCalledWith('init_complete', undefined);

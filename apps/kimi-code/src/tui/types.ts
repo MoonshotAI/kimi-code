@@ -14,14 +14,12 @@ export interface AppState {
   model: string;
   workDir: string;
   sessionId: string;
-  yolo: boolean;
   permissionMode: PermissionMode;
   planMode: boolean;
   thinking: boolean;
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;
-  isStreaming: boolean;
   isCompacting: boolean;
   isReplaying: boolean;
   streamingPhase: 'idle' | 'waiting' | 'thinking' | 'composing';

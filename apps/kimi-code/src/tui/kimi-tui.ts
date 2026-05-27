@@ -188,20 +188,15 @@ export interface TUIState {
   theme: KimiTUIThemeBundle;
   appState: AppState;
   startupState: TUIStartupState;
-  startupNotice: string | undefined;
   livePane: LivePaneState;
   transcriptEntries: TranscriptEntry[];
   terminalState: TerminalState;
-  activitySpinner: MoonLoader | undefined;
-  activitySpinnerStyle: SpinnerStyle | undefined;
+  activitySpinner: { instance: MoonLoader; style: SpinnerStyle } | null;
   activeThinkingComponent: ThinkingComponent | undefined;
-  streamingComponent: AssistantMessageComponent | undefined;
-  streamingTranscriptEntry: TranscriptEntry | undefined;
+  streamingBlock: { component: AssistantMessageComponent; entry: TranscriptEntry } | null;
   activeCompactionBlock: CompactionComponent | undefined;
   toolOutputExpanded: boolean;
   planExpanded: boolean;
-  lastActivityMode: string | undefined;
-  lastHistoryContent: string | undefined;
   pendingToolComponents: Map<string, ToolCallComponent>;
   pendingAgentGroup: {
     readonly turnId: string | undefined;
@@ -215,7 +210,6 @@ export interface TUIState {
     solo?: ToolCallComponent;
     group?: ReadGroupComponent;
   } | null;
-  backgroundAgents: Set<string>;
   backgroundAgentMetadata: Map<string, BackgroundAgentMetadata>;
   /**
    * Authoritative live mirror of the BPM. Keyed by `taskId`. Includes
@@ -234,18 +228,15 @@ export interface TUIState {
   renderedSkillActivationIds: Set<string>;
   renderedMcpServerStatusKeys: Map<string, string>;
   mcpServerStatusSpinners: Map<string, MoonLoader>;
-  subagentParentToolCallIds: Map<string, string>;
-  subagentNames: Map<string, string>;
+  subagentInfo: Map<string, { parentToolCallId: string; name: string }>;
   sessions: SessionRow[];
   loadingSessions: boolean;
-  showingSessionPicker: boolean;
-  showingHelpPanel: boolean;
+  activeDialog: 'session-picker' | 'help' | null;
   tasksBrowser: TasksBrowserState | undefined;
   externalEditorRunning: boolean;
   currentTurnId: string | undefined;
   currentStep: number;
   assistantDraft: string;
-  assistantStreamActive: boolean;
   thinkingDraft: string;
   activeToolCalls: Map<string, ToolCallBlockData>;
   streamingToolCallArguments: Map<
@@ -262,14 +253,12 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     model: '',
     workDir: input.workDir,
     sessionId: '',
-    yolo: input.cliOptions.yolo,
     permissionMode: startupPermission,
     planMode: input.cliOptions.plan,
     thinking: false,
     contextUsage: 0,
     contextTokens: 0,
     maxContextTokens: 0,
-    isStreaming: false,
     isCompacting: false,
     isReplaying: false,
     streamingPhase: 'idle',
@@ -321,42 +310,33 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     theme,
     appState: { ...initialAppState },
     startupState: 'pending',
-    startupNotice: options.startup.startupNotice,
     livePane: { ...INITIAL_LIVE_PANE },
     transcriptEntries: [],
     terminalState: createTerminalState(),
-    activitySpinner: undefined,
-    activitySpinnerStyle: undefined,
+    activitySpinner: null,
     activeThinkingComponent: undefined,
-    streamingComponent: undefined,
-    streamingTranscriptEntry: undefined,
+    streamingBlock: null,
     activeCompactionBlock: undefined,
     toolOutputExpanded: false,
     planExpanded: false,
-    lastActivityMode: undefined,
-    lastHistoryContent: undefined,
     pendingToolComponents: new Map<string, ToolCallComponent>(),
     pendingAgentGroup: null,
     pendingReadGroup: null,
-    backgroundAgents: new Set<string>(),
     backgroundAgentMetadata: new Map<string, BackgroundAgentMetadata>(),
     backgroundTasks: new Map<string, BackgroundTaskInfo>(),
     backgroundTaskTranscriptedTerminal: new Set<string>(),
     renderedSkillActivationIds: new Set<string>(),
     renderedMcpServerStatusKeys: new Map<string, string>(),
     mcpServerStatusSpinners: new Map<string, MoonLoader>(),
-    subagentParentToolCallIds: new Map<string, string>(),
-    subagentNames: new Map<string, string>(),
+    subagentInfo: new Map(),
     sessions: [],
     loadingSessions: false,
-    showingSessionPicker: false,
-    showingHelpPanel: false,
+    activeDialog: null,
     tasksBrowser: undefined,
     externalEditorRunning: false,
     currentTurnId: undefined,
     currentStep: 0,
     assistantDraft: '',
-    assistantStreamActive: false,
     thinkingDraft: '',
     activeToolCalls: new Map<string, ToolCallBlockData>(),
     streamingToolCallArguments: new Map(),
@@ -407,6 +387,9 @@ export class KimiTUI {
   private readonly migrationPlan: MigrationPlan | null;
   // When true, the migration screen is the whole session: run it, then exit.
   private readonly migrateOnly: boolean;
+  private startupNotice: string | undefined;
+  private lastActivityMode: string | undefined;
+  private lastHistoryContent: string | undefined;
   readonly streamingUI: StreamingUIController;
   readonly authFlow: AuthFlowController;
   readonly sessionEventHandler: SessionEventHandler;
@@ -440,6 +423,7 @@ export class KimiTUI {
     this.options = tuiOptions;
     this.migrationPlan = startupInput.migrationPlan ?? null;
     this.migrateOnly = startupInput.migrateOnly ?? false;
+    this.startupNotice = startupInput.startupNotice;
     this.state = createTUIState(tuiOptions);
     this.gitLsFilesCache = createGitLsFilesCache(tuiOptions.initialAppState.workDir);
 
@@ -525,7 +509,7 @@ export class KimiTUI {
       for (const entry of entries) {
         this.state.editor.addToHistory(entry.content);
       }
-      this.state.lastHistoryContent = entries.at(-1)?.content;
+      this.lastHistoryContent = entries.at(-1)?.content;
     } catch {
       /* history is best-effort */
     }
@@ -627,9 +611,9 @@ export class KimiTUI {
   // Runs post-init startup tasks: startup notice, picker bootstrap, transcript
   // replay, and session event subscriptions.
   private async finishStartup(shouldReplayHistory: boolean): Promise<void> {
-    if (this.state.startupNotice !== undefined) {
-      this.showStatus(this.state.startupNotice);
-      this.state.startupNotice = undefined;
+    if (this.startupNotice !== undefined) {
+      this.showStatus(this.startupNotice);
+      this.startupNotice = undefined;
     }
     void this.showTmuxKeyboardWarningIfNeeded();
     if (this.state.startupState === 'picker') {
@@ -701,8 +685,8 @@ export class KimiTUI {
             shouldReplayHistory = true;
           } else {
             session = await this.harness.createSession(createSessionOptions);
-            this.state.startupNotice = combineStartupNotice(
-              this.state.startupNotice,
+            this.startupNotice = combineStartupNotice(
+              this.startupNotice,
               `No sessions to continue under "${workDir}"; starting a fresh session.`,
             );
           }
@@ -850,6 +834,10 @@ export class KimiTUI {
     this.terminalFocusTrackingDispose = undefined;
   }
 
+  appendStartupNotice(extra: string): void {
+    this.startupNotice = combineStartupNotice(this.startupNotice, extra);
+  }
+
   // Returns the currently selected session id shown by the UI.
   getCurrentSessionId(): string {
     return this.state.appState.sessionId;
@@ -913,15 +901,15 @@ export class KimiTUI {
         return;
       }
 
-      if (this.state.appState.isStreaming) {
-        this.clearPendingExit();
-        this.cancelCurrentStream();
-        return;
-      }
-
       if (this.state.appState.isCompacting) {
         this.clearPendingExit();
         this.cancelCurrentCompaction();
+        return;
+      }
+
+      if (this.state.appState.streamingPhase !== 'idle') {
+        this.clearPendingExit();
+        this.cancelCurrentStream();
         return;
       }
 
@@ -948,16 +936,16 @@ export class KimiTUI {
 
     editor.onEscape = () => {
       if (this.pendingExit) this.clearPendingExit();
-      if (this.state.showingSessionPicker) {
+      if (this.state.activeDialog === 'session-picker') {
         this.hideSessionPicker();
-        return;
-      }
-      if (this.state.appState.isStreaming) {
-        this.cancelCurrentStream();
         return;
       }
       if (this.state.appState.isCompacting) {
         this.cancelCurrentCompaction();
+        return;
+      }
+      if (this.state.appState.streamingPhase !== 'idle') {
+        this.cancelCurrentStream();
       }
     };
 
@@ -986,7 +974,7 @@ export class KimiTUI {
     editor.onTogglePlanExpand = () => this.togglePlanExpansion();
 
     editor.onCtrlS = () => {
-      if (!this.state.appState.isStreaming || this.state.appState.isCompacting) return;
+      if (this.state.appState.streamingPhase === 'idle' || this.state.appState.isCompacting) return;
       const text = editor.getText().trim();
       const queuedTexts = this.state.queuedMessages.map((m) => m.text);
       this.state.queuedMessages = [];
@@ -1024,7 +1012,7 @@ export class KimiTUI {
     };
 
     editor.onUpArrowEmpty = () => {
-      if (!this.state.appState.isStreaming && !this.state.appState.isCompacting) return false;
+      if (this.state.appState.streamingPhase === 'idle' && !this.state.appState.isCompacting) return false;
       const recalled = this.recallLastQueued();
       if (recalled !== undefined) {
         editor.setText(recalled);
@@ -1200,14 +1188,14 @@ export class KimiTUI {
   private async persistInputHistory(text: string): Promise<void> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
-    if (trimmed === this.state.lastHistoryContent) return;
+    if (trimmed === this.lastHistoryContent) return;
     this.state.editor.addToHistory(trimmed);
     try {
       const file = getInputHistoryFile(this.state.appState.workDir);
-      const written = await appendInputHistory(file, trimmed, this.state.lastHistoryContent);
-      if (written) this.state.lastHistoryContent = trimmed;
+      const written = await appendInputHistory(file, trimmed, this.lastHistoryContent);
+      if (written) this.lastHistoryContent = trimmed;
     } catch {
-      this.state.lastHistoryContent = trimmed;
+      this.lastHistoryContent = trimmed;
     }
   }
 
@@ -1250,7 +1238,6 @@ export class KimiTUI {
       pendingQuestion: null,
     });
     this.setAppState({
-      isStreaming: true,
       streamingPhase: 'waiting',
       streamingStartTime: Date.now(),
     });
@@ -1258,7 +1245,7 @@ export class KimiTUI {
 
   // Ends a failed session request and renders the failure to the transcript.
   failSessionRequest(message: string): void {
-    this.setAppState({ isStreaming: false, streamingPhase: 'idle' });
+    this.setAppState({ streamingPhase: 'idle' });
     this.resetLivePane();
     this.showError(message);
   }
@@ -1309,7 +1296,7 @@ export class KimiTUI {
   private sendMessage(session: Session, input: string, options?: SendMessageOptions): void {
     if (
       this.deferUserMessages ||
-      this.state.appState.isStreaming ||
+      this.state.appState.streamingPhase !== 'idle' ||
       this.state.appState.isCompacting
     ) {
       this.enqueueMessage(input, options);
@@ -1326,7 +1313,7 @@ export class KimiTUI {
       }
       return;
     }
-    if (!this.state.appState.isStreaming) {
+    if (this.state.appState.streamingPhase === 'idle') {
       for (const part of input) {
         this.sendMessageInternal(session, part);
       }
@@ -1372,7 +1359,7 @@ export class KimiTUI {
   // Applies app-state changes and refreshes dependent UI surfaces.
   setAppState(patch: Partial<AppState>): void {
     if (!hasPatchChanges(this.state.appState, patch)) return;
-    const busyChanged = 'isStreaming' in patch || 'isCompacting' in patch;
+    const busyChanged = 'streamingPhase' in patch || 'isCompacting' in patch;
     Object.assign(this.state.appState, patch);
     if ('planMode' in patch) this.updateEditorBorderHighlight();
     this.state.footer.setState(this.state.appState);
@@ -1441,7 +1428,6 @@ export class KimiTUI {
       model: status.model ?? '',
       thinking: status.thinkingLevel !== 'off',
       permissionMode: status.permission,
-      yolo: status.permission === 'yolo',
       planMode: status.planMode,
       contextTokens: status.contextTokens,
       maxContextTokens: status.maxContextTokens,
@@ -1525,13 +1511,11 @@ export class KimiTUI {
     this.harness.interactiveAgentId = MAIN_AGENT_ID;
     this.streamingUI.resetToolCallState();
     this.streamingUI.resetToolUi();
-    this.state.backgroundAgents.clear();
     this.state.backgroundAgentMetadata.clear();
     this.state.backgroundTasks.clear();
     this.state.backgroundTaskTranscriptedTerminal.clear();
     this.tasksBrowserController.close();
-    this.state.subagentParentToolCallIds.clear();
-    this.state.subagentNames.clear();
+    this.state.subagentInfo.clear();
     this.state.renderedSkillActivationIds.clear();
     this.state.renderedMcpServerStatusKeys.clear();
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
@@ -1549,7 +1533,7 @@ export class KimiTUI {
       this.showStatus('Already on this session.');
       return true;
     }
-    if (this.state.appState.isStreaming) {
+    if (this.state.appState.streamingPhase !== 'idle') {
       this.showError('Cannot switch sessions while streaming — press Esc or Ctrl-C first.');
       return false;
     }
@@ -1872,13 +1856,13 @@ export class KimiTUI {
     this.syncTerminalProgress(this.shouldShowTerminalProgress(effectiveMode));
 
     if (
-      effectiveMode === this.state.lastActivityMode &&
+      effectiveMode === this.lastActivityMode &&
       (effectiveMode === 'waiting' || effectiveMode === 'thinking' || effectiveMode === 'tool')
     ) {
       return;
     }
 
-    this.state.lastActivityMode = effectiveMode;
+    this.lastActivityMode = effectiveMode;
     this.state.activityContainer.clear();
 
     switch (effectiveMode) {
@@ -1933,7 +1917,7 @@ export class KimiTUI {
 
   // Computes the effective activity-pane mode from modal and streaming state.
   private resolveActivityPaneMode(): EffectiveActivityPaneMode {
-    if (this.state.showingSessionPicker) return 'hidden';
+    if (this.state.activeDialog === 'session-picker') return 'hidden';
     if (this.state.livePane.pendingApproval !== null) return 'hidden';
     if (this.state.appState.isCompacting) return 'hidden';
     if (this.state.livePane.pendingQuestion !== null) return 'hidden';
@@ -1959,7 +1943,7 @@ export class KimiTUI {
         messages: queued,
         colors: this.state.theme.colors,
         isCompacting: this.state.appState.isCompacting,
-        isStreaming: this.state.appState.isStreaming,
+        isStreaming: this.state.appState.streamingPhase !== 'idle',
         canSteerImmediately: !this.deferUserMessages,
       }),
     );
@@ -2063,30 +2047,29 @@ export class KimiTUI {
     label = '',
     colorFn?: (s: string) => string,
   ): MoonLoader {
-    if (this.state.activitySpinnerStyle !== style) {
+    if (this.state.activitySpinner?.style !== style) {
       this.stopActivitySpinner();
     }
 
-    if (this.state.activitySpinner === undefined) {
-      this.state.activitySpinner = new MoonLoader(this.state.ui, style, colorFn, label);
-      this.state.activitySpinnerStyle = style;
-      return this.state.activitySpinner;
+    if (this.state.activitySpinner === null) {
+      const instance = new MoonLoader(this.state.ui, style, colorFn, label);
+      this.state.activitySpinner = { instance, style };
+      return instance;
     }
 
-    this.state.activitySpinner.setLabel(label);
+    this.state.activitySpinner.instance.setLabel(label);
     if (colorFn !== undefined) {
-      this.state.activitySpinner.setColorFn(colorFn);
+      this.state.activitySpinner.instance.setColorFn(colorFn);
     }
-    return this.state.activitySpinner;
+    return this.state.activitySpinner.instance;
   }
 
   // Stops and clears the activity spinner.
   private stopActivitySpinner(): void {
-    if (this.state.activitySpinner) {
-      this.state.activitySpinner.stop();
-      this.state.activitySpinner = undefined;
+    if (this.state.activitySpinner !== null) {
+      this.state.activitySpinner.instance.stop();
+      this.state.activitySpinner = null;
     }
-    this.state.activitySpinnerStyle = undefined;
   }
 
   // =========================================================================
@@ -2150,7 +2133,7 @@ export class KimiTUI {
 
   // Shows the help panel with the current slash command list.
   showHelpPanel(): void {
-    this.state.showingHelpPanel = true;
+    this.state.activeDialog = 'help';
     this.mountEditorReplacement(
       new HelpPanelComponent({
         commands: this.getSlashCommands(),
@@ -2164,7 +2147,7 @@ export class KimiTUI {
 
   // Hides the help panel and returns focus to the editor.
   private hideHelpPanel(): void {
-    this.state.showingHelpPanel = false;
+    this.state.activeDialog = null;
     this.restoreEditor();
   }
 
@@ -2187,13 +2170,13 @@ export class KimiTUI {
 
   // Hides the session picker and restores the editor.
   private hideSessionPicker(): void {
-    this.state.showingSessionPicker = false;
+    this.state.activeDialog = null;
     this.restoreEditor();
   }
 
   // Mounts a session picker with shared selection behavior.
   private mountSessionPicker(onCancel: () => void): void {
-    this.state.showingSessionPicker = true;
+    this.state.activeDialog = 'session-picker';
     this.mountEditorReplacement(
       new SessionPickerComponent({
         sessions: this.state.sessions,

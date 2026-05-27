@@ -198,7 +198,6 @@ describe("KimiTUI startup", () => {
       sessionId: "ses-1",
       model: "k2",
       permissionMode: "yolo",
-      yolo: true,
       planMode: true,
       contextTokens: 25,
       maxContextTokens: 200,
@@ -349,7 +348,7 @@ describe("KimiTUI startup", () => {
     await expect(driver.init()).resolves.toBe(false);
 
     expect(driver.state.startupState).toBe("ready");
-    expect(driver.state.startupNotice).toContain("OAuth login expired");
+    expect((driver as any).startupNotice).toContain("OAuth login expired");
     expect(driver.state.appState).toMatchObject({
       sessionId: "",
       model: "",
@@ -395,7 +394,6 @@ describe("KimiTUI startup", () => {
       sessionId: "",
       model: "",
       permissionMode: "yolo",
-      yolo: true,
       planMode: true,
     });
 
@@ -418,7 +416,6 @@ describe("KimiTUI startup", () => {
       sessionId: "ses-1",
       model: "k2",
       permissionMode: "yolo",
-      yolo: true,
       planMode: true,
     });
   });
@@ -464,7 +461,6 @@ describe("KimiTUI startup", () => {
     });
     expect(driver.state.appState).toMatchObject({
       permissionMode: "auto",
-      yolo: false,
     });
   });
 

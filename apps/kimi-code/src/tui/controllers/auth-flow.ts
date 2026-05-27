@@ -3,7 +3,6 @@ import type { SkillListSession } from '../commands';
 
 import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
 import type { SessionEventHandler } from './session-event-handler';
-import { combineStartupNotice } from '../utils/startup';
 import type { AppState } from '../types';
 import type { KimiTUIOptions, TUIState } from '../kimi-tui';
 
@@ -18,6 +17,7 @@ export interface AuthFlowHost {
   setSession(session: Session): Promise<void>;
   syncRuntimeState(session?: Session): Promise<void>;
   closeSession(reason: string): Promise<void>;
+  appendStartupNotice(extra: string): void;
   readonly sessionEventHandler: SessionEventHandler;
   fetchSessions(): Promise<void>;
   refreshSessionTitle(): void;
@@ -46,10 +46,7 @@ export class AuthFlowController {
       contextUsage: 0,
       sessionTitle: null,
     });
-    this.host.state.startupNotice = combineStartupNotice(
-      this.host.state.startupNotice,
-      OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
-    );
+    this.host.appendStartupNotice(OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE);
     this.host.state.startupState = 'ready';
   }
 

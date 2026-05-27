@@ -41,7 +41,6 @@ export interface SkillActivationProjection {
 }
 
 export interface ReplayBackgroundProjection {
-  readonly backgroundAgents: ReadonlySet<string>;
   readonly backgroundAgentMetadata: ReadonlyMap<string, BackgroundAgentMetadata>;
 }
 
@@ -55,7 +54,6 @@ export function appStateFromResumeAgent(agent: ResumedAgentState): Partial<AppSt
     maxContextTokens,
     contextUsage,
     planMode: agent.plan !== null,
-    yolo: agent.permission.mode === 'yolo',
     permissionMode: agent.permission.mode,
   };
 }
@@ -89,19 +87,17 @@ export function countActiveBackgroundTasks(tasks: ReadonlyMap<string, Background
 export function replayBackgroundProjection(
   background: readonly BackgroundTaskInfo[],
 ): ReplayBackgroundProjection {
-  const backgroundAgents = new Set<string>();
   const backgroundAgentMetadata = new Map<string, BackgroundAgentMetadata>();
   for (const info of background) {
     if (!info.taskId.startsWith('agent-')) continue;
     if (isTerminalBackgroundTask(info)) continue;
-    backgroundAgents.add(info.taskId);
     backgroundAgentMetadata.set(info.taskId, {
       agentId: info.taskId,
       parentToolCallId: info.taskId,
       description: info.description,
     });
   }
-  return { backgroundAgents, backgroundAgentMetadata };
+  return { backgroundAgentMetadata };
 }
 
 export function createReplayRenderContext(): ReplayRenderContext {

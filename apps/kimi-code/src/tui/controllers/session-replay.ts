@@ -105,7 +105,6 @@ export class SessionReplayRenderer {
   private hydrateBackgroundState(agent: ResumedAgentState): void {
     const { state } = this.host;
     const projection = replayBackgroundProjection(agent.background);
-    state.backgroundAgents = new Set(projection.backgroundAgents);
     state.backgroundAgentMetadata = new Map(projection.backgroundAgentMetadata);
     state.backgroundTasks = new Map<string, BackgroundTaskInfo>(
       agent.background.map((info) => [info.taskId, info]),
@@ -275,11 +274,9 @@ export class SessionReplayRenderer {
       streamingUI.onThinkingEnd();
     }
     if (text.length > 0) {
-      state.assistantStreamActive = true;
       streamingUI.onStreamingTextStart();
       streamingUI.onStreamingTextUpdate(text);
       streamingUI.onStreamingTextEnd();
-      state.assistantStreamActive = false;
       state.assistantDraft = '';
     }
   }
@@ -474,7 +471,6 @@ export class SessionReplayRenderer {
       detail: status.detail,
       backgroundAgentStatus: status,
     });
-    state.backgroundAgents.delete(meta.agentId);
     state.backgroundAgentMetadata.delete(meta.agentId);
   }
 }
