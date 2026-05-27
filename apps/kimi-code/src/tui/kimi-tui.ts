@@ -30,7 +30,6 @@ import type {
   CreateSessionOptions,
   Event,
   KimiHarness,
-  McpServerInfo,
   PermissionMode,
   PromptPart,
   Session,
@@ -66,7 +65,7 @@ import { FooterComponent } from './components/chrome/footer';
 import { GutterContainer } from './components/chrome/gutter-container';
 import { CHROME_GUTTER } from './constant/rendering';
 import { MoonLoader, type SpinnerStyle } from './components/chrome/moon-loader';
-import { TodoPanelComponent, type TodoItem } from './components/chrome/todo-panel';
+import { TodoPanelComponent } from './components/chrome/todo-panel';
 import { WelcomeComponent } from './components/chrome/welcome';
 import {
   ApprovalPanelComponent,
@@ -77,16 +76,13 @@ import {
   type ApiKeyInputResult,
 } from './components/dialogs/api-key-input-dialog';
 import { CompactionComponent } from './components/dialogs/compaction';
-import { EditorSelectorComponent } from './components/dialogs/editor-selector';
 import {
   FeedbackInputDialogComponent,
   type FeedbackInputDialogResult,
 } from './components/dialogs/feedback-input-dialog';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { ChoicePickerComponent, type ChoiceOption } from './components/dialogs/choice-picker';
-import { ModelSelectorComponent } from './components/dialogs/model-selector';
 import { PlatformSelectorComponent } from './components/dialogs/platform-selector';
-import { PermissionSelectorComponent } from './components/dialogs/permission-selector';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
 import { AuthFlowController } from './controllers/auth-flow';
@@ -96,34 +92,27 @@ import { SessionReplayRenderer } from './controllers/session-replay';
 import { StreamingUIController } from './controllers/streaming-ui';
 import { TasksBrowserController, type TasksBrowserState } from './controllers/tasks-browser';
 import {
-  SettingsSelectorComponent,
-  type SettingsSelection,
 } from './components/dialogs/settings-selector';
-import { ThemeSelectorComponent } from './components/dialogs/theme-selector';
 import { CustomEditor } from './components/editor/custom-editor';
 import { FileMentionProvider } from './components/editor/file-mention-provider';
 import { AgentGroupComponent } from './components/messages/agent-group';
 import { AssistantMessageComponent } from './components/messages/assistant-message';
 import { BackgroundAgentStatusComponent } from './components/messages/background-agent-status';
-import { buildMcpStatusReportLines } from './components/messages/mcp-status-panel';
 import { ReadGroupComponent } from './components/messages/read-group';
 import { SkillActivationComponent } from './components/messages/skill-activation';
 import {
   NoticeMessageComponent,
   StatusMessageComponent,
 } from './components/messages/status-message';
-import { buildStatusReportLines } from './components/messages/status-panel';
 import { ThinkingComponent } from './components/messages/thinking';
 import { ToolCallComponent } from './components/messages/tool-call';
 import {
-  buildUsageReportLines,
-  UsagePanelComponent,
   type ManagedUsageReport,
 } from './components/messages/usage-panel';
 import { UserMessageComponent } from './components/messages/user-message';
 import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes/activity-pane';
 import { QueuePaneComponent } from './components/panes/queue-pane';
-import { saveTuiConfig, type TuiConfig } from './config';
+import type { TuiConfig } from './config';
 import {
   FEEDBACK_ISSUE_URL,
   FEEDBACK_STATUS_CANCELLED,
@@ -141,7 +130,6 @@ import {
   CTRL_D_HINT,
   DEFAULT_OAUTH_PROVIDER_NAME,
   EXIT_CONFIRM_WINDOW_MS,
-  isManagedUsageProvider,
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
   NO_ACTIVE_SESSION_MESSAGE,
@@ -167,7 +155,6 @@ import {
   type LivePaneState,
   type QueuedMessage,
   type ToolCallBlockData,
-  type ToolResultBlockData,
   type TranscriptEntry,
 } from './types';
 import { formatBackgroundAgentTranscript } from './utils/background-agent-status';
@@ -179,7 +166,6 @@ import {
   appendStreamingArgsPreview,
   argsRecord,
   formatErrorMessage,
-  isTodoItemShape,
   parseStreamingArgs,
   serializeToolResultOutput,
   stringValue,
@@ -995,9 +981,6 @@ export class KimiTUI {
 
   private async refreshAvailableModels(): Promise<void> { await this.authFlow.refreshAvailableModels(); }
   private enterLoginRequiredStartupState(): void { this.authFlow.enterLoginRequiredStartupState(); }
-  private async activateModelAfterLogin(model: string, thinking?: boolean): Promise<void> {
-    await this.authFlow.activateModelAfterLogin(model, thinking);
-  }
 
   // =========================================================================
   // Layout / Editor Setup
@@ -1630,10 +1613,6 @@ export class KimiTUI {
       const message = formatErrorMessage(error);
       this.showError(`Failed to cancel compaction: ${message}`);
     });
-  }
-
-  finalizeTurn(sendQueued: (item: QueuedMessage) => void): void {
-    this.streamingUI.finalizeTurn(sendQueued);
   }
 
   // =========================================================================

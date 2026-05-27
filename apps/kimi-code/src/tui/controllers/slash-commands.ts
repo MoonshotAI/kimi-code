@@ -77,6 +77,7 @@ import { isAbortError } from '../utils/errors';
 import { formatErrorMessage } from '../utils/event-payload';
 import { openUrl } from '../utils/open-url';
 import type { AuthFlowController } from './auth-flow';
+import type { StreamingUIController } from './streaming-ui';
 import type { AppState, QueuedMessage } from '../types';
 import type { TUIState, LoginProgressSpinnerHandle } from '../kimi-tui';
 
@@ -101,7 +102,6 @@ export interface SlashCommandHost {
   switchToSession(session: Session, message: string): Promise<void>;
   beginSessionRequest(): void;
   failSessionRequest(message: string): void;
-  finalizeTurn(sendQueued: (item: QueuedMessage) => void): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
 
   // UI
@@ -113,6 +113,7 @@ export interface SlashCommandHost {
   refreshTerminalThemeTracking(): void;
 
   // Controller refs
+  readonly streamingUI: StreamingUIController;
   readonly authFlow: AuthFlowController;
 
 }
@@ -318,7 +319,7 @@ export async function handleInitCommand(host: SlashCommandHost): Promise<void> {
   try {
     await session.init();
     host.track('init_complete');
-    host.finalizeTurn((item) => {
+    host.streamingUI.finalizeTurn((item) => {
       host.sendQueuedMessage(session, item);
     });
   } catch (error) {
