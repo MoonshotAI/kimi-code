@@ -1,12 +1,3 @@
-/**
- * KimiTUI owns the terminal UI shell for a Kimi Code session.
- *
- * It builds the pi-tui layout, tracks view state, wires editor shortcuts and
- * slash commands, drives session startup/switching, renders SDK events into the
- * transcript and live panes, and bridges approval, question, auth, and config
- * flows back to the harness.
- */
-
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -111,9 +102,7 @@ import {
 import { createTUIState, type TUIState } from './tui-state';
 import { isExpandable, isPlanExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
-import {
-  formatErrorMessage,
-} from './utils/event-payload';
+import { formatErrorMessage } from './utils/event-payload';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments } from './utils/image-placeholder';
 import { hasPatchChanges } from './utils/object-patch';
@@ -149,7 +138,6 @@ export interface KimiTUIStartupInput {
 
 type EffectiveActivityPaneMode = ActivityPaneMode | 'idle' | 'session';
 
-// Builds the app-state snapshot used before a session is attached.
 function createInitialAppState(input: KimiTUIStartupInput): AppState {
   const startupPermission: PermissionMode = input.cliOptions.yolo ? 'yolo' : 'manual';
   return {
@@ -197,21 +185,13 @@ export class KimiTUI {
   private readonly gitLsFilesCache: GitLsFilesCache;
   sessionEventUnsubscribe: (() => void) | undefined;
   cancelInFlight: (() => void) | undefined;
-  // Queues editor messages instead of sending or steering them. Used by /init.
   deferUserMessages = false;
   aborted = false;
   private terminalFocusTrackingDispose: (() => void) | undefined;
   private terminalThemeTrackingDispose: (() => void) | undefined;
-  // Cleanup callbacks for SIGHUP/SIGTERM listeners and stdout/stderr 'error'
-  // listeners installed by `registerSignalHandlers()`. Drained on shutdown so
-  // we never leave dangling listeners on the host `process`.
   private signalCleanupHandlers: Array<() => void> = [];
-  // Guards `stop()` and `emergencyTerminalExit()` so a signal arriving mid-
-  // shutdown does not race with itself.
   private isShuttingDown = false;
-  // First-launch migration plan detected pre-TUI; null when nothing to migrate.
   private readonly migrationPlan: MigrationPlan | null;
-  // When true, the migration screen is the whole session: run it, then exit.
   private readonly migrateOnly: boolean;
   private startupNotice: string | undefined;
   private lastActivityMode: string | undefined;
@@ -232,7 +212,6 @@ export class KimiTUI {
     this.harness.track(event, properties);
   }
 
-  // Initializes state, reverse-RPC handlers, editor callbacks, and layout.
   constructor(harness: KimiHarness, startupInput: KimiTUIStartupInput) {
     this.harness = harness;
     const tuiOptions: KimiTUIOptions = {
@@ -254,7 +233,6 @@ export class KimiTUI {
     this.state = createTUIState(tuiOptions);
     this.gitLsFilesCache = createGitLsFilesCache(tuiOptions.initialAppState.workDir);
 
-    // Register approval / question UI controllers before SDK handlers.
     this.reverseRpcDisposers.push(
       ...registerReverseRPCHandlers(this.approvalController, this.questionController, {
         showApprovalPanel: (payload) => {
@@ -282,15 +260,13 @@ export class KimiTUI {
   }
 
   // =========================================================================
-  // Startup Helpers
+  // Autocomplete & Skill Commands
   // =========================================================================
 
-  // Returns built-in and dynamically loaded slash commands in display order.
   private getSlashCommands(): readonly KimiSlashCommand[] {
     return [...sortSlashCommands(BUILTIN_SLASH_COMMANDS), ...this.skillCommands];
   }
 
-  // Rebuilds editor autocomplete from slash commands and file mentions.
   private setupAutocomplete(): void {
     const slashCommands: SlashCommand[] = this.getSlashCommands().map((cmd) => ({
       name: cmd.name,
@@ -305,7 +281,6 @@ export class KimiTUI {
     this.state.editor.setAutocompleteProvider(provider);
   }
 
-  // Loads skill-backed slash commands from the active session.
   async refreshSkillCommands(session?: SkillListSession): Promise<void> {
     if (session === undefined) {
       this.skillCommands = [];
@@ -329,53 +304,23 @@ export class KimiTUI {
     this.setupAutocomplete();
   }
 
-  // Restores persisted input history for the current working directory.
-  private async loadPersistedInputHistory(): Promise<void> {
-    try {
-      const file = getInputHistoryFile(this.state.appState.workDir);
-      const entries = await loadInputHistory(file);
-      for (const entry of entries) {
-        this.state.editor.addToHistory(entry.content);
-      }
-      this.lastHistoryContent = entries.at(-1)?.content;
-    } catch {
-      /* history is best-effort */
-    }
-  }
-
   // =========================================================================
   // Lifecycle
   // =========================================================================
 
-  // Starts the TUI, performs startup routing, and begins session event handling.
   async start(): Promise<void> {
-    // Arm SIGHUP/SIGTERM and stdout/stderr 'error' handlers before touching the
-    // terminal: once raw mode is on and timers start firing, a dying parent
-    // shell can pin a CPU core on EIO write retries unless we can self-exit.
+    // Signal handlers must be installed before raw mode to avoid EIO loops.
     this.registerSignalHandlers();
-    // Outer try ensures the signal handlers are rolled back if any startup
-    // path throws. Without this, callers that retry `start()` in the same
-    // Node process (tests, embedded use) would accumulate listeners on
-    // `process` and trip `MaxListenersExceededWarning`. Inner catch blocks
-    // still own their UI/focus cleanup; this only handles the listener half.
+    // Outer try rolls back signal listeners on startup failure.
     try {
-      // Migration path: the migration screen is a pi-tui component, so the
-      // event loop must run first. It then renders as the very first thing on
-      // screen, before the session is created and the Welcome banner is drawn.
       if (this.migrationPlan !== null) {
+        // Migration needs the event loop running first (pi-tui component).
         this.startEventLoop();
         try {
           const migrationResult = await this.runMigrationScreen(this.migrationPlan);
           if (this.migrateOnly) {
-            // Explicit `kimi migrate`: the screen is the whole command — exit
-            // instead of continuing into the chat TUI. A migration that ran
-            // but failed exits non-zero so scripted callers can detect it.
             const failed =
               migrationResult.decision === 'now' && migrationResult.migrated === false;
-            // Restore the terminal before `onExit` calls `process.exit`: dispose
-            // the focus/theme tracking `startEventLoop()` installed, then stop
-            // the pi-tui loop. Skipping either leaves the terminal in raw mode
-            // or still emitting focus/OSC sequences after the command finishes.
             this.disposeTerminalTracking();
             this.state.ui.stop();
             await this.onExit?.(failed ? 1 : 0);
@@ -384,10 +329,6 @@ export class KimiTUI {
           const shouldReplayHistory = await this.initMainTui();
           await this.finishStartup(shouldReplayHistory);
         } catch (error) {
-          // The pi-tui loop is running and startEventLoop() installed focus/
-          // theme tracking; a startup failure must tear all of it down before
-          // the exception propagates, otherwise the terminal is left in raw
-          // mode or still emitting focus/OSC sequences.
           this.disposeTerminalTracking();
           this.state.ui.stop();
           throw error;
@@ -395,15 +336,11 @@ export class KimiTUI {
         return;
       }
 
-      // No-migration path: ordering is identical to the original `start()`.
       const shouldReplayHistory = await this.initMainTui();
       this.startEventLoop();
       try {
         await this.finishStartup(shouldReplayHistory);
       } catch (error) {
-        // The pi-tui loop is running and startEventLoop() installed focus/theme
-        // tracking; tear all of it down so a finishStartup failure does not
-        // leave the terminal in raw mode or emitting focus/OSC sequences.
         this.disposeTerminalTracking();
         this.state.ui.stop();
         throw error;
@@ -414,9 +351,6 @@ export class KimiTUI {
     }
   }
 
-  // Creates/resumes the session, renders the Welcome banner, configures
-  // autocomplete and input history, and mounts the editor. Returns whether
-  // transcript history should be replayed.
   private async initMainTui(): Promise<boolean> {
     const shouldReplayHistory = await this.init();
 
@@ -429,15 +363,12 @@ export class KimiTUI {
     return shouldReplayHistory;
   }
 
-  // Starts the pi-tui event loop and installs terminal focus/theme tracking.
   private startEventLoop(): void {
     this.state.ui.start();
     this.terminalFocusTrackingDispose = installTerminalFocusTracking(this.state);
     this.refreshTerminalThemeTracking();
   }
 
-  // Runs post-init startup tasks: startup notice, picker bootstrap, transcript
-  // replay, and session event subscriptions.
   private async finishStartup(shouldReplayHistory: boolean): Promise<void> {
     if (this.startupNotice !== undefined) {
       this.showStatus(this.startupNotice);
@@ -446,8 +377,6 @@ export class KimiTUI {
     void this.showTmuxKeyboardWarningIfNeeded();
     if (this.state.startupState === 'picker') {
       void this.bootstrapFromPicker();
-      // resumeSession (fired on picker select) owns post-pick init; nothing
-      // else to do here until the user makes a choice.
       return;
     }
     if (shouldReplayHistory) {
@@ -467,14 +396,12 @@ export class KimiTUI {
     void this.refreshSkillCommands(this.session);
   }
 
-  // Warns tmux users when modified Enter shortcuts are likely to be swallowed.
   private async showTmuxKeyboardWarningIfNeeded(): Promise<void> {
     const warning = await detectTmuxKeyboardWarning();
     if (warning === undefined || this.aborted) return;
     this.showStatus(warning, this.state.theme.colors.warning);
   }
 
-  // Creates or resumes the startup session and reports whether history should replay.
   private async init(): Promise<boolean> {
     await this.authFlow.refreshAvailableModels();
 
@@ -540,11 +467,6 @@ export class KimiTUI {
     return shouldReplayHistory;
   }
 
-  // Stops UI resources, active sessions, reverse-RPC handlers, and the harness.
-  // `exitCode` is forwarded to `onExit`; it defaults to the conventional 0 for
-  // user-initiated exits (e.g. `/exit`). Signal-driven shutdown paths pass the
-  // POSIX 128 + signum value so supervisors can tell signal exits from clean
-  // exits.
   async stop(exitCode?: number): Promise<void> {
     if (this.isShuttingDown) return;
     this.isShuttingDown = true;
@@ -566,20 +488,8 @@ export class KimiTUI {
     }
   }
 
-  // Installs SIGHUP/SIGTERM signal handlers and stdout/stderr 'error' listeners
-  // so the process can self-terminate when the controlling terminal goes away.
-  //
-  // SIGHUP and EIO/EPIPE/ENOTCONN on stdout/stderr both mean "the terminal is
-  // gone". Running the normal `stop()` path in that state writes restore
-  // sequences (cursor show, bracketed paste off, Kitty protocol off) which
-  // re-trigger EIO and have been observed to pin a CPU core for days.
-  // `emergencyTerminalExit()` is the safe response: it bypasses cleanup.
-  //
-  // SIGTERM is treated as a graceful shutdown request and routes through the
-  // normal `stop()` path so telemetry and session state get flushed.
-  //
-  // `prependListener` ensures we run before any subsequent listener a feature
-  // might register later in startup, since responsiveness here is critical.
+  // SIGHUP / dead-terminal EIO → emergencyTerminalExit (no cleanup, avoids
+  // EIO write-loop that can pin a CPU core). SIGTERM → normal stop().
   private registerSignalHandlers(): void {
     this.unregisterSignalHandlers();
 
@@ -594,14 +504,8 @@ export class KimiTUI {
           this.emergencyTerminalExit();
           return;
         }
-        // SIGTERM: preserve the POSIX 128 + SIGTERM(15) = 143 convention so
-        // supervisors (launchd, systemd, pm2, parent shells) can distinguish
-        // signal-driven exit from a normal `/exit`. Registering a listener
-        // disables Node's default 143 termination, so we must reinstate it
-        // explicitly. Forcing `process.exit(143)` after `stop()` resolves
-        // also guards the defensive case where `onExit` was never wired up.
-        // On cleanup failure we exit 143 too — the process must not hang
-        // on pending I/O once `isShuttingDown` has been latched.
+        // Registering a SIGTERM listener disables Node's default exit(143),
+        // so we must reinstate it after stop() or on failure.
         this.stop(143).then(
           () => {
             process.exit(143);
@@ -638,62 +542,19 @@ export class KimiTUI {
     for (const cleanup of handlers) cleanup();
   }
 
-  // Bails out without running normal shutdown. Reserved for SIGHUP / dead-
-  // terminal write errors where every additional stdout write risks looping
-  // on EIO. The default exit code 129 follows the POSIX 128 + SIGHUP(1)
-  // convention; SIGTERM cleanup failures pass 143 (128 + SIGTERM(15)) so
-  // supervisors still see signal-conventional exits.
+  // Exit codes follow POSIX 128+signum: 129 = SIGHUP, 143 = SIGTERM.
   private emergencyTerminalExit(exitCode = 129): never {
     this.isShuttingDown = true;
     this.unregisterSignalHandlers();
     process.exit(exitCode);
   }
 
-  // Tears down the terminal focus + theme tracking installed by
-  // `startEventLoop()`. Every exit path must run this, or the terminal is
-  // left with focus-reporting / theme-query modes on and emits stray
-  // focus/OSC sequences after the process exits.
   private disposeTerminalTracking(): void {
     this.stopTerminalThemeTracking();
     this.terminalFocusTrackingDispose?.();
     this.terminalFocusTrackingDispose = undefined;
   }
 
-  appendStartupNotice(extra: string): void {
-    this.startupNotice = combineStartupNotice(this.startupNotice, extra);
-  }
-
-  // Exposes background tasks owned by the event handler for host interfaces.
-  get backgroundTasks(): ReadonlyMap<string, BackgroundTaskInfo> {
-    return this.sessionEventHandler.backgroundTasks;
-  }
-
-  // Returns the currently selected session id shown by the UI.
-  getCurrentSessionId(): string {
-    return this.state.appState.sessionId;
-  }
-
-  // Reports whether the transcript contains user-visible session content.
-  hasSessionContent(): boolean {
-    return this.state.transcriptEntries.length > 0;
-  }
-
-  async getStartupMcpMs(): Promise<number> {
-    const session = this.session;
-    if (session === undefined) return 0;
-    try {
-      const metrics = await session.getMcpStartupMetrics();
-      return metrics.durationMs;
-    } catch {
-      return 0;
-    }
-  }
-
-  // =========================================================================
-  // Layout / Editor Setup
-  // =========================================================================
-
-  // Mounts the root TUI containers in their rendering order.
   private buildLayout(): void {
     const { ui } = this.state;
     ui.clear();
@@ -727,7 +588,6 @@ export class KimiTUI {
     slashCommands.dispatchInput(this, text);
   }
 
-  // Sends regular user input after validating model and media support.
   sendNormalUserInput(text: string): void {
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
@@ -753,7 +613,6 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  // Checks whether the current model can accept attached media.
   private validateMediaCapabilities(
     extraction: ReturnType<typeof extractMediaAttachments>,
   ): boolean {
@@ -775,7 +634,6 @@ export class KimiTUI {
     return true;
   }
 
-  // Tests the active model's advertised capability list.
   private supportsCurrentModelCapability(capability: string): boolean {
     const capabilities =
       this.state.appState.availableModels[this.state.appState.model]?.capabilities;
@@ -783,7 +641,19 @@ export class KimiTUI {
     return capabilities.includes(capability);
   }
 
-  // Persists a submitted input line and mirrors it into editor history.
+  private async loadPersistedInputHistory(): Promise<void> {
+    try {
+      const file = getInputHistoryFile(this.state.appState.workDir);
+      const entries = await loadInputHistory(file);
+      for (const entry of entries) {
+        this.state.editor.addToHistory(entry.content);
+      }
+      this.lastHistoryContent = entries.at(-1)?.content;
+    } catch {
+      // best-effort
+    }
+  }
+
   private async persistInputHistory(text: string): Promise<void> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
@@ -798,7 +668,6 @@ export class KimiTUI {
     }
   }
 
-  // Pops the most recent queued message back into the editor.
   recallLastQueued(): string | undefined {
     if (this.state.queuedMessages.length === 0) return undefined;
     const last = this.state.queuedMessages.at(-1)!;
@@ -810,7 +679,6 @@ export class KimiTUI {
   // Session Requests / Queues
   // =========================================================================
 
-  // Adds a message to the queue for delivery after current work finishes.
   private enqueueMessage(text: string, options?: SendMessageOptions): void {
     this.state.queuedMessages.push({
       text,
@@ -824,7 +692,6 @@ export class KimiTUI {
     this.track('input_queue');
   }
 
-  // Resets request-scoped state before submitting work to the active session.
   beginSessionRequest(): void {
     this.streamingUI.setTurnId(undefined);
     this.streamingUI.resetLiveText();
@@ -842,14 +709,12 @@ export class KimiTUI {
     });
   }
 
-  // Ends a failed session request and renders the failure to the transcript.
   failSessionRequest(message: string): void {
     this.setAppState({ streamingPhase: 'idle' });
     this.resetLivePane();
     this.showError(message);
   }
 
-  // Sends a queued message after restoring the agent target captured at enqueue time.
   sendQueuedMessage(session: Session, item: QueuedMessage): void {
     this.harness.interactiveAgentId = item.agentId ?? MAIN_AGENT_ID;
     this.sendMessageInternal(session, item.text, {
@@ -858,7 +723,6 @@ export class KimiTUI {
     });
   }
 
-  // Appends the user message and sends the prompt to the session immediately.
   private sendMessageInternal(session: Session, input: string, options?: SendMessageOptions): void {
     const imageAttachmentIds =
       options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
@@ -882,7 +746,6 @@ export class KimiTUI {
     });
   }
 
-  // Starts a skill activation turn on the session.
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void {
     this.beginSessionRequest();
     void session.activateSkill(skillName, skillArgs).catch((error: unknown) => {
@@ -891,7 +754,6 @@ export class KimiTUI {
     });
   }
 
-  // Sends a message now or queues it when the session is busy.
   private sendMessage(session: Session, input: string, options?: SendMessageOptions): void {
     if (
       this.deferUserMessages ||
@@ -904,7 +766,6 @@ export class KimiTUI {
     this.sendMessageInternal(session, input, options);
   }
 
-  // Sends steering input into an active stream or falls back to normal prompts.
   steerMessage(session: Session, input: string[]): void {
     if (this.deferUserMessages || this.state.appState.isCompacting) {
       for (const part of input) {
@@ -936,10 +797,36 @@ export class KimiTUI {
   }
 
   // =========================================================================
-  // State Helpers
+  // State & Accessors
   // =========================================================================
 
-  // Applies app-state changes and refreshes dependent UI surfaces.
+  appendStartupNotice(extra: string): void {
+    this.startupNotice = combineStartupNotice(this.startupNotice, extra);
+  }
+
+  get backgroundTasks(): ReadonlyMap<string, BackgroundTaskInfo> {
+    return this.sessionEventHandler.backgroundTasks;
+  }
+
+  getCurrentSessionId(): string {
+    return this.state.appState.sessionId;
+  }
+
+  hasSessionContent(): boolean {
+    return this.state.transcriptEntries.length > 0;
+  }
+
+  async getStartupMcpMs(): Promise<number> {
+    const session = this.session;
+    if (session === undefined) return 0;
+    try {
+      const metrics = await session.getMcpStartupMetrics();
+      return metrics.durationMs;
+    } catch {
+      return 0;
+    }
+  }
+
   setAppState(patch: Partial<AppState>): void {
     if (!hasPatchChanges(this.state.appState, patch)) return;
     const busyChanged = 'streamingPhase' in patch || 'isCompacting' in patch;
@@ -951,7 +838,6 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  // Applies live-pane changes and refreshes activity presentation.
   patchLivePane(patch: Partial<LivePaneState>): void {
     if (!hasPatchChanges(this.state.livePane, patch)) return;
     Object.assign(this.state.livePane, patch);
@@ -959,7 +845,6 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  // Restores the live pane to its initial idle state.
   resetLivePane(): void {
     this.state.livePane = { ...INITIAL_LIVE_PANE };
     this.updateActivityPane();
@@ -970,7 +855,6 @@ export class KimiTUI {
   // Session Runtime
   // =========================================================================
 
-  // Returns the active session or raises the standard no-session error.
   requireSession(): Session {
     if (this.session === undefined) {
       throw new Error(NO_ACTIVE_SESSION_MESSAGE);
@@ -978,7 +862,6 @@ export class KimiTUI {
     return this.session;
   }
 
-  // Creates a session using the current model, known session runtime, permission, and plan state.
   private async createSessionFromCurrentState(): Promise<Session> {
     const model = this.state.appState.model.trim();
     if (model.length === 0) {
@@ -994,7 +877,6 @@ export class KimiTUI {
     });
   }
 
-  // Replaces the active session and installs approval/question handlers.
   async setSession(session: Session): Promise<void> {
     const previous = this.unloadCurrentSession('switching session');
     await previous?.close();
@@ -1003,7 +885,6 @@ export class KimiTUI {
     this.registerSessionHandlers(session);
   }
 
-  // Pulls runtime session status into the app state.
   async syncRuntimeState(session: Session = this.requireSession()): Promise<void> {
     const status = await session.getStatus();
     this.setAppState({
@@ -1019,21 +900,18 @@ export class KimiTUI {
     });
   }
 
-  // Applies current permission to the active session. Plan mode is applied by
-  // createSession when requested, so post-create setup must not enter it again.
+  // Plan mode is set by createSession — do not re-enter it here.
   private async activateRuntime(): Promise<void> {
     const session = this.requireSession();
     await session.setPermission(this.state.appState.permissionMode);
     await this.syncRuntimeState(session);
   }
 
-  // Detaches and closes the current session.
   async closeSession(reason: string): Promise<void> {
     const previous = this.unloadCurrentSession(reason);
     await previous?.close();
   }
 
-  // Detaches session subscriptions and cancels pending interactive requests.
   private unloadCurrentSession(reason: string): Session | undefined {
     const previous = this.session;
     this.sessionEventUnsubscribe?.();
@@ -1054,7 +932,6 @@ export class KimiTUI {
     }
   }
 
-  // Connects session approval and question requests to local controllers.
   private registerSessionHandlers(session: Session): void {
     session.setApprovalHandler(
       createApprovalRequestHandler(this.approvalController, (request, response) => {
@@ -1064,7 +941,6 @@ export class KimiTUI {
     session.setQuestionHandler(createQuestionAskHandler(this.questionController));
   }
 
-  // Loads session picker rows for the current working directory.
   async fetchSessions(): Promise<void> {
     this.state.loadingSessions = true;
     try {
@@ -1081,12 +957,10 @@ export class KimiTUI {
     }
   }
 
-  // Syncs the process title with the current session title and id.
   refreshSessionTitle(): void {
     setProcessTitle(this.state.appState.sessionTitle, this.state.appState.sessionId);
   }
 
-  // Resets turn, tool, queue, and background-agent state for a session switch.
   resetSessionRuntime(): void {
     this.aborted = false;
     this.streamingUI.discardPending();
@@ -1104,7 +978,6 @@ export class KimiTUI {
     this.updateQueueDisplay();
   }
 
-  // Switches to an existing session and replays its transcript.
   private async resumeSession(targetSessionId: string): Promise<boolean> {
     if (targetSessionId === this.state.appState.sessionId) {
       this.showStatus('Already on this session.');
@@ -1132,7 +1005,6 @@ export class KimiTUI {
     return true;
   }
 
-  // Switches to a provided session and replays its transcript.
   async switchToSession(session: Session, statusMessage: string): Promise<void> {
     this.resetSessionRuntime();
     await this.setSession(session);
@@ -1159,7 +1031,6 @@ export class KimiTUI {
     this.showStatus(statusMessage);
   }
 
-  // Creates a fresh session from current UI settings and resets the transcript.
   async createNewSession(): Promise<void> {
     if (this.state.appState.isReplaying) {
       this.showError('Cannot start a new session while history is replaying.');
@@ -1201,7 +1072,6 @@ export class KimiTUI {
   // Transcript Rendering
   // =========================================================================
 
-  // Creates the pi-tui component that renders a transcript entry.
   private createTranscriptComponent(entry: TranscriptEntry): Component | null {
     if (entry.compactionData !== undefined) {
       const data = entry.compactionData;
@@ -1280,7 +1150,6 @@ export class KimiTUI {
     }
   }
 
-  // Stores a transcript entry and mounts its component if renderable.
   appendTranscriptEntry(entry: TranscriptEntry): void {
     this.state.transcriptEntries.push(entry);
     const component = this.createTranscriptComponent(entry);
@@ -1290,7 +1159,6 @@ export class KimiTUI {
     }
   }
 
-  // Appends an approval-result entry to the transcript.
   private appendApprovalTranscriptEntry(request: ApprovalRequest, response: ApprovalResponse): void {
     if (request.toolName === 'ExitPlanMode' || request.display.kind === 'plan_review') return;
     const parts: string[] = [];
@@ -1317,7 +1185,6 @@ export class KimiTUI {
     });
   }
 
-  // Adds the welcome component to the transcript.
   private renderWelcome(): void {
     const welcome = new WelcomeComponent(this.state.appState, this.state.theme.colors);
     this.state.transcriptContainer.addChild(welcome);
@@ -1328,7 +1195,6 @@ export class KimiTUI {
     this.state.terminal.write(deleteAllKittyImages());
   }
 
-  // Clears transcript-related state and redraws the welcome view.
   private clearTranscriptAndRedraw(): void {
     this.streamingUI.discardPending();
     this.state.transcriptEntries = [];
@@ -1344,7 +1210,6 @@ export class KimiTUI {
     this.renderWelcome();
   }
 
-  // Appends a status message to the transcript.
   showStatus(message: string, color?: string): void {
     this.state.transcriptContainer.addChild(
       new StatusMessageComponent(message, this.state.theme.colors, color),
@@ -1352,7 +1217,6 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  // Appends a notice message to the transcript.
   showNotice(title: string, detail?: string): void {
     this.state.transcriptContainer.addChild(
       new NoticeMessageComponent(title, detail, this.state.theme.colors),
@@ -1360,12 +1224,10 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  // Appends an error status message to the transcript.
   showError(message: string): void {
     this.showStatus(`Error: ${message}`, this.state.theme.colors.error);
   }
 
-  // Adds an animated login progress row to the transcript.
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle {
     const tint = (s: string): string => chalk.hex(this.state.theme.colors.primary)(s);
     const spinner = new MoonLoader(this.state.ui, 'braille', tint, label);
@@ -1383,7 +1245,6 @@ export class KimiTUI {
     };
   }
 
-  // Opens the device-code URL and renders the login authorization prompt.
   showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle {
     openUrl(auth.verificationUriComplete);
     this.state.transcriptContainer.addChild(
@@ -1403,7 +1264,6 @@ export class KimiTUI {
   // Panes / Presentation State
   // =========================================================================
 
-  // Rebuilds the activity pane for the current live and streaming state.
   updateActivityPane(): void {
     const effectiveMode = this.resolveActivityPaneMode();
     this.syncTerminalProgress(this.shouldShowTerminalProgress(effectiveMode));
@@ -1468,7 +1328,6 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  // Computes the effective activity-pane mode from modal and streaming state.
   private resolveActivityPaneMode(): EffectiveActivityPaneMode {
     if (this.state.activeDialog === 'session-picker') return 'hidden';
     if (this.state.livePane.pendingApproval !== null) return 'hidden';
@@ -1485,7 +1344,6 @@ export class KimiTUI {
     return this.state.livePane.mode;
   }
 
-  // Re-renders the queued-message pane.
   updateQueueDisplay(): void {
     this.state.queueContainer.clear();
     const queued = this.state.queuedMessages;
@@ -1502,7 +1360,6 @@ export class KimiTUI {
     );
   }
 
-  // Toggles expansion for all expandable tool-output components.
   toggleToolOutputExpansion(): void {
     this.state.toolOutputExpanded = !this.state.toolOutputExpanded;
     for (const child of this.state.transcriptContainer.children) {
@@ -1513,9 +1370,7 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  // Toggles expansion for plan-preview cards (ExitPlanMode). Returns true
-  // iff at least one plan card was actually toggled so the caller can decide
-  // whether to consume the keystroke vs. let pi-tui's default end-of-line run.
+  // Returns true when at least one card toggled, so the caller can consume the keystroke.
   togglePlanExpansion(): boolean {
     const next = !this.state.planExpanded;
     let toggled = false;
@@ -1530,7 +1385,6 @@ export class KimiTUI {
     return true;
   }
 
-  // Updates the editor border color for slash command and plan-mode context.
   updateEditorBorderHighlight(text?: string): void {
     const trimmed = (text ?? this.state.editor.getText()).trimStart();
     const colorToken =
@@ -1541,7 +1395,6 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  // Applies a theme bundle to all stateful UI theme references.
   applyTheme(theme: Theme, resolved?: ResolvedTheme): void {
     const nextTheme = createKimiTUIThemeBundle(theme, resolved);
     Object.assign(this.state.theme.colors, nextTheme.colors);
@@ -1553,7 +1406,6 @@ export class KimiTUI {
     this.state.ui.requestRender(true);
   }
 
-  // Starts or stops terminal theme notifications according to the user preference.
   refreshTerminalThemeTracking(): void {
     this.stopTerminalThemeTracking();
     if (this.state.appState.theme !== 'auto') return;
@@ -1563,20 +1415,17 @@ export class KimiTUI {
     });
   }
 
-  // Stops terminal theme notifications if they were enabled for auto mode.
   private stopTerminalThemeTracking(): void {
     this.terminalThemeTrackingDispose?.();
     this.terminalThemeTrackingDispose = undefined;
   }
 
-  // Applies a concrete terminal-reported theme while keeping the preference as auto.
   private applyResolvedAutoTheme(resolved: ResolvedTheme): void {
     if (this.state.appState.theme !== 'auto') return;
     if (this.state.theme.resolvedTheme === resolved) return;
     this.applyTheme('auto', resolved);
   }
 
-  // Determines whether the terminal should expose progress state.
   private shouldShowTerminalProgress(effectiveMode: EffectiveActivityPaneMode): boolean {
     if (this.state.appState.isCompacting) return true;
     return (
@@ -1587,14 +1436,12 @@ export class KimiTUI {
     );
   }
 
-  // Syncs terminal progress only when the active flag changes.
   private syncTerminalProgress(active: boolean): void {
     if (this.state.terminalState.progressActive === active) return;
     this.state.terminal.setProgress(active);
     this.state.terminalState.progressActive = active;
   }
 
-  // Returns an activity spinner with the requested style and presentation.
   private ensureActivitySpinner(
     style: SpinnerStyle,
     label = '',
@@ -1617,7 +1464,6 @@ export class KimiTUI {
     return this.state.activitySpinner.instance;
   }
 
-  // Stops and clears the activity spinner.
   private stopActivitySpinner(): void {
     if (this.state.activitySpinner !== null) {
       this.state.activitySpinner.instance.stop();
@@ -1629,7 +1475,6 @@ export class KimiTUI {
   // Dialogs / Selectors
   // =========================================================================
 
-  // Replaces the editor with a focusable dialog or selector panel.
   mountEditorReplacement(panel: Component & Focusable): void {
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(panel);
@@ -1637,7 +1482,6 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  // Restores the main editor after a dialog or selector closes.
   restoreEditor(): void {
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
@@ -1645,15 +1489,10 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  // Runs the first-launch migration screen, if a plan was detected pre-TUI.
-  // Resolves with the screen's result when the user dismisses it; the editor
-  // is then restored.
   private async runMigrationScreen(plan: MigrationPlan): Promise<MigrationScreenResult> {
     const result = await new Promise<MigrationScreenResult>((resolve) => {
       const screen = new MigrationScreenComponent({
         plan,
-        // Reuse the source path detection already resolved — the single source
-        // of truth — rather than re-deriving it here.
         sourceHome: plan.sourceHome,
         targetHome: this.harness.homeDir,
         colors: this.state.theme.colors,
@@ -1684,7 +1523,6 @@ export class KimiTUI {
     return result;
   }
 
-  // Shows the help panel with the current slash command list.
   showHelpPanel(): void {
     this.state.activeDialog = 'help';
     this.mountEditorReplacement(
@@ -1698,13 +1536,11 @@ export class KimiTUI {
     );
   }
 
-  // Hides the help panel and returns focus to the editor.
   private hideHelpPanel(): void {
     this.state.activeDialog = null;
     this.restoreEditor();
   }
 
-  // Loads sessions and shows the session picker.
   async showSessionPicker(): Promise<void> {
     await this.fetchSessions();
     this.mountSessionPicker(() => {
@@ -1712,7 +1548,6 @@ export class KimiTUI {
     });
   }
 
-  // Shows the startup session picker and exits when it is cancelled.
   private async bootstrapFromPicker(): Promise<void> {
     await this.fetchSessions();
     this.mountSessionPicker(() => {
@@ -1721,13 +1556,11 @@ export class KimiTUI {
     });
   }
 
-  // Hides the session picker and restores the editor.
   hideSessionPicker(): void {
     this.state.activeDialog = null;
     this.restoreEditor();
   }
 
-  // Mounts a session picker with shared selection behavior.
   private mountSessionPicker(onCancel: () => void): void {
     this.state.activeDialog = 'session-picker';
     this.mountEditorReplacement(
@@ -1748,7 +1581,6 @@ export class KimiTUI {
     );
   }
 
-  // Shows an approval panel and connects its response callback.
   private showApprovalPanel(payload: ApprovalPanelData): void {
     this.patchLivePane({ pendingApproval: { data: payload } });
     notifyTerminalOnce(this.state, `approval:${payload.id}`, {
@@ -1771,13 +1603,11 @@ export class KimiTUI {
     this.mountEditorReplacement(panel);
   }
 
-  // Hides the active approval panel.
   private hideApprovalPanel(): void {
     this.patchLivePane({ pendingApproval: null });
     this.restoreEditor();
   }
 
-  // Shows a question dialog and connects its response callback.
   private showQuestionDialog(payload: QuestionPanelData): void {
     this.patchLivePane({ pendingQuestion: { data: payload } });
     notifyTerminalOnce(this.state, `question:${payload.id}`, {
@@ -1801,14 +1631,9 @@ export class KimiTUI {
     this.mountEditorReplacement(dialog);
   }
 
-  // Hides the active question dialog.
   private hideQuestionDialog(): void {
     this.patchLivePane({ pendingQuestion: null });
     this.restoreEditor();
   }
-
-  // =========================================================================
-  // Slash Command Handlers — delegated to controllers/slash-commands.ts
-  // =========================================================================
 
 }
