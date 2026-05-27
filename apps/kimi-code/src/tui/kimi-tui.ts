@@ -254,6 +254,7 @@ import { createTerminalState, type TerminalState } from './utils/terminal-state'
 import { installTerminalThemeTracking } from './utils/terminal-theme';
 import { detectTmuxKeyboardWarning } from './utils/tmux-keyboard';
 import { nextTranscriptId } from './utils/transcript-id';
+import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
 
 export interface KimiTUIStartupInput {
   readonly cliOptions: CLIOptions;
@@ -2595,17 +2596,8 @@ export class KimiTUI {
 
   private maybeShowDebugTiming(event: TurnStepCompletedEvent): void {
     if (process.env['KIMI_CODE_DEBUG'] !== '1') return;
-    const latency = event.llmFirstTokenLatencyMs;
-    const streamMs = event.llmStreamDurationMs;
-    const outputTokens = event.usage?.output;
-    if (latency === undefined || streamMs === undefined) return;
-
-    const parts: string[] = [`TTFT: ${formatDuration(latency)}`];
-    if (outputTokens !== undefined && outputTokens > 0 && streamMs > 0) {
-      const tps = (outputTokens / (streamMs / 1000)).toFixed(1);
-      parts.push(`TPS: ${tps} tok/s (${outputTokens} tokens in ${formatDuration(streamMs)})`);
-    }
-    this.showStatus(`[Debug] ${parts.join(' | ')}`);
+    const text = formatStepDebugTiming(event);
+    if (text !== undefined) this.showStatus(text);
   }
 
   private isAnthropicSessionActive(): boolean {
@@ -5771,9 +5763,4 @@ function formatHookResultTitle(event: HookResultEvent): string {
 function formatHookResultBody(event: HookResultEvent): string {
   const content = event.content.trim();
   return content.length === 0 ? '(empty)' : content;
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
 }
