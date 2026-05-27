@@ -46,8 +46,10 @@ import {
   type CronScheduler,
 } from '../../tools/cron/scheduler';
 import {
+  CRON_DELETED,
   CRON_FIRED,
   CRON_MISSED,
+  CRON_SCHEDULED,
 } from '../../tools/cron/telemetry-events';
 import type { CronTask } from '../../tools/cron/types';
 
@@ -221,5 +223,29 @@ export class CronManager {
     };
     this.agent.turn.steer(content, origin);
     this.agent.telemetry.track(CRON_MISSED, { count: tasks.length });
+  }
+
+  /**
+   * Emit `cron_scheduled` for a freshly-added task. Called by
+   * `CronCreate` after a successful `store.add(...)`. Kept as an
+   * explicit method so the tool layer never reaches into
+   * `manager.agent.telemetry` — preserves the "tools see the manager,
+   * the manager sees the agent" layering and matches the symmetric
+   * `emitDeleted` used by `CronDelete` (P1.6).
+   */
+  emitScheduled(task: CronTask): void {
+    this.agent.telemetry.track(CRON_SCHEDULED, {
+      recurring: task.recurring !== false,
+      durable: task.durable === true,
+    });
+  }
+
+  /**
+   * Emit `cron_deleted` for a removed task. Wired up here so P1.6 can
+   * land without touching this file again. `task_id` matches the field
+   * naming used elsewhere in the telemetry surface (snake_case).
+   */
+  emitDeleted(taskId: string): void {
+    this.agent.telemetry.track(CRON_DELETED, { task_id: taskId });
   }
 }
