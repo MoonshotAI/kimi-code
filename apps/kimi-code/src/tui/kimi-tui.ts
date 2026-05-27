@@ -71,18 +71,8 @@ import {
   ApprovalPanelComponent,
   type ApprovalPanelResponse,
 } from './components/dialogs/approval-panel';
-import {
-  ApiKeyInputDialogComponent,
-  type ApiKeyInputResult,
-} from './components/dialogs/api-key-input-dialog';
 import { CompactionComponent } from './components/dialogs/compaction';
-import {
-  FeedbackInputDialogComponent,
-  type FeedbackInputDialogResult,
-} from './components/dialogs/feedback-input-dialog';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
-import { ChoicePickerComponent, type ChoiceOption } from './components/dialogs/choice-picker';
-import { PlatformSelectorComponent } from './components/dialogs/platform-selector';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
 import { AuthFlowController } from './controllers/auth-flow';
@@ -91,8 +81,6 @@ import * as slashCommands from './controllers/slash-commands';
 import { SessionReplayRenderer } from './controllers/session-replay';
 import { StreamingUIController } from './controllers/streaming-ui';
 import { TasksBrowserController, type TasksBrowserState } from './controllers/tasks-browser';
-import {
-} from './components/dialogs/settings-selector';
 import { CustomEditor } from './components/editor/custom-editor';
 import { FileMentionProvider } from './components/editor/file-mention-provider';
 import { AgentGroupComponent } from './components/messages/agent-group';
@@ -106,36 +94,20 @@ import {
 } from './components/messages/status-message';
 import { ThinkingComponent } from './components/messages/thinking';
 import { ToolCallComponent } from './components/messages/tool-call';
-import {
-  type ManagedUsageReport,
-} from './components/messages/usage-panel';
+import type { ManagedUsageReport } from './components/messages/usage-panel';
 import { UserMessageComponent } from './components/messages/user-message';
 import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes/activity-pane';
 import { QueuePaneComponent } from './components/panes/queue-pane';
 import type { TuiConfig } from './config';
 import {
-  FEEDBACK_ISSUE_URL,
-  FEEDBACK_STATUS_CANCELLED,
-  FEEDBACK_STATUS_FALLBACK,
-  FEEDBACK_STATUS_NOT_SIGNED_IN,
-  FEEDBACK_STATUS_SUBMITTING,
-  FEEDBACK_STATUS_SUCCESS,
-  FEEDBACK_TELEMETRY_EVENT,
-  errorReportHintLine,
-  feedbackSessionLine,
-  withFeedbackVersionPrefix,
-} from './constant/feedback';
-import {
   CTRL_C_HINT,
   CTRL_D_HINT,
-  DEFAULT_OAUTH_PROVIDER_NAME,
   EXIT_CONFIRM_WINDOW_MS,
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
   NO_ACTIVE_SESSION_MESSAGE,
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
-  PRODUCT_NAME,
 } from './constant/kimi-tui';
 import { STREAMING_UI_FLUSH_MS } from './constant/streaming';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
