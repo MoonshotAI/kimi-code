@@ -2,6 +2,7 @@ import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 import type { SkillListSession } from '../commands';
 
 import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
+import type { SessionEventHandler } from './session-event-handler';
 import { combineStartupNotice } from '../utils/startup';
 import type { AppState } from '../types';
 import type { KimiTUIOptions, TUIState } from '../kimi-tui';
@@ -17,7 +18,7 @@ export interface AuthFlowHost {
   setSession(session: Session): Promise<void>;
   syncRuntimeState(session?: Session): Promise<void>;
   closeSession(reason: string): Promise<void>;
-  startSessionEventSubscription(): void;
+  readonly sessionEventHandler: SessionEventHandler;
   fetchSessions(): Promise<void>;
   refreshSessionTitle(): void;
   refreshSkillCommands(session?: SkillListSession): Promise<void>;
@@ -76,7 +77,7 @@ export class AuthFlowController {
       sessionTitle: session.summary?.title ?? null,
     });
     await host.syncRuntimeState(session);
-    host.startSessionEventSubscription();
+    host.sessionEventHandler.startSubscription();
     void host.fetchSessions();
     host.refreshSessionTitle();
     void host.refreshSkillCommands(host.session);

@@ -39,11 +39,13 @@ function stripSgr(text: string): string {
 
 interface MessageDriver {
   state: TUIState;
+  sessionEventHandler: {
+    startSubscription(): void;
+    handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void;
+  };
   init(): Promise<boolean>;
   handleUserInput(text: string): void;
-  handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void;
   persistInputHistory(text: string): Promise<void>;
-  startSessionEventSubscription(): void;
   getCurrentSessionId(): string;
 }
 
@@ -498,7 +500,7 @@ describe('KimiTUI message flow', () => {
     });
     const { driver } = await makeDriver(session);
 
-    driver.startSessionEventSubscription();
+    driver.sessionEventHandler.startSubscription();
     await Promise.resolve();
 
     expect(session.onEvent).toHaveBeenCalledOnce();
@@ -532,7 +534,7 @@ describe('KimiTUI message flow', () => {
     });
     const { driver } = await makeDriver(session);
 
-    driver.startSessionEventSubscription();
+    driver.sessionEventHandler.startSubscription();
     await Promise.resolve();
     eventListeners[0]?.({
       type: 'mcp.server.status',
@@ -590,7 +592,7 @@ describe('KimiTUI message flow', () => {
     });
     const { driver } = await makeDriver(session);
 
-    driver.startSessionEventSubscription();
+    driver.sessionEventHandler.startSubscription();
     eventListeners[0]?.({
       type: 'mcp.server.status',
       agentId: 'main',
@@ -693,7 +695,7 @@ describe('KimiTUI message flow', () => {
       driver.state.currentTurnId = '1';
       driver.state.queuedMessages = [{ text: 'next' }];
 
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'turn.ended',
           agentId: 'main',
@@ -719,7 +721,7 @@ describe('KimiTUI message flow', () => {
       const { driver } = await makeDriver();
       vi.mocked(driver.state.ui.requestRender).mockClear();
 
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'assistant.delta',
           agentId: 'main',
@@ -733,7 +735,7 @@ describe('KimiTUI message flow', () => {
       if (component === undefined) throw new Error('expected streaming component');
       const updateSpy = vi.spyOn(component, 'updateContent');
 
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'assistant.delta',
           agentId: 'main',
@@ -743,7 +745,7 @@ describe('KimiTUI message flow', () => {
         } as Event,
         vi.fn(),
       );
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'assistant.delta',
           agentId: 'main',
@@ -771,7 +773,7 @@ describe('KimiTUI message flow', () => {
       const sendQueued = vi.fn();
       driver.state.appState.isStreaming = true;
 
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'assistant.delta',
           agentId: 'main',
@@ -781,7 +783,7 @@ describe('KimiTUI message flow', () => {
         } as Event,
         sendQueued,
       );
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'turn.ended',
           agentId: 'main',
@@ -805,7 +807,7 @@ describe('KimiTUI message flow', () => {
       driver.state.currentTurnId = '1';
       driver.state.currentStep = 1;
 
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'tool.call.delta',
           agentId: 'main',
@@ -834,7 +836,7 @@ describe('KimiTUI message flow', () => {
 
   it('cancels manual compaction from the editor', async () => {
     const { driver, session } = await makeDriver();
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'compaction.started',
         agentId: 'main',
@@ -860,7 +862,7 @@ describe('KimiTUI message flow', () => {
     try {
       const { driver } = await makeDriver();
       const sendQueued = vi.fn();
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'compaction.started',
           agentId: 'main',
@@ -871,7 +873,7 @@ describe('KimiTUI message flow', () => {
       );
       driver.state.queuedMessages = [{ text: 'next' }];
 
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'compaction.cancelled',
           agentId: 'main',
@@ -1007,7 +1009,7 @@ describe('KimiTUI message flow', () => {
   it('shows the login prompt for auth.login_required session errors', async () => {
     const { driver } = await makeDriver();
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'error',
         agentId: 'main',
@@ -1028,7 +1030,7 @@ describe('KimiTUI message flow', () => {
   it('appends the kimi export hint beneath session error messages', async () => {
     const { driver } = await makeDriver();
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'error',
         agentId: 'main',
@@ -1050,7 +1052,7 @@ describe('KimiTUI message flow', () => {
     const { driver } = await makeDriver();
     driver.state.appState.sessionId = '';
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'error',
         agentId: 'main',
@@ -1078,7 +1080,7 @@ describe('KimiTUI message flow', () => {
     });
     const { driver } = await makeDriver(session);
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'tool.call.started',
         agentId: 'main',
@@ -1132,7 +1134,7 @@ describe('KimiTUI message flow', () => {
     });
     const { driver } = await makeDriver(session);
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'tool.call.started',
         agentId: 'main',
@@ -1173,7 +1175,7 @@ describe('KimiTUI message flow', () => {
     (driver.state.editorContainer.children[0] as ApprovalPanelComponent).handleInput('2');
     await expect(response).resolves.toMatchObject({ decision: 'rejected' });
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'tool.result',
         agentId: 'main',
@@ -1517,7 +1519,7 @@ describe('KimiTUI message flow', () => {
     driver.state.toolOutputExpanded = true;
 
     const longThinking = ['t1', 't2', 't3', 't4', 't5', 't6', 't7'].join('\n');
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'thinking.delta',
         agentId: 'main',
@@ -1526,7 +1528,7 @@ describe('KimiTUI message flow', () => {
       } as Event,
       vi.fn(),
     );
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'assistant.delta',
         agentId: 'main',
@@ -1544,7 +1546,7 @@ describe('KimiTUI message flow', () => {
   it('renders hook results without XML tags', async () => {
     const { driver } = await makeDriver();
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'hook.result',
         agentId: 'main',
@@ -1565,7 +1567,7 @@ describe('KimiTUI message flow', () => {
   it('renders empty hook results as empty status text', async () => {
     const { driver } = await makeDriver();
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'hook.result',
         agentId: 'main',

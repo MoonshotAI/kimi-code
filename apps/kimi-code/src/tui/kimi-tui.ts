@@ -409,8 +409,8 @@ export class KimiTUI {
   private readonly migrateOnly: boolean;
   readonly streamingUI: StreamingUIController;
   readonly authFlow: AuthFlowController;
-  private readonly sessionEventHandler: SessionEventHandler;
-  private readonly sessionReplay: SessionReplayRenderer;
+  readonly sessionEventHandler: SessionEventHandler;
+  readonly sessionReplay: SessionReplayRenderer;
   readonly tasksBrowserController: TasksBrowserController;
 
   public onExit?: (exitCode?: number) => Promise<void>;
@@ -639,14 +639,14 @@ export class KimiTUI {
       return;
     }
     if (shouldReplayHistory) {
-      await this.hydrateTranscriptFromReplay(this.requireSession());
+      await this.sessionReplay.hydrateFromReplay(this.requireSession());
     }
     const resumeState = this.session?.getResumeState();
     if (resumeState?.warning !== undefined) {
       this.showStatus(`Warning: ${resumeState.warning}`, this.state.theme.colors.warning);
     }
     if (this.session !== undefined) {
-      this.startSessionEventSubscription();
+      this.sessionEventHandler.startSubscription();
     }
     void this.fetchSessions();
     if (this.session !== undefined) {
@@ -1584,12 +1584,12 @@ export class KimiTUI {
     }
     this.clearTranscriptAndRedraw();
     try {
-      await this.hydrateTranscriptFromReplay(session);
+      await this.sessionReplay.hydrateFromReplay(session);
     } catch (error) {
       const msg = formatErrorMessage(error);
       this.showError(`Failed to replay session history: ${msg}`);
     } finally {
-      this.startSessionEventSubscription();
+      this.sessionEventHandler.startSubscription();
     }
     const resumeState = session.getResumeState();
     if (resumeState?.warning !== undefined) {
@@ -1621,7 +1621,7 @@ export class KimiTUI {
       await this.activateRuntime();
       await this.syncRuntimeState(session);
     } catch (error) {
-      this.startSessionEventSubscription();
+      this.sessionEventHandler.startSubscription();
       const msg = formatErrorMessage(error);
       this.showError(`Post-create setup failed: ${msg}`);
       return;
@@ -1631,28 +1631,11 @@ export class KimiTUI {
     } catch {
       /* keep the new session usable even if dynamic skills fail */
     }
-    this.startSessionEventSubscription();
+    this.sessionEventHandler.startSubscription();
     this.clearTranscriptAndRedraw();
     this.showStatus(`Started a new session (${session.id}).`);
   }
 
-  // =========================================================================
-  // Session Replay — delegated to SessionReplayRenderer
-  // =========================================================================
-
-  private hydrateTranscriptFromReplay(session: Session): Promise<boolean> {
-    return this.sessionReplay.hydrateFromReplay(session);
-  }
-
-  // =========================================================================
-  // Session Events — delegated to SessionEventHandler
-  // =========================================================================
-
-  startSessionEventSubscription(): void { this.sessionEventHandler.startSubscription(); }
-
-  private handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
-    this.sessionEventHandler.handleEvent(event, sendQueued);
-  }
   // =========================================================================
   // Transcript Rendering
   // =========================================================================
