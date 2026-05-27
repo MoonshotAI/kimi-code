@@ -30,6 +30,7 @@ import {
 import type { PromisableMethods } from '../utils/types';
 import { BackgroundManager } from './background';
 import { FullCompaction, type CompactionStrategy } from './compaction';
+import { CronManager } from './cron';
 import { ConfigState } from './config';
 import { ContextMemory } from './context';
 import { HookEngine } from './hooks';
@@ -109,6 +110,7 @@ export class Agent {
   readonly usage: UsageRecorder;
   readonly tools: ToolManager;
   readonly background: BackgroundManager;
+  readonly cron: CronManager;
   readonly replayBuilder: ReplayBuilder;
   readonly log: Logger;
 
@@ -163,6 +165,12 @@ export class Agent {
       maxRunningTasks: config.backgroundMaxRunningTasks,
       sessionDir: config.backgroundSessionDir,
     });
+    this.cron = new CronManager(this);
+    // Start the auto-tick loop immediately. The scheduler unref()'s its
+    // setInterval so the cron timer never keeps the process alive on its
+    // own, and isKilled (reading KIMI_DISABLE_CRON) short-circuits every
+    // tick — no need to delay start when the killswitch is set.
+    this.cron.start();
     this.replayBuilder = new ReplayBuilder(this);
   }
 
