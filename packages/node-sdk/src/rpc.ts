@@ -4,6 +4,7 @@ import {
   KimiCore,
   makeErrorPayload,
   resolveKimiHome,
+  type AgentContextData,
   type ApprovalRequest,
   type ApprovalResponse,
   type CoreAPI,
@@ -303,6 +304,14 @@ export class SDKRpcClient {
   async cancelCompaction(input: SessionIdRpcInput): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.cancelCompaction({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
+  }
+
+  async getContext(input: SessionIdRpcInput): Promise<AgentContextData> {
+    const rpc = await this.getRpc();
+    return rpc.getContext({
       sessionId: input.sessionId,
       agentId: this.interactiveAgentId,
     });

@@ -1,4 +1,4 @@
-import { ErrorCodes, KimiError, type KimiErrorCode } from '@moonshot-ai/agent-core';
+import { ErrorCodes, KimiError, type AgentContextData, type KimiErrorCode } from '@moonshot-ai/agent-core';
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
 import type { SDKRpcClient } from '#/rpc';
 import type {
@@ -161,6 +161,11 @@ export class Session {
   async cancelCompaction(): Promise<void> {
     this.ensureOpen();
     await this.rpc.cancelCompaction({ sessionId: this.id });
+  }
+
+  async getContext(): Promise<AgentContextData> {
+    this.ensureOpen();
+    return this.rpc.getContext({ sessionId: this.id });
   }
 
   async getUsage(): Promise<SessionUsage> {
