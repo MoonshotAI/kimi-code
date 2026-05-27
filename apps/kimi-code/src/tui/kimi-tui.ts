@@ -147,6 +147,7 @@ import { PlatformSelectorComponent } from './components/dialogs/platform-selecto
 import { PermissionSelectorComponent } from './components/dialogs/permission-selector';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
+import { StreamingUIController } from './controllers/streaming-ui';
 import { TasksBrowserController, type TasksBrowserState } from './controllers/tasks-browser';
 import {
   SettingsSelectorComponent,
@@ -563,7 +564,7 @@ export class KimiTUI {
   private pendingExit: PendingExit | null = null;
   private cancelInFlight: (() => void) | undefined;
   // Queues editor messages instead of sending or steering them. Used by /init.
-  private deferUserMessages = false;
+  deferUserMessages = false;
   private aborted = false;
   private terminalFocusTrackingDispose: (() => void) | undefined;
   private terminalThemeTrackingDispose: (() => void) | undefined;
@@ -578,13 +579,7 @@ export class KimiTUI {
   private readonly migrationPlan: MigrationPlan | null;
   // When true, the migration screen is the whole session: run it, then exit.
   private readonly migrateOnly: boolean;
-  // High-frequency model/tool deltas update draft state immediately, then use
-  // these flags to coalesce expensive component rebuilds into periodic flushes.
-  private streamingUiFlushTimer: ReturnType<typeof setTimeout> | undefined;
-  private lastStreamingUiFlushAt: number | undefined;
-  private pendingAssistantFlush = false;
-  private pendingThinkingFlush = false;
-  private readonly pendingToolCallFlushIds = new Set<string>();
+  readonly streamingUI: StreamingUIController;
   private readonly tasksBrowserController: TasksBrowserController;
 
   public onExit?: (exitCode?: number) => Promise<void>;
@@ -634,6 +629,7 @@ export class KimiTUI {
         },
       }),
     );
+    this.streamingUI = new StreamingUIController(this);
     this.tasksBrowserController = new TasksBrowserController(this);
     this.setupEditorHandlers();
     this.buildLayout();
@@ -1790,191 +1786,25 @@ export class KimiTUI {
     });
   }
 
-  private hasPendingStreamingUiUpdates(): boolean {
-    return (
-      this.pendingAssistantFlush ||
-      this.pendingThinkingFlush ||
-      this.pendingToolCallFlushIds.size > 0
-    );
-  }
+  // ---------------------------------------------------------------------------
+  // Streaming UI — delegated to StreamingUIController
+  // ---------------------------------------------------------------------------
 
-  private clearStreamingUiFlushTimer(): void {
-    if (this.streamingUiFlushTimer === undefined) return;
-    clearTimeout(this.streamingUiFlushTimer);
-    this.streamingUiFlushTimer = undefined;
-  }
-
-  private clearStreamingUiFlushTimerIfIdle(): void {
-    if (this.hasPendingStreamingUiUpdates()) return;
-    this.clearStreamingUiFlushTimer();
-  }
-
-  private discardPendingStreamingUiUpdates(): void {
-    this.clearStreamingUiFlushTimer();
-    this.pendingAssistantFlush = false;
-    this.pendingThinkingFlush = false;
-    this.pendingToolCallFlushIds.clear();
-  }
-
-  // Schedule trailing UI work for streaming deltas. Terminal drawing is already
-  // coalesced by pi-tui; this avoids doing our own markdown/tool preview rebuild
-  // work on every chunk before pi-tui even gets a chance to render.
-  private scheduleStreamingUiFlush(): void {
-    if (!this.hasPendingStreamingUiUpdates()) return;
-    if (this.streamingUiFlushTimer !== undefined) return;
-    const delay =
-      this.lastStreamingUiFlushAt === undefined
-        ? 0
-        : Math.max(0, STREAMING_UI_FLUSH_MS - (Date.now() - this.lastStreamingUiFlushAt));
-    this.streamingUiFlushTimer = setTimeout(() => {
-      this.streamingUiFlushTimer = undefined;
-      this.flushStreamingUiUpdates();
-    }, delay);
-  }
-
-  // Final events such as tool.result or turn.ended must observe all streamed
-  // draft content, so they bypass the timer and drain pending UI work first.
-  private flushStreamingUiUpdatesNow(): void {
-    this.clearStreamingUiFlushTimer();
-    this.flushStreamingUiUpdates();
-  }
-
-  private flushStreamingUiUpdates(): void {
-    if (!this.hasPendingStreamingUiUpdates()) return;
-    this.lastStreamingUiFlushAt = Date.now();
-    const shouldFlushThinking = this.pendingThinkingFlush;
-    const shouldFlushAssistant = this.pendingAssistantFlush;
-    const toolCallIds = [...this.pendingToolCallFlushIds];
-    this.pendingThinkingFlush = false;
-    this.pendingAssistantFlush = false;
-    this.pendingToolCallFlushIds.clear();
-
-    if (shouldFlushThinking && this.state.thinkingDraft.length > 0) {
-      this.onThinkingUpdate(this.state.thinkingDraft);
-    }
-    if (shouldFlushAssistant) {
-      this.onStreamingTextUpdate(this.state.assistantDraft);
-    }
-    for (const id of toolCallIds) {
-      this.flushStreamingToolCallPreview(id);
-    }
-  }
-
-  // Materializes the latest bounded argument preview for one in-flight tool
-  // call. The final tool.call event still replaces this with authoritative args.
-  private flushStreamingToolCallPreview(id: string): void {
-    const streaming = this.state.streamingToolCallArguments.get(id);
-    if (streaming === undefined) return;
-    const toolCall: ToolCallBlockData = {
-      id,
-      name: streaming.name ?? this.state.activeToolCalls.get(id)?.name ?? 'Tool',
-      args: parseStreamingArgs(streaming.argumentsText),
-      streamingArguments: streaming.argumentsText,
-      streamingStartedAtMs: streaming.startedAtMs,
-      step: this.state.currentStep,
-      turnId: this.state.currentTurnId,
-    };
-    this.state.activeToolCalls.set(id, toolCall);
-
-    if (this.state.thinkingDraft.length > 0 || this.state.assistantStreamActive) {
-      this.finalizeLiveTextBuffers('tool');
-    }
-
-    const existingComponent = this.state.pendingToolComponents.get(id);
-    if (existingComponent !== undefined) {
-      existingComponent.updateToolCall(toolCall);
-    } else if (toolCall.name !== 'Agent') {
-      this.onToolCallStart(toolCall);
-    }
-  }
-
-  // Finalizes live thinking output and moves the live pane to the next mode.
+  private scheduleStreamingUiFlush(): void { this.streamingUI.scheduleFlush(); }
+  private flushStreamingUiUpdatesNow(): void { this.streamingUI.flushNow(); }
+  private discardPendingStreamingUiUpdates(): void { this.streamingUI.discardPending(); }
   private flushThinkingToTranscript(nextMode: LivePaneState['mode'] = 'idle'): void {
-    this.flushStreamingUiUpdatesNow();
-    if (this.state.thinkingDraft.length === 0) {
-      this.patchLivePane({ mode: nextMode });
-      return;
-    }
-    this.state.thinkingDraft = '';
-    this.onThinkingEnd();
-    this.patchLivePane({ mode: nextMode });
+    this.streamingUI.flushThinkingToTranscript(nextMode);
   }
-
-  // Finalizes live assistant text and clears streaming component state.
-  private finalizeAssistantStream(): void {
-    this.flushStreamingUiUpdatesNow();
-    if (this.state.assistantStreamActive) {
-      this.onStreamingTextEnd();
-      this.state.assistantStreamActive = false;
-    }
-    this.state.assistantDraft = '';
-    this.updateActivityPane();
-    this.state.ui.requestRender();
-  }
-
-  // Discards live thinking and assistant text state without finalizing transcript output.
-  private resetLiveTextRuntime(): void {
-    this.pendingAssistantFlush = false;
-    this.pendingThinkingFlush = false;
-    this.clearStreamingUiFlushTimerIfIdle();
-    this.state.assistantDraft = '';
-    this.state.assistantStreamActive = false;
-    this.state.streamingComponent = undefined;
-    this.state.streamingTranscriptEntry = undefined;
-    this.state.thinkingDraft = '';
-    this.disposeActiveThinkingComponent();
-  }
-
-  // Clears live tool UI state while preserving active tool-call tracking.
-  private resetLiveToolUiState(): void {
-    this.pendingToolCallFlushIds.clear();
-    this.clearStreamingUiFlushTimerIfIdle();
-    this.state.streamingToolCallArguments.clear();
-    this.disposeAndClearPendingToolComponents();
-    this.state.pendingAgentGroup = null;
-    this.state.pendingReadGroup = null;
-  }
-
-  // Clears SDK tool-call tracking.
-  private resetToolCallState(): void {
-    this.state.activeToolCalls.clear();
-  }
-
-  // Finalizes any live thinking and assistant text for a phase transition.
+  private finalizeAssistantStream(): void { this.streamingUI.finalizeAssistantStream(); }
+  private resetLiveTextRuntime(): void { this.streamingUI.resetLiveText(); }
+  private resetLiveToolUiState(): void { this.streamingUI.resetToolUi(); }
+  private resetToolCallState(): void { this.streamingUI.resetToolCallState(); }
   private finalizeLiveTextBuffers(nextMode: LivePaneState['mode'] = 'idle'): void {
-    this.flushThinkingToTranscript(nextMode);
-    this.finalizeAssistantStream();
+    this.streamingUI.finalizeLiveTextBuffers(nextMode);
   }
-
-  // Completes a turn, dispatches queued work, and sends completion notification.
   private finalizeTurn(sendQueued: (item: QueuedMessage) => void): void {
-    if (!this.state.appState.isStreaming) return;
-    this.deferUserMessages = false;
-    const completedTurnKey =
-      this.state.currentTurnId ?? `local:${String(this.state.appState.streamingStartTime)}`;
-    this.finalizeLiveTextBuffers('idle');
-    this.resetToolCallState();
-    this.state.currentTurnId = undefined;
-
-    if (this.state.queuedMessages.length > 0) {
-      const [next, ...rest] = this.state.queuedMessages;
-      this.state.queuedMessages = rest;
-      this.setAppState({ isStreaming: false, streamingPhase: 'idle' });
-      this.resetLivePane();
-      if (next !== undefined) {
-        setTimeout(() => {
-          sendQueued(next);
-        }, 0);
-      }
-      return;
-    }
-
-    this.setAppState({ isStreaming: false, streamingPhase: 'idle' });
-    this.resetLivePane();
-    notifyTerminalOnce(this.state, `turn-complete:${completedTurnKey}`, {
-      title: 'Kimi Code task complete',
-      body: this.state.appState.sessionTitle ?? undefined,
-    });
+    this.streamingUI.finalizeTurn(sendQueued);
   }
 
   // =========================================================================
@@ -1982,7 +1812,7 @@ export class KimiTUI {
   // =========================================================================
 
   // Applies app-state changes and refreshes dependent UI surfaces.
-  private setAppState(patch: Partial<AppState>): void {
+  setAppState(patch: Partial<AppState>): void {
     if (!hasPatchChanges(this.state.appState, patch)) return;
     const busyChanged = 'isStreaming' in patch || 'isCompacting' in patch;
     Object.assign(this.state.appState, patch);
@@ -1994,7 +1824,7 @@ export class KimiTUI {
   }
 
   // Applies live-pane changes and refreshes activity presentation.
-  private patchLivePane(patch: Partial<LivePaneState>): void {
+  patchLivePane(patch: Partial<LivePaneState>): void {
     if (!hasPatchChanges(this.state.livePane, patch)) return;
     Object.assign(this.state.livePane, patch);
     this.updateActivityPane();
@@ -2002,7 +1832,7 @@ export class KimiTUI {
   }
 
   // Restores the live pane to its initial idle state.
-  private resetLivePane(): void {
+  resetLivePane(): void {
     this.state.livePane = { ...INITIAL_LIVE_PANE };
     this.updateActivityPane();
     this.state.ui.requestRender();
@@ -2013,7 +1843,7 @@ export class KimiTUI {
   // =========================================================================
 
   // Returns the active session or raises the standard no-session error.
-  private requireSession(): Session {
+  requireSession(): Session {
     if (this.session === undefined) {
       throw new Error(NO_ACTIVE_SESSION_MESSAGE);
     }
@@ -2486,7 +2316,7 @@ export class KimiTUI {
     this.state.currentTurnId = undefined;
     this.state.currentStep = 0;
     this.state.streamingToolCallArguments.clear();
-    this.pendingToolCallFlushIds.clear();
+    this.streamingUI.pendingToolCallFlushIds.clear();
     this.state.ui.requestRender();
   }
 
@@ -3020,7 +2850,7 @@ export class KimiTUI {
   // Appends a thinking delta to the live thinking block.
   private handleThinkingDelta(event: ThinkingDeltaEvent): void {
     this.state.thinkingDraft += event.delta;
-    this.pendingThinkingFlush = true;
+    this.streamingUI.markThinkingDirty();
     this.patchLivePane({ mode: 'idle' });
     if (this.state.appState.streamingPhase !== 'thinking') {
       this.setAppState({ streamingPhase: 'thinking', streamingStartTime: Date.now() });
@@ -3040,7 +2870,7 @@ export class KimiTUI {
     }
 
     this.state.assistantDraft += event.delta;
-    this.pendingAssistantFlush = true;
+    this.streamingUI.markAssistantDirty();
 
     this.patchLivePane({
       mode: 'idle',
@@ -3087,7 +2917,7 @@ export class KimiTUI {
     };
     const existing = this.state.activeToolCalls.get(event.toolCallId);
     this.state.activeToolCalls.set(event.toolCallId, toolCall);
-    this.pendingToolCallFlushIds.delete(event.toolCallId);
+    this.streamingUI.pendingToolCallFlushIds.delete(event.toolCallId);
     this.state.streamingToolCallArguments.delete(event.toolCallId);
     const existingComponent = this.state.pendingToolComponents.get(event.toolCallId);
     if (existingComponent !== undefined) {
@@ -3117,7 +2947,7 @@ export class KimiTUI {
     const name = event.name ?? existing?.name ?? this.state.activeToolCalls.get(id)?.name ?? 'Tool';
     const startedAtMs = existing?.startedAtMs ?? Date.now();
     this.state.streamingToolCallArguments.set(id, { name, argumentsText, startedAtMs });
-    this.pendingToolCallFlushIds.add(id);
+    this.streamingUI.pendingToolCallFlushIds.add(id);
 
     this.patchLivePane({
       mode: 'tool',
@@ -3631,293 +3461,20 @@ export class KimiTUI {
   }
 
   // =========================================================================
-  // Live Render Hooks
+  // Live Render Hooks — delegated to StreamingUIController
   // =========================================================================
 
-  // Creates the live assistant transcript component.
-  private onStreamingTextStart(): void {
-    this.state.pendingAgentGroup = null;
-    this.state.pendingReadGroup = null;
-    const entry = {
-      id: nextTranscriptId(),
-      kind: 'assistant' as const,
-      turnId: this.state.currentTurnId,
-      renderMode: 'markdown' as const,
-      content: '',
-    };
-    this.state.streamingComponent = new AssistantMessageComponent(
-      this.state.theme.markdownTheme,
-      this.state.theme.colors,
-    );
-    this.state.streamingTranscriptEntry = entry;
-    this.state.transcriptEntries.push(entry);
-    this.state.transcriptContainer.addChild(this.state.streamingComponent);
-    this.state.ui.requestRender();
-  }
-
-  // Updates the live assistant transcript component.
-  private onStreamingTextUpdate(fullText: string): void {
-    if (this.state.streamingTranscriptEntry !== undefined) {
-      this.state.streamingTranscriptEntry.content = fullText;
-    }
-    if (this.state.streamingComponent) {
-      this.state.streamingComponent.updateContent(fullText);
-      this.state.ui.requestRender();
-    }
-  }
-
-  // Clears live assistant component references after streaming ends.
-  private onStreamingTextEnd(): void {
-    this.state.streamingComponent = undefined;
-    this.state.streamingTranscriptEntry = undefined;
-  }
-
-  // Creates or updates the live thinking transcript component.
-  private onThinkingUpdate(fullText: string): void {
-    if (this.state.activeThinkingComponent === undefined) {
-      this.state.pendingAgentGroup = null;
-      this.state.pendingReadGroup = null;
-      this.state.activeThinkingComponent = new ThinkingComponent(
-        fullText,
-        this.state.theme.colors,
-        true,
-        'live',
-        this.state.ui,
-      );
-      if (this.state.toolOutputExpanded) this.state.activeThinkingComponent.setExpanded(true);
-      this.state.transcriptContainer.addChild(this.state.activeThinkingComponent);
-    } else {
-      this.state.activeThinkingComponent.setText(fullText);
-    }
-    this.state.ui.requestRender();
-  }
-
-  // Finalizes the live thinking transcript component.
-  private onThinkingEnd(): void {
-    if (this.state.activeThinkingComponent === undefined) return;
-    this.state.activeThinkingComponent.finalize();
-    this.state.activeThinkingComponent = undefined;
-    this.state.ui.requestRender();
-  }
-
-  // Creates and mounts a live tool-call component.
-  private onToolCallStart(toolCall: ToolCallBlockData): void {
-    if (toolCall.name === 'AskUserQuestion') return;
-
-    const tc = new ToolCallComponent(
-      toolCall,
-      undefined,
-      this.state.theme.colors,
-      this.state.ui,
-      this.state.theme.markdownTheme,
-      this.state.appState.workDir,
-    );
-    if (this.state.toolOutputExpanded) tc.setExpanded(true);
-    if (this.state.planExpanded) tc.setPlanExpanded(true);
-    this.state.pendingToolComponents.set(toolCall.id, tc);
-
-    if (toolCall.name !== 'Agent') this.state.pendingAgentGroup = null;
-    if (toolCall.name !== 'Read') this.state.pendingReadGroup = null;
-
-    let handled = this.tryAttachAgentToolCall(toolCall, tc);
-    if (!handled) handled = this.tryAttachReadToolCall(toolCall, tc);
-    if (!handled) {
-      this.state.transcriptContainer.addChild(tc);
-      this.state.ui.requestRender();
-    }
-
-    if (toolCall.name === 'ExitPlanMode' && typeof toolCall.args['plan'] !== 'string') {
-      const session = this.requireSession();
-      void (async () => {
-        try {
-          const plan = await session.getPlan();
-          tc.setPlanInfo(plan === null ? {} : { plan: plan.content, path: plan.path });
-        } catch {
-          tc.setPlanInfo({});
-        }
-      })();
-    }
-  }
-
-  // Applies a tool result to a live or completed tool-call component.
-  private onToolCallEnd(toolCallId: string, result: ToolResultBlockData): void {
-    const matchedCall = this.state.activeToolCalls.get(toolCallId);
-    const tc = this.state.pendingToolComponents.get(toolCallId);
-    if (tc) {
-      tc.setResult(result);
-      this.state.pendingToolComponents.delete(toolCallId);
-      this.state.ui.requestRender();
-      return;
-    }
-
-    if (matchedCall?.name === 'AskUserQuestion') {
-      const completed = new ToolCallComponent(
-        matchedCall,
-        result,
-        this.state.theme.colors,
-        this.state.ui,
-        this.state.theme.markdownTheme,
-        this.state.appState.workDir,
-      );
-      if (this.state.toolOutputExpanded) completed.setExpanded(true);
-      if (this.state.planExpanded) completed.setPlanExpanded(true);
-      this.state.transcriptContainer.addChild(completed);
-      this.state.ui.requestRender();
-    }
-  }
-
-  // Replaces the visible todo list panel.
-  private setTodoList(todos: readonly TodoItem[]): void {
-    this.state.todoPanel.setTodos(todos);
-    this.state.todoPanelContainer.clear();
-    if (!this.state.todoPanel.isEmpty()) {
-      this.state.todoPanelContainer.addChild(this.state.todoPanel);
-    }
-    this.state.ui.requestRender();
-  }
-
-  // Renders a compaction block in the transcript.
-  private beginCompaction(instruction?: string): void {
-    if (this.state.activeCompactionBlock !== undefined) {
-      this.state.activeCompactionBlock.markDone();
-      this.state.activeCompactionBlock = undefined;
-    }
-    const block = new CompactionComponent(this.state.theme.colors, this.state.ui, instruction);
-    this.state.activeCompactionBlock = block;
-    this.state.transcriptContainer.addChild(block);
-    this.state.ui.requestRender();
-  }
-
-  // Marks the active compaction block complete.
-  private endCompaction(tokensBefore?: number, tokensAfter?: number): void {
-    const block = this.state.activeCompactionBlock;
-    if (block === undefined) return;
-    block.markDone(tokensBefore, tokensAfter);
-    this.state.activeCompactionBlock = undefined;
-    this.state.ui.requestRender();
-  }
-
-  private cancelCompactionBlock(): void {
-    const block = this.state.activeCompactionBlock;
-    if (block === undefined) return;
-    block.markCanceled();
-    this.state.activeCompactionBlock = undefined;
-    this.state.ui.requestRender();
-  }
-
-  // Groups Agent tool calls that belong to the same turn step.
-  private tryAttachAgentToolCall(toolCall: ToolCallBlockData, tc: ToolCallComponent): boolean {
-    if (toolCall.name !== 'Agent') {
-      this.state.pendingAgentGroup = null;
-      return false;
-    }
-
-    const step = toolCall.step ?? this.state.currentStep;
-    const turnId = toolCall.turnId ?? this.state.currentTurnId;
-    const pending = this.state.pendingAgentGroup;
-
-    if (pending !== null && (pending.step !== step || pending.turnId !== turnId)) {
-      this.state.pendingAgentGroup = null;
-    }
-
-    const cur = this.state.pendingAgentGroup;
-    if (cur === null) {
-      this.state.pendingAgentGroup = { step, turnId, solo: tc };
-      this.state.transcriptContainer.addChild(tc);
-      this.state.ui.requestRender();
-      return true;
-    }
-
-    if (cur.group !== undefined) {
-      cur.group.attach(toolCall.id, tc);
-      return true;
-    }
-
-    const solo = cur.solo;
-    if (solo === undefined) {
-      this.state.pendingAgentGroup = { step, turnId, solo: tc };
-      this.state.transcriptContainer.addChild(tc);
-      this.state.ui.requestRender();
-      return true;
-    }
-    const group = this.upgradeSoloAgentToGroup(solo);
-    group.attach(toolCall.id, tc);
-    this.state.pendingAgentGroup = { step, turnId, group };
-    this.state.ui.requestRender();
-    return true;
-  }
-
-  // Replaces a single Agent tool call with an Agent group component.
-  private upgradeSoloAgentToGroup(solo: ToolCallComponent): AgentGroupComponent {
-    const group = new AgentGroupComponent(this.state.theme.colors, this.state.ui);
-    const children = this.state.transcriptContainer.children;
-    const idx = children.indexOf(solo);
-    if (idx >= 0) {
-      children[idx] = group;
-      this.state.transcriptContainer.invalidate();
-    } else {
-      this.state.transcriptContainer.addChild(group);
-    }
-    group.attach(solo.toolCallView.id, solo);
-    return group;
-  }
-
-  // Groups Read tool calls that belong to the same turn step.
-  private tryAttachReadToolCall(toolCall: ToolCallBlockData, tc: ToolCallComponent): boolean {
-    if (toolCall.name !== 'Read') {
-      this.state.pendingReadGroup = null;
-      return false;
-    }
-
-    const step = toolCall.step ?? this.state.currentStep;
-    const turnId = toolCall.turnId ?? this.state.currentTurnId;
-    const pending = this.state.pendingReadGroup;
-
-    if (pending !== null && (pending.step !== step || pending.turnId !== turnId)) {
-      this.state.pendingReadGroup = null;
-    }
-
-    const cur = this.state.pendingReadGroup;
-    if (cur === null) {
-      this.state.pendingReadGroup = { step, turnId, solo: tc };
-      this.state.transcriptContainer.addChild(tc);
-      this.state.ui.requestRender();
-      return true;
-    }
-
-    if (cur.group !== undefined) {
-      cur.group.attach(toolCall.id, tc);
-      return true;
-    }
-
-    const solo = cur.solo;
-    if (solo === undefined) {
-      this.state.pendingReadGroup = { step, turnId, solo: tc };
-      this.state.transcriptContainer.addChild(tc);
-      this.state.ui.requestRender();
-      return true;
-    }
-    const group = this.upgradeSoloReadToGroup(solo);
-    group.attach(toolCall.id, tc);
-    this.state.pendingReadGroup = { step, turnId, group };
-    this.state.ui.requestRender();
-    return true;
-  }
-
-  // Replaces a single Read tool call with a Read group component.
-  private upgradeSoloReadToGroup(solo: ToolCallComponent): ReadGroupComponent {
-    const group = new ReadGroupComponent(this.state.theme.colors, this.state.ui);
-    const children = this.state.transcriptContainer.children;
-    const idx = children.indexOf(solo);
-    if (idx >= 0) {
-      children[idx] = group;
-      this.state.transcriptContainer.invalidate();
-    } else {
-      this.state.transcriptContainer.addChild(group);
-    }
-    group.attach(solo.toolCallView.id, solo);
-    return group;
-  }
+  private onStreamingTextStart(): void { this.streamingUI.onStreamingTextStart(); }
+  private onStreamingTextUpdate(t: string): void { this.streamingUI.onStreamingTextUpdate(t); }
+  private onStreamingTextEnd(): void { this.streamingUI.onStreamingTextEnd(); }
+  private onThinkingUpdate(t: string): void { this.streamingUI.onThinkingUpdate(t); }
+  private onThinkingEnd(): void { this.streamingUI.onThinkingEnd(); }
+  private onToolCallStart(tc: ToolCallBlockData): void { this.streamingUI.onToolCallStart(tc); }
+  private onToolCallEnd(id: string, r: ToolResultBlockData): void { this.streamingUI.onToolCallEnd(id, r); }
+  private setTodoList(todos: readonly TodoItem[]): void { this.streamingUI.setTodoList(todos); }
+  private beginCompaction(instruction?: string): void { this.streamingUI.beginCompaction(instruction); }
+  private endCompaction(before?: number, after?: number): void { this.streamingUI.endCompaction(before, after); }
+  private cancelCompactionBlock(): void { this.streamingUI.cancelCompaction(); }
 
   // =========================================================================
   // Transcript Rendering
@@ -4054,7 +3611,7 @@ export class KimiTUI {
   }
 
   // Disposes the active thinking component if one is mounted.
-  private disposeActiveThinkingComponent(): void {
+  disposeActiveThinkingComponent(): void {
     if (this.state.activeThinkingComponent !== undefined) {
       this.state.activeThinkingComponent.dispose();
       this.state.activeThinkingComponent = undefined;
@@ -4062,7 +3619,7 @@ export class KimiTUI {
   }
 
   // Disposes and forgets all pending live tool-call components.
-  private disposeAndClearPendingToolComponents(): void {
+  disposeAndClearPendingToolComponents(): void {
     for (const component of this.state.pendingToolComponents.values()) {
       if (hasDispose(component)) component.dispose();
     }
@@ -4150,7 +3707,7 @@ export class KimiTUI {
   // =========================================================================
 
   // Rebuilds the activity pane for the current live and streaming state.
-  private updateActivityPane(): void {
+  updateActivityPane(): void {
     const effectiveMode = this.resolveActivityPaneMode();
     this.syncTerminalProgress(this.shouldShowTerminalProgress(effectiveMode));
 
@@ -4232,7 +3789,7 @@ export class KimiTUI {
   }
 
   // Re-renders the queued-message pane.
-  private updateQueueDisplay(): void {
+  updateQueueDisplay(): void {
     this.state.queueContainer.clear();
     const queued = this.state.queuedMessages;
     if (queued.length === 0) return;
