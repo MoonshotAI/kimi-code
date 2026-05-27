@@ -148,6 +148,7 @@ import { PermissionSelectorComponent } from './components/dialogs/permission-sel
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
 import { SessionEventHandler } from './controllers/session-event-handler';
+import * as slashCommands from './controllers/slash-commands';
 import { SessionReplayRenderer } from './controllers/session-replay';
 import { StreamingUIController } from './controllers/streaming-ui';
 import { TasksBrowserController, type TasksBrowserState } from './controllers/tasks-browser';
@@ -544,13 +545,13 @@ interface SendMessageOptions {
   readonly hasMedia?: boolean;
 }
 
-interface LoginProgressSpinnerHandle {
+export interface LoginProgressSpinnerHandle {
   /** Stops the login progress row and replaces it with a final status. */
   stop(opts: { ok: boolean; label: string }): void;
 }
 
 export class KimiTUI {
-  private readonly harness: KimiHarness;
+  readonly harness: KimiHarness;
   private readonly options: KimiTUIOptions;
   session: Session | undefined;
   state: TUIState;
@@ -564,7 +565,7 @@ export class KimiTUI {
   private readonly gitLsFilesCache: GitLsFilesCache;
   sessionEventUnsubscribe: (() => void) | undefined;
   private pendingExit: PendingExit | null = null;
-  private cancelInFlight: (() => void) | undefined;
+  cancelInFlight: (() => void) | undefined;
   // Queues editor messages instead of sending or steering them. Used by /init.
   deferUserMessages = false;
   aborted = false;
@@ -588,7 +589,7 @@ export class KimiTUI {
 
   public onExit?: (exitCode?: number) => Promise<void>;
 
-  private track(
+  track(
     event: string,
     properties?: Parameters<KimiHarness['track']>[1],
   ): void {
@@ -1106,7 +1107,7 @@ export class KimiTUI {
   }
 
   // Clears the active session and runtime UI after logout.
-  private async clearActiveSessionAfterLogout(): Promise<void> {
+  async clearActiveSessionAfterLogout(): Promise<void> {
     await this.closeSession('logged out');
     this.resetSessionRuntime();
     this.setAppState({
@@ -1118,7 +1119,7 @@ export class KimiTUI {
   }
 
   // Reloads config after login and selects the configured default model.
-  private async refreshConfigAfterLogin(): Promise<void> {
+  async refreshConfigAfterLogin(): Promise<void> {
     const config = await this.harness.getConfig({ reload: true });
     const availableModels = config.models ?? {};
     const availableProviders = config.providers ?? {};
@@ -1144,7 +1145,7 @@ export class KimiTUI {
   }
 
   // Reloads config after logout and clears model-dependent state.
-  private async refreshConfigAfterLogout(): Promise<void> {
+  async refreshConfigAfterLogout(): Promise<void> {
     const config = await this.harness.getConfig({ reload: true });
     const availableModels = config.models ?? {};
     const availableProviders = config.providers ?? {};
@@ -1511,7 +1512,7 @@ export class KimiTUI {
         void this.showMcpServers();
         return;
       case 'editor':
-        await this.handleEditorCommand(args, {});
+        await this.handleEditorCommand(args);
         return;
       case 'theme':
         await this.handleThemeCommand(args);
@@ -1665,7 +1666,7 @@ export class KimiTUI {
   }
 
   // Resets request-scoped state before submitting work to the active session.
-  private beginSessionRequest(): void {
+  beginSessionRequest(): void {
     this.state.currentTurnId = undefined;
     this.resetLiveTextRuntime();
     this.resetLiveToolUiState();
@@ -1684,7 +1685,7 @@ export class KimiTUI {
   }
 
   // Ends a failed session request and renders the failure to the transcript.
-  private failSessionRequest(message: string): void {
+  failSessionRequest(message: string): void {
     this.setAppState({ isStreaming: false, streamingPhase: 'idle' });
     this.resetLivePane();
     this.showError(message);
@@ -1809,7 +1810,7 @@ export class KimiTUI {
   private finalizeLiveTextBuffers(nextMode: LivePaneState['mode'] = 'idle'): void {
     this.streamingUI.finalizeLiveTextBuffers(nextMode);
   }
-  private finalizeTurn(sendQueued: (item: QueuedMessage) => void): void {
+  finalizeTurn(sendQueued: (item: QueuedMessage) => void): void {
     this.streamingUI.finalizeTurn(sendQueued);
   }
 
@@ -2020,7 +2021,7 @@ export class KimiTUI {
   }
 
   // Switches to a provided session and replays its transcript.
-  private async switchToSession(session: Session, statusMessage: string): Promise<void> {
+  async switchToSession(session: Session, statusMessage: string): Promise<void> {
     this.resetSessionRuntime();
     await this.setSession(session);
     await this.syncRuntimeState(session);
@@ -2312,7 +2313,7 @@ export class KimiTUI {
   }
 
   // Adds an animated login progress row to the transcript.
-  private showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle {
+  showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle {
     const tint = (s: string): string => chalk.hex(this.state.theme.colors.primary)(s);
     const spinner = new MoonLoader(this.state.ui, 'braille', tint, label);
     this.state.transcriptContainer.addChild(new Spacer(1));
@@ -2330,7 +2331,7 @@ export class KimiTUI {
   }
 
   // Opens the device-code URL and renders the login authorization prompt.
-  private showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle {
+  showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle {
     openUrl(auth.verificationUriComplete);
     this.state.transcriptContainer.addChild(
       new DeviceCodeBoxComponent({
@@ -2577,7 +2578,7 @@ export class KimiTUI {
   // =========================================================================
 
   // Replaces the editor with a focusable dialog or selector panel.
-  private mountEditorReplacement(panel: Component & Focusable): void {
+  mountEditorReplacement(panel: Component & Focusable): void {
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(panel);
     this.state.ui.setFocus(panel);
@@ -2585,7 +2586,7 @@ export class KimiTUI {
   }
 
   // Restores the main editor after a dialog or selector closes.
-  private restoreEditor(): void {
+  restoreEditor(): void {
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
@@ -2707,7 +2708,7 @@ export class KimiTUI {
   }
 
   // Shows the editor command selector.
-  private showEditorPicker(): void {
+  showEditorPicker(): void {
     const currentValue = this.state.appState.editorCommand ?? '';
     this.mountEditorReplacement(
       new EditorSelectorComponent({
@@ -2725,7 +2726,7 @@ export class KimiTUI {
   }
 
   // Persists and applies the selected external editor command.
-  private async applyEditorChoice(value: string): Promise<void> {
+  async applyEditorChoice(value: string): Promise<void> {
     const previous = this.state.appState.editorCommand ?? '';
     if (value === previous && value.length > 0) {
       this.showStatus(`Editor unchanged: ${value.length > 0 ? value : 'auto-detect'}`);
@@ -2756,7 +2757,7 @@ export class KimiTUI {
   }
 
   // Shows the model selector when models are available.
-  private showModelPicker(selectedValue: string = this.state.appState.model): void {
+  showModelPicker(selectedValue: string = this.state.appState.model): void {
     const entries = Object.entries(this.state.appState.availableModels);
     if (entries.length === 0) {
       this.showNotice(
@@ -2785,7 +2786,7 @@ export class KimiTUI {
   }
 
   // Applies model and thinking changes to the active or newly created session.
-  private async performModelSwitch(alias: string, thinking: boolean): Promise<void> {
+  async performModelSwitch(alias: string, thinking: boolean): Promise<void> {
     if (this.state.appState.isStreaming) {
       this.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
       return;
@@ -2842,7 +2843,7 @@ export class KimiTUI {
   }
 
   // Persists the selected model and thinking state as the startup defaults.
-  private async persistModelSelection(alias: string, thinking: boolean): Promise<boolean> {
+  async persistModelSelection(alias: string, thinking: boolean): Promise<boolean> {
     const config = await this.harness.getConfig({ reload: true });
     if (config.defaultModel === alias && config.defaultThinking === thinking) {
       return false;
@@ -2855,7 +2856,7 @@ export class KimiTUI {
   }
 
   // Shows the theme selector.
-  private showThemePicker(): void {
+  showThemePicker(): void {
     this.mountEditorReplacement(
       new ThemeSelectorComponent({
         currentValue: this.state.appState.theme,
@@ -2872,7 +2873,7 @@ export class KimiTUI {
   }
 
   // Shows the permission mode selector.
-  private showPermissionPicker(): void {
+  showPermissionPicker(): void {
     this.mountEditorReplacement(
       new PermissionSelectorComponent({
         currentValue: this.state.appState.permissionMode,
@@ -2889,7 +2890,7 @@ export class KimiTUI {
   }
 
   // Shows the settings selector entry point.
-  private showSettingsSelector(): void {
+  showSettingsSelector(): void {
     this.mountEditorReplacement(
       new SettingsSelectorComponent({
         colors: this.state.theme.colors,
@@ -2904,7 +2905,7 @@ export class KimiTUI {
   }
 
   // Routes a settings selection to the matching selector or panel.
-  private handleSettingsSelection(value: SettingsSelection): void {
+  handleSettingsSelection(value: SettingsSelection): void {
     this.restoreEditor();
     switch (value) {
       case 'model':
@@ -2926,7 +2927,7 @@ export class KimiTUI {
   }
 
   // Applies a permission mode choice to the active session and app state.
-  private async applyPermissionChoice(mode: PermissionMode): Promise<void> {
+  async applyPermissionChoice(mode: PermissionMode): Promise<void> {
     if (mode === this.state.appState.permissionMode) {
       this.showStatus(`Permission mode unchanged: ${mode}.`);
       return;
@@ -2945,7 +2946,7 @@ export class KimiTUI {
   }
 
   // Persists and applies a theme choice.
-  private async applyThemeChoice(theme: Theme): Promise<void> {
+  async applyThemeChoice(theme: Theme): Promise<void> {
     if (theme === this.state.appState.theme) {
       if (theme === 'auto') this.refreshTerminalThemeTracking();
       this.showStatus(`Theme unchanged: "${theme}".`);
@@ -3140,772 +3141,23 @@ export class KimiTUI {
   }
 
   // =========================================================================
-  // Slash Command Handlers
+  // Slash Command Handlers — delegated to controllers/slash-commands.ts
   // =========================================================================
 
-  // Applies plan mode through the session and mirrors it into UI state.
   private async applyPlanMode(session: Session, enabled: boolean): Promise<void> {
-    try {
-      await session.setPlanMode(enabled);
-      this.setAppState({ planMode: enabled });
-      if (enabled) {
-        const plan = await session.getPlan().catch(() => null);
-        this.showNotice(
-          'Plan mode: ON',
-          plan?.path !== undefined ? `Plan will be created here: ${plan.path}` : undefined,
-        );
-        return;
-      }
-      this.showNotice('Plan mode: OFF');
-    } catch (error) {
-      const msg = formatErrorMessage(error);
-      this.showError(`Failed to set plan mode: ${msg}`);
-    }
+    await slashCommands.handlePlanCommand(this, enabled ? 'on' : 'off');
   }
-
-  // Handles the /editor command.
-  private async handleEditorCommand(args: string, _eCtx: {}): Promise<void> {
-    const command = args.trim();
-    if (command.length === 0) {
-      this.showEditorPicker();
-      return;
-    }
-    await this.applyEditorChoice(command);
-  }
-
-  // Handles the /theme command.
-  private async handleThemeCommand(args: string): Promise<void> {
-    const theme = args.trim();
-    if (theme.length === 0) {
-      this.showThemePicker();
-      return;
-    }
-    if (!isTheme(theme)) {
-      this.showError(`Unknown theme: ${theme}`);
-      return;
-    }
-    await this.applyThemeChoice(theme);
-  }
-
-  // Handles the /model command.
-  private handleModelCommand(args: string): void {
-    const alias = args.trim();
-    if (alias.length === 0) {
-      this.showModelPicker();
-      return;
-    }
-    if (this.state.appState.availableModels[alias] === undefined) {
-      this.showError(`Unknown model alias: ${alias}`);
-      return;
-    }
-    this.showModelPicker(alias);
-  }
-
-  // Handles the /title command.
-  private async handleTitleCommand(args: string): Promise<void> {
-    const title = args.trim();
-    if (title.length === 0) {
-      const current = this.state.appState.sessionTitle;
-      this.showStatus(
-        current !== null && current.length > 0
-          ? `Session title: ${current}`
-          : `Session title: (not set) — id: ${this.state.appState.sessionId}`,
-      );
-      return;
-    }
-
-    const session = this.session;
-    if (session === undefined) {
-      this.showError(NO_ACTIVE_SESSION_MESSAGE);
-      return;
-    }
-
-    const newTitle = title.slice(0, 200);
-    try {
-      await this.harness.renameSession({ id: session.id, title: newTitle });
-    } catch (error) {
-      const msg = formatErrorMessage(error);
-      this.showError(`Failed to set title: ${msg}`);
-      return;
-    }
-    this.showStatus(`Session title set to: ${newTitle}`);
-  }
-
-  // Handles the /fork command.
-  private async handleForkCommand(args: string): Promise<void> {
-    void args;
-
-    const session = this.session;
-    if (session === undefined) {
-      this.showError(NO_ACTIVE_SESSION_MESSAGE);
-      return;
-    }
-
-    const sourceTitle = this.forkSourceTitle(session);
-    let forked: Session;
-    try {
-      forked = await this.harness.forkSession({
-        id: session.id,
-        title: `Fork: ${sourceTitle}`,
-      });
-    } catch (error) {
-      const msg = formatErrorMessage(error);
-      this.showError(`Failed to fork session: ${msg}`);
-      return;
-    }
-
-    try {
-      await this.switchToSession(forked, `Session forked (${forked.id}).`);
-    } catch (error) {
-      const msg = formatErrorMessage(error);
-      this.showError(`Failed to switch to forked session: ${msg}`);
-    }
-  }
-
-  private forkSourceTitle(session: Session): string {
-    const currentTitle = this.state.appState.sessionTitle?.trim();
-    if (currentTitle !== undefined && currentTitle.length > 0) return currentTitle;
-
-    const summaryTitle =
-      typeof session.summary?.title === 'string' ? session.summary.title.trim() : '';
-    return summaryTitle.length > 0 ? summaryTitle : session.id;
-  }
-
-  // Handles the /yolo command.
-  private async handleYoloCommand(args: string): Promise<void> {
-    const session = this.session;
-    if (session === undefined) {
-      this.showError(NO_ACTIVE_SESSION_MESSAGE);
-      return;
-    }
-
-    let enabled: boolean;
-    if (args === 'on') enabled = true;
-    else if (args === 'off') enabled = false;
-    else enabled = !this.state.appState.yolo;
-
-    await session.setPermission(enabled ? 'yolo' : 'manual');
-    this.setAppState({ yolo: enabled, permissionMode: enabled ? 'yolo' : 'manual' });
-    if (enabled) {
-      this.showNotice(
-        'YOLO mode: ON',
-        'All actions will be approved automatically. Use with caution.',
-      );
-      return;
-    }
-    this.showNotice('YOLO mode: OFF');
-  }
-
-  // Handles the /plan command.
-  private async handlePlanCommand(args: string): Promise<void> {
-    const session = this.session;
-    if (session === undefined) {
-      this.showError(NO_ACTIVE_SESSION_MESSAGE);
-      return;
-    }
-
-    const subcmd = args.trim().toLowerCase();
-    if (subcmd === 'clear') {
-      await session.clearPlan();
-      this.showNotice('Plan cleared');
-      return;
-    }
-
-    let enabled: boolean;
-    if (subcmd.length === 0) enabled = !this.state.appState.planMode;
-    else if (subcmd === 'on') enabled = true;
-    else if (subcmd === 'off') enabled = false;
-    else {
-      this.showError(`Unknown plan subcommand: ${subcmd}`);
-      return;
-    }
-
-    await this.applyPlanMode(session, enabled);
-  }
-
-  // Handles the /compact command.
-  private async handleCompactCommand(args: string): Promise<void> {
-    const session = this.session;
-    if (session === undefined) {
-      this.showError(NO_ACTIVE_SESSION_MESSAGE);
-      return;
-    }
-
-    const customInstruction = args.trim() || undefined;
-    await session.compact({ instruction: customInstruction });
-  }
-
-  // Handles the /init command.
-  private async handleInitCommand(): Promise<void> {
-    const session = this.session;
-    if (this.state.appState.model.trim().length === 0 || session === undefined) {
-      this.showError(LLM_NOT_SET_MESSAGE);
-      return;
-    }
-
-    this.deferUserMessages = true;
-    this.beginSessionRequest();
-    try {
-      await session.init();
-      this.track('init_complete');
-      this.finalizeTurn((item) => {
-        this.sendQueuedMessage(session, item);
-      });
-    } catch (error) {
-      if (isAbortError(error)) {
-        this.setAppState({ isStreaming: false, streamingPhase: 'idle' });
-        this.resetLivePane();
-        return;
-      }
-      const msg = error instanceof Error ? error.message : String(error);
-      this.failSessionRequest(`Init failed: ${msg}`);
-    } finally {
-      this.deferUserMessages = false;
-    }
-  }
-
-  // Handles the /login command.
-  private async handleLoginCommand(): Promise<void> {
-    const platformId = await this.promptPlatformSelection();
-    if (platformId === undefined) return;
-
-    if (platformId === 'kimi-code') {
-      await this.handleKimiCodeOAuthLogin();
-      return;
-    }
-
-    const platform = getOpenPlatformById(platformId);
-    if (platform === undefined) return;
-    await this.handleOpenPlatformLogin(platform);
-  }
-
-  // Kimi Code OAuth login flow.
-  private async handleKimiCodeOAuthLogin(): Promise<void> {
-    const status = await this.harness.auth.status(DEFAULT_OAUTH_PROVIDER_NAME);
-    const alreadyLoggedIn = status.providers.some(
-      (provider) => provider.providerName === DEFAULT_OAUTH_PROVIDER_NAME && provider.hasToken,
-    );
-
-    let spinner: LoginProgressSpinnerHandle | undefined;
-    const controller = new AbortController();
-    const cancelLogin = (): void => {
-      controller.abort();
-    };
-    this.cancelInFlight = cancelLogin;
-    try {
-      await this.harness.auth.login(DEFAULT_OAUTH_PROVIDER_NAME, {
-        signal: controller.signal,
-        onDeviceCode: (data) => {
-          spinner = this.showLoginAuthorizationPrompt(data);
-        },
-      });
-      spinner?.stop({ ok: true, label: 'Logged in.' });
-      spinner = undefined;
-      try {
-        await this.refreshConfigAfterLogin();
-      } catch (refreshError) {
-        const message = formatErrorMessage(refreshError);
-        this.showError(`Authentication successful, but failed to refresh config: ${message}`);
-        return;
-      }
-      this.track('login', {
-        provider: DEFAULT_OAUTH_PROVIDER_NAME,
-        already_logged_in: alreadyLoggedIn,
-      });
-      if (alreadyLoggedIn) {
-        this.showStatus('Already logged in. Model configuration refreshed.');
-      }
-    } catch (error) {
-      const cancelled = controller.signal.aborted;
-      spinner?.stop({
-        ok: false,
-        label: cancelled ? 'Login cancelled.' : 'Login failed.',
-      });
-      spinner = undefined;
-      if (cancelled) return;
-      log.warn('login failed', {
-        providerName: DEFAULT_OAUTH_PROVIDER_NAME,
-        alreadyLoggedIn,
-        sessionId: this.session?.id,
-        error,
-      });
-      const message = formatErrorMessage(error);
-      this.showError(`Login failed: ${message}`);
-    } finally {
-      if (this.cancelInFlight === cancelLogin) {
-        this.cancelInFlight = undefined;
-      }
-    }
-  }
-
-  // Open platform API key login flow.
-  private async handleOpenPlatformLogin(
-    platform: OpenPlatformDefinition,
-  ): Promise<void> {
-    const apiKey = await this.promptApiKey(platform.name);
-    if (apiKey === undefined) return;
-
-    const controller = new AbortController();
-    const cancelLogin = (): void => {
-      controller.abort();
-    };
-    this.cancelInFlight = cancelLogin;
-
-    let models: ManagedKimiCodeModelInfo[];
-    try {
-      models = await fetchOpenPlatformModels(platform, apiKey, fetch, controller.signal);
-      models = filterModelsByPrefix(models, platform);
-    } catch (error) {
-      if (controller.signal.aborted) return;
-      const msg = formatErrorMessage(error);
-      this.showError(`Failed to verify API key: ${msg}`);
-      if (
-        error instanceof OpenPlatformApiError &&
-        error.status === 401
-      ) {
-        this.showStatus(
-          'Hint: If your API key was obtained from Kimi Code, please select "Kimi Code" instead.',
-        );
-      }
-      return;
-    } finally {
-      if (this.cancelInFlight === cancelLogin) {
-        this.cancelInFlight = undefined;
-      }
-    }
-
-    if (models.length === 0) {
-      this.showError('No models available for this platform.');
-      return;
-    }
-
-    const selection = await this.promptModelSelectionForOpenPlatform(models, platform);
-    if (selection === undefined) return;
-
-    // Remove stale provider config first so old model aliases are fully
-    // cleared (setConfig patch merge cannot delete nested keys).
-    const existingConfig = await this.harness.getConfig();
-    if (existingConfig.providers[platform.id] !== undefined) {
-      await this.harness.removeProvider(platform.id);
-    }
-
-    const config = await this.harness.getConfig();
-    applyOpenPlatformConfig(config as ManagedKimiConfigShape, {
-      platform,
-      models,
-      selectedModel: selection.model,
-      thinking: selection.thinking,
-      apiKey,
-    });
-
-    await this.harness.setConfig({
-      providers: config.providers,
-      models: config.models,
-      defaultModel: config.defaultModel,
-      defaultThinking: config.defaultThinking,
-    });
-
-    await this.refreshConfigAfterLogin();
-    this.track('login', { provider: platform.id, method: 'api_key' });
-    this.showStatus(`Setup complete: ${platform.name} · ${selection.model.id}`);
-  }
-
-  // Handles the /connect command — fetches a model catalog (default
-  // models.dev), lets the user pick a provider + model, prompts for an API
-  // key, then writes the provider config + model aliases. Model metadata
-  // (context size, capabilities) comes from the catalog, so users do not
-  // hand-write it.
-  private async handleConnectCommand(args: string): Promise<void> {
-    const resolution = resolveConnectCatalogRequest(args);
-    if (resolution.kind === 'error') {
-      this.showError(resolution.message);
-      return;
-    }
-    const { url, preferBuiltIn, allowBuiltInFallback } = resolution.request;
-
-    let catalog: Catalog | undefined;
-
-    // Default path: serve the bundled catalog so /connect works without a
-    // live network and is not gated by models.dev availability. The source
-    // placeholder is undefined in dev builds, so dev falls through to fetch.
-    if (preferBuiltIn) {
-      const builtIn = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
-      if (builtIn !== undefined) {
-        this.showStatus('Loaded built-in catalog. Run /connect refresh for the latest.');
-        catalog = builtIn;
-      }
-    }
-
-    if (catalog === undefined) {
-      const controller = new AbortController();
-      const cancel = (): void => {
-        controller.abort();
-      };
-      this.cancelInFlight = cancel;
-
-      const spinner = this.showLoginProgressSpinner(`Fetching catalog from ${url}`);
-      try {
-        catalog = await fetchCatalog(url, controller.signal);
-        spinner.stop({ ok: true, label: 'Catalog loaded.' });
-      } catch (error) {
-        if (controller.signal.aborted) {
-          spinner.stop({ ok: false, label: 'Aborted.' });
-        } else {
-          const hint = error instanceof CatalogFetchError ? ` (HTTP ${error.status})` : '';
-          if (!allowBuiltInFallback) {
-            spinner.stop({ ok: false, label: 'Failed to load catalog.' });
-            this.showError(`Failed to fetch catalog${hint}: ${formatErrorMessage(error)}`);
-          } else {
-            const fallback = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
-            if (fallback !== undefined) {
-              spinner.stop({ ok: true, label: 'Using built-in catalog (offline mode).' });
-              catalog = fallback;
-            } else {
-              spinner.stop({ ok: false, label: 'Failed to load catalog.' });
-              this.showError(`Failed to fetch catalog${hint}: ${formatErrorMessage(error)}`);
-            }
-          }
-        }
-      } finally {
-        if (this.cancelInFlight === cancel) this.cancelInFlight = undefined;
-      }
-    }
-
-    if (catalog === undefined) return;
-
-    const providerId = await this.promptCatalogProviderSelection(catalog);
-    if (providerId === undefined) return;
-    const entry = catalog[providerId];
-    if (entry === undefined) return;
-
-    const models = catalogProviderModels(entry);
-    if (models.length === 0) {
-      this.showError(`Provider "${providerId}" has no usable models in this catalog.`);
-      return;
-    }
-
-    const selection = await this.promptModelSelectionForCatalog(providerId, models);
-    if (selection === undefined) return;
-
-    const apiKey = await this.promptApiKey(entry.name ?? providerId);
-    if (apiKey === undefined) return;
-
-    const wire = inferWireType(entry);
-    if (wire === undefined) return;
-    const baseUrl = catalogBaseUrl(entry, wire);
-
-    // Remove stale provider config first: setConfig is a deep-merge patch that
-    // cannot delete keys, and applyCatalogProvider's in-memory cleanup below
-    // does not survive that merge — removeProvider is the only step that
-    // actually drops old model aliases from disk.
-    const existingConfig = await this.harness.getConfig();
-    if (existingConfig.providers[providerId] !== undefined) {
-      await this.harness.removeProvider(providerId);
-    }
-
-    const config = await this.harness.getConfig();
-    applyCatalogProvider(config, {
-      providerId,
-      wire,
-      baseUrl,
-      apiKey,
-      models,
-      selectedModelId: selection.model.id,
-      thinking: selection.thinking,
-    });
-
-    await this.harness.setConfig({
-      providers: config.providers,
-      models: config.models,
-      defaultModel: config.defaultModel,
-      defaultThinking: config.defaultThinking,
-    });
-
-    await this.refreshConfigAfterLogin();
-    this.track('connect', { provider: providerId, model: selection.model.id });
-    this.showStatus(`Connected: ${entry.name ?? providerId} · ${selection.model.id}`);
-  }
-
-  // Handles the /feedback command — opens an inline input dialog and POSTs
-  // the result to the managed Kimi Code platform. Falls back to the GitHub
-  // Issues page when the user is not signed in or the request fails.
-  private async handleFeedbackCommand(): Promise<void> {
-    const fallback = (reason: string): void => {
-      this.showStatus(reason);
-      this.showStatus(FEEDBACK_ISSUE_URL);
-      openUrl(FEEDBACK_ISSUE_URL);
-    };
-
-    const providerKey = this.state.appState.availableModels[this.state.appState.model]?.provider;
-    if (!isManagedUsageProvider(providerKey)) {
-      fallback(FEEDBACK_STATUS_NOT_SIGNED_IN);
-      return;
-    }
-
-    const content = await this.promptFeedbackInput();
-    if (content === undefined) {
-      this.showStatus(FEEDBACK_STATUS_CANCELLED);
-      return;
-    }
-
-    const spinner = this.showLoginProgressSpinner(FEEDBACK_STATUS_SUBMITTING);
-    const res = await this.harness.auth.submitFeedback({
-      content,
-      sessionId: this.state.appState.sessionId,
-      version: withFeedbackVersionPrefix(this.state.appState.version),
-      os: `${osType()} ${osRelease()}`,
-      model: this.state.appState.model.length > 0 ? this.state.appState.model : null,
-    });
-
-    if (res.kind === 'ok') {
-      spinner.stop({ ok: true, label: FEEDBACK_STATUS_SUCCESS });
-      this.showStatus(feedbackSessionLine(this.state.appState.sessionId));
-      this.track(FEEDBACK_TELEMETRY_EVENT);
-      return;
-    }
-
-    spinner.stop({ ok: false, label: res.message });
-    fallback(FEEDBACK_STATUS_FALLBACK);
-  }
-
-  // Mounts the feedback input dialog and resolves with the trimmed value
-  // when submitted, or undefined when the user cancels.
-  private promptFeedbackInput(): Promise<string | undefined> {
-    return new Promise((resolve) => {
-      const dialog = new FeedbackInputDialogComponent((result: FeedbackInputDialogResult) => {
-        this.restoreEditor();
-        resolve(result.kind === 'ok' ? result.value : undefined);
-      }, this.state.theme.colors);
-      this.mountEditorReplacement(dialog);
-    });
-  }
-
-  // Handles the /logout command. Lists every credential currently held — the
-  // Kimi Code OAuth token (or a stale config entry for it) plus each configured
-  // API-key provider — and lets the user pick which one to drop. OAuth tokens
-  // go through auth.logout for proper revocation, everything else through
-  // removeProvider.
-  private async handleLogoutCommand(): Promise<void> {
-    const oauthStatus = await this.harness.auth.status(DEFAULT_OAUTH_PROVIDER_NAME);
-    const hasOAuthToken = oauthStatus.providers.some(
-      (p) => p.providerName === DEFAULT_OAUTH_PROVIDER_NAME && p.hasToken,
-    );
-    const config = await this.harness.getConfig();
-    // Offer the managed provider whenever something points at it — either a
-    // live OAuth token or a stale providers[] entry left over from a previous
-    // login. auth.logout cleans the config regardless of whether the token
-    // is still present, so this avoids leaving residue with no way to reach it.
-    const hasManagedRemnant =
-      hasOAuthToken || config.providers[DEFAULT_OAUTH_PROVIDER_NAME] !== undefined;
-    const apiKeyProviderIds = Object.keys(config.providers ?? {})
-      .filter((id) => id !== DEFAULT_OAUTH_PROVIDER_NAME)
-      .toSorted();
-
-    const options: ChoiceOption[] = [];
-    if (hasManagedRemnant) {
-      options.push({
-        value: DEFAULT_OAUTH_PROVIDER_NAME,
-        label: PRODUCT_NAME,
-        description: 'OAuth login',
-      });
-    }
-    for (const id of apiKeyProviderIds) {
-      const baseUrl = config.providers[id]?.baseUrl;
-      options.push({
-        value: id,
-        label: id,
-        description: typeof baseUrl === 'string' && baseUrl.length > 0 ? baseUrl : undefined,
-      });
-    }
-
-    if (options.length === 0) {
-      this.showStatus('Nothing to logout.');
-      return;
-    }
-
-    const currentModel = this.state.appState.model.trim();
-    const currentProvider = this.state.appState.availableModels[currentModel]?.provider;
-
-    const target = await this.promptLogoutProviderSelection(options, currentProvider);
-    if (target === undefined) return;
-
-    if (target === DEFAULT_OAUTH_PROVIDER_NAME) {
-      await this.harness.auth.logout(DEFAULT_OAUTH_PROVIDER_NAME);
-    } else {
-      await this.harness.removeProvider(target);
-    }
-
-    if (target === currentProvider) {
-      // The active session is backed by the provider we just removed, so it
-      // can no longer make requests — tear it down along with the model state.
-      await this.refreshConfigAfterLogout();
-      await this.clearActiveSessionAfterLogout();
-    } else {
-      // Refresh provider/model listings so the picker reflects the change,
-      // but leave the user's current session running.
-      const updated = await this.harness.getConfig({ reload: true });
-      this.setAppState({
-        availableModels: updated.models ?? {},
-        availableProviders: updated.providers ?? {},
-      });
-    }
-
-    this.track('logout', { provider: target });
-    const label = target === DEFAULT_OAUTH_PROVIDER_NAME ? PRODUCT_NAME : target;
-    this.showStatus(`Logged out from ${label}.`);
-  }
-
-  private promptLogoutProviderSelection(
-    options: readonly ChoiceOption[],
-    currentValue: string | undefined,
-  ): Promise<string | undefined> {
-    return new Promise((resolve) => {
-      const picker = new ChoicePickerComponent({
-        title: 'Select a provider to log out',
-        options,
-        currentValue,
-        colors: this.state.theme.colors,
-        onSelect: (value) => {
-          this.restoreEditor();
-          resolve(value);
-        },
-        onCancel: () => {
-          this.restoreEditor();
-          resolve(undefined);
-        },
-      });
-      this.mountEditorReplacement(picker);
-    });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Login / setup prompts
-  // ---------------------------------------------------------------------------
-
-  private promptPlatformSelection(): Promise<string | undefined> {
-    return new Promise((resolve) => {
-      const selector = new PlatformSelectorComponent({
-        colors: this.state.theme.colors,
-        onSelect: (platformId) => {
-          this.restoreEditor();
-          resolve(platformId);
-        },
-        onCancel: () => {
-          this.restoreEditor();
-          resolve(undefined);
-        },
-      });
-      this.mountEditorReplacement(selector);
-    });
-  }
-
-  private promptCatalogProviderSelection(catalog: Catalog): Promise<string | undefined> {
-    return new Promise((resolve) => {
-      const options: ChoiceOption[] = Object.entries(catalog)
-        .filter(([, entry]) => inferWireType(entry) !== undefined)
-        .map(([id, entry]) => ({
-          value: id,
-          label: entry.name ?? id,
-          description:
-            typeof entry.api === 'string' && entry.api.length > 0 ? entry.api : undefined,
-        }))
-        .toSorted((a, b) => a.label.localeCompare(b.label));
-
-      if (options.length === 0) {
-        this.showError('Catalog has no providers with supported wire types.');
-        resolve(undefined);
-        return;
-      }
-
-      const picker = new ChoicePickerComponent({
-        title: 'Select a provider',
-        options,
-        colors: this.state.theme.colors,
-        searchable: true,
-        onSelect: (value) => {
-          this.restoreEditor();
-          resolve(value);
-        },
-        onCancel: () => {
-          this.restoreEditor();
-          resolve(undefined);
-        },
-      });
-      this.mountEditorReplacement(picker);
-    });
-  }
-
-  private promptApiKey(platformName: string): Promise<string | undefined> {
-    return new Promise((resolve) => {
-      const dialog = new ApiKeyInputDialogComponent(
-        platformName,
-        (result: ApiKeyInputResult) => {
-          this.restoreEditor();
-          resolve(result.kind === 'ok' ? result.value : undefined);
-        },
-        this.state.theme.colors,
-      );
-      this.mountEditorReplacement(dialog);
-    });
-  }
-
-  private async promptModelSelectionForOpenPlatform(
-    models: ManagedKimiCodeModelInfo[],
-    platform: OpenPlatformDefinition,
-  ): Promise<{ model: ManagedKimiCodeModelInfo; thinking: boolean } | undefined> {
-    const modelDict: Record<string, ModelAlias> = {};
-    for (const m of models) {
-      modelDict[`${platform.id}/${m.id}`] = {
-        provider: platform.id,
-        model: m.id,
-        maxContextSize: m.contextLength,
-        capabilities: capabilitiesForModel(m),
-        displayName: m.displayName,
-      };
-    }
-    const selection = await this.runModelSelector(modelDict);
-    if (selection === undefined) return undefined;
-    const model = models.find((m) => `${platform.id}/${m.id}` === selection.alias);
-    return model ? { model, thinking: selection.thinking } : undefined;
-  }
-
-  private async promptModelSelectionForCatalog(
-    providerId: string,
-    models: CatalogModel[],
-  ): Promise<{ model: CatalogModel; thinking: boolean } | undefined> {
-    const modelDict: Record<string, ModelAlias> = {};
-    for (const m of models) {
-      modelDict[`${providerId}/${m.id}`] = catalogModelToAlias(providerId, m);
-    }
-    const selection = await this.runModelSelector(modelDict);
-    if (selection === undefined) return undefined;
-    const model = models.find((m) => `${providerId}/${m.id}` === selection.alias);
-    return model ? { model, thinking: selection.thinking } : undefined;
-  }
-
-  private runModelSelector(
-    modelDict: Record<string, ModelAlias>,
-  ): Promise<{ alias: string; thinking: boolean } | undefined> {
-    return new Promise((resolve) => {
-      const firstAlias = Object.keys(modelDict)[0] ?? '';
-      const caps = modelDict[firstAlias]?.capabilities ?? [];
-      const initialThinking = caps.includes('always_thinking') || caps.includes('thinking');
-      const selector = new ModelSelectorComponent({
-        models: modelDict,
-        currentValue: firstAlias,
-        currentThinking: initialThinking,
-        colors: this.state.theme.colors,
-        searchable: true,
-        onSelect: ({ alias, thinking }) => {
-          this.restoreEditor();
-          resolve({ alias, thinking });
-        },
-        onCancel: () => {
-          this.restoreEditor();
-          resolve(undefined);
-        },
-      });
-      this.mountEditorReplacement(selector);
-    });
-  }
+  private async handleEditorCommand(args: string): Promise<void> { await slashCommands.handleEditorCommand(this, args); }
+  private async handleThemeCommand(args: string): Promise<void> { await slashCommands.handleThemeCommand(this, args); }
+  private handleModelCommand(args: string): void { slashCommands.handleModelCommand(this, args); }
+  private async handleTitleCommand(args: string): Promise<void> { await slashCommands.handleTitleCommand(this, args); }
+  private async handleForkCommand(args: string): Promise<void> { await slashCommands.handleForkCommand(this, args); }
+  private async handleYoloCommand(args: string): Promise<void> { await slashCommands.handleYoloCommand(this, args); }
+  private async handlePlanCommand(args: string): Promise<void> { await slashCommands.handlePlanCommand(this, args); }
+  private async handleCompactCommand(args: string): Promise<void> { await slashCommands.handleCompactCommand(this, args); }
+  private async handleInitCommand(): Promise<void> { await slashCommands.handleInitCommand(this); }
+  private async handleLoginCommand(): Promise<void> { await slashCommands.handleLoginCommand(this); }
+  private async handleConnectCommand(args: string): Promise<void> { await slashCommands.handleConnectCommand(this, args); }
+  private async handleLogoutCommand(): Promise<void> { await slashCommands.handleLogoutCommand(this); }
+  private async handleFeedbackCommand(): Promise<void> { await slashCommands.handleFeedbackCommand(this); }
 }

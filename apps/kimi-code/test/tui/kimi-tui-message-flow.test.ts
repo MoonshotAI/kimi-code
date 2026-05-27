@@ -13,7 +13,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
+import {
+  promptFeedbackInput,
+  runModelSelector,
+} from '#/tui/controllers/slash-command-prompts';
 import type { QueuedMessage } from '#/tui/types';
+
+vi.mock('#/tui/controllers/slash-command-prompts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#/tui/controllers/slash-command-prompts')>();
+  return { ...actual, promptFeedbackInput: vi.fn() };
+});
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
 vi.mock('#/tui/utils/open-url', () => ({ openUrl: vi.fn() }));
@@ -285,7 +294,7 @@ describe('KimiTUI message flow', () => {
       },
     );
     const feedbackDriver = driver as unknown as FeedbackDriver;
-    feedbackDriver.promptFeedbackInput = vi.fn(async () => 'useful feedback');
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => 'useful feedback');
     harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok' });
     harness.track.mockClear();
 
@@ -318,7 +327,7 @@ describe('KimiTUI message flow', () => {
       },
     );
     const feedbackDriver = driver as unknown as FeedbackDriver;
-    feedbackDriver.promptFeedbackInput = vi.fn(async () => 'useful feedback');
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => 'useful feedback');
     harness.auth.submitFeedback.mockResolvedValueOnce({
       kind: 'error',
       status: 500,
@@ -349,7 +358,7 @@ describe('KimiTUI message flow', () => {
       },
     );
     const feedbackDriver = driver as unknown as FeedbackDriver;
-    feedbackDriver.promptFeedbackInput = vi.fn(async () => undefined);
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => undefined);
     harness.track.mockClear();
 
     await feedbackDriver.handleFeedbackCommand();
@@ -1399,8 +1408,7 @@ describe('KimiTUI message flow', () => {
 
   it('enables search in the shared model selector helper', async () => {
     const { driver } = await makeDriver();
-    const selectorDriver = driver as unknown as ModelSelectorDriver;
-    const selection = selectorDriver.runModelSelector({
+    const selection = runModelSelector(driver as any, {
       alpha: {
         provider: 'managed:kimi-code',
         model: 'kimi-alpha',
