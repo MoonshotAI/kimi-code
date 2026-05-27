@@ -65,26 +65,26 @@ export class BlobStore {
     switch (record.type) {
       case 'turn.prompt':
       case 'turn.steer':
-        for (const part of record.input) {
-          await this.rehydrateContentPart(part);
-        }
+        await this.rehydrateParts(record.input);
         break;
       case 'context.append_message':
-        for (const part of record.message.content) {
-          await this.rehydrateContentPart(part);
-        }
+        await this.rehydrateParts(record.message.content);
         break;
       case 'context.append_loop_event': {
         const event = record.event;
         if (event.type === 'tool.result' && typeof event.result.output !== 'string') {
-          for (const part of event.result.output) {
-            await this.rehydrateContentPart(part);
-          }
+          await this.rehydrateParts(event.result.output);
         }
         break;
       }
       default:
         break;
+    }
+  }
+
+  async rehydrateParts(parts: readonly ContentPart[]): Promise<void> {
+    for (const part of parts) {
+      await this.rehydrateContentPart(part);
     }
   }
 
