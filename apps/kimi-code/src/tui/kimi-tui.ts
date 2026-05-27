@@ -52,11 +52,7 @@ import { detectFdPath } from '#/utils/process/fd-detect';
 import {
   BUILTIN_SLASH_COMMANDS,
   buildSkillSlashCommands,
-  parseSlashInput,
-  resolveSlashCommandInput,
-  slashBusyMessage,
   sortSlashCommands,
-  type BuiltinSlashCommandName,
   type KimiSlashCommand,
   type SkillListSession,
 } from './commands';
@@ -460,7 +456,7 @@ export class KimiTUI {
   private readonly questionController = new QuestionController();
   private readonly reverseRpcDisposers: Array<() => void> = [];
   private skillCommands: readonly KimiSlashCommand[] = [];
-  private readonly skillCommandMap = new Map<string, string>();
+  readonly skillCommandMap = new Map<string, string>();
   private readonly imageStore = new ImageAttachmentStore();
   private readonly fdPath: string | null = detectFdPath();
   private readonly gitLsFilesCache: GitLsFilesCache;
@@ -1206,7 +1202,6 @@ export class KimiTUI {
   // Input Dispatch
   // =========================================================================
 
-  // Routes submitted editor text to slash command handling or normal prompting.
   private handleUserInput(text: string): void {
     if (text.trim().length === 0) return;
     if (this.state.appState.isReplaying) {
@@ -1214,149 +1209,11 @@ export class KimiTUI {
       return;
     }
     void this.persistInputHistory(text);
-    if (parseSlashInput(text) !== null) {
-      void this.executeSlashCommand(text);
-      return;
-    }
-
-    this.sendNormalUserInput(text);
-  }
-
-  // Parses and executes a slash command intent.
-  private async executeSlashCommand(input: string): Promise<void> {
-    const parsedCommand = parseSlashInput(input);
-    const intent = resolveSlashCommandInput({
-      input,
-      skillCommandMap: this.skillCommandMap,
-      isStreaming: this.state.appState.isStreaming,
-      isCompacting: this.state.appState.isCompacting,
-    });
-
-    switch (intent.kind) {
-      case 'not-command':
-        return;
-      case 'blocked':
-        this.track('input_command_invalid', { reason: 'blocked', command: intent.commandName });
-        this.showError(slashBusyMessage(intent.commandName, intent.reason));
-        return;
-      case 'skill': {
-        const session = this.session;
-        if (this.state.appState.model.trim().length === 0 || session === undefined) {
-          this.showError(LLM_NOT_SET_MESSAGE);
-          return;
-        }
-        this.track('input_command', {
-          command: intent.commandName,
-          skill_name: intent.skillName,
-        });
-        this.sendSkillActivation(session, intent.skillName, intent.args);
-        return;
-      }
-      case 'message': {
-        this.sendNormalUserInput(intent.input);
-        return;
-      }
-      case 'builtin':
-        this.track('input_command', { command: intent.name });
-        if (intent.name === 'new' && parsedCommand?.name === 'clear') {
-          this.track('clear');
-        }
-        try {
-          await this.handleBuiltInSlashCommand(intent.name, intent.args);
-        } catch (error) {
-          this.showError(formatErrorMessage(error));
-        }
-        return;
-    }
-  }
-
-  // Dispatches a built-in slash command to its concrete handler.
-  private async handleBuiltInSlashCommand(
-    name: BuiltinSlashCommandName,
-    args: string,
-  ): Promise<void> {
-    switch (name) {
-      case 'exit':
-        void this.stop();
-        return;
-      case 'help':
-        this.showHelpPanel();
-        return;
-      case 'version':
-        this.showStatus(`Kimi Code v${this.state.appState.version}`);
-        return;
-      case 'new':
-        await this.createNewSession();
-        this.state.ui.requestRender();
-        return;
-      case 'sessions':
-        void this.showSessionPicker();
-        return;
-      case 'tasks':
-        void this.tasksBrowserController.show();
-        return;
-      case 'mcp':
-        void slashCommands.showMcpServers(this);
-        return;
-      case 'editor':
-        await slashCommands.handleEditorCommand(this, args);
-        return;
-      case 'theme':
-        await slashCommands.handleThemeCommand(this, args);
-        return;
-      case 'model':
-        slashCommands.handleModelCommand(this, args);
-        return;
-      case 'permission':
-        slashCommands.showPermissionPicker(this);
-        return;
-      case 'settings':
-        slashCommands.showSettingsSelector(this);
-        return;
-      case 'usage':
-        void slashCommands.showUsage(this);
-        return;
-      case 'status':
-        void slashCommands.showStatusReport(this);
-        return;
-      case 'feedback':
-        await slashCommands.handleFeedbackCommand(this);
-        return;
-      case 'title':
-        await slashCommands.handleTitleCommand(this, args);
-        return;
-      case 'yolo':
-        await slashCommands.handleYoloCommand(this, args);
-        return;
-      case 'plan':
-        await slashCommands.handlePlanCommand(this, args);
-        return;
-      case 'compact':
-        await slashCommands.handleCompactCommand(this, args);
-        return;
-      case 'init':
-        await slashCommands.handleInitCommand(this);
-        return;
-      case 'fork':
-        await slashCommands.handleForkCommand(this, args);
-        return;
-      case 'login':
-        await slashCommands.handleLoginCommand(this);
-        return;
-      case 'connect':
-        await slashCommands.handleConnectCommand(this, args);
-        return;
-      case 'logout':
-        await slashCommands.handleLogoutCommand(this);
-        return;
-      default:
-        this.showError(`Unknown slash command: /${String(name)}`);
-        return;
-    }
+    slashCommands.dispatchInput(this, text);
   }
 
   // Sends regular user input after validating model and media support.
-  private sendNormalUserInput(text: string): void {
+  sendNormalUserInput(text: string): void {
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
@@ -1512,7 +1369,7 @@ export class KimiTUI {
   }
 
   // Starts a skill activation turn on the session.
-  private sendSkillActivation(session: Session, skillName: string, skillArgs: string): void {
+  sendSkillActivation(session: Session, skillName: string, skillArgs: string): void {
     this.beginSessionRequest();
     void session.activateSkill(skillName, skillArgs).catch((error: unknown) => {
       const message = formatErrorMessage(error);
@@ -1814,7 +1671,7 @@ export class KimiTUI {
   }
 
   // Creates a fresh session from current UI settings and resets the transcript.
-  private async createNewSession(): Promise<void> {
+  async createNewSession(): Promise<void> {
     if (this.state.appState.isReplaying) {
       this.showError('Cannot start a new session while history is replaying.');
       return;
@@ -2381,7 +2238,7 @@ export class KimiTUI {
   }
 
   // Shows the help panel with the current slash command list.
-  private showHelpPanel(): void {
+  showHelpPanel(): void {
     this.state.showingHelpPanel = true;
     this.mountEditorReplacement(
       new HelpPanelComponent({
@@ -2401,7 +2258,7 @@ export class KimiTUI {
   }
 
   // Loads sessions and shows the session picker.
-  private async showSessionPicker(): Promise<void> {
+  async showSessionPicker(): Promise<void> {
     await this.fetchSessions();
     this.mountSessionPicker(() => {
       this.hideSessionPicker();
