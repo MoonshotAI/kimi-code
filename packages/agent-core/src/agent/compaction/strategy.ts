@@ -67,7 +67,9 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
     // Preserved recent messages: messages.slice(N)
     //
     // Rules (in order of precedence):
-    // 1. messages[N-1] must not be a user message or assistant message with tool calls
+    // 1. The split after messages[N-1] must be safe per `canSplitAfter`:
+    //    messages[N-1] is not a user or asst-with-tool-calls, and the retained
+    //    suffix messages.slice(N) has no orphan tool result.
     // 2. At least one recent message must be preserved
     // 3. At most maxRecentMessages recent messages should be preserved
     // 4. At most maxRecentUserMessages recent user messages should be preserved
@@ -80,7 +82,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
     let bestN: number | undefined;
 
     for (; recentMessages < messages.length; recentMessages++) {
-      const m1 = messages[messages.length - recentMessages - 1]!;
+      const splitIndex = messages.length - recentMessages - 1;
       const m2 = messages[messages.length - recentMessages]!;
 
       if (m2.role === 'user') {
@@ -88,8 +90,8 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
       }
       recentSize += estimateTokensForMessage(m2);
 
-      if (!cannotSplitAfter(m1)) {
-        bestN = messages.length - recentMessages;
+      if (canSplitAfter(messages, splitIndex)) {
+        bestN = splitIndex + 1;
       }
 
       const reachesMax = recentMessages >= this.config.maxRecentMessages
@@ -105,7 +107,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
 
   reduceCompactOnOverflow(messages: readonly Message[]): number {
     for (let i = messages.length - 2; i > 0; i--) {
-      if (!cannotSplitAfter(messages[i]!)) {
+      if (canSplitAfter(messages, i)) {
         return i + 1;
       }
     }
@@ -121,6 +123,24 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
   }
 }
 
-function cannotSplitAfter(message: Message): boolean {
-  return message.role === 'user' || (message.role === 'assistant' && message.toolCalls.length > 0);
+/**
+ * Decide whether a compaction split is safe to place immediately after
+ * `messages[index]`. A split is safe only when:
+ *   - `messages[index]` itself is not a user message or an assistant message
+ *     with pending tool calls (cutting either of those off from what follows
+ *     would break the conversation), AND
+ *   - the next message is not a tool result. The history is well-formed:
+ *     tool results only appear after their owning `asst_w_tc` and all tool
+ *     results for one exchange land consecutively before the next non-tool
+ *     message. So if the suffix starts with a tool result, its `asst_w_tc`
+ *     must be in the compacted prefix, which would orphan that result
+ *     (e.g. splitting between tool_a and tool_b of a parallel call).
+ */
+function canSplitAfter(messages: readonly Message[], index: number): boolean {
+  const m = messages[index];
+  if (m === undefined) return false;
+  if (m.role === 'user') return false;
+  if (m.role === 'assistant' && m.toolCalls.length > 0) return false;
+  if (messages[index + 1]?.role === 'tool') return false;
+  return true;
 }

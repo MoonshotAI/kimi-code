@@ -100,6 +100,30 @@ describe('Agent compaction', () => {
     expect(strategy.computeCompactCount(messages)).toBe(0);
   });
 
+  it('does not split inside a parallel tool exchange', () => {
+    const strategy = testCompactionStrategy();
+    const messages: Message[] = [
+      textMessage('user', 'old user'),
+      textMessage('assistant', 'old assistant'),
+      textMessage('user', 'run both tools'),
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          { type: 'function', id: 'call_a', name: 'Lookup', arguments: '{}' },
+          { type: 'function', id: 'call_b', name: 'Lookup', arguments: '{}' },
+        ],
+      },
+      { role: 'tool', content: [{ type: 'text', text: 'a' }], toolCalls: [], toolCallId: 'call_a' },
+      { role: 'tool', content: [{ type: 'text', text: 'b' }], toolCalls: [], toolCallId: 'call_b' },
+      textMessage('user', 'next prompt'),
+    ];
+
+    // The only valid split is before the parallel exchange (after 'old assistant'),
+    // never between tool_a and tool_b — that would leave tool_b as an orphan.
+    expect(strategy.computeCompactCount(messages)).toBe(2);
+  });
+
   it('reserves response context by default before the ratio threshold is reached', () => {
     const strategy = new DefaultCompactionStrategy(() => 256_000);
 
