@@ -8,7 +8,6 @@
  */
 
 import { writeFileSync } from 'node:fs';
-import { release as osRelease, type as osType } from 'node:os';
 import { join } from 'node:path';
 
 import {
@@ -23,77 +22,20 @@ import {
   TUI,
 } from '@earendil-works/pi-tui';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
-import {
-  applyOpenPlatformConfig,
-  capabilitiesForModel,
-  fetchOpenPlatformModels,
-  filterModelsByPrefix,
-  getOpenPlatformById,
-  OpenPlatformApiError,
-  type DeviceAuthorization,
-  type ManagedKimiCodeModelInfo,
-  type ManagedKimiConfigShape,
-  type OpenPlatformDefinition,
-} from '@moonshot-ai/kimi-code-oauth';
-import {
-  applyCatalogProvider,
-  catalogBaseUrl,
-  catalogModelToAlias,
-  catalogProviderModels,
-  CatalogFetchError,
-  fetchCatalog,
-  inferWireType,
-  loadBuiltInCatalog,
-  log,
-} from '@moonshot-ai/kimi-code-sdk';
-import { BUILT_IN_CATALOG_JSON } from '../built-in-catalog';
+import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import type {
-  AgentReplayRecord,
-  AgentStatusUpdatedEvent,
   ApprovalRequest,
   ApprovalResponse,
-  AssistantDeltaEvent,
   BackgroundTaskInfo,
-  BackgroundTaskStartedEvent,
-  BackgroundTaskTerminatedEvent,
-  BackgroundTaskUpdatedEvent,
-  Catalog,
-  CatalogModel,
-  CompactionCancelledEvent,
-  CompactionCompletedEvent,
-  CompactionStartedEvent,
-  ContextMessage,
   CreateSessionOptions,
-  ErrorEvent,
   Event,
-  HookResultEvent,
   KimiHarness,
-  ModelAlias,
   McpServerInfo,
   PermissionMode,
-  PromptOrigin,
   PromptPart,
-  ResumedAgentState,
   Session,
-  SessionMetaUpdatedEvent,
   SessionStatus,
   SessionUsage,
-  SkillActivatedEvent,
-  SubagentCompletedEvent,
-  SubagentFailedEvent,
-  SubagentSpawnedEvent,
-  ThinkingDeltaEvent,
-  ToolCall,
-  ToolCallDeltaEvent,
-  ToolCallStartedEvent,
-  ToolProgressEvent,
-  ToolResultEvent,
-  TurnEndedEvent,
-  TurnStartedEvent,
-  TurnStepCompletedEvent,
-  TurnStepInterruptedEvent,
-  TurnStepStartedEvent,
-  WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 

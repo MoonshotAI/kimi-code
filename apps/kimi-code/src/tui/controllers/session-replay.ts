@@ -14,7 +14,6 @@ import type { TodoItem } from '../components/chrome/todo-panel';
 import type {
   AppState,
   BackgroundAgentMetadata,
-  ToolCallBlockData,
   ToolResultBlockData,
   TranscriptEntry,
 } from '../types';

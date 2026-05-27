@@ -2,7 +2,6 @@ import { release as osRelease, type as osType } from 'node:os';
 
 import {
   applyOpenPlatformConfig,
-  capabilitiesForModel,
   fetchOpenPlatformModels,
   filterModelsByPrefix,
   getOpenPlatformById,
@@ -15,7 +14,6 @@ import {
 import {
   applyCatalogProvider,
   catalogBaseUrl,
-  catalogModelToAlias,
   catalogProviderModels,
   CatalogFetchError,
   fetchCatalog,
@@ -23,9 +21,7 @@ import {
   loadBuiltInCatalog,
   log,
   type Catalog,
-  type CatalogModel,
   type KimiHarness,
-  type ModelAlias,
   type Session,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -42,7 +38,6 @@ import {
   promptModelSelectionForCatalog,
   promptModelSelectionForOpenPlatform,
   promptPlatformSelection,
-  runModelSelector,
 } from './slash-command-prompts';
 import {
   DEFAULT_OAUTH_PROVIDER_NAME,
