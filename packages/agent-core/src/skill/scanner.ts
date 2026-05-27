@@ -1,5 +1,5 @@
 import { promises as fs } from 'node:fs';
-import path from 'node:path';
+import path from 'pathe';
 
 import { SkillParseError, UnsupportedSkillTypeError, parseSkillFromFile } from './parser';
 import type { SkillDefinition, SkillRoot, SkillSource, SkippedSkill } from './types';
@@ -52,7 +52,9 @@ export async function resolveSkillRoots(
   options: ResolveSkillRootsOptions,
 ): Promise<readonly SkillRoot[]> {
   const isDir = options.isDir ?? defaultIsDir;
-  const realpath = options.realpath ?? ((p: string) => fs.realpath(p));
+  const realpath =
+    options.realpath ??
+    ((p: string) => fs.realpath(p).then((r) => r.replaceAll('\\', '/')));
   const roots: SkillRoot[] = [];
   const mergeAllAvailableSkills = options.mergeAllAvailableSkills ?? true;
   const { userHomeDir, workDir } = options.paths;

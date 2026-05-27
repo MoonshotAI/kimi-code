@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join } from 'pathe';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { Kaos } from '@moonshot-ai/kaos';

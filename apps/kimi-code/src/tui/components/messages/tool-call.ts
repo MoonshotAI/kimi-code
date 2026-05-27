@@ -191,6 +191,16 @@ function interpretExitPlanModeOutcome(output: string): ExitPlanModeOutcome {
   return path !== undefined && path.length > 0 ? { kind: 'approved', path } : { kind: 'approved' };
 }
 
+function isExitPlanModeOutcomeOutput(output: string): boolean {
+  return (
+    output.startsWith(REJECT_PREFIX) ||
+    output.startsWith(PLAN_REJECT_PREFIX) ||
+    output.startsWith('Exited plan mode.') ||
+    APPROVED_OPTION_RE.test(output) ||
+    output.includes(APPROVED_PLAN_MARKER)
+  );
+}
+
 function unescapeJsonString(s: string): string {
   return s.replaceAll(/\\(["\\/bfnrt])/g, (_, ch: string) => {
     switch (ch) {
@@ -1042,7 +1052,7 @@ export class ToolCallComponent extends Container {
             : 'Approved';
         return `${label}${chalk.hex(colors.success)(` · ${chipText}`)}`;
       }
-      return `${label}${chalk.hex(colors.error)(' · Rejected')}`;
+      return label;
     }
 
     if (toolCall.name === 'AskUserQuestion') {
@@ -1549,6 +1559,7 @@ export class ToolCallComponent extends Container {
         new PlanBoxComponent(plan, this.markdownTheme, this.colors.success, path, {
           maxContentLines: this.computePlanBoxMaxContentLines(),
           expanded: this.planExpanded,
+          status: this.resolvePlanBoxStatus(),
         }),
       );
     } else {
@@ -1582,6 +1593,15 @@ export class ToolCallComponent extends Container {
     return this.planPath;
   }
 
+  private resolvePlanBoxStatus(): { label: string; colorHex: string } | undefined {
+    const result = this.result;
+    if (this.toolCall.name !== 'ExitPlanMode' || result === undefined) return undefined;
+    if (!isExitPlanModeOutcomeOutput(result.output)) return undefined;
+    const outcome = interpretExitPlanModeOutcome(result.output);
+    if (outcome.kind !== 'rejected') return undefined;
+    return { label: 'Rejected', colorHex: this.colors.error };
+  }
+
   private buildContent(): void {
     const { result } = this;
     if (result === undefined || !result.output) return;
@@ -1597,7 +1617,7 @@ export class ToolCallComponent extends Container {
       return;
     }
 
-    if (this.toolCall.name === 'ExitPlanMode' && !result.is_error) {
+    if (this.toolCall.name === 'ExitPlanMode' && isExitPlanModeOutcomeOutput(result.output)) {
       // Approved plans are already rendered by buildCallPreview via
       // resolvePlanForPreview. Rejected or revise feedback uses a warning label
       // plus normal body text so it remains visible in the transcript.

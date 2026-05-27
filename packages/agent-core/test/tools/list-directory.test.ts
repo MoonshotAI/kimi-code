@@ -47,14 +47,15 @@ describe('listDirectory', () => {
       pathClass: () => 'win32',
       iterdir: async function* (p: string) {
         seenDirs.push(p);
-        if (p === 'C:\\workspace') {
+        const n = p.replaceAll('\\', '/');
+        if (n === 'C:/workspace') {
           yield 'C:\\workspace\\src';
-        } else if (p === 'C:\\workspace\\src') {
+        } else if (n === 'C:/workspace/src') {
           yield 'C:\\workspace\\src\\index.ts';
         }
       } as unknown as Kaos['iterdir'],
       stat: (async (p: string) => ({
-        stMode: p.endsWith('\\src') ? 0o040_755 : 0o100_644,
+        stMode: p.replaceAll('\\', '/').endsWith('/src') ? 0o040_755 : 0o100_644,
         stIno: 1,
         stDev: 1,
         stNlink: 1,
@@ -69,7 +70,7 @@ describe('listDirectory', () => {
 
     const tree = await listDirectory(kaos, 'C:\\workspace');
 
-    expect(seenDirs).toEqual(['C:\\workspace', 'C:\\workspace\\src']);
+    expect(seenDirs).toEqual(['C:\\workspace', 'C:/workspace/src']);
     expect(tree).toContain('src/');
     expect(tree).toContain('index.ts');
   });

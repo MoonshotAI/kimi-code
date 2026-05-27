@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join } from 'pathe';
 
 export interface SessionWireScan {
   readonly firstActivityMs?: number | undefined;

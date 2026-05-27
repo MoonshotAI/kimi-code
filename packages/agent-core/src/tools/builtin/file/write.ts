@@ -6,17 +6,13 @@
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';
-import * as posixPath from 'node:path/posix';
-import * as win32Path from 'node:path/win32';
+import { dirname } from 'pathe';
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
-import {
-  type PathClass,
-  resolvePathAccessPath,
-} from '../../policies/path-access';
+import { resolvePathAccessPath } from '../../policies/path-access';
 import { toInputJsonSchema } from '../../support/input-schema';
 import type { WorkspaceConfig } from '../../support/workspace';
 import WRITE_DESCRIPTION from './write.md';
@@ -25,10 +21,6 @@ import WRITE_DESCRIPTION from './write.md';
 const S_IFMT = 0o170000;
 /** File-type bits of a directory. */
 const S_IFDIR = 0o040000;
-
-function pathMod(pathClass: PathClass): typeof posixPath {
-  return pathClass === 'win32' ? win32Path : posixPath;
-}
 
 export const WriteInputSchema = z.object({
   path: z
@@ -126,7 +118,7 @@ export class WriteTool implements BuiltinTool<WriteInput> {
    * skipped and the write proceeds, surfacing the real I/O error if any.
    */
   private async checkParentDirectory(safePath: string): Promise<string | undefined> {
-    const parent = pathMod(this.kaos.pathClass()).dirname(safePath);
+    const parent = dirname(safePath);
     let stat;
     try {
       stat = await this.kaos.stat(parent);
