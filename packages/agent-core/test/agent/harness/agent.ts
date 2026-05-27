@@ -4,7 +4,7 @@ import { Readable, type Writable } from 'node:stream';
 import { createControlledPromise } from '@antfu/utils';
 import { type Environment, type Kaos, type KaosProcess } from '@moonshot-ai/kaos';
 import type { ModelCapability, ProviderConfig } from '@moonshot-ai/kosong';
-import { expect, vi } from 'vitest';
+import { expect, onTestFinished, vi } from 'vitest';
 
 import {
   Agent,
@@ -182,6 +182,16 @@ export class AgentTestContext {
       log: options.log,
     });
     this.rpc = this.createPromiseAgentApi(this.agent);
+    // The Agent constructor now eagerly binds a SIGUSR1 listener via
+    // CronManager.start(). Without per-test cleanup, every Agent built
+    // by this harness leaks one listener — Node prints a
+    // MaxListenersExceededWarning once the suite crosses 10 agents.
+    // onTestFinished is a vitest API callable from non-hook scopes, so
+    // we register cleanup transparently without forcing every test to
+    // remember an afterEach.
+    onTestFinished(async () => {
+      await this.agent.cron.stop();
+    });
   }
 
   configure({
