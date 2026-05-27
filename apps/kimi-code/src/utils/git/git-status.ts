@@ -244,28 +244,32 @@ function parseDiffNumstatCount(value: string | undefined): number {
 
 function readPullRequest(workDir: string): Promise<PullRequestInfo | null> {
   return new Promise((resolve) => {
-    execFile(
-      'gh',
-      ['pr', 'view', '--json', 'number,url'],
-      {
-        cwd: workDir,
-        encoding: 'utf8',
-        env: {
-          ...process.env,
-          GH_NO_UPDATE_NOTIFIER: '1',
-          GH_PROMPT_DISABLED: '1',
+    try {
+      execFile(
+        'gh',
+        ['pr', 'view', '--json', 'number,url'],
+        {
+          cwd: workDir,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            GH_NO_UPDATE_NOTIFIER: '1',
+            GH_PROMPT_DISABLED: '1',
+          },
+          timeout: PR_SPAWN_TIMEOUT_MS,
+          maxBuffer: 256 * 1024,
         },
-        timeout: PR_SPAWN_TIMEOUT_MS,
-        maxBuffer: 256 * 1024,
-      },
-      (error, stdout) => {
-        if (error !== null) {
-          resolve(null);
-          return;
-        }
-        resolve(parsePullRequest(stdout));
-      },
-    );
+        (error, stdout) => {
+          if (error !== null) {
+            resolve(null);
+            return;
+          }
+          resolve(parsePullRequest(stdout));
+        },
+      );
+    } catch {
+      resolve(null);
+    }
   });
 }
 

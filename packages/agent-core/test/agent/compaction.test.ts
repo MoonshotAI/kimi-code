@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join } from 'pathe';
 
 import {
   APIConnectionError,
@@ -199,6 +199,53 @@ describe('Agent compaction', () => {
       },
     });
     await ctx.expectResumeMatches();
+  });
+
+  it('uses the model context window for compaction completion budget', async () => {
+    const maxContextTokens = 5_000;
+    let appliedCap: number | undefined;
+    const generate: GenerateFn = async (provider) => {
+      const cap = (provider as { readonly modelParameters?: Record<string, unknown> })
+        .modelParameters?.['max_completion_tokens'];
+      if (typeof cap !== 'number') throw new Error('Expected max_completion_tokens to be applied');
+      appliedCap = cap;
+
+      return {
+        id: 'mock-compaction-budget',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Budgeted summary.' }],
+          toolCalls: [],
+        },
+        usage: {
+          inputOther: 1,
+          output: 4,
+          inputCacheRead: 0,
+          inputCacheCreation: 0,
+        },
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const ctx = testAgent({ compactionStrategy: alwaysCompactOnce, generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: maxContextTokens,
+      },
+    });
+    appendExchange(ctx, 1, 'old user one', 'old assistant one', maxContextTokens - 100);
+    const compacted = new Promise<void>((resolve) => {
+      ctx.emitter.once('context.apply_compaction', () => {
+        resolve();
+      });
+    });
+
+    await ctx.rpc.beginCompaction({ instruction: 'Keep the important test facts.' });
+    await compacted;
+
+    expect(appliedCap).toBe(maxContextTokens);
   });
 
   it('projects the compacted prefix before sending the summary request', async () => {

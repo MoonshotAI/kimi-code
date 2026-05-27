@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { basename, resolve } from 'node:path';
+import { basename, resolve } from 'pathe';
 
 import { slugifyWorkDirName } from '#/utils/workdir-slug';
 

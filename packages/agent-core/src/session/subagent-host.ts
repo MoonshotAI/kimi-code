@@ -255,6 +255,7 @@ export class SessionSubagentHost {
         parentToolCallId: options.parentToolCallId,
         resultSummary: result,
         usage,
+        contextTokens: child.context.tokenCount,
       });
       this.triggerSubagentStop(parent, profileName, result);
       return { result, usage };

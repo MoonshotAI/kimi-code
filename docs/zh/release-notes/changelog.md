@@ -2,6 +2,34 @@
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.3.0
+
+### 新功能
+
+- `/logout` 现在会打开一个选择器，让你选择要登出的供应商，而不再总是登出当前模型所对应的供应商。当前供应商默认高亮，因此按 Enter 即可保持与此前一致的行为。该命令同时以 `/disconnect` 别名提供。
+- `openai` 供应商现在开箱即用地支持 OpenAI 兼容的 reasoner 模型：自动识别响应中的 Thinking 字段（`reasoning_content` / `reasoning_details` / `reasoning`），并在历史包含 Thinking 时自动注入 `reasoning_effort`。DeepSeek、Qwen、One API 等网关服务无需再手工设置 `reasoning_key`，该字段仍可作为非标准网关的显式覆盖项。
+
+### 修复
+
+- 在流式输出或压缩上下文期间，阻止运行 `/model` 和 `/sessions` 斜杠命令。
+- 在通过 `/connect` 配置 OpenAI 兼容模型时，保留模型目录中声明的 interleaved reasoning 字段。
+- 修复 API 密钥输入对话框在空白状态下显示掩码点的问题。
+- 修复 `~/.agents/` 下的用户 Skill 未被加载的问题。
+- 恢复终端界面中运行中的子 Agent 的实时 token 显示。
+- 在会话恢复时，若所有待办均已完成则隐藏待办面板。
+- 在工具返回结果格式错误或缺失时，始终发出配对的工具结果，避免下一次请求因缺少 `tool_call_id` 而失败。
+- 修复 Plan 模式下的会话重置：新会话在 Plan 评审被拒后不再失败，并能在初始化错误后继续接收事件。
+- 在控制终端消失时及时退出。终端界面现在会处理 `SIGHUP` / `SIGTERM` 信号以及 stdout/stderr 的 `EIO` / `EPIPE` / `ENOTCONN` 错误，避免父 shell 或终端复用器异常退出后残留占用 CPU 核心的 `kimi` 进程。
+- 避免本地补全上限过小，导致摘要生成前推理被截断。
+
+### 重构
+
+- 让 `AgentRecords` 直接持有 `Agent` 实例，并将恢复时的派发逻辑内联。
+
+### 其他
+
+- 改进 `Write` 工具的交互体验。
+
 ## 0.2.0
 
 ### 新功能

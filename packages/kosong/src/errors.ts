@@ -64,6 +64,16 @@ export class APIEmptyResponseError extends ChatProviderError {
   }
 }
 
+export function isRetryableGenerateError(error: unknown): boolean {
+  if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
+    return true;
+  }
+  if (error instanceof APIEmptyResponseError) {
+    return true;
+  }
+  return error instanceof APIStatusError && [429, 500, 502, 503, 504].includes(error.statusCode);
+}
+
 const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
   /context[ _-]?length/,
   /(?:context[ _-]?window.*exceed|exceed.*context[ _-]?window)/,
