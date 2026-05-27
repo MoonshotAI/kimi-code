@@ -2555,6 +2555,7 @@ export class KimiTUI {
   // notice pointing at the config knob.
   private handleStepCompleted(event: TurnStepCompletedEvent): void {
     this.flushStreamingUiUpdatesNow();
+    this.maybeShowDebugTiming(event);
     if (event.finishReason !== 'max_tokens') return;
 
     // Scope the truncation marking to tool calls that belong to the
@@ -2590,6 +2591,21 @@ export class KimiTUI {
       ? 'If this limit is wrong for your model, set `max_output_size` on the model alias in your kimi-code config.'
       : undefined;
     this.showNotice(title, detail);
+  }
+
+  private maybeShowDebugTiming(event: TurnStepCompletedEvent): void {
+    if (process.env['KIMI_CODE_DEBUG'] !== '1') return;
+    const latency = event.llmFirstTokenLatencyMs;
+    const streamMs = event.llmStreamDurationMs;
+    const outputTokens = event.usage?.output;
+    if (latency === undefined || streamMs === undefined) return;
+
+    const parts: string[] = [`TTFT: ${formatDuration(latency)}`];
+    if (outputTokens !== undefined && outputTokens > 0 && streamMs > 0) {
+      const tps = (outputTokens / (streamMs / 1000)).toFixed(1);
+      parts.push(`TPS: ${tps} tok/s (${outputTokens} tokens in ${formatDuration(streamMs)})`);
+    }
+    this.showStatus(`[Debug] ${parts.join(' | ')}`);
   }
 
   private isAnthropicSessionActive(): boolean {
@@ -5755,4 +5771,9 @@ function formatHookResultTitle(event: HookResultEvent): string {
 function formatHookResultBody(event: HookResultEvent): string {
   const content = event.content.trim();
   return content.length === 0 ? '(empty)' : content;
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }
