@@ -686,6 +686,23 @@ describe('Agent turn flow', () => {
     );
   });
 
+  it('emits LLM stream timing on step completion', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'timed answer' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
+    await ctx.untilTurnEnd();
+
+    const stepCompleted = ctx.allEvents.find(
+      (event) => event.type === '[rpc]' && event.event === 'turn.step.completed',
+    );
+    expect(stepCompleted?.args).toMatchObject({
+      llmFirstTokenLatencyMs: expect.any(Number),
+      llmStreamDurationMs: expect.any(Number),
+    });
+  });
+
   it('logs LLM request metadata without message bodies', async () => {
     const { logger, entries } = captureLogs();
     const ctx = testAgent({ log: logger });
