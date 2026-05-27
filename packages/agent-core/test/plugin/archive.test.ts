@@ -136,6 +136,17 @@ describe('extractZip', () => {
     expect(readme).toBe('hello');
   });
 
+  it('prefers a plugin manifest at the archive root', async () => {
+    const destDir = await mkdtemp(path.join(tmpdir(), 'archive-test-'));
+    const zipBuffer = await createZipBuffer([
+      { name: 'kimi.plugin.json', data: '{"name":"root"}' },
+      { name: 'examples/demo/kimi.plugin.json', data: '{"name":"demo"}' },
+    ]);
+
+    const root = await extractZip(zipBuffer, destDir);
+    expect(root).toBe(destDir);
+  });
+
   it('detects plugin root with kimi.plugin.json', async () => {
     const destDir = await mkdtemp(path.join(tmpdir(), 'archive-test-'));
     const zipBuffer = await createZipBuffer([
@@ -162,7 +173,7 @@ describe('extractZip', () => {
     expect(manifest).toBe('{"name":"test"}');
   });
 
-  it('detects nested plugin root depth-first', async () => {
+  it('detects a single wrapper directory before nested manifests', async () => {
     const destDir = await mkdtemp(path.join(tmpdir(), 'archive-test-'));
     const zipBuffer = await createZipBuffer([
       { name: 'outer/kimi.plugin.json', data: '{"name":"outer"}' },
@@ -171,6 +182,17 @@ describe('extractZip', () => {
 
     const root = await extractZip(zipBuffer, destDir);
     expect(root).toBe(path.join(destDir, 'outer'));
+  });
+
+  it('ignores deep nested plugin manifests when there is no root or wrapper manifest', async () => {
+    const destDir = await mkdtemp(path.join(tmpdir(), 'archive-test-'));
+    const zipBuffer = await createZipBuffer([
+      { name: 'examples/demo/kimi.plugin.json', data: '{"name":"demo"}' },
+      { name: 'examples/demo/readme.md', data: '# Demo' },
+    ]);
+
+    const root = await extractZip(zipBuffer, destDir);
+    expect(root).toBe(destDir);
   });
 
   it('preserves executable file permission bits', async () => {

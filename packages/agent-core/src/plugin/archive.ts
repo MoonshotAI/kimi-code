@@ -119,20 +119,17 @@ async function restoreFilePermissions(destPath: string, entry: Entry): Promise<v
 }
 
 async function detectPluginRoot(dir: string): Promise<string> {
-  async function search(current: string): Promise<string | undefined> {
-    const entries = await readdir(current, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const child = path.join(current, entry.name);
-      if (await hasManifest(child)) return child;
-      const deeper = await search(child);
-      if (deeper !== undefined) return deeper;
-    }
-    return undefined;
+  if (await hasManifest(dir)) return dir;
+
+  const entries = await readdir(dir, { withFileTypes: true });
+  const childDirs = entries.filter((entry) => entry.isDirectory());
+  const childDir = childDirs.length === 1 ? childDirs[0] : undefined;
+  if (childDir !== undefined) {
+    const child = path.join(dir, childDir.name);
+    if (await hasManifest(child)) return child;
   }
 
-  const found = await search(dir);
-  return found ?? dir;
+  return dir;
 }
 
 async function hasManifest(dir: string): Promise<boolean> {
