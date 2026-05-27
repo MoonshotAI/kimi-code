@@ -1904,18 +1904,11 @@ export class KimiTUI {
   }
 
   // Finalizes live thinking output and moves the live pane to the next mode.
+  // onThinkingEnd() is safe to call even when no component exists (it no-ops
+  // when activeThinkingComponent is undefined), and clearing an already-empty
+  // thinkingDraft is harmless, so we can unconditionally clean up.
   private flushThinkingToTranscript(nextMode: LivePaneState['mode'] = 'idle'): void {
     this.flushStreamingUiUpdatesNow();
-    if (this.state.thinkingDraft.length === 0) {
-      // A live ThinkingComponent may still exist with a running spinner
-      // (e.g. created by an empty thinking delta). Finalize it here so
-      // the spinner does not leak past the thinking phase.
-      if (this.state.activeThinkingComponent !== undefined) {
-        this.onThinkingEnd();
-      }
-      this.patchLivePane({ mode: nextMode });
-      return;
-    }
     this.state.thinkingDraft = '';
     this.onThinkingEnd();
     this.patchLivePane({ mode: nextMode });
