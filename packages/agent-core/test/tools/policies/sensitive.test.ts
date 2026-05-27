@@ -27,6 +27,19 @@ describe('isSensitiveFile', () => {
     }
   });
 
+  it('matches sensitive patterns case-insensitively on posix paths', () => {
+    for (const path of [
+      '.ENV',
+      '/app/.Env.Local',
+      '/home/user/.AWS/Credentials',
+      '/home/user/.GCP/CREDENTIALS',
+      '/home/user/.ssh/ID_RSA',
+      '/home/user/.ssh/ID_ED25519.OLD',
+    ]) {
+      expect(isSensitiveFile(path, 'posix'), path).toBe(true);
+    }
+  });
+
   it('does not flag normal source / config files or env exemplars', () => {
     // Mirrors the py parametrization exactly. `.envrc`, `environment.py`,
     // `.env_example`, `server.key.example`, `id_rsa.pub`, `credentials.json`
@@ -44,9 +57,13 @@ describe('isSensitiveFile', () => {
       'environment.py',
       '.env_example',
       '.env.example',
+      '.ENV.EXAMPLE',
       '.env.sample',
+      '.ENV.SAMPLE',
       '.env.template',
+      '.ENV.TEMPLATE',
       '/app/.env.example',
+      '/app/.ENV.EXAMPLE',
     ]) {
       expect(isSensitiveFile(path), path).toBe(false);
     }

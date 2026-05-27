@@ -51,15 +51,15 @@ function pathMod(pathClass: PathClass): typeof posixPath {
   return pathClass === 'win32' ? win32Path : posixPath;
 }
 
-function comparable(path: string, pathClass: PathClass): string {
-  return pathClass === 'win32' ? path.toLowerCase() : path;
+function comparable(path: string): string {
+  return path.toLowerCase();
 }
 
 export function isSensitiveFile(path: string, pathClass: PathClass = DEFAULT_PATH_CLASS): boolean {
   const mod = pathMod(pathClass);
   const name = mod.basename(path);
-  const comparableName = comparable(name, pathClass);
-  const comparablePath = comparable(path, pathClass);
+  const comparableName = comparable(name);
+  const comparablePath = comparable(path);
 
   if (ENV_EXEMPTIONS.has(comparableName)) return false;
   if (PUBLIC_KEY_BASENAMES.has(comparableName)) return false;
@@ -80,7 +80,7 @@ export function isSensitiveFile(path: string, pathClass: PathClass = DEFAULT_PAT
 
   for (const suffixParts of SENSITIVE_PATH_SUFFIXES) {
     const suffix = suffixParts.join(mod.sep);
-    const comparableSuffix = comparable(suffix, pathClass);
+    const comparableSuffix = comparable(suffix);
     if (
       comparablePath.endsWith(`${mod.sep}${comparableSuffix}`) ||
       comparablePath.includes(`${mod.sep}${comparableSuffix}${mod.sep}`)
