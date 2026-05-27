@@ -105,6 +105,8 @@ kimi export <sessionId> -o ~/Desktop/my-session.zip
 
 未指定 `-o` 时，ZIP 写入当前工作目录。会话目录里的诊断日志会一并打包；此外，全局诊断日志 `$KIMI_CODE_HOME/logs/kimi-code.log`（记录 TUI 启动、登录等不属于任何会话的事件）默认也会包含进来，不需要时加 `--no-include-global-log` 跳过。
 
+也可以在不离开 TUI 的情况下导出当前会话。`/export-debug-zip` 产生与 `kimi export` 相同的调试 ZIP，而 `/export-md`（别名 `/export`）会写出一份人类可读的 Markdown 对话记录，适合分享或归档可读的会话内容。`/export-md` 可选接收一个路径参数；不带参数时，写入工作目录下的 `kimi-export-<short-id>-<timestamp>.md`。
+
 ::: tip 提示
 导出文件可能包含敏感信息，分享前请确认内容。
 :::
