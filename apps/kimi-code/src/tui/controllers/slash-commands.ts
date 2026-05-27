@@ -85,8 +85,8 @@ import {
 import type { AuthFlowController } from './auth-flow';
 import type { StreamingUIController } from './streaming-ui';
 import type { TasksBrowserController } from './tasks-browser';
-import type { AppState, QueuedMessage } from '../types';
-import type { TUIState, LoginProgressSpinnerHandle } from '../kimi-tui';
+import type { AppState, LoginProgressSpinnerHandle, QueuedMessage } from '../types';
+import type { TUIState } from '../tui-state';
 
 export interface SlashCommandHost {
   state: TUIState;

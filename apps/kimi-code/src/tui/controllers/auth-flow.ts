@@ -3,8 +3,8 @@ import type { SkillListSession } from '../commands';
 
 import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
 import type { SessionEventHandler } from './session-event-handler';
-import type { AppState } from '../types';
-import type { KimiTUIOptions, TUIState } from '../kimi-tui';
+import type { AppState, KimiTUIOptions } from '../types';
+import type { TUIState } from '../tui-state';
 
 export interface AuthFlowHost {
   state: TUIState;

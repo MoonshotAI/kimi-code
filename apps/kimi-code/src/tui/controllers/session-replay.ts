@@ -40,7 +40,7 @@ import {
   type SkillActivationProjection,
 } from '../utils/message-replay';
 import type { StreamingUIController } from './streaming-ui';
-import type { TUIState } from '../kimi-tui';
+import type { TUIState } from '../tui-state';
 
 export interface SessionReplayHost {
   state: TUIState;
@@ -220,14 +220,14 @@ export class SessionReplayRenderer {
 
   private renderToolCalls(context: ReplayRenderContext, toolCalls: readonly ToolCall[]): void {
     if (toolCalls.length === 0) return;
-    const { state, streamingUI } = this.host;
+    const { streamingUI } = this.host;
     context.stepIndex += 1;
     this.applyStepContext(context);
     for (const rawToolCall of toolCalls) {
       const toolCall = toolCallFromReplayMessage(rawToolCall, context);
       if (toolCall === undefined) continue;
       context.toolCalls.set(toolCall.id, toolCall);
-      state.activeToolCalls.set(toolCall.id, toolCall);
+      streamingUI.activeToolCalls.set(toolCall.id, toolCall);
       streamingUI.onToolCallStart(toolCall);
     }
   }
@@ -246,7 +246,7 @@ export class SessionReplayRenderer {
     call.result = result;
     this.applyStepContext(context);
     this.host.streamingUI.onToolCallEnd(toolCallId, result);
-    this.host.state.activeToolCalls.delete(toolCallId);
+    this.host.streamingUI.activeToolCalls.delete(toolCallId);
     context.completedToolCallIds.add(toolCallId);
   }
 
@@ -258,12 +258,12 @@ export class SessionReplayRenderer {
   }
 
   private applyStepContext(context: ReplayRenderContext): void {
-    this.host.state.currentTurnId = context.currentTurnId;
-    this.host.state.currentStep = context.stepIndex;
+    this.host.streamingUI.currentTurnId = context.currentTurnId;
+    this.host.streamingUI.currentStep = context.stepIndex;
   }
 
   private flushAssistant(context: ReplayRenderContext): void {
-    const { state, streamingUI } = this.host;
+    const { streamingUI } = this.host;
     const thinking = context.assistant.thinking.join('');
     const text = context.assistant.text.join('');
     context.assistant = { thinking: [], text: [] };
@@ -277,22 +277,22 @@ export class SessionReplayRenderer {
       streamingUI.onStreamingTextStart();
       streamingUI.onStreamingTextUpdate(text);
       streamingUI.onStreamingTextEnd();
-      state.assistantDraft = '';
+      streamingUI.assistantDraft = '';
     }
   }
 
   private cleanupRuntime(context: ReplayRenderContext): void {
     const { state, streamingUI } = this.host;
     this.flushAssistant(context);
-    state.activeToolCalls.clear();
+    streamingUI.activeToolCalls.clear();
     for (const toolCallId of context.completedToolCallIds) {
-      state.pendingToolComponents.delete(toolCallId);
+      streamingUI.pendingToolComponents.delete(toolCallId);
     }
-    state.pendingAgentGroup = null;
-    state.pendingReadGroup = null;
-    state.currentTurnId = undefined;
-    state.currentStep = 0;
-    state.streamingToolCallArguments.clear();
+    streamingUI.pendingAgentGroup = null;
+    streamingUI.pendingReadGroup = null;
+    streamingUI.currentTurnId = undefined;
+    streamingUI.currentStep = 0;
+    streamingUI.streamingToolCallArguments.clear();
     streamingUI.pendingToolCallFlushIds.clear();
     state.ui.requestRender();
   }
@@ -412,9 +412,9 @@ export class SessionReplayRenderer {
   }
 
   private removeToolCall(toolCallId: string): void {
-    const { state } = this.host;
-    state.activeToolCalls.delete(toolCallId);
-    state.pendingToolComponents.delete(toolCallId);
+    const { state, streamingUI } = this.host;
+    streamingUI.activeToolCalls.delete(toolCallId);
+    streamingUI.pendingToolComponents.delete(toolCallId);
     const index = state.transcriptEntries.findIndex(
       (entry) => entry.toolCallData?.id === toolCallId,
     );

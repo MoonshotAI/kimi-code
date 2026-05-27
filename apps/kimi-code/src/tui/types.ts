@@ -9,6 +9,7 @@ import type {
 import type { NotificationsConfig } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { Theme } from './theme';
+import type { ResolvedTheme } from './theme/colors';
 
 export interface AppState {
   model: string;
@@ -145,3 +146,33 @@ export const INITIAL_LIVE_PANE: LivePaneState = {
   pendingApproval: null,
   pendingQuestion: null,
 };
+
+// ---------------------------------------------------------------------------
+// TUI startup / options types (extracted from kimi-tui.ts)
+// ---------------------------------------------------------------------------
+
+export interface TUIStartupOptions {
+  readonly sessionFlag?: string;
+  readonly continueLast: boolean;
+  readonly yolo: boolean;
+  readonly plan: boolean;
+  readonly model?: string;
+  readonly startupNotice?: string;
+}
+
+export type TUIStartupState = 'pending' | 'ready' | 'picker';
+
+export interface KimiTUIOptions {
+  initialAppState: AppState;
+  startup: TUIStartupOptions;
+  resolvedTheme?: ResolvedTheme;
+}
+
+export interface PendingExit {
+  readonly kind: 'ctrl-c' | 'ctrl-d';
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+
+export interface LoginProgressSpinnerHandle {
+  stop(opts: { ok: boolean; label: string }): void;
+}

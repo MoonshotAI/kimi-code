@@ -69,9 +69,6 @@ describe('createTUIState', () => {
     // Empty collections.
     expect(state.transcriptEntries).toHaveLength(0);
     expect(state.queuedMessages).toHaveLength(0);
-    expect(state.pendingToolComponents.size).toBe(0);
-    expect(state.activeToolCalls.size).toBe(0);
-    expect(state.streamingToolCallArguments.size).toBe(0);
     expect(state.backgroundAgentMetadata.size).toBe(0);
     expect(state.renderedSkillActivationIds.size).toBe(0);
 
@@ -80,14 +77,6 @@ describe('createTUIState', () => {
     expect(state.activeDialog).toBeNull();
     expect(state.externalEditorRunning).toBe(false);
     expect(state.loadingSessions).toBe(false);
-    expect(state.currentTurnId).toBeUndefined();
-    expect(state.currentStep).toBe(0);
-    expect(state.assistantDraft).toBe('');
-    expect(state.thinkingDraft).toBe('');
     expect(state.activitySpinner).toBeNull();
-    expect(state.streamingBlock).toBeNull();
-    expect(state.activeCompactionBlock).toBeUndefined();
-    expect(state.pendingAgentGroup).toBeNull();
-    expect(state.pendingReadGroup).toBeNull();
   });
 });

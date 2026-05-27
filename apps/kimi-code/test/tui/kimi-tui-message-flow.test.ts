@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
+import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { handleFeedbackCommand } from '#/tui/controllers/slash-commands';
 import {
   promptFeedbackInput,
@@ -39,6 +40,7 @@ function stripSgr(text: string): string {
 
 interface MessageDriver {
   state: TUIState;
+  streamingUI: StreamingUIController;
   sessionEventHandler: {
     startSubscription(): void;
     handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void;
@@ -691,7 +693,7 @@ describe('KimiTUI message flow', () => {
       const sendQueued = vi.fn();
       driver.state.appState.streamingPhase = 'waiting';
       driver.state.appState.streamingStartTime = 1;
-      driver.state.currentTurnId = '1';
+      driver.streamingUI.currentTurnId = '1';
       driver.state.queuedMessages = [{ text: 'next' }];
 
       driver.sessionEventHandler.handleEvent(
@@ -730,7 +732,7 @@ describe('KimiTUI message flow', () => {
         } as Event,
         vi.fn(),
       );
-      const component = driver.state.streamingBlock?.component;
+      const component = driver.streamingUI.streamingBlock?.component;
       if (component === undefined) throw new Error('expected streaming component');
       const updateSpy = vi.spyOn(component, 'updateContent');
 
@@ -803,8 +805,8 @@ describe('KimiTUI message flow', () => {
     vi.useFakeTimers();
     try {
       const { driver } = await makeDriver();
-      driver.state.currentTurnId = '1';
-      driver.state.currentStep = 1;
+      driver.streamingUI.currentTurnId = '1';
+      driver.streamingUI.currentStep = 1;
 
       driver.sessionEventHandler.handleEvent(
         {
@@ -819,13 +821,13 @@ describe('KimiTUI message flow', () => {
         vi.fn(),
       );
 
-      expect(driver.state.pendingToolComponents.has('call_bash')).toBe(false);
-      expect(driver.state.activeToolCalls.has('call_bash')).toBe(false);
+      expect(driver.streamingUI.pendingToolComponents.has('call_bash')).toBe(false);
+      expect(driver.streamingUI.activeToolCalls.has('call_bash')).toBe(false);
 
       await vi.runOnlyPendingTimersAsync();
 
-      expect(driver.state.pendingToolComponents.has('call_bash')).toBe(true);
-      expect(driver.state.activeToolCalls.get('call_bash')?.args).toMatchObject({
+      expect(driver.streamingUI.pendingToolComponents.has('call_bash')).toBe(true);
+      expect(driver.streamingUI.activeToolCalls.get('call_bash')?.args).toMatchObject({
         command: 'echo hi',
       });
     } finally {

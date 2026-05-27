@@ -1,0 +1,116 @@
+import {
+  Container,
+  ProcessTerminal,
+  TUI,
+} from '@earendil-works/pi-tui';
+import type { BackgroundTaskInfo } from '@moonshot-ai/kimi-code-sdk';
+
+import { FooterComponent } from './components/chrome/footer';
+import { GutterContainer } from './components/chrome/gutter-container';
+import type { MoonLoader, SpinnerStyle } from './components/chrome/moon-loader';
+import { TodoPanelComponent } from './components/chrome/todo-panel';
+import type { SessionRow } from './components/dialogs/session-picker';
+import { CustomEditor } from './components/editor/custom-editor';
+import { CHROME_GUTTER } from './constant/rendering';
+import type { TasksBrowserState } from './controllers/tasks-browser';
+import { createKimiTUIThemeBundle, type KimiTUIThemeBundle } from './theme/bundle';
+import { createTerminalState, type TerminalState } from './utils/terminal-state';
+import {
+  INITIAL_LIVE_PANE,
+  type AppState,
+  type BackgroundAgentMetadata,
+  type KimiTUIOptions,
+  type LivePaneState,
+  type QueuedMessage,
+  type TranscriptEntry,
+  type TUIStartupState,
+} from './types';
+
+export interface TUIState {
+  ui: TUI;
+  terminal: ProcessTerminal;
+  transcriptContainer: Container;
+  activityContainer: Container;
+  todoPanelContainer: Container;
+  todoPanel: TodoPanelComponent;
+  queueContainer: Container;
+  editorContainer: Container;
+  footer: FooterComponent;
+  editor: CustomEditor;
+  theme: KimiTUIThemeBundle;
+  appState: AppState;
+  startupState: TUIStartupState;
+  livePane: LivePaneState;
+  transcriptEntries: TranscriptEntry[];
+  terminalState: TerminalState;
+  activitySpinner: { instance: MoonLoader; style: SpinnerStyle } | null;
+  toolOutputExpanded: boolean;
+  planExpanded: boolean;
+  backgroundAgentMetadata: Map<string, BackgroundAgentMetadata>;
+  backgroundTasks: Map<string, BackgroundTaskInfo>;
+  backgroundTaskTranscriptedTerminal: Set<string>;
+  renderedSkillActivationIds: Set<string>;
+  renderedMcpServerStatusKeys: Map<string, string>;
+  mcpServerStatusSpinners: Map<string, MoonLoader>;
+  subagentInfo: Map<string, { parentToolCallId: string; name: string }>;
+  sessions: SessionRow[];
+  loadingSessions: boolean;
+  activeDialog: 'session-picker' | 'help' | null;
+  tasksBrowser: TasksBrowserState | undefined;
+  externalEditorRunning: boolean;
+  queuedMessages: QueuedMessage[];
+}
+
+export function createTUIState(options: KimiTUIOptions): TUIState {
+  const initialAppState = options.initialAppState;
+  const theme = createKimiTUIThemeBundle(initialAppState.theme, options.resolvedTheme);
+
+  const terminal = new ProcessTerminal();
+  const ui = new TUI(terminal);
+
+  const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+  const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+  const todoPanelContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+  const todoPanel = new TodoPanelComponent(theme.colors);
+  const queueContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+  const editorContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+  const editor = new CustomEditor(ui, theme.colors);
+  const footer = new FooterComponent({ ...initialAppState }, theme.colors, () => {
+    ui.requestRender();
+  });
+
+  return {
+    ui,
+    terminal,
+    transcriptContainer,
+    activityContainer,
+    todoPanelContainer,
+    todoPanel,
+    queueContainer,
+    editorContainer,
+    footer,
+    editor,
+    theme,
+    appState: { ...initialAppState },
+    startupState: 'pending',
+    livePane: { ...INITIAL_LIVE_PANE },
+    transcriptEntries: [],
+    terminalState: createTerminalState(),
+    activitySpinner: null,
+    toolOutputExpanded: false,
+    planExpanded: false,
+    backgroundAgentMetadata: new Map<string, BackgroundAgentMetadata>(),
+    backgroundTasks: new Map<string, BackgroundTaskInfo>(),
+    backgroundTaskTranscriptedTerminal: new Set<string>(),
+    renderedSkillActivationIds: new Set<string>(),
+    renderedMcpServerStatusKeys: new Map<string, string>(),
+    mcpServerStatusSpinners: new Map<string, MoonLoader>(),
+    subagentInfo: new Map(),
+    sessions: [],
+    loadingSessions: false,
+    activeDialog: null,
+    tasksBrowser: undefined,
+    externalEditorRunning: false,
+    queuedMessages: [],
+  };
+}

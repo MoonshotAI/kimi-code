@@ -11,24 +11,19 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
-  Container,
   deleteAllKittyImages,
   type Component,
   type Focusable,
   getCapabilities,
-  ProcessTerminal,
   type SlashCommand,
   Spacer,
-  TUI,
 } from '@earendil-works/pi-tui';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import type {
   ApprovalRequest,
   ApprovalResponse,
-  BackgroundTaskInfo,
   CreateSessionOptions,
-  Event,
   KimiHarness,
   PermissionMode,
   PromptPart,
@@ -55,11 +50,9 @@ import {
   type SkillListSession,
 } from './commands';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
-import { FooterComponent } from './components/chrome/footer';
 import { GutterContainer } from './components/chrome/gutter-container';
 import { CHROME_GUTTER } from './constant/rendering';
 import { MoonLoader, type SpinnerStyle } from './components/chrome/moon-loader';
-import { TodoPanelComponent } from './components/chrome/todo-panel';
 import { WelcomeComponent } from './components/chrome/welcome';
 import {
   ApprovalPanelComponent,
@@ -68,19 +61,16 @@ import {
 import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
-import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
+import { SessionPickerComponent } from './components/dialogs/session-picker';
 import { AuthFlowController } from './controllers/auth-flow';
 import { SessionEventHandler } from './controllers/session-event-handler';
 import * as slashCommands from './controllers/slash-commands';
 import { SessionReplayRenderer } from './controllers/session-replay';
 import { StreamingUIController } from './controllers/streaming-ui';
-import { TasksBrowserController, type TasksBrowserState } from './controllers/tasks-browser';
-import { CustomEditor } from './components/editor/custom-editor';
+import { TasksBrowserController } from './controllers/tasks-browser';
 import { FileMentionProvider } from './components/editor/file-mention-provider';
-import { AgentGroupComponent } from './components/messages/agent-group';
 import { AssistantMessageComponent } from './components/messages/assistant-message';
 import { BackgroundAgentStatusComponent } from './components/messages/background-agent-status';
-import { ReadGroupComponent } from './components/messages/read-group';
 import { SkillActivationComponent } from './components/messages/skill-activation';
 import {
   NoticeMessageComponent,
@@ -108,19 +98,23 @@ import { registerReverseRPCHandlers } from './reverse-rpc/index';
 import { QuestionController } from './reverse-rpc/question/controller';
 import { createQuestionAskHandler } from './reverse-rpc/question/handler';
 import type { ApprovalPanelData, QuestionPanelData } from './reverse-rpc/types';
-import { createKimiTUIThemeBundle, type KimiTUIThemeBundle } from './theme/bundle';
+import { createKimiTUIThemeBundle } from './theme/bundle';
 import type { ResolvedTheme } from './theme/colors';
 import type { Theme } from './theme/index';
 import {
   INITIAL_LIVE_PANE,
   type AppState,
-  type BackgroundAgentMetadata,
+  type KimiTUIOptions,
   type LivePaneState,
+  type LoginProgressSpinnerHandle,
+  type PendingExit,
   type QueuedMessage,
-  type ToolCallBlockData,
   type TranscriptEntry,
+  type TUIStartupOptions,
+  type TUIStartupState,
 } from './types';
-import { hasDispose, isExpandable, isPlanExpandable } from './utils/component-capabilities';
+import { createTUIState, type TUIState } from './tui-state';
+import { isExpandable, isPlanExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import {
   formatErrorMessage,
@@ -133,10 +127,19 @@ import { setProcessTitle } from './utils/proctitle';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
-import { createTerminalState, type TerminalState } from './utils/terminal-state';
 import { installTerminalThemeTracking } from './utils/terminal-theme';
 import { detectTmuxKeyboardWarning } from './utils/tmux-keyboard';
 import { nextTranscriptId } from './utils/transcript-id';
+
+export type { TUIState } from './tui-state';
+export { createTUIState } from './tui-state';
+export type {
+  KimiTUIOptions,
+  LoginProgressSpinnerHandle,
+  PendingExit,
+  TUIStartupOptions,
+  TUIStartupState,
+} from './types';
 
 export interface KimiTUIStartupInput {
   readonly cliOptions: CLIOptions;
@@ -150,101 +153,7 @@ export interface KimiTUIStartupInput {
   readonly migrateOnly?: boolean;
 }
 
-export interface PendingExit {
-  readonly kind: 'ctrl-c' | 'ctrl-d';
-  readonly timer: ReturnType<typeof setTimeout>;
-}
-
 type EffectiveActivityPaneMode = ActivityPaneMode | 'idle' | 'session';
-
-export interface TUIStartupOptions {
-  readonly sessionFlag?: string;
-  readonly continueLast: boolean;
-  readonly yolo: boolean;
-  readonly plan: boolean;
-  readonly model?: string;
-  readonly startupNotice?: string;
-}
-
-export type TUIStartupState = 'pending' | 'ready' | 'picker';
-
-export interface KimiTUIOptions {
-  initialAppState: AppState;
-  startup: TUIStartupOptions;
-  resolvedTheme?: ResolvedTheme;
-}
-
-export interface TUIState {
-  ui: TUI;
-  terminal: ProcessTerminal;
-  transcriptContainer: Container;
-  activityContainer: Container;
-  todoPanelContainer: Container;
-  todoPanel: TodoPanelComponent;
-  queueContainer: Container;
-  editorContainer: Container;
-  footer: FooterComponent;
-  editor: CustomEditor;
-  theme: KimiTUIThemeBundle;
-  appState: AppState;
-  startupState: TUIStartupState;
-  livePane: LivePaneState;
-  transcriptEntries: TranscriptEntry[];
-  terminalState: TerminalState;
-  activitySpinner: { instance: MoonLoader; style: SpinnerStyle } | null;
-  activeThinkingComponent: ThinkingComponent | undefined;
-  streamingBlock: { component: AssistantMessageComponent; entry: TranscriptEntry } | null;
-  activeCompactionBlock: CompactionComponent | undefined;
-  toolOutputExpanded: boolean;
-  planExpanded: boolean;
-  pendingToolComponents: Map<string, ToolCallComponent>;
-  pendingAgentGroup: {
-    readonly turnId: string | undefined;
-    readonly step: number;
-    solo?: ToolCallComponent;
-    group?: AgentGroupComponent;
-  } | null;
-  pendingReadGroup: {
-    readonly turnId: string | undefined;
-    readonly step: number;
-    solo?: ToolCallComponent;
-    group?: ReadGroupComponent;
-  } | null;
-  backgroundAgentMetadata: Map<string, BackgroundAgentMetadata>;
-  /**
-   * Authoritative live mirror of the BPM. Keyed by `taskId`. Includes
-   * both bash and agent tasks, and retains terminal entries until they
-   * are explicitly forgotten (kept so transcript replay and footer
-   * lookups stay consistent).
-   */
-  backgroundTasks: Map<string, BackgroundTaskInfo>;
-  /**
-   * Task IDs whose terminal transcript card has already been pushed.
-   * Used to dedupe between the BPM `background.task.terminated` event
-   * and the older `subagent.completed/failed` flow, both of which
-   * arrive for `agent-*` tasks.
-   */
-  backgroundTaskTranscriptedTerminal: Set<string>;
-  renderedSkillActivationIds: Set<string>;
-  renderedMcpServerStatusKeys: Map<string, string>;
-  mcpServerStatusSpinners: Map<string, MoonLoader>;
-  subagentInfo: Map<string, { parentToolCallId: string; name: string }>;
-  sessions: SessionRow[];
-  loadingSessions: boolean;
-  activeDialog: 'session-picker' | 'help' | null;
-  tasksBrowser: TasksBrowserState | undefined;
-  externalEditorRunning: boolean;
-  currentTurnId: string | undefined;
-  currentStep: number;
-  assistantDraft: string;
-  thinkingDraft: string;
-  activeToolCalls: Map<string, ToolCallBlockData>;
-  streamingToolCallArguments: Map<
-    string,
-    { name?: string; argumentsText: string; startedAtMs: number }
-  >;
-  queuedMessages: QueuedMessage[];
-}
 
 // Builds the app-state snapshot used before a session is attached.
 function createInitialAppState(input: KimiTUIStartupInput): AppState {
@@ -273,86 +182,10 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
   };
 }
 
-// Creates all pi-tui components and mutable runtime state owned by KimiTUI.
-export function createTUIState(options: KimiTUIOptions): TUIState {
-  const initialAppState = options.initialAppState;
-  const theme = createKimiTUIThemeBundle(initialAppState.theme, options.resolvedTheme);
-
-  const terminal = new ProcessTerminal();
-  const ui = new TUI(terminal);
-
-  // Every chrome container runs with a 2-column outer gutter on each
-  // side. That gives the transcript, panels, the editor and the
-  // statusline a shared left edge — the input box's `│` lines up with
-  // panel borders like Welcome's `│`, and bullets / `>` share a column.
-  const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-  const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-  const todoPanelContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-  const todoPanel = new TodoPanelComponent(theme.colors);
-  const queueContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-  const editorContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-  const editor = new CustomEditor(ui, theme.colors);
-  const footer = new FooterComponent({ ...initialAppState }, theme.colors, () => {
-    ui.requestRender();
-  });
-
-  return {
-    ui,
-    terminal,
-    transcriptContainer,
-    activityContainer,
-    todoPanelContainer,
-    todoPanel,
-    queueContainer,
-    editorContainer,
-    footer,
-    editor,
-    theme,
-    appState: { ...initialAppState },
-    startupState: 'pending',
-    livePane: { ...INITIAL_LIVE_PANE },
-    transcriptEntries: [],
-    terminalState: createTerminalState(),
-    activitySpinner: null,
-    activeThinkingComponent: undefined,
-    streamingBlock: null,
-    activeCompactionBlock: undefined,
-    toolOutputExpanded: false,
-    planExpanded: false,
-    pendingToolComponents: new Map<string, ToolCallComponent>(),
-    pendingAgentGroup: null,
-    pendingReadGroup: null,
-    backgroundAgentMetadata: new Map<string, BackgroundAgentMetadata>(),
-    backgroundTasks: new Map<string, BackgroundTaskInfo>(),
-    backgroundTaskTranscriptedTerminal: new Set<string>(),
-    renderedSkillActivationIds: new Set<string>(),
-    renderedMcpServerStatusKeys: new Map<string, string>(),
-    mcpServerStatusSpinners: new Map<string, MoonLoader>(),
-    subagentInfo: new Map(),
-    sessions: [],
-    loadingSessions: false,
-    activeDialog: null,
-    tasksBrowser: undefined,
-    externalEditorRunning: false,
-    currentTurnId: undefined,
-    currentStep: 0,
-    assistantDraft: '',
-    thinkingDraft: '',
-    activeToolCalls: new Map<string, ToolCallBlockData>(),
-    streamingToolCallArguments: new Map(),
-    queuedMessages: [],
-  };
-}
-
 interface SendMessageOptions {
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
   readonly hasMedia?: boolean;
-}
-
-export interface LoginProgressSpinnerHandle {
-  /** Stops the login progress row and replaces it with a final status. */
-  stop(opts: { ok: boolean; label: string }): void;
 }
 
 export class KimiTUI {
@@ -1227,7 +1060,7 @@ export class KimiTUI {
 
   // Resets request-scoped state before submitting work to the active session.
   beginSessionRequest(): void {
-    this.state.currentTurnId = undefined;
+    this.streamingUI.currentTurnId = undefined;
     this.streamingUI.resetLiveText();
     this.streamingUI.resetToolUi();
     this.streamingUI.resetToolCallState();
@@ -1324,7 +1157,7 @@ export class KimiTUI {
       this.appendTranscriptEntry({
         id: nextTranscriptId(),
         kind: 'user',
-        turnId: this.state.currentTurnId,
+        turnId: this.streamingUI.currentTurnId,
         renderMode: 'plain',
         content: part,
       });
@@ -1521,8 +1354,8 @@ export class KimiTUI {
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
     this.state.footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 0 });
     this.streamingUI.setTodoList([]);
-    this.state.currentTurnId = undefined;
-    this.state.currentStep = 0;
+    this.streamingUI.currentTurnId = undefined;
+    this.streamingUI.currentStep = 0;
     this.streamingUI.resetLiveText();
     this.updateQueueDisplay();
   }
@@ -1746,30 +1579,6 @@ export class KimiTUI {
     this.state.transcriptContainer.addChild(welcome);
   }
 
-  // Disposes the active compaction component if one is mounted.
-  private disposeActiveCompactionBlock(): void {
-    if (this.state.activeCompactionBlock !== undefined) {
-      this.state.activeCompactionBlock.dispose();
-      this.state.activeCompactionBlock = undefined;
-    }
-  }
-
-  // Disposes the active thinking component if one is mounted.
-  disposeActiveThinkingComponent(): void {
-    if (this.state.activeThinkingComponent !== undefined) {
-      this.state.activeThinkingComponent.dispose();
-      this.state.activeThinkingComponent = undefined;
-    }
-  }
-
-  // Disposes and forgets all pending live tool-call components.
-  disposeAndClearPendingToolComponents(): void {
-    for (const component of this.state.pendingToolComponents.values()) {
-      if (hasDispose(component)) component.dispose();
-    }
-    this.state.pendingToolComponents.clear();
-  }
-
   private clearTerminalInlineImages(): void {
     if (getCapabilities().images !== 'kitty') return;
     this.state.terminal.write(deleteAllKittyImages());
@@ -1779,7 +1588,7 @@ export class KimiTUI {
   private clearTranscriptAndRedraw(): void {
     this.streamingUI.discardPending();
     this.state.transcriptEntries = [];
-    this.disposeActiveCompactionBlock();
+    this.streamingUI.disposeActiveCompactionBlock();
     this.streamingUI.resetLiveText();
     this.streamingUI.resetToolUi();
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
