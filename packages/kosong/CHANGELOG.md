@@ -1,5 +1,11 @@
 # @moonshot-ai/kosong
 
+## 0.2.2
+
+### Patch Changes
+
+- [#92](https://github.com/MoonshotAI/kimi-code/pull/92) [`4e458d6`](https://github.com/MoonshotAI/kimi-code/commit/4e458d63643a56a2fb1ba9f908c774e56eef1c75) - Use one retry classification for transient LLM failures across regular turns and compaction.
+
 ## 0.2.1
 
 ### Patch Changes
