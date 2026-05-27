@@ -211,9 +211,9 @@ export class PluginManager {
     for (const record of this.records.values()) {
       if (!record.enabled || record.state !== 'ok' || record.manifest === undefined) continue;
       for (const [name, config] of Object.entries(record.manifest.mcpServers ?? {})) {
-        if (!isMcpServerEnabled(record, name)) continue;
+        if (!isMcpServerEnabled(record, name, config)) continue;
         out[pluginMcpRuntimeName(record.id, name)] = withPluginMcpRuntime(
-          config,
+          withMcpServerEnabled(config, true),
           record.root,
           this.kimiHomeDir,
         );
@@ -359,8 +359,12 @@ function recordToInfo(record: PluginRecord): PluginInfo {
   };
 }
 
-function isMcpServerEnabled(record: PluginRecord, name: string): boolean {
-  return record.capabilities?.mcpServers?.[name]?.enabled !== false;
+function isMcpServerEnabled(
+  record: PluginRecord,
+  name: string,
+  config: McpServerConfig,
+): boolean {
+  return record.capabilities?.mcpServers?.[name]?.enabled ?? config.enabled !== false;
 }
 
 function pluginMcpServersInfo(record: PluginRecord): readonly PluginMcpServerInfo[] {
@@ -378,7 +382,7 @@ function pluginMcpServerInfo(
     return {
       name,
       runtimeName: pluginMcpRuntimeName(record.id, name),
-      enabled: isMcpServerEnabled(record, name),
+      enabled: isMcpServerEnabled(record, name, config),
       transport: 'http',
       url: config.url,
       headerKeys: config.headers === undefined ? undefined : Object.keys(config.headers).toSorted(),
@@ -387,7 +391,7 @@ function pluginMcpServerInfo(
   return {
     name,
     runtimeName: pluginMcpRuntimeName(record.id, name),
-    enabled: isMcpServerEnabled(record, name),
+    enabled: isMcpServerEnabled(record, name, config),
     transport: 'stdio',
     command: config.command,
     args: config.args,
@@ -396,8 +400,14 @@ function pluginMcpServerInfo(
   };
 }
 
+function withMcpServerEnabled(config: McpServerConfig, enabled: boolean): McpServerConfig {
+  return { ...config, enabled };
+}
+
 function pluginMcpRuntimeName(pluginId: string, serverName: string): string {
-  return `plugin-${pluginId}-${serverName}`;
+  // Plugin ids cannot contain ":", so this keeps plugin/server pairs unambiguous
+  // even when either side contains "-".
+  return `plugin-${pluginId}:${serverName}`;
 }
 
 function withPluginMcpRuntime(

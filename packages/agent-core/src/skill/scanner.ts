@@ -34,6 +34,7 @@ export interface DiscoverSkillsOptions {
   readonly roots: readonly SkillRoot[];
   readonly onWarning?: (message: string, cause?: unknown) => void;
   readonly onSkippedByPolicy?: (skill: SkippedSkill) => void;
+  readonly onDiscoveredSkill?: (skill: SkillDefinition) => void;
   readonly readdir?: (p: string) => Promise<readonly string[]>;
   readonly isFile?: (p: string) => Promise<boolean>;
   readonly isDir?: (p: string) => Promise<boolean>;
@@ -168,6 +169,7 @@ export async function discoverSkills(
         skillMdPath: path.join(dirPath, entry, 'SKILL.md'),
         skillDirName: entry,
         root,
+        onDiscoveredSkill: options.onDiscoveredSkill,
         warn,
         skip,
       });
@@ -188,6 +190,7 @@ export async function discoverSkills(
             skillMdPath: rootSkillMd,
             skillDirName: path.basename(dirPath),
             root,
+            onDiscoveredSkill: options.onDiscoveredSkill,
             warn,
             skip,
           });
@@ -212,6 +215,7 @@ export async function discoverSkills(
           skillMdPath,
           skillDirName: skillName,
           root,
+          onDiscoveredSkill: options.onDiscoveredSkill,
           warn,
           skip,
         });
@@ -338,6 +342,7 @@ async function parseAndRegister(input: {
   readonly skillMdPath: string;
   readonly skillDirName: string;
   readonly root: SkillRoot;
+  readonly onDiscoveredSkill?: (skill: SkillDefinition) => void;
   readonly warn: (message: string, cause?: unknown) => void;
   readonly skip: (skill: SkippedSkill) => void;
 }): Promise<void> {
@@ -347,12 +352,14 @@ async function parseAndRegister(input: {
       skillDirName: input.skillDirName,
       source: input.root.source,
     });
-    const key = normalizeSkillName(skill.name);
+    const discovered = input.root.plugin === undefined ? skill : {
+      ...skill,
+      plugin: input.root.plugin,
+    };
+    input.onDiscoveredSkill?.(discovered);
+    const key = normalizeSkillName(discovered.name);
     if (!input.byName.has(key)) {
-      input.byName.set(key, input.root.plugin === undefined ? skill : {
-        ...skill,
-        plugin: input.root.plugin,
-      });
+      input.byName.set(key, discovered);
     }
   } catch (error) {
     if (error instanceof UnsupportedSkillTypeError) {

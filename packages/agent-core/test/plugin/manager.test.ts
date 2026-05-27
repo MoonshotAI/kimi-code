@@ -329,7 +329,7 @@ describe('PluginManager', () => {
     expect(manager.info('demo')?.mcpServers).toContainEqual(
       expect.objectContaining({
         name: 'finance',
-        runtimeName: 'plugin-demo-finance',
+        runtimeName: 'plugin-demo:finance',
         enabled: true,
         command: 'finance-mcp',
       }),
@@ -343,12 +343,12 @@ describe('PluginManager', () => {
 
     expect(manager.enabledMcpServers()).toEqual(
       expect.objectContaining({
-        'plugin-demo-finance': expect.objectContaining({
+        'plugin-demo:finance': expect.objectContaining({
           command: 'finance-mcp',
           cwd: managedRoot,
           env: expect.objectContaining({ KIMI_CODE_HOME: home, KIMI_PLUGIN_ROOT: managedRoot }),
         }),
-        'plugin-demo-docs': expect.objectContaining({
+        'plugin-demo:docs': expect.objectContaining({
           url: 'https://example.com/mcp',
         }),
       }),
@@ -356,7 +356,7 @@ describe('PluginManager', () => {
 
     await manager.setMcpServerEnabled('demo', 'finance', false);
 
-    expect(manager.enabledMcpServers()).not.toHaveProperty('plugin-demo-finance');
+    expect(manager.enabledMcpServers()).not.toHaveProperty('plugin-demo:finance');
     expect(manager.summaries()[0]).toEqual(
       expect.objectContaining({
         mcpServerCount: 2,
@@ -369,6 +369,84 @@ describe('PluginManager', () => {
     expect(reloaded.info('demo')?.mcpServers).toContainEqual(
       expect.objectContaining({ name: 'finance', enabled: false }),
     );
+  });
+
+  it('merges manifest MCP enabled defaults with explicit user state', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo', {
+      mcpServers: {
+        finance: { command: 'finance-mcp', enabled: false },
+      },
+    });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+
+    expect(manager.info('demo')?.mcpServers).toContainEqual(
+      expect.objectContaining({ name: 'finance', enabled: false }),
+    );
+    expect(manager.summaries()[0]).toEqual(
+      expect.objectContaining({
+        mcpServerCount: 1,
+        enabledMcpServerCount: 0,
+      }),
+    );
+    expect(manager.enabledMcpServers()).toEqual({});
+
+    await manager.setMcpServerEnabled('demo', 'finance', true);
+
+    expect(manager.info('demo')?.mcpServers).toContainEqual(
+      expect.objectContaining({ name: 'finance', enabled: true }),
+    );
+    expect(manager.enabledMcpServers()).toEqual(
+      expect.objectContaining({
+        'plugin-demo:finance': expect.objectContaining({
+          command: 'finance-mcp',
+          enabled: true,
+        }),
+      }),
+    );
+
+    const reloaded = new PluginManager({ kimiHomeDir: home });
+    await reloaded.load();
+    expect(reloaded.info('demo')?.mcpServers).toContainEqual(
+      expect.objectContaining({ name: 'finance', enabled: true }),
+    );
+    expect(reloaded.enabledMcpServers()).toHaveProperty('plugin-demo:finance');
+  });
+
+  it('uses unambiguous runtime names for plugin MCP servers', async () => {
+    const home = await makeKimiHome();
+    const first = await makePlugin('a-b', {
+      mcpServers: {
+        c: { command: 'first-mcp' },
+      },
+    });
+    const second = await makePlugin('a', {
+      mcpServers: {
+        'b-c': { command: 'second-mcp' },
+      },
+    });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(first);
+    await manager.install(second);
+
+    expect(manager.info('a-b')?.mcpServers).toContainEqual(
+      expect.objectContaining({ name: 'c', runtimeName: 'plugin-a-b:c' }),
+    );
+    expect(manager.info('a')?.mcpServers).toContainEqual(
+      expect.objectContaining({ name: 'b-c', runtimeName: 'plugin-a:b-c' }),
+    );
+
+    const servers = manager.enabledMcpServers();
+    expect(servers).toEqual(
+      expect.objectContaining({
+        'plugin-a-b:c': expect.objectContaining({ command: 'first-mcp' }),
+        'plugin-a:b-c': expect.objectContaining({ command: 'second-mcp' }),
+      }),
+    );
+    expect(Object.keys(servers)).toHaveLength(2);
   });
 
   it('enabledMcpServers() excludes disabled plugins', async () => {

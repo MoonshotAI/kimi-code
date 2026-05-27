@@ -694,6 +694,43 @@ describe('resolveSkillRoots extra dirs', () => {
     });
   });
 
+  it('keeps plugin-specific skill lookup when a project skill has the same name', async () => {
+    const { repoDir } = await makeWorkspace();
+    const projectRoot = path.join(repoDir, '.kimi-code', 'skills');
+    const pluginRoot = path.join(repoDir, 'plugin-skills');
+    await writeSkill(projectRoot, path.join('using-superpowers', 'SKILL.md'), [
+      '---',
+      'name: using-superpowers',
+      'description: Project override',
+      '---',
+      '',
+      'project body',
+    ]);
+    await writeSkill(pluginRoot, path.join('using-superpowers', 'SKILL.md'), [
+      '---',
+      'name: using-superpowers',
+      'description: Plugin startup',
+      '---',
+      '',
+      'plugin body',
+    ]);
+    const registry = new SkillRegistry();
+
+    await registry.loadRoots([
+      { path: projectRoot, source: 'project' },
+      {
+        path: pluginRoot,
+        source: 'extra',
+        plugin: { id: 'superpowers' },
+      },
+    ]);
+
+    expect(registry.getSkill('using-superpowers')?.content).toBe('project body');
+    expect(registry.getPluginSkill('superpowers', 'using-superpowers')?.content).toBe(
+      'plugin body',
+    );
+  });
+
   it('stamps skills discovered via extra dirs with source=extra', async () => {
     const { homeDir, repoDir, workDir } = await makeWorkspace();
     const extra = path.join(repoDir, 'my-extra');

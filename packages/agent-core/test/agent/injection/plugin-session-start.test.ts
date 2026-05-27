@@ -11,6 +11,7 @@ interface StubSessionStartAgent {
   skills: {
     registry: {
       getSkill: (name: string) => SkillDefinition | undefined;
+      getPluginSkill: (pluginId: string, name: string) => SkillDefinition | undefined;
       renderSkillPrompt: (skill: SkillDefinition, args: string) => string;
     };
   };
@@ -54,6 +55,11 @@ function sessionStartAgent(input: {
   history?: unknown[];
 }): { agent: Agent; warnings: readonly CapturedWarn[] } {
   const byName = new Map(input.skills.map((s) => [s.name.toLowerCase(), s]));
+  const byPluginAndName = new Map(
+    input.skills.flatMap((s) =>
+      s.plugin === undefined ? [] : [[`${s.plugin.id}\0${s.name.toLowerCase()}`, s] as const],
+    ),
+  );
   const history: unknown[] = [...(input.history ?? [])];
   const warnings: CapturedWarn[] = [];
   const agent: StubSessionStartAgent = {
@@ -61,6 +67,8 @@ function sessionStartAgent(input: {
     skills: {
       registry: {
         getSkill: (name) => byName.get(name.toLowerCase()),
+        getPluginSkill: (pluginId, name) =>
+          byPluginAndName.get(`${pluginId}\0${name.toLowerCase()}`),
         renderSkillPrompt: (skill) => {
           const plugin = skill.plugin;
           if (plugin === undefined) return skill.content;
@@ -117,7 +125,7 @@ describe('PluginSessionStartInjector', () => {
   it('does not hard-code Superpowers guidance when the skill has no plugin instructions', async () => {
     const { agent } = sessionStartAgent({
       sessionStarts: [{ pluginId: 'superpowers', skillName: 'using-superpowers' }],
-      skills: [skill('using-superpowers', 'body')],
+      skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
     });
     const injector = new PluginSessionStartInjector(agent);
     await injector.inject();
@@ -131,7 +139,7 @@ describe('PluginSessionStartInjector', () => {
   it('does not re-inject on subsequent calls within the same session', async () => {
     const { agent } = sessionStartAgent({
       sessionStarts: [{ pluginId: 'superpowers', skillName: 'using-superpowers' }],
-      skills: [skill('using-superpowers', 'body')],
+      skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
     });
     const injector = new PluginSessionStartInjector(agent);
     await injector.inject();
@@ -143,7 +151,7 @@ describe('PluginSessionStartInjector', () => {
   it('does not re-inject when a replayed history already contains plugin sessionStart', async () => {
     const { agent } = sessionStartAgent({
       sessionStarts: [{ pluginId: 'superpowers', skillName: 'using-superpowers' }],
-      skills: [skill('using-superpowers', 'body')],
+      skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
       history: [
         {
           role: 'user',
@@ -164,7 +172,7 @@ describe('PluginSessionStartInjector', () => {
         { pluginId: 'demo', skillName: 'missing' },
         { pluginId: 'superpowers', skillName: 'using-superpowers' },
       ],
-      skills: [skill('using-superpowers', 'body')],
+      skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
     });
     const injector = new PluginSessionStartInjector(agent);
     await injector.inject();
@@ -185,5 +193,20 @@ describe('PluginSessionStartInjector', () => {
     await injector.inject();
     const history = (agent.context as unknown as { history: unknown[] }).history;
     expect(history).toEqual([]);
+  });
+
+  it('resolves sessionStart skills by plugin identity when names collide', async () => {
+    const { agent } = sessionStartAgent({
+      sessionStarts: [{ pluginId: 'superpowers', skillName: 'using-superpowers' }],
+      skills: [
+        skill('using-superpowers', 'project body'),
+        skill('using-superpowers', 'plugin body', { id: 'superpowers' }),
+      ],
+    });
+    const injector = new PluginSessionStartInjector(agent);
+    await injector.inject();
+    const text = lastReminder(agent);
+    expect(text).toContain('plugin body');
+    expect(text).not.toContain('project body');
   });
 });

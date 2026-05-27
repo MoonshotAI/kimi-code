@@ -22,7 +22,7 @@ export class PluginSessionStartInjector extends DynamicInjector {
     if (registry === undefined) return undefined;
     const blocks: string[] = [];
     for (const sessionStart of sessionStarts) {
-      const skill = registry.getSkill(sessionStart.skillName);
+      const skill = registry.getPluginSkill(sessionStart.pluginId, sessionStart.skillName);
       if (skill === undefined) {
         this.agent.log.warn('plugin sessionStart skill not found', {
           pluginId: sessionStart.pluginId,
