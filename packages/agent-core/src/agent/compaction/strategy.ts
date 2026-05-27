@@ -1,6 +1,25 @@
 import type { Message } from "@moonshot-ai/kosong";
 import { estimateTokensForMessage } from "../../utils/tokens";
-import { type CompactionConfig, DEFAULT_COMPACTION_CONFIG } from "./config";
+
+export interface CompactionConfig {
+  triggerRatio: number;
+  blockRatio: number;
+  reservedContextSize: number;
+  maxCompactionPerTurn: number;
+  maxRecentSteps: number;
+  maxRecentUserMessages: number;
+  maxRecentSizeRatio: number;
+}
+
+export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
+  triggerRatio: 0.85,
+  blockRatio: 0.85, // Same as triggerRatio to disable async compaction
+  reservedContextSize: 50_000,
+  maxCompactionPerTurn: 3,
+  maxRecentSteps: 3,
+  maxRecentUserMessages: Infinity,
+  maxRecentSizeRatio: 0.2,
+};
 
 export interface CompactionStrategy {
   shouldCompact(usedSize: number, maxSize: number): boolean;

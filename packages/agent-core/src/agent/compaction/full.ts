@@ -33,10 +33,9 @@ import {
 } from '../../utils/tokens';
 import { project } from '../context/projector';
 import compactionInstructionTemplate from './compaction-instruction.md';
-import { DEFAULT_COMPACTION_CONFIG } from './config';
 import { renderMessagesToText } from './render-messages';
 import type { CompactionBeginData, CompactionResult } from './types';
-import { DefaultCompactionStrategy, type CompactionStrategy } from './strategy';
+import { DEFAULT_COMPACTION_CONFIG, DefaultCompactionStrategy, type CompactionStrategy } from './strategy';
 
 type CompactionTelemetryTrigger = CompactionBeginData['source'] | 'manual-with-prompt' | 'unknown';
 
