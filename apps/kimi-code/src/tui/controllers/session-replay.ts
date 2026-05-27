@@ -40,11 +40,13 @@ import {
   type SkillActivationProjection,
 } from '../utils/message-replay';
 import type { StreamingUIController } from './streaming-ui';
+import type { SessionEventHandler } from './session-event-handler';
 import type { TUIState } from '../tui-state';
 
 export interface SessionReplayHost {
   state: TUIState;
   readonly streamingUI: StreamingUIController;
+  readonly sessionEventHandler: SessionEventHandler;
   setAppState(patch: Partial<AppState>): void;
   showError(msg: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
@@ -103,19 +105,19 @@ export class SessionReplayRenderer {
   }
 
   private hydrateBackgroundState(agent: ResumedAgentState): void {
-    const { state } = this.host;
+    const { state, sessionEventHandler } = this.host;
     const projection = replayBackgroundProjection(agent.background);
-    state.backgroundAgentMetadata = new Map(projection.backgroundAgentMetadata);
-    state.backgroundTasks = new Map<string, BackgroundTaskInfo>(
+    sessionEventHandler.backgroundAgentMetadata = new Map(projection.backgroundAgentMetadata);
+    sessionEventHandler.backgroundTasks = new Map<string, BackgroundTaskInfo>(
       agent.background.map((info) => [info.taskId, info]),
     );
-    state.backgroundTaskTranscriptedTerminal.clear();
+    sessionEventHandler.backgroundTaskTranscriptedTerminal.clear();
     for (const info of agent.background) {
       if (isTerminalBackgroundTask(info)) {
-        state.backgroundTaskTranscriptedTerminal.add(info.taskId);
+        sessionEventHandler.backgroundTaskTranscriptedTerminal.add(info.taskId);
       }
     }
-    state.footer.setBackgroundCounts(countActiveBackgroundTasks(state.backgroundTasks));
+    state.footer.setBackgroundCounts(countActiveBackgroundTasks(sessionEventHandler.backgroundTasks));
     state.ui.requestRender();
   }
 
@@ -305,11 +307,11 @@ export class SessionReplayRenderer {
     context: ReplayRenderContext,
     skill: SkillActivationProjection,
   ): void {
-    const { state } = this.host;
+    const { sessionEventHandler } = this.host;
     if (context.skillActivationIds.has(skill.activationId)) return;
-    if (state.renderedSkillActivationIds.has(skill.activationId)) return;
+    if (sessionEventHandler.renderedSkillActivationIds.has(skill.activationId)) return;
     context.skillActivationIds.add(skill.activationId);
-    state.renderedSkillActivationIds.add(skill.activationId);
+    sessionEventHandler.renderedSkillActivationIds.add(skill.activationId);
     this.host.appendTranscriptEntry({
       ...replayEntry(context, 'skill_activation', `Activated skill: ${skill.skillName}`, 'plain'),
       skillActivationId: skill.activationId,
@@ -433,8 +435,8 @@ export class SessionReplayRenderer {
     context: ReplayRenderContext,
     origin: Extract<PromptOrigin, { kind: 'background_task' }>,
   ): void {
-    const { state } = this.host;
-    const task = state.backgroundTasks.get(origin.taskId);
+    const { sessionEventHandler } = this.host;
+    const task = sessionEventHandler.backgroundTasks.get(origin.taskId);
     if (task !== undefined && task.taskId.startsWith('bash-')) {
       const status = formatBackgroundTaskTranscript({ ...task, status: origin.status });
       this.host.appendTranscriptEntry({
@@ -442,7 +444,7 @@ export class SessionReplayRenderer {
         detail: status.detail,
         backgroundAgentStatus: status,
       });
-      state.backgroundTaskTranscriptedTerminal.add(origin.taskId);
+      sessionEventHandler.backgroundTaskTranscriptedTerminal.add(origin.taskId);
       return;
     }
 
@@ -471,6 +473,6 @@ export class SessionReplayRenderer {
       detail: status.detail,
       backgroundAgentStatus: status,
     });
-    state.backgroundAgentMetadata.delete(meta.agentId);
+    sessionEventHandler.backgroundAgentMetadata.delete(meta.agentId);
   }
 }

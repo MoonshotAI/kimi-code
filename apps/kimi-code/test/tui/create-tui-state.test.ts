@@ -69,8 +69,6 @@ describe('createTUIState', () => {
     // Empty collections.
     expect(state.transcriptEntries).toHaveLength(0);
     expect(state.queuedMessages).toHaveLength(0);
-    expect(state.backgroundAgentMetadata.size).toBe(0);
-    expect(state.renderedSkillActivationIds.size).toBe(0);
 
     // Boolean, counter, and optional-field defaults.
     expect(state.toolOutputExpanded).toBe(false);

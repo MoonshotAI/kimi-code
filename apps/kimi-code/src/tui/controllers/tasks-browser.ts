@@ -9,12 +9,12 @@ import type { CustomEditor } from '../components/editor/custom-editor';
 export interface TasksBrowserHost {
   readonly state: {
     tasksBrowser: TasksBrowserState | undefined;
-    readonly backgroundTasks: Map<string, BackgroundTaskInfo>;
     readonly theme: { readonly colors: ColorPalette };
     readonly terminal: ProcessTerminal;
     readonly ui: TUI;
     readonly editor: CustomEditor;
   };
+  readonly backgroundTasks: ReadonlyMap<string, BackgroundTaskInfo>;
   readonly session: Session | undefined;
   showError(msg: string): void;
 }
@@ -131,7 +131,7 @@ export class TasksBrowserController {
   repaint(): void {
     const browser = this.host.state.tasksBrowser;
     if (browser === undefined) return;
-    const tasks = [...this.host.state.backgroundTasks.values()];
+    const tasks = [...this.host.backgroundTasks.values()];
     this.pushProps(tasks);
   }
 
@@ -161,7 +161,7 @@ export class TasksBrowserController {
     }
     if (output === viewer.output) return;
     viewer.output = output;
-    const info = state.backgroundTasks.get(viewer.taskId);
+    const info = this.host.backgroundTasks.get(viewer.taskId);
     viewer.component.setProps({
       taskId: viewer.taskId,
       info,
@@ -339,7 +339,7 @@ export class TasksBrowserController {
     const current = state.tasksBrowser;
     if (current === undefined || current !== browser) return;
 
-    const info = state.backgroundTasks.get(taskId);
+    const info = this.host.backgroundTasks.get(taskId);
     const viewer = new TaskOutputViewer(
       {
         taskId,

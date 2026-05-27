@@ -94,6 +94,25 @@ export interface SessionEventHost {
 export class SessionEventHandler {
   constructor(private readonly host: SessionEventHost) {}
 
+  // Runtime state – owned by this handler, reset between sessions.
+  backgroundAgentMetadata: Map<string, BackgroundAgentMetadata> = new Map();
+  backgroundTasks: Map<string, BackgroundTaskInfo> = new Map();
+  backgroundTaskTranscriptedTerminal: Set<string> = new Set();
+  subagentInfo: Map<string, { parentToolCallId: string; name: string }> = new Map();
+  renderedSkillActivationIds: Set<string> = new Set();
+  renderedMcpServerStatusKeys: Map<string, string> = new Map();
+  mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
+
+  resetRuntimeState(): void {
+    this.backgroundAgentMetadata.clear();
+    this.backgroundTasks.clear();
+    this.backgroundTaskTranscriptedTerminal.clear();
+    this.subagentInfo.clear();
+    this.renderedSkillActivationIds.clear();
+    this.renderedMcpServerStatusKeys.clear();
+    this.stopAllMcpServerStatusSpinners();
+  }
+
   startSubscription(): void {
     const { host } = this;
     const session = host.requireSession();
@@ -130,15 +149,15 @@ export class SessionEventHandler {
     const visible = selectMcpStartupStatusRows(servers);
     const visibleNames = new Set(visible.map((server) => server.name));
     for (const server of visible) {
-      if (host.state.renderedMcpServerStatusKeys.has(server.name)) continue;
+      if (this.renderedMcpServerStatusKeys.has(server.name)) continue;
       this.renderMcpServerStatus(server);
     }
 
     const hidden: McpServerStatusSnapshot[] = [];
     for (const server of servers) {
       if (visibleNames.has(server.name)) continue;
-      if (host.state.renderedMcpServerStatusKeys.has(server.name)) continue;
-      host.state.renderedMcpServerStatusKeys.set(server.name, mcpServerStatusKey(server));
+      if (this.renderedMcpServerStatusKeys.has(server.name)) continue;
+      this.renderedMcpServerStatusKeys.set(server.name, mcpServerStatusKey(server));
       hidden.push(server);
     }
     if (hidden.length > 0) {
@@ -193,10 +212,10 @@ export class SessionEventHandler {
   }
 
   stopAllMcpServerStatusSpinners(): void {
-    for (const spinner of this.host.state.mcpServerStatusSpinners.values()) {
+    for (const spinner of this.mcpServerStatusSpinners.values()) {
       spinner.stop();
     }
-    this.host.state.mcpServerStatusSpinners.clear();
+    this.mcpServerStatusSpinners.clear();
   }
 
   // ---------------------------------------------------------------------------
@@ -207,8 +226,8 @@ export class SessionEventHandler {
     const subagentId = event.agentId;
     if (subagentId === MAIN_AGENT_ID) return false;
 
-    const { state, streamingUI } = this.host;
-    const info = state.subagentInfo.get(subagentId);
+    const { streamingUI } = this.host;
+    const info = this.subagentInfo.get(subagentId);
     if (info === undefined || info.parentToolCallId.length === 0) return true;
     const { parentToolCallId } = info;
     const sourceName = info.name;
@@ -574,8 +593,8 @@ export class SessionEventHandler {
   private renderMcpServerStatus(server: McpServerStatusSnapshot): void {
     const { state } = this.host;
     const key = mcpServerStatusKey(server);
-    if (state.renderedMcpServerStatusKeys.get(server.name) === key) return;
-    state.renderedMcpServerStatusKeys.set(server.name, key);
+    if (this.renderedMcpServerStatusKeys.get(server.name) === key) return;
+    this.renderedMcpServerStatusKeys.set(server.name, key);
 
     const colors = state.theme.colors;
     switch (server.status) {
@@ -611,7 +630,7 @@ export class SessionEventHandler {
   private showMcpServerStatusSpinner(name: string): void {
     const { state } = this.host;
     const label = `MCP server "${name}" connecting…`;
-    const existing = state.mcpServerStatusSpinners.get(name);
+    const existing = this.mcpServerStatusSpinners.get(name);
     if (existing !== undefined) {
       existing.setLabel(label);
       return;
@@ -619,13 +638,13 @@ export class SessionEventHandler {
     const tint = (s: string): string => chalk.hex(state.theme.colors.textMuted)(s);
     const spinner = new MoonLoader(state.ui, 'braille', tint, label);
     state.transcriptContainer.addChild(spinner);
-    state.mcpServerStatusSpinners.set(name, spinner);
+    this.mcpServerStatusSpinners.set(name, spinner);
     state.ui.requestRender();
   }
 
   private finalizeMcpServerStatusRow(name: string, message: string, color: string): void {
     const { state } = this.host;
-    const spinner = state.mcpServerStatusSpinners.get(name);
+    const spinner = this.mcpServerStatusSpinners.get(name);
     if (spinner === undefined) {
       this.host.showStatus(message, color);
       return;
@@ -640,14 +659,13 @@ export class SessionEventHandler {
     } else {
       state.transcriptContainer.addChild(status);
     }
-    state.mcpServerStatusSpinners.delete(name);
+    this.mcpServerStatusSpinners.delete(name);
     state.ui.requestRender();
   }
 
   private handleSkillActivated(event: SkillActivatedEvent): void {
-    const { state } = this.host;
-    if (state.renderedSkillActivationIds.has(event.activationId)) return;
-    state.renderedSkillActivationIds.add(event.activationId);
+    if (this.renderedSkillActivationIds.has(event.activationId)) return;
+    this.renderedSkillActivationIds.add(event.activationId);
     this.host.appendTranscriptEntry({
       id: nextTranscriptId(),
       kind: 'skill_activation',
@@ -710,15 +728,15 @@ export class SessionEventHandler {
   }
 
   private handleSubagentSpawned(event: SubagentSpawnedEvent): void {
-    const { state, streamingUI } = this.host;
-    state.subagentInfo.set(event.subagentId, {
+    const { streamingUI } = this.host;
+    this.subagentInfo.set(event.subagentId, {
       parentToolCallId: event.parentToolCallId,
       name: event.subagentName,
     });
 
     if (event.runInBackground) {
       const meta = this.buildBackgroundAgentMetadata(event);
-      state.backgroundAgentMetadata.set(event.subagentId, meta);
+      this.backgroundAgentMetadata.set(event.subagentId, meta);
       this.appendBackgroundAgentEntry('started', meta);
       this.syncBackgroundAgentBadge();
       return;
@@ -742,17 +760,17 @@ export class SessionEventHandler {
   }
 
   private handleSubagentCompleted(event: SubagentCompletedEvent): void {
-    const { state, streamingUI } = this.host;
-    const backgroundMeta = state.backgroundAgentMetadata.get(event.subagentId);
+    const { streamingUI } = this.host;
+    const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
-      state.backgroundAgentMetadata.delete(event.subagentId);
+      this.backgroundAgentMetadata.delete(event.subagentId);
       this.syncBackgroundAgentBadge();
       const taskId = this.findAgentTaskId(event.subagentId);
-      if (taskId !== undefined && state.backgroundTaskTranscriptedTerminal.has(taskId)) {
+      if (taskId !== undefined && this.backgroundTaskTranscriptedTerminal.has(taskId)) {
         return;
       }
       if (taskId !== undefined) {
-        state.backgroundTaskTranscriptedTerminal.add(taskId);
+        this.backgroundTaskTranscriptedTerminal.add(taskId);
       }
       const extras =
         event.resultSummary === undefined ? undefined : { resultSummary: event.resultSummary };
@@ -772,17 +790,17 @@ export class SessionEventHandler {
   }
 
   private handleSubagentFailed(event: SubagentFailedEvent): void {
-    const { state, streamingUI } = this.host;
-    const backgroundMeta = state.backgroundAgentMetadata.get(event.subagentId);
+    const { streamingUI } = this.host;
+    const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
-      state.backgroundAgentMetadata.delete(event.subagentId);
+      this.backgroundAgentMetadata.delete(event.subagentId);
       this.syncBackgroundAgentBadge();
       const taskId = this.findAgentTaskId(event.subagentId);
-      if (taskId !== undefined && state.backgroundTaskTranscriptedTerminal.has(taskId)) {
+      if (taskId !== undefined && this.backgroundTaskTranscriptedTerminal.has(taskId)) {
         return;
       }
       if (taskId !== undefined) {
-        state.backgroundTaskTranscriptedTerminal.add(taskId);
+        this.backgroundTaskTranscriptedTerminal.add(taskId);
       }
       this.appendBackgroundAgentEntry('failed', backgroundMeta, { error: event.error });
       return;
@@ -814,12 +832,11 @@ export class SessionEventHandler {
   }
 
   private findAgentTaskId(subagentId: string): string | undefined {
-    const { state } = this.host;
-    const meta = state.backgroundAgentMetadata.get(subagentId);
+    const meta = this.backgroundAgentMetadata.get(subagentId);
     const description = meta?.description ?? meta?.agentName;
     if (description === undefined) return undefined;
     let match: string | undefined;
-    for (const info of state.backgroundTasks.values()) {
+    for (const info of this.backgroundTasks.values()) {
       if (!info.taskId.startsWith('agent-')) continue;
       if (info.description !== description) continue;
       if (match !== undefined) return undefined;
@@ -870,8 +887,8 @@ export class SessionEventHandler {
   ): void {
     const { state } = this.host;
     const { info } = event;
-    const previous = state.backgroundTasks.get(info.taskId);
-    state.backgroundTasks.set(info.taskId, info);
+    const previous = this.backgroundTasks.get(info.taskId);
+    this.backgroundTasks.set(info.taskId, info);
 
     const viewer = state.tasksBrowser?.viewer;
     if (viewer !== undefined && viewer.taskId === info.taskId) {
@@ -897,11 +914,11 @@ export class SessionEventHandler {
     }
 
     if (event.type === 'background.task.terminated' && isTerminal) {
-      if (!state.backgroundTaskTranscriptedTerminal.has(info.taskId)) {
+      if (!this.backgroundTaskTranscriptedTerminal.has(info.taskId)) {
         if (info.taskId.startsWith('bash-')) {
           this.appendBackgroundTaskEntry(info);
         }
-        state.backgroundTaskTranscriptedTerminal.add(info.taskId);
+        this.backgroundTaskTranscriptedTerminal.add(info.taskId);
       }
       this.syncBackgroundTaskBadge();
       this.host.tasksBrowserController.repaint();
@@ -932,7 +949,7 @@ export class SessionEventHandler {
     const { state } = this.host;
     let bashTasks = 0;
     let agentTasks = 0;
-    for (const info of state.backgroundTasks.values()) {
+    for (const info of this.backgroundTasks.values()) {
       if (
         info.status === 'completed' ||
         info.status === 'failed' ||

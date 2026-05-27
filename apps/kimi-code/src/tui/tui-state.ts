@@ -3,7 +3,6 @@ import {
   ProcessTerminal,
   TUI,
 } from '@earendil-works/pi-tui';
-import type { BackgroundTaskInfo } from '@moonshot-ai/kimi-code-sdk';
 
 import { FooterComponent } from './components/chrome/footer';
 import { GutterContainer } from './components/chrome/gutter-container';
@@ -18,7 +17,6 @@ import { createTerminalState, type TerminalState } from './utils/terminal-state'
 import {
   INITIAL_LIVE_PANE,
   type AppState,
-  type BackgroundAgentMetadata,
   type KimiTUIOptions,
   type LivePaneState,
   type QueuedMessage,
@@ -46,13 +44,6 @@ export interface TUIState {
   activitySpinner: { instance: MoonLoader; style: SpinnerStyle } | null;
   toolOutputExpanded: boolean;
   planExpanded: boolean;
-  backgroundAgentMetadata: Map<string, BackgroundAgentMetadata>;
-  backgroundTasks: Map<string, BackgroundTaskInfo>;
-  backgroundTaskTranscriptedTerminal: Set<string>;
-  renderedSkillActivationIds: Set<string>;
-  renderedMcpServerStatusKeys: Map<string, string>;
-  mcpServerStatusSpinners: Map<string, MoonLoader>;
-  subagentInfo: Map<string, { parentToolCallId: string; name: string }>;
   sessions: SessionRow[];
   loadingSessions: boolean;
   activeDialog: 'session-picker' | 'help' | null;
@@ -99,13 +90,6 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     activitySpinner: null,
     toolOutputExpanded: false,
     planExpanded: false,
-    backgroundAgentMetadata: new Map<string, BackgroundAgentMetadata>(),
-    backgroundTasks: new Map<string, BackgroundTaskInfo>(),
-    backgroundTaskTranscriptedTerminal: new Set<string>(),
-    renderedSkillActivationIds: new Set<string>(),
-    renderedMcpServerStatusKeys: new Map<string, string>(),
-    mcpServerStatusSpinners: new Map<string, MoonLoader>(),
-    subagentInfo: new Map(),
     sessions: [],
     loadingSessions: false,
     activeDialog: null,

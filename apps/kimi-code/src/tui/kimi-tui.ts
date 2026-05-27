@@ -23,6 +23,7 @@ import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import type {
   ApprovalRequest,
   ApprovalResponse,
+  BackgroundTaskInfo,
   CreateSessionOptions,
   KimiHarness,
   PermissionMode,
@@ -669,6 +670,11 @@ export class KimiTUI {
 
   appendStartupNotice(extra: string): void {
     this.startupNotice = combineStartupNotice(this.startupNotice, extra);
+  }
+
+  // Exposes background tasks owned by the event handler for host interfaces.
+  get backgroundTasks(): ReadonlyMap<string, BackgroundTaskInfo> {
+    return this.sessionEventHandler.backgroundTasks;
   }
 
   // Returns the currently selected session id shown by the UI.
@@ -1344,14 +1350,8 @@ export class KimiTUI {
     this.harness.interactiveAgentId = MAIN_AGENT_ID;
     this.streamingUI.resetToolCallState();
     this.streamingUI.resetToolUi();
-    this.state.backgroundAgentMetadata.clear();
-    this.state.backgroundTasks.clear();
-    this.state.backgroundTaskTranscriptedTerminal.clear();
+    this.sessionEventHandler.resetRuntimeState();
     this.tasksBrowserController.close();
-    this.state.subagentInfo.clear();
-    this.state.renderedSkillActivationIds.clear();
-    this.state.renderedMcpServerStatusKeys.clear();
-    this.sessionEventHandler.stopAllMcpServerStatusSpinners();
     this.state.footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 0 });
     this.streamingUI.setTodoList([]);
     this.streamingUI.currentTurnId = undefined;
