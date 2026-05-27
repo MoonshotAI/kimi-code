@@ -36,9 +36,13 @@ import compactionInstructionTemplate from './compaction-instruction.md';
 import { DEFAULT_COMPACTION_CONFIG } from './config';
 import { renderMessagesToText } from './render-messages';
 import type { CompactionBeginData, CompactionResult } from './types';
-import { DefaultCompactionStrategy, type CompactedHistory, type CompactionStrategy } from './strategy';
+import { DefaultCompactionStrategy, type CompactionStrategy } from './strategy';
 
 type CompactionTelemetryTrigger = CompactionBeginData['source'] | 'manual-with-prompt' | 'unknown';
+
+export interface CompactedHistory {
+  text: string;
+}
 
 export class FullCompaction {
   protected compactionCountInTurn = 0;

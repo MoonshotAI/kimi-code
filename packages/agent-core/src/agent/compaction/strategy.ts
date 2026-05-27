@@ -91,7 +91,3 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
     return this.config.maxCompactionPerTurn;
   }
 }
-
-export interface CompactedHistory {
-  text: string;
-}
