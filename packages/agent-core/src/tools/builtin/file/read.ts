@@ -426,9 +426,11 @@ export class ReadTool implements BuiltinTool<ReadInput> {
     parts.push(`Total lines in file: ${String(input.totalLines)}.`);
     if (input.maxLinesReached) {
       parts.push(`Max ${String(MAX_LINES)} lines reached.`);
-    } else if (input.maxBytesReached) {
+    }
+    if (input.maxBytesReached) {
       parts.push(`Max ${String(MAX_BYTES)} bytes reached.`);
-    } else if (lineCount < input.requestedLines) {
+    }
+    if (!input.maxLinesReached && !input.maxBytesReached && lineCount < input.requestedLines) {
       parts.push('End of file reached.');
     }
     if (input.truncatedLineNumbers.length > 0) {
