@@ -8,7 +8,7 @@ import type { CustomEditor } from '../components/editor/custom-editor';
 
 export interface TasksBrowserHost {
   readonly state: {
-    tasksBrowser: TasksBrowserState | undefined;
+    readonly tasksBrowser: TasksBrowserState | undefined;
     readonly theme: { readonly colors: ColorPalette };
     readonly terminal: ProcessTerminal;
     readonly ui: TUI;
@@ -17,6 +17,7 @@ export interface TasksBrowserHost {
   readonly backgroundTasks: ReadonlyMap<string, BackgroundTaskInfo>;
   readonly session: Session | undefined;
   showError(msg: string): void;
+  setTasksBrowser(value: TasksBrowserState | undefined): void;
 }
 
 export type TasksBrowserState = {
@@ -92,7 +93,7 @@ export class TasksBrowserController {
       void this.refresh({ silent: true });
     }, 1000);
 
-    state.tasksBrowser = {
+    this.host.setTasksBrowser({
       component,
       savedChildren,
       filter,
@@ -104,7 +105,7 @@ export class TasksBrowserController {
       flashTimer: undefined,
       pollTimer,
       viewer: undefined,
-    };
+    });
 
     if (selectedTaskId !== undefined) {
       this.loadTail(selectedTaskId);
@@ -123,7 +124,7 @@ export class TasksBrowserController {
     for (const child of browser.savedChildren) {
       state.ui.addChild(child);
     }
-    state.tasksBrowser = undefined;
+    this.host.setTasksBrowser(undefined);
     state.ui.setFocus(state.editor);
     state.ui.requestRender(true);
   }

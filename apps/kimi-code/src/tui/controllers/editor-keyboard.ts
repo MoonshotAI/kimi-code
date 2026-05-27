@@ -33,6 +33,8 @@ export interface EditorKeyboardHost {
   hideSessionPicker(): void;
   stop(exitCode?: number): Promise<void>;
   handlePlanToggle(next: boolean): void;
+  clearQueuedMessages(): void;
+  setExternalEditorRunning(running: boolean): void;
 }
 
 export class EditorKeyboardController {
@@ -140,7 +142,7 @@ export class EditorKeyboardController {
       if (host.state.appState.streamingPhase === 'idle' || host.state.appState.isCompacting) return;
       const text = editor.getText().trim();
       const queuedTexts = host.state.queuedMessages.map((m) => m.text);
-      host.state.queuedMessages = [];
+      host.clearQueuedMessages();
 
       const parts: string[] = [];
       for (const q of queuedTexts) {
@@ -262,7 +264,7 @@ export class EditorKeyboardController {
       this.host.showError('No editor configured. Set $VISUAL / $EDITOR, or run /editor <command>.');
       return;
     }
-    state.externalEditorRunning = true;
+    this.host.setExternalEditorRunning(true);
     const seed = state.editor.getExpandedText?.() ?? state.editor.getText();
     state.ui.stop();
     await new Promise<void>((resolve) => {
@@ -283,7 +285,7 @@ export class EditorKeyboardController {
       state.ui.start();
       state.ui.setFocus(state.editor);
       state.ui.requestRender(true);
-      state.externalEditorRunning = false;
+      this.host.setExternalEditorRunning(false);
     }
   }
 }

@@ -32,6 +32,8 @@ export interface StreamingUIHost {
   updateQueueDisplay(): void;
   requireSession(): Session;
   deferUserMessages: boolean;
+  shiftQueuedMessage(): QueuedMessage | undefined;
+  pushTranscriptEntry(entry: TranscriptEntry): void;
 }
 
 export class StreamingUIController {
@@ -414,16 +416,13 @@ export class StreamingUIController {
     this.resetToolCallState();
     this._currentTurnId = undefined;
 
-    if (state.queuedMessages.length > 0) {
-      const [next, ...rest] = state.queuedMessages;
-      state.queuedMessages = rest;
+    const next = this.host.shiftQueuedMessage();
+    if (next !== undefined) {
       this.host.setAppState({ streamingPhase: 'idle' });
       this.host.resetLivePane();
-      if (next !== undefined) {
-        setTimeout(() => {
-          sendQueued(next);
-        }, 0);
-      }
+      setTimeout(() => {
+        sendQueued(next);
+      }, 0);
       return;
     }
 
@@ -455,7 +454,7 @@ export class StreamingUIController {
       state.theme.colors,
     );
     this._streamingBlock = { component, entry };
-    state.transcriptEntries.push(entry);
+    this.host.pushTranscriptEntry(entry);
     state.transcriptContainer.addChild(component);
     state.ui.requestRender();
   }

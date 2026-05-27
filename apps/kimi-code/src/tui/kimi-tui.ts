@@ -800,6 +800,33 @@ export class KimiTUI {
   // State & Accessors
   // =========================================================================
 
+  setStartupReady(): void {
+    this.state.startupState = 'ready';
+  }
+
+  clearQueuedMessages(): void {
+    this.state.queuedMessages = [];
+  }
+
+  shiftQueuedMessage(): QueuedMessage | undefined {
+    if (this.state.queuedMessages.length === 0) return undefined;
+    const [first, ...rest] = this.state.queuedMessages;
+    this.state.queuedMessages = rest;
+    return first;
+  }
+
+  pushTranscriptEntry(entry: TranscriptEntry): void {
+    this.state.transcriptEntries.push(entry);
+  }
+
+  setExternalEditorRunning(running: boolean): void {
+    this.state.externalEditorRunning = running;
+  }
+
+  setTasksBrowser(value: TUIState['tasksBrowser']): void {
+    this.state.tasksBrowser = value;
+  }
+
   appendStartupNotice(extra: string): void {
     this.startupNotice = combineStartupNotice(this.startupNotice, extra);
   }

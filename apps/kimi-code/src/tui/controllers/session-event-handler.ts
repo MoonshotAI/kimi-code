@@ -87,6 +87,7 @@ export interface SessionEventHost {
   showNotice(title: string, detail?: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
+  shiftQueuedMessage(): QueuedMessage | undefined;
   readonly tasksBrowserController: TasksBrowserController;
 }
 
@@ -669,14 +670,11 @@ export class SessionEventHandler {
         streamingPhase: 'idle',
       });
       this.host.resetLivePane();
-      if (state.queuedMessages.length > 0) {
-        const [next, ...rest] = state.queuedMessages;
-        state.queuedMessages = rest;
-        if (next !== undefined) {
-          setTimeout(() => {
-            sendQueued(next);
-          }, 0);
-        }
+      const next = this.host.shiftQueuedMessage();
+      if (next !== undefined) {
+        setTimeout(() => {
+          sendQueued(next);
+        }, 0);
       }
     } else {
       this.host.setAppState({ isCompacting: false });

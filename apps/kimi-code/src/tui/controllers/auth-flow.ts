@@ -13,6 +13,7 @@ export interface AuthFlowHost {
   readonly options: KimiTUIOptions;
 
   setAppState(patch: Partial<AppState>): void;
+  setStartupReady(): void;
   resetSessionRuntime(): void;
   setSession(session: Session): Promise<void>;
   syncRuntimeState(session?: Session): Promise<void>;
@@ -47,7 +48,7 @@ export class AuthFlowController {
       sessionTitle: null,
     });
     this.host.appendStartupNotice(OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE);
-    this.host.state.startupState = 'ready';
+    this.host.setStartupReady();
   }
 
   async activateModelAfterLogin(model: string, thinking?: boolean): Promise<void> {
