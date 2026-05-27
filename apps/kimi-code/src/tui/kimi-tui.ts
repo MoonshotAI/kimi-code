@@ -93,15 +93,14 @@ import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes
 import { QueuePaneComponent } from './components/panes/queue-pane';
 import type { TuiConfig } from './config';
 import {
-  combineStartupNotice,
   CTRL_C_HINT,
   CTRL_D_HINT,
   EXIT_CONFIRM_WINDOW_MS,
-  isOAuthLoginRequiredError,
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
   NO_ACTIVE_SESSION_MESSAGE,
 } from './constant/kimi-tui';
+import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
 import { ApprovalController } from './reverse-rpc/approval/controller';
 import { createApprovalRequestHandler } from './reverse-rpc/approval/handler';

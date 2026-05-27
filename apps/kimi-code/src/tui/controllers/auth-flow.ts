@@ -1,7 +1,8 @@
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 import type { SkillListSession } from '../commands';
 
-import { combineStartupNotice, OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
+import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
+import { combineStartupNotice } from '../utils/startup';
 import type { AppState } from '../types';
 import type { KimiTUIOptions, TUIState } from '../kimi-tui';
 
