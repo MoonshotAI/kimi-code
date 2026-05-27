@@ -740,7 +740,7 @@ export class KimiTUI {
 
   // Creates or resumes the startup session and reports whether history should replay.
   private async init(): Promise<boolean> {
-    await this.refreshAvailableModels();
+    await this.authFlow.refreshAvailableModels();
 
     const { startup } = this.options;
     const { workDir } = this.state.appState;
@@ -791,7 +791,7 @@ export class KimiTUI {
       }
     } catch (error) {
       if (!isOAuthLoginRequiredError(error)) throw error;
-      this.enterLoginRequiredStartupState();
+      this.authFlow.enterLoginRequiredStartupState();
       return false;
     }
 
@@ -946,13 +946,6 @@ export class KimiTUI {
       return 0;
     }
   }
-
-  // =========================================================================
-  // Auth / Model Bootstrap — delegated to AuthFlowController
-  // =========================================================================
-
-  private async refreshAvailableModels(): Promise<void> { await this.authFlow.refreshAvailableModels(); }
-  private enterLoginRequiredStartupState(): void { this.authFlow.enterLoginRequiredStartupState(); }
 
   // =========================================================================
   // Layout / Editor Setup
