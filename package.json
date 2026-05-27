@@ -34,6 +34,7 @@
     "lint-staged": "16.4.0",
     "oxlint": "1.59.0",
     "oxlint-tsgolint": "0.20.0",
+    "pkg-pr-new": "0.0.75",
     "publint": "0.3.18",
     "sherif": "1.11.1",
     "simple-git-hooks": "2.13.1",
