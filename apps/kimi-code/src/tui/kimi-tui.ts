@@ -33,8 +33,6 @@ import type {
   PermissionMode,
   PromptPart,
   Session,
-  SessionStatus,
-  SessionUsage,
 } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 
@@ -90,7 +88,6 @@ import {
 } from './components/messages/status-message';
 import { ThinkingComponent } from './components/messages/thinking';
 import { ToolCallComponent } from './components/messages/tool-call';
-import type { ManagedUsageReport } from './components/messages/usage-panel';
 import { UserMessageComponent } from './components/messages/user-message';
 import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes/activity-pane';
 import { QueuePaneComponent } from './components/panes/queue-pane';
@@ -103,9 +100,7 @@ import {
   MAIN_AGENT_ID,
   NO_ACTIVE_SESSION_MESSAGE,
   OAUTH_LOGIN_REQUIRED_CODE,
-  OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
 } from './constant/kimi-tui';
-import { STREAMING_UI_FLUSH_MS } from './constant/streaming';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
 import { ApprovalController } from './reverse-rpc/approval/controller';
 import { createApprovalRequestHandler } from './reverse-rpc/approval/handler';
@@ -115,7 +110,7 @@ import { createQuestionAskHandler } from './reverse-rpc/question/handler';
 import type { ApprovalPanelData, QuestionPanelData } from './reverse-rpc/types';
 import { createKimiTUIThemeBundle, type KimiTUIThemeBundle } from './theme/bundle';
 import type { ResolvedTheme } from './theme/colors';
-import { isTheme, type Theme } from './theme/index';
+import type { Theme } from './theme/index';
 import {
   INITIAL_LIVE_PANE,
   type AppState,
@@ -125,49 +120,13 @@ import {
   type ToolCallBlockData,
   type TranscriptEntry,
 } from './types';
-import { formatBackgroundAgentTranscript } from './utils/background-agent-status';
-import { formatBackgroundTaskTranscript } from './utils/background-task-status';
 import { hasDispose, isExpandable, isPlanExpandable } from './utils/component-capabilities';
-import { resolveConnectCatalogRequest } from './utils/connect-catalog';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import {
-  appendStreamingArgsPreview,
-  argsRecord,
   formatErrorMessage,
-  parseStreamingArgs,
-  serializeToolResultOutput,
-  stringValue,
 } from './utils/event-payload';
-import { isAbortError } from './utils/errors';
-import { formatHookResultMarkdown, formatHookResultPlain } from './utils/hook-result-format';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments } from './utils/image-placeholder';
-import { McpOAuthAuthorizationUrlOpener } from './utils/mcp-oauth';
-import {
-  appStateFromResumeAgent,
-  backgroundOrigin,
-  collectReplayMessageContent,
-  contentPartsToText,
-  countActiveBackgroundTasks,
-  createReplayRenderContext,
-  formatHookResultMessageForTranscript,
-  isTerminalBackgroundTask,
-  limitReplayRecordsByTurn,
-  REPLAY_TURN_LIMIT,
-  replayBackgroundProjection,
-  replayEntry,
-  skillActivationFromOrigin,
-  toolCallFromReplayMessage,
-  toolResultOutput,
-  type ReplayRenderContext,
-  type SkillActivationProjection,
-} from './utils/message-replay';
-import {
-  formatMcpStartupStatusSummary,
-  mcpServerStatusKey,
-  type McpServerStatusSnapshot,
-  selectMcpStartupStatusRows,
-} from './utils/mcp-server-status';
 import { hasPatchChanges } from './utils/object-patch';
 import { openUrl } from './utils/open-url';
 import { setProcessTitle } from './utils/proctitle';
@@ -419,21 +378,6 @@ function combineStartupNotice(
 function isOAuthLoginRequiredError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   return (error as { readonly code?: unknown }).code === OAUTH_LOGIN_REQUIRED_CODE;
-}
-
-interface SessionUsageResult {
-  readonly usage?: SessionUsage;
-  readonly error?: string;
-}
-
-interface ManagedUsageResult {
-  readonly usage?: ManagedUsageReport;
-  readonly error?: string;
-}
-
-interface RuntimeStatusResult {
-  readonly status?: SessionStatus;
-  readonly error?: string;
 }
 
 interface SendMessageOptions {
