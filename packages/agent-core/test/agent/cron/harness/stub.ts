@@ -110,3 +110,14 @@ export function createClocks(initial: number = WALL_ANCHOR): ClockHarness {
     now: () => wall,
   };
 }
+
+/**
+ * Normalise non-deterministic fields out of a cron tool's output so it
+ * can be fed to `toMatchInlineSnapshot`. Replaces randomly-generated
+ * 8-hex ids and ISO timestamps with stable placeholders.
+ */
+export function scrubCronOutput(out: string): string {
+  return out
+    .replaceAll(/\b[0-9a-f]{8}\b/g, '<id>')
+    .replaceAll(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, '<iso>');
+}

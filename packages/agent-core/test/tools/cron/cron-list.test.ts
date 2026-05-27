@@ -21,6 +21,7 @@ import type {
 import {
   createAgentStub,
   createClocks,
+  scrubCronOutput,
   WALL_ANCHOR,
   type AgentStub,
 } from '../../agent/cron/harness/stub';
@@ -85,7 +86,10 @@ describe('CronListTool', () => {
   it('renders the empty case with a zero header and no separator', async () => {
     const { tool } = makeHarness();
     const out = assertSuccess(await runTool(tool, {}));
-    expect(out).toBe('cron_jobs: 0\nNo cron jobs scheduled.');
+    expect(out).toMatchInlineSnapshot(`
+      "cron_jobs: 0
+      No cron jobs scheduled."
+    `);
   });
 
   it('renders a single recurring task with all expected columns', async () => {
@@ -98,24 +102,19 @@ describe('CronListTool', () => {
 
     const out = assertSuccess(await runTool(tool, {}));
 
-    // Header — single task.
-    expect(out.startsWith('cron_jobs: 1\n')).toBe(true);
-    // No `---` separator for one record.
-    expect(out).not.toContain('\n---\n');
-
-    // Field-by-field. id is 8 hex, nextFireAt is an ISO timestamp,
-    // ageDays is exactly 0.00 (we set createdAt = wallNow), stale is
-    // false (recurring, but only 0 days old).
-    expect(out).toMatch(/^id: [0-9a-f]{8}$/m);
-    expect(out).toMatch(/^cron: \*\/5 \* \* \* \*$/m);
-    expect(out).toMatch(/^humanSchedule: every 5 minutes$/m);
-    expect(out).toMatch(
-      /^nextFireAt: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/m,
-    );
-    expect(out).toMatch(/^recurring: true$/m);
-    expect(out).toMatch(/^durable: false$/m);
-    expect(out).toMatch(/^ageDays: 0\.00$/m);
-    expect(out).toMatch(/^stale: false$/m);
+    // ageDays is exactly 0.00 (we set createdAt = wallNow); stale is
+    // false (recurring, only 0 days old). id + nextFireAt are scrubbed.
+    expect(scrubCronOutput(out)).toMatchInlineSnapshot(`
+      "cron_jobs: 1
+      id: <id>
+      cron: */5 * * * *
+      humanSchedule: every 5 minutes
+      nextFireAt: <iso>
+      recurring: true
+      durable: false
+      ageDays: 0.00
+      stale: false"
+    `);
   });
 
   it('separates multiple records with \\n---\\n in insertion order', async () => {
@@ -131,18 +130,26 @@ describe('CronListTool', () => {
     );
 
     const out = assertSuccess(await runTool(tool, {}));
-
-    expect(out.startsWith('cron_jobs: 2\n')).toBe(true);
-    // Exactly one separator between the two records.
-    expect(out.split('\n---\n')).toHaveLength(2);
-    // First record's cron precedes the second's in insertion order.
-    const firstIdx = out.indexOf('cron: */5 * * * *');
-    const secondIdx = out.indexOf('cron: 0 12 * * *');
-    expect(firstIdx).toBeGreaterThanOrEqual(0);
-    expect(secondIdx).toBeGreaterThan(firstIdx);
-    // Recurring flag flips correctly per record.
-    expect(out).toMatch(/^recurring: true$/m);
-    expect(out).toMatch(/^recurring: false$/m);
+    expect(scrubCronOutput(out)).toMatchInlineSnapshot(`
+      "cron_jobs: 2
+      id: <id>
+      cron: */5 * * * *
+      humanSchedule: every 5 minutes
+      nextFireAt: <iso>
+      recurring: true
+      durable: false
+      ageDays: 0.00
+      stale: false
+      ---
+      id: <id>
+      cron: 0 12 * * *
+      humanSchedule: at 12:00 every day
+      nextFireAt: <iso>
+      recurring: false
+      durable: false
+      ageDays: 0.00
+      stale: false"
+    `);
   });
 
   it('flags a recurring task older than 7 days as stale', async () => {
@@ -156,40 +163,40 @@ describe('CronListTool', () => {
     );
 
     const out = assertSuccess(await runTool(tool, {}));
-    expect(out).toMatch(/^stale: true$/m);
-    // Spot-check ageDays is the expected ~8.00 — formatted via
-    // toFixed(2) so the exact 8.00 string is deterministic.
-    expect(out).toMatch(/^ageDays: 8\.00$/m);
+    // ageDays formatted via toFixed(2) is deterministic at 8.00.
+    expect(scrubCronOutput(out)).toMatchInlineSnapshot(`
+      "cron_jobs: 1
+      id: <id>
+      cron: */5 * * * *
+      humanSchedule: every 5 minutes
+      nextFireAt: <iso>
+      recurring: true
+      durable: false
+      ageDays: 8.00
+      stale: true"
+    `);
   });
 
   it('reports recurring=false for one-shots; jittered nextFireAt is at-or-before the ideal', async () => {
-    // Use `0 12 * * *` so the ideal fire lands on a `:00` minute,
-    // which is the one place one-shot jitter actually pulls forward
-    // (any other minute is passed through verbatim).
-    //
-    // KIMI_CRON_NO_JITTER is set in beforeEach, so the jittered
-    // value equals the ideal: that satisfies "at-or-before" without
-    // making the test sensitive to the per-task deterministic offset.
+    // KIMI_CRON_NO_JITTER is set in beforeEach, so the jittered value
+    // equals the ideal: that satisfies "at-or-before" without making
+    // the test sensitive to the per-task deterministic offset.
     const { manager, tool } = makeHarness();
     const nowMs = manager.clocks.wallNow();
-    const task = manager.store.add(
+    manager.store.add(
       { cron: '0 12 * * *', prompt: 'noon', recurring: false },
       nowMs,
     );
 
     const out = assertSuccess(await runTool(tool, {}));
-    expect(out).toMatch(/^recurring: false$/m);
 
     // Parse the rendered nextFireAt and confirm it is at-or-before
-    // the next ideal noon following `nowMs`.
+    // the next ideal noon following `nowMs`. The snapshot scrubs the
+    // exact timestamp; this assertion guards the at-or-before bound.
     const match = /^nextFireAt: (.+)$/m.exec(out);
     expect(match).not.toBeNull();
     const renderedMs = Date.parse(match![1]!);
     expect(Number.isFinite(renderedMs)).toBe(true);
-
-    // Recompute the unjittered "next noon" the same way the tool
-    // does. Local-time noon is correct because cron expressions
-    // evaluate in local time per `cron-expr.ts`.
     const expected = new Date(nowMs);
     expected.setSeconds(0, 0);
     expected.setMinutes(0);
@@ -199,15 +206,23 @@ describe('CronListTool', () => {
     }
     expect(renderedMs).toBeLessThanOrEqual(expected.getTime());
 
-    // Sanity: the id round-trips.
-    expect(out).toContain(`id: ${task.id}`);
+    expect(scrubCronOutput(out)).toMatchInlineSnapshot(`
+      "cron_jobs: 1
+      id: <id>
+      cron: 0 12 * * *
+      humanSchedule: at 12:00 every day
+      nextFireAt: <iso>
+      recurring: false
+      durable: false
+      ageDays: 0.00
+      stale: false"
+    `);
   });
 
   it('renders malformed cron as raw / fallback humanSchedule / null nextFireAt without throwing', async () => {
     const { manager, tool } = makeHarness();
     // `store.add` does NOT validate — that's the seam we're using to
-    // simulate "this slipped past CronCreate". The tool must render
-    // safely instead of letting parseCronExpression escape.
+    // simulate "this slipped past CronCreate".
     const nowMs = manager.clocks.wallNow();
     manager.store.add(
       { cron: 'garbage', prompt: 'x', recurring: true },
@@ -215,11 +230,16 @@ describe('CronListTool', () => {
     );
 
     const out = assertSuccess(await runTool(tool, {}));
-    // Raw cron survives the failed parse.
-    expect(out).toMatch(/^cron: garbage$/m);
-    // humanSchedule falls back to the raw expression.
-    expect(out).toMatch(/^humanSchedule: garbage$/m);
-    // nextFireAt is the literal string null (no ISO render).
-    expect(out).toMatch(/^nextFireAt: null$/m);
+    expect(scrubCronOutput(out)).toMatchInlineSnapshot(`
+      "cron_jobs: 1
+      id: <id>
+      cron: garbage
+      humanSchedule: garbage
+      nextFireAt: null
+      recurring: true
+      durable: false
+      ageDays: 0.00
+      stale: false"
+    `);
   });
 });
