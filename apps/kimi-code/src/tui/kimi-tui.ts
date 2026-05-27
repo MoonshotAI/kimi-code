@@ -8,8 +8,9 @@
  */
 
 import { writeFileSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { release as osRelease, type as osType } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
@@ -111,6 +112,7 @@ import { parseImageMeta } from '#/utils/image/image-mime';
 import { getInputHistoryFile } from '#/utils/paths';
 import { editInExternalEditor, resolveEditorCommand } from '#/utils/process/external-editor';
 import { detectFdPath } from '#/utils/process/fd-detect';
+import { buildExportMarkdown } from './utils/export-markdown';
 
 import {
   BUILTIN_SLASH_COMMANDS,
@@ -5548,10 +5550,6 @@ export class KimiTUI {
         this.showError('No messages to export.');
         return;
       }
-
-      const { buildExportMarkdown } = await import('./utils/export-markdown');
-      const { writeFile, mkdir } = await import('node:fs/promises');
-      const { resolve, dirname } = await import('node:path');
 
       const now = new Date();
       const shortId = session.id.slice(0, 8);
