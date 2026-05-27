@@ -187,6 +187,24 @@ describe('CustomEditor paste marker expansion', () => {
     expect(editor.getText()).not.toContain('chunk2');
     expect(editor.getText()).toContain(longText);
   });
+
+  it('handles paste-end sequence split across chunks', () => {
+    const editor = makeEditor();
+    const longText = 'line\n'.repeat(15).trimEnd();
+    simulateLargePaste(editor, longText);
+
+    // Split: PASTE_START in chunk 1, paste-end split across chunk 2 and 3
+    editor.handleInput(`${PASTE_START}data`);
+    editor.handleInput('\x1b[20');
+    editor.handleInput('1~');
+
+    expect(editor.getText()).toContain(longText);
+    expect(editor.getText()).not.toContain('data');
+
+    // Verify editor is not stuck — next keystrokes should work normally
+    editor.handleInput('x');
+    expect(editor.getText()).toContain('x');
+  });
 });
 
 describe('CustomEditor shortcut telemetry hooks', () => {

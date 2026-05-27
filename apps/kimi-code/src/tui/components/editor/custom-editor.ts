@@ -123,6 +123,7 @@ export class CustomEditor extends Editor {
   public onPasteImage?: () => Promise<boolean>;
 
   private consumingPaste = false;
+  private consumeBuffer = '';
 
   /**
    * `colors` is the live `ColorPalette` reference — the host mutates it
@@ -224,8 +225,10 @@ export class CustomEditor extends Editor {
     // When a paste marker was just expanded, discard the trailing bracketed
     // paste data that the terminal sends alongside the Ctrl-V keystroke.
     if (this.consumingPaste) {
-      if (normalized.includes(BRACKET_PASTE_END)) {
+      this.consumeBuffer += normalized;
+      if (this.consumeBuffer.includes(BRACKET_PASTE_END)) {
         this.consumingPaste = false;
+        this.consumeBuffer = '';
       }
       return;
     }
