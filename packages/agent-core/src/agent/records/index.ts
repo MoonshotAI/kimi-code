@@ -54,7 +54,7 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
       agent.fullCompaction.cancel();
       return;
     case 'full_compaction.complete':
-      agent.fullCompaction.complete(input);
+      agent.fullCompaction.complete(input, null);
       return;
     case 'plan_mode.enter':
       agent.planMode.restoreEnter(input);

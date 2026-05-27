@@ -245,7 +245,7 @@ export class FullCompaction {
       const model = this.agent.config.model;
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
-      let response: GenerateResult;
+      let usage: TokenUsage | null;
       let summary: string;
       while (true) {
         const messagesToCompact = originalHistory.slice(0, compactedCount);
@@ -262,8 +262,9 @@ export class FullCompaction {
             toolCalls: [],
           } satisfies Message,
         ];
+        class TruncatedError extends Error {}
         try {
-          response = await this.agent.generate(
+          const response = await this.agent.generate(
             this.agent.config.provider,
             this.agent.config.systemPrompt,
             [...this.agent.tools.loopTools],
@@ -271,13 +272,17 @@ export class FullCompaction {
             undefined,
             { signal },
           );
+          if (response.finishReason === 'truncated') {
+            throw new TruncatedError();
+          }
+          usage = response.usage;
           summary = extractCompactionSummary(response);
           break;
         } catch (error) {
-          if (error instanceof APIContextOverflowError) {
+          if (error instanceof APIContextOverflowError || error instanceof TruncatedError) {
             compactedCount = this.strategy.reduceCompactOnOverflow(messagesToCompact);
           }
-          if (!isRetryableGenerateError(error)) {
+          else if (!isRetryableGenerateError(error)) {
             throw error;
           }
           if (retryCount + 1 >= MAX_COMPACTION_RETRY_ATTEMPTS) {
@@ -288,8 +293,8 @@ export class FullCompaction {
         }
       }
 
-      if (response.usage !== null) {
-        this.agent.usage.record(model, response.usage);
+      if (usage !== null) {
+        this.agent.usage.record(model, usage);
       }
 
       const newHistory = this.agent.context.history;
@@ -311,7 +316,7 @@ export class FullCompaction {
         tokensAfter,
       };
 
-      this.complete(result, response.usage, retryCount);
+      this.complete(result, usage, retryCount);
       this.agent.context.applyCompaction(result);
       this.triggerPostCompactHook(data, result);
     } catch (error) {
