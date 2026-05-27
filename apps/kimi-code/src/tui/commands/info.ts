@@ -19,8 +19,8 @@ import {
 import { isManagedUsageProvider } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { openUrl } from '../utils/open-url';
-import { promptFeedbackInput } from './slash-command-prompts';
-import type { SlashCommandHost } from './slash-commands';
+import { promptFeedbackInput } from './prompts';
+import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
 // Feedback

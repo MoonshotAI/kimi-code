@@ -10,8 +10,8 @@ import type { Theme } from '../theme';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { isTheme } from '../theme/index';
 import { formatErrorMessage } from '../utils/event-payload';
-import { showUsage } from './info-commands';
-import type { SlashCommandHost } from './slash-commands';
+import { showUsage } from './info';
+import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
 // Plan / Config commands

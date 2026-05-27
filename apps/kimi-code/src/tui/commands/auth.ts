@@ -33,8 +33,8 @@ import {
   promptModelSelectionForCatalog,
   promptModelSelectionForOpenPlatform,
   promptPlatformSelection,
-} from './slash-command-prompts';
-import type { SlashCommandHost } from './slash-commands';
+} from './prompts';
+import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
 // Auth: login / logout / connect

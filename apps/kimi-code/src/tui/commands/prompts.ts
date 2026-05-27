@@ -16,7 +16,7 @@ import { ChoicePickerComponent, type ChoiceOption } from '../components/dialogs/
 import { FeedbackInputDialogComponent, type FeedbackInputDialogResult } from '../components/dialogs/feedback-input-dialog';
 import { ModelSelectorComponent } from '../components/dialogs/model-selector';
 import { PlatformSelectorComponent } from '../components/dialogs/platform-selector';
-import type { SlashCommandHost } from './slash-commands';
+import type { SlashCommandHost } from './dispatch';
 
 export function promptPlatformSelection(host: SlashCommandHost): Promise<string | undefined> {
   return new Promise((resolve) => {

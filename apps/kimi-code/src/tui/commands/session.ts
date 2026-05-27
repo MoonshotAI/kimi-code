@@ -3,7 +3,7 @@ import type { Session } from '@moonshot-ai/kimi-code-sdk';
 import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { isAbortError } from '../utils/errors';
 import { formatErrorMessage } from '../utils/event-payload';
-import type { SlashCommandHost } from './slash-commands';
+import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
 // Session commands

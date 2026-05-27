@@ -8,19 +8,19 @@ import {
   LLM_NOT_SET_MESSAGE,
 } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
+import { parseSlashInput } from './parse';
 import {
-  parseSlashInput,
   resolveSlashCommandInput,
   slashBusyMessage,
-  type BuiltinSlashCommandName,
-} from '../commands';
-import type { AuthFlowController } from './auth-flow';
-import type { StreamingUIController } from './streaming-ui';
-import type { TasksBrowserController } from './tasks-browser';
+} from './resolve';
+import type { BuiltinSlashCommandName } from './registry';
+import type { AuthFlowController } from '../controllers/auth-flow';
+import type { StreamingUIController } from '../controllers/streaming-ui';
+import type { TasksBrowserController } from '../controllers/tasks-browser';
 import type { AppState, LoginProgressSpinnerHandle, QueuedMessage } from '../types';
 import type { TUIState } from '../tui-state';
 
-import { handleConnectCommand, handleLoginCommand, handleLogoutCommand } from './auth-commands';
+import { handleConnectCommand, handleLoginCommand, handleLogoutCommand } from './auth';
 import {
   handleCompactCommand,
   handleEditorCommand,
@@ -31,9 +31,9 @@ import {
   showModelPicker,
   showPermissionPicker,
   showSettingsSelector,
-} from './config-commands';
-import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info-commands';
-import { handleForkCommand, handleInitCommand, handleTitleCommand } from './session-commands';
+} from './config';
+import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
+import { handleForkCommand, handleInitCommand, handleTitleCommand } from './session';
 
 // ---------------------------------------------------------------------------
 // Re-exports — keep existing consumers working
@@ -43,7 +43,7 @@ export {
   handleConnectCommand,
   handleLoginCommand,
   handleLogoutCommand,
-} from './auth-commands';
+} from './auth';
 export {
   handleCompactCommand,
   handleEditorCommand,
@@ -54,18 +54,18 @@ export {
   showModelPicker,
   showPermissionPicker,
   showSettingsSelector,
-} from './config-commands';
+} from './config';
 export {
   handleFeedbackCommand,
   showMcpServers,
   showStatusReport,
   showUsage,
-} from './info-commands';
+} from './info';
 export {
   handleForkCommand,
   handleInitCommand,
   handleTitleCommand,
-} from './session-commands';
+} from './session';
 
 // ---------------------------------------------------------------------------
 // Host interface

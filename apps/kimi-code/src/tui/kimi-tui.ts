@@ -64,7 +64,7 @@ import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent } from './components/dialogs/session-picker';
 import { AuthFlowController } from './controllers/auth-flow';
 import { SessionEventHandler } from './controllers/session-event-handler';
-import * as slashCommands from './controllers/slash-commands';
+import * as slashCommands from './commands/dispatch';
 import { SessionReplayRenderer } from './controllers/session-replay';
 import { StreamingUIController } from './controllers/streaming-ui';
 import { TasksBrowserController } from './controllers/tasks-browser';

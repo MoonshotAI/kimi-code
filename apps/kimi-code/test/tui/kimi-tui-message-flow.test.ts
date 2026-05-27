@@ -14,15 +14,15 @@ import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel'
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
-import { handleFeedbackCommand } from '#/tui/controllers/slash-commands';
+import { handleFeedbackCommand } from '#/tui/commands/info';
 import {
   promptFeedbackInput,
   runModelSelector,
-} from '#/tui/controllers/slash-command-prompts';
+} from '#/tui/commands/prompts';
 import type { QueuedMessage } from '#/tui/types';
 
-vi.mock('#/tui/controllers/slash-command-prompts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('#/tui/controllers/slash-command-prompts')>();
+vi.mock('#/tui/commands/prompts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#/tui/commands/prompts')>();
   return { ...actual, promptFeedbackInput: vi.fn() };
 });
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';

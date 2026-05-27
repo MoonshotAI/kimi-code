@@ -7,14 +7,14 @@ import { KimiTUI, type KimiTUIStartupInput, type TUIState } from "#/tui/kimi-tui
 import {
   handleLoginCommand,
   handleLogoutCommand,
-} from "#/tui/controllers/slash-commands";
+} from "#/tui/commands/auth";
 import {
   promptPlatformSelection,
   promptLogoutProviderSelection,
-} from "#/tui/controllers/slash-command-prompts";
+} from "#/tui/commands/prompts";
 
-vi.mock("#/tui/controllers/slash-command-prompts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("#/tui/controllers/slash-command-prompts")>();
+vi.mock("#/tui/commands/prompts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("#/tui/commands/prompts")>();
   return { ...actual, promptPlatformSelection: vi.fn(), promptLogoutProviderSelection: vi.fn() };
 });
 import {
