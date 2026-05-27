@@ -8,7 +8,6 @@ import {
 import {
   APIEmptyResponseError,
   isRetryableGenerateError,
-  inputTotal,
   type GenerateResult,
   type Message,
   type TokenUsage,
@@ -134,7 +133,7 @@ export class FullCompaction {
 
   complete(
     result: CompactionResult,
-    llmUsage?: TokenUsage | undefined,
+    llmUsage: TokenUsage | null,
     retryCount: number = 0,
   ): void {
     this.agent.records.logRecord({
@@ -156,11 +155,8 @@ export class FullCompaction {
         duration_ms: Date.now() - active.startedAt,
         compacted_count: result.compactedCount,
         retry_count: retryCount,
+        ...llmUsage,
       };
-      if (llmUsage !== undefined) {
-        properties['llm_input_tokens'] = inputTotal(llmUsage);
-        properties['llm_output_tokens'] = llmUsage.output;
-      }
       this.agent.telemetry.track('compaction_finished', properties);
     }
   }
@@ -315,7 +311,7 @@ export class FullCompaction {
         tokensAfter,
       };
 
-      this.complete(result, response.usage ?? undefined, retryCount);
+      this.complete(result, response.usage, retryCount);
       this.agent.context.applyCompaction(result);
       this.triggerPostCompactHook(data, result);
     } catch (error) {
