@@ -11,7 +11,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join as pathJoin, normalize } from 'node:path';
+import { isAbsolute, join, normalize } from 'pathe';
 import type { Readable, Writable } from 'node:stream';
 
 import { KaosFileExistsError } from './errors';
@@ -152,12 +152,12 @@ export class LocalKaos implements Kaos {
     // Snapshot the process cwd at construction time. After this point we
     // never touch process.cwd() / process.chdir() — all path resolution
     // goes through this._cwd.
-    this._cwd = process.cwd();
+    this._cwd = normalize(process.cwd());
   }
 
   private _resolvePath(path: string): string {
-    if (isAbsolute(path)) return path;
-    return pathJoin(this._cwd, path);
+    if (isAbsolute(path)) return normalize(path);
+    return join(this._cwd, path);
   }
 
   pathClass(): 'posix' | 'win32' {
@@ -169,7 +169,7 @@ export class LocalKaos implements Kaos {
   }
 
   gethome(): string {
-    return homedir();
+    return normalize(homedir());
   }
 
   getcwd(): string {
@@ -216,9 +216,9 @@ export class LocalKaos implements Kaos {
     const resolved = this._resolvePath(path);
     const entries = await readdir(resolved);
     for (const entry of entries) {
-      // Use pathJoin so root paths like "/" or "C:\\" don't produce "//entry"
-      // or "C:\\\\entry" — pathJoin normalizes trailing separators correctly.
-      yield pathJoin(resolved, entry);
+      // Use join so root paths like "/" or "C:\\" don't produce "//entry"
+      // or "C:\\\\entry" — join normalizes trailing separators correctly.
+      yield join(resolved, entry);
     }
   }
 
@@ -310,8 +310,8 @@ export class LocalKaos implements Kaos {
       }
 
       for (const entry of entries) {
-        // Use pathJoin to avoid "//entry" when basePath is a filesystem root.
-        const fullPath = pathJoin(basePath, entry);
+        // Use join to avoid "//entry" when basePath is a filesystem root.
+        const fullPath = join(basePath, entry);
         let entryStat;
         try {
           entryStat = await stat(fullPath);
@@ -348,8 +348,8 @@ export class LocalKaos implements Kaos {
           continue;
         }
 
-        // Use pathJoin to avoid "//entry" when basePath is a filesystem root.
-        const fullPath = pathJoin(basePath, entry);
+        // Use join to avoid "//entry" when basePath is a filesystem root.
+        const fullPath = join(basePath, entry);
 
         if (remainingParts.length === 0) {
           yield fullPath;

@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { dirname, join, posix as posixPath } from 'node:path';
+import { dirname, join, normalize } from 'pathe';
 
 import { load as loadYaml } from 'js-yaml';
 
@@ -91,7 +91,7 @@ function parseAgentProfileYaml(content: string, profilePath: string): RawAgentPr
 
 function resolveProfileSourcePath(profilePath: string, relativePath: string): string {
   return normalizeSourcePath(
-    posixPath.join(posixPath.dirname(normalizeSourcePath(profilePath)), relativePath),
+    join(dirname(normalizeSourcePath(profilePath)), relativePath),
   );
 }
 
@@ -105,7 +105,7 @@ function readRequiredSource(sources: Readonly<Record<string, string>>, path: str
 }
 
 function normalizeSourcePath(path: string): string {
-  return posixPath.normalize(path.replaceAll('\\', '/')).replace(/^\.\//, '');
+  return normalize(path.replaceAll('\\', '/')).replace(/^\.\//, '');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,6 +1,6 @@
 import { createReadStream } from 'node:fs';
 import { mkdir, open } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname } from 'pathe';
 
 import { syncDir } from '../../utils/fs';
 import { type AgentRecord, type AgentRecordPersistence } from './types';

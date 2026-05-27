@@ -1,5 +1,4 @@
-import * as posixPath from 'node:path/posix';
-import * as win32Path from 'node:path/win32';
+import { isAbsolute, join, parse } from 'pathe';
 
 import picomatch from 'picomatch';
 
@@ -14,7 +13,6 @@ export interface PermissionPathMatchOptions {
 
 interface PathMatchSemantics {
   readonly pathClass: PathClass;
-  readonly path: typeof posixPath;
 }
 
 /**
@@ -90,8 +88,8 @@ function canonicalizePathPattern(
   semantics: PathMatchSemantics,
   pathOptions: PermissionPathMatchOptions | undefined,
 ): string | undefined {
-  const expanded = expandUserPath(value, semantics, pathOptions?.homeDir);
-  const cwd = pathOptions?.cwd ?? defaultCwdForPath(expanded, semantics);
+  const expanded = expandUserPath(value, semantics.pathClass, pathOptions?.homeDir);
+  const cwd = pathOptions?.cwd ?? defaultCwdForPath(expanded);
   if (cwd === undefined) return undefined;
   try {
     return canonicalizePath(expanded, cwd, semantics.pathClass);
@@ -102,20 +100,20 @@ function canonicalizePathPattern(
 
 function expandUserPath(
   value: string,
-  semantics: PathMatchSemantics,
+  pathClass: PathClass,
   homeDir: string | undefined,
 ): string {
   if (homeDir === undefined) return value;
   if (value === '~') return homeDir;
-  if (value.startsWith('~/') || (semantics.pathClass === 'win32' && value.startsWith('~\\'))) {
-    return semantics.path.join(homeDir, value.slice(2));
+  if (value.startsWith('~/') || (pathClass === 'win32' && value.startsWith('~\\'))) {
+    return join(homeDir, value.slice(2));
   }
   return value;
 }
 
-function defaultCwdForPath(value: string, semantics: PathMatchSemantics): string | undefined {
-  if (!semantics.path.isAbsolute(value)) return undefined;
-  return semantics.path.parse(value).root;
+function defaultCwdForPath(value: string): string | undefined {
+  if (!isAbsolute(value)) return undefined;
+  return parse(value).root;
 }
 
 function pathMatchSemantics(
@@ -136,10 +134,7 @@ function pathMatchSemantics(
     })
       ? 'win32'
       : 'posix');
-  return {
-    pathClass,
-    path: pathClass === 'win32' ? win32Path : posixPath,
-  };
+  return { pathClass };
 }
 
 function addPathVariant(variants: Set<string>, value: string, pathClass: PathClass): void {

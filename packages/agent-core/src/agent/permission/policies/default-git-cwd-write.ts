@@ -1,4 +1,4 @@
-import * as posixPath from 'node:path/posix';
+import { join, relative, sep } from 'pathe';
 
 import type { Kaos } from '@moonshot-ai/kaos';
 
@@ -89,20 +89,20 @@ function readStringField(args: unknown, key: string): string | undefined {
 function isGitControlPath(targetPath: string, cwd: string, marker: GitWorkTreeMarker): boolean {
   const foldedTarget = targetPath.toLowerCase();
   return (
-    posixPath.relative(cwd.toLowerCase(), foldedTarget).split(posixPath.sep).includes('.git') ||
+    relative(cwd.toLowerCase(), foldedTarget).split(sep).includes('.git') ||
     isWithinDirectory(foldedTarget, marker.dotGitPath.toLowerCase(), 'posix') ||
     isWithinDirectory(foldedTarget, marker.controlDirPath.toLowerCase(), 'posix')
   );
 }
 
 async function hasSymlinkInPath(kaos: Kaos, cwd: string, targetPath: string): Promise<boolean> {
-  const relative = posixPath.relative(cwd, targetPath);
+  const relPath = relative(cwd, targetPath);
   const parts = [cwd];
 
   let current = cwd;
-  for (const part of relative.split(posixPath.sep)) {
+  for (const part of relPath.split(sep)) {
     if (part.length === 0 || part === '.') continue;
-    current = posixPath.join(current, part);
+    current = join(current, part);
     parts.push(current);
   }
 
