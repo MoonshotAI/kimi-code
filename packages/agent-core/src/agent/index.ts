@@ -50,9 +50,11 @@ import { ToolManager } from './tool/index';
 import { TurnFlow } from './turn';
 import {
   GENERATE_REQUEST_LOG_CONTEXT,
+  KosongLLM,
   type GenerateOptionsWithRequestLog,
 } from './turn/kosong-llm';
 import { UsageRecorder } from './usage';
+import { resolveCompletionBudget } from '../utils/completion-budget';
 
 export type { AgentRecord, AgentRecordPersistence } from './records';
 export type { BuiltinTool, ToolInfo, ToolSource, UserToolRegistration } from './tool';
@@ -176,6 +178,23 @@ export class Agent {
         return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, requestOptions);
       });
     };
+  }
+
+  get llm(): KosongLLM {
+    const model = this.config.model;
+    const provider = this.config.provider.withThinking(this.config.thinkingLevel);
+    const loopControl = this.providerManager?.config.loopControl;
+    const completionBudgetConfig = resolveCompletionBudget({
+      reservedContextSize: loopControl?.reservedContextSize,
+    });
+    return new KosongLLM({
+      provider,
+      modelName: model,
+      systemPrompt: this.config.systemPrompt,
+      capability: this.config.modelCapabilities,
+      generate: this.generate,
+      completionBudgetConfig,
+    });
   }
 
   private logLlmRequest(

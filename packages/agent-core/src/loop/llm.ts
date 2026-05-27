@@ -57,8 +57,8 @@ export interface LLMChatParams {
 
 export interface LLMChatResponse {
   toolCalls: ToolCall[];
-  providerFinishReason?: FinishReason | undefined;
-  rawFinishReason?: string | undefined;
+  providerFinishReason?: FinishReason;
+  rawFinishReason?: string;
   usage: TokenUsage;
 }
 
