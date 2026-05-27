@@ -27,6 +27,7 @@ import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from '#/cli/telemetry';
 import { detectInstallSource } from '#/cli/update/source';
 import { createKimiCodeHostIdentity } from '#/cli/version';
+import { detectShellEnvironment } from '#/utils/process/shell-env';
 
 interface WritableLike {
   write(chunk: string): boolean;
@@ -229,23 +230,6 @@ async function confirmPreviousSession(summary: PreviousSessionSummary): Promise<
   } finally {
     rl.close();
   }
-}
-
-function detectMultiplexer(): string | undefined {
-  if (process.env['TMUX']) return 'tmux';
-  if (process.env['STY']) return 'screen';
-  if (process.env['ZELLIJ']) return 'zellij';
-  return undefined;
-}
-
-function detectShellEnvironment(): ShellEnvironment {
-  return {
-    term: process.env['TERM'] || undefined,
-    termProgram: process.env['TERM_PROGRAM'] || undefined,
-    termProgramVersion: process.env['TERM_PROGRAM_VERSION'] || undefined,
-    multiplexer: detectMultiplexer(),
-    shell: process.env['SHELL'] || undefined,
-  };
 }
 
 function errorMessage(error: unknown): string {

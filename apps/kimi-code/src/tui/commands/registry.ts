@@ -146,6 +146,12 @@ export const BUILTIN_SLASH_COMMANDS = [
     priority: 40,
   },
   {
+    name: 'export-debug-zip',
+    aliases: [],
+    description: 'Export current session as a debug ZIP archive',
+    priority: 40,
+  },
+  {
     name: 'exit',
     aliases: ['quit', 'q'],
     description: 'Exit the application',

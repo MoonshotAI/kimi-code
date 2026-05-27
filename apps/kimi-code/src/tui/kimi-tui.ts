@@ -98,6 +98,8 @@ import type {
 import chalk from 'chalk';
 
 import type { CLIOptions } from '#/cli/options';
+import { detectInstallSource } from '#/cli/update/source';
+import { detectShellEnvironment } from '#/utils/process/shell-env';
 import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/index';
 import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
 import type { GitLsFilesCache } from '#/utils/git/git-ls-files';
@@ -1585,6 +1587,9 @@ export class KimiTUI {
         return;
       case 'fork':
         await this.handleForkCommand(args);
+        return;
+      case 'export-debug-zip':
+        await this.handleExportDebugZipCommand();
         return;
       case 'login':
         await this.handleLoginCommand();
@@ -5521,6 +5526,31 @@ export class KimiTUI {
     } catch (error) {
       const msg = formatErrorMessage(error);
       this.showError(`Failed to switch to forked session: ${msg}`);
+    }
+  }
+
+  private async handleExportDebugZipCommand(): Promise<void> {
+    const session = this.session;
+    if (session === undefined) {
+      this.showError(NO_ACTIVE_SESSION_MESSAGE);
+      return;
+    }
+
+    this.showStatus('Exporting session…');
+    try {
+      const installSource = await detectInstallSource();
+      const shellEnv = detectShellEnvironment();
+      const result = await this.harness.exportSession({
+        id: session.id,
+        version: this.state.appState.version,
+        installSource,
+        shellEnv,
+        includeGlobalLog: true,
+      });
+      this.showNotice('Export complete', result.zipPath);
+    } catch (error) {
+      const msg = formatErrorMessage(error);
+      this.showError(`Failed to export session: ${msg}`);
     }
   }
 
