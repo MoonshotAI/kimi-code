@@ -164,7 +164,6 @@ export class CustomEditor extends Editor {
       const text = this.getText();
       const offset = lines.slice(0, line).reduce((sum, l) => sum + l.length + 1, 0) + start;
       const newText = text.slice(0, offset) + content + text.slice(offset + match[0].length);
-      pastes.delete(pasteId);
       this.setText(newText);
       return true;
     }

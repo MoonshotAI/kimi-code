@@ -157,6 +157,24 @@ describe('CustomEditor paste marker expansion', () => {
     expect(editor.getText()).toContain(longText);
   });
 
+  it('can re-expand after undo restores the marker', () => {
+    const editor = makeEditor();
+    const longText = 'line\n'.repeat(15).trimEnd();
+    simulateLargePaste(editor, longText);
+
+    const markerText = editor.getText();
+    expect(markerText).toMatch(/\[paste #1/);
+
+    simulateLargePaste(editor, 'anything');
+    expect(editor.getText()).toContain(longText);
+
+    editor.setText(markerText);
+
+    simulateLargePaste(editor, 'anything');
+    expect(editor.getText()).not.toContain('[paste #');
+    expect(editor.getText()).toContain(longText);
+  });
+
   it('suppresses multi-chunk bracketed paste data after marker expansion', () => {
     const editor = makeEditor();
     const longText = 'line\n'.repeat(15).trimEnd();
