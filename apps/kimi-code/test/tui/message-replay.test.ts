@@ -245,9 +245,9 @@ describe('KimiTUI resume message replay', () => {
 
     expect(group).toBeInstanceOf(AgentGroupComponent);
     expect((group as AgentGroupComponent).size()).toBe(2);
-    expect(driver.streamingUI.pendingAgentGroup).toBeNull();
-    expect(driver.streamingUI.pendingToolComponents.has('call_agent_1')).toBe(false);
-    expect(driver.streamingUI.pendingToolComponents.has('call_agent_2')).toBe(false);
+    expect(driver.streamingUI.hasPendingAgentGroup()).toBe(false);
+    expect(driver.streamingUI.getToolComponent('call_agent_1')).toBeUndefined();
+    expect(driver.streamingUI.getToolComponent('call_agent_2')).toBeUndefined();
   });
 
   it('groups replayed Read calls from one assistant message using live grouping', async () => {
@@ -274,9 +274,9 @@ describe('KimiTUI resume message replay', () => {
 
     expect(group).toBeInstanceOf(ReadGroupComponent);
     expect((group as ReadGroupComponent).size()).toBe(2);
-    expect(driver.streamingUI.pendingReadGroup).toBeNull();
-    expect(driver.streamingUI.pendingToolComponents.has('call_read_1')).toBe(false);
-    expect(driver.streamingUI.pendingToolComponents.has('call_read_2')).toBe(false);
+    expect(driver.streamingUI.hasPendingReadGroup()).toBe(false);
+    expect(driver.streamingUI.getToolComponent('call_read_1')).toBeUndefined();
+    expect(driver.streamingUI.getToolComponent('call_read_2')).toBeUndefined();
   });
 
   it('hydrates todo and background snapshot state from resumed main agent', async () => {

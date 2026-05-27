@@ -693,7 +693,7 @@ describe('KimiTUI message flow', () => {
       const sendQueued = vi.fn();
       driver.state.appState.streamingPhase = 'waiting';
       driver.state.appState.streamingStartTime = 1;
-      driver.streamingUI.currentTurnId = '1';
+      driver.streamingUI.setTurnId('1');
       driver.state.queuedMessages = [{ text: 'next' }];
 
       driver.sessionEventHandler.handleEvent(
@@ -732,7 +732,7 @@ describe('KimiTUI message flow', () => {
         } as Event,
         vi.fn(),
       );
-      const component = driver.streamingUI.streamingBlock?.component;
+      const component = driver.streamingUI.getStreamingBlockComponent();
       if (component === undefined) throw new Error('expected streaming component');
       const updateSpy = vi.spyOn(component, 'updateContent');
 
@@ -805,8 +805,8 @@ describe('KimiTUI message flow', () => {
     vi.useFakeTimers();
     try {
       const { driver } = await makeDriver();
-      driver.streamingUI.currentTurnId = '1';
-      driver.streamingUI.currentStep = 1;
+      driver.streamingUI.setTurnId('1');
+      driver.streamingUI.setStep(1);
 
       driver.sessionEventHandler.handleEvent(
         {
@@ -821,13 +821,13 @@ describe('KimiTUI message flow', () => {
         vi.fn(),
       );
 
-      expect(driver.streamingUI.pendingToolComponents.has('call_bash')).toBe(false);
-      expect(driver.streamingUI.activeToolCalls.has('call_bash')).toBe(false);
+      expect(driver.streamingUI.getToolComponent('call_bash')).toBeUndefined();
+      expect(driver.streamingUI.hasActiveToolCall('call_bash')).toBe(false);
 
       await vi.runOnlyPendingTimersAsync();
 
-      expect(driver.streamingUI.pendingToolComponents.has('call_bash')).toBe(true);
-      expect(driver.streamingUI.activeToolCalls.get('call_bash')?.args).toMatchObject({
+      expect(driver.streamingUI.getToolComponent('call_bash')).toBeDefined();
+      expect(driver.streamingUI.getActiveToolCall('call_bash')?.args).toMatchObject({
         command: 'echo hi',
       });
     } finally {

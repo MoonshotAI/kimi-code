@@ -39,7 +39,6 @@ import {
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
 } from '../constant/kimi-tui';
 import {
-  appendStreamingArgsPreview,
   argsRecord,
   isTodoItemShape,
   serializeToolResultOutput,
@@ -172,7 +171,7 @@ export class SessionEventHandler {
     if (this.routeSubagentEvent(event)) return;
 
     if ('turnId' in event && event.turnId !== undefined) {
-      this.host.streamingUI.currentTurnId = String(event.turnId);
+      this.host.streamingUI.setTurnId(String(event.turnId));
     }
 
     switch (event.type) {
@@ -231,7 +230,7 @@ export class SessionEventHandler {
     if (info === undefined || info.parentToolCallId.length === 0) return true;
     const { parentToolCallId } = info;
     const sourceName = info.name;
-    const toolCall = streamingUI.pendingToolComponents.get(parentToolCallId);
+    const toolCall = streamingUI.getToolComponent(parentToolCallId);
     if (toolCall === undefined) return true;
     toolCall.setSubagentMeta(subagentId, sourceName);
 
@@ -306,7 +305,7 @@ export class SessionEventHandler {
   private handleTurnBegin(_event: TurnStartedEvent): void {
     void _event;
     this.host.streamingUI.resetToolUi();
-    this.host.streamingUI.currentStep = 0;
+    this.host.streamingUI.setStep(0);
     this.host.patchLivePane({
       mode: 'waiting',
       pendingApproval: null,
@@ -331,7 +330,7 @@ export class SessionEventHandler {
 
   private handleStepBegin(event: TurnStepStartedEvent): void {
     this.host.streamingUI.flushNow();
-    this.host.streamingUI.currentStep = event.step;
+    this.host.streamingUI.setStep(event.step);
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeLiveTextBuffers('waiting');
     this.host.patchLivePane({
@@ -349,22 +348,10 @@ export class SessionEventHandler {
     this.host.streamingUI.flushNow();
     if (event.finishReason !== 'max_tokens') return;
 
-    const streamingUI = this.host.streamingUI;
-    const eventTurnId = String(event.turnId);
-    let truncatedCount = 0;
-    for (const toolCall of streamingUI.activeToolCalls.values()) {
-      if (toolCall.result !== undefined) continue;
-      if (toolCall.streamingArguments === undefined) continue;
-      if (toolCall.turnId !== eventTurnId) continue;
-      if (toolCall.step !== event.step) continue;
-      toolCall.truncated = true;
-      const component = streamingUI.pendingToolComponents.get(toolCall.id);
-      if (component !== undefined) {
-        component.updateToolCall(toolCall);
-      }
-      truncatedCount += 1;
-    }
-    streamingUI.streamingToolCallArguments.clear();
+    const truncatedCount = this.host.streamingUI.markStepTruncated(
+      String(event.turnId),
+      event.step,
+    );
 
     const title =
       truncatedCount > 0
@@ -402,8 +389,7 @@ export class SessionEventHandler {
 
   private handleThinkingDelta(event: ThinkingDeltaEvent): void {
     const { state, streamingUI } = this.host;
-    streamingUI.thinkingDraft += event.delta;
-    streamingUI.markThinkingDirty();
+    streamingUI.appendThinkingDelta(event.delta);
     this.host.patchLivePane({ mode: 'idle' });
     if (state.appState.streamingPhase !== 'thinking') {
       this.host.setAppState({ streamingPhase: 'thinking', streamingStartTime: Date.now() });
@@ -413,16 +399,11 @@ export class SessionEventHandler {
 
   private handleAssistantDelta(event: AssistantDeltaEvent): void {
     const { state, streamingUI } = this.host;
-    if (streamingUI.thinkingDraft.length > 0) {
+    if (streamingUI.hasThinkingDraft()) {
       streamingUI.flushThinkingToTranscript('idle');
     }
 
-    if (streamingUI.streamingBlock === null) {
-      streamingUI.onStreamingTextStart();
-    }
-
-    streamingUI.assistantDraft += event.delta;
-    streamingUI.markAssistantDirty();
+    streamingUI.appendAssistantDelta(event.delta);
 
     this.host.patchLivePane({
       mode: 'idle',
@@ -437,7 +418,7 @@ export class SessionEventHandler {
 
   private handleHookResult(event: HookResultEvent): void {
     this.host.streamingUI.flushNow();
-    if (this.host.streamingUI.thinkingDraft.length > 0) {
+    if (this.host.streamingUI.hasThinkingDraft()) {
       this.host.streamingUI.flushThinkingToTranscript('idle');
     }
     this.host.streamingUI.finalizeAssistantStream();
@@ -458,28 +439,17 @@ export class SessionEventHandler {
   private handleToolCall(event: ToolCallStartedEvent): void {
     const { streamingUI } = this.host;
     streamingUI.flushNow();
+    const { turnId, step } = streamingUI.getTurnContext();
     const toolCall: ToolCallBlockData = {
       id: event.toolCallId,
       name: event.name,
       args: argsRecord(event.args),
       description: event.description,
       display: event.display,
-      step: streamingUI.currentStep,
-      turnId: streamingUI.currentTurnId,
+      step,
+      turnId,
     };
-    const existing = streamingUI.activeToolCalls.get(event.toolCallId);
-    streamingUI.activeToolCalls.set(event.toolCallId, toolCall);
-    streamingUI.pendingToolCallFlushIds.delete(event.toolCallId);
-    streamingUI.streamingToolCallArguments.delete(event.toolCallId);
-    const existingComponent = streamingUI.pendingToolComponents.get(event.toolCallId);
-    if (existingComponent !== undefined) {
-      existingComponent.updateToolCall(toolCall);
-    } else if (existing === undefined) {
-      streamingUI.finalizeLiveTextBuffers('tool');
-      if (event.name !== 'Agent') {
-        streamingUI.onToolCallStart(toolCall);
-      }
-    }
+    streamingUI.registerToolCall(toolCall);
     this.host.patchLivePane({
       mode: 'tool',
       pendingApproval: null,
@@ -490,16 +460,7 @@ export class SessionEventHandler {
   private handleToolCallDelta(event: ToolCallDeltaEvent): void {
     if (event.toolCallId.length === 0) return;
     const { state, streamingUI } = this.host;
-    const id = event.toolCallId;
-    const existing = streamingUI.streamingToolCallArguments.get(id);
-    const argumentsText = appendStreamingArgsPreview(
-      existing?.argumentsText,
-      event.argumentsPart,
-    );
-    const name = event.name ?? existing?.name ?? streamingUI.activeToolCalls.get(id)?.name ?? 'Tool';
-    const startedAtMs = existing?.startedAtMs ?? Date.now();
-    streamingUI.streamingToolCallArguments.set(id, { name, argumentsText, startedAtMs });
-    streamingUI.pendingToolCallFlushIds.add(id);
+    streamingUI.accumulateToolCallDelta(event.toolCallId, event.name, event.argumentsPart);
 
     this.host.patchLivePane({
       mode: 'tool',
@@ -516,7 +477,7 @@ export class SessionEventHandler {
     if (event.update.kind !== 'status') return;
     const text = event.update.text;
     if (text === undefined || text.length === 0) return;
-    const tc = this.host.streamingUI.pendingToolComponents.get(event.toolCallId);
+    const tc = this.host.streamingUI.getToolComponent(event.toolCallId);
     if (tc === undefined) return;
     tc.appendProgress(text);
   }
@@ -524,29 +485,24 @@ export class SessionEventHandler {
   private handleToolResult(event: ToolResultEvent): void {
     const { streamingUI } = this.host;
     streamingUI.flushNow();
-    const matchedCall = streamingUI.activeToolCalls.get(event.toolCallId);
     const resultData: ToolResultBlockData = {
       tool_call_id: event.toolCallId,
       output: serializeToolResultOutput(event.output),
       is_error: event.isError,
       synthetic: event.synthetic,
     };
-    if (matchedCall !== undefined) {
-      streamingUI.onToolCallEnd(event.toolCallId, resultData);
-      if (matchedCall.name === 'TodoList' && !event.isError) {
-        const rawTodos = (matchedCall.args as { todos?: unknown }).todos;
-        if (Array.isArray(rawTodos)) {
-          const sanitized = rawTodos
-            .filter((todo): todo is { title: string; status: 'pending' | 'in_progress' | 'done' } =>
-              isTodoItemShape(todo),
-            )
-            .map((t) => ({ title: t.title, status: t.status }));
-          streamingUI.setTodoList(sanitized);
-        }
+    const matchedCall = streamingUI.completeToolResult(event.toolCallId, resultData);
+    if (matchedCall !== undefined && matchedCall.name === 'TodoList' && !event.isError) {
+      const rawTodos = (matchedCall.args as { todos?: unknown }).todos;
+      if (Array.isArray(rawTodos)) {
+        const sanitized = rawTodos
+          .filter((todo): todo is { title: string; status: 'pending' | 'in_progress' | 'done' } =>
+            isTodoItemShape(todo),
+          )
+          .map((t) => ({ title: t.title, status: t.status }));
+        streamingUI.setTodoList(sanitized);
       }
     }
-    streamingUI.activeToolCalls.delete(event.toolCallId);
-    streamingUI.streamingToolCallArguments.delete(event.toolCallId);
     this.host.patchLivePane({ mode: 'waiting' });
   }
 
@@ -706,7 +662,7 @@ export class SessionEventHandler {
 
   private finishCompaction(sendQueued: (item: QueuedMessage) => void): void {
     const { state } = this.host;
-    const hasActiveTurn = this.host.streamingUI.currentTurnId !== undefined;
+    const hasActiveTurn = this.host.streamingUI.hasActiveTurn();
     if (!hasActiveTurn) {
       this.host.setAppState({
         isCompacting: false,
@@ -742,12 +698,12 @@ export class SessionEventHandler {
       return;
     }
 
-    let tc = streamingUI.pendingToolComponents.get(event.parentToolCallId);
+    let tc = streamingUI.getToolComponent(event.parentToolCallId);
     if (tc === undefined) {
-      const toolCall = streamingUI.activeToolCalls.get(event.parentToolCallId);
+      const toolCall = streamingUI.getActiveToolCall(event.parentToolCallId);
       if (toolCall !== undefined) {
         streamingUI.onToolCallStart(toolCall);
-        tc = streamingUI.pendingToolComponents.get(event.parentToolCallId);
+        tc = streamingUI.getToolComponent(event.parentToolCallId);
       }
     }
     tc ??= this.createStandaloneSubagentToolCall(event);
@@ -777,16 +733,14 @@ export class SessionEventHandler {
       this.appendBackgroundAgentEntry('completed', backgroundMeta, extras);
       return;
     }
-    const tc = streamingUI.pendingToolComponents.get(event.parentToolCallId);
+    const tc = streamingUI.getToolComponent(event.parentToolCallId);
     if (tc === undefined) return;
     tc.onSubagentCompleted({
       contextTokens: event.contextTokens,
       usage: event.usage,
       resultSummary: event.resultSummary,
     });
-    if (!streamingUI.activeToolCalls.has(event.parentToolCallId)) {
-      streamingUI.pendingToolComponents.delete(event.parentToolCallId);
-    }
+    streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
   }
 
   private handleSubagentFailed(event: SubagentFailedEvent): void {
@@ -805,17 +759,16 @@ export class SessionEventHandler {
       this.appendBackgroundAgentEntry('failed', backgroundMeta, { error: event.error });
       return;
     }
-    const tc = streamingUI.pendingToolComponents.get(event.parentToolCallId);
+    const tc = streamingUI.getToolComponent(event.parentToolCallId);
     if (tc === undefined) return;
     tc.onSubagentFailed({ error: event.error });
-    if (!streamingUI.activeToolCalls.has(event.parentToolCallId)) {
-      streamingUI.pendingToolComponents.delete(event.parentToolCallId);
-    }
+    streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
   }
 
   private createStandaloneSubagentToolCall(event: SubagentSpawnedEvent) {
     const { streamingUI } = this.host;
     const description = event.description ?? `Run ${event.subagentName} agent`;
+    const { turnId, step } = streamingUI.getTurnContext();
     const toolCall: ToolCallBlockData = {
       id: event.parentToolCallId,
       name: 'Agent',
@@ -824,11 +777,11 @@ export class SessionEventHandler {
         subagent_type: event.subagentName,
       },
       description,
-      step: streamingUI.currentStep,
-      turnId: streamingUI.currentTurnId,
+      step,
+      turnId,
     };
     streamingUI.onToolCallStart(toolCall);
-    return streamingUI.pendingToolComponents.get(event.parentToolCallId);
+    return streamingUI.getToolComponent(event.parentToolCallId);
   }
 
   private findAgentTaskId(subagentId: string): string | undefined {
@@ -846,7 +799,7 @@ export class SessionEventHandler {
   }
 
   private buildBackgroundAgentMetadata(event: SubagentSpawnedEvent): BackgroundAgentMetadata {
-    const parent = this.host.streamingUI.activeToolCalls.get(event.parentToolCallId);
+    const parent = this.host.streamingUI.getActiveToolCall(event.parentToolCallId);
     const description = parent?.args['description'] ?? event.description;
     return {
       agentId: event.subagentId,
@@ -865,7 +818,7 @@ export class SessionEventHandler {
     const entry: TranscriptEntry = {
       id: nextTranscriptId(),
       kind: 'status',
-      turnId: this.host.streamingUI.currentTurnId,
+      turnId: this.host.streamingUI.getTurnContext().turnId,
       renderMode: 'plain',
       content: status.headline,
       detail: status.detail,
@@ -936,7 +889,7 @@ export class SessionEventHandler {
     const entry: TranscriptEntry = {
       id: nextTranscriptId(),
       kind: 'status',
-      turnId: this.host.streamingUI.currentTurnId,
+      turnId: this.host.streamingUI.getTurnContext().turnId,
       renderMode: 'plain',
       content: status.headline,
       detail: status.detail,

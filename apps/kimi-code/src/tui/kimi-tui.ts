@@ -1066,7 +1066,7 @@ export class KimiTUI {
 
   // Resets request-scoped state before submitting work to the active session.
   beginSessionRequest(): void {
-    this.streamingUI.currentTurnId = undefined;
+    this.streamingUI.setTurnId(undefined);
     this.streamingUI.resetLiveText();
     this.streamingUI.resetToolUi();
     this.streamingUI.resetToolCallState();
@@ -1163,7 +1163,7 @@ export class KimiTUI {
       this.appendTranscriptEntry({
         id: nextTranscriptId(),
         kind: 'user',
-        turnId: this.streamingUI.currentTurnId,
+        turnId: this.streamingUI.getTurnContext().turnId,
         renderMode: 'plain',
         content: part,
       });
@@ -1354,8 +1354,8 @@ export class KimiTUI {
     this.tasksBrowserController.close();
     this.state.footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 0 });
     this.streamingUI.setTodoList([]);
-    this.streamingUI.currentTurnId = undefined;
-    this.streamingUI.currentStep = 0;
+    this.streamingUI.setTurnId(undefined);
+    this.streamingUI.setStep(0);
     this.streamingUI.resetLiveText();
     this.updateQueueDisplay();
   }

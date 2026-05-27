@@ -229,7 +229,7 @@ export class SessionReplayRenderer {
       const toolCall = toolCallFromReplayMessage(rawToolCall, context);
       if (toolCall === undefined) continue;
       context.toolCalls.set(toolCall.id, toolCall);
-      streamingUI.activeToolCalls.set(toolCall.id, toolCall);
+      streamingUI.setActiveToolCall(toolCall.id, toolCall);
       streamingUI.onToolCallStart(toolCall);
     }
   }
@@ -248,7 +248,7 @@ export class SessionReplayRenderer {
     call.result = result;
     this.applyStepContext(context);
     this.host.streamingUI.onToolCallEnd(toolCallId, result);
-    this.host.streamingUI.activeToolCalls.delete(toolCallId);
+    this.host.streamingUI.removeActiveToolCall(toolCallId);
     context.completedToolCallIds.add(toolCallId);
   }
 
@@ -260,8 +260,8 @@ export class SessionReplayRenderer {
   }
 
   private applyStepContext(context: ReplayRenderContext): void {
-    this.host.streamingUI.currentTurnId = context.currentTurnId;
-    this.host.streamingUI.currentStep = context.stepIndex;
+    this.host.streamingUI.setTurnId(context.currentTurnId);
+    this.host.streamingUI.setStep(context.stepIndex);
   }
 
   private flushAssistant(context: ReplayRenderContext): void {
@@ -279,24 +279,13 @@ export class SessionReplayRenderer {
       streamingUI.onStreamingTextStart();
       streamingUI.onStreamingTextUpdate(text);
       streamingUI.onStreamingTextEnd();
-      streamingUI.assistantDraft = '';
+      streamingUI.clearAssistantDraft();
     }
   }
 
   private cleanupRuntime(context: ReplayRenderContext): void {
-    const { state, streamingUI } = this.host;
     this.flushAssistant(context);
-    streamingUI.activeToolCalls.clear();
-    for (const toolCallId of context.completedToolCallIds) {
-      streamingUI.pendingToolComponents.delete(toolCallId);
-    }
-    streamingUI.pendingAgentGroup = null;
-    streamingUI.pendingReadGroup = null;
-    streamingUI.currentTurnId = undefined;
-    streamingUI.currentStep = 0;
-    streamingUI.streamingToolCallArguments.clear();
-    streamingUI.pendingToolCallFlushIds.clear();
-    state.ui.requestRender();
+    this.host.streamingUI.cleanupAfterReplay(context.completedToolCallIds);
   }
 
   // ---------------------------------------------------------------------------
@@ -415,8 +404,8 @@ export class SessionReplayRenderer {
 
   private removeToolCall(toolCallId: string): void {
     const { state, streamingUI } = this.host;
-    streamingUI.activeToolCalls.delete(toolCallId);
-    streamingUI.pendingToolComponents.delete(toolCallId);
+    streamingUI.removeActiveToolCall(toolCallId);
+    streamingUI.removeToolComponent(toolCallId);
     const index = state.transcriptEntries.findIndex(
       (entry) => entry.toolCallData?.id === toolCallId,
     );
