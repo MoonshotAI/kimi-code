@@ -1,140 +1,34 @@
 /**
- * P1.9 — Session-level cron end-to-end smoke test.
- *
- * Every other Phase-1 test in this directory checks one slice of the
- * cron stack: the scheduler against a hand-rolled task source
- * (`tools/cron/scheduler.test.ts`), the manager against a stubbed Agent
- * (`manager.test.ts`), or the Agent <-> ToolManager wiring
- * (`agent-integration.test.ts`). What none of them covers is the full
- * pipeline as it runs in production:
- *
- *   `CronCreateTool.resolveExecution(...).execute(...)`
- *      ↓
- *   `SessionCronStore.add(...)` on the real `agent.cron.store`
- *      ↓
- *   `CronScheduler.tick()` (driven manually, under an injected clock)
- *      ↓
- *   `CronManager.handleFire(...)`
- *      ↓
- *   `agent.turn.steer(content, CronJobOrigin)` on the real turn
- *
- * This file exercises that whole path through the real `AgentTestContext`
- * harness and asserts the contract documented in todo-cron.md §9 P1.9:
- *
- *   "Inject a mock ClockSources, CronCreate one recurring=true,
- *    cron='*\/5 * * * *', advance 15 minutes, verify steer was called
- *    exactly once with coalescedCount=3 and a full CronJobOrigin."
- *
- * ── Clock injection
- *
- * The Agent constructor eagerly builds a `CronManager` against
- * `SYSTEM_CLOCKS` (modulo the `KIMI_CRON_CLOCK` env hooks). There is no
- * production-side configuration knob to substitute a mock clock at that
- * level — and adding one (`AgentConfig.cron`) is out of scope for P1.9.
- *
- * Instead this test exercises the documented test-only escape hatch: we
- * stop the auto-built manager, replace `agent.cron` with one wired to a
- * mock `ClockSources`, and re-start it with `pollIntervalMs: null` so we
- * drive `tick()` deterministically rather than racing setInterval. The
- * `as any` cast is intentional — `readonly cron` is the right shape for
- * production callers, and the swap is bounded to test setup.
- *
- * ── coalescedCount = 3 calibration
- *
- * Why exactly 3? The scheduler computes `coalescedCount` by enumerating
- * the cron expression's ideal fires that fall in `(firstFire - ε, now]`
- * starting from `firstFire = computeNextCronRun(parsed, baseFromMs)`
- * where `baseFromMs = createdAt`. The expression `*\/5 * * * *`
- * matches every 5 minutes, and `computeNextCronRun` returns the next
- * match *strictly after* its `fromMs` argument.
- *
- *   createdAt = 12:00:00.000
- *   now       = 12:15:00.000
- *   firstFire = computeNextCronRun(parsed, 12:00:00) = 12:05:00
- *   countCoalesced:
- *     count=1, cursor=12:05:00 → next=12:10:00 ≤ 12:15:00 → count=2
- *     count=2, cursor=12:10:00 → next=12:15:00 ≤ 12:15:00 → count=3
- *     count=3, cursor=12:15:00 → next=12:20:00 >  12:15:00 → stop
- *   → coalescedCount = 3
- *
- * We anchor at noon **local time** because `cron-expr` matches on local
- * fields (`Date.getHours()` etc.); a UTC anchor would shift the result
- * by the host's UTC offset. Using `new Date(y, m, d, h, ...)` keeps the
- * count deterministic regardless of where this test runs.
- *
- * ── Jitter
- *
- * `KIMI_CRON_NO_JITTER=1` is set so the actual fire lands at the ideal
- * 12:05:00 and any future change to the jitter window can't push the
- * fire past our 15-minute advance. The `coalescedCount` math itself is
- * jitter-independent (the count is derived from the unjittered ideal
- * schedule), but pinning jitter off keeps the test robust against
- * unrelated jitter refactors.
- *
- * ── Steer interception
- *
- * We wrap `agent.turn.steer` with a spy that captures `(content, origin)`
- * before delegating to the real implementation. The real `steer` is
- * involved deliberately — it writes a `turn.steer` record and launches a
- * turn (since no turn is active, the scripted-generate harness will be
- * asked to produce a response). Wrapping rather than replacing keeps the
- * production code path live; if a regression in `handleFire` ever
- * stopped calling `steer`, the spy's empty array would surface it
- * exactly the way a missed wire would in production.
+ * Session-level cron end-to-end smoke: exercises the full
+ * `CronCreateTool → SessionCronStore → CronScheduler → CronManager →
+ * agent.turn.steer` pipeline through the real `AgentTestContext`,
+ * with a swapped CronManager wired to an injected clock so the
+ * `coalescedCount = 3` calibration after a 15-minute advance is
+ * deterministic regardless of host TZ.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CronManager } from '../../../src/agent/cron';
-import type { ClockSources } from '../../../src/tools/cron/clock';
 import { CronCreateTool } from '../../../src/tools/cron/cron-create';
 import { CronDeleteTool } from '../../../src/tools/cron/cron-delete';
 import { CronListTool } from '../../../src/tools/cron/cron-list';
 import type { ExecutableToolOutput } from '../../../src/loop/types';
 import { testAgent, type AgentTestContext } from '../harness/agent';
+import { createClocks } from './harness/stub';
 
-// Anchor wall-clock to 12:00:00.000 local time on a fixed date. See the
-// "coalescedCount = 3 calibration" note in the file header for why local
-// time matters — the cron parser uses local fields, so an explicit
-// `new Date(y, m, d, h, ...)` is the only way to land the test on a
-// known minute regardless of the host's timezone.
+// Local-time anchor (cron-expr matches on local fields, so a UTC anchor
+// would shift the result by the host's offset). At noon + 15 min the
+// `*\/5 * * * *` ideal fires are 12:05/12:10/12:15 → coalescedCount=3.
 const LOCAL_ANCHOR_MS = new Date(2024, 5, 1, 12, 0, 0, 0).getTime();
 
 /**
  * Coerce an `ExecutableToolOutput` (string | ContentPart[]) into a
- * single string. The cron tools we exercise always return a string body,
- * but the type union forces us to handle the structured-content path —
- * doing so via JSON keeps assertions safe against a future tool that
- * starts returning rich content without crashing on the typescript-
- * eslint `no-base-to-string` rule.
+ * single string. The cron tools always return a string body, but the
+ * union forces us to handle the structured-content path — JSON keeps
+ * future-tool assertions safe and the `no-base-to-string` rule happy.
  */
 function outputText(out: ExecutableToolOutput): string {
   return typeof out === 'string' ? out : JSON.stringify(out);
-}
-
-interface MockClockHandle {
-  readonly clocks: ClockSources;
-  advance(ms: number): void;
-  now(): number;
-}
-
-function createMockClocks(initial: number): MockClockHandle {
-  let wall = initial;
-  // Monotonic only ever advances; we drive it from the same `advance(...)`
-  // calls so the scheduler's monoNowMs (used for any future poll cadence
-  // / lock heartbeat) stays consistent with the wall clock the test
-  // controls.
-  let mono = 1_000_000;
-  return {
-    clocks: {
-      wallNow: () => wall,
-      monoNowMs: () => mono,
-    },
-    advance: (ms) => {
-      wall += ms;
-      mono += ms;
-    },
-    now: () => wall,
-  };
 }
 
 describe('Cron — session E2E (P1.9)', () => {
@@ -167,7 +61,7 @@ describe('Cron — session E2E (P1.9)', () => {
     // because production code must never overwrite it; tests are the
     // only legitimate exception.
     await ctx.agent.cron.stop();
-    const harness = createMockClocks(LOCAL_ANCHOR_MS);
+    const harness = createClocks(LOCAL_ANCHOR_MS);
     (ctx.agent as unknown as { cron: CronManager }).cron = new CronManager(
       ctx.agent,
       {

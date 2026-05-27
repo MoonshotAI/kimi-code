@@ -1,11 +1,7 @@
 /**
- * Tests for `tools/cron/jitter.ts`. Mirrors layout of `cron-expr.test.ts` —
- * lives under `test/` because vitest config scopes include to `test/**`.
- *
- * We construct fire times via `new Date(year, monthIndex, day, h, m, s)`
- * so the tests are stable regardless of the host TZ. The jitter
- * implementation reasons about *minute-of-hour* (a local-time concept),
- * which is what we want for "ignore round-number :00/:30 marks".
+ * Tests for `tools/cron/jitter.ts`. Fire times are constructed via
+ * `new Date(y, m, d, h, mn, s)` so minute-of-hour assertions are
+ * TZ-stable.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 

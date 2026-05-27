@@ -1,9 +1,5 @@
 /**
  * Tests for `tools/cron/session-store.ts`.
- *
- * Lives under `test/tools/cron/` because the package's `vitest.config.ts`
- * scopes its `include` to `test/**`. See sibling `clock.test.ts` for the
- * same rationale.
  */
 import { describe, expect, it } from 'vitest';
 

@@ -1,26 +1,7 @@
 /**
- * P1.7 — Agent + cron wiring smoke test.
- *
- * The unit-level CronManager behaviour is exhaustively covered by
- * `manager.test.ts` against a hand-rolled Agent stub. This file checks
- * the wiring that stub can't see:
- *
- *   1. `new Agent(...)` constructs a `CronManager` and assigns it to
- *      `agent.cron`, and calls `cron.start()` so the auto-tick loop is
- *      live by the time anyone hands the agent to a tool.
- *
- *   2. `ToolManager.initializeBuiltinTools()` registers `CronCreate`,
- *      `CronList`, and `CronDelete` in the builtin map. We use
- *      `agent.tools.data()` (the public surface used by `getTools` RPC)
- *      to enumerate; that proves both the barrel re-export in
- *      `tools/builtin/index.ts` and the construction-side wiring in
- *      `agent/tool/index.ts` are in place.
- *
- *   3. `KIMI_DISABLE_CRON=1` causes `CronCreateTool.resolveExecution`
- *      to short-circuit with the documented "disabled" error before
- *      doing any work. The killswitch is already enforced inside
- *      CronManager / CronCreateTool; this test pins the contract so a
- *      future refactor can't silently lose it.
+ * Agent + cron wiring smoke: verifies `new Agent(...)` constructs and
+ * starts a CronManager, registers the three cron tools, and that
+ * `KIMI_DISABLE_CRON=1` short-circuits `CronCreate`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
