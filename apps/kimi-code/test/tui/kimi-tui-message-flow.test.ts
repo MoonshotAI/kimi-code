@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -12,6 +12,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
+import {
+  PluginMcpSelectorComponent,
+  PluginMarketplaceSelectorComponent,
+  PluginRemoveConfirmComponent,
+  PluginsOverviewSelectorComponent,
+} from '#/tui/components/dialogs/plugins-selector';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { QueuedMessage } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
@@ -127,6 +133,38 @@ function makeSession(overrides: Record<string, unknown> = {}) {
       },
     })),
     close: vi.fn(async () => {}),
+    listPlugins: vi.fn(async () => []),
+    installPlugin: vi.fn(async () => ({
+      id: 'demo',
+      displayName: 'Demo',
+      version: '1.0.0',
+      enabled: true,
+      state: 'ok',
+      skillCount: 1,
+      mcpServerCount: 0,
+      enabledMcpServerCount: 0,
+      hasErrors: false,
+    })),
+    setPluginEnabled: vi.fn(async () => {}),
+    setPluginMcpServerEnabled: vi.fn(async () => {}),
+    removePlugin: vi.fn(async () => {}),
+    reloadPlugins: vi.fn(async () => ({ added: [], removed: [], errors: [] })),
+    getPluginInfo: vi.fn(async (id: string) => ({
+      id,
+      displayName: id,
+      version: '1.0.0',
+      enabled: true,
+      state: 'ok',
+      skillCount: 1,
+      mcpServerCount: 0,
+      enabledMcpServerCount: 0,
+      hasErrors: false,
+      source: 'local-path',
+      root: `/plugins/${id}`,
+      manifest: undefined,
+      mcpServers: [],
+      diagnostics: [],
+    })),
     ...overrides,
   };
 }
@@ -189,6 +227,7 @@ function countOccurrences(haystack: string, needle: string): number {
 
 const tempDirs: string[] = [];
 const originalKimiCodeHome = process.env['KIMI_CODE_HOME'];
+const originalPluginMarketplaceUrl = process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'];
 const originalVisual = process.env['VISUAL'];
 const originalEditor = process.env['EDITOR'];
 
@@ -212,6 +251,11 @@ afterEach(async () => {
     delete process.env['VISUAL'];
   } else {
     process.env['VISUAL'] = originalVisual;
+  }
+  if (originalPluginMarketplaceUrl === undefined) {
+    delete process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'];
+  } else {
+    process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] = originalPluginMarketplaceUrl;
   }
   if (originalEditor === undefined) {
     delete process.env['EDITOR'];
@@ -1303,6 +1347,250 @@ describe('KimiTUI message flow', () => {
     await vi.waitFor(() => {
       const output = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
       expect(output).toContain('Error: Failed to load MCP servers: rpc unavailable');
+    });
+  });
+
+  it('toggles plugin MCP servers from the text command', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins mcp enable kimi-datasource data');
+
+    await vi.waitFor(() => {
+      expect(session.setPluginMcpServerEnabled).toHaveBeenCalledWith(
+        'kimi-datasource',
+        'data',
+        true,
+      );
+    });
+  });
+
+  it('errors when /plugins install has no argument', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins install');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Usage: /plugins install <local-path-or-zip-url>',
+      );
+    });
+    expect(session.installPlugin).not.toHaveBeenCalled();
+  });
+
+  it('installs from a positional source on /plugins install', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins install ./plugins/kimi-datasource');
+
+    await vi.waitFor(() => {
+      expect(session.installPlugin).toHaveBeenCalledWith('/tmp/proj-a/plugins/kimi-datasource');
+    });
+  });
+
+  it('loads a local plugin marketplace file and installs from it', async () => {
+    const marketplaceDir = await makeTempHome();
+    const marketplacePath = join(marketplaceDir, 'marketplace.json');
+    await writeFile(
+      marketplacePath,
+      JSON.stringify({
+        plugins: [
+          {
+            id: 'kimi-datasource',
+            displayName: 'Kimi Datasource',
+            description: 'Datasource plugin',
+            source: './kimi-datasource',
+          },
+        ],
+      }),
+      'utf8',
+    );
+    process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] = marketplacePath;
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins marketplace');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginMarketplaceSelectorComponent,
+      );
+    });
+    const picker = driver.state.editorContainer.children[0] as PluginMarketplaceSelectorComponent;
+    picker.handleInput(' ');
+
+    await vi.waitFor(() => {
+      expect(session.installPlugin).toHaveBeenCalledWith(join(marketplaceDir, 'kimi-datasource'));
+    });
+    await vi.waitFor(() => {
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(transcript).toContain('Installing or updating Kimi Datasource from marketplace...');
+      expect(transcript).toContain('Installed or updated Demo');
+    });
+  });
+
+  it('toggles plugins from the overview with space', async () => {
+    let enabled = true;
+    const session = makeSession({
+      listPlugins: vi.fn(async () => [
+        {
+          id: 'demo',
+          displayName: 'Demo',
+          version: '1.0.0',
+          enabled,
+          state: 'ok',
+          skillCount: 1,
+          mcpServerCount: 0,
+          enabledMcpServerCount: 0,
+          hasErrors: false,
+        },
+      ]),
+      setPluginEnabled: vi.fn(async (_id: string, nextEnabled: boolean) => {
+        enabled = nextEnabled;
+      }),
+    });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginsOverviewSelectorComponent,
+      );
+    });
+    const overview = driver.state.editorContainer.children[0] as PluginsOverviewSelectorComponent;
+    overview.handleInput(' ');
+
+    await vi.waitFor(() => {
+      expect(session.setPluginEnabled).toHaveBeenCalledWith('demo', false);
+    });
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginsOverviewSelectorComponent,
+      );
+    });
+    const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
+    expect(out).toContain('❯ Demo  disabled  saved · /new to apply');
+    expect(stripSgr(renderTranscript(driver))).toContain('Disabled demo. Run /new to apply.');
+  });
+
+  it('toggles plugin MCP servers from the overview MCP picker', async () => {
+    const session = makeSession({
+      listPlugins: vi.fn(async () => [
+        {
+          id: 'kimi-datasource',
+          displayName: 'Kimi Datasource',
+          version: '1.0.0',
+          enabled: true,
+          state: 'ok',
+          skillCount: 1,
+          mcpServerCount: 1,
+          enabledMcpServerCount: 1,
+          hasErrors: false,
+        },
+      ]),
+      getPluginInfo: vi.fn(async () => ({
+        id: 'kimi-datasource',
+        displayName: 'Kimi Datasource',
+        version: '1.0.0',
+        enabled: true,
+        state: 'ok',
+        skillCount: 1,
+        mcpServerCount: 1,
+        enabledMcpServerCount: 1,
+        hasErrors: false,
+        source: 'local-path',
+        root: '/plugins/kimi-datasource',
+        manifest: undefined,
+        mcpServers: [
+          {
+            name: 'data',
+            runtimeName: 'plugin-kimi-datasource-data',
+            enabled: true,
+            transport: 'stdio',
+            command: 'node',
+            args: ['./bin/kimi-datasource.mjs'],
+          },
+        ],
+        diagnostics: [],
+      })),
+    });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginsOverviewSelectorComponent,
+      );
+    });
+    const overview = driver.state.editorContainer.children[0] as PluginsOverviewSelectorComponent;
+    overview.handleInput('m');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginMcpSelectorComponent,
+      );
+    });
+    const mcpPicker = driver.state.editorContainer.children[0] as PluginMcpSelectorComponent;
+    mcpPicker.handleInput(' ');
+
+    await vi.waitFor(() => {
+      expect(session.setPluginMcpServerEnabled).toHaveBeenCalledWith(
+        'kimi-datasource',
+        'data',
+        false,
+      );
+    });
+  });
+
+  it('requires confirmation before /plugins remove removes a plugin', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins remove demo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+        PluginRemoveConfirmComponent,
+      );
+    });
+    expect(session.removePlugin).not.toHaveBeenCalled();
+
+    const confirm = driver.state.editorContainer.children[0] as PluginRemoveConfirmComponent;
+    expect(stripSgr(confirm.render(120).join('\n'))).toContain('Remove demo (demo)?');
+    confirm.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Remove cancelled: demo.');
+    });
+    expect(session.removePlugin).not.toHaveBeenCalled();
+  });
+
+  it('renders /plugins <id> info to the transcript', async () => {
+    const session = makeSession({
+      listPlugins: vi.fn(async () => [
+        {
+          id: 'demo',
+          displayName: 'Demo',
+          version: '1.0.0',
+          enabled: true,
+          state: 'ok',
+          skillCount: 1,
+          mcpServerCount: 0,
+          enabledMcpServerCount: 0,
+          hasErrors: false,
+        },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/plugins demo');
+
+    await vi.waitFor(() => {
+      expect(session.getPluginInfo).toHaveBeenCalledWith('demo');
     });
   });
 

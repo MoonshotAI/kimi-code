@@ -19,6 +19,7 @@ import {
 import chalk from 'chalk';
 
 import type { ColorPalette } from '#/tui/theme/colors';
+import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
 export interface ChoiceOption {
@@ -33,6 +34,7 @@ export interface ChoiceOption {
 export interface ChoicePickerOptions {
   readonly title: string;
   readonly hint?: string;
+  readonly notice?: string;
   readonly options: readonly ChoiceOption[];
   readonly currentValue?: string;
   readonly colors: ColorPalette;
@@ -102,7 +104,11 @@ export class ChoicePickerComponent extends Container implements Focusable {
       this.list.pageDown();
       return;
     }
-    if (matchesKey(data, Key.enter)) {
+    if (
+      matchesKey(data, Key.enter) ||
+      matchesKey(data, Key.space) ||
+      printableChar(data) === ' '
+    ) {
       const chosen = this.list.selected();
       if (chosen !== undefined) this.opts.onSelect(chosen.value);
       return;
@@ -131,6 +137,9 @@ export class ChoicePickerComponent extends Container implements Focusable {
       lines.push(chalk.hex(colors.primary)(` Search: `) + chalk.hex(colors.text)(view.query));
     }
     lines.push(chalk.hex(colors.textMuted)(` ${hint}`));
+    if (this.opts.notice !== undefined) {
+      lines.push(chalk.hex(colors.success)(` ${this.opts.notice}`));
+    }
     lines.push('');
 
     if (options.length === 0) {

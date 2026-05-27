@@ -9,11 +9,13 @@ import { registerExportCommand } from './sub/export';
 
 export type MainCommandHandler = (opts: CLIOptions) => void;
 export type MigrateCommandHandler = () => void;
+export type PluginNodeRunnerHandler = (entry: string, args: readonly string[]) => void;
 
 export function createProgram(
   version: string,
   onMain: MainCommandHandler,
   onMigrate: MigrateCommandHandler,
+  onPluginNodeRunner: PluginNodeRunnerHandler = () => {},
 ): Command {
   const program = new Command(CLI_COMMAND_NAME)
     .description('The Starting Point for Next-Gen Agents')
@@ -72,6 +74,15 @@ export function createProgram(
 
   registerExportCommand(program);
   registerMigrateCommand(program, onMigrate);
+
+  program
+    .command('__plugin_run_node', { hidden: true })
+    .argument('<entry>')
+    .argument('[args...]')
+    .allowUnknownOption(true)
+    .action((entry: string, args: string[]) => {
+      onPluginNodeRunner(entry, args);
+    });
 
   program.action(() => {
     const raw = program.opts<Record<string, unknown>>();

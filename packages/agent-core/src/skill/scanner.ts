@@ -24,6 +24,7 @@ export interface ResolveSkillRootsOptions {
   readonly builtinDir?: string;
   readonly explicitDirs?: readonly string[];
   readonly extraDirs?: readonly string[];
+  readonly pluginSkillRoots?: readonly SkillRoot[];
   readonly mergeAllAvailableSkills?: boolean;
   readonly realpath?: (p: string) => Promise<string>;
   readonly isDir?: (p: string) => Promise<boolean>;
@@ -105,6 +106,12 @@ export async function resolveSkillRoots(
     );
   }
 
+  if (options.pluginSkillRoots !== undefined) {
+    for (const root of options.pluginSkillRoots) {
+      await pushProvidedRoot(roots, root, isDir, realpath);
+    }
+  }
+
   if (options.builtinDir !== undefined) {
     await pushExistingRoot(roots, options.builtinDir, 'builtin', isDir, realpath);
   }
@@ -125,7 +132,7 @@ export async function discoverSkills(
 
   async function walkSkillDir(
     dirPath: string,
-    source: SkillSource,
+    root: SkillRoot,
     isTopLevel: boolean,
     depth: number,
   ): Promise<void> {
@@ -160,7 +167,7 @@ export async function discoverSkills(
         byName,
         skillMdPath: path.join(dirPath, entry, 'SKILL.md'),
         skillDirName: entry,
-        source,
+        root,
         warn,
         skip,
       });
@@ -169,6 +176,24 @@ export async function discoverSkills(
     // Flat .md skills count only at a root's top level; deeper .md files are
     // skill payload (e.g. references/foo.md), not skills.
     if (isTopLevel) {
+      // A SKILL.md placed directly at a plugin skill root (e.g. plugin root fallback)
+      // is treated as a single skill bundle. This only applies to plugin-derived roots,
+      // not to user/project skill directories.
+      if (root.plugin !== undefined) {
+        const rootSkillMd = path.join(dirPath, 'SKILL.md');
+        if (await isFile(rootSkillMd)) {
+          await parseAndRegister({
+            parse,
+            byName,
+            skillMdPath: rootSkillMd,
+            skillDirName: path.basename(dirPath),
+            root,
+            warn,
+            skip,
+          });
+        }
+      }
+
       for (const entry of entries) {
         if (!entry.endsWith('.md')) continue;
         if (entry === 'SKILL.md') continue;
@@ -186,7 +211,7 @@ export async function discoverSkills(
           byName,
           skillMdPath,
           skillDirName: skillName,
-          source,
+          root,
           warn,
           skip,
         });
@@ -194,12 +219,12 @@ export async function discoverSkills(
     }
 
     for (const entry of subdirs) {
-      await walkSkillDir(path.join(dirPath, entry), source, false, depth + 1);
+      await walkSkillDir(path.join(dirPath, entry), root, false, depth + 1);
     }
   }
 
   for (const root of options.roots) {
-    await walkSkillDir(root.path, root.source, true, 0);
+    await walkSkillDir(root.path, root, true, 0);
   }
 
   return sortSkills([...byName.values()]);
@@ -287,12 +312,32 @@ async function pushExistingRoot(
   return true;
 }
 
+async function pushProvidedRoot(
+  out: SkillRoot[],
+  root: SkillRoot,
+  isDir: (p: string) => Promise<boolean>,
+  realpath: (p: string) => Promise<string>,
+): Promise<boolean> {
+  if (!(await isDir(root.path))) return false;
+  const resolved = await realpath(root.path);
+  const existingIndex = out.findIndex((existing) => existing.path === resolved);
+  if (existingIndex < 0) {
+    out.push({ ...root, path: resolved });
+    return true;
+  }
+  const existing = out[existingIndex];
+  if (existing !== undefined && existing.plugin === undefined && root.plugin !== undefined) {
+    out[existingIndex] = { ...existing, plugin: root.plugin };
+  }
+  return true;
+}
+
 async function parseAndRegister(input: {
   readonly parse: NonNullable<DiscoverSkillsOptions['parse']>;
   readonly byName: Map<string, SkillDefinition>;
   readonly skillMdPath: string;
   readonly skillDirName: string;
-  readonly source: SkillSource;
+  readonly root: SkillRoot;
   readonly warn: (message: string, cause?: unknown) => void;
   readonly skip: (skill: SkippedSkill) => void;
 }): Promise<void> {
@@ -300,10 +345,15 @@ async function parseAndRegister(input: {
     const skill = await input.parse({
       skillMdPath: input.skillMdPath,
       skillDirName: input.skillDirName,
-      source: input.source,
+      source: input.root.source,
     });
     const key = normalizeSkillName(skill.name);
-    if (!input.byName.has(key)) input.byName.set(key, skill);
+    if (!input.byName.has(key)) {
+      input.byName.set(key, input.root.plugin === undefined ? skill : {
+        ...skill,
+        plugin: input.root.plugin,
+      });
+    }
   } catch (error) {
     if (error instanceof UnsupportedSkillTypeError) {
       input.skip({

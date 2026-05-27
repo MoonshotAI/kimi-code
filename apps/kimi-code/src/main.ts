@@ -19,6 +19,7 @@ import { OptionConflictError, validateOptions } from './cli/options';
 import { runPrompt } from './cli/run-prompt';
 import { runShell } from './cli/run-shell';
 import { formatStartupError } from './cli/startup-error';
+import { runPluginNodeEntry } from './cli/sub/plugin-run-node';
 import { runUpdatePreflight } from './cli/update/preflight';
 import { getVersion } from './cli/version';
 import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
@@ -108,6 +109,13 @@ export function main(): void {
         await logStartupFailure('run migration', error);
         process.stderr.write(formatStartupError(error, { operation: 'run migration' }));
         process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
+        process.exit(1);
+      });
+    },
+    (entry, args) => {
+      void runPluginNodeEntry(entry, args).catch(async (error: unknown) => {
+        await logStartupFailure('run plugin node entry', error);
+        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
         process.exit(1);
       });
     },

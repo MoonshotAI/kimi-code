@@ -68,11 +68,20 @@ export class SkillRegistry {
 
   renderSkillPrompt(skill: SkillDefinition, rawArgs: string): string {
     const argumentNames = skillArgumentNames(skill.metadata);
-    return expandSkillParameters(skill.content, rawArgs, {
+    const content = expandSkillParameters(skill.content, rawArgs, {
       skillDir: skill.dir,
       sessionId: this.sessionId,
       argumentNames,
     });
+    const plugin = skill.plugin;
+    if (plugin === undefined) return content;
+    const instructions = plugin.instructions;
+    if (instructions === undefined || instructions.trim().length === 0) return content;
+    return (
+      `<kimi-plugin-instructions plugin="${escapeAttr(plugin.id)}">\n` +
+      `${instructions}\n` +
+      `</kimi-plugin-instructions>\n\n${content}`
+    );
   }
 
   listSkills(): readonly SkillDefinition[] {
@@ -147,4 +156,8 @@ function formatModelSkill(skill: SkillDefinition): readonly string[] {
 
 function truncate(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
+}
+
+function escapeAttr(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
 }

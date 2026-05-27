@@ -665,6 +665,35 @@ describe('resolveSkillRoots extra dirs', () => {
     expect(matches).toHaveLength(1);
   });
 
+  it('preserves plugin metadata when a plugin skill root duplicates an extra dir', async () => {
+    const { homeDir, repoDir, workDir } = await makeWorkspace();
+    const real = path.join(repoDir, 'real');
+    await mkdir(real, { recursive: true });
+
+    const roots = await resolveSkillRoots({
+      paths: { userHomeDir: homeDir, workDir },
+      extraDirs: [real],
+      pluginSkillRoots: [
+        {
+          path: real,
+          source: 'extra',
+          plugin: {
+            id: 'superpowers',
+            instructions: 'Use AskUserQuestion.',
+          },
+        },
+      ],
+    });
+
+    const realResolved = await realpath(real);
+    const matches = roots.filter((r) => r.path === realResolved);
+    expect(matches).toHaveLength(1);
+    expect(matches[0]?.plugin).toEqual({
+      id: 'superpowers',
+      instructions: 'Use AskUserQuestion.',
+    });
+  });
+
   it('stamps skills discovered via extra dirs with source=extra', async () => {
     const { homeDir, repoDir, workDir } = await makeWorkspace();
     const extra = path.join(repoDir, 'my-extra');

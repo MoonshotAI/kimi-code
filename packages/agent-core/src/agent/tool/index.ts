@@ -416,7 +416,9 @@ export class ToolManager {
       .toSorted((a, b) => a.localeCompare(b))
       .map(
         (name) =>
-          this.userTools.get(name) ?? this.mcpTools.get(name)?.tool ?? this.builtinTools.get(name),
+          this.userTools.get(name) ??
+          this.mcpTools.get(name)?.tool ??
+          this.builtinTools.get(name),
       )
       .filter((tool) => !!tool);
   }

@@ -9,8 +9,8 @@
 
 import { writeFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { release as osRelease, type as osType } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { homedir as osHomedir, release as osRelease, type as osType } from 'node:os';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
@@ -73,6 +73,8 @@ import type {
   ModelAlias,
   McpServerInfo,
   PermissionMode,
+  PluginInfo,
+  PluginSummary,
   PromptOrigin,
   PromptPart,
   ResumedAgentState,
@@ -109,6 +111,7 @@ import type { GitLsFilesCache } from '#/utils/git/git-ls-files';
 import { createGitLsFilesCache } from '#/utils/git/git-ls-files';
 import { appendInputHistory, loadInputHistory } from '#/utils/history/input-history';
 import { parseImageMeta } from '#/utils/image/image-mime';
+import { loadPluginMarketplace } from '#/utils/plugin-marketplace';
 import { getInputHistoryFile } from '#/utils/paths';
 import { editInExternalEditor, resolveEditorCommand } from '#/utils/process/external-editor';
 import { detectFdPath } from '#/utils/process/fd-detect';
@@ -151,6 +154,16 @@ import { ChoicePickerComponent, type ChoiceOption } from './components/dialogs/c
 import { ModelSelectorComponent } from './components/dialogs/model-selector';
 import { PlatformSelectorComponent } from './components/dialogs/platform-selector';
 import { PermissionSelectorComponent } from './components/dialogs/permission-selector';
+import {
+  PluginMcpSelectorComponent,
+  PluginMarketplaceSelectorComponent,
+  PluginRemoveConfirmComponent,
+  PluginsOverviewSelectorComponent,
+  type PluginMcpSelection,
+  type PluginMarketplaceSelection,
+  type PluginRemoveConfirmResult,
+  type PluginsOverviewSelection,
+} from './components/dialogs/plugins-selector';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
 import { TaskOutputViewer } from './components/dialogs/task-output-viewer';
@@ -175,6 +188,10 @@ import {
 import { buildStatusReportLines } from './components/messages/status-panel';
 import { ThinkingComponent } from './components/messages/thinking';
 import { ToolCallComponent } from './components/messages/tool-call';
+import {
+  buildPluginsInfoLines,
+  buildPluginsListLines,
+} from './components/messages/plugins-status-panel';
 import {
   buildUsageReportLines,
   UsagePanelComponent,
@@ -1549,6 +1566,9 @@ export class KimiTUI {
         return;
       case 'mcp':
         void this.showMcpServers();
+        return;
+      case 'plugins':
+        void this.handlePluginsCommand(args);
         return;
       case 'editor':
         await this.handleEditorCommand(args, {});
@@ -5196,6 +5216,121 @@ export class KimiTUI {
     }
   }
 
+  // Shows the plugin manager entry point.
+  private async showPluginsPicker(options?: {
+    readonly selectedId?: string;
+    readonly pluginHint?: {
+      readonly id: string;
+      readonly text: string;
+    };
+  }): Promise<void> {
+    let plugins: readonly PluginSummary[];
+    try {
+      plugins = await this.requireSession().listPlugins();
+    } catch (error) {
+      this.showError(`Failed to load plugins: ${formatErrorMessage(error)}`);
+      return;
+    }
+
+    this.mountEditorReplacement(
+      new PluginsOverviewSelectorComponent({
+        plugins,
+        selectedId: options?.selectedId,
+        pluginHint: options?.pluginHint,
+        colors: this.state.theme.colors,
+        onSelect: (selection) => {
+          this.restoreEditor();
+          void this.handlePluginsOverviewSelection(selection).catch((error: unknown) => {
+            this.showError(`/plugins failed: ${formatErrorMessage(error)}`);
+          });
+        },
+        onCancel: () => {
+          this.restoreEditor();
+        },
+      }),
+    );
+  }
+
+  // Loads official marketplace metadata and shows installable plugins.
+  private async showPluginMarketplacePicker(source?: string): Promise<void> {
+    try {
+      const [marketplace, installed] = await Promise.all([
+        loadPluginMarketplace({ workDir: this.state.appState.workDir, source }),
+        this.requireSession().listPlugins(),
+      ]);
+      this.mountEditorReplacement(
+        new PluginMarketplaceSelectorComponent({
+          entries: marketplace.plugins,
+          installedIds: new Set(installed.map((plugin) => plugin.id)),
+          source: marketplace.source,
+          colors: this.state.theme.colors,
+          onSelect: (selection) => {
+            this.restoreEditor();
+            void this.handlePluginMarketplaceSelection(selection).catch((error: unknown) => {
+              this.showError(`/plugins marketplace failed: ${formatErrorMessage(error)}`);
+            });
+          },
+          onCancel: () => {
+            this.restoreEditor();
+            void this.showPluginsPicker();
+          },
+        }),
+      );
+    } catch (error) {
+      this.showError(`Failed to load plugin marketplace: ${formatErrorMessage(error)}`);
+    }
+  }
+
+  private async showPluginMcpPicker(id: string): Promise<void> {
+    let info: PluginInfo;
+    try {
+      info = await this.requireSession().getPluginInfo(id);
+    } catch (error) {
+      this.showError(`Failed to load plugin MCP servers: ${formatErrorMessage(error)}`);
+      return;
+    }
+
+    this.mountEditorReplacement(
+      new PluginMcpSelectorComponent({
+        info,
+        colors: this.state.theme.colors,
+        onSelect: (selection) => {
+          this.restoreEditor();
+          void this.handlePluginMcpSelection(selection).catch((error: unknown) => {
+            this.showError(`/plugins mcp failed: ${formatErrorMessage(error)}`);
+          });
+        },
+        onCancel: () => {
+          this.restoreEditor();
+          void this.showPluginsPicker({ selectedId: id });
+        },
+      }),
+    );
+  }
+
+  private async confirmRemovePlugin(id: string): Promise<boolean> {
+    let displayName = id;
+    try {
+      displayName = (await this.requireSession().getPluginInfo(id)).displayName;
+    } catch {
+      // Keep the confirmation available even when plugin details cannot be loaded.
+    }
+
+    return new Promise((resolveConfirmed) => {
+      this.mountEditorReplacement(
+        new PluginRemoveConfirmComponent({
+          id,
+          displayName,
+          colors: this.state.theme.colors,
+          onDone: (result: PluginRemoveConfirmResult) => {
+            this.restoreEditor();
+            resolveConfirmed(result.kind === 'confirm');
+          },
+        }),
+      );
+    });
+  }
+
   // Applies a permission mode choice to the active session and app state.
   private async applyPermissionChoice(mode: PermissionMode): Promise<void> {
     if (mode === this.state.appState.permissionMode) {
@@ -5293,6 +5428,240 @@ export class KimiTUI {
     const panel = new UsagePanelComponent(lines, this.state.theme.colors.primary, ' Status ');
     this.state.transcriptContainer.addChild(panel);
     this.state.ui.requestRender();
+  }
+
+  private async handlePluginsCommand(rawArgs: string): Promise<void> {
+    const args = rawArgs.trim().split(/\s+/).filter((part) => part.length > 0);
+    const sub = args[0];
+    const rest = args.slice(1);
+    const session = this.requireSession();
+
+    try {
+      if (sub === undefined) {
+        await this.showPluginsPicker();
+        return;
+      }
+      if (sub === 'list') {
+        await this.renderPluginsList();
+        return;
+      }
+      if (sub === 'install') {
+        const source = rest.join(' ').trim();
+        if (source.length === 0) {
+          this.showError('Usage: /plugins install <local-path-or-zip-url>');
+          return;
+        }
+        await this.installPluginFromSource(source);
+        return;
+      }
+      if (sub === 'marketplace') {
+        await this.showPluginMarketplacePicker(rest.join(' ').trim() || undefined);
+        return;
+      }
+      if (sub === 'info') {
+        const id = rest[0];
+        if (id === undefined) {
+          await this.showPluginsPicker();
+          return;
+        }
+        await this.renderPluginInfo(id);
+        return;
+      }
+      if (sub === 'mcp') {
+        const action = rest[0];
+        const id = rest[1];
+        const server = rest[2];
+        if ((action !== 'enable' && action !== 'disable') || id === undefined || server === undefined) {
+          this.showError('Usage: /plugins mcp enable|disable <id> <server>');
+          return;
+        }
+        await session.setPluginMcpServerEnabled(id, server, action === 'enable');
+        this.showStatus(
+          `${action === 'enable' ? 'Enabled' : 'Disabled'} MCP server ${server} for ${id}. Run /new to apply.`,
+        );
+        return;
+      }
+      if (sub === 'enable' || sub === 'disable') {
+        const id = rest[0];
+        if (id === undefined) {
+          await this.showPluginsPicker();
+          return;
+        }
+        await this.applyPluginEnabled(id, sub === 'enable');
+        return;
+      }
+      if (sub === 'remove') {
+        const id = rest[0];
+        if (id === undefined) {
+          this.showError('Usage: /plugins remove <id>');
+          return;
+        }
+        if (!(await this.confirmRemovePlugin(id))) {
+          this.showStatus(`Remove cancelled: ${id}.`);
+          return;
+        }
+        await session.removePlugin(id);
+        this.showStatus(`Removed ${id} (plugin files left in place).`);
+        return;
+      }
+      if (sub === 'reload') {
+        await this.reloadPlugins();
+        return;
+      }
+      const plugins = await session.listPlugins();
+      if (plugins.some((plugin) => plugin.id === sub)) {
+        await this.renderPluginInfo(sub);
+        return;
+      }
+      this.showError(`Unknown /plugins action: ${sub}. Run /plugins to choose interactively.`);
+    } catch (error) {
+      this.showError(`/plugins ${sub ?? ''} failed: ${formatErrorMessage(error)}`);
+    }
+  }
+
+  // Toggles a plugin's enabled state and surfaces the MCP opt-in hint when relevant.
+  private async applyPluginEnabled(id: string, enabled: boolean): Promise<void> {
+    const session = this.requireSession();
+    await session.setPluginEnabled(id, enabled);
+    let info: PluginInfo | undefined;
+    try {
+      info = await session.getPluginInfo(id);
+    } catch {
+      info = undefined;
+    }
+    const mcpHint =
+      enabled && info !== undefined && info.mcpServerCount > info.enabledMcpServerCount
+        ? ` Some MCP servers are disabled; re-enable with /plugins mcp enable ${id} <server>.`
+        : '';
+    this.showStatus(`${enabled ? 'Enabled' : 'Disabled'} ${id}. Run /new to apply.${mcpHint}`);
+  }
+
+  private async handlePluginsOverviewSelection(
+    selection: PluginsOverviewSelection,
+  ): Promise<void> {
+    const session = this.requireSession();
+    switch (selection.kind) {
+      case 'marketplace':
+        await this.showPluginMarketplacePicker();
+        return;
+      case 'reload':
+        await this.reloadPlugins();
+        await this.showPluginsPicker();
+        return;
+      case 'show-list':
+        await this.renderPluginsList();
+        return;
+      case 'toggle':
+        await this.applyPluginEnabled(selection.id, selection.enabled);
+        await this.showPluginsPicker({
+          selectedId: selection.id,
+          pluginHint: { id: selection.id, text: 'saved · /new to apply' },
+        });
+        return;
+      case 'mcp':
+        await this.showPluginMcpPicker(selection.id);
+        return;
+      case 'remove':
+        if (!(await this.confirmRemovePlugin(selection.id))) {
+          this.showStatus(`Remove cancelled: ${selection.id}.`);
+          await this.showPluginsPicker({ selectedId: selection.id });
+          return;
+        }
+        await session.removePlugin(selection.id);
+        this.showStatus(`Removed ${selection.id} (plugin files left in place).`);
+        await this.showPluginsPicker();
+        return;
+      case 'info':
+        await this.renderPluginInfo(selection.id);
+        return;
+    }
+  }
+
+  private async handlePluginMcpSelection(selection: PluginMcpSelection): Promise<void> {
+    switch (selection.kind) {
+      case 'toggle':
+        await this.requireSession().setPluginMcpServerEnabled(
+          selection.pluginId,
+          selection.server,
+          selection.enabled,
+        );
+        this.showStatus(
+          `${selection.enabled ? 'Enabled' : 'Disabled'} MCP server ${selection.server} for ${selection.pluginId}. Run /new to apply.`,
+        );
+        await this.showPluginMcpPicker(selection.pluginId);
+        return;
+      case 'back':
+        await this.showPluginsPicker({ selectedId: selection.pluginId });
+        return;
+    }
+  }
+
+  private async handlePluginMarketplaceSelection(
+    selection: PluginMarketplaceSelection,
+  ): Promise<void> {
+    switch (selection.kind) {
+      case 'install':
+        this.showStatus(`Installing or updating ${selection.entry.displayName} from marketplace...`);
+        await this.installPluginFromSource(selection.entry.source, {
+          successNotice: 'marketplace',
+        });
+        await this.showPluginsPicker({ selectedId: selection.entry.id });
+        return;
+      case 'back':
+        await this.showPluginsPicker();
+        return;
+    }
+  }
+
+  private async renderPluginsList(plugins?: readonly PluginSummary[]): Promise<void> {
+    const currentPlugins = plugins ?? (await this.requireSession().listPlugins());
+    const lines = buildPluginsListLines({
+      colors: this.state.theme.colors,
+      plugins: currentPlugins,
+    });
+    const title = ` Plugins (${currentPlugins.length}) `;
+    const panel = new UsagePanelComponent(lines, this.state.theme.colors.primary, title);
+    this.state.transcriptContainer.addChild(panel);
+    this.state.ui.requestRender();
+  }
+
+  private async renderPluginInfo(id: string): Promise<void> {
+    const info = await this.requireSession().getPluginInfo(id);
+    const lines = buildPluginsInfoLines({ colors: this.state.theme.colors, info });
+    const panel = new UsagePanelComponent(lines, this.state.theme.colors.primary, ` ${info.id} `);
+    this.state.transcriptContainer.addChild(panel);
+    this.state.ui.requestRender();
+  }
+
+  private async installPluginFromSource(
+    source: string,
+    options?: { readonly successNotice?: 'marketplace' },
+  ): Promise<void> {
+    const summary = await this.requireSession().installPlugin(
+      resolvePluginInstallSource(source, this.state.appState.workDir),
+    );
+    const serverWord = summary.mcpServerCount === 1 ? 'server' : 'servers';
+    const mcpHint =
+      summary.mcpServerCount > 0
+        ? ` Declares ${summary.mcpServerCount} MCP ${serverWord}; enabled by default and configurable from /plugins.`
+        : '';
+    const installVerb = options?.successNotice === 'marketplace' ? 'Installed or updated' : 'Installed';
+    this.showStatus(
+      `${installVerb} ${summary.displayName} (${summary.id}).${mcpHint} Run /new to apply plugin changes.`,
+    );
+    if (options?.successNotice === 'marketplace') {
+      this.showNotice(
+        `Installed or updated ${summary.displayName}`,
+        `Marketplace install or update succeeded for ${summary.id}. Run /new to apply plugin changes.`,
+      );
+    }
+  }
+
+  private async reloadPlugins(): Promise<void> {
+    const summary = await this.requireSession().reloadPlugins();
+    const line = `Reload: +${summary.added.length} -${summary.removed.length}` +
+      (summary.errors.length > 0 ? ` (${summary.errors.length} errors)` : '');
+    this.showStatus(line);
   }
 
   // Loads and renders current MCP server status.
@@ -6252,4 +6621,12 @@ export class KimiTUI {
       this.mountEditorReplacement(selector);
     });
   }
+}
+
+function resolvePluginInstallSource(source: string, workDir: string): string {
+  const trimmed = source.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+  if (trimmed === '~') return osHomedir();
+  if (trimmed.startsWith('~/')) return join(osHomedir(), trimmed.slice(2));
+  return isAbsolute(trimmed) ? trimmed : resolve(workDir, trimmed);
 }
