@@ -147,8 +147,7 @@ import { PlatformSelectorComponent } from './components/dialogs/platform-selecto
 import { PermissionSelectorComponent } from './components/dialogs/permission-selector';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
-import { TaskOutputViewer } from './components/dialogs/task-output-viewer';
-import { TasksBrowserApp, type TasksFilter } from './components/dialogs/tasks-browser';
+import { TasksBrowserController, type TasksBrowserState } from './controllers/tasks-browser';
 import {
   SettingsSelectorComponent,
   type SettingsSelection,
@@ -381,43 +380,7 @@ export interface TUIState {
   loadingSessions: boolean;
   showingSessionPicker: boolean;
   showingHelpPanel: boolean;
-  /**
-   * Active `/tasks` full-screen takeover. When non-undefined, the main
-   * TUI's children have been replaced by `component`; `savedChildren`
-   * holds the original list so we can restore on exit.
-   */
-  tasksBrowser:
-    | {
-        component: TasksBrowserApp;
-        savedChildren: readonly Component[];
-        filter: TasksFilter;
-        selectedTaskId: string | undefined;
-        tailOutput: string | undefined;
-        tailLoading: boolean;
-        tailRequestId: number;
-        flashMessage: string | undefined;
-        flashTimer: NodeJS.Timeout | undefined;
-        pollTimer: NodeJS.Timeout | undefined;
-        /**
-         * Active nested output viewer (TaskOutputViewer). Undefined when
-         * the browser is showing its normal 3-pane layout.
-         */
-        viewer:
-          | {
-              component: TaskOutputViewer;
-              savedChildren: readonly Component[];
-              /** Task whose output the viewer is currently following. */
-              taskId: string;
-              /** Latest output snapshot pushed into the viewer. */
-              output: string;
-              /** Last in-flight refresh — used to ignore late responses. */
-              refreshId: number;
-              /** 1s background poll so live tail still works if events drop. */
-              pollTimer: NodeJS.Timeout;
-            }
-          | undefined;
-      }
-    | undefined;
+  tasksBrowser: TasksBrowserState | undefined;
   externalEditorRunning: boolean;
   currentTurnId: string | undefined;
   currentStep: number;
@@ -586,8 +549,8 @@ interface LoginProgressSpinnerHandle {
 export class KimiTUI {
   private readonly harness: KimiHarness;
   private readonly options: KimiTUIOptions;
-  private session: Session | undefined;
-  private state: TUIState;
+  session: Session | undefined;
+  state: TUIState;
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
   private readonly reverseRpcDisposers: Array<() => void> = [];
@@ -622,6 +585,7 @@ export class KimiTUI {
   private pendingAssistantFlush = false;
   private pendingThinkingFlush = false;
   private readonly pendingToolCallFlushIds = new Set<string>();
+  private readonly tasksBrowserController: TasksBrowserController;
 
   public onExit?: (exitCode?: number) => Promise<void>;
 
@@ -670,6 +634,7 @@ export class KimiTUI {
         },
       }),
     );
+    this.tasksBrowserController = new TasksBrowserController(this);
     this.setupEditorHandlers();
     this.buildLayout();
   }
@@ -4142,7 +4107,7 @@ export class KimiTUI {
   }
 
   // Appends an error status message to the transcript.
-  private showError(message: string): void {
+  showError(message: string): void {
     this.showStatus(`Error: ${message}`, this.state.theme.colors.error);
   }
 
@@ -4531,428 +4496,14 @@ export class KimiTUI {
   }
 
   // =========================================================================
-  // Background tasks browser (`/tasks`)
+  // Background tasks browser (`/tasks`) — delegated to TasksBrowserController
   // =========================================================================
 
-  /**
-   * Open the `/tasks` overlay. Idempotent: a second `/tasks` while the
-   * panel is already open is a no-op (the focus stays on the existing
-   * overlay) — prevents accidental stacking.
-   */
-  private async showTasksBrowser(): Promise<void> {
-    if (this.state.tasksBrowser !== undefined) return;
-    const session = this.session;
-    if (session === undefined) {
-      this.showError('No active session.');
-      return;
-    }
-
-    let tasks: readonly BackgroundTaskInfo[] = [];
-    try {
-      tasks = await session.listBackgroundTasks({ activeOnly: false });
-    } catch (error) {
-      this.showError(
-        `Failed to load tasks: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return;
-    }
-    // Race: panel might have been opened then immediately closed by
-    // another path while the await above was in flight. Bail out then.
-    if (this.state.tasksBrowser !== undefined) return;
-
-    const filter: TasksFilter = 'all';
-    const selectedTaskId = this.pickInitialSelection(tasks, filter);
-    const component = new TasksBrowserApp(
-      {
-        tasks,
-        filter,
-        selectedTaskId,
-        tailOutput: undefined,
-        tailLoading: false,
-        flashMessage: undefined,
-        colors: this.state.theme.colors,
-        ...this.buildTasksBrowserCallbacks(),
-      },
-      this.state.terminal,
-    );
-
-    // Alt-screen takeover: save the main TUI's children, then replace
-    // them with this single full-screen component. `closeTasksBrowser`
-    // restores the original layout. Mirrors the Python `Application(
-    // full_screen=True, erase_when_done=True)` pattern.
-    const savedChildren = [...this.state.ui.children];
-    this.state.ui.clear();
-    this.state.ui.addChild(component);
-    this.state.ui.setFocus(component);
-    this.state.ui.requestRender(true);
-
-    const pollTimer = setInterval(() => {
-      void this.refreshTasksBrowser({ silent: true });
-    }, 1000);
-
-    this.state.tasksBrowser = {
-      component,
-      savedChildren,
-      filter,
-      selectedTaskId,
-      tailOutput: undefined,
-      tailLoading: false,
-      tailRequestId: 0,
-      flashMessage: undefined,
-      flashTimer: undefined,
-      pollTimer,
-      viewer: undefined,
-    };
-
-    if (selectedTaskId !== undefined) {
-      this.loadTasksBrowserTail(selectedTaskId);
-    }
-  }
-
-  private pickInitialSelection(
-    tasks: readonly BackgroundTaskInfo[],
-    filter: TasksFilter,
-  ): string | undefined {
-    const candidates =
-      filter === 'all'
-        ? tasks
-        : tasks.filter(
-            (t) =>
-              t.status !== 'completed' &&
-              t.status !== 'failed' &&
-              t.status !== 'killed' &&
-              t.status !== 'lost',
-          );
-    if (candidates.length === 0) return undefined;
-    // Prefer the first non-terminal task; fall back to the first one.
-    return (
-      candidates.find(
-        (t) => t.status === 'running' || t.status === 'awaiting_approval',
-      )?.taskId ?? candidates[0]!.taskId
-    );
-  }
-
-  private async refreshTasksBrowser(opts: { silent?: boolean } = {}): Promise<void> {
-    const browser = this.state.tasksBrowser;
-    if (browser === undefined) return;
-    const session = this.session;
-    if (session === undefined) return;
-
-    let tasks: readonly BackgroundTaskInfo[];
-    try {
-      tasks = await session.listBackgroundTasks({ activeOnly: false });
-    } catch (error) {
-      if (!opts.silent) {
-        this.flashTasksBrowser(
-          `Refresh failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-      return;
-    }
-    if (this.state.tasksBrowser !== browser) return;
-    this.pushTasksBrowserProps(tasks);
-  }
-
-  private pushTasksBrowserProps(tasks: readonly BackgroundTaskInfo[]): void {
-    const browser = this.state.tasksBrowser;
-    if (browser === undefined) return;
-    browser.component.setProps({
-      tasks,
-      filter: browser.filter,
-      selectedTaskId: browser.selectedTaskId,
-      tailOutput: browser.tailOutput,
-      tailLoading: browser.tailLoading,
-      flashMessage: browser.flashMessage,
-      colors: this.state.theme.colors,
-      ...this.buildTasksBrowserCallbacks(),
-    });
-    this.state.ui.requestRender();
-  }
-
-  /** Callback bundle for `TasksBrowserComponent`. Single source of truth. */
-  private buildTasksBrowserCallbacks(): {
-    onSelect: (taskId: string) => void;
-    onToggleFilter: () => void;
-    onRefresh: () => void;
-    onCancel: () => void;
-    onStopConfirmed: (taskId: string) => void;
-    onOpenOutput: (taskId: string) => void;
-    onStopIgnored: (taskId: string, reason: 'terminal') => void;
-  } {
-    return {
-      onSelect: (taskId) => {
-        this.handleTasksBrowserSelect(taskId);
-      },
-      onToggleFilter: () => {
-        this.handleTasksBrowserToggleFilter();
-      },
-      onRefresh: () => {
-        this.handleTasksBrowserRefresh();
-      },
-      onCancel: () => {
-        this.closeTasksBrowser();
-      },
-      onStopConfirmed: (taskId) => {
-        void this.handleTasksBrowserStop(taskId);
-      },
-      onOpenOutput: (taskId) => {
-        void this.handleTasksBrowserOpenOutput(taskId);
-      },
-      onStopIgnored: (taskId, reason) => {
-        if (reason === 'terminal') {
-          this.flashTasksBrowser(`${taskId} is already terminal — nothing to stop.`);
-        }
-      },
-    };
-  }
-
-  private handleTasksBrowserSelect(taskId: string): void {
-    const browser = this.state.tasksBrowser;
-    if (browser === undefined) return;
-    if (browser.selectedTaskId === taskId) return;
-    browser.selectedTaskId = taskId;
-    browser.tailOutput = undefined;
-    browser.tailLoading = true;
-    this.repaintTasksBrowser();
-    this.loadTasksBrowserTail(taskId);
-  }
-
-  private handleTasksBrowserToggleFilter(): void {
-    const browser = this.state.tasksBrowser;
-    if (browser === undefined) return;
-    browser.filter = browser.filter === 'all' ? 'active' : 'all';
-    this.repaintTasksBrowser();
-  }
-
-  private handleTasksBrowserRefresh(): void {
-    this.flashTasksBrowser('Refreshing…', 600);
-    void this.refreshTasksBrowser();
-  }
-
-  /**
-   * Re-render the `/tasks` panel from the in-memory BPM store (no RPC
-   * fetch). Safe to call when the panel is closed (no-op). Use this
-   * after any local state change — selection, filter, flash message,
-   * or an incoming `background.task.*` event — so the UI stays in sync.
-   * Use `refreshTasksBrowser` instead when you also want fresh data
-   * from the agent (e.g. a manual `R refresh`).
-   */
-  private repaintTasksBrowser(): void {
-    const browser = this.state.tasksBrowser;
-    if (browser === undefined) return;
-    const tasks = [...this.state.backgroundTasks.values()];
-    this.pushTasksBrowserProps(tasks);
-  }
-
-  private loadTasksBrowserTail(taskId: string): void {
-    const browser = this.state.tasksBrowser;
-    if (browser === undefined) return;
-    const session = this.session;
-    if (session === undefined) {
-      browser.tailLoading = false;
-      this.repaintTasksBrowser();
-      return;
-    }
-    const requestId = ++browser.tailRequestId;
-    void session
-      .getBackgroundTaskOutput(taskId, { tail: 4000 })
-      .then((output) => {
-        const current = this.state.tasksBrowser;
-        if (current === undefined) return;
-        if (current !== browser || current.tailRequestId !== requestId) return;
-        if (current.selectedTaskId !== taskId) return;
-        current.tailOutput = output;
-        current.tailLoading = false;
-        this.repaintTasksBrowser();
-      })
-      .catch(() => {
-        const current = this.state.tasksBrowser;
-        if (current === undefined) return;
-        if (current !== browser || current.tailRequestId !== requestId) return;
-        if (current.selectedTaskId !== taskId) return;
-        current.tailOutput = '';
-        current.tailLoading = false;
-        this.repaintTasksBrowser();
-      });
-  }
-
-  private flashTasksBrowser(message: string, durationMs = 2500): void {
-    const browser = this.state.tasksBrowser;
-    if (browser === undefined) return;
-    if (browser.flashTimer !== undefined) clearTimeout(browser.flashTimer);
-    browser.flashMessage = message;
-    browser.flashTimer = setTimeout(() => {
-      const current = this.state.tasksBrowser;
-      if (current !== browser) return;
-      current.flashMessage = undefined;
-      current.flashTimer = undefined;
-      this.repaintTasksBrowser();
-    }, durationMs);
-    this.repaintTasksBrowser();
-  }
-
-  private async handleTasksBrowserStop(taskId: string): Promise<void> {
-    const browser = this.state.tasksBrowser;
-    if (browser === undefined) return;
-    const session = this.session;
-    if (session === undefined) {
-      this.flashTasksBrowser('No active session.');
-      return;
-    }
-    this.flashTasksBrowser(`Stopping ${taskId}…`, 1500);
-    try {
-      await session.stopBackgroundTask(taskId, { reason: 'stopped from /tasks' });
-      // Force a refresh so the row flips to `killed` immediately. The
-      // `background.task.terminated` event will repaint again shortly.
-      await this.refreshTasksBrowser({ silent: true });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.flashTasksBrowser(`Stop failed: ${message}`);
-    }
-  }
-
-  private async handleTasksBrowserOpenOutput(taskId: string): Promise<void> {
-    const browser = this.state.tasksBrowser;
-    if (browser === undefined) return;
-    if (browser.viewer !== undefined) return; // already viewing
-    const session = this.session;
-    if (session === undefined) {
-      this.flashTasksBrowser('No active session.');
-      return;
-    }
-
-    let output: string;
-    try {
-      output = await session.getBackgroundTaskOutput(taskId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.flashTasksBrowser(`Cannot open output: ${message}`);
-      return;
-    }
-    // Race: panel might have been closed while the await was in flight.
-    const current = this.state.tasksBrowser;
-    if (current === undefined || current !== browser) return;
-
-    const info = this.state.backgroundTasks.get(taskId);
-    const viewer = new TaskOutputViewer(
-      {
-        taskId,
-        info,
-        output,
-        colors: this.state.theme.colors,
-        onClose: () => {
-          this.closeTaskOutputViewer();
-        },
-      },
-      this.state.terminal,
-    );
-
-    // Nested takeover: save the TasksBrowser layer (which itself is a
-    // single-child swap of the main TUI), then put the viewer in its
-    // place. `closeTaskOutputViewer` reverses this without touching the
-    // outer "main TUI ↔ TasksBrowser" swap state.
-    const savedBrowserChildren = [...this.state.ui.children];
-    this.state.ui.clear();
-    this.state.ui.addChild(viewer);
-    this.state.ui.setFocus(viewer);
-    this.state.ui.requestRender(true);
-
-    // Live-tail: keep re-fetching the output every second so the viewer
-    // shows new content as the task writes it. The viewer itself decides
-    // whether to follow the tail or preserve scroll position.
-    const pollTimer = setInterval(() => {
-      void this.refreshTaskOutputViewer({ silent: true });
-    }, 1000);
-
-    browser.viewer = {
-      component: viewer,
-      savedChildren: savedBrowserChildren,
-      taskId,
-      output,
-      refreshId: 0,
-      pollTimer,
-    };
-  }
-
-  /**
-   * Re-fetch the current viewer task's output and push it into the
-   * component. Safe to call when the viewer is closed (no-op). Stale
-   * responses (issued before a more recent call) are discarded via the
-   * monotonically-increasing `refreshId`.
-   */
-  private async refreshTaskOutputViewer(opts: { silent?: boolean } = {}): Promise<void> {
-    const browser = this.state.tasksBrowser;
-    const viewer = browser?.viewer;
-    if (browser === undefined || viewer === undefined) return;
-    const session = this.session;
-    if (session === undefined) return;
-
-    const myRefreshId = ++viewer.refreshId;
-    let output: string;
-    try {
-      output = await session.getBackgroundTaskOutput(viewer.taskId);
-    } catch (error) {
-      if (!opts.silent) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.flashTasksBrowser(`Output refresh failed: ${message}`);
-      }
-      return;
-    }
-    // If the viewer was closed or another refresh raced ahead, drop this result.
-    const current = this.state.tasksBrowser?.viewer;
-    if (current === undefined || current !== viewer || current.refreshId !== myRefreshId) {
-      return;
-    }
-    // Skip the setProps round-trip when nothing changed — keeps the
-    // differential renderer from re-emitting the same frame.
-    if (output === viewer.output) return;
-    viewer.output = output;
-    const info = this.state.backgroundTasks.get(viewer.taskId);
-    viewer.component.setProps({
-      taskId: viewer.taskId,
-      info,
-      output,
-      colors: this.state.theme.colors,
-      onClose: () => {
-        this.closeTaskOutputViewer();
-      },
-    });
-    this.state.ui.requestRender();
-  }
-
-  private closeTaskOutputViewer(): void {
-    const browser = this.state.tasksBrowser;
-    if (browser === undefined || browser.viewer === undefined) return;
-    const viewer = browser.viewer;
-    clearInterval(viewer.pollTimer);
-    browser.viewer = undefined;
-    this.state.ui.clear();
-    for (const child of viewer.savedChildren) {
-      this.state.ui.addChild(child);
-    }
-    this.state.ui.setFocus(browser.component);
-    this.state.ui.requestRender(true);
-  }
-
-  private closeTasksBrowser(): void {
-    const browser = this.state.tasksBrowser;
-    if (browser === undefined) return;
-    // If the output viewer is open, fold it back before tearing down
-    // the browser so the saved-children stack stays consistent.
-    if (browser.viewer !== undefined) this.closeTaskOutputViewer();
-    if (browser.pollTimer !== undefined) clearInterval(browser.pollTimer);
-    if (browser.flashTimer !== undefined) clearTimeout(browser.flashTimer);
-
-    // Restore the main TUI's children we saved when opening. After
-    // clearing, re-add in original order, then return focus to the
-    // editor so the user is back at the prompt.
-    this.state.ui.clear();
-    for (const child of browser.savedChildren) {
-      this.state.ui.addChild(child);
-    }
-    this.state.tasksBrowser = undefined;
-    this.state.ui.setFocus(this.state.editor);
-    this.state.ui.requestRender(true);
+  private showTasksBrowser(): Promise<void> { return this.tasksBrowserController.show(); }
+  private closeTasksBrowser(): void { this.tasksBrowserController.close(); }
+  private repaintTasksBrowser(): void { this.tasksBrowserController.repaint(); }
+  private refreshTaskOutputViewer(opts?: { silent?: boolean }): Promise<void> {
+    return this.tasksBrowserController.refreshOutputViewer(opts);
   }
 
   // Shows the editor command selector.
