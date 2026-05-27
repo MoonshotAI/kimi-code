@@ -36,7 +36,7 @@ describe('isSensitiveFile', () => {
       '/home/user/.ssh/ID_RSA',
       '/home/user/.ssh/ID_ED25519.OLD',
     ]) {
-      expect(isSensitiveFile(path, 'posix'), path).toBe(true);
+      expect(isSensitiveFile(path), path).toBe(true);
     }
   });
 

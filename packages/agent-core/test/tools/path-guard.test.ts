@@ -400,11 +400,11 @@ describe('path access policy', () => {
 
     for (const key of keys) {
       it(`flags ${key} as sensitive by basename`, () => {
-        expect(isSensitiveFile(key, 'posix')).toBe(true);
+        expect(isSensitiveFile(key)).toBe(true);
       });
 
       it(`flags /home/user/.ssh/${key} as sensitive`, () => {
-        expect(isSensitiveFile(`/home/user/.ssh/${key}`, 'posix')).toBe(true);
+        expect(isSensitiveFile(`/home/user/.ssh/${key}`)).toBe(true);
       });
     }
   });

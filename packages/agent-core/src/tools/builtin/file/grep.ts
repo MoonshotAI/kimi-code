@@ -843,7 +843,7 @@ function filterSensitiveLines(
       continue;
     }
     const filePath = parsedFilePath(line, mode, pathClass);
-    if (filePath !== undefined && isSensitiveFile(filePath, pathClass)) {
+    if (filePath !== undefined && isSensitiveFile(filePath)) {
       filteredPaths.add(filePath);
       continue;
     }
