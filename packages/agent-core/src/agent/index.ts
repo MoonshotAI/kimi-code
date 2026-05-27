@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { join } from 'pathe';
 
 import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import { log } from '#/logging/logger';

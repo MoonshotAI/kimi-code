@@ -2,6 +2,34 @@
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.3.0
+
+### Features
+
+- `/logout` now opens a picker so you can choose which provider to log out of, instead of always logging out the one tied to the current model. The current provider is highlighted by default, so pressing Enter matches the previous behavior. The command is also available as `/disconnect`.
+- The `openai` provider now works out of the box for OpenAI-compatible reasoner models: it auto-detects thinking fields in responses (`reasoning_content` / `reasoning_details` / `reasoning`) and auto-injects `reasoning_effort` when history contains prior thinking. DeepSeek, Qwen, One API and other gateway-fronted services no longer need a hand-set `reasoning_key`, which remains available as an explicit override for non-standard gateways.
+
+### Bug Fixes
+
+- Prevent running the `/model` and `/sessions` slash commands while streaming or compacting context.
+- Preserve catalog-declared interleaved reasoning fields for OpenAI-compatible models configured through `/connect`.
+- Fix API key input dialog showing a masked dot in empty state.
+- Fix user skills in `~/.agents/` not being loaded.
+- Restore real-time token display for running subagents in the TUI.
+- Hide the todo panel on resume when all todos are already completed.
+- Always emit a paired tool result when a tool returns a malformed or missing result, preventing the next request from failing with a missing tool_call_id error.
+- Fix Plan mode session resets so new sessions no longer fail after plan review rejection and continue receiving events after setup errors.
+- Exit promptly when the controlling terminal goes away. The TUI now handles `SIGHUP` / `SIGTERM` and stdout/stderr `EIO` / `EPIPE` / `ENOTCONN` errors, preventing leftover `kimi` processes that pin a CPU core after the parent shell or multiplexer dies unexpectedly.
+- Avoid overly small local completion caps that can truncate reasoning before summaries are produced.
+
+### Refactors
+
+- Make `AgentRecords` hold the `Agent` instance directly and inline the restore dispatch logic.
+
+### Other
+
+- Improve the Write tool UX.
+
 ## 0.2.0
 
 ### Features

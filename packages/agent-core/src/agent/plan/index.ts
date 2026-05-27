@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { dirname, join } from 'pathe';
 
 import type { Agent } from '..';
 import { generateHeroSlug } from '../../utils/hero-slug';

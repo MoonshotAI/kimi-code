@@ -12,9 +12,7 @@
  * `isWithinDirectory`.
  */
 
-import * as nativePath from 'node:path';
-import * as posixPath from 'node:path/posix';
-import * as win32Path from 'node:path/win32';
+import * as pathe from 'pathe';
 
 import type { Kaos } from '@moonshot-ai/kaos';
 
@@ -60,15 +58,7 @@ export class PathSecurityError extends Error {
   }
 }
 
-const DEFAULT_PATH_CLASS: PathClass = nativePath.sep === '\\' ? 'win32' : 'posix';
-
-function pathMod(pathClass: PathClass): typeof posixPath {
-  return pathClass === 'win32' ? win32Path : posixPath;
-}
-
-function comparablePath(path: string, pathClass: PathClass): string {
-  return pathClass === 'win32' ? path.toLowerCase().replaceAll('/', '\\') : path;
-}
+const DEFAULT_PATH_CLASS: PathClass = process.platform === 'win32' ? 'win32' : 'posix';
 
 function isWin32DriveRelative(path: string): boolean {
   return /^[A-Za-z]:(?:$|[^\\/])/.test(path);
@@ -77,27 +67,26 @@ function isWin32DriveRelative(path: string): boolean {
 export function normalizeUserPath(path: string, pathClass: PathClass = DEFAULT_PATH_CLASS): string {
   if (pathClass !== 'win32') return path;
 
-  // A bare root slash flips to backslash so downstream win32 string
-  // operations (join, isAbsolute, drive-letter detection) treat it as a
-  // native path component. Matches the py helper's behavior.
-  if (path === '/') return '\\';
+  // A bare root slash stays forward so downstream pathe operations
+  // treat it consistently. Matches the py helper's behavior.
+  if (path === '/') return '/';
 
   if (path.startsWith('//')) {
-    return path.replaceAll('/', '\\');
+    return path;
   }
 
   const cygdriveMatch = /^\/cygdrive\/([A-Za-z])(?:\/|$)/.exec(path);
   if (cygdriveMatch !== null) {
     const drive = cygdriveMatch[1]!.toUpperCase();
-    const rest = path.slice(`/cygdrive/${cygdriveMatch[1]!}`.length).replaceAll('/', '\\');
-    return `${drive}:${rest === '' ? '\\' : rest}`;
+    const rest = path.slice(`/cygdrive/${cygdriveMatch[1]!}`.length);
+    return `${drive}:${rest === '' ? '/' : rest}`;
   }
 
   const driveMatch = /^\/([A-Za-z])(?:\/|$)/.exec(path);
   if (driveMatch !== null) {
     const drive = driveMatch[1]!.toUpperCase();
-    const rest = path.slice(2).replaceAll('/', '\\');
-    return `${drive}:${rest === '' ? '\\' : rest}`;
+    const rest = path.slice(2);
+    return `${drive}:${rest === '' ? '/' : rest}`;
   }
 
   return path;
@@ -107,7 +96,7 @@ function expandUserPath(path: string, homeDir: string | undefined, pathClass: Pa
   if (homeDir === undefined) return path;
   if (path === '~') return homeDir;
   if (path.startsWith('~/') || (pathClass === 'win32' && path.startsWith('~\\'))) {
-    return pathMod(pathClass).join(homeDir, path.slice(2));
+    return pathe.join(homeDir, path.slice(2));
   }
   return path;
 }
@@ -124,7 +113,6 @@ export function canonicalizePath(
   if (path === '') {
     throw new PathSecurityError('PATH_INVALID', path, path, 'Path cannot be empty');
   }
-  const mod = pathMod(pathClass);
   const normalizedPath = normalizeUserPath(path, pathClass);
   if (pathClass === 'win32' && isWin32DriveRelative(normalizedPath)) {
     throw new PathSecurityError(
@@ -134,7 +122,7 @@ export function canonicalizePath(
       `"${path}" is a drive-relative Windows path. Use an absolute path like C:\\path or a path relative to the working directory.`,
     );
   }
-  if (!mod.isAbsolute(normalizedPath) && !mod.isAbsolute(cwd)) {
+  if (!pathe.isAbsolute(normalizedPath) && !pathe.isAbsolute(cwd)) {
     throw new PathSecurityError(
       'PATH_INVALID',
       path,
@@ -142,8 +130,8 @@ export function canonicalizePath(
       `Cannot resolve "${path}" against non-absolute cwd "${cwd}".`,
     );
   }
-  const abs = mod.isAbsolute(normalizedPath) ? normalizedPath : mod.resolve(cwd, normalizedPath);
-  return mod.normalize(abs);
+  const abs = pathe.isAbsolute(normalizedPath) ? normalizedPath : pathe.resolve(cwd, normalizedPath);
+  return pathe.normalize(abs);
 }
 
 /**
@@ -155,11 +143,12 @@ export function isWithinDirectory(
   base: string,
   pathClass: PathClass = DEFAULT_PATH_CLASS,
 ): boolean {
-  const mod = pathMod(pathClass);
-  const comparableCandidate = comparablePath(candidate, pathClass);
-  const comparableBase = comparablePath(base, pathClass);
+  const nc = pathe.normalize(candidate);
+  const nb = pathe.normalize(base);
+  const comparableCandidate = pathClass === 'win32' ? nc.toLowerCase() : nc;
+  const comparableBase = pathClass === 'win32' ? nb.toLowerCase() : nb;
   if (comparableCandidate === comparableBase) return true;
-  const prefix = comparableBase.endsWith(mod.sep) ? comparableBase : comparableBase + mod.sep;
+  const prefix = comparableBase.endsWith('/') ? comparableBase : comparableBase + '/';
   return comparableCandidate.startsWith(prefix);
 }
 
@@ -236,10 +225,9 @@ export function resolvePathAccess(
   options: ResolvePathAccessOptions,
 ): PathAccess {
   const pathClass = options.pathClass ?? DEFAULT_PATH_CLASS;
-  const mod = pathMod(pathClass);
   const normalizedPath = normalizeUserPath(path, pathClass);
   const expandedPath = expandUserPath(normalizedPath, options.homeDir, pathClass);
-  const rawIsAbsolute = mod.isAbsolute(expandedPath);
+  const rawIsAbsolute = pathe.isAbsolute(expandedPath);
   const canonical = canonicalizePath(expandedPath, cwd, pathClass);
   const outsideWorkspace = !isWithinWorkspace(canonical, config, pathClass);
   const policy = options.policy ?? DEFAULT_WORKSPACE_ACCESS_POLICY;

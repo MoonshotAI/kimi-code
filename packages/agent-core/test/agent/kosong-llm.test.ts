@@ -84,6 +84,53 @@ describe('KosongLLM streaming tool-call deltas', () => {
   });
 });
 
+describe('KosongLLM stream timing', () => {
+  it('returns timing measured from provider request start to stream end', async () => {
+    const generate: GenerateFn = async (
+      _provider,
+      _systemPrompt,
+      _tools,
+      _history,
+      callbacks,
+      options,
+    ) => {
+      options?.onRequestStart?.();
+      await callbacks?.onMessagePart?.({ type: 'text', text: 'timed' });
+      options?.onStreamEnd?.();
+      return {
+        id: 'response-1',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'timed' }],
+          toolCalls: [],
+        },
+        usage: emptyUsage(),
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const llm = new KosongLLM({
+      provider,
+      modelName: 'test-model',
+      systemPrompt: 'system',
+      generate,
+    });
+
+    const response = await llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(response.streamTiming).toMatchObject({
+      firstTokenLatencyMs: expect.any(Number),
+      streamDurationMs: expect.any(Number),
+    });
+    expect(response.streamTiming?.firstTokenLatencyMs).toBeGreaterThanOrEqual(0);
+    expect(response.streamTiming?.streamDurationMs).toBeGreaterThanOrEqual(0);
+  });
+});
+
 describe('KosongLLM completion budget', () => {
   it('applies the model context window as the completion cap', async () => {
     let appliedCap: number | undefined;

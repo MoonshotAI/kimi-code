@@ -18,6 +18,7 @@
 import {
   emptyUsage,
   generate as kosongGenerate,
+  type GenerateOptions,
   isRetryableGenerateError,
   type ChatProvider,
   type GenerateCallbacks,
@@ -26,7 +27,13 @@ import {
   type StreamedMessagePart,
 } from '@moonshot-ai/kosong';
 
-import type { LLM, LLMChatParams, LLMChatResponse, LLMRequestLogContext } from '../../loop';
+import type {
+  LLM,
+  LLMChatParams,
+  LLMChatResponse,
+  LLMRequestLogContext,
+  LLMStreamTiming,
+} from '../../loop';
 import {
   applyCompletionBudget,
   type CompletionBudgetConfig,
@@ -34,8 +41,7 @@ import {
 
 export const GENERATE_REQUEST_LOG_CONTEXT = '__kimiRequestLogContext';
 
-export type GenerateOptionsWithRequestLog = {
-  readonly signal?: AbortSignal;
+export type GenerateOptionsWithRequestLog = GenerateOptions & {
   readonly [GENERATE_REQUEST_LOG_CONTEXT]?: LLMRequestLogContext;
 };
 
@@ -78,7 +84,21 @@ export class KosongLLM implements LLM {
   }
 
   async chat(params: LLMChatParams): Promise<LLMChatResponse> {
-    const callbacks = buildKosongCallbacks(params);
+    let requestStartedAt = Date.now();
+    let firstChunkAt: number | undefined;
+    let streamEndedAt: number | undefined;
+    const markRequestStart = (): void => {
+      requestStartedAt = Date.now();
+    };
+    const markStreamEnd = (): void => {
+      streamEndedAt = Date.now();
+    };
+    const markStreamOutput = (): void => {
+      if (firstChunkAt === undefined) {
+        firstChunkAt = Date.now();
+      }
+    };
+    const callbacks = buildKosongCallbacks(params, markStreamOutput);
 
     // Compute and apply the per-request completion budget against a
     // throwaway shallow clone. `effectiveProvider` is local to this call
@@ -96,7 +116,10 @@ export class KosongLLM implements LLM {
       [...params.tools],
       [...params.messages],
       callbacks,
-      generateOptions(params),
+      generateOptions(params, {
+        onRequestStart: markRequestStart,
+        onStreamEnd: markStreamEnd,
+      }),
     );
 
     // Replay merged content parts onto loop per-block callbacks after the
@@ -117,6 +140,10 @@ export class KosongLLM implements LLM {
       providerFinishReason: result.finishReason ?? undefined,
       rawFinishReason: result.rawFinishReason ?? undefined,
       usage: result.usage ?? emptyUsage(),
+      streamTiming:
+        firstChunkAt === undefined
+          ? undefined
+          : buildStreamTiming(requestStartedAt, firstChunkAt, streamEndedAt),
     };
 
     return response;
@@ -127,20 +154,34 @@ export class KosongLLM implements LLM {
   }
 }
 
-function generateOptions(params: LLMChatParams): GenerateOptionsWithRequestLog {
-  const options: GenerateOptionsWithRequestLog = {
-    signal: params.signal,
+function buildStreamTiming(
+  requestStartedAt: number,
+  firstChunkAt: number,
+  streamEndedAt: number | undefined,
+): LLMStreamTiming {
+  const outputEndedAt = streamEndedAt ?? Date.now();
+  return {
+    firstTokenLatencyMs: Math.max(0, firstChunkAt - requestStartedAt),
+    streamDurationMs: Math.max(0, outputEndedAt - firstChunkAt),
   };
-  if (params.requestLogContext !== undefined) {
-    return {
-      ...options,
-      [GENERATE_REQUEST_LOG_CONTEXT]: params.requestLogContext,
-    };
-  }
-  return options;
 }
 
-function buildKosongCallbacks(params: LLMChatParams): GenerateCallbacks {
+function generateOptions(
+  params: LLMChatParams,
+  hooks: Pick<GenerateOptions, 'onRequestStart' | 'onStreamEnd'>,
+): GenerateOptionsWithRequestLog {
+  return {
+    signal: params.signal,
+    onRequestStart: hooks.onRequestStart,
+    onStreamEnd: hooks.onStreamEnd,
+    [GENERATE_REQUEST_LOG_CONTEXT]: params.requestLogContext,
+  };
+}
+
+function buildKosongCallbacks(
+  params: LLMChatParams,
+  markStreamOutput: () => void,
+): GenerateCallbacks {
   type ToolCallIdentity = { readonly toolCallId: string; readonly name: string };
   type BufferedToolCallDelta = { readonly argumentsPart?: string | undefined };
 
@@ -159,6 +200,7 @@ function buildKosongCallbacks(params: LLMChatParams): GenerateCallbacks {
 
   return {
     onMessagePart: (part: StreamedMessagePart) => {
+      markStreamOutput();
       if (part.type === 'text') {
         if (params.onTextDelta === undefined) return;
         params.onTextDelta(part.text);

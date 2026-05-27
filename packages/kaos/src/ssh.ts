@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { posix } from 'node:path';
+import { isAbsolute, join, normalize, resolve } from 'pathe';
 import type { Readable, Writable } from 'node:stream';
 
 import * as ssh2 from 'ssh2';
@@ -438,8 +438,8 @@ export class SSHKaos implements Kaos {
   }
 
   private _resolvePath(path: string): string {
-    if (posix.isAbsolute(path)) return path;
-    return posix.join(this._cwd, path);
+    if (isAbsolute(path)) return path;
+    return join(this._cwd, path);
   }
 
   /**
@@ -515,7 +515,7 @@ export class SSHKaos implements Kaos {
   }
 
   normpath(path: string): string {
-    return posix.normalize(path);
+    return normalize(path);
   }
 
   gethome(): string {
@@ -530,10 +530,10 @@ export class SSHKaos implements Kaos {
 
   async chdir(path: string): Promise<void> {
     let target: string;
-    if (posix.isAbsolute(path)) {
+    if (isAbsolute(path)) {
       target = path;
     } else {
-      target = posix.resolve(this._cwd, path);
+      target = resolve(this._cwd, path);
     }
     // Resolve to the real path via SFTP
     const resolved = await sftpRealpath(this._sftp, target);
@@ -578,7 +578,7 @@ export class SSHKaos implements Kaos {
     const entries = await sftpReaddir(this._sftp, resolved);
     for (const entry of entries) {
       if (entry.filename === '.' || entry.filename === '..') continue;
-      yield posix.join(resolved, entry.filename);
+      yield join(resolved, entry.filename);
     }
   }
 
@@ -637,7 +637,7 @@ export class SSHKaos implements Kaos {
 
       for (const entry of entries) {
         if (entry.filename === '.' || entry.filename === '..') continue;
-        const fullPath = posix.join(basePath, entry.filename);
+        const fullPath = join(basePath, entry.filename);
         if (entry.attrs.isDirectory()) {
           yield* this._globWalk(fullPath, patternParts, caseSensitive);
         } else if (remainingParts.length === 0) {
@@ -659,7 +659,7 @@ export class SSHKaos implements Kaos {
         if (entry.filename === '.' || entry.filename === '..') continue;
         if (!regex.test(entry.filename)) continue;
 
-        const fullPath = posix.join(basePath, entry.filename);
+        const fullPath = join(basePath, entry.filename);
 
         if (remainingParts.length === 0) {
           yield fullPath;
@@ -764,7 +764,7 @@ export class SSHKaos implements Kaos {
     let current = path.startsWith('/') ? '/' : '';
     const lastIndex = parts.length - 1;
     for (const [i, part] of parts.entries()) {
-      current = current ? posix.join(current, part) : part;
+      current = current ? join(current, part) : part;
 
       const isFinal = i === lastIndex;
 

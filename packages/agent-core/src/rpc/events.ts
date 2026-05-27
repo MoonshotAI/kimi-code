@@ -104,6 +104,8 @@ export interface TurnStepCompletedEvent {
   readonly stepId?: string | undefined;
   readonly usage?: TokenUsage | undefined;
   readonly finishReason?: string | undefined;
+  readonly llmFirstTokenLatencyMs?: number | undefined;
+  readonly llmStreamDurationMs?: number | undefined;
   readonly providerFinishReason?: FinishReason | undefined;
   readonly rawFinishReason?: string | undefined;
 }

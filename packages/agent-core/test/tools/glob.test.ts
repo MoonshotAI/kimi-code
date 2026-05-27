@@ -92,8 +92,8 @@ describe('GlobTool', () => {
 
     const result = await executeTool(tool, context({ pattern: 'src/**/*.ts', path: 'C:\\WORKSPACE' }));
 
-    expect(result.output).toBe('src\\old.ts');
-    expect(glob).toHaveBeenCalledWith('C:\\WORKSPACE', 'src/**/*.ts');
+    expect(result.output).toBe('src/old.ts');
+    expect(glob).toHaveBeenCalledWith('C:/WORKSPACE', 'src/**/*.ts');
   });
 
   it('rejects pure wildcard patterns before walking the tree', async () => {

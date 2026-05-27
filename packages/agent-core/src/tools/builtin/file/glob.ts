@@ -29,6 +29,7 @@
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';
+import { normalize } from 'pathe';
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
@@ -308,15 +309,16 @@ export class GlobTool implements BuiltinTool<GlobInput> {
  * should be canonical absolute paths.
  */
 function relativizeIfUnder(candidate: string, base: string, pathClass: PathClass): string {
-  const sep = pathClass === 'win32' ? '\\' : '/';
-  const comparableCandidate = pathClass === 'win32' ? candidate.toLowerCase() : candidate;
-  const comparableBase = pathClass === 'win32' ? base.toLowerCase() : base;
+  const normCandidate = normalize(candidate);
+  const normBase = normalize(base);
+  const comparableCandidate = pathClass === 'win32' ? normCandidate.toLowerCase() : normCandidate;
+  const comparableBase = pathClass === 'win32' ? normBase.toLowerCase() : normBase;
   if (comparableCandidate === comparableBase) return '.';
-  const prefix = comparableBase.endsWith(sep) ? comparableBase : comparableBase + sep;
+  const prefix = comparableBase.endsWith('/') ? comparableBase : comparableBase + '/';
   if (comparableCandidate.startsWith(prefix)) {
-    return candidate.slice(prefix.length);
+    return normCandidate.slice(prefix.length);
   }
-  return candidate;
+  return normCandidate;
 }
 
 // Return true iff `pattern` begins with the literal sequence `**` followed

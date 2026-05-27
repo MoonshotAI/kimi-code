@@ -48,6 +48,7 @@ import {
 } from '@moonshot-ai/kimi-code-sdk';
 import { BUILT_IN_CATALOG_JSON } from '../built-in-catalog';
 import type {
+  AgentReplayRecord,
   AgentStatusUpdatedEvent,
   ApprovalRequest,
   ApprovalResponse,
@@ -61,6 +62,7 @@ import type {
   CompactionCancelledEvent,
   CompactionCompletedEvent,
   CompactionStartedEvent,
+  ContextMessage,
   CreateSessionOptions,
   ErrorEvent,
   Event,
@@ -69,7 +71,9 @@ import type {
   ModelAlias,
   McpServerInfo,
   PermissionMode,
+  PromptOrigin,
   PromptPart,
+  ResumedAgentState,
   Session,
   SessionMetaUpdatedEvent,
   SessionStatus,
@@ -79,6 +83,7 @@ import type {
   SubagentFailedEvent,
   SubagentSpawnedEvent,
   ThinkingDeltaEvent,
+  ToolCall,
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
   ToolProgressEvent,
@@ -103,7 +108,6 @@ import { getInputHistoryFile } from '#/utils/paths';
 import { editInExternalEditor, resolveEditorCommand } from '#/utils/process/external-editor';
 import { detectFdPath } from '#/utils/process/fd-detect';
 
-import { hydrateTranscriptFromReplay, type ReplayHydrationHooks } from './actions/replay-ops';
 import {
   BUILTIN_SLASH_COMMANDS,
   buildSkillSlashCommands,
@@ -235,9 +239,29 @@ import {
   stringValue,
 } from './utils/event-payload';
 import { isAbortError } from './utils/errors';
+import { formatHookResultMarkdown, formatHookResultPlain } from './utils/hook-result-format';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments } from './utils/image-placeholder';
 import { McpOAuthAuthorizationUrlOpener } from './utils/mcp-oauth';
+import {
+  appStateFromResumeAgent,
+  backgroundOrigin,
+  collectReplayMessageContent,
+  contentPartsToText,
+  countActiveBackgroundTasks,
+  createReplayRenderContext,
+  formatHookResultMessageForTranscript,
+  isTerminalBackgroundTask,
+  limitReplayRecordsByTurn,
+  REPLAY_TURN_LIMIT,
+  replayBackgroundProjection,
+  replayEntry,
+  skillActivationFromOrigin,
+  toolCallFromReplayMessage,
+  toolResultOutput,
+  type ReplayRenderContext,
+  type SkillActivationProjection,
+} from './utils/message-replay';
 import {
   formatMcpStartupStatusSummary,
   mcpServerStatusKey,
@@ -254,6 +278,7 @@ import { createTerminalState, type TerminalState } from './utils/terminal-state'
 import { installTerminalThemeTracking } from './utils/terminal-theme';
 import { detectTmuxKeyboardWarning } from './utils/tmux-keyboard';
 import { nextTranscriptId } from './utils/transcript-id';
+import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
 
 export interface KimiTUIStartupInput {
   readonly cliOptions: CLIOptions;
@@ -820,11 +845,7 @@ export class KimiTUI {
       return;
     }
     if (shouldReplayHistory) {
-      await hydrateTranscriptFromReplay(
-        this.state,
-        this.replayHydrationHooks(),
-        this.requireSession(),
-      );
+      await this.hydrateTranscriptFromReplay(this.requireSession());
     }
     const resumeState = this.session?.getResumeState();
     if (resumeState?.warning !== undefined) {
@@ -2210,7 +2231,7 @@ export class KimiTUI {
     }
     this.clearTranscriptAndRedraw();
     try {
-      await hydrateTranscriptFromReplay(this.state, this.replayHydrationHooks(), session);
+      await this.hydrateTranscriptFromReplay(session);
     } catch (error) {
       const msg = formatErrorMessage(error);
       this.showError(`Failed to replay session history: ${msg}`);
@@ -2260,6 +2281,422 @@ export class KimiTUI {
     this.startSessionEventSubscription();
     this.clearTranscriptAndRedraw();
     this.showStatus(`Started a new session (${session.id}).`);
+  }
+
+  // =========================================================================
+  // Session Replay
+  // =========================================================================
+
+  private async hydrateTranscriptFromReplay(session: Session): Promise<boolean> {
+    this.setAppState({ isReplaying: true });
+    try {
+      const main = session.getResumeState()?.agents['main'];
+      if (main === undefined) {
+        this.showError('Session history is unavailable for this session.');
+        return false;
+      }
+
+      this.hydrateReplaySnapshot(main);
+      this.renderReplayRecords(main);
+      return true;
+    } catch (error) {
+      const message = formatErrorMessage(error);
+      this.showError(`Failed to replay session history: ${message}`);
+      return false;
+    } finally {
+      this.setAppState({ isReplaying: false });
+    }
+  }
+
+  private hydrateReplaySnapshot(agent: ResumedAgentState): void {
+    this.setAppState(appStateFromResumeAgent(agent));
+    this.hydrateTodoPanelFromResume(agent);
+    this.hydrateBackgroundStateFromResume(agent);
+  }
+
+  private hydrateTodoPanelFromResume(agent: ResumedAgentState): void {
+    const rawTodos = agent.toolStore?.['todo'];
+    if (!Array.isArray(rawTodos)) {
+      this.setTodoList([]);
+      return;
+    }
+
+    const todos = rawTodos
+      .filter((todo): todo is TodoItem => isTodoItemShape(todo))
+      .map((todo) => ({ title: todo.title, status: todo.status }));
+    if (todos.length > 0 && todos.every((todo) => todo.status === 'done')) {
+      this.setTodoList([]);
+      return;
+    }
+
+    this.setTodoList(todos);
+  }
+
+  private hydrateBackgroundStateFromResume(agent: ResumedAgentState): void {
+    const projection = replayBackgroundProjection(agent.background);
+    this.state.backgroundAgents = new Set(projection.backgroundAgents);
+    this.state.backgroundAgentMetadata = new Map(projection.backgroundAgentMetadata);
+    this.state.backgroundTasks = new Map<string, BackgroundTaskInfo>(
+      agent.background.map((info) => [info.taskId, info]),
+    );
+    this.state.backgroundTaskTranscriptedTerminal.clear();
+    for (const info of agent.background) {
+      if (isTerminalBackgroundTask(info)) {
+        this.state.backgroundTaskTranscriptedTerminal.add(info.taskId);
+      }
+    }
+    this.state.footer.setBackgroundCounts(countActiveBackgroundTasks(this.state.backgroundTasks));
+    this.state.ui.requestRender();
+  }
+
+  private renderReplayRecords(agent: ResumedAgentState): void {
+    const context = createReplayRenderContext();
+    for (const record of limitReplayRecordsByTurn(agent.replay, REPLAY_TURN_LIMIT)) {
+      this.renderReplayRecord(context, record);
+    }
+    this.flushReplayAssistant(context);
+    this.cleanupReplayRuntime(context);
+  }
+
+  private renderReplayRecord(context: ReplayRenderContext, record: AgentReplayRecord): void {
+    switch (record.type) {
+      case 'message':
+        this.renderReplayMessage(context, record.message);
+        return;
+      case 'plan_updated':
+        this.flushReplayAssistant(context);
+        if (!record.enabled && context.suppressNextPlanModeOffNotice) {
+          context.suppressNextPlanModeOffNotice = false;
+          return;
+        }
+        context.suppressNextPlanModeOffNotice = false;
+        this.appendTranscriptEntry(
+          replayEntry(context, 'status', `Plan mode: ${record.enabled ? 'ON' : 'OFF'}`, 'notice'),
+        );
+        return;
+      case 'permission_updated':
+        this.flushReplayAssistant(context);
+        this.renderReplayPermissionUpdate(context, record.mode);
+        return;
+      case 'approval_result':
+        this.flushReplayAssistant(context);
+        this.renderReplayApprovalResult(context, record.record);
+        return;
+      case 'config_updated':
+        return;
+    }
+  }
+
+  private renderReplayMessage(context: ReplayRenderContext, message: ContextMessage): void {
+    switch (message.role) {
+      case 'user':
+        this.renderReplayUserMessage(context, message);
+        return;
+      case 'assistant':
+        if (message.origin?.kind === 'hook_result') {
+          this.renderReplayHookResult(context, message);
+          this.renderReplayToolCalls(context, message.toolCalls);
+          return;
+        }
+        collectReplayMessageContent(context.assistant, message.content);
+        this.flushReplayAssistant(context);
+        this.renderReplayToolCalls(context, message.toolCalls);
+        return;
+      case 'tool':
+        this.flushReplayAssistant(context);
+        this.renderReplayToolResult(context, message);
+        return;
+      case 'system':
+        return;
+      default:
+        return;
+    }
+  }
+
+  private renderReplayUserMessage(context: ReplayRenderContext, message: ContextMessage): void {
+    const origin = backgroundOrigin(message);
+    if (origin !== undefined) {
+      this.flushReplayAssistant(context);
+      this.renderReplayBackgroundTaskNotification(context, origin);
+      return;
+    }
+    if (message.origin?.kind === 'hook_result') {
+      this.renderReplayHookResult(context, message);
+      return;
+    }
+    if (message.origin?.kind === 'injection') {
+      return;
+    }
+
+    this.flushReplayAssistant(context);
+    const skill = skillActivationFromOrigin(message.origin);
+    if (skill !== undefined) {
+      this.renderReplaySkillActivation(context, skill);
+      if (message.origin?.kind === 'skill_activation' && message.origin.trigger === 'user-slash') {
+        this.advanceReplayTurn(context);
+      }
+      return;
+    }
+
+    this.advanceReplayTurn(context);
+    this.appendTranscriptEntry(
+      replayEntry(context, 'user', contentPartsToText(message.content), 'plain'),
+    );
+  }
+
+  private renderReplayToolCalls(
+    context: ReplayRenderContext,
+    toolCalls: readonly ToolCall[],
+  ): void {
+    if (toolCalls.length === 0) return;
+    context.stepIndex += 1;
+    this.applyReplayStepContext(context);
+    for (const rawToolCall of toolCalls) {
+      const toolCall = toolCallFromReplayMessage(rawToolCall, context);
+      if (toolCall === undefined) continue;
+      context.toolCalls.set(toolCall.id, toolCall);
+      this.state.activeToolCalls.set(toolCall.id, toolCall);
+      this.onToolCallStart(toolCall);
+    }
+  }
+
+  private renderReplayToolResult(context: ReplayRenderContext, message: ContextMessage): void {
+    const toolCallId = message.toolCallId;
+    if (toolCallId === undefined) return;
+    const call = context.toolCalls.get(toolCallId);
+    if (call === undefined) return;
+
+    const result: ToolResultBlockData = {
+      tool_call_id: toolCallId,
+      output: toolResultOutput(message.content),
+      is_error: message.isError,
+    };
+    call.result = result;
+    this.applyReplayStepContext(context);
+    this.onToolCallEnd(toolCallId, result);
+    this.state.activeToolCalls.delete(toolCallId);
+    context.completedToolCallIds.add(toolCallId);
+  }
+
+  private advanceReplayTurn(context: ReplayRenderContext): void {
+    context.turnIndex += 1;
+    context.stepIndex = 0;
+    context.currentTurnId = `replay:${String(context.turnIndex)}`;
+    this.applyReplayStepContext(context);
+  }
+
+  private applyReplayStepContext(context: ReplayRenderContext): void {
+    this.state.currentTurnId = context.currentTurnId;
+    this.state.currentStep = context.stepIndex;
+  }
+
+  private flushReplayAssistant(context: ReplayRenderContext): void {
+    const thinking = context.assistant.thinking.join('');
+    const text = context.assistant.text.join('');
+    context.assistant = { thinking: [], text: [] };
+    this.applyReplayStepContext(context);
+
+    if (thinking.length > 0) {
+      this.onThinkingUpdate(thinking);
+      this.onThinkingEnd();
+    }
+    if (text.length > 0) {
+      this.state.assistantStreamActive = true;
+      this.onStreamingTextStart();
+      this.onStreamingTextUpdate(text);
+      this.onStreamingTextEnd();
+      this.state.assistantStreamActive = false;
+      this.state.assistantDraft = '';
+    }
+  }
+
+  private cleanupReplayRuntime(context: ReplayRenderContext): void {
+    this.flushReplayAssistant(context);
+    this.state.activeToolCalls.clear();
+    for (const toolCallId of context.completedToolCallIds) {
+      this.state.pendingToolComponents.delete(toolCallId);
+    }
+    this.state.pendingAgentGroup = null;
+    this.state.pendingReadGroup = null;
+    this.state.currentTurnId = undefined;
+    this.state.currentStep = 0;
+    this.state.streamingToolCallArguments.clear();
+    this.pendingToolCallFlushIds.clear();
+    this.state.ui.requestRender();
+  }
+
+  private renderReplaySkillActivation(
+    context: ReplayRenderContext,
+    skill: SkillActivationProjection,
+  ): void {
+    if (context.skillActivationIds.has(skill.activationId)) return;
+    if (this.state.renderedSkillActivationIds.has(skill.activationId)) return;
+    context.skillActivationIds.add(skill.activationId);
+    this.state.renderedSkillActivationIds.add(skill.activationId);
+    this.appendTranscriptEntry({
+      ...replayEntry(context, 'skill_activation', `Activated skill: ${skill.skillName}`, 'plain'),
+      skillActivationId: skill.activationId,
+      skillName: skill.skillName,
+      skillArgs: skill.skillArgs,
+    });
+  }
+
+  private renderReplayHookResult(context: ReplayRenderContext, message: ContextMessage): void {
+    if (message.origin?.kind !== 'hook_result') return;
+    this.flushReplayAssistant(context);
+    this.appendTranscriptEntry(
+      replayEntry(
+        context,
+        'assistant',
+        formatHookResultMessageForTranscript(
+          contentPartsToText(message.content),
+          message.origin.event,
+          message.origin.blocked === true,
+        ),
+        'markdown',
+      ),
+    );
+  }
+
+  private renderReplayPermissionUpdate(
+    context: ReplayRenderContext,
+    mode: PermissionMode,
+  ): void {
+    if (mode === 'yolo') {
+      this.appendTranscriptEntry(
+        replayEntry(context, 'status', 'YOLO mode: ON', 'notice', {
+          detail: 'All actions will be approved automatically. Use with caution.',
+        }),
+      );
+      return;
+    }
+    this.appendTranscriptEntry(
+      replayEntry(
+        context,
+        'status',
+        mode === 'manual' ? 'YOLO mode: OFF' : `Permission mode: ${mode}`,
+        'notice',
+      ),
+    );
+  }
+
+  private renderReplayApprovalResult(
+    context: ReplayRenderContext,
+    record: Extract<AgentReplayRecord, { type: 'approval_result' }>['record'],
+  ): void {
+    if (record.toolName === 'ExitPlanMode') {
+      this.renderReplayPlanReviewResult(context, record);
+      return;
+    }
+
+    const { result } = record;
+    const parts: string[] = [];
+    switch (result.decision) {
+      case 'approved':
+        parts.push(result.scope === 'session' ? 'Approved for session' : 'Approved');
+        break;
+      case 'rejected':
+        parts.push('Rejected');
+        break;
+      case 'cancelled':
+        parts.push('Cancelled');
+        break;
+    }
+    parts.push(`: ${record.action}`);
+    if (result.feedback !== undefined && result.feedback.length > 0) {
+      parts.push(` — "${result.feedback}"`);
+    }
+    this.appendTranscriptEntry(replayEntry(context, 'status', parts.join(''), 'notice'));
+  }
+
+  private renderReplayPlanReviewResult(
+    context: ReplayRenderContext,
+    record: Extract<AgentReplayRecord, { type: 'approval_result' }>['record'],
+  ): void {
+    const { result } = record;
+    if (result.decision === 'approved') {
+      context.suppressNextPlanModeOffNotice = true;
+      return;
+    }
+    this.removeReplayToolCall(record.toolCallId);
+
+    let content: string;
+    switch (result.decision) {
+      case 'rejected':
+        content =
+          result.selectedLabel === 'Revise' ? 'Plan sent back for revision' : 'Plan review rejected';
+        break;
+      case 'cancelled':
+        content = 'Plan review cancelled';
+        break;
+    }
+    const detail =
+      result.feedback !== undefined && result.feedback.length > 0
+        ? `Feedback: ${result.feedback}`
+        : undefined;
+    this.appendTranscriptEntry(replayEntry(context, 'status', content, 'notice', { detail }));
+  }
+
+  private removeReplayToolCall(toolCallId: string): void {
+    this.state.activeToolCalls.delete(toolCallId);
+    this.state.pendingToolComponents.delete(toolCallId);
+    const index = this.state.transcriptEntries.findIndex(
+      (entry) => entry.toolCallData?.id === toolCallId,
+    );
+    if (index >= 0) this.state.transcriptEntries.splice(index, 1);
+    const children = this.state.transcriptContainer.children;
+    const childIndex = children.findIndex(
+      (child) => child instanceof ToolCallComponent && child.toolCallView.id === toolCallId,
+    );
+    if (childIndex >= 0) {
+      children.splice(childIndex, 1);
+      this.state.transcriptContainer.invalidate();
+    }
+  }
+
+  private renderReplayBackgroundTaskNotification(
+    context: ReplayRenderContext,
+    origin: Extract<PromptOrigin, { kind: 'background_task' }>,
+  ): void {
+    const task = this.state.backgroundTasks.get(origin.taskId);
+    if (task !== undefined && task.taskId.startsWith('bash-')) {
+      const status = formatBackgroundTaskTranscript({ ...task, status: origin.status });
+      this.appendTranscriptEntry({
+        ...replayEntry(context, 'status', status.headline, 'plain'),
+        detail: status.detail,
+        backgroundAgentStatus: status,
+      });
+      this.state.backgroundTaskTranscriptedTerminal.add(origin.taskId);
+      return;
+    }
+
+    const meta: BackgroundAgentMetadata = {
+      agentId: origin.taskId,
+      parentToolCallId: origin.taskId,
+      description: task?.description,
+    };
+    let status = formatBackgroundAgentTranscript(
+      origin.status === 'completed' ? 'completed' : 'failed',
+      meta,
+    );
+    if (origin.status === 'lost') {
+      status = {
+        ...status,
+        headline: status.headline.replace(' failed in background', ' lost in background'),
+      };
+    } else if (origin.status === 'killed') {
+      status = {
+        ...status,
+        headline: status.headline.replace(' failed in background', ' stopped'),
+      };
+    }
+    this.appendTranscriptEntry({
+      ...replayEntry(context, 'status', status.headline, 'plain'),
+      detail: status.detail,
+      backgroundAgentStatus: status,
+    });
+    this.state.backgroundAgents.delete(meta.agentId);
+    this.state.backgroundAgentMetadata.delete(meta.agentId);
   }
 
   // =========================================================================
@@ -2554,6 +2991,7 @@ export class KimiTUI {
   // notice pointing at the config knob.
   private handleStepCompleted(event: TurnStepCompletedEvent): void {
     this.flushStreamingUiUpdatesNow();
+    this.maybeShowDebugTiming(event);
     if (event.finishReason !== 'max_tokens') return;
 
     // Scope the truncation marking to tool calls that belong to the
@@ -2589,6 +3027,12 @@ export class KimiTUI {
       ? 'If this limit is wrong for your model, set `max_output_size` on the model alias in your kimi-code config.'
       : undefined;
     this.showNotice(title, detail);
+  }
+
+  private maybeShowDebugTiming(event: TurnStepCompletedEvent): void {
+    if (process.env['KIMI_CODE_DEBUG'] !== '1') return;
+    const text = formatStepDebugTiming(event);
+    if (text !== undefined) this.showStatus(text);
   }
 
   private isAnthropicSessionActive(): boolean {
@@ -3615,6 +4059,7 @@ export class KimiTUI {
 
   // Appends an approval-result entry to the transcript.
   private appendApprovalTranscriptEntry(request: ApprovalRequest, response: ApprovalResponse): void {
+    if (request.toolName === 'ExitPlanMode' || request.display.kind === 'plan_review') return;
     const parts: string[] = [];
     switch (response.decision) {
       case 'approved':
@@ -3743,24 +4188,6 @@ export class KimiTUI {
     );
     this.state.ui.requestRender();
     return this.showLoginProgressSpinner('Waiting for authorization…');
-  }
-
-  // Provides UI callbacks used while hydrating transcript history.
-  private replayHydrationHooks(): ReplayHydrationHooks {
-    return {
-      setAppState: (patch) => {
-        this.setAppState(patch);
-      },
-      appendEntry: (entry) => {
-        this.appendTranscriptEntry(entry);
-      },
-      setTodoList: (todos) => {
-        this.setTodoList(todos);
-      },
-      emitError: (message) => {
-        this.showError(message);
-      },
-    };
   }
 
   // =========================================================================
@@ -5087,7 +5514,10 @@ export class KimiTUI {
     }
 
     try {
-      await this.switchToSession(forked, `Session forked (${forked.id}).`);
+      await this.switchToSession(
+        forked,
+        `Session forked (${forked.id}). To return to the original session: kimi -r ${session.id}`,
+      );
     } catch (error) {
       const msg = formatErrorMessage(error);
       this.showError(`Failed to switch to forked session: ${msg}`);
@@ -5740,21 +6170,4 @@ export class KimiTUI {
       this.mountEditorReplacement(selector);
     });
   }
-}
-
-function formatHookResultMarkdown(event: HookResultEvent): string {
-  return `*${formatHookResultTitle(event)}*\n\n${formatHookResultBody(event)}`;
-}
-
-function formatHookResultPlain(event: HookResultEvent): string {
-  return `${formatHookResultTitle(event)}\n\n${formatHookResultBody(event)}`;
-}
-
-function formatHookResultTitle(event: HookResultEvent): string {
-  return `${event.hookEvent} hook${event.blocked === true ? ' blocked' : ''}`;
-}
-
-function formatHookResultBody(event: HookResultEvent): string {
-  const content = event.content.trim();
-  return content.length === 0 ? '(empty)' : content;
 }

@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import path from 'node:path';
+import path from 'pathe';
 
 import { load as loadYaml } from 'js-yaml';
 import regexpEscape from 'regexp.escape';

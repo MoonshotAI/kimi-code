@@ -311,12 +311,12 @@ describe('ToolCallComponent', () => {
     expect(header).toContain('Current plan · Approved: Pragmatic refactor');
   });
 
-  it('header chips Rejected and renders feedback for reject-with-suggestion', () => {
+  it('renders Rejected in the plan box title and keeps revise feedback visible', () => {
     const component = new ToolCallComponent(
       {
         id: 'call_exit_reject_fb',
         name: 'ExitPlanMode',
-        args: {},
+        args: { plan: '# Rework Plan\n\n- step 1' },
       },
       {
         tool_call_id: 'call_exit_reject_fb',
@@ -324,31 +324,37 @@ describe('ToolCallComponent', () => {
         is_error: false,
       },
       darkColors,
+      undefined,
+      createMarkdownTheme(darkColors),
     );
 
     const out = strip(component.render(100).join('\n'));
-    expect(out).toContain('Current plan · Rejected');
+    expect(out).toContain('plan · Rejected');
     expect(out).toContain('↪ Suggestion');
     expect(out).toContain('please rethink step 2');
   });
 
-  it('header chips Rejected without feedback when user rejected outright', () => {
+  it('renders is_error ExitPlanMode reject in the plan box title without raw error text', () => {
     const component = new ToolCallComponent(
       {
         id: 'call_exit_reject',
         name: 'ExitPlanMode',
-        args: {},
+        args: { plan: '# Rejected Plan\n\n- keep investigating' },
       },
       {
         tool_call_id: 'call_exit_reject',
         output: 'Plan rejected by user. Plan mode remains active.',
-        is_error: false,
+        is_error: true,
       },
       darkColors,
+      undefined,
+      createMarkdownTheme(darkColors),
     );
 
     const out = strip(component.render(100).join('\n'));
-    expect(out).toContain('Current plan · Rejected');
+    expect(out).toContain('plan · Rejected');
+    expect(out).toContain('Rejected Plan');
+    expect(out).not.toContain('Plan rejected by user.');
     expect(out).not.toContain('Plan mode remains active.');
   });
 

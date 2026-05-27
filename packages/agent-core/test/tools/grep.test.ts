@@ -797,7 +797,7 @@ describe('GrepTool', () => {
 
     const result = await executeTool(tool, context({ pattern: 'hit', output_mode: 'content' }));
 
-    expect(result.output).toContain('src\\main.ts:10:hit');
+    expect(result.output).toContain('src/main.ts:10:hit');
     expect(result.output).not.toContain('SECRET=hit');
     expect(result.output).toContain('Filtered 1 sensitive file(s): .env');
   });
@@ -830,7 +830,7 @@ describe('GrepTool', () => {
       'C:\\workspace',
     );
     expect(toolContentString(result)).toBe(
-      ['src\\main.ts:hit', 'Filtered 1 sensitive file(s): .aws\\credentials'].join('\n'),
+      ['src/main.ts:hit', 'Filtered 1 sensitive file(s): .aws/credentials'].join('\n'),
     );
   });
 
@@ -849,7 +849,7 @@ describe('GrepTool', () => {
     const result = await executeTool(tool, context({ pattern: 'hit', output_mode: 'content' }));
 
     expect(toolContentString(result)).toBe(
-      ['src\\main.ts:1:hit', 'Filtered 1 sensitive file(s): foo-10-\\.aws\\credentials'].join('\n'),
+      ['src/main.ts:1:hit', 'Filtered 1 sensitive file(s): foo-10-/.aws/credentials'].join('\n'),
     );
   });
 
@@ -930,10 +930,10 @@ describe('GrepTool', () => {
     );
     expect(toolContentString(result)).toBe(
       [
-        'src\\main.ts:before',
-        'src\\main.ts:hit',
-        'src\\main.ts:after',
-        'Filtered 1 sensitive file(s): .aws\\credentials',
+        'src/main.ts:before',
+        'src/main.ts:hit',
+        'src/main.ts:after',
+        'Filtered 1 sensitive file(s): .aws/credentials',
       ].join('\n'),
     );
   });
@@ -1744,8 +1744,8 @@ describe('GrepTool', () => {
     const result = await executeTool(tool, context({ pattern: 'code', output_mode: 'content' }));
 
     const lines = toolContentString(result).split('\n');
-    expect(lines[0]).toBe('src\\a.py:42:code');
-    expect(lines[1]).toBe('src\\b.py-41-context');
+    expect(lines[0]).toBe('src/a.py:42:code');
+    expect(lines[1]).toBe('src/b.py-41-context');
   });
 
   it('passes lines through unchanged when path is not under the workspace', async () => {
