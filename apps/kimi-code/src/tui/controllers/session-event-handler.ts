@@ -60,6 +60,7 @@ import { setProcessTitle } from '../utils/proctitle';
 import { errorReportHintLine } from '../constant/feedback';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { StreamingUIController } from './streaming-ui';
+import type { TasksBrowserController } from './tasks-browser';
 import type {
   AppState,
   BackgroundAgentMetadata,
@@ -87,8 +88,7 @@ export interface SessionEventHost {
   showNotice(title: string, detail?: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
-  repaintTasksBrowser(): void;
-  refreshTaskOutputViewer(opts?: { silent?: boolean }): Promise<void>;
+  readonly tasksBrowserController: TasksBrowserController;
 }
 
 export class SessionEventHandler {
@@ -879,7 +879,7 @@ export class SessionEventHandler {
 
     const viewer = state.tasksBrowser?.viewer;
     if (viewer !== undefined && viewer.taskId === info.taskId) {
-      void this.host.refreshTaskOutputViewer({ silent: true });
+      void this.host.tasksBrowserController.refreshOutputViewer({ silent: true });
     }
 
     const isTerminal =
@@ -891,12 +891,12 @@ export class SessionEventHandler {
     if (event.type === 'background.task.started') {
       if (info.taskId.startsWith('agent-')) {
         this.syncBackgroundTaskBadge();
-        this.host.repaintTasksBrowser();
+        this.host.tasksBrowserController.repaint();
         return;
       }
       this.appendBackgroundTaskEntry(info);
       this.syncBackgroundTaskBadge();
-      this.host.repaintTasksBrowser();
+      this.host.tasksBrowserController.repaint();
       return;
     }
 
@@ -908,14 +908,14 @@ export class SessionEventHandler {
         state.backgroundTaskTranscriptedTerminal.add(info.taskId);
       }
       this.syncBackgroundTaskBadge();
-      this.host.repaintTasksBrowser();
+      this.host.tasksBrowserController.repaint();
       return;
     }
 
     if (previous?.status !== info.status) {
       this.syncBackgroundTaskBadge();
     }
-    this.host.repaintTasksBrowser();
+    this.host.tasksBrowserController.repaint();
   }
 
   private appendBackgroundTaskEntry(info: BackgroundTaskInfo): void {

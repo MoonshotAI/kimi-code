@@ -526,10 +526,10 @@ export class KimiTUI {
   // When true, the migration screen is the whole session: run it, then exit.
   private readonly migrateOnly: boolean;
   readonly streamingUI: StreamingUIController;
-  private readonly authFlow: AuthFlowController;
+  readonly authFlow: AuthFlowController;
   private readonly sessionEventHandler: SessionEventHandler;
   private readonly sessionReplay: SessionReplayRenderer;
-  private readonly tasksBrowserController: TasksBrowserController;
+  readonly tasksBrowserController: TasksBrowserController;
 
   public onExit?: (exitCode?: number) => Promise<void>;
 
@@ -856,7 +856,7 @@ export class KimiTUI {
     this.isShuttingDown = true;
     this.unregisterSignalHandlers();
     this.aborted = true;
-    this.discardPendingStreamingUiUpdates();
+    this.streamingUI.discardPending();
     if (this.pendingExit) {
       clearTimeout(this.pendingExit.timer);
       this.pendingExit = null;
@@ -868,7 +868,7 @@ export class KimiTUI {
     this.disposeTerminalTracking();
     await this.closeSession('shutting down');
     await this.harness.close();
-    this.stopAllMcpServerStatusSpinners();
+    this.sessionEventHandler.stopAllMcpServerStatusSpinners();
     this.state.ui.stop();
     if (this.onExit) {
       await this.onExit(exitCode);
@@ -998,9 +998,6 @@ export class KimiTUI {
   private async activateModelAfterLogin(model: string, thinking?: boolean): Promise<void> {
     await this.authFlow.activateModelAfterLogin(model, thinking);
   }
-  async clearActiveSessionAfterLogout(): Promise<void> { await this.authFlow.clearActiveSessionAfterLogout(); }
-  async refreshConfigAfterLogin(): Promise<void> { await this.authFlow.refreshConfigAfterLogin(); }
-  async refreshConfigAfterLogout(): Promise<void> { await this.authFlow.refreshConfigAfterLogout(); }
 
   // =========================================================================
   // Layout / Editor Setup
@@ -1348,7 +1345,7 @@ export class KimiTUI {
         void this.showSessionPicker();
         return;
       case 'tasks':
-        void this.showTasksBrowser();
+        void this.tasksBrowserController.show();
         return;
       case 'mcp':
         void this.showMcpServers();
@@ -1510,9 +1507,9 @@ export class KimiTUI {
   // Resets request-scoped state before submitting work to the active session.
   beginSessionRequest(): void {
     this.state.currentTurnId = undefined;
-    this.resetLiveTextRuntime();
-    this.resetLiveToolUiState();
-    this.resetToolCallState();
+    this.streamingUI.resetLiveText();
+    this.streamingUI.resetToolUi();
+    this.streamingUI.resetToolCallState();
 
     this.patchLivePane({
       mode: 'waiting',
@@ -1635,23 +1632,6 @@ export class KimiTUI {
     });
   }
 
-  // ---------------------------------------------------------------------------
-  // Streaming UI — delegated to StreamingUIController
-  // ---------------------------------------------------------------------------
-
-  private scheduleStreamingUiFlush(): void { this.streamingUI.scheduleFlush(); }
-  private flushStreamingUiUpdatesNow(): void { this.streamingUI.flushNow(); }
-  private discardPendingStreamingUiUpdates(): void { this.streamingUI.discardPending(); }
-  private flushThinkingToTranscript(nextMode: LivePaneState['mode'] = 'idle'): void {
-    this.streamingUI.flushThinkingToTranscript(nextMode);
-  }
-  private finalizeAssistantStream(): void { this.streamingUI.finalizeAssistantStream(); }
-  private resetLiveTextRuntime(): void { this.streamingUI.resetLiveText(); }
-  private resetLiveToolUiState(): void { this.streamingUI.resetToolUi(); }
-  private resetToolCallState(): void { this.streamingUI.resetToolCallState(); }
-  private finalizeLiveTextBuffers(nextMode: LivePaneState['mode'] = 'idle'): void {
-    this.streamingUI.finalizeLiveTextBuffers(nextMode);
-  }
   finalizeTurn(sendQueued: (item: QueuedMessage) => void): void {
     this.streamingUI.finalizeTurn(sendQueued);
   }
@@ -1811,26 +1791,26 @@ export class KimiTUI {
   // Resets turn, tool, queue, and background-agent state for a session switch.
   resetSessionRuntime(): void {
     this.aborted = false;
-    this.discardPendingStreamingUiUpdates();
+    this.streamingUI.discardPending();
     this.state.queuedMessages = [];
     this.harness.interactiveAgentId = MAIN_AGENT_ID;
-    this.resetToolCallState();
-    this.resetLiveToolUiState();
+    this.streamingUI.resetToolCallState();
+    this.streamingUI.resetToolUi();
     this.state.backgroundAgents.clear();
     this.state.backgroundAgentMetadata.clear();
     this.state.backgroundTasks.clear();
     this.state.backgroundTaskTranscriptedTerminal.clear();
-    this.closeTasksBrowser();
+    this.tasksBrowserController.close();
     this.state.subagentParentToolCallIds.clear();
     this.state.subagentNames.clear();
     this.state.renderedSkillActivationIds.clear();
     this.state.renderedMcpServerStatusKeys.clear();
-    this.stopAllMcpServerStatusSpinners();
+    this.sessionEventHandler.stopAllMcpServerStatusSpinners();
     this.state.footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 0 });
-    this.setTodoList([]);
+    this.streamingUI.setTodoList([]);
     this.state.currentTurnId = undefined;
     this.state.currentStep = 0;
-    this.resetLiveTextRuntime();
+    this.streamingUI.resetLiveText();
     this.updateQueueDisplay();
   }
 
@@ -1944,24 +1924,6 @@ export class KimiTUI {
   private handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
     this.sessionEventHandler.handleEvent(event, sendQueued);
   }
-  private stopAllMcpServerStatusSpinners(): void { this.sessionEventHandler.stopAllMcpServerStatusSpinners(); }
-
-  // =========================================================================
-  // Live Render Hooks — delegated to StreamingUIController
-  // =========================================================================
-
-  private onStreamingTextStart(): void { this.streamingUI.onStreamingTextStart(); }
-  private onStreamingTextUpdate(t: string): void { this.streamingUI.onStreamingTextUpdate(t); }
-  private onStreamingTextEnd(): void { this.streamingUI.onStreamingTextEnd(); }
-  private onThinkingUpdate(t: string): void { this.streamingUI.onThinkingUpdate(t); }
-  private onThinkingEnd(): void { this.streamingUI.onThinkingEnd(); }
-  private onToolCallStart(tc: ToolCallBlockData): void { this.streamingUI.onToolCallStart(tc); }
-  private onToolCallEnd(id: string, r: ToolResultBlockData): void { this.streamingUI.onToolCallEnd(id, r); }
-  private setTodoList(todos: readonly TodoItem[]): void { this.streamingUI.setTodoList(todos); }
-  private beginCompaction(instruction?: string): void { this.streamingUI.beginCompaction(instruction); }
-  private endCompaction(before?: number, after?: number): void { this.streamingUI.endCompaction(before, after); }
-  private cancelCompactionBlock(): void { this.streamingUI.cancelCompaction(); }
-
   // =========================================================================
   // Transcript Rendering
   // =========================================================================
@@ -2119,12 +2081,12 @@ export class KimiTUI {
 
   // Clears transcript-related state and redraws the welcome view.
   private clearTranscriptAndRedraw(): void {
-    this.discardPendingStreamingUiUpdates();
+    this.streamingUI.discardPending();
     this.state.transcriptEntries = [];
     this.disposeActiveCompactionBlock();
-    this.resetLiveTextRuntime();
-    this.resetLiveToolUiState();
-    this.stopAllMcpServerStatusSpinners();
+    this.streamingUI.resetLiveText();
+    this.streamingUI.resetToolUi();
+    this.sessionEventHandler.stopAllMcpServerStatusSpinners();
     this.state.transcriptContainer.clear();
     this.clearTerminalInlineImages();
     this.state.todoPanel.clear();
@@ -2536,17 +2498,6 @@ export class KimiTUI {
         onCancel,
       }),
     );
-  }
-
-  // =========================================================================
-  // Background tasks browser (`/tasks`) — delegated to TasksBrowserController
-  // =========================================================================
-
-  private showTasksBrowser(): Promise<void> { return this.tasksBrowserController.show(); }
-  private closeTasksBrowser(): void { this.tasksBrowserController.close(); }
-  repaintTasksBrowser(): void { this.tasksBrowserController.repaint(); }
-  refreshTaskOutputViewer(opts?: { silent?: boolean }): Promise<void> {
-    return this.tasksBrowserController.refreshOutputViewer(opts);
   }
 
   // Shows the editor command selector.

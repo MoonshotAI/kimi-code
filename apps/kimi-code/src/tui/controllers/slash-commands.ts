@@ -62,6 +62,7 @@ import { resolveConnectCatalogRequest } from '../utils/connect-catalog';
 import { isAbortError } from '../utils/errors';
 import { formatErrorMessage } from '../utils/event-payload';
 import { openUrl } from '../utils/open-url';
+import type { AuthFlowController } from './auth-flow';
 import type { AppState, QueuedMessage } from '../types';
 import type { TUIState, LoginProgressSpinnerHandle } from '../kimi-tui';
 
@@ -101,9 +102,9 @@ export interface SlashCommandHost {
   // Config (remain on KimiTUI)
   applyEditorChoice(value: string): Promise<void>;
   applyThemeChoice(theme: Theme): Promise<void>;
-  refreshConfigAfterLogin(): Promise<void>;
-  refreshConfigAfterLogout(): Promise<void>;
-  clearActiveSessionAfterLogout(): Promise<void>;
+
+  // Controller refs
+  readonly authFlow: AuthFlowController;
 
 }
 
@@ -408,7 +409,7 @@ async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<void> {
     spinner?.stop({ ok: true, label: 'Logged in.' });
     spinner = undefined;
     try {
-      await host.refreshConfigAfterLogin();
+      await host.authFlow.refreshConfigAfterLogin();
     } catch (refreshError) {
       const message = formatErrorMessage(refreshError);
       host.showError(`Authentication successful, but failed to refresh config: ${message}`);
@@ -509,7 +510,7 @@ async function handleOpenPlatformLogin(
     defaultThinking: config.defaultThinking,
   });
 
-  await host.refreshConfigAfterLogin();
+  await host.authFlow.refreshConfigAfterLogin();
   host.track('login', { provider: platform.id, method: 'api_key' });
   host.showStatus(`Setup complete: ${platform.name} · ${selection.model.id}`);
 }
@@ -613,7 +614,7 @@ export async function handleConnectCommand(host: SlashCommandHost, args: string)
     defaultThinking: config.defaultThinking,
   });
 
-  await host.refreshConfigAfterLogin();
+  await host.authFlow.refreshConfigAfterLogin();
   host.track('connect', { provider: providerId, model: selection.model.id });
   host.showStatus(`Connected: ${entry.name ?? providerId} · ${selection.model.id}`);
 }
@@ -665,8 +666,8 @@ export async function handleLogoutCommand(host: SlashCommandHost): Promise<void>
   }
 
   if (target === currentProvider) {
-    await host.refreshConfigAfterLogout();
-    await host.clearActiveSessionAfterLogout();
+    await host.authFlow.refreshConfigAfterLogout();
+    await host.authFlow.clearActiveSessionAfterLogout();
   } else {
     const updated = await host.harness.getConfig({ reload: true });
     host.setAppState({
