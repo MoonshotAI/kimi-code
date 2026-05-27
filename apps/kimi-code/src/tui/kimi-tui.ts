@@ -93,13 +93,14 @@ import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes
 import { QueuePaneComponent } from './components/panes/queue-pane';
 import type { TuiConfig } from './config';
 import {
+  combineStartupNotice,
   CTRL_C_HINT,
   CTRL_D_HINT,
   EXIT_CONFIRM_WINDOW_MS,
+  isOAuthLoginRequiredError,
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
   NO_ACTIVE_SESSION_MESSAGE,
-  OAUTH_LOGIN_REQUIRED_CODE,
 } from './constant/kimi-tui';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
 import { ApprovalController } from './reverse-rpc/approval/controller';
@@ -362,22 +363,6 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     streamingToolCallArguments: new Map(),
     queuedMessages: [],
   };
-}
-
-// Merges startup notices while preserving their display order.
-function combineStartupNotice(
-  existing: string | undefined,
-  next: string | undefined,
-): string | undefined {
-  if (existing !== undefined && next !== undefined) {
-    return `${existing}\n${next}`;
-  }
-  return existing ?? next;
-}
-
-function isOAuthLoginRequiredError(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  return (error as { readonly code?: unknown }).code === OAUTH_LOGIN_REQUIRED_CODE;
 }
 
 interface SendMessageOptions {

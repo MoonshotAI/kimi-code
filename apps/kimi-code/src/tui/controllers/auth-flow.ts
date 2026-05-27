@@ -1,19 +1,9 @@
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 import type { SkillListSession } from '../commands';
 
-import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
+import { combineStartupNotice, OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
 import type { AppState } from '../types';
 import type { KimiTUIOptions, TUIState } from '../kimi-tui';
-
-function combineStartupNotice(
-  existing: string | undefined,
-  next: string | undefined,
-): string | undefined {
-  if (existing !== undefined && next !== undefined) {
-    return `${existing}\n${next}`;
-  }
-  return existing ?? next;
-}
 
 export interface AuthFlowHost {
   state: TUIState;

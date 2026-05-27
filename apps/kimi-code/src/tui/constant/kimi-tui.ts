@@ -1,4 +1,4 @@
-import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
+import { DEFAULT_OAUTH_PROVIDER_NAME, OAUTH_LOGIN_REQUIRED_CODE } from '#/constant/app';
 
 export { DEFAULT_OAUTH_PROVIDER_NAME, OAUTH_LOGIN_REQUIRED_CODE, PRODUCT_NAME } from '#/constant/app';
 
@@ -9,6 +9,20 @@ export const CTRL_C_HINT = 'Press Ctrl+C again to exit';
 export const MAIN_AGENT_ID = 'main';
 export const OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE = 'OAuth login expired. Send /login to login.';
 export const EXIT_CONFIRM_WINDOW_MS = 1500;
+
+export function combineStartupNotice(
+  existing: string | undefined,
+  next: string | undefined,
+): string | undefined {
+  if (existing !== undefined && next !== undefined) {
+    return `${existing}\n${next}`;
+  }
+  return existing ?? next;
+}
+
+export function isOAuthLoginRequiredError(error: unknown): boolean {
+  return (error as { readonly code?: unknown }).code === OAUTH_LOGIN_REQUIRED_CODE;
+}
 
 export function isManagedUsageProvider(
   providerKey: string | undefined,
