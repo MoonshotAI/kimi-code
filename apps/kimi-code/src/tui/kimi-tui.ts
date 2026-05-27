@@ -1098,7 +1098,7 @@ export class KimiTUI {
       const next = !this.state.appState.planMode;
       this.track('shortcut_plan_toggle', { enabled: next });
       this.track('shortcut_mode_switch', { to_mode: next ? 'plan' : 'agent' });
-      void this.applyPlanMode(session, next);
+      void slashCommands.handlePlanCommand(this, next ? 'on' : 'off');
     };
 
     editor.onOpenExternalEditor = () => {
@@ -1348,58 +1348,58 @@ export class KimiTUI {
         void this.tasksBrowserController.show();
         return;
       case 'mcp':
-        void this.showMcpServers();
+        void slashCommands.showMcpServers(this);
         return;
       case 'editor':
-        await this.handleEditorCommand(args);
+        await slashCommands.handleEditorCommand(this, args);
         return;
       case 'theme':
-        await this.handleThemeCommand(args);
+        await slashCommands.handleThemeCommand(this, args);
         return;
       case 'model':
-        this.handleModelCommand(args);
+        slashCommands.handleModelCommand(this, args);
         return;
       case 'permission':
-        this.showPermissionPicker();
+        slashCommands.showPermissionPicker(this);
         return;
       case 'settings':
-        this.showSettingsSelector();
+        slashCommands.showSettingsSelector(this);
         return;
       case 'usage':
-        void this.showUsage();
+        void slashCommands.showUsage(this);
         return;
       case 'status':
-        void this.showStatusReport();
+        void slashCommands.showStatusReport(this);
         return;
       case 'feedback':
-        await this.handleFeedbackCommand();
+        await slashCommands.handleFeedbackCommand(this);
         return;
       case 'title':
-        await this.handleTitleCommand(args);
+        await slashCommands.handleTitleCommand(this, args);
         return;
       case 'yolo':
-        await this.handleYoloCommand(args);
+        await slashCommands.handleYoloCommand(this, args);
         return;
       case 'plan':
-        await this.handlePlanCommand(args);
+        await slashCommands.handlePlanCommand(this, args);
         return;
       case 'compact':
-        await this.handleCompactCommand(args);
+        await slashCommands.handleCompactCommand(this, args);
         return;
       case 'init':
-        await this.handleInitCommand();
+        await slashCommands.handleInitCommand(this);
         return;
       case 'fork':
-        await this.handleForkCommand(args);
+        await slashCommands.handleForkCommand(this, args);
         return;
       case 'login':
-        await this.handleLoginCommand();
+        await slashCommands.handleLoginCommand(this);
         return;
       case 'connect':
-        await this.handleConnectCommand(args);
+        await slashCommands.handleConnectCommand(this, args);
         return;
       case 'logout':
-        await this.handleLogoutCommand();
+        await slashCommands.handleLogoutCommand(this);
         return;
       default:
         this.showError(`Unknown slash command: /${String(name)}`);
@@ -2293,7 +2293,7 @@ export class KimiTUI {
   }
 
   // Applies a theme bundle to all stateful UI theme references.
-  private applyTheme(theme: Theme, resolved?: ResolvedTheme): void {
+  applyTheme(theme: Theme, resolved?: ResolvedTheme): void {
     const nextTheme = createKimiTUIThemeBundle(theme, resolved);
     Object.assign(this.state.theme.colors, nextTheme.colors);
     this.state.theme.resolvedTheme = nextTheme.resolvedTheme;
@@ -2305,7 +2305,7 @@ export class KimiTUI {
   }
 
   // Starts or stops terminal theme notifications according to the user preference.
-  private refreshTerminalThemeTracking(): void {
+  refreshTerminalThemeTracking(): void {
     this.stopTerminalThemeTracking();
     if (this.state.appState.theme !== 'auto') return;
 
@@ -2500,380 +2500,6 @@ export class KimiTUI {
     );
   }
 
-  // Shows the editor command selector.
-  showEditorPicker(): void {
-    const currentValue = this.state.appState.editorCommand ?? '';
-    this.mountEditorReplacement(
-      new EditorSelectorComponent({
-        currentValue,
-        colors: this.state.theme.colors,
-        onSelect: (value) => {
-          this.restoreEditor();
-          void this.applyEditorChoice(value);
-        },
-        onCancel: () => {
-          this.restoreEditor();
-        },
-      }),
-    );
-  }
-
-  // Persists and applies the selected external editor command.
-  async applyEditorChoice(value: string): Promise<void> {
-    const previous = this.state.appState.editorCommand ?? '';
-    if (value === previous && value.length > 0) {
-      this.showStatus(`Editor unchanged: ${value.length > 0 ? value : 'auto-detect'}`);
-      return;
-    }
-
-    const editorCommand = value.length > 0 ? value : null;
-    try {
-      await saveTuiConfig({
-        theme: this.state.appState.theme,
-        editorCommand,
-        notifications: this.state.appState.notifications,
-      });
-    } catch (error) {
-      this.showStatus(
-        `Failed to save editor: ${formatErrorMessage(error)}`,
-        this.state.theme.colors.error,
-      );
-      return;
-    }
-
-    this.setAppState({ editorCommand });
-    this.showStatus(
-      value.length > 0
-        ? `Editor set to "${value}".`
-        : 'Editor set to auto-detect ($VISUAL / $EDITOR).',
-    );
-  }
-
-  // Shows the model selector when models are available.
-  showModelPicker(selectedValue: string = this.state.appState.model): void {
-    const entries = Object.entries(this.state.appState.availableModels);
-    if (entries.length === 0) {
-      this.showNotice(
-        'No models configured',
-        'Run /login to sign in to Kimi, or /connect to add another provider from a model catalog.',
-      );
-      return;
-    }
-    this.mountEditorReplacement(
-      new ModelSelectorComponent({
-        models: this.state.appState.availableModels,
-        currentValue: this.state.appState.model,
-        selectedValue,
-        currentThinking: this.state.appState.thinking,
-        colors: this.state.theme.colors,
-        searchable: true,
-        onSelect: ({ alias, thinking }) => {
-          this.restoreEditor();
-          void this.performModelSwitch(alias, thinking);
-        },
-        onCancel: () => {
-          this.restoreEditor();
-        },
-      }),
-    );
-  }
-
-  // Applies model and thinking changes to the active or newly created session.
-  async performModelSwitch(alias: string, thinking: boolean): Promise<void> {
-    if (this.state.appState.isStreaming) {
-      this.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
-      return;
-    }
-
-    const level = thinking ? 'on' : 'off';
-    const prevModel = this.state.appState.model;
-    const prevThinking = this.state.appState.thinking;
-    const runtimeChanged = alias !== prevModel || thinking !== prevThinking;
-
-    const session = this.session;
-    try {
-      if (session === undefined && runtimeChanged) {
-        await this.activateModelAfterLogin(alias, thinking);
-      } else if (session !== undefined) {
-        if (alias !== prevModel) {
-          await session.setModel(alias);
-        }
-        if (thinking !== prevThinking) {
-          await session.setThinking(level);
-        }
-      }
-    } catch (error) {
-      const msg = formatErrorMessage(error);
-      this.showError(`Failed to switch model: ${msg}`);
-      return;
-    }
-
-    this.setAppState({ model: alias, thinking });
-    if (session === undefined && runtimeChanged) {
-      if (alias !== prevModel) {
-        this.track('model_switch', { model: alias });
-      }
-      if (thinking !== prevThinking) {
-        this.track('thinking_toggle', { enabled: thinking });
-      }
-    }
-
-    let persisted = false;
-    try {
-      persisted = await this.persistModelSelection(alias, thinking);
-    } catch (error) {
-      const msg = formatErrorMessage(error);
-      this.showError(`Switched to ${alias}, but failed to save default: ${msg}`);
-      return;
-    }
-
-    const status = runtimeChanged
-      ? `Switched to ${alias} with thinking ${level}.`
-      : persisted
-        ? `Saved ${alias} with thinking ${level} as default.`
-        : `Already using ${alias} with thinking ${level}.`;
-    this.showStatus(status, this.state.theme.colors.success);
-  }
-
-  // Persists the selected model and thinking state as the startup defaults.
-  async persistModelSelection(alias: string, thinking: boolean): Promise<boolean> {
-    const config = await this.harness.getConfig({ reload: true });
-    if (config.defaultModel === alias && config.defaultThinking === thinking) {
-      return false;
-    }
-    await this.harness.setConfig({
-      defaultModel: alias,
-      defaultThinking: thinking,
-    });
-    return true;
-  }
-
-  // Shows the theme selector.
-  showThemePicker(): void {
-    this.mountEditorReplacement(
-      new ThemeSelectorComponent({
-        currentValue: this.state.appState.theme,
-        colors: this.state.theme.colors,
-        onSelect: (value) => {
-          this.restoreEditor();
-          void this.applyThemeChoice(value);
-        },
-        onCancel: () => {
-          this.restoreEditor();
-        },
-      }),
-    );
-  }
-
-  // Shows the permission mode selector.
-  showPermissionPicker(): void {
-    this.mountEditorReplacement(
-      new PermissionSelectorComponent({
-        currentValue: this.state.appState.permissionMode,
-        colors: this.state.theme.colors,
-        onSelect: (value) => {
-          this.restoreEditor();
-          void this.applyPermissionChoice(value);
-        },
-        onCancel: () => {
-          this.restoreEditor();
-        },
-      }),
-    );
-  }
-
-  // Shows the settings selector entry point.
-  showSettingsSelector(): void {
-    this.mountEditorReplacement(
-      new SettingsSelectorComponent({
-        colors: this.state.theme.colors,
-        onSelect: (value) => {
-          this.handleSettingsSelection(value);
-        },
-        onCancel: () => {
-          this.restoreEditor();
-        },
-      }),
-    );
-  }
-
-  // Routes a settings selection to the matching selector or panel.
-  handleSettingsSelection(value: SettingsSelection): void {
-    this.restoreEditor();
-    switch (value) {
-      case 'model':
-        this.showModelPicker();
-        return;
-      case 'permission':
-        this.showPermissionPicker();
-        return;
-      case 'theme':
-        this.showThemePicker();
-        return;
-      case 'editor':
-        this.showEditorPicker();
-        return;
-      case 'usage':
-        void this.showUsage();
-        return;
-    }
-  }
-
-  // Applies a permission mode choice to the active session and app state.
-  async applyPermissionChoice(mode: PermissionMode): Promise<void> {
-    if (mode === this.state.appState.permissionMode) {
-      this.showStatus(`Permission mode unchanged: ${mode}.`);
-      return;
-    }
-
-    try {
-      await this.requireSession().setPermission(mode);
-    } catch (error) {
-      const msg = formatErrorMessage(error);
-      this.showError(`Failed to set permission mode: ${msg}`);
-      return;
-    }
-
-    this.setAppState({ permissionMode: mode, yolo: mode === 'yolo' });
-    this.showNotice(`Permission mode: ${mode}`);
-  }
-
-  // Persists and applies a theme choice.
-  async applyThemeChoice(theme: Theme): Promise<void> {
-    if (theme === this.state.appState.theme) {
-      if (theme === 'auto') this.refreshTerminalThemeTracking();
-      this.showStatus(`Theme unchanged: "${theme}".`);
-      return;
-    }
-
-    try {
-      await saveTuiConfig({
-        theme,
-        editorCommand: this.state.appState.editorCommand,
-        notifications: this.state.appState.notifications,
-      });
-    } catch (error) {
-      this.showStatus(
-        `Failed to save theme: ${formatErrorMessage(error)}`,
-        this.state.theme.colors.error,
-      );
-      return;
-    }
-
-    const resolved = theme === 'auto' ? this.state.theme.resolvedTheme : theme;
-    this.applyTheme(theme, resolved);
-    this.refreshTerminalThemeTracking();
-    this.track('theme_switch', { theme });
-    const detail = theme === 'auto' ? ` (tracking terminal; current: ${resolved})` : '';
-    this.showStatus(`Theme set to "${theme}"${detail}.`);
-  }
-
-  // Loads and renders current usage information.
-  private async showUsage(): Promise<void> {
-    const sessionUsage = await this.loadSessionUsageReport();
-    const managedUsage = await this.loadManagedUsageReport();
-    const lines = buildUsageReportLines({
-      colors: this.state.theme.colors,
-      sessionUsage: sessionUsage.usage,
-      sessionUsageError: sessionUsage.error,
-      contextUsage: this.state.appState.contextUsage,
-      contextTokens: this.state.appState.contextTokens,
-      maxContextTokens: this.state.appState.maxContextTokens,
-      managedUsage: managedUsage?.usage,
-      managedUsageError: managedUsage?.error,
-    });
-    const panel = new UsagePanelComponent(lines, this.state.theme.colors.primary);
-    this.state.transcriptContainer.addChild(panel);
-    this.state.ui.requestRender();
-  }
-
-  // Loads and renders current runtime status.
-  private async showStatusReport(): Promise<void> {
-    const [runtimeStatus, managedUsage] = await Promise.all([
-      this.loadRuntimeStatusReport(),
-      this.loadManagedUsageReport(),
-    ]);
-    const appState = this.state.appState;
-    const lines = buildStatusReportLines({
-      colors: this.state.theme.colors,
-      version: appState.version,
-      model: appState.model,
-      workDir: appState.workDir,
-      sessionId: appState.sessionId,
-      sessionTitle: appState.sessionTitle,
-      thinking: appState.thinking,
-      permissionMode: appState.permissionMode,
-      planMode: appState.planMode,
-      contextUsage: appState.contextUsage,
-      contextTokens: appState.contextTokens,
-      maxContextTokens: appState.maxContextTokens,
-      availableModels: appState.availableModels,
-      status: runtimeStatus.status,
-      statusError: runtimeStatus.error,
-      managedUsage: managedUsage?.usage,
-      managedUsageError: managedUsage?.error,
-    });
-    const panel = new UsagePanelComponent(lines, this.state.theme.colors.primary, ' Status ');
-    this.state.transcriptContainer.addChild(panel);
-    this.state.ui.requestRender();
-  }
-
-  // Loads and renders current MCP server status.
-  private async showMcpServers(): Promise<void> {
-    let servers: readonly McpServerInfo[];
-    try {
-      servers = await this.requireSession().listMcpServers();
-    } catch (error) {
-      this.showError(`Failed to load MCP servers: ${formatErrorMessage(error)}`);
-      return;
-    }
-
-    const lines = buildMcpStatusReportLines({
-      colors: this.state.theme.colors,
-      servers,
-    });
-    const title = servers.length > 0 ? ` MCP (${servers.length}) ` : ' MCP ';
-    const panel = new UsagePanelComponent(lines, this.state.theme.colors.primary, title);
-    this.state.transcriptContainer.addChild(panel);
-    this.state.ui.requestRender();
-  }
-
-  // Loads per-session usage and captures displayable errors.
-  private async loadSessionUsageReport(): Promise<SessionUsageResult> {
-    try {
-      return { usage: await this.requireSession().getUsage() };
-    } catch (error) {
-      return { error: formatErrorMessage(error) };
-    }
-  }
-
-  // Loads per-session runtime status and captures displayable errors.
-  private async loadRuntimeStatusReport(): Promise<RuntimeStatusResult> {
-    try {
-      return { status: await this.requireSession().getStatus() };
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : String(error) };
-    }
-  }
-
-  // Loads managed-provider usage when the active model supports it.
-  private async loadManagedUsageReport(): Promise<ManagedUsageResult | undefined> {
-    const alias = this.state.appState.model;
-    const providerKey = this.state.appState.availableModels[alias]?.provider;
-    if (!isManagedUsageProvider(providerKey)) return undefined;
-
-    let res;
-    try {
-      res = await this.harness.auth.getManagedUsage(providerKey);
-    } catch (error) {
-      return { error: formatErrorMessage(error) };
-    }
-    if (res.kind === 'error') {
-      return { error: res.message };
-    }
-    return { usage: { summary: res.summary, limits: res.limits } };
-  }
-
   // Shows an approval panel and connects its response callback.
   private showApprovalPanel(payload: ApprovalPanelData): void {
     this.patchLivePane({ pendingApproval: { data: payload } });
@@ -2937,20 +2563,4 @@ export class KimiTUI {
   // Slash Command Handlers — delegated to controllers/slash-commands.ts
   // =========================================================================
 
-  private async applyPlanMode(session: Session, enabled: boolean): Promise<void> {
-    await slashCommands.handlePlanCommand(this, enabled ? 'on' : 'off');
-  }
-  private async handleEditorCommand(args: string): Promise<void> { await slashCommands.handleEditorCommand(this, args); }
-  private async handleThemeCommand(args: string): Promise<void> { await slashCommands.handleThemeCommand(this, args); }
-  private handleModelCommand(args: string): void { slashCommands.handleModelCommand(this, args); }
-  private async handleTitleCommand(args: string): Promise<void> { await slashCommands.handleTitleCommand(this, args); }
-  private async handleForkCommand(args: string): Promise<void> { await slashCommands.handleForkCommand(this, args); }
-  private async handleYoloCommand(args: string): Promise<void> { await slashCommands.handleYoloCommand(this, args); }
-  private async handlePlanCommand(args: string): Promise<void> { await slashCommands.handlePlanCommand(this, args); }
-  private async handleCompactCommand(args: string): Promise<void> { await slashCommands.handleCompactCommand(this, args); }
-  private async handleInitCommand(): Promise<void> { await slashCommands.handleInitCommand(this); }
-  private async handleLoginCommand(): Promise<void> { await slashCommands.handleLoginCommand(this); }
-  private async handleConnectCommand(args: string): Promise<void> { await slashCommands.handleConnectCommand(this, args); }
-  private async handleLogoutCommand(): Promise<void> { await slashCommands.handleLogoutCommand(this); }
-  private async handleFeedbackCommand(): Promise<void> { await slashCommands.handleFeedbackCommand(this); }
 }

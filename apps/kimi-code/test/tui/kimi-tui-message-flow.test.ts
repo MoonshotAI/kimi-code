@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
+import { handleFeedbackCommand } from '#/tui/controllers/slash-commands';
 import {
   promptFeedbackInput,
   runModelSelector,
@@ -298,7 +299,7 @@ describe('KimiTUI message flow', () => {
     harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok' });
     harness.track.mockClear();
 
-    await feedbackDriver.handleFeedbackCommand();
+    await handleFeedbackCommand(feedbackDriver as any);
 
     expect(harness.auth.submitFeedback).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -334,7 +335,7 @@ describe('KimiTUI message flow', () => {
       message: 'backend says no',
     });
 
-    await feedbackDriver.handleFeedbackCommand();
+    await handleFeedbackCommand(feedbackDriver as any);
 
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('backend says no');
@@ -361,7 +362,7 @@ describe('KimiTUI message flow', () => {
     vi.mocked(promptFeedbackInput).mockImplementation(async () => undefined);
     harness.track.mockClear();
 
-    await feedbackDriver.handleFeedbackCommand();
+    await handleFeedbackCommand(feedbackDriver as any);
 
     expect(harness.auth.submitFeedback).not.toHaveBeenCalled();
     expect(harness.track).not.toHaveBeenCalledWith('feedback_submitted', undefined);

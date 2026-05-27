@@ -22,14 +22,28 @@ import {
   log,
   type Catalog,
   type KimiHarness,
+  type McpServerInfo,
+  type PermissionMode,
   type Session,
+  type SessionStatus,
+  type SessionUsage,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import type { Component, Focusable } from '@earendil-works/pi-tui';
 
 import { BUILT_IN_CATALOG_JSON } from '../../built-in-catalog';
 import type { ChoiceOption } from '../components/dialogs/choice-picker';
+import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
+import { ModelSelectorComponent } from '../components/dialogs/model-selector';
+import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
+import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
+import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
+import { buildMcpStatusReportLines } from '../components/messages/mcp-status-panel';
+import { buildStatusReportLines } from '../components/messages/status-panel';
+import { buildUsageReportLines, UsagePanelComponent, type ManagedUsageReport } from '../components/messages/usage-panel';
+import { saveTuiConfig } from '../config';
 import type { Theme } from '../theme';
+import type { ResolvedTheme } from '../theme/colors';
 import {
   promptApiKey,
   promptCatalogProviderSelection,
@@ -90,18 +104,13 @@ export interface SlashCommandHost {
   finalizeTurn(sendQueued: (item: QueuedMessage) => void): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
 
-  // Pickers (remain on KimiTUI)
-  showEditorPicker(): void;
-  showModelPicker(selectedValue?: string): void;
-  showThemePicker(): void;
-  showPermissionPicker(): void;
-  showSettingsSelector(): void;
+  // UI
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle;
   showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle;
 
-  // Config (remain on KimiTUI)
-  applyEditorChoice(value: string): Promise<void>;
-  applyThemeChoice(theme: Theme): Promise<void>;
+  // Theme
+  applyTheme(theme: Theme, resolved?: ResolvedTheme): void;
+  refreshTerminalThemeTracking(): void;
 
   // Controller refs
   readonly authFlow: AuthFlowController;
@@ -194,36 +203,36 @@ export async function handleCompactCommand(host: SlashCommandHost, args: string)
 export async function handleEditorCommand(host: SlashCommandHost, args: string): Promise<void> {
   const command = args.trim();
   if (command.length === 0) {
-    host.showEditorPicker();
+    showEditorPicker(host);
     return;
   }
-  await host.applyEditorChoice(command);
+  await applyEditorChoice(host, command);
 }
 
 export async function handleThemeCommand(host: SlashCommandHost, args: string): Promise<void> {
   const theme = args.trim();
   if (theme.length === 0) {
-    host.showThemePicker();
+    showThemePicker(host);
     return;
   }
   if (!isTheme(theme)) {
     host.showError(`Unknown theme: ${theme}`);
     return;
   }
-  await host.applyThemeChoice(theme);
+  await applyThemeChoice(host, theme);
 }
 
 export function handleModelCommand(host: SlashCommandHost, args: string): void {
   const alias = args.trim();
   if (alias.length === 0) {
-    host.showModelPicker();
+    showModelPicker(host);
     return;
   }
   if (host.state.appState.availableModels[alias] === undefined) {
     host.showError(`Unknown model alias: ${alias}`);
     return;
   }
-  host.showModelPicker(alias);
+  showModelPicker(host, alias);
 }
 
 // ---------------------------------------------------------------------------
@@ -679,5 +688,375 @@ export async function handleLogoutCommand(host: SlashCommandHost): Promise<void>
   host.track('logout', { provider: target });
   const label = target === DEFAULT_OAUTH_PROVIDER_NAME ? PRODUCT_NAME : target;
   host.showStatus(`Logged out from ${label}.`);
+}
+
+// ---------------------------------------------------------------------------
+// Pickers & config apply
+// ---------------------------------------------------------------------------
+
+function showEditorPicker(host: SlashCommandHost): void {
+  const currentValue = host.state.appState.editorCommand ?? '';
+  host.mountEditorReplacement(
+    new EditorSelectorComponent({
+      currentValue,
+      colors: host.state.theme.colors,
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyEditorChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+async function applyEditorChoice(host: SlashCommandHost, value: string): Promise<void> {
+  const previous = host.state.appState.editorCommand ?? '';
+  if (value === previous && value.length > 0) {
+    host.showStatus(`Editor unchanged: ${value.length > 0 ? value : 'auto-detect'}`);
+    return;
+  }
+
+  const editorCommand = value.length > 0 ? value : null;
+  try {
+    await saveTuiConfig({
+      theme: host.state.appState.theme,
+      editorCommand,
+      notifications: host.state.appState.notifications,
+    });
+  } catch (error) {
+    host.showStatus(
+      `Failed to save editor: ${formatErrorMessage(error)}`,
+      host.state.theme.colors.error,
+    );
+    return;
+  }
+
+  host.setAppState({ editorCommand });
+  host.showStatus(
+    value.length > 0
+      ? `Editor set to "${value}".`
+      : 'Editor set to auto-detect ($VISUAL / $EDITOR).',
+  );
+}
+
+export function showModelPicker(host: SlashCommandHost, selectedValue: string = host.state.appState.model): void {
+  const entries = Object.entries(host.state.appState.availableModels);
+  if (entries.length === 0) {
+    host.showNotice(
+      'No models configured',
+      'Run /login to sign in to Kimi, or /connect to add another provider from a model catalog.',
+    );
+    return;
+  }
+  host.mountEditorReplacement(
+    new ModelSelectorComponent({
+      models: host.state.appState.availableModels,
+      currentValue: host.state.appState.model,
+      selectedValue,
+      currentThinking: host.state.appState.thinking,
+      colors: host.state.theme.colors,
+      searchable: true,
+      onSelect: ({ alias, thinking }) => {
+        host.restoreEditor();
+        void performModelSwitch(host, alias, thinking);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+async function performModelSwitch(host: SlashCommandHost, alias: string, thinking: boolean): Promise<void> {
+  if (host.state.appState.isStreaming) {
+    host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
+    return;
+  }
+
+  const level = thinking ? 'on' : 'off';
+  const prevModel = host.state.appState.model;
+  const prevThinking = host.state.appState.thinking;
+  const runtimeChanged = alias !== prevModel || thinking !== prevThinking;
+
+  const session = host.session;
+  try {
+    if (session === undefined && runtimeChanged) {
+      await host.authFlow.activateModelAfterLogin(alias, thinking);
+    } else if (session !== undefined) {
+      if (alias !== prevModel) {
+        await session.setModel(alias);
+      }
+      if (thinking !== prevThinking) {
+        await session.setThinking(level);
+      }
+    }
+  } catch (error) {
+    const msg = formatErrorMessage(error);
+    host.showError(`Failed to switch model: ${msg}`);
+    return;
+  }
+
+  host.setAppState({ model: alias, thinking });
+  if (session === undefined && runtimeChanged) {
+    if (alias !== prevModel) {
+      host.track('model_switch', { model: alias });
+    }
+    if (thinking !== prevThinking) {
+      host.track('thinking_toggle', { enabled: thinking });
+    }
+  }
+
+  let persisted = false;
+  try {
+    persisted = await persistModelSelection(host, alias, thinking);
+  } catch (error) {
+    const msg = formatErrorMessage(error);
+    host.showError(`Switched to ${alias}, but failed to save default: ${msg}`);
+    return;
+  }
+
+  const status = runtimeChanged
+    ? `Switched to ${alias} with thinking ${level}.`
+    : persisted
+      ? `Saved ${alias} with thinking ${level} as default.`
+      : `Already using ${alias} with thinking ${level}.`;
+  host.showStatus(status, host.state.theme.colors.success);
+}
+
+async function persistModelSelection(host: SlashCommandHost, alias: string, thinking: boolean): Promise<boolean> {
+  const config = await host.harness.getConfig({ reload: true });
+  if (config.defaultModel === alias && config.defaultThinking === thinking) {
+    return false;
+  }
+  await host.harness.setConfig({
+    defaultModel: alias,
+    defaultThinking: thinking,
+  });
+  return true;
+}
+
+function showThemePicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new ThemeSelectorComponent({
+      currentValue: host.state.appState.theme,
+      colors: host.state.theme.colors,
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyThemeChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+async function applyThemeChoice(host: SlashCommandHost, theme: Theme): Promise<void> {
+  if (theme === host.state.appState.theme) {
+    if (theme === 'auto') host.refreshTerminalThemeTracking();
+    host.showStatus(`Theme unchanged: "${theme}".`);
+    return;
+  }
+
+  try {
+    await saveTuiConfig({
+      theme,
+      editorCommand: host.state.appState.editorCommand,
+      notifications: host.state.appState.notifications,
+    });
+  } catch (error) {
+    host.showStatus(
+      `Failed to save theme: ${formatErrorMessage(error)}`,
+      host.state.theme.colors.error,
+    );
+    return;
+  }
+
+  const resolved = theme === 'auto' ? host.state.theme.resolvedTheme : theme;
+  host.applyTheme(theme, resolved);
+  host.refreshTerminalThemeTracking();
+  host.track('theme_switch', { theme });
+  const detail = theme === 'auto' ? ` (tracking terminal; current: ${resolved})` : '';
+  host.showStatus(`Theme set to "${theme}"${detail}.`);
+}
+
+export function showPermissionPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new PermissionSelectorComponent({
+      currentValue: host.state.appState.permissionMode,
+      colors: host.state.theme.colors,
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyPermissionChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMode): Promise<void> {
+  if (mode === host.state.appState.permissionMode) {
+    host.showStatus(`Permission mode unchanged: ${mode}.`);
+    return;
+  }
+
+  try {
+    await host.requireSession().setPermission(mode);
+  } catch (error) {
+    const msg = formatErrorMessage(error);
+    host.showError(`Failed to set permission mode: ${msg}`);
+    return;
+  }
+
+  host.setAppState({ permissionMode: mode, yolo: mode === 'yolo' });
+  host.showNotice(`Permission mode: ${mode}`);
+}
+
+export function showSettingsSelector(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new SettingsSelectorComponent({
+      colors: host.state.theme.colors,
+      onSelect: (value) => {
+        handleSettingsSelection(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelection): void {
+  host.restoreEditor();
+  switch (value) {
+    case 'model': showModelPicker(host); return;
+    case 'permission': showPermissionPicker(host); return;
+    case 'theme': showThemePicker(host); return;
+    case 'editor': showEditorPicker(host); return;
+    case 'usage': void showUsage(host); return;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Info commands
+// ---------------------------------------------------------------------------
+
+interface SessionUsageResult {
+  readonly usage?: SessionUsage;
+  readonly error?: string;
+}
+
+interface RuntimeStatusResult {
+  readonly status?: SessionStatus;
+  readonly error?: string;
+}
+
+interface ManagedUsageResult {
+  readonly usage?: ManagedUsageReport;
+  readonly error?: string;
+}
+
+export async function showUsage(host: SlashCommandHost): Promise<void> {
+  const sessionUsage = await loadSessionUsageReport(host);
+  const managedUsage = await loadManagedUsageReport(host);
+  const lines = buildUsageReportLines({
+    colors: host.state.theme.colors,
+    sessionUsage: sessionUsage.usage,
+    sessionUsageError: sessionUsage.error,
+    contextUsage: host.state.appState.contextUsage,
+    contextTokens: host.state.appState.contextTokens,
+    maxContextTokens: host.state.appState.maxContextTokens,
+    managedUsage: managedUsage?.usage,
+    managedUsageError: managedUsage?.error,
+  });
+  const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary);
+  host.state.transcriptContainer.addChild(panel);
+  host.state.ui.requestRender();
+}
+
+export async function showStatusReport(host: SlashCommandHost): Promise<void> {
+  const [runtimeStatus, managedUsage] = await Promise.all([
+    loadRuntimeStatusReport(host),
+    loadManagedUsageReport(host),
+  ]);
+  const appState = host.state.appState;
+  const lines = buildStatusReportLines({
+    colors: host.state.theme.colors,
+    version: appState.version,
+    model: appState.model,
+    workDir: appState.workDir,
+    sessionId: appState.sessionId,
+    sessionTitle: appState.sessionTitle,
+    thinking: appState.thinking,
+    permissionMode: appState.permissionMode,
+    planMode: appState.planMode,
+    contextUsage: appState.contextUsage,
+    contextTokens: appState.contextTokens,
+    maxContextTokens: appState.maxContextTokens,
+    availableModels: appState.availableModels,
+    status: runtimeStatus.status,
+    statusError: runtimeStatus.error,
+    managedUsage: managedUsage?.usage,
+    managedUsageError: managedUsage?.error,
+  });
+  const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary, ' Status ');
+  host.state.transcriptContainer.addChild(panel);
+  host.state.ui.requestRender();
+}
+
+export async function showMcpServers(host: SlashCommandHost): Promise<void> {
+  let servers: readonly McpServerInfo[];
+  try {
+    servers = await host.requireSession().listMcpServers();
+  } catch (error) {
+    host.showError(`Failed to load MCP servers: ${formatErrorMessage(error)}`);
+    return;
+  }
+
+  const lines = buildMcpStatusReportLines({
+    colors: host.state.theme.colors,
+    servers,
+  });
+  const title = servers.length > 0 ? ` MCP (${servers.length}) ` : ' MCP ';
+  const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary, title);
+  host.state.transcriptContainer.addChild(panel);
+  host.state.ui.requestRender();
+}
+
+async function loadSessionUsageReport(host: SlashCommandHost): Promise<SessionUsageResult> {
+  try {
+    return { usage: await host.requireSession().getUsage() };
+  } catch (error) {
+    return { error: formatErrorMessage(error) };
+  }
+}
+
+async function loadRuntimeStatusReport(host: SlashCommandHost): Promise<RuntimeStatusResult> {
+  try {
+    return { status: await host.requireSession().getStatus() };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function loadManagedUsageReport(host: SlashCommandHost): Promise<ManagedUsageResult | undefined> {
+  const alias = host.state.appState.model;
+  const providerKey = host.state.appState.availableModels[alias]?.provider;
+  if (!isManagedUsageProvider(providerKey)) return undefined;
+
+  let res;
+  try {
+    res = await host.harness.auth.getManagedUsage(providerKey);
+  } catch (error) {
+    return { error: formatErrorMessage(error) };
+  }
+  if (res.kind === 'error') {
+    return { error: res.message };
+  }
+  return { usage: { summary: res.summary, limits: res.limits } };
 }
 

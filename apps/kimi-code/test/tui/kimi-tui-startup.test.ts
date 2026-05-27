@@ -5,6 +5,10 @@ import { log } from "@moonshot-ai/kimi-code-sdk";
 
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from "#/tui/kimi-tui";
 import {
+  handleLoginCommand,
+  handleLogoutCommand,
+} from "#/tui/controllers/slash-commands";
+import {
   promptPlatformSelection,
   promptLogoutProviderSelection,
 } from "#/tui/controllers/slash-command-prompts";
@@ -396,7 +400,7 @@ describe("KimiTUI startup", () => {
     });
 
     vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
-    await driver.handleLoginCommand();
+    await handleLoginCommand(driver as any);
 
     expect(createSession).toHaveBeenNthCalledWith(1, {
       workDir: "/tmp/proj-a",
@@ -449,7 +453,7 @@ describe("KimiTUI startup", () => {
 
     await expect(driver.init()).resolves.toBe(false);
     vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
-    await driver.handleLoginCommand();
+    await handleLoginCommand(driver as any);
 
     expect(createSession).toHaveBeenNthCalledWith(2, {
       workDir: "/tmp/proj-a",
@@ -481,7 +485,7 @@ describe("KimiTUI startup", () => {
     expect(driver.state.appState.thinking).toBe(false);
 
     vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
-    await driver.handleLoginCommand();
+    await handleLoginCommand(driver as any);
 
     expect(session.setModel).toHaveBeenCalledWith("k2");
     expect(session.setThinking).toHaveBeenCalledWith("on");
@@ -514,7 +518,7 @@ describe("KimiTUI startup", () => {
     harness.track.mockClear();
 
     vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
-    await driver.handleLoginCommand();
+    await handleLoginCommand(driver as any);
 
     expect(harness.auth.login).toHaveBeenCalledWith(
       "managed:kimi-code",
@@ -549,7 +553,7 @@ describe("KimiTUI startup", () => {
       await expect(driver.init()).resolves.toBe(false);
 
       vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
-      await driver.handleLoginCommand();
+      await handleLoginCommand(driver as any);
 
       expect(harness.auth.login).toHaveBeenCalledWith(
         "managed:kimi-code",
@@ -600,7 +604,7 @@ describe("KimiTUI startup", () => {
     vi.mocked(promptLogoutProviderSelection).mockResolvedValue(
       "managed:kimi-code",
     );
-    await driver.handleLogoutCommand();
+    await handleLogoutCommand(driver as any);
 
     expect(harness.auth.logout).toHaveBeenCalledWith("managed:kimi-code");
     expect(session.close).toHaveBeenCalledOnce();
@@ -641,7 +645,7 @@ describe("KimiTUI startup", () => {
     harness.track.mockClear();
 
     vi.mocked(promptLogoutProviderSelection).mockResolvedValue("openai");
-    await driver.handleLogoutCommand();
+    await handleLogoutCommand(driver as any);
 
     expect(removeProvider).toHaveBeenCalledWith("openai");
     expect(harness.auth.logout).not.toHaveBeenCalled();
@@ -680,7 +684,7 @@ describe("KimiTUI startup", () => {
     vi.mocked(promptLogoutProviderSelection).mockResolvedValue(
       "managed:kimi-code",
     );
-    await driver.handleLogoutCommand();
+    await handleLogoutCommand(driver as any);
 
     expect(harness.auth.logout).toHaveBeenCalledWith("managed:kimi-code");
   });
