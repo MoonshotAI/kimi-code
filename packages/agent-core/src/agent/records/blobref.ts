@@ -5,7 +5,7 @@ import type { ContentPart, Message } from '@moonshot-ai/kosong';
 import type { AgentRecord } from './types';
 
 const DEFAULT_THRESHOLD = 4096;
-const DEFAULT_MAX_CACHE_SIZE = 500 * 1024 * 1024;
+const DEFAULT_MAX_CACHE_SIZE = 50 * 1024 * 1024;
 const BLOBREF_PROTOCOL = 'blobref:';
 const DATA_URI_HEADER_RE = /^data:([^;]+);base64,/;
 const MISSING_MEDIA_PLACEHOLDER = '[media missing]';
