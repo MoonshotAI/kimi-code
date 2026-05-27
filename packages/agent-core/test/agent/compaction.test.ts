@@ -73,6 +73,48 @@ describe('Agent compaction', () => {
     expect(strategy.computeCompactCount(messages)).toBe(2);
   });
 
+  it('returns 0 when there is nothing to compact', () => {
+    const strategy = testCompactionStrategy();
+    expect(strategy.computeCompactCount([])).toBe(0);
+    expect(strategy.computeCompactCount([textMessage('user', 'only pending')])).toBe(0);
+    expect(
+      strategy.computeCompactCount([
+        textMessage('user', 'a'),
+        textMessage('user', 'b'),
+        textMessage('user', 'c'),
+      ]),
+    ).toBe(0);
+  });
+
+  it('falls back to compacting everything when no intermediate split exists but the last message is splittable', () => {
+    const strategy = testCompactionStrategy();
+    const messages: Message[] = [
+      textMessage('user', 'inspect'),
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [{ type: 'function', id: 'call_a', name: 'Lookup', arguments: '{}' }],
+      },
+      { role: 'tool', content: [{ type: 'text', text: 'result' }], toolCalls: [], toolCallId: 'call_a' },
+    ];
+
+    expect(strategy.computeCompactCount(messages)).toBe(messages.length);
+  });
+
+  it('returns 0 when no intermediate split exists and the last message is also unsplittable', () => {
+    const strategy = testCompactionStrategy();
+    const messages: Message[] = [
+      textMessage('user', 'inspect'),
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [{ type: 'function', id: 'call_a', name: 'Lookup', arguments: '{}' }],
+      },
+    ];
+
+    expect(strategy.computeCompactCount(messages)).toBe(0);
+  });
+
   it('reserves response context by default before the ratio threshold is reached', () => {
     const strategy = new DefaultCompactionStrategy(() => 256_000);
 
@@ -125,9 +167,9 @@ describe('Agent compaction', () => {
       [emit] compaction.started         { "trigger": "manual", "instruction": "Keep the important test facts." }
       [wire] usage.record               { "model": "kimi-code", "usage": { "inputOther": 468, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
       [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 120, "maxContextTokens": 256000, "contextUsage": 0.00046875, "planMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 468, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 468, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] full_compaction.complete   { "summary": "Compacted summary.", "compactedCount": 2, "tokensBefore": 120, "tokensAfter": 32, "time": "<time>" }
-      [emit] compaction.completed       { "result": { "summary": "Compacted summary.", "compactedCount": 2, "tokensBefore": 120, "tokensAfter": 32 } }
-      [wire] context.apply_compaction   { "summary": "Compacted summary.", "compactedCount": 2, "tokensBefore": 120, "tokensAfter": 32, "time": "<time>" }
+      [wire] full_compaction.complete   { "summary": "Compacted summary.", "compactedCount": 2, "tokensBefore": 39, "tokensAfter": 32, "time": "<time>" }
+      [emit] compaction.completed       { "result": { "summary": "Compacted summary.", "compactedCount": 2, "tokensBefore": 39, "tokensAfter": 32 } }
+      [wire] context.apply_compaction   { "summary": "Compacted summary.", "compactedCount": 2, "tokensBefore": 39, "tokensAfter": 32, "time": "<time>" }
       [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 32, "maxContextTokens": 256000, "contextUsage": 0.000125, "planMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 468, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 468, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -195,7 +237,7 @@ describe('Agent compaction', () => {
       event: 'compaction_finished',
       properties: {
         trigger_type: 'manual-with-prompt',
-        before_tokens: 120,
+        before_tokens: 39,
         after_tokens: 32,
         duration_ms: expect.any(Number),
         compacted_count: 2,
@@ -353,7 +395,7 @@ describe('Agent compaction', () => {
       session_id: 'session-hooks',
       cwd: dir,
       trigger: 'auto',
-      token_count: 120,
+      token_count: 39,
     });
     expect(post).toMatchObject({
       hook_event_name: 'PostCompact',
@@ -434,7 +476,7 @@ describe('Agent compaction', () => {
       event: 'compaction_finished',
       properties: expect.objectContaining({
         trigger_type: 'manual',
-        before_tokens: 80,
+        before_tokens: 25,
         retry_count: 1,
       }),
     });
@@ -584,7 +626,7 @@ describe('Agent compaction', () => {
       event: 'compaction_failed',
       properties: {
         trigger_type: 'manual',
-        before_tokens: 80,
+        before_tokens: 25,
         duration_ms: expect.any(Number),
         retry_count: 0,
         error_type: 'Error',
@@ -622,7 +664,7 @@ describe('Agent compaction', () => {
       event: 'compaction_failed',
       properties: {
         trigger_type: 'manual',
-        before_tokens: 80,
+        before_tokens: 25,
         duration_ms: expect.any(Number),
         retry_count: 4,
         error_type: 'APIConnectionError',
@@ -733,9 +775,9 @@ describe('Agent compaction', () => {
       [wire] context.append_message     { "message": { "role": "user", "content": [ { "type": "text", "text": "new user while compacting" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] usage.record               { "model": "kimi-code", "usage": { "inputOther": 460, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
       [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 80, "maxContextTokens": 256000, "contextUsage": 0.0003125, "planMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 460, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 460, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] full_compaction.complete   { "summary": "Compacted prefix.", "compactedCount": 2, "tokensBefore": 80, "tokensAfter": 18, "time": "<time>" }
-      [emit] compaction.completed       { "result": { "summary": "Compacted prefix.", "compactedCount": 2, "tokensBefore": 80, "tokensAfter": 18 } }
-      [wire] context.apply_compaction   { "summary": "Compacted prefix.", "compactedCount": 2, "tokensBefore": 80, "tokensAfter": 18, "time": "<time>" }
+      [wire] full_compaction.complete   { "summary": "Compacted prefix.", "compactedCount": 2, "tokensBefore": 25, "tokensAfter": 18, "time": "<time>" }
+      [emit] compaction.completed       { "result": { "summary": "Compacted prefix.", "compactedCount": 2, "tokensBefore": 25, "tokensAfter": 18 } }
+      [wire] context.apply_compaction   { "summary": "Compacted prefix.", "compactedCount": 2, "tokensBefore": 25, "tokensAfter": 18, "time": "<time>" }
       [emit] agent.status.updated       { "model": "kimi-code", "contextTokens": 18, "maxContextTokens": 256000, "contextUsage": 0.0000703125, "planMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 460, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 460, "output": 8, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -835,9 +877,9 @@ describe('Agent compaction', () => {
       [emit] compaction.blocked          { "turnId": 0 }
       [wire] usage.record                { "model": "kimi-code", "usage": { "inputOther": 472, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
       [emit] agent.status.updated        { "model": "kimi-code", "contextTokens": 950000, "maxContextTokens": 256000, "contextUsage": 3.7109375, "planMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 472, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 472, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] full_compaction.complete    { "summary": "Auto compacted summary.", "compactedCount": 4, "tokensBefore": 950000, "tokensAfter": 28, "time": "<time>" }
-      [emit] compaction.completed        { "result": { "summary": "Auto compacted summary.", "compactedCount": 4, "tokensBefore": 950000, "tokensAfter": 28 } }
-      [wire] context.apply_compaction    { "summary": "Auto compacted summary.", "compactedCount": 4, "tokensBefore": 950000, "tokensAfter": 28, "time": "<time>" }
+      [wire] full_compaction.complete    { "summary": "Auto compacted summary.", "compactedCount": 4, "tokensBefore": 46, "tokensAfter": 28, "time": "<time>" }
+      [emit] compaction.completed        { "result": { "summary": "Auto compacted summary.", "compactedCount": 4, "tokensBefore": 46, "tokensAfter": 28 } }
+      [wire] context.apply_compaction    { "summary": "Auto compacted summary.", "compactedCount": 4, "tokensBefore": 46, "tokensAfter": 28, "time": "<time>" }
       [emit] agent.status.updated        { "model": "kimi-code", "contextTokens": 28, "maxContextTokens": 256000, "contextUsage": 0.000109375, "planMode": false, "permission": "manual", "usage": { "byModel": { "kimi-code": { "inputOther": 472, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 472, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }
@@ -871,7 +913,7 @@ describe('Agent compaction', () => {
       event: 'compaction_finished',
       properties: expect.objectContaining({
         trigger_type: 'auto',
-        before_tokens: 950000,
+        before_tokens: 46,
         after_tokens: 28,
         compacted_count: 4,
         retry_count: 0,
@@ -1276,9 +1318,9 @@ describe('Agent compaction', () => {
       [emit] compaction.blocked          { "turnId": 0 }
       [wire] usage.record                { "model": "mock-model", "usage": { "inputOther": 456, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "session", "time": "<time>" }
       [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 456, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 456, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
-      [wire] full_compaction.complete    { "summary": "First compacted summary.", "compactedCount": 1, "tokensBefore": 0, "tokensAfter": 6, "time": "<time>" }
-      [emit] compaction.completed        { "result": { "summary": "First compacted summary.", "compactedCount": 1, "tokensBefore": 0, "tokensAfter": 6 } }
-      [wire] context.apply_compaction    { "summary": "First compacted summary.", "compactedCount": 1, "tokensBefore": 0, "tokensAfter": 6, "time": "<time>" }
+      [wire] full_compaction.complete    { "summary": "First compacted summary.", "compactedCount": 1, "tokensBefore": 8, "tokensAfter": 6, "time": "<time>" }
+      [emit] compaction.completed        { "result": { "summary": "First compacted summary.", "compactedCount": 1, "tokensBefore": 8, "tokensAfter": 6 } }
+      [wire] context.apply_compaction    { "summary": "First compacted summary.", "compactedCount": 1, "tokensBefore": 8, "tokensAfter": 6, "time": "<time>" }
       [emit] agent.status.updated        { "model": "mock-model", "contextTokens": 6, "maxContextTokens": 1000000, "contextUsage": 0.000006, "planMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 456, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 456, "output": 9, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] context.append_loop_event   { "event": { "type": "step.begin", "uuid": "<uuid-1>", "turnId": "0", "step": 1 }, "time": "<time>" }
       [emit] turn.step.started           { "turnId": 0, "step": 1, "stepId": "<uuid-1>" }

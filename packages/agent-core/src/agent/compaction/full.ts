@@ -87,7 +87,7 @@ export class FullCompaction {
     if (this.compactionCountInTurn > this.strategy.maxCompactionPerTurn) return;
     const compactedCount = this.strategy.computeCompactCount(this.agent.context.history);
     if (compactedCount === 0) {
-      throw new KimiError(ErrorCodes.COMPACTION_UNABLE, 'No compactable prefix in current history.');
+      throw new KimiError(ErrorCodes.COMPACTION_UNABLE, 'No prefix that can be compacted in current history.');
     }
     this.agent.records.logRecord({
       type: 'full_compaction.begin',
@@ -239,7 +239,7 @@ export class FullCompaction {
   ): Promise<void> {
     const startedAt = Date.now();
     const originalHistory = [...this.agent.context.history];
-    const tokensBefore = this.agent.context.tokenCount;
+    const tokensBefore = estimateTokensForMessages(originalHistory);
     let retryCount = 0;
     try {
       let compactedCount = initialCompactedCount;
@@ -306,7 +306,7 @@ export class FullCompaction {
       }
 
       const recent = originalHistory.slice(compactedCount);
-      const tokensAfter = estimateTokens(summary) + estimateTokensForMessages(project(recent));
+      const tokensAfter = estimateTokens(summary) + estimateTokensForMessages(recent);
 
       const result: CompactionResult = {
         summary,

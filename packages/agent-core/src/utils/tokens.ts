@@ -21,7 +21,7 @@ export function estimateTokens(text: string): number {
   return Math.ceil(asciiCount / 4) + nonAsciiCount;
 }
 
-export function estimateTokensForMessages(messages: Message[]): number {
+export function estimateTokensForMessages(messages: readonly Message[]): number {
   let total = 0;
   for (const message of messages) {
     total += estimateTokensForMessage(message);

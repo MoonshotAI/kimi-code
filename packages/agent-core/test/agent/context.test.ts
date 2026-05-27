@@ -408,7 +408,7 @@ describe('Agent context', () => {
 
     const pendingMessages = ctx.agent.context.history.slice(-1);
     expect(ctx.agent.context.tokenCountWithPending).toBe(
-      ctx.agent.context.tokenCount + estimateTokensForMessages([...pendingMessages]),
+      ctx.agent.context.tokenCount + estimateTokensForMessages(pendingMessages),
     );
   });
 
@@ -463,7 +463,7 @@ describe('Agent context', () => {
     const pendingMessages = ctx.agent.context.history.slice(-1);
     expect(ctx.agent.context.tokenCount).toBe(1_280);
     expect(ctx.agent.context.tokenCountWithPending).toBe(
-      1_280 + estimateTokensForMessages([...pendingMessages]),
+      1_280 + estimateTokensForMessages(pendingMessages),
     );
   });
 
