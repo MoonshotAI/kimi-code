@@ -60,6 +60,7 @@ If you believe a change qualifies as major, stop first, explain why, and ask the
 ## Wording Rules
 
 - Changelog entries **must be written in English**.
+- **Keep it short — ideally a single sentence that states what was done.** Do not write a paragraph, do not pile on technical detail, and do not enumerate every sub-change.
 - User-facing CLI wording should only be used when CLI users can perceive the change.
 - Internal changes that do not affect CLI users can still share a changeset with the CLI, but the wording must describe the real change honestly and must not present it as a user-facing feature.
 - Do not mention file names, class names, function names, PR numbers, or commit hashes.
