@@ -34,13 +34,10 @@ import chalk from 'chalk';
 
 import type { CLIOptions } from '#/cli/options';
 import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/index';
-import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
 import type { GitLsFilesCache } from '#/utils/git/git-ls-files';
 import { createGitLsFilesCache } from '#/utils/git/git-ls-files';
 import { appendInputHistory, loadInputHistory } from '#/utils/history/input-history';
-import { parseImageMeta } from '#/utils/image/image-mime';
 import { getInputHistoryFile } from '#/utils/paths';
-import { editInExternalEditor, resolveEditorCommand } from '#/utils/process/external-editor';
 import { detectFdPath } from '#/utils/process/fd-detect';
 
 import {
@@ -64,6 +61,7 @@ import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent } from './components/dialogs/session-picker';
 import { AuthFlowController } from './controllers/auth-flow';
+import { EditorKeyboardController } from './controllers/editor-keyboard';
 import { SessionEventHandler } from './controllers/session-event-handler';
 import * as slashCommands from './commands/dispatch';
 import { SessionReplayRenderer } from './controllers/session-replay';
@@ -84,9 +82,6 @@ import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes
 import { QueuePaneComponent } from './components/panes/queue-pane';
 import type { TuiConfig } from './config';
 import {
-  CTRL_C_HINT,
-  CTRL_D_HINT,
-  EXIT_CONFIRM_WINDOW_MS,
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
   NO_ACTIVE_SESSION_MESSAGE,
@@ -108,7 +103,6 @@ import {
   type KimiTUIOptions,
   type LivePaneState,
   type LoginProgressSpinnerHandle,
-  type PendingExit,
   type QueuedMessage,
   type TranscriptEntry,
   type TUIStartupOptions,
@@ -137,7 +131,6 @@ export { createTUIState } from './tui-state';
 export type {
   KimiTUIOptions,
   LoginProgressSpinnerHandle,
-  PendingExit,
   TUIStartupOptions,
   TUIStartupState,
 } from './types';
@@ -203,7 +196,6 @@ export class KimiTUI {
   private readonly fdPath: string | null = detectFdPath();
   private readonly gitLsFilesCache: GitLsFilesCache;
   sessionEventUnsubscribe: (() => void) | undefined;
-  private pendingExit: PendingExit | null = null;
   cancelInFlight: (() => void) | undefined;
   // Queues editor messages instead of sending or steering them. Used by /init.
   deferUserMessages = false;
@@ -229,6 +221,7 @@ export class KimiTUI {
   readonly sessionEventHandler: SessionEventHandler;
   readonly sessionReplay: SessionReplayRenderer;
   readonly tasksBrowserController: TasksBrowserController;
+  readonly editorKeyboard: EditorKeyboardController;
 
   public onExit?: (exitCode?: number) => Promise<void>;
 
@@ -283,7 +276,8 @@ export class KimiTUI {
     this.sessionEventHandler = new SessionEventHandler(this);
     this.sessionReplay = new SessionReplayRenderer(this);
     this.tasksBrowserController = new TasksBrowserController(this);
-    this.setupEditorHandlers();
+    this.editorKeyboard = new EditorKeyboardController(this, this.imageStore);
+    this.editorKeyboard.install();
     this.buildLayout();
   }
 
@@ -557,10 +551,7 @@ export class KimiTUI {
     this.unregisterSignalHandlers();
     this.aborted = true;
     this.streamingUI.discardPending();
-    if (this.pendingExit) {
-      clearTimeout(this.pendingExit.timer);
-      this.pendingExit = null;
-    }
+    this.editorKeyboard.clearPendingExit();
     for (const dispose of this.reverseRpcDisposers) {
       dispose();
     }
@@ -718,246 +709,15 @@ export class KimiTUI {
     ui.addChild(footerWrap);
   }
 
-  // Wires editor shortcuts, submission, paste, and navigation callbacks.
-  private setupEditorHandlers(): void {
-    const editor = this.state.editor;
-
-    editor.onSubmit = (text: string) => {
-      this.handleUserInput(text);
-    };
-
-    editor.onChange = (text: string) => {
-      if (this.pendingExit) this.clearPendingExit();
-      this.updateEditorBorderHighlight(text);
-    };
-
-    editor.onCtrlC = () => {
-      if (this.cancelInFlight !== undefined) {
-        const cancel = this.cancelInFlight;
-        this.cancelInFlight = undefined;
-        this.clearPendingExit();
-        cancel();
-        return;
-      }
-
-      if (this.state.appState.isCompacting) {
-        this.clearPendingExit();
-        this.cancelCurrentCompaction();
-        return;
-      }
-
-      if (this.state.appState.streamingPhase !== 'idle') {
-        this.clearPendingExit();
-        this.cancelCurrentStream();
-        return;
-      }
-
-      if (this.pendingExit?.kind === 'ctrl-c') {
-        this.clearPendingExit();
-        void this.stop();
-        return;
-      }
-
-      if (editor.getText().length > 0) {
-        editor.setText('');
-      }
-      this.armPendingExit('ctrl-c', CTRL_C_HINT);
-    };
-
-    editor.onCtrlD = () => {
-      if (this.pendingExit?.kind === 'ctrl-d') {
-        this.clearPendingExit();
-        void this.stop();
-        return;
-      }
-      this.armPendingExit('ctrl-d', CTRL_D_HINT);
-    };
-
-    editor.onEscape = () => {
-      if (this.pendingExit) this.clearPendingExit();
-      if (this.state.activeDialog === 'session-picker') {
-        this.hideSessionPicker();
-        return;
-      }
-      if (this.state.appState.isCompacting) {
-        this.cancelCurrentCompaction();
-        return;
-      }
-      if (this.state.appState.streamingPhase !== 'idle') {
-        this.cancelCurrentStream();
-      }
-    };
-
-    editor.onShiftTab = () => {
-      const session = this.session;
-      if (session === undefined) {
-        this.showError(NO_ACTIVE_SESSION_MESSAGE);
-        return;
-      }
-      const next = !this.state.appState.planMode;
-      this.track('shortcut_plan_toggle', { enabled: next });
-      this.track('shortcut_mode_switch', { to_mode: next ? 'plan' : 'agent' });
-      void slashCommands.handlePlanCommand(this, next ? 'on' : 'off');
-    };
-
-    editor.onOpenExternalEditor = () => {
-      this.track('shortcut_editor');
-      void this.openExternalEditor();
-    };
-
-    editor.onToggleToolExpand = () => {
-      this.track('shortcut_expand');
-      this.toggleToolOutputExpansion();
-    };
-
-    editor.onTogglePlanExpand = () => this.togglePlanExpansion();
-
-    editor.onCtrlS = () => {
-      if (this.state.appState.streamingPhase === 'idle' || this.state.appState.isCompacting) return;
-      const text = editor.getText().trim();
-      const queuedTexts = this.state.queuedMessages.map((m) => m.text);
-      this.state.queuedMessages = [];
-
-      const parts: string[] = [];
-      for (const q of queuedTexts) {
-        const trimmed = q.trim();
-        if (trimmed.length > 0) parts.push(trimmed);
-      }
-      if (text.length > 0) parts.push(text);
-
-      if (parts.length > 0) {
-        editor.setText('');
-        const session = this.session;
-        if (this.state.appState.model.trim().length === 0 || session === undefined) {
-          this.showError(LLM_NOT_SET_MESSAGE);
-        } else {
-          this.steerMessage(session, parts);
-        }
-      }
-      this.updateQueueDisplay();
-      this.state.ui.requestRender();
-    };
-
-    editor.onUndo = () => {
-      this.track('undo');
-    };
-
-    editor.onInsertNewline = () => {
-      this.track('shortcut_newline');
-    };
-
-    editor.onTextPaste = () => {
-      this.track('shortcut_paste', { kind: 'text' });
-    };
-
-    editor.onUpArrowEmpty = () => {
-      if (this.state.appState.streamingPhase === 'idle' && !this.state.appState.isCompacting) return false;
-      const recalled = this.recallLastQueued();
-      if (recalled !== undefined) {
-        editor.setText(recalled);
-        this.updateQueueDisplay();
-        this.state.ui.requestRender();
-        return true;
-      }
-      return false;
-    };
-
-    editor.onPasteImage = async () => this.handleClipboardImagePaste();
-  }
-
-  // Cancels the pending double-key exit prompt.
-  private clearPendingExit(): void {
-    if (!this.pendingExit) return;
-    clearTimeout(this.pendingExit.timer);
-    this.state.footer.setTransientHint(null);
-    this.pendingExit = null;
-  }
-
-  // Starts a timed confirmation window for Ctrl-C or Ctrl-D exit.
-  private armPendingExit(kind: 'ctrl-c' | 'ctrl-d', hint: string): void {
-    this.clearPendingExit();
-    this.state.footer.setTransientHint(hint);
-
-    const timer = setTimeout(() => {
-      if (this.pendingExit?.timer === timer) {
-        this.clearPendingExit();
-        this.state.ui.requestRender();
-      }
-    }, EXIT_CONFIRM_WINDOW_MS);
-
-    this.pendingExit = { kind, timer };
-    this.state.ui.requestRender();
-  }
-
-  // Reads image or video data from the clipboard and inserts an attachment placeholder.
-  private async handleClipboardImagePaste(): Promise<boolean> {
-    let media;
-    try {
-      media = await readClipboardMedia();
-    } catch (error) {
-      if (error instanceof ClipboardMediaError) {
-        this.showError(error.message);
-        return true;
-      }
-      return false;
-    }
-    if (media === null) return false;
-
-    if (media.kind === 'video') {
-      const attachment = this.imageStore.addVideo(media.mimeType, media.sourcePath, media.filename);
-      this.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
-      this.state.ui.requestRender();
-      this.track('shortcut_paste', { kind: 'video' });
-      return true;
-    }
-
-    const meta = parseImageMeta(media.bytes);
-    if (meta === null) return false;
-    const attachment = this.imageStore.addImage(media.bytes, meta.mime, meta.width, meta.height);
-    this.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
-    this.state.ui.requestRender();
-    this.track('shortcut_paste', { kind: 'image' });
-    return true;
-  }
-
-  // Opens the configured external editor and writes the edited text back.
-  private async openExternalEditor(): Promise<void> {
-    if (this.state.externalEditorRunning) return;
-    const cmd = resolveEditorCommand(this.state.appState.editorCommand);
-    if (cmd === undefined) {
-      this.showError('No editor configured. Set $VISUAL / $EDITOR, or run /editor <command>.');
-      return;
-    }
-    this.state.externalEditorRunning = true;
-    const seed = this.state.editor.getExpandedText?.() ?? this.state.editor.getText();
-    this.state.ui.stop();
-    await new Promise<void>((resolve) => {
-      setImmediate(resolve);
-    });
-    try {
-      const result = await editInExternalEditor(seed, cmd);
-      if (result !== undefined) {
-        this.state.editor.setText(result.replaceAll('\r\n', '\n').replace(/\n$/, ''));
-      }
-    } catch (error) {
-      const msg = formatErrorMessage(error);
-      this.showError(`External editor failed: ${msg}`);
-    } finally {
-      if (typeof process.stdin.pause === 'function') {
-        process.stdin.pause();
-      }
-      this.state.ui.start();
-      this.state.ui.setFocus(this.state.editor);
-      this.state.ui.requestRender(true);
-      this.state.externalEditorRunning = false;
-    }
-  }
-
   // =========================================================================
   // Input Dispatch
   // =========================================================================
 
-  private handleUserInput(text: string): void {
+  handlePlanToggle(next: boolean): void {
+    void slashCommands.handlePlanCommand(this, next ? 'on' : 'off');
+  }
+
+  handleUserInput(text: string): void {
     if (text.trim().length === 0) return;
     if (this.state.appState.isReplaying) {
       this.showError('Cannot send input while session history is replaying.');
@@ -1039,7 +799,7 @@ export class KimiTUI {
   }
 
   // Pops the most recent queued message back into the editor.
-  private recallLastQueued(): string | undefined {
+  recallLastQueued(): string | undefined {
     if (this.state.queuedMessages.length === 0) return undefined;
     const last = this.state.queuedMessages.at(-1)!;
     this.state.queuedMessages = this.state.queuedMessages.slice(0, -1);
@@ -1145,7 +905,7 @@ export class KimiTUI {
   }
 
   // Sends steering input into an active stream or falls back to normal prompts.
-  private steerMessage(session: Session, input: string[]): void {
+  steerMessage(session: Session, input: string[]): void {
     if (this.deferUserMessages || this.state.appState.isCompacting) {
       for (const part of input) {
         this.enqueueMessage(part);
@@ -1172,22 +932,6 @@ export class KimiTUI {
     void session.steer(input.join('\n\n')).catch((error: unknown) => {
       const message = formatErrorMessage(error);
       this.showError(`Failed to steer: ${message}`);
-    });
-  }
-
-  // Requests cancellation of the active session stream.
-  private cancelCurrentStream(): void {
-    const session = this.session;
-    if (session === undefined) return;
-    void session.cancel();
-  }
-
-  private cancelCurrentCompaction(): void {
-    const session = this.session;
-    if (session === undefined) return;
-    void session.cancelCompaction().catch((error: unknown) => {
-      const message = formatErrorMessage(error);
-      this.showError(`Failed to cancel compaction: ${message}`);
     });
   }
 
@@ -1759,7 +1503,7 @@ export class KimiTUI {
   }
 
   // Toggles expansion for all expandable tool-output components.
-  private toggleToolOutputExpansion(): void {
+  toggleToolOutputExpansion(): void {
     this.state.toolOutputExpanded = !this.state.toolOutputExpanded;
     for (const child of this.state.transcriptContainer.children) {
       if (isExpandable(child)) {
@@ -1772,7 +1516,7 @@ export class KimiTUI {
   // Toggles expansion for plan-preview cards (ExitPlanMode). Returns true
   // iff at least one plan card was actually toggled so the caller can decide
   // whether to consume the keystroke vs. let pi-tui's default end-of-line run.
-  private togglePlanExpansion(): boolean {
+  togglePlanExpansion(): boolean {
     const next = !this.state.planExpanded;
     let toggled = false;
     for (const child of this.state.transcriptContainer.children) {
@@ -1787,7 +1531,7 @@ export class KimiTUI {
   }
 
   // Updates the editor border color for slash command and plan-mode context.
-  private updateEditorBorderHighlight(text?: string): void {
+  updateEditorBorderHighlight(text?: string): void {
     const trimmed = (text ?? this.state.editor.getText()).trimStart();
     const colorToken =
       this.state.appState.planMode || trimmed.startsWith('/')
@@ -1978,7 +1722,7 @@ export class KimiTUI {
   }
 
   // Hides the session picker and restores the editor.
-  private hideSessionPicker(): void {
+  hideSessionPicker(): void {
     this.state.activeDialog = null;
     this.restoreEditor();
   }
