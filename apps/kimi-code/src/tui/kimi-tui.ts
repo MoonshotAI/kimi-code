@@ -147,6 +147,7 @@ import { PlatformSelectorComponent } from './components/dialogs/platform-selecto
 import { PermissionSelectorComponent } from './components/dialogs/permission-selector';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
+import { AuthFlowController } from './controllers/auth-flow';
 import { SessionEventHandler } from './controllers/session-event-handler';
 import * as slashCommands from './controllers/slash-commands';
 import { SessionReplayRenderer } from './controllers/session-replay';
@@ -552,7 +553,7 @@ export interface LoginProgressSpinnerHandle {
 
 export class KimiTUI {
   readonly harness: KimiHarness;
-  private readonly options: KimiTUIOptions;
+  readonly options: KimiTUIOptions;
   session: Session | undefined;
   state: TUIState;
   private readonly approvalController = new ApprovalController();
@@ -583,6 +584,7 @@ export class KimiTUI {
   // When true, the migration screen is the whole session: run it, then exit.
   private readonly migrateOnly: boolean;
   readonly streamingUI: StreamingUIController;
+  private readonly authFlow: AuthFlowController;
   private readonly sessionEventHandler: SessionEventHandler;
   private readonly sessionReplay: SessionReplayRenderer;
   private readonly tasksBrowserController: TasksBrowserController;
@@ -635,6 +637,7 @@ export class KimiTUI {
       }),
     );
     this.streamingUI = new StreamingUIController(this);
+    this.authFlow = new AuthFlowController(this);
     this.sessionEventHandler = new SessionEventHandler(this);
     this.sessionReplay = new SessionReplayRenderer(this);
     this.tasksBrowserController = new TasksBrowserController(this);
@@ -667,7 +670,7 @@ export class KimiTUI {
   }
 
   // Loads skill-backed slash commands from the active session.
-  private async refreshSkillCommands(session?: SkillListSession): Promise<void> {
+  async refreshSkillCommands(session?: SkillListSession): Promise<void> {
     if (session === undefined) {
       this.skillCommands = [];
       this.skillCommandMap.clear();
@@ -1045,120 +1048,17 @@ export class KimiTUI {
   }
 
   // =========================================================================
-  // Auth / Model Bootstrap
+  // Auth / Model Bootstrap — delegated to AuthFlowController
   // =========================================================================
 
-  // Refreshes model metadata from the harness config.
-  private async refreshAvailableModels(): Promise<void> {
-    const config = await this.harness.getConfig({ reload: true });
-    this.setAppState({
-      availableModels: config.models ?? {},
-      availableProviders: config.providers ?? {},
-    });
-  }
-
-  // Allows the shell to start even when the managed OAuth token needs login.
-  private enterLoginRequiredStartupState(): void {
-    this.resetSessionRuntime();
-    this.setAppState({
-      sessionId: '',
-      model: '',
-      thinking: false,
-      contextTokens: 0,
-      maxContextTokens: 0,
-      contextUsage: 0,
-      sessionTitle: null,
-    });
-    this.state.startupNotice = combineStartupNotice(
-      this.state.startupNotice,
-      OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
-    );
-    this.state.startupState = 'ready';
-  }
-
-  // Ensures a usable session exists for the default model after login.
+  private async refreshAvailableModels(): Promise<void> { await this.authFlow.refreshAvailableModels(); }
+  private enterLoginRequiredStartupState(): void { this.authFlow.enterLoginRequiredStartupState(); }
   private async activateModelAfterLogin(model: string, thinking?: boolean): Promise<void> {
-    const level = thinking === undefined ? undefined : thinking ? 'on' : 'off';
-    if (this.session !== undefined) {
-      await this.session.setModel(model);
-      if (level !== undefined) {
-        await this.session.setThinking(level);
-      }
-      return;
-    }
-
-    const session = await this.harness.createSession({
-      workDir: this.state.appState.workDir,
-      model,
-      thinking: level,
-      permission: this.options.startup.yolo ? 'yolo' : undefined,
-      planMode: this.state.appState.planMode ? true : undefined,
-    });
-    await this.setSession(session);
-    this.setAppState({
-      sessionId: session.id,
-      sessionTitle: session.summary?.title ?? null,
-    });
-    await this.syncRuntimeState(session);
-    this.startSessionEventSubscription();
-    void this.fetchSessions();
-    this.refreshSessionTitle();
-    void this.refreshSkillCommands(this.session);
+    await this.authFlow.activateModelAfterLogin(model, thinking);
   }
-
-  // Clears the active session and runtime UI after logout.
-  async clearActiveSessionAfterLogout(): Promise<void> {
-    await this.closeSession('logged out');
-    this.resetSessionRuntime();
-    this.setAppState({
-      sessionId: '',
-      model: '',
-      sessionTitle: null,
-    });
-    await this.refreshSkillCommands();
-  }
-
-  // Reloads config after login and selects the configured default model.
-  async refreshConfigAfterLogin(): Promise<void> {
-    const config = await this.harness.getConfig({ reload: true });
-    const availableModels = config.models ?? {};
-    const availableProviders = config.providers ?? {};
-    const defaultModel = this.options.startup.model ?? config.defaultModel;
-    const selected = defaultModel !== undefined ? availableModels[defaultModel] : undefined;
-
-    if (defaultModel === undefined || selected === undefined) {
-      this.setAppState({ availableModels, availableProviders });
-      return;
-    }
-
-    await this.activateModelAfterLogin(defaultModel, config.defaultThinking);
-    const appStatePatch: Partial<AppState> = {
-      availableModels,
-      availableProviders,
-      model: defaultModel,
-      maxContextTokens: selected.maxContextSize,
-    };
-    if (config.defaultThinking !== undefined) {
-      appStatePatch.thinking = config.defaultThinking;
-    }
-    this.setAppState(appStatePatch);
-  }
-
-  // Reloads config after logout and clears model-dependent state.
-  async refreshConfigAfterLogout(): Promise<void> {
-    const config = await this.harness.getConfig({ reload: true });
-    const availableModels = config.models ?? {};
-    const availableProviders = config.providers ?? {};
-    this.setAppState({
-      availableModels,
-      availableProviders,
-      model: '',
-      thinking: false,
-      maxContextTokens: 0,
-      contextUsage: 0,
-      contextTokens: 0,
-    });
-  }
+  async clearActiveSessionAfterLogout(): Promise<void> { await this.authFlow.clearActiveSessionAfterLogout(); }
+  async refreshConfigAfterLogin(): Promise<void> { await this.authFlow.refreshConfigAfterLogin(); }
+  async refreshConfigAfterLogout(): Promise<void> { await this.authFlow.refreshConfigAfterLogout(); }
 
   // =========================================================================
   // Layout / Editor Setup
@@ -1874,7 +1774,7 @@ export class KimiTUI {
   }
 
   // Replaces the active session and installs approval/question handlers.
-  private async setSession(session: Session): Promise<void> {
+  async setSession(session: Session): Promise<void> {
     const previous = this.unloadCurrentSession('switching session');
     await previous?.close();
     this.session = session;
@@ -1883,7 +1783,7 @@ export class KimiTUI {
   }
 
   // Pulls runtime session status into the app state.
-  private async syncRuntimeState(session: Session = this.requireSession()): Promise<void> {
+  async syncRuntimeState(session: Session = this.requireSession()): Promise<void> {
     const status = await session.getStatus();
     this.setAppState({
       sessionId: session.id,
@@ -1908,7 +1808,7 @@ export class KimiTUI {
   }
 
   // Detaches and closes the current session.
-  private async closeSession(reason: string): Promise<void> {
+  async closeSession(reason: string): Promise<void> {
     const previous = this.unloadCurrentSession(reason);
     await previous?.close();
   }
@@ -1945,7 +1845,7 @@ export class KimiTUI {
   }
 
   // Loads session picker rows for the current working directory.
-  private async fetchSessions(): Promise<void> {
+  async fetchSessions(): Promise<void> {
     this.state.loadingSessions = true;
     try {
       const sessions = await this.harness.listSessions({ workDir: this.state.appState.workDir });
@@ -1962,12 +1862,12 @@ export class KimiTUI {
   }
 
   // Syncs the process title with the current session title and id.
-  private refreshSessionTitle(): void {
+  refreshSessionTitle(): void {
     setProcessTitle(this.state.appState.sessionTitle, this.state.appState.sessionId);
   }
 
   // Resets turn, tool, queue, and background-agent state for a session switch.
-  private resetSessionRuntime(): void {
+  resetSessionRuntime(): void {
     this.aborted = false;
     this.discardPendingStreamingUiUpdates();
     this.state.queuedMessages = [];
@@ -2097,7 +1997,7 @@ export class KimiTUI {
   // Session Events — delegated to SessionEventHandler
   // =========================================================================
 
-  private startSessionEventSubscription(): void { this.sessionEventHandler.startSubscription(); }
+  startSessionEventSubscription(): void { this.sessionEventHandler.startSubscription(); }
 
   private handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
     this.sessionEventHandler.handleEvent(event, sendQueued);
