@@ -12,20 +12,16 @@ import {
   type GenerateResult,
   type Message,
   type TokenUsage,
+  APIContextOverflowError,
 } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
 import { isAbortError } from '../../loop/errors';
 import {
-  DEFAULT_MAX_RETRY_ATTEMPTS,
   retryBackoffDelays,
   sleepForRetry,
 } from '../../loop/retry';
 import type { TelemetryPropertyValue } from '../../telemetry';
-import {
-  applyCompletionBudget,
-  resolveCompletionBudget,
-} from '../../utils/completion-budget';
 import { renderPrompt } from '../../utils/render-prompt';
 import {
   estimateTokens,
@@ -42,6 +38,8 @@ type CompactionTelemetryTrigger = CompactionBeginData['source'] | 'manual-with-p
 export interface CompactedHistory {
   text: string;
 }
+
+export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
 
 export class FullCompaction {
   protected compactionCountInTurn = 0;
@@ -60,16 +58,23 @@ export class FullCompaction {
   ) {
     this.strategy =
       strategy ??
-      new DefaultCompactionStrategy({
-        ...DEFAULT_COMPACTION_CONFIG,
-        reservedContextSize:
-          agent.providerManager?.config.loopControl?.reservedContextSize ??
-          DEFAULT_COMPACTION_CONFIG.reservedContextSize,
-      });
+      new DefaultCompactionStrategy(
+        () => agent.config.modelCapabilities.max_context_tokens,
+        {
+          ...DEFAULT_COMPACTION_CONFIG,
+          reservedContextSize:
+            agent.providerManager?.config.loopControl?.reservedContextSize ??
+            DEFAULT_COMPACTION_CONFIG.reservedContextSize,
+        }
+      );
   }
 
   get isCompacting(): boolean {
     return this.compacting !== null;
+  }
+
+  get compactedHistory(): readonly CompactedHistory[] {
+    return this._compactedHistory;
   }
 
   begin(data: Readonly<CompactionBeginData>): void {
@@ -157,18 +162,6 @@ export class FullCompaction {
     return this.agent.context.tokenCountWithPending;
   }
 
-  private get maxContextSize() {
-    return this.agent.config.modelCapabilities.max_context_tokens;
-  }
-
-  private get shouldCompact(): boolean {
-    return this.strategy.shouldCompact(this.tokenCountWithPending, this.maxContextSize);
-  }
-
-  private get shouldBlock(): boolean {
-    return this.strategy.shouldBlock(this.tokenCountWithPending, this.maxContextSize);
-  }
-
   resetForTurn(): void {
     this.compactionCountInTurn = 0;
   }
@@ -182,7 +175,7 @@ export class FullCompaction {
 
   async beforeStep(signal: AbortSignal): Promise<void> {
     this.checkAutoCompaction();
-    if (this.shouldBlock) {
+    if (this.strategy.shouldBlock(this.tokenCountWithPending)) {
       await this.block(signal);
     }
   }
@@ -196,7 +189,7 @@ export class FullCompaction {
 
   private checkAutoCompaction(throwOnLimit: boolean = true): boolean {
     if (this.compacting) return true;
-    if (!this.shouldCompact) return false;
+    if (!this.strategy.shouldCompact(this.tokenCountWithPending)) return false;
 
     return this.beginAutoCompaction(throwOnLimit);
   }
@@ -212,16 +205,7 @@ export class FullCompaction {
       }
       return false;
     }
-    const history = this.agent.context.history;
-    const compactedCount = this.computeCompactableCount(history);
-    if (compactedCount === 0) return false;
-    if (
-      this.maxContextSize > 0 &&
-      estimateTokensForMessages(project(history.slice(compactedCount))) >= this.maxContextSize
-    ) {
-      return false;
-    }
-    this.agent.fullCompaction.begin({ source: 'auto', instruction: undefined });
+    this.begin({ source: 'auto', instruction: undefined });
     return true;
   }
 
@@ -246,42 +230,59 @@ export class FullCompaction {
     data: Readonly<CompactionBeginData>,
   ): Promise<void> {
     const startedAt = Date.now();
-    let tokensBeforeForError = 0;
-    let retryCountForTelemetry = 0;
+    const originalHistory = [...this.agent.context.history];
+    const tokensBefore = this.agent.context.tokenCount;
+    let retryCount = 0;
     try {
-      const originalHistory = [...this.agent.context.history];
-      const tokensBefore = this.agent.context.tokenCount;
-      tokensBeforeForError = tokensBefore;
-      const compactedCount = this.computeCompactableCount(originalHistory);
-      if (compactedCount === 0) {
-        this.markCanceled();
-        return undefined;
-      }
-      signal.throwIfAborted();
+      let compactedCount = this.strategy.computeCompactCount(originalHistory);
+
       await this.triggerPreCompactHook(data, tokensBefore, signal);
-      signal.throwIfAborted();
 
       const model = this.agent.config.model;
-      const messages = [
-        ...project(originalHistory.slice(0, compactedCount)),
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: COMPACTION_INSTRUCTION(data.instruction),
-            },
-          ],
-          toolCalls: [],
-        } satisfies Message,
-      ];
-      const { response, retryCount, summary } = await this.generateCompactionResponse({
-        messages,
-        signal,
-        onRetry: (count) => {
-          retryCountForTelemetry = count;
-        },
-      });
+
+      const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
+      let response: GenerateResult;
+      while (true) {
+        const messagesToCompact = originalHistory.slice(0, compactedCount);
+        const messages = [
+          ...messagesToCompact,
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: COMPACTION_INSTRUCTION(data.instruction),
+              },
+            ],
+            toolCalls: [],
+          } satisfies Message,
+        ];
+        try {
+          response = await this.agent.generate(
+            this.agent.config.provider,
+            this.agent.config.systemPrompt,
+            [...this.agent.tools.loopTools],
+            messages,
+            undefined,
+            { signal },
+          );
+          break;
+        } catch (error) {
+          retryCount += 1;
+          if (retryCount >= MAX_COMPACTION_RETRY_ATTEMPTS) {
+            throw error;
+          }
+          if (error instanceof APIContextOverflowError) {
+            compactedCount = this.strategy.reduceCompactOnOverflow(messagesToCompact);
+          }
+          if (!isRetryableGenerateError(error)) {
+            throw error;
+          }
+          await sleepForRetry(delays[retryCount - 1]!, signal);
+        }
+      }
+      const summary = extractCompactionSummary(response);
+
       if (response.usage !== null) {
         this.agent.usage.record(model, response.usage);
       }
@@ -325,69 +326,13 @@ export class FullCompaction {
         });
         this.agent.telemetry.track('compaction_failed', {
           trigger_type: compactionTelemetryTrigger(data.source, data.instruction),
-          before_tokens: tokensBeforeForError,
+          before_tokens: tokensBefore,
           duration_ms: Date.now() - startedAt,
-          retry_count: retryCountForTelemetry,
+          retry_count: retryCount,
           error_type: error instanceof Error ? error.name : 'Unknown',
         });
       }
     }
-  }
-
-  private async generateCompactionResponse({
-    messages,
-    signal,
-    onRetry,
-  }: {
-    readonly messages: Message[];
-    readonly signal: AbortSignal;
-    readonly onRetry?: ((retryCount: number) => void) | undefined;
-  }): Promise<{
-    readonly response: GenerateResult;
-    readonly summary: string;
-    readonly retryCount: number;
-  }> {
-    const maxAttempts =
-      this.agent.providerManager?.config.loopControl?.maxRetriesPerStep ??
-      DEFAULT_MAX_RETRY_ATTEMPTS;
-    const delays = retryBackoffDelays(maxAttempts);
-    let retryCount = 0;
-
-    const completionBudget = resolveCompletionBudget({
-      reservedContextSize:
-        this.agent.providerManager?.config.loopControl?.reservedContextSize,
-    });
-    const effectiveProvider = applyCompletionBudget({
-      provider: this.agent.config.provider,
-      budget: completionBudget,
-      capability: this.agent.config.modelCapabilities,
-    });
-
-    for (let attempt = 1; ; attempt += 1) {
-      try {
-        const response = await this.agent.generate(
-          effectiveProvider,
-          this.agent.config.systemPrompt,
-          [...this.agent.tools.loopTools],
-          messages,
-          undefined,
-          { signal },
-        );
-        const summary = extractCompactionSummary(response);
-        return { response, summary, retryCount };
-      } catch (error) {
-        if (attempt >= maxAttempts || !isRetryableGenerateError(error)) {
-          throw error;
-        }
-        retryCount += 1;
-        onRetry?.(retryCount);
-        await sleepForRetry(delays[attempt - 1] ?? 0, signal);
-      }
-    }
-  }
-
-  get compactedHistory(): readonly CompactedHistory[] {
-    return this._compactedHistory;
   }
 
   private async triggerPreCompactHook(
@@ -395,6 +340,7 @@ export class FullCompaction {
     tokenCount: number,
     signal: AbortSignal,
   ): Promise<void> {
+    signal.throwIfAborted();
     await this.agent.hooks?.trigger('PreCompact', {
       matcherValue: data.source,
       signal,
@@ -403,6 +349,7 @@ export class FullCompaction {
         tokenCount,
       },
     });
+    signal.throwIfAborted();
   }
 
   private triggerPostCompactHook(
@@ -416,10 +363,6 @@ export class FullCompaction {
         estimatedTokenCount: result.tokensAfter,
       },
     });
-  }
-
-  private computeCompactableCount(history: readonly Message[]): number {
-    return this.strategy.computeCompactCount(history, this.maxContextSize);
   }
 }
 
