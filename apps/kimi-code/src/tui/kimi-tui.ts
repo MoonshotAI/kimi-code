@@ -5504,7 +5504,10 @@ export class KimiTUI {
     }
 
     try {
-      await this.switchToSession(forked, `Session forked (${forked.id}).`);
+      await this.switchToSession(
+        forked,
+        `Session forked (${forked.id}). To return to the original session: kimi -r ${session.id}`,
+      );
     } catch (error) {
       const msg = formatErrorMessage(error);
       this.showError(`Failed to switch to forked session: ${msg}`);

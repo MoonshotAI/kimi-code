@@ -1476,7 +1476,7 @@ describe('KimiTUI message flow', () => {
       expect(forked.onEvent).toHaveBeenCalledOnce();
       expect(harness.resumeSession).not.toHaveBeenCalled();
       expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
-        'Session forked (ses-fork).',
+        'Session forked (ses-fork). To return to the original session: kimi -r ses-source',
       );
     } finally {
       process.title = originalTitle;
