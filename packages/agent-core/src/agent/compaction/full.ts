@@ -78,10 +78,6 @@ export class FullCompaction {
   }
 
   begin(data: Readonly<CompactionBeginData>): void {
-    this.agent.records.logRecord({
-      type: 'full_compaction.begin',
-      ...data,
-    });
     if (this.compacting) return;
     if (data.source === 'manual') {
       this.compactionCountInTurn = 0;
@@ -89,12 +85,23 @@ export class FullCompaction {
       this.compactionCountInTurn += 1;
     }
     if (this.compactionCountInTurn > this.strategy.maxCompactionPerTurn) return;
+    const compactedCount = this.strategy.computeCompactCount(this.agent.context.history);
+    if (compactedCount === 0) {
+      throw new KimiError(ErrorCodes.COMPACTION_UNABLE, 'No compactable prefix in current history.');
+    }
+    this.agent.records.logRecord({
+      type: 'full_compaction.begin',
+      ...data,
+    });
     if (!this.agent.records.restoring) {
-      this.startCompactionWorker(data);
+      this.startCompactionWorker(data, compactedCount);
     }
   }
 
-  private startCompactionWorker(data: Readonly<CompactionBeginData>): void {
+  private startCompactionWorker(
+    data: Readonly<CompactionBeginData>,
+    compactedCount: number,
+  ): void {
     const abortController = new AbortController();
     this.agent.emitEvent({
       type: 'compaction.started',
@@ -108,7 +115,7 @@ export class FullCompaction {
       promise: Promise.resolve(),
     };
     this.compacting = active;
-    active.promise = this.compactionWorker(abortController.signal, data);
+    active.promise = this.compactionWorker(abortController.signal, data, compactedCount);
   }
 
   cancel(): void {
@@ -206,7 +213,7 @@ export class FullCompaction {
       return false;
     }
     this.begin({ source: 'auto', instruction: undefined });
-    return true;
+    return this.compacting !== null;
   }
 
   private async block(signal: AbortSignal): Promise<void> {
@@ -228,13 +235,14 @@ export class FullCompaction {
   private async compactionWorker(
     signal: AbortSignal,
     data: Readonly<CompactionBeginData>,
+    initialCompactedCount: number,
   ): Promise<void> {
     const startedAt = Date.now();
     const originalHistory = [...this.agent.context.history];
     const tokensBefore = this.agent.context.tokenCount;
     let retryCount = 0;
     try {
-      let compactedCount = this.strategy.computeCompactCount(originalHistory);
+      let compactedCount = initialCompactedCount;
 
       await this.triggerPreCompactHook(data, tokensBefore, signal);
 
@@ -242,10 +250,11 @@ export class FullCompaction {
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
       let response: GenerateResult;
+      let summary: string;
       while (true) {
         const messagesToCompact = originalHistory.slice(0, compactedCount);
         const messages = [
-          ...messagesToCompact,
+          ...project(messagesToCompact),
           {
             role: 'user',
             content: [
@@ -266,22 +275,22 @@ export class FullCompaction {
             undefined,
             { signal },
           );
+          summary = extractCompactionSummary(response);
           break;
         } catch (error) {
-          retryCount += 1;
-          if (retryCount >= MAX_COMPACTION_RETRY_ATTEMPTS) {
-            throw error;
-          }
           if (error instanceof APIContextOverflowError) {
             compactedCount = this.strategy.reduceCompactOnOverflow(messagesToCompact);
           }
           if (!isRetryableGenerateError(error)) {
             throw error;
           }
-          await sleepForRetry(delays[retryCount - 1]!, signal);
+          if (retryCount + 1 >= MAX_COMPACTION_RETRY_ATTEMPTS) {
+            throw error;
+          }
+          await sleepForRetry(delays[retryCount]!, signal);
+          retryCount += 1;
         }
       }
-      const summary = extractCompactionSummary(response);
 
       if (response.usage !== null) {
         this.agent.usage.record(model, response.usage);

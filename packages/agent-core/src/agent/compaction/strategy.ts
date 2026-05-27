@@ -62,7 +62,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
   }
 
   computeCompactCount(messages: readonly Message[]): number {
-    // Return value: N messages to be compacted
+    // Return value: N messages to be compacted (0 means no compaction possible)
     // LLM Input: messages.slice(0, N) + [user:instruction]
     // Preserved recent messages: messages.slice(N)
     //
@@ -77,26 +77,33 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
     let recentMessages = 1;
     let recentUserMessages = 0;
     let recentSize = 0;
+    let bestN: number | undefined;
 
     for (; recentMessages < messages.length; recentMessages++) {
       const m1 = messages[messages.length - recentMessages - 1]!;
       const m2 = messages[messages.length - recentMessages]!;
 
-      recentMessages++;
       if (m2.role === 'user') {
         recentUserMessages++;
       }
       recentSize += estimateTokensForMessage(m2);
 
+      if (!cannotSplitAfter(m1)) {
+        bestN = messages.length - recentMessages;
+      }
+
       const reachesMax = recentMessages >= this.config.maxRecentMessages
         || recentUserMessages >= this.config.maxRecentUserMessages
         || recentSize >= this.maxSize * this.config.maxRecentSizeRatio;
-      if (!cannotSplitAfter(m1) && reachesMax) {
-        return messages.length - recentMessages;
+      if (reachesMax && bestN !== undefined) {
+        break;
       }
     }
 
-    throw new Error('Unable to compact messages: all messages are too recent or cannot be split');
+    if (bestN !== undefined) return bestN;
+    const last = messages.at(-1);
+    if (last && !cannotSplitAfter(last)) return messages.length;
+    return 0;
   }
 
   reduceCompactOnOverflow(messages: readonly Message[]): number {

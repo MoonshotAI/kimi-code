@@ -5594,7 +5594,13 @@ export class KimiTUI {
     }
 
     const customInstruction = args.trim() || undefined;
-    await session.compact({ instruction: customInstruction });
+    try {
+      await session.compact({ instruction: customInstruction });
+    } catch (error) {
+      const code = (error as { code?: string } | null)?.code;
+      const message = error instanceof Error ? error.message : String(error);
+      this.showError(code !== undefined ? `[${code}] ${message}` : message);
+    }
   }
 
   // Handles the /init command.
