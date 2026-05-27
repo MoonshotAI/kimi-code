@@ -1,23 +1,13 @@
 /**
  * Tests for `tools/cron/cron-list.ts`.
  *
- * Same harness shape as `cron-create.test.ts`: a minimal Agent stub
- * (only `turn` + `telemetry` need to look like the real thing) and an
- * injected `ClockSources` so the `ageDays` and `nextFireAt` columns
- * stay deterministic across CI machines.
- *
- * Each case seeds tasks directly through `manager.store.add(...)` so
- * we can exercise corners the tool itself would never reach via
- * CronCreate — notably the malformed-cron path, which CronCreate's
- * validator would otherwise refuse to schedule.
+ * Tasks are seeded via `manager.store.add(...)` so we can exercise
+ * corners CronCreate's validator would never let through (notably the
+ * malformed-cron path).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ContentPart } from '@moonshot-ai/kosong';
 
-import type { Agent } from '../../../src/agent';
-import type { PromptOrigin } from '../../../src/agent/context/types';
 import { CronManager } from '../../../src/agent/cron/manager';
-import type { ClockSources } from '../../../src/tools/cron/clock';
 import {
   CronListTool,
   type CronListInput,
@@ -28,59 +18,14 @@ import type {
   RunnableToolExecution,
   ToolExecution,
 } from '../../../src/loop/types';
+import {
+  createAgentStub,
+  createClocks,
+  WALL_ANCHOR,
+  type AgentStub,
+} from '../../agent/cron/harness/stub';
 
-// Same wall anchor as `cron-create.test.ts` for cross-file
-// comparability of any timing-derived assertions.
-const WALL_ANCHOR = 1_700_000_000_000;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-interface SteerCall {
-  readonly content: readonly ContentPart[];
-  readonly origin: PromptOrigin;
-}
-interface TelemetryCall {
-  readonly event: string;
-  readonly props: unknown;
-}
-
-interface AgentStub {
-  readonly agent: Agent;
-  readonly steerCalls: SteerCall[];
-  readonly telemetryCalls: TelemetryCall[];
-}
-
-function createAgentStub(): AgentStub {
-  const steerCalls: SteerCall[] = [];
-  const telemetryCalls: TelemetryCall[] = [];
-  const turn = {
-    get hasActiveTurn(): boolean {
-      return false;
-    },
-    steer: (content: readonly ContentPart[], origin: PromptOrigin) => {
-      steerCalls.push({ content, origin });
-      return 42;
-    },
-  };
-  const telemetry = {
-    track: (event: string, props: unknown) => {
-      telemetryCalls.push({ event, props });
-    },
-  };
-  const agent = { turn, telemetry } as unknown as Agent;
-  return { agent, steerCalls, telemetryCalls };
-}
-
-/**
- * Frozen-wall clock. The tool reads `wallNow()` exactly once per
- * `resolveExecution` so a constant return is enough — no need for the
- * advance helper used by the scheduler tests.
- */
-function createClocks(wall: number): ClockSources {
-  return {
-    wallNow: () => wall,
-    monoNowMs: () => 1_000_000,
-  };
-}
 
 interface Harness {
   readonly stub: AgentStub;
@@ -91,7 +36,7 @@ interface Harness {
 function makeHarness(wall = WALL_ANCHOR): Harness {
   const stub = createAgentStub();
   const manager = new CronManager(stub.agent, {
-    clocks: createClocks(wall),
+    clocks: createClocks(wall).clocks,
     pollIntervalMs: null,
   });
   const tool = new CronListTool(manager);

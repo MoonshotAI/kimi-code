@@ -1,79 +1,12 @@
 /**
- * P1.8 — Manual tick + SIGUSR1.
- *
- * Two env / signal affordances live on `CronManager`:
- *
- *   1. `KIMI_CRON_MANUAL_TICK=1` forces `pollIntervalMs: null` in the
- *      scheduler so no `setInterval` is installed. Bench / time-injected
- *      tests can then call `manager.tick()` explicitly without racing a
- *      1-second auto-tick.
- *   2. `process.on('SIGUSR1', () => manager.tick())` lets a bench script
- *      run `kill -USR1 <pid>` to advance the scheduler manually. The
- *      handler is bound in `start()` and removed in `stop()` so vitest
- *      files don't leak listeners across the shared process.
- *
- * The default Agent stub here is identical in spirit to the one in
- * `manager.test.ts` — kept inline so this file is independently
- * readable; the cost of the small copy is offset by the clarity of
- * having all P1.8 assertions in one place.
+ * Tests for `agent/cron/manager.ts` P1.8 affordances: the
+ * `KIMI_CRON_MANUAL_TICK=1` env disables the auto-tick interval and,
+ * in the same gate, binds SIGUSR1 to a no-throw `tick()` for benches.
  */
-import type { ContentPart } from '@moonshot-ai/kosong';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Agent } from '../../../src/agent';
-import type { PromptOrigin } from '../../../src/agent/context/types';
 import { CronManager } from '../../../src/agent/cron/manager';
-import type { ClockSources } from '../../../src/tools/cron/clock';
-
-const WALL_ANCHOR = 1_700_000_000_000;
-
-interface SteerCall {
-  readonly content: readonly ContentPart[];
-  readonly origin: PromptOrigin;
-}
-
-function createAgentStub(): {
-  agent: Agent;
-  steerCalls: SteerCall[];
-} {
-  const steerCalls: SteerCall[] = [];
-  const turn = {
-    get hasActiveTurn(): boolean {
-      return false;
-    },
-    steer: (content: readonly ContentPart[], origin: PromptOrigin) => {
-      steerCalls.push({ content, origin });
-      return 1;
-    },
-  };
-  const telemetry = {
-    track: () => {
-      /* no-op for P1.8 — assertions here are on steer / signals */
-    },
-  };
-  const agent = { turn, telemetry } as unknown as Agent;
-  return { agent, steerCalls };
-}
-
-function createClocks(initial = WALL_ANCHOR): {
-  clocks: ClockSources;
-  advance(ms: number): void;
-  now(): number;
-} {
-  let wall = initial;
-  let mono = 1_000_000;
-  return {
-    clocks: {
-      wallNow: () => wall,
-      monoNowMs: () => mono,
-    },
-    advance: (ms) => {
-      wall += ms;
-      mono += ms;
-    },
-    now: () => wall,
-  };
-}
+import { createAgentStub, createClocks } from './harness/stub';
 
 describe('CronManager — P1.8 manual tick + SIGUSR1', () => {
   beforeEach(() => {
