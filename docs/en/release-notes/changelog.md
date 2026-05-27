@@ -2,6 +2,33 @@
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.4.0
+
+### Features
+
+- Add user-global plugin installation, interactive plugin management, plugin-provided skills, and plugin-owned MCP servers.
+- Expand folded paste markers on second paste.
+- Rework tool permissions: reads outside cwd no longer prompt, session approvals match the exact call, and path-based rules are case-insensitive.
+- Add `/export-debug-zip` slash command to export the current session as a debug ZIP archive directly from the TUI.
+- Add `/export-md` slash command to export the current session as a Markdown file.
+
+### Bug Fixes
+
+- Prevent the TUI from crashing when pull request lookup fails during startup.
+- Fix thinking spinner leaking past turn end when an empty thinking delta creates an orphaned thinking component.
+- Show the original session resume command after forking a session.
+- Restrict plugin zip installs to manifests at the archive root or a single wrapper directory.
+- Route session-tagged log entries exclusively to the session sink instead of duplicating them to the global sink. Consistently omit stable main-agent context keys from all session log lines that carry `agentId=main`.
+
+### Refactors
+
+- Refactor TUI resume replay logic.
+- Use one retry classification for transient LLM failures across regular turns and compaction.
+
+### Other
+
+- Enhance `kimi export` to include more diagnostic information in the manifest.
+
 ## 0.3.0
 
 ### Features
