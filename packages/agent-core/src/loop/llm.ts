@@ -31,6 +31,11 @@ export interface LLMRequestLogContext {
   readonly maxAttempts?: number;
 }
 
+export interface LLMStreamTiming {
+  readonly firstTokenLatencyMs: number;
+  readonly streamDurationMs: number;
+}
+
 export interface LLMChatParams {
   messages: Message[];
   tools: readonly Tool[];
@@ -60,6 +65,7 @@ export interface LLMChatResponse {
   providerFinishReason?: FinishReason;
   rawFinishReason?: string;
   usage: TokenUsage;
+  streamTiming?: LLMStreamTiming;
 }
 
 export interface LLM {

@@ -25,7 +25,9 @@ export type {
   ToolCall,
   ExecutableToolContext,
   ToolExecutionHookContext,
+  ResolvedToolExecutionHookContext,
   PrepareToolExecutionHook,
+  AuthorizeToolExecutionHook,
   PrepareToolExecutionResult,
   ExecutableToolResult,
   FinalizeToolResultContext,
@@ -63,6 +65,7 @@ export type {
   LLMChatParams,
   LLMChatResponse,
   LLMRequestLogContext,
+  LLMStreamTiming,
   ToolCallDelta,
 } from './llm';
 

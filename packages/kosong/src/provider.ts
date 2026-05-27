@@ -98,6 +98,16 @@ export interface GenerateOptions {
    * each request/retry so providers never retain mutable credential state.
    */
   auth?: ProviderRequestAuth;
+  /**
+   * Host-side instrumentation hook fired immediately before invoking the
+   * provider adapter's generate call.
+   */
+  onRequestStart?: () => void;
+  /**
+   * Host-side instrumentation hook fired after the provider stream is fully
+   * drained, before post-processing the assembled response.
+   */
+  onStreamEnd?: () => void;
 }
 
 /**

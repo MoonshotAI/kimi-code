@@ -52,6 +52,14 @@ export interface ForkSessionPayload {
   readonly metadata?: JsonObject;
 }
 
+export interface ShellEnvironment {
+  readonly term?: string | undefined;
+  readonly termProgram?: string | undefined;
+  readonly termProgramVersion?: string | undefined;
+  readonly multiplexer?: string | undefined;
+  readonly shell?: string | undefined;
+}
+
 export interface ExportSessionPayload {
   readonly sessionId: string;
   readonly outputPath?: string | undefined;
@@ -63,6 +71,9 @@ export interface ExportSessionPayload {
   readonly includeGlobalLog?: boolean | undefined;
   /** Host version to record in the export manifest. */
   readonly version: string;
+  /** How the CLI was installed (e.g. 'npm-global', 'native'). */
+  readonly installSource?: string | undefined;
+  readonly shellEnv?: ShellEnvironment | undefined;
 }
 
 export interface ExportSessionManifest {
@@ -80,6 +91,9 @@ export interface ExportSessionManifest {
   readonly sessionLogPath?: string | undefined;
   /** zip-relative path to the bundled global diagnostic log (only when --include-global-log). */
   readonly globalLogPath?: string | undefined;
+  /** How the CLI was installed (e.g. 'npm-global', 'native'). */
+  readonly installSource?: string | undefined;
+  readonly shellEnv?: ShellEnvironment | undefined;
 }
 
 export interface ExportSessionResult {

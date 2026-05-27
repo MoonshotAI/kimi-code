@@ -232,7 +232,7 @@ export function resolvePathAccess(
   const outsideWorkspace = !isWithinWorkspace(canonical, config, pathClass);
   const policy = options.policy ?? DEFAULT_WORKSPACE_ACCESS_POLICY;
 
-  if (policy.checkSensitive && isSensitiveFile(canonical, pathClass)) {
+  if (policy.checkSensitive && isSensitiveFile(canonical)) {
     throw new PathSecurityError(
       'PATH_SENSITIVE',
       path,

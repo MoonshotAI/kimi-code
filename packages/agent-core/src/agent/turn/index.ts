@@ -419,29 +419,10 @@ export class TurnFlow {
                 ctx.args,
               );
               if (cached !== null) return { syntheticResult: cached };
-              const hookResult = await this.agent.hooks?.triggerBlock('PreToolUse', {
-                matcherValue: ctx.toolCall.name,
-                signal: ctx.signal,
-                inputData: {
-                  toolName: ctx.toolCall.name,
-                  toolInput: toolInputRecord(ctx.args),
-                  toolCallId: ctx.toolCall.id,
-                },
-              });
-              ctx.signal.throwIfAborted();
-              if (hookResult) {
-                this.agent.telemetry.track('hook_triggered', {
-                  event_type: 'PreToolUse',
-                  action: hookResult.block ? 'block' : 'allow',
-                });
-                return hookResult;
-              }
-              const permissionResult = await this.agent.permission.beforeToolCall(ctx);
-              this.agent.telemetry.track('hook_triggered', {
-                event_type: 'PreToolUse',
-                action: permissionResult?.block === true ? 'block' : 'allow',
-              });
-              return permissionResult;
+              return undefined;
+            },
+            authorizeToolExecution: async (ctx) => {
+              return this.agent.permission.beforeToolCall(ctx);
             },
             finalizeToolResult: async (ctx) => {
               // Resolve dedup BEFORE firing the PostToolUse hook so same-step
@@ -637,6 +618,8 @@ function mapLoopEvent(event: LoopEvent, turnId: number): AgentEvent | undefined 
         stepId: event.uuid,
         usage: event.usage,
         finishReason: event.finishReason,
+        llmFirstTokenLatencyMs: event.llmFirstTokenLatencyMs,
+        llmStreamDurationMs: event.llmStreamDurationMs,
         providerFinishReason: event.providerFinishReason,
         rawFinishReason: event.rawFinishReason,
       };

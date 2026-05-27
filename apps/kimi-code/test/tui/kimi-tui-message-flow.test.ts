@@ -1488,7 +1488,7 @@ describe('KimiTUI message flow', () => {
       expect(forked.onEvent).toHaveBeenCalledOnce();
       expect(harness.resumeSession).not.toHaveBeenCalled();
       expect(driver.state.transcriptContainer.render(120).join('\n')).toContain(
-        'Session forked (ses-fork).',
+        'Session forked (ses-fork). To return to the original session: kimi -r ses-source',
       );
     } finally {
       process.title = originalTitle;
@@ -1513,6 +1513,56 @@ describe('KimiTUI message flow', () => {
         'Failed to fork session: fork unavailable',
       );
     });
+  });
+
+  it('does not create a thinking component for empty thinking deltas', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'thinking';
+    driver.state.appState.streamingStartTime = 1;
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        delta: '',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
+  });
+
+  it('finalizes an orphaned thinking component on turn end', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'thinking';
+    driver.state.appState.streamingStartTime = 1;
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        delta: 'leaked',
+      } as Event,
+      vi.fn(),
+    );
+    driver.streamingUI.flushNow();
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(true);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'completed',
+      } as Event,
+      sendQueued,
+    );
+
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
   });
 
   it('renders newly streamed thinking expanded when ctrl+o toggle was already active', async () => {

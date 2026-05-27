@@ -98,7 +98,7 @@ function readZipEntries(buf: Buffer): Map<string, Buffer> {
 }
 
 describe('Local logging — harness integration', () => {
-  it('writes session-tagged entries to both global and session log files', async () => {
+  it('writes session-tagged entries to session log only and untagged entries to global', async () => {
     const homeDir = await makeTempDir('kimi-log-home-');
     const workDir = await makeTempDir('kimi-log-work-');
 
@@ -131,7 +131,7 @@ describe('Local logging — harness integration', () => {
 
     const global = await readFile(globalPath, 'utf-8');
     const sessionLog = await readFile(sessionLogPath, 'utf-8');
-    expect(global).toContain('session diagnostic');
+    expect(global).not.toContain('session diagnostic');
     expect(sessionLog).toContain('session diagnostic');
     expect(global).toContain('untagged event');
     expect(sessionLog).not.toContain('untagged event');
@@ -284,6 +284,7 @@ describe('Local logging — harness integration', () => {
     const harness = new KimiHarness({ identity: TEST_IDENTITY, homeDir });
     const session = await harness.createSession({ id: 'ses_flush_warning', workDir });
     log.warn('flush warning setup', { sessionId: session.id });
+    log.warn('global untagged marker');
 
     const root = getRootLogger();
     const flushSessionSpy = vi
@@ -305,7 +306,8 @@ describe('Local logging — harness integration', () => {
       const globalLog = entries.get('logs/global/kimi-code.log')!.toString('utf-8');
       expect(sessionLog).toContain('export session log flush failed');
       expect(sessionLog).toContain('export global log flush failed');
-      expect(globalLog).toContain('export global log flush failed');
+      expect(globalLog).toContain('global untagged marker');
+      expect(globalLog).not.toContain('export global log flush failed');
     } finally {
       flushSessionSpy.mockRestore();
       flushGlobalSpy.mockRestore();

@@ -116,6 +116,10 @@ export class StreamingUIController {
     return this._thinkingDraft.length > 0;
   }
 
+  hasActiveThinkingComponent(): boolean {
+    return this._activeThinkingComponent !== undefined;
+  }
+
   hasStreamingBlock(): boolean {
     return this._streamingBlock !== null;
   }
@@ -359,10 +363,6 @@ export class StreamingUIController {
 
   flushThinkingToTranscript(nextMode: LivePaneState['mode'] = 'idle'): void {
     this.flushNow();
-    if (this._thinkingDraft.length === 0) {
-      this.host.patchLivePane({ mode: nextMode });
-      return;
-    }
     this._thinkingDraft = '';
     this.onThinkingEnd();
     this.host.patchLivePane({ mode: nextMode });
@@ -473,6 +473,7 @@ export class StreamingUIController {
   }
 
   onThinkingUpdate(fullText: string): void {
+    if (fullText.length === 0 && this._activeThinkingComponent === undefined) return;
     const { state } = this.host;
     if (this._activeThinkingComponent === undefined) {
       this._pendingAgentGroup = null;

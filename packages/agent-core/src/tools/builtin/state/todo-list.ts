@@ -102,6 +102,7 @@ export class TodoListTool implements BuiltinTool<TodoListInput> {
           : 'Updating todo list';
     return {
       description,
+      approvalRule: this.name,
       execute: async () => {
         // Query mode — return the current list without mutation.
         if (args.todos === undefined) {

@@ -33,7 +33,13 @@ import {
   showSettingsSelector,
 } from './config';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
-import { handleForkCommand, handleInitCommand, handleTitleCommand } from './session';
+import {
+  handleExportDebugZipCommand,
+  handleExportMdCommand,
+  handleForkCommand,
+  handleInitCommand,
+  handleTitleCommand,
+} from './session';
 
 // ---------------------------------------------------------------------------
 // Re-exports — keep existing consumers working
@@ -62,6 +68,8 @@ export {
   showUsage,
 } from './info';
 export {
+  handleExportDebugZipCommand,
+  handleExportMdCommand,
   handleForkCommand,
   handleInitCommand,
   handleTitleCommand,
@@ -244,6 +252,12 @@ async function handleBuiltInSlashCommand(
       return;
     case 'fork':
       await handleForkCommand(host, args);
+      return;
+    case 'export-md':
+      await handleExportMdCommand(host, args);
+      return;
+    case 'export-debug-zip':
+      await handleExportDebugZipCommand(host);
       return;
     case 'login':
       await handleLoginCommand(host);

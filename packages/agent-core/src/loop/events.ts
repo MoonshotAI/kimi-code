@@ -19,6 +19,8 @@ export interface LoopStepEndEvent {
   readonly step: number;
   readonly usage?: TokenUsage | undefined;
   readonly finishReason?: LoopStepStopReason | undefined;
+  readonly llmFirstTokenLatencyMs?: number | undefined;
+  readonly llmStreamDurationMs?: number | undefined;
   /**
    * Provider diagnostics are optional and must not drive loop control.
    * Use `finishReason` for normalized behavior.

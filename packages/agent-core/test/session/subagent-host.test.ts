@@ -691,6 +691,7 @@ describe('Session resume permission parent chain', () => {
     const workDir = join(dir, 'work');
     const mainDir = join(sessionDir, 'agents', 'main');
     const childDir = join(sessionDir, 'agents', 'agent-0');
+    const sessionApprovalRule = 'Bash(printf parent)';
     await mkdir(workDir, { recursive: true });
     await mkdir(sessionDir, { recursive: true });
     await writeFile(
@@ -731,6 +732,7 @@ describe('Session resume permission parent chain', () => {
         toolCallId: 'call_parent_bash',
         toolName: 'Bash',
         action: 'run command',
+        sessionApprovalRule,
         result: {
           decision: 'approved',
           scope: 'session',
@@ -755,12 +757,8 @@ describe('Session resume permission parent chain', () => {
       const child = session.agents.get('agent-0');
       expect(child?.permission.mode).toBe('yolo');
       expect(child?.permission.rules).toEqual([]);
-      expect(child?.permission.data().rules).toContainEqual({
-        decision: 'allow',
-        scope: 'session-runtime',
-        pattern: 'Bash',
-        reason: 'approve_for_session: run command',
-      });
+      expect(child?.permission.data().rules).toEqual([]);
+      expect(child?.permission.sessionApprovalRulePatterns).toContain(sessionApprovalRule);
     } finally {
       await session.close();
     }

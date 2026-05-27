@@ -54,7 +54,7 @@ MCP server 配置写在 `mcp.json` 中，分为两层：
 
 ## 工具命名与权限
 
-MCP 工具按 `mcp__<server>__<tool>` 命名。权限匹配支持 `*` 和 `**` 通配，例如 `mcp__github__*` 命中该 server 下所有工具。
+MCP 工具按 `mcp__<server>__<tool>` 命名。权限匹配支持工具名中的 `*` 和 `**` 通配，例如 `mcp__github__*` 命中该 server 下所有工具。MCP 工具参数不会参与权限匹配；请放行或拒绝精确的 MCP 工具名，或使用工具名通配。
 
 未命中权限规则的调用会触发审批请求；在审批弹窗中选择 "Approve for this session" 后，后续同类调用将自动放行。
 

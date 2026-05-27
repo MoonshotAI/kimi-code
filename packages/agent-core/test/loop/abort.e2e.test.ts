@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest';
 import type { LLMChatResponse, LoopHooks } from '../../src/loop/index';
 import { makeEndTurnResponse, makeToolCall, makeToolUseResponse } from './fixtures/fake-llm';
 import { runTurn } from './fixtures/helpers';
-import { EchoTool, GatedTool, markReadAnyFileAccesses, SlowTool } from './fixtures/tools';
+import { EchoTool, GatedTool, markReadFileAccesses, SlowTool } from './fixtures/tools';
 
 function waitOneMacrotask(): Promise<void> {
   return new Promise((resolve) => {
@@ -217,7 +217,7 @@ describe('runTurn — abort handling', () => {
     // followed by a tool.result for the same toolCallId. Without this,
     // the next turn's messages would carry orphan tool.calls and the
     // provider API would reject the conversation.
-    const slow = markReadAnyFileAccesses(new SlowTool());
+    const slow = markReadFileAccesses(new SlowTool());
     const controller = new AbortController();
 
     const turnPromise = runTurn({

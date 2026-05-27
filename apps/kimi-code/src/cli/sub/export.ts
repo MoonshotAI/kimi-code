@@ -18,13 +18,16 @@ import {
   type ExportSessionInput,
   type ExportSessionResult,
   type SessionSummary,
+  type ShellEnvironment,
   type TelemetryClient,
 } from '@moonshot-ai/kimi-code-sdk';
 import type { Command } from 'commander';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from '#/cli/telemetry';
+import { detectInstallSource } from '#/cli/update/source';
 import { createKimiCodeHostIdentity } from '#/cli/version';
+import { detectShellEnvironment } from '#/utils/process/shell-env';
 
 interface WritableLike {
   write(chunk: string): boolean;
@@ -41,6 +44,8 @@ export interface ExportDeps {
   readonly listSessions: (workDir: string) => Promise<readonly SessionSummary[]>;
   readonly exportSession: (input: ExportSessionInput) => Promise<ExportSessionResult>;
   readonly confirmPreviousSession: (summary: PreviousSessionSummary) => Promise<boolean>;
+  readonly getInstallSource: () => Promise<string>;
+  readonly getShellEnv: () => ShellEnvironment;
   readonly version: string;
   readonly cwd: () => string;
   readonly stdout: WritableLike;
@@ -81,9 +86,13 @@ export async function handleExport(
   }
 
   try {
+    const installSource = await deps.getInstallSource();
+    const shellEnv = deps.getShellEnv();
     const result = await deps.exportSession({
       id: resolvedId,
       version: deps.version,
+      installSource,
+      shellEnv,
       ...(output === undefined ? {} : { outputPath: output }),
       ...(opts.includeGlobalLog ? { includeGlobalLog: true } : {}),
     });
@@ -180,6 +189,8 @@ function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDep
         }
       }),
     version: overrides.version ?? identity.version,
+    getInstallSource: overrides.getInstallSource ?? (() => detectInstallSource()),
+    getShellEnv: overrides.getShellEnv ?? detectShellEnvironment,
     confirmPreviousSession: overrides.confirmPreviousSession ?? confirmPreviousSession,
     cwd: overrides.cwd ?? (() => process.cwd()),
     stdout: overrides.stdout ?? process.stdout,

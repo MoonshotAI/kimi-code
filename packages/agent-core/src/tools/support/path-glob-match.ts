@@ -2,7 +2,7 @@ import { isAbsolute, join, parse } from 'pathe';
 
 import picomatch from 'picomatch';
 
-import { canonicalizePath, type PathClass } from '../../tools/policies/path-access';
+import { canonicalizePath, type PathClass } from '../policies/path-access';
 
 export interface PermissionPathMatchOptions {
   readonly cwd?: string;
@@ -40,20 +40,15 @@ function stripLeadingDotSlash(value: string): string {
 export function pathGlobMatch(
   value: string,
   pattern: string,
-  options: {
-    readonly pathOptions?: PermissionPathMatchOptions;
-    readonly conservativeCaseFold: boolean;
-  },
+  pathOptions?: PermissionPathMatchOptions,
 ): boolean {
-  const semantics = pathMatchSemantics(value, pattern, options.pathOptions);
-  const nocase =
-    options.pathOptions?.caseInsensitivePaths ??
-    (semantics.pathClass === 'win32' || options.conservativeCaseFold);
+  const semantics = pathMatchSemantics(value, pattern, pathOptions);
+  const nocase = pathOptions?.caseInsensitivePaths ?? true;
 
   if (globMatch(value, pattern, { nocase })) return true;
 
-  for (const valueVariant of pathVariants(value, semantics, options.pathOptions)) {
-    for (const patternVariant of pathVariants(pattern, semantics, options.pathOptions)) {
+  for (const valueVariant of pathVariants(value, semantics, pathOptions)) {
+    for (const patternVariant of pathVariants(pattern, semantics, pathOptions)) {
       if (globMatch(valueVariant, patternVariant, { nocase })) return true;
     }
   }

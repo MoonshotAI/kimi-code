@@ -39,6 +39,7 @@ import { resolvePathAccessPath } from '../../policies/path-access';
 import type { PathClass } from '../../policies/path-access';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { listDirectory } from '../../support/list-directory';
+import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
 import GLOB_DESCRIPTION from './glob.md';
 
@@ -118,6 +119,9 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     return {
       accesses: ToolAccesses.searchTree(searchRoots[0]!),
       description: `Searching ${args.pattern}`,
+      display: { kind: 'file_io', operation: 'glob', path: searchRoots[0]! },
+      approvalRule: literalRulePattern(this.name, args.pattern),
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
       execute: () => this.execution(args, searchRoots),
     };
   }

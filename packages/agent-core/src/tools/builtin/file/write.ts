@@ -14,6 +14,7 @@ import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { resolvePathAccessPath } from '../../policies/path-access';
 import { toInputJsonSchema } from '../../support/input-schema';
+import { literalRulePattern, matchesPathRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
 import WRITE_DESCRIPTION from './write.md';
 
@@ -68,6 +69,14 @@ export class WriteTool implements BuiltinTool<WriteInput> {
     return {
       accesses: ToolAccesses.writeFile(path),
       description: `Writing ${args.path}`,
+      display: { kind: 'file_io', operation: 'write', path },
+      approvalRule: literalRulePattern(this.name, path),
+      matchesRule: (ruleArgs) =>
+        matchesPathRuleSubject(ruleArgs, path, {
+          cwd: this.workspace.workspaceDir,
+          pathClass: this.kaos.pathClass(),
+          homeDir: this.kaos.gethome(),
+        }),
       execute: () => this.execution(args, path),
     };
   }

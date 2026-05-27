@@ -1,125 +1,98 @@
-/**
- * matchesRule — pure function that decides whether a PermissionRule
- * applies to a given tool call.
- *
- * Contract:
- *   - No side effects, no `this`, no IO, no exceptions.
- *   - Deterministic: same `(rule, toolName, args)` → same result.
- *   - Returns boolean only; decision semantics (deny/ask/allow) are a
- *     caller concern (see `check-rules.ts`).
- */
-
 import picomatch from 'picomatch';
 
-import { parsePattern } from './parse-pattern';
-import { globMatch, pathGlobMatch, type PermissionPathMatchOptions } from './path-glob-match';
+import type { RunnableToolExecution } from '../../loop/types';
 import type { PermissionRule } from './types';
 
-type ArgFieldKind = 'generic' | 'path';
+/**
+ * DSL parser for PermissionRule `pattern` strings.
+ *
+ * Grammar:
+ *   pattern    := toolName ( "(" argPattern ")" )?
+ *   toolName   := identifier characters (e.g. `Bash`, `mcp__github__*`)
+ *   argPattern := any string interpreted only by a tool-provided matcher
+ *
+ * Examples:
+ *   "Write"            -> { toolName: "Write" }
+ *   "Read(/etc/**)"    -> { toolName: "Read", argPattern: "/etc/**" }
+ *   "Bash(!rm *)"      -> { toolName: "Bash", argPattern: "!rm *" }
+ *   "mcp__github__*"   -> { toolName: "mcp__github__*" }
+ */
+export interface ParsedPattern {
+  readonly toolName: string;
+  readonly argPattern?: string;
+}
 
-interface ArgField {
-  readonly value: string;
-  readonly kind: ArgFieldKind;
+export interface PermissionRuleMatchExecution {
+  readonly matchesRule?: RunnableToolExecution['matchesRule'];
+}
+
+export type PermissionRuleMatchStrategy = 'tool_name_only' | 'matches_rule';
+
+export interface PermissionRuleMatch {
+  readonly rule: PermissionRule;
+  readonly strategy: PermissionRuleMatchStrategy;
+  readonly hasRuleArgs: boolean;
+}
+
+export interface PermissionRuleMatchInput {
+  readonly rule: PermissionRule;
+  readonly toolName: string;
+  readonly execution: PermissionRuleMatchExecution;
 }
 
 /**
- * Tool-specific argument field convention. When a rule uses an arg
- * pattern (`Read(./src/**)`), we extract the listed field from the tool
- * call args and match the glob against its value.
- *
- * Unknown tools fall back to `undefined`, which means "arg pattern
- * cannot match" — rules with an arg pattern on an unknown tool will
- * never fire. Rules without an arg pattern (`UnknownTool`) still match
- * on name alone.
+ * Parse a DSL pattern. Throws on malformed input (missing closing paren,
+ * empty tool name). The parser is the single source of truth for DSL syntax.
  */
-function extractArgField(toolName: string, args: unknown): ArgField | undefined {
-  if (args === null || typeof args !== 'object') return undefined;
-  const rec = args as Record<string, unknown>;
-
-  switch (toolName) {
-    case 'Bash':
-    case 'Shell':
-    case 'Background':
-      return typeof rec['command'] === 'string'
-        ? { value: rec['command'], kind: 'generic' }
-        : undefined;
-    case 'Read':
-    case 'Write':
-    case 'Edit':
-    case 'ReadMediaFile':
-      return typeof rec['path'] === 'string' ? { value: rec['path'], kind: 'path' } : undefined;
-    case 'Grep':
-    case 'Glob':
-      return typeof rec['pattern'] === 'string'
-        ? { value: rec['pattern'], kind: 'generic' }
-        : undefined;
-    case 'Task':
-    case 'Agent':
-      return typeof rec['subagent_type'] === 'string'
-        ? { value: rec['subagent_type'], kind: 'generic' }
-        : undefined;
-    default:
-      return undefined;
+export function parsePattern(pattern: string): ParsedPattern {
+  const trimmed = pattern.trim();
+  if (trimmed.length === 0) {
+    throw new Error('permission pattern: empty string');
   }
+
+  const openIdx = trimmed.indexOf('(');
+  if (openIdx === -1) {
+    return { toolName: trimmed };
+  }
+
+  if (!trimmed.endsWith(')')) {
+    throw new Error(`permission pattern: missing closing paren in "${pattern}"`);
+  }
+
+  const toolName = trimmed.slice(0, openIdx);
+  const argPattern = trimmed.slice(openIdx + 1, -1);
+  if (toolName.length === 0) {
+    throw new Error(`permission pattern: empty tool name in "${pattern}"`);
+  }
+  // `Tool()` parses to no arg pattern so it stays tool-name-only — tools without
+  // a `matchesRule` matcher (user/MCP/custom) would otherwise stop matching it.
+  if (argPattern.length === 0) {
+    return { toolName };
+  }
+  return { toolName, argPattern };
 }
 
-/**
- * Decide whether a single rule matches a specific tool call.
- *
- * Algorithm:
- *   1. Parse `rule.pattern` into `{toolName, argPattern?}`.
- *   2. If parsed toolName is `*`, skip name check; otherwise compare with
- *      glob semantics so `mcp__github__*` matches `mcp__github__list`.
- *   3. If the rule has no argPattern, name match → rule fires.
- *   4. Otherwise extract the tool-specific field value and match against
- *      the glob. Handle the leading `!` negation prefix by flipping the
- *      final boolean.
- */
-export function matchesRule(
-  rule: PermissionRule,
-  toolName: string,
-  args: unknown,
-  pathOptions?: PermissionPathMatchOptions,
-): boolean {
+export function matchPermissionRule({
+  rule,
+  toolName,
+  execution,
+}: PermissionRuleMatchInput): PermissionRuleMatch | undefined {
   let parsed;
   try {
     parsed = parsePattern(rule.pattern);
   } catch {
-    // Malformed patterns never match. The loader is responsible for
-    // surfacing DSL errors at load time; matcher stays total.
-    return false;
+    return undefined;
   }
 
-  // 1. Tool-name match (support `*` wildcard + glob-style tool names)
-  const nameGlob = parsed.toolName;
-  if (nameGlob !== '*' && !picomatch.isMatch(toolName, nameGlob)) return false;
-
-  // 2. No arg pattern → name match is enough
-  if (parsed.argPattern === undefined) return true;
-
-  // 3. Arg pattern — resolve negation and glob-match the field
-  const rawPattern = parsed.argPattern;
-  const negated = rawPattern.startsWith('!');
-  const positivePattern = negated ? rawPattern.slice(1) : rawPattern;
-
-  const fieldValue = extractArgField(toolName, args);
-  if (fieldValue === undefined) {
-    // No extractable field → positive pattern cannot match; negation
-    // semantics here mean "the field is not in the disallowed set",
-    // which by missing-field convention we treat as a non-match to
-    // avoid accidentally firing deny rules on malformed args.
-    return false;
+  if (parsed.toolName !== '*' && !picomatch.isMatch(toolName, parsed.toolName)) {
+    return undefined;
   }
 
-  // If the field is a path, use `pathGlobMatch` which handles normalization.
-  const hit =
-    fieldValue.kind === 'path'
-      ? pathGlobMatch(fieldValue.value, positivePattern, {
-          pathOptions,
-          conservativeCaseFold: rule.decision === 'deny' && !negated,
-        })
-      : globMatch(fieldValue.value, positivePattern);
-  return negated ? !hit : hit;
+  if (parsed.argPattern === undefined) {
+    return { rule, strategy: 'tool_name_only', hasRuleArgs: false };
+  }
+
+  return execution.matchesRule?.(parsed.argPattern) === true
+    ? { rule, strategy: 'matches_rule', hasRuleArgs: true }
+    : undefined;
 }
-
-export type { PermissionPathMatchOptions } from './path-glob-match';

@@ -105,6 +105,8 @@ kimi export <sessionId> -o ~/Desktop/my-session.zip
 
 The ZIP is written to the current working directory by default. The session's own diagnostic log is always bundled along with the session directory. The global diagnostic log at `$KIMI_CODE_HOME/logs/kimi-code.log` — which captures events that do not belong to a session, such as TUI startup and login — is also bundled by default; pass `--no-include-global-log` to skip it.
 
+You can also export the current session without leaving the TUI. `/export-debug-zip` produces the same kind of debug ZIP as `kimi export`, while `/export-md` (alias `/export`) writes a human-readable Markdown transcript — useful for sharing or archiving a readable conversation history. `/export-md` accepts an optional path; with no argument, it writes to `kimi-export-<short-id>-<timestamp>.md` in the working directory.
+
 ::: tip Tip
 Exported files may contain sensitive information. Review the contents before sharing.
 :::

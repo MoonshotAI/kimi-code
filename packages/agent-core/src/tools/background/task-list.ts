@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { BuiltinTool } from '../../agent/tool';
 import type { ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
+import { matchesGlobRuleSubject } from '../support/rule-match';
 import type { BackgroundProcessManager, BackgroundTaskInfo } from './manager';
 import { isBackgroundTaskTerminal } from './manager';
 import TASK_LIST_DESCRIPTION from './task-list.md';
@@ -67,8 +68,11 @@ export class TaskListTool implements BuiltinTool<TaskListInput> {
   constructor(private readonly manager: BackgroundProcessManager) {}
 
   resolveExecution(args: TaskListInput): ToolExecution {
+    const listScope = (args.active_only ?? true) ? 'active' : 'all';
     return {
       description: 'Listing background tasks',
+      approvalRule: this.name,
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, listScope),
       execute: async () => {
         await this.manager.settlePendingExits();
         const activeOnly = args.active_only ?? true;

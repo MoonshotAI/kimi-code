@@ -11,6 +11,10 @@ import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
 // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
 const ANSI_SGR = /\u001B\[[0-9;]*m/g;
 
+const PASTE_MARKER_RE = /\[paste #(\d+)(?: (?:\+\d+ lines|\d+ chars))?\]/g;
+const BRACKET_PASTE_START = '\u001B[200~';
+const BRACKET_PASTE_END = '\u001B[201~';
+
 // Kitty keyboard protocol CSI-u sequence: ESC [ keycode ; modifier[:eventType] u.
 // We intentionally match only the simple two-field form — enough to rewrite
 // `ctrl+<LETTER>` with caps_lock into `ctrl+<letter>` without caps_lock.
@@ -118,6 +122,9 @@ export class CustomEditor extends Editor {
    */
   public onPasteImage?: () => Promise<boolean>;
 
+  private consumingPaste = false;
+  private consumeBuffer = '';
+
   /**
    * `colors` is the live `ColorPalette` reference — the host mutates it
    * in place on theme switch (`Object.assign(state.theme.colors, ...)`), so
@@ -138,6 +145,30 @@ export class CustomEditor extends Editor {
     // content. The right side mirrors with 3 padding columns and the right
     // border at the last column.
     super(tui, createEditorTheme(colors), { paddingX: 4 });
+  }
+
+  private expandPasteMarkerAtCursor(): boolean {
+    const { line, col } = this.getCursor();
+    const lines = this.getLines();
+    const currentLine = lines[line] ?? '';
+
+    for (const match of currentLine.matchAll(PASTE_MARKER_RE)) {
+      const start = match.index;
+      const end = start + match[0].length;
+      if (col < start || col > end) continue;
+
+      const pasteId = Number(match[1]);
+      const pastes = (this as unknown as { pastes: Map<number, string> }).pastes;
+      const content = pastes.get(pasteId);
+      if (content === undefined) return false;
+
+      const text = this.getText();
+      const offset = lines.slice(0, line).reduce((sum, l) => sum + l.length + 1, 0) + start;
+      const newText = text.slice(0, offset) + content + text.slice(offset + match[0].length);
+      this.setText(newText);
+      return true;
+    }
+    return false;
   }
 
   private hasAutocompleteActivity(): boolean {
@@ -190,6 +221,27 @@ export class CustomEditor extends Editor {
     if (isKeyRelease(normalized)) {
       return;
     }
+
+    // When a paste marker was just expanded, discard the trailing bracketed
+    // paste data that the terminal sends alongside the Ctrl-V keystroke.
+    if (this.consumingPaste) {
+      this.consumeBuffer += normalized;
+      if (this.consumeBuffer.includes(BRACKET_PASTE_END)) {
+        this.consumingPaste = false;
+        this.consumeBuffer = '';
+      }
+      return;
+    }
+
+    // If a bracketed paste arrives while the cursor sits on an existing
+    // paste marker, expand that marker instead of pasting new content.
+    if (normalized.includes(BRACKET_PASTE_START) && this.expandPasteMarkerAtCursor()) {
+      if (!normalized.includes(BRACKET_PASTE_END)) {
+        this.consumingPaste = true;
+      }
+      return;
+    }
+
     // Paste image binding — platform-aware:
     //   Windows terminals reserve Ctrl-V for their own paste handling
     //   (e.g. Windows Terminal's Ctrl+V shortcut), so we listen for
@@ -197,17 +249,20 @@ export class CustomEditor extends Editor {
     //   reports no image available, we fall through to pi-tui's
     //   normal paste path so text from the clipboard still works.
     const pasteKey = process.platform === 'win32' ? 'alt+v' : Key.ctrl('v');
-    if (matchesKey(normalized, pasteKey) && this.onPasteImage !== undefined) {
-      const handler = this.onPasteImage;
-      void handler().then((handled) => {
-        if (!handled) {
-          this.onTextPaste?.();
-          // No image on the clipboard — forward the original keystroke
-          // through the base handler so a textual clipboard still works.
-          super.handleInput.call(this, normalized);
-        }
-      });
-      return;
+    if (matchesKey(normalized, pasteKey)) {
+      if (this.expandPasteMarkerAtCursor()) {
+        return;
+      }
+      if (this.onPasteImage !== undefined) {
+        const handler = this.onPasteImage;
+        void handler().then((handled) => {
+          if (!handled) {
+            this.onTextPaste?.();
+            super.handleInput.call(this, normalized);
+          }
+        });
+        return;
+      }
     }
 
     if (matchesKey(normalized, Key.ctrl('d'))) {

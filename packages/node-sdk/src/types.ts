@@ -1,6 +1,7 @@
 import type {
   ExportSessionManifest,
   ResumeSessionResult,
+  ShellEnvironment,
   TelemetryClient,
   TelemetryContextPatch,
   TelemetryProperties,
@@ -35,6 +36,7 @@ export type {
   ProviderType,
   ResumedAgentState,
   ServicesConfig,
+  ShellEnvironment,
   SkillSummary,
   ThinkingConfig,
   ToolInfo,
@@ -94,6 +96,9 @@ export interface ExportSessionInput {
   readonly includeGlobalLog?: boolean | undefined;
   /** Host version to record in the export manifest. */
   readonly version: string;
+  /** How the CLI was installed (e.g. 'npm-global', 'native'). */
+  readonly installSource?: string | undefined;
+  readonly shellEnv?: ShellEnvironment | undefined;
 }
 
 export interface ExportSessionResult {

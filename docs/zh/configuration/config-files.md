@@ -201,7 +201,7 @@ api_key = "sk-xxx"
 | --- | --- | --- | --- |
 | `decision` | `string` | 是 | 决策结果，可选 `allow`、`deny`、`ask` |
 | `scope` | `string` | 否 | 规则作用域，可选 `turn-override`、`session-runtime`、`project`、`user`；默认 `user` |
-| `pattern` | `string` | 是 | 匹配模式，格式为 `ToolName` 或 `ToolName(arg-pattern)`。`ToolName` 必须与运行时真实工具名一致——内置工具是 `Read`、`Write`、`Edit`、`Bash`、`Grep` 等（详见 [内置工具](../reference/tools.md)） |
+| `pattern` | `string` | 是 | 匹配模式，格式为 `ToolName` 或 `ToolName(arg-pattern)`。`ToolName` 必须与运行时真实工具名一致——内置工具是 `Read`、`Write`、`Edit`、`Bash`、`Grep` 等（详见 [内置工具](../reference/tools.md)）。参数模式只由带内置参数 matcher 的工具解释，例如 `Bash`、文件工具和搜索工具；MCP 工具和自定义工具只按工具名匹配 |
 | `reason` | `string` | 否 | 规则说明，供调试或审计使用 |
 
 示例：
