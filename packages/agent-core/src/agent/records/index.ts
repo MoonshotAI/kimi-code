@@ -16,6 +16,13 @@ export {
   InMemoryAgentRecordPersistence,
 } from './persistence';
 export type { FileSystemAgentRecordPersistenceOptions } from './persistence';
+export {
+  isBlobRef,
+  offloadRecordBlobs,
+  rehydrateRecordBlobs,
+  rehydrateMessagesBlobs,
+} from './blobref';
+export type { BlobOffloadOptions } from './blobref';
 
 // Contract: restore MUST NOT emit UI events, call the LLM, execute tools, or
 // touch the filesystem in a way that triggers external side effects. Each case

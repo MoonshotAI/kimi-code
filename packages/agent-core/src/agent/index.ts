@@ -140,6 +140,7 @@ export class Agent {
               onError: (error) => {
                 this.emitRecordsWriteError(error);
               },
+              blobsDir: join(config.homedir, 'blobs'),
             })
           : undefined),
     );
@@ -194,6 +195,7 @@ export class Agent {
       capability: this.config.modelCapabilities,
       generate: this.generate,
       completionBudgetConfig,
+      blobsDir: this.homedir ? join(this.homedir, 'blobs') : undefined,
     });
   }
 

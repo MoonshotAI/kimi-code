@@ -3,10 +3,13 @@ import { mkdir, open } from 'node:fs/promises';
 import { dirname } from 'pathe';
 
 import { syncDir } from '../../utils/fs';
+import { offloadRecordBlobs } from './blobref';
 import { type AgentRecord, type AgentRecordPersistence } from './types';
 
 export interface FileSystemAgentRecordPersistenceOptions {
   readonly onError?: ((error: unknown) => void) | undefined;
+  readonly blobsDir?: string | undefined;
+  readonly blobThreshold?: number | undefined;
 }
 
 export interface InMemoryAgentRecordPersistenceOptions {
@@ -168,6 +171,17 @@ export class FileSystemAgentRecordPersistence implements AgentRecordPersistence 
     const shouldClear = this.shouldClear;
     const batch = this.pendingRecords.splice(0);
     this.shouldClear = false;
+
+    if (this.options.blobsDir !== undefined) {
+      await Promise.all(
+        batch.map((record) =>
+          offloadRecordBlobs(record, {
+            blobsDir: this.options.blobsDir!,
+            threshold: this.options.blobThreshold,
+          }),
+        ),
+      );
+    }
 
     const content = batch.map((e) => JSON.stringify(e) + '\n').join('');
     const directory = dirname(this.filePath);

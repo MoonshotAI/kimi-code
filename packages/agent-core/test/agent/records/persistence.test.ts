@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
@@ -216,6 +216,36 @@ describe('FileSystemAgentRecordPersistence', () => {
       ]);
     }).toThrow();
     await expect(persistence.flush()).rejects.toBeInstanceOf(Error);
+  });
+
+  it('offloads large data URIs to blobsDir during append', async () => {
+    const dir = join(tmpdir(), `wire-blob-test-${randomBytes(6).toString('hex')}`);
+    await mkdir(dir, { recursive: true });
+    cleanups.push(dir);
+
+    const wirePath = join(dir, 'wire.jsonl');
+    const blobsDir = join(dir, 'blobs');
+    const persistence = new FileSystemAgentRecordPersistence(wirePath, { blobsDir });
+
+    const payload = 'X'.repeat(5000);
+    const dataUri = `data:image/png;base64,${payload}`;
+
+    persistence.append({
+      type: 'turn.prompt',
+      input: [{ type: 'image_url', imageUrl: { url: dataUri } }],
+      origin: { kind: 'user' },
+    });
+    await persistence.close();
+
+    const lines = await readLines(wirePath);
+    expect(lines).toHaveLength(1);
+    const record = JSON.parse(lines[0]!) as unknown as Record<string, unknown>;
+    const url = ((record['input'] as unknown[])[0] as { imageUrl: { url: string } }).imageUrl.url;
+    expect(url.startsWith('blobref:')).toBe(true);
+
+    const blobFiles = await readdir(blobsDir);
+    expect(blobFiles).toHaveLength(1);
+    expect(await readFile(join(blobsDir, blobFiles[0]!), 'utf8')).toBe(payload);
   });
 });
 
