@@ -1,128 +1,23 @@
 /**
- * Tests for `agent/cron/manager.ts`.
- *
- * The manager is tested against a lightweight Agent stub rather than a
- * real Agent. That keeps the test fast, deterministic, and focused on
- * exactly the surface the manager actually touches:
- *
- *   - `agent.turn.hasActiveTurn` (getter)
- *   - `agent.turn.steer(content, origin)` (returns turnId or null)
- *   - `agent.telemetry.track(event, props)`
- *
- * Building a real Agent here would drag in kosong / records / context
- * for no incremental coverage — the wiring path is verified separately
- * in P1.7 (agent lifecycle + tool barrel).
- *
- * Time is injected via a `ClockSources` whose `wallNow` is driven by
- * hand. `KIMI_CRON_NO_JITTER=1` is used everywhere we assert on a
- * specific fire count so the jitter window doesn't make assertions
- * flaky; the stale-flag tests don't depend on the scheduler firing so
- * jitter is irrelevant there.
+ * Tests for `agent/cron/manager.ts`. Uses a lightweight Agent stub
+ * (see ./harness/stub) — only the three surfaces the manager touches
+ * (turn.hasActiveTurn, turn.steer, telemetry.track) need to look real.
  */
-import type { ContentPart } from '@moonshot-ai/kosong';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Agent } from '../../../src/agent';
-import type { PromptOrigin } from '../../../src/agent/context/types';
 import { CronManager } from '../../../src/agent/cron/manager';
-import type { ClockSources } from '../../../src/tools/cron/clock';
 import {
   CRON_FIRED,
   CRON_MISSED,
 } from '../../../src/tools/cron/telemetry-events';
 import type { CronTask } from '../../../src/tools/cron/types';
+import {
+  createAgentStub,
+  createClocks,
+  WALL_ANCHOR,
+} from './harness/stub';
 
-// Stable wall-clock anchor (Nov 14 2023, 22:13:20 UTC) — same anchor as
-// `tools/cron/scheduler.test.ts` so cross-file timing assertions stay
-// comparable. Picked deliberately off any round minute so the next
-// `*/5 * * * *` fire is not exactly five minutes ahead.
-const WALL_ANCHOR = 1_700_000_000_000;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-
-interface SteerCall {
-  readonly content: readonly ContentPart[];
-  readonly origin: PromptOrigin;
-}
-interface TelemetryCall {
-  readonly event: string;
-  readonly props: unknown;
-}
-
-interface AgentStub {
-  readonly agent: Agent;
-  readonly steerCalls: SteerCall[];
-  readonly telemetryCalls: TelemetryCall[];
-  setHasActiveTurn(v: boolean): void;
-}
-
-interface AgentStubOptions {
-  readonly hasActiveTurn?: boolean;
-  readonly steerReturns?: number | null;
-}
-
-function createAgentStub(opts: AgentStubOptions = {}): AgentStub {
-  const steerCalls: SteerCall[] = [];
-  const telemetryCalls: TelemetryCall[] = [];
-  let hasActiveTurn = opts.hasActiveTurn ?? false;
-  // Distinguish "not specified" (default 42) from "explicitly null"
-  // (buffered). `?? 42` would collapse both into 42 because the
-  // nullish-coalescing operator treats `null` as missing.
-  const steerReturns: number | null =
-    'steerReturns' in opts ? (opts.steerReturns as number | null) : 42;
-
-  const turn = {
-    get hasActiveTurn(): boolean {
-      return hasActiveTurn;
-    },
-    steer: (content: readonly ContentPart[], origin: PromptOrigin) => {
-      steerCalls.push({ content, origin });
-      return steerReturns;
-    },
-  };
-  const telemetry = {
-    track: (event: string, props: unknown) => {
-      telemetryCalls.push({ event, props });
-    },
-  };
-  const agent = { turn, telemetry } as unknown as Agent;
-  return {
-    agent,
-    steerCalls,
-    telemetryCalls,
-    setHasActiveTurn: (v: boolean) => {
-      hasActiveTurn = v;
-    },
-  };
-}
-
-/**
- * Build a frozen-clock harness. `now` is mutable via the returned
- * `advance` helper so individual cases can age tasks past the 7-day
- * stale threshold without sleeping.
- */
-function createClocks(initial = WALL_ANCHOR): {
-  clocks: ClockSources;
-  setNow(v: number): void;
-  advance(ms: number): void;
-  now(): number;
-} {
-  let wall = initial;
-  let mono = 1_000_000;
-  return {
-    clocks: {
-      wallNow: () => wall,
-      monoNowMs: () => mono,
-    },
-    setNow: (v) => {
-      wall = v;
-    },
-    advance: (ms) => {
-      wall += ms;
-      mono += ms;
-    },
-    now: () => wall,
-  };
-}
 
 describe('CronManager', () => {
   beforeEach(() => {

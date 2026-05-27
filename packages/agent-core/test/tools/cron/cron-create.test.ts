@@ -1,35 +1,13 @@
 /**
  * Tests for `tools/cron/cron-create.ts`.
  *
- * The tool is wired against a `CronManager` instance backed by a
- * lightweight Agent stub — the same pattern as
- * `test/agent/cron/manager.test.ts`. That keeps validation focused on
- * exactly the surface the tool touches:
- *
- *   - `manager.clocks.wallNow()` (the cron parse uses this for the
- *     5-year fire-window check)
- *   - `manager.store.add(...)` / `manager.store.list()` (cap + storage)
- *   - `manager.emitScheduled(...)` (telemetry — observed via the
- *     stub's `telemetryCalls`).
- *
- * `KIMI_DISABLE_CRON` / `KIMI_CRON_NO_JITTER` are toggled via
- * `vi.stubEnv` and reset in `afterEach` so leaked env state can't taint
- * sibling tests.
- *
- * Note on the empty-prompt case: zod's `.min(1)` lives in the input
- * schema that the loop validates with AJV *before* `resolveExecution`
- * is ever called. Calling the tool directly with `prompt: ''` therefore
- * does NOT exercise zod — that's a property of the loop's validation
- * layer, not the tool itself. We document the path here rather than
+ * Empty-prompt handling lives in the loop's AJV layer (`prompt.min(1)`
+ * runs before `resolveExecution`), so we document the path instead of
  * asserting a false positive.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ContentPart } from '@moonshot-ai/kosong';
 
-import type { Agent } from '../../../src/agent';
-import type { PromptOrigin } from '../../../src/agent/context/types';
 import { CronManager } from '../../../src/agent/cron/manager';
-import type { ClockSources } from '../../../src/tools/cron/clock';
 import {
   CronCreateTool,
   MAX_CRON_JOBS_PER_SESSION,
@@ -42,55 +20,11 @@ import type {
   RunnableToolExecution,
   ToolExecution,
 } from '../../../src/loop/types';
-
-// Same anchor as `test/agent/cron/manager.test.ts` so cross-file
-// timing assertions stay comparable.
-const WALL_ANCHOR = 1_700_000_000_000;
-
-interface SteerCall {
-  readonly content: readonly ContentPart[];
-  readonly origin: PromptOrigin;
-}
-interface TelemetryCall {
-  readonly event: string;
-  readonly props: unknown;
-}
-
-interface AgentStub {
-  readonly agent: Agent;
-  readonly steerCalls: SteerCall[];
-  readonly telemetryCalls: TelemetryCall[];
-}
-
-function createAgentStub(): AgentStub {
-  const steerCalls: SteerCall[] = [];
-  const telemetryCalls: TelemetryCall[] = [];
-  const turn = {
-    get hasActiveTurn(): boolean {
-      return false;
-    },
-    steer: (content: readonly ContentPart[], origin: PromptOrigin) => {
-      steerCalls.push({ content, origin });
-      return 42;
-    },
-  };
-  const telemetry = {
-    track: (event: string, props: unknown) => {
-      telemetryCalls.push({ event, props });
-    },
-  };
-  const agent = { turn, telemetry } as unknown as Agent;
-  return { agent, steerCalls, telemetryCalls };
-}
-
-function createClocks(initial = WALL_ANCHOR): ClockSources {
-  let wall = initial;
-  let mono = 1_000_000;
-  return {
-    wallNow: () => wall,
-    monoNowMs: () => mono,
-  };
-}
+import {
+  createAgentStub,
+  createClocks,
+  type AgentStub,
+} from '../../agent/cron/harness/stub';
 
 interface Harness {
   readonly stub: AgentStub;
@@ -101,7 +35,7 @@ interface Harness {
 function makeHarness(): Harness {
   const stub = createAgentStub();
   const manager = new CronManager(stub.agent, {
-    clocks: createClocks(),
+    clocks: createClocks().clocks,
     pollIntervalMs: null,
   });
   const tool = new CronCreateTool(manager);
