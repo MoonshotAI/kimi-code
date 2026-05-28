@@ -33,6 +33,7 @@ import {
   showSettingsSelector,
 } from './config';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
+import { handlePluginsCommand } from './plugins';
 import {
   handleExportDebugZipCommand,
   handleExportMdCommand,
@@ -67,6 +68,7 @@ export {
   showStatusReport,
   showUsage,
 } from './info';
+export { handlePluginsCommand } from './plugins';
 export {
   handleExportDebugZipCommand,
   handleExportMdCommand,
@@ -210,6 +212,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'mcp':
       void showMcpServers(host);
+      return;
+    case 'plugins':
+      void handlePluginsCommand(host, args);
       return;
     case 'editor':
       await handleEditorCommand(host, args);

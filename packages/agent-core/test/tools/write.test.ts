@@ -58,6 +58,23 @@ describe('WriteTool', () => {
     expect(params.properties.path.description).toMatch(/absolute/i);
   });
 
+  it('exposes the content on the file_io display so the approval panel can preview it', () => {
+    const tool = new WriteTool(createFakeKaos(), PERMISSIVE_WORKSPACE);
+    const execution = tool.resolveExecution({
+      path: '/tmp/new.txt',
+      content: 'hello\nworld',
+    });
+    if (execution.isError === true) {
+      throw new TypeError('expected runnable execution');
+    }
+    expect(execution.display).toEqual({
+      kind: 'file_io',
+      operation: 'write',
+      path: '/tmp/new.txt',
+      content: 'hello\nworld',
+    });
+  });
+
   it('matches permission args with negated glob path semantics', () => {
     const tool = new WriteTool(createFakeKaos(), {
       workspaceDir: '/workspace',

@@ -5,6 +5,7 @@ export * from './config';
 export * from './session/export';
 export * from './telemetry';
 export * from './errors';
+export * from './plugin';
 export {
   flushDiagnosticLogs,
   getRootLogger,

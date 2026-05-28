@@ -47,6 +47,10 @@ import {
   ApprovalPanelComponent,
   type ApprovalPanelResponse,
 } from './components/dialogs/approval-panel';
+import {
+  ApprovalPreviewViewer,
+  type ApprovalPreviewBlock,
+} from './components/dialogs/approval-preview';
 import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
@@ -202,6 +206,20 @@ export class KimiTUI {
   readonly sessionReplay: SessionReplayRenderer;
   readonly tasksBrowserController: TasksBrowserController;
   readonly editorKeyboard: EditorKeyboardController;
+
+  // The currently-mounted approval panel, if any. Kept so the full-screen
+  // preview viewer can restore focus to the exact same instance (and its
+  // selection / feedback state) when it closes.
+  private activeApprovalPanel: ApprovalPanelComponent | undefined;
+  // Active full-screen approval preview. While set, the root UI's normal
+  // children are stashed in `savedChildren`; closing restores them.
+  private approvalPreview:
+    | {
+        component: ApprovalPreviewViewer;
+        savedChildren: readonly Component[];
+        panel: ApprovalPanelComponent;
+      }
+    | undefined;
 
   public onExit?: (exitCode?: number) => Promise<void>;
 
@@ -1626,13 +1644,58 @@ export class KimiTUI {
       () => {
         this.togglePlanExpansion();
       },
+      (block) => {
+        this.openApprovalPreview(panel, block);
+      },
     );
+    this.activeApprovalPanel = panel;
     this.mountEditorReplacement(panel);
   }
 
   private hideApprovalPanel(): void {
+    // If the full-screen preview is open, fold it back first so the saved-
+    // children stack stays consistent with what mountEditorReplacement set up.
+    if (this.approvalPreview !== undefined) this.closeApprovalPreview();
+    this.activeApprovalPanel = undefined;
     this.patchLivePane({ pendingApproval: null });
     this.restoreEditor();
+  }
+
+  // Mounts the full-screen approval preview viewer on top of the current
+  // approval panel. Uses the same nested-takeover pattern as
+  // openTaskOutputViewer: we snapshot the root container's children, swap
+  // in the viewer, and restore on close. The approval panel instance is
+  // kept around in `activeApprovalPanel` so its selection state survives.
+  private openApprovalPreview(panel: ApprovalPanelComponent, block: ApprovalPreviewBlock): void {
+    if (this.approvalPreview !== undefined) return;
+    const savedChildren = [...this.state.ui.children];
+    const viewer = new ApprovalPreviewViewer(
+      {
+        block,
+        colors: this.state.theme.colors,
+        onClose: () => {
+          this.closeApprovalPreview();
+        },
+      },
+      this.state.terminal,
+    );
+    this.state.ui.clear();
+    this.state.ui.addChild(viewer);
+    this.state.ui.setFocus(viewer);
+    this.state.ui.requestRender(true);
+    this.approvalPreview = { component: viewer, savedChildren, panel };
+  }
+
+  private closeApprovalPreview(): void {
+    const preview = this.approvalPreview;
+    if (preview === undefined) return;
+    this.approvalPreview = undefined;
+    this.state.ui.clear();
+    for (const child of preview.savedChildren) {
+      this.state.ui.addChild(child);
+    }
+    this.state.ui.setFocus(preview.panel);
+    this.state.ui.requestRender(true);
   }
 
   private showQuestionDialog(payload: QuestionPanelData): void {

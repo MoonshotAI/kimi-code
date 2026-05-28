@@ -69,7 +69,7 @@ export class WriteTool implements BuiltinTool<WriteInput> {
     return {
       accesses: ToolAccesses.writeFile(path),
       description: `Writing ${args.path}`,
-      display: { kind: 'file_io', operation: 'write', path },
+      display: { kind: 'file_io', operation: 'write', path, content: args.content },
       approvalRule: literalRulePattern(this.name, path),
       matchesRule: (ruleArgs) =>
         matchesPathRuleSubject(ruleArgs, path, {

@@ -1,0 +1,10 @@
+export * from './types';
+export { parseManifest } from './manifest';
+export type { ParsedManifestResult } from './manifest';
+export { readInstalled, writeInstalled } from './store';
+export type { InstalledFile, InstalledRecord } from './store';
+export { PluginManager } from './manager';
+export type { PluginManagerOptions } from './manager';
+export { resolveInstallSource } from './source';
+export type { InstallSource, ResolvedSource } from './source';
+export { downloadZip, extractZip } from './archive';

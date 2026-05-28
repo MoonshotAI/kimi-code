@@ -91,6 +91,72 @@ describe('approval adapter', () => {
     ]);
   });
 
+  // The builtin Write tool emits its display as file_io (operation=write) with
+  // the file content alongside the path, so the approval panel can show — and
+  // ctrl+e expand — the bytes about to land on disk.
+  it('emits a file_content block for file_io write with content', () => {
+    const adapted = adaptApprovalRequest({
+      toolCallId: 'tc-write-io',
+      toolName: 'Write',
+      action: 'Writing src/new.ts',
+      display: {
+        kind: 'file_io',
+        operation: 'write',
+        path: 'src/new.ts',
+        content: 'export const x = 1;\nexport const y = 2;',
+      },
+    });
+
+    expect(adapted.display).toEqual([
+      {
+        type: 'file_content',
+        path: 'src/new.ts',
+        content: 'export const x = 1;\nexport const y = 2;',
+      },
+    ]);
+  });
+
+  // The builtin Edit tool emits its display as file_io (operation=edit) with
+  // before/after carrying old_string/new_string, so the panel can render the
+  // hunk as a diff just like the generic-fallback path used to.
+  it('emits a diff block for file_io edit with before/after', () => {
+    const adapted = adaptApprovalRequest({
+      toolCallId: 'tc-edit-io',
+      toolName: 'Edit',
+      action: 'Editing src/foo.ts',
+      display: {
+        kind: 'file_io',
+        operation: 'edit',
+        path: 'src/foo.ts',
+        before: 'a\nb\nc',
+        after: 'a\nB\nc',
+      },
+    });
+
+    expect(adapted.display).toEqual([
+      { type: 'diff', path: 'src/foo.ts', old_text: 'a\nb\nc', new_text: 'a\nB\nc' },
+    ]);
+  });
+
+  // Read/Glob/Grep have no content to preview, so file_io without
+  // content/before/after still collapses to a path-only file_op row.
+  it('keeps a path-only file_op block for file_io without preview fields', () => {
+    const adapted = adaptApprovalRequest({
+      toolCallId: 'tc-read',
+      toolName: 'Read',
+      action: 'Reading src/foo.ts',
+      display: {
+        kind: 'file_io',
+        operation: 'read',
+        path: 'src/foo.ts',
+      },
+    });
+
+    expect(adapted.display).toEqual([
+      { type: 'file_op', operation: 'read', path: 'src/foo.ts', detail: undefined },
+    ]);
+  });
+
   it('omits plan review content from the approval panel while keeping Python-style choices', () => {
     const adapted = adaptApprovalRequest({
       toolCallId: 'tc-plan',

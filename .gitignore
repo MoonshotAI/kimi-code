@@ -10,4 +10,5 @@ coverage/
 .claude
 .conductor
 .kimi-stash-dir
-superpowers/
+plugins/cdn/
+superpowers

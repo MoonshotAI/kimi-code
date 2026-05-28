@@ -73,6 +73,7 @@ When neither `KIMI_CODE_OAUTH_HOST` nor `KIMI_OAUTH_HOST` is set, the OAuth auth
 | --- | --- | --- |
 | `KIMI_DISABLE_TELEMETRY` | Disable telemetry reporting | `1`, `true`, `t`, `yes`, `y` (case-insensitive) |
 | `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` | Override `[background].keep_alive_on_exit`, controlling whether still-running background tasks are kept when the session closes | True values: `1`, `true`, `yes`, `on`; false values: `0`, `false`, `no`, `off`; when unset, reads `config.toml`, then falls back to `true` |
+| `KIMI_CODE_PLUGIN_MARKETPLACE_URL` | Override the plugin marketplace JSON loaded by `/plugins`; useful for dev loopback servers, staging CDN files, or alternate marketplace directories | `https://cdn.kimi.com/kimi-code/plugins/marketplace.json`; also accepts `http://`, `file://` URLs, and local paths |
 | `KIMI_SHELL_PATH` | Override the absolute path to Git Bash (`bash.exe`) on Windows; only needed when auto-detection fails on Windows | None |
 | `KIMI_MODEL_MAX_COMPLETION_TOKENS` | Explicit hard cap for `max_completion_tokens` in a single-step LLM request. When unset, Kimi Code uses the safe remaining context window for models with a known context size. Set to `0` or a negative value to disable clamping entirely. **Currently effective only for providers of type `kimi`**; for Anthropic and other providers, use `[models.<alias>].max_output_size` instead (see [Config files](./config-files.md#models)) | Unset: computed from remaining context; unknown context falls back to `loop_control.reserved_context_size`, then 32000 |
 

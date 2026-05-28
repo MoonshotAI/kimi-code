@@ -17,6 +17,8 @@ MCP server 配置写在 `mcp.json` 中，分为两层：
 
 最方便的入口是在 TUI 中运行 `/mcp-config`，它会引导你新增、编辑或删除 server。要查看当前连接状态，可运行 `/mcp`。
 
+Plugins 也可以在 `kimi.plugin.json` 或 `.kimi-plugin/plugin.json` 中声明 MCP servers。Plugin 声明的 servers 默认启用，但只会在新会话中启动；可以在 `/plugins` 中禁用或重新启用，也可以使用 `/plugins mcp disable|enable <plugin-id> <server>`，然后开启新会话。详见 [Plugins](./plugins.md)。
+
 `mcp.json` 的顶层结构如下：
 
 ```json

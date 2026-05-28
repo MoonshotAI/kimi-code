@@ -55,6 +55,7 @@
 | `/usage` | — | 显示 token 用量、上下文占用以及配额信息。 | 是 |
 | `/status` | — | 显示当前会话运行时状态，包括版本、模型、工作目录和权限模式等。 | 是 |
 | `/mcp` | — | 列出当前会话中的 MCP server 及其连接状态。 | 是 |
+| `/plugins` | — | 打开面向 user/global（用户全局）安装的交互式 plugin 管理器，用于安装、查看、启用、禁用、确认移除、重载、浏览官方 marketplace，以及启用或禁用 plugin MCP servers；快捷子命令仍可使用。 | 是 |
 | `/version` | — | 显示 Kimi Code CLI 版本号。 | 是 |
 | `/feedback` | — | 提交反馈以改进 Kimi Code CLI。 | 是 |
 

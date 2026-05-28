@@ -18,6 +18,7 @@ import {
   type McpServerEntry,
   type SessionMcpConfig,
 } from '../mcp';
+import type { EnabledPluginSessionStart } from '../plugin';
 import {
   DEFAULT_AGENT_PROFILES,
   DEFAULT_INIT_PROMPT,
@@ -32,6 +33,7 @@ import {
   resolveSkillRoots,
   SkillRegistry,
   summarizeSkill,
+  type SkillRoot,
   type SkillSummary,
 } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
@@ -52,12 +54,14 @@ export interface SessionConfig {
   readonly skills?: SessionSkillConfig;
   readonly mcpConfig?: SessionMcpConfig;
   readonly telemetry?: TelemetryClient | undefined;
+  readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
 }
 
 export interface SessionSkillConfig {
   readonly userHomeDir?: string;
   readonly explicitDirs?: readonly string[];
   readonly extraDirs?: readonly string[];
+  readonly pluginSkillRoots?: readonly SkillRoot[];
   readonly mergeAllAvailableSkills?: boolean;
   readonly builtinDir?: string;
 }
@@ -325,6 +329,7 @@ export class Session {
       },
       explicitDirs: this.config.skills?.explicitDirs,
       extraDirs: this.config.skills?.extraDirs,
+      pluginSkillRoots: this.config.skills?.pluginSkillRoots,
       mergeAllAvailableSkills: this.config.skills?.mergeAllAvailableSkills,
       builtinDir: this.config.skills?.builtinDir,
     });
@@ -420,6 +425,7 @@ export class Session {
       permission: this.permissionOptions(parentAgentId, config.permission),
       telemetry: this.telemetry,
       log: this.log.createChild({ agentId: id }),
+      pluginSessionStarts: type === 'main' ? this.config.pluginSessionStarts : undefined,
     });
   }
 

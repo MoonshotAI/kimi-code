@@ -27,6 +27,7 @@ export {
   showStatusReport,
   showUsage,
 } from './info';
+export { handlePluginsCommand } from './plugins';
 export {
   handleForkCommand,
   handleInitCommand,
