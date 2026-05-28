@@ -32,15 +32,17 @@ export interface VisibleTodos {
 /**
  * Pick which todos to render when the list exceeds {@link MAX_VISIBLE}.
  *
- * Strategy: prioritise the user's current focus.
+ * The selector is order-agnostic — the TodoList tool keeps whatever
+ * order the model produced and does not group items by status, so an
+ * interleaved sequence like `pending, done, pending, done, ...` is
+ * possible and must still yield MAX_VISIBLE rows when enough exist.
+ *
+ * Strategy:
  * 1. Include every `in_progress` item (capped at MAX_VISIBLE).
- * 2. Anchor on the in_progress range and fill remaining slots with
- *    "what's next" (pending after the anchor), reserving one slot for
- *    "what just finished" (done before the anchor) when both sides
- *    have candidates.
- * 3. With no in_progress, anchor between the last done and the first
- *    pending; otherwise fall back to last-5 (all done) or first-5
- *    (all pending).
+ * 2. Fill remaining slots with "what's next" — the earliest `pending`
+ *    items in their original positions — while reserving one slot for
+ *    "what just finished" — the latest `done` item — when both kinds
+ *    exist. If one side has too few candidates, the other expands.
  *
  * Items are returned in their original order.
  */
@@ -49,69 +51,42 @@ export function selectVisibleTodos(todos: readonly TodoItem[]): VisibleTodos {
     return { rows: [...todos], hidden: 0 };
   }
 
-  const ipIndices: number[] = [];
+  const inProgress: number[] = [];
+  const pending: number[] = [];
+  const done: number[] = [];
   for (const [i, todo] of todos.entries()) {
-    if (todo.status === 'in_progress') ipIndices.push(i);
+    if (todo.status === 'in_progress') inProgress.push(i);
+    else if (todo.status === 'pending') pending.push(i);
+    else done.push(i);
   }
 
   const picked = new Set<number>();
-  for (const i of ipIndices.slice(0, MAX_VISIBLE)) picked.add(i);
+  for (const i of inProgress.slice(0, MAX_VISIBLE)) picked.add(i);
 
   if (picked.size < MAX_VISIBLE) {
-    let beforeAnchor: number;
-    let afterAnchor: number;
-
-    if (ipIndices.length > 0) {
-      beforeAnchor = ipIndices[0] as number;
-      afterAnchor = ipIndices.at(-1) as number;
-    } else {
-      const firstPending = todos.findIndex((t) => t.status === 'pending');
-      let lastDone = -1;
-      for (let i = todos.length - 1; i >= 0; i--) {
-        if (todos[i]?.status === 'done') {
-          lastDone = i;
-          break;
-        }
-      }
-      if (firstPending < 0) {
-        beforeAnchor = todos.length;
-        afterAnchor = todos.length;
-      } else if (lastDone < 0) {
-        beforeAnchor = -1;
-        afterAnchor = -1;
-      } else {
-        beforeAnchor = firstPending;
-        afterAnchor = lastDone;
-      }
-    }
-
-    const before: number[] = [];
-    for (let i = beforeAnchor - 1; i >= 0; i--) {
-      if (!picked.has(i)) before.push(i);
-    }
-    const after: number[] = [];
-    for (let i = afterAnchor + 1; i < todos.length; i++) {
-      if (!picked.has(i)) after.push(i);
-    }
+    // Most recent done first; earliest pending first.
+    const doneCandidates = done.toReversed();
+    const pendingCandidates = pending;
 
     const remaining = MAX_VISIBLE - picked.size;
-    let beforeAlloc = 0;
-    let afterAlloc = 0;
-
-    if (before.length === 0) {
-      afterAlloc = Math.min(remaining, after.length);
-    } else if (after.length === 0) {
-      beforeAlloc = Math.min(remaining, before.length);
+    let doneCount: number;
+    let pendingCount: number;
+    if (doneCandidates.length === 0) {
+      doneCount = 0;
+      pendingCount = Math.min(remaining, pendingCandidates.length);
+    } else if (pendingCandidates.length === 0) {
+      pendingCount = 0;
+      doneCount = Math.min(remaining, doneCandidates.length);
     } else {
-      beforeAlloc = 1;
-      afterAlloc = Math.min(remaining - 1, after.length);
-      if (afterAlloc < remaining - 1) {
-        beforeAlloc = Math.min(before.length, remaining - afterAlloc);
+      doneCount = 1;
+      pendingCount = Math.min(remaining - 1, pendingCandidates.length);
+      if (pendingCount < remaining - 1) {
+        doneCount = Math.min(doneCandidates.length, remaining - pendingCount);
       }
     }
 
-    for (let i = 0; i < beforeAlloc; i++) picked.add(before[i] as number);
-    for (let i = 0; i < afterAlloc; i++) picked.add(after[i] as number);
+    for (let i = 0; i < doneCount; i++) picked.add(doneCandidates[i] as number);
+    for (let i = 0; i < pendingCount; i++) picked.add(pendingCandidates[i] as number);
   }
 
   const sortedIdx = [...picked].toSorted((a, b) => a - b);

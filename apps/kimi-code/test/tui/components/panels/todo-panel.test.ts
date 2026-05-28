@@ -197,6 +197,40 @@ describe('selectVisibleTodos', () => {
     expect(hidden).toBe(2);
   });
 
+  it('no in_progress, interleaved done/pending order: still picks MAX items', () => {
+    const todos: TodoItem[] = [
+      T('p0', 'pending'),
+      T('d0', 'done'),
+      T('p1', 'pending'),
+      T('d1', 'done'),
+      T('p2', 'pending'),
+      T('d2', 'done'),
+      T('p3', 'pending'),
+    ];
+    const { rows, hidden } = selectVisibleTodos(todos);
+    expect(rows.length).toBe(5);
+    expect(hidden).toBe(2);
+    expect(rows.filter((r) => r.status === 'pending').length).toBe(4);
+    expect(rows.filter((r) => r.status === 'done').length).toBe(1);
+  });
+
+  it('done appearing after in_progress is still treated as recent context', () => {
+    const todos: TodoItem[] = [
+      T('ip', 'in_progress'),
+      T('p1', 'pending'),
+      T('d1', 'done'),
+      T('p2', 'pending'),
+      T('p3', 'pending'),
+      T('p4', 'pending'),
+      T('p5', 'pending'),
+    ];
+    const { rows, hidden } = selectVisibleTodos(todos);
+    expect(rows.length).toBe(5);
+    expect(hidden).toBe(2);
+    expect(rows.some((r) => r.status === 'in_progress')).toBe(true);
+    expect(rows.some((r) => r.status === 'done')).toBe(true);
+  });
+
   it('more than 5 in_progress: caps at 5 keeping the earliest', () => {
     const todos: TodoItem[] = Array.from({ length: 7 }, (_, i) =>
       T(`ip${i}`, 'in_progress'),
