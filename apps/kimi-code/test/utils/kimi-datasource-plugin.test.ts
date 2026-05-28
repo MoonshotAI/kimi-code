@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { createServer, type IncomingMessage } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -20,32 +20,13 @@ describe('kimi-datasource MCP server', () => {
     const requests: unknown[] = [];
     let child: ChildProcessWithoutNullStreams | undefined;
 
-    const server = createServer(async (request, response) => {
-      try {
-        requests.push(await readJson(request));
-        response.setHeader('Content-Type', 'application/json');
-        response.end(
-          JSON.stringify({
-            is_success: true,
-            result: {
-              assistant: [{ type: 'text', text: 'assistant complete result' }],
-              user: [{ type: 'text', text: '{"data_preview": null}' }],
-            },
-            files: [
-              { name: textFile, content: 'country,value\nCN,1\n' },
-              {
-                name: binaryFile,
-                content: Buffer.from('binary payload').toString('base64'),
-                encoding: 'base64',
-              },
-              { name: blockedFile, content: 'blocked\n' },
-            ],
-          }),
-        );
-      } catch (error) {
-        response.statusCode = 500;
-        response.end(error instanceof Error ? error.message : String(error));
-      }
+    const server = createServer((request, response) => {
+      void handleMockDatasourceRequest(request, response, {
+        requests,
+        textFile,
+        binaryFile,
+        blockedFile,
+      });
     });
 
     try {
@@ -121,6 +102,43 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
     body += chunk;
   }
   return JSON.parse(body);
+}
+
+async function handleMockDatasourceRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: {
+    readonly requests: unknown[];
+    readonly textFile: string;
+    readonly binaryFile: string;
+    readonly blockedFile: string;
+  },
+): Promise<void> {
+  try {
+    options.requests.push(await readJson(request));
+    response.setHeader('Content-Type', 'application/json');
+    response.end(
+      JSON.stringify({
+        is_success: true,
+        result: {
+          assistant: [{ type: 'text', text: 'assistant complete result' }],
+          user: [{ type: 'text', text: '{"data_preview": null}' }],
+        },
+        files: [
+          { name: options.textFile, content: 'country,value\nCN,1\n' },
+          {
+            name: options.binaryFile,
+            content: Buffer.from('binary payload').toString('base64'),
+            encoding: 'base64',
+          },
+          { name: options.blockedFile, content: 'blocked\n' },
+        ],
+      }),
+    );
+  } catch (error) {
+    response.statusCode = 500;
+    response.end(error instanceof Error ? error.message : String(error));
+  }
 }
 
 function listen(server: ReturnType<typeof createServer>): Promise<void> {
