@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { KimiHarness } from '#/index';
 
-import { resolveRuntimeProvider } from '../../agent-core/src/providers/runtime-provider';
+import { ProviderManager } from '../../agent-core/src/session/provider-manager';
 import { TEST_IDENTITY } from './test-identity';
 
 let homeDir: string;
@@ -96,7 +96,7 @@ describe('KimiHarness.auth', () => {
       capabilities: ['thinking', 'image_in', 'video_in', 'tool_use'],
       displayName: 'Kimi for Coding',
     });
-    expect(resolveRuntimeProvider({ config })).toMatchObject({
+    expect(new ProviderManager({ config }).resolveProviderConfig(config.defaultModel!)).toMatchObject({
       modelCapabilities: {
         tool_use: true,
       },
