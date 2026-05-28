@@ -24,7 +24,7 @@ export class BlobStore {
   private readonly blobsDir: string;
   private readonly threshold: number;
   private readonly maxCacheSize: number;
-  private readonly cache = new Map<string, string>();
+  private readonly cache = new Map<string, Buffer>();
   private readonly cacheSizes = new Map<string, number>();
   private currentCacheSize = 0;
 
@@ -133,10 +133,10 @@ export class BlobStore {
     if (payload === undefined) {
       return undefined;
     }
-    return `data:${mimeType};base64,${payload}`;
+    return `data:${mimeType};base64,${payload.toString('base64')}`;
   }
 
-  private async readBlob(hash: string): Promise<string | undefined> {
+  private async readBlob(hash: string): Promise<Buffer | undefined> {
     const cached = this.cache.get(hash);
     if (cached !== undefined) {
       // Move the entry to the end so it lives longer than less-recently-used items.
@@ -144,7 +144,7 @@ export class BlobStore {
       this.cache.set(hash, cached);
       return cached;
     }
-    const payload = await readFile(join(this.blobsDir, hash), 'utf8').catch(() => undefined);
+    const payload = await readFile(join(this.blobsDir, hash)).catch(() => undefined);
     if (payload !== undefined) {
       this.setCache(hash, payload);
     }
@@ -171,10 +171,11 @@ export class BlobStore {
     await mkdir(this.blobsDir, { recursive: true, mode: 0o700 });
     const hash = createHash('sha256').update(base64Payload, 'utf8').digest('hex');
     const blobPath = join(this.blobsDir, hash);
+    const binary = Buffer.from(base64Payload, 'base64');
     try {
       const fh = await open(blobPath, 'wx');
       try {
-        await fh.writeFile(base64Payload, 'utf8');
+        await fh.writeFile(binary);
         await fh.sync();
       } finally {
         await fh.close();
@@ -184,12 +185,12 @@ export class BlobStore {
       // EEXIST means the identical payload was already written; deduplication.
       if (code !== 'EEXIST') throw error;
     }
-    this.setCache(hash, base64Payload);
+    this.setCache(hash, binary);
     return `${BLOBREF_PROTOCOL}${mimeType};${hash}`;
   }
 
-  private setCache(hash: string, payload: string): void {
-    const size = Buffer.byteLength(payload, 'utf8');
+  private setCache(hash: string, payload: Buffer): void {
+    const size = payload.byteLength;
     const alreadyCached = this.cache.has(hash);
     if (alreadyCached) {
       const oldSize = this.cacheSizes.get(hash) ?? 0;

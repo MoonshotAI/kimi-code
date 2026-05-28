@@ -51,7 +51,7 @@ describe('blobref', () => {
 
     const files = await readdir(blobsDir);
     expect(files).toHaveLength(1);
-    expect(await readFile(join(blobsDir, files[0]!), 'utf8')).toBe(payload);
+    expect((await readFile(join(blobsDir, files[0]!))).toString('base64')).toBe(payload);
   });
 
   it('skips small data URIs below threshold', async () => {
@@ -199,9 +199,9 @@ describe('blobref', () => {
     const limit = 8; // bytes
     const { store, blobsDir } = await makeStore({ maxCacheSize: limit, threshold: 1 });
 
-    const payloadA = 'A'.repeat(4); // 4 bytes
-    const payloadB = 'B'.repeat(4); // 4 bytes
-    const payloadC = 'C'.repeat(4); // 4 bytes
+    const payloadA = 'A'.repeat(4); // 3 bytes after base64 decode
+    const payloadB = 'B'.repeat(4); // 3 bytes after base64 decode
+    const payloadC = 'C'.repeat(4); // 3 bytes after base64 decode
 
     const recordA: AgentRecord = {
       type: 'turn.prompt',
