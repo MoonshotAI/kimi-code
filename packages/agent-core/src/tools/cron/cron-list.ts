@@ -46,14 +46,9 @@ import type { CronManager } from '../../agent/cron';
 import type { ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
 import {
-  computeNextCronRun,
   cronToHuman,
   parseCronExpression,
 } from './cron-expr';
-import {
-  jitteredNextCronRunMs,
-  oneShotJitteredNextCronRunMs,
-} from './jitter';
 import type { CronTask } from './types';
 import CRON_LIST_DESCRIPTION from './cron-list.md';
 
@@ -144,30 +139,12 @@ export class CronListTool implements BuiltinTool<CronListInput> {
     try {
       const parsed = parseCronExpression(task.cron);
       humanSchedule = cronToHuman(parsed);
-      // Match the baseline the scheduler uses when picking the next
-      // ideal fire. One-shots never advance `lastSeenAt` (they are
-      // removed on delivery), so the scheduler always re-computes
-      // their next fire from `task.createdAt` — meaning a one-shot
-      // that was scheduled for 09:00 and is listed at 09:05 is still
-      // pending delivery of *today's* 09:00 slot. Computing from
-      // `nowMs` would make the list report "tomorrow 09:00" and the
-      // model would believe today's reminder had already shipped.
-      // Recurring tasks use the scheduler's internal `lastSeenAt`,
-      // which we cannot see from here; falling back to `nowMs` for
-      // them keeps the drift bounded by one tick interval.
-      const baseFromMs =
-        task.recurring === false ? task.createdAt : nowMs;
-      const ideal = computeNextCronRun(parsed, baseFromMs);
-      if (ideal !== null) {
-        // Match the jitter path CronCreate took when scheduling the
-        // task. Recurring jobs shift forward; one-shots only shift
-        // earlier when they land on a round minute. Either way the
-        // ISO timestamp we render here is the time the scheduler
-        // will actually compare against.
-        const jittered = recurring
-          ? jitteredNextCronRunMs(task, parsed, ideal)
-          : oneShotJitteredNextCronRunMs(task, ideal);
-        nextFireAtIso = new Date(jittered).toISOString();
+      // Delegate to the scheduler so the rendered ISO matches what the
+      // scheduler will actually deliver — including a pending jittered
+      // slot in the current period.
+      const nextFireMs = this.manager.getNextFireForTask(task.id);
+      if (nextFireMs !== null) {
+        nextFireAtIso = new Date(nextFireMs).toISOString();
       }
     } catch {
       // Malformed cron string — leave humanSchedule as the raw

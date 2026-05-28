@@ -181,6 +181,16 @@ export class CronManager {
   }
 
   /**
+   * Per-task post-jitter next-fire. Forwards to the scheduler so
+   * CronList renders the same instant the scheduler will fire — even
+   * when an already-past ideal still has a pending jittered delivery
+   * in the current period.
+   */
+  getNextFireForTask(taskId: string): number | null {
+    return this.scheduler.getNextFireForTask(taskId);
+  }
+
+  /**
    * Stale judgment.
    *
    *   - `KIMI_CRON_NO_STALE=1` short-circuits to false (bench).

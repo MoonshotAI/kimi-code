@@ -54,6 +54,17 @@ describe('CronManager', () => {
       expect(manager.store.list()).toEqual([]);
       expect(manager.getNextFireTime()).toBeNull();
     });
+
+    it('getNextFireForTask delegates to the scheduler', () => {
+      const { agent } = createAgentStub();
+      const manager = new CronManager(agent, { pollIntervalMs: null });
+      const scheduler = (manager as unknown as {
+        scheduler: { getNextFireForTask: (id: string) => number | null };
+      }).scheduler;
+      const spy = vi.spyOn(scheduler, 'getNextFireForTask').mockReturnValue(123);
+      expect(manager.getNextFireForTask('deadbeef')).toBe(123);
+      expect(spy).toHaveBeenCalledWith('deadbeef');
+    });
   });
 
   describe('handleFire — recurring', () => {

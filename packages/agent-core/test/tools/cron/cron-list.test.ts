@@ -285,6 +285,49 @@ describe('CronListTool', () => {
     expect(renderedMs).toBe(expectedToday12.getTime());
   });
 
+  it('nextFireAt for a recurring task in its pending jitter window is the current period, not next period', async () => {
+    // C1 regression: when the ideal slot is past but the jittered
+    // delivery is still pending, CronList must report the pending
+    // slot — otherwise the model is told the fire is one period away
+    // when the scheduler will actually deliver inside the jitter cap.
+    vi.unstubAllEnvs();
+    vi.stubEnv('KIMI_CRON_NO_STALE', '1');
+    const stub = createAgentStub();
+    const harness = createClocks();
+    const manager = new CronManager(stub.agent, {
+      clocks: harness.clocks,
+      pollIntervalMs: null,
+    });
+    const tool = new CronListTool(manager);
+
+    // Anchor at a sharp 5-minute boundary so the next ideal is exactly
+    // 5 min later — keeps the assertion bound simple regardless of
+    // any internal task-id offset (jitter cap is 30 s on a 5-min job).
+    const anchor = new Date();
+    anchor.setSeconds(0, 0);
+    anchor.setMinutes(Math.floor(anchor.getMinutes() / 5) * 5);
+    harness.setNow(anchor.getTime());
+
+    manager.store.add(
+      { cron: '*/5 * * * *', prompt: 'pending-jitter', recurring: true },
+      harness.now(),
+    );
+
+    // Advance 5 min + 1 s — past the next ideal but inside the 30 s
+    // jitter cap.
+    harness.advance(5 * 60_000 + 1_000);
+
+    const out = assertSuccess(await runTool(tool, {}));
+    const match = /^nextFireAt: (.+)$/m.exec(out);
+    expect(match).not.toBeNull();
+    const renderedMs = Date.parse(match![1]!);
+    const now = harness.now();
+    // Rendered fire must be in the *current* jittered window — within
+    // ~30 s of now — not the next-period skip (≥ 4 min ahead).
+    expect(renderedMs - now).toBeGreaterThanOrEqual(0);
+    expect(renderedMs - now).toBeLessThanOrEqual(60_000);
+  });
+
   it('truncates prompts longer than 200 UTF-8 bytes with a …(truncated) marker', async () => {
     // Explicit assertions instead of a snapshot: keeps the truncation
     // boundary visible in the test source rather than buried in a

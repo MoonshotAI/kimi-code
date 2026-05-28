@@ -187,6 +187,12 @@ function addTerm(out: Set<number>, term: string, min: number, max: number, name:
  * minute-by-minute scan — month mismatch advances by months, day
  * mismatch by days, etc., so the worst case for `0 12 1 1 *` is a
  * handful of iterations, not 43 200.
+ *
+ * Termination is bounded by a wall-time deadline on the candidate
+ * date — not an iteration count — so a pathological expression that
+ * spends every iteration on `advanceMonth` still bails inside the
+ * documented window. A secondary `HARD_ITERATION_CAP` guards against
+ * a future refactor that fails to advance the date.
  */
 export function computeNextCronRun(expr: ParsedCronExpression, fromMs: number): number | null {
   return nextRunWithinMinutes(expr, fromMs, 5 * 366 * 24 * 60);
@@ -195,9 +201,9 @@ export function computeNextCronRun(expr: ParsedCronExpression, fromMs: number): 
 /**
  * True iff at least one fire exists within `years` years of `fromMs`.
  * Used by CronCreate validation to reject `0 0 31 2 *` and friends up
- * front, with the same search budget {@link computeNextCronRun} uses
- * (so the validator never says yes to something the scheduler will
- * later refuse to compute).
+ * front, with the same wall-time deadline {@link computeNextCronRun}
+ * uses (so the validator never says yes to something the scheduler
+ * will later refuse to compute).
  */
 export function hasFireWithinYears(
   expr: ParsedCronExpression,
@@ -219,15 +225,21 @@ function nextRunWithinMinutes(
   start.setSeconds(0, 0);
   const date = new Date(start.getTime() + MS_PER_MINUTE);
 
-  // Hard cap on field-level iterations. Each loop body either advances
-  // the date by at least one minute, or by a larger granularity (day /
-  // month) when a coarser field rejects the current point. We count
-  // worst-case minute advances against `capMinutes` and bail out if a
-  // legal-but-never-fires expression exhausts the budget.
-  let iterations = 0;
-  const maxIterations = capMinutes + 10_000;
+  // Wall-clock deadline. Each loop body only advances `date` forward
+  // (month / day / hour / minute), so a single deadline check on
+  // `date.getTime()` bounds total work regardless of which granularity
+  // dominates — including the pathological case where `advanceMonth`
+  // is the dominant op (e.g. `0 0 30 2 *` never matches February).
+  const deadlineMs = fromMs + capMinutes * MS_PER_MINUTE;
 
-  while (iterations++ < maxIterations) {
+  // Secondary safety net: if a future refactor accidentally fails to
+  // advance `date`, this prevents an infinite loop. Generous enough to
+  // cover any minute-by-minute walk within a sane window, and many
+  // orders of magnitude below the previous iteration bound.
+  let iterations = 0;
+  const HARD_ITERATION_CAP = 10_000_000;
+
+  while (date.getTime() <= deadlineMs && iterations++ < HARD_ITERATION_CAP) {
     // Month — coarsest. If wrong, jump to day 1 of the next allowed
     // month and restart the day check.
     if (!expr.months.has(date.getMonth() + 1)) {

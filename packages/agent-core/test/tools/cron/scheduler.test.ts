@@ -16,6 +16,7 @@ interface HarnessOptions {
   readonly isIdle?: boolean;
   readonly isKilled?: boolean;
   readonly pollIntervalMs?: number | null;
+  readonly onFireThrows?: boolean;
 }
 
 interface Harness {
@@ -26,6 +27,7 @@ interface Harness {
   advance(ms: number): void;
   setIdle(v: boolean): void;
   setKilled(v: boolean): void;
+  setOnFireThrows(v: boolean): void;
   now(): number;
 }
 
@@ -46,11 +48,17 @@ function createHarness(opts: HarnessOptions = {}): Harness {
   const removed: string[] = [];
   let idle = opts.isIdle ?? true;
   let killed = opts.isKilled ?? false;
+  let onFireThrows = opts.onFireThrows ?? false;
 
   const scheduler = createCronScheduler({
     clocks,
     source: () => tasks,
-    onFire: (task, ctx) => fired.push({ task, coalescedCount: ctx.coalescedCount }),
+    onFire: (task, ctx) => {
+      if (onFireThrows) {
+        throw new Error('onFire boom');
+      }
+      fired.push({ task, coalescedCount: ctx.coalescedCount });
+    },
     isIdle: () => idle,
     isKilled: () => killed,
     removeOneShot: (id) => {
@@ -76,6 +84,9 @@ function createHarness(opts: HarnessOptions = {}): Harness {
     },
     setKilled: (v: boolean) => {
       killed = v;
+    },
+    setOnFireThrows: (v: boolean) => {
+      onFireThrows = v;
     },
     now: () => now,
   };
@@ -269,6 +280,61 @@ describe('createCronScheduler — tick behaviour', () => {
     expect(h.fired).toHaveLength(1);
     expect(h.fired[0]!.coalescedCount).toBeGreaterThanOrEqual(3);
   });
+
+  it('recurring task whose onFire throws is retried on the next tick', () => {
+    // C3 regression: a throwing onFire must NOT advance lastSeenAt or
+    // consume the ideal fire. Otherwise a transient persistence error
+    // silently drops the reminder.
+    const h = createHarness({ onFireThrows: true });
+    h.tasks.push(
+      makeTask({ cron: '*/5 * * * *', createdAt: h.now(), recurring: true }),
+    );
+
+    // Past the next */5 boundary — task is due.
+    h.advance(6 * 60_000);
+    h.scheduler.tick();
+    // Throw swallowed; no delivery recorded.
+    expect(h.fired).toHaveLength(0);
+
+    // Recover and tick again — the same ideal must still be reachable.
+    h.setOnFireThrows(false);
+    h.scheduler.tick();
+    expect(h.fired).toHaveLength(1);
+    // Coalesced from the same just-past slot, not a phantom past
+    // delivery — the count is the natural 1 (or up to the gap), never
+    // skipped to a later period.
+    expect(h.fired[0]!.coalescedCount).toBe(1);
+  });
+
+  it('one-shot whose onFire throws is NOT removed and retries on the next tick', () => {
+    // C3 regression for one-shots: removeOneShot must be gated on a
+    // successful delivery so a transient throw doesn't lose the
+    // reminder entirely.
+    const h = createHarness({ onFireThrows: true });
+    h.tasks.push(
+      makeTask({
+        cron: '*/5 * * * *',
+        createdAt: h.now(),
+        recurring: false,
+      }),
+    );
+    const taskId = h.tasks[0]!.id;
+
+    h.advance(6 * 60_000);
+    h.scheduler.tick();
+    expect(h.fired).toHaveLength(0);
+    // Critical: still present in the store, not removed.
+    expect(h.tasks).toHaveLength(1);
+    expect(h.tasks[0]!.id).toBe(taskId);
+    expect(h.removed).toEqual([]);
+
+    // Recover — delivery succeeds and removeOneShot runs.
+    h.setOnFireThrows(false);
+    h.scheduler.tick();
+    expect(h.fired).toHaveLength(1);
+    expect(h.removed).toEqual([taskId]);
+    expect(h.tasks).toHaveLength(0);
+  });
 });
 
 describe('createCronScheduler — getNextFireTime', () => {
@@ -304,6 +370,90 @@ describe('createCronScheduler — getNextFireTime', () => {
     // yearly cron is at least days away. So `next` must be within
     // 65s of now.
     expect(next! - h.now()).toBeLessThanOrEqual(65_000);
+  });
+});
+
+describe('createCronScheduler — getNextFireForTask', () => {
+  beforeEach(() => {
+    process.env['KIMI_CRON_NO_JITTER'] = '1';
+    idCounter = 0;
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_ENV_NO_JITTER === undefined) {
+      delete process.env['KIMI_CRON_NO_JITTER'];
+    } else {
+      process.env['KIMI_CRON_NO_JITTER'] = ORIGINAL_ENV_NO_JITTER;
+    }
+  });
+
+  it('returns null for unknown id', () => {
+    const h = createHarness();
+    expect(h.scheduler.getNextFireForTask('00000000')).toBeNull();
+    h.tasks.push(
+      makeTask({ cron: '*/5 * * * *', createdAt: h.now(), recurring: true }),
+    );
+    // Unknown id even when there are other tasks.
+    expect(h.scheduler.getNextFireForTask('ffffffff')).toBeNull();
+  });
+
+  it('returns the same value getNextFireTime would for a single-task store', () => {
+    const h = createHarness();
+    h.tasks.push(
+      makeTask({ cron: '*/5 * * * *', createdAt: h.now(), recurring: true }),
+    );
+    const taskId = h.tasks[0]!.id;
+    const aggregate = h.scheduler.getNextFireTime();
+    const perTask = h.scheduler.getNextFireForTask(taskId);
+    expect(perTask).not.toBeNull();
+    expect(perTask).toBe(aggregate);
+  });
+
+  it('preserves pending jittered slot when ideal is just past', () => {
+    // C1 load-bearing assertion: an already-past ideal whose jittered
+    // delivery is still in the future must be returned as the next
+    // fire, not skipped to the following period.
+    delete process.env['KIMI_CRON_NO_JITTER'];
+    const h = createHarness();
+    // id `ffffffff` → fraction ≈ 1.0 → recurring offset ≈ 30s (10% of
+    // 5-min period).
+    h.tasks.push(
+      makeTask({
+        id: 'ffffffff',
+        cron: '*/5 * * * *',
+        createdAt: h.now(),
+        recurring: true,
+      }),
+    );
+    const taskId = h.tasks[0]!.id;
+
+    // Burn one fire so lastSeenAt advances onto a known 5-min slot;
+    // from this point the period structure is regular.
+    h.advance(6 * 60_000 + 30_000);
+    h.scheduler.tick();
+    expect(h.fired).toHaveLength(1);
+    const firedAtIdeal = h.fired[0]!.task; // proves we delivered
+
+    // The next ideal sits 5 min after the previous ideal. Capture
+    // `getNextFireForTask` as the source of truth, then advance just
+    // past that ideal but BEFORE the jittered +30s delivery.
+    const idealPlusJitter = h.scheduler.getNextFireForTask(taskId);
+    expect(idealPlusJitter).not.toBeNull();
+    expect(firedAtIdeal.id).toBe(taskId);
+
+    // Step to 20s past the next ideal: ideal is at (idealPlusJitter -
+    // 30s); we are now 10s short of the jittered delivery point.
+    const stepTo = idealPlusJitter! - 10_000;
+    h.advance(stepTo - h.now());
+
+    // Pending current-period slot — should still report the same
+    // jittered timestamp, NOT skip to the next period.
+    const next = h.scheduler.getNextFireForTask(taskId);
+    expect(next).toBe(idealPlusJitter);
+    // Sanity: that timestamp is in the very near future, not 5 min
+    // later (which would be the next-period skip we are preventing).
+    expect(next! - h.now()).toBeLessThanOrEqual(15_000);
+    expect(next! - h.now()).toBeGreaterThan(0);
   });
 });
 

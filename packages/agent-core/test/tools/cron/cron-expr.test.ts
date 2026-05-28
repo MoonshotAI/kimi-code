@@ -284,6 +284,41 @@ describe('hasFireWithinYears', () => {
     const expr = parseCronExpression('* * * * *');
     expect(hasFireWithinYears(expr, 1, localDate(2024, 0, 1))).toBe(true);
   });
+
+  it('computeNextCronRun returns null fast for never-firing 0 0 30 2 *', () => {
+    // Feb 30 never exists. Without a wall-time deadline this can scan
+    // tens of thousands of years before bailing. The fix bounds the
+    // search by candidate-date wall time, so this completes in < 500ms
+    // on any sane host.
+    const expr = parseCronExpression('0 0 30 2 *');
+    const start = performance.now();
+    const result = computeNextCronRun(expr, localDate(2024, 0, 1));
+    const elapsedMs = performance.now() - start;
+    expect(result).toBeNull();
+    expect(elapsedMs).toBeLessThan(500);
+  });
+
+  it('hasFireWithinYears returns false fast for never-firing 0 0 30 2 *', () => {
+    const expr = parseCronExpression('0 0 30 2 *');
+    const start = performance.now();
+    const result = hasFireWithinYears(expr, 5, localDate(2024, 0, 1));
+    const elapsedMs = performance.now() - start;
+    expect(result).toBe(false);
+    expect(elapsedMs).toBeLessThan(500);
+  });
+
+  it('hasFireWithinYears respects custom year windows around fire boundary', () => {
+    // Anchor: Jan 1 2024 at midnight. The expression `0 0 1 1 *` fires
+    // at Jan 1 of each year. Within 5 years we will see 5 fires
+    // (2025..2029). With a 0.5-year window starting after Jan 1 we see
+    // nothing until Jan 1 of the next year.
+    const expr = parseCronExpression('0 0 1 1 *');
+    const fromInsideYear = localDate(2024, 5, 1); // mid-2024
+    expect(hasFireWithinYears(expr, 5, fromInsideYear)).toBe(true);
+    // A window that ends before the next Jan 1 must return false.
+    // Jun 1 → ~7 months to Jan 1 2025; 0.5 years ≈ 6 months → false.
+    expect(hasFireWithinYears(expr, 0.5, fromInsideYear)).toBe(false);
+  });
 });
 
 describe('cronToHuman', () => {

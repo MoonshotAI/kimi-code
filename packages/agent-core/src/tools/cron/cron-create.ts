@@ -178,10 +178,17 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
     // everywhere else in the cron stack.
     const recurring = args.recurring !== false;
 
+    // Normalize accepted whitespace (tabs / newlines) to single spaces.
+    // `parseCronExpression` accepts any \s+ between fields, but downstream
+    // output formats (CronList one-key-per-line records, <cron-fire>
+    // envelope attributes) assume a single-line cron value. Storing the
+    // raw input lets the original tabs/newlines leak into both sinks.
+    const normalizedCron = args.cron.trim().split(/\s+/).join(' ');
+
     return {
       description: recurring
-        ? `Scheduling cron ${args.cron}`
-        : `Scheduling one-shot ${args.cron}`,
+        ? `Scheduling cron ${normalizedCron}`
+        : `Scheduling one-shot ${normalizedCron}`,
       approvalRule: this.name,
       execute: async () => {
         // Anchor the schedule to the moment of execution, not the
@@ -206,7 +213,7 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
 
         const task = this.manager.store.add(
           {
-            cron: args.cron,
+            cron: normalizedCron,
             prompt: args.prompt,
             recurring,
           },
@@ -234,7 +241,7 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
 
         const output: CronCreateOutput = {
           id: task.id,
-          cron: args.cron,
+          cron: normalizedCron,
           humanSchedule,
           recurring,
           nextFireAt,

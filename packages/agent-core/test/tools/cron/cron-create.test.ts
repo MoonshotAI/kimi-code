@@ -256,6 +256,64 @@ describe('CronCreateTool', () => {
     expect(true).toBe(true);
   });
 
+  describe('whitespace normalization', () => {
+    it('normalizes newline-separated cron fields to single spaces in the store', async () => {
+      const { manager, tool } = makeHarness();
+      const result = await runTool(tool, {
+        cron: '*/5\n* * * *',
+        prompt: 'x',
+        recurring: true,
+      });
+      expect(result.isError ?? false).toBe(false);
+
+      const tasks = manager.store.list();
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]!.cron).toBe('*/5 * * * *');
+    });
+
+    it('normalizes tab-separated cron fields', async () => {
+      const { manager, tool } = makeHarness();
+      const result = await runTool(tool, {
+        cron: '*/5\t*\t*\t*\t*',
+        prompt: 'x',
+        recurring: true,
+      });
+      expect(result.isError ?? false).toBe(false);
+
+      const tasks = manager.store.list();
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]!.cron).toBe('*/5 * * * *');
+    });
+
+    it('normalizes leading/trailing whitespace', async () => {
+      const { manager, tool } = makeHarness();
+      const result = await runTool(tool, {
+        cron: '   */5 * * * *   ',
+        prompt: 'x',
+        recurring: true,
+      });
+      expect(result.isError ?? false).toBe(false);
+
+      const tasks = manager.store.list();
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]!.cron).toBe('*/5 * * * *');
+    });
+
+    it('normalized cron is what shows up in the rendered CronCreate output', async () => {
+      const { tool } = makeHarness();
+      const result = await runTool(tool, {
+        cron: '*/5\n* * * *',
+        prompt: 'x',
+        recurring: true,
+      });
+      const out = assertSuccess(result);
+      expect(out).toContain('cron: */5 * * * *');
+      // No literal newline between the cron field tokens — the only
+      // newlines should be the record separators between keys.
+      expect(out).not.toMatch(/cron: \*\/5\n\* \* \* \*/);
+    });
+  });
+
   describe('clock anchored at execute() time', () => {
     it('uses the clock value at execute(), not resolveExecution()', async () => {
       // Mirrors the manual-approval scenario: prepare returns a
