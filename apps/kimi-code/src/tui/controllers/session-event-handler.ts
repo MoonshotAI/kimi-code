@@ -670,7 +670,6 @@ export class SessionEventHandler {
   }
 
   private finishCompaction(sendQueued: (item: QueuedMessage) => void): void {
-    const { state } = this.host;
     const hasActiveTurn = this.host.streamingUI.hasActiveTurn();
     if (!hasActiveTurn) {
       this.host.setAppState({

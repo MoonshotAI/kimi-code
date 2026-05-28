@@ -214,7 +214,7 @@ export class EditorKeyboardController {
   }
 
   private cancelCurrentStream(): void {
-    this.host.session?.cancel();
+    void this.host.session?.cancel();
   }
 
   private cancelCurrentCompaction(): void {
