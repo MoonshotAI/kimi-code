@@ -121,7 +121,7 @@ export class PluginsOverviewSelectorComponent extends Container implements Focus
   override render(width: number): string[] {
     const { colors, plugins } = this.opts;
     const hint =
-      '↑↓ navigate · Space enable/disable · M MCP · D remove · Enter/→ info · ←/Esc close';
+      '↑↓ navigate · Space toggle · M MCP servers · D remove · Enter details · Esc close';
     const pluginItems = this.items.filter((item) => item.kind === 'plugin');
     const actionItems = this.items.filter((item) => item.kind === 'action');
     const lines: string[] = [
@@ -286,6 +286,7 @@ export type PluginMcpSelection =
 
 export interface PluginMcpSelectorOptions {
   readonly info: PluginInfo;
+  readonly selectedServer?: string;
   readonly serverHint?: {
     readonly server: string;
     readonly text: string;
@@ -306,6 +307,10 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
     super();
     this.opts = opts;
     this.items = buildMcpItems(opts.info);
+    const selectedIndex = this.items.findIndex(
+      (item) => item.value === `${MCP_SERVER_PREFIX}${opts.selectedServer}`,
+    );
+    this.selectedIndex = Math.max(0, selectedIndex);
   }
 
   handleInput(data: string): void {
@@ -448,19 +453,19 @@ function buildOverviewItems(plugins: readonly PluginSummary[]): PluginsOverviewI
     {
       value: OVERVIEW_MARKETPLACE,
       kind: 'action',
-      label: 'Browse official marketplace',
-      description: 'Install official plugins from marketplace.json.',
+      label: 'Marketplace',
+      description: 'Browse official plugins.',
     },
     {
       value: OVERVIEW_RELOAD,
       kind: 'action',
-      label: 'Reload plugins',
-      description: 'Re-read installed.json and plugin manifests.',
+      label: 'Reload',
+      description: 'Re-read installed plugins and manifests.',
     },
     {
       value: OVERVIEW_SHOW_LIST,
       kind: 'action',
-      label: 'Show plugin summary',
+      label: 'Summary',
       description: 'Append the current plugin summary to the transcript.',
     },
   );
@@ -468,8 +473,6 @@ function buildOverviewItems(plugins: readonly PluginSummary[]): PluginsOverviewI
 }
 
 function overviewPluginDescription(plugin: PluginSummary): string {
-  const mcpShortcut = plugin.mcpServerCount > 0 ? ' · M MCP' : '';
-  const shortcut = `Space ${plugin.enabled ? 'disable' : 'enable'}${mcpShortcut} · D remove · Enter info`;
   const state = plugin.state === 'ok' ? '' : ` · state ${plugin.state}`;
   const skills = `${plugin.skillCount} skill${plugin.skillCount === 1 ? '' : 's'}`;
   const mcp =
@@ -477,7 +480,7 @@ function overviewPluginDescription(plugin: PluginSummary): string {
       ? ` · MCP ${plugin.enabledMcpServerCount}/${plugin.mcpServerCount}`
       : '';
   const diagnostics = plugin.hasErrors ? ' · diagnostics available' : '';
-  return `${shortcut} · id ${plugin.id} · ${skills}${mcp}${state}${diagnostics}`;
+  return `id ${plugin.id} · ${skills}${mcp}${state}${diagnostics}`;
 }
 
 function pluginStatus(plugin: PluginSummary): string {

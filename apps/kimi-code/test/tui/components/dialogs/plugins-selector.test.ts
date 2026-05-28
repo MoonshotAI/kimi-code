@@ -69,16 +69,16 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('Installed plugins (1)');
     expect(out).toContain('Actions');
     expect(out).toContain('? Kimi Datasource  enabled');
-    expect(out).toContain(
-      `Space disable ${MID} M MCP ${MID} D remove ${MID} Enter info ${MID} id kimi-datasource ${MID} 2 skills ${MID} MCP 1/1`,
-    );
-    expect(raw.match(HIGHLIGHTED_D_REMOVE)).toHaveLength(2);
+    expect(out).toContain(`id kimi-datasource ${MID} 2 skills ${MID} MCP 1/1`);
+    expect(out).not.toContain('Space disable');
+    expect(out).not.toContain('Enter info');
+    expect(raw.match(HIGHLIGHTED_D_REMOVE)).toHaveLength(1);
     expect(raw).toContain(primaryShortcut('Space'));
     expect(raw).toContain(primaryShortcut('M'));
     expect(raw).toContain(dangerShortcut('D'));
     expect(raw).toContain(primaryShortcut('Enter'));
-    expect(out).toContain('Browse official marketplace');
-    expect(out).toContain('Show plugin summary');
+    expect(out).toContain('Marketplace');
+    expect(out).toContain('Summary');
 
     picker.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({ kind: 'info', id: 'kimi-datasource' });
@@ -300,7 +300,7 @@ describe('plugins selector dialogs', () => {
         },
       ],
       selectedId: 'kimi-datasource',
-      pluginHint: { id: 'kimi-datasource', text: `saved ${MID} /new to apply` },
+      pluginHint: { id: 'kimi-datasource', text: 'pending /new' },
       colors: darkColors,
       onSelect: vi.fn(),
       onCancel: vi.fn(),
@@ -308,7 +308,7 @@ describe('plugins selector dialogs', () => {
 
     const out = picker.render(120).map(strip).join('\n');
 
-    expect(out).toContain(`? Kimi Datasource  enabled  saved ${MID} /new to apply`);
+    expect(out).toContain('? Kimi Datasource  enabled  pending /new');
   });
 
   it('defaults plugin removal confirmation to cancel', () => {

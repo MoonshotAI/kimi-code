@@ -35,6 +35,11 @@ interface PluginMcpServerHint {
   readonly text: string;
 }
 
+interface ShowPluginMcpPickerOptions {
+  readonly selectedServer?: string;
+  readonly serverHint?: PluginMcpServerHint;
+}
+
 export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: string): Promise<void> {
   const args = rawArgs.trim().split(/\s+/).filter((part) => part.length > 0);
   const sub = args[0];
@@ -187,7 +192,7 @@ async function showPluginMarketplacePicker(host: SlashCommandHost, source?: stri
 async function showPluginMcpPicker(
   host: SlashCommandHost,
   id: string,
-  serverHint?: PluginMcpServerHint,
+  options?: ShowPluginMcpPickerOptions,
 ): Promise<void> {
   let info: PluginInfo;
   try {
@@ -200,7 +205,8 @@ async function showPluginMcpPicker(
   host.mountEditorReplacement(
     new PluginMcpSelectorComponent({
       info,
-      serverHint,
+      selectedServer: options?.selectedServer,
+      serverHint: options?.serverHint,
       colors: host.state.theme.colors,
       onSelect: (selection) => {
         host.restoreEditor();
@@ -261,7 +267,7 @@ async function applyPluginEnabled(
     host.showStatus(`${enabled ? 'Enabled' : 'Disabled'} ${id}. Run /new to apply.${mcpHint}`);
   }
   const inlineMcpHint = mcpHint.length > 0 ? ' · MCP servers disabled' : '';
-  return `${pluginInlineChangeHint(enabled)}${inlineMcpHint}`;
+  return `${pluginInlineChangeHint()}${inlineMcpHint}`;
 }
 
 async function handlePluginsOverviewSelection(
@@ -319,8 +325,11 @@ async function handlePluginMcpSelection(
         selection.enabled,
       );
       await showPluginMcpPicker(host, selection.pluginId, {
-        server: selection.server,
-        text: pluginInlineChangeHint(selection.enabled),
+        selectedServer: selection.server,
+        serverHint: {
+          server: selection.server,
+          text: pluginInlineChangeHint(),
+        },
       });
       return;
     case 'back':
@@ -410,6 +419,6 @@ function resolvePluginInstallSource(source: string, workDir: string): string {
   return isAbsolute(trimmed) ? trimmed : resolve(workDir, trimmed);
 }
 
-function pluginInlineChangeHint(enabled: boolean): string {
-  return `${enabled ? 'Enabled' : 'Disabled'} · /new to apply`;
+function pluginInlineChangeHint(): string {
+  return 'pending /new';
 }
