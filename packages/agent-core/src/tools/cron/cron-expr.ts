@@ -111,6 +111,22 @@ function parseField(field: string, min: number, max: number, name: string): Set<
   return out;
 }
 
+// Cron numeric fields are digit-only. `Number(...)` would otherwise
+// accept `''` (→ 0), `'1e1'`, `'0x10'`, `'+5'`, `'  3  '`, etc. — none
+// of which are valid cron syntax. This regex gate runs before the
+// conversion to surface a typo as a parse error instead of silently
+// rescheduling the task.
+const DIGIT_ONLY = /^\d+$/;
+
+function parseCronInt(raw: string, name: string, role: string): number {
+  if (!DIGIT_ONLY.test(raw)) {
+    throw new Error(
+      `cron ${name} ${role} must be a non-negative integer with digits only (got ${JSON.stringify(raw)})`,
+    );
+  }
+  return Number.parseInt(raw, 10);
+}
+
 function addTerm(out: Set<number>, term: string, min: number, max: number, name: string): void {
   let rangePart = term;
   let step = 1;
@@ -121,8 +137,8 @@ function addTerm(out: Set<number>, term: string, min: number, max: number, name:
     if (stepStr === '') {
       throw new Error(`cron ${name} step is empty in "${term}"`);
     }
-    const parsedStep = Number(stepStr);
-    if (!Number.isInteger(parsedStep) || parsedStep <= 0) {
+    const parsedStep = parseCronInt(stepStr, name, 'step');
+    if (parsedStep <= 0) {
       throw new Error(`cron ${name} step must be a positive integer (got "${stepStr}")`);
     }
     step = parsedStep;
@@ -139,10 +155,7 @@ function addTerm(out: Set<number>, term: string, min: number, max: number, name:
   } else {
     const dash = rangePart.indexOf('-');
     if (dash === -1) {
-      const single = Number(rangePart);
-      if (!Number.isInteger(single)) {
-        throw new TypeError(`cron ${name} value "${rangePart}" is not an integer`);
-      }
+      const single = parseCronInt(rangePart, name, 'value');
       if (single < min || single > max) {
         throw new Error(`cron ${name} value ${single} out of range ${min}..${max}`);
       }
@@ -159,11 +172,8 @@ function addTerm(out: Set<number>, term: string, min: number, max: number, name:
     } else {
       const loStr = rangePart.slice(0, dash);
       const hiStr = rangePart.slice(dash + 1);
-      lo = Number(loStr);
-      hi = Number(hiStr);
-      if (!Number.isInteger(lo) || !Number.isInteger(hi)) {
-        throw new TypeError(`cron ${name} range "${rangePart}" has non-integer bound`);
-      }
+      lo = parseCronInt(loStr, name, 'range lower bound');
+      hi = parseCronInt(hiStr, name, 'range upper bound');
       if (lo < min || hi > max || lo > hi) {
         throw new Error(
           `cron ${name} range ${lo}-${hi} out of bounds (must be ${min}..${max}, ascending)`,
@@ -187,6 +197,12 @@ function addTerm(out: Set<number>, term: string, min: number, max: number, name:
  * minute-by-minute scan — month mismatch advances by months, day
  * mismatch by days, etc., so the worst case for `0 12 1 1 *` is a
  * handful of iterations, not 43 200.
+ *
+ * Termination is bounded by a wall-time deadline on the candidate
+ * date — not an iteration count — so a pathological expression that
+ * spends every iteration on `advanceMonth` still bails inside the
+ * documented window. A secondary `HARD_ITERATION_CAP` guards against
+ * a future refactor that fails to advance the date.
  */
 export function computeNextCronRun(expr: ParsedCronExpression, fromMs: number): number | null {
   return nextRunWithinMinutes(expr, fromMs, 5 * 366 * 24 * 60);
@@ -195,9 +211,9 @@ export function computeNextCronRun(expr: ParsedCronExpression, fromMs: number): 
 /**
  * True iff at least one fire exists within `years` years of `fromMs`.
  * Used by CronCreate validation to reject `0 0 31 2 *` and friends up
- * front, with the same search budget {@link computeNextCronRun} uses
- * (so the validator never says yes to something the scheduler will
- * later refuse to compute).
+ * front, with the same wall-time deadline {@link computeNextCronRun}
+ * uses (so the validator never says yes to something the scheduler
+ * will later refuse to compute).
  */
 export function hasFireWithinYears(
   expr: ParsedCronExpression,
@@ -219,15 +235,21 @@ function nextRunWithinMinutes(
   start.setSeconds(0, 0);
   const date = new Date(start.getTime() + MS_PER_MINUTE);
 
-  // Hard cap on field-level iterations. Each loop body either advances
-  // the date by at least one minute, or by a larger granularity (day /
-  // month) when a coarser field rejects the current point. We count
-  // worst-case minute advances against `capMinutes` and bail out if a
-  // legal-but-never-fires expression exhausts the budget.
-  let iterations = 0;
-  const maxIterations = capMinutes + 10_000;
+  // Wall-clock deadline. Each loop body only advances `date` forward
+  // (month / day / hour / minute), so a single deadline check on
+  // `date.getTime()` bounds total work regardless of which granularity
+  // dominates — including the pathological case where `advanceMonth`
+  // is the dominant op (e.g. `0 0 30 2 *` never matches February).
+  const deadlineMs = fromMs + capMinutes * MS_PER_MINUTE;
 
-  while (iterations++ < maxIterations) {
+  // Secondary safety net: if a future refactor accidentally fails to
+  // advance `date`, this prevents an infinite loop. Generous enough to
+  // cover any minute-by-minute walk within a sane window, and many
+  // orders of magnitude below the previous iteration bound.
+  let iterations = 0;
+  const HARD_ITERATION_CAP = 10_000_000;
+
+  while (date.getTime() <= deadlineMs && iterations++ < HARD_ITERATION_CAP) {
     // Month — coarsest. If wrong, jump to day 1 of the next allowed
     // month and restart the day check.
     if (!expr.months.has(date.getMonth() + 1)) {

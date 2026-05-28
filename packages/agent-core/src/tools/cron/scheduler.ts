@@ -118,6 +118,16 @@ export interface CronScheduler {
    * Used by /cron and by external monitoring.
    */
   getNextFireTime(): number | null;
+
+  /**
+   * Post-jitter next-fire for a single task using the scheduler's
+   * internal `lastSeenAt` baseline. Returns null if the task isn't in
+   * the current `source()` snapshot or its expression yields no future
+   * fire. Used by CronList so its rendered `nextFireAt` matches what
+   * the scheduler will actually deliver, including the in-flight
+   * jittered slot of the current period.
+   */
+  getNextFireForTask(taskId: string): number | null;
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
@@ -283,14 +293,25 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
           }
 
           inFlight.add(task.id);
+          let delivered = false;
           try {
             onFire(task, { coalescedCount });
+            delivered = true;
           } catch (error) {
             debugLog(
               `onFire threw for task ${task.id}: ${
                 error instanceof Error ? error.message : String(error)
               }`,
             );
+          }
+
+          if (!delivered) {
+            // Leave lastSeenAt/store untouched — next tick will
+            // re-detect this task as due. A persistently-throwing
+            // onFire becomes loud retry rather than silent loss; the
+            // manager is the layer responsible for ironing out
+            // persistence-level failures so they don't reach here.
+            continue;
           }
 
           if (task.recurring === false) {
@@ -362,29 +383,41 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
     // I/O cleanup, lock release). Session-only resolves immediately.
   }
 
+  function nextFireFor(task: CronTask): number | null {
+    try {
+      const parsed = getParsed(task.cron);
+      const seen = lastSeenAt.get(task.id);
+      const baseFromMs =
+        seen !== undefined && seen > task.createdAt ? seen : task.createdAt;
+      return computeJitteredNext(task, parsed, baseFromMs);
+    } catch (error) {
+      debugLog(
+        `getNextFireFor skipping task ${task.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return null;
+    }
+  }
+
   function getNextFireTime(): number | null {
     const tasks = source();
     if (tasks.length === 0) return null;
 
     let min: number | null = null;
     for (const task of tasks) {
-      try {
-        const parsed = getParsed(task.cron);
-        const seen = lastSeenAt.get(task.id);
-        const baseFromMs =
-          seen !== undefined && seen > task.createdAt ? seen : task.createdAt;
-        const next = computeJitteredNext(task, parsed, baseFromMs);
-        if (next === null) continue;
-        if (min === null || next < min) min = next;
-      } catch (error) {
-        debugLog(
-          `getNextFireTime skipping task ${task.id}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
+      const next = nextFireFor(task);
+      if (next === null) continue;
+      if (min === null || next < min) min = next;
     }
     return min;
+  }
+
+  function getNextFireForTask(taskId: string): number | null {
+    const tasks = source();
+    const task = tasks.find((t) => t.id === taskId);
+    if (task === undefined) return null;
+    return nextFireFor(task);
   }
 
   return {
@@ -392,5 +425,6 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
     stop,
     tick,
     getNextFireTime,
+    getNextFireForTask,
   };
 }

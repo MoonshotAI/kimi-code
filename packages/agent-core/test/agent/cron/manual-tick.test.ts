@@ -132,6 +132,55 @@ describe('CronManager — P1.8 manual tick + SIGUSR1', () => {
       }
     });
 
+    it('logs swallowed tick() throws to stderr when KIMI_CRON_DEBUG=1', async () => {
+      if (process.platform === 'win32') return;
+      vi.stubEnv('KIMI_CRON_DEBUG', '1');
+
+      const stub = createAgentStub();
+      const manager = new CronManager(stub.agent, { pollIntervalMs: null });
+      const writeSpy = vi
+        .spyOn(process.stderr, 'write')
+        .mockImplementation(() => true);
+      try {
+        manager.start();
+        vi.spyOn(manager, 'tick').mockImplementation(() => {
+          throw new Error('debug-boom');
+        });
+        process.emit('SIGUSR1', 'SIGUSR1');
+        expect(writeSpy).toHaveBeenCalled();
+        const calls = writeSpy.mock.calls.map((c) => String(c[0]));
+        expect(calls.some((s) => /cron\/manager.*SIGUSR1/.test(s))).toBe(true);
+        expect(calls.some((s) => s.includes('debug-boom'))).toBe(true);
+      } finally {
+        writeSpy.mockRestore();
+        await manager.stop();
+      }
+    });
+
+    it('does not write to stderr on tick() throw when KIMI_CRON_DEBUG is unset', async () => {
+      if (process.platform === 'win32') return;
+      // KIMI_CRON_DEBUG intentionally NOT set in this test.
+
+      const stub = createAgentStub();
+      const manager = new CronManager(stub.agent, { pollIntervalMs: null });
+      const writeSpy = vi
+        .spyOn(process.stderr, 'write')
+        .mockImplementation(() => true);
+      try {
+        manager.start();
+        vi.spyOn(manager, 'tick').mockImplementation(() => {
+          throw new Error('silent-boom');
+        });
+        process.emit('SIGUSR1', 'SIGUSR1');
+        // No cron/manager line was emitted because debug is off.
+        const calls = writeSpy.mock.calls.map((c) => String(c[0]));
+        expect(calls.some((s) => /cron\/manager/.test(s))).toBe(false);
+      } finally {
+        writeSpy.mockRestore();
+        await manager.stop();
+      }
+    });
+
     it('stop() removes the SIGUSR1 listener (no leak)', async () => {
       if (process.platform === 'win32') return;
 

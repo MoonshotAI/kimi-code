@@ -115,6 +115,7 @@ function isInjectionUserMessage(message: Message): boolean {
   if (trimmed.startsWith('<notification ')) return true;
   if (trimmed.startsWith('<system-reminder>')) return true;
   if (trimmed.startsWith('<hook_result ')) return true;
+  if (trimmed.startsWith('<cron-fire ')) return true;
   return false;
 }
 

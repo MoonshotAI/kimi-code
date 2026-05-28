@@ -144,6 +144,50 @@ describe('parseCronExpression', () => {
   });
 });
 
+describe('rejects malformed numeric tokens', () => {
+  it('rejects negative range lower bound (-5 * * * *)', () => {
+    expect(() => parseCronExpression('-5 * * * *')).toThrow(/digits only|non-negative integer/);
+  });
+
+  it('rejects scientific notation (1e1 * * * *)', () => {
+    expect(() => parseCronExpression('1e1 * * * *')).toThrow(/digits only|non-negative integer/);
+  });
+
+  it('rejects hex notation (0x10 * * * *)', () => {
+    expect(() => parseCronExpression('0x10 * * * *')).toThrow(/digits only|non-negative integer/);
+  });
+
+  it('rejects leading-plus (+5 * * * *)', () => {
+    expect(() => parseCronExpression('+5 * * * *')).toThrow(/digits only|non-negative integer/);
+  });
+
+  it('rejects scientific notation in step (*/1e1 * * * *)', () => {
+    expect(() => parseCronExpression('*/1e1 * * * *')).toThrow(/digits only|non-negative integer/);
+  });
+
+  it('rejects hex notation in step (*/0x10 * * * *)', () => {
+    expect(() => parseCronExpression('*/0x10 * * * *')).toThrow(/digits only|non-negative integer/);
+  });
+
+  it('rejects scientific notation in range (1-1e1 * * * *)', () => {
+    expect(() => parseCronExpression('1-1e1 * * * *')).toThrow(/digits only|non-negative integer/);
+  });
+
+  it('rejects scientific notation in range lower bound (1e1-5 * * * *)', () => {
+    // Symmetric coverage of the lo path — hi was covered by the
+    // 1-1e1 case above. Both lo and hi go through parseCronInt.
+    expect(() => parseCronExpression('1e1-5 * * * *')).toThrow(/digits only|non-negative integer/);
+  });
+
+  it('still accepts plain integers, ranges, lists, and steps', () => {
+    expect(() => parseCronExpression('5 * * * *')).not.toThrow();
+    expect(() => parseCronExpression('1-5 * * * *')).not.toThrow();
+    expect(() => parseCronExpression('1,5,10 * * * *')).not.toThrow();
+    expect(() => parseCronExpression('*/5 * * * *')).not.toThrow();
+    expect(() => parseCronExpression('1-30/5 * * * *')).not.toThrow();
+  });
+});
+
 describe('computeNextCronRun', () => {
   it('*/5 — from xx:00:30 advances to xx:05:00', () => {
     const expr = parseCronExpression('*/5 * * * *');
@@ -283,6 +327,41 @@ describe('hasFireWithinYears', () => {
   it('* * * * * → true within any nonzero window', () => {
     const expr = parseCronExpression('* * * * *');
     expect(hasFireWithinYears(expr, 1, localDate(2024, 0, 1))).toBe(true);
+  });
+
+  it('computeNextCronRun returns null fast for never-firing 0 0 30 2 *', () => {
+    // Feb 30 never exists. Without a wall-time deadline this can scan
+    // tens of thousands of years before bailing. The fix bounds the
+    // search by candidate-date wall time, so this completes in < 500ms
+    // on any sane host.
+    const expr = parseCronExpression('0 0 30 2 *');
+    const start = performance.now();
+    const result = computeNextCronRun(expr, localDate(2024, 0, 1));
+    const elapsedMs = performance.now() - start;
+    expect(result).toBeNull();
+    expect(elapsedMs).toBeLessThan(500);
+  });
+
+  it('hasFireWithinYears returns false fast for never-firing 0 0 30 2 *', () => {
+    const expr = parseCronExpression('0 0 30 2 *');
+    const start = performance.now();
+    const result = hasFireWithinYears(expr, 5, localDate(2024, 0, 1));
+    const elapsedMs = performance.now() - start;
+    expect(result).toBe(false);
+    expect(elapsedMs).toBeLessThan(500);
+  });
+
+  it('hasFireWithinYears respects custom year windows around fire boundary', () => {
+    // Anchor: Jan 1 2024 at midnight. The expression `0 0 1 1 *` fires
+    // at Jan 1 of each year. Within 5 years we will see 5 fires
+    // (2025..2029). With a 0.5-year window starting after Jan 1 we see
+    // nothing until Jan 1 of the next year.
+    const expr = parseCronExpression('0 0 1 1 *');
+    const fromInsideYear = localDate(2024, 5, 1); // mid-2024
+    expect(hasFireWithinYears(expr, 5, fromInsideYear)).toBe(true);
+    // A window that ends before the next Jan 1 must return false.
+    // Jun 1 → ~7 months to Jan 1 2025; 0.5 years ≈ 6 months → false.
+    expect(hasFireWithinYears(expr, 0.5, fromInsideYear)).toBe(false);
   });
 });
 

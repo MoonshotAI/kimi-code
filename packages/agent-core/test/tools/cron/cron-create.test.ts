@@ -256,6 +256,103 @@ describe('CronCreateTool', () => {
     expect(true).toBe(true);
   });
 
+  describe('whitespace normalization', () => {
+    it('normalizes newline-separated cron fields to single spaces in the store', async () => {
+      const { manager, tool } = makeHarness();
+      const result = await runTool(tool, {
+        cron: '*/5\n* * * *',
+        prompt: 'x',
+        recurring: true,
+      });
+      expect(result.isError ?? false).toBe(false);
+
+      const tasks = manager.store.list();
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]!.cron).toBe('*/5 * * * *');
+    });
+
+    it('normalizes tab-separated cron fields', async () => {
+      const { manager, tool } = makeHarness();
+      const result = await runTool(tool, {
+        cron: '*/5\t*\t*\t*\t*',
+        prompt: 'x',
+        recurring: true,
+      });
+      expect(result.isError ?? false).toBe(false);
+
+      const tasks = manager.store.list();
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]!.cron).toBe('*/5 * * * *');
+    });
+
+    it('normalizes leading/trailing whitespace', async () => {
+      const { manager, tool } = makeHarness();
+      const result = await runTool(tool, {
+        cron: '   */5 * * * *   ',
+        prompt: 'x',
+        recurring: true,
+      });
+      expect(result.isError ?? false).toBe(false);
+
+      const tasks = manager.store.list();
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]!.cron).toBe('*/5 * * * *');
+    });
+
+    it('normalized cron is what shows up in the rendered CronCreate output', async () => {
+      const { tool } = makeHarness();
+      const result = await runTool(tool, {
+        cron: '*/5\n* * * *',
+        prompt: 'x',
+        recurring: true,
+      });
+      const out = assertSuccess(result);
+      expect(out).toContain('cron: */5 * * * *');
+      // No literal newline between the cron field tokens — the only
+      // newlines should be the record separators between keys.
+      expect(out).not.toMatch(/cron: \*\/5\n\* \* \* \*/);
+    });
+
+    it('normalizes whitespace before parse so humanSchedule does not leak newlines', async () => {
+      // `cronToHuman` recognizes "*/5 * * * *" → "every 5 minutes",
+      // so the rendered humanSchedule should be the template output —
+      // a single line, no leaked newline from the raw input.
+      const { tool } = makeHarness();
+      const result = await runTool(tool, {
+        cron: '*/5\n* * * *',
+        prompt: 'x',
+        recurring: true,
+      });
+      const out = assertSuccess(result);
+      const match = /^humanSchedule: (.+)$/m.exec(out);
+      expect(match).not.toBeNull();
+      const value = match![1]!;
+      expect(value).toBe('every 5 minutes');
+      expect(value).not.toContain('\n');
+    });
+
+    it('humanSchedule fallback is single-line for a non-template cron with tabs in input', async () => {
+      // Five specific integers don't match any cronToHuman template,
+      // so the function falls back to `parsed.raw`. With normalization
+      // moved before parsing, `parsed.raw` is the single-line form;
+      // the rendered humanSchedule must not contain the original tabs
+      // or any newlines.
+      const { tool } = makeHarness();
+      const result = await runTool(tool, {
+        cron: '1\t2\t3\t4\t5',
+        prompt: 'x',
+        recurring: true,
+      });
+      const out = assertSuccess(result);
+      const match = /^humanSchedule: (.+)$/m.exec(out);
+      expect(match).not.toBeNull();
+      const value = match![1]!;
+      expect(value).toBe('1 2 3 4 5');
+      expect(value).not.toContain('\t');
+      expect(value.split('\n').length - 1).toBe(0);
+    });
+  });
+
   describe('clock anchored at execute() time', () => {
     it('uses the clock value at execute(), not resolveExecution()', async () => {
       // Mirrors the manual-approval scenario: prepare returns a

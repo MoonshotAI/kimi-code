@@ -122,14 +122,16 @@ export function jitteredNextCronRunMs(
  * fine — it just means this task is the unlucky one that pays the
  * full delay).
  *
- * The result is clamped to `task.createdAt` when provided so the
- * pull-forward can never produce a fire time strictly before the
- * task was scheduled (a one-shot created at 08:59:30 for `0 9 * * *`
- * with a high-hash id would otherwise jitter the 09:00 ideal back to
- * 08:58:30 — a past timestamp that the next scheduler tick treats
- * as immediately overdue). Callers that don't have a `createdAt`
- * (legacy test fixtures) get the unclamped value, which preserves
- * the previous behaviour for them.
+ * When the deterministic offset would land before `task.createdAt`,
+ * the jitter budget is too small to safely pull forward: a previous
+ * version clamped to `createdAt` itself, but the scheduler condition
+ * `now >= nextFireAt` then fires on the very next tick — for the
+ * canonical 08:59:30-created `0 9 * * *` case, that means firing
+ * ~29 s before the ideal 09:00 mark. We skip jitter instead and
+ * return `idealMs` unchanged; the task fires at the ideal time, no
+ * earlier. Callers without `createdAt` (legacy test fixtures) get
+ * the unclamped pulled-forward value, preserving the previous
+ * behaviour for them.
  */
 export function oneShotJitteredNextCronRunMs(
   task: { id: string; createdAt?: number | undefined },
@@ -139,8 +141,12 @@ export function oneShotJitteredNextCronRunMs(
   if (jitterDisabledByEnv()) {
     return idealMs;
   }
-  // Only the minute-of-hour matters: did the model land on the round
-  // number? Sub-minute granularity is filtered by the modulo check.
+  // `idealMs % MS_PER_MINUTE === 0` is a UTC minute-boundary check.
+  // It coincides with a local minute boundary in every modern timezone
+  // because all offsets are minute-aligned — there are no sub-minute
+  // offsets in current use. Cron firings are always on the minute, so
+  // this gate is almost always true; it remains as a guard against
+  // synthetic idealMs values from tests that aren't on the minute.
   if (idealMs % MS_PER_MINUTE !== 0) {
     return idealMs;
   }
@@ -153,12 +159,12 @@ export function oneShotJitteredNextCronRunMs(
   }
   const offset = -config.oneShotMaxMs * fractionFromId(task.id);
   const shifted = idealMs + offset;
-  // Floor at `createdAt` so we never return a timestamp before the
-  // task was scheduled. Without this floor a brand-new one-shot can
-  // come out of `CronCreate` already overdue and fire on the very
-  // next scheduler tick.
+  // Skip jitter when the budget is insufficient: the previous version
+  // clamped to `createdAt`, but `now >= nextFireAt` then fired on the
+  // very next tick — ~29 s before ideal for the 08:59:30 → 09:00 case.
+  // Returning `idealMs` keeps the fire on schedule, never earlier.
   if (task.createdAt !== undefined && shifted < task.createdAt) {
-    return task.createdAt;
+    return idealMs;
   }
   return shifted;
 }

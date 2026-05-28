@@ -40,6 +40,7 @@ import {
   SYSTEM_CLOCKS,
   type ClockSources,
 } from '../../tools/cron/clock';
+import { renderCronFireXml } from '../../tools/cron/cron-fire-xml';
 import { SessionCronStore } from '../../tools/cron/session-store';
 import {
   createCronScheduler,
@@ -180,6 +181,16 @@ export class CronManager {
   }
 
   /**
+   * Per-task post-jitter next-fire. Forwards to the scheduler so
+   * CronList renders the same instant the scheduler will fire — even
+   * when an already-past ideal still has a pending jittered delivery
+   * in the current period.
+   */
+  getNextFireForTask(taskId: string): number | null {
+    return this.scheduler.getNextFireForTask(taskId);
+  }
+
+  /**
    * Stale judgment.
    *
    *   - `KIMI_CRON_NO_STALE=1` short-circuits to false (bench).
@@ -229,7 +240,12 @@ export class CronManager {
       coalescedCount: ctx.coalescedCount,
       stale,
     };
-    const content: ContentPart[] = [{ type: 'text', text: task.prompt }];
+    const content: ContentPart[] = [
+      {
+        type: 'text',
+        text: renderCronFireXml(origin, task.prompt),
+      },
+    ];
     const turnId = this.agent.turn.steer(content, origin);
     this.agent.telemetry.track(CRON_FIRED, {
       recurring: task.recurring !== false,
@@ -331,6 +347,9 @@ export class CronManager {
    * The handler swallows any throw from `tick()` because a signal-driven
    * bench tool must never crash the host process; the tick failure mode
    * is already surfaced via telemetry / logs inside the scheduler.
+   * Set `KIMI_CRON_DEBUG=1` to surface the swallowed error to stderr —
+   * mirrors `scheduler.ts`'s debugLog pattern so bench debugging can
+   * see a bad tick.
    */
   private bindSigusr1(): void {
     if (process.platform === 'win32') return;
@@ -339,8 +358,13 @@ export class CronManager {
     const handler: NodeJS.SignalsListener = () => {
       try {
         this.tick();
-      } catch {
-        // Intentional: bench affordance must never bubble.
+      } catch (error) {
+        if (process.env['KIMI_CRON_DEBUG'] === '1') {
+          const msg = error instanceof Error ? error.message : String(error);
+          process.stderr.write(
+            `[cron/manager] SIGUSR1 tick threw: ${msg}\n`,
+          );
+        }
       }
     };
     this.sigusr1Handler = handler;

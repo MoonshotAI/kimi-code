@@ -54,6 +54,17 @@ describe('CronManager', () => {
       expect(manager.store.list()).toEqual([]);
       expect(manager.getNextFireTime()).toBeNull();
     });
+
+    it('getNextFireForTask delegates to the scheduler', () => {
+      const { agent } = createAgentStub();
+      const manager = new CronManager(agent, { pollIntervalMs: null });
+      const scheduler = (manager as unknown as {
+        scheduler: { getNextFireForTask: (id: string) => number | null };
+      }).scheduler;
+      const spy = vi.spyOn(scheduler, 'getNextFireForTask').mockReturnValue(123);
+      expect(manager.getNextFireForTask('deadbeef')).toBe(123);
+      expect(spy).toHaveBeenCalledWith('deadbeef');
+    });
   });
 
   describe('handleFire — recurring', () => {
@@ -83,7 +94,15 @@ describe('CronManager', () => {
       expect(call.origin.coalescedCount).toBeGreaterThanOrEqual(1);
       expect(call.origin.cron).toBe('*/5 * * * *');
       expect(call.origin.jobId).toMatch(/^[0-9a-f]{8}$/);
-      expect(call.content).toEqual([{ type: 'text', text: 'check the deploy' }]);
+      // Content is wrapped in the cron-fire envelope (Bug A fix).
+      expect(call.content).toHaveLength(1);
+      const text = (call.content[0] as { type: 'text'; text: string }).text;
+      expect(text).toContain('<cron-fire ');
+      expect(text).toContain('<prompt>\ncheck the deploy\n</prompt>');
+      // Exactly one envelope — guards against an accidental double-wrap
+      // (e.g. handleFire calling renderCronFireXml on already-rendered
+      // content from a future refactor).
+      expect((text.match(/<cron-fire /g) ?? []).length).toBe(1);
 
       expect(stub.telemetryCalls.length).toBe(1);
       const tc = stub.telemetryCalls[0]!;
@@ -124,6 +143,12 @@ describe('CronManager', () => {
       if (origin.kind !== 'cron_job') throw new Error('unreachable');
       expect(origin.recurring).toBe(false);
       expect(origin.stale).toBe(false);
+      // Content carries the cron-fire envelope around the verbatim prompt.
+      const content = stub.steerCalls[0]!.content;
+      const text = (content[0] as { type: 'text'; text: string }).text;
+      expect(text).toContain('<cron-fire ');
+      expect(text).toContain('recurring="false"');
+      expect(text).toContain('<prompt>\none-shot ping\n</prompt>');
 
       const tc = stub.telemetryCalls[0]!;
       expect(tc.props).toMatchObject({ recurring: false });
@@ -268,6 +293,12 @@ describe('CronManager', () => {
       if (origin.kind !== 'cron_job') throw new Error('expected cron_job');
       expect(origin.stale).toBe(true);
       expect(stub.telemetryCalls[0]!.props).toMatchObject({ stale: true });
+      // Rendered envelope carries the stale flag too.
+      const text = (stub.steerCalls[0]!.content[0] as {
+        type: 'text';
+        text: string;
+      }).text;
+      expect(text).toContain('stale="true"');
     });
 
     it('stale recurring tasks get one final fire and are then removed', () => {

@@ -182,6 +182,7 @@ export class Session {
   async close(): Promise<void> {
     try {
       await this.stopBackgroundTasksOnExit();
+      await this.stopCronOnExit();
       await this.flushMetadata();
       await this.triggerSessionEnd('exit');
     } finally {
@@ -191,6 +192,15 @@ export class Session {
         await this.logHandle?.close();
       }
     }
+  }
+
+  // Stop every agent's cron scheduler on close. No keepAlive notion — cron
+  // intervals reference the agent/session graph and must die with the session.
+  // `allSettled` keeps one agent's failure from blocking the rest.
+  private async stopCronOnExit(): Promise<void> {
+    await Promise.allSettled(
+      Array.from(this.agents.values(), (agent) => agent.cron.stop()),
+    );
   }
 
   private async stopBackgroundTasksOnExit(): Promise<void> {

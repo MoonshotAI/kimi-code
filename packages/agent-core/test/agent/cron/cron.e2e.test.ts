@@ -125,8 +125,11 @@ describe('Cron — session E2E (P1.9)', () => {
     expect(steerCalls.length).toBe(1);
     const fire = steerCalls[0]!;
 
-    // ── Content carries the user prompt verbatim ─────────────────────
-    expect(fire.content).toEqual([{ type: 'text', text: 'cron-fired prompt' }]);
+    // ── Content carries the user prompt wrapped in the cron-fire envelope ─
+    expect(fire.content).toHaveLength(1);
+    const fireText = (fire.content[0] as { type: 'text'; text: string }).text;
+    expect(fireText).toContain('<cron-fire ');
+    expect(fireText).toContain('cron-fired prompt');
 
     // ── Origin carries the full CronJobOrigin contract ───────────────
     expect(fire.origin).toMatchObject({

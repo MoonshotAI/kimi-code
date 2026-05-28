@@ -534,6 +534,24 @@ describe('Agent context notification projection', () => {
     expect(textOf(messages[0]!)).toContain('Task done');
     expect(textOf(messages[1]!)).toBe('Actual user prompt');
   });
+
+  it('does not merge a cron-fire envelope into an adjacent user message', () => {
+    // Cron fires arrive as user-role messages whose text starts with
+    // `<cron-fire `. `mergeAdjacentUserMessages` must treat them like
+    // <notification>/<system-reminder>/<hook_result> and keep them in
+    // separate messages — otherwise the envelope XML smears into a
+    // real user turn and confuses the LLM about where the system
+    // annotation ends.
+    const cronEnvelope =
+      '<cron-fire jobId="deadbeef" cron="*/5 * * * *" recurring="true" coalescedCount="1" stale="false">\n<prompt>\ncheck the deploy\n</prompt>\n</cron-fire>';
+    const messages = project([
+      userMessage(cronEnvelope),
+      userMessage('Actual follow-up from the user'),
+    ]);
+    expect(messages).toHaveLength(2);
+    expect(textOf(messages[0]!)).toBe(cronEnvelope);
+    expect(textOf(messages[1]!)).toBe('Actual follow-up from the user');
+  });
 });
 
 function userMessage(text: string): Message {

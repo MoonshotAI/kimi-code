@@ -171,12 +171,12 @@ describe('oneShotJitteredNextCronRunMs', () => {
     }
   });
 
-  it('clamps the pull-forward to task.createdAt so it never returns the past', () => {
-    // The bot-flagged race: schedule a one-shot at 08:59:30 for
-    // `0 9 * * *` with a high-hash id. The unclamped pull-forward
-    // could land at 08:58:30 — strictly before `createdAt`, which the
-    // next scheduler tick would treat as immediately overdue.
-    // With the clamp, the result is floored at `createdAt`.
+  it('skips jitter when budget insufficient — returns idealMs, never earlier', () => {
+    // Schedule a one-shot at 08:59:30 for `0 9 * * *` with a high-hash
+    // id. The unclamped pull-forward lands at 08:58:30. A previous
+    // version clamped to `createdAt` (08:59:30), but the scheduler
+    // condition `now >= nextFireAt` then fires on the next tick —
+    // ~29 s before ideal. We skip jitter instead and return idealMs.
     const ideal = localDate(2024, 5, 1, 9, 0, 0);
     const createdAt = ideal - 30_000; // 08:59:30
     const jittered = oneShotJitteredNextCronRunMs(
@@ -184,6 +184,24 @@ describe('oneShotJitteredNextCronRunMs', () => {
       ideal,
     );
     expect(jittered).toBeGreaterThanOrEqual(createdAt);
+    expect(jittered).toBeLessThanOrEqual(ideal);
+    expect(jittered).toBe(ideal);
+  });
+
+  it('still pulls forward when createdAt leaves enough room', () => {
+    // 5-minute gap between createdAt and ideal — well past the 90 s
+    // oneShotMaxMs cap, so the budget is sufficient and the jitter
+    // applies normally. Regression: the budget-insufficient branch
+    // must not poison the happy path.
+    const ideal = localDate(2024, 5, 1, 9, 0, 0);
+    const createdAt = ideal - 5 * 60_000;
+    const jittered = oneShotJitteredNextCronRunMs(
+      { id: 'ffffffff', createdAt },
+      ideal,
+    );
+    expect(jittered).toBeGreaterThanOrEqual(createdAt);
+    expect(jittered).toBeLessThan(ideal);
+    expect(ideal - jittered).toBeLessThanOrEqual(90_000);
   });
 
   it('passes through unchanged when createdAt is not provided (legacy callers)', () => {
