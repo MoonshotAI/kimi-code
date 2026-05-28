@@ -6,7 +6,7 @@ import regexpEscape from 'regexp.escape';
 
 import type { SkillDefinition, SkillMetadata, SkillSource } from './types';
 import { isSupportedSkillType } from './types';
-import { escapeXml, escapeXmlTags } from '../utils/xml-escape';
+import { escapeXmlTags } from '../utils/xml-escape';
 
 export class FrontmatterError extends Error {
   constructor(message: string, cause?: unknown) {
@@ -208,7 +208,7 @@ export function expandSkillParameters(
     .replaceAll('${KIMI_SESSION_ID}', context.sessionId ?? '');
 
   if (!hasArgumentPlaceholder && rawArgs.length > 0) {
-    return `${content}\n\nARGUMENTS: ${escapeXml(rawArgs)}`;
+    return `${content}\n\nARGUMENTS: ${escapeXmlTags(rawArgs)}`;
   }
   return content;
 }

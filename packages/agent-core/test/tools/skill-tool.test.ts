@@ -236,7 +236,7 @@ describe('SkillTool execution', () => {
     await execute(tool, { skill: 'a&b', args: '<raw "value">' });
 
     expect(methods.recordSystemReminder.mock.calls[0]?.[0]).toContain(
-      '<kimi-skill-loaded name="a&amp;b" args="&lt;raw &quot;value&quot;&gt;">\nbody of a&b\n\nARGUMENTS: &lt;raw &quot;value&quot;&gt;\n</kimi-skill-loaded>',
+      '<kimi-skill-loaded name="a&amp;b" args="&lt;raw &quot;value&quot;&gt;">\nbody of a&b\n\nARGUMENTS: &lt;raw "value"&gt;\n</kimi-skill-loaded>',
     );
     expect(methods.recordSkillActivation).toHaveBeenCalledTimes(1);
   });
