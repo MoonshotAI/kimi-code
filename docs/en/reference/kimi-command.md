@@ -21,6 +21,7 @@ The table below lists all options supported by the `kimi` main command. All flag
 | `--prompt <prompt>` | `-p` | Run one prompt non-interactively and stream assistant output to stdout. This mode uses `auto` permission for tool calls and does not open the TUI. |
 | `--output-format <format>` | | Set the non-interactive output format. Supported values are `text` and `stream-json`. Only valid with `--prompt`; defaults to `text`. |
 | `--yolo` | `-y` | Auto-approve ordinary tool calls, skipping approval requests; Plan mode `Bash` approval and Plan mode exit approval are not skipped. |
+| `--auto` | | Start in auto permission mode. Tool approvals are handled automatically and the agent will not ask questions. |
 | `--plan` | | Start a new session in Plan mode, where the AI favors read-only tools for exploration and planning and can write the current plan file; Plan mode `Bash` is handled separately according to the permission mode. |
 | `--skills-dir <dir>` | | Load Skills from the specified directory, replacing the auto-discovered user and project directories. Can be passed multiple times to stack several directories. See [Custom Skills directories](#custom-skills-directories) below. |
 
@@ -36,8 +37,10 @@ The following combinations are rejected at startup:
 
 - `--continue` and `--session` are mutually exclusive: both mean "resume a previous session" and overlap in meaning.
 - `--yolo` cannot be combined with `--continue` or `--session`: when resuming a session, the original session's approval settings are preserved. This rule only applies to interactive mode; in `--prompt` mode, `--yolo` is rejected earlier because it is mutually exclusive with `--prompt`.
+- `--auto` cannot be combined with `--continue` or `--session`: same rationale as `--yolo`.
+- `--auto` cannot be combined with `--yolo`: the two permission modes are mutually exclusive.
 - `--plan` cannot be combined with `--continue` or `--session`: Plan mode only applies to new sessions.
-- `--prompt` cannot be combined with `--yolo` or `--plan`: non-interactive mode always uses `auto` permission and does not enter Plan mode.
+- `--prompt` cannot be combined with `--yolo`, `--auto`, or `--plan`: non-interactive mode always uses `auto` permission and does not enter Plan mode.
 - `--prompt` can be combined with `--continue` or `--session <id>` with an ID; bare `--session` without an ID would open the interactive picker and therefore cannot be used in non-interactive mode.
 - `--output-format` can only be used with `--prompt`; the interactive TUI does not support writing the full event stream as stdout JSONL.
 
@@ -67,6 +70,12 @@ When the task is trivial and you don't want to be interrupted by frequent approv
 
 ```sh
 kimi --yolo
+```
+
+If you want the agent to handle approvals on its own and not ask questions, use `--auto`:
+
+```sh
+kimi --auto
 ```
 
 If you want the AI to read the code and produce an implementation plan first, rather than immediately editing files, use `--plan` to enter Plan mode:

@@ -21,6 +21,7 @@ kimi <subcommand> [options]
 | `--prompt <prompt>` | `-p` | 非交互执行单次 prompt，并把 Assistant 输出流式写到 stdout。该模式会使用 `auto` 权限处理工具调用，不会打开 TUI。 |
 | `--output-format <format>` | | 设置非交互输出格式，支持 `text` 与 `stream-json`。仅可与 `--prompt` 一起使用，默认 `text`。 |
 | `--yolo` | `-y` | 自动批准普通工具调用，跳过审批请求；Plan 模式中的 `Bash` 审批和退出审批不会被跳过。 |
+| `--auto` | | 以 auto 权限模式启动。工具审批自动处理，Agent 不会向用户提问。 |
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划，可以写入当前计划文件；Plan 模式中的 `Bash` 按权限模式单独处理。 |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入以叠加多个目录。详见下文 [自定义 Skills 目录](#自定义-skills-目录)。 |
 
@@ -36,8 +37,10 @@ kimi <subcommand> [options]
 
 - `--continue` 与 `--session` 互斥：两者都表示"恢复历史会话"，含义重叠。
 - `--yolo` 不能与 `--continue` 或 `--session` 同时使用：恢复会话时会沿用原会话的审批设置。此规则仅适用于交互式模式；在 `--prompt` 模式下，`--yolo` 已因与 `--prompt` 互斥而被更早拦截。
+- `--auto` 不能与 `--continue` 或 `--session` 同时使用：与 `--yolo` 同理。
+- `--auto` 不能与 `--yolo` 同时使用：两种权限模式互斥。
 - `--plan` 不能与 `--continue` 或 `--session` 同时使用：Plan 模式只对新会话生效。
-- `--prompt` 不能与 `--yolo` 或 `--plan` 同时使用：非交互模式固定使用 `auto` 权限，并且不进入 Plan 模式。
+- `--prompt` 不能与 `--yolo`、`--auto` 或 `--plan` 同时使用：非交互模式固定使用 `auto` 权限，并且不进入 Plan 模式。
 - `--prompt` 可以与 `--continue` 或带 ID 的 `--session <id>` 一起使用；不带 ID 的 `--session` 会尝试打开选择器，因此不能用于非交互模式。
 - `--output-format` 只能与 `--prompt` 一起使用；交互式 TUI 不支持把完整事件流写成 stdout JSONL。
 
@@ -67,6 +70,12 @@ kimi --session 01HZ...XYZ
 
 ```sh
 kimi --yolo
+```
+
+希望 Agent 自行处理审批且不再向用户提问时，使用 `--auto`：
+
+```sh
+kimi --auto
 ```
 
 需要先让 AI 阅读代码、产出实现计划，而不是立刻动手修改文件时，使用 `--plan` 进入 Plan 模式：

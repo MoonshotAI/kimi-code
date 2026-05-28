@@ -39,7 +39,8 @@ Some commands are only available in the idle state. Running them while the sessi
 
 | Command | Alias | Description | Always available |
 | --- | --- | --- | --- |
-| `/yolo [on\|off]` | `/yes` | Toggle auto-approve mode. Without arguments, flip the current state; pass `on`/`off` explicitly to force the corresponding state. When enabled, ordinary tool call approvals are skipped; the Plan mode exit approval is not skipped. | Yes |
+| `/yolo [on\|off]` | `/yes` | Toggle YOLO mode. Without arguments, flip the current state; pass `on`/`off` explicitly to force the corresponding state. When enabled, ordinary tool call approvals are skipped; the Plan mode exit approval is not skipped. | Yes |
+| `/auto [on\|off]` | — | Toggle auto permission mode. Without arguments, flip the current state; pass `on`/`off` explicitly to force the corresponding state. When enabled, tool approvals are handled automatically and the agent will not ask questions. | Yes |
 | `/plan [on\|off]` | — | Toggle Plan mode. Without arguments, flip the current state; pass `on`/`off` explicitly to force the corresponding state. Toggling alone does not create an empty plan file. | Yes |
 | `/plan clear` | — | Clear the current plan. | No |
 
