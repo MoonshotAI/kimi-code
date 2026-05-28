@@ -975,6 +975,7 @@ export class KimiTUI {
     for (const dispose of this.reverseRpcDisposers) {
       dispose();
     }
+    this.reverseRpcDisposers.length = 0;
   }
 
   private registerSessionHandlers(session: Session): void {
