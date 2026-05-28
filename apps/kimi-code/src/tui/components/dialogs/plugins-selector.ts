@@ -127,7 +127,7 @@ export class PluginsOverviewSelectorComponent extends Container implements Focus
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(' Plugins'),
-      chalk.hex(colors.textMuted)(` ${hint}`),
+      pluginShortcutHint(` ${hint}`, colors),
       '',
       sectionLabel(`Installed plugins (${plugins.length})`, colors),
     ];
@@ -171,7 +171,7 @@ export class PluginsOverviewSelectorComponent extends Container implements Focus
     const descriptionWidth = Math.max(1, width - 4);
     const lines = [line];
     for (const descLine of wrapOverviewDescription(item.description, descriptionWidth)) {
-      lines.push(chalk.hex(colors.textMuted)(`    ${descLine}`));
+      lines.push(pluginShortcutHint(`    ${descLine}`, colors));
     }
     return lines;
   }
@@ -236,7 +236,7 @@ export class PluginMarketplaceSelectorComponent extends Container implements Foc
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(' Official plugins'),
-      chalk.hex(colors.textMuted)(' ↑↓ navigate · Enter/Space install/update · ←/Esc back'),
+      pluginShortcutHint(' ↑↓ navigate · Enter/Space install/update · ←/Esc back', colors),
       chalk.hex(colors.textMuted)(` Source: ${this.opts.source}`),
       '',
       sectionLabel(`Marketplace (${entries.length})`, colors),
@@ -274,7 +274,7 @@ export class PluginMarketplaceSelectorComponent extends Container implements Foc
     const descriptionWidth = Math.max(1, width - 4);
     const lines = [line];
     for (const descLine of wrapOverviewDescription(item.description, descriptionWidth)) {
-      lines.push(chalk.hex(colors.textMuted)(`    ${descLine}`));
+      lines.push(pluginShortcutHint(`    ${descLine}`, colors));
     }
     return lines;
   }
@@ -286,6 +286,10 @@ export type PluginMcpSelection =
 
 export interface PluginMcpSelectorOptions {
   readonly info: PluginInfo;
+  readonly serverHint?: {
+    readonly server: string;
+    readonly text: string;
+  };
   readonly colors: ColorPalette;
   readonly onSelect: (selection: PluginMcpSelection) => void;
   readonly onCancel: () => void;
@@ -344,7 +348,7 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(` MCP servers · ${info.displayName}`),
-      chalk.hex(colors.textMuted)(' ↑↓ navigate · Enter/Space enable/disable · ←/Esc back'),
+      pluginShortcutHint(' ↑↓ navigate · Enter/Space enable/disable · ←/Esc back', colors),
       '',
       sectionLabel(`MCP servers (${info.enabledMcpServerCount}/${info.mcpServerCount} enabled)`, colors),
     ];
@@ -378,10 +382,14 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
     if (item.status !== undefined) {
       line += '  ' + statusStyle(item, colors)(item.status);
     }
+    const serverName = mcpItemServerName(item);
+    if (serverName !== undefined && this.opts.serverHint?.server === serverName) {
+      line += '  ' + chalk.hex(colors.warning)(this.opts.serverHint.text);
+    }
     const descriptionWidth = Math.max(1, width - 4);
     const lines = [line];
     for (const descLine of wrapOverviewDescription(item.description, descriptionWidth)) {
-      lines.push(chalk.hex(colors.textMuted)(`    ${descLine}`));
+      lines.push(pluginShortcutHint(`    ${descLine}`, colors));
     }
     return lines;
   }
@@ -403,6 +411,7 @@ export class PluginRemoveConfirmComponent extends ChoicePickerComponent {
     super({
       title: `Remove ${opts.displayName} (${opts.id})?`,
       hint: '↑↓ navigate · Enter/Space select · ←/Esc cancel',
+      formatHint: pluginShortcutHint,
       options: [
         {
           value: REMOVE_CONFIRM_CANCEL,
@@ -412,6 +421,7 @@ export class PluginRemoveConfirmComponent extends ChoicePickerComponent {
         {
           value: REMOVE_CONFIRM_REMOVE,
           label: 'Remove plugin',
+          tone: 'danger',
           description: 'Remove only the install record; plugin files are left in place.',
         },
       ],
@@ -577,6 +587,29 @@ function statusStyle(
   if (item.status === 'disabled') return chalk.hex(colors.textDim);
   if (item.status !== undefined && /^\d/.test(item.status)) return chalk.hex(colors.textDim);
   return chalk.hex(colors.warning);
+}
+
+function pluginShortcutHint(text: string, colors: ColorPalette): string {
+  const shortcutPattern = /D(?= remove)|M(?= MCP)|Space|Enter|Esc|[←→↑↓]/gu;
+  let output = '';
+  let offset = 0;
+
+  for (const match of text.matchAll(shortcutPattern)) {
+    const index = match.index;
+    if (index === undefined) continue;
+    const token = match[0];
+    output += chalk.hex(colors.textMuted)(text.slice(offset, index));
+    output += shortcutTokenStyle(token, colors)(token);
+    offset = index + token.length;
+  }
+
+  output += chalk.hex(colors.textMuted)(text.slice(offset));
+  return output;
+}
+
+function shortcutTokenStyle(token: string, colors: ColorPalette): (text: string) => string {
+  if (token === 'D') return chalk.hex(colors.error).bold;
+  return chalk.hex(colors.primary).bold;
 }
 
 function wrapOverviewDescription(text: string, width: number): string[] {

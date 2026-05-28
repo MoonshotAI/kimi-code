@@ -27,6 +27,8 @@ export interface ChoiceOption {
   readonly value: string;
   /** Display text shown in the list. */
   readonly label: string;
+  /** Optional semantic tone for labels that need stronger visual treatment. */
+  readonly tone?: 'danger';
   /** Optional explanatory text shown below the label. */
   readonly description?: string | undefined;
 }
@@ -34,6 +36,7 @@ export interface ChoiceOption {
 export interface ChoicePickerOptions {
   readonly title: string;
   readonly hint?: string;
+  readonly formatHint?: (text: string, colors: ColorPalette) => string;
   readonly notice?: string;
   readonly options: readonly ChoiceOption[];
   readonly currentValue?: string;
@@ -136,7 +139,11 @@ export class ChoicePickerComponent extends Container implements Focusable {
     if (searchable && view.query.length > 0) {
       lines.push(chalk.hex(colors.primary)(` Search: `) + chalk.hex(colors.text)(view.query));
     }
-    lines.push(chalk.hex(colors.textMuted)(` ${hint}`));
+    lines.push(
+      this.opts.formatHint === undefined
+        ? chalk.hex(colors.textMuted)(` ${hint}`)
+        : this.opts.formatHint(` ${hint}`, colors),
+    );
     if (this.opts.notice !== undefined) {
       lines.push(chalk.hex(colors.success)(` ${this.opts.notice}`));
     }
@@ -150,7 +157,7 @@ export class ChoicePickerComponent extends Container implements Focusable {
       const isSelected = i === view.selectedIndex;
       const isCurrent = opt.value === this.opts.currentValue;
       const pointer = isSelected ? '❯' : ' ';
-      const labelStyle = isSelected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
+      const labelStyle = optionLabelStyle(opt, isSelected, colors);
       let line = chalk.hex(isSelected ? colors.primary : colors.textDim)(`  ${pointer} `);
       line += labelStyle(opt.label);
       if (isCurrent) {
@@ -176,4 +183,15 @@ export class ChoicePickerComponent extends Container implements Focusable {
     lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width));
   }
+}
+
+function optionLabelStyle(
+  option: ChoiceOption,
+  selected: boolean,
+  colors: ColorPalette,
+): (text: string) => string {
+  if (option.tone === 'danger') {
+    return selected ? chalk.hex(colors.error).bold : chalk.hex(colors.error);
+  }
+  return selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import chalk from 'chalk';
 
 import {
   PluginMcpSelectorComponent,
@@ -11,10 +12,34 @@ import {
 import { darkColors } from '#/tui/theme/colors';
 
 const ANSI_SGR = /\[[0-9;]*m/g;
+const SGR_SEQUENCE = String.raw`\[[0-9;]*m`;
+const HIGHLIGHTED_D_REMOVE = new RegExp(`${SGR_SEQUENCE}(?:${SGR_SEQUENCE})*D(?:${SGR_SEQUENCE})+ remove`, 'g');
 const MID = '\u00B7';
 
 function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '').replaceAll('\u276F', '?');
+}
+
+function withAnsiColors<T>(fn: () => T): T {
+  const previousChalkLevel = chalk.level;
+  chalk.level = 3;
+  try {
+    return fn();
+  } finally {
+    chalk.level = previousChalkLevel;
+  }
+}
+
+function renderRaw(component: { render(width: number): string[] }, width = 120): string {
+  return withAnsiColors(() => component.render(width).join('\n'));
+}
+
+function primaryShortcut(text: string): string {
+  return withAnsiColors(() => chalk.hex(darkColors.primary).bold(text));
+}
+
+function dangerShortcut(text: string): string {
+  return withAnsiColors(() => chalk.hex(darkColors.error).bold(text));
 }
 
 describe('plugins selector dialogs', () => {
@@ -39,13 +64,19 @@ describe('plugins selector dialogs', () => {
       onCancel: vi.fn(),
     });
 
-    const out = picker.render(120).map(strip).join('\n');
+    const raw = renderRaw(picker);
+    const out = strip(raw);
     expect(out).toContain('Installed plugins (1)');
     expect(out).toContain('Actions');
     expect(out).toContain('? Kimi Datasource  enabled');
     expect(out).toContain(
       `Space disable ${MID} M MCP ${MID} D remove ${MID} Enter info ${MID} id kimi-datasource ${MID} 2 skills ${MID} MCP 1/1`,
     );
+    expect(raw.match(HIGHLIGHTED_D_REMOVE)).toHaveLength(2);
+    expect(raw).toContain(primaryShortcut('Space'));
+    expect(raw).toContain(primaryShortcut('M'));
+    expect(raw).toContain(dangerShortcut('D'));
+    expect(raw).toContain(primaryShortcut('Enter'));
     expect(out).toContain('Browse official marketplace');
     expect(out).toContain('Show plugin summary');
 
@@ -74,12 +105,15 @@ describe('plugins selector dialogs', () => {
       onCancel: vi.fn(),
     });
 
-    const out = picker.render(120).map(strip).join('\n');
+    const raw = renderRaw(picker);
+    const out = strip(raw);
     expect(out).toContain('Marketplace (1)');
     expect(out).toContain('? Superpowers  install v5.1.0');
     expect(out).toContain(
       `Enter/Space install ${MID} Workflow skills ${MID} id superpowers ${MID} v5.1.0 ${MID} Curated plugin ${MID} workflow`,
     );
+    expect(raw).toContain(primaryShortcut('Enter'));
+    expect(raw).toContain(primaryShortcut('Space'));
     expect(out).toContain('Actions');
     expect(out).toContain('Back to installed plugins');
 
@@ -236,9 +270,12 @@ describe('plugins selector dialogs', () => {
       onCancel: vi.fn(),
     });
 
-    const out = picker.render(120).map(strip).join('\n');
+    const raw = renderRaw(picker);
+    const out = strip(raw);
     expect(out).toContain('MCP servers (1/1 enabled)');
     expect(out).toContain('? data  enabled');
+    expect(raw).toContain(primaryShortcut('Enter'));
+    expect(raw).toContain(primaryShortcut('Space'));
 
     picker.handleInput(' ');
 
@@ -307,6 +344,11 @@ describe('plugins selector dialogs', () => {
     });
 
     picker.handleInput('[B');
+    const raw = renderRaw(picker);
+    expect(raw).toContain(primaryShortcut('Enter'));
+    expect(raw).toContain(primaryShortcut('Space'));
+    expect(raw).toContain(dangerShortcut('Remove plugin'));
+
     picker.handleInput('\r');
 
     expect(results).toEqual([{ kind: 'confirm' }]);
