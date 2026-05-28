@@ -6,7 +6,7 @@ import regexpEscape from 'regexp.escape';
 
 import type { SkillDefinition, SkillMetadata, SkillSource } from './types';
 import { isSupportedSkillType } from './types';
-import { escapeXml } from '../utils/xml-escape';
+import { escapeXml, escapeXmlTags } from '../utils/xml-escape';
 
 export class FrontmatterError extends Error {
   constructor(message: string, cause?: unknown) {
@@ -187,20 +187,20 @@ export function expandSkillParameters(
     const escaped = regexpEscape(name);
     content = content.replaceAll(
       new RegExp(`\\$${escaped}(?![\\[\\w])`, 'g'),
-      tokens[index] ?? '',
+      escapeXmlTags(tokens[index] ?? ''),
     );
   }
 
   content = content
     .replaceAll(/\$ARGUMENTS\[(\d+)\]/g, (_match, indexText: string) => {
       const index = Number.parseInt(indexText, 10);
-      return tokens[index] ?? '';
+      return escapeXmlTags(tokens[index] ?? '');
     })
     .replaceAll(/\$(\d+)(?!\w)/g, (_match, indexText: string) => {
       const index = Number.parseInt(indexText, 10);
-      return tokens[index] ?? '';
+      return escapeXmlTags(tokens[index] ?? '');
     })
-    .replaceAll('$ARGUMENTS', rawArgs);
+    .replaceAll('$ARGUMENTS', escapeXmlTags(rawArgs));
 
   const hasArgumentPlaceholder = content !== body;
   content = content
