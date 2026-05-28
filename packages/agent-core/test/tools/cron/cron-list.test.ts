@@ -109,6 +109,7 @@ describe('CronListTool', () => {
       id: <id>
       cron: */5 * * * *
       humanSchedule: every 5 minutes
+      prompt: "hi"
       nextFireAt: <iso>
       recurring: true
       ageDays: 0.00
@@ -134,6 +135,7 @@ describe('CronListTool', () => {
       id: <id>
       cron: */5 * * * *
       humanSchedule: every 5 minutes
+      prompt: "first"
       nextFireAt: <iso>
       recurring: true
       ageDays: 0.00
@@ -142,6 +144,7 @@ describe('CronListTool', () => {
       id: <id>
       cron: 0 12 * * *
       humanSchedule: at 12:00 every day
+      prompt: "second"
       nextFireAt: <iso>
       recurring: false
       ageDays: 0.00
@@ -166,6 +169,7 @@ describe('CronListTool', () => {
       id: <id>
       cron: */5 * * * *
       humanSchedule: every 5 minutes
+      prompt: "old"
       nextFireAt: <iso>
       recurring: true
       ageDays: 8.00
@@ -207,6 +211,7 @@ describe('CronListTool', () => {
       id: <id>
       cron: 0 12 * * *
       humanSchedule: at 12:00 every day
+      prompt: "noon"
       nextFireAt: <iso>
       recurring: false
       ageDays: 0.00
@@ -230,6 +235,7 @@ describe('CronListTool', () => {
       id: <id>
       cron: garbage
       humanSchedule: garbage
+      prompt: "x"
       nextFireAt: null
       recurring: true
       ageDays: 0.00
@@ -277,5 +283,56 @@ describe('CronListTool', () => {
     expect(match).not.toBeNull();
     const renderedMs = Date.parse(match![1]!);
     expect(renderedMs).toBe(expectedToday12.getTime());
+  });
+
+  it('truncates prompts longer than 200 UTF-8 bytes with a …(truncated) marker', async () => {
+    // Explicit assertions instead of a snapshot: keeps the truncation
+    // boundary visible in the test source rather than buried in a
+    // mostly-x string.
+    const { manager, tool } = makeHarness();
+    const nowMs = manager.clocks.wallNow();
+    const longPrompt = 'x'.repeat(300);
+    manager.store.add(
+      { cron: '*/5 * * * *', prompt: longPrompt, recurring: true },
+      nowMs,
+    );
+
+    const out = assertSuccess(await runTool(tool, {}));
+    const promptMatch = /^prompt: (.+)$/m.exec(out);
+    expect(promptMatch).not.toBeNull();
+    const renderedPromptField = promptMatch![1]!;
+    // JSON-encoded, so closing quote terminates the line.
+    expect(renderedPromptField.endsWith('…(truncated)"')).toBe(true);
+    expect(renderedPromptField.length).toBeLessThan(longPrompt.length);
+    expect(out).toContain('prompt: ');
+  });
+
+  it('walks back to a UTF-8 char boundary when truncating multi-byte prompts', async () => {
+    // Regression: a naïve `subarray(0, 200)` could split a 3-byte CJK
+    // sequence and produce a `�` replacement char on decode. The
+    // `0b1100_0000` continuation-byte walk-back must back off to a
+    // legal char boundary so the rendered preview is valid UTF-8.
+    const { manager, tool } = makeHarness();
+    const nowMs = manager.clocks.wallNow();
+    // `你` is 3 bytes in UTF-8; 100 × 3 = 300 bytes, well past the cap.
+    const cjkPrompt = '你'.repeat(100);
+    manager.store.add(
+      { cron: '*/5 * * * *', prompt: cjkPrompt, recurring: true },
+      nowMs,
+    );
+
+    const out = assertSuccess(await runTool(tool, {}));
+    const promptMatch = /^prompt: (.+)$/m.exec(out);
+    expect(promptMatch).not.toBeNull();
+    const rendered = promptMatch![1]!;
+    expect(rendered.endsWith('…(truncated)"')).toBe(true);
+    // No replacement char — the walk-back stopped at a legal boundary.
+    expect(rendered).not.toContain('�');
+    // Inner content is JSON-stringified; strip the outer quotes and
+    // the trailing `…(truncated)` marker, then verify the remainder
+    // parses back to a run of `你` chars with no fractional sequence.
+    const stripped = rendered.replace(/^"|…\(truncated\)"$/g, '');
+    expect(stripped.length).toBeGreaterThan(0);
+    for (const ch of stripped) expect(ch).toBe('你');
   });
 });

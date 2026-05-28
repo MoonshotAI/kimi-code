@@ -14,6 +14,11 @@ Each record carries:
   confirmation.
 - `cron` — the verbatim 5-field cron expression as scheduled.
 - `humanSchedule` — plain-English rendering (e.g. `every 5 minutes`).
+- `prompt` — the scheduled prompt text, JSON-encoded so embedded
+  newlines stay on one line. Truncated to 200 UTF-8 bytes with
+  `…(truncated)` if longer. Use this to recall what a task is for
+  after a context compaction, and as the source for the
+  `CronCreate` refresh ritual.
 - `nextFireAt` — ISO timestamp of the next fire **after jitter has
   been applied**. The actual fire may land slightly before or after a
   round `:00` / `:30` minute mark due to herd-avoidance jitter; this

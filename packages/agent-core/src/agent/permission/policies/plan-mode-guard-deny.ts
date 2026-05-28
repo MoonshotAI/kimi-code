@@ -28,12 +28,23 @@ export class PlanModeGuardDenyPermissionPolicy implements PermissionPolicy {
       };
     }
 
-    if (toolName !== 'TaskStop') return;
-    return {
-      kind: 'deny',
-      message:
-        'TaskStop is not available in plan mode. Call ExitPlanMode to exit plan mode before stopping a background task.',
-    };
+    if (toolName === 'TaskStop') {
+      return {
+        kind: 'deny',
+        message:
+          'TaskStop is not available in plan mode. Call ExitPlanMode to exit plan mode before stopping a background task.',
+      };
+    }
+
+    if (toolName === 'CronCreate' || toolName === 'CronDelete') {
+      return {
+        kind: 'deny',
+        message:
+          `${toolName} is not available in plan mode because it would mutate scheduled work that runs after plan exit. Call ExitPlanMode first.`,
+      };
+    }
+
+    return;
   }
 }
 

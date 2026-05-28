@@ -71,6 +71,21 @@ export type CronListInput = z.infer<typeof CronListInputSchema>;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+// Cap each rendered prompt at 200 UTF-8 bytes so a 50-task list with
+// kilobyte-scale prompts can't blow up the context window.
+const PROMPT_PREVIEW_BYTES = 200;
+
+function previewPrompt(prompt: string): string {
+  const buf = Buffer.from(prompt, 'utf8');
+  if (buf.byteLength <= PROMPT_PREVIEW_BYTES) return prompt;
+  // Slice to PROMPT_PREVIEW_BYTES. If that lands inside a multi-byte
+  // sequence, walk back to the nearest UTF-8 char boundary (continuation
+  // bytes start with 10xxxxxx).
+  let end = PROMPT_PREVIEW_BYTES;
+  while (end > 0 && (buf[end]! & 0b1100_0000) === 0b1000_0000) end--;
+  return `${buf.subarray(0, end).toString('utf8')}…(truncated)`;
+}
+
 // ── Implementation ───────────────────────────────────────────────────
 
 export class CronListTool implements BuiltinTool<CronListInput> {
@@ -165,6 +180,10 @@ export class CronListTool implements BuiltinTool<CronListInput> {
       `id: ${task.id}`,
       `cron: ${task.cron}`,
       `humanSchedule: ${humanSchedule}`,
+      // JSON-stringify so embedded newlines become `\n` escapes and
+      // the record stays one `key: value` per line — otherwise a
+      // multi-line prompt would corrupt the per-record parser.
+      `prompt: ${JSON.stringify(previewPrompt(task.prompt))}`,
       `nextFireAt: ${nextFireAtIso}`,
       `recurring: ${String(recurring)}`,
       `ageDays: ${ageDays.toFixed(2)}`,
