@@ -10,7 +10,10 @@ import {
 import type { ApprovalRequest, ApprovalResponse, Event } from '@moonshot-ai/kimi-code-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ApiKeyInputDialogComponent } from '#/tui/components/dialogs/api-key-input-dialog';
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
+import { CatalogModelMultiSelectComponent } from '#/tui/components/dialogs/catalog-model-multi-select';
+import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import {
   PluginMcpSelectorComponent,
@@ -26,12 +29,12 @@ import {
   runModelSelector,
 } from '#/tui/commands/prompts';
 import type { QueuedMessage } from '#/tui/types';
+import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
 vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/tui/commands/prompts')>();
   return { ...actual, promptFeedbackInput: vi.fn() };
 });
-import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
 vi.mock('#/tui/utils/open-url', () => ({ openUrl: vi.fn() }));
 
@@ -1731,6 +1734,404 @@ describe('KimiTUI message flow', () => {
     (picker as ModelSelectorComponent).handleInput('\u001B');
     (picker as ModelSelectorComponent).handleInput('\u001B');
     await expect(selection).resolves.toBeUndefined();
+  });
+
+  it('/connect writes only the models the user selected, default = first checked', async () => {
+    const catalog = {
+      acme: {
+        id: 'acme',
+        name: 'Acme',
+        api: 'https://api.acme.com/v1',
+        type: 'openai',
+        models: {
+          'acme-large': {
+            id: 'acme-large',
+            name: 'Acme Large',
+            limit: { context: 200000, output: 64000 },
+            reasoning: true,
+            tool_call: true,
+          },
+          'acme-mini': {
+            id: 'acme-mini',
+            name: 'Acme Mini',
+            limit: { context: 100000 },
+            tool_call: true,
+          },
+          'acme-nano': {
+            id: 'acme-nano',
+            name: 'Acme Nano',
+            limit: { context: 50000 },
+            tool_call: true,
+          },
+        },
+      },
+    };
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify(catalog), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    const originalFetch = global.fetch;
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({ providers: {}, models: {} })),
+      setConfig,
+    });
+
+    try {
+      driver.handleUserInput('/connect refresh');
+
+      // 1. Provider picker — one provider, select it.
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ChoicePickerComponent);
+      });
+      (driver.state.editorContainer.children[0] as ChoicePickerComponent).handleInput('\r');
+
+      // 2. Model multi-select — check acme-mini then acme-nano, leave acme-large out.
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+          CatalogModelMultiSelectComponent,
+        );
+      });
+      const modelPicker = driver.state.editorContainer
+        .children[0] as CatalogModelMultiSelectComponent;
+      modelPicker.handleInput(`${ESC}[B`); // highlight acme-mini
+      modelPicker.handleInput(' '); // check acme-mini (becomes default)
+      modelPicker.handleInput(`${ESC}[B`); // highlight acme-nano
+      modelPicker.handleInput(' '); // check acme-nano
+      modelPicker.handleInput('\r');
+
+      // 3. API key dialog — type and submit.
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ApiKeyInputDialogComponent);
+      });
+      const apiKeyDialog = driver.state.editorContainer.children[0] as ApiKeyInputDialogComponent;
+      apiKeyDialog.handleInput('\r');
+      expect(stripSgr(apiKeyDialog.render(120).join('\n'))).toContain(
+        'API key cannot be empty.',
+      );
+      expect(setConfig).not.toHaveBeenCalled();
+
+      for (const ch of 'sk-test') apiKeyDialog.handleInput(ch);
+      apiKeyDialog.handleInput('\r');
+
+      await vi.waitFor(() => {
+        expect(setConfig).toHaveBeenCalled();
+      });
+
+      const written = (setConfig.mock.calls[0] as unknown as [
+        {
+          providers: Record<string, { type?: string; apiKey?: string }>;
+          models: Record<string, unknown>;
+          defaultModel: string;
+        },
+      ])[0];
+      expect(Object.keys(written.models)).toEqual(['acme/acme-mini', 'acme/acme-nano']);
+      expect(written.models['acme/acme-large']).toBeUndefined();
+      expect(written.defaultModel).toBe('acme/acme-mini');
+      expect(written.providers['acme']).toMatchObject({ type: 'openai', apiKey: 'sk-test' });
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('/connect preselects existing provider models and writes the updated selection', async () => {
+    const catalog = {
+      acme: {
+        id: 'acme',
+        name: 'Acme',
+        api: 'https://api.acme.com/v1',
+        type: 'openai',
+        models: {
+          'acme-large': {
+            id: 'acme-large',
+            name: 'Acme Large',
+            limit: { context: 200000, output: 64000 },
+            reasoning: true,
+            tool_call: true,
+          },
+          'acme-mini': {
+            id: 'acme-mini',
+            name: 'Acme Mini',
+            limit: { context: 100000 },
+            tool_call: true,
+          },
+          'acme-nano': {
+            id: 'acme-nano',
+            name: 'Acme Nano',
+            limit: { context: 50000 },
+            tool_call: true,
+          },
+        },
+      },
+    };
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify(catalog), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    const originalFetch = global.fetch;
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const getConfig = vi.fn(async () => ({
+      providers: { acme: { type: 'openai', apiKey: 'old-key' } },
+      models: {
+        'acme/acme-mini': { provider: 'acme', model: 'acme-mini', maxContextSize: 100000 },
+        'acme/acme-nano': { provider: 'acme', model: 'acme-nano', maxContextSize: 50000 },
+      },
+      defaultModel: 'acme/acme-nano',
+      defaultThinking: false,
+    }));
+    const removeProvider = vi.fn(async () => ({ providers: {}, models: {} }));
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig,
+      removeProvider,
+      setConfig,
+    });
+
+    try {
+      driver.handleUserInput('/connect refresh');
+
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ChoicePickerComponent);
+      });
+      (driver.state.editorContainer.children[0] as ChoicePickerComponent).handleInput('\r');
+
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+          CatalogModelMultiSelectComponent,
+        );
+      });
+      const modelPicker = driver.state.editorContainer
+        .children[0] as CatalogModelMultiSelectComponent;
+      const initialOutput = stripSgr(modelPicker.render(120).join('\n'));
+      expect(initialOutput).toContain('[ ] Acme Large (acme)');
+      expect(initialOutput).toContain('[x] Acme Mini (acme)');
+      expect(initialOutput).toContain('[x] Acme Nano (acme) ← default');
+      expect(initialOutput).toContain('❯ [x] Acme Nano (acme) ← default');
+
+      modelPicker.handleInput(`${ESC}[A`); // highlight acme-mini
+      modelPicker.handleInput(' '); // remove old acme-mini
+      modelPicker.handleInput(`${ESC}[A`); // highlight acme-large
+      modelPicker.handleInput(' '); // add acme-large
+      modelPicker.handleInput('\r');
+
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ApiKeyInputDialogComponent);
+      });
+      const apiKeyDialog = driver.state.editorContainer.children[0] as ApiKeyInputDialogComponent;
+      for (const ch of 'sk-new') apiKeyDialog.handleInput(ch);
+      apiKeyDialog.handleInput('\r');
+
+      await vi.waitFor(() => {
+        expect(setConfig).toHaveBeenCalled();
+      });
+
+      expect(removeProvider).toHaveBeenCalledWith('acme');
+      const written = (setConfig.mock.calls[0] as unknown as [
+        {
+          providers: Record<string, { type?: string; apiKey?: string }>;
+          models: Record<string, unknown>;
+          defaultModel: string;
+          defaultThinking: boolean;
+        },
+      ])[0];
+      expect(Object.keys(written.models)).toEqual(['acme/acme-nano', 'acme/acme-large']);
+      expect(written.defaultModel).toBe('acme/acme-nano');
+      expect(written.defaultThinking).toBe(false);
+      expect(written.providers['acme']).toMatchObject({ type: 'openai', apiKey: 'sk-new' });
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('/connect marks already-configured providers and floats them to the top', async () => {
+    const catalog = {
+      acme: {
+        id: 'acme',
+        name: 'Acme',
+        api: 'https://api.acme.com/v1',
+        type: 'openai',
+        models: {
+          'acme-large': {
+            id: 'acme-large',
+            name: 'Acme Large',
+            limit: { context: 200000 },
+            tool_call: true,
+          },
+          'acme-mini': {
+            id: 'acme-mini',
+            name: 'Acme Mini',
+            limit: { context: 100000 },
+            tool_call: true,
+          },
+        },
+      },
+      beacon: {
+        id: 'beacon',
+        name: 'Beacon',
+        api: 'https://api.beacon.com/v1',
+        type: 'openai',
+        models: {
+          'beacon-pro': {
+            id: 'beacon-pro',
+            name: 'Beacon Pro',
+            limit: { context: 100000 },
+            tool_call: true,
+          },
+        },
+      },
+      zenith: {
+        id: 'zenith',
+        name: 'Zenith',
+        api: 'https://api.zenith.com/v1',
+        type: 'openai',
+        models: {
+          'zenith-1': {
+            id: 'zenith-1',
+            name: 'Zenith One',
+            limit: { context: 50000 },
+            tool_call: true,
+          },
+        },
+      },
+    };
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify(catalog), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    const originalFetch = global.fetch;
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    // Two configured providers (zenith with 1 model, acme with 2) and one
+    // unconfigured (beacon). Configured ones should float to the top with
+    // accurate counts; unconfigured ones stay in alphabetical order below.
+    const getConfig = vi.fn(async () => ({
+      providers: {
+        acme: { type: 'openai', apiKey: 'a' },
+        zenith: { type: 'openai', apiKey: 'z' },
+      },
+      models: {
+        'acme/acme-large': { provider: 'acme', model: 'acme-large', maxContextSize: 200000 },
+        'acme/acme-mini': { provider: 'acme', model: 'acme-mini', maxContextSize: 100000 },
+        'zenith/zenith-1': { provider: 'zenith', model: 'zenith-1', maxContextSize: 50000 },
+      },
+    }));
+    const { driver } = await makeDriver(makeSession(), { getConfig });
+
+    try {
+      driver.handleUserInput('/connect refresh');
+
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ChoicePickerComponent);
+      });
+      const picker = driver.state.editorContainer.children[0] as ChoicePickerComponent;
+      const out = stripSgr(picker.render(120).join('\n'));
+
+      expect(out).toContain('Acme ← configured · 2 models');
+      expect(out).toContain('Zenith ← configured · 1 model');
+      expect(out).toContain('Beacon');
+      expect(out).not.toContain('Beacon ← configured');
+
+      const acmeIdx = out.indexOf('Acme ');
+      const zenithIdx = out.indexOf('Zenith ');
+      const beaconIdx = out.indexOf('Beacon');
+      expect(acmeIdx).toBeGreaterThan(-1);
+      expect(zenithIdx).toBeGreaterThan(-1);
+      expect(beaconIdx).toBeGreaterThan(-1);
+      expect(acmeIdx).toBeLessThan(zenithIdx); // configured group: alphabetical
+      expect(zenithIdx).toBeLessThan(beaconIdx); // configured group precedes unconfigured
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('/connect keeps an existing provider apiKey when submitted empty', async () => {
+    const catalog = {
+      acme: {
+        id: 'acme',
+        name: 'Acme',
+        api: 'https://api.acme.com/v1',
+        type: 'openai',
+        models: {
+          'acme-mini': {
+            id: 'acme-mini',
+            name: 'Acme Mini',
+            limit: { context: 100000 },
+            tool_call: true,
+          },
+        },
+      },
+    };
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify(catalog), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    const originalFetch = global.fetch;
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const getConfig = vi.fn(async () => ({
+      providers: { acme: { type: 'openai', apiKey: 'old-key' } },
+      models: {
+        'acme/acme-mini': { provider: 'acme', model: 'acme-mini', maxContextSize: 100000 },
+      },
+      defaultModel: 'acme/acme-mini',
+      defaultThinking: false,
+    }));
+    const removeProvider = vi.fn(async () => ({ providers: {}, models: {} }));
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig,
+      removeProvider,
+      setConfig,
+    });
+
+    try {
+      driver.handleUserInput('/connect refresh');
+
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ChoicePickerComponent);
+      });
+      (driver.state.editorContainer.children[0] as ChoicePickerComponent).handleInput('\r');
+
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+          CatalogModelMultiSelectComponent,
+        );
+      });
+      (driver.state.editorContainer.children[0] as CatalogModelMultiSelectComponent).handleInput(
+        '\r',
+      );
+
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ApiKeyInputDialogComponent);
+      });
+      (driver.state.editorContainer.children[0] as ApiKeyInputDialogComponent).handleInput('\r');
+
+      await vi.waitFor(() => {
+        expect(setConfig).toHaveBeenCalled();
+      });
+
+      const written = (setConfig.mock.calls[0] as unknown as [
+        { providers: Record<string, { apiKey?: string }> },
+      ])[0];
+      expect(written.providers['acme']?.apiKey).toBe('old-key');
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 
   it('deletes Kitty inline images when /new clears the transcript', async () => {
