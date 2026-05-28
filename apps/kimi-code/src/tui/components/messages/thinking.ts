@@ -13,7 +13,7 @@ import {
   BRAILLE_SPINNER_FRAMES,
   BRAILLE_SPINNER_INTERVAL_MS,
   MESSAGE_INDENT,
-  RESULT_PREVIEW_LINES,
+  THINKING_PREVIEW_LINES,
 } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import type { ColorPalette } from '#/tui/theme/colors';
@@ -85,8 +85,8 @@ export class ThinkingComponent implements Component {
 
     if (this.mode === 'live') {
       const visibleLines =
-        contentLines.length > RESULT_PREVIEW_LINES
-          ? contentLines.slice(contentLines.length - RESULT_PREVIEW_LINES)
+        contentLines.length > THINKING_PREVIEW_LINES
+          ? contentLines.slice(contentLines.length - THINKING_PREVIEW_LINES)
           : contentLines;
       const spinner = chalk.hex(this.color)(
         `${BRAILLE_SPINNER_FRAMES[this.spinnerFrame] ?? BRAILLE_SPINNER_FRAMES[0]} `,
@@ -104,13 +104,13 @@ export class ThinkingComponent implements Component {
       rendered.push(p + contentLines[i]);
     }
 
-    if (this.expanded || contentLines.length <= RESULT_PREVIEW_LINES) {
+    if (this.expanded || contentLines.length <= THINKING_PREVIEW_LINES) {
       return rendered;
     }
 
     // Leading blank + first PREVIEW_LINES content lines + hint line.
-    const truncated = rendered.slice(0, 1 + RESULT_PREVIEW_LINES);
-    const remaining = contentLines.length - RESULT_PREVIEW_LINES;
+    const truncated = rendered.slice(0, 1 + THINKING_PREVIEW_LINES);
+    const remaining = contentLines.length - THINKING_PREVIEW_LINES;
     truncated.push(
       MESSAGE_INDENT + chalk.dim(`... (${String(remaining)} more lines, ctrl+o to expand)`),
     );
