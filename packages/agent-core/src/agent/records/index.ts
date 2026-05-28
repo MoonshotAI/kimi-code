@@ -177,14 +177,14 @@ export class AgentRecords {
       replayedRecords.push(migratedRecord);
       this.restore(migratedRecord);
     }
+    if (shouldRewrite) {
+      this.persistence.rewrite(replayedRecords);
+      await this.persistence.flush();
+    }
     if (this.agent.blobStore !== undefined) {
       for (const msg of this.agent.context.history) {
         await this.agent.blobStore.rehydrateParts(msg.content);
       }
-    }
-    if (shouldRewrite) {
-      this.persistence.rewrite(replayedRecords);
-      await this.persistence.flush();
     }
     return { warning };
   }
