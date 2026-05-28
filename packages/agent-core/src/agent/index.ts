@@ -164,11 +164,17 @@ export class Agent {
       sessionDir: config.backgroundSessionDir,
     });
     this.cron = new CronManager(this);
-    // Start the auto-tick loop immediately. The scheduler unref()'s its
-    // setInterval so the cron timer never keeps the process alive on its
-    // own, and isKilled (reading KIMI_DISABLE_CRON) short-circuits every
-    // tick — no need to delay start when the killswitch is set.
-    this.cron.start();
+    if (this.type !== 'sub') {
+      // Skip auto-tick for subagents: each session can spawn many
+      // subagents, and stacking 1s setInterval timers + SIGUSR1
+      // listeners per subagent serves no purpose — the default subagent
+      // profiles don't expose Cron tools, so the store stays empty.
+      // The scheduler unref()'s its setInterval so the cron timer never
+      // keeps the process alive on its own, and isKilled (reading
+      // KIMI_DISABLE_CRON) short-circuits every tick — no need to
+      // delay start when the killswitch is set.
+      this.cron.start();
+    }
     this.replayBuilder = new ReplayBuilder(this);
   }
 

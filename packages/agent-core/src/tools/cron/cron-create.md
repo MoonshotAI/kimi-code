@@ -27,9 +27,31 @@ Only use minute 0 or 30 when the user names that exact time and clearly means it
 
 If the scheduler slept past multiple ideal fire times (laptop closed, long-running turn, etc.), only **one** fire is delivered when it wakes up. The origin carries `coalescedCount` showing how many ideal fires were collapsed into this single delivery. You should treat `coalescedCount > 1` as "I missed some checks; only the latest state matters" rather than running the prompt that many times.
 
+## Cron-fire envelope
+
+When a cron task fires, the prompt you scheduled is re-injected wrapped in an XML envelope that exposes the fire context:
+
+```
+<cron-fire jobId="..." cron="..." recurring="true|false" coalescedCount="N" stale="true|false">
+<prompt>
+your original prompt text, verbatim
+</prompt>
+</cron-fire>
+```
+
+The envelope is parseable. Use `coalescedCount > 1` to know multiple ideal fires were collapsed into a single delivery (treat as "only the latest state matters"), and `stale="true"` as a cue that the task is past its 7-day threshold.
+
 ## 7-day stale behavior
 
-Recurring tasks that have been alive for more than 7 days surface `stale: true` on the fire origin (and in `CronList` output). One-shot tasks are never marked stale. When you see `stale: true`, ask the user whether to keep, delete, or refresh the task — do not silently keep firing forever. The refresh ritual is `CronDelete(id)` followed by a fresh `CronCreate` with the same cron/prompt; that resets the `createdAt` baseline.
+Recurring tasks that have been alive for more than 7 days fire one
+final time with `stale: true` on the envelope, and the system then
+auto-deletes the task. The flag is the model's notice that this is
+the last delivery. If the schedule is still wanted, call `CronCreate`
+again with the same `cron` and `prompt` — that resets `createdAt` and
+starts a fresh 7-day window. One-shot tasks are never marked stale.
+
+Bench / acceptance runs can set `KIMI_CRON_NO_STALE=1` to disable the
+judgment entirely.
 
 ## Jitter behavior
 
@@ -54,4 +76,4 @@ will disappear.
 ## Returned fields
 
 `id` (8-hex), `humanSchedule` (English summary), `recurring`,
-`nextFireAt` (epoch ms or null). `id` is needed by `CronDelete`.
+`nextFireAt` (ISO timestamp or null). `id` is needed by `CronDelete`.

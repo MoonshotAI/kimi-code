@@ -30,10 +30,14 @@ Each record carries:
 - `ageDays` — `(now - createdAt) / day`, two decimal places. Useful
   when deciding whether a long-running cron is still relevant.
 - `stale` — `true` when a recurring task is older than 7 days. The
-  task is **not** auto-deleted; recurring jobs keep firing. When you
-  see `stale: true`, ask the user whether to keep, delete, or refresh
-  the task (refresh = `CronDelete` followed by a new `CronCreate`
-  with the same cron + prompt — this resets `createdAt`).
+  system **auto-deletes the task after this fire** to bound session
+  lifetime; the `stale: true` flag is the model's notice that this is
+  the final delivery. To resume the same schedule, call `CronCreate`
+  again with the original `cron` and `prompt` (the `prompt` row above
+  carries it for exactly this purpose). One-shots are never marked
+  stale — they fire at most once by construction.
+  `KIMI_CRON_NO_STALE=1` disables the judgment entirely (bench /
+  acceptance runs).
 
 Guidelines:
 

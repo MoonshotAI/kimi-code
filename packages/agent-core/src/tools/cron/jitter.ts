@@ -141,8 +141,12 @@ export function oneShotJitteredNextCronRunMs(
   if (jitterDisabledByEnv()) {
     return idealMs;
   }
-  // Only the minute-of-hour matters: did the model land on the round
-  // number? Sub-minute granularity is filtered by the modulo check.
+  // `idealMs % MS_PER_MINUTE === 0` is a UTC minute-boundary check.
+  // It coincides with a local minute boundary in every modern timezone
+  // because all offsets are minute-aligned — there are no sub-minute
+  // offsets in current use. Cron firings are always on the minute, so
+  // this gate is almost always true; it remains as a guard against
+  // synthetic idealMs values from tests that aren't on the minute.
   if (idealMs % MS_PER_MINUTE !== 0) {
     return idealMs;
   }

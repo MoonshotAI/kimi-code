@@ -27,7 +27,7 @@
  * `wallNow` resolution is driven by the `KIMI_CRON_CLOCK` env var; see
  * `resolveClockSources` below. Defaults to `Date.now()`.
  */
-import { readFileSync } from 'node:fs';
+import { closeSync, openSync, readSync } from 'node:fs';
 
 export interface ClockSources {
   /**
@@ -102,13 +102,32 @@ export function resolveClockSources(spec?: string): ClockSources {
   return SYSTEM_CLOCKS;
 }
 
+// Epoch-ms is always under 20 characters in practice; 64 bytes leaves
+// slack for a leading newline / `\r` and prevents OOM on a hostile or
+// accidentally-huge clock file (e.g. a `/dev/zero` redirect).
+const MAX_CLOCK_FILE_BYTES = 64;
+
 function readFileWall(filePath: string): number {
-  let raw: string;
+  let bytesRead = 0;
+  const buf = Buffer.alloc(MAX_CLOCK_FILE_BYTES);
+  let fd: number;
   try {
-    raw = readFileSync(filePath, 'utf8');
+    fd = openSync(filePath, 'r');
   } catch {
     return Date.now();
   }
+  try {
+    bytesRead = readSync(fd, buf, 0, MAX_CLOCK_FILE_BYTES, 0);
+  } catch {
+    return Date.now();
+  } finally {
+    try {
+      closeSync(fd);
+    } catch {
+      /* swallow close errors */
+    }
+  }
+  const raw = buf.subarray(0, bytesRead).toString('utf8');
   const firstLine = raw.split('\n', 1)[0]?.trim() ?? '';
   if (firstLine === '') return Date.now();
   const parsed = Number(firstLine);

@@ -119,5 +119,29 @@ describe('clock.ts', () => {
     it('empty file path in spec falls back to SYSTEM_CLOCKS', () => {
       expect(resolveClockSources('file:')).toBe(SYSTEM_CLOCKS);
     });
+
+    it('caps file reads at 64 bytes and parses the prefix', () => {
+      const tmpDir = mkdtempSync(join(os.tmpdir(), 'kimi-cron-clock-'));
+      const filePath = join(tmpDir, 'now.txt');
+      // First line is a valid epoch-ms within the 64-byte window; the
+      // remainder is garbage that would break Number(...) if read.
+      const prefix = '1234567890\n';
+      const garbage = 'x'.repeat(10_000);
+      writeFileSync(filePath, prefix + garbage, 'utf8');
+      const clocks = resolveClockSources(`file:${filePath}`);
+      expect(clocks.wallNow()).toBe(1234567890);
+    });
+
+    it('rejects garbage longer than the 64-byte cap and falls back to Date.now', () => {
+      const tmpDir = mkdtempSync(join(os.tmpdir(), 'kimi-cron-clock-'));
+      const filePath = join(tmpDir, 'now.txt');
+      writeFileSync(filePath, 'x'.repeat(100), 'utf8');
+      const clocks = resolveClockSources(`file:${filePath}`);
+      const before = Date.now();
+      const sample = clocks.wallNow();
+      const after = Date.now();
+      expect(sample).toBeGreaterThanOrEqual(before);
+      expect(sample).toBeLessThanOrEqual(after);
+    });
   });
 });
