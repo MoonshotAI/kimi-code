@@ -52,28 +52,28 @@ export async function readAgentWire(path: string): Promise<WireReadResult> {
     let parsed: unknown;
     try {
       parsed = JSON.parse(line);
-    } catch (err) {
-      warnings.push(`line ${lineNo}: invalid JSON (${(err as Error).message})`);
+    } catch (error) {
+      warnings.push(`line ${lineNo}: invalid JSON (${(error as Error).message})`);
       continue;
     }
-    if (!isObject(parsed) || typeof parsed.type !== 'string') {
+    if (!isObject(parsed) || typeof parsed['type'] !== 'string') {
       warnings.push(`line ${lineNo}: missing 'type' field`);
       continue;
     }
     if (metadata === null) {
-      if (parsed.type !== 'metadata') {
+      if (parsed['type'] !== 'metadata') {
         throw new Error(`Wire file missing metadata header at line ${lineNo}`);
       }
       const pv = parsed['protocol_version'];
       const ca = parsed['created_at'];
       if (typeof pv !== 'string' || typeof ca !== 'number') {
-        throw new Error(`Wire metadata malformed at line ${lineNo}`);
+        throw new TypeError(`Wire metadata malformed at line ${lineNo}`);
       }
       try {
         migrations = resolveWireMigrations(pv);
-      } catch (err) {
+      } catch (error) {
         warnings.push(
-          `unrecognised protocol_version "${pv}" — parsing as best-effort (${(err as Error).message})`,
+          `unrecognised protocol_version "${pv}" — parsing as best-effort (${(error as Error).message})`,
         );
         migrations = bestEffortMigrations();
       }
@@ -85,18 +85,18 @@ export async function readAgentWire(path: string): Promise<WireReadResult> {
     try {
       migrated =
         migrations.length === 0
-          ? raw
+          ? (structuredClone(raw) as Record<string, unknown>)
           : (migrateWireRecord(
               raw as Record<string, unknown> & { type: string },
               migrations,
             ) as Record<string, unknown>);
-    } catch (err) {
+    } catch (error) {
       // A single record that won't migrate is not fatal — keep the raw
       // payload so the UI can still render whatever fields it understands.
       warnings.push(
-        `line ${lineNo}: migration failed (${(err as Error).message}); using raw record`,
+        `line ${lineNo}: migration failed (${(error as Error).message}); using raw record`,
       );
-      migrated = raw;
+      migrated = structuredClone(raw) as Record<string, unknown>;
     }
     records.push({ lineNo, data: migrated as AgentRecord, raw });
   }

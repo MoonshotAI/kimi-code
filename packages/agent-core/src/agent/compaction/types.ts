@@ -5,7 +5,9 @@ export interface CompactionResult {
   tokensAfter: number;
 }
 
+export type CompactionSource = 'manual' | 'auto';
+
 export interface CompactionBeginData {
   instruction?: string;
-  source: 'manual' | 'auto';
+  source: CompactionSource;
 }
