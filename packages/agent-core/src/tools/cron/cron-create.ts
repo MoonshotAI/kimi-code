@@ -114,13 +114,22 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
       };
     }
 
-    // 2. Parse the cron expression. Any parse failure is a user error
+    // 2. Normalize whitespace BEFORE parsing so `parsed.raw` (which
+    //    `cronToHuman` falls back to for non-template shapes) is the
+    //    single-line form. Otherwise tabs/newlines from the raw input
+    //    leak into the rendered `humanSchedule:` row and break the
+    //    one-key-per-line tool output format. Parse errors still report
+    //    against canonical field positions; only whitespace is
+    //    degraded, not semantics.
+    const normalizedCron = args.cron.trim().split(/\s+/).join(' ');
+
+    // 3. Parse the cron expression. Any parse failure is a user error
     //    rather than an internal one, so we surface the message
     //    verbatim — the parser is already careful to name the
     //    offending field.
     let parsed: ParsedCronExpression;
     try {
-      parsed = parseCronExpression(args.cron);
+      parsed = parseCronExpression(normalizedCron);
     } catch (err) {
       return {
         isError: true,
@@ -130,7 +139,7 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
       };
     }
 
-    // 3. Reject "legal but never fires within 5 years" — the same
+    // 4. Reject "legal but never fires within 5 years" — the same
     //    bound the scheduler uses internally to refuse to spin.
     //    `0 0 31 2 *` is the canonical example. The exact `nowMs` does
     //    not matter for this judgment (it only changes the search
@@ -141,12 +150,12 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
       return {
         isError: true,
         output: `Cron expression ${JSON.stringify(
-          args.cron,
+          normalizedCron,
         )} has no fire within 5 years; refusing to schedule.`,
       };
     }
 
-    // 4. Session-level cap — preliminary check. We re-check inside
+    // 5. Session-level cap — preliminary check. We re-check inside
     //    `execute()` because manual-approval mode can delay execution
     //    long enough for parallel CronCreate calls to all pass this
     //    gate and then collectively breach the cap on insert.
@@ -159,7 +168,7 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
       };
     }
 
-    // 5. Byte-length cap. zod's `.max()` counts code units, which is
+    // 6. Byte-length cap. zod's `.max()` counts code units, which is
     //    not the budget we actually want for a multi-byte prompt; the
     //    Buffer.byteLength check makes the 8 KiB intent literal.
     const byteLen = Buffer.byteLength(args.prompt, 'utf8');
@@ -177,13 +186,6 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
     // canonical "recurring iff not explicitly false" convention used
     // everywhere else in the cron stack.
     const recurring = args.recurring !== false;
-
-    // Normalize accepted whitespace (tabs / newlines) to single spaces.
-    // `parseCronExpression` accepts any \s+ between fields, but downstream
-    // output formats (CronList one-key-per-line records, <cron-fire>
-    // envelope attributes) assume a single-line cron value. Storing the
-    // raw input lets the original tabs/newlines leak into both sinks.
-    const normalizedCron = args.cron.trim().split(/\s+/).join(' ');
 
     return {
       description: recurring

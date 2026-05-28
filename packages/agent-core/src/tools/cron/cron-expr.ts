@@ -111,6 +111,22 @@ function parseField(field: string, min: number, max: number, name: string): Set<
   return out;
 }
 
+// Cron numeric fields are digit-only. `Number(...)` would otherwise
+// accept `''` (→ 0), `'1e1'`, `'0x10'`, `'+5'`, `'  3  '`, etc. — none
+// of which are valid cron syntax. This regex gate runs before the
+// conversion to surface a typo as a parse error instead of silently
+// rescheduling the task.
+const DIGIT_ONLY = /^\d+$/;
+
+function parseCronInt(raw: string, name: string, role: string): number {
+  if (!DIGIT_ONLY.test(raw)) {
+    throw new Error(
+      `cron ${name} ${role} must be a non-negative integer with digits only (got ${JSON.stringify(raw)})`,
+    );
+  }
+  return Number.parseInt(raw, 10);
+}
+
 function addTerm(out: Set<number>, term: string, min: number, max: number, name: string): void {
   let rangePart = term;
   let step = 1;
@@ -121,8 +137,8 @@ function addTerm(out: Set<number>, term: string, min: number, max: number, name:
     if (stepStr === '') {
       throw new Error(`cron ${name} step is empty in "${term}"`);
     }
-    const parsedStep = Number(stepStr);
-    if (!Number.isInteger(parsedStep) || parsedStep <= 0) {
+    const parsedStep = parseCronInt(stepStr, name, 'step');
+    if (parsedStep <= 0) {
       throw new Error(`cron ${name} step must be a positive integer (got "${stepStr}")`);
     }
     step = parsedStep;
@@ -139,10 +155,7 @@ function addTerm(out: Set<number>, term: string, min: number, max: number, name:
   } else {
     const dash = rangePart.indexOf('-');
     if (dash === -1) {
-      const single = Number(rangePart);
-      if (!Number.isInteger(single)) {
-        throw new TypeError(`cron ${name} value "${rangePart}" is not an integer`);
-      }
+      const single = parseCronInt(rangePart, name, 'value');
       if (single < min || single > max) {
         throw new Error(`cron ${name} value ${single} out of range ${min}..${max}`);
       }
@@ -159,11 +172,8 @@ function addTerm(out: Set<number>, term: string, min: number, max: number, name:
     } else {
       const loStr = rangePart.slice(0, dash);
       const hiStr = rangePart.slice(dash + 1);
-      lo = Number(loStr);
-      hi = Number(hiStr);
-      if (!Number.isInteger(lo) || !Number.isInteger(hi)) {
-        throw new TypeError(`cron ${name} range "${rangePart}" has non-integer bound`);
-      }
+      lo = parseCronInt(loStr, name, 'range lower bound');
+      hi = parseCronInt(hiStr, name, 'range upper bound');
       if (lo < min || hi > max || lo > hi) {
         throw new Error(
           `cron ${name} range ${lo}-${hi} out of bounds (must be ${min}..${max}, ascending)`,

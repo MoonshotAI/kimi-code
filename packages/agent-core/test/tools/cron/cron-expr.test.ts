@@ -144,6 +144,50 @@ describe('parseCronExpression', () => {
   });
 });
 
+describe('rejects malformed numeric tokens', () => {
+  it('rejects negative range lower bound (-5 * * * *)', () => {
+    expect(() => parseCronExpression('-5 * * * *')).toThrow(/digits only|non-negative integer/);
+  });
+
+  it('rejects scientific notation (1e1 * * * *)', () => {
+    expect(() => parseCronExpression('1e1 * * * *')).toThrow(/digits only|non-negative integer/);
+  });
+
+  it('rejects hex notation (0x10 * * * *)', () => {
+    expect(() => parseCronExpression('0x10 * * * *')).toThrow(/digits only|non-negative integer/);
+  });
+
+  it('rejects leading-plus (+5 * * * *)', () => {
+    expect(() => parseCronExpression('+5 * * * *')).toThrow(/digits only|non-negative integer/);
+  });
+
+  it('rejects scientific notation in step (*/1e1 * * * *)', () => {
+    expect(() => parseCronExpression('*/1e1 * * * *')).toThrow(/digits only|non-negative integer/);
+  });
+
+  it('rejects hex notation in step (*/0x10 * * * *)', () => {
+    expect(() => parseCronExpression('*/0x10 * * * *')).toThrow(/digits only|non-negative integer/);
+  });
+
+  it('rejects scientific notation in range (1-1e1 * * * *)', () => {
+    expect(() => parseCronExpression('1-1e1 * * * *')).toThrow(/digits only|non-negative integer/);
+  });
+
+  it('rejects scientific notation in range lower bound (1e1-5 * * * *)', () => {
+    // Symmetric coverage of the lo path — hi was covered by the
+    // 1-1e1 case above. Both lo and hi go through parseCronInt.
+    expect(() => parseCronExpression('1e1-5 * * * *')).toThrow(/digits only|non-negative integer/);
+  });
+
+  it('still accepts plain integers, ranges, lists, and steps', () => {
+    expect(() => parseCronExpression('5 * * * *')).not.toThrow();
+    expect(() => parseCronExpression('1-5 * * * *')).not.toThrow();
+    expect(() => parseCronExpression('1,5,10 * * * *')).not.toThrow();
+    expect(() => parseCronExpression('*/5 * * * *')).not.toThrow();
+    expect(() => parseCronExpression('1-30/5 * * * *')).not.toThrow();
+  });
+});
+
 describe('computeNextCronRun', () => {
   it('*/5 — from xx:00:30 advances to xx:05:00', () => {
     const expr = parseCronExpression('*/5 * * * *');
