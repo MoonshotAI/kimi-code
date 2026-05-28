@@ -403,7 +403,7 @@ export class ToolManager {
     if (uploadVideo === undefined) return undefined;
 
     const modelAlias = this.agent.config.modelAlias!;
-    const withAuth = this.agent.providerManager?.createAuthResolverForModel(modelAlias, {
+    const withAuth = this.agent.providerManager?.resolveAuth(modelAlias, {
       log: this.agent.log,
     });
     if (withAuth === undefined) return (input) => uploadVideo(input);

@@ -50,7 +50,7 @@ export class ConfigState {
     if (changed.thinkingLevel !== undefined) {
       this._thinkingLevel = resolveThinkingEffort(
         changed.thinkingLevel,
-        this.agent.providerManager?.config.thinking,
+        this.agent.kimiConfig?.thinking,
       );
     }
     if (changed.systemPrompt !== undefined) {

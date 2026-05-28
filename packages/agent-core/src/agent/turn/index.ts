@@ -362,7 +362,7 @@ export class TurnFlow {
     while (true) {
       signal.throwIfAborted();
       const model = this.agent.config.model;
-      const loopControl = this.agent.providerManager?.config.loopControl;
+      const loopControl = this.agent.kimiConfig?.loopControl;
       try {
         const result = await runTurn({
           turnId: String(turnId),

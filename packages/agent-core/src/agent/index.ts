@@ -169,7 +169,7 @@ export class Agent {
       const withAuth =
         modelAlias === undefined
           ? undefined
-          : this.providerManager?.createAuthResolverForModel(modelAlias, { log: this.log });
+          : this.providerManager?.resolveAuth(modelAlias, { log: this.log });
       if (withAuth === undefined) {
         this.logLlmRequest(provider, systemPrompt, tools, history, options);
         return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, options);
@@ -185,7 +185,7 @@ export class Agent {
   get llm(): KosongLLM {
     const model = this.config.model;
     const provider = this.config.provider.withThinking(this.config.thinkingLevel);
-    const loopControl = this.providerManager?.config.loopControl;
+    const loopControl = this.kimiConfig?.loopControl;
     const completionBudgetConfig = resolveCompletionBudget({
       reservedContextSize: loopControl?.reservedContextSize,
     });

@@ -34,7 +34,7 @@ type AuthorizedRequest = <T>(
 export class ProviderManager {
   constructor(private readonly options: ProviderManagerOptions) {}
 
-  get config(): KimiConfig {
+  private get config(): KimiConfig {
     const { config } = this.options;
     return typeof config === 'function' ? config() : config;
   }
@@ -88,7 +88,7 @@ export class ProviderManager {
     };
   }
 
-  createAuthResolverForModel(
+  resolveAuth(
     model: string,
     options?: { readonly log?: Logger },
   ): AuthorizedRequest | undefined {
