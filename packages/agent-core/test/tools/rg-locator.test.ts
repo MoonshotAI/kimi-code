@@ -9,7 +9,15 @@
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import type * as FsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
@@ -166,6 +174,91 @@ describe('verifyArchiveChecksum', () => {
     await expect(
       verifyArchiveChecksum(archivePath, 'archive.tar.gz', '0'.repeat(64)),
     ).rejects.toThrow(/checksum mismatch/);
+  });
+});
+
+describe('installExtractedRg', () => {
+  let fakeDir: string;
+  beforeEach(() => {
+    fakeDir = join(
+      tmpdir(),
+      `kimi-rg-install-${String(Date.now())}-${String(Math.random()).slice(2)}`,
+    );
+    mkdirSync(fakeDir, { recursive: true });
+  });
+  afterEach(() => {
+    rmSync(fakeDir, { recursive: true, force: true });
+    vi.doUnmock('node:fs/promises');
+    vi.resetModules();
+    vi.restoreAllMocks();
+  });
+
+  it('falls back to a target-side staged copy when rename crosses devices', async () => {
+    const extractDir = join(fakeDir, 'extract');
+    const binDir = join(fakeDir, 'bin');
+    const extracted = join(extractDir, 'rg');
+    const destination = join(binDir, 'rg');
+    const payload = '#!/bin/sh\necho ripgrep\n';
+    mkdirSync(extractDir, { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(extracted, payload);
+    const renameCalls: Array<[string, string]> = [];
+
+    vi.resetModules();
+    vi.doMock('node:fs/promises', async () => {
+      const actual = await vi.importActual<typeof FsPromises>('node:fs/promises');
+      return {
+        ...actual,
+        rename: async (from: string, to: string) => {
+          renameCalls.push([from, to]);
+          if (from === extracted && to === destination) {
+            throw Object.assign(new Error('cross-device rename'), { code: 'EXDEV' });
+          }
+          return actual.rename(from, to);
+        },
+      };
+    });
+
+    const { installExtractedRg } = await import('../../src/tools/support/rg-locator');
+
+    await installExtractedRg(extracted, destination);
+
+    expect(readFileSync(destination, 'utf8')).toBe(payload);
+    expect(renameCalls).toHaveLength(2);
+    expect(renameCalls[0]).toEqual([extracted, destination]);
+    expect(renameCalls[1]?.[0]).toContain(join(binDir, '.rg-install-'));
+    expect(renameCalls[1]?.[1]).toBe(destination);
+    if (process.platform !== 'win32') {
+      expect(statSync(destination).mode & 0o777).toBe(0o755);
+    }
+  });
+
+  it('does not mask non-EXDEV rename failures', async () => {
+    const extractDir = join(fakeDir, 'extract');
+    const binDir = join(fakeDir, 'bin');
+    const extracted = join(extractDir, 'rg');
+    const destination = join(binDir, 'rg');
+    mkdirSync(extractDir, { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(extracted, 'rg bytes');
+
+    vi.resetModules();
+    vi.doMock('node:fs/promises', async () => {
+      const actual = await vi.importActual<typeof FsPromises>('node:fs/promises');
+      return {
+        ...actual,
+        rename: async () => {
+          throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+        },
+      };
+    });
+
+    const { installExtractedRg } = await import('../../src/tools/support/rg-locator');
+
+    await expect(installExtractedRg(extracted, destination)).rejects.toMatchObject({
+      code: 'EACCES',
+    });
+    expect(existsSync(destination)).toBe(false);
   });
 });
 

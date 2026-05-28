@@ -14,9 +14,9 @@
 
 import { createHash } from 'node:crypto';
 import { createWriteStream, existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { basename, join } from 'pathe';
+import { basename, dirname, join } from 'pathe';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
@@ -243,13 +243,42 @@ async function downloadAndInstallRg(shareDir: string): Promise<string> {
             'CDN content may have changed.',
         );
       }
-      await rename(extracted, destination);
-      await chmod(destination, 0o755);
+      await installExtractedRg(extracted, destination);
     }
     return destination;
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
+}
+
+/** @internal for tests — install an extracted rg binary into the persistent bin dir. */
+export async function installExtractedRg(extracted: string, destination: string): Promise<void> {
+  try {
+    await rename(extracted, destination);
+    await chmod(destination, 0o755);
+    return;
+  } catch (error) {
+    if (!isCrossDeviceRenameError(error)) throw error;
+  }
+
+  const stagingDir = await mkdtemp(join(dirname(destination), '.rg-install-'));
+  const staged = join(stagingDir, basename(destination));
+  try {
+    await copyFile(extracted, staged);
+    await chmod(staged, 0o755);
+    await rename(staged, destination);
+  } finally {
+    await rm(stagingDir, { recursive: true, force: true });
+  }
+}
+
+function isCrossDeviceRenameError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { readonly code?: unknown }).code === 'EXDEV'
+  );
 }
 
 /** @internal for tests — fail closed before extracting downloaded bytes. */
