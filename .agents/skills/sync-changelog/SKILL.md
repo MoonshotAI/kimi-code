@@ -92,14 +92,15 @@ Upstream language rule: `gen-changesets` requires changelog entries to be Englis
 
 ### 3. Classify Entries
 
-The docs changelog uses four section types:
+The docs changelog uses five section types:
 
 | English section | Chinese section | Meaning |
 |---|---|---|
-| `### Features` | `### 新功能` | New user-facing functionality |
+| `### Features` | `### 新功能` | New user-facing functionality, such as a new command, flag, mode, or capability that did not exist before |
 | `### Bug Fixes` | `### 修复` | Fixes for behavior that was broken |
+| `### Polish` | `### 优化` | User-visible improvements to existing functionality, including UX adjustments, behavior tweaks, and performance improvements that are not fixes or new capabilities |
 | `### Refactors` | `### 重构` | Internal changes with no user-visible behavior change, including build, CI, tests, dependency cleanup, and internal renames |
-| `### Other` | `### 其他` | Anything that does not fit above, such as user-visible adjustments that are not fixes or features, CDN/endpoint swaps, and docs-related artifacts |
+| `### Other` | `### 其他` | Anything that does not fit above, such as CDN/endpoint swaps and docs-related artifacts |
 
 Classification process:
 
@@ -109,17 +110,20 @@ Classification process:
    - Or use the PR number with `gh pr view <NNN>`.
 3. If it is still unclear, put it in `Other`. Do not guess or force entries into `Features`.
 
+Features vs. Polish: ask whether the entry introduces something the user could not do before. If yes (new command, flag, mode, viewer, or capability), use `Features`. If it only improves an existing surface (a UI panel that already existed, an existing prompt, an existing tool card, an existing payload pipeline), use `Polish`. Verbs like `Add` do not automatically mean `Features` — a small visual addition to an existing UI is still polish.
+
 Keyword hints:
 
-- **Features**: `Add`, `Introduce`, `Support`, `Allow`, `Enable`, `Implement`, `New ... command/flag/option`
+- **Features**: `Add ... command/flag/option/mode/viewer`, `Introduce`, `Support`, `Allow`, `Enable`, `Implement`, `New ... command/flag/option`
 - **Bug Fixes**: `Fix`, `Resolve`, `Correct`, `Address`, `Prevent ... from`, `Stop ... from`, `... no longer ...`
+- **Polish**: `Polish`, `Optimize`, `Improve`, `Enhance`, `Speed up`, `Reduce`, `Cap`, `Shorten`, `Wrap`, `Clarify`, `Tweak`, `Adjust`, `Offload`, `Show ... in existing surface`, performance and UX adjustments to existing features
 - **Refactors**: `Refactor`, `Rename`, `Clean up`, `Simplify`, `Remove unused`, `Migrate to`, `Unify`, `Restructure`, `Internal`, dependency bumps, pure CI/build/test changes
-- **Other**: docs artifacts, CDN/endpoint switches, or small user-visible adjustments that are not fixes or new features
+- **Other**: docs artifacts, CDN/endpoint switches, anything that genuinely fits no other section
 
 Within each version, section order is:
 
 ```text
-Features → Bug Fixes → Refactors → Other
+Features → Bug Fixes → Polish → Refactors → Other
 ```
 
 Omit empty sections. Preserve upstream entry order within each section.
@@ -171,6 +175,7 @@ Chinese page requirements:
 - Translate section headings exactly:
   - `### Features` → `### 新功能`
   - `### Bug Fixes` → `### 修复`
+  - `### Polish` → `### 优化`
   - `### Refactors` → `### 重构`
   - `### Other` → `### 其他`
 - The Chinese page must mirror the English page 1:1 for versions, sections, section order, and entry counts.
@@ -228,8 +233,10 @@ Do **not** create a changeset for changelog docs sync. Docs sync does not enter 
 | Leaving English text untranslated in the Chinese page | The Chinese page must be fully Chinese except preserved technical terms |
 | Editing upstream changelog text | Do not edit upstream |
 | Losing two-space indentation in multi-line list items | Restore indentation so Markdown lists stay valid |
-| Copying `### Patch Changes` into docs | Remove changesets headings and classify under Features / Bug Fixes / Refactors / Other |
+| Copying `### Patch Changes` into docs | Remove changesets headings and classify under Features / Bug Fixes / Polish / Refactors / Other |
 | Guessing unclear entries as Features | Inspect commit/PR; if still unclear, use Other |
+| Treating any `Add ...` line as Features | If the entry only adds a small element to an existing UI/surface, use Polish |
+| Filing UX or performance tweaks under Other | Use Polish for user-visible improvements to existing functionality |
 | Reclassifying entries while translating | Chinese classification must mirror English |
 | Leaving empty sections | Delete sections with no entries |
 | Putting everything under Other for convenience | Classify what can be classified first |
