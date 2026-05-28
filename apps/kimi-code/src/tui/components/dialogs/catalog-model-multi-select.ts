@@ -71,15 +71,12 @@ export class CatalogModelMultiSelectComponent extends Container implements Focus
       this.explicitDefault = opts.defaultAlias;
     }
     const initialAlias = this.defaultAlias();
-    const initialIndex =
-      initialAlias !== undefined
-        ? choices.findIndex((choice) => choice.alias === initialAlias)
-        : -1;
+    const initialIndex = choices.findIndex((choice) => choice.alias === initialAlias);
     this.list = new SearchableList({
       items: choices,
       toSearchText: (c) => c.label,
       pageSize: opts.pageSize,
-      initialIndex: initialIndex >= 0 ? initialIndex : undefined,
+      initialIndex: Math.max(initialIndex, 0),
       searchable: opts.searchable === true,
     });
     this.thinkingDraft = opts.currentThinking;
@@ -157,8 +154,7 @@ export class CatalogModelMultiSelectComponent extends Container implements Focus
     const aliases = [...this.checked];
     const defaultAlias = this.defaultAlias();
     if (defaultAlias === undefined) return;
-    const target = this.opts.models[defaultAlias];
-    const thinking = target !== undefined ? effectiveThinking(target, this.thinkingDraft) : false;
+    const thinking = effectiveThinking(this.opts.models[defaultAlias]!, this.thinkingDraft);
     this.opts.onSelect({ aliases, defaultAlias, thinking });
   }
 
@@ -213,10 +209,9 @@ export class CatalogModelMultiSelectComponent extends Container implements Focus
       );
     } else {
       lines.push(chalk.hex(colors.textMuted)(' Thinking'));
-      const target = defaultAlias !== undefined ? this.opts.models[defaultAlias] : undefined;
-      if (target !== undefined) {
-        lines.push(renderThinkingControl(target, this.thinkingDraft, colors));
-      }
+      // checked.size > 0 here, so defaultAlias() returns a checked alias and that
+      // alias is always a key in opts.models (checked is filtered by availableAliases).
+      lines.push(renderThinkingControl(this.opts.models[defaultAlias!]!, this.thinkingDraft, colors));
     }
     lines.push('');
     if (view.page.pageCount > 1) {
