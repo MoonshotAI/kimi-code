@@ -128,7 +128,7 @@ export class ConfigState {
 
   private get resolvedProviderConfig(): ResolvedRuntimeProvider | undefined {
     if (this._modelAlias === undefined) return undefined;
-    return this.agent.providerManager?.resolveProviderConfig(this._modelAlias);
+    return this.agent.modelProvider?.resolveProviderConfig(this._modelAlias);
   }
 
   private tryResolvedProviderConfig(): ResolvedRuntimeProvider | undefined {

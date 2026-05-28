@@ -51,7 +51,7 @@ function makeAgent(
     rpc,
     skills,
     persistence,
-    providerManager: testProviderManager(),
+    modelProvider: testProviderManager(),
   });
   agent.config.update({
     cwd: process.cwd(),

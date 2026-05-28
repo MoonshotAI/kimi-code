@@ -14,7 +14,6 @@ export type OAuthTokenProviderResolver = (
 ) => BearerTokenProvider | undefined;
 
 export interface ResolvedRuntimeProvider {
-  readonly modelName: string;
   readonly providerName: string;
   readonly provider: KosongProviderConfig;
   readonly modelCapabilities: ModelCapability;
@@ -31,7 +30,30 @@ type AuthorizedRequest = <T>(
   request: (auth: ProviderRequestAuth) => Promise<T>,
 ) => Promise<T>;
 
-export class ProviderManager {
+export interface ModelProvider {
+  resolveProviderConfig(model: string): ResolvedRuntimeProvider;
+  resolveAuth?(model: string, options?: { readonly log?: Logger }): AuthorizedRequest | undefined;
+}
+
+export class SingleModelProvider implements ModelProvider {
+  constructor(
+    private readonly providerConfig: KosongProviderConfig,
+    private readonly modelCapabilities: ModelCapability = UNKNOWN_CAPABILITY,
+  ) {}
+
+  resolveProviderConfig(model: string): ResolvedRuntimeProvider {
+    if (model !== this.providerConfig.model) {
+      throw new Error(`Model "${model}" is not supported by SingleModelProvider.`);
+    }
+    return {
+      modelCapabilities: this.modelCapabilities,
+      providerName: 'single-model-provider',
+      provider: this.providerConfig,
+    }
+  }
+}
+
+export class ProviderManager implements ModelProvider {
   constructor(private readonly options: ProviderManagerOptions) {}
 
   private get config(): KimiConfig {
@@ -81,7 +103,6 @@ export class ProviderManager {
     );
 
     return {
-      modelName: model,
       providerName,
       provider,
       modelCapabilities: resolveModelCapabilities(alias, provider),

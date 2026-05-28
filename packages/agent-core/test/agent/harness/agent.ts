@@ -181,7 +181,7 @@ export class AgentTestContext {
       persistence,
       generate: options.generate ?? this.scriptedGenerate.generate,
       compactionStrategy: options.compactionStrategy,
-      providerManager,
+      modelProvider: providerManager,
       subagentHost: options.subagentHost,
       type: options.type,
       permission: options.permission,

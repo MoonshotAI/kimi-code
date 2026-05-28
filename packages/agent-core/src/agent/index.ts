@@ -16,7 +16,7 @@ import type { EnabledPluginSessionStart } from '#/plugin';
 
 import type { McpConnectionManager } from '../mcp';
 import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
-import type { ProviderManager } from '../session/provider-manager';
+import type { ModelProvider } from '../session/provider-manager';
 import type { RuntimeConfig } from '../runtime-types';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import type { SkillRegistry } from '../skill';
@@ -69,7 +69,7 @@ export interface AgentOptions {
   readonly type?: AgentType;
   readonly generate?: typeof generate;
   readonly compactionStrategy?: CompactionStrategy;
-  readonly providerManager?: ProviderManager | undefined;
+  readonly modelProvider?: ModelProvider | undefined;
   readonly subagentHost?: SessionSubagentHost | undefined;
   readonly skills?: SkillRegistry;
   readonly mcp?: McpConnectionManager;
@@ -89,7 +89,7 @@ export class Agent {
   readonly rpc?: SDKAgentRPC;
   readonly pluginSessionStarts: readonly EnabledPluginSessionStart[];
   readonly rawGenerate: typeof generate;
-  readonly providerManager?: ProviderManager;
+  readonly modelProvider?: ModelProvider;
   readonly subagentHost?: SessionSubagentHost;
   readonly mcp?: McpConnectionManager;
   readonly hooks?: HookEngine;
@@ -122,7 +122,7 @@ export class Agent {
     this.rpc = options.rpc;
     this.pluginSessionStarts = options.pluginSessionStarts ?? [];
     this.rawGenerate = options.generate ?? generate;
-    this.providerManager = options.providerManager;
+    this.modelProvider = options.modelProvider;
     this.subagentHost = options.subagentHost;
     this.mcp = options.mcp;
     this.hooks = options.hookEngine;
@@ -169,7 +169,7 @@ export class Agent {
       const withAuth =
         modelAlias === undefined
           ? undefined
-          : this.providerManager?.resolveAuth(modelAlias, { log: this.log });
+          : this.modelProvider?.resolveAuth?.(modelAlias, { log: this.log });
       if (withAuth === undefined) {
         this.logLlmRequest(provider, systemPrompt, tools, history, options);
         return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, options);
@@ -298,7 +298,7 @@ export class Agent {
         // Validate the alias resolves before recording it so resume / runtime
         // callers fail fast on missing aliases instead of deferring to the
         // next prompt.
-        const resolved = this.providerManager?.resolveProviderConfig(payload.model);
+        const resolved = this.modelProvider?.resolveProviderConfig(payload.model);
         if (this.config.modelAlias !== payload.model) {
           this.config.update({ modelAlias: payload.model });
           this.telemetry.track('model_switch', { model: payload.model });
