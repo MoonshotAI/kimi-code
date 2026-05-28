@@ -101,6 +101,30 @@ Research the mainstream dependency injection options in TypeScript (tsyringe, in
 
 Use `--yolo` or `/yolo` to skip approvals, or set an allow list under [permission configuration](../configuration/config-files.md#permission) for a safer middle ground.
 
+## Scheduled tasks and reminders
+
+Within an interactive session you can ask the assistant to set a one-shot reminder, run a task on a recurring schedule, or come back to you after a fixed delay. The agent maps the request to a 5-field cron expression in your local timezone and re-injects the prompt into the same session when it fires.
+
+```
+Remind me at 2:30pm today to check the deploy.
+```
+
+```
+Every weekday at 9am, summarize the latest CI failures and post the result to me.
+```
+
+```
+Hourly, poll the production health endpoint and let me know if anything looks off.
+```
+
+```
+In about 10 minutes, come back and verify the build finished.
+```
+
+Schedules live inside the session: closing the terminal is fine, and `kimi resume`-ing the same session reloads them and resumes the schedule. They do not carry over into a brand-new session. Recurring tasks auto-expire after seven days — the agent gets a `stale` notice on the final fire and will either let the task end or refresh it depending on your earlier instructions. Use `--yolo` if you want the agent to schedule tasks without approval prompts; otherwise each `CronCreate` asks for confirmation against the exact schedule and prompt.
+
+To see what is currently scheduled, just ask: `What scheduled tasks are pending?` (the agent runs the read-only `CronList` tool). To cancel one, ask the agent to drop it or quote its 8-character id. The full tool surface is documented under [Scheduled tasks](../reference/tools.md#scheduled-tasks), and the kill switch is `KIMI_DISABLE_CRON=1`.
+
 ## Generating and maintaining documentation
 
 ```
