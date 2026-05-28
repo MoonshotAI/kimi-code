@@ -190,7 +190,7 @@ async function runTool(params) {
   try {
     const built = handler.buildParams(args);
     const response = await callKimiTool(handler.method, built);
-    const fileWarnings = await writeResponseFiles(response);
+    const fileWarnings = await writeResponseFiles(response, expectedResponseFilePath(built));
     const text = extractText(response);
     const formatted = (handler.format?.(text, built) ?? text).trim();
     return { content: [{ type: 'text', text: appendWarnings(formatted, fileWarnings) }] };
@@ -203,7 +203,7 @@ async function runTool(params) {
   }
 }
 
-async function writeResponseFiles(response) {
+async function writeResponseFiles(response, expectedOutputPath) {
   if (!isRecord(response) || !Array.isArray(response.files)) return [];
   const warnings = [];
 
@@ -212,20 +212,57 @@ async function writeResponseFiles(response) {
     const name = typeof file.name === 'string' ? file.name.trim() : '';
     if (name.length === 0 || file.content === undefined || file.content === null) continue;
 
+    const writePath = allowedResponseFilePath(name, expectedOutputPath);
+    if (writePath === undefined) {
+      warnings.push(`Warning: skipped returned file ${name} because it is outside the requested output path.`);
+      continue;
+    }
+
     try {
-      await mkdir(path.dirname(name), { recursive: true });
+      await mkdir(path.dirname(writePath), { recursive: true });
       if (file.encoding === 'base64') {
-        await writeFile(name, Buffer.from(String(file.content), 'base64'));
+        await writeFile(writePath, Buffer.from(String(file.content), 'base64'));
       } else {
-        await writeFile(name, String(file.content), 'utf8');
+        await writeFile(writePath, String(file.content), 'utf8');
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      warnings.push(`Warning: failed to write file ${name}: ${message}`);
+      warnings.push(`Warning: failed to write file ${writePath}: ${message}`);
     }
   }
 
   return warnings;
+}
+
+function expectedResponseFilePath(params) {
+  return outputPathField(params) ?? (isRecord(params) ? outputPathField(params.params) : undefined);
+}
+
+function outputPathField(value) {
+  if (!isRecord(value)) return undefined;
+  for (const field of ['file_path', 'filepath']) {
+    const pathValue = value[field];
+    if (typeof pathValue !== 'string') continue;
+    const trimmed = pathValue.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return undefined;
+}
+
+function allowedResponseFilePath(name, expectedOutputPath) {
+  if (expectedOutputPath === undefined) return undefined;
+
+  const actual = path.resolve(name);
+  const expected = path.resolve(expectedOutputPath);
+  if (actual === expected) return actual;
+
+  const actualParts = path.parse(actual);
+  const expectedParts = path.parse(expected);
+  if (actualParts.dir !== expectedParts.dir) return undefined;
+  if (actualParts.ext !== expectedParts.ext) return undefined;
+  if (!actualParts.name.startsWith(`${expectedParts.name}_`)) return undefined;
+
+  return actual;
 }
 
 function appendWarnings(text, warnings) {

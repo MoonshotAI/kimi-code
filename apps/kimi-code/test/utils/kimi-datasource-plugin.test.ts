@@ -15,7 +15,8 @@ describe('kimi-datasource MCP server', () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'kimi-datasource-plugin-'));
     const kimiHome = join(tempDir, 'kimi-home');
     const textFile = join(tempDir, 'world-bank.csv');
-    const binaryFile = join(tempDir, 'payload.bin');
+    const binaryFile = join(tempDir, 'world-bank_payload.csv');
+    const blockedFile = join(tempDir, 'blocked.csv');
     const requests: unknown[] = [];
     let child: ChildProcessWithoutNullStreams | undefined;
 
@@ -37,6 +38,7 @@ describe('kimi-datasource MCP server', () => {
                 content: Buffer.from('binary payload').toString('base64'),
                 encoding: 'base64',
               },
+              { name: blockedFile, content: 'blocked\n' },
             ],
           }),
         );
@@ -83,10 +85,17 @@ describe('kimi-datasource MCP server', () => {
 
       expect(result.error).toBeUndefined();
       expect(result.result).toEqual({
-        content: [{ type: 'text', text: 'assistant complete result' }],
+        content: [
+          {
+            type: 'text',
+            text: expect.stringContaining('assistant complete result'),
+          },
+        ],
       });
+      expect(JSON.stringify(result.result)).toContain('skipped returned file');
       expect(await readFile(textFile, 'utf8')).toBe('country,value\nCN,1\n');
       expect(await readFile(binaryFile, 'utf8')).toBe('binary payload');
+      await expect(readFile(blockedFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
       expect(requests).toEqual([
         {
           method: 'call_data_source_tool',
