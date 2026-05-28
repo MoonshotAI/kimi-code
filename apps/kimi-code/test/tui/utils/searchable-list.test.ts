@@ -97,4 +97,17 @@ describe('SearchableList', () => {
     expect(search.handleKey(BACKSPACE)).toBe(true);
     expect(search.view().query).toBe('');
   });
+
+  it('supports j/k navigation for non-search pickers without stealing searchable input', () => {
+    const nav = make({ searchable: false, initialIndex: 1 });
+    expect(nav.handleKey('j')).toBe(true);
+    expect(nav.selected()).toBe('item02');
+    expect(nav.handleKey('k')).toBe(true);
+    expect(nav.selected()).toBe('item01');
+
+    const search = make({ searchable: true });
+    expect(search.handleKey('j')).toBe(true);
+    expect(search.view().query).toBe('j');
+    expect(search.selected()).toBe(search.view().items[0]);
+  });
 });

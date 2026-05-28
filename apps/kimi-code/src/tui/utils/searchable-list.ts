@@ -5,7 +5,8 @@
  * The component owns presentation and the keys that carry component-specific
  * meaning — Enter (submit), Esc (cancel), and ←/→ (paging in one picker, a
  * thinking toggle in another). This unit owns the keys that behave identically
- * everywhere: ↑/↓, PgUp/PgDn, and search editing.
+ * everywhere: ↑/↓, PgUp/PgDn, Vim-style j/k navigation for non-search
+ * pickers, and search editing.
  */
 
 import { fuzzyFilter, Key, matchesKey } from '@earendil-works/pi-tui';
@@ -105,6 +106,7 @@ export class SearchableList<T> {
    * Enter, Esc, and ←/→ are intentionally left to the component.
    */
   handleKey(data: string): boolean {
+    const ch = printableChar(data);
     if (matchesKey(data, Key.up)) {
       this.moveUp();
       return true;
@@ -121,6 +123,14 @@ export class SearchableList<T> {
       this.pageDown();
       return true;
     }
+    if (!this.searchable && ch === 'k') {
+      this.moveUp();
+      return true;
+    }
+    if (!this.searchable && ch === 'j') {
+      this.moveDown();
+      return true;
+    }
     if (!this.searchable) return false;
     if (matchesKey(data, Key.backspace)) {
       if (this.query.length > 0) {
@@ -129,7 +139,6 @@ export class SearchableList<T> {
       }
       return true;
     }
-    const ch = printableChar(data);
     if (isPrintableChar(ch)) {
       this.query += ch;
       this.cursor = 0;
