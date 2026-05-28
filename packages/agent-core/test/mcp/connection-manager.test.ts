@@ -4,7 +4,7 @@ import { dirname, join } from 'pathe';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { localKaos } from '@moonshot-ai/kaos';
+import { testKaos } from '../fixtures/test-kaos';
 import type { ProviderConfig } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
@@ -27,8 +27,8 @@ import { JsonFileStore, McpOAuthService } from '../../src/mcp/oauth';
 import type { AgentEvent, SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { SessionAPIImpl } from '../../src/session/rpc';
-import { detectEnvironmentFromNode } from '../../src/utils/environment';
 import { createScriptedGenerate } from '../agent/harness';
+
 
 const here = import.meta.dirname;
 const stdioFixture = join(here, 'fixtures', 'mock-stdio-server.mjs');
@@ -663,13 +663,9 @@ describe('Session MCP startup', () => {
 
     const session = new Session({
       id: 'test-mcp-oauth',
-      runtime: {
-        kaos: localKaos,
-        osEnv: await detectEnvironmentFromNode(),
-      },
+      runtime: { kaos: testKaos.withCwd(tmp) },
       homedir: join(tmp, 'session'),
       kimiHomeDir: kimiHome,
-      cwd: tmp,
       rpc: sessionRpc(),
     });
 
@@ -708,12 +704,8 @@ describe('Session MCP startup', () => {
     const tmp = await mkdtemp(join(tmpdir(), 'kimi-session-mcp-startup-'));
     const session = new Session({
       id: 'test-mcp-slow',
-      runtime: {
-        kaos: localKaos,
-        osEnv: await detectEnvironmentFromNode(),
-      },
+      runtime: { kaos: testKaos.withCwd(tmp) },
       homedir: join(tmp, 'session'),
-      cwd: tmp,
       rpc: sessionRpc(),
       mcpConfig: {
         servers: {
@@ -752,12 +744,8 @@ describe('Session MCP startup', () => {
     scripted.mockNextResponse({ type: 'text', text: 'ready' });
     const session = new Session({
       id: 'test-mcp-turn-ended',
-      runtime: {
-        kaos: localKaos,
-        osEnv: await detectEnvironmentFromNode(),
-      },
+      runtime: { kaos: testKaos.withCwd(tmp) },
       homedir: join(tmp, 'session'),
-      cwd: tmp,
       rpc: sessionRpc({
         events,
         onEvent: (event) => {
@@ -823,12 +811,8 @@ describe('Session MCP startup', () => {
     const events: SessionRpcEvent[] = [];
     const session = new Session({
       id: 'test-mcp-mixed',
-      runtime: {
-        kaos: localKaos,
-        osEnv: await detectEnvironmentFromNode(),
-      },
+      runtime: { kaos: testKaos.withCwd(tmp) },
       homedir: join(tmp, 'session'),
-      cwd: tmp,
       rpc: sessionRpc({ events }),
       mcpConfig: {
         servers: {

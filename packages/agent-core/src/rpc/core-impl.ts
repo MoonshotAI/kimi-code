@@ -1,13 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 
-import { localKaos } from '@moonshot-ai/kaos';
+import { KaosShellNotFoundError, LocalKaos } from '@moonshot-ai/kaos';
 import { ErrorCodes, KimiError } from '#/errors';
 import { getRootLogger, log } from '#/logging/logger';
 import { LocalFetchURLProvider } from '#/tools/providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from '#/tools/providers/moonshot-fetch-url';
 import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search';
-import { detectEnvironmentFromNode } from '#/utils/environment';
 import { getCoreVersion } from '#/version';
 import type {
   ActivateSkillPayload,
@@ -184,13 +183,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
     // Session ctor attaches its own log sink. If anything in the setup-after-
     // ctor block throws, `session.close()` releases the sink (and mcp).
+    const runtime = await this.resolveRuntime(config);
     const session = new Session({
-      runtime: await this.resolveRuntime(config),
+      runtime: { ...runtime, kaos: runtime.kaos.withCwd(workDir) },
       id,
       homedir: summary.sessionDir,
       kimiHomeDir: this.homeDir,
       rpc: proxyWithExtraPayload(await this.sdk, { sessionId: summary.id }),
-      cwd: workDir,
       providerManager: this.providerManager,
       background: config.background,
       hooks: config.hooks,
@@ -215,7 +214,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       };
       const mainAgent = await session.createMain();
       mainAgent.config.update({
-        cwd: workDir,
         modelAlias: modelName,
         thinkingLevel,
       });
@@ -264,13 +262,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     await this.pluginsReady;
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
     const mcpConfig = this.mergePluginMcpConfig(baseMcpConfig);
+    const runtime = await this.resolveRuntime(config);
     const session = new Session({
-      runtime: await this.resolveRuntime(config),
+      runtime: { ...runtime, kaos: runtime.kaos.withCwd(summary.workDir) },
       id: summary.id,
       homedir: summary.sessionDir,
       kimiHomeDir: this.homeDir,
       rpc: proxyWithExtraPayload(await this.sdk, { sessionId: summary.id }),
-      cwd: summary.workDir,
       providerManager: this.providerManager,
       background: config.background,
       hooks: config.hooks,
@@ -743,9 +741,15 @@ async function createRuntimeConfig(input: {
   const searchService = input.config.services?.moonshotSearch;
   const fetchService = input.config.services?.moonshotFetch;
 
+  const kaos = await LocalKaos.create().catch((error: unknown) => {
+    if (error instanceof KaosShellNotFoundError) {
+      throw new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, error.message);
+    }
+    throw error;
+  });
+
   return {
-    kaos: localKaos,
-    osEnv: await detectEnvironmentFromNode(),
+    kaos,
     urlFetcher:
       fetchService?.baseUrl === undefined
         ? localFetcher

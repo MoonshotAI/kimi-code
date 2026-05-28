@@ -114,7 +114,7 @@ export class KosongLLM implements LLM {
       effectiveProvider,
       this.systemPrompt,
       [...params.tools],
-      [...params.messages],
+      params.messages,
       callbacks,
       generateOptions(params, {
         onRequestStart: markRequestStart,

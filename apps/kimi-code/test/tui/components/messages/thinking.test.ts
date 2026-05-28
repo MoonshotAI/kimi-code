@@ -28,7 +28,8 @@ describe('ThinkingComponent', () => {
 
     expect(out).not.toContain('line1');
     expect(out).not.toContain('line4');
-    expect(out).toContain('line5');
+    expect(out).not.toContain('line5');
+    expect(out).toContain('line6');
     expect(out).toContain('line7');
     expect(out).not.toContain('ctrl+o to expand');
   });
@@ -60,9 +61,10 @@ describe('ThinkingComponent', () => {
 
     const out = strip(component.render(80).join('\n'));
     expect(out).toContain('line1');
-    expect(out).toContain('line3');
+    expect(out).toContain('line2');
+    expect(out).not.toContain('line3');
     expect(out).not.toContain('line4');
-    expect(out).toContain('... (4 more lines, ctrl+o to expand)');
+    expect(out).toContain('... (5 more lines, ctrl+o to expand)');
   });
 
   it('expands and collapses after finalization', () => {

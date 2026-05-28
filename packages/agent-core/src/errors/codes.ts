@@ -51,6 +51,7 @@ export const ErrorCodes = {
 
   RECORDS_WRITE_FAILED: 'records.write_failed',
   COMPACTION_FAILED: 'compaction.failed',
+  COMPACTION_UNABLE: 'compaction.unable',
 
   BACKGROUND_TASK_ID_EMPTY: 'background.task_id_empty',
   MCP_SERVER_NOT_FOUND: 'mcp.server_not_found',
@@ -306,6 +307,12 @@ export const KIMI_ERROR_INFO = {
     retryable: false,
     public: true,
     action: 'Inspect logs and consider increasing compaction limits.',
+  },
+  'compaction.unable': {
+    title: 'Unable to compact',
+    retryable: false,
+    public: true,
+    action: 'The current history has no prefix that can be compacted (e.g. only a pending user message). Start a new turn or session instead.',
   },
 
   'background.task_id_empty': {

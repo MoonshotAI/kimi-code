@@ -63,7 +63,7 @@ export interface AgentRecordEvents {
   };
 
   'full_compaction.cancel': {};
-  'full_compaction.complete': CompactionResult;
+  'full_compaction.complete': {};
 
   'context.append_message': { message: ContextMessage };
   'context.mark_last_user_prompt_blocked': { hookEvent: string };

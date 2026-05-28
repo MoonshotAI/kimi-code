@@ -1,3 +1,3 @@
 export * from './full';
-export * from './config';
+export * from './strategy';
 export * from './types';

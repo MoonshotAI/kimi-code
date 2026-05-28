@@ -340,7 +340,7 @@ export class ToolManager {
 
   initializeBuiltinTools(): void {
     const {
-      runtime: { kaos, osEnv, urlFetcher, webSearcher },
+      runtime: { kaos, urlFetcher, webSearcher },
       config: { cwd, provider, modelCapabilities },
       background,
     } = this.agent;
@@ -363,7 +363,7 @@ export class ToolManager {
         new b.EditTool(kaos, workspace),
         new b.GrepTool(kaos, workspace),
         new b.GlobTool(kaos, workspace),
-        new b.BashTool(kaos, cwd, osEnv, background, {
+        new b.BashTool(kaos, cwd, kaos.osEnv, background, {
           allowBackground,
         }),
         (modelCapabilities.image_in || modelCapabilities.video_in) &&

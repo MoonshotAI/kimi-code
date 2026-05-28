@@ -27,3 +27,15 @@ export class KaosFileExistsError extends KaosError {
     this.name = 'KaosFileExistsError';
   }
 }
+
+/**
+ * Thrown by `detectEnvironment` on Windows when no Git Bash install can be
+ * located. Carries the list of paths that were probed so callers can include
+ * them in install hints.
+ */
+export class KaosShellNotFoundError extends KaosError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'KaosShellNotFoundError';
+  }
+}

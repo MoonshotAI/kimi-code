@@ -15,7 +15,7 @@ describe('LocalKaos', () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    kaos = new LocalKaos();
+    kaos = await LocalKaos.create();
     tempDir = await realpath(await mkdtemp(join(tmpdir(), 'kaos-test-')));
     await kaos.chdir(tempDir);
   });
@@ -644,8 +644,8 @@ describe('LocalKaos', () => {
 
 describe('LocalKaos instance isolation', () => {
   test('instances have isolated cwds (no process.cwd pollution)', async () => {
-    const kaosA = new LocalKaos();
-    const kaosB = new LocalKaos();
+    const kaosA = await LocalKaos.create();
+    const kaosB = await LocalKaos.create();
 
     const tmpA = await realpath(await mkdtemp(join(tmpdir(), 'kaos-a-')));
     const tmpB = await realpath(await mkdtemp(join(tmpdir(), 'kaos-b-')));
@@ -684,7 +684,7 @@ describe('LocalKaos instance isolation', () => {
 
 describe('LocalProcess.kill safety', () => {
   test('kill() is safe when spawn failed (pid -1 must not signal process group)', async () => {
-    const kaos = new LocalKaos();
+    const kaos = await LocalKaos.create();
 
     // Try to spawn a nonexistent command. Node's spawn() returns a
     // ChildProcess immediately with pid=undefined; the "error" event
@@ -712,7 +712,7 @@ describe('LocalProcess.kill safety', () => {
   });
 
   test('kill() handles already-exited process gracefully (ESRCH ignored)', async () => {
-    const kaos = new LocalKaos();
+    const kaos = await LocalKaos.create();
     const proc = await kaos.exec('node', '-e', 'process.exit(0)');
     await proc.wait();
 
@@ -732,7 +732,7 @@ describe('LocalProcess.kill safety', () => {
   test.skipIf(process.platform !== 'win32')(
     'kill() terminates the grandchild on Windows (process tree)',
     async () => {
-      const kaos = new LocalKaos();
+      const kaos = await LocalKaos.create();
       const tmp = await realpath(await mkdtemp(join(tmpdir(), 'kaos-killtree-')));
       try {
         const pidFile = join(tmp, 'grandchild.pid').replaceAll('\\', '\\\\');
@@ -802,7 +802,7 @@ describe('LocalProcess.kill safety', () => {
   test.skipIf(process.platform === 'win32')(
     'kill() terminates the grandchild on POSIX (process tree)',
     async () => {
-      const kaos = new LocalKaos();
+      const kaos = await LocalKaos.create();
       const tmp = await realpath(await mkdtemp(join(tmpdir(), 'kaos-killtree-posix-')));
       try {
         const pidFile = join(tmp, 'grandchild.pid');

@@ -4,19 +4,14 @@ import { join } from 'pathe';
 import { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 
-import { localKaos, type KaosProcess } from '@moonshot-ai/kaos';
+import type { KaosProcess } from '@moonshot-ai/kaos';
+
+import { testKaos } from '../fixtures/test-kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 
-const OS_ENV = {
-  osKind: 'Linux',
-  osArch: 'arm64',
-  osVersion: 'test',
-  shellPath: '/bin/bash',
-  shellName: 'bash',
-} as const;
 
 const tempDirs: string[] = [];
 
@@ -31,10 +26,9 @@ describe('Session lifecycle hooks', () => {
   it('fires SessionStart on startup and SessionEnd on close', async () => {
     const { command, logPath, sessionDir, workDir } = await hookFixture();
     const session = new Session({
-      runtime: { kaos: localKaos, osEnv: OS_ENV },
+      runtime: { kaos: testKaos.withCwd(workDir) },
       id: 'session-123',
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
       hooks: [
@@ -77,10 +71,9 @@ describe('Session lifecycle hooks', () => {
       'utf-8',
     );
     const session = new Session({
-      runtime: { kaos: localKaos, osEnv: OS_ENV },
+      runtime: { kaos: testKaos.withCwd(workDir) },
       id: 'session-456',
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
       hooks: [{ event: 'SessionStart', matcher: 'resume', command, timeout: 5 }],
@@ -101,10 +94,9 @@ describe('Session lifecycle hooks', () => {
   it('does not let failing SessionStart or SessionEnd hook commands interrupt startup or close', async () => {
     const { sessionDir, workDir } = await hookFixture();
     const session = new Session({
-      runtime: { kaos: localKaos, osEnv: OS_ENV },
+      runtime: { kaos: testKaos.withCwd(workDir) },
       id: 'session-reject',
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
       hooks: [
@@ -120,10 +112,9 @@ describe('Session lifecycle hooks', () => {
   it('stops background tasks on close when keepAliveOnExit is false', async () => {
     const { sessionDir, workDir } = await hookFixture();
     const session = new Session({
-      runtime: { kaos: localKaos, osEnv: OS_ENV },
+      runtime: { kaos: testKaos.withCwd(workDir) },
       id: 'session-bg-cleanup',
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
       background: { keepAliveOnExit: false },
@@ -142,10 +133,9 @@ describe('Session lifecycle hooks', () => {
     vi.stubEnv('KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT', '0');
     const { sessionDir, workDir } = await hookFixture();
     const session = new Session({
-      runtime: { kaos: localKaos, osEnv: OS_ENV },
+      runtime: { kaos: testKaos.withCwd(workDir) },
       id: 'session-bg-env-cleanup',
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
       background: { keepAliveOnExit: true },

@@ -11,7 +11,7 @@ describe('e2e: glob parity boundaries', () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    kaos = new LocalKaos();
+    kaos = await LocalKaos.create();
     tempDir = await realpath(await mkdtemp(join(tmpdir(), 'kaos-glob-')));
     await kaos.chdir(tempDir);
   });

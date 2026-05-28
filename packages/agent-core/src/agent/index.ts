@@ -15,11 +15,7 @@ import {
 import type { EnabledPluginSessionStart } from '#/plugin';
 
 import type { McpConnectionManager } from '../mcp';
-import {
-  resolveSystemPromptCwd,
-  type PreparedSystemPromptContext,
-  type ResolvedAgentProfile,
-} from '../profile';
+import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
 import type { ProviderManager } from '../providers/provider-manager';
 import { withProviderRequestAuth } from '../providers/request-auth';
 import type { RuntimeConfig } from '../runtime-types';
@@ -42,6 +38,7 @@ import { PermissionManager, type PermissionManagerOptions } from './permission';
 import { PlanMode } from './plan';
 import {
   AgentRecords,
+  BlobStore,
   FileSystemAgentRecordPersistence,
   type AgentRecord,
   type AgentRecordPersistence,
@@ -100,6 +97,7 @@ export class Agent {
   readonly hooks: HookEngine | undefined;
 
   readonly type: AgentType;
+  readonly blobStore: BlobStore | undefined;
   readonly records: AgentRecords;
   readonly fullCompaction: FullCompaction;
   readonly context: ContextMemory;
@@ -137,6 +135,9 @@ export class Agent {
 
     this.rpc = config.rpc;
     this.telemetry = config.telemetry ?? noopTelemetryClient;
+    this.blobStore = config.homedir
+      ? new BlobStore({ blobsDir: join(config.homedir, 'blobs') })
+      : undefined;
     this.records = new AgentRecords(
       this,
       config.persistence ??
@@ -145,6 +146,7 @@ export class Agent {
               onError: (error) => {
                 this.emitRecordsWriteError(error);
               },
+              blobStore: this.blobStore,
             })
           : undefined),
     );
@@ -241,10 +243,9 @@ export class Agent {
   }
 
   useProfile(profile: ResolvedAgentProfile, context?: PreparedSystemPromptContext): void {
-    const cwd = context?.cwd ?? resolveSystemPromptCwd(this.runtime.kaos, this.config.cwd);
     const systemPrompt = profile.systemPrompt({
-      osEnv: this.runtime.osEnv,
-      cwd,
+      osEnv: this.runtime.kaos.osEnv,
+      cwd: this.config.cwd,
       skills: this.skills?.registry,
       cwdListing: context?.cwdListing,
       agentsMd: context?.agentsMd,
@@ -479,7 +480,7 @@ function buildLlmRequestMetadata(
 
   const estimatedInputTokens =
     estimateTokens(systemPrompt) +
-    estimateTokensForMessages([...history]) +
+    estimateTokensForMessages(history) +
     estimateTokensForTools(tools);
 
   const metadata: LlmRequestMetadata = {

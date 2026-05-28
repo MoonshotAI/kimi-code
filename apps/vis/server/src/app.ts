@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 
 import { Hono } from 'hono';
 
+import { blobsRoute } from './routes/blobs';
 import { contextRoute } from './routes/context';
 import { sessionDetailRoute } from './routes/session-detail';
 import { sessionsRoute } from './routes/sessions';
@@ -87,6 +88,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono> {
   api.route('/sessions', sessionDetailRoute());
   api.route('/sessions', wireRoute());
   api.route('/sessions', subagentsRoute());
+  api.route('/sessions', blobsRoute());
   // Mount contextRoute last because it currently uses a catch-all stub
   // (Phase C scope) that would otherwise shadow more specific routes
   // registered below it.

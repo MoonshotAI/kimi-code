@@ -35,18 +35,10 @@ import {
   normalizeWorkDir,
 } from '@moonshot-ai/agent-core/session/store';
 import { Session, type SDKSessionRPC } from '@moonshot-ai/agent-core';
-import { localKaos } from '@moonshot-ai/kaos';
+import { LocalKaos } from '@moonshot-ai/kaos';
 
 import { migrateOneSession, type MigrateOneResult } from '../src/sessions/migrate-one.js';
 import { computeWorkdirBucket } from '../src/sessions/workdir-bucket.js';
-
-const TEST_OS_ENV = {
-  osKind: 'Linux',
-  osArch: 'arm64',
-  osVersion: 'test',
-  shellPath: '/bin/bash',
-  shellName: 'bash',
-} as const;
 
 function createSessionRpc(): SDKSessionRPC {
   return {
@@ -134,10 +126,9 @@ describe('migrated session loads in real kimi-core', () => {
     // If `agents.main.homedir` were the project workdir (the bug), the agent
     // would replay an absent file and the history would be empty.
     const session = new Session({
-      runtime: { kaos: localKaos, osEnv: TEST_OS_ENV },
+      runtime: { kaos: (await LocalKaos.create()).withCwd(WORK_DIR) },
       id: 'ses_tiny-resume',
       homedir: targetDir,
-      cwd: WORK_DIR,
       rpc: createSessionRpc(),
       initializeMainAgent: false,
     });
