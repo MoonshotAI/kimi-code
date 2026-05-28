@@ -1,3 +1,4 @@
+import { resolve } from 'pathe';
 import type { TokenUsage } from '@moonshot-ai/kosong';
 
 import type { Agent } from '../agent';
@@ -32,6 +33,7 @@ type RunSubagentOptions = {
   readonly runInBackground: boolean;
   readonly origin?: PromptOrigin | undefined;
   readonly signal: AbortSignal;
+  readonly cwd?: string | undefined;
 };
 
 type SubagentCompletion = {
@@ -69,8 +71,16 @@ export class SessionSubagentHost {
     }
 
     const profile = this.resolveProfile(parent, profileName);
+    const resolvedCwd =
+      options.cwd !== undefined
+        ? parent.runtime.kaos.normpath(resolve(parent.config.cwd, options.cwd))
+        : undefined;
+    const runtime =
+      resolvedCwd !== undefined
+        ? { ...parent.runtime, kaos: parent.runtime.kaos.withCwd(resolvedCwd) }
+        : undefined;
     const { id, agent } = await this.session.createAgent(
-      { type: 'sub', generate: parent.rawGenerate },
+      { type: 'sub', generate: parent.rawGenerate, runtime },
       undefined,
       this.ownerAgentId,
     );
@@ -90,7 +100,7 @@ export class SessionSubagentHost {
         ...options,
         signal: controller.signal,
       },
-      () => this.configureChild(parent, agent, profile),
+      () => this.configureChild(parent, agent, profile, resolvedCwd),
     ).finally(() => {
       unlinkAbortSignal();
       this.activeChildren.delete(id);
@@ -275,10 +285,11 @@ export class SessionSubagentHost {
     parent: Agent,
     child: Agent,
     profile: ResolvedAgentProfile,
+    cwd?: string,
   ): Promise<void> {
     // A subagent always inherits the parent agent's model.
     child.config.update({
-      cwd: parent.config.cwd,
+      cwd: cwd ?? parent.config.cwd,
       modelAlias: parent.config.modelAlias,
       thinkingLevel: parent.config.thinkingLevel,
     });

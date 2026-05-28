@@ -408,7 +408,7 @@ export class Session {
     return new Agent({
       ...config,
       type,
-      runtime: this.options.runtime,
+      runtime: config.runtime ?? this.options.runtime,
       config: this.options.config,
       homedir,
       skills: this.skills,

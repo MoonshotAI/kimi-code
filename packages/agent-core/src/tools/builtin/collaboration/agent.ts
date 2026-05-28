@@ -80,6 +80,12 @@ export const AgentToolInputSchema = z.preprocess(
       .describe(
         'Timeout in seconds for the agent task (min 30s, max 3600s / 1hr). When omitted, a foreground task runs until completion with no timeout. The agent is stopped if it exceeds this limit.',
       ),
+    cwd: z
+      .string()
+      .optional()
+      .describe(
+        "The working directory for the subagent. When provided, the subagent discovers AGENTS.md and resolves paths relative to this directory. When omitted, the subagent inherits the parent agent's working directory.",
+      ),
   }),
 );
 
@@ -170,15 +176,19 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       const runInBackground = args.run_in_background === true;
       const requestedProfileName = args.subagent_type?.length ? args.subagent_type : undefined;
       const resumeAgentId = args.resume?.trim();
-      if (
-        resumeAgentId !== undefined &&
-        resumeAgentId.length > 0 &&
-        requestedProfileName !== undefined
-      ) {
-        return {
-          output: 'Cannot set subagent_type when resuming an existing agent. Resume by agent id only.',
-          isError: true,
-        };
+      if (resumeAgentId !== undefined && resumeAgentId.length > 0) {
+        if (requestedProfileName !== undefined) {
+          return {
+            output: 'Cannot set subagent_type when resuming an existing agent. Resume by agent id only.',
+            isError: true,
+          };
+        }
+        if (args.cwd !== undefined && args.cwd.length > 0) {
+          return {
+            output: 'Cannot set cwd when resuming an existing agent. Resume by agent id only.',
+            isError: true,
+          };
+        }
       }
 
       let reservation: ReturnType<BackgroundProcessManager['reserveSlot']> | undefined;
@@ -214,6 +224,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         description: args.description,
         runInBackground,
         signal: backgroundController?.signal ?? foregroundDeadline?.signal ?? signal,
+        cwd: args.cwd,
       };
 
       let handle: SubagentHandle;

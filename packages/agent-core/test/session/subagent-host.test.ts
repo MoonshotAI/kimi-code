@@ -13,7 +13,9 @@ import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { collectGitContext } from '../../src/session/git-context';
 import { SessionSubagentHost } from '../../src/session/subagent-host';
+import { ProviderManager } from '../../src/session/provider-manager';
 import { testAgent } from '../agent/harness/agent';
+import { createScriptedGenerate } from '../agent/harness/scripted-generate';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 
 // Git context collection is exercised in git-context.test.ts; here it is
@@ -33,6 +35,174 @@ afterEach(async () => {
 });
 
 describe('SessionSubagentHost', () => {
+  it('spawns a subagent with a custom cwd and isolated kaos', async () => {
+    const parentWorkDir = '/repo';
+    const childWorkDir = '/repo/packages/domain';
+
+    const scripted = createScriptedGenerate();
+
+    const parentKaos = createFakeKaos({
+      getcwd: () => parentWorkDir,
+      mkdir: vi.fn().mockResolvedValue(undefined),
+      writeText: vi.fn().mockResolvedValue(0),
+      stat: vi.fn(async (path: string) => {
+        if (
+          [parentWorkDir, `${parentWorkDir}/.git`, childWorkDir, `${childWorkDir}/.git`].includes(
+            path,
+          )
+        ) {
+          return stat('dir');
+        }
+        if (path === `${childWorkDir}/AGENTS.md`) {
+          return stat('file');
+        }
+        throw new Error(`ENOENT ${path}`);
+      }),
+      iterdir: async function* (path: string) {
+        if (path === parentWorkDir) {
+          yield `${parentWorkDir}/packages`;
+          return;
+        }
+        if (path === childWorkDir) {
+          yield `${childWorkDir}/package.json`;
+          return;
+        }
+        throw new Error(`ENOENT ${path}`);
+      },
+      readText: vi.fn(async (path: string) => {
+        if (path === `${childWorkDir}/AGENTS.md`) return 'domain rules';
+        throw new Error(`ENOENT ${path}`);
+      }),
+    });
+
+    const parent = testAgent({
+      kaos: parentKaos,
+      generate: scripted.generate,
+    });
+    parent.configure();
+    parent.newEvents();
+
+    scripted.mockNextResponse({
+      type: 'text',
+      text:
+        'Domain investigation complete. Examined the module structure, traced all call sites, and verified the fix against the existing test suite. The relevant files were located under the domain package and the changes applied cleanly without touching unrelated code paths.',
+    });
+
+    const session = new Session({
+      id: 'test-subagent-cwd',
+      runtime: { kaos: parentKaos },
+      homedir: '/tmp/kimi-session',
+      rpc: createSessionRpc(),
+      initializeMainAgent: false,
+      providerManager: parent.agent.modelProvider as ProviderManager,
+    });
+    session.agents.set('main', parent.agent);
+
+    const host = new SessionSubagentHost(session, 'main');
+
+    const parentCwdBefore = parent.agent.config.cwd;
+
+    const handle = await host.spawn('coder', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Investigate domain',
+      description: 'Investigate domain',
+      runInBackground: false,
+      signal,
+      cwd: childWorkDir,
+    });
+
+    await handle.completion;
+
+    const child = session.agents.get('agent-0');
+    expect(child).toBeDefined();
+    expect(child!.config.cwd).toBe(childWorkDir);
+    expect(child!.runtime.kaos.getcwd()).toBe(childWorkDir);
+    expect(child!.config.systemPrompt).toContain('domain rules');
+    expect(parent.agent.config.cwd).toBe(parentCwdBefore);
+  });
+
+  it('resolves a relative cwd against the parent agent cwd', async () => {
+    const parentWorkDir = '/repo';
+    const childWorkDir = '/repo/packages/domain';
+
+    const scripted = createScriptedGenerate();
+
+    const parentKaos = createFakeKaos({
+      getcwd: () => parentWorkDir,
+      mkdir: vi.fn().mockResolvedValue(undefined),
+      writeText: vi.fn().mockResolvedValue(0),
+      stat: vi.fn(async (path: string) => {
+        if (
+          [parentWorkDir, `${parentWorkDir}/.git`, childWorkDir, `${childWorkDir}/.git`].includes(
+            path,
+          )
+        ) {
+          return stat('dir');
+        }
+        if (path === `${childWorkDir}/AGENTS.md`) {
+          return stat('file');
+        }
+        throw new Error(`ENOENT ${path}`);
+      }),
+      iterdir: async function* (path: string) {
+        if (path === childWorkDir) {
+          yield `${childWorkDir}/package.json`;
+          return;
+        }
+        throw new Error(`ENOENT ${path}`);
+      },
+      readText: vi.fn(async (path: string) => {
+        if (path === `${childWorkDir}/AGENTS.md`) return 'domain rules';
+        throw new Error(`ENOENT ${path}`);
+      }),
+    });
+
+    const parent = testAgent({
+      kaos: parentKaos,
+      generate: scripted.generate,
+    });
+    parent.configure();
+    // Override the parent cwd to the repo root so relative resolution is
+    // deterministic and matches the real monorepo scenario.
+    parent.agent.config.update({ cwd: parentWorkDir });
+    parent.newEvents();
+
+    scripted.mockNextResponse({
+      type: 'text',
+      text:
+        'Domain investigation complete. Examined the module structure, traced all call sites, and verified the fix against the existing test suite. The relevant files were located under the domain package and the changes applied cleanly without touching unrelated code paths.',
+    });
+
+    const session = new Session({
+      id: 'test-subagent-relative-cwd',
+      runtime: { kaos: parentKaos },
+      homedir: '/tmp/kimi-session',
+      rpc: createSessionRpc(),
+      initializeMainAgent: false,
+      providerManager: parent.agent.modelProvider as ProviderManager,
+    });
+    session.agents.set('main', parent.agent);
+
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await host.spawn('coder', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Investigate domain',
+      description: 'Investigate domain',
+      runInBackground: false,
+      signal,
+      cwd: 'packages/domain',
+    });
+
+    await handle.completion;
+
+    const child = session.agents.get('agent-0');
+    expect(child).toBeDefined();
+    expect(child!.config.cwd).toBe(childWorkDir);
+    expect(child!.runtime.kaos.getcwd()).toBe(childWorkDir);
+    expect(child!.config.systemPrompt).toContain('domain rules');
+  });
+
   it('fires subagent lifecycle hooks around the child turn', async () => {
     const child = testAgent();
     const calls: Array<{ readonly event: string; readonly childLlmCallCount: number }> = [];
