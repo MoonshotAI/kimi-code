@@ -11,7 +11,7 @@ import {
   type CoreAPI,
   type SDKAPI,
 } from '../../src';
-import type { OAuthTokenProviderResolver } from '../../src/providers/runtime-provider';
+import type { OAuthTokenProviderResolver } from '../../src/session/provider-manager';
 
 describe('KimiCore runtime config', () => {
   let tmp: string;

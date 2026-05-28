@@ -6,7 +6,7 @@ describe('Agent question', () => {
   it('roundtrips a question request through wire rpc', async () => {
     const ctx = testAgent();
 
-    const resultPromise = ctx.agent.rpc.requestQuestion(
+    const resultPromise = ctx.agent.rpc!.requestQuestion(
       {
         questions: [
           {
@@ -29,7 +29,7 @@ describe('Agent question', () => {
   it('sends multiple questions in one request', async () => {
     const ctx = testAgent();
 
-    const resultPromise = ctx.agent.rpc.requestQuestion(
+    const resultPromise = ctx.agent.rpc!.requestQuestion(
       {
         questions: [
           {

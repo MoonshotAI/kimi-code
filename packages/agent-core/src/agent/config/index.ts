@@ -7,6 +7,7 @@ import {
 } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
+import { ErrorCodes, KimiError } from '../../errors';
 import type { AgentConfigData, AgentConfigUpdateData } from './types';
 import { resolveThinkingEffort, type ThinkingEffort } from './thinking';
 import type { ResolvedRuntimeProvider } from '../../session/provider-manager';
@@ -89,7 +90,7 @@ export class ConfigState {
   get providerConfig(): ProviderConfig {
     const provider = this.resolvedProviderConfig?.provider;
     if (provider === undefined) {
-      throw new Error('Provider not set');
+      throw new KimiError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Provider not set');
     }
     return provider;
   }
@@ -100,7 +101,7 @@ export class ConfigState {
 
   get model(): string {
     if (this._modelAlias === undefined) {
-      throw new Error('Model not set');
+      throw new KimiError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
     }
     return this._modelAlias;
   }

@@ -167,9 +167,11 @@ export class Agent {
         this.logLlmRequest(provider, systemPrompt, tools, history, options);
         return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, options);
       }
-      const withAuth = this.providerManager?.createAuthResolverForModel(provider.modelName, {
-        log: this.log,
-      });
+      const modelAlias = this.config.modelAlias;
+      const withAuth =
+        modelAlias === undefined
+          ? undefined
+          : this.providerManager?.createAuthResolverForModel(modelAlias, { log: this.log });
       if (withAuth === undefined) {
         this.logLlmRequest(provider, systemPrompt, tools, history, options);
         return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, options);
@@ -294,15 +296,17 @@ export class Agent {
         }
       },
       setModel: (payload) => {
+        // Validate the alias resolves before recording it so resume / runtime
+        // callers fail fast on missing aliases instead of deferring to the
+        // next prompt.
+        const resolved = this.providerManager?.resolveProviderConfig(payload.model);
         if (this.config.modelAlias !== payload.model) {
           this.config.update({ modelAlias: payload.model });
           this.telemetry.track('model_switch', { model: payload.model });
         }
-        const kimiConfig = this.providerManager?.config;
         return {
           model: payload.model,
-          providerName:
-            kimiConfig?.models?.[payload.model]?.provider ?? kimiConfig?.defaultProvider,
+          providerName: resolved?.providerName,
         };
       },
       getModel: () => {

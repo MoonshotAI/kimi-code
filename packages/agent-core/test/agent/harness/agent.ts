@@ -88,7 +88,7 @@ interface ResumeStateSnapshot {
   readonly usage: ReturnType<Agent['usage']['data']>;
 }
 
-interface TestAgentOptions {
+export interface TestAgentOptions {
   readonly kaos?: Kaos | undefined;
   readonly runtime?: RuntimeConfig | undefined;
   readonly compactionStrategy?: CompactionStrategy | undefined;
@@ -97,6 +97,8 @@ interface TestAgentOptions {
   readonly type?: AgentConfig['type'];
   readonly permission?: AgentConfig['permission'];
   readonly providerManager?: ProviderManager;
+  readonly initialConfig?: KimiConfig;
+  readonly providerManagerOverrides?: Omit<ConstructorParameters<typeof ProviderManager>[0], 'config'>;
   readonly sessionId?: string;
   readonly subagentHost?: AgentConfig['subagentHost'];
   readonly onEvent?: ((event: AgentRecord) => AgentRecord | undefined) | undefined;
@@ -155,10 +157,17 @@ export class AgentTestContext {
   readonly mockNextResponse = this.scriptedGenerate.mockNextResponse;
   readonly mockNextProviderResponse = this.scriptedGenerate.mockNextProviderResponse;
 
+  private kimiConfig: KimiConfig;
+
   constructor(options: TestAgentOptions = {}) {
     this.options = options;
     this.emitter.on('error', () => {});
-    const providerManager = options.providerManager ?? new ProviderManager({ config: emptyConfig() });
+    this.kimiConfig = options.initialConfig ?? emptyConfig();
+    const providerManager = options.providerManager ?? new ProviderManager({
+      config: () => this.kimiConfig,
+      ...(options.sessionId !== undefined ? { promptCacheKey: options.sessionId } : {}),
+      ...options.providerManagerOverrides,
+    });
 
     const runtime = options.runtime ?? {
       kaos: options.kaos ?? testKaos,
@@ -207,9 +216,9 @@ export class AgentTestContext {
     provider: ProviderConfig,
     modelCapabilities?: ModelCapability | undefined,
   ): void {
-    this.agent.providerManager?.updateConfig(
-      configWithProvider(this.agent.providerManager.config, provider, modelCapabilities),
-    );
+    if (this.options.providerManager === undefined) {
+      this.kimiConfig = configWithProvider(this.kimiConfig, provider, modelCapabilities);
+    }
     this.agent.config.update({ modelAlias: provider.model });
   }
 
@@ -711,7 +720,9 @@ export class AgentTestContext {
         urlFetcher: this.agent.runtime.urlFetcher,
         webSearcher: this.agent.runtime.webSearcher,
       },
-      providerManager: this.agent.providerManager,
+      providerManager: this.options.providerManager,
+      initialConfig: this.kimiConfig,
+      providerManagerOverrides: this.options.providerManagerOverrides,
       generate: failOnResumeGenerate,
       compactionStrategy: this.options.compactionStrategy,
       persistence: new InMemoryAgentRecordPersistence(

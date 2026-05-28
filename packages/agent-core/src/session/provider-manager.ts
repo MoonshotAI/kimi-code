@@ -4,11 +4,11 @@ import { APIStatusError, createProvider, UNKNOWN_CAPABILITY } from '@moonshot-ai
 import type { KimiConfig, ModelAlias, OAuthRef, ProviderConfig } from '../config';
 import { ErrorCodes, isKimiError, KimiError } from '../errors';
 
-interface BearerTokenProvider {
+export interface BearerTokenProvider {
   getAccessToken(options?: { readonly force?: boolean }): Promise<string>;
 }
 
-type OAuthTokenProviderResolver = (
+export type OAuthTokenProviderResolver = (
   providerName: string,
   oauthRef?: OAuthRef,
 ) => BearerTokenProvider | undefined;

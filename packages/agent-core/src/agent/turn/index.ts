@@ -701,8 +701,8 @@ function summarizeTurnError(error: unknown, turnId: number): KimiErrorPayload {
   const details = { ...payload.details, turnId };
 
   // Substitute a friendlier TUI-aware message for model-not-configured.
-  // Raw kosong text ("Model not set" / "Provider not set") is not
-  // actionable; this string points the user at the login flow.
+  // The raw "Model not set" / "Provider not set" text is not actionable;
+  // this string points the user at the login flow.
   if (payload.code === 'model.not_configured') {
     return { ...payload, message: LLM_NOT_SET_MESSAGE, details };
   }

@@ -88,8 +88,8 @@ describe('ConfigState model capabilities', () => {
 
   it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
     const ctx = testAgent({
-      sessionId: 'session-test',
       providerManager: new ProviderManager({
+        promptCacheKey: 'session-test',
         config: {
           providers: {
             kimi: {

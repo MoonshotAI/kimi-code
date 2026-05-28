@@ -716,14 +716,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
         throw error;
       }
     }
-    // No candidate resolved (the replayed alias and the configured default are
-    // both invalid/unset). Clear the stale alias so the session is honestly
-    // model-less — the TUI then prompts for a model instead of showing a
-    // selection whose next prompt fails with a config error. Not persisted:
-    // `refreshSessionRuntimeConfig` re-derives this on every resume.
-    if (requested.length > 0) {
-      session.agents.get('main')?.config.update({ modelAlias: undefined });
-    }
   }
 }
 

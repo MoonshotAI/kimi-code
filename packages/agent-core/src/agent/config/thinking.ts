@@ -18,7 +18,7 @@ export function resolveThinkingLevel(
   options: ResolveThinkingLevelOptions,
 ): ThinkingEffort {
   const resolvedRequest =
-    requestedThinking !== undefined && requestedThinking.length > 0
+    requestedThinking !== undefined && requestedThinking.trim().length > 0
       ? requestedThinking
       : options.defaultThinking === false
         ? 'off'

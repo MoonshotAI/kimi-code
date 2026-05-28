@@ -43,7 +43,7 @@ export type { RuntimeConfig } from './runtime-types';
 export type {
   BearerTokenProvider,
   OAuthTokenProviderResolver,
-} from './providers/runtime-provider';
+} from './session/provider-manager';
 
 // ─── Wire records (for in-monorepo consumers like apps/vis) ────────────────
 export type {

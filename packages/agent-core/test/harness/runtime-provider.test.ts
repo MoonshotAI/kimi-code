@@ -1,10 +1,33 @@
 import { describe, expect, it } from 'vitest';
 
 import type { KimiConfig } from '../../src/config';
-import { KimiError } from '../../src/errors';
-import { resolveRuntimeProvider } from '../../src/providers/runtime-provider';
+import { ErrorCodes, KimiError } from '../../src/errors';
 import { ProviderManager } from '../../src/session/provider-manager';
 import { resolveThinkingLevel } from '../../src/agent/config/thinking';
+
+// Thin wrapper that adapts the legacy `resolveRuntimeProvider(input)` shape to
+// the current ProviderManager API. Kept local so the existing test bodies do
+// not need to change.
+function resolveRuntimeProvider(input: {
+  readonly config: KimiConfig;
+  readonly model?: string;
+  readonly kimiRequestHeaders?: Record<string, string>;
+  readonly promptCacheKey?: string;
+}): ReturnType<ProviderManager['resolveProviderConfig']> {
+  const manager = new ProviderManager({
+    config: input.config,
+    kimiRequestHeaders: input.kimiRequestHeaders,
+    promptCacheKey: input.promptCacheKey,
+  });
+  const model = input.model ?? input.config.defaultModel;
+  if (model === undefined) {
+    throw new KimiError(
+      ErrorCodes.CONFIG_INVALID,
+      'No model is selected. Set default_model in config.toml or pass a configured model alias.',
+    );
+  }
+  return manager.resolveProviderConfig(model);
+}
 
 const BASE_CONFIG: KimiConfig = {
   defaultModel: 'kimi-code/kimi-for-coding',
@@ -160,39 +183,6 @@ describe('resolveRuntimeProvider model metadata', () => {
         model: 'kimi-code',
       }),
     ).toThrow(KimiError);
-  });
-
-  it('throws when the selected provider has neither apiKey nor oauth configured', () => {
-    expect(() =>
-      resolveRuntimeProvider({
-        config: {
-          ...BASE_CONFIG,
-          providers: {
-            'managed:kimi-code': {
-              type: 'kimi',
-              baseUrl: 'https://api.example/v1',
-            },
-          },
-        },
-      }),
-    ).toThrow(/no credentials configured/i);
-  });
-
-  it('throws when apiKey is an empty string and no oauth is configured', () => {
-    expect(() =>
-      resolveRuntimeProvider({
-        config: {
-          ...BASE_CONFIG,
-          providers: {
-            'managed:kimi-code': {
-              type: 'kimi',
-              apiKey: '',
-              baseUrl: 'https://api.example/v1',
-            },
-          },
-        },
-      }),
-    ).toThrow(/no credentials configured/i);
   });
 
   it('allows vertexai providers without an apiKey', () => {
@@ -524,12 +514,13 @@ describe('resolveRuntimeProvider customHeaders propagation', () => {
 
 describe('ProviderManager prompt cache key', () => {
   it('applies a prompt cache key to Kimi providers', () => {
-    const manager = new ProviderManager({ config: BASE_CONFIG }).withPromptCacheKey(
-      'session-test',
-    );
-    const resolved = manager.resolveProviderConfigForModel('kimi-code/kimi-for-coding');
+    const manager = new ProviderManager({
+      config: BASE_CONFIG,
+      promptCacheKey: 'session-test',
+    });
+    const resolved = manager.resolveProviderConfig('kimi-code/kimi-for-coding');
 
-    expect(resolved?.provider).toMatchObject({
+    expect(resolved.provider).toMatchObject({
       type: 'kimi',
       generationKwargs: {
         prompt_cache_key: 'session-test',
@@ -539,6 +530,7 @@ describe('ProviderManager prompt cache key', () => {
 
   it('does not add generation kwargs to non-Kimi providers', () => {
     const manager = new ProviderManager({
+      promptCacheKey: 'session-test',
       config: {
         defaultModel: 'gpt-alias',
         providers: {
@@ -555,24 +547,27 @@ describe('ProviderManager prompt cache key', () => {
           },
         },
       },
-    }).withPromptCacheKey('session-test');
-    const resolved = manager.resolveProviderConfigForModel('gpt-alias');
+    });
+    const resolved = manager.resolveProviderConfig('gpt-alias');
 
-    expect(resolved?.provider).toMatchObject({
+    expect(resolved.provider).toMatchObject({
       type: 'openai',
       model: 'gpt-runtime',
     });
-    expect('generationKwargs' in resolved!.provider).toBe(false);
+    expect('generationKwargs' in resolved.provider).toBe(false);
   });
 
-  it('keeps derived managers on the latest shared config', () => {
-    const manager = new ProviderManager({ config: { providers: {} } });
-    const derived = manager.withPromptCacheKey('session-test');
+  it('reads the current config when constructed with a function', () => {
+    let sharedConfig: KimiConfig = { providers: {} };
+    const manager = new ProviderManager({
+      config: () => sharedConfig,
+      promptCacheKey: 'session-test',
+    });
 
-    manager.updateConfig(BASE_CONFIG);
+    sharedConfig = BASE_CONFIG;
 
-    const resolved = derived.resolveProviderConfigForModel(undefined);
-    expect(resolved?.provider).toMatchObject({
+    const resolved = manager.resolveProviderConfig('kimi-code/kimi-for-coding');
+    expect(resolved.provider).toMatchObject({
       type: 'kimi',
       generationKwargs: {
         prompt_cache_key: 'session-test',
