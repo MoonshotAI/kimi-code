@@ -81,6 +81,17 @@ function assertError(result: ExecutableToolResult): string {
   return result.output as string;
 }
 
+function extractApprovalRule(execution: ToolExecution): string {
+  if (isErrorExecution(execution)) {
+    throw new Error('expected runnable execution, got error');
+  }
+  const rule = (execution as RunnableToolExecution).approvalRule;
+  if (typeof rule !== 'string') {
+    throw new Error('expected approvalRule to be a string');
+  }
+  return rule;
+}
+
 describe('CronCreateTool', () => {
   beforeEach(() => {
     // Disable jitter so the nextFireAt string we render is the bare
@@ -395,6 +406,119 @@ describe('CronCreateTool', () => {
       const task = tasks[0]!;
       expect(task.createdAt).toBe(afterExecute);
       expect(task.createdAt).not.toBe(beforeExecute);
+    });
+  });
+
+  describe('one-shot pinned-date guard', () => {
+    it('rejects a one-shot whose first fire is more than ~one year out', async () => {
+      // Simulate the "today, just missed" footgun: the tool docs
+      // recommend pinning <today_dom>/<today_month> for "remind me at X
+      // today". If submission lands seconds past the target minute,
+      // `computeNextCronRun` rolls the match to next year and the
+      // 5-year window happily accepts it. Without the dedicated guard
+      // the user gets a year-late reminder. Build the cron by pinning
+      // *yesterday's* local dom/month — guaranteed to have passed in
+      // every timezone, so the next match is next year.
+      const { stub, manager, tool } = makeHarness();
+      const yesterday = new Date(manager.clocks.wallNow() - 24 * 60 * 60 * 1000);
+      const dom = yesterday.getDate();
+      const month = yesterday.getMonth() + 1;
+
+      const result = await runTool(tool, {
+        cron: `0 12 ${String(dom)} ${String(month)} *`,
+        prompt: 'yesterday',
+        recurring: false,
+      });
+      const msg = assertError(result);
+      expect(msg).toContain('more than a year out');
+      expect(manager.store.list()).toHaveLength(0);
+      expect(stub.telemetryCalls).toHaveLength(0);
+    });
+
+    it('accepts a recurring task whose next fire happens to be a year out', async () => {
+      // The guard is one-shot-only — recurring tasks may legitimately
+      // land their first match on next year's anniversary.
+      const { manager, tool } = makeHarness();
+      const yesterday = new Date(manager.clocks.wallNow() - 24 * 60 * 60 * 1000);
+      const dom = yesterday.getDate();
+      const month = yesterday.getMonth() + 1;
+
+      const result = await runTool(tool, {
+        cron: `0 12 ${String(dom)} ${String(month)} *`,
+        prompt: 'annual',
+        recurring: true,
+      });
+      expect(result.isError ?? false).toBe(false);
+      expect(manager.store.list()).toHaveLength(1);
+    });
+
+    it('accepts a one-shot scheduled for a near-future date this year', async () => {
+      // Sanity: the guard does not reject legitimate pinning whose
+      // next match is still well inside the window. Compute the
+      // target date dynamically from the harness clock so the test is
+      // independent of the host timezone (local-time evaluation of
+      // the cron means hard-coded dom/month would be wrong on non-UTC
+      // CI).
+      const { manager, tool } = makeHarness();
+      const sevenDaysAhead = new Date(manager.clocks.wallNow() + 7 * 24 * 60 * 60 * 1000);
+      const dom = sevenDaysAhead.getDate();
+      const month = sevenDaysAhead.getMonth() + 1;
+      const result = await runTool(tool, {
+        cron: `0 12 ${String(dom)} ${String(month)} *`,
+        prompt: 'in 7 days',
+        recurring: false,
+      });
+      expect(result.isError ?? false).toBe(false);
+      expect(manager.store.list()).toHaveLength(1);
+    });
+  });
+
+  describe('approvalRule includes the payload', () => {
+    it('produces a distinct rule for each (cron, prompt, recurring) tuple', () => {
+      // Without payload encoding, every CronCreate would share the
+      // same approvalRule `CronCreate` — one `scope: session` approval
+      // would auto-authorize any future scheduled prompt for the rest
+      // of the session. Mirror the Bash / Write / Edit convention: the
+      // rule must change when the payload changes.
+      const { tool } = makeHarness();
+      const ruleA = extractApprovalRule(
+        tool.resolveExecution({
+          cron: '*/5 * * * *',
+          prompt: 'A',
+          recurring: true,
+        }),
+      );
+      const ruleB = extractApprovalRule(
+        tool.resolveExecution({
+          cron: '*/5 * * * *',
+          prompt: 'B',
+          recurring: true,
+        }),
+      );
+      const ruleSameAsA = extractApprovalRule(
+        tool.resolveExecution({
+          cron: '*/5 * * * *',
+          prompt: 'A',
+          recurring: true,
+        }),
+      );
+      const ruleDifferentCron = extractApprovalRule(
+        tool.resolveExecution({
+          cron: '0 9 * * *',
+          prompt: 'A',
+          recurring: true,
+        }),
+      );
+
+      // Different prompts → different rules.
+      expect(ruleA).not.toBe(ruleB);
+      // Different crons → different rules.
+      expect(ruleA).not.toBe(ruleDifferentCron);
+      // Same payload → same rule (so a session approval keeps working).
+      expect(ruleA).toBe(ruleSameAsA);
+      // Rule must still start with the tool name so the permission
+      // layer routes it to the right matcher.
+      expect(ruleA.startsWith('CronCreate(')).toBe(true);
     });
   });
 

@@ -181,8 +181,14 @@ export class Session {
 
   async close(): Promise<void> {
     try {
-      await this.stopBackgroundTasksOnExit();
+      // Stop cron FIRST. `stopBackgroundTasksOnExit()` can await
+      // long-running background workers (especially with
+      // `background.keepAliveOnExit=false`); while we are waiting, a due
+      // cron tick would otherwise still call `turn.steer()` and start a
+      // fresh turn after shutdown has already begun, racing the
+      // metadata flush below.
       await this.stopCronOnExit();
+      await this.stopBackgroundTasksOnExit();
       await this.flushMetadata();
       await this.triggerSessionEnd('exit');
     } finally {

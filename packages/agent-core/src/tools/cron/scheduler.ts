@@ -87,6 +87,19 @@ export interface CronSchedulerOptions {
   readonly removeOneShot?: (id: string) => void;
 
   /**
+   * Optional. Called after a recurring task fires successfully, with
+   * the wall-clock timestamp of the last ideal occurrence whose
+   * jittered delivery has just been delivered. The manager wires this
+   * to `store.markFired(id, ts)` + a per-id JSON write so a
+   * `kimi resume` does not replay the fire.
+   *
+   * Fire-and-forget: the scheduler does not wait for persistence to
+   * settle. One-shot tasks do not invoke this callback (the
+   * `removeOneShot` path handles them).
+   */
+  readonly onAdvanceCursor?: (taskId: string, lastFiredAt: number) => void;
+
+  /**
    * Optional. Poll interval for the auto-tick setInterval, in ms.
    *   - undefined (default) → 1000ms.
    *   - 0 or null → no automatic polling. Caller drives tick()
@@ -150,6 +163,7 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
     isIdle,
     isKilled,
     removeOneShot,
+    onAdvanceCursor,
     pollIntervalMs,
   } = opts;
 
@@ -158,14 +172,22 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
   const parsedCache = new Map<string, ParsedCronExpression>();
 
   // Per-task wall-clock baseline for "where did we last look from".
-  // NOT persisted — after `kimi resume` this map is empty, so the
-  // baseline falls back to `task.createdAt` and `countCoalesced`
-  // collapses any fires that landed during downtime into a single
-  // delivery. Persisting a `lastFiredAt` would risk skipping a
-  // legitimately-due fire because the stored value said "fired
-  // recently"; coalesce semantics make missing one fire across a
-  // restart acceptable, missed fires from bad bookkeeping are not.
+  // Now persisted across `kimi resume` via `task.lastFiredAt`: when
+  // the scheduler first sees a task whose `lastFiredAt` is set and
+  // not in the future, that timestamp seeds this map so resume does
+  // not coalesce-replay already-delivered recurring fires. A bogus
+  // `lastFiredAt > now` (clock skew / corrupt store) is ignored and
+  // the scheduler falls back to `createdAt`, matching pre-persistence
+  // behaviour for that task.
   const lastSeenAt = new Map<string, number>();
+
+  // Tracks which task ids have already had `lastFiredAt` consulted
+  // during this scheduler's lifetime, so the seeding above happens
+  // exactly once per task per scheduler instance. Without this, a
+  // task whose cursor was advanced *during* the session would have
+  // its in-memory map entry silently overwritten back to the
+  // persisted (older) value on the next tick.
+  const seededFromDisk = new Set<string>();
 
   // Defensive re-entry guard for the duration of a single tick.
   const inFlight = new Set<string>();
@@ -271,6 +293,27 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
 
           const parsed = getParsed(task.cron);
 
+          // First time we see this task in this scheduler instance,
+          // seed `lastSeenAt` from the persisted `task.lastFiredAt`
+          // (when present and sane). This is the one-line fix for
+          // "resume replays yesterday's already-fired 09:00 cron":
+          // without seeding, the baseline below would fall back to
+          // `task.createdAt` and `countCoalesced` would treat every
+          // ideal fire since creation as still due. A `lastFiredAt`
+          // strictly greater than `now` is treated as corrupt (clock
+          // skew, mis-set bench env) and ignored — never trust a
+          // stored cursor enough to *skip* a legitimately-due fire.
+          if (
+            !seededFromDisk.has(task.id) &&
+            task.lastFiredAt !== undefined &&
+            Number.isFinite(task.lastFiredAt) &&
+            task.lastFiredAt <= now &&
+            !lastSeenAt.has(task.id)
+          ) {
+            lastSeenAt.set(task.id, task.lastFiredAt);
+          }
+          seededFromDisk.add(task.id);
+
           // Base from which to compute the next ideal fire. For a
           // freshly-added task this is its createdAt; once we've fired
           // (or seen it pass), bump to the wall clock at that moment
@@ -334,6 +377,7 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
               );
             }
             lastSeenAt.delete(task.id);
+            seededFromDisk.delete(task.id);
           } else {
             // Recurring: advance the baseline to the last ideal fire
             // whose jittered delivery has actually completed (or to
@@ -343,7 +387,23 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
             // `now` reachable on the next tick. If `lastDueMs` is
             // null (degenerate cron / no enumerated ideal) we fall
             // back to `now`, matching the original behaviour.
-            lastSeenAt.set(task.id, lastDueMs ?? now);
+            const advancedTo = lastDueMs ?? now;
+            lastSeenAt.set(task.id, advancedTo);
+            // Mirror the cursor to the manager so it can persist
+            // through to disk. Fire-and-forget — the callback is
+            // expected to schedule the write asynchronously; throws
+            // are swallowed here so a flaky writer never poisons the
+            // tick loop. The persistence path is the manager's
+            // responsibility (consistent with addTask / removeTasks).
+            try {
+              onAdvanceCursor?.(task.id, advancedTo);
+            } catch (error) {
+              debugLog(
+                `onAdvanceCursor threw for task ${task.id}: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              );
+            }
           }
         } catch (error) {
           // A single bad task must not stop the rest of the loop.
@@ -386,6 +446,7 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
     }
     inFlight.clear();
     lastSeenAt.clear();
+    seededFromDisk.clear();
     parsedCache.clear();
     // Async signature for forward compatibility with Phase 2 (file
     // I/O cleanup, lock release). Session-only resolves immediately.
@@ -395,8 +456,25 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
     try {
       const parsed = getParsed(task.cron);
       const seen = lastSeenAt.get(task.id);
+      // Mirror tick()'s seeding: when the scheduler has not yet ticked
+      // this session, consult `task.lastFiredAt` so CronList renders
+      // the resume-corrected nextFireAt instead of a value re-derived
+      // from `createdAt`. Bogus values (future timestamp) are ignored,
+      // identical to tick()'s sanity gate.
+      const persistedCursor =
+        task.lastFiredAt !== undefined &&
+        Number.isFinite(task.lastFiredAt) &&
+        task.lastFiredAt <= clocks.wallNow()
+          ? task.lastFiredAt
+          : undefined;
+      const cursor =
+        seen !== undefined
+          ? seen
+          : persistedCursor !== undefined
+            ? persistedCursor
+            : undefined;
       const baseFromMs =
-        seen !== undefined && seen > task.createdAt ? seen : task.createdAt;
+        cursor !== undefined && cursor > task.createdAt ? cursor : task.createdAt;
       return computeJitteredNext(task, parsed, baseFromMs);
     } catch (error) {
       debugLog(

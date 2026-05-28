@@ -97,6 +97,12 @@ const INTERNAL_ORIGINS = new Set<PromptOrigin['kind']>([
   'system_trigger',
   'compaction_summary',
   'hook_result',
+  // Cron fires are stored as user-role records carrying a `<cron-fire ...>`
+  // XML envelope meant only for the model. Replay and the TUI projector
+  // already hide them; the markdown exporter must do the same or the raw
+  // protocol XML leaks into the user-facing export.
+  'cron_job',
+  'cron_missed',
 ]);
 
 export function isInternalMessage(msg: ContextMessage): boolean {

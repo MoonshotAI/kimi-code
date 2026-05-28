@@ -232,6 +232,112 @@ describe('CronManager — persistence and resume', () => {
     await managerB.stop();
   });
 
+  it('recurring task fired before shutdown does NOT replay on resume', async () => {
+    // Session A: schedule a `*/5 * * * *` task, advance past the first
+    // ideal fire, tick once. The scheduler's onAdvanceCursor callback
+    // must stamp `lastFiredAt` on the persisted record so session B
+    // doesn't re-coalesce that already-delivered occurrence.
+    const stubA = createAgentStub();
+    const clockA = createClocks(WALL_ANCHOR);
+    const managerA = new CronManager(stubA.agent, {
+      clocks: clockA.clocks,
+      pollIntervalMs: null,
+      sessionDir,
+    });
+    const task = managerA.addTask({ cron: '*/5 * * * *', prompt: 'check' });
+    await managerA.flushPersist();
+
+    // Advance ~6 minutes — the first */5 ideal (anchor + 100s) is now
+    // due. Tick once to deliver and stamp lastFiredAt.
+    clockA.advance(6 * 60_000);
+    managerA.tick();
+    expect(stubA.steerCalls.length).toBe(1);
+
+    // Drain the cursor persistence write before shutdown so session B
+    // observes the stamped lastFiredAt.
+    await managerA.flushPersist();
+    await managerA.stop();
+
+    // Sanity: the persisted JSON now carries a non-undefined lastFiredAt.
+    const onDisk = await createCronPersistStore(sessionDir).read(task.id);
+    expect(typeof onDisk?.lastFiredAt).toBe('number');
+    // It must be at or before session A's last wall clock (not in the future).
+    expect(onDisk!.lastFiredAt!).toBeLessThanOrEqual(clockA.now());
+
+    // Session B: resume 23 minutes after the anchor (matching the
+    // existing "missed during downtime" test). Without persisted
+    // lastFiredAt, session B would coalesce-replay the already-fired
+    // first ideal occurrence (count = 5: 5/10/15/20 minute marks plus
+    // the one that was already delivered in session A). With the
+    // persistence, session A's fire is skipped on resume so the
+    // count is strictly lower.
+    const stubB = createAgentStub();
+    const clockB = createClocks(WALL_ANCHOR + 23 * 60_000);
+    const managerB = new CronManager(stubB.agent, {
+      clocks: clockB.clocks,
+      pollIntervalMs: null,
+      sessionDir,
+    });
+    await managerB.loadFromDisk();
+    managerB.tick();
+
+    expect(stubB.steerCalls.length).toBe(1);
+    const resumeOrigin = stubB.steerCalls[0]!.origin;
+    if (resumeOrigin.kind !== 'cron_job') throw new Error('unreachable');
+    // 23 min window contains 5 ideal */5 fires. Session A consumed 1.
+    // Session B should coalesce at most 4 fires.
+    expect(resumeOrigin.coalescedCount).toBeLessThanOrEqual(4);
+    expect(resumeOrigin.coalescedCount).toBeGreaterThanOrEqual(1);
+
+    await managerB.stop();
+  });
+
+  it('treats a future lastFiredAt as corrupt and falls back to createdAt', async () => {
+    // If the persisted cursor lands ahead of the current wall clock
+    // (clock skew or a bench env mistake) the scheduler must not skip
+    // legitimately-due fires. The sanity gate ignores the bogus value
+    // and falls back to `createdAt`, matching pre-persistence behaviour.
+    const stubA = createAgentStub();
+    const clockA = createClocks();
+    const managerA = new CronManager(stubA.agent, {
+      clocks: clockA.clocks,
+      pollIntervalMs: null,
+      sessionDir,
+    });
+    const task = managerA.addTask({ cron: '*/5 * * * *', prompt: 'check' });
+    await managerA.flushPersist();
+    await managerA.stop();
+
+    // Manually corrupt the on-disk record with a lastFiredAt set far in
+    // the future relative to session B's clock.
+    const store = createCronPersistStore(sessionDir);
+    const original = await store.read(task.id);
+    if (original === undefined) throw new Error('expected persisted task');
+    await store.write(task.id, {
+      ...original,
+      lastFiredAt: clockA.now() + 365 * 24 * 60 * 60 * 1000,
+    });
+
+    // Session B: 23 minutes later. Even though lastFiredAt is in the
+    // future, the scheduler must still fire (sanity gate ignores it).
+    const stubB = createAgentStub();
+    const clockB = createClocks(clockA.now() + 23 * 60_000);
+    const managerB = new CronManager(stubB.agent, {
+      clocks: clockB.clocks,
+      pollIntervalMs: null,
+      sessionDir,
+    });
+    await managerB.loadFromDisk();
+    managerB.tick();
+
+    expect(stubB.steerCalls.length).toBe(1);
+    const origin = stubB.steerCalls[0]!.origin;
+    if (origin.kind !== 'cron_job') throw new Error('unreachable');
+    expect(origin.coalescedCount).toBeGreaterThan(1);
+
+    await managerB.stop();
+  });
+
   it('no sessionDir = pure in-memory: no FS side effects, loadFromDisk is a no-op', async () => {
     const { agent } = createAgentStub();
     const harness = createClocks();

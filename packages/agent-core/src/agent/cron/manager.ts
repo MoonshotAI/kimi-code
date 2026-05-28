@@ -171,6 +171,9 @@ export class CronManager {
       removeOneShot: (id) => {
         this.removeTasks([id]);
       },
+      onAdvanceCursor: (id, lastFiredAt) => {
+        this.advanceCursor(id, lastFiredAt);
+      },
       // P1.8: `KIMI_CRON_MANUAL_TICK=1` forces the scheduler into
       // manual-drive mode (no setInterval), so bench / time-injected
       // tests can step time forward and call `tick()` explicitly without
@@ -224,6 +227,27 @@ export class CronManager {
       this.persistEnqueue(id, () => this.persistStore!.remove(id));
     }
     return removed;
+  }
+
+  /**
+   * Persist the scheduler's `lastFiredAt` cursor for a recurring task
+   * so a `kimi resume` does not coalesce-replay an already-delivered
+   * fire. Called by the scheduler's `onAdvanceCursor` callback after a
+   * successful recurring fire.
+   *
+   * No-op when the task has already been removed between fire and
+   * callback (concurrent CronDelete is the canonical case). When
+   * persistence is detached (subagent / ephemeral session) we still
+   * update the in-memory record — same-session stale checks read off
+   * the in-memory store. The on-disk write is fire-and-forget via
+   * `persistEnqueue`; a flaky disk drops cross-resume durability but
+   * never blocks the scheduler.
+   */
+  private advanceCursor(id: string, lastFiredAt: number): void {
+    const updated = this.store.markFired(id, lastFiredAt);
+    if (updated === undefined) return;
+    if (this.persistStore === undefined) return;
+    this.persistEnqueue(id, () => this.persistStore!.write(id, updated));
   }
 
   /**

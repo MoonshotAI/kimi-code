@@ -181,6 +181,27 @@ describe('isInternalMessage', () => {
     ).toBe(true);
   });
 
+  it('marks cron_job origin as internal', () => {
+    expect(
+      isInternalMessage(
+        userMsg('x', {
+          kind: 'cron_job',
+          jobId: 'a1b2c3d4',
+          cron: '0 9 * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it('marks cron_missed origin as internal', () => {
+    expect(
+      isInternalMessage(userMsg('x', { kind: 'cron_missed', count: 2 })),
+    ).toBe(true);
+  });
+
   it('keeps real user messages', () => {
     expect(isInternalMessage(userMsg('hello', { kind: 'user' }))).toBe(false);
   });

@@ -29,6 +29,7 @@ import type { BuiltinTool } from '../../agent/tool';
 import type { CronManager } from '../../agent/cron';
 import type { ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
+import { literalRulePattern } from '../support/rule-match';
 import {
   computeNextCronRun,
   cronToHuman,
@@ -58,6 +59,22 @@ export const MAX_CRON_JOBS_PER_SESSION = 50;
  * size the model will eventually see.
  */
 const MAX_PROMPT_BYTES = 8 * 1024;
+
+/**
+ * Maximum forward distance allowed for a one-shot (`recurring: false`)
+ * cron's first fire. The canonical footgun is following the tool docs
+ * and pinning today's day/month for a "remind me at X today"
+ * reminder — if submission lands seconds past the target minute,
+ * `computeNextCronRun` rolls the match to next year (~365 days),
+ * which is still inside the 5-year `hasFireWithinYears` window, and
+ * the user gets a year-late notification instead of an error. 350
+ * days is tight enough to catch the rollover (365 ± epsilon) while
+ * still leaving room for legitimate "schedule for late this year"
+ * pinning from early-year submissions. A user who genuinely wants a
+ * one-shot 11+ months out is better served by a natural-language
+ * date in the prompt body than by stretching the cron field semantics.
+ */
+const ONE_SHOT_MAX_FUTURE_MS = 350 * 24 * 60 * 60 * 1000;
 
 // ── Input schema ─────────────────────────────────────────────────────
 
@@ -188,11 +205,50 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
     // everywhere else in the cron stack.
     const recurring = args.recurring !== false;
 
+    // 7. One-shot "rolled to next year" guard. The tool docs recommend
+    //    pinning today's dom/month for "remind me at X today"; if
+    //    submission lands seconds past the target minute,
+    //    `computeNextCronRun` returns next year's match, the 5-year
+    //    window above accepts it, and the user's reminder fires a
+    //    year late. Reject when the first ideal fire is more than
+    //    ~one year out — for a 5-field cron this can only mean the
+    //    pinned date already passed this year. Recurring tasks are
+    //    unaffected; they re-fire as expected.
+    if (!recurring) {
+      const firstFire = computeNextCronRun(parsed, nowAtPrepare);
+      if (
+        firstFire !== null &&
+        firstFire - nowAtPrepare > ONE_SHOT_MAX_FUTURE_MS
+      ) {
+        return {
+          isError: true,
+          output: `One-shot cron ${JSON.stringify(
+            normalizedCron,
+          )} would not fire until ${new Date(
+            firstFire,
+          ).toISOString()} (more than a year out). If you meant "today" or a near date, the pinned day/month has already passed this year — pick a future date or use wildcards.`,
+        };
+      }
+    }
+
     return {
       description: recurring
         ? `Scheduling cron ${normalizedCron}`
         : `Scheduling one-shot ${normalizedCron}`,
-      approvalRule: this.name,
+      // Scope `session` approval to this exact payload. Without the
+      // payload in the rule, a single approved CronCreate would
+      // authorize any future scheduled prompt for the rest of the
+      // session — including ones the user never saw before approving.
+      // Matches the Bash / Write / Edit convention of including the
+      // command / path in the literal rule pattern.
+      approvalRule: literalRulePattern(
+        this.name,
+        JSON.stringify({
+          cron: normalizedCron,
+          prompt: args.prompt,
+          recurring,
+        }),
+      ),
       execute: async () => {
         // Anchor the schedule to the moment of execution, not the
         // moment of preparation. Manual-approval mode can leave

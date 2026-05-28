@@ -83,6 +83,23 @@ export class SessionCronStore {
     this.tasks.set(task.id, task);
   }
 
+  /**
+   * Stamp `lastFiredAt` on the in-memory task. Used by the scheduler
+   * cursor-advance callback so the value flows back to disk via the
+   * manager's persistence path. Returns the updated record (so the
+   * manager can hand it straight to the per-id JSON writer), or
+   * `undefined` when no task with that id is present — the latter
+   * happens harmlessly if a task was concurrently removed between the
+   * scheduler's fire and the cursor callback.
+   */
+  markFired(id: string, lastFiredAt: number): CronTask | undefined {
+    const existing = this.tasks.get(id);
+    if (existing === undefined) return undefined;
+    const updated: CronTask = { ...existing, lastFiredAt };
+    this.tasks.set(id, updated);
+    return updated;
+  }
+
   /** Returns the task or `undefined`. */
   get(id: string): CronTask | undefined {
     return this.tasks.get(id);
