@@ -11,6 +11,25 @@ function context(args: EditInput) {
 }
 
 describe('EditTool', () => {
+  it('exposes before/after on the file_io display so the approval panel can render a diff', () => {
+    const tool = new EditTool(createFakeKaos(), PERMISSIVE_WORKSPACE);
+    const execution = tool.resolveExecution({
+      path: '/tmp/foo.ts',
+      old_string: 'a\nb\nc',
+      new_string: 'a\nB\nc',
+    });
+    if (execution.isError === true) {
+      throw new TypeError('expected runnable execution');
+    }
+    expect(execution.display).toEqual({
+      kind: 'file_io',
+      operation: 'edit',
+      path: '/tmp/foo.ts',
+      before: 'a\nb\nc',
+      after: 'a\nB\nc',
+    });
+  });
+
   it('exposes current metadata and schema', () => {
     const tool = new EditTool(createFakeKaos(), PERMISSIVE_WORKSPACE);
 
