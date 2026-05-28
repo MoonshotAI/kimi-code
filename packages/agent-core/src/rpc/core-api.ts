@@ -4,6 +4,7 @@ import type { PermissionData, PermissionMode } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
 import type { ToolInfo } from '#/agent/tool';
 import type { KimiConfig, KimiConfigPatch } from '#/config';
+import type { MemoryScope, MemoryType } from '#/memory';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
 import type { BackgroundTaskInfo } from '#/tools/builtin';
@@ -194,6 +195,31 @@ export interface SkillSummary {
   readonly disableModelInvocation?: boolean | undefined;
 }
 
+export interface MemoryFactSummary {
+  readonly scope: MemoryScope;
+  readonly slug: string;
+  readonly type: MemoryType;
+  readonly description: string;
+  readonly body: string;
+  readonly path: string;
+  /**
+   * True for a `user`-scope fact whose slug is also defined by a
+   * `project`-scope fact in the active workspace. The project copy
+   * takes precedence in the prompt index; this flag lets curation
+   * surfaces annotate the user copy.
+   */
+  readonly shadowed: boolean;
+}
+
+export interface DeleteMemoryPayload {
+  readonly scope: MemoryScope;
+  readonly slug: string;
+}
+
+export interface RememberPayload {
+  readonly text: string;
+}
+
 export interface ActivateSkillPayload {
   readonly name: string;
   readonly args?: string | undefined;
@@ -296,6 +322,9 @@ export interface SessionAPI extends AgentAPIWithId {
   getMcpStartupMetrics: (payload: EmptyPayload) => McpStartupMetrics;
   reconnectMcpServer: (payload: ReconnectMcpServerPayload) => void;
   generateAgentsMd: (payload: EmptyPayload) => void;
+  listMemory: (payload: EmptyPayload) => readonly MemoryFactSummary[];
+  deleteMemory: (payload: DeleteMemoryPayload) => boolean;
+  remember: (payload: RememberPayload) => void;
 }
 
 type SessionAPIWithId = WithSessionId<SessionAPI>;

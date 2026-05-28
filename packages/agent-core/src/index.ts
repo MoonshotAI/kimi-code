@@ -6,6 +6,12 @@ export * from './session/export';
 export * from './telemetry';
 export * from './errors';
 export * from './plugin';
+export type {
+  MemoryEntry,
+  MemoryRecord,
+  MemoryScope,
+  MemoryType,
+} from './memory';
 export {
   flushDiagnosticLogs,
   getRootLogger,

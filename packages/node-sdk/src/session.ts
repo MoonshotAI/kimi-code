@@ -6,6 +6,8 @@ import type {
   CompactOptions,
   McpServerInfo,
   McpStartupMetrics,
+  MemoryFactSummary,
+  MemoryScope,
   PermissionMode,
   PluginInfo,
   PluginSummary,
@@ -93,6 +95,31 @@ export class Session {
   async init(): Promise<void> {
     this.ensureOpen();
     await this.rpc.generateAgentsMd({ sessionId: this.id });
+  }
+
+  async listMemory(): Promise<readonly MemoryFactSummary[]> {
+    this.ensureOpen();
+    return this.rpc.listMemory({ sessionId: this.id });
+  }
+
+  async deleteMemory(scope: MemoryScope, slug: string): Promise<boolean> {
+    this.ensureOpen();
+    const trimmedSlug = normalizeRequiredString(
+      slug,
+      'Memory slug cannot be empty',
+      ErrorCodes.REQUEST_PROMPT_INPUT_EMPTY,
+    );
+    return this.rpc.deleteMemory({ sessionId: this.id, scope, slug: trimmedSlug });
+  }
+
+  async remember(text: string): Promise<void> {
+    this.ensureOpen();
+    const normalized = normalizeRequiredString(
+      text,
+      'Remember text cannot be empty',
+      ErrorCodes.REQUEST_PROMPT_INPUT_EMPTY,
+    );
+    await this.rpc.remember({ sessionId: this.id, text: normalized });
   }
 
   async cancel(): Promise<void> {

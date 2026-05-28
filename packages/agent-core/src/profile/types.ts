@@ -39,6 +39,7 @@ export interface SystemPromptContext {
   readonly now?: string | Date;
   readonly cwdListing?: string;
   readonly agentsMd?: string;
+  readonly memoryIndex?: string;
   readonly skills?: SkillRegistry | string;
   readonly additionalDirsInfo?: string;
   readonly roleAdditional?: string;

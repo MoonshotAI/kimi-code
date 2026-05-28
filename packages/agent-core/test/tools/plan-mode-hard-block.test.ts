@@ -237,6 +237,38 @@ describe('Plan mode permission policy', () => {
     },
   );
 
+  it.each(['write', 'update', 'delete'] as const)(
+    'blocks Memory %s operations while plan mode is active',
+    async (operation) => {
+      const { agent } = await activePlanAgent();
+
+      const result = evaluatePlanPolicy(agent, 'memory', {
+        operation,
+        scope: 'project',
+        name: 'irrelevant',
+      });
+
+      const deny = expectDeny(result);
+      expect(deny.message ?? '').toContain('Plan mode is active');
+      expect(deny.message ?? '').toContain('ExitPlanMode');
+    },
+  );
+
+  it.each(['view', 'list', 'read'] as const)(
+    'allows Memory %s operations while plan mode is active',
+    async (operation) => {
+      const { agent } = await activePlanAgent();
+
+      const result = evaluatePlanPolicy(agent, 'memory', {
+        operation,
+        scope: 'project',
+        name: 'irrelevant',
+      });
+
+      expect(result).toBeUndefined();
+    },
+  );
+
   it('does not block anything once plan mode has exited', async () => {
     const { agent, planMode } = await activePlanAgent();
     planMode.exit();

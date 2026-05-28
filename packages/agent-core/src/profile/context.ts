@@ -2,6 +2,9 @@ import { dirname, join } from 'pathe';
 
 import type { Kaos } from '@moonshot-ai/kaos';
 
+import { findProjectRoot } from '../memory/find-project-root';
+import { loadMemory } from '../memory/loader';
+import type { TelemetryClient } from '../telemetry';
 import { listDirectory } from '../tools/support/list-directory';
 import type { SystemPromptContext } from './types';
 
@@ -11,7 +14,7 @@ const S_IFREG = 0o100000;
 
 export type PreparedSystemPromptContext = Pick<
   SystemPromptContext,
-  'cwd' | 'cwdListing' | 'agentsMd'
+  'cwd' | 'cwdListing' | 'agentsMd' | 'memoryIndex'
 >;
 
 export function resolveSystemPromptCwd(kaos: Kaos, cwd: string): string {
@@ -21,17 +24,20 @@ export function resolveSystemPromptCwd(kaos: Kaos, cwd: string): string {
 export async function prepareSystemPromptContext(
   kaos: Kaos,
   cwd: string,
+  telemetry?: TelemetryClient,
 ): Promise<PreparedSystemPromptContext> {
   const resolvedCwd = resolveSystemPromptCwd(kaos, cwd);
-  const [cwdListing, agentsMd] = await Promise.all([
+  const [cwdListing, agentsMd, memoryIndex] = await Promise.all([
     listDirectory(kaos, resolvedCwd),
     loadAgentsMd(kaos, resolvedCwd),
+    loadMemory(kaos, resolvedCwd, telemetry),
   ]);
 
   return {
     cwd: resolvedCwd,
     cwdListing,
     agentsMd,
+    memoryIndex,
   };
 }
 
@@ -74,18 +80,6 @@ export async function loadAgentsMd(kaos: Kaos, workDir: string): Promise<string>
   return renderAgentFiles(discovered);
 }
 
-async function findProjectRoot(kaos: Kaos, workDir: string): Promise<string> {
-  const initial = kaos.normpath(workDir);
-  let current = initial;
-
-  while (true) {
-    if (await pathExists(kaos, join(current, '.git'))) return current;
-    const parent = dirname(current);
-    if (parent === current) return initial;
-    current = parent;
-  }
-}
-
 function dirsRootToLeaf(kaos: Kaos, workDir: string, projectRoot: string): string[] {
   const dirs: string[] = [];
   let current = kaos.normpath(workDir);
@@ -111,15 +105,6 @@ async function readAgentFile(kaos: Kaos, path: string): Promise<AgentFile | unde
   const content = (await kaos.readText(path, { errors: 'ignore' })).trim();
   if (content.length === 0) return undefined;
   return { path, content };
-}
-
-async function pathExists(kaos: Kaos, path: string): Promise<boolean> {
-  try {
-    await kaos.stat(path);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function isFile(kaos: Kaos, path: string): Promise<boolean> {

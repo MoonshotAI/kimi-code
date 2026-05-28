@@ -28,6 +28,18 @@ export class PlanModeGuardDenyPermissionPolicy implements PermissionPolicy {
       };
     }
 
+    if (toolName === 'memory') {
+      const operation = readOperationField(context.args);
+      if (operation === 'write' || operation === 'update' || operation === 'delete') {
+        return {
+          kind: 'deny',
+          message:
+            'Plan mode is active. Call ExitPlanMode to exit plan mode before modifying memory.',
+        };
+      }
+      return;
+    }
+
     if (toolName !== 'TaskStop') return;
     return {
       kind: 'deny',
@@ -35,6 +47,12 @@ export class PlanModeGuardDenyPermissionPolicy implements PermissionPolicy {
         'TaskStop is not available in plan mode. Call ExitPlanMode to exit plan mode before stopping a background task.',
     };
   }
+}
+
+function readOperationField(args: unknown): string | undefined {
+  if (args === null || typeof args !== 'object') return undefined;
+  const value = (args as Record<string, unknown>).operation;
+  return typeof value === 'string' ? value : undefined;
 }
 
 function writesOnlyPlanFile(

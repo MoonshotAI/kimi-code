@@ -283,7 +283,11 @@ export class SessionSubagentHost {
       thinkingLevel: parent.config.thinkingLevel,
     });
 
-    const context = await prepareSystemPromptContext(child.runtime.kaos, child.config.cwd);
+    const context = await prepareSystemPromptContext(
+      child.runtime.kaos,
+      child.config.cwd,
+      child.telemetry,
+    );
     child.useProfile(profile, context);
   }
 

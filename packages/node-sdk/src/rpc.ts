@@ -42,6 +42,8 @@ import type {
   SessionStatus,
   SessionUsage,
   PromptInput,
+  MemoryFactSummary,
+  MemoryScope,
   RenameSessionInput,
   ResumeSessionInput,
   ResumedSessionSummary,
@@ -228,6 +230,27 @@ export class SDKRpcClient {
   async generateAgentsMd(input: SessionIdRpcInput): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.generateAgentsMd({ sessionId: input.sessionId });
+  }
+
+  async listMemory(input: SessionIdRpcInput): Promise<readonly MemoryFactSummary[]> {
+    const rpc = await this.getRpc();
+    return rpc.listMemory({ sessionId: input.sessionId });
+  }
+
+  async deleteMemory(
+    input: SessionIdRpcInput & { scope: MemoryScope; slug: string },
+  ): Promise<boolean> {
+    const rpc = await this.getRpc();
+    return rpc.deleteMemory({
+      sessionId: input.sessionId,
+      scope: input.scope,
+      slug: input.slug,
+    });
+  }
+
+  async remember(input: SessionIdRpcInput & { text: string }): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.remember({ sessionId: input.sessionId, text: input.text });
   }
 
   async cancel(input: SessionIdRpcInput): Promise<void> {

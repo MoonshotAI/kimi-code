@@ -70,6 +70,8 @@ import type {
   Event,
   HookResultEvent,
   KimiHarness,
+  MemoryFactSummary,
+  MemoryScope,
   ModelAlias,
   McpServerInfo,
   PermissionMode,
@@ -168,6 +170,14 @@ import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
 import { TaskOutputViewer } from './components/dialogs/task-output-viewer';
 import { TasksBrowserApp, type TasksFilter } from './components/dialogs/tasks-browser';
+import { MemoryBrowserApp, type MemoryBrowserProps } from './memory/browser';
+import {
+  factsFromSummaries,
+  type MemoryFactView,
+  type MemoryScopeFilter,
+  nextScopeFilter,
+  pickInitialSelection,
+} from './memory/state';
 import {
   SettingsSelectorComponent,
   type SettingsSelection,
@@ -442,6 +452,25 @@ export interface TUIState {
           | undefined;
       }
     | undefined;
+  /**
+   * Active `/memory` full-screen takeover. When non-undefined, the main
+   * TUI's children have been replaced by `component`. `savedChildren`
+   * holds the original list so `closeMemoryBrowser` can restore them.
+   */
+  memoryBrowser:
+    | {
+        component: MemoryBrowserApp;
+        savedChildren: readonly Component[];
+        facts: readonly MemoryFactView[];
+        selectedScope: MemoryScope | undefined;
+        selectedSlug: string | undefined;
+        detailOpen: boolean;
+        confirmingDelete: boolean;
+        scopeFilter: MemoryScopeFilter;
+        flashMessage: string | undefined;
+        flashTimer: NodeJS.Timeout | undefined;
+      }
+    | undefined;
   externalEditorRunning: boolean;
   currentTurnId: string | undefined;
   currentStep: number;
@@ -553,6 +582,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     showingSessionPicker: false,
     showingHelpPanel: false,
     tasksBrowser: undefined,
+    memoryBrowser: undefined,
     externalEditorRunning: false,
     currentTurnId: undefined,
     currentStep: 0,
@@ -1609,6 +1639,12 @@ export class KimiTUI {
       case 'init':
         await this.handleInitCommand();
         return;
+      case 'memory':
+        await this.handleMemoryCommand();
+        return;
+      case 'remember':
+        await this.handleRememberCommand(args);
+        return;
       case 'fork':
         await this.handleForkCommand(args);
         return;
@@ -2209,6 +2245,7 @@ export class KimiTUI {
     this.state.backgroundTasks.clear();
     this.state.backgroundTaskTranscriptedTerminal.clear();
     this.closeTasksBrowser();
+    this.closeMemoryBrowser();
     this.state.subagentParentToolCallIds.clear();
     this.state.subagentNames.clear();
     this.state.renderedSkillActivationIds.clear();
@@ -6046,6 +6083,258 @@ export class KimiTUI {
 
     const customInstruction = args.trim() || undefined;
     await session.compact({ instruction: customInstruction });
+  }
+
+  // Handles the /memory command — mounts the read-only browser.
+  private async handleMemoryCommand(): Promise<void> {
+    if (this.state.memoryBrowser !== undefined) return;
+    const session = this.session;
+    if (session === undefined) {
+      this.showError('No active session.');
+      return;
+    }
+
+    let summaries: readonly MemoryFactSummary[] = [];
+    try {
+      summaries = await session.listMemory();
+    } catch (error) {
+      this.showError(
+        `Failed to load memory: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
+    if (this.state.memoryBrowser !== undefined) return;
+
+    const facts = factsFromSummaries(summaries);
+    const initial = pickInitialSelection(facts);
+    const scopeFilter: MemoryScopeFilter = 'all';
+
+    const component = new MemoryBrowserApp(
+      this.buildMemoryBrowserProps({
+        facts,
+        scopeFilter,
+        selectedScope: initial?.scope,
+        selectedSlug: initial?.slug,
+        detailOpen: false,
+        confirmingDelete: false,
+        flashMessage: undefined,
+      }),
+      this.state.terminal,
+    );
+
+    const savedChildren = [...this.state.ui.children];
+    this.state.ui.clear();
+    this.state.ui.addChild(component);
+    this.state.ui.setFocus(component);
+    this.state.ui.requestRender(true);
+
+    this.state.memoryBrowser = {
+      component,
+      savedChildren,
+      facts,
+      selectedScope: initial?.scope,
+      selectedSlug: initial?.slug,
+      detailOpen: false,
+      confirmingDelete: false,
+      scopeFilter,
+      flashMessage: undefined,
+      flashTimer: undefined,
+    };
+  }
+
+  // Handles the /remember command — agent-routed memory write.
+  private async handleRememberCommand(args: string): Promise<void> {
+    const session = this.session;
+    if (this.state.appState.model.trim().length === 0 || session === undefined) {
+      this.showError(LLM_NOT_SET_MESSAGE);
+      return;
+    }
+    const text = args.trim();
+    if (text.length === 0) {
+      this.showError('Usage: /remember <text to remember>');
+      return;
+    }
+
+    this.deferUserMessages = true;
+    this.beginSessionRequest();
+    try {
+      await session.remember(text);
+      this.track('remember_complete');
+      this.finalizeTurn((item) => {
+        this.sendQueuedMessage(session, item);
+      });
+    } catch (error) {
+      if (isAbortError(error)) {
+        this.setAppState({ isStreaming: false, streamingPhase: 'idle' });
+        this.resetLivePane();
+        return;
+      }
+      const msg = error instanceof Error ? error.message : String(error);
+      this.failSessionRequest(`Remember failed: ${msg}`);
+    } finally {
+      this.deferUserMessages = false;
+    }
+  }
+
+  private buildMemoryBrowserProps(state: {
+    facts: readonly MemoryFactView[];
+    scopeFilter: MemoryScopeFilter;
+    selectedScope: MemoryScope | undefined;
+    selectedSlug: string | undefined;
+    detailOpen: boolean;
+    confirmingDelete: boolean;
+    flashMessage: string | undefined;
+  }): MemoryBrowserProps {
+    return {
+      facts: state.facts,
+      scopeFilter: state.scopeFilter,
+      selectedScope: state.selectedScope,
+      selectedSlug: state.selectedSlug,
+      detailOpen: state.detailOpen,
+      confirmingDelete: state.confirmingDelete,
+      flashMessage: state.flashMessage,
+      colors: this.state.theme.colors,
+      onSelect: (scope, slug) => {
+        this.handleMemoryBrowserSelect(scope, slug);
+      },
+      onToggleDetail: () => {
+        this.handleMemoryBrowserToggleDetail();
+      },
+      onCycleFilter: () => {
+        this.handleMemoryBrowserCycleFilter();
+      },
+      onRequestDelete: (scope, slug) => {
+        this.handleMemoryBrowserRequestDelete(scope, slug);
+      },
+      onConfirmDelete: (scope, slug) => {
+        void this.handleMemoryBrowserConfirmDelete(scope, slug);
+      },
+      onCancelDelete: () => {
+        this.handleMemoryBrowserCancelDelete();
+      },
+      onCancel: () => {
+        this.closeMemoryBrowser();
+      },
+    };
+  }
+
+  private pushMemoryBrowserProps(): void {
+    const browser = this.state.memoryBrowser;
+    if (browser === undefined) return;
+    browser.component.setProps(
+      this.buildMemoryBrowserProps({
+        facts: browser.facts,
+        scopeFilter: browser.scopeFilter,
+        selectedScope: browser.selectedScope,
+        selectedSlug: browser.selectedSlug,
+        detailOpen: browser.detailOpen,
+        confirmingDelete: browser.confirmingDelete,
+        flashMessage: browser.flashMessage,
+      }),
+    );
+    this.state.ui.requestRender();
+  }
+
+  private handleMemoryBrowserSelect(scope: MemoryScope, slug: string): void {
+    const browser = this.state.memoryBrowser;
+    if (browser === undefined) return;
+    browser.selectedScope = scope;
+    browser.selectedSlug = slug;
+    this.pushMemoryBrowserProps();
+  }
+
+  private handleMemoryBrowserToggleDetail(): void {
+    const browser = this.state.memoryBrowser;
+    if (browser === undefined) return;
+    browser.detailOpen = !browser.detailOpen;
+    this.pushMemoryBrowserProps();
+  }
+
+  private handleMemoryBrowserCycleFilter(): void {
+    const browser = this.state.memoryBrowser;
+    if (browser === undefined) return;
+    browser.scopeFilter = nextScopeFilter(browser.scopeFilter);
+    this.pushMemoryBrowserProps();
+  }
+
+  private handleMemoryBrowserRequestDelete(scope: MemoryScope, slug: string): void {
+    const browser = this.state.memoryBrowser;
+    if (browser === undefined) return;
+    browser.selectedScope = scope;
+    browser.selectedSlug = slug;
+    browser.confirmingDelete = true;
+    this.pushMemoryBrowserProps();
+  }
+
+  private handleMemoryBrowserCancelDelete(): void {
+    const browser = this.state.memoryBrowser;
+    if (browser === undefined) return;
+    browser.confirmingDelete = false;
+    this.pushMemoryBrowserProps();
+  }
+
+  private async handleMemoryBrowserConfirmDelete(
+    scope: MemoryScope,
+    slug: string,
+  ): Promise<void> {
+    const browser = this.state.memoryBrowser;
+    if (browser === undefined) return;
+    const session = this.session;
+    if (session === undefined) {
+      this.flashMemoryBrowser('No active session.');
+      return;
+    }
+
+    browser.confirmingDelete = false;
+    try {
+      const removed = await session.deleteMemory(scope, slug);
+      const current = this.state.memoryBrowser;
+      if (current === undefined || current !== browser) return;
+      if (removed) {
+        const facts = current.facts.filter((f) => !(f.scope === scope && f.slug === slug));
+        current.facts = facts;
+        const initial = pickInitialSelection(facts);
+        current.selectedScope = initial?.scope;
+        current.selectedSlug = initial?.slug;
+        this.flashMemoryBrowser(`Deleted ${scope}/${slug}.`);
+      } else {
+        this.flashMemoryBrowser(`No fact to delete: ${scope}/${slug}.`);
+      }
+      this.pushMemoryBrowserProps();
+    } catch (error) {
+      this.flashMemoryBrowser(
+        `Delete failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      this.pushMemoryBrowserProps();
+    }
+  }
+
+  private flashMemoryBrowser(message: string): void {
+    const browser = this.state.memoryBrowser;
+    if (browser === undefined) return;
+    browser.flashMessage = message;
+    if (browser.flashTimer !== undefined) clearTimeout(browser.flashTimer);
+    browser.flashTimer = setTimeout(() => {
+      const current = this.state.memoryBrowser;
+      if (current === undefined || current !== browser) return;
+      current.flashMessage = undefined;
+      current.flashTimer = undefined;
+      this.pushMemoryBrowserProps();
+    }, 3_000);
+  }
+
+  private closeMemoryBrowser(): void {
+    const browser = this.state.memoryBrowser;
+    if (browser === undefined) return;
+    if (browser.flashTimer !== undefined) clearTimeout(browser.flashTimer);
+
+    this.state.ui.clear();
+    for (const child of browser.savedChildren) {
+      this.state.ui.addChild(child);
+    }
+    this.state.memoryBrowser = undefined;
+    this.state.ui.setFocus(this.state.editor);
+    this.state.ui.requestRender(true);
   }
 
   // Handles the /init command.

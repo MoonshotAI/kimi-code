@@ -88,10 +88,12 @@ describe('built-in slash command registry', () => {
         'login',
         'logout',
         'mcp',
+        'memory',
         'model',
         'new',
         'permission',
         'plan',
+        'remember',
         'sessions',
         'settings',
         'status',
@@ -102,5 +104,15 @@ describe('built-in slash command registry', () => {
         'yolo',
       ]),
     );
+  });
+
+  it('registers /memory and /remember', () => {
+    const memory = findBuiltInSlashCommand('memory');
+    expect(memory).toBeDefined();
+    expect(memory?.description).toMatch(/memory/i);
+
+    const remember = findBuiltInSlashCommand('remember');
+    expect(remember).toBeDefined();
+    expect(remember?.description).toMatch(/remember/i);
   });
 });

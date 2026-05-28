@@ -5,14 +5,17 @@ import type {
   BeginCompactionPayload,
   CancelPayload,
   CancelPlanPayload,
+  DeleteMemoryPayload,
   EmptyPayload,
   GetBackgroundOutputPathPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
   McpServerInfo,
   McpStartupMetrics,
+  MemoryFactSummary,
   PromptPayload,
   ReconnectMcpServerPayload,
+  RememberPayload,
   RenameSessionPayload,
   RegisterToolPayload,
   SessionAPI,
@@ -86,6 +89,30 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   generateAgentsMd(_payload: EmptyPayload): Promise<void> {
     return this.session.generateAgentsMd();
+  }
+
+  async listMemory(_payload: EmptyPayload): Promise<readonly MemoryFactSummary[]> {
+    const entries = await this.session.listMemory();
+    const projectSlugs = new Set(
+      entries.filter((e) => e.scope === 'project').map((e) => e.record.name),
+    );
+    return entries.map((entry) => ({
+      scope: entry.scope,
+      slug: entry.record.name,
+      type: entry.record.type,
+      description: entry.record.description,
+      body: entry.body,
+      path: entry.path,
+      shadowed: entry.scope === 'user' && projectSlugs.has(entry.record.name),
+    }));
+  }
+
+  deleteMemory(payload: DeleteMemoryPayload): Promise<boolean> {
+    return this.session.deleteMemory(payload.scope, payload.slug);
+  }
+
+  remember(payload: RememberPayload): Promise<void> {
+    return this.session.remember(payload.text);
   }
 
   async prompt({ agentId, ...payload }: AgentScopedPayload<PromptPayload>) {

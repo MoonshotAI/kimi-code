@@ -1,6 +1,9 @@
 import { promises as fs } from 'node:fs';
 import path from 'pathe';
 
+import { localKaos } from '@moonshot-ai/kaos';
+
+import { findProjectRoot } from '../memory/find-project-root';
 import { SkillParseError, UnsupportedSkillTypeError, parseSkillFromFile } from './parser';
 import type { SkillDefinition, SkillRoot, SkillSource, SkippedSkill } from './types';
 import { normalizeSkillName } from './types';
@@ -60,7 +63,7 @@ export async function resolveSkillRoots(
   const roots: SkillRoot[] = [];
   const mergeAllAvailableSkills = options.mergeAllAvailableSkills ?? true;
   const { userHomeDir, workDir } = options.paths;
-  const projectRoot = await findProjectRoot(workDir);
+  const projectRoot = await findProjectRoot(localKaos, workDir);
 
   if (options.explicitDirs !== undefined && options.explicitDirs.length > 0) {
     await pushConfiguredDirs(
@@ -387,26 +390,6 @@ async function defaultIsDir(p: string): Promise<boolean> {
 async function defaultIsFile(p: string): Promise<boolean> {
   try {
     return (await fs.stat(p)).isFile();
-  } catch {
-    return false;
-  }
-}
-
-async function findProjectRoot(workDir: string): Promise<string> {
-  const start = path.resolve(workDir);
-  let current = start;
-  while (true) {
-    if (await exists(path.join(current, '.git'))) return current;
-    const parent = path.dirname(current);
-    if (parent === current) return start;
-    current = parent;
-  }
-}
-
-async function exists(p: string): Promise<boolean> {
-  try {
-    await fs.stat(p);
-    return true;
   } catch {
     return false;
   }

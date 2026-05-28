@@ -158,6 +158,7 @@ function buildTemplateVars(
     KIMI_WORK_DIR: context.cwd,
     KIMI_WORK_DIR_LS: context.cwdListing ?? '',
     KIMI_AGENTS_MD: context.agentsMd ?? '',
+    KIMI_MEMORY: context.memoryIndex ?? '',
     KIMI_SKILLS: skills,
     KIMI_ADDITIONAL_DIRS_INFO: context.additionalDirsInfo ?? '',
     ROLE_ADDITIONAL:

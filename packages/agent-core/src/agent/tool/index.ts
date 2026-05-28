@@ -372,6 +372,7 @@ export class ToolManager {
         new b.ExitPlanModeTool(this.agent),
         new b.AskUserQuestionTool(this.agent),
         new b.TodoListTool(this.toolStore),
+        new b.MemoryTool(kaos, workspace, this.agent.telemetry),
         new b.TaskListTool(background),
         new b.TaskOutputTool(background),
         new b.TaskStopTool(background),

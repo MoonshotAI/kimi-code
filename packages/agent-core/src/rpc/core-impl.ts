@@ -32,11 +32,14 @@ import type {
   McpStartupMetrics,
   PluginInfo,
   PluginSummary,
+  MemoryFactSummary,
+  DeleteMemoryPayload,
   PromptPayload,
   ReconnectMcpServerPayload,
   ReloadPluginsResult,
   RemoveKimiProviderPayload,
   RemovePluginPayload,
+  RememberPayload,
   RenameSessionPayload,
   ResumeSessionPayload,
   RegisterToolPayload,
@@ -638,6 +641,24 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
         `Fix the file at ${this.homeDir}/plugins/installed.json and run /plugins reload.`,
       { cause: this.pluginsLoadError, details: { kimiHomeDir: this.homeDir } },
     );
+  }
+
+  listMemory({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<EmptyPayload>): Promise<readonly MemoryFactSummary[]> {
+    return this.sessionApi(sessionId).listMemory(payload);
+  }
+
+  deleteMemory({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<DeleteMemoryPayload>): Promise<boolean> {
+    return this.sessionApi(sessionId).deleteMemory(payload);
+  }
+
+  remember({ sessionId, ...payload }: SessionScopedPayload<RememberPayload>): Promise<void> {
+    return this.sessionApi(sessionId).remember(payload);
   }
 
   private async resolveRuntime(config: KimiConfig): Promise<RuntimeConfig> {

@@ -20,6 +20,12 @@ import {
 } from '../mcp';
 import type { EnabledPluginSessionStart } from '../plugin';
 import {
+  FileMemoryStore,
+  findProjectRoot,
+  type MemoryEntry,
+  type MemoryScope,
+} from '../memory';
+import {
   DEFAULT_AGENT_PROFILES,
   DEFAULT_INIT_PROMPT,
   loadAgentsMd,
@@ -249,7 +255,11 @@ export class Session {
     if (this.config.cwd !== undefined) {
       agent.config.update({ cwd: this.config.cwd });
     }
-    const context = await prepareSystemPromptContext(this.config.runtime.kaos, agent.config.cwd);
+    const context = await prepareSystemPromptContext(
+      this.config.runtime.kaos,
+      agent.config.cwd,
+      this.telemetry,
+    );
     agent.useProfile(profile, context);
   }
 
@@ -281,6 +291,61 @@ export class Session {
         { cause: error },
       );
     }
+  }
+
+  async listMemory(): Promise<readonly MemoryEntry[]> {
+    const store = await this.memoryStore();
+    const [userEntries, projectEntries] = await Promise.all([
+      store.list('user'),
+      store.list('project'),
+    ]);
+    return [...projectEntries, ...userEntries];
+  }
+
+  async deleteMemory(scope: MemoryScope, slug: string): Promise<boolean> {
+    const store = await this.memoryStore();
+    return store.delete(scope, slug);
+  }
+
+  async remember(text: string): Promise<void> {
+    await this.skillsReady;
+    const mainAgent = this.requireMainAgent();
+    const trimmed = text.trim();
+    if (trimmed.length === 0) {
+      throw new KimiError(ErrorCodes.REQUEST_PROMPT_INPUT_EMPTY, 'Remember text cannot be empty');
+    }
+
+    try {
+      const handle = await mainAgent.subagentHost!.spawn('coder', {
+        parentToolCallId: 'remember',
+        prompt: rememberPrompt(trimmed),
+        description: 'Persist memory fact',
+        runInBackground: false,
+        origin: { kind: 'system_trigger', name: 'remember' },
+        signal: new AbortController().signal,
+      });
+      await handle.completion;
+
+      mainAgent.context.appendSystemReminder(rememberCompletionReminder(trimmed), {
+        kind: 'injection',
+        variant: 'memory',
+      });
+      await mainAgent.records.flush();
+    } catch (error) {
+      throw new KimiError(
+        ErrorCodes.SESSION_INIT_FAILED,
+        error instanceof Error ? error.message : 'Remember failed',
+        { cause: error },
+      );
+    }
+  }
+
+  private async memoryStore(): Promise<FileMemoryStore> {
+    const kaos = this.config.runtime.kaos;
+    const cwd = this.config.cwd ?? process.cwd();
+    const userRoot = join(kaos.gethome(), '.kimi-code', 'memory');
+    const projectRoot = join(await findProjectRoot(kaos, cwd), '.kimi-code', 'memory');
+    return new FileMemoryStore(kaos, userRoot, projectRoot);
   }
 
   get hasActiveTurn(): boolean {
@@ -519,5 +584,29 @@ function initCompletionReminder(agentsMd: string): string {
     '',
     'Latest AGENTS.md file content:',
     latest,
+  ].join('\n');
+}
+
+function rememberPrompt(text: string): string {
+  return [
+    'The user asked you to remember the following:',
+    '',
+    text,
+    '',
+    'Pick an appropriate kebab-case `name` (slug), a one-line `description` (≤ 240 chars),',
+    'a `type` from {user, feedback, project, reference}, and a `scope` from {user, project}',
+    '(prefer `project` if the fact is repo-specific, `user` if it follows the user',
+    'across all projects). Call the Memory tool with `operation: "write"` to persist',
+    'the fact. If a similar slug already exists, use `operation: "update"` instead.',
+  ].join('\n');
+}
+
+function rememberCompletionReminder(text: string): string {
+  return [
+    'The user just ran `/remember` slash command.',
+    'A subagent persisted the fact via the Memory tool.',
+    '',
+    'Original request:',
+    text,
   ].join('\n');
 }

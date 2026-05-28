@@ -126,6 +126,27 @@ The `AGENTS.md` instructions (merged from all applicable directories):
 When working on files in subdirectories, always check whether those directories contain their own `AGENTS.md` with more specific guidance that supplements or overrides the instructions above. You may also check `README`/`README.md` files for more information about the project.
 
 If you modified any files/styles/structures/configurations/workflows/... mentioned in `AGENTS.md` files, you MUST update the corresponding `AGENTS.md` files to keep them up-to-date.
+{% if KIMI_MEMORY %}
+
+# Memory
+
+You have persistent, cross-session memory composed of small Markdown facts. Each fact lives in its own file under `<scope>/.kimi-code/memory/` and is summarized in the index below. Two scopes exist:
+
+- **User** (`~/.kimi-code/memory/`) — preferences that follow the user across all projects.
+- **Project** (`<project-root>/.kimi-code/memory/`) — facts specific to this repository. Project entries override User entries on slug collision.
+
+Use the `Memory` tool to:
+- `read` the full body of a fact before relying on it,
+- `write` a new fact when the user asks you to remember something,
+- `update` a fact when refining it (prefer this over creating a near-duplicate),
+- `delete` a fact when it is wrong or no longer relevant.
+
+Do not write transient turn-scoped state into memory. Treat memory as long-lived user/project knowledge, complementary to `AGENTS.md` (project documentation) and Skills (reusable procedures).
+
+`````````
+{{ KIMI_MEMORY }}
+`````````
+{% endif %}
 
 # Skills
 

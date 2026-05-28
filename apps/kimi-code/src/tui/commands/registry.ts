@@ -87,6 +87,18 @@ export const BUILTIN_SLASH_COMMANDS = [
     description: 'Analyze the codebase and generate AGENTS.md',
   },
   {
+    name: 'remember',
+    aliases: [],
+    description: 'Ask the agent to remember something',
+    priority: 80,
+  },
+  {
+    name: 'memory',
+    aliases: [],
+    description: 'Browse and manage stored memory',
+    priority: 70,
+  },
+  {
     name: 'fork',
     aliases: [],
     description: 'Fork the current session',
