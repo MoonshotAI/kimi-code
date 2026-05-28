@@ -29,14 +29,21 @@ export const FAKE_OS_ENV: Environment = {
 };
 
 export function createFakeKaos(overrides?: Partial<Kaos>): Kaos {
+  // Hold cwd in a closure so `chdir` (which `config.update({cwd})` now
+  // routes through) can mutate it and later `getcwd()` calls see the
+  // update — mirroring real-kaos semantics without needing a backing fs.
+  let cwd = overrides?.getcwd?.() ?? '/workspace';
   const base: Kaos = {
     name: 'fake',
     osEnv: FAKE_OS_ENV,
     pathClass: () => 'posix',
     normpath: (p: string) => p,
     gethome: () => '/home/test',
-    getcwd: () => '/workspace',
-    chdir: () => notImplemented('chdir'),
+    getcwd: () => cwd,
+    withCwd: (next: string) => createFakeKaos({ ...overrides, getcwd: () => next }),
+    chdir: async (next: string) => {
+      cwd = next;
+    },
     stat: () => notImplemented('stat'),
     iterdir: () => notImplemented('iterdir'),
     glob: () => notImplemented('glob'),

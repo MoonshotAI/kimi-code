@@ -9,33 +9,20 @@ const AGENTS_MD_MAX_BYTES = 32 * 1024;
 const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
 
-export type PreparedSystemPromptContext = Pick<
-  SystemPromptContext,
-  'cwd' | 'cwdListing' | 'agentsMd'
->;
-
-export function resolveSystemPromptCwd(kaos: Kaos, cwd: string): string {
-  return cwd === '' ? kaos.getcwd() : cwd;
-}
+export type PreparedSystemPromptContext = Pick<SystemPromptContext, 'cwdListing' | 'agentsMd'>;
 
 export async function prepareSystemPromptContext(
   kaos: Kaos,
-  cwd: string,
 ): Promise<PreparedSystemPromptContext> {
-  const resolvedCwd = resolveSystemPromptCwd(kaos, cwd);
   const [cwdListing, agentsMd] = await Promise.all([
-    listDirectory(kaos, resolvedCwd),
-    loadAgentsMd(kaos, resolvedCwd),
+    listDirectory(kaos),
+    loadAgentsMd(kaos),
   ]);
-
-  return {
-    cwd: resolvedCwd,
-    cwdListing,
-    agentsMd,
-  };
+  return { cwdListing, agentsMd };
 }
 
-export async function loadAgentsMd(kaos: Kaos, workDir: string): Promise<string> {
+export async function loadAgentsMd(kaos: Kaos): Promise<string> {
+  const workDir = kaos.getcwd();
   const projectRoot = await findProjectRoot(kaos, workDir);
   const dirs = dirsRootToLeaf(kaos, workDir, projectRoot);
   const discovered: AgentFile[] = [];

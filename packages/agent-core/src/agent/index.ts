@@ -15,11 +15,7 @@ import {
 import type { EnabledPluginSessionStart } from '#/plugin';
 
 import type { McpConnectionManager } from '../mcp';
-import {
-  resolveSystemPromptCwd,
-  type PreparedSystemPromptContext,
-  type ResolvedAgentProfile,
-} from '../profile';
+import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
 import type { ProviderManager } from '../providers/provider-manager';
 import { withProviderRequestAuth } from '../providers/request-auth';
 import type { RuntimeConfig } from '../runtime-types';
@@ -241,10 +237,9 @@ export class Agent {
   }
 
   useProfile(profile: ResolvedAgentProfile, context?: PreparedSystemPromptContext): void {
-    const cwd = context?.cwd ?? resolveSystemPromptCwd(this.runtime.kaos, this.config.cwd);
     const systemPrompt = profile.systemPrompt({
       osEnv: this.runtime.kaos.osEnv,
-      cwd,
+      cwd: this.config.cwd,
       skills: this.skills?.registry,
       cwdListing: context?.cwdListing,
       agentsMd: context?.agentsMd,

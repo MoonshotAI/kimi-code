@@ -736,9 +736,8 @@ describe('Session resume permission parent chain', () => {
     await writeWire(childDir, []);
 
     const session = new Session({
-      runtime: { kaos: testKaos },
+      runtime: { kaos: testKaos.withCwd(workDir) },
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc(),
       initializeMainAgent: false,
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
@@ -855,11 +854,8 @@ describe('Session.createAgent', () => {
     });
     const session = new Session({
       id: 'test-subagent-agents-md',
-      runtime: {
-        kaos,
-      },
+      runtime: { kaos: kaos.withCwd(workDir) },
       homedir: '/tmp/kimi-session',
-      cwd: workDir,
       rpc: createSessionRpc(),
       initializeMainAgent: false,
     });

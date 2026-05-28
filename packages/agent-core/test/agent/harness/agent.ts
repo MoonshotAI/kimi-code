@@ -708,7 +708,7 @@ export class AgentTestContext {
   async expectResumeMatches(): Promise<void> {
     const resumed = testAgent({
       runtime: {
-        kaos: createResumeNoSideEffectKaos(),
+        kaos: createResumeNoSideEffectKaos(this.agent.config.cwd),
         urlFetcher: this.agent.runtime.urlFetcher,
         webSearcher: this.agent.runtime.webSearcher,
       },
@@ -927,19 +927,26 @@ const failOnResumeGenerate: GenerateFn = async () => {
   throw new Error('Resume replay unexpectedly called the LLM');
 };
 
-function createResumeNoSideEffectKaos(): Kaos {
+function createResumeNoSideEffectKaos(initialCwd: string): Kaos {
   const fail = (method: string): never => {
     throw new Error(`Resume replay unexpectedly called kaos.${method}`);
   };
 
+  // Replay may carry `config.update({cwd})` events that route through
+  // `kaos.chdir(...)`; let those mutate an internal cwd field so replay
+  // succeeds. Actual fs I/O methods remain forbidden.
+  let cwd = initialCwd;
   return {
     name: 'resume-no-side-effects',
     osEnv: TEST_OS_ENV,
     pathClass: () => 'posix',
     normpath: (p: string) => p,
     gethome: () => '/home/test',
-    getcwd: () => '/workspace',
-    chdir: () => fail('chdir'),
+    getcwd: () => cwd,
+    withCwd: (next: string) => createResumeNoSideEffectKaos(next),
+    chdir: async (next: string) => {
+      cwd = next;
+    },
     stat: () => fail('stat'),
     iterdir: () => fail('iterdir'),
     glob: () => fail('glob'),

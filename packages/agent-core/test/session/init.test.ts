@@ -44,9 +44,8 @@ describe('Session.init', () => {
     const scripted = createScriptedGenerate();
     const session = new Session({
       id: 'test-init',
-      runtime: { kaos: testKaos },
+      runtime: { kaos: testKaos.withCwd(workDir) },
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc(events),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
       providerManager: testProviderManager(),
@@ -121,9 +120,8 @@ describe('Session.init', () => {
     const sessionDir = await makeTempDir();
     const records: TelemetryRecord[] = [];
     const session = new Session({
-      runtime: { kaos: testKaos },
+      runtime: { kaos: testKaos.withCwd(workDir) },
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc([]),
       providerManager: testProviderManager(),
       mcpConfig: {

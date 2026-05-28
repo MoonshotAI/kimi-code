@@ -183,13 +183,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
     // Session ctor attaches its own log sink. If anything in the setup-after-
     // ctor block throws, `session.close()` releases the sink (and mcp).
+    const runtime = await this.resolveRuntime(config);
     const session = new Session({
-      runtime: await this.resolveRuntime(config),
+      runtime: { ...runtime, kaos: runtime.kaos.withCwd(workDir) },
       id,
       homedir: summary.sessionDir,
       kimiHomeDir: this.homeDir,
       rpc: proxyWithExtraPayload(await this.sdk, { sessionId: summary.id }),
-      cwd: workDir,
       providerManager: this.providerManager,
       background: config.background,
       hooks: config.hooks,
@@ -214,7 +214,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       };
       const mainAgent = await session.createMain();
       mainAgent.config.update({
-        cwd: workDir,
         modelAlias: modelName,
         thinkingLevel,
       });
@@ -263,13 +262,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     await this.pluginsReady;
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
     const mcpConfig = this.mergePluginMcpConfig(baseMcpConfig);
+    const runtime = await this.resolveRuntime(config);
     const session = new Session({
-      runtime: await this.resolveRuntime(config),
+      runtime: { ...runtime, kaos: runtime.kaos.withCwd(summary.workDir) },
       id: summary.id,
       homedir: summary.sessionDir,
       kimiHomeDir: this.homeDir,
       rpc: proxyWithExtraPayload(await this.sdk, { sessionId: summary.id }),
-      cwd: summary.workDir,
       providerManager: this.providerManager,
       background: config.background,
       hooks: config.hooks,

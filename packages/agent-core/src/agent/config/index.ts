@@ -15,7 +15,6 @@ export * from './types';
 export { resolveThinkingEffort, type ThinkingEffort } from './thinking';
 
 export class ConfigState {
-  private _cwd: string = '';
   private _modelAlias: string | undefined;
   private _profileName: string | undefined;
   private _thinkingLevel: ThinkingEffort = 'off';
@@ -41,7 +40,9 @@ export class ConfigState {
       type: 'config_updated',
       config: changed,
     });
-    if (changed.cwd !== undefined) this._cwd = changed.cwd;
+    if (changed.cwd) {
+      this.agent.runtime.kaos.chdir(changed.cwd);
+    }
     if (Object.hasOwn(changed, 'modelAlias')) {
       this._modelAlias = changed.modelAlias ?? undefined;
     }
@@ -69,7 +70,7 @@ export class ConfigState {
   }
 
   get cwd(): string {
-    return this._cwd;
+    return this.agent.runtime.kaos.getcwd();
   }
 
   get hasModel(): boolean {

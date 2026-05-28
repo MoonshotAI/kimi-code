@@ -35,6 +35,8 @@ export interface Kaos {
 
   /** Change the working directory to `path`. */
   chdir(path: string): Promise<void>;
+  /** Return a new Kaos with the given `cwd`. */
+  withCwd(cwd: string): Kaos;
   /** Return stat metadata for `path`. */
   stat(path: string, options?: { followSymlinks?: boolean }): Promise<StatResult>;
   /** Yield entry names in the directory at `path`. */

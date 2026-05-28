@@ -150,11 +150,12 @@ export class LocalKaos implements Kaos {
   readonly osEnv: Environment;
   private _cwd: string;
 
-  private constructor(osEnv: Environment) {
-    // Snapshot the process cwd at construction time. After this point we
-    // never touch process.cwd() / process.chdir() — all path resolution
-    // goes through this._cwd.
-    this._cwd = normalize(process.cwd());
+  private constructor(osEnv: Environment, cwd?: string) {
+    // After construction we never touch `process.cwd()` / `process.chdir()`
+    // — all path resolution goes through `this._cwd`. The default seeds
+    // from `process.cwd()` but callers can pin to anything via `withCwd`
+    // (or supplying `cwd` directly).
+    this._cwd = normalize(cwd ?? process.cwd());
     this.osEnv = osEnv;
   }
 
@@ -168,6 +169,10 @@ export class LocalKaos implements Kaos {
   static async create(): Promise<LocalKaos> {
     const osEnv = await detectEnvironmentFromNode();
     return new LocalKaos(osEnv);
+  }
+
+  withCwd(cwd: string): LocalKaos {
+    return new LocalKaos(this.osEnv, cwd);
   }
 
   private _resolvePath(path: string): string {

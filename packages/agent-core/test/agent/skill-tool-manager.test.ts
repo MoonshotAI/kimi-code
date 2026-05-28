@@ -62,9 +62,9 @@ function makeAgent(
   return agent;
 }
 
-function runtime() {
+function runtime(cwd?: string) {
   return {
-    kaos: testKaos,
+    kaos: cwd === undefined ? testKaos : testKaos.withCwd(cwd),
   };
 }
 
@@ -189,15 +189,13 @@ describe('ToolManager SkillTool registration', () => {
 
       const session = new Session({
         id: 'test-skill-tool',
-        runtime: runtime(),
+        runtime: runtime(workDir),
         homedir: homeDir,
-        cwd: workDir,
         rpc: sessionRpc(),
         providerManager: testProviderManager(),
       });
       const mainAgent = await session.createMain();
       mainAgent.config.update({
-        cwd: workDir,
         modelAlias: MOCK_PROVIDER.model,
       });
       mainAgent.tools.initializeBuiltinTools();

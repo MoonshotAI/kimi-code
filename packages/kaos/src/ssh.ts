@@ -446,6 +446,10 @@ export class SSHKaos implements Kaos {
     this._cwd = cwd;
   }
 
+  withCwd(cwd: string): SSHKaos {
+    return new SSHKaos(this._client, this._sftp, this._home, cwd);
+  }
+
   private _resolvePath(path: string): string {
     if (isAbsolute(path)) return path;
     return join(this._cwd, path);

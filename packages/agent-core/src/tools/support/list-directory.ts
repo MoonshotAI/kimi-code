@@ -58,7 +58,7 @@ async function collectEntries(
  * tool error message. Returns `"(empty directory)"` if the directory is
  * empty, or an error marker line if the directory itself is unreadable.
  */
-export async function listDirectory(kaos: Kaos, workDir: string): Promise<string> {
+export async function listDirectory(kaos: Kaos, workDir: string = kaos.getcwd()): Promise<string> {
   const lines: string[] = [];
   const { entries, total, readable } = await collectEntries(
     kaos,
