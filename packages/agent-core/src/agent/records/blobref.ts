@@ -217,6 +217,10 @@ export class BlobStore {
       // Re-insert to update LRU position.
       this.cache.delete(hash);
     } else {
+      if (size > this.maxCacheSize) {
+        // Skip caching a single blob that exceeds the entire cap.
+        return;
+      }
       while (this.currentCacheSize + size > this.maxCacheSize && this.cache.size > 0) {
         this.evictLRU();
       }

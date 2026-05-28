@@ -311,4 +311,50 @@ describe('blobref', () => {
     await store.rehydrate(recordC2);
     expect((recordC2.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url).toBe(`data:image/png;base64,${payloadC}`);
   });
+
+  it('skips caching a blob larger than the entire cache cap', async () => {
+    const limit = 8; // bytes
+    const { store, blobsDir } = await makeStore({ maxCacheSize: limit, threshold: 1 });
+
+    const small = 'S'.repeat(4);
+    const large = 'L'.repeat(16);
+
+    const recordSmall: AgentRecord = {
+      type: 'turn.prompt',
+      input: [{ type: 'image_url', imageUrl: { url: `data:image/png;base64,${small}` } }],
+      origin: { kind: 'user' },
+    };
+    const recordLarge: AgentRecord = {
+      type: 'turn.prompt',
+      input: [{ type: 'image_url', imageUrl: { url: `data:image/png;base64,${large}` } }],
+      origin: { kind: 'user' },
+    };
+
+    await store.offload(recordSmall);
+    await store.offload(recordLarge);
+
+    // Delete all files so only cache can satisfy rehydration.
+    const files = await readdir(blobsDir);
+    for (const f of files) {
+      await rm(join(blobsDir, f));
+    }
+
+    // The small blob is still cached.
+    const recordSmall2: AgentRecord = {
+      type: 'turn.prompt',
+      input: [{ type: 'image_url', imageUrl: { url: (recordSmall.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url } }],
+      origin: { kind: 'user' },
+    };
+    await store.rehydrate(recordSmall2);
+    expect((recordSmall2.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url).toBe(`data:image/png;base64,${small}`);
+
+    // The large blob was never cached, so rehydration fails.
+    const recordLarge2: AgentRecord = {
+      type: 'turn.prompt',
+      input: [{ type: 'image_url', imageUrl: { url: (recordLarge.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url } }],
+      origin: { kind: 'user' },
+    };
+    await store.rehydrate(recordLarge2);
+    expect((recordLarge2.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url).toBe('[media missing]');
+  });
 });
