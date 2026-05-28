@@ -423,7 +423,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     }
 
     if (timeoutMs !== undefined) {
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         void (async (): Promise<void> => {
           if (proc.exitCode !== null) {
             await backgroundManager.settlePendingExits();
@@ -435,6 +435,10 @@ export class BashTool implements BuiltinTool<BashInput> {
           }
         })();
       }, timeoutMs);
+      void proc.wait().then(
+        () => clearTimeout(timer),
+        () => clearTimeout(timer),
+      );
     }
 
     // register() synchronously inserts taskId into the manager's Map, so
