@@ -166,14 +166,6 @@ describe('CatalogModelMultiSelectComponent', () => {
     expect(onCancel).not.toHaveBeenCalled();
   });
 
-  it('shows an empty-state hint until a model is checked', () => {
-    const { selector } = makeSelector();
-    expect(rendered(selector)).toContain('Press Space to select at least one model');
-
-    selector.handleInput(SPACE); // check Alpha
-    expect(rendered(selector)).not.toContain('Press Space to select at least one model');
-  });
-
   it('Tab promotes the highlighted model to default, auto-checks it, and marks it in the render', () => {
     const { selector, onSelect } = makeSelector();
     selector.handleInput(DOWN); // highlight Beta

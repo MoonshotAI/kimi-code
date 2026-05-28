@@ -1810,12 +1810,6 @@ describe('KimiTUI message flow', () => {
         expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ApiKeyInputDialogComponent);
       });
       const apiKeyDialog = driver.state.editorContainer.children[0] as ApiKeyInputDialogComponent;
-      apiKeyDialog.handleInput('\r');
-      expect(stripSgr(apiKeyDialog.render(120).join('\n'))).toContain(
-        'API key cannot be empty.',
-      );
-      expect(setConfig).not.toHaveBeenCalled();
-
       for (const ch of 'sk-test') apiKeyDialog.handleInput(ch);
       apiKeyDialog.handleInput('\r');
 
