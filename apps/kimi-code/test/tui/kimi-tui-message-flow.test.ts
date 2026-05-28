@@ -19,7 +19,18 @@ import {
   PluginsOverviewSelectorComponent,
 } from '#/tui/components/dialogs/plugins-selector';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
+import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
+import { handleFeedbackCommand } from '#/tui/commands/info';
+import {
+  promptFeedbackInput,
+  runModelSelector,
+} from '#/tui/commands/prompts';
 import type { QueuedMessage } from '#/tui/types';
+
+vi.mock('#/tui/commands/prompts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('#/tui/commands/prompts')>();
+  return { ...actual, promptFeedbackInput: vi.fn() };
+});
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
 vi.mock('#/tui/utils/open-url', () => ({ openUrl: vi.fn() }));
@@ -35,11 +46,14 @@ function stripSgr(text: string): string {
 
 interface MessageDriver {
   state: TUIState;
+  streamingUI: StreamingUIController;
+  sessionEventHandler: {
+    startSubscription(): void;
+    handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void;
+  };
   init(): Promise<boolean>;
   handleUserInput(text: string): void;
-  handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void;
   persistInputHistory(text: string): Promise<void>;
-  startSessionEventSubscription(): void;
   getCurrentSessionId(): string;
 }
 
@@ -329,11 +343,11 @@ describe('KimiTUI message flow', () => {
       },
     );
     const feedbackDriver = driver as unknown as FeedbackDriver;
-    feedbackDriver.promptFeedbackInput = vi.fn(async () => 'useful feedback');
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => 'useful feedback');
     harness.auth.submitFeedback.mockResolvedValueOnce({ kind: 'ok' });
     harness.track.mockClear();
 
-    await feedbackDriver.handleFeedbackCommand();
+    await handleFeedbackCommand(feedbackDriver as any);
 
     expect(harness.auth.submitFeedback).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -362,14 +376,14 @@ describe('KimiTUI message flow', () => {
       },
     );
     const feedbackDriver = driver as unknown as FeedbackDriver;
-    feedbackDriver.promptFeedbackInput = vi.fn(async () => 'useful feedback');
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => 'useful feedback');
     harness.auth.submitFeedback.mockResolvedValueOnce({
       kind: 'error',
       status: 500,
       message: 'backend says no',
     });
 
-    await feedbackDriver.handleFeedbackCommand();
+    await handleFeedbackCommand(feedbackDriver as any);
 
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('backend says no');
@@ -393,10 +407,10 @@ describe('KimiTUI message flow', () => {
       },
     );
     const feedbackDriver = driver as unknown as FeedbackDriver;
-    feedbackDriver.promptFeedbackInput = vi.fn(async () => undefined);
+    vi.mocked(promptFeedbackInput).mockImplementation(async () => undefined);
     harness.track.mockClear();
 
-    await feedbackDriver.handleFeedbackCommand();
+    await handleFeedbackCommand(feedbackDriver as any);
 
     expect(harness.auth.submitFeedback).not.toHaveBeenCalled();
     expect(harness.track).not.toHaveBeenCalledWith('feedback_submitted', undefined);
@@ -404,7 +418,7 @@ describe('KimiTUI message flow', () => {
 
   it('tracks blocked slash commands as invalid without counting them as executed commands', async () => {
     const { driver, harness } = await makeDriver();
-    driver.state.appState.isStreaming = true;
+    driver.state.appState.streamingPhase = 'waiting';
 
     for (const command of ['/new', '/model', '/sessions']) {
       harness.track.mockClear();
@@ -505,7 +519,6 @@ describe('KimiTUI message flow', () => {
       expect(session.setPermission).toHaveBeenCalledWith('yolo');
     });
     expect(driver.state.appState).toMatchObject({
-      yolo: true,
       permissionMode: 'yolo',
     });
     expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'yolo' });
@@ -532,7 +545,7 @@ describe('KimiTUI message flow', () => {
     });
     const { driver } = await makeDriver(session);
 
-    driver.startSessionEventSubscription();
+    driver.sessionEventHandler.startSubscription();
     await Promise.resolve();
 
     expect(session.onEvent).toHaveBeenCalledOnce();
@@ -566,7 +579,7 @@ describe('KimiTUI message flow', () => {
     });
     const { driver } = await makeDriver(session);
 
-    driver.startSessionEventSubscription();
+    driver.sessionEventHandler.startSubscription();
     await Promise.resolve();
     eventListeners[0]?.({
       type: 'mcp.server.status',
@@ -624,7 +637,7 @@ describe('KimiTUI message flow', () => {
     });
     const { driver } = await makeDriver(session);
 
-    driver.startSessionEventSubscription();
+    driver.sessionEventHandler.startSubscription();
     eventListeners[0]?.({
       type: 'mcp.server.status',
       agentId: 'main',
@@ -658,7 +671,7 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput('hello');
 
     expect(session.prompt).toHaveBeenCalledWith('hello');
-    expect(driver.state.appState.isStreaming).toBe(true);
+    expect(driver.state.appState.streamingPhase).not.toBe('idle');
     expect(driver.state.appState.streamingPhase).toBe('waiting');
     expect(driver.state.livePane.mode).toBe('waiting');
     expect(driver.state.transcriptEntries).toEqual([
@@ -691,7 +704,7 @@ describe('KimiTUI message flow', () => {
 
   it('queues editor input instead of prompting while a turn is already streaming', async () => {
     const { driver, session, harness } = await makeDriver();
-    driver.state.appState.isStreaming = true;
+    driver.state.appState.streamingPhase = 'waiting';
     harness.track.mockClear();
 
     driver.handleUserInput('queued message');
@@ -705,13 +718,13 @@ describe('KimiTUI message flow', () => {
   it('cancels active streaming from Escape and Ctrl-C editor shortcuts', async () => {
     const { driver, session } = await makeDriver();
 
-    driver.state.appState.isStreaming = true;
+    driver.state.appState.streamingPhase = 'waiting';
     driver.state.editor.onEscape?.();
 
     expect(session.cancel).toHaveBeenCalledTimes(1);
 
     session.cancel.mockClear();
-    driver.state.appState.isStreaming = true;
+    driver.state.appState.streamingPhase = 'waiting';
     driver.state.editor.onCtrlC?.();
 
     expect(session.cancel).toHaveBeenCalledTimes(1);
@@ -722,12 +735,12 @@ describe('KimiTUI message flow', () => {
     try {
       const { driver } = await makeDriver();
       const sendQueued = vi.fn();
-      driver.state.appState.isStreaming = true;
+      driver.state.appState.streamingPhase = 'waiting';
       driver.state.appState.streamingStartTime = 1;
-      driver.state.currentTurnId = '1';
+      driver.streamingUI.setTurnId('1');
       driver.state.queuedMessages = [{ text: 'next' }];
 
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'turn.ended',
           agentId: 'main',
@@ -741,7 +754,7 @@ describe('KimiTUI message flow', () => {
 
       expect(sendQueued).toHaveBeenCalledWith({ text: 'next' });
       expect(driver.state.queuedMessages).toEqual([]);
-      expect(driver.state.appState.isStreaming).toBe(false);
+      expect(driver.state.appState.streamingPhase).toBe('idle');
     } finally {
       vi.useRealTimers();
     }
@@ -753,7 +766,7 @@ describe('KimiTUI message flow', () => {
       const { driver } = await makeDriver();
       vi.mocked(driver.state.ui.requestRender).mockClear();
 
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'assistant.delta',
           agentId: 'main',
@@ -763,11 +776,11 @@ describe('KimiTUI message flow', () => {
         } as Event,
         vi.fn(),
       );
-      const component = driver.state.streamingComponent;
+      const component = driver.streamingUI.getStreamingBlockComponent();
       if (component === undefined) throw new Error('expected streaming component');
       const updateSpy = vi.spyOn(component, 'updateContent');
 
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'assistant.delta',
           agentId: 'main',
@@ -777,7 +790,7 @@ describe('KimiTUI message flow', () => {
         } as Event,
         vi.fn(),
       );
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'assistant.delta',
           agentId: 'main',
@@ -803,9 +816,9 @@ describe('KimiTUI message flow', () => {
     try {
       const { driver } = await makeDriver();
       const sendQueued = vi.fn();
-      driver.state.appState.isStreaming = true;
+      driver.state.appState.streamingPhase = 'waiting';
 
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'assistant.delta',
           agentId: 'main',
@@ -815,7 +828,7 @@ describe('KimiTUI message flow', () => {
         } as Event,
         sendQueued,
       );
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'turn.ended',
           agentId: 'main',
@@ -836,10 +849,10 @@ describe('KimiTUI message flow', () => {
     vi.useFakeTimers();
     try {
       const { driver } = await makeDriver();
-      driver.state.currentTurnId = '1';
-      driver.state.currentStep = 1;
+      driver.streamingUI.setTurnId('1');
+      driver.streamingUI.setStep(1);
 
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'tool.call.delta',
           agentId: 'main',
@@ -852,13 +865,13 @@ describe('KimiTUI message flow', () => {
         vi.fn(),
       );
 
-      expect(driver.state.pendingToolComponents.has('call_bash')).toBe(false);
-      expect(driver.state.activeToolCalls.has('call_bash')).toBe(false);
+      expect(driver.streamingUI.getToolComponent('call_bash')).toBeUndefined();
+      expect(driver.streamingUI.hasActiveToolCall('call_bash')).toBe(false);
 
       await vi.runOnlyPendingTimersAsync();
 
-      expect(driver.state.pendingToolComponents.has('call_bash')).toBe(true);
-      expect(driver.state.activeToolCalls.get('call_bash')?.args).toMatchObject({
+      expect(driver.streamingUI.getToolComponent('call_bash')).toBeDefined();
+      expect(driver.streamingUI.getActiveToolCall('call_bash')?.args).toMatchObject({
         command: 'echo hi',
       });
     } finally {
@@ -868,7 +881,7 @@ describe('KimiTUI message flow', () => {
 
   it('cancels manual compaction from the editor', async () => {
     const { driver, session } = await makeDriver();
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'compaction.started',
         agentId: 'main',
@@ -894,7 +907,7 @@ describe('KimiTUI message flow', () => {
     try {
       const { driver } = await makeDriver();
       const sendQueued = vi.fn();
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'compaction.started',
           agentId: 'main',
@@ -905,7 +918,7 @@ describe('KimiTUI message flow', () => {
       );
       driver.state.queuedMessages = [{ text: 'next' }];
 
-      driver.handleEvent(
+      driver.sessionEventHandler.handleEvent(
         {
           type: 'compaction.cancelled',
           agentId: 'main',
@@ -956,13 +969,13 @@ describe('KimiTUI message flow', () => {
       expect(session.init).toHaveBeenCalledTimes(1);
     });
     expect(session.prompt).not.toHaveBeenCalled();
-    expect(driver.state.appState.isStreaming).toBe(true);
+    expect(driver.state.appState.streamingPhase).not.toBe('idle');
     expect(driver.state.livePane.mode).toBe('waiting');
 
     resolveInit?.();
 
     await vi.waitFor(() => {
-      expect(driver.state.appState.isStreaming).toBe(false);
+      expect(driver.state.appState.streamingPhase).toBe('idle');
     });
     expect(driver.state.livePane.mode).toBe('idle');
     expect(harness.track).toHaveBeenCalledWith('init_complete', undefined);
@@ -1041,7 +1054,7 @@ describe('KimiTUI message flow', () => {
   it('shows the login prompt for auth.login_required session errors', async () => {
     const { driver } = await makeDriver();
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'error',
         agentId: 'main',
@@ -1062,7 +1075,7 @@ describe('KimiTUI message flow', () => {
   it('appends the kimi export hint beneath session error messages', async () => {
     const { driver } = await makeDriver();
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'error',
         agentId: 'main',
@@ -1084,7 +1097,7 @@ describe('KimiTUI message flow', () => {
     const { driver } = await makeDriver();
     driver.state.appState.sessionId = '';
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'error',
         agentId: 'main',
@@ -1112,7 +1125,7 @@ describe('KimiTUI message flow', () => {
     });
     const { driver } = await makeDriver(session);
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'tool.call.started',
         agentId: 'main',
@@ -1166,7 +1179,7 @@ describe('KimiTUI message flow', () => {
     });
     const { driver } = await makeDriver(session);
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'tool.call.started',
         agentId: 'main',
@@ -1207,7 +1220,7 @@ describe('KimiTUI message flow', () => {
     (driver.state.editorContainer.children[0] as ApprovalPanelComponent).handleInput('2');
     await expect(response).resolves.toMatchObject({ decision: 'rejected' });
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'tool.result',
         agentId: 'main',
@@ -1687,8 +1700,7 @@ describe('KimiTUI message flow', () => {
 
   it('enables search in the shared model selector helper', async () => {
     const { driver } = await makeDriver();
-    const selectorDriver = driver as unknown as ModelSelectorDriver;
-    const selection = selectorDriver.runModelSelector({
+    const selection = runModelSelector(driver as any, {
       alpha: {
         provider: 'managed:kimi-code',
         model: 'kimi-alpha',
@@ -1793,13 +1805,10 @@ describe('KimiTUI message flow', () => {
 
   it('does not create a thinking component for empty thinking deltas', async () => {
     const { driver } = await makeDriver();
-    driver.state.appState.isStreaming = true;
+    driver.state.appState.streamingPhase = 'thinking';
     driver.state.appState.streamingStartTime = 1;
 
-    // An empty thinking delta — as emitted by providers like Anthropic
-    // (signature_delta → think: '') — must not create a ThinkingComponent
-    // whose spinner would leak past turn end.
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'thinking.delta',
         agentId: 'main',
@@ -1809,28 +1818,28 @@ describe('KimiTUI message flow', () => {
       vi.fn(),
     );
 
-    expect(driver.state.activeThinkingComponent).toBeUndefined();
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
   });
 
   it('finalizes an orphaned thinking component on turn end', async () => {
     const { driver } = await makeDriver();
-    driver.state.appState.isStreaming = true;
+    driver.state.appState.streamingPhase = 'thinking';
     driver.state.appState.streamingStartTime = 1;
     const sendQueued = vi.fn();
 
-    // Simulate a ThinkingComponent that leaked into state without
-    // corresponding thinkingDraft content (the exact scenario that
-    // could happen without the empty-delta guard above).
-    const { ThinkingComponent } = await import('../../src/tui/components/messages/thinking');
-    driver.state.activeThinkingComponent = new ThinkingComponent(
-      '',
-      driver.state.theme.colors,
-      true,
-      'live',
-      driver.state.ui,
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        delta: 'leaked',
+      } as Event,
+      vi.fn(),
     );
+    driver.streamingUI.flushNow();
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(true);
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'turn.ended',
         agentId: 'main',
@@ -1841,9 +1850,7 @@ describe('KimiTUI message flow', () => {
       sendQueued,
     );
 
-    // flushThinkingToTranscript must finalize the component even when
-    // thinkingDraft is empty, so the spinner does not outlive the turn.
-    expect(driver.state.activeThinkingComponent).toBeUndefined();
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
   });
 
   it('renders newly streamed thinking expanded when ctrl+o toggle was already active', async () => {
@@ -1851,7 +1858,7 @@ describe('KimiTUI message flow', () => {
     driver.state.toolOutputExpanded = true;
 
     const longThinking = ['t1', 't2', 't3', 't4', 't5', 't6', 't7'].join('\n');
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'thinking.delta',
         agentId: 'main',
@@ -1860,7 +1867,7 @@ describe('KimiTUI message flow', () => {
       } as Event,
       vi.fn(),
     );
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'assistant.delta',
         agentId: 'main',
@@ -1878,7 +1885,7 @@ describe('KimiTUI message flow', () => {
   it('renders hook results without XML tags', async () => {
     const { driver } = await makeDriver();
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'hook.result',
         agentId: 'main',
@@ -1899,7 +1906,7 @@ describe('KimiTUI message flow', () => {
   it('renders empty hook results as empty status text', async () => {
     const { driver } = await makeDriver();
 
-    driver.handleEvent(
+    driver.sessionEventHandler.handleEvent(
       {
         type: 'hook.result',
         agentId: 'main',

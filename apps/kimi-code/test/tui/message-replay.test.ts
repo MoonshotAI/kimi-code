@@ -11,6 +11,8 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
+import type { SessionEventHandler } from '#/tui/controllers/session-event-handler';
+import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { AgentGroupComponent } from '#/tui/components/messages/agent-group';
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 
@@ -18,6 +20,8 @@ vi.mock('#/tui/utils/open-url', () => ({ openUrl: vi.fn() }));
 
 interface ReplayDriver {
   readonly state: TUIState;
+  readonly streamingUI: StreamingUIController;
+  readonly sessionEventHandler: SessionEventHandler;
   init(): Promise<boolean>;
   switchToSession(session: Session, statusMessage: string): Promise<void>;
 }
@@ -241,9 +245,9 @@ describe('KimiTUI resume message replay', () => {
 
     expect(group).toBeInstanceOf(AgentGroupComponent);
     expect((group as AgentGroupComponent).size()).toBe(2);
-    expect(driver.state.pendingAgentGroup).toBeNull();
-    expect(driver.state.pendingToolComponents.has('call_agent_1')).toBe(false);
-    expect(driver.state.pendingToolComponents.has('call_agent_2')).toBe(false);
+    expect(driver.streamingUI.hasPendingAgentGroup()).toBe(false);
+    expect(driver.streamingUI.getToolComponent('call_agent_1')).toBeUndefined();
+    expect(driver.streamingUI.getToolComponent('call_agent_2')).toBeUndefined();
   });
 
   it('groups replayed Read calls from one assistant message using live grouping', async () => {
@@ -270,9 +274,9 @@ describe('KimiTUI resume message replay', () => {
 
     expect(group).toBeInstanceOf(ReadGroupComponent);
     expect((group as ReadGroupComponent).size()).toBe(2);
-    expect(driver.state.pendingReadGroup).toBeNull();
-    expect(driver.state.pendingToolComponents.has('call_read_1')).toBe(false);
-    expect(driver.state.pendingToolComponents.has('call_read_2')).toBe(false);
+    expect(driver.streamingUI.hasPendingReadGroup()).toBe(false);
+    expect(driver.streamingUI.getToolComponent('call_read_1')).toBeUndefined();
+    expect(driver.streamingUI.getToolComponent('call_read_2')).toBeUndefined();
   });
 
   it('hydrates todo and background snapshot state from resumed main agent', async () => {
@@ -294,9 +298,9 @@ describe('KimiTUI resume message replay', () => {
       { title: 'Review resume snapshot', status: 'done' },
       { title: 'Render replay transcript', status: 'in_progress' },
     ]);
-    expect(driver.state.backgroundTasks.has('agent-bg1')).toBe(true);
-    expect(driver.state.backgroundTasks.has('bash-bg1')).toBe(true);
-    expect(driver.state.backgroundTaskTranscriptedTerminal.has('bash-bg1')).toBe(true);
+    expect(driver.sessionEventHandler.backgroundTasks.has('agent-bg1')).toBe(true);
+    expect(driver.sessionEventHandler.backgroundTasks.has('bash-bg1')).toBe(true);
+    expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('bash-bg1')).toBe(true);
   });
 
   it('renders replayed bash background notifications as bash tasks', async () => {
@@ -388,7 +392,7 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).toContain('review');
     expect(transcript).toContain('src/app.ts');
     expect(transcript).not.toContain('Review the requested file');
-    expect(driver.state.renderedSkillActivationIds.has('act-review')).toBe(true);
+    expect(driver.sessionEventHandler.renderedSkillActivationIds.has('act-review')).toBe(true);
   });
 
   it('renders replayed hook results as assistant transcript entries', async () => {

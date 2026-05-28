@@ -2,7 +2,6 @@ import type { Component } from '@earendil-works/pi-tui';
 import { Container, Text } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
-import { COMMAND_PREVIEW_LINES } from '#/tui/constant/rendering';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
@@ -15,6 +14,11 @@ export interface ShellExecutionOptions {
   readonly colors: ColorPalette;
   readonly expanded?: boolean;
   readonly showCommand?: boolean;
+  /**
+   * Max command lines to render. `undefined` means no cap — used by the
+   * ctrl+o expanded view so the user can see the full multi-line command
+   * even when the header preview was truncated.
+   */
   readonly commandPreviewLines?: number;
   readonly resultPreviewLines?: number;
 }
@@ -24,10 +28,7 @@ export class ShellExecutionComponent extends Container {
     super();
 
     if (options.showCommand === true) {
-      this.addCommandPreview(
-        options.command ?? '',
-        options.commandPreviewLines ?? COMMAND_PREVIEW_LINES,
-      );
+      this.addCommandPreview(options.command ?? '', options.commandPreviewLines);
     }
 
     if (options.result !== undefined) {
@@ -40,9 +41,10 @@ export class ShellExecutionComponent extends Container {
     }
   }
 
-  private addCommandPreview(command: string, previewLines: number): void {
+  private addCommandPreview(command: string, previewLines: number | undefined): void {
     if (command.length === 0) return;
-    const lines = command.split('\n').slice(0, previewLines);
+    const allLines = command.split('\n');
+    const lines = previewLines === undefined ? allLines : allLines.slice(0, previewLines);
     for (const [i, line] of lines.entries()) {
       const prefix = i === 0 ? '$ ' : '  ';
       this.addChild(new Text(chalk.dim(prefix + line), 2, 0));
@@ -84,5 +86,10 @@ export const shellExecutionResultRenderer: ResultRenderer = (
     result,
     colors: ctx.colors,
     expanded: ctx.expanded,
+    // Header truncates long bash commands to 60 chars. When the user expands
+    // the card with ctrl+o, reveal the full command (no line cap) so they
+    // can read what actually ran.
+    showCommand: ctx.expanded,
+    commandPreviewLines: undefined,
   }),
 ];
