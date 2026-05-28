@@ -48,7 +48,10 @@ export class SingleModelProvider implements ModelProvider {
 
   resolveProviderConfig(model: string): ResolvedRuntimeProvider {
     if (model !== this.providerConfig.model) {
-      throw new Error(`Model "${model}" is not supported by SingleModelProvider.`);
+      throw new KimiError(
+        ErrorCodes.CONFIG_INVALID,
+        `Model "${model}" is not supported by SingleModelProvider.`,
+      );
     }
     return {
       modelCapabilities: this.modelCapabilities,

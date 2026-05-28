@@ -43,6 +43,9 @@ export class ToolManager {
 
   constructor(protected readonly agent: Agent) {
     this.attachMcpTools();
+    if (agent.config.hasProvider) {
+      this.initializeBuiltinTools();
+    }
   }
 
   protected get toolStore(): ToolStore {
