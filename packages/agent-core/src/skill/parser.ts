@@ -187,20 +187,20 @@ export function expandSkillParameters(
     const escaped = regexpEscape(name);
     content = content.replaceAll(
       new RegExp(`\\$${escaped}(?![\\[\\w])`, 'g'),
-      escapeXml(tokens[index] ?? ''),
+      tokens[index] ?? '',
     );
   }
 
   content = content
     .replaceAll(/\$ARGUMENTS\[(\d+)\]/g, (_match, indexText: string) => {
       const index = Number.parseInt(indexText, 10);
-      return escapeXml(tokens[index] ?? '');
+      return tokens[index] ?? '';
     })
     .replaceAll(/\$(\d+)(?!\w)/g, (_match, indexText: string) => {
       const index = Number.parseInt(indexText, 10);
-      return escapeXml(tokens[index] ?? '');
+      return tokens[index] ?? '';
     })
-    .replaceAll('$ARGUMENTS', escapeXml(rawArgs));
+    .replaceAll('$ARGUMENTS', rawArgs);
 
   const hasArgumentPlaceholder = content !== body;
   content = content

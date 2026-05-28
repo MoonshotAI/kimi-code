@@ -186,7 +186,7 @@ describe('SkillTool execution', () => {
     await execute(tool, { skill: 'commit', args: '-m "fix login"' });
 
     expect(methods.recordSystemReminder.mock.calls[0]?.[0]).toContain(
-      '<kimi-skill-loaded name="commit" args="-m &quot;fix login&quot;">\nFlag: -m\nCommit message: fix login\nRaw: -m &quot;fix login&quot;\n</kimi-skill-loaded>',
+      '<kimi-skill-loaded name="commit" args="-m &quot;fix login&quot;">\nFlag: -m\nCommit message: fix login\nRaw: -m "fix login"\n</kimi-skill-loaded>',
     );
     expect(methods.recordSystemReminder.mock.calls[0]?.[0]).not.toContain('ARGUMENTS:');
   });

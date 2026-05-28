@@ -150,7 +150,7 @@ describe('skill parameter expansion', () => {
     );
 
     expect(out).toBe(
-      'raw=-m &quot;fix login&quot; zero=-m one=fix login second=fix login flag=-m message=fix login dir=/tmp/skills/commit session=ses_1',
+      'raw=-m "fix login" zero=-m one=fix login second=fix login flag=-m message=fix login dir=/tmp/skills/commit session=ses_1',
     );
   });
 
@@ -189,7 +189,7 @@ describe('SkillRegistry.renderSkillPrompt', () => {
       '"src/app.ts" carefully',
     );
 
-    expect(rendered).toBe('Review src/app.ts from &quot;src/app.ts&quot; carefully.');
+    expect(rendered).toBe('Review src/app.ts from "src/app.ts" carefully.');
     expect(rendered).not.toContain('ARGUMENTS:');
   });
 
