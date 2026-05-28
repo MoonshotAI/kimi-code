@@ -4,7 +4,7 @@ import { join } from 'pathe';
 import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import { log } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
-import type { AgentAPI, AgentEvent, SDKAgentRPC, UsageStatus } from '#/rpc';
+import type { AgentAPI, AgentEvent, KimiConfig, SDKAgentRPC, UsageStatus } from '#/rpc';
 import {
   generate,
   type ChatProvider,
@@ -59,8 +59,9 @@ export type { BuiltinTool, ToolInfo, ToolSource, UserToolRegistration } from './
 
 export type AgentType = 'main' | 'sub' | 'independent';
 
-export interface AgentConfig {
+export interface AgentOptions {
   readonly runtime: RuntimeConfig;
+  readonly config?: KimiConfig;
   readonly homedir?: string;
   readonly rpc?: SDKAgentRPC;
   readonly persistence?: AgentRecordPersistence;
@@ -72,7 +73,6 @@ export interface AgentConfig {
   readonly skills?: SkillRegistry;
   readonly mcp?: McpConnectionManager;
   readonly hookEngine?: HookEngine;
-  readonly backgroundMaxRunningTasks?: number;
   readonly permission?: PermissionManagerOptions | undefined;
   readonly log?: Logger;
   readonly telemetry?: TelemetryClient | undefined;
@@ -81,6 +81,7 @@ export interface AgentConfig {
 
 export class Agent {
   readonly runtime: RuntimeConfig;
+  readonly kimiConfig?: KimiConfig;
   readonly homedir?: string;
   readonly skills?: SkillManager;
   readonly pluginSessionStarts: readonly EnabledPluginSessionStart[];
@@ -110,32 +111,33 @@ export class Agent {
 
   private lastLlmConfigLogSignature?: string;
 
-  constructor(config: AgentConfig) {
-    this.log = config.log ?? log;
-    this.runtime = config.runtime;
-    this.homedir = config.homedir;
-    if (config.skills !== undefined) {
-      this.skills = new SkillManager(this, config.skills);
+  constructor(options: AgentOptions) {
+    this.log = options.log ?? log;
+    this.kimiConfig = options.config;
+    this.runtime = options.runtime;
+    this.homedir = options.homedir;
+    if (options.skills !== undefined) {
+      this.skills = new SkillManager(this, options.skills);
     }
-    this.pluginSessionStarts = config.pluginSessionStarts ?? [];
-    this.rawGenerate = config.generate ?? generate;
-    this.providerManager = config.providerManager;
-    this.subagentHost = config.subagentHost;
-    this.mcp = config.mcp;
-    this.hooks = config.hookEngine;
+    this.pluginSessionStarts = options.pluginSessionStarts ?? [];
+    this.rawGenerate = options.generate ?? generate;
+    this.providerManager = options.providerManager;
+    this.subagentHost = options.subagentHost;
+    this.mcp = options.mcp;
+    this.hooks = options.hookEngine;
 
-    this.type = config.type ?? 'main';
+    this.type = options.type ?? 'main';
 
-    this.rpc = config.rpc;
-    this.telemetry = config.telemetry ?? noopTelemetryClient;
-    this.blobStore = config.homedir
-      ? new BlobStore({ blobsDir: join(config.homedir, 'blobs') })
+    this.rpc = options.rpc;
+    this.telemetry = options.telemetry ?? noopTelemetryClient;
+    this.blobStore = options.homedir
+      ? new BlobStore({ blobsDir: join(options.homedir, 'blobs') })
       : undefined;
     this.records = new AgentRecords(
       this,
-      config.persistence ??
-        (config.homedir
-          ? new FileSystemAgentRecordPersistence(join(config.homedir, 'wire.jsonl'), {
+      options.persistence ??
+        (options.homedir
+          ? new FileSystemAgentRecordPersistence(join(options.homedir, 'wire.jsonl'), {
               onError: (error) => {
                 this.emitRecordsWriteError(error);
               },
@@ -143,19 +145,16 @@ export class Agent {
             })
           : undefined),
     );
-    this.fullCompaction = new FullCompaction(this, config.compactionStrategy);
+    this.fullCompaction = new FullCompaction(this, options.compactionStrategy);
     this.context = new ContextMemory(this);
     this.config = new ConfigState(this);
     this.turn = new TurnFlow(this);
     this.injection = new InjectionManager(this);
-    this.permission = new PermissionManager(this, config.permission);
+    this.permission = new PermissionManager(this, options.permission);
     this.planMode = new PlanMode(this);
     this.usage = new UsageRecorder(this);
     this.tools = new ToolManager(this);
-    this.background = new BackgroundManager(this, {
-      maxRunningTasks: config.backgroundMaxRunningTasks,
-      sessionDir: config.homedir,
-    });
+    this.background = new BackgroundManager(this);
     this.replayBuilder = new ReplayBuilder(this);
   }
 

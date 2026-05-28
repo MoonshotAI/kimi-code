@@ -16,7 +16,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { HookEngine } from '../../src/session/hooks';
-import type { AgentConfig } from '../../src/agent';
+import type { AgentOptions } from '../../src/agent';
 import type { Logger, LogPayload } from '../../src/logging';
 import {
   estimateTokens,
@@ -28,7 +28,7 @@ import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { createCommandKaos, testAgent, type TestAgentOptions } from './harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
 
-type GenerateFn = NonNullable<AgentConfig['generate']>;
+type GenerateFn = NonNullable<AgentOptions['generate']>;
 
 interface CapturedLogEntry {
   readonly level: 'error' | 'warn' | 'info' | 'debug';

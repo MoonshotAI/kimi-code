@@ -8,7 +8,7 @@ import { expect, vi } from 'vitest';
 
 import {
   Agent,
-  type AgentConfig,
+  type AgentOptions,
   type AgentRecord,
   type AgentRecordPersistence,
 } from '../../../src/agent';
@@ -65,7 +65,7 @@ type RpcLogEntry = RpcSnapshotEntry & {
 };
 
 type PromiseAgentAPI = PromisifyMethods<AgentAPI>;
-type GenerateFn = NonNullable<AgentConfig['generate']>;
+type GenerateFn = NonNullable<AgentOptions['generate']>;
 
 type TestToolResult = ExecutableToolResult & {
   readonly content?: unknown;
@@ -93,14 +93,14 @@ export interface TestAgentOptions {
   readonly runtime?: RuntimeConfig | undefined;
   readonly compactionStrategy?: CompactionStrategy | undefined;
   readonly generate?: GenerateFn | undefined;
-  readonly hookEngine?: AgentConfig['hookEngine'];
-  readonly type?: AgentConfig['type'];
-  readonly permission?: AgentConfig['permission'];
+  readonly hookEngine?: AgentOptions['hookEngine'];
+  readonly type?: AgentOptions['type'];
+  readonly permission?: AgentOptions['permission'];
   readonly providerManager?: ProviderManager;
   readonly initialConfig?: KimiConfig;
   readonly providerManagerOverrides?: Omit<ConstructorParameters<typeof ProviderManager>[0], 'config'>;
   readonly sessionId?: string;
-  readonly subagentHost?: AgentConfig['subagentHost'];
+  readonly subagentHost?: AgentOptions['subagentHost'];
   readonly onEvent?: ((event: AgentRecord) => AgentRecord | undefined) | undefined;
   readonly persistence?: AgentRecordPersistence | undefined;
   readonly telemetry?: TelemetryClient | undefined;
