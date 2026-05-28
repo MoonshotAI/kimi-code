@@ -76,7 +76,7 @@ function fractionFromId(id: string): number {
 }
 
 function jitterDisabledByEnv(): boolean {
-  return process.env.KIMI_CRON_NO_JITTER === '1';
+  return process.env['KIMI_CRON_NO_JITTER'] === '1';
 }
 
 /**
@@ -121,9 +121,18 @@ export function jitteredNextCronRunMs(
  * 0 unless the deterministic hash happens to land on 0 (which is
  * fine — it just means this task is the unlucky one that pays the
  * full delay).
+ *
+ * The result is clamped to `task.createdAt` when provided so the
+ * pull-forward can never produce a fire time strictly before the
+ * task was scheduled (a one-shot created at 08:59:30 for `0 9 * * *`
+ * with a high-hash id would otherwise jitter the 09:00 ideal back to
+ * 08:58:30 — a past timestamp that the next scheduler tick treats
+ * as immediately overdue). Callers that don't have a `createdAt`
+ * (legacy test fixtures) get the unclamped value, which preserves
+ * the previous behaviour for them.
  */
 export function oneShotJitteredNextCronRunMs(
-  task: { id: string },
+  task: { id: string; createdAt?: number | undefined },
   idealMs: number,
   config: JitterConfig = DEFAULT_CRON_JITTER_CONFIG,
 ): number {
@@ -143,5 +152,13 @@ export function oneShotJitteredNextCronRunMs(
     return idealMs;
   }
   const offset = -config.oneShotMaxMs * fractionFromId(task.id);
-  return idealMs + offset;
+  const shifted = idealMs + offset;
+  // Floor at `createdAt` so we never return a timestamp before the
+  // task was scheduled. Without this floor a brand-new one-shot can
+  // come out of `CronCreate` already overdue and fire on the very
+  // next scheduler tick.
+  if (task.createdAt !== undefined && shifted < task.createdAt) {
+    return task.createdAt;
+  }
+  return shifted;
 }

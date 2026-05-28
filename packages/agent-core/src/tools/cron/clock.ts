@@ -121,7 +121,7 @@ function debugInvalidSpec(spec: string, reason: string): void {
   // the cron module and must stay dependency-free so it can be imported
   // from anywhere (including lint rules, type files). A stderr write
   // gated on KIMI_CRON_DEBUG is enough — production is silent.
-  if (process.env.KIMI_CRON_DEBUG === '1') {
+  if (process.env['KIMI_CRON_DEBUG'] === '1') {
     process.stderr.write(
       `[cron/clock] invalid KIMI_CRON_CLOCK spec ${JSON.stringify(spec)}: ${reason} — falling back to system clock\n`,
     );

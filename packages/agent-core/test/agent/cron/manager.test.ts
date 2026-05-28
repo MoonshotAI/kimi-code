@@ -5,7 +5,10 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { ContentPart } from '@moonshot-ai/kosong';
+
 import { CronManager } from '../../../src/agent/cron/manager';
+import type { ClockSources } from '../../../src/tools/cron/clock';
 import {
   CRON_FIRED,
   CRON_MISSED,
@@ -265,6 +268,40 @@ describe('CronManager', () => {
       if (origin.kind !== 'cron_job') throw new Error('expected cron_job');
       expect(origin.stale).toBe(true);
       expect(stub.telemetryCalls[0]!.props).toMatchObject({ stale: true });
+    });
+
+    it('stale recurring tasks get one final fire and are then removed', () => {
+      // Mirrors the documented contract on `CronCreate.description`:
+      // recurring tasks auto-expire after 7 days — they fire one final
+      // time, then are deleted. Without this branch a session that
+      // stays up past the stale threshold keeps re-injecting an old
+      // cron prompt forever.
+      const stub = createAgentStub();
+      const harness = createClocks();
+      const manager = new CronManager(stub.agent, {
+        clocks: harness.clocks,
+        pollIntervalMs: null,
+      });
+      manager.store.add(
+        { cron: '*/5 * * * *', prompt: 'stale-recurring', recurring: true },
+        harness.now() - 8 * ONE_DAY_MS,
+      );
+      expect(manager.store.list()).toHaveLength(1);
+
+      manager.tick();
+      expect(stub.steerCalls.length).toBe(1);
+      expect(manager.store.list()).toHaveLength(0);
+
+      // A `cron_deleted` event closes the lifecycle in telemetry,
+      // symmetric with manual `CronDelete` calls.
+      const events = stub.telemetryCalls.map((c) => c.event);
+      expect(events).toContain('cron_fired');
+      expect(events).toContain('cron_deleted');
+
+      // No further fires after the task is gone.
+      harness.advance(6 * 60_000);
+      manager.tick();
+      expect(stub.steerCalls.length).toBe(1);
     });
   });
 

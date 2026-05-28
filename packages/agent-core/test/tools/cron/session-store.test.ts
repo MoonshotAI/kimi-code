@@ -100,7 +100,7 @@ describe('SessionCronStore', () => {
     it('mutating the returned array does not affect the store', () => {
       const store = new SessionCronStore();
       store.add(makeInit('a'), 1000);
-      const snap = store.list() as CronTaskLike[];
+      const snap = store.list() as unknown as CronTaskLike[];
       snap.length = 0;
       expect(store.list()).toHaveLength(1);
     });

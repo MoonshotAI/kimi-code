@@ -399,7 +399,7 @@ function detectStep(set: ReadonlySet<number>, min: number, max: number): number 
   const values = [...set].toSorted((a, b) => a - b);
   if (values.length < 2) return null;
   if (values[0] !== min) return null;
-  const step = values[1] - values[0];
+  const step = values[1]! - values[0]!;
   if (step <= 0) return null;
   let expected = min;
   for (const v of values) {

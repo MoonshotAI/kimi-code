@@ -246,6 +246,8 @@ function isReplayUserTurnRecord(record: AgentReplayRecord): boolean {
       return message.origin.trigger === 'user-slash';
     case 'background_task':
     case 'compaction_summary':
+    case 'cron_job':
+    case 'cron_missed':
     case 'hook_result':
     case 'injection':
     case 'system_trigger':
