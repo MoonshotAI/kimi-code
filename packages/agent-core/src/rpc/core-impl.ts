@@ -112,6 +112,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   readonly telemetry: TelemetryClient;
 
   private runtime: RuntimeConfig | undefined;
+  private config: KimiConfig;
   private readonly userHomeDir: string;
   private readonly kimiRequestHeaders: Record<string, string> | undefined;
   private readonly resolveOAuthTokenProvider: OAuthTokenProviderResolver | undefined;
@@ -138,8 +139,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.skillDirs = options.skillDirs ?? [];
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     ensureKimiHome(this.homeDir);
+    this.config = readConfigFile(this.configPath);
     this.providerManager = new ProviderManager({
-      config: readConfigFile(this.configPath),
+      config: () => this.config,
       kimiRequestHeaders: this.kimiRequestHeaders,
       resolveOAuthTokenProvider: this.resolveOAuthTokenProvider,
     });
@@ -360,17 +362,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return result;
   }
 
-  async getKimiConfig(input: EmptyPayload = {}): Promise<KimiConfig> {
-    void input;
-    return readConfigFile(this.configPath);
+  async getKimiConfig(): Promise<KimiConfig> {
+    return this.config;
   }
 
   async setKimiConfig(input: SetKimiConfigPayload): Promise<KimiConfig> {
-    const config = mergeConfigPatch(readConfigFile(this.configPath), input);
+    const config = mergeConfigPatch(this.config, input);
     await writeConfigFile(this.configPath, config);
-    const updated = readConfigFile(this.configPath);
-    this.providerManager.updateConfig(updated);
-    return updated;
+    return this.config = readConfigFile(this.configPath);
   }
 
   async removeKimiProvider(input: RemoveKimiProviderPayload): Promise<KimiConfig> {
@@ -401,9 +400,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     }
 
     await writeConfigFile(this.configPath, config);
-    const updated = readConfigFile(this.configPath);
-    this.providerManager.updateConfig(updated);
-    return updated;
+    return this.config = readConfigFile(this.configPath);
   }
 
   prompt({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {
@@ -682,9 +679,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   private reloadProviderManager(): KimiConfig {
-    const config = readConfigFile(this.configPath);
-    this.providerManager.updateConfig(config);
-    return config;
+    return this.config = readConfigFile(this.configPath);
   }
 
   private async refreshSessionRuntimeConfig(

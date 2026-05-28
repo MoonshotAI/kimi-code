@@ -132,7 +132,7 @@ export class PermissionManager {
 
     let response: ApprovalResponse;
     try {
-      response = await this.agent.rpc.requestApproval(
+      response = await this.agent.rpc!.requestApproval(
         {
           turnId: Number(context.turnId),
           toolCallId: id,

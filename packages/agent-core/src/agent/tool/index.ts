@@ -94,7 +94,7 @@ export class ToolManager {
         return {
           approvalRule: name,
           execute: async (context) => {
-            return this.agent.rpc.toolCall(
+            return this.agent.rpc!.toolCall(
               {
                 turnId: Number(context.turnId),
                 toolCallId: context.toolCallId,

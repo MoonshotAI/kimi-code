@@ -12,47 +12,24 @@ import {
 } from './runtime-provider';
 
 export interface ProviderManagerOptions {
-  readonly config: KimiConfig;
+  readonly config: KimiConfig | (() => KimiConfig);
   readonly kimiRequestHeaders?: Record<string, string> | undefined;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
   readonly promptCacheKey?: string;
 }
 
 export class ProviderManager {
-  private readonly state: ProviderManagerState;
-
-  constructor(
-    private readonly options: ProviderManagerOptions,
-    state?: ProviderManagerState,
-  ) {
-    this.state = state ?? { config: options.config };
-  }
+  constructor(private readonly options: ProviderManagerOptions) { }
 
   get config(): KimiConfig {
-    return this.state.config;
-  }
-
-  get providers(): KimiConfig['providers'] {
-    return this.state.config.providers;
-  }
-
-  get models(): NonNullable<KimiConfig['models']> {
-    return this.state.config.models ?? {};
-  }
-
-  updateConfig(config: KimiConfig): void {
-    this.state.config = config;
+    return typeof this.options.config === 'function' ? this.options.config() : this.options.config;
   }
 
   withPromptCacheKey(promptCacheKey?: string): ProviderManager {
-    return new ProviderManager(
-      {
-        ...this.options,
-        config: this.state.config,
-        promptCacheKey,
-      },
-      this.state,
-    );
+    return new ProviderManager({
+      ...this.options,
+      promptCacheKey,
+    });
   }
 
   resolveProviderConfigForModel(
@@ -63,7 +40,7 @@ export class ProviderManager {
     if (selectedModel === undefined) return undefined;
 
     return resolveRuntimeProvider({
-      config: this.state.config,
+      config: this.config,
       model: selectedModel,
       kimiRequestHeaders: this.options.kimiRequestHeaders,
       promptCacheKey: options?.promptCacheKey ?? this.options.promptCacheKey,
@@ -78,7 +55,7 @@ export class ProviderManager {
     if (selectedModel === undefined) return undefined;
 
     return resolveRuntimeProviderWithOAuth({
-      config: this.state.config,
+      config: this.config,
       model: selectedModel,
       kimiRequestHeaders: this.options.kimiRequestHeaders,
       promptCacheKey: this.options.promptCacheKey,
@@ -94,14 +71,14 @@ export class ProviderManager {
     if (selectedModel === undefined) return undefined;
 
     const resolved = resolveRuntimeProvider({
-      config: this.state.config,
+      config: this.config,
       model: selectedModel,
       kimiRequestHeaders: this.options.kimiRequestHeaders,
       promptCacheKey: this.options.promptCacheKey,
     });
     return createRuntimeProviderAuthResolver(
       {
-        config: this.state.config,
+        config: this.config,
         model: selectedModel,
         kimiRequestHeaders: this.options.kimiRequestHeaders,
         promptCacheKey: this.options.promptCacheKey,
@@ -114,8 +91,8 @@ export class ProviderManager {
 
   resolveThinkingLevel(requestedThinking?: string): ThinkingEffort {
     return resolveThinkingEffort(
-      resolveRuntimeThinkingRequest(requestedThinking, this.state.config.defaultThinking),
-      this.state.config.thinking,
+      resolveRuntimeThinkingRequest(requestedThinking, this.config.defaultThinking),
+      this.config.thinking,
     );
   }
 
@@ -127,12 +104,8 @@ export class ProviderManager {
       }
       return normalized;
     }
-    return normalizeString(this.state.config.defaultModel);
+    return normalizeString(this.config.defaultModel);
   }
-}
-
-interface ProviderManagerState {
-  config: KimiConfig;
 }
 
 function normalizeString(value: string | undefined): string | undefined {

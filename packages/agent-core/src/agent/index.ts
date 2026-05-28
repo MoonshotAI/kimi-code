@@ -64,7 +64,7 @@ export interface AgentConfig {
   readonly runtime: RuntimeConfig;
   readonly homedir?: string;
   readonly skills?: SkillRegistry;
-  readonly rpc: SDKAgentRPC;
+  readonly rpc?: SDKAgentRPC;
   readonly persistence?: AgentRecordPersistence;
   readonly type?: AgentType;
   readonly generate?: typeof generate;
@@ -89,7 +89,7 @@ export class Agent {
   readonly skills?: SkillManager;
   readonly pluginSessionStarts: readonly EnabledPluginSessionStart[];
   readonly rawGenerate: typeof generate;
-  readonly rpc: SDKAgentRPC;
+  readonly rpc?: SDKAgentRPC;
   readonly telemetry: TelemetryClient;
   readonly providerManager: ProviderManager | undefined;
   readonly subagentHost: SessionSubagentHost | undefined;
@@ -172,13 +172,9 @@ export class Agent {
         this.logLlmRequest(provider, systemPrompt, tools, history, options);
         return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, options);
       }
-      const modelAlias = this.config.modelAlias;
-      const resolveAuth =
-        modelAlias === undefined
-          ? undefined
-          : this.providerManager?.createAuthResolverForModel(modelAlias, {
-              log: this.log,
-            });
+      const resolveAuth = this.providerManager?.createAuthResolverForModel(provider.modelName, {
+        log: this.log,
+      });
       return withProviderRequestAuth(resolveAuth, (auth) => {
         const requestOptions = auth === undefined ? options : { ...options, auth };
         this.logLlmRequest(provider, systemPrompt, tools, history, requestOptions);
@@ -369,7 +365,7 @@ export class Agent {
 
   emitEvent(event: AgentEvent): void {
     if (this.records.restoring) return;
-    void this.rpc.emitEvent(event);
+    void this.rpc?.emitEvent(event);
   }
 
   emitStatusUpdated(): void {
