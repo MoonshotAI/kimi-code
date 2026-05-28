@@ -369,7 +369,7 @@ export class ToolManager {
           new b.ReadMediaFileTool(kaos, workspace, modelCapabilities, videoUploader),
         new b.EnterPlanModeTool(this.agent),
         new b.ExitPlanModeTool(this.agent),
-        new b.AskUserQuestionTool(this.agent),
+        this.agent.rpc && new b.AskUserQuestionTool(this.agent),
         new b.TodoListTool(this.toolStore),
         new b.TaskListTool(background),
         new b.TaskOutputTool(background),

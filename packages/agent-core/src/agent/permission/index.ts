@@ -131,32 +131,38 @@ export class PermissionManager {
     const startedAt = Date.now();
 
     let response: ApprovalResponse;
-    try {
-      response = await this.agent.rpc!.requestApproval(
-        {
-          turnId: Number(context.turnId),
-          toolCallId: id,
-          toolName: name,
-          action,
-          display,
-        },
-        { signal },
-      );
-    } catch (error) {
-      this.agent.telemetry.track('permission_approval_result', {
-        policy_name: policyName ?? null,
-        tool_name: name,
-        permission_mode: this.mode,
-        result: 'error',
-        approval_surface: display.kind,
-        duration_ms: Date.now() - startedAt,
-        session_cache_written: false,
-        has_feedback: false,
-      });
-      const resolved = result.resolveError?.(error);
-      return resolved === undefined
-        ? Promise.reject(error)
-        : this.permissionPolicyResolutionToPrepare(resolved, context, policyName);
+    if (this.agent.rpc === undefined) {
+      response = {
+        decision: 'approved',
+      };
+    } else {
+      try {
+        response = await this.agent.rpc.requestApproval(
+          {
+            turnId: Number(context.turnId),
+            toolCallId: id,
+            toolName: name,
+            action,
+            display,
+          },
+          { signal },
+        );
+      } catch (error) {
+        this.agent.telemetry.track('permission_approval_result', {
+          policy_name: policyName ?? null,
+          tool_name: name,
+          permission_mode: this.mode,
+          result: 'error',
+          approval_surface: display.kind,
+          duration_ms: Date.now() - startedAt,
+          session_cache_written: false,
+          has_feedback: false,
+        });
+        const resolved = result.resolveError?.(error);
+        return resolved === undefined
+          ? Promise.reject(error)
+          : this.permissionPolicyResolutionToPrepare(resolved, context, policyName);
+      }
     }
 
     const sessionApprovalRule =
