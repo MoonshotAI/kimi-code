@@ -29,6 +29,11 @@ export class ThinkingComponent implements Component {
   private readonly ui: TUI | undefined;
   private spinnerFrame = 0;
   private spinnerInterval: ReturnType<typeof setInterval> | undefined;
+  // Hold a single Text instance so pi-tui's (text, width) → lines cache
+  // actually survives across renders. Re-constructing per render destroys
+  // the cache and forces full re-wrap on every frame, which dominates CPU
+  // once the transcript accumulates many finalized thinking blocks.
+  private readonly textComponent: Text;
 
   constructor(
     text: string,
@@ -42,6 +47,7 @@ export class ThinkingComponent implements Component {
     this.showMarker = showMarker;
     this.mode = mode;
     this.ui = ui;
+    this.textComponent = new Text(this.styled(text), 0, 0);
     if (mode === 'live') {
       this.startSpinner();
     }
@@ -50,7 +56,13 @@ export class ThinkingComponent implements Component {
   invalidate(): void {}
 
   setText(text: string): void {
+    if (this.text === text) return;
     this.text = text;
+    this.textComponent.setText(this.styled(text));
+  }
+
+  private styled(text: string): string {
+    return chalk.hex(this.color).italic(text);
   }
 
   finalize(): void {
@@ -69,8 +81,7 @@ export class ThinkingComponent implements Component {
 
   render(width: number): string[] {
     const contentWidth = Math.max(1, width - MESSAGE_INDENT.length);
-    const textComponent = new Text(chalk.hex(this.color).italic(this.text), 0, 0);
-    const contentLines = this.text.length > 0 ? textComponent.render(contentWidth) : [''];
+    const contentLines = this.text.length > 0 ? this.textComponent.render(contentWidth) : [''];
 
     if (this.mode === 'live') {
       const visibleLines =

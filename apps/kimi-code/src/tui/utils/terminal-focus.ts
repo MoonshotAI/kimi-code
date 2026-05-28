@@ -4,7 +4,7 @@ import {
   TERMINAL_FOCUS_IN,
   TERMINAL_FOCUS_OUT,
 } from '#/tui/constant/terminal';
-import type { TUIState } from '#/tui/kimi-tui';
+import type { TUIState } from '#/tui/tui-state';
 import type { TerminalState } from '#/tui/utils/terminal-state';
 
 export {

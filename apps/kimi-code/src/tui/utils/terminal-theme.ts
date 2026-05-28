@@ -10,7 +10,7 @@ import {
   TERMINAL_THEME_DARK,
   TERMINAL_THEME_LIGHT,
 } from "#/tui/constant/terminal";
-import type { TUIState } from "#/tui/kimi-tui";
+import type { TUIState } from "#/tui/tui-state";
 import type { ResolvedTheme } from "#/tui/theme/colors";
 import { parseOsc11BackgroundTheme } from "#/tui/theme/terminal-background";
 
