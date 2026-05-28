@@ -79,11 +79,35 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
   if (enabled) {
     host.showNotice(
       'YOLO mode: ON',
-      'All actions will be approved automatically. Use with caution.',
+      'Workspace tools auto-approved.',
     );
     return;
   }
   host.showNotice('YOLO mode: OFF');
+}
+
+export async function handleAutoCommand(host: SlashCommandHost, args: string): Promise<void> {
+  const session = host.session;
+  if (session === undefined) {
+    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    return;
+  }
+
+  let enabled: boolean;
+  if (args === 'on') enabled = true;
+  else if (args === 'off') enabled = false;
+  else enabled = host.state.appState.permissionMode !== 'auto';
+
+  await session.setPermission(enabled ? 'auto' : 'manual');
+  host.setAppState({ permissionMode: enabled ? 'auto' : 'manual' });
+  if (enabled) {
+    host.showNotice(
+      'Auto mode: ON',
+      'Tools auto-approved. Agent will not ask questions.',
+    );
+    return;
+  }
+  host.showNotice('Auto mode: OFF');
 }
 
 export async function handleCompactCommand(host: SlashCommandHost, args: string): Promise<void> {

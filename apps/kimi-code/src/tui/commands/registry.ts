@@ -9,6 +9,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'auto',
+    aliases: [],
+    description: 'Toggle auto permission mode',
+    priority: 100,
+    availability: 'always',
+  },
+  {
     name: 'permission',
     aliases: [],
     description: 'Select permission mode',

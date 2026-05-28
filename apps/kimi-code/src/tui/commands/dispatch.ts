@@ -22,6 +22,7 @@ import type { TUIState } from '../tui-state';
 
 import { handleConnectCommand, handleLoginCommand, handleLogoutCommand } from './auth';
 import {
+  handleAutoCommand,
   handleCompactCommand,
   handleEditorCommand,
   handleModelCommand,
@@ -52,6 +53,7 @@ export {
   handleLogoutCommand,
 } from './auth';
 export {
+  handleAutoCommand,
   handleCompactCommand,
   handleEditorCommand,
   handleModelCommand,
@@ -245,6 +247,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'yolo':
       await handleYoloCommand(host, args);
+      return;
+    case 'auto':
+      await handleAutoCommand(host, args);
       return;
     case 'plan':
       await handlePlanCommand(host, args);
