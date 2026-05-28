@@ -2,11 +2,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { localKaos } from '@moonshot-ai/kaos';
+import { LocalKaos } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
+
+const KAOS = new LocalKaos();
 
 const OS_ENV = {
   osKind: 'Linux',
@@ -29,7 +31,7 @@ describe('Session.close stops cron', () => {
   it('stops each agent cron scheduler on close', async () => {
     const { sessionDir, workDir } = await sessionFixture();
     const session = new Session({
-      runtime: { kaos: localKaos, osEnv: OS_ENV },
+      runtime: { kaos: KAOS, osEnv: OS_ENV },
       id: 'session-cron-stop',
       homedir: sessionDir,
       cwd: workDir,
@@ -57,7 +59,7 @@ describe('Session.close stops cron', () => {
     const before = process.listenerCount('SIGUSR1');
     const { sessionDir, workDir } = await sessionFixture();
     const session = new Session({
-      runtime: { kaos: localKaos, osEnv: OS_ENV },
+      runtime: { kaos: KAOS, osEnv: OS_ENV },
       id: 'session-cron-stop-sigusr1',
       homedir: sessionDir,
       cwd: workDir,
