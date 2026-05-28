@@ -1725,4 +1725,5 @@ export class KimiTUI {
     this.patchLivePane({ pendingQuestion: null });
     this.restoreEditor();
   }
+
 }
