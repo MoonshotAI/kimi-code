@@ -31,7 +31,7 @@ import { BackgroundManager } from './background';
 import { FullCompaction, type CompactionStrategy } from './compaction';
 import { ConfigState } from './config';
 import { ContextMemory } from './context';
-import { HookEngine } from './hooks';
+import { HookEngine } from '../session/hooks';
 import { InjectionManager } from './injection/manager';
 import { PermissionManager, type PermissionManagerOptions } from './permission';
 import { PlanMode } from './plan';
@@ -62,7 +62,6 @@ export type AgentType = 'main' | 'sub' | 'independent';
 export interface AgentConfig {
   readonly runtime: RuntimeConfig;
   readonly homedir?: string;
-  readonly skills?: SkillRegistry;
   readonly rpc?: SDKAgentRPC;
   readonly persistence?: AgentRecordPersistence;
   readonly type?: AgentType;
@@ -70,10 +69,10 @@ export interface AgentConfig {
   readonly compactionStrategy?: CompactionStrategy;
   readonly providerManager?: ProviderManager | undefined;
   readonly subagentHost?: SessionSubagentHost | undefined;
+  readonly skills?: SkillRegistry;
   readonly mcp?: McpConnectionManager;
   readonly hookEngine?: HookEngine;
   readonly backgroundMaxRunningTasks?: number;
-  readonly backgroundSessionDir?: string;
   readonly permission?: PermissionManagerOptions | undefined;
   readonly log?: Logger;
   readonly telemetry?: TelemetryClient | undefined;
@@ -155,7 +154,7 @@ export class Agent {
     this.tools = new ToolManager(this);
     this.background = new BackgroundManager(this, {
       maxRunningTasks: config.backgroundMaxRunningTasks,
-      sessionDir: config.backgroundSessionDir,
+      sessionDir: config.homedir,
     });
     this.replayBuilder = new ReplayBuilder(this);
   }

@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentConfig } from '../../src/agent';
 import { DefaultCompactionStrategy, type CompactionStrategy } from '../../src/agent/compaction';
-import { HookEngine, type HookEngineTriggerArgs } from '../../src/agent/hooks';
+import { HookEngine, type HookEngineTriggerArgs } from '../../src/session/hooks';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import type { TestAgentContext, TestAgentOptions } from './harness/agent';
 import { testAgent } from './harness/agent';

@@ -8,7 +8,7 @@ import type { SDKSessionRPC } from '#/rpc';
 import { proxyWithExtraPayload } from '#/rpc/types';
 
 import { Agent, type AgentConfig, type AgentType } from '../agent';
-import { HookEngine, type HookDef } from '../agent/hooks';
+import { HookEngine, type HookDef } from './hooks';
 import type { PermissionManagerOptions, PermissionRule } from '../agent/permission';
 import { parseBooleanEnv, resolveConfigValue, type BackgroundConfig } from '../config';
 import { makeErrorPayload } from '../errors';
@@ -413,8 +413,6 @@ export class Session {
       subagentHost:
         config.subagentHost ?? new SessionSubagentHost(this, id, this.backgroundTaskTimeoutMs()),
       mcp: this.mcp,
-      backgroundMaxRunningTasks: this.config.background?.maxRunningTasks,
-      backgroundSessionDir: homedir,
       permission: this.permissionOptions(parentAgentId, config.permission),
       telemetry: this.telemetry,
       log: this.log.createChild({ agentId: id }),

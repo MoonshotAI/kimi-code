@@ -15,7 +15,7 @@ import {
 } from '@moonshot-ai/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
-import { HookEngine } from '../../src/agent/hooks';
+import { HookEngine } from '../../src/session/hooks';
 import type { AgentConfig } from '../../src/agent';
 import type { Logger, LogPayload } from '../../src/logging';
 import {
