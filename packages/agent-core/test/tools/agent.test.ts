@@ -46,6 +46,20 @@ function captureLogs(): { logger: Logger; entries: CapturedLogEntry[] } {
 }
 
 describe('AgentTool', () => {
+  it('accepts the cwd parameter', () => {
+    const parsed = AgentToolInputSchema.parse({
+      prompt: 'Investigate',
+      description: 'Find cause',
+      cwd: '/repo/packages/domain',
+    });
+
+    expect(parsed).toMatchObject({
+      prompt: 'Investigate',
+      description: 'Find cause',
+      cwd: '/repo/packages/domain',
+    });
+  });
+
   it('accepts the snake_case background parameter', () => {
     const parsed = AgentToolInputSchema.parse({
       prompt: 'Investigate',
@@ -198,6 +212,35 @@ describe('AgentTool', () => {
     expect(tool.description).toContain('- coder: General coding.');
   });
 
+  it('passes cwd to the subagent host when spawning', async () => {
+    const host = mockSubagentHost({
+      spawn: vi.fn().mockResolvedValue({
+        agentId: 'agent-child',
+        profileName: 'coder',
+        resumed: false,
+        completion: Promise.resolve({ result: 'child result' }),
+      }),
+    });
+    const tool = new AgentTool(host);
+
+    await executeTool(tool,
+      context({
+        prompt: 'Investigate',
+        description: 'Find cause',
+        cwd: '/repo/packages/domain',
+      }),
+    );
+
+    expect(host.spawn).toHaveBeenCalledWith('coder', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Investigate',
+      description: 'Find cause',
+      runInBackground: false,
+      signal,
+      cwd: '/repo/packages/domain',
+    });
+  });
+
   it('spawns a foreground subagent and returns its summary', async () => {
     const host = mockSubagentHost({
       spawn: vi.fn().mockResolvedValue({
@@ -287,6 +330,29 @@ describe('AgentTool', () => {
     expect(result.output).toContain('agent_id: agent-existing');
     expect(result.output).toContain('actual_subagent_type: explore');
     expect(result.output).toContain('resumed result');
+  });
+
+  it('returns an error when resuming with cwd', async () => {
+    const host = mockSubagentHost({
+      spawn: vi.fn(),
+      resume: vi.fn(),
+    });
+    const tool = new AgentTool(host);
+
+    const result = await executeTool(tool,
+      context({
+        prompt: 'Continue',
+        description: 'Continue work',
+        resume: 'agent-existing',
+        cwd: '/some/path',
+      }),
+    );
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: 'Cannot set cwd when resuming an existing agent. Resume by agent id only.',
+    });
+    expect(host.resume).not.toHaveBeenCalled();
   });
 
   it('returns an error when resuming with a subagent type', async () => {
