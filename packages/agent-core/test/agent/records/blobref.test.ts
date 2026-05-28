@@ -142,51 +142,6 @@ describe('blobref', () => {
     expect(files).toHaveLength(1);
   });
 
-  it('rehydrates messages with media parts only', async () => {
-    const { store } = await makeStore();
-    const payload = 'D'.repeat(5000);
-    const dataUri = `data:audio/wav;base64,${payload}`;
-
-    const record: AgentRecord = {
-      type: 'turn.prompt',
-      input: [
-        { type: 'text', text: 'hello' },
-        { type: 'audio_url', audioUrl: { url: dataUri } },
-      ],
-      origin: { kind: 'user' },
-    };
-
-    await store.offload(record);
-
-    const messages = [
-      {
-        role: 'user' as const,
-        content: [...record.input],
-        toolCalls: [],
-      },
-    ];
-
-    const hydrated = await store.rehydrateMessages(messages);
-    const firstMsg = hydrated[0]!;
-    expect(firstMsg.content[0]).toEqual({ type: 'text', text: 'hello' });
-    expect((firstMsg.content[1]! as { audioUrl: { url: string } }).audioUrl.url).toBe(dataUri);
-  });
-
-  it('degrades missing blob in messages to text placeholder', async () => {
-    const { store } = await makeStore();
-    const messages = [
-      {
-        role: 'user' as const,
-        content: [{ type: 'image_url' as const, imageUrl: { url: 'blobref:image/png;missing' } }],
-        toolCalls: [],
-      },
-    ];
-
-    const hydrated = await store.rehydrateMessages(messages);
-    const firstMsg = hydrated[0]!;
-    expect(firstMsg.content[0]).toEqual({ type: 'text', text: '[media missing]' });
-  });
-
   it('rehydrates from write-through cache after blob file is deleted', async () => {
     const { store, blobsDir } = await makeStore();
     const payload = 'E'.repeat(5000);

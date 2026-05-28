@@ -34,7 +34,6 @@ import type {
   LLMRequestLogContext,
   LLMStreamTiming,
 } from '../../loop';
-import type { BlobStore } from '../records/blobref';
 import {
   applyCompletionBudget,
   type CompletionBudgetConfig,
@@ -64,7 +63,6 @@ export interface KosongLLMConfig {
    * final cap is applied to each request.
    */
   readonly completionBudgetConfig?: CompletionBudgetConfig | undefined;
-  readonly blobStore?: BlobStore | undefined;
 }
 
 export class KosongLLM implements LLM {
@@ -75,7 +73,6 @@ export class KosongLLM implements LLM {
   private readonly provider: ChatProvider;
   private readonly generate: GenerateFn;
   private readonly completionBudgetConfig: CompletionBudgetConfig | undefined;
-  private readonly blobStore: BlobStore | undefined;
 
   constructor(config: KosongLLMConfig) {
     this.provider = config.provider;
@@ -84,15 +81,9 @@ export class KosongLLM implements LLM {
     this.capability = config.capability;
     this.generate = config.generate ?? kosongGenerate;
     this.completionBudgetConfig = config.completionBudgetConfig;
-    this.blobStore = config.blobStore;
   }
 
   async chat(params: LLMChatParams): Promise<LLMChatResponse> {
-    let messages = params.messages;
-    if (this.blobStore !== undefined) {
-      messages = await this.blobStore.rehydrateMessages(params.messages);
-    }
-
     let requestStartedAt = Date.now();
     let firstChunkAt: number | undefined;
     let streamEndedAt: number | undefined;
@@ -123,7 +114,7 @@ export class KosongLLM implements LLM {
       effectiveProvider,
       this.systemPrompt,
       [...params.tools],
-      messages,
+      params.messages,
       callbacks,
       generateOptions(params, {
         onRequestStart: markRequestStart,

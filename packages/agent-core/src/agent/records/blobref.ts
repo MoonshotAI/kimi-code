@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, open, readFile } from 'node:fs/promises';
 import { join } from 'pathe';
-import type { ContentPart, Message } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@moonshot-ai/kosong';
 import type { AgentRecord } from './types';
 
 const DEFAULT_THRESHOLD = 4096;
@@ -86,26 +86,6 @@ export class BlobStore {
     for (const part of parts) {
       await this.rehydrateContentPart(part);
     }
-  }
-
-  async rehydrateMessages(messages: readonly Message[]): Promise<Message[]> {
-    return Promise.all(
-      messages.map(async (msg): Promise<Message> => {
-        if (msg.content.length === 0) return msg;
-        const clone = structuredClone(msg) as Message;
-        for (const part of clone.content) {
-          await this.rehydrateContentPart(part);
-        }
-        return {
-          role: clone.role,
-          name: clone.name,
-          content: clone.content.map((part) => downgradeMissingMedia(part)),
-          toolCalls: clone.toolCalls,
-          toolCallId: clone.toolCallId,
-          partial: clone.partial,
-        };
-      }),
-    );
   }
 
   private async offloadContentPart(part: ContentPart): Promise<void> {
@@ -238,18 +218,6 @@ export class BlobStore {
     this.cache.delete(lru);
     this.cacheSizes.delete(lru);
   }
-}
-
-function downgradeMissingMedia(part: ContentPart): ContentPart {
-  const record = part as unknown as Record<string, unknown>;
-  for (const value of Object.values(record)) {
-    const mediaObj = asMediaContainer(value);
-    if (mediaObj === undefined) continue;
-    if (mediaObj.url === MISSING_MEDIA_PLACEHOLDER) {
-      return { type: 'text', text: MISSING_MEDIA_PLACEHOLDER };
-    }
-  }
-  return part;
 }
 
 function asMediaContainer(value: unknown): { url: unknown } | undefined {
