@@ -86,4 +86,41 @@ custom_headers = { "X-Test" = "1" }
       'X-Test': '1',
     });
   });
+
+  it('falls back to defaultModel when createSession receives no model option', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `default_model = "default-mock"
+
+[providers.test]
+type = "kimi"
+api_key = "test-key"
+
+[models."default-mock"]
+provider = "test"
+model = "default-mock"
+max_context_size = 100000
+`,
+    );
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({ id: 'ses_runtime_default_model', workDir });
+    const session = core.sessions.get(created.id);
+    const mainAgent = session?.agents.get('main');
+
+    expect(mainAgent?.config.modelAlias).toBe('default-mock');
+  });
 });

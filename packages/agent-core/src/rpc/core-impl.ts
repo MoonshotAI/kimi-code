@@ -50,6 +50,7 @@ import type {
   GetBackgroundOutputPathPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
+  GetKimiConfigPayload,
   GetPluginInfoPayload,
   InstallPluginPayload,
   ListSessionsPayload,
@@ -207,7 +208,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       };
       const mainAgent = await session.createMain();
       mainAgent.config.update({
-        modelAlias: options.model,
+        modelAlias: options.model ?? config.defaultModel,
         thinkingLevel,
       });
       if (permissionMode !== undefined) {
@@ -353,7 +354,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return result;
   }
 
-  async getKimiConfig(): Promise<KimiConfig> {
+  async getKimiConfig(input?: GetKimiConfigPayload): Promise<KimiConfig> {
+    if (input?.reload) {
+      this.config = readConfigFile(this.configPath);
+    }
     return this.config;
   }
 
