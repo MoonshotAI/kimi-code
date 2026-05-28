@@ -98,7 +98,6 @@ function makeTask(overrides: Partial<CronTask> & { cron: string; createdAt: numb
     cron: overrides.cron,
     createdAt: overrides.createdAt,
     recurring: overrides.recurring,
-    durable: overrides.durable,
   };
 }
 

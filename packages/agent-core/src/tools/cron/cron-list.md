@@ -4,8 +4,8 @@ Use this tool to see every pending cron task — both recurring jobs and
 one-shot reminders — that you (or the user) have scheduled with
 `CronCreate`. The output is the entry point for inspecting scheduled
 work: it returns a stable id, the original cron expression, a human
-rendering, the next post-jitter fire time, the recurring / durable
-flags, the task's age in days, and a stale indicator.
+rendering, the next post-jitter fire time, the recurring flag, the
+task's age in days, and a stale indicator.
 
 Each record carries:
 
@@ -22,8 +22,6 @@ Each record carries:
   the next 5 years (should not happen for tasks created through
   `CronCreate`, which validates).
 - `recurring` — `true` for cadenced jobs, `false` for one-shots.
-- `durable` — `false` for every task in this session-only build;
-  reported anyway so the column is stable.
 - `ageDays` — `(now - createdAt) / day`, two decimal places. Useful
   when deciding whether a long-running cron is still relevant.
 - `stale` — `true` when a recurring task is older than 7 days. The
@@ -36,10 +34,9 @@ Guidelines:
 
 - This tool is read-only and never mutates state, so it is always
   safe to call (including in plan mode).
-- The empty case returns `cron_jobs: 0\nNo cron jobs scheduled.`. Do
-  not infer anything from that beyond "this session has no scheduled
-  work" — durable tasks from other sessions are not visible in this
-  build.
+- The empty case returns `cron_jobs: 0\nNo cron jobs scheduled.`. All
+  cron tasks live only in this session — there is no cross-session
+  persistence.
 - After a context compaction, or whenever you are unsure which cron
   jobs are live, call this tool to re-enumerate them rather than
   guessing ids from earlier in the conversation.

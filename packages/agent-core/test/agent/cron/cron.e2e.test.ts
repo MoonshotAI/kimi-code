@@ -101,7 +101,6 @@ describe('Cron — session E2E (P1.9)', () => {
       cron: '*/5 * * * *',
       prompt: 'cron-fired prompt',
       recurring: true,
-      durable: false,
     });
     if (execution.isError === true) {
       throw new Error(
@@ -161,7 +160,6 @@ describe('Cron — session E2E (P1.9)', () => {
       cron: '*/10 * * * *',
       prompt: 'noop',
       recurring: true,
-      durable: false,
     });
     if (createExec.isError === true) {
       throw new Error(`CronCreate failed: ${outputText(createExec.output)}`);

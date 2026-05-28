@@ -43,10 +43,15 @@ Bench / acceptance tests can set `KIMI_CRON_NO_JITTER=1` to disable jitter entir
 
 Use `recurring: false` for "remind me at X" style requests, single deadlines, "in N minutes do Y", and any task that should not repeat. Use `recurring: true` for periodic polling (CI status, build watchers, scheduled reports), workday rituals, and anything the user explicitly described as recurring.
 
-## durable
+## Session-only
 
-`durable: true` is **not supported** in this build (Phase 2). Pass `durable: false` (the default) or omit the field; otherwise the call is rejected. Session-only tasks vanish when this CLI process exits — tell the user so when relevant.
+Cron tasks live only in this CLI process. When the process exits, all
+scheduled tasks vanish — there is no cross-restart persistence in this
+build. If the user asks for something that needs to survive restarts,
+tell them so explicitly rather than silently scheduling something that
+will disappear.
 
 ## Returned fields
 
-`id` (8-hex), `humanSchedule` (English summary), `recurring`, `durable`, `nextFireAt` (epoch ms or null). `id` is needed by `CronDelete`.
+`id` (8-hex), `humanSchedule` (English summary), `recurring`,
+`nextFireAt` (epoch ms or null). `id` is needed by `CronDelete`.

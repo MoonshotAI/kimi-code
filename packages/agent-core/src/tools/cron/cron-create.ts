@@ -3,17 +3,18 @@
  * at a future wall-clock time, either once (`recurring: false`) or on a
  * cron cadence (`recurring: true`, the default).
  *
- * Phase 1 / P1.4 covers the **session-only** path. `durable: true` is
- * rejected with an explicit error so the protocol stays unambiguous
- * across the phase boundary — when P2.8 lands the durable branch, the
- * existing one-shot/recurring shape doesn't change.
+ * Phase 1 / P1.4 is session-only — tasks live in `SessionCronStore` and
+ * die when the process exits. A durable / file-backed branch is planned
+ * for Phase 2 but is intentionally absent from the public surface until
+ * the storage layer exists; exposing a `durable` flag now would mislead
+ * the model into promising persistence we can't yet deliver.
  *
  * The tool itself is pure validation + bookkeeping; the firing /
  * coalesce / jitter logic lives in `CronScheduler` (one layer below)
  * and `CronManager` (one layer up). This file only knows how to:
  *
- *   1. validate the request (killswitch, durable rejection, cron parse,
- *      5-year window, session cap, byte-length cap);
+ *   1. validate the request (killswitch, cron parse, 5-year window,
+ *      session cap, byte-length cap);
  *   2. add it to the manager's session store;
  *   3. report back the post-jitter `nextFireAt` and a human-readable
  *      schedule for the model's benefit;
@@ -43,10 +44,8 @@ import CRON_CREATE_DESCRIPTION from './cron-create.md';
 // ── Constants ────────────────────────────────────────────────────────
 
 /**
- * Session-level cap on the number of live cron tasks. Phase 2 will
- * hoist this to a project-level combined (durable + session) cap once
- * file-backed storage lands. Exported so tests can pre-fill the store
- * without re-deriving the magic number.
+ * Session-level cap on the number of live cron tasks. Exported so tests
+ * can pre-fill the store without re-deriving the magic number.
  */
 export const MAX_CRON_JOBS_PER_SESSION = 50;
 
@@ -79,13 +78,6 @@ export const CronCreateInputSchema = z.object({
     .describe(
       'true (default) = fire on every cron match until deleted or auto-expired after 7 days. false = fire once at the next match, then auto-delete. Use false for "remind me at X" one-shot requests with pinned minute/hour/dom/month.',
     ),
-  durable: z
-    .boolean()
-    .optional()
-    .default(false)
-    .describe(
-      'true = persist to .kimi-code/cron/tasks.json and survive restarts. false (default) = in-memory only, dies when this Claude session ends. Use true only when the user asks the task to survive across sessions.',
-    ),
 });
 
 export type CronCreateInput = z.Infer<typeof CronCreateInputSchema>;
@@ -97,7 +89,6 @@ interface CronCreateOutput {
   readonly cron: string;
   readonly humanSchedule: string;
   readonly recurring: boolean;
-  readonly durable: boolean;
   readonly nextFireAt: number | null;
 }
 
@@ -123,18 +114,7 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
       };
     }
 
-    // 2. durable=true is Phase 2 work. Reject explicitly so the model
-    //    sees a clear error rather than a silent demotion to session-
-    //    only (which would lie about persistence).
-    if (args.durable === true) {
-      return {
-        isError: true,
-        output:
-          'durable=true is not supported in this build. Use durable=false (session-only) for now.',
-      };
-    }
-
-    // 3. Parse the cron expression. Any parse failure is a user error
+    // 2. Parse the cron expression. Any parse failure is a user error
     //    rather than an internal one, so we surface the message
     //    verbatim — the parser is already careful to name the
     //    offending field.
@@ -150,7 +130,7 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
       };
     }
 
-    // 4. Reject "legal but never fires within 5 years" — the same
+    // 3. Reject "legal but never fires within 5 years" — the same
     //    bound the scheduler uses internally to refuse to spin.
     //    `0 0 31 2 *` is the canonical example.
     const nowMs = this.manager.clocks.wallNow();
@@ -163,8 +143,7 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
       };
     }
 
-    // 5. Session-level cap (Phase 2 will replace this with a project-
-    //    level durable+session combined count under the file lock).
+    // 4. Session-level cap.
     if (this.manager.store.list().length >= MAX_CRON_JOBS_PER_SESSION) {
       return {
         isError: true,
@@ -174,7 +153,7 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
       };
     }
 
-    // 6. Byte-length cap. zod's `.max()` counts code units, which is
+    // 5. Byte-length cap. zod's `.max()` counts code units, which is
     //    not the budget we actually want for a multi-byte prompt; the
     //    Buffer.byteLength check makes the 8 KiB intent literal.
     const byteLen = Buffer.byteLength(args.prompt, 'utf8');
@@ -203,9 +182,6 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
             cron: args.cron,
             prompt: args.prompt,
             recurring,
-            // `durable` intentionally omitted — session-only path.
-            // Phase 2's durable branch will set this explicitly when
-            // writing to the file store.
           },
           nowMs,
         );
@@ -234,7 +210,6 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
           cron: args.cron,
           humanSchedule,
           recurring,
-          durable: false,
           nextFireAt,
         };
 
@@ -254,7 +229,6 @@ function formatOutput(o: CronCreateOutput): string {
     `cron: ${o.cron}`,
     `humanSchedule: ${o.humanSchedule}`,
     `recurring: ${String(o.recurring)}`,
-    `durable: ${String(o.durable)}`,
     `nextFireAt: ${
       o.nextFireAt === null ? 'null' : new Date(o.nextFireAt).toISOString()
     }`,

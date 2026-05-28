@@ -22,9 +22,6 @@
  *                       avoidance offsets without surprise.
  *   - `recurring`     — `true` unless the task was explicitly created
  *                       with `recurring: false`.
- *   - `durable`       — `false` for every session-store task (Phase 1);
- *                       reported anyway so the column is stable when
- *                       P2.8 lights up the durable branch.
  *   - `ageDays`       — `(wallNow - createdAt) / day`, formatted to two
  *                       decimal places. Useful context for the `stale`
  *                       flag and for the LLM's "should I still be
@@ -39,8 +36,7 @@
  * `cron`, a `humanSchedule` fallback equal to `cron`, and
  * `nextFireAt: null` — that should never happen for tasks that went
  * through `CronCreate` (which validates), but guards against future
- * direct `store.add(...)` inserts (or a Phase 2 file-store entry that
- * silently slipped past validation).
+ * direct `store.add(...)` inserts.
  */
 
 import { z } from 'zod';
@@ -117,7 +113,6 @@ export class CronListTool implements BuiltinTool<CronListInput> {
     // `recurring: undefined` is the canonical "repeat by default"
     // shape across the cron stack; only an explicit `false` opts out.
     const recurring = task.recurring !== false;
-    const durable = task.durable === true;
 
     // `ageDays` is purely informational — a non-finite age (e.g.
     // wallNow returned NaN from a misconfigured bench clock) is
@@ -149,9 +144,7 @@ export class CronListTool implements BuiltinTool<CronListInput> {
       // Malformed cron string — leave humanSchedule as the raw
       // expression and nextFireAt as `null`. Should never happen for
       // tasks that went through CronCreate (which validates), but
-      // defends against direct store inserts (tests) and a future
-      // Phase 2 file-store entry whose `cron` field somehow slipped
-      // past read-time validation.
+      // defends against direct store inserts (tests).
     }
 
     return [
@@ -160,7 +153,6 @@ export class CronListTool implements BuiltinTool<CronListInput> {
       `humanSchedule: ${humanSchedule}`,
       `nextFireAt: ${nextFireAtIso}`,
       `recurring: ${String(recurring)}`,
-      `durable: ${String(durable)}`,
       `ageDays: ${ageDays.toFixed(2)}`,
       `stale: ${String(stale)}`,
     ].join('\n');
