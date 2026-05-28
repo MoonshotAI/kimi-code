@@ -69,7 +69,7 @@ export interface CronManagerOptions {
   /**
    * Override for tests / bench. Defaults to
    * `resolveClockSources(process.env.KIMI_CRON_CLOCK)` so production
-   * picks up `KIMI_CRON_CLOCK=env:...` / `file:...` automatically.
+   * picks up `KIMI_CRON_CLOCK=file:...` automatically.
    * When unset, falls through to {@link SYSTEM_CLOCKS}.
    */
   readonly clocks?: ClockSources;
@@ -225,7 +225,6 @@ export class CronManager {
     const turnId = this.agent.turn.steer(content, origin);
     this.agent.telemetry.track(CRON_FIRED, {
       recurring: task.recurring !== false,
-      durable: task.durable === true,
       coalesced_count: ctx.coalescedCount,
       stale,
       buffered: turnId === null,
@@ -274,7 +273,6 @@ export class CronManager {
   emitScheduled(task: CronTask): void {
     this.agent.telemetry.track(CRON_SCHEDULED, {
       recurring: task.recurring !== false,
-      durable: task.durable === true,
     });
   }
 

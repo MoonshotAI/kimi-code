@@ -87,7 +87,6 @@ describe('CronManager', () => {
       expect(tc.event).toBe(CRON_FIRED);
       expect(tc.props).toMatchObject({
         recurring: true,
-        durable: false,
         stale: false,
         buffered: false,
       });

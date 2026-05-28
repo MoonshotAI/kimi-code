@@ -17,7 +17,6 @@ function makeInit(suffix: string, overrides: Partial<SessionCronTaskInit> = {}):
     cron: '*/5 * * * *',
     prompt: `prompt-${suffix}`,
     recurring: true,
-    durable: false,
     ...overrides,
   };
 }
@@ -30,19 +29,17 @@ describe('SessionCronStore', () => {
       expect(task.id).toMatch(ID_REGEX);
     });
 
-    it('preserves cron / prompt / recurring / durable from the init', () => {
+    it('preserves cron / prompt / recurring from the init', () => {
       const store = new SessionCronStore();
       const init: SessionCronTaskInit = {
         cron: '0 9 * * 1-5',
         prompt: 'sync PRs',
         recurring: true,
-        durable: true,
       };
       const task = store.add(init, 1000);
       expect(task.cron).toBe('0 9 * * 1-5');
       expect(task.prompt).toBe('sync PRs');
       expect(task.recurring).toBe(true);
-      expect(task.durable).toBe(true);
     });
 
     it('sets createdAt to the supplied nowMs (no internal clock read)', () => {

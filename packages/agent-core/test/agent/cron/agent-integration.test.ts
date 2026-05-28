@@ -63,7 +63,6 @@ describe('Agent + Cron integration (P1.7)', () => {
       cron: '*/5 * * * *',
       prompt: 'x',
       recurring: true,
-      durable: false,
     };
     const result = tool.resolveExecution(args);
 

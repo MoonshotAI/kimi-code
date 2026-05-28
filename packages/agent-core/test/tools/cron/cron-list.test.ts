@@ -111,7 +111,6 @@ describe('CronListTool', () => {
       humanSchedule: every 5 minutes
       nextFireAt: <iso>
       recurring: true
-      durable: false
       ageDays: 0.00
       stale: false"
     `);
@@ -137,7 +136,6 @@ describe('CronListTool', () => {
       humanSchedule: every 5 minutes
       nextFireAt: <iso>
       recurring: true
-      durable: false
       ageDays: 0.00
       stale: false
       ---
@@ -146,7 +144,6 @@ describe('CronListTool', () => {
       humanSchedule: at 12:00 every day
       nextFireAt: <iso>
       recurring: false
-      durable: false
       ageDays: 0.00
       stale: false"
     `);
@@ -171,7 +168,6 @@ describe('CronListTool', () => {
       humanSchedule: every 5 minutes
       nextFireAt: <iso>
       recurring: true
-      durable: false
       ageDays: 8.00
       stale: true"
     `);
@@ -213,7 +209,6 @@ describe('CronListTool', () => {
       humanSchedule: at 12:00 every day
       nextFireAt: <iso>
       recurring: false
-      durable: false
       ageDays: 0.00
       stale: false"
     `);
@@ -237,7 +232,6 @@ describe('CronListTool', () => {
       humanSchedule: garbage
       nextFireAt: null
       recurring: true
-      durable: false
       ageDays: 0.00
       stale: false"
     `);

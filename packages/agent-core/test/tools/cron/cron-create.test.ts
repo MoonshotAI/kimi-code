@@ -99,7 +99,6 @@ describe('CronCreateTool', () => {
       cron: '*/5 * * * *',
       prompt: 'hi',
       recurring: true,
-      durable: false,
     });
     const out = assertSuccess(result);
 
@@ -110,7 +109,6 @@ describe('CronCreateTool', () => {
       cron: */5 * * * *
       humanSchedule: every 5 minutes
       recurring: true
-      durable: false
       nextFireAt: <iso>"
     `);
 
@@ -119,7 +117,6 @@ describe('CronCreateTool', () => {
     expect(stub.telemetryCalls[0]!.event).toBe(CRON_SCHEDULED);
     expect(stub.telemetryCalls[0]!.props).toEqual({
       recurring: true,
-      durable: false,
     });
   });
 
@@ -129,7 +126,6 @@ describe('CronCreateTool', () => {
       cron: '0 12 * * *',
       prompt: 'noon',
       recurring: false,
-      durable: false,
     });
     const out = assertSuccess(result);
     expect(scrubCronOutput(out)).toMatchInlineSnapshot(`
@@ -137,7 +133,6 @@ describe('CronCreateTool', () => {
       cron: 0 12 * * *
       humanSchedule: at 12:00 every day
       recurring: false
-      durable: false
       nextFireAt: <iso>"
     `);
 
@@ -156,7 +151,6 @@ describe('CronCreateTool', () => {
         cron: 'not a cron',
         prompt: 'x',
         recurring: true,
-        durable: false,
       }),
     );
     expect(msg).toMatchInlineSnapshot(
@@ -175,7 +169,6 @@ describe('CronCreateTool', () => {
         cron: '0 0 31 2 *',
         prompt: 'never',
         recurring: false,
-        durable: false,
       }),
     );
     expect(msg).toMatchInlineSnapshot(
@@ -194,29 +187,10 @@ describe('CronCreateTool', () => {
         cron: '*/5 * * * *',
         prompt: 'hi',
         recurring: true,
-        durable: false,
       }),
     );
     expect(msg).toMatchInlineSnapshot(
       `"Cron scheduling is disabled (KIMI_DISABLE_CRON=1)."`,
-    );
-
-    expect(manager.store.list()).toHaveLength(0);
-    expect(stub.telemetryCalls).toHaveLength(0);
-  });
-
-  it('rejects durable=true (Phase 2 not implemented)', async () => {
-    const { manager, tool, stub } = makeHarness();
-    const msg = assertError(
-      await runTool(tool, {
-        cron: '*/5 * * * *',
-        prompt: 'x',
-        recurring: true,
-        durable: true,
-      }),
-    );
-    expect(msg).toMatchInlineSnapshot(
-      `"durable=true is not supported in this build. Use durable=false (session-only) for now."`,
     );
 
     expect(manager.store.list()).toHaveLength(0);
@@ -241,7 +215,6 @@ describe('CronCreateTool', () => {
         cron: '*/5 * * * *',
         prompt: 'overflow',
         recurring: true,
-        durable: false,
       }),
     );
     expect(msg).toMatchInlineSnapshot(
@@ -263,7 +236,6 @@ describe('CronCreateTool', () => {
         cron: '*/5 * * * *',
         prompt,
         recurring: true,
-        durable: false,
       }),
     );
     expect(msg).toMatchInlineSnapshot(

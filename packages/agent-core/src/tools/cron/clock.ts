@@ -61,11 +61,6 @@ export const SYSTEM_CLOCKS: ClockSources = {
  * `process.env.KIMI_CRON_CLOCK`).
  *
  *   unset / `"system"`   → {@link SYSTEM_CLOCKS}
- *   `"env:VAR_NAME"`     → `wallNow` reads `process.env[VAR_NAME]` on
- *                          every call and parses it as `Number(...)`.
- *                          A missing or unparseable value falls back to
- *                          `Date.now()` for that single call so a
- *                          mis-set env never bricks the scheduler.
  *   `"file:<path>"`      → `wallNow` reads the first line of `<path>`
  *                          on every call (sync — the tick path is not
  *                          async) and parses it as `Number(...)`. A
@@ -91,18 +86,6 @@ export function resolveClockSources(spec?: string): ClockSources {
     return SYSTEM_CLOCKS;
   }
 
-  if (spec.startsWith('env:')) {
-    const varName = spec.slice('env:'.length);
-    if (varName === '') {
-      debugInvalidSpec(spec, 'empty env var name');
-      return SYSTEM_CLOCKS;
-    }
-    return {
-      wallNow: () => readEnvWall(varName),
-      monoNowMs: systemMonoNowMs,
-    };
-  }
-
   if (spec.startsWith('file:')) {
     const filePath = spec.slice('file:'.length);
     if (filePath === '') {
@@ -117,14 +100,6 @@ export function resolveClockSources(spec?: string): ClockSources {
 
   debugInvalidSpec(spec, 'unrecognised scheme');
   return SYSTEM_CLOCKS;
-}
-
-function readEnvWall(varName: string): number {
-  const raw = process.env[varName];
-  if (raw === undefined || raw === '') return Date.now();
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) return Date.now();
-  return parsed;
 }
 
 function readFileWall(filePath: string): number {

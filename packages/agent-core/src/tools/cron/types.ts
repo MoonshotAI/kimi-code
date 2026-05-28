@@ -10,8 +10,6 @@
  *     to the 7-day stale judgment.
  *   - `recurring` — undefined / true means "fire repeatedly until deleted
  *     or auto-expired"; false means "fire once then auto-delete".
- *   - `durable` — runtime-only field that decides where the task lives
- *     (file vs session-store). It is stripped before writing to tasks.json.
  *
  * Notably absent: `lastFiredAt`. Persisting last-fire would let a fast
  * restart skip a legitimately-due fire because the stored timestamp says
@@ -24,5 +22,4 @@ export interface CronTask {
   readonly prompt: string;
   readonly createdAt: number;
   readonly recurring?: boolean;
-  readonly durable?: boolean;
 }

@@ -1,11 +1,8 @@
 /**
  * SessionCronStore — in-memory cron task store for a single CLI session.
  *
- * Phase 1 cron storage. Tasks added here live only for the lifetime of
- * the current process; on exit they vanish. The Phase 2 file-backed
- * store under `<project>/.kimi-code/cron/` will share the same shape
- * (add / get / list / remove) but write to disk so durable tasks
- * survive restart.
+ * Tasks added here live only for the lifetime of the current process;
+ * on exit they vanish. There is no on-disk persistence in this build.
  *
  * The store is intentionally clock-agnostic: it does NOT call
  * `Date.now()` itself. Callers pass `nowMs` (which the cron manager
