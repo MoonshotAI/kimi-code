@@ -190,9 +190,10 @@ async function runTool(params) {
   try {
     const built = handler.buildParams(args);
     const response = await callKimiTool(handler.method, built);
+    const fileWarnings = await writeResponseFiles(response, expectedResponseFilePath(built));
     const text = extractText(response);
     const formatted = (handler.format?.(text, built) ?? text).trim();
-    return { content: [{ type: 'text', text: formatted }] };
+    return { content: [{ type: 'text', text: appendWarnings(formatted, fileWarnings) }] };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
@@ -200,6 +201,73 @@ async function runTool(params) {
       isError: true,
     };
   }
+}
+
+async function writeResponseFiles(response, expectedOutputPath) {
+  if (!isRecord(response) || !Array.isArray(response.files)) return [];
+  const warnings = [];
+
+  for (const file of response.files) {
+    if (!isRecord(file)) continue;
+    const name = typeof file.name === 'string' ? file.name.trim() : '';
+    if (name.length === 0 || file.content === undefined || file.content === null) continue;
+
+    const writePath = allowedResponseFilePath(name, expectedOutputPath);
+    if (writePath === undefined) {
+      warnings.push(`Warning: skipped returned file ${name} because it is outside the requested output path.`);
+      continue;
+    }
+
+    try {
+      await mkdir(path.dirname(writePath), { recursive: true });
+      if (file.encoding === 'base64') {
+        await writeFile(writePath, Buffer.from(String(file.content), 'base64'));
+      } else {
+        await writeFile(writePath, String(file.content), 'utf8');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      warnings.push(`Warning: failed to write file ${writePath}: ${message}`);
+    }
+  }
+
+  return warnings;
+}
+
+function expectedResponseFilePath(params) {
+  return outputPathField(params) ?? (isRecord(params) ? outputPathField(params.params) : undefined);
+}
+
+function outputPathField(value) {
+  if (!isRecord(value)) return undefined;
+  for (const field of ['file_path', 'filepath']) {
+    const pathValue = value[field];
+    if (typeof pathValue !== 'string') continue;
+    const trimmed = pathValue.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return undefined;
+}
+
+function allowedResponseFilePath(name, expectedOutputPath) {
+  if (expectedOutputPath === undefined) return undefined;
+
+  const actual = path.resolve(name);
+  const expected = path.resolve(expectedOutputPath);
+  if (actual === expected) return actual;
+
+  const actualParts = path.parse(actual);
+  const expectedParts = path.parse(expected);
+  if (actualParts.dir !== expectedParts.dir) return undefined;
+  if (actualParts.ext !== expectedParts.ext) return undefined;
+  if (!actualParts.name.startsWith(`${expectedParts.name}_`)) return undefined;
+
+  return actual;
+}
+
+function appendWarnings(text, warnings) {
+  if (warnings.length === 0) return text;
+  return `${text}\n\n${warnings.join('\n')}`;
 }
 
 function resolveKimiHome() {
@@ -319,23 +387,29 @@ function extractText(response) {
   if (!isRecord(response)) return String(response);
 
   if (response.is_success === false) {
-    const message = extractUserText(response.error) ?? JSON.stringify(response);
+    const message = extractChannelText(response.error) ?? JSON.stringify(response);
     throw new Error(`Tool API returned an error: ${message}`);
   }
 
-  const text = extractUserText(response.result);
+  const text = extractChannelText(response.result);
   if (text !== undefined) return text;
   return `Tool API succeeded but did not return user text. Raw response: ${JSON.stringify(response)}`;
 }
 
-function extractUserText(value) {
-  if (!isRecord(value) || !Array.isArray(value.user)) return undefined;
-  const text = value.user
-    .filter((item) => isRecord(item) && item.type === 'text' && typeof item.text === 'string')
-    .map((item) => item.text)
-    .filter(Boolean)
-    .join('\n\n');
-  return text.length > 0 ? text : undefined;
+function extractChannelText(value) {
+  if (!isRecord(value)) return undefined;
+  for (const channel of ['assistant', 'user']) {
+    const items = value[channel];
+    if (!Array.isArray(items)) continue;
+    const text = items
+      .filter((item) => isRecord(item) && item.type === 'text' && typeof item.text === 'string')
+      .map((item) => item.text)
+      .filter(Boolean)
+      .join('\n\n')
+      .trim();
+    if (text.length > 0) return text;
+  }
+  return undefined;
 }
 
 function defaultStockFilePath(ticker, queryType) {

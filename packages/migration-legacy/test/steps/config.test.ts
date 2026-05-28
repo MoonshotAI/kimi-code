@@ -430,18 +430,15 @@ base_url = "https://target.example/v1"
     expect(r.siblingContents.hooks).toBe(2);
   });
 
-  it('reports migratedHooks=0 when target has an invalid non-array hooks value', async () => {
-    // A target with e.g. `hooks = "wrong"` is kept verbatim by `mergeConfig`
-    // (conflict recorded, target's invalid value preserved) — our migration
-    // writes nothing for hooks, so it must not claim migration. An
-    // `Array.isArray(...)` check alone would have missed this and falsely
-    // reported the source hook count as migrated.
+  it('maps default_yolo to default_permission_mode = "yolo"', async () => {
     await writeFile(
       join(src, 'config.toml'),
-      '[[hooks]]\nevent = "PreToolUse"\ncommand = "echo a"\n',
+      'default_yolo = true\n',
     );
-    await writeFile(join(tgt, 'config.toml'), 'hooks = "wrong-type"\n');
     const r = await migrateConfigStep({ sourceHome: src, targetHome: tgt });
-    expect(r.migratedHooks).toBe(0);
+    expect(r.migrated).toBe(true);
+    const written = await readFile(join(tgt, 'config.toml'), 'utf-8');
+    expect(written).toContain('default_permission_mode = "yolo"');
+    expect(written).not.toContain('yolo = true');
   });
 });

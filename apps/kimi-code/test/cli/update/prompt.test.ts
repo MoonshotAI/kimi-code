@@ -1,9 +1,12 @@
+import { EventEmitter } from 'node:events';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   createInstallPromptChoices,
   getDefaultInstallPromptSelection,
   moveInstallPromptSelection,
+  promptForInstallConfirmation,
 } from '#/cli/update/prompt';
 
 describe('install prompt helpers', () => {
@@ -26,5 +29,44 @@ describe('install prompt helpers', () => {
     expect(moveInstallPromptSelection(0, 'up', 2)).toBe(0);
     expect(moveInstallPromptSelection(0, 'down', 2)).toBe(1);
     expect(moveInstallPromptSelection(1, 'down', 2)).toBe(1);
+  });
+});
+
+describe('promptForInstallConfirmation', () => {
+  it('renders changelog hyperlink in the prompt output', async () => {
+    const CHANGELOG_URL = 'https://moonshotai.github.io/kimi-code/en/release-notes/changelog.html';
+
+    const input = Object.assign(new EventEmitter(), {
+      isRaw: false,
+      setRawMode: () => {},
+      resume: () => {},
+      off: () => {},
+    }) as unknown as NodeJS.ReadStream;
+
+    const outputChunks: string[] = [];
+    const output = {
+      write: (chunk: string) => {
+        outputChunks.push(chunk);
+        return true;
+      },
+    } as NodeJS.WriteStream;
+
+    const promptPromise = promptForInstallConfirmation({
+      currentVersion: '0.4.0',
+      target: { version: '0.5.0' },
+      installCommand: 'npm install -g @moonshot-ai/kimi-code@0.5.0',
+      installSource: 'npm-global',
+      input,
+      output,
+    });
+
+    // Emit keypress to trigger initial render then exit
+    input.emit('keypress', '', { name: 'escape' });
+
+    await promptPromise;
+
+    const rendered = outputChunks.join('');
+    expect(rendered).toContain(CHANGELOG_URL);
+    expect(rendered).toContain('View changelog');
   });
 });
