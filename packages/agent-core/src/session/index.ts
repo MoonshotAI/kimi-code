@@ -426,6 +426,7 @@ export class Session {
       mcp: this.mcp,
       backgroundMaxRunningTasks: this.config.background?.maxRunningTasks,
       backgroundSessionDir: homedir,
+      cronSessionDir: homedir,
       permission: this.permissionOptions(parentAgentId, config.permission),
       telemetry: this.telemetry,
       log: this.log.createChild({ agentId: id }),

@@ -1,10 +1,12 @@
 /**
- * CronScheduler — the session-only scheduling engine.
+ * CronScheduler — the scheduling engine.
  *
  * This is the bottom of the cron stack: it knows about tasks, clocks,
  * jitter, and "is the REPL idle?", but nothing about agents, tools,
- * persistence, locks, or the file system. The Phase 2 file-backed
- * variant will extend this same module rather than fork it.
+ * persistence, locks, or the file system. Persistence is layered on
+ * top by `CronManager` writing through to per-id JSON files; the
+ * scheduler stays oblivious so its tick-loop tests can run with a
+ * pure in-memory `source()`.
  *
  * Design notes worth keeping near the code:
  *
@@ -156,7 +158,13 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
   const parsedCache = new Map<string, ParsedCronExpression>();
 
   // Per-task wall-clock baseline for "where did we last look from".
-  // NOT persisted — restart starts from `task.createdAt` as the floor.
+  // NOT persisted — after `kimi resume` this map is empty, so the
+  // baseline falls back to `task.createdAt` and `countCoalesced`
+  // collapses any fires that landed during downtime into a single
+  // delivery. Persisting a `lastFiredAt` would risk skipping a
+  // legitimately-due fire because the stored value said "fired
+  // recently"; coalesce semantics make missing one fire across a
+  // restart acceptable, missed fires from bad bookkeeping are not.
   const lastSeenAt = new Map<string, number>();
 
   // Defensive re-entry guard for the duration of a single tick.

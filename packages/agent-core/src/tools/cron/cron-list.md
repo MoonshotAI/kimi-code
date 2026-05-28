@@ -43,9 +43,9 @@ Guidelines:
 
 - This tool is read-only and never mutates state, so it is always
   safe to call (including in plan mode).
-- The empty case returns `cron_jobs: 0\nNo cron jobs scheduled.`. All
-  cron tasks live only in this session — there is no cross-session
-  persistence.
+- The empty case returns `cron_jobs: 0\nNo cron jobs scheduled.`. Cron
+  tasks survive a `kimi resume` of the same session but do not bleed
+  into new sessions.
 - After a context compaction, or whenever you are unsure which cron
   jobs are live, call this tool to re-enumerate them rather than
   guessing ids from earlier in the conversation.

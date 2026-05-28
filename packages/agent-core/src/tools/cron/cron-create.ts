@@ -3,11 +3,12 @@
  * at a future wall-clock time, either once (`recurring: false`) or on a
  * cron cadence (`recurring: true`, the default).
  *
- * Phase 1 / P1.4 is session-only — tasks live in `SessionCronStore` and
- * die when the process exits. A durable / file-backed branch is planned
- * for Phase 2 but is intentionally absent from the public surface until
- * the storage layer exists; exposing a `durable` flag now would mislead
- * the model into promising persistence we can't yet deliver.
+ * Tasks live in `SessionCronStore` and are mirrored to
+ * `<sessionDir>/cron/<id>.json` via `CronManager.addTask`, so a
+ * `kimi resume` of the same session reloads them and the scheduler
+ * picks up where it left off (fires that fell during downtime are
+ * collapsed into a single delivery with `coalescedCount`). Tasks do
+ * NOT carry over into a brand-new session.
  *
  * The tool itself is pure validation + bookkeeping; the firing /
  * coalesce / jitter logic lives in `CronScheduler` (one layer below)
@@ -15,7 +16,7 @@
  *
  *   1. validate the request (killswitch, cron parse, 5-year window,
  *      session cap, byte-length cap);
- *   2. add it to the manager's session store;
+ *   2. add it to the manager (which writes through to disk on success);
  *   3. report back the post-jitter `nextFireAt` and a human-readable
  *      schedule for the model's benefit;
  *   4. emit `cron_scheduled` telemetry through the manager (the tool
@@ -213,14 +214,11 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
           };
         }
 
-        const task = this.manager.store.add(
-          {
-            cron: normalizedCron,
-            prompt: args.prompt,
-            recurring,
-          },
-          nowMs,
-        );
+        const task = this.manager.addTask({
+          cron: normalizedCron,
+          prompt: args.prompt,
+          recurring,
+        });
 
         // Post-jitter next-fire for the response. `computeNextCronRun`
         // returns `null` if there's no fire in the 5-year window (we

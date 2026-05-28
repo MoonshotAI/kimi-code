@@ -65,13 +65,18 @@ Bench / acceptance tests can set `KIMI_CRON_NO_JITTER=1` to disable jitter entir
 
 Use `recurring: false` for "remind me at X" style requests, single deadlines, "in N minutes do Y", and any task that should not repeat. Use `recurring: true` for periodic polling (CI status, build watchers, scheduled reports), workday rituals, and anything the user explicitly described as recurring.
 
-## Session-only
+## Session lifetime
 
-Cron tasks live only in this CLI process. When the process exits, all
-scheduled tasks vanish — there is no cross-restart persistence in this
-build. If the user asks for something that needs to survive restarts,
-tell them so explicitly rather than silently scheduling something that
-will disappear.
+Cron tasks live in the current kimi CLI session. When you exit, they
+are persisted under the session homedir; the next `kimi resume` of the
+same session reloads them and the scheduler resumes from each task's
+`createdAt`. Fire times that fell during the offline window are
+collapsed into a single delivery via `coalescedCount` (and recurring
+tasks past their 7-day window arrive with `stale: true` as their final
+delivery).
+
+Tasks do **not** carry over into a brand-new session — they are scoped
+to the resumed session id, not to the working directory.
 
 ## Returned fields
 

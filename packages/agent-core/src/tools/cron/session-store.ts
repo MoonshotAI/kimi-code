@@ -1,8 +1,11 @@
 /**
  * SessionCronStore — in-memory cron task store for a single CLI session.
  *
- * Tasks added here live only for the lifetime of the current process;
- * on exit they vanish. There is no on-disk persistence in this build.
+ * The store itself is purely in-memory; cross-restart persistence is
+ * layered on top by `CronManager.addTask` / `removeTasks`, which
+ * mirror every mutation to `<sessionDir>/cron/<id>.json`. On resume
+ * the manager calls {@link adopt} to put each persisted task back into
+ * the store with its original id and `createdAt` preserved.
  *
  * The store is intentionally clock-agnostic: it does NOT call
  * `Date.now()` itself. Callers pass `nowMs` (which the cron manager
@@ -62,6 +65,22 @@ export class SessionCronStore {
     };
     this.tasks.set(id, task);
     return task;
+  }
+
+  /**
+   * Insert a previously-persisted task verbatim — id and createdAt
+   * stay as they are on disk. Used by `CronManager.loadFromDisk()` to
+   * rehydrate the store on resume. Unlike {@link add}, this does NOT
+   * generate a new id; the caller is responsible for ensuring the id
+   * matches the expected shape (the persistence layer's regex /
+   * shape-guard handle this upstream).
+   *
+   * Overwrites any existing in-memory task with the same id — reload
+   * is a "replace" operation, not a "merge". Callers that want merge
+   * semantics should clear the store first.
+   */
+  adopt(task: CronTask): void {
+    this.tasks.set(task.id, task);
   }
 
   /** Returns the task or `undefined`. */

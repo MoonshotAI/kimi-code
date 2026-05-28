@@ -1,5 +1,5 @@
 /**
- * CronManager — Agent-facing facade for the session-only cron scheduler.
+ * CronManager — Agent-facing facade for the cron scheduler.
  *
  * This layer sits between the raw `CronScheduler` (which knows nothing
  * about agents) and the rest of the agent runtime (Agent / turn /
@@ -12,11 +12,16 @@
  *     duplicate idle flag — the turn machinery already knows;
  *   - translate a fired `CronTask` into a `steer(...)` call carrying a
  *     `CronJobOrigin`, plus the `cron_fired` telemetry event;
- *   - provide a `handleMissed(...)` entry point that Phase 2 boot-time
- *     missed-task detection (P2.7 / P2.11) will call. In Phase 1 the
- *     entry point is reachable but never invoked from the framework —
- *     it is exposed now so the API surface stays stable across the
- *     phase boundary.
+ *   - mirror every store mutation to `<sessionDir>/cron/<id>.json`
+ *     (via {@link addTask} / {@link removeTasks}) so that `kimi resume`
+ *     can call {@link loadFromDisk} to rehydrate previously-scheduled
+ *     tasks. When no `sessionDir` is supplied (subagents, tests,
+ *     ephemeral sessions) the manager stays purely in-memory.
+ *   - provide a `handleMissed(...)` entry point that future boot-time
+ *     missed-task notification will call. Today the scheduler's
+ *     `coalescedCount` semantics handle missed fires inline, so this
+ *     entry point is not wired by the framework — it stays exposed so
+ *     adding a banner later does not require API churn here.
  *
  * The manager does NOT read `Date.now()` directly anywhere; every
  * wall-clock read goes through `this.clocks.wallNow()`. The
@@ -41,6 +46,7 @@ import {
   type ClockSources,
 } from '../../tools/cron/clock';
 import { renderCronFireXml } from '../../tools/cron/cron-fire-xml';
+import { createCronPersistStore } from '../../tools/cron/persist';
 import { SessionCronStore } from '../../tools/cron/session-store';
 import {
   createCronScheduler,
@@ -53,6 +59,9 @@ import {
   CRON_SCHEDULED,
 } from '../../tools/cron/telemetry-events';
 import type { CronTask } from '../../tools/cron/types';
+import type { PerIdJsonStore } from '../../utils/per-id-json-store';
+
+import type { SessionCronTaskInit } from '../../tools/cron/session-store';
 
 /**
  * Threshold past which a recurring task is flagged `stale: true` on its
@@ -82,10 +91,21 @@ export interface CronManagerOptions {
    * means "no automatic timer — caller drives `tick()` manually".
    */
   readonly pollIntervalMs?: number | null;
+
+  /**
+   * Per-session directory used to persist cron tasks across
+   * `kimi resume`. When set, `addTask` / `removeTasks` mirror the
+   * in-memory store to `<sessionDir>/cron/<id>.json` and
+   * `loadFromDisk()` re-populates the store on resume. When omitted
+   * (subagents, tests, ephemeral sessions), the manager stays purely
+   * in-memory and `loadFromDisk()` is a no-op.
+   */
+  readonly sessionDir?: string;
 }
 
 export class CronManager {
-  /** Session-only task store. Empty at construction. */
+  /** In-memory task store. Empty at construction; populated by
+   * {@link addTask} (and {@link loadFromDisk} on resume). */
   readonly store: SessionCronStore;
 
   /**
@@ -112,6 +132,24 @@ export class CronManager {
    */
   private sigusr1Handler: NodeJS.SignalsListener | null = null;
 
+  /**
+   * File-backed mirror of {@link store}. `undefined` when no
+   * `sessionDir` was supplied — the manager then behaves as pure
+   * in-memory, matching pre-persistence semantics. When defined,
+   * `addTask` / `removeTasks` schedule fire-and-forget writes so a
+   * later `kimi resume` can reload via {@link loadFromDisk}.
+   */
+  private readonly persistStore: PerIdJsonStore<CronTask> | undefined;
+
+  /**
+   * Per-id serializer for persistence writes. Prevents a fast
+   * `add` → `remove` sequence on the same id from racing each other on
+   * the rename — the rm must observe the prior write's renamed file.
+   * Empty between bursts; entries are deleted once their tail promise
+   * settles so the map cannot grow unboundedly with churn.
+   */
+  private readonly persistQueues: Map<string, Promise<void>> = new Map();
+
   constructor(agent: Agent, opts: CronManagerOptions = {}) {
     this.agent = agent;
     this.store = new SessionCronStore();
@@ -119,6 +157,10 @@ export class CronManager {
       opts.clocks ??
       resolveClockSources(process.env['KIMI_CRON_CLOCK']) ??
       SYSTEM_CLOCKS;
+    this.persistStore =
+      opts.sessionDir === undefined
+        ? undefined
+        : createCronPersistStore(opts.sessionDir);
 
     this.scheduler = createCronScheduler({
       clocks: this.clocks,
@@ -127,7 +169,7 @@ export class CronManager {
       isKilled: () => process.env['KIMI_DISABLE_CRON'] === '1',
       onFire: (task, ctx) => this.handleFire(task, ctx),
       removeOneShot: (id) => {
-        this.store.remove([id]);
+        this.removeTasks([id]);
       },
       // P1.8: `KIMI_CRON_MANUAL_TICK=1` forces the scheduler into
       // manual-drive mode (no setInterval), so bench / time-injected
@@ -143,6 +185,109 @@ export class CronManager {
   }
 
   /**
+   * Add a fresh task to the in-memory store and, when persistence is
+   * attached, mirror the new record to `<sessionDir>/cron/<id>.json`.
+   *
+   * The store call is synchronous (CronCreate needs the id for its
+   * response); the on-disk write is fire-and-forget so a slow disk
+   * never blocks the tool's reply. Per-id queueing serializes
+   * concurrent writes on the same id (e.g. add → stale auto-expire) so
+   * the rm cannot race the rename.
+   *
+   * Persistence failures are logged via `agent.log.warn` and swallowed
+   * — a flaky disk drops cross-resume durability but must not crash
+   * the agent loop.
+   */
+  addTask(init: SessionCronTaskInit): CronTask {
+    const task = this.store.add(init, this.clocks.wallNow());
+    this.persistEnqueue(task.id, () =>
+      this.persistStore!.write(task.id, task),
+    );
+    return task;
+  }
+
+  /**
+   * Remove a batch of tasks from the in-memory store and mirror each
+   * deletion to disk (when persistence is attached). Returns the
+   * subset of ids that were actually present, matching
+   * `SessionCronStore.remove`'s contract — callers (CronDelete /
+   * scheduler one-shot cleanup / stale auto-expire) read this to
+   * decide whether to emit telemetry.
+   *
+   * Persistence failures are logged and swallowed; cross-resume the
+   * worst case is a ghost entry that gets dropped on the next
+   * `list()` shape-guard pass.
+   */
+  removeTasks(ids: readonly string[]): readonly string[] {
+    const removed = this.store.remove(ids);
+    for (const id of removed) {
+      this.persistEnqueue(id, () => this.persistStore!.remove(id));
+    }
+    return removed;
+  }
+
+  /**
+   * Rehydrate the in-memory store from `<sessionDir>/cron/` after
+   * `kimi resume`. No-op when persistence is not attached. Idempotent:
+   * clears the in-memory map and re-inserts every record on disk.
+   *
+   * Tasks are inserted via {@link SessionCronStore.adopt} so the
+   * original `id` and `createdAt` survive — `createdAt` is the
+   * scheduler's recurring baseline and the 7-day stale judgment's
+   * input, so a regenerated value would corrupt both.
+   */
+  async loadFromDisk(): Promise<void> {
+    if (this.persistStore === undefined) return;
+    const tasks = await this.persistStore.list();
+    this.store.clear();
+    for (const task of tasks) {
+      this.store.adopt(task);
+    }
+  }
+
+  /**
+   * Serialize per-id persistence writes. Concurrent mutations on the
+   * same id (uncommon but reachable via `add` immediately followed by
+   * stale auto-expire) would otherwise race on the rename — atomicWrite
+   * is per-call atomic, not per-id ordered. Each id's chain is dropped
+   * from the map once it settles so the map size tracks live in-flight
+   * writes, not lifetime churn.
+   */
+  private persistEnqueue(id: string, work: () => Promise<void>): void {
+    if (this.persistStore === undefined) return;
+    const prev = this.persistQueues.get(id) ?? Promise.resolve();
+    const next = prev
+      .catch(() => {})
+      .then(() => work())
+      .catch((err: unknown) => {
+        this.agent.log?.warn?.('cron persist failed', err);
+      })
+      .finally(() => {
+        if (this.persistQueues.get(id) === next) {
+          this.persistQueues.delete(id);
+        }
+      });
+    this.persistQueues.set(id, next);
+  }
+
+  /**
+   * Wait for every pending persistence write / remove scheduled via
+   * {@link addTask} / {@link removeTasks} to settle. Called from
+   * {@link stop} for graceful session shutdown and exposed publicly so
+   * tests can synchronise on disk-visible state without polling.
+   *
+   * Errors are already swallowed by `persistEnqueue`, so this never
+   * rejects.
+   */
+  async flushPersist(): Promise<void> {
+    // Snapshot the chain promises rather than the map itself — the
+    // `.finally` cleanup deletes entries while we await, and a live
+    // map iteration would observe the deletions and miss tails.
+    const inFlight = Array.from(this.persistQueues.values());
+    await Promise.allSettled(inFlight);
+  }
+
+  /**
    * Begin the scheduler's auto-tick loop and bind the SIGUSR1 manual-tick
    * hook (P1.8). Idempotent: a second call is a no-op so the boot
    * sequence and tests can opt into "ensure started" without bookkeeping.
@@ -155,14 +300,21 @@ export class CronManager {
   }
 
   /**
-   * Stop the scheduler, clear in-flight bookkeeping, and unbind the
-   * SIGUSR1 handler. Idempotent and signal-handler-safe — multiple
-   * vitest files exercising the manager must not leave a SIGUSR1 listener
-   * dangling on the shared process.
+   * Stop the scheduler, drain pending persistence writes, clear
+   * in-flight bookkeeping, and unbind the SIGUSR1 handler. Idempotent
+   * and signal-handler-safe — multiple vitest files exercising the
+   * manager must not leave a SIGUSR1 listener dangling on the shared
+   * process.
+   *
+   * Draining persistence on shutdown matters for production: a session
+   * `close()` immediately after a CronCreate would otherwise tear the
+   * process down before the JSON file lands on disk, and the task
+   * would be missing from the resume's `loadFromDisk()`.
    */
   async stop(): Promise<void> {
     this.unbindSigusr1();
     await this.scheduler.stop();
+    await this.flushPersist();
     this.started = false;
   }
 
@@ -261,16 +413,20 @@ export class CronManager {
     // (above) and is then dropped. Emit `cron_deleted` symmetrically
     // with manual deletion so dashboards see the lifecycle close.
     if (stale && task.recurring !== false) {
-      this.store.remove([task.id]);
+      this.removeTasks([task.id]);
       this.emitDeleted(task.id);
     }
   }
 
   /**
-   * Called from P2.7 / P2.11 when boot-time missed one-shot tasks are
-   * detected. Stubbed in P1.3 because Phase 1 has no persistence — but
-   * the API surface is final so the consumer (file-backed missed-task
-   * detector) can land without touching this class again.
+   * Reserved hook for an explicit "you missed N fires while offline"
+   * banner. Today the scheduler's `coalescedCount` semantics already
+   * communicate missed fires inside the `cron_job` envelope (and
+   * recurring tasks past 7 days arrive with `stale: true`), so the
+   * resume path does NOT invoke this from the framework. The method
+   * stays exposed because adding a separate user-facing banner later
+   * — e.g. for one-shots whose fire times all landed during a long
+   * outage — should not require an API change here.
    *
    * The `renderMissedNotification` callback is supplied by the caller
    * (rather than imported here) so this module stays free of UI / copy

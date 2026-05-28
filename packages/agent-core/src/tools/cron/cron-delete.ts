@@ -47,10 +47,11 @@ import CRON_DELETE_DESCRIPTION from './cron-delete.md';
 // ── Constants ────────────────────────────────────────────────────────
 
 /**
- * Same id shape used by `SessionCronStore` (and Phase 2's file store).
- * We re-check here so a malformed id never reaches the store — the
- * regex is the single source of truth for the on-the-wire id format and
- * an early reject keeps the error message close to the user's input.
+ * Same id shape used by `SessionCronStore` and the on-disk persistence
+ * layer. We re-check here so a malformed id never reaches the store —
+ * the regex is the single source of truth for the on-the-wire id
+ * format and an early reject keeps the error message close to the
+ * user's input.
  */
 const ID_PATTERN = /^[0-9a-f]{8}$/;
 
@@ -91,7 +92,7 @@ export class CronDeleteTool implements BuiltinTool<CronDeleteInput> {
       description: `Deleting cron ${args.id}`,
       approvalRule: this.name,
       execute: async () => {
-        const removed = this.manager.store.remove([args.id]);
+        const removed = this.manager.removeTasks([args.id]);
         if (removed.length === 0) {
           // Not found is reported as an error so the model can correct
           // itself — see the module header for the rationale. We

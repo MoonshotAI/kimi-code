@@ -77,6 +77,13 @@ export interface AgentConfig {
   readonly hookEngine?: HookEngine;
   readonly backgroundMaxRunningTasks?: number;
   readonly backgroundSessionDir?: string;
+  /**
+   * Per-session directory used by `CronManager` to persist scheduled
+   * tasks across `kimi resume`. When omitted the cron stack stays
+   * purely in-memory (subagents, ephemeral sessions). Set in parallel
+   * with {@link backgroundSessionDir} from the session homedir.
+   */
+  readonly cronSessionDir?: string;
   readonly permission?: PermissionManagerOptions | undefined;
   /** Parent logger; the agent appends its own ctx (agentId already bound by session). */
   readonly log?: Logger;
@@ -165,7 +172,14 @@ export class Agent {
       maxRunningTasks: config.backgroundMaxRunningTasks,
       sessionDir: config.backgroundSessionDir,
     });
-    this.cron = new CronManager(this);
+    this.cron = new CronManager(this, {
+      // Subagents stay in-memory: their default profiles don't expose
+      // cron tools, so attaching a sessionDir would only litter the
+      // subagent homedir with an empty `cron/` directory on first
+      // mkdir. Main / non-sub agents persist when the session supplied
+      // a directory.
+      sessionDir: this.type !== 'sub' ? config.cronSessionDir : undefined,
+    });
     if (this.type !== 'sub') {
       // Skip auto-tick for subagents: each session can spawn many
       // subagents, and stacking 1s setInterval timers + SIGUSR1
@@ -272,6 +286,12 @@ export class Agent {
     const result = await this.records.replay();
     await this.background.loadFromDisk();
     await this.background.reconcile();
+    // Rehydrate cron tasks scheduled in the previous CLI invocation.
+    // No-op when this agent was constructed without a `cronSessionDir`
+    // (subagents, ephemeral sessions). The scheduler's `createdAt`-based
+    // baseline then handles any fire times missed during downtime via
+    // `coalescedCount` (and the 7-day stale flag) without further wiring.
+    await this.cron.loadFromDisk();
     this.turn.finishResume();
     return result;
   }
