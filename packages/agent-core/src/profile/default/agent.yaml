@@ -15,6 +15,9 @@ tools:
   - TaskList
   - TaskOutput
   - TaskStop
+  - CronCreate
+  - CronList
+  - CronDelete
   - ReadMediaFile
   - TodoList
   - Skill

@@ -374,6 +374,9 @@ export class ToolManager {
         new b.TaskListTool(background),
         new b.TaskOutputTool(background),
         new b.TaskStopTool(background),
+        this.agent.cron && new b.CronCreateTool(this.agent.cron),
+        this.agent.cron && new b.CronListTool(this.agent.cron),
+        this.agent.cron && new b.CronDeleteTool(this.agent.cron),
         this.agent.skills !== undefined &&
           this.agent.skills.registry.listInvocableSkills().length > 0 &&
           new b.SkillTool(this.agent),

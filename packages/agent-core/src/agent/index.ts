@@ -29,6 +29,7 @@ import {
 import type { PromisableMethods } from '../utils/types';
 import { BackgroundManager } from './background';
 import { FullCompaction, type CompactionStrategy } from './compaction';
+import { CronManager } from './cron';
 import { ConfigState } from './config';
 import { ContextMemory } from './context';
 import { HookEngine } from '../session/hooks';
@@ -73,6 +74,7 @@ export interface AgentOptions {
   readonly skills?: SkillRegistry;
   readonly mcp?: McpConnectionManager;
   readonly hookEngine?: HookEngine;
+  readonly cronSessionDir?: string;
   readonly permission?: PermissionManagerOptions | undefined;
   readonly log?: Logger;
   readonly telemetry?: TelemetryClient | undefined;
@@ -106,6 +108,7 @@ export class Agent {
   readonly usage: UsageRecorder;
   readonly tools: ToolManager;
   readonly background: BackgroundManager;
+  readonly cron: CronManager | null;
   readonly replayBuilder: ReplayBuilder;
   readonly log: Logger;
 
@@ -125,9 +128,7 @@ export class Agent {
     this.subagentHost = options.subagentHost;
     this.mcp = options.mcp;
     this.hooks = options.hookEngine;
-
     this.type = options.type ?? 'main';
-
     this.rpc = options.rpc;
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.blobStore = options.homedir
@@ -155,6 +156,7 @@ export class Agent {
     this.usage = new UsageRecorder(this);
     this.tools = new ToolManager(this);
     this.background = new BackgroundManager(this);
+    this.cron = this.type === 'sub' ? null : new CronManager(this);
     this.replayBuilder = new ReplayBuilder(this);
   }
 
@@ -252,6 +254,7 @@ export class Agent {
     const result = await this.records.replay();
     await this.background.loadFromDisk();
     await this.background.reconcile();
+    await this.cron?.loadFromDisk();
     this.turn.finishResume();
     return result;
   }
