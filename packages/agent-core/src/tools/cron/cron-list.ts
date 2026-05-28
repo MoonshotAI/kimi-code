@@ -85,6 +85,7 @@ export class CronListTool implements BuiltinTool<CronListInput> {
   resolveExecution(_args: CronListInput): ToolExecution {
     return {
       description: 'Listing scheduled cron jobs',
+      approvalRule: this.name,
       execute: async () => {
         // Snapshot the store once and pin "now" from the manager's
         // clock — keeping both reads inside the same execute() call
@@ -128,7 +129,20 @@ export class CronListTool implements BuiltinTool<CronListInput> {
     try {
       const parsed = parseCronExpression(task.cron);
       humanSchedule = cronToHuman(parsed);
-      const ideal = computeNextCronRun(parsed, nowMs);
+      // Match the baseline the scheduler uses when picking the next
+      // ideal fire. One-shots never advance `lastSeenAt` (they are
+      // removed on delivery), so the scheduler always re-computes
+      // their next fire from `task.createdAt` — meaning a one-shot
+      // that was scheduled for 09:00 and is listed at 09:05 is still
+      // pending delivery of *today's* 09:00 slot. Computing from
+      // `nowMs` would make the list report "tomorrow 09:00" and the
+      // model would believe today's reminder had already shipped.
+      // Recurring tasks use the scheduler's internal `lastSeenAt`,
+      // which we cannot see from here; falling back to `nowMs` for
+      // them keeps the drift bounded by one tick interval.
+      const baseFromMs =
+        task.recurring === false ? task.createdAt : nowMs;
+      const ideal = computeNextCronRun(parsed, baseFromMs);
       if (ideal !== null) {
         // Match the jitter path CronCreate took when scheduling the
         // task. Recurring jobs shift forward; one-shots only shift

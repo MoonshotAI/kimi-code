@@ -236,4 +236,46 @@ describe('CronListTool', () => {
       stale: false"
     `);
   });
+
+  it('one-shot nextFireAt is anchored at createdAt, not nowMs (pending today’s slot)', async () => {
+    // Scenario from the Codex review: a daily one-shot scheduled for
+    // 12:00 that the agent could not yet deliver (busy turn, manual
+    // tick mode) and is listed 5 minutes after the ideal slot. The
+    // scheduler will still fire today's 12:00 slot from createdAt, so
+    // CronList must report today's 12:00 — not tomorrow's — to stay
+    // consistent with the pending work. Listing tomorrow would teach
+    // the LLM that today's reminder has shipped, even though the
+    // scheduler is still planning to deliver it.
+    const stub = createAgentStub();
+    const harness = createClocks();
+    const manager = new CronManager(stub.agent, {
+      clocks: harness.clocks,
+      pollIntervalMs: null,
+    });
+    const tool = new CronListTool(manager);
+
+    // Anchor "createdAt" at 11:55 local, then advance "now" to 12:05
+    // local without ticking. The scheduler hasn't fired yet (this
+    // test never calls tick); the list must report 12:00 today.
+    const today1155 = new Date();
+    today1155.setHours(11, 55, 0, 0);
+    harness.setNow(today1155.getTime());
+    const createdAt = harness.now();
+    manager.store.add(
+      { cron: '0 12 * * *', prompt: 'noon-pending', recurring: false },
+      createdAt,
+    );
+    harness.advance(10 * 60_000); // now = 12:05
+
+    // Build the expected today-12:00 ISO from the same local TZ the
+    // tool will render in.
+    const expectedToday12 = new Date(today1155);
+    expectedToday12.setHours(12, 0, 0, 0);
+
+    const out = assertSuccess(await runTool(tool, {}));
+    const match = /^nextFireAt: (.+)$/m.exec(out);
+    expect(match).not.toBeNull();
+    const renderedMs = Date.parse(match![1]!);
+    expect(renderedMs).toBe(expectedToday12.getTime());
+  });
 });

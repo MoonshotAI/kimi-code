@@ -107,7 +107,7 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
     // 1. Global killswitch — checked first so a flipped env stops all
     //    further work, including the cron parse which can throw on
     //    legitimately-malformed input.
-    if (process.env.KIMI_DISABLE_CRON === '1') {
+    if (process.env['KIMI_DISABLE_CRON'] === '1') {
       return {
         isError: true,
         output: 'Cron scheduling is disabled (KIMI_DISABLE_CRON=1).',
@@ -132,9 +132,12 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
 
     // 3. Reject "legal but never fires within 5 years" — the same
     //    bound the scheduler uses internally to refuse to spin.
-    //    `0 0 31 2 *` is the canonical example.
-    const nowMs = this.manager.clocks.wallNow();
-    if (!hasFireWithinYears(parsed, 5, nowMs)) {
+    //    `0 0 31 2 *` is the canonical example. The exact `nowMs` does
+    //    not matter for this judgment (it only changes the search
+    //    window by < 5 years), so we read it here at prepare time and
+    //    re-read inside `execute()` for the actual schedule anchor.
+    const nowAtPrepare = this.manager.clocks.wallNow();
+    if (!hasFireWithinYears(parsed, 5, nowAtPrepare)) {
       return {
         isError: true,
         output: `Cron expression ${JSON.stringify(
@@ -143,7 +146,10 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
       };
     }
 
-    // 4. Session-level cap.
+    // 4. Session-level cap — preliminary check. We re-check inside
+    //    `execute()` because manual-approval mode can delay execution
+    //    long enough for parallel CronCreate calls to all pass this
+    //    gate and then collectively breach the cap on insert.
     if (this.manager.store.list().length >= MAX_CRON_JOBS_PER_SESSION) {
       return {
         isError: true,
@@ -176,7 +182,28 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
       description: recurring
         ? `Scheduling cron ${args.cron}`
         : `Scheduling one-shot ${args.cron}`,
+      approvalRule: this.name,
       execute: async () => {
+        // Anchor the schedule to the moment of execution, not the
+        // moment of preparation. Manual-approval mode can leave
+        // resolveExecution() and execute() minutes apart; inserting
+        // with a stale `nowMs` would let the scheduler treat a fresh
+        // one-shot as already overdue and fire it on the next tick
+        // with a phantom `coalescedCount > 1`.
+        const nowMs = this.manager.clocks.wallNow();
+
+        // Re-check the session cap against the live store size so two
+        // concurrently-prepared CronCreate calls cannot collectively
+        // breach it after both passed the prepare-time check.
+        if (this.manager.store.list().length >= MAX_CRON_JOBS_PER_SESSION) {
+          return {
+            isError: true,
+            output: `Cron job cap reached (max ${String(
+              MAX_CRON_JOBS_PER_SESSION,
+            )} per session).`,
+          };
+        }
+
         const task = this.manager.store.add(
           {
             cron: args.cron,

@@ -163,7 +163,7 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
   }
 
   function debugLog(message: string): void {
-    if (process.env.KIMI_CRON_DEBUG === '1') {
+    if (process.env['KIMI_CRON_DEBUG'] === '1') {
       process.stderr.write(`[cron/scheduler] ${message}\n`);
     }
   }
@@ -187,27 +187,52 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
   }
 
   /**
-   * Count how many ideal fires fall in `(firstFireMs - 1, nowMs]`.
+   * Count how many ideal fires fall in `(firstFireMs, nowMs]` whose
+   * **jittered delivery time** is also ≤ `nowMs`. Returns the count
+   * plus the timestamp of the last ideal occurrence that satisfied the
+   * jittered-due test — used by the caller as the new `lastSeenAt`
+   * baseline so the next scheduler pass still sees any later
+   * occurrence whose jittered delivery slipped past `nowMs`.
+   *
+   * Counting against `nowMs` alone (without re-applying jitter) over-
+   * counted on jobs whose jitter offset pushed the next ideal fire
+   * past the scheduler wake-up window; the caller would then advance
+   * `lastSeenAt` past that occurrence and the jittered delivery would
+   * never happen. The fix is to gate the counting loop on the same
+   * jitter the delivery path uses.
+   *
    * Always returns at least 1 — every actual fire is one occurrence.
    * Capped at MAX_COALESCE_ITERATIONS as a defence against runaway
    * loops; an expression that produces more than 10 000 fires in the
    * gap is degenerate and the LLM only needs the order of magnitude.
    */
   function countCoalesced(
+    task: CronTask,
     parsed: ParsedCronExpression,
     firstFireMs: number,
     nowMs: number,
-  ): number {
+  ): { count: number; lastDueMs: number } {
     let count = 1;
     let cursor = firstFireMs;
+    let lastDueMs = firstFireMs;
     while (count < MAX_COALESCE_ITERATIONS) {
       const next = computeNextCronRun(parsed, cursor);
       if (next === null) break;
       if (next > nowMs) break;
+      // The scheduler delivers at the jittered time, not the ideal
+      // one. Counting an ideal fire whose jitter pushes its delivery
+      // past `nowMs` would leak the occurrence — the caller advances
+      // `lastSeenAt` past it and the next tick can never re-pick it.
+      const jitteredNext =
+        task.recurring === false
+          ? oneShotJitteredNextCronRunMs(task, next)
+          : jitteredNextCronRunMs(task, parsed, next);
+      if (jitteredNext > nowMs) break;
       count++;
       cursor = next;
+      lastDueMs = next;
     }
-    return count;
+    return { count, lastDueMs };
   }
 
   function tick(): void {
@@ -243,10 +268,19 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
 
           // Due — compute coalescedCount starting from the first
           // ideal fire (not the jittered one — jitter only shifts the
-          // delivery point, not the underlying schedule).
+          // delivery point, not the underlying schedule). One-shot
+          // tasks are removed after a single delivery and must always
+          // report `coalescedCount: 1`; multi-occurrence semantics
+          // make no sense for "remind me at X" reminders that were
+          // simply slept-through.
           const ideal = computeNextCronRun(parsed, baseFromMs);
-          const coalescedCount =
-            ideal === null ? 1 : Math.max(1, countCoalesced(parsed, ideal, now));
+          let coalescedCount = 1;
+          let lastDueMs: number | null = null;
+          if (task.recurring !== false && ideal !== null) {
+            const result = countCoalesced(task, parsed, ideal, now);
+            coalescedCount = Math.max(1, result.count);
+            lastDueMs = result.lastDueMs;
+          }
 
           inFlight.add(task.id);
           try {
@@ -272,9 +306,15 @@ export function createCronScheduler(opts: CronSchedulerOptions): CronScheduler {
             }
             lastSeenAt.delete(task.id);
           } else {
-            // Recurring: advance baseline so the next tick computes
-            // the next-after-now ideal fire.
-            lastSeenAt.set(task.id, now);
+            // Recurring: advance the baseline to the last ideal fire
+            // whose jittered delivery has actually completed (or to
+            // `now` if no ideal fires were enumerated). Using the
+            // *delivered* timestamp — rather than `now` — keeps any
+            // later ideal fire whose jitter pushes its delivery past
+            // `now` reachable on the next tick. If `lastDueMs` is
+            // null (degenerate cron / no enumerated ideal) we fall
+            // back to `now`, matching the original behaviour.
+            lastSeenAt.set(task.id, lastDueMs ?? now);
           }
         } catch (error) {
           // A single bad task must not stop the rest of the loop.

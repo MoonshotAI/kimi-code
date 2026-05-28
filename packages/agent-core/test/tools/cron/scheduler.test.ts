@@ -101,21 +101,21 @@ function makeTask(overrides: Partial<CronTask> & { cron: string; createdAt: numb
   };
 }
 
-const ORIGINAL_ENV_NO_JITTER = process.env.KIMI_CRON_NO_JITTER;
+const ORIGINAL_ENV_NO_JITTER = process.env['KIMI_CRON_NO_JITTER'];
 
 describe('createCronScheduler — tick behaviour', () => {
   beforeEach(() => {
     // Pin exact fire times in every test by default. The single test
     // that exercises jitter restores the env explicitly.
-    process.env.KIMI_CRON_NO_JITTER = '1';
+    process.env['KIMI_CRON_NO_JITTER'] = '1';
     idCounter = 0;
   });
 
   afterEach(() => {
     if (ORIGINAL_ENV_NO_JITTER === undefined) {
-      delete process.env.KIMI_CRON_NO_JITTER;
+      delete process.env['KIMI_CRON_NO_JITTER'];
     } else {
-      process.env.KIMI_CRON_NO_JITTER = ORIGINAL_ENV_NO_JITTER;
+      process.env['KIMI_CRON_NO_JITTER'] = ORIGINAL_ENV_NO_JITTER;
     }
   });
 
@@ -273,15 +273,15 @@ describe('createCronScheduler — tick behaviour', () => {
 
 describe('createCronScheduler — getNextFireTime', () => {
   beforeEach(() => {
-    process.env.KIMI_CRON_NO_JITTER = '1';
+    process.env['KIMI_CRON_NO_JITTER'] = '1';
     idCounter = 0;
   });
 
   afterEach(() => {
     if (ORIGINAL_ENV_NO_JITTER === undefined) {
-      delete process.env.KIMI_CRON_NO_JITTER;
+      delete process.env['KIMI_CRON_NO_JITTER'];
     } else {
-      process.env.KIMI_CRON_NO_JITTER = ORIGINAL_ENV_NO_JITTER;
+      process.env['KIMI_CRON_NO_JITTER'] = ORIGINAL_ENV_NO_JITTER;
     }
   });
 
@@ -309,15 +309,15 @@ describe('createCronScheduler — getNextFireTime', () => {
 
 describe('createCronScheduler — start/stop lifecycle', () => {
   beforeEach(() => {
-    process.env.KIMI_CRON_NO_JITTER = '1';
+    process.env['KIMI_CRON_NO_JITTER'] = '1';
     idCounter = 0;
   });
 
   afterEach(() => {
     if (ORIGINAL_ENV_NO_JITTER === undefined) {
-      delete process.env.KIMI_CRON_NO_JITTER;
+      delete process.env['KIMI_CRON_NO_JITTER'];
     } else {
-      process.env.KIMI_CRON_NO_JITTER = ORIGINAL_ENV_NO_JITTER;
+      process.env['KIMI_CRON_NO_JITTER'] = ORIGINAL_ENV_NO_JITTER;
     }
   });
 
@@ -375,15 +375,15 @@ describe('createCronScheduler — start/stop lifecycle', () => {
 
 describe('createCronScheduler — jitter integration', () => {
   beforeEach(() => {
-    delete process.env.KIMI_CRON_NO_JITTER;
+    delete process.env['KIMI_CRON_NO_JITTER'];
     idCounter = 0;
   });
 
   afterEach(() => {
     if (ORIGINAL_ENV_NO_JITTER === undefined) {
-      delete process.env.KIMI_CRON_NO_JITTER;
+      delete process.env['KIMI_CRON_NO_JITTER'];
     } else {
-      process.env.KIMI_CRON_NO_JITTER = ORIGINAL_ENV_NO_JITTER;
+      process.env['KIMI_CRON_NO_JITTER'] = ORIGINAL_ENV_NO_JITTER;
     }
   });
 
@@ -399,5 +399,70 @@ describe('createCronScheduler — jitter integration', () => {
 
     expect(h.fired).toHaveLength(1);
     expect(h.fired[0]!.coalescedCount).toBe(1);
+  });
+
+  it('one-shot task always reports coalescedCount=1 even after a long backlog', () => {
+    // A daily one-shot left un-delivered for a week should still
+    // report `coalescedCount: 1` — one-shots are removed after a
+    // single delivery, so multi-occurrence counts are meaningless and
+    // would mislead the LLM into thinking it missed multiple
+    // scheduled events.
+    process.env['KIMI_CRON_NO_JITTER'] = '1';
+    try {
+      const h = createHarness();
+      const task = makeTask({
+        cron: '0 9 * * *',
+        createdAt: h.now(),
+        recurring: false,
+      });
+      h.tasks.push(task);
+      h.advance(7 * 24 * 60 * 60_000);
+      h.scheduler.tick();
+
+      expect(h.fired).toHaveLength(1);
+      expect(h.fired[0]!.coalescedCount).toBe(1);
+      expect(h.removed).toEqual([task.id]);
+    } finally {
+      delete process.env['KIMI_CRON_NO_JITTER'];
+    }
+  });
+
+  it('does not advance baseline past a not-yet-jittered ideal fire', () => {
+    // The bot-flagged scenario: when the next ideal fire's jittered
+    // delivery is still in the future, `countCoalesced` must not
+    // include it and `lastSeenAt` must not advance past it — otherwise
+    // the jittered delivery is lost on the next tick. (jitter ON).
+    //
+    // Setup: id `ffffffff` → fraction ≈ 1.0 → recurring offset = 10%
+    // of 5-min period = 30s. After firing the first slot, the next
+    // ideal is +5 min and its jittered delivery is +5 min 30s.
+    delete process.env['KIMI_CRON_NO_JITTER'];
+    const h = createHarness();
+    h.tasks.push(
+      makeTask({
+        id: 'ffffffff',
+        cron: '*/5 * * * *',
+        createdAt: h.now(),
+        recurring: true,
+      }),
+    );
+    // Cross the first jittered fire (6m past anchor + 30s buffer).
+    h.advance(6 * 60_000 + 30_000);
+    h.scheduler.tick();
+    expect(h.fired).toHaveLength(1);
+
+    // The next ideal is the very next `*/5` after the first ideal —
+    // 5 minutes later — with the same 30s jitter offset. Advance just
+    // past the ideal but short of the jittered delivery; the
+    // scheduler must NOT fire yet, and must keep the slot reachable.
+    h.advance(20_000); // now is 20s past the next ideal, still 10s short of jittered
+    h.scheduler.tick();
+    expect(h.fired).toHaveLength(1);
+
+    // Cross the jittered delivery point — the slot fires now.
+    h.advance(60_000);
+    h.scheduler.tick();
+    expect(h.fired).toHaveLength(2);
+    expect(h.fired[1]!.coalescedCount).toBe(1);
   });
 });

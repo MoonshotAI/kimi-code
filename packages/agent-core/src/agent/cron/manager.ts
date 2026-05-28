@@ -116,14 +116,14 @@ export class CronManager {
     this.store = new SessionCronStore();
     this.clocks =
       opts.clocks ??
-      resolveClockSources(process.env.KIMI_CRON_CLOCK) ??
+      resolveClockSources(process.env['KIMI_CRON_CLOCK']) ??
       SYSTEM_CLOCKS;
 
     this.scheduler = createCronScheduler({
       clocks: this.clocks,
       source: () => this.store.list(),
       isIdle: () => !agent.turn.hasActiveTurn,
-      isKilled: () => process.env.KIMI_DISABLE_CRON === '1',
+      isKilled: () => process.env['KIMI_DISABLE_CRON'] === '1',
       onFire: (task, ctx) => this.handleFire(task, ctx),
       removeOneShot: (id) => {
         this.store.remove([id]);
@@ -135,7 +135,7 @@ export class CronManager {
       // (`opts.pollIntervalMs`) lose to the env so a bench can flip the
       // switch from the outside without rebuilding the manager wiring.
       pollIntervalMs:
-        process.env.KIMI_CRON_MANUAL_TICK === '1'
+        process.env['KIMI_CRON_MANUAL_TICK'] === '1'
           ? null
           : opts.pollIntervalMs,
     });
@@ -193,7 +193,7 @@ export class CronManager {
    * treated as "we don't know, don't claim stale".
    */
   isStale(task: CronTask): boolean {
-    if (process.env.KIMI_CRON_NO_STALE === '1') return false;
+    if (process.env['KIMI_CRON_NO_STALE'] === '1') return false;
     if (task.recurring === false) return false;
     const age = this.clocks.wallNow() - task.createdAt;
     return Number.isFinite(age) && age >= STALE_THRESHOLD_MS;
@@ -207,6 +207,14 @@ export class CronManager {
    * We propagate that as `buffered` on the telemetry props so dashboards
    * can distinguish "fired into a fresh turn" from "fired into a steer
    * buffer that may not run until the user's turn ends".
+   *
+   * Honours the documented 7-day auto-expire contract for recurring
+   * tasks: a stale recurring task gets exactly one final delivery
+   * (already issued above) and is then removed from the store. The
+   * scheduler picks up the deletion on its next tick via `source()`
+   * and stops re-firing the task. One-shots are not affected — they
+   * are deleted by the scheduler immediately after delivery via the
+   * `removeOneShot` callback.
    */
   private handleFire(
     task: CronTask,
@@ -229,6 +237,17 @@ export class CronManager {
       stale,
       buffered: turnId === null,
     });
+
+    // 7-day auto-expire — the recurring branch of CronCreate's tool
+    // description promises this contract to the model. Without the
+    // removal a long-lived session keeps re-injecting a multi-day-old
+    // cron prompt forever; with it, the task fires one last time
+    // (above) and is then dropped. Emit `cron_deleted` symmetrically
+    // with manual deletion so dashboards see the lifecycle close.
+    if (stale && task.recurring !== false) {
+      this.store.remove([task.id]);
+      this.emitDeleted(task.id);
+    }
   }
 
   /**
@@ -315,7 +334,7 @@ export class CronManager {
    */
   private bindSigusr1(): void {
     if (process.platform === 'win32') return;
-    if (process.env.KIMI_CRON_MANUAL_TICK !== '1') return;
+    if (process.env['KIMI_CRON_MANUAL_TICK'] !== '1') return;
     if (this.sigusr1Handler !== null) return;
     const handler: NodeJS.SignalsListener = () => {
       try {

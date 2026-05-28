@@ -255,4 +255,107 @@ describe('CronCreateTool', () => {
     // is co-located with the test list called out in the spec.
     expect(true).toBe(true);
   });
+
+  describe('clock anchored at execute() time', () => {
+    it('uses the clock value at execute(), not resolveExecution()', async () => {
+      // Mirrors the manual-approval scenario: prepare returns a
+      // runnable, the user takes a while to approve, and only then
+      // does execute() run. If the schedule were anchored at prepare
+      // time, the one-shot would be inserted with a stale
+      // `createdAt` and could fire immediately on the next tick.
+      const stub = createAgentStub();
+      const harness = createClocks();
+      const manager = new CronManager(stub.agent, {
+        clocks: harness.clocks,
+        pollIntervalMs: null,
+      });
+      const tool = new CronCreateTool(manager);
+
+      const execution = tool.resolveExecution({
+        cron: '*/5 * * * *',
+        prompt: 'after-delay',
+        recurring: false,
+      });
+      if (isErrorExecution(execution)) {
+        throw new Error('expected runnable execution');
+      }
+
+      // Advance the wall clock past prepare-time (manual-approval gap)
+      // before running execute(). The task should be created with
+      // `createdAt` equal to the new wall time, not the original one.
+      const beforeExecute = harness.now();
+      harness.advance(10 * 60_000);
+      const afterExecute = harness.now();
+
+      await execution.execute({
+        turnId: 't',
+        toolCallId: 'c',
+        signal: new AbortController().signal,
+      });
+
+      const tasks = manager.store.list();
+      expect(tasks).toHaveLength(1);
+      const task = tasks[0]!;
+      expect(task.createdAt).toBe(afterExecute);
+      expect(task.createdAt).not.toBe(beforeExecute);
+    });
+  });
+
+  describe('cap rechecked inside execute()', () => {
+    it('refuses insert when the store fills between prepare and execute', async () => {
+      // Two concurrently prepared CronCreate calls must not be able
+      // to both pass the cap check at prepare time and then both
+      // succeed at execute() time, breaching the cap. The first to
+      // execute wins; the second must observe the live store size and
+      // refuse.
+      const stub = createAgentStub();
+      const harness = createClocks();
+      const manager = new CronManager(stub.agent, {
+        clocks: harness.clocks,
+        pollIntervalMs: null,
+      });
+      const tool = new CronCreateTool(manager);
+
+      // Seed up to one below the cap, then prepare two CronCreate
+      // calls. Both see length === MAX - 1 < MAX and pass the
+      // prepare-time gate; the second's execute() must trip the
+      // re-check after the first executes.
+      const seedNow = manager.clocks.wallNow();
+      for (let i = 0; i < MAX_CRON_JOBS_PER_SESSION - 1; i++) {
+        manager.store.add(
+          { cron: '*/5 * * * *', prompt: `seed-${String(i)}`, recurring: true },
+          seedNow,
+        );
+      }
+
+      const first = tool.resolveExecution({
+        cron: '*/5 * * * *',
+        prompt: 'first',
+        recurring: true,
+      });
+      const second = tool.resolveExecution({
+        cron: '*/5 * * * *',
+        prompt: 'second',
+        recurring: true,
+      });
+      if (isErrorExecution(first) || isErrorExecution(second)) {
+        throw new Error('expected both to pass prepare-time cap');
+      }
+
+      const ctx = {
+        turnId: 't',
+        toolCallId: 'c',
+        signal: new AbortController().signal,
+      };
+      const firstResult = await first.execute(ctx);
+      const secondResult = await second.execute(ctx);
+
+      expect(firstResult.isError ?? false).toBe(false);
+      expect(secondResult.isError).toBe(true);
+      expect(secondResult.output).toMatchInlineSnapshot(
+        `"Cron job cap reached (max 50 per session)."`,
+      );
+      expect(manager.store.list()).toHaveLength(MAX_CRON_JOBS_PER_SESSION);
+    });
+  });
 });
