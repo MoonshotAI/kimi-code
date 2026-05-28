@@ -185,9 +185,9 @@ describe('CronManager — P1.8 manual tick + SIGUSR1', () => {
       if (process.platform === 'win32') return;
 
       const stub = createAgentStub();
-      const manager = new CronManager(stub.agent, { pollIntervalMs: null });
       const before = process.listenerCount('SIGUSR1');
-      manager.start();
+      // Constructor auto-starts, which binds SIGUSR1 under KIMI_CRON_MANUAL_TICK=1.
+      const manager = new CronManager(stub.agent, { pollIntervalMs: null });
       expect(process.listenerCount('SIGUSR1')).toBe(before + 1);
       await manager.stop();
       expect(process.listenerCount('SIGUSR1')).toBe(before);
@@ -197,10 +197,11 @@ describe('CronManager — P1.8 manual tick + SIGUSR1', () => {
       if (process.platform === 'win32') return;
 
       const stub = createAgentStub();
-      const manager = new CronManager(stub.agent, { pollIntervalMs: null });
       const before = process.listenerCount('SIGUSR1');
+      // Constructor already calls start() once; an explicit second
+      // call must not stack a handler.
+      const manager = new CronManager(stub.agent, { pollIntervalMs: null });
       try {
-        manager.start();
         manager.start();
         expect(process.listenerCount('SIGUSR1')).toBe(before + 1);
       } finally {

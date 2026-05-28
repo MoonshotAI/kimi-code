@@ -38,6 +38,8 @@ export interface AgentStubOptions {
    * encodes "input was buffered into the steer queue" (turn in flight).
    */
   readonly steerReturns?: number | null;
+  /** Optional homedir so CronManager persistence can derive its path. */
+  readonly homedir?: string;
 }
 
 export interface AgentStub {
@@ -70,7 +72,7 @@ export function createAgentStub(opts: AgentStubOptions = {}): AgentStub {
       telemetryCalls.push({ event, props });
     },
   };
-  const agent = { turn, telemetry } as unknown as Agent;
+  const agent = { turn, telemetry, homedir: opts.homedir } as unknown as Agent;
   return {
     agent,
     steerCalls,

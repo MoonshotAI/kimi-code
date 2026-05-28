@@ -91,16 +91,6 @@ export interface CronManagerOptions {
    * means "no automatic timer — caller drives `tick()` manually".
    */
   readonly pollIntervalMs?: number | null;
-
-  /**
-   * Per-session directory used to persist cron tasks across
-   * `kimi resume`. When set, `addTask` / `removeTasks` mirror the
-   * in-memory store to `<sessionDir>/cron/<id>.json` and
-   * `loadFromDisk()` re-populates the store on resume. When omitted
-   * (subagents, tests, ephemeral sessions), the manager stays purely
-   * in-memory and `loadFromDisk()` is a no-op.
-   */
-  readonly sessionDir?: string;
 }
 
 export class CronManager {
@@ -158,9 +148,9 @@ export class CronManager {
       resolveClockSources(process.env['KIMI_CRON_CLOCK']) ??
       SYSTEM_CLOCKS;
     this.persistStore =
-      opts.sessionDir === undefined
+      agent.homedir === undefined
         ? undefined
-        : createCronPersistStore(opts.sessionDir);
+        : createCronPersistStore(agent.homedir);
 
     this.scheduler = createCronScheduler({
       clocks: this.clocks,
@@ -185,6 +175,8 @@ export class CronManager {
           ? null
           : opts.pollIntervalMs,
     });
+
+    this.start();
   }
 
   /**

@@ -4,7 +4,7 @@ import { join } from 'pathe';
 import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import { log } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
-import type { AgentAPI, AgentEvent, SDKAgentRPC, UsageStatus } from '#/rpc';
+import type { AgentAPI, AgentEvent, KimiConfig, SDKAgentRPC, UsageStatus } from '#/rpc';
 import {
   generate,
   type ChatProvider,
@@ -32,7 +32,7 @@ import { FullCompaction, type CompactionStrategy } from './compaction';
 import { CronManager } from './cron';
 import { ConfigState } from './config';
 import { ContextMemory } from './context';
-import { HookEngine } from './hooks';
+import { HookEngine } from '../session/hooks';
 import { InjectionManager } from './injection/manager';
 import { PermissionManager, type PermissionManagerOptions } from './permission';
 import { PlanMode } from './plan';
@@ -60,10 +60,10 @@ export type { BuiltinTool, ToolInfo, ToolSource, UserToolRegistration } from './
 
 export type AgentType = 'main' | 'sub' | 'independent';
 
-export interface AgentConfig {
+export interface AgentOptions {
   readonly runtime: RuntimeConfig;
+  readonly config?: KimiConfig;
   readonly homedir?: string;
-  readonly skills?: SkillRegistry;
   readonly rpc?: SDKAgentRPC;
   readonly persistence?: AgentRecordPersistence;
   readonly type?: AgentType;
@@ -71,16 +71,9 @@ export interface AgentConfig {
   readonly compactionStrategy?: CompactionStrategy;
   readonly providerManager?: ProviderManager | undefined;
   readonly subagentHost?: SessionSubagentHost | undefined;
+  readonly skills?: SkillRegistry;
   readonly mcp?: McpConnectionManager;
   readonly hookEngine?: HookEngine;
-  readonly backgroundMaxRunningTasks?: number;
-  readonly backgroundSessionDir?: string;
-  /**
-   * Per-session directory used by `CronManager` to persist scheduled
-   * tasks across `kimi resume`. When omitted the cron stack stays
-   * purely in-memory (subagents, ephemeral sessions). Set in parallel
-   * with {@link backgroundSessionDir} from the session homedir.
-   */
   readonly cronSessionDir?: string;
   readonly permission?: PermissionManagerOptions | undefined;
   readonly log?: Logger;
@@ -90,6 +83,7 @@ export interface AgentConfig {
 
 export class Agent {
   readonly runtime: RuntimeConfig;
+  readonly kimiConfig?: KimiConfig;
   readonly homedir?: string;
   readonly skills?: SkillManager;
   readonly pluginSessionStarts: readonly EnabledPluginSessionStart[];
@@ -114,38 +108,37 @@ export class Agent {
   readonly usage: UsageRecorder;
   readonly tools: ToolManager;
   readonly background: BackgroundManager;
-  readonly cron: CronManager;
+  readonly cron: CronManager | null;
   readonly replayBuilder: ReplayBuilder;
   readonly log: Logger;
 
   private lastLlmConfigLogSignature?: string;
 
-  constructor(config: AgentConfig) {
-    this.log = config.log ?? log;
-    this.runtime = config.runtime;
-    this.homedir = config.homedir;
-    if (config.skills !== undefined) {
-      this.skills = new SkillManager(this, config.skills);
+  constructor(options: AgentOptions) {
+    this.log = options.log ?? log;
+    this.kimiConfig = options.config;
+    this.runtime = options.runtime;
+    this.homedir = options.homedir;
+    if (options.skills !== undefined) {
+      this.skills = new SkillManager(this, options.skills);
     }
-    this.pluginSessionStarts = config.pluginSessionStarts ?? [];
-    this.rawGenerate = config.generate ?? generate;
-    this.providerManager = config.providerManager;
-    this.subagentHost = config.subagentHost;
-    this.mcp = config.mcp;
-    this.hooks = config.hookEngine;
-
-    this.type = config.type ?? 'main';
-
-    this.rpc = config.rpc;
-    this.telemetry = config.telemetry ?? noopTelemetryClient;
-    this.blobStore = config.homedir
-      ? new BlobStore({ blobsDir: join(config.homedir, 'blobs') })
+    this.pluginSessionStarts = options.pluginSessionStarts ?? [];
+    this.rawGenerate = options.generate ?? generate;
+    this.providerManager = options.providerManager;
+    this.subagentHost = options.subagentHost;
+    this.mcp = options.mcp;
+    this.hooks = options.hookEngine;
+    this.type = options.type ?? 'main';
+    this.rpc = options.rpc;
+    this.telemetry = options.telemetry ?? noopTelemetryClient;
+    this.blobStore = options.homedir
+      ? new BlobStore({ blobsDir: join(options.homedir, 'blobs') })
       : undefined;
     this.records = new AgentRecords(
       this,
-      config.persistence ??
-        (config.homedir
-          ? new FileSystemAgentRecordPersistence(join(config.homedir, 'wire.jsonl'), {
+      options.persistence ??
+        (options.homedir
+          ? new FileSystemAgentRecordPersistence(join(options.homedir, 'wire.jsonl'), {
               onError: (error) => {
                 this.emitRecordsWriteError(error);
               },
@@ -153,38 +146,17 @@ export class Agent {
             })
           : undefined),
     );
-    this.fullCompaction = new FullCompaction(this, config.compactionStrategy);
+    this.fullCompaction = new FullCompaction(this, options.compactionStrategy);
     this.context = new ContextMemory(this);
     this.config = new ConfigState(this);
     this.turn = new TurnFlow(this);
     this.injection = new InjectionManager(this);
-    this.permission = new PermissionManager(this, config.permission);
+    this.permission = new PermissionManager(this, options.permission);
     this.planMode = new PlanMode(this);
     this.usage = new UsageRecorder(this);
     this.tools = new ToolManager(this);
-    this.background = new BackgroundManager(this, {
-      maxRunningTasks: config.backgroundMaxRunningTasks,
-      sessionDir: config.backgroundSessionDir,
-    });
-    this.cron = new CronManager(this, {
-      // Subagents stay in-memory: their default profiles don't expose
-      // cron tools, so attaching a sessionDir would only litter the
-      // subagent homedir with an empty `cron/` directory on first
-      // mkdir. Main / non-sub agents persist when the session supplied
-      // a directory.
-      sessionDir: this.type !== 'sub' ? config.cronSessionDir : undefined,
-    });
-    if (this.type !== 'sub') {
-      // Skip auto-tick for subagents: each session can spawn many
-      // subagents, and stacking 1s setInterval timers + SIGUSR1
-      // listeners per subagent serves no purpose — the default subagent
-      // profiles don't expose Cron tools, so the store stays empty.
-      // The scheduler unref()'s its setInterval so the cron timer never
-      // keeps the process alive on its own, and isKilled (reading
-      // KIMI_DISABLE_CRON) short-circuits every tick — no need to
-      // delay start when the killswitch is set.
-      this.cron.start();
-    }
+    this.background = new BackgroundManager(this);
+    this.cron = this.type === 'sub' ? null : new CronManager(this);
     this.replayBuilder = new ReplayBuilder(this);
   }
 
@@ -282,12 +254,7 @@ export class Agent {
     const result = await this.records.replay();
     await this.background.loadFromDisk();
     await this.background.reconcile();
-    // Rehydrate cron tasks scheduled in the previous CLI invocation.
-    // No-op when this agent was constructed without a `cronSessionDir`
-    // (subagents, ephemeral sessions). The scheduler's `createdAt`-based
-    // baseline then handles any fire times missed during downtime via
-    // `coalescedCount` (and the 7-day stale flag) without further wiring.
-    await this.cron.loadFromDisk();
+    await this.cron?.loadFromDisk();
     this.turn.finishResume();
     return result;
   }

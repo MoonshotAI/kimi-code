@@ -26,14 +26,14 @@ describe('Agent + Cron integration (P1.7)', () => {
   });
 
   afterEach(async () => {
-    await ctx.agent.cron.stop();
+    await ctx.agent.cron?.stop();
     vi.unstubAllEnvs();
   });
 
   it('exposes agent.cron with its session store on construction', () => {
     expect(ctx.agent.cron).toBeDefined();
-    expect(ctx.agent.cron.store).toBeDefined();
-    expect(ctx.agent.cron.store.list()).toEqual([]);
+    expect(ctx.agent.cron!.store).toBeDefined();
+    expect(ctx.agent.cron!.store.list()).toEqual([]);
   });
 
   it('registers CronCreate / CronList / CronDelete in the tool manager', () => {
@@ -58,7 +58,7 @@ describe('Agent + Cron integration (P1.7)', () => {
     // killswitch lives in `resolveExecution`, so a direct call is the
     // precise unit being asserted, and it stays robust if the loop /
     // dispatch surface changes around it (P1.8 onwards).
-    const tool = new CronCreateTool(ctx.agent.cron);
+    const tool = new CronCreateTool(ctx.agent.cron!);
     const args: CronCreateInput = {
       cron: '*/5 * * * *',
       prompt: 'x',
@@ -76,6 +76,6 @@ describe('Agent + Cron integration (P1.7)', () => {
     );
 
     // And no task slipped into the store.
-    expect(ctx.agent.cron.store.list()).toEqual([]);
+    expect(ctx.agent.cron!.store.list()).toEqual([]);
   });
 });
