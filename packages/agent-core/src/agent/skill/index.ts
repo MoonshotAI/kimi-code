@@ -6,15 +6,8 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '#/errors';
 import { isUserActivatableSkillType, type SkillRegistry } from '../../skill';
+import { escapeXml } from '#/utils/xml-escape';
 import type { SkillActivationOrigin } from '../context';
-
-function escapeXml(input: string): string {
-  return input
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
-}
 
 export class SkillManager {
   constructor(
