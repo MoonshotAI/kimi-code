@@ -74,7 +74,6 @@ export interface AgentOptions {
   readonly skills?: SkillRegistry;
   readonly mcp?: McpConnectionManager;
   readonly hookEngine?: HookEngine;
-  readonly cronSessionDir?: string;
   readonly permission?: PermissionManagerOptions | undefined;
   readonly log?: Logger;
   readonly telemetry?: TelemetryClient | undefined;
