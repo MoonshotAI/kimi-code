@@ -64,7 +64,7 @@ export interface AgentOptions {
   readonly runtime: RuntimeConfig;
   readonly config?: KimiConfig;
   readonly homedir?: string;
-  readonly rpc?: SDKAgentRPC;
+  readonly rpc?: Partial<SDKAgentRPC>;
   readonly persistence?: AgentRecordPersistence;
   readonly type?: AgentType;
   readonly generate?: typeof generate;
@@ -85,7 +85,7 @@ export class Agent {
   readonly runtime: RuntimeConfig;
   readonly kimiConfig?: KimiConfig;
   readonly homedir?: string;
-  readonly rpc?: SDKAgentRPC;
+  readonly rpc?: Partial<SDKAgentRPC>;
   readonly pluginSessionStarts: readonly EnabledPluginSessionStart[];
   readonly rawGenerate: typeof generate;
   readonly modelProvider?: ModelProvider;
@@ -105,8 +105,8 @@ export class Agent {
   readonly permission: PermissionManager;
   readonly planMode: PlanMode;
   readonly usage: UsageRecorder;
-  readonly tools: ToolManager;
   readonly skills: SkillManager | null;
+  readonly tools: ToolManager;
   readonly background: BackgroundManager;
   readonly cron: CronManager | null;
   readonly replayBuilder: ReplayBuilder;
@@ -151,8 +151,8 @@ export class Agent {
     this.permission = new PermissionManager(this, options.permission);
     this.planMode = new PlanMode(this);
     this.usage = new UsageRecorder(this);
+    this.skills = options.skills ? new SkillManager(this, options.skills) : null;
     this.tools = new ToolManager(this);
-    this.skills = options.skills === undefined ? null : new SkillManager(this, options.skills);
     this.background = new BackgroundManager(this);
     this.cron = this.type === 'sub' ? null : new CronManager(this);
     this.replayBuilder = new ReplayBuilder(this);
@@ -361,7 +361,7 @@ export class Agent {
 
   emitEvent(event: AgentEvent): void {
     if (this.records.restoring) return;
-    void this.rpc?.emitEvent(event);
+    void this.rpc?.emitEvent?.(event);
   }
 
   emitStatusUpdated(): void {

@@ -104,7 +104,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
-      const result = await this.agent.rpc!.requestQuestion(
+      const result = await this.agent.rpc!.requestQuestion!(
         {
           turnId: numericTurnId(turnId),
           toolCallId,
