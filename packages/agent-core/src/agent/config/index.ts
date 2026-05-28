@@ -15,13 +15,15 @@ export * from './types';
 export { resolveThinkingEffort, type ThinkingEffort } from './thinking';
 
 export class ConfigState {
-  private _cwd: string = '';
+  private _cwd: string;
   private _modelAlias: string | undefined;
   private _profileName: string | undefined;
   private _thinkingLevel: ThinkingEffort = 'off';
   private _systemPrompt: string = '';
 
-  constructor(protected readonly agent: Agent) {}
+  constructor(protected readonly agent: Agent) {
+    this._cwd = agent.runtime.kaos.getcwd();
+  }
 
   update(input: AgentConfigUpdateData): void {
     const changed = { ...input };
@@ -41,7 +43,10 @@ export class ConfigState {
       type: 'config_updated',
       config: changed,
     });
-    if (changed.cwd !== undefined) this._cwd = changed.cwd;
+    if (changed.cwd) {
+      this._cwd = changed.cwd;
+      void this.agent.runtime.kaos.chdir(changed.cwd);
+    }
     if (Object.hasOwn(changed, 'modelAlias')) {
       this._modelAlias = changed.modelAlias ?? undefined;
     }

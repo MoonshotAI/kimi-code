@@ -7,7 +7,7 @@
  *   - POSIX path probing prefers /bin/bash, falls back to /usr/bin/bash,
  *     /usr/local/bin/bash, then /bin/sh (with shellName 'sh').
  *   - Windows resolves Git Bash via `KIMI_SHELL_PATH`, `git.exe` on PATH,
- *     or well-known install locations; throws `shell.git_bash_not_found`
+ *     or well-known install locations; throws `KaosShellNotFoundError`
  *     if none are present.
  *   - `osArch` / `osVersion` are populated from the Node OS APIs.
  *
@@ -18,13 +18,13 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { ErrorCodes, KimiError } from '../../src/errors';
 import {
   detectEnvironment,
   type Environment,
   type OsKind,
   type ShellName,
-} from '../../src/utils/environment';
+} from '#/environment';
+import { KaosShellNotFoundError } from '#/errors';
 
 interface StubOpts {
   readonly platform: NodeJS.Platform;
@@ -178,7 +178,7 @@ describe('detectEnvironment', () => {
     expect(env.shellPath).toBe('C:\\Users\\me\\AppData\\Local\\Programs\\Git\\bin\\bash.exe');
   });
 
-  it('throws KimiError with the shell.git_bash_not_found code when no candidate is found', async () => {
+  it('throws KaosShellNotFoundError when no Git Bash candidate is found', async () => {
     const error = await detectEnvironment(
       stubDeps({
         platform: 'win32',
@@ -191,11 +191,10 @@ describe('detectEnvironment', () => {
       },
       (error: unknown) => error,
     );
-    expect(error).toBeInstanceOf(KimiError);
-    expect((error as KimiError).code).toBe(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND);
+    expect(error).toBeInstanceOf(KaosShellNotFoundError);
   });
 
-  it('includes attempted paths in the thrown KimiError message', async () => {
+  it('includes attempted paths in the thrown error message', async () => {
     const error = await detectEnvironment(
       stubDeps({
         platform: 'win32',
@@ -206,7 +205,7 @@ describe('detectEnvironment', () => {
       () => {
         throw new Error('expected throw');
       },
-      (error: unknown) => error as KimiError,
+      (error: unknown) => error as KaosShellNotFoundError,
     );
     expect(error.message).toContain('D:\\custom\\bash.exe');
     expect(error.message).toContain('C:\\Program Files\\Git\\bin\\bash.exe');

@@ -170,7 +170,7 @@ export function projectContext(entries: ReadonlyArray<WireEntry>): ContextProjec
         }];
         break;
       case 'usage.record': {
-        const scope = rec.usageScope ?? 'session';
+        const scope = (rec.usageScope ?? 'session') as 'session' | 'turn';
         addUsage(usage.byScope[scope], rec.usage);
         if (!usage.byModel[rec.model]) usage.byModel[rec.model] = { ...ZERO };
         addUsage(usage.byModel[rec.model]!, rec.usage);

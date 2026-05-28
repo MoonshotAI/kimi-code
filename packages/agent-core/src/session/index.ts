@@ -45,7 +45,6 @@ export interface SessionConfig {
   readonly homedir: string;
   readonly kimiHomeDir?: string;
   readonly rpc: SDKSessionRPC;
-  readonly cwd?: string;
   readonly initializeMainAgent?: boolean | undefined;
   readonly providerManager?: ProviderManager | undefined;
   readonly background?: BackgroundConfig | undefined;
@@ -122,7 +121,7 @@ export class Session {
       (config.id === undefined ? log : log.createChild({ sessionId: config.id }));
     this.rpc = config.rpc;
     this.hookEngine = new HookEngine(config.hooks, {
-      cwd: config.cwd,
+      cwd: config.runtime.kaos.getcwd(),
       sessionId: config.id,
     });
     this.telemetry = config.telemetry ?? noopTelemetryClient;
@@ -222,8 +221,6 @@ export class Session {
     const agent = this.instantiateAgent(id, homedir, type, config, parentAgentId ?? null);
     if (profile) {
       await this.bootstrapAgentProfile(agent, profile);
-    } else if (this.config.cwd !== undefined) {
-      agent.config.update({ cwd: this.config.cwd });
     }
 
     this.agents.set(id, agent);
@@ -246,10 +243,7 @@ export class Session {
     agent: Agent,
     profile: ResolvedAgentProfile,
   ): Promise<void> {
-    if (this.config.cwd !== undefined) {
-      agent.config.update({ cwd: this.config.cwd });
-    }
-    const context = await prepareSystemPromptContext(this.config.runtime.kaos, agent.config.cwd);
+    const context = await prepareSystemPromptContext(agent.runtime.kaos);
     agent.useProfile(profile, context);
   }
 
@@ -268,7 +262,7 @@ export class Session {
       });
       await handle.completion;
 
-      const agentsMd = await loadAgentsMd(this.config.runtime.kaos, mainAgent.config.cwd);
+      const agentsMd = await loadAgentsMd(mainAgent.runtime.kaos);
       mainAgent.context.appendSystemReminder(initCompletionReminder(agentsMd), {
         kind: 'injection',
         variant: 'init',
@@ -325,7 +319,7 @@ export class Session {
     const roots = await resolveSkillRoots({
       paths: {
         userHomeDir: this.config.skills?.userHomeDir ?? homedir(),
-        workDir: this.config.cwd ?? process.cwd(),
+        workDir: this.config.runtime.kaos.getcwd(),
       },
       explicitDirs: this.config.skills?.explicitDirs,
       extraDirs: this.config.skills?.extraDirs,

@@ -82,7 +82,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     }
   });
 
-  it('starts manual compaction with an optional instruction', async () => {
+  it('rejects manual compaction on an empty session with compaction.unable', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-compact-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-compact-work-');
     await writeTestConfig(homeDir);
@@ -91,14 +91,10 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     try {
       const session = await harness.createSession({ id: 'ses_compact_runtime', workDir });
 
-      const started = waitForSessionEvent(session, (event) => event.type === 'compaction.started');
-      await session.compact({ instruction: 'Keep important facts.' });
-
-      await expect(started).resolves.toMatchObject({
-        type: 'compaction.started',
-        trigger: 'manual',
-        instruction: 'Keep important facts.',
-      });
+      await expect(session.compact({ instruction: 'Keep important facts.' })).rejects.toMatchObject({
+        name: 'KimiError',
+        code: 'compaction.unable',
+      } satisfies Partial<KimiError>);
     } finally {
       await harness.close();
     }

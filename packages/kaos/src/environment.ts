@@ -8,16 +8,15 @@
  *
  * On Windows the probe expects Git Bash (the canonical POSIX shell that
  * ships with Git for Windows). If it cannot be located the function
- * throws `KimiError` with code `shell.git_bash_not_found`; the SDK layer
- * can wrap that into a user-facing install hint. Set `KIMI_SHELL_PATH`
- * to override.
+ * throws `KaosShellNotFoundError`; the SDK layer can wrap that into a
+ * user-facing install hint. Set `KIMI_SHELL_PATH` to override.
  */
 
 import { constants as fsConstants } from 'node:fs';
 import { access } from 'node:fs/promises';
 import * as nodeOs from 'node:os';
 
-import { ErrorCodes, KimiError } from '#/errors';
+import { KaosShellNotFoundError } from './errors';
 
 // `OsKind` carries 'macOS' / 'Linux' / 'Windows' for known platforms and
 // falls back to the raw `process.platform` string for unknown ones (e.g.
@@ -118,8 +117,7 @@ async function locateWindowsGitBash(deps: EnvironmentDeps): Promise<string> {
     }
   }
 
-  throw new KimiError(
-    ErrorCodes.SHELL_GIT_BASH_NOT_FOUND,
+  throw new KaosShellNotFoundError(
     `Git Bash was not found on this Windows host. Install Git for Windows from https://gitforwindows.org/ or set KIMI_SHELL_PATH to a bash.exe. Checked: ${checked.join(', ')}.`,
   );
 }
@@ -143,8 +141,18 @@ function inferGitBashFromGitExe(gitExe: string): string | undefined {
 
 /**
  * Production convenience — derive the deps bag from Node's ambient surface.
+ *
+ * The result is memoised: subsequent calls return the original promise.
+ * `Environment` is immutable for the lifetime of the process (it derives
+ * from `process.platform`, `process.arch`, `os.release()`, and one-time
+ * shell-path discovery), so caching is sound. Tests that need to probe
+ * with different inputs should call {@link detectEnvironment} directly
+ * with an injected deps bag.
  */
-export async function detectEnvironmentFromNode(): Promise<Environment> {
+let detectedEnvironment: Promise<Environment> | undefined;
+
+export function detectEnvironmentFromNode(): Promise<Environment> {
+  if (detectedEnvironment !== undefined) return detectedEnvironment;
   const platform = process.platform;
   const env = process.env as Record<string, string | undefined>;
   const isFile = async (path: string): Promise<boolean> => {
@@ -155,7 +163,7 @@ export async function detectEnvironmentFromNode(): Promise<Environment> {
       return false;
     }
   };
-  return detectEnvironment({
+  detectedEnvironment = detectEnvironment({
     platform,
     arch: process.arch,
     release: nodeOs.release(),
@@ -163,6 +171,7 @@ export async function detectEnvironmentFromNode(): Promise<Environment> {
     isFile,
     findExecutable: (name: string) => findExecutableOnPath(name, env['PATH'], platform, isFile),
   });
+  return detectedEnvironment;
 }
 
 async function findExecutableOnPath(

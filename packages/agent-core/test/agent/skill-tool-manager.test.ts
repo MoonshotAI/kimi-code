@@ -2,10 +2,10 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { localKaos } from '@moonshot-ai/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Agent, type AgentRecord } from '../../src/agent';
+import { testKaos } from '../fixtures/test-kaos';
 import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
 import type { AgentRecordPersistence } from '../../src/agent/records';
 import { ProviderManager } from '../../src/providers/provider-manager';
@@ -13,16 +13,8 @@ import type { ApprovalResponse, SDKAgentRPC, SDKSessionRPC } from '../../src/rpc
 import { Session } from '../../src/session';
 import { SkillRegistry, type SkillDefinition } from '../../src/skill';
 import { SkillTool } from '../../src/tools/builtin/collaboration/skill-tool';
-import type { Environment } from '../../src/utils/environment';
 import { executeTool } from '../tools/fixtures/execute-tool';
 
-const TEST_OS_ENV: Environment = {
-  osKind: 'Linux',
-  osArch: 'x86_64',
-  osVersion: 'test',
-  shellName: 'bash',
-  shellPath: '/bin/bash',
-};
 
 const MOCK_PROVIDER = {
   type: 'kimi',
@@ -54,8 +46,7 @@ function makeAgent(
   } as unknown as SDKAgentRPC;
   const agent = new Agent({
     runtime: {
-      kaos: localKaos,
-      osEnv: TEST_OS_ENV,
+      kaos: testKaos,
     },
     rpc,
     skills,
@@ -71,10 +62,9 @@ function makeAgent(
   return agent;
 }
 
-function runtime() {
+function runtime(cwd?: string) {
   return {
-    kaos: localKaos,
-    osEnv: TEST_OS_ENV,
+    kaos: cwd === undefined ? testKaos : testKaos.withCwd(cwd),
   };
 }
 
@@ -199,15 +189,13 @@ describe('ToolManager SkillTool registration', () => {
 
       const session = new Session({
         id: 'test-skill-tool',
-        runtime: runtime(),
+        runtime: runtime(workDir),
         homedir: homeDir,
-        cwd: workDir,
         rpc: sessionRpc(),
         providerManager: testProviderManager(),
       });
       const mainAgent = await session.createMain();
       mainAgent.config.update({
-        cwd: workDir,
         modelAlias: MOCK_PROVIDER.model,
       });
       mainAgent.tools.initializeBuiltinTools();

@@ -1,7 +1,6 @@
 import type { Message } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
-import { sliceCompleteMessages } from '../../src/agent/context/complete-slice';
 import { renderNotificationXml } from '../../src/agent/context/notification-xml';
 import { project } from '../../src/agent/context/projector';
 import { estimateTokensForMessages } from '../../src/utils/tokens';
@@ -409,7 +408,7 @@ describe('Agent context', () => {
 
     const pendingMessages = ctx.agent.context.history.slice(-1);
     expect(ctx.agent.context.tokenCountWithPending).toBe(
-      ctx.agent.context.tokenCount + estimateTokensForMessages([...pendingMessages]),
+      ctx.agent.context.tokenCount + estimateTokensForMessages(pendingMessages),
     );
   });
 
@@ -464,30 +463,10 @@ describe('Agent context', () => {
     const pendingMessages = ctx.agent.context.history.slice(-1);
     expect(ctx.agent.context.tokenCount).toBe(1_280);
     expect(ctx.agent.context.tokenCountWithPending).toBe(
-      1_280 + estimateTokensForMessages([...pendingMessages]),
+      1_280 + estimateTokensForMessages(pendingMessages),
     );
   });
 
-  it('normalizes message slice ends around tool exchanges', () => {
-    const messages: Message[] = [
-      userMessage('old prompt'),
-      assistantMessage('old answer'),
-      userMessage('run both tools'),
-      assistantToolCallMessage(['call_one', 'call_two']),
-      toolMessage('call_one', 'one result'),
-      toolMessage('call_two', 'two result'),
-      userMessage('recent prompt'),
-    ];
-
-    expect(sliceCompleteMessages(messages, 1)).toBe(1);
-    expect(sliceCompleteMessages(messages, 4)).toBe(2);
-    expect(sliceCompleteMessages(messages, 5)).toBe(2);
-    expect(sliceCompleteMessages(messages, 6)).toBe(6);
-    expect(sliceCompleteMessages(messages, 99)).toBe(7);
-
-    const incomplete = messages.slice(0, 5);
-    expect(sliceCompleteMessages(incomplete, 5)).toBe(2);
-  });
 });
 
 describe('Agent context notification projection', () => {
@@ -562,36 +541,6 @@ function userMessage(text: string): Message {
     role: 'user',
     content: [{ type: 'text', text }],
     toolCalls: [],
-  };
-}
-
-function assistantMessage(text: string): Message {
-  return {
-    role: 'assistant',
-    content: [{ type: 'text', text }],
-    toolCalls: [],
-  };
-}
-
-function assistantToolCallMessage(ids: readonly string[]): Message {
-  return {
-    role: 'assistant',
-    content: [],
-    toolCalls: ids.map((id) => ({
-      type: 'function',
-      id,
-      name: 'Lookup',
-      arguments: '{}',
-    })),
-  };
-}
-
-function toolMessage(toolCallId: string, text: string): Message {
-  return {
-    role: 'tool',
-    content: [{ type: 'text', text }],
-    toolCalls: [],
-    toolCallId,
   };
 }
 

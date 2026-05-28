@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import { KIMI_CODE_HOME } from '../config';
 import { isSafeAgentId, readSessionDetail } from '../lib/session-store';
+import { rehydrateWireEntries } from '../lib/blob-resolver';
 import { readAgentWire } from '../lib/wire-reader';
 
 export function wireRoute(): Hono {
@@ -28,6 +29,8 @@ export function wireRoute(): Hono {
       const result = await readAgentWire(
         join(detail.sessionDir, 'agents', agentId, 'wire.jsonl'),
       );
+      const baseUrl = new URL(c.req.url).origin;
+      rehydrateWireEntries(result.records, id, agentId, baseUrl);
       return c.json({
         sessionId: id,
         agentId,

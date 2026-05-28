@@ -2,10 +2,10 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { localKaos } from '@moonshot-ai/kaos';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { loadAgentsMd } from '../../src/profile/context';
+import { testKaos } from '../fixtures/test-kaos';
 
 let homeDir: string;
 let workDir: string;
@@ -13,7 +13,8 @@ let workDir: string;
 beforeEach(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'kimi-agents-home-'));
   workDir = await mkdtemp(join(tmpdir(), 'kimi-agents-work-'));
-  vi.spyOn(localKaos, 'gethome').mockReturnValue(homeDir);
+  vi.spyOn(testKaos, 'gethome').mockReturnValue(homeDir);
+  vi.spyOn(testKaos, 'getcwd').mockReturnValue(workDir);
 });
 
 afterEach(async () => {
@@ -30,7 +31,7 @@ describe('loadAgentsMd user-level discovery', () => {
     await writeFile(join(homeDir, '.agents', 'AGENTS.md'), 'user generic', 'utf-8');
     await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
 
-    const result = await loadAgentsMd(localKaos, workDir);
+    const result = await loadAgentsMd(testKaos);
 
     expect(result).toContain('user branded');
     expect(result).toContain('user generic');
@@ -43,7 +44,7 @@ describe('loadAgentsMd user-level discovery', () => {
     await mkdir(join(homeDir, '.agents'), { recursive: true });
     await writeFile(join(homeDir, '.agents', 'AGENTS.md'), 'dot-agents generic', 'utf-8');
 
-    const result = await loadAgentsMd(localKaos, workDir);
+    const result = await loadAgentsMd(testKaos);
 
     expect(result).toContain('dot-agents generic');
   });
@@ -51,17 +52,18 @@ describe('loadAgentsMd user-level discovery', () => {
   it('falls back to project-level only when no user-level files exist', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'project only', 'utf-8');
 
-    const result = await loadAgentsMd(localKaos, workDir);
+    const result = await loadAgentsMd(testKaos);
 
     expect(result).toContain('project only');
     expect(result).not.toContain(homeDir);
   });
 
   it('does not load the same file twice when the work dir is the home dir', async () => {
+    vi.spyOn(testKaos, 'getcwd').mockReturnValue(homeDir);
     await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
     await writeFile(join(homeDir, '.kimi-code', 'AGENTS.md'), 'home branded', 'utf-8');
 
-    const result = await loadAgentsMd(localKaos, homeDir);
+    const result = await loadAgentsMd(testKaos);
 
     expect(result.split('home branded').length - 1).toBe(1);
   });

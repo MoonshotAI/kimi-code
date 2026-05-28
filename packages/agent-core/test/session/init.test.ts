@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'pathe';
 import { fileURLToPath } from 'node:url';
 
-import { localKaos } from '@moonshot-ai/kaos';
+import { testKaos } from '../fixtures/test-kaos';
 import type { ProviderConfig } from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -21,13 +21,6 @@ const MOCK_PROVIDER = {
   model: 'mock-model',
 } as const satisfies ProviderConfig;
 
-const OS_ENV = {
-  osKind: 'Linux',
-  osArch: 'arm64',
-  osVersion: 'test',
-  shellPath: '/bin/bash',
-  shellName: 'bash',
-} as const;
 
 const here = import.meta.dirname;
 const mcpStdioFixture = join(here, '..', 'mcp', 'fixtures', 'mock-stdio-server.mjs');
@@ -51,9 +44,8 @@ describe('Session.init', () => {
     const scripted = createScriptedGenerate();
     const session = new Session({
       id: 'test-init',
-      runtime: { kaos: localKaos, osEnv: OS_ENV },
+      runtime: { kaos: testKaos.withCwd(workDir) },
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc(events),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
       providerManager: testProviderManager(),
@@ -128,9 +120,8 @@ describe('Session.init', () => {
     const sessionDir = await makeTempDir();
     const records: TelemetryRecord[] = [];
     const session = new Session({
-      runtime: { kaos: localKaos, osEnv: OS_ENV },
+      runtime: { kaos: testKaos.withCwd(workDir) },
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc([]),
       providerManager: testProviderManager(),
       mcpConfig: {
