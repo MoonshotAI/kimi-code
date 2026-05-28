@@ -16,7 +16,7 @@ import type { EnabledPluginSessionStart } from '#/plugin';
 
 import type { McpConnectionManager } from '../mcp';
 import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
-import type { ProviderManager } from '../session/provider-manager';
+import type { ModelProvider } from '../session/provider-manager';
 import type { RuntimeConfig } from '../runtime-types';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import type { SkillRegistry } from '../skill';
@@ -64,17 +64,16 @@ export interface AgentOptions {
   readonly runtime: RuntimeConfig;
   readonly config?: KimiConfig;
   readonly homedir?: string;
-  readonly rpc?: SDKAgentRPC;
+  readonly rpc?: Partial<SDKAgentRPC>;
   readonly persistence?: AgentRecordPersistence;
   readonly type?: AgentType;
   readonly generate?: typeof generate;
   readonly compactionStrategy?: CompactionStrategy;
-  readonly providerManager?: ProviderManager | undefined;
+  readonly modelProvider?: ModelProvider | undefined;
   readonly subagentHost?: SessionSubagentHost | undefined;
   readonly skills?: SkillRegistry;
   readonly mcp?: McpConnectionManager;
   readonly hookEngine?: HookEngine;
-  readonly cronSessionDir?: string;
   readonly permission?: PermissionManagerOptions | undefined;
   readonly log?: Logger;
   readonly telemetry?: TelemetryClient | undefined;
@@ -82,20 +81,20 @@ export interface AgentOptions {
 }
 
 export class Agent {
+  readonly type: AgentType;
   readonly runtime: RuntimeConfig;
   readonly kimiConfig?: KimiConfig;
   readonly homedir?: string;
-  readonly skills?: SkillManager;
+  readonly rpc?: Partial<SDKAgentRPC>;
   readonly pluginSessionStarts: readonly EnabledPluginSessionStart[];
   readonly rawGenerate: typeof generate;
-  readonly rpc?: SDKAgentRPC;
+  readonly modelProvider?: ModelProvider;
+  readonly subagentHost?: SessionSubagentHost;
+  readonly mcp?: McpConnectionManager;
+  readonly hooks?: HookEngine;
+  readonly log: Logger;
   readonly telemetry: TelemetryClient;
-  readonly providerManager: ProviderManager | undefined;
-  readonly subagentHost: SessionSubagentHost | undefined;
-  readonly mcp: McpConnectionManager | undefined;
-  readonly hooks: HookEngine | undefined;
 
-  readonly type: AgentType;
   readonly blobStore: BlobStore | undefined;
   readonly records: AgentRecords;
   readonly fullCompaction: FullCompaction;
@@ -106,31 +105,29 @@ export class Agent {
   readonly permission: PermissionManager;
   readonly planMode: PlanMode;
   readonly usage: UsageRecorder;
+  readonly skills: SkillManager | null;
   readonly tools: ToolManager;
   readonly background: BackgroundManager;
   readonly cron: CronManager | null;
   readonly replayBuilder: ReplayBuilder;
-  readonly log: Logger;
 
   private lastLlmConfigLogSignature?: string;
 
   constructor(options: AgentOptions) {
-    this.log = options.log ?? log;
-    this.kimiConfig = options.config;
+    this.type = options.type ?? 'main';
     this.runtime = options.runtime;
+    this.kimiConfig = options.config;
     this.homedir = options.homedir;
-    if (options.skills !== undefined) {
-      this.skills = new SkillManager(this, options.skills);
-    }
+    this.rpc = options.rpc;
     this.pluginSessionStarts = options.pluginSessionStarts ?? [];
     this.rawGenerate = options.generate ?? generate;
-    this.providerManager = options.providerManager;
+    this.modelProvider = options.modelProvider;
     this.subagentHost = options.subagentHost;
     this.mcp = options.mcp;
     this.hooks = options.hookEngine;
-    this.type = options.type ?? 'main';
-    this.rpc = options.rpc;
+    this.log = options.log ?? log;
     this.telemetry = options.telemetry ?? noopTelemetryClient;
+
     this.blobStore = options.homedir
       ? new BlobStore({ blobsDir: join(options.homedir, 'blobs') })
       : undefined;
@@ -154,6 +151,7 @@ export class Agent {
     this.permission = new PermissionManager(this, options.permission);
     this.planMode = new PlanMode(this);
     this.usage = new UsageRecorder(this);
+    this.skills = options.skills ? new SkillManager(this, options.skills) : null;
     this.tools = new ToolManager(this);
     this.background = new BackgroundManager(this);
     this.cron = this.type === 'sub' ? null : new CronManager(this);
@@ -170,7 +168,7 @@ export class Agent {
       const withAuth =
         modelAlias === undefined
           ? undefined
-          : this.providerManager?.createAuthResolverForModel(modelAlias, { log: this.log });
+          : this.modelProvider?.resolveAuth?.(modelAlias, { log: this.log });
       if (withAuth === undefined) {
         this.logLlmRequest(provider, systemPrompt, tools, history, options);
         return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, options);
@@ -186,7 +184,7 @@ export class Agent {
   get llm(): KosongLLM {
     const model = this.config.model;
     const provider = this.config.provider.withThinking(this.config.thinkingLevel);
-    const loopControl = this.providerManager?.config.loopControl;
+    const loopControl = this.kimiConfig?.loopControl;
     const completionBudgetConfig = resolveCompletionBudget({
       reservedContextSize: loopControl?.reservedContextSize,
     });
@@ -299,7 +297,7 @@ export class Agent {
         // Validate the alias resolves before recording it so resume / runtime
         // callers fail fast on missing aliases instead of deferring to the
         // next prompt.
-        const resolved = this.providerManager?.resolveProviderConfig(payload.model);
+        const resolved = this.modelProvider?.resolveProviderConfig(payload.model);
         if (this.config.modelAlias !== payload.model) {
           this.config.update({ modelAlias: payload.model });
           this.telemetry.track('model_switch', { model: payload.model });
@@ -344,7 +342,7 @@ export class Agent {
         this.context.clear();
       },
       activateSkill: (payload) => {
-        if (this.skills === undefined) {
+        if (this.skills === null) {
           throw new KimiError(ErrorCodes.SKILL_NOT_FOUND, `Skill "${payload.name}" was not found`);
         }
         this.skills.activate(payload);
@@ -363,7 +361,7 @@ export class Agent {
 
   emitEvent(event: AgentEvent): void {
     if (this.records.restoring) return;
-    void this.rpc?.emitEvent(event);
+    void this.rpc?.emitEvent?.(event);
   }
 
   emitStatusUpdated(): void {

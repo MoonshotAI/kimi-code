@@ -177,11 +177,12 @@ export class AgentTestContext {
     );
     this.agent = new Agent({
       runtime,
+      config: this.kimiConfig,
       rpc: this.createRpcProxy(),
       persistence,
       generate: options.generate ?? this.scriptedGenerate.generate,
       compactionStrategy: options.compactionStrategy,
-      providerManager,
+      modelProvider: providerManager,
       subagentHost: options.subagentHost,
       type: options.type,
       permission: options.permission,

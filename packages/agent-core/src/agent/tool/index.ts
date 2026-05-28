@@ -43,6 +43,9 @@ export class ToolManager {
 
   constructor(protected readonly agent: Agent) {
     this.attachMcpTools();
+    if (agent.config.hasProvider) {
+      this.initializeBuiltinTools();
+    }
   }
 
   protected get toolStore(): ToolStore {
@@ -93,7 +96,7 @@ export class ToolManager {
         return {
           approvalRule: name,
           execute: async (context) => {
-            return this.agent.rpc!.toolCall(
+            return this.agent.rpc!.toolCall!(
               {
                 turnId: Number(context.turnId),
                 toolCallId: context.toolCallId,
@@ -369,7 +372,7 @@ export class ToolManager {
           new b.ReadMediaFileTool(kaos, workspace, modelCapabilities, videoUploader),
         new b.EnterPlanModeTool(this.agent),
         new b.ExitPlanModeTool(this.agent),
-        this.agent.rpc && new b.AskUserQuestionTool(this.agent),
+        this.agent.rpc?.requestQuestion && new b.AskUserQuestionTool(this.agent),
         new b.TodoListTool(this.toolStore),
         new b.TaskListTool(background),
         new b.TaskOutputTool(background),
@@ -377,8 +380,7 @@ export class ToolManager {
         this.agent.cron && new b.CronCreateTool(this.agent.cron),
         this.agent.cron && new b.CronListTool(this.agent.cron),
         this.agent.cron && new b.CronDeleteTool(this.agent.cron),
-        this.agent.skills !== undefined &&
-          this.agent.skills.registry.listInvocableSkills().length > 0 &&
+        this.agent.skills?.registry.listInvocableSkills().length &&
           new b.SkillTool(this.agent),
         this.agent.subagentHost &&
           new b.AgentTool(
@@ -403,7 +405,7 @@ export class ToolManager {
     if (uploadVideo === undefined) return undefined;
 
     const modelAlias = this.agent.config.modelAlias!;
-    const withAuth = this.agent.providerManager?.createAuthResolverForModel(modelAlias, {
+    const withAuth = this.agent.modelProvider?.resolveAuth?.(modelAlias, {
       log: this.agent.log,
     });
     if (withAuth === undefined) return (input) => uploadVideo(input);

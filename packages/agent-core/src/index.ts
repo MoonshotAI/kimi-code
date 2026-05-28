@@ -40,8 +40,10 @@ export type {
   BackgroundTaskStatus,
 } from './tools/background/manager';
 export type { RuntimeConfig } from './runtime-types';
+export { SingleModelProvider } from './session/provider-manager';
 export type {
   BearerTokenProvider,
+  ModelProvider,
   OAuthTokenProviderResolver,
 } from './session/provider-manager';
 

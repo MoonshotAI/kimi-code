@@ -14,7 +14,6 @@ export type OAuthTokenProviderResolver = (
 ) => BearerTokenProvider | undefined;
 
 export interface ResolvedRuntimeProvider {
-  readonly modelName: string;
   readonly providerName: string;
   readonly provider: KosongProviderConfig;
   readonly modelCapabilities: ModelCapability;
@@ -31,10 +30,41 @@ type AuthorizedRequest = <T>(
   request: (auth: ProviderRequestAuth) => Promise<T>,
 ) => Promise<T>;
 
-export class ProviderManager {
+export interface ModelProvider {
+  readonly defaultModel?: string;
+  resolveProviderConfig(model: string): ResolvedRuntimeProvider;
+  resolveAuth?(model: string, options?: { readonly log?: Logger }): AuthorizedRequest | undefined;
+}
+
+export class SingleModelProvider implements ModelProvider {
+  constructor(
+    private readonly providerConfig: KosongProviderConfig,
+    private readonly modelCapabilities: ModelCapability = UNKNOWN_CAPABILITY,
+  ) {}
+
+  get defaultModel(): string {
+    return this.providerConfig.model;
+  }
+
+  resolveProviderConfig(model: string): ResolvedRuntimeProvider {
+    if (model !== this.providerConfig.model) {
+      throw new KimiError(
+        ErrorCodes.CONFIG_INVALID,
+        `Model "${model}" is not supported by SingleModelProvider.`,
+      );
+    }
+    return {
+      modelCapabilities: this.modelCapabilities,
+      providerName: 'single-model-provider',
+      provider: this.providerConfig,
+    }
+  }
+}
+
+export class ProviderManager implements ModelProvider {
   constructor(private readonly options: ProviderManagerOptions) {}
 
-  get config(): KimiConfig {
+  private get config(): KimiConfig {
     const { config } = this.options;
     return typeof config === 'function' ? config() : config;
   }
@@ -81,14 +111,13 @@ export class ProviderManager {
     );
 
     return {
-      modelName: model,
       providerName,
       provider,
       modelCapabilities: resolveModelCapabilities(alias, provider),
     };
   }
 
-  createAuthResolverForModel(
+  resolveAuth(
     model: string,
     options?: { readonly log?: Logger },
   ): AuthorizedRequest | undefined {

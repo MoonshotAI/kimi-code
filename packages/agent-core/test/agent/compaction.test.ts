@@ -1309,7 +1309,7 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    const providerManager = ctx.agent.providerManager;
+    const providerManager = ctx.agent.modelProvider;
     if (providerManager === undefined) throw new Error('Expected provider manager');
     const resolveProviderConfig = providerManager.resolveProviderConfig.bind(providerManager);
     providerManager.resolveProviderConfig = (model) => ({

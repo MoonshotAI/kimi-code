@@ -413,7 +413,7 @@ export class Session {
       homedir,
       skills: this.skills,
       rpc: proxyWithExtraPayload(this.rpc, { agentId: id }),
-      providerManager: this.options.providerManager,
+      modelProvider: this.options.providerManager,
       hookEngine: config.hookEngine ?? this.hookEngine,
       subagentHost:
         config.subagentHost ?? new SessionSubagentHost(this, id, this.backgroundTaskTimeoutMs()),
