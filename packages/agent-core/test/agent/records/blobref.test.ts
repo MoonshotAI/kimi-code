@@ -16,6 +16,10 @@ afterEach(async () => {
   }
 });
 
+function firstImageUrl(record: AgentRecord): string {
+  return (record as unknown as { input: [{ imageUrl: { url: string } }] }).input[0].imageUrl.url;
+}
+
 async function makeStore(options?: { maxCacheSize?: number; threshold?: number }): Promise<{ store: BlobStore; blobsDir: string }> {
   const blobsDir = join(tmpdir(), `blobref-test-${randomBytes(6).toString('hex')}`);
   await mkdir(blobsDir, { recursive: true });
@@ -42,9 +46,10 @@ describe('blobref', () => {
       origin: { kind: 'user' },
     };
 
-    await store.offload(record);
+    const offloaded = await store.offload(record);
 
-    const url = (record.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url;
+    const url = (offloaded as unknown as { input: [{ imageUrl: { url: string } }] }).input[0]
+      .imageUrl.url;
     expect(isBlobRef(url)).toBe(true);
     expect(url.startsWith('blobref:')).toBe(true);
     expect(url.startsWith('blobref:image/png;')).toBe(true);
@@ -52,6 +57,81 @@ describe('blobref', () => {
     const files = await readdir(blobsDir);
     expect(files).toHaveLength(1);
     expect((await readFile(join(blobsDir, files[0]!))).toString('base64')).toBe(payload);
+  });
+
+  it('does not mutate the input record or its content parts', async () => {
+    const { store } = await makeStore();
+    const payload = 'M'.repeat(5000);
+    const dataUri = `data:image/png;base64,${payload}`;
+    const innerImageUrl = { url: dataUri };
+    const part = { type: 'image_url', imageUrl: innerImageUrl } as const;
+    const record: AgentRecord = {
+      type: 'turn.prompt',
+      input: [part as unknown as { type: 'image_url'; imageUrl: { url: string } }],
+      origin: { kind: 'user' },
+    } as unknown as AgentRecord;
+
+    const offloaded = await store.offload(record);
+
+    // The original record/parts must remain untouched.
+    expect(
+      (record as unknown as { input: unknown[] }).input[0],
+    ).toBe(part);
+    expect(part.imageUrl).toBe(innerImageUrl);
+    expect(innerImageUrl.url).toBe(dataUri);
+
+    // The returned record carries the blobref URL.
+    expect(offloaded).not.toBe(record);
+    const returnedUrl = (
+      offloaded as unknown as { input: [{ imageUrl: { url: string } }] }
+    ).input[0].imageUrl.url;
+    expect(returnedUrl.startsWith('blobref:image/png;')).toBe(true);
+  });
+
+  it('offloads tool.result media parts in context.append_loop_event records', async () => {
+    const { store, blobsDir } = await makeStore();
+    const payload = 'X'.repeat(5000);
+    const dataUri = `data:image/png;base64,${payload}`;
+    const innerImageUrl = { url: dataUri };
+    const part = { type: 'image_url', imageUrl: innerImageUrl } as const;
+    const record: AgentRecord = {
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'p',
+        toolCallId: 'tc',
+        result: { isError: false, output: [part] },
+      },
+    } as unknown as AgentRecord;
+
+    const offloaded = await store.offload(record);
+
+    // Input record/part untouched — same path that the agent's in-memory
+    // history shares with this record reference.
+    expect(innerImageUrl.url).toBe(dataUri);
+    expect(part.imageUrl).toBe(innerImageUrl);
+
+    // Returned record has blobref URL on a fresh imageUrl object.
+    const returned = offloaded as unknown as {
+      event: { result: { output: [{ imageUrl: { url: string } }] } };
+    };
+    expect(returned.event.result.output[0].imageUrl).not.toBe(innerImageUrl);
+    expect(returned.event.result.output[0].imageUrl.url.startsWith('blobref:image/png;')).toBe(true);
+
+    const files = await readdir(blobsDir);
+    expect(files).toHaveLength(1);
+  });
+
+  it('returns the same record reference when nothing needs offloading', async () => {
+    const { store } = await makeStore();
+    const record: AgentRecord = {
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: 'just text' }],
+      origin: { kind: 'user' },
+    } as unknown as AgentRecord;
+
+    const offloaded = await store.offload(record);
+    expect(offloaded).toBe(record);
   });
 
   it('skips small data URIs below threshold', async () => {
@@ -65,10 +145,10 @@ describe('blobref', () => {
       origin: { kind: 'user' },
     };
 
-    await store.offload(record);
+    const offloaded = await store.offload(record);
 
-    const url = (record.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url;
-    expect(url).toBe(dataUri);
+    // Below threshold: nothing happens; original record is returned as-is.
+    expect(offloaded).toBe(record);
     const files = await readdir(blobsDir).catch(() => []);
     expect(files).toHaveLength(0);
   });
@@ -81,10 +161,10 @@ describe('blobref', () => {
       origin: { kind: 'user' },
     };
 
-    await store.offload(record);
+    const offloaded = await store.offload(record);
 
-    const url = (record.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url;
-    expect(url).toBe('blobref:image/png;abc');
+    // Already a blobref: nothing to do; the same reference is returned.
+    expect(offloaded).toBe(record);
   });
 
   it('rehydrates blobrefs back to data URIs', async () => {
@@ -98,10 +178,11 @@ describe('blobref', () => {
       origin: { kind: 'user' },
     };
 
-    await store.offload(record);
-    await store.rehydrate(record);
+    const offloaded = await store.offload(record);
+    await store.rehydrate(offloaded);
 
-    const url = (record.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url;
+    const url = (offloaded as unknown as { input: [{ imageUrl: { url: string } }] }).input[0]
+      .imageUrl.url;
     expect(url).toBe(dataUri);
   });
 
@@ -153,14 +234,15 @@ describe('blobref', () => {
       origin: { kind: 'user' },
     };
 
-    await store.offload(record);
+    const offloaded = await store.offload(record);
     const files = await readdir(blobsDir);
     expect(files).toHaveLength(1);
     await rm(join(blobsDir, files[0]!));
 
     // Should still rehydrate because offload populated the cache.
-    await store.rehydrate(record);
-    const url = (record.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url;
+    await store.rehydrate(offloaded);
+    const url = (offloaded as unknown as { input: [{ imageUrl: { url: string } }] }).input[0]
+      .imageUrl.url;
     expect(url).toBe(dataUri);
   });
 
@@ -175,8 +257,8 @@ describe('blobref', () => {
       origin: { kind: 'user' },
     };
 
-    await store.offload(record);
-    await store.rehydrate(record);
+    const offloaded = await store.offload(record);
+    await store.rehydrate(offloaded);
 
     const files = await readdir(blobsDir);
     expect(files).toHaveLength(1);
@@ -184,15 +266,16 @@ describe('blobref', () => {
 
     // Second rehydrate (of a fresh record pointing to the same blobref)
     // should still succeed because the first rehydrate populated the read cache.
-    const blobrefUrl = (record.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url;
+    // After the rehydrate above, `offloaded` carries the data URI again — pull
+    // the blobref back out by re-offloading or re-using the original offload run.
+    const offloadedFresh = await store.offload(record);
     const record2: AgentRecord = {
       type: 'turn.prompt',
-      input: [{ type: 'image_url', imageUrl: { url: blobrefUrl } }],
+      input: [{ type: 'image_url', imageUrl: { url: firstImageUrl(offloadedFresh) } }],
       origin: { kind: 'user' },
     };
     await store.rehydrate(record2);
-    const url2 = (record2.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url;
-    expect(url2).toBe(dataUri);
+    expect(firstImageUrl(record2)).toBe(dataUri);
   });
 
   it('evicts least-recently-used entries when cache size limit is exceeded', async () => {
@@ -219,19 +302,19 @@ describe('blobref', () => {
       origin: { kind: 'user' },
     };
 
-    await store.offload(recordA);
-    await store.offload(recordB);
+    const offloadedA = await store.offload(recordA);
+    const offloadedB = await store.offload(recordB);
 
     // Touch A so it becomes more recent than B.
     const recordA_touch: AgentRecord = {
       type: 'turn.prompt',
-      input: [{ type: 'image_url', imageUrl: { url: (recordA.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url } }],
+      input: [{ type: 'image_url', imageUrl: { url: firstImageUrl(offloadedA) } }],
       origin: { kind: 'user' },
     };
     await store.rehydrate(recordA_touch);
 
     // Adding C should evict B (the least-recently-used), not A.
-    await store.offload(recordC);
+    const offloadedC = await store.offload(recordC);
 
     // Delete all files so only cache can satisfy rehydration.
     const files = await readdir(blobsDir);
@@ -242,29 +325,29 @@ describe('blobref', () => {
     // A should still be cached because it was touched after B.
     const recordA2: AgentRecord = {
       type: 'turn.prompt',
-      input: [{ type: 'image_url', imageUrl: { url: (recordA.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url } }],
+      input: [{ type: 'image_url', imageUrl: { url: firstImageUrl(offloadedA) } }],
       origin: { kind: 'user' },
     };
     await store.rehydrate(recordA2);
-    expect((recordA2.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url).toBe(`data:image/png;base64,${payloadA}`);
+    expect(firstImageUrl(recordA2)).toBe(`data:image/png;base64,${payloadA}`);
 
     // B should have been evicted.
     const recordB2: AgentRecord = {
       type: 'turn.prompt',
-      input: [{ type: 'image_url', imageUrl: { url: (recordB.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url } }],
+      input: [{ type: 'image_url', imageUrl: { url: firstImageUrl(offloadedB) } }],
       origin: { kind: 'user' },
     };
     await store.rehydrate(recordB2);
-    expect((recordB2.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url).toBe('[media missing]');
+    expect(firstImageUrl(recordB2)).toBe('[media missing]');
 
     // C should still be cached.
     const recordC2: AgentRecord = {
       type: 'turn.prompt',
-      input: [{ type: 'image_url', imageUrl: { url: (recordC.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url } }],
+      input: [{ type: 'image_url', imageUrl: { url: firstImageUrl(offloadedC) } }],
       origin: { kind: 'user' },
     };
     await store.rehydrate(recordC2);
-    expect((recordC2.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url).toBe(`data:image/png;base64,${payloadC}`);
+    expect(firstImageUrl(recordC2)).toBe(`data:image/png;base64,${payloadC}`);
   });
 
   it('skips caching a blob larger than the entire cache cap', async () => {
@@ -285,8 +368,8 @@ describe('blobref', () => {
       origin: { kind: 'user' },
     };
 
-    await store.offload(recordSmall);
-    await store.offload(recordLarge);
+    const offloadedSmall = await store.offload(recordSmall);
+    const offloadedLarge = await store.offload(recordLarge);
 
     // Delete all files so only cache can satisfy rehydration.
     const files = await readdir(blobsDir);
@@ -297,19 +380,19 @@ describe('blobref', () => {
     // The small blob is still cached.
     const recordSmall2: AgentRecord = {
       type: 'turn.prompt',
-      input: [{ type: 'image_url', imageUrl: { url: (recordSmall.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url } }],
+      input: [{ type: 'image_url', imageUrl: { url: firstImageUrl(offloadedSmall) } }],
       origin: { kind: 'user' },
     };
     await store.rehydrate(recordSmall2);
-    expect((recordSmall2.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url).toBe(`data:image/png;base64,${small}`);
+    expect(firstImageUrl(recordSmall2)).toBe(`data:image/png;base64,${small}`);
 
     // The large blob was never cached, so rehydration fails.
     const recordLarge2: AgentRecord = {
       type: 'turn.prompt',
-      input: [{ type: 'image_url', imageUrl: { url: (recordLarge.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url } }],
+      input: [{ type: 'image_url', imageUrl: { url: firstImageUrl(offloadedLarge) } }],
       origin: { kind: 'user' },
     };
     await store.rehydrate(recordLarge2);
-    expect((recordLarge2.input as unknown as [{ imageUrl: { url: string } }])[0].imageUrl.url).toBe('[media missing]');
+    expect(firstImageUrl(recordLarge2)).toBe('[media missing]');
   });
 });

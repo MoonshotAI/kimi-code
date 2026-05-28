@@ -248,7 +248,7 @@ describe('FileSystemAgentRecordPersistence', () => {
 
     const blobFiles = await readdir(blobsDir);
     expect(blobFiles).toHaveLength(1);
-    expect(await readFile(join(blobsDir, blobFiles[0]!), 'utf8')).toBe(payload);
+    expect((await readFile(join(blobsDir, blobFiles[0]!))).toString('base64')).toBe(payload);
   });
 });
 

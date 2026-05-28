@@ -171,13 +171,13 @@ export class FileSystemAgentRecordPersistence implements AgentRecordPersistence 
     const batch = this.pendingRecords.splice(0);
     this.shouldClear = false;
 
-    if (this.options.blobStore !== undefined) {
-      await Promise.all(
-        batch.map((record) => this.options.blobStore!.offload(record)),
-      );
-    }
+    const writable = this.options.blobStore !== undefined
+      ? await Promise.all(
+          batch.map((record) => this.options.blobStore!.offload(record)),
+        )
+      : batch;
 
-    const content = batch.map((e) => JSON.stringify(e) + '\n').join('');
+    const content = writable.map((e) => JSON.stringify(e) + '\n').join('');
     const directory = dirname(this.filePath);
     await mkdir(directory, { recursive: true });
 

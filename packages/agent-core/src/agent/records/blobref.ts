@@ -34,31 +34,48 @@ export class BlobStore {
     this.maxCacheSize = options.maxCacheSize ?? DEFAULT_MAX_CACHE_SIZE;
   }
 
-  async offload(record: AgentRecord): Promise<void> {
+  async offload(record: AgentRecord): Promise<AgentRecord> {
     switch (record.type) {
       case 'turn.prompt':
-      case 'turn.steer':
-        for (const part of record.input) {
-          await this.offloadContentPart(part);
-        }
-        break;
-      case 'context.append_message':
-        for (const part of record.message.content) {
-          await this.offloadContentPart(part);
-        }
-        break;
+      case 'turn.steer': {
+        const input = await this.offloadParts(record.input);
+        return input === record.input ? record : { ...record, input };
+      }
+      case 'context.append_message': {
+        const content = await this.offloadParts(record.message.content);
+        return content === record.message.content
+          ? record
+          : { ...record, message: { ...record.message, content } };
+      }
       case 'context.append_loop_event': {
         const event = record.event;
-        if (event.type === 'tool.result' && typeof event.result.output !== 'string') {
-          for (const part of event.result.output) {
-            await this.offloadContentPart(part);
-          }
+        if (event.type !== 'tool.result' || typeof event.result.output === 'string') {
+          return record;
         }
-        break;
+        const output = await this.offloadParts(event.result.output);
+        if (output === event.result.output) return record;
+        return {
+          ...record,
+          event: {
+            ...event,
+            result: { ...event.result, output },
+          },
+        };
       }
       default:
-        break;
+        return record;
     }
+  }
+
+  private async offloadParts(parts: readonly ContentPart[]): Promise<ContentPart[]> {
+    let changed = false;
+    const out: ContentPart[] = [];
+    for (const part of parts) {
+      const next = await this.offloadContentPart(part);
+      if (next !== part) changed = true;
+      out.push(next);
+    }
+    return changed ? out : (parts as ContentPart[]);
   }
 
   async rehydrate(record: AgentRecord): Promise<void> {
@@ -88,9 +105,9 @@ export class BlobStore {
     }
   }
 
-  private async offloadContentPart(part: ContentPart): Promise<void> {
-    const record = part as unknown as Record<string, unknown>;
-    for (const value of Object.values(record)) {
+  private async offloadContentPart(part: ContentPart): Promise<ContentPart> {
+    let updated: Record<string, unknown> | undefined;
+    for (const [key, value] of Object.entries(part)) {
       const mediaObj = asMediaContainer(value);
       if (mediaObj === undefined) continue;
 
@@ -98,10 +115,12 @@ export class BlobStore {
       if (typeof url !== 'string') continue;
 
       const newUrl = await this.maybeOffloadString(url);
-      if (newUrl !== url) {
-        mediaObj.url = newUrl;
-      }
+      if (newUrl === url) continue;
+
+      if (updated === undefined) updated = { ...part };
+      updated[key] = { ...(value as object), url: newUrl };
     }
+    return updated === undefined ? part : (updated as unknown as ContentPart);
   }
 
   private async rehydrateContentPart(part: ContentPart): Promise<void> {
