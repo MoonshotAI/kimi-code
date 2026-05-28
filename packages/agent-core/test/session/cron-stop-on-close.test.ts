@@ -2,17 +2,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { localKaos, type Kaos } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { testKaos } from '../fixtures/test-kaos';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
-
-// Anchor the workspace type resolution: `tsgo` (CI's TypeScript native
-// preview) flaked when this file value-imported `localKaos` alone — the
-// other session tests that hit the same import all also bring in a
-// `type` from kaos. Naming `Kaos` here keeps the resolution stable.
-const KAOS: Kaos = localKaos;
 
 const OS_ENV = {
   osKind: 'Linux',
@@ -35,10 +29,9 @@ describe('Session.close stops cron', () => {
   it('stops each agent cron scheduler on close', async () => {
     const { sessionDir, workDir } = await sessionFixture();
     const session = new Session({
-      runtime: { kaos: KAOS, osEnv: OS_ENV },
+      runtime: { kaos: testKaos.withCwd(workDir) },
       id: 'session-cron-stop',
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
     });
@@ -63,10 +56,9 @@ describe('Session.close stops cron', () => {
     const before = process.listenerCount('SIGUSR1');
     const { sessionDir, workDir } = await sessionFixture();
     const session = new Session({
-      runtime: { kaos: KAOS, osEnv: OS_ENV },
+      runtime: { kaos: testKaos.withCwd(workDir) },
       id: 'session-cron-stop-sigusr1',
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
     });
