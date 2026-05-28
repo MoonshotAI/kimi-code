@@ -2,13 +2,17 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { LocalKaos } from '@moonshot-ai/kaos';
+import { localKaos, type Kaos } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 
-const KAOS = new LocalKaos();
+// Anchor the workspace type resolution: `tsgo` (CI's TypeScript native
+// preview) flaked when this file value-imported `localKaos` alone — the
+// other session tests that hit the same import all also bring in a
+// `type` from kaos. Naming `Kaos` here keeps the resolution stable.
+const KAOS: Kaos = localKaos;
 
 const OS_ENV = {
   osKind: 'Linux',
