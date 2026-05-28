@@ -792,9 +792,7 @@ export class KimiTUI {
       return;
     }
     if (this.state.appState.streamingPhase === 'idle') {
-      for (const part of input) {
-        this.sendMessageInternal(session, part);
-      }
+      this.sendMessageInternal(session, input.join('\n\n'));
       return;
     }
 
