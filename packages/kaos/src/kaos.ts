@@ -1,3 +1,4 @@
+import type { Environment } from './environment';
 import type { KaosProcess } from './process';
 import type { StatResult } from './types';
 
@@ -11,6 +12,13 @@ import type { StatResult } from './types';
 export interface Kaos {
   /** Human-readable name for this environment (e.g. `"local"`, `"ssh:host"`). */
   readonly name: string;
+
+  /**
+   * OS / shell probe describing the target environment. Populated by the
+   * concrete Kaos implementation (e.g. `detectEnvironmentFromNode()` for
+   * `LocalKaos`, a remote probe for `SSHKaos`).
+   */
+  readonly osEnv: Environment;
 
   // ── Path operations (sync) ──────────────────────────────────────────
 

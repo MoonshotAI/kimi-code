@@ -11,8 +11,8 @@
  * their own `WorkspaceConfig` with narrower bounds.
  */
 
+import type { Environment, Kaos } from '@moonshot-ai/kaos';
 import type { ExecutableToolResult } from '#/loop';
-import type { Kaos } from '@moonshot-ai/kaos';
 
 import type { WorkspaceConfig } from '../../../src/tools/support/workspace';
 
@@ -20,9 +20,18 @@ function notImplemented(method: string): never {
   throw new Error(`FakeKaos.${method} not implemented — override in test`);
 }
 
+export const FAKE_OS_ENV: Environment = {
+  osKind: 'Linux',
+  osArch: 'x86_64',
+  osVersion: 'test',
+  shellName: 'bash',
+  shellPath: '/bin/bash',
+};
+
 export function createFakeKaos(overrides?: Partial<Kaos>): Kaos {
   const base: Kaos = {
     name: 'fake',
+    osEnv: FAKE_OS_ENV,
     pathClass: () => 'posix',
     normpath: (p: string) => p,
     gethome: () => '/home/test',

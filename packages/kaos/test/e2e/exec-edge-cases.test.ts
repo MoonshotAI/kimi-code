@@ -43,7 +43,7 @@ describe('e2e: exec edge cases', () => {
   let originalCwd: string;
 
   beforeEach(async () => {
-    kaos = new LocalKaos();
+    kaos = await LocalKaos.create();
     originalCwd = process.cwd();
     tempDir = await realpath(await mkdtemp(join(tmpdir(), 'kaos-exec-edge-')));
     await kaos.chdir(tempDir);
@@ -176,8 +176,8 @@ describe('e2e: exec edge cases', () => {
       await kaos.mkdir(subA);
       await kaos.mkdir(subB);
 
-      const kaosA = new LocalKaos();
-      const kaosB = new LocalKaos();
+      const kaosA = await LocalKaos.create();
+      const kaosB = await LocalKaos.create();
       await kaosA.chdir(subA);
       await kaosB.chdir(subB);
 

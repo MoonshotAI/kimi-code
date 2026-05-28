@@ -243,7 +243,7 @@ export class Agent {
   useProfile(profile: ResolvedAgentProfile, context?: PreparedSystemPromptContext): void {
     const cwd = context?.cwd ?? resolveSystemPromptCwd(this.runtime.kaos, this.config.cwd);
     const systemPrompt = profile.systemPrompt({
-      osEnv: this.runtime.osEnv,
+      osEnv: this.runtime.kaos.osEnv,
       cwd,
       skills: this.skills?.registry,
       cwdListing: context?.cwdListing,

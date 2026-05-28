@@ -12,6 +12,7 @@ import type {
   Stats as SFTPStats,
 } from 'ssh2';
 
+import type { Environment } from './environment';
 import { KaosError, KaosFileExistsError, KaosValueError } from './errors';
 import { BufferedReadable, decodeTextWithErrors, globPatternToRegex } from './internal';
 import type { Kaos } from './kaos';
@@ -429,6 +430,14 @@ export class SSHKaos implements Kaos {
   private _sftp: SFTPWrapper;
   private _home: string;
   private _cwd: string;
+
+  // Stub: real wiring (probing the remote host via `uname` / `$SHELL` over the
+  // SSH transport) is deferred.
+  get osEnv(): Environment {
+    throw new KaosError(
+      'SSHKaos.osEnv is not yet wired — remote environment probing is not implemented.',
+    );
+  }
 
   private constructor(client: Client, sftp: SFTPWrapper, home: string, cwd: string) {
     this._client = client;

@@ -16,7 +16,7 @@ describe.skipIf(process.platform === 'win32')('e2e: symlink stat parity', () => 
   let tempDir: string;
 
   beforeEach(async () => {
-    kaos = new LocalKaos();
+    kaos = await LocalKaos.create();
     tempDir = await realpath(await mkdtemp(join(tmpdir(), 'kaos-symlink-')));
     await kaos.chdir(tempDir);
   });

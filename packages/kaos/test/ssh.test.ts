@@ -1,9 +1,6 @@
 import { EventEmitter } from 'node:events';
 
-import { resetCurrentKaos, setCurrentKaos } from '#/current';
-import type { KaosToken } from '#/current';
 import { KaosFileExistsError, KaosValueError } from '#/errors';
-import { KaosPath } from '#/path';
 import {
   KaosConnectionError,
   KaosFileNotFoundError,
@@ -40,7 +37,6 @@ async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
 describe.skipIf(process.platform === 'win32' || !SSH_SMOKE)('SSHKaos smoke', () => {
   let sshKaos: SSHKaos;
   let remoteBase = '';
-  let token: KaosToken | undefined;
 
   beforeAll(async () => {
     if (SSH_USERNAME === undefined) {
@@ -68,10 +64,6 @@ describe.skipIf(process.platform === 'win32' || !SSH_SMOKE)('SSHKaos smoke', () 
   });
 
   afterEach(async () => {
-    if (token !== undefined) {
-      resetCurrentKaos(token);
-      token = undefined;
-    }
     // Cleanup the remote directory best-effort, but always restore cwd.
     if (remoteBase.length > 0) {
       try {
@@ -169,8 +161,7 @@ describe.skipIf(process.platform === 'win32' || !SSH_SMOKE)('SSHKaos smoke', () 
     expect(fileStat.stNlink).toBeGreaterThanOrEqual(0);
   });
 
-  test('KaosPath roundtrip via SSH', async () => {
-    token = setCurrentKaos(sshKaos);
+  test('file roundtrip via SSH', async () => {
     await sshKaos.chdir(remoteBase);
 
     const textPath = remoteBase + '/text.txt';
@@ -200,7 +191,7 @@ describe.skipIf(process.platform === 'win32' || !SSH_SMOKE)('SSHKaos smoke', () 
     const roundtrip = await sshKaos.readBytes(bytesPath);
     expect(Buffer.compare(roundtrip, bytesPayload)).toBe(0);
 
-    expect(KaosPath.cwd().toString()).toBe(remoteBase);
+    expect(sshKaos.getcwd()).toBe(remoteBase);
   });
 
   test('iterdir lists child entries', async () => {

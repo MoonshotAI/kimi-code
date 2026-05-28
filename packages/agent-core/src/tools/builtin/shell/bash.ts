@@ -26,12 +26,11 @@
 import type { Readable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 
-import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
+import type { Environment, Kaos, KaosProcess } from '@moonshot-ai/kaos';
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
-import type { Environment } from '../../../utils/environment';
 import { renderPrompt } from '../../../utils/render-prompt';
 import type { BackgroundProcessManager } from '../../background/manager';
 import { toInputJsonSchema } from '../../support/input-schema';

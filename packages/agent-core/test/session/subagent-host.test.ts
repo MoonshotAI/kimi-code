@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { localKaos } from '@moonshot-ai/kaos';
+import { testKaos } from '../fixtures/test-kaos';
 import type { ToolCall } from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -24,13 +24,6 @@ vi.mock('../../src/session/git-context', () => ({
 }));
 
 const signal = new AbortController().signal;
-const TEST_OS_ENV = {
-  osKind: 'Linux',
-  osArch: 'arm64',
-  osVersion: 'test',
-  shellPath: '/bin/bash',
-  shellName: 'bash',
-} as const;
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -743,7 +736,7 @@ describe('Session resume permission parent chain', () => {
     await writeWire(childDir, []);
 
     const session = new Session({
-      runtime: { kaos: localKaos, osEnv: TEST_OS_ENV },
+      runtime: { kaos: testKaos },
       homedir: sessionDir,
       cwd: workDir,
       rpc: createSessionRpc(),
@@ -797,13 +790,6 @@ describe('Session.createAgent', () => {
       id: 'test-subagent-remote-context',
       runtime: {
         kaos,
-        osEnv: {
-          osKind: 'Linux',
-          osArch: 'arm64',
-          osVersion: 'test',
-          shellPath: '/bin/bash',
-          shellName: 'bash',
-        },
       },
       homedir: '/tmp/kimi-session',
       rpc: createSessionRpc(),
@@ -871,13 +857,6 @@ describe('Session.createAgent', () => {
       id: 'test-subagent-agents-md',
       runtime: {
         kaos,
-        osEnv: {
-          osKind: 'Linux',
-          osArch: 'arm64',
-          osVersion: 'test',
-          shellPath: '/bin/bash',
-          shellName: 'bash',
-        },
       },
       homedir: '/tmp/kimi-session',
       cwd: workDir,
@@ -911,13 +890,6 @@ describe('Session.createAgent', () => {
           mkdir: vi.fn().mockResolvedValue(undefined),
           writeText: vi.fn().mockResolvedValue(0),
         }),
-        osEnv: {
-          osKind: 'Linux',
-          osArch: 'arm64',
-          osVersion: 'test',
-          shellPath: '/bin/bash',
-          shellName: 'bash',
-        },
       },
       homedir: '/tmp/kimi-session',
       rpc: createSessionRpc(),
@@ -946,7 +918,6 @@ describe('Session.createAgent', () => {
           mkdir: vi.fn().mockResolvedValue(undefined),
           writeText: vi.fn().mockResolvedValue(0),
         }),
-        osEnv: TEST_OS_ENV,
       },
       homedir: '/tmp/kimi-session',
       rpc: createSessionRpc(),

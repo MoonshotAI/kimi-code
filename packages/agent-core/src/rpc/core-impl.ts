@@ -1,13 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 
-import { localKaos } from '@moonshot-ai/kaos';
+import { KaosShellNotFoundError, LocalKaos } from '@moonshot-ai/kaos';
 import { ErrorCodes, KimiError } from '#/errors';
 import { getRootLogger, log } from '#/logging/logger';
 import { LocalFetchURLProvider } from '#/tools/providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from '#/tools/providers/moonshot-fetch-url';
 import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search';
-import { detectEnvironmentFromNode } from '#/utils/environment';
 import { getCoreVersion } from '#/version';
 import type {
   ActivateSkillPayload,
@@ -743,9 +742,15 @@ async function createRuntimeConfig(input: {
   const searchService = input.config.services?.moonshotSearch;
   const fetchService = input.config.services?.moonshotFetch;
 
+  const kaos = await LocalKaos.create().catch((error: unknown) => {
+    if (error instanceof KaosShellNotFoundError) {
+      throw new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, error.message);
+    }
+    throw error;
+  });
+
   return {
-    kaos: localKaos,
-    osEnv: await detectEnvironmentFromNode(),
+    kaos,
     urlFetcher:
       fetchService?.baseUrl === undefined
         ? localFetcher

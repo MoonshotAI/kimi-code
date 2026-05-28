@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { Readable, type Writable } from 'node:stream';
 
 import { createControlledPromise } from '@antfu/utils';
-import { localKaos, type Kaos, type KaosProcess } from '@moonshot-ai/kaos';
+import { type Environment, type Kaos, type KaosProcess } from '@moonshot-ai/kaos';
 import type { ModelCapability, ProviderConfig } from '@moonshot-ai/kosong';
 import { expect, vi } from 'vitest';
 
@@ -26,9 +26,10 @@ import type { QuestionResult, RPCCallOptions, SDKAgentRPC } from '../../../src/r
 import type { AgentAPI } from '../../../src/rpc/core-api';
 import type { RuntimeConfig } from '../../../src/runtime-types';
 import type { TelemetryClient } from '../../../src/telemetry';
-import type { Environment } from '../../../src/utils/environment';
 import type { PromisifyMethods } from '../../../src/utils/types';
 import { createFakeKaos } from '../../tools/fixtures/fake-kaos';
+import { testKaos } from '../../fixtures/test-kaos';
+
 import { createScriptedGenerate } from './scripted-generate';
 import {
   DEFAULT_TEST_SYSTEM_PROMPT,
@@ -160,8 +161,7 @@ export class AgentTestContext {
     const providerManager = options.providerManager ?? new ProviderManager({ config: emptyConfig() });
 
     const runtime = options.runtime ?? {
-      kaos: options.kaos ?? localKaos,
-      osEnv: TEST_OS_ENV,
+      kaos: options.kaos ?? testKaos,
     };
     const persistence = this.wrapPersistence(
       options.persistence ?? new InMemoryAgentRecordPersistence(),
@@ -709,7 +709,6 @@ export class AgentTestContext {
     const resumed = testAgent({
       runtime: {
         kaos: createResumeNoSideEffectKaos(),
-        osEnv: this.agent.runtime.osEnv,
         urlFetcher: this.agent.runtime.urlFetcher,
         webSearcher: this.agent.runtime.webSearcher,
       },
@@ -935,6 +934,7 @@ function createResumeNoSideEffectKaos(): Kaos {
 
   return {
     name: 'resume-no-side-effects',
+    osEnv: TEST_OS_ENV,
     pathClass: () => 'posix',
     normpath: (p: string) => p,
     gethome: () => '/home/test',

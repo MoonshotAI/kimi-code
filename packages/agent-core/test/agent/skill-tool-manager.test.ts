@@ -2,10 +2,10 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { localKaos } from '@moonshot-ai/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Agent, type AgentRecord } from '../../src/agent';
+import { testKaos } from '../fixtures/test-kaos';
 import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
 import type { AgentRecordPersistence } from '../../src/agent/records';
 import { ProviderManager } from '../../src/providers/provider-manager';
@@ -13,16 +13,8 @@ import type { ApprovalResponse, SDKAgentRPC, SDKSessionRPC } from '../../src/rpc
 import { Session } from '../../src/session';
 import { SkillRegistry, type SkillDefinition } from '../../src/skill';
 import { SkillTool } from '../../src/tools/builtin/collaboration/skill-tool';
-import type { Environment } from '../../src/utils/environment';
 import { executeTool } from '../tools/fixtures/execute-tool';
 
-const TEST_OS_ENV: Environment = {
-  osKind: 'Linux',
-  osArch: 'x86_64',
-  osVersion: 'test',
-  shellName: 'bash',
-  shellPath: '/bin/bash',
-};
 
 const MOCK_PROVIDER = {
   type: 'kimi',
@@ -54,8 +46,7 @@ function makeAgent(
   } as unknown as SDKAgentRPC;
   const agent = new Agent({
     runtime: {
-      kaos: localKaos,
-      osEnv: TEST_OS_ENV,
+      kaos: testKaos,
     },
     rpc,
     skills,
@@ -73,8 +64,7 @@ function makeAgent(
 
 function runtime() {
   return {
-    kaos: localKaos,
-    osEnv: TEST_OS_ENV,
+    kaos: testKaos,
   };
 }
 

@@ -4,8 +4,6 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { resetCurrentKaos, setCurrentKaos } from '#/current';
-import type { KaosToken } from '#/current';
 import type { Kaos } from '#/kaos';
 import { LocalKaos } from '#/local';
 import type { KaosProcess } from '#/process';
@@ -79,17 +77,14 @@ async function runSh(
 
 describe.skipIf(process.platform === 'win32')('LocalKaos shell operations', () => {
   let kaos: Kaos;
-  let token: KaosToken;
   let tmpDir: string;
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), 'kaos-shell-'));
-    kaos = new LocalKaos();
-    token = setCurrentKaos(kaos);
+    kaos = await LocalKaos.create();
   });
 
   afterEach(async () => {
-    resetCurrentKaos(token);
     await rm(tmpDir, { recursive: true, force: true });
   });
 

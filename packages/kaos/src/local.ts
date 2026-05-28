@@ -14,6 +14,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join, normalize } from 'pathe';
 import type { Readable, Writable } from 'node:stream';
 
+import { detectEnvironmentFromNode, type Environment } from './environment';
 import { KaosFileExistsError } from './errors';
 import { BufferedReadable, decodeTextWithErrors, globPatternToRegex } from './internal';
 import type { Kaos } from './kaos';
@@ -146,13 +147,27 @@ class LocalProcess implements KaosProcess {
  */
 export class LocalKaos implements Kaos {
   readonly name: string = 'local';
+  readonly osEnv: Environment;
   private _cwd: string;
 
-  constructor() {
+  private constructor(osEnv: Environment) {
     // Snapshot the process cwd at construction time. After this point we
     // never touch process.cwd() / process.chdir() — all path resolution
     // goes through this._cwd.
     this._cwd = normalize(process.cwd());
+    this.osEnv = osEnv;
+  }
+
+  /**
+   * Construct a fresh `LocalKaos` after probing the host environment.
+   *
+   * Each call returns a new instance with its own `_cwd`; concurrent
+   * callers can therefore operate on independent working directories
+   * without polluting one another.
+   */
+  static async create(): Promise<LocalKaos> {
+    const osEnv = await detectEnvironmentFromNode();
+    return new LocalKaos(osEnv);
   }
 
   private _resolvePath(path: string): string {
@@ -555,6 +570,3 @@ function waitForSpawn(child: ChildProcess): Promise<void> {
     child.once('error', onError);
   });
 }
-
-/** The default local KAOS instance. */
-export const localKaos: LocalKaos = new LocalKaos();
