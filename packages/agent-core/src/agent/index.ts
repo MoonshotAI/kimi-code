@@ -82,20 +82,20 @@ export interface AgentOptions {
 }
 
 export class Agent {
+  readonly type: AgentType;
   readonly runtime: RuntimeConfig;
   readonly kimiConfig?: KimiConfig;
   readonly homedir?: string;
-  readonly skills?: SkillManager;
+  readonly rpc?: SDKAgentRPC;
   readonly pluginSessionStarts: readonly EnabledPluginSessionStart[];
   readonly rawGenerate: typeof generate;
-  readonly rpc?: SDKAgentRPC;
+  readonly providerManager?: ProviderManager;
+  readonly subagentHost?: SessionSubagentHost;
+  readonly mcp?: McpConnectionManager;
+  readonly hooks?: HookEngine;
+  readonly log: Logger;
   readonly telemetry: TelemetryClient;
-  readonly providerManager: ProviderManager | undefined;
-  readonly subagentHost: SessionSubagentHost | undefined;
-  readonly mcp: McpConnectionManager | undefined;
-  readonly hooks: HookEngine | undefined;
 
-  readonly type: AgentType;
   readonly blobStore: BlobStore | undefined;
   readonly records: AgentRecords;
   readonly fullCompaction: FullCompaction;
@@ -107,30 +107,28 @@ export class Agent {
   readonly planMode: PlanMode;
   readonly usage: UsageRecorder;
   readonly tools: ToolManager;
+  readonly skills: SkillManager | null;
   readonly background: BackgroundManager;
   readonly cron: CronManager | null;
   readonly replayBuilder: ReplayBuilder;
-  readonly log: Logger;
 
   private lastLlmConfigLogSignature?: string;
 
   constructor(options: AgentOptions) {
-    this.log = options.log ?? log;
-    this.kimiConfig = options.config;
+    this.type = options.type ?? 'main';
     this.runtime = options.runtime;
+    this.kimiConfig = options.config;
     this.homedir = options.homedir;
-    if (options.skills !== undefined) {
-      this.skills = new SkillManager(this, options.skills);
-    }
+    this.rpc = options.rpc;
     this.pluginSessionStarts = options.pluginSessionStarts ?? [];
     this.rawGenerate = options.generate ?? generate;
     this.providerManager = options.providerManager;
     this.subagentHost = options.subagentHost;
     this.mcp = options.mcp;
     this.hooks = options.hookEngine;
-    this.type = options.type ?? 'main';
-    this.rpc = options.rpc;
+    this.log = options.log ?? log;
     this.telemetry = options.telemetry ?? noopTelemetryClient;
+
     this.blobStore = options.homedir
       ? new BlobStore({ blobsDir: join(options.homedir, 'blobs') })
       : undefined;
@@ -155,6 +153,7 @@ export class Agent {
     this.planMode = new PlanMode(this);
     this.usage = new UsageRecorder(this);
     this.tools = new ToolManager(this);
+    this.skills = options.skills === undefined ? null : new SkillManager(this, options.skills);
     this.background = new BackgroundManager(this);
     this.cron = this.type === 'sub' ? null : new CronManager(this);
     this.replayBuilder = new ReplayBuilder(this);
@@ -344,7 +343,7 @@ export class Agent {
         this.context.clear();
       },
       activateSkill: (payload) => {
-        if (this.skills === undefined) {
+        if (this.skills === null) {
           throw new KimiError(ErrorCodes.SKILL_NOT_FOUND, `Skill "${payload.name}" was not found`);
         }
         this.skills.activate(payload);
