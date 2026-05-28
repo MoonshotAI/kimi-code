@@ -7,9 +7,9 @@ import {
 } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
-import type { ResolvedRuntimeProvider } from '../../providers/runtime-provider';
 import type { AgentConfigData, AgentConfigUpdateData } from './types';
 import { resolveThinkingEffort, type ThinkingEffort } from './thinking';
+import type { ResolvedRuntimeProvider } from '../../session/provider-manager';
 
 export * from './types';
 export { resolveThinkingEffort, type ThinkingEffort } from './thinking';
@@ -25,16 +25,9 @@ export class ConfigState {
     this._cwd = agent.runtime.kaos.getcwd();
   }
 
-  update(input: AgentConfigUpdateData): void {
-    const changed = { ...input };
+  update(changed: AgentConfigUpdateData): void {
     if (Object.keys(changed).length === 0) return;
 
-    if (changed.thinkingLevel !== undefined) {
-      changed.thinkingLevel = resolveThinkingEffort(
-        changed.thinkingLevel,
-        this.agent.providerManager?.config.thinking,
-      );
-    }
     this.agent.records.logRecord({
       type: 'config.update',
       ...changed,
@@ -47,14 +40,22 @@ export class ConfigState {
       this._cwd = changed.cwd;
       void this.agent.runtime.kaos.chdir(changed.cwd);
     }
-    if (Object.hasOwn(changed, 'modelAlias')) {
-      this._modelAlias = changed.modelAlias ?? undefined;
+    if (changed.modelAlias) {
+      this._modelAlias = changed.modelAlias;
     }
-    if (Object.hasOwn(changed, 'profileName')) this._profileName = changed.profileName;
-    if (changed.thinkingLevel !== undefined)
-      this._thinkingLevel = changed.thinkingLevel as ThinkingEffort;
-    if (changed.systemPrompt !== undefined) this._systemPrompt = changed.systemPrompt;
-    if (this.hasProvider && (changed.cwd !== undefined || Object.hasOwn(changed, 'modelAlias'))) {
+    if (changed.profileName) {
+      this._profileName = changed.profileName;
+    }
+    if (changed.thinkingLevel !== undefined) {
+      this._thinkingLevel = resolveThinkingEffort(
+        changed.thinkingLevel,
+        this.agent.providerManager?.config.thinking,
+      );
+    }
+    if (changed.systemPrompt !== undefined) {
+      this._systemPrompt = changed.systemPrompt;
+    }
+    if (this.hasProvider && (changed.cwd !== undefined || changed.modelAlias)) {
       this.agent.tools.initializeBuiltinTools();
     }
     this.agent.emitStatusUpdated();
@@ -126,7 +127,7 @@ export class ConfigState {
 
   private get resolvedProviderConfig(): ResolvedRuntimeProvider | undefined {
     if (this._modelAlias === undefined) return undefined;
-    return this.agent.providerManager?.resolveProviderConfigForModel(this._modelAlias);
+    return this.agent.providerManager?.resolveProviderConfig(this._modelAlias);
   }
 
   private tryResolvedProviderConfig(): ResolvedRuntimeProvider | undefined {

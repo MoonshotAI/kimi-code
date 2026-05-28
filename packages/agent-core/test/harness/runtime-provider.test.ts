@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import type { KimiConfig } from '../../src/config';
 import { KimiError } from '../../src/errors';
 import { resolveRuntimeProvider } from '../../src/providers/runtime-provider';
-import { ProviderManager } from '../../src/providers/provider-manager';
+import { ProviderManager } from '../../src/session/provider-manager';
+import { resolveThinkingLevel } from '../../src/agent/config/thinking';
 
 const BASE_CONFIG: KimiConfig = {
   defaultModel: 'kimi-code/kimi-for-coding',
@@ -580,54 +581,90 @@ describe('ProviderManager prompt cache key', () => {
   });
 });
 
-describe('ProviderManager thinking level', () => {
+describe('resolveThinkingLevel', () => {
   it('normalizes requested thinking into a concrete effort', () => {
-    const manager = new ProviderManager({
-      config: {
-        providers: {},
+    expect(
+      resolveThinkingLevel('on', {
         defaultThinking: false,
         thinking: { effort: 'medium', mode: 'auto' },
-      },
-    });
-    expect(manager.resolveThinkingLevel('on')).toBe('medium');
-    expect(manager.resolveThinkingLevel('off')).toBe('off');
-    expect(manager.resolveThinkingLevel('low')).toBe('low');
-    expect(manager.resolveThinkingLevel()).toBe('off');
-    expect(manager.resolveThinkingLevel('')).toBe('off');
-    expect(manager.resolveThinkingLevel('   ')).toBe('off');
+      }),
+    ).toBe('medium');
+    expect(
+      resolveThinkingLevel('off', {
+        defaultThinking: false,
+        thinking: { effort: 'medium', mode: 'auto' },
+      }),
+    ).toBe('off');
+    expect(
+      resolveThinkingLevel('low', {
+        defaultThinking: false,
+        thinking: { effort: 'medium', mode: 'auto' },
+      }),
+    ).toBe('low');
+    expect(
+      resolveThinkingLevel(undefined, {
+        defaultThinking: false,
+        thinking: { effort: 'medium', mode: 'auto' },
+      }),
+    ).toBe('off');
+    expect(
+      resolveThinkingLevel('', {
+        defaultThinking: false,
+        thinking: { effort: 'medium', mode: 'auto' },
+      }),
+    ).toBe('off');
+    expect(
+      resolveThinkingLevel('   ', {
+        defaultThinking: false,
+        thinking: { effort: 'medium', mode: 'auto' },
+      }),
+    ).toBe('off');
 
-    const managerOnByDefault = new ProviderManager({
-      config: {
-        providers: {},
+    expect(
+      resolveThinkingLevel(undefined, {
         defaultThinking: true,
         thinking: { effort: 'medium', mode: 'auto' },
-      },
-    });
-    expect(managerOnByDefault.resolveThinkingLevel()).toBe('medium');
-    expect(managerOnByDefault.resolveThinkingLevel('   ')).toBe('medium');
+      }),
+    ).toBe('medium');
+    expect(
+      resolveThinkingLevel('   ', {
+        defaultThinking: true,
+        thinking: { effort: 'medium', mode: 'auto' },
+      }),
+    ).toBe('medium');
 
-    const managerWithoutEffort = new ProviderManager({
-      config: { providers: {}, defaultThinking: true, thinking: { mode: 'auto' } },
-    });
-    expect(managerWithoutEffort.resolveThinkingLevel('on')).toBe('high');
-    expect(managerWithoutEffort.resolveThinkingLevel()).toBe('high');
+    expect(
+      resolveThinkingLevel('on', {
+        defaultThinking: true,
+        thinking: { mode: 'auto' },
+      }),
+    ).toBe('high');
+    expect(
+      resolveThinkingLevel(undefined, {
+        defaultThinking: true,
+        thinking: { mode: 'auto' },
+      }),
+    ).toBe('high');
 
-    const managerOffByDefault = new ProviderManager({
-      config: { providers: {}, thinking: { mode: 'off' } },
-    });
-    expect(managerOffByDefault.resolveThinkingLevel()).toBe('off');
+    expect(
+      resolveThinkingLevel(undefined, {
+        thinking: { mode: 'off' },
+      }),
+    ).toBe('off');
 
-    const managerWithModeOffAndDefaultThinking = new ProviderManager({
-      config: {
-        providers: {},
+    expect(
+      resolveThinkingLevel(undefined, {
         defaultThinking: true,
         thinking: { effort: 'medium', mode: 'off' },
-      },
-    });
-    expect(managerWithModeOffAndDefaultThinking.resolveThinkingLevel()).toBe('off');
-    expect(managerWithModeOffAndDefaultThinking.resolveThinkingLevel('   ')).toBe('off');
+      }),
+    ).toBe('off');
+    expect(
+      resolveThinkingLevel('   ', {
+        defaultThinking: true,
+        thinking: { effort: 'medium', mode: 'off' },
+      }),
+    ).toBe('off');
 
-    const managerWithoutThinking = new ProviderManager({ config: { providers: {} } });
-    expect(managerWithoutThinking.resolveThinkingLevel()).toBe('high');
+    expect(resolveThinkingLevel(undefined, {})).toBe('high');
   });
 });

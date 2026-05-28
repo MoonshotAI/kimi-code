@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { KimiHarness } from '#/index';
 
-import { resolveRuntimeProviderWithOAuth } from '../../agent-core/src/providers/runtime-provider';
+import { resolveRuntimeProvider } from '../../agent-core/src/providers/runtime-provider';
 import { TEST_IDENTITY } from './test-identity';
 
 let homeDir: string;
@@ -96,14 +96,7 @@ describe('KimiHarness.auth', () => {
       capabilities: ['thinking', 'image_in', 'video_in', 'tool_use'],
       displayName: 'Kimi for Coding',
     });
-    await expect(
-      resolveRuntimeProviderWithOAuth({
-        config,
-        resolveOAuthTokenProvider: () => ({
-          getAccessToken: vi.fn().mockResolvedValue('fresh-oauth-token'),
-        }),
-      }),
-    ).resolves.toMatchObject({
+    expect(resolveRuntimeProvider({ config })).toMatchObject({
       modelCapabilities: {
         tool_use: true,
       },

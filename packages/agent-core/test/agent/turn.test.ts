@@ -19,7 +19,7 @@ import { HookEngine } from '../../src/agent/hooks';
 import type { AgentConfig } from '../../src/agent';
 import type { KimiConfig } from '../../src/config';
 import type { Logger, LogPayload } from '../../src/logging';
-import { ProviderManager } from '../../src/providers/provider-manager';
+import { ProviderManager } from '../../src/session/provider-manager';
 import {
   estimateTokens,
   estimateTokensForMessages,

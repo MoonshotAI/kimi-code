@@ -16,7 +16,7 @@ import type { AgentConfig } from '../../src/agent';
 import { DefaultCompactionStrategy, type CompactionStrategy } from '../../src/agent/compaction';
 import { HookEngine, type HookEngineTriggerArgs } from '../../src/agent/hooks';
 import type { KimiConfig } from '../../src/config';
-import { ProviderManager } from '../../src/providers/provider-manager';
+import { ProviderManager } from '../../src/session/provider-manager';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import type { TestAgentContext } from './harness/agent';
 import { testAgent } from './harness/agent';
@@ -1319,8 +1319,8 @@ describe('Agent compaction', () => {
     });
     const providerManager = ctx.agent.providerManager;
     if (providerManager === undefined) throw new Error('Expected provider manager');
-    const resolveProviderConfig = providerManager.resolveProviderConfigForModel.bind(providerManager);
-    providerManager.resolveProviderConfigForModel = (model) => {
+    const resolveProviderConfig = providerManager.resolveProviderConfig.bind(providerManager);
+    providerManager.resolveProviderConfig = (model) => {
       const resolved = resolveProviderConfig(model);
       return resolved === undefined
         ? undefined

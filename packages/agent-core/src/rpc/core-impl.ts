@@ -1,13 +1,39 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 
-import { KaosShellNotFoundError, LocalKaos } from '@moonshot-ai/kaos';
 import { ErrorCodes, KimiError } from '#/errors';
 import { getRootLogger, log } from '#/logging/logger';
+import { PluginManager } from '#/plugin';
 import { LocalFetchURLProvider } from '#/tools/providers/local-fetch-url';
 import { MoonshotFetchURLProvider } from '#/tools/providers/moonshot-fetch-url';
 import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search';
+import type { PromisableMethods } from '#/utils/types';
 import { getCoreVersion } from '#/version';
+import { KaosShellNotFoundError, LocalKaos } from '@moonshot-ai/kaos';
+import { resolveThinkingLevel } from '../agent/config/thinking';
+import {
+  ensureKimiHome,
+  mergeConfigPatch,
+  readConfigFile,
+  resolveConfigPath,
+  resolveKimiHome,
+  writeConfigFile,
+  type KimiConfig,
+  type MoonshotServiceConfig,
+} from '../config';
+import type { Logger } from '../logging/types';
+import { resolveSessionMcpConfig, type SessionMcpConfig } from '../mcp';
+import type { RuntimeConfig } from '../runtime-types';
+import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
+import { exportSessionDirectory } from '../session/export';
+import {
+  ProviderManager, type BearerTokenProvider,
+  type OAuthTokenProviderResolver
+} from '../session/provider-manager';
+import { SessionAPIImpl } from '../session/rpc';
+import { normalizeWorkDir, SessionStore } from '../session/store';
+import { noopTelemetryClient, withTelemetryContext, type TelemetryClient } from '../telemetry';
+import type { CoreRPCClient } from './client';
 import type {
   ActivateSkillPayload,
   BeginCompactionPayload,
@@ -33,14 +59,15 @@ import type {
   PluginSummary,
   PromptPayload,
   ReconnectMcpServerPayload,
+  RegisterToolPayload,
   ReloadPluginsResult,
   RemoveKimiProviderPayload,
   RemovePluginPayload,
   RenameSessionPayload,
   ResumeSessionPayload,
-  RegisterToolPayload,
-  SetKimiConfigPayload,
+  SessionSummary,
   SetActiveToolsPayload,
+  SetKimiConfigPayload,
   SetModelPayload,
   SetModelResult,
   SetPermissionPayload,
@@ -50,41 +77,12 @@ import type {
   SkillSummary,
   SteerPayload,
   StopBackgroundPayload,
-  SessionSummary,
   UnregisterToolPayload,
   UpdateSessionMetadataPayload,
 } from './core-api';
-import type { CoreRPCClient } from './client';
 import type { ResumedAgentState, ResumeSessionResult } from './resumed';
 import type { SDKRPC } from './sdk-api';
 import { proxyWithExtraPayload } from './types';
-import type { PromisableMethods } from '#/utils/types';
-
-import { PluginManager } from '#/plugin';
-
-import { resolveSessionMcpConfig, type SessionMcpConfig } from '../mcp';
-import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
-import { SessionAPIImpl } from '../session/rpc';
-import {
-  ensureKimiHome,
-  mergeConfigPatch,
-  readConfigFile,
-  resolveConfigPath,
-  resolveKimiHome,
-  writeConfigFile,
-  type KimiConfig,
-  type MoonshotServiceConfig,
-} from '../config';
-import { exportSessionDirectory } from '../session/export';
-import { ProviderManager } from '../providers/provider-manager';
-import {
-  type BearerTokenProvider,
-  type OAuthTokenProviderResolver,
-} from '../providers/runtime-provider';
-import type { Logger } from '../logging/types';
-import type { RuntimeConfig } from '../runtime-types';
-import { normalizeWorkDir, SessionStore } from '../session/store';
-import { noopTelemetryClient, withTelemetryContext, type TelemetryClient } from '../telemetry';
 
 const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
 
@@ -117,7 +115,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private readonly kimiRequestHeaders: Record<string, string> | undefined;
   private readonly resolveOAuthTokenProvider: OAuthTokenProviderResolver | undefined;
   private readonly skillDirs: readonly string[];
-  private readonly providerManager: ProviderManager;
   private readonly sessionStore: SessionStore;
   readonly plugins: PluginManager;
   private pluginsReady: Promise<void>;
@@ -140,11 +137,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     ensureKimiHome(this.homeDir);
     this.config = readConfigFile(this.configPath);
-    this.providerManager = new ProviderManager({
-      config: () => this.config,
-      kimiRequestHeaders: this.kimiRequestHeaders,
-      resolveOAuthTokenProvider: this.resolveOAuthTokenProvider,
-    });
     this.sessionStore = new SessionStore(this.homeDir);
     this.plugins = new PluginManager({ kimiHomeDir: this.homeDir });
     // Capture the error rather than swallow it: mutators and explicit /plugins
@@ -163,8 +155,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const workDir = requiredWorkDir('createSession', options.workDir);
     const config = this.reloadProviderManager();
     const id = options.id ?? createSessionId();
-    const modelName = this.providerManager.resolveSelectedModel(options.model);
-    const thinkingLevel = this.providerManager.resolveThinkingLevel(options.thinking);
+    const thinkingLevel = resolveThinkingLevel(options.thinking, config);
     const permissionMode = options.permission ?? config.defaultPermissionMode;
     const baseMcpConfig = await resolveSessionMcpConfig({
       cwd: workDir,
@@ -192,7 +183,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       homedir: summary.sessionDir,
       kimiHomeDir: this.homeDir,
       rpc: proxyWithExtraPayload(await this.sdk, { sessionId: summary.id }),
-      providerManager: this.providerManager,
+      providerManager: this.resolveProviderManager(summary.id),
       background: config.background,
       hooks: config.hooks,
       permissionRules: config.permission?.rules,
@@ -216,7 +207,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       };
       const mainAgent = await session.createMain();
       mainAgent.config.update({
-        modelAlias: modelName,
+        modelAlias: options.model,
         thinkingLevel,
       });
       if (permissionMode !== undefined) {
@@ -271,7 +262,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       homedir: summary.sessionDir,
       kimiHomeDir: this.homeDir,
       rpc: proxyWithExtraPayload(await this.sdk, { sessionId: summary.id }),
-      providerManager: this.providerManager,
+      providerManager: this.resolveProviderManager(summary.id),
       background: config.background,
       hooks: config.hooks,
       permissionRules: config.permission?.rules,
@@ -655,6 +646,15 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       pluginSkillRoots: this.plugins.pluginSkillRoots(),
       mergeAllAvailableSkills: config.mergeAllAvailableSkills,
     };
+  }
+
+  private resolveProviderManager(sessionId: string): ProviderManager {
+    return new ProviderManager({
+      config: () => this.config,
+      kimiRequestHeaders: this.kimiRequestHeaders,
+      resolveOAuthTokenProvider: this.resolveOAuthTokenProvider,
+      promptCacheKey: sessionId,
+    });
   }
 
   private mergePluginMcpConfig(base: SessionMcpConfig | undefined): SessionMcpConfig | undefined {

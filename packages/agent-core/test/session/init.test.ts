@@ -7,7 +7,7 @@ import { testKaos } from '../fixtures/test-kaos';
 import type { ProviderConfig } from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ProviderManager } from '../../src/providers/provider-manager';
+import { ProviderManager } from '../../src/session/provider-manager';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';

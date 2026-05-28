@@ -1,7 +1,7 @@
 import { UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
-import { ProviderManager } from '../../src/providers/provider-manager';
+import { ProviderManager } from '../../src/session/provider-manager';
 import { testAgent } from './harness';
 
 describe('ConfigState model capabilities', () => {

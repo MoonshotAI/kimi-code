@@ -16,8 +16,7 @@ import type { EnabledPluginSessionStart } from '#/plugin';
 
 import type { McpConnectionManager } from '../mcp';
 import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
-import type { ProviderManager } from '../providers/provider-manager';
-import { withProviderRequestAuth } from '../providers/request-auth';
+import type { ProviderManager } from '../session/provider-manager';
 import type { RuntimeConfig } from '../runtime-types';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import type { SkillRegistry } from '../skill';
@@ -70,7 +69,6 @@ export interface AgentConfig {
   readonly generate?: typeof generate;
   readonly compactionStrategy?: CompactionStrategy;
   readonly providerManager?: ProviderManager | undefined;
-  readonly sessionId?: string;
   readonly subagentHost?: SessionSubagentHost | undefined;
   readonly mcp?: McpConnectionManager;
   readonly hookEngine?: HookEngine;
@@ -123,10 +121,7 @@ export class Agent {
     }
     this.pluginSessionStarts = config.pluginSessionStarts ?? [];
     this.rawGenerate = config.generate ?? generate;
-    this.providerManager =
-      config.sessionId === undefined
-        ? config.providerManager
-        : config.providerManager?.withPromptCacheKey(config.sessionId);
+    this.providerManager = config.providerManager;
     this.subagentHost = config.subagentHost;
     this.mcp = config.mcp;
     this.hooks = config.hookEngine;
@@ -172,11 +167,15 @@ export class Agent {
         this.logLlmRequest(provider, systemPrompt, tools, history, options);
         return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, options);
       }
-      const resolveAuth = this.providerManager?.createAuthResolverForModel(provider.modelName, {
+      const withAuth = this.providerManager?.createAuthResolverForModel(provider.modelName, {
         log: this.log,
       });
-      return withProviderRequestAuth(resolveAuth, (auth) => {
-        const requestOptions = auth === undefined ? options : { ...options, auth };
+      if (withAuth === undefined) {
+        this.logLlmRequest(provider, systemPrompt, tools, history, options);
+        return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, options);
+      }
+      return withAuth((auth) => {
+        const requestOptions = { ...options, auth };
         this.logLlmRequest(provider, systemPrompt, tools, history, requestOptions);
         return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, requestOptions);
       });
@@ -294,21 +293,16 @@ export class Agent {
           this.telemetry.track('afk_toggle', { enabled: afkEnabled });
         }
       },
-      setModel: async (payload) => {
-        const previous = this.config.modelAlias;
-        const resolved = await this.providerManager?.resolveProviderForModel(payload.model);
-        if (resolved === undefined) {
-          throw new Error('Runtime provider model cannot be empty');
+      setModel: (payload) => {
+        if (this.config.modelAlias !== payload.model) {
+          this.config.update({ modelAlias: payload.model });
+          this.telemetry.track('model_switch', { model: payload.model });
         }
-        this.config.update({
-          modelAlias: resolved.modelName,
-        });
-        if (previous !== resolved.modelName) {
-          this.telemetry.track('model_switch', { model: resolved.modelName });
-        }
+        const kimiConfig = this.providerManager?.config;
         return {
-          model: resolved.modelName,
-          providerName: resolved.providerName,
+          model: payload.model,
+          providerName:
+            kimiConfig?.models?.[payload.model]?.provider ?? kimiConfig?.defaultProvider,
         };
       },
       getModel: () => {

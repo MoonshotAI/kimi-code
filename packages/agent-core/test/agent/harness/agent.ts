@@ -21,7 +21,7 @@ import {
 import type { KimiConfig } from '../../../src/config';
 import type { ExecutableToolResult } from '../../../src/loop';
 import type { Logger } from '../../../src/logging';
-import { ProviderManager } from '../../../src/providers/provider-manager';
+import { ProviderManager } from '../../../src/session/provider-manager';
 import type { QuestionResult, RPCCallOptions, SDKAgentRPC } from '../../../src/rpc';
 import type { AgentAPI } from '../../../src/rpc/core-api';
 import type { RuntimeConfig } from '../../../src/runtime-types';
@@ -173,7 +173,6 @@ export class AgentTestContext {
       generate: options.generate ?? this.scriptedGenerate.generate,
       compactionStrategy: options.compactionStrategy,
       providerManager,
-      sessionId: options.sessionId,
       subagentHost: options.subagentHost,
       type: options.type,
       permission: options.permission,

@@ -26,7 +26,7 @@ import {
   prepareSystemPromptContext,
   type ResolvedAgentProfile,
 } from '../profile';
-import type { ProviderManager } from '../providers/provider-manager';
+import type { ProviderManager } from './provider-manager';
 import type { RuntimeConfig } from '../runtime-types';
 import {
   registerBuiltinSkills,
@@ -409,7 +409,6 @@ export class Session {
       skills: this.skills,
       rpc: proxyWithExtraPayload(this.rpc, { agentId: id }),
       providerManager: this.config.providerManager,
-      sessionId: this.config.id,
       hookEngine: config.hookEngine ?? this.hookEngine,
       subagentHost:
         config.subagentHost ?? new SessionSubagentHost(this, id, this.backgroundTaskTimeoutMs()),

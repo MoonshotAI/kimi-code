@@ -8,7 +8,7 @@ import { Agent, type AgentRecord } from '../../src/agent';
 import { testKaos } from '../fixtures/test-kaos';
 import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
 import type { AgentRecordPersistence } from '../../src/agent/records';
-import { ProviderManager } from '../../src/providers/provider-manager';
+import { ProviderManager } from '../../src/session/provider-manager';
 import type { ApprovalResponse, SDKAgentRPC, SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { SkillRegistry, type SkillDefinition } from '../../src/skill';
