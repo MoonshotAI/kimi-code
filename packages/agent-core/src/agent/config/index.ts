@@ -24,6 +24,7 @@ export class ConfigState {
 
   constructor(protected readonly agent: Agent) {
     this._cwd = agent.runtime.kaos.getcwd();
+    this._modelAlias = agent.modelProvider?.defaultModel;
   }
 
   update(changed: AgentConfigUpdateData): void {

@@ -31,6 +31,7 @@ type AuthorizedRequest = <T>(
 ) => Promise<T>;
 
 export interface ModelProvider {
+  readonly defaultModel?: string;
   resolveProviderConfig(model: string): ResolvedRuntimeProvider;
   resolveAuth?(model: string, options?: { readonly log?: Logger }): AuthorizedRequest | undefined;
 }
@@ -40,6 +41,10 @@ export class SingleModelProvider implements ModelProvider {
     private readonly providerConfig: KosongProviderConfig,
     private readonly modelCapabilities: ModelCapability = UNKNOWN_CAPABILITY,
   ) {}
+
+  get defaultModel(): string {
+    return this.providerConfig.model;
+  }
 
   resolveProviderConfig(model: string): ResolvedRuntimeProvider {
     if (model !== this.providerConfig.model) {

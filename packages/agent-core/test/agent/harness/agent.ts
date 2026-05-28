@@ -177,6 +177,7 @@ export class AgentTestContext {
     );
     this.agent = new Agent({
       runtime,
+      config: this.kimiConfig,
       rpc: this.createRpcProxy(),
       persistence,
       generate: options.generate ?? this.scriptedGenerate.generate,
