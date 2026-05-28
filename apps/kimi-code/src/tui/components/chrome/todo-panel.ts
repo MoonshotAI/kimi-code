@@ -22,6 +22,80 @@ export interface TodoItem {
   readonly status: TodoStatus;
 }
 
+const MAX_VISIBLE = 5;
+
+export interface VisibleTodos {
+  readonly rows: readonly TodoItem[];
+  readonly hidden: number;
+}
+
+/**
+ * Pick which todos to render when the list exceeds {@link MAX_VISIBLE}.
+ *
+ * The selector is order-agnostic — the TodoList tool keeps whatever
+ * order the model produced and does not group items by status, so an
+ * interleaved sequence like `pending, done, pending, done, ...` is
+ * possible and must still yield MAX_VISIBLE rows when enough exist.
+ *
+ * Strategy:
+ * 1. Include every `in_progress` item (capped at MAX_VISIBLE).
+ * 2. Fill remaining slots with "what's next" — the earliest `pending`
+ *    items in their original positions — while reserving one slot for
+ *    "what just finished" — the latest `done` item — when both kinds
+ *    exist. If one side has too few candidates, the other expands.
+ *
+ * Items are returned in their original order.
+ */
+export function selectVisibleTodos(todos: readonly TodoItem[]): VisibleTodos {
+  if (todos.length <= MAX_VISIBLE) {
+    return { rows: [...todos], hidden: 0 };
+  }
+
+  const inProgress: number[] = [];
+  const pending: number[] = [];
+  const done: number[] = [];
+  for (const [i, todo] of todos.entries()) {
+    if (todo.status === 'in_progress') inProgress.push(i);
+    else if (todo.status === 'pending') pending.push(i);
+    else done.push(i);
+  }
+
+  const picked = new Set<number>();
+  for (const i of inProgress.slice(0, MAX_VISIBLE)) picked.add(i);
+
+  if (picked.size < MAX_VISIBLE) {
+    // Most recent done first; earliest pending first.
+    const doneCandidates = done.toReversed();
+    const pendingCandidates = pending;
+
+    const remaining = MAX_VISIBLE - picked.size;
+    let doneCount: number;
+    let pendingCount: number;
+    if (doneCandidates.length === 0) {
+      doneCount = 0;
+      pendingCount = Math.min(remaining, pendingCandidates.length);
+    } else if (pendingCandidates.length === 0) {
+      pendingCount = 0;
+      doneCount = Math.min(remaining, doneCandidates.length);
+    } else {
+      doneCount = 1;
+      pendingCount = Math.min(remaining - 1, pendingCandidates.length);
+      if (pendingCount < remaining - 1) {
+        doneCount = Math.min(doneCandidates.length, remaining - pendingCount);
+      }
+    }
+
+    for (let i = 0; i < doneCount; i++) picked.add(doneCandidates[i] as number);
+    for (let i = 0; i < pendingCount; i++) picked.add(pendingCandidates[i] as number);
+  }
+
+  const sortedIdx = [...picked].toSorted((a, b) => a - b);
+  return {
+    rows: sortedIdx.map((i) => todos[i] as TodoItem),
+    hidden: todos.length - sortedIdx.length,
+  };
+}
+
 export class TodoPanelComponent implements Component {
   private todos: readonly TodoItem[] = [];
   private colors: ColorPalette;
@@ -55,12 +129,16 @@ export class TodoPanelComponent implements Component {
   render(width: number): string[] {
     if (this.todos.length === 0) return [];
     const c = this.colors;
+    const { rows, hidden } = selectVisibleTodos(this.todos);
     const lines: string[] = [
       chalk.hex(c.border)('─'.repeat(width)),
       chalk.hex(c.primary).bold(' Todo'),
     ];
-    for (const todo of this.todos) {
+    for (const todo of rows) {
       lines.push(renderRow(todo, c));
+    }
+    if (hidden > 0) {
+      lines.push(chalk.hex(c.textDim)(`  … +${hidden} more`));
     }
 
     return lines.map((line) => truncateToWidth(line, width));

@@ -18,7 +18,13 @@ import chalk from 'chalk';
 
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
-import type { ApprovalPanelChoice, DisplayBlock, PendingApproval } from '#/tui/reverse-rpc/types';
+import type {
+  ApprovalPanelChoice,
+  DiffDisplayBlock,
+  DisplayBlock,
+  FileContentDisplayBlock,
+  PendingApproval,
+} from '#/tui/reverse-rpc/types';
 import type { ColorPalette } from '#/tui/theme/colors';
 
 export interface ApprovalPanelResponse {
@@ -55,7 +61,6 @@ function makeBlockStyles(colors: ColorPalette): BlockStyles {
 
 function renderDisplayBlock(
   block: DisplayBlock,
-  expanded: boolean,
   s: BlockStyles,
   colors: ColorPalette,
 ): string[] {
@@ -63,14 +68,13 @@ function renderDisplayBlock(
     case 'diff':
       return renderDiffLinesClustered(block.old_text, block.new_text, block.path, colors, {
         contextLines: 3,
-        expandKeyHint: 'ctrl+e',
-        ...(expanded ? {} : { maxLines: DIFF_SUMMARY_MAX_LINES }),
+        expandKeyHint: 'ctrl+e to preview',
+        maxLines: DIFF_SUMMARY_MAX_LINES,
       });
     case 'file_content': {
       const lang = block.language ?? langFromPath(block.path);
       const allLines = highlightLines(block.content, lang);
-      const cap = expanded ? allLines.length : CONTENT_SUMMARY_MAX_LINES;
-      const shown = allLines.slice(0, cap);
+      const shown = allLines.slice(0, CONTENT_SUMMARY_MAX_LINES);
       const lines = [s.strong(block.path)];
       for (const [i, line] of shown.entries()) {
         lines.push(s.gutter(String(i + 1).padStart(4) + '  ') + line);
@@ -79,7 +83,7 @@ function renderDisplayBlock(
       if (remaining > 0) {
         lines.push(
           s.dim(
-            `     … ${String(remaining)} more line${remaining > 1 ? 's' : ''} hidden (ctrl+e to expand)`,
+            `     … ${String(remaining)} more line${remaining > 1 ? 's' : ''} hidden (ctrl+e to preview)`,
           ),
         );
       }
@@ -181,12 +185,14 @@ export class ApprovalPanelComponent extends Container implements Focusable {
   private selectedIndex = 0;
   private feedbackMode = false;
   private readonly feedbackInput = new Input();
-  private expanded = false;
   private onResponse: (response: ApprovalPanelResponse) => void;
   private request: PendingApproval;
   private readonly colors: ColorPalette;
   private readonly onToggleToolOutput: (() => void) | undefined;
   private readonly onTogglePlanExpand: (() => void) | undefined;
+  private readonly onOpenPreview:
+    | ((block: DiffDisplayBlock | FileContentDisplayBlock) => void)
+    | undefined;
 
   constructor(
     request: PendingApproval,
@@ -194,6 +200,7 @@ export class ApprovalPanelComponent extends Container implements Focusable {
     colors: ColorPalette,
     onToggleToolOutput?: () => void,
     onTogglePlanExpand?: () => void,
+    onOpenPreview?: (block: DiffDisplayBlock | FileContentDisplayBlock) => void,
   ) {
     super();
     this.request = request;
@@ -201,6 +208,7 @@ export class ApprovalPanelComponent extends Container implements Focusable {
     this.colors = colors;
     this.onToggleToolOutput = onToggleToolOutput;
     this.onTogglePlanExpand = onTogglePlanExpand;
+    this.onOpenPreview = onOpenPreview;
     this.feedbackInput.onSubmit = (value) => {
       this.submit(this.selectedIndex, value);
     };
@@ -242,8 +250,12 @@ export class ApprovalPanelComponent extends Container implements Focusable {
     }
 
     if (matchesKey(data, Key.ctrl('e'))) {
-      this.expanded = !this.expanded;
-      this.onTogglePlanExpand?.();
+      const previewable = this.findPreviewableBlock();
+      if (previewable !== undefined && this.onOpenPreview !== undefined) {
+        this.onOpenPreview(previewable);
+      } else {
+        this.onTogglePlanExpand?.();
+      }
       return;
     }
 
@@ -312,14 +324,14 @@ export class ApprovalPanelComponent extends Container implements Focusable {
       (block) => !isDuplicateBriefBlock(block, data.description),
     );
     const visibleBlocks = dedupedBlocks.slice(0, 5);
-    const hasExpandable = visibleBlocks.some(
+    const hasPreviewable = visibleBlocks.some(
       (block) => block.type === 'diff' || block.type === 'file_content',
     );
 
     if (visibleBlocks.length > 0) {
       lines.push('');
       for (const block of visibleBlocks) {
-        const blockLines = renderDisplayBlock(block, this.expanded, blockStyles, this.colors);
+        const blockLines = renderDisplayBlock(block, blockStyles, this.colors);
         for (const line of blockLines) {
           lines.push(indent(line));
         }
@@ -352,7 +364,7 @@ export class ApprovalPanelComponent extends Container implements Focusable {
     if (this.feedbackMode) {
       lines.push(indent(dim('Type feedback · ↵ submit.')));
     } else {
-      const expandHint = hasExpandable ? ` · ctrl+e ${this.expanded ? 'collapse' : 'expand'}` : '';
+      const expandHint = hasPreviewable ? ' · ctrl+e preview' : '';
       lines.push(
         indent(
           dim(
@@ -364,6 +376,13 @@ export class ApprovalPanelComponent extends Container implements Focusable {
     lines.push(horizontalBar);
 
     return lines.map((line) => truncateToWidth(line, width));
+  }
+
+  private findPreviewableBlock(): DiffDisplayBlock | FileContentDisplayBlock | undefined {
+    for (const block of this.request.data.display) {
+      if (block.type === 'diff' || block.type === 'file_content') return block;
+    }
+    return undefined;
   }
 
   private choiceAt(index: number): ApprovalPanelChoice | undefined {

@@ -20,6 +20,13 @@ export const ToolInputDisplaySchema = z.discriminatedUnion('kind', [
     operation: z.enum(['read', 'write', 'edit', 'glob', 'grep']),
     path: z.string(),
     detail: z.string().optional(),
+    // Optional preview payload for the approval panel. Write attaches the
+    // full content; Edit attaches the old/new hunk as before/after. UIs that
+    // want a diff or code preview read these instead of having to re-derive
+    // them from the raw tool args.
+    content: z.string().optional(),
+    before: z.string().optional(),
+    after: z.string().optional(),
   }),
   z.object({
     kind: z.literal('diff'),

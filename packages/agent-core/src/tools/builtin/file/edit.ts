@@ -74,7 +74,13 @@ export class EditTool implements BuiltinTool<EditInput> {
     return {
       accesses: ToolAccesses.readWriteFile(path),
       description: `Editing ${args.path}`,
-      display: { kind: 'file_io', operation: 'edit', path },
+      display: {
+        kind: 'file_io',
+        operation: 'edit',
+        path,
+        before: args.old_string,
+        after: args.new_string,
+      },
       approvalRule: literalRulePattern(this.name, path),
       matchesRule: (ruleArgs) =>
         matchesPathRuleSubject(ruleArgs, path, {
