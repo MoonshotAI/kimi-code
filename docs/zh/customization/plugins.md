@@ -40,6 +40,8 @@ Kimi Code CLI 目前按用户安装 plugins，记录在 `$KIMI_CODE_HOME/plugins
 
 Plugin 变更只对新会话生效。安装、启用/禁用、移除、重载 plugin，或修改 MCP server 开关后，需要通过 `/new` 开启新会话；当前会话不会更新，新的 Skills、会话启动行为和 MCP servers 只会在新会话中加载。
 
+本地安装会被拷贝到 `$KIMI_CODE_HOME/plugins/managed/<id>/`，Kimi Code CLI 始终从这份托管副本运行。安装后再编辑原始源目录不会生效，需要重新安装——`/plugins reload` 只会重读安装记录和 manifest，不会重读原始源。移除 plugin 只会删除其安装记录，托管副本和原始源文件仍保留在磁盘上。
+
 ## Plugin manifest
 
 Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以下任一位置：
@@ -130,7 +132,7 @@ HTTP server：
 }
 ```
 
-对于 stdio servers，`command` 可以是 `PATH` 上的命令，也可以是 plugin 根目录内以 `./` 开头的路径。如果设置了 `cwd`，它也必须位于 plugin 根目录内。Plugin MCP servers 会继承当前进程的环境变量；`env` 中的值会按字面量覆盖。
+对于 stdio servers，`command` 可以是 `PATH` 上的命令，也可以是 plugin 根目录内以 `./` 开头的路径。如果设置了 `cwd`，它也必须以 `./` 开头并位于 plugin 根目录内；其他取值会被拒绝，该 server 会被忽略。Plugin MCP servers 会继承当前进程的环境变量；`env` 中的值会按字面量覆盖。
 
 Plugin MCP servers 只会在新会话中启动。要禁用或重新启用某个 server，运行 `/plugins`，选中 plugin 后按 `M`。也可以使用快捷命令：
 

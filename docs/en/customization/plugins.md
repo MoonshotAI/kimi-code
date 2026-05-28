@@ -40,6 +40,8 @@ Kimi Code CLI currently installs plugins per user. Records are stored under `$KI
 
 Plugin changes apply to new sessions only. After installing, enabling, disabling, removing, or reloading a plugin, or changing an MCP server toggle, start a fresh session with `/new`. The current session is not updated; new skills, session-start behavior, and MCP servers load only in new sessions.
 
+Local installs are copied into `$KIMI_CODE_HOME/plugins/managed/<id>/`, and Kimi Code CLI always runs from that managed copy. Editing the original source directory after install has no effect until you reinstall — `/plugins reload` re-reads install records and manifests, not the original source. Removing a plugin deletes only its install record; the managed copy and the original source files are left on disk.
+
 ## Plugin manifest
 
 A plugin is a directory or zip file with a manifest at one of these paths:
@@ -130,7 +132,7 @@ HTTP server:
 }
 ```
 
-For stdio servers, `command` may be a command on `PATH` or a `./` path inside the plugin root. If `cwd` is set, it must also stay inside the plugin root. Plugin MCP servers inherit the current process environment; values under `env` are literal overrides.
+For stdio servers, `command` may be a command on `PATH` or a `./` path inside the plugin root. If `cwd` is set, it must also start with `./` and stay inside the plugin root; other values are rejected and the server is omitted. Plugin MCP servers inherit the current process environment; values under `env` are literal overrides.
 
 Plugin MCP servers start only in new sessions. To disable or re-enable one, run `/plugins`, select the plugin, and press `M`. Shortcut commands are also available:
 
