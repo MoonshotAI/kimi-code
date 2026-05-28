@@ -5,6 +5,19 @@ import { log } from "@moonshot-ai/kimi-code-sdk";
 
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from "#/tui/kimi-tui";
 import {
+  handleLoginCommand,
+  handleLogoutCommand,
+} from "#/tui/commands/auth";
+import {
+  promptPlatformSelection,
+  promptLogoutProviderSelection,
+} from "#/tui/commands/prompts";
+
+vi.mock("#/tui/commands/prompts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("#/tui/commands/prompts")>();
+  return { ...actual, promptPlatformSelection: vi.fn(), promptLogoutProviderSelection: vi.fn() };
+});
+import {
   DISABLE_TERMINAL_THEME_REPORTING,
   ENABLE_TERMINAL_THEME_REPORTING,
   OSC11_QUERY,
@@ -185,7 +198,6 @@ describe("KimiTUI startup", () => {
       sessionId: "ses-1",
       model: "k2",
       permissionMode: "yolo",
-      yolo: true,
       planMode: true,
       contextTokens: 25,
       maxContextTokens: 200,
@@ -336,7 +348,7 @@ describe("KimiTUI startup", () => {
     await expect(driver.init()).resolves.toBe(false);
 
     expect(driver.state.startupState).toBe("ready");
-    expect(driver.state.startupNotice).toContain("OAuth login expired");
+    expect((driver as any).startupNotice).toContain("OAuth login expired");
     expect(driver.state.appState).toMatchObject({
       sessionId: "",
       model: "",
@@ -382,12 +394,11 @@ describe("KimiTUI startup", () => {
       sessionId: "",
       model: "",
       permissionMode: "yolo",
-      yolo: true,
       planMode: true,
     });
 
-    vi.spyOn(driver as any, 'promptPlatformSelection').mockResolvedValue('kimi-code');
-    await driver.handleLoginCommand();
+    vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+    await handleLoginCommand(driver as any);
 
     expect(createSession).toHaveBeenNthCalledWith(1, {
       workDir: "/tmp/proj-a",
@@ -405,7 +416,6 @@ describe("KimiTUI startup", () => {
       sessionId: "ses-1",
       model: "k2",
       permissionMode: "yolo",
-      yolo: true,
       planMode: true,
     });
   });
@@ -439,8 +449,8 @@ describe("KimiTUI startup", () => {
     const driver = makeDriver(harness, makeStartupInput());
 
     await expect(driver.init()).resolves.toBe(false);
-    vi.spyOn(driver as any, 'promptPlatformSelection').mockResolvedValue('kimi-code');
-    await driver.handleLoginCommand();
+    vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+    await handleLoginCommand(driver as any);
 
     expect(createSession).toHaveBeenNthCalledWith(2, {
       workDir: "/tmp/proj-a",
@@ -451,7 +461,6 @@ describe("KimiTUI startup", () => {
     });
     expect(driver.state.appState).toMatchObject({
       permissionMode: "auto",
-      yolo: false,
     });
   });
 
@@ -471,8 +480,8 @@ describe("KimiTUI startup", () => {
     await expect(driver.init()).resolves.toBe(false);
     expect(driver.state.appState.thinking).toBe(false);
 
-    vi.spyOn(driver as any, 'promptPlatformSelection').mockResolvedValue('kimi-code');
-    await driver.handleLoginCommand();
+    vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+    await handleLoginCommand(driver as any);
 
     expect(session.setModel).toHaveBeenCalledWith("k2");
     expect(session.setThinking).toHaveBeenCalledWith("on");
@@ -504,8 +513,8 @@ describe("KimiTUI startup", () => {
     await expect(driver.init()).resolves.toBe(false);
     harness.track.mockClear();
 
-    vi.spyOn(driver as any, 'promptPlatformSelection').mockResolvedValue('kimi-code');
-    await driver.handleLoginCommand();
+    vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+    await handleLoginCommand(driver as any);
 
     expect(harness.auth.login).toHaveBeenCalledWith(
       "managed:kimi-code",
@@ -539,8 +548,8 @@ describe("KimiTUI startup", () => {
     try {
       await expect(driver.init()).resolves.toBe(false);
 
-      vi.spyOn(driver as any, 'promptPlatformSelection').mockResolvedValue('kimi-code');
-      await driver.handleLoginCommand();
+      vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+      await handleLoginCommand(driver as any);
 
       expect(harness.auth.login).toHaveBeenCalledWith(
         "managed:kimi-code",
@@ -588,10 +597,10 @@ describe("KimiTUI startup", () => {
     await expect(driver.init()).resolves.toBe(false);
     harness.track.mockClear();
 
-    vi.spyOn(driver as any, "promptLogoutProviderSelection").mockResolvedValue(
+    vi.mocked(promptLogoutProviderSelection).mockResolvedValue(
       "managed:kimi-code",
     );
-    await driver.handleLogoutCommand();
+    await handleLogoutCommand(driver as any);
 
     expect(harness.auth.logout).toHaveBeenCalledWith("managed:kimi-code");
     expect(session.close).toHaveBeenCalledOnce();
@@ -631,8 +640,8 @@ describe("KimiTUI startup", () => {
     await expect(driver.init()).resolves.toBe(false);
     harness.track.mockClear();
 
-    vi.spyOn(driver as any, "promptLogoutProviderSelection").mockResolvedValue("openai");
-    await driver.handleLogoutCommand();
+    vi.mocked(promptLogoutProviderSelection).mockResolvedValue("openai");
+    await handleLogoutCommand(driver as any);
 
     expect(removeProvider).toHaveBeenCalledWith("openai");
     expect(harness.auth.logout).not.toHaveBeenCalled();
@@ -668,10 +677,10 @@ describe("KimiTUI startup", () => {
 
     await expect(driver.init()).resolves.toBe(false);
 
-    vi.spyOn(driver as any, "promptLogoutProviderSelection").mockResolvedValue(
+    vi.mocked(promptLogoutProviderSelection).mockResolvedValue(
       "managed:kimi-code",
     );
-    await driver.handleLogoutCommand();
+    await handleLogoutCommand(driver as any);
 
     expect(harness.auth.logout).toHaveBeenCalledWith("managed:kimi-code");
   });
