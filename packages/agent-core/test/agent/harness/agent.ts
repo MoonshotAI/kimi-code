@@ -198,7 +198,7 @@ export class AgentTestContext {
     // we register cleanup transparently without forcing every test to
     // remember an afterEach.
     onTestFinished(async () => {
-      await this.agent.cron.stop();
+      await this.agent.cron?.stop();
     });
   }
 

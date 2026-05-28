@@ -50,7 +50,7 @@ describe('Cron — session E2E (P1.9)', () => {
     // `agent.cron.stop()`, but doing it here as well keeps the test
     // self-contained against future harness changes and ensures the
     // SIGUSR1 handler (if any) is unbound before the next test.
-    await ctx.agent.cron.stop();
+    await ctx.agent.cron?.stop();
     vi.unstubAllEnvs();
   });
 
@@ -60,7 +60,7 @@ describe('Cron — session E2E (P1.9)', () => {
     // test-only escape hatch — Agent.cron is `readonly` precisely
     // because production code must never overwrite it; tests are the
     // only legitimate exception.
-    await ctx.agent.cron.stop();
+    await ctx.agent.cron!.stop();
     const harness = createClocks(LOCAL_ANCHOR_MS);
     (ctx.agent as unknown as { cron: CronManager }).cron = new CronManager(
       ctx.agent,
@@ -71,7 +71,7 @@ describe('Cron — session E2E (P1.9)', () => {
         pollIntervalMs: null,
       },
     );
-    ctx.agent.cron.start();
+    ctx.agent.cron!.start();
 
     // Spy on agent.turn.steer. We wrap rather than replace so the real
     // steer logic still runs (and the `turn.steer` record is written /
@@ -96,7 +96,7 @@ describe('Cron — session E2E (P1.9)', () => {
     // bypass `emitScheduled` telemetry and skip the byte-length /
     // expression checks; that would not be the production code path
     // this commit is meant to smoke.
-    const createTool = new CronCreateTool(ctx.agent.cron);
+    const createTool = new CronCreateTool(ctx.agent.cron!);
     const execution = createTool.resolveExecution({
       cron: '*/5 * * * *',
       prompt: 'cron-fired prompt',
@@ -113,13 +113,13 @@ describe('Cron — session E2E (P1.9)', () => {
       signal: new AbortController().signal,
     });
     expect(createResult.isError ?? false).toBe(false);
-    expect(ctx.agent.cron.store.list().length).toBe(1);
+    expect(ctx.agent.cron!.store.list().length).toBe(1);
 
     // Advance 15 minutes — exactly three ideal */5 fires across the gap
     // (12:05, 12:10, 12:15). See the file header for the calibration
     // derivation.
     harness.advance(15 * 60_000);
-    ctx.agent.cron.tick();
+    ctx.agent.cron!.tick();
 
     // ── Steer was called exactly once ─────────────────────────────────
     expect(steerCalls.length).toBe(1);
@@ -149,9 +149,9 @@ describe('Cron — session E2E (P1.9)', () => {
     // Optional second case from the P1.9 plan: prove the three-tool
     // surface composes correctly end-to-end on the real manager. No
     // clock manipulation needed — list/delete are time-invariant.
-    const createTool = new CronCreateTool(ctx.agent.cron);
-    const listTool = new CronListTool(ctx.agent.cron);
-    const deleteTool = new CronDeleteTool(ctx.agent.cron);
+    const createTool = new CronCreateTool(ctx.agent.cron!);
+    const listTool = new CronListTool(ctx.agent.cron!);
+    const deleteTool = new CronDeleteTool(ctx.agent.cron!);
     const ctxArgs = {
       turnId: 'p19-tools',
       toolCallId: 'p19-tools-call',

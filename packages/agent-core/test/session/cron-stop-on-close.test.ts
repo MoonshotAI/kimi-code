@@ -36,7 +36,7 @@ describe('Session.close stops cron', () => {
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
     });
     const main = await session.createMain();
-    const stopSpy = vi.spyOn(main.cron, 'stop');
+    const stopSpy = vi.spyOn(main.cron!, 'stop');
 
     await session.close();
 

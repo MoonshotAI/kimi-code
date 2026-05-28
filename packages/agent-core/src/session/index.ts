@@ -41,7 +41,7 @@ import { SessionSubagentHost } from './subagent-host';
 
 export interface SessionOptions {
   readonly runtime: RuntimeConfig;
-  readonly config: KimiConfig;
+  readonly config?: KimiConfig;
   readonly id?: string | undefined;
   readonly homedir: string;
   readonly kimiHomeDir?: string;

@@ -50,12 +50,11 @@ async function readDiskIds(): Promise<readonly string[]> {
 
 describe('CronManager — persistence and resume', () => {
   it('addTask writes a JSON record to <sessionDir>/cron/<id>.json', async () => {
-    const { agent } = createAgentStub();
+    const { agent } = createAgentStub({ homedir: sessionDir });
     const harness = createClocks();
     const manager = new CronManager(agent, {
       clocks: harness.clocks,
       pollIntervalMs: null,
-      sessionDir,
     });
 
     const task = manager.addTask({
@@ -82,12 +81,11 @@ describe('CronManager — persistence and resume', () => {
   });
 
   it('removeTasks deletes the JSON record', async () => {
-    const { agent } = createAgentStub();
+    const { agent } = createAgentStub({ homedir: sessionDir });
     const harness = createClocks();
     const manager = new CronManager(agent, {
       clocks: harness.clocks,
       pollIntervalMs: null,
-      sessionDir,
     });
 
     const task = manager.addTask({ cron: '*/5 * * * *', prompt: 'a' });
@@ -103,12 +101,11 @@ describe('CronManager — persistence and resume', () => {
 
   it('loadFromDisk re-adopts tasks with original id and createdAt', async () => {
     // First "session": schedule two recurring tasks.
-    const stubA = createAgentStub();
+    const stubA = createAgentStub({ homedir: sessionDir });
     const clockA = createClocks();
     const managerA = new CronManager(stubA.agent, {
       clocks: clockA.clocks,
       pollIntervalMs: null,
-      sessionDir,
     });
     const t1 = managerA.addTask({ cron: '*/5 * * * *', prompt: 'a' });
     const t2 = managerA.addTask({
@@ -120,12 +117,11 @@ describe('CronManager — persistence and resume', () => {
     await managerA.stop();
 
     // Second "session": fresh manager, same sessionDir.
-    const stubB = createAgentStub();
+    const stubB = createAgentStub({ homedir: sessionDir });
     const clockB = createClocks(clockA.now() + 60_000);
     const managerB = new CronManager(stubB.agent, {
       clocks: clockB.clocks,
       pollIntervalMs: null,
-      sessionDir,
     });
     expect(managerB.store.list()).toEqual([]);
     await managerB.loadFromDisk();
@@ -146,12 +142,11 @@ describe('CronManager — persistence and resume', () => {
 
   it('recurring task missed during downtime fires once with coalescedCount > 1', async () => {
     // Session A: create a `*/5 * * * *` task.
-    const stubA = createAgentStub();
+    const stubA = createAgentStub({ homedir: sessionDir });
     const clockA = createClocks();
     const managerA = new CronManager(stubA.agent, {
       clocks: clockA.clocks,
       pollIntervalMs: null,
-      sessionDir,
     });
     managerA.addTask({ cron: '*/5 * * * *', prompt: 'check' });
     await managerA.flushPersist();
@@ -160,12 +155,11 @@ describe('CronManager — persistence and resume', () => {
     // Session B: 23 minutes later (≈ 4 ideal fires missed: t+5, +10,
     // +15, +20). With createdAt as the baseline the scheduler must
     // collapse them into one fire.
-    const stubB = createAgentStub();
+    const stubB = createAgentStub({ homedir: sessionDir });
     const clockB = createClocks(clockA.now() + 23 * 60_000);
     const managerB = new CronManager(stubB.agent, {
       clocks: clockB.clocks,
       pollIntervalMs: null,
-      sessionDir,
     });
     await managerB.loadFromDisk();
     managerB.tick();
@@ -183,12 +177,11 @@ describe('CronManager — persistence and resume', () => {
   it('one-shot scheduled in the past fires once on resume and the file is removed', async () => {
     // Session A: schedule a one-shot 5 minutes ahead of clockA's now,
     // then quit before it fires.
-    const stubA = createAgentStub();
+    const stubA = createAgentStub({ homedir: sessionDir });
     const clockA = createClocks(WALL_ANCHOR);
     const managerA = new CronManager(stubA.agent, {
       clocks: clockA.clocks,
       pollIntervalMs: null,
-      sessionDir,
     });
     // Compute a cron expression that lands 5 minutes in the future
     // using the harness's anchor (Nov 14 2023 22:13:20 UTC). The next
@@ -204,12 +197,11 @@ describe('CronManager — persistence and resume', () => {
 
     // Session B: 10 minutes after the anchor — the one-shot's ideal
     // fire (anchor + 100s ≈ 22:15:00) is in the past.
-    const stubB = createAgentStub();
+    const stubB = createAgentStub({ homedir: sessionDir });
     const clockB = createClocks(clockA.now() + 10 * 60_000);
     const managerB = new CronManager(stubB.agent, {
       clocks: clockB.clocks,
       pollIntervalMs: null,
-      sessionDir,
     });
     await managerB.loadFromDisk();
     managerB.tick();
@@ -237,12 +229,11 @@ describe('CronManager — persistence and resume', () => {
     // ideal fire, tick once. The scheduler's onAdvanceCursor callback
     // must stamp `lastFiredAt` on the persisted record so session B
     // doesn't re-coalesce that already-delivered occurrence.
-    const stubA = createAgentStub();
+    const stubA = createAgentStub({ homedir: sessionDir });
     const clockA = createClocks(WALL_ANCHOR);
     const managerA = new CronManager(stubA.agent, {
       clocks: clockA.clocks,
       pollIntervalMs: null,
-      sessionDir,
     });
     const task = managerA.addTask({ cron: '*/5 * * * *', prompt: 'check' });
     await managerA.flushPersist();
@@ -271,12 +262,11 @@ describe('CronManager — persistence and resume', () => {
     // the one that was already delivered in session A). With the
     // persistence, session A's fire is skipped on resume so the
     // count is strictly lower.
-    const stubB = createAgentStub();
+    const stubB = createAgentStub({ homedir: sessionDir });
     const clockB = createClocks(WALL_ANCHOR + 23 * 60_000);
     const managerB = new CronManager(stubB.agent, {
       clocks: clockB.clocks,
       pollIntervalMs: null,
-      sessionDir,
     });
     await managerB.loadFromDisk();
     managerB.tick();
@@ -297,12 +287,11 @@ describe('CronManager — persistence and resume', () => {
     // (clock skew or a bench env mistake) the scheduler must not skip
     // legitimately-due fires. The sanity gate ignores the bogus value
     // and falls back to `createdAt`, matching pre-persistence behaviour.
-    const stubA = createAgentStub();
+    const stubA = createAgentStub({ homedir: sessionDir });
     const clockA = createClocks();
     const managerA = new CronManager(stubA.agent, {
       clocks: clockA.clocks,
       pollIntervalMs: null,
-      sessionDir,
     });
     const task = managerA.addTask({ cron: '*/5 * * * *', prompt: 'check' });
     await managerA.flushPersist();
@@ -320,12 +309,11 @@ describe('CronManager — persistence and resume', () => {
 
     // Session B: 23 minutes later. Even though lastFiredAt is in the
     // future, the scheduler must still fire (sanity gate ignores it).
-    const stubB = createAgentStub();
+    const stubB = createAgentStub({ homedir: sessionDir });
     const clockB = createClocks(clockA.now() + 23 * 60_000);
     const managerB = new CronManager(stubB.agent, {
       clocks: clockB.clocks,
       pollIntervalMs: null,
-      sessionDir,
     });
     await managerB.loadFromDisk();
     managerB.tick();
@@ -341,7 +329,7 @@ describe('CronManager — persistence and resume', () => {
   it('no sessionDir = pure in-memory: no FS side effects, loadFromDisk is a no-op', async () => {
     const { agent } = createAgentStub();
     const harness = createClocks();
-    // Construct without sessionDir.
+    // Construct without homedir.
     const manager = new CronManager(agent, {
       clocks: harness.clocks,
       pollIntervalMs: null,

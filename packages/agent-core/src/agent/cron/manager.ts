@@ -175,6 +175,8 @@ export class CronManager {
           ? null
           : opts.pollIntervalMs,
     });
+
+    this.start();
   }
 
   /**
