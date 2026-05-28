@@ -270,7 +270,7 @@ describe('HarnessAPI session skills', () => {
       '<kimi-skill-loaded name="templated-review" args="&quot;src/app.ts&quot; careful">',
       'Target: src/app.ts',
       'Mode: careful',
-      'Raw: "src/app.ts" careful',
+      'Raw: &quot;src/app.ts&quot; careful',
       `Dir: ${skillDir}`,
       'Session: ses_skill_template',
       '</kimi-skill-loaded>',
