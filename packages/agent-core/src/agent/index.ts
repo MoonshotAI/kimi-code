@@ -75,7 +75,6 @@ export interface AgentConfig {
   readonly backgroundMaxRunningTasks?: number;
   readonly backgroundSessionDir?: string;
   readonly permission?: PermissionManagerOptions | undefined;
-  /** Parent logger; the agent appends its own ctx (agentId already bound by session). */
   readonly log?: Logger;
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
