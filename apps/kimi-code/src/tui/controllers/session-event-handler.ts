@@ -1,0 +1,928 @@
+import chalk from 'chalk';
+import type {
+  AgentStatusUpdatedEvent,
+  AssistantDeltaEvent,
+  BackgroundTaskInfo,
+  BackgroundTaskStartedEvent,
+  BackgroundTaskTerminatedEvent,
+  BackgroundTaskUpdatedEvent,
+  CompactionCancelledEvent,
+  CompactionCompletedEvent,
+  CompactionStartedEvent,
+  ErrorEvent,
+  Event,
+  HookResultEvent,
+  Session,
+  SessionMetaUpdatedEvent,
+  SkillActivatedEvent,
+  SubagentCompletedEvent,
+  SubagentFailedEvent,
+  SubagentSpawnedEvent,
+  ThinkingDeltaEvent,
+  ToolCallDeltaEvent,
+  ToolCallStartedEvent,
+  ToolProgressEvent,
+  ToolResultEvent,
+  TurnEndedEvent,
+  TurnStartedEvent,
+  TurnStepCompletedEvent,
+  TurnStepInterruptedEvent,
+  TurnStepStartedEvent,
+  WarningEvent,
+} from '@moonshot-ai/kimi-code-sdk';
+
+import { MoonLoader } from '../components/chrome/moon-loader';
+import { StatusMessageComponent } from '../components/messages/status-message';
+import {
+  MAIN_AGENT_ID,
+  OAUTH_LOGIN_REQUIRED_CODE,
+  OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
+} from '../constant/kimi-tui';
+import {
+  argsRecord,
+  isTodoItemShape,
+  serializeToolResultOutput,
+  stringValue,
+} from '../utils/event-payload';
+import { formatBackgroundAgentTranscript } from '../utils/background-agent-status';
+import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
+import { formatHookResultMarkdown, formatHookResultPlain } from '../utils/hook-result-format';
+import { McpOAuthAuthorizationUrlOpener } from '../utils/mcp-oauth';
+import {
+  formatMcpStartupStatusSummary,
+  mcpServerStatusKey,
+  type McpServerStatusSnapshot,
+  selectMcpStartupStatusRows,
+} from '../utils/mcp-server-status';
+import { openUrl } from '../utils/open-url';
+import { setProcessTitle } from '../utils/proctitle';
+import { errorReportHintLine } from '../constant/feedback';
+import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
+import { nextTranscriptId } from '../utils/transcript-id';
+import type { StreamingUIController } from './streaming-ui';
+import type { TasksBrowserController } from './tasks-browser';
+import type {
+  AppState,
+  BackgroundAgentMetadata,
+  LivePaneState,
+  QueuedMessage,
+  ToolCallBlockData,
+  ToolResultBlockData,
+  TranscriptEntry,
+} from '../types';
+import type { TUIState } from '../tui-state';
+
+export interface SessionEventHost {
+  state: TUIState;
+  session: Session | undefined;
+  aborted: boolean;
+  sessionEventUnsubscribe: (() => void) | undefined;
+  readonly streamingUI: StreamingUIController;
+
+  requireSession(): Session;
+  setAppState(patch: Partial<AppState>): void;
+  patchLivePane(patch: Partial<LivePaneState>): void;
+  resetLivePane(): void;
+  showError(msg: string): void;
+  showStatus(msg: string, color?: string): void;
+  showNotice(title: string, detail?: string): void;
+  appendTranscriptEntry(entry: TranscriptEntry): void;
+  sendQueuedMessage(session: Session, item: QueuedMessage): void;
+  shiftQueuedMessage(): QueuedMessage | undefined;
+  readonly tasksBrowserController: TasksBrowserController;
+}
+
+export class SessionEventHandler {
+  constructor(private readonly host: SessionEventHost) {}
+
+  // Runtime state – owned by this handler, reset between sessions.
+  backgroundAgentMetadata: Map<string, BackgroundAgentMetadata> = new Map();
+  backgroundTasks: Map<string, BackgroundTaskInfo> = new Map();
+  backgroundTaskTranscriptedTerminal: Set<string> = new Set();
+  subagentInfo: Map<string, { parentToolCallId: string; name: string }> = new Map();
+  renderedSkillActivationIds: Set<string> = new Set();
+  renderedMcpServerStatusKeys: Map<string, string> = new Map();
+  mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
+
+  resetRuntimeState(): void {
+    this.backgroundAgentMetadata.clear();
+    this.backgroundTasks.clear();
+    this.backgroundTaskTranscriptedTerminal.clear();
+    this.subagentInfo.clear();
+    this.renderedSkillActivationIds.clear();
+    this.renderedMcpServerStatusKeys.clear();
+    this.stopAllMcpServerStatusSpinners();
+  }
+
+  startSubscription(): void {
+    const { host } = this;
+    const session = host.requireSession();
+    const sendQueued = (item: QueuedMessage): void => {
+      host.sendQueuedMessage(session, item);
+    };
+    host.sessionEventUnsubscribe?.();
+    const mcpOAuthOpener = new McpOAuthAuthorizationUrlOpener(openUrl);
+    const { sessionId } = host.state.appState;
+    host.sessionEventUnsubscribe = session.onEvent((event) => {
+      if (host.aborted) return;
+      if (event.sessionId !== sessionId) return;
+      if (event.type === 'tool.progress') {
+        mcpOAuthOpener.handleToolProgress(event);
+      }
+      this.handleEvent(event, sendQueued);
+    });
+    void this.syncMcpServerStatusSnapshot(session);
+  }
+
+  async syncMcpServerStatusSnapshot(session: Session): Promise<void> {
+    const { host } = this;
+    let servers: readonly McpServerStatusSnapshot[];
+    try {
+      servers = await session.listMcpServers();
+    } catch (error) {
+      if (host.session !== session || host.aborted) return;
+      const message = error instanceof Error ? error.message : String(error);
+      host.showError(`Failed to sync MCP server status: ${message}`);
+      return;
+    }
+    if (host.session !== session || host.state.appState.sessionId !== session.id) return;
+
+    const visible = selectMcpStartupStatusRows(servers);
+    const visibleNames = new Set(visible.map((server) => server.name));
+    for (const server of visible) {
+      if (this.renderedMcpServerStatusKeys.has(server.name)) continue;
+      this.renderMcpServerStatus(server);
+    }
+
+    const hidden: McpServerStatusSnapshot[] = [];
+    for (const server of servers) {
+      if (visibleNames.has(server.name)) continue;
+      if (this.renderedMcpServerStatusKeys.has(server.name)) continue;
+      this.renderedMcpServerStatusKeys.set(server.name, mcpServerStatusKey(server));
+      hidden.push(server);
+    }
+    if (hidden.length > 0) {
+      host.showStatus(
+        formatMcpStartupStatusSummary(hidden, visible.length),
+        host.state.theme.colors.textMuted,
+      );
+    }
+  }
+
+  handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
+    if (this.routeSubagentEvent(event)) return;
+
+    if ('turnId' in event && event.turnId !== undefined) {
+      this.host.streamingUI.setTurnId(String(event.turnId));
+    }
+
+    switch (event.type) {
+      case 'turn.started': this.handleTurnBegin(event); break;
+      case 'turn.ended': this.handleTurnEnd(event, sendQueued); break;
+      case 'turn.step.started': this.handleStepBegin(event); break;
+      case 'turn.step.interrupted': this.handleStepInterrupted(event); break;
+      case 'turn.step.completed': this.handleStepCompleted(event); break;
+      case 'turn.step.retrying': break;
+      case 'tool.progress': this.handleToolProgress(event); break;
+      case 'assistant.delta': this.handleAssistantDelta(event); break;
+      case 'hook.result': this.handleHookResult(event); break;
+      case 'thinking.delta': this.handleThinkingDelta(event); break;
+      case 'tool.call.started': this.handleToolCall(event); break;
+      case 'tool.call.delta': this.handleToolCallDelta(event); break;
+      case 'tool.result': this.handleToolResult(event); break;
+      case 'agent.status.updated': this.handleStatusUpdate(event); break;
+      case 'session.meta.updated': this.handleSessionMetaChanged(event); break;
+      case 'skill.activated': this.handleSkillActivated(event); break;
+      case 'error': this.handleSessionError(event); break;
+      case 'warning': this.handleSessionWarning(event); break;
+      case 'compaction.started': this.handleCompactionBegin(event); break;
+      case 'compaction.completed': this.handleCompactionEnd(event, sendQueued); break;
+      case 'compaction.blocked': break;
+      case 'compaction.cancelled': this.handleCompactionCancel(event, sendQueued); break;
+      case 'subagent.spawned': this.handleSubagentSpawned(event); break;
+      case 'subagent.completed': this.handleSubagentCompleted(event); break;
+      case 'subagent.failed': this.handleSubagentFailed(event); break;
+      case 'background.task.started':
+      case 'background.task.updated':
+      case 'background.task.terminated':
+        this.handleBackgroundTaskEvent(event); break;
+      case 'mcp.server.status': this.renderMcpServerStatus(event.server); break;
+      case 'tool.list.updated': break;
+      default: break;
+    }
+  }
+
+  stopAllMcpServerStatusSpinners(): void {
+    for (const spinner of this.mcpServerStatusSpinners.values()) {
+      spinner.stop();
+    }
+    this.mcpServerStatusSpinners.clear();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private handlers
+  // ---------------------------------------------------------------------------
+
+  private routeSubagentEvent(event: Event): boolean {
+    const subagentId = event.agentId;
+    if (subagentId === MAIN_AGENT_ID) return false;
+
+    const { streamingUI } = this.host;
+    const info = this.subagentInfo.get(subagentId);
+    if (info === undefined || info.parentToolCallId.length === 0) return true;
+    const { parentToolCallId } = info;
+    const sourceName = info.name;
+    const toolCall = streamingUI.getToolComponent(parentToolCallId);
+    if (toolCall === undefined) return true;
+    toolCall.setSubagentMeta(subagentId, sourceName);
+
+    switch (event.type) {
+      case 'hook.result':
+        toolCall.appendSubagentText(formatHookResultPlain(event), 'text');
+        return true;
+      case 'assistant.delta':
+        toolCall.appendSubagentText(event.delta, 'text');
+        return true;
+      case 'thinking.delta':
+        toolCall.appendSubagentText(event.delta, 'thinking');
+        return true;
+      case 'tool.call.started':
+        toolCall.appendSubToolCall({
+          id: `${subagentId}:${event.toolCallId}`,
+          name: event.name,
+          args: argsRecord(event.args),
+        });
+        return true;
+      case 'tool.call.delta':
+        toolCall.appendSubToolCallDelta({
+          id: `${subagentId}:${event.toolCallId}`,
+          name: event.name,
+          argumentsPart: event.argumentsPart ?? null,
+        });
+        return true;
+      case 'tool.result':
+        toolCall.finishSubToolCall({
+          tool_call_id: `${subagentId}:${event.toolCallId}`,
+          output: serializeToolResultOutput(event.output),
+          is_error: event.isError,
+        });
+        return true;
+      case 'agent.status.updated': {
+        const usageObj = event.usage;
+        const totalUsage = usageObj?.total ?? usageObj?.currentTurn;
+        toolCall.updateSubagentMetrics({
+          contextTokens: event.contextTokens,
+          usage: totalUsage,
+        });
+        return true;
+      }
+      case 'background.task.started':
+      case 'background.task.updated':
+      case 'background.task.terminated':
+      case 'compaction.blocked':
+      case 'compaction.cancelled':
+      case 'compaction.completed':
+      case 'compaction.started':
+      case 'error':
+      case 'session.meta.updated':
+      case 'skill.activated':
+      case 'subagent.completed':
+      case 'subagent.failed':
+      case 'subagent.spawned':
+      case 'tool.progress':
+      case 'tool.list.updated':
+      case 'mcp.server.status':
+      case 'turn.ended':
+      case 'turn.started':
+      case 'turn.step.completed':
+      case 'turn.step.interrupted':
+      case 'turn.step.retrying':
+      case 'turn.step.started':
+        return true;
+      default:
+        return true;
+    }
+  }
+
+  private handleTurnBegin(_event: TurnStartedEvent): void {
+    void _event;
+    this.host.streamingUI.resetToolUi();
+    this.host.streamingUI.setStep(0);
+    this.host.patchLivePane({
+      mode: 'waiting',
+      pendingApproval: null,
+      pendingQuestion: null,
+    });
+    this.host.setAppState({
+      streamingPhase: 'waiting',
+      streamingStartTime: Date.now(),
+    });
+  }
+
+  private handleTurnEnd(_event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
+    void _event;
+    this.host.streamingUI.flushNow();
+    const todos = this.host.state.todoPanel.getTodos();
+    if (todos.length > 0 && todos.every((t) => t.status === 'done')) {
+      this.host.streamingUI.setTodoList([]);
+    }
+    this.host.streamingUI.resetToolUi();
+    this.host.streamingUI.finalizeTurn(sendQueued);
+  }
+
+  private handleStepBegin(event: TurnStepStartedEvent): void {
+    this.host.streamingUI.flushNow();
+    this.host.streamingUI.setStep(event.step);
+    this.host.streamingUI.resetToolUi();
+    this.host.streamingUI.finalizeLiveTextBuffers('waiting');
+    this.host.patchLivePane({
+      mode: 'waiting',
+      pendingApproval: null,
+      pendingQuestion: null,
+    });
+    this.host.setAppState({
+      streamingPhase: 'waiting',
+      streamingStartTime: Date.now(),
+    });
+  }
+
+  private handleStepCompleted(event: TurnStepCompletedEvent): void {
+    this.host.streamingUI.flushNow();
+    this.maybeShowDebugTiming(event);
+    if (event.finishReason !== 'max_tokens') return;
+
+    const truncatedCount = this.host.streamingUI.markStepTruncated(
+      String(event.turnId),
+      event.step,
+    );
+
+    const title =
+      truncatedCount > 0
+        ? 'Model hit max_tokens — tool call was truncated before it could run.'
+        : 'Model hit max_tokens — no tool call was emitted.';
+    const detail = this.isAnthropicSessionActive()
+      ? 'If this limit is wrong for your model, set `max_output_size` on the model alias in your kimi-code config.'
+      : undefined;
+    this.host.showNotice(title, detail);
+  }
+
+  private maybeShowDebugTiming(event: TurnStepCompletedEvent): void {
+    if (process.env['KIMI_CODE_DEBUG'] !== '1') return;
+    const text = formatStepDebugTiming(event);
+    if (text !== undefined) this.host.showStatus(text);
+  }
+
+  private isAnthropicSessionActive(): boolean {
+    const { state } = this.host;
+    const providerKey = state.appState.availableModels[state.appState.model]?.provider;
+    if (providerKey === undefined) return false;
+    return state.appState.availableProviders[providerKey]?.type === 'anthropic';
+  }
+
+  private handleStepInterrupted(event: TurnStepInterruptedEvent): void {
+    this.host.streamingUI.flushNow();
+    this.host.streamingUI.resetToolUi();
+    this.host.streamingUI.finalizeLiveTextBuffers('idle');
+    const reason = event.reason;
+    if (reason === 'error') return;
+    if (reason === 'aborted' || reason === undefined || reason === '') {
+      this.host.showStatus('Interrupted by user', this.host.state.theme.colors.error);
+      return;
+    }
+    this.host.showError(
+      reason === 'max_steps'
+        ? 'reached per-turn step limit (max_steps)'
+        : `step interrupted (${reason})`,
+    );
+  }
+
+  private handleThinkingDelta(event: ThinkingDeltaEvent): void {
+    const { state, streamingUI } = this.host;
+    streamingUI.appendThinkingDelta(event.delta);
+    this.host.patchLivePane({ mode: 'idle' });
+    if (state.appState.streamingPhase !== 'thinking') {
+      this.host.setAppState({ streamingPhase: 'thinking', streamingStartTime: Date.now() });
+    }
+    streamingUI.scheduleFlush();
+  }
+
+  private handleAssistantDelta(event: AssistantDeltaEvent): void {
+    const { state, streamingUI } = this.host;
+    if (streamingUI.hasThinkingDraft()) {
+      streamingUI.flushThinkingToTranscript('idle');
+    }
+
+    streamingUI.appendAssistantDelta(event.delta);
+
+    this.host.patchLivePane({
+      mode: 'idle',
+      pendingApproval: null,
+      pendingQuestion: null,
+    });
+    if (state.appState.streamingPhase !== 'composing') {
+      this.host.setAppState({ streamingPhase: 'composing', streamingStartTime: Date.now() });
+    }
+    streamingUI.scheduleFlush();
+  }
+
+  private handleHookResult(event: HookResultEvent): void {
+    this.host.streamingUI.flushNow();
+    if (this.host.streamingUI.hasThinkingDraft()) {
+      this.host.streamingUI.flushThinkingToTranscript('idle');
+    }
+    this.host.streamingUI.finalizeAssistantStream();
+    this.host.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'assistant',
+      turnId: String(event.turnId),
+      renderMode: 'markdown',
+      content: formatHookResultMarkdown(event),
+    });
+    this.host.patchLivePane({
+      mode: 'idle',
+      pendingApproval: null,
+      pendingQuestion: null,
+    });
+  }
+
+  private handleToolCall(event: ToolCallStartedEvent): void {
+    const { streamingUI } = this.host;
+    streamingUI.flushNow();
+    const { turnId, step } = streamingUI.getTurnContext();
+    const toolCall: ToolCallBlockData = {
+      id: event.toolCallId,
+      name: event.name,
+      args: argsRecord(event.args),
+      description: event.description,
+      display: event.display,
+      step,
+      turnId,
+    };
+    streamingUI.registerToolCall(toolCall);
+    this.host.patchLivePane({
+      mode: 'tool',
+      pendingApproval: null,
+      pendingQuestion: null,
+    });
+  }
+
+  private handleToolCallDelta(event: ToolCallDeltaEvent): void {
+    if (event.toolCallId.length === 0) return;
+    const { state, streamingUI } = this.host;
+    streamingUI.accumulateToolCallDelta(event.toolCallId, event.name, event.argumentsPart);
+
+    this.host.patchLivePane({
+      mode: 'tool',
+      pendingApproval: null,
+      pendingQuestion: null,
+    });
+    if (state.appState.streamingPhase !== 'composing') {
+      this.host.setAppState({ streamingPhase: 'composing', streamingStartTime: Date.now() });
+    }
+    streamingUI.scheduleFlush();
+  }
+
+  private handleToolProgress(event: ToolProgressEvent): void {
+    if (event.update.kind !== 'status') return;
+    const text = event.update.text;
+    if (text === undefined || text.length === 0) return;
+    const tc = this.host.streamingUI.getToolComponent(event.toolCallId);
+    if (tc === undefined) return;
+    tc.appendProgress(text);
+  }
+
+  private handleToolResult(event: ToolResultEvent): void {
+    const { streamingUI } = this.host;
+    streamingUI.flushNow();
+    const resultData: ToolResultBlockData = {
+      tool_call_id: event.toolCallId,
+      output: serializeToolResultOutput(event.output),
+      is_error: event.isError,
+      synthetic: event.synthetic,
+    };
+    const matchedCall = streamingUI.completeToolResult(event.toolCallId, resultData);
+    if (matchedCall !== undefined && matchedCall.name === 'TodoList' && !event.isError) {
+      const rawTodos = (matchedCall.args as { todos?: unknown }).todos;
+      if (Array.isArray(rawTodos)) {
+        const sanitized = rawTodos
+          .filter((todo): todo is { title: string; status: 'pending' | 'in_progress' | 'done' } =>
+            isTodoItemShape(todo),
+          )
+          .map((t) => ({ title: t.title, status: t.status }));
+        streamingUI.setTodoList(sanitized);
+      }
+    }
+    this.host.patchLivePane({ mode: 'waiting' });
+  }
+
+  private handleStatusUpdate(event: AgentStatusUpdatedEvent): void {
+    const patch: Partial<AppState> = {};
+    if (event.contextUsage !== undefined) patch.contextUsage = event.contextUsage;
+    if (event.contextTokens !== undefined) patch.contextTokens = event.contextTokens;
+    if (event.maxContextTokens !== undefined) patch.maxContextTokens = event.maxContextTokens;
+    if (event.planMode !== undefined) patch.planMode = event.planMode;
+    if (event.permission !== undefined) {
+      patch.permissionMode = event.permission;
+    }
+    if (event.model !== undefined) patch.model = event.model;
+    if (Object.keys(patch).length > 0) this.host.setAppState(patch);
+  }
+
+  private handleSessionMetaChanged(event: SessionMetaUpdatedEvent): void {
+    const title = event.title ?? stringValue(event.patch?.['title']);
+    if (title !== undefined) {
+      this.host.setAppState({ sessionTitle: title });
+      setProcessTitle(title, this.host.state.appState.sessionId);
+    }
+  }
+
+  private handleSessionError(event: ErrorEvent): void {
+    this.host.streamingUI.flushNow();
+    this.host.streamingUI.resetToolUi();
+    this.host.streamingUI.finalizeLiveTextBuffers('idle');
+    if (event.code === OAUTH_LOGIN_REQUIRED_CODE) {
+      this.host.showError(OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE);
+      return;
+    }
+    this.host.showError(`[${event.code}] ${event.message}`);
+    const sessionId = this.host.state.appState.sessionId;
+    if (sessionId.length > 0) {
+      this.host.showStatus(errorReportHintLine(sessionId));
+    }
+  }
+
+  private handleSessionWarning(event: WarningEvent): void {
+    this.host.showStatus(`Warning: ${event.message}`, this.host.state.theme.colors.warning);
+  }
+
+  private renderMcpServerStatus(server: McpServerStatusSnapshot): void {
+    const { state } = this.host;
+    const key = mcpServerStatusKey(server);
+    if (this.renderedMcpServerStatusKeys.get(server.name) === key) return;
+    this.renderedMcpServerStatusKeys.set(server.name, key);
+
+    const colors = state.theme.colors;
+    switch (server.status) {
+      case 'connected': {
+        const toolStr = `${server.toolCount} tool${server.toolCount === 1 ? '' : 's'}`;
+        const message = `MCP server "${server.name}" connected · ${toolStr} (${server.transport})`;
+        this.finalizeMcpServerStatusRow(server.name, message, colors.success);
+        return;
+      }
+      case 'failed': {
+        const message = `MCP server "${server.name}" failed${server.error !== undefined ? `: ${server.error}` : ''}`;
+        this.finalizeMcpServerStatusRow(server.name, message, colors.error);
+        return;
+      }
+      case 'needs-auth': {
+        const message = `MCP server "${server.name}" needs OAuth — run /mcp-config login ${server.name}`;
+        this.finalizeMcpServerStatusRow(server.name, message, colors.warning);
+        return;
+      }
+      case 'disabled':
+        this.finalizeMcpServerStatusRow(
+          server.name,
+          `MCP server "${server.name}" disabled`,
+          colors.textMuted,
+        );
+        return;
+      case 'pending':
+        this.showMcpServerStatusSpinner(server.name);
+        return;
+    }
+  }
+
+  private showMcpServerStatusSpinner(name: string): void {
+    const { state } = this.host;
+    const label = `MCP server "${name}" connecting…`;
+    const existing = this.mcpServerStatusSpinners.get(name);
+    if (existing !== undefined) {
+      existing.setLabel(label);
+      return;
+    }
+    const tint = (s: string): string => chalk.hex(state.theme.colors.textMuted)(s);
+    const spinner = new MoonLoader(state.ui, 'braille', tint, label);
+    state.transcriptContainer.addChild(spinner);
+    this.mcpServerStatusSpinners.set(name, spinner);
+    state.ui.requestRender();
+  }
+
+  private finalizeMcpServerStatusRow(name: string, message: string, color: string): void {
+    const { state } = this.host;
+    const spinner = this.mcpServerStatusSpinners.get(name);
+    if (spinner === undefined) {
+      this.host.showStatus(message, color);
+      return;
+    }
+    spinner.stop();
+    const status = new StatusMessageComponent(message, state.theme.colors, color);
+    const children = state.transcriptContainer.children;
+    const idx = children.indexOf(spinner);
+    if (idx >= 0) {
+      children[idx] = status;
+      state.transcriptContainer.invalidate();
+    } else {
+      state.transcriptContainer.addChild(status);
+    }
+    this.mcpServerStatusSpinners.delete(name);
+    state.ui.requestRender();
+  }
+
+  private handleSkillActivated(event: SkillActivatedEvent): void {
+    if (this.renderedSkillActivationIds.has(event.activationId)) return;
+    this.renderedSkillActivationIds.add(event.activationId);
+    this.host.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'skill_activation',
+      turnId: undefined,
+      renderMode: 'plain',
+      content: `Activated skill: ${event.skillName}`,
+      skillActivationId: event.activationId,
+      skillName: event.skillName,
+      skillArgs: event.skillArgs,
+    });
+  }
+
+  private handleCompactionBegin(event: CompactionStartedEvent): void {
+    this.host.streamingUI.finalizeLiveTextBuffers('waiting');
+    this.host.setAppState({
+      isCompacting: true,
+      streamingPhase: 'waiting',
+      streamingStartTime: Date.now(),
+    });
+    this.host.streamingUI.beginCompaction(event.instruction);
+  }
+
+  private handleCompactionEnd(
+    event: CompactionCompletedEvent,
+    sendQueued: (item: QueuedMessage) => void,
+  ): void {
+    this.host.streamingUI.endCompaction(event.result.tokensBefore, event.result.tokensAfter);
+    this.finishCompaction(sendQueued);
+  }
+
+  private handleCompactionCancel(
+    _event: CompactionCancelledEvent,
+    sendQueued: (item: QueuedMessage) => void,
+  ): void {
+    this.host.streamingUI.cancelCompaction();
+    this.finishCompaction(sendQueued);
+  }
+
+  private finishCompaction(sendQueued: (item: QueuedMessage) => void): void {
+    const hasActiveTurn = this.host.streamingUI.hasActiveTurn();
+    if (!hasActiveTurn) {
+      this.host.setAppState({
+        isCompacting: false,
+        streamingPhase: 'idle',
+      });
+      this.host.resetLivePane();
+      const next = this.host.shiftQueuedMessage();
+      if (next !== undefined) {
+        setTimeout(() => {
+          sendQueued(next);
+        }, 0);
+      }
+    } else {
+      this.host.setAppState({ isCompacting: false });
+    }
+  }
+
+  private handleSubagentSpawned(event: SubagentSpawnedEvent): void {
+    const { streamingUI } = this.host;
+    this.subagentInfo.set(event.subagentId, {
+      parentToolCallId: event.parentToolCallId,
+      name: event.subagentName,
+    });
+
+    if (event.runInBackground) {
+      const meta = this.buildBackgroundAgentMetadata(event);
+      this.backgroundAgentMetadata.set(event.subagentId, meta);
+      this.appendBackgroundAgentEntry('started', meta);
+      this.syncBackgroundAgentBadge();
+      return;
+    }
+
+    let tc = streamingUI.getToolComponent(event.parentToolCallId);
+    if (tc === undefined) {
+      const toolCall = streamingUI.getActiveToolCall(event.parentToolCallId);
+      if (toolCall !== undefined) {
+        streamingUI.onToolCallStart(toolCall);
+        tc = streamingUI.getToolComponent(event.parentToolCallId);
+      }
+    }
+    tc ??= this.createStandaloneSubagentToolCall(event);
+    if (tc === undefined) return;
+    tc.onSubagentSpawned({
+      agentId: event.subagentId,
+      agentName: event.subagentName,
+      runInBackground: event.runInBackground,
+    });
+  }
+
+  private handleSubagentCompleted(event: SubagentCompletedEvent): void {
+    const { streamingUI } = this.host;
+    const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
+    if (backgroundMeta !== undefined) {
+      this.backgroundAgentMetadata.delete(event.subagentId);
+      this.syncBackgroundAgentBadge();
+      const taskId = this.findAgentTaskId(event.subagentId);
+      if (taskId !== undefined && this.backgroundTaskTranscriptedTerminal.has(taskId)) {
+        return;
+      }
+      if (taskId !== undefined) {
+        this.backgroundTaskTranscriptedTerminal.add(taskId);
+      }
+      const extras =
+        event.resultSummary === undefined ? undefined : { resultSummary: event.resultSummary };
+      this.appendBackgroundAgentEntry('completed', backgroundMeta, extras);
+      return;
+    }
+    const tc = streamingUI.getToolComponent(event.parentToolCallId);
+    if (tc === undefined) return;
+    tc.onSubagentCompleted({
+      contextTokens: event.contextTokens,
+      usage: event.usage,
+      resultSummary: event.resultSummary,
+    });
+    streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
+  }
+
+  private handleSubagentFailed(event: SubagentFailedEvent): void {
+    const { streamingUI } = this.host;
+    const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
+    if (backgroundMeta !== undefined) {
+      this.backgroundAgentMetadata.delete(event.subagentId);
+      this.syncBackgroundAgentBadge();
+      const taskId = this.findAgentTaskId(event.subagentId);
+      if (taskId !== undefined && this.backgroundTaskTranscriptedTerminal.has(taskId)) {
+        return;
+      }
+      if (taskId !== undefined) {
+        this.backgroundTaskTranscriptedTerminal.add(taskId);
+      }
+      this.appendBackgroundAgentEntry('failed', backgroundMeta, { error: event.error });
+      return;
+    }
+    const tc = streamingUI.getToolComponent(event.parentToolCallId);
+    if (tc === undefined) return;
+    tc.onSubagentFailed({ error: event.error });
+    streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
+  }
+
+  private createStandaloneSubagentToolCall(event: SubagentSpawnedEvent) {
+    const { streamingUI } = this.host;
+    const description = event.description ?? `Run ${event.subagentName} agent`;
+    const { turnId, step } = streamingUI.getTurnContext();
+    const toolCall: ToolCallBlockData = {
+      id: event.parentToolCallId,
+      name: 'Agent',
+      args: {
+        description,
+        subagent_type: event.subagentName,
+      },
+      description,
+      step,
+      turnId,
+    };
+    streamingUI.onToolCallStart(toolCall);
+    return streamingUI.getToolComponent(event.parentToolCallId);
+  }
+
+  private findAgentTaskId(subagentId: string): string | undefined {
+    const meta = this.backgroundAgentMetadata.get(subagentId);
+    const description = meta?.description ?? meta?.agentName;
+    if (description === undefined) return undefined;
+    let match: string | undefined;
+    for (const info of this.backgroundTasks.values()) {
+      if (!info.taskId.startsWith('agent-')) continue;
+      if (info.description !== description) continue;
+      if (match !== undefined) return undefined;
+      match = info.taskId;
+    }
+    return match;
+  }
+
+  private buildBackgroundAgentMetadata(event: SubagentSpawnedEvent): BackgroundAgentMetadata {
+    const parent = this.host.streamingUI.getActiveToolCall(event.parentToolCallId);
+    const description = parent?.args['description'] ?? event.description;
+    return {
+      agentId: event.subagentId,
+      parentToolCallId: event.parentToolCallId,
+      agentName: event.subagentName,
+      description: typeof description === 'string' ? description : undefined,
+    };
+  }
+
+  private appendBackgroundAgentEntry(
+    phase: 'started' | 'completed' | 'failed',
+    meta: BackgroundAgentMetadata,
+    extras: { resultSummary?: string; error?: string } | undefined = undefined,
+  ): void {
+    const status = formatBackgroundAgentTranscript(phase, meta, extras);
+    const entry: TranscriptEntry = {
+      id: nextTranscriptId(),
+      kind: 'status',
+      turnId: this.host.streamingUI.getTurnContext().turnId,
+      renderMode: 'plain',
+      content: status.headline,
+      detail: status.detail,
+      backgroundAgentStatus: status,
+    };
+    this.host.appendTranscriptEntry(entry);
+  }
+
+  private syncBackgroundAgentBadge(): void {
+    this.syncBackgroundTaskBadge();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Background task lifecycle
+  // ---------------------------------------------------------------------------
+
+  private handleBackgroundTaskEvent(
+    event: BackgroundTaskStartedEvent | BackgroundTaskUpdatedEvent | BackgroundTaskTerminatedEvent,
+  ): void {
+    const { state } = this.host;
+    const { info } = event;
+    const previous = this.backgroundTasks.get(info.taskId);
+    this.backgroundTasks.set(info.taskId, info);
+
+    const viewer = state.tasksBrowser?.viewer;
+    if (viewer !== undefined && viewer.taskId === info.taskId) {
+      void this.host.tasksBrowserController.refreshOutputViewer({ silent: true });
+    }
+
+    const isTerminal =
+      info.status === 'completed' ||
+      info.status === 'failed' ||
+      info.status === 'killed' ||
+      info.status === 'lost';
+
+    if (event.type === 'background.task.started') {
+      if (info.taskId.startsWith('agent-')) {
+        this.syncBackgroundTaskBadge();
+        this.host.tasksBrowserController.repaint();
+        return;
+      }
+      this.appendBackgroundTaskEntry(info);
+      this.syncBackgroundTaskBadge();
+      this.host.tasksBrowserController.repaint();
+      return;
+    }
+
+    if (event.type === 'background.task.terminated' && isTerminal) {
+      if (!this.backgroundTaskTranscriptedTerminal.has(info.taskId)) {
+        if (info.taskId.startsWith('bash-')) {
+          this.appendBackgroundTaskEntry(info);
+        }
+        this.backgroundTaskTranscriptedTerminal.add(info.taskId);
+      }
+      this.syncBackgroundTaskBadge();
+      this.host.tasksBrowserController.repaint();
+      return;
+    }
+
+    if (previous?.status !== info.status) {
+      this.syncBackgroundTaskBadge();
+    }
+    this.host.tasksBrowserController.repaint();
+  }
+
+  private appendBackgroundTaskEntry(info: BackgroundTaskInfo): void {
+    const status = formatBackgroundTaskTranscript(info);
+    const entry: TranscriptEntry = {
+      id: nextTranscriptId(),
+      kind: 'status',
+      turnId: this.host.streamingUI.getTurnContext().turnId,
+      renderMode: 'plain',
+      content: status.headline,
+      detail: status.detail,
+      backgroundAgentStatus: status,
+    };
+    this.host.appendTranscriptEntry(entry);
+  }
+
+  private syncBackgroundTaskBadge(): void {
+    const { state } = this.host;
+    let bashTasks = 0;
+    let agentTasks = 0;
+    for (const info of this.backgroundTasks.values()) {
+      if (
+        info.status === 'completed' ||
+        info.status === 'failed' ||
+        info.status === 'killed' ||
+        info.status === 'lost'
+      ) {
+        continue;
+      }
+      if (info.taskId.startsWith('agent-')) {
+        agentTasks += 1;
+      } else {
+        bashTasks += 1;
+      }
+    }
+    state.footer.setBackgroundCounts({ bashTasks, agentTasks });
+    state.ui.requestRender();
+  }
+}
