@@ -362,7 +362,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   async setKimiConfig(input: SetKimiConfigPayload): Promise<KimiConfig> {
-    const config = mergeConfigPatch(this.config, input);
+    const config = mergeConfigPatch(readConfigFile(this.configPath), input);
     await writeConfigFile(this.configPath, config);
     return this.config = readConfigFile(this.configPath);
   }
