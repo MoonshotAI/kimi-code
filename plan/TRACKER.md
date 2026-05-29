@@ -17,9 +17,9 @@ coding agent, following the phase plans in this directory.
 | 1b | Goal audit and resume lifecycle | ✅ | 70ee3c6 |
 | 2  | SDK API and `/goal` command surface | ✅ | c14b025 |
 | 3  | Model goal tools | ✅ | c5d8a90 |
-| 4a | Goal context injection | ✅ | (this commit) |
-| 4b | Goal usage accounting | 🟡 | — |
-| 4c | Goal continuation loop | ⬜ | — |
+| 4a | Goal context injection | ✅ | 687654c |
+| 4b | Goal usage accounting | ✅ | (this commit) |
+| 4c | Goal continuation loop | 🟡 | — |
 | 4d | Goal evaluator | ⬜ | — |
 | 5  | End-to-end integration and gates | ⬜ | — |
 | 6  | Headless goal mode and hardening | ⬜ | — |
@@ -95,3 +95,22 @@ coding agent, following the phase plans in this directory.
 - Test harness `testAgent` gained a `goals` option. Tests: injection/goal.test.ts (14) including
   the wire `context.append_message` record with `origin.variant === 'goal'`. Injection suite (33)
   green; typecheck clean.
+
+### Phase 4b
+
+- `TurnFlow` `afterStep` now records goal token usage (`grandTotal(usage)`, source `agent_step`,
+  agent id derived from homedir basename) for every session agent step when an active goal exists.
+  Comment `// Goal token budgets count every session agent step.` added.
+- Token accounting is not flag-gated (a goal only exists via flag-gated paths anyway); the store's
+  `recordTokenUsage` already no-ops for paused/terminal goals and writes no audit record then.
+- Wall-clock accounting stays store-side (`recordWallClockUsage`); per the plan, the live
+  per-continuation wall-clock recording + final-interval finalize hook land in Phase 4c.
+- Tests added to turn.test.ts (42 pass): main + subagent token accounting, no-active-goal skip,
+  token budget flag update without status change, paused skip, terminal-not-cleared, store
+  wall-clock accumulation.
+
+### Detour note (Phase 4b)
+
+- The 4b plan also lists "subagent wall-clock does not update wallClockMs" and "superseded turn
+  does not update final wall-clock". Those depend on the Phase 4c continuation controller /
+  finalize hook (the only wall-clock writers from turns), so they are covered in Phase 4c, not 4b.

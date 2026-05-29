@@ -6,11 +6,13 @@ import {
   APIEmptyResponseError,
   APIStatusError,
   APITimeoutError,
+  grandTotal,
   inputTotal,
   isContextOverflowStatusError,
   type ContentPart,
   type TokenUsage,
 } from '@moonshot-ai/kosong';
+import { basename } from 'pathe';
 
 import type { Agent } from '..';
 import {
@@ -69,6 +71,11 @@ export class TurnFlow {
   private currentStep = 0;
 
   constructor(protected readonly agent: Agent) {}
+
+  /** Best-effort agent id (main / generated id) derived from the agent homedir. */
+  private get agentId(): string {
+    return this.agent.homedir ? basename(this.agent.homedir) : this.agent.type;
+  }
 
   // Returns the new turnId, or null if the turn was marked as resuming.
   prompt(input: readonly ContentPart[], origin: PromptOrigin = USER_PROMPT_ORIGIN): number | null {
@@ -384,6 +391,15 @@ export class TurnFlow {
             },
             afterStep: async ({ usage }) => {
               this.agent.usage.record(model, usage, 'turn');
+              // Goal token budgets count every session agent step.
+              if (this.agent.goals?.getActiveGoal() != null) {
+                await this.agent.goals.recordTokenUsage({
+                  tokenDelta: grandTotal(usage),
+                  agentId: this.agentId,
+                  agentType: this.agent.type,
+                  source: 'agent_step',
+                });
+              }
               await this.agent.fullCompaction.afterStep();
               deduper.endStep();
             },
