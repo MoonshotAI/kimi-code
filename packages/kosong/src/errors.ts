@@ -82,6 +82,7 @@ const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
   /(?:too many tokens.*(?:prompt|input|context)|(?:prompt|input|context).*too many tokens)/,
   /prompt is too long.*maximum/,
   /input token count.*exceeds?.*maximum number of tokens/,
+  /request.*exceed(?:ed|s|ing)?.*model token limit/,
 ] as const;
 
 export function normalizeAPIStatusError(

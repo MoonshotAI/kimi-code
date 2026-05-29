@@ -154,6 +154,7 @@ describe('normalizeAPIStatusError', () => {
     [422, 'Too many tokens in prompt'],
     [400, 'prompt is too long: 210000 tokens exceeds the maximum'],
     [400, 'input token count 131072 exceeds the maximum number of tokens allowed'],
+    [400, 'Invalid request: Your request exceeded model token limit: 262144 (requested: 274613)'],
   ])('normalizes %i "%s" to APIContextOverflowError', (statusCode, message) => {
     const error = normalizeAPIStatusError(statusCode, message, 'req-context');
     expect(error).toBeInstanceOf(APIContextOverflowError);

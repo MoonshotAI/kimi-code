@@ -636,6 +636,45 @@ describe('Agent compaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('fails a blocked turn when auto compaction generation fails', async () => {
+    let attempts = 0;
+    const generate: GenerateFn = async () => {
+      attempts += 1;
+      throw new APIStatusError(400, 'Bad request');
+    };
+    const ctx = testAgent({ generate, compactionStrategy: alwaysCompactOnce });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Trigger failed auto compaction' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(attempts).toBe(1);
+    expect(events).not.toContainEqual(expect.objectContaining({ event: 'error' }));
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: {
+          turnId: 0,
+          reason: 'failed',
+          error: expect.objectContaining({
+            code: 'compaction.failed',
+            message: 'APIStatusError: Bad request',
+          }),
+        },
+      }),
+    );
+    const errorEvents = ctx.newEvents();
+    expect(errorEvents).toHaveLength(1);
+    expect(errorEvents[0]).toMatchObject({
+      event: 'error',
+      args: expect.objectContaining({
+        code: 'compaction.failed',
+        message: 'APIStatusError: Bad request',
+      }),
+    });
+    await ctx.expectResumeMatches();
+  });
+
   it('reports compaction retry_count when retryable generation failures are exhausted', async () => {
     vi.useFakeTimers();
     const records: TelemetryRecord[] = [];
