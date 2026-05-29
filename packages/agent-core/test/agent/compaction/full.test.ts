@@ -334,6 +334,7 @@ describe('FullCompaction', () => {
 
     vi.setSystemTime(61 * 60 * 1000);
 
+    ctx.agent.microCompaction.detect();
     const compacted = ctx.once('context.apply_compaction');
     ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
     await ctx.rpc.beginCompaction({ instruction: 'Summarize tool exchanges.' });

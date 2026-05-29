@@ -42,6 +42,7 @@ describe('MicroCompaction', () => {
         keepRecentMessages: 4,
         minContentTokens: 1,
         cacheMissedThresholdMs: 60 * 60 * 1000,
+        minContextUsageRatio: 0,
       },
     });
 
@@ -54,6 +55,7 @@ describe('MicroCompaction', () => {
 
     vi.setSystemTime(61 * 60 * 1000);
 
+    ctx.agent.microCompaction.detect();
     const messages = ctx.agent.context.messages;
     expect(messages[2]).toMatchObject({
       role: 'tool',
@@ -97,6 +99,7 @@ describe('MicroCompaction', () => {
         keepRecentMessages: 2,
         minContentTokens: 1,
         cacheMissedThresholdMs: 60 * 60 * 1000,
+        minContextUsageRatio: 0,
       },
     });
 
@@ -106,6 +109,7 @@ describe('MicroCompaction', () => {
 
     vi.setSystemTime(61 * 60 * 1000);
 
+    ctx.agent.microCompaction.detect();
     const first = ctx.agent.context.messages;
     expect(first[2]).toMatchObject({
       role: 'tool',
@@ -114,6 +118,7 @@ describe('MicroCompaction', () => {
 
     vi.setSystemTime(62 * 60 * 1000);
 
+    ctx.agent.microCompaction.detect();
     const second = ctx.agent.context.messages;
     expect(second[2]).toMatchObject({
       role: 'tool',
@@ -252,6 +257,7 @@ describe('MicroCompaction', () => {
         keepRecentMessages: 0,
         minContentTokens: 1,
         cacheMissedThresholdMs: 60 * MINUTE,
+        minContextUsageRatio: 0,
       },
       persistence: new InMemoryAgentRecordPersistence(
         resumeToolExchangeRecords(assistantRecordTime),
@@ -267,6 +273,7 @@ describe('MicroCompaction', () => {
     expect(hasMarker(ctx.agent.context.messages)).toBe(false);
 
     vi.setSystemTime(assistantRecordTime + 61 * MINUTE);
+    ctx.agent.microCompaction.detect();
     expect(toolTexts(ctx.agent.context.messages)).toEqual([DEFAULT_MARKER]);
   });
 
@@ -277,6 +284,7 @@ describe('MicroCompaction', () => {
       keepRecentMessages: 2,
       minContentTokens: 1,
       cacheMissedThresholdMs: 60 * MINUTE,
+      minContextUsageRatio: 0,
     };
     const ctx = testAgent({
       microCompaction: config,
@@ -288,6 +296,7 @@ describe('MicroCompaction', () => {
     appendMicroToolExchange(ctx, 2, { output: 'result two' });
 
     vi.setSystemTime(61 * MINUTE);
+    ctx.agent.microCompaction.detect();
     expect(toolTexts(ctx.agent.context.messages)).toEqual([DEFAULT_MARKER, 'result two']);
     expect(lastMicroCompactionCutoff(persistence.records)).toBe(4);
 
@@ -317,6 +326,7 @@ describe('MicroCompaction', () => {
       keepRecentMessages: 2,
       minContentTokens: 1,
       cacheMissedThresholdMs: 60 * MINUTE,
+      minContextUsageRatio: 0,
     };
     const ctx = testAgent({
       microCompaction: config,
@@ -328,6 +338,7 @@ describe('MicroCompaction', () => {
     appendMicroToolExchange(ctx, 2, { output: 'result two' });
 
     vi.setSystemTime(61 * MINUTE);
+    ctx.agent.microCompaction.detect();
     expect(toolTexts(ctx.agent.context.messages)).toEqual([DEFAULT_MARKER, 'result two']);
     expect(lastMicroCompactionCutoff(persistence.records)).toBe(4);
 
@@ -346,6 +357,7 @@ describe('MicroCompaction', () => {
     await resumed.agent.resume();
 
     expect(resumed.agent.context.lastAssistantAt).toBe(62 * MINUTE);
+    resumed.agent.microCompaction.detect();
     expect(toolTexts(resumed.agent.context.messages)).toEqual([
       DEFAULT_MARKER,
       DEFAULT_MARKER,
@@ -361,6 +373,7 @@ describe('MicroCompaction', () => {
         keepRecentMessages: 2,
         minContentTokens: 1,
         cacheMissedThresholdMs: 60 * MINUTE,
+        minContextUsageRatio: 0,
       },
     });
 
@@ -369,12 +382,14 @@ describe('MicroCompaction', () => {
     appendMicroToolExchange(ctx, 2, { output: 'result two' });
 
     vi.setSystemTime(61 * MINUTE);
+    ctx.agent.microCompaction.detect();
     expect(toolTexts(ctx.agent.context.messages)).toEqual([DEFAULT_MARKER, 'result two']);
 
     vi.setSystemTime(62 * MINUTE);
     appendMicroToolExchange(ctx, 3, { output: 'result three' });
 
     vi.setSystemTime(63 * MINUTE);
+    ctx.agent.microCompaction.detect();
     expect(toolTexts(ctx.agent.context.messages)).toEqual([
       DEFAULT_MARKER,
       'result two',
@@ -382,6 +397,7 @@ describe('MicroCompaction', () => {
     ]);
 
     vi.setSystemTime(123 * MINUTE);
+    ctx.agent.microCompaction.detect();
     expect(toolTexts(ctx.agent.context.messages)).toEqual([
       DEFAULT_MARKER,
       DEFAULT_MARKER,
@@ -396,6 +412,7 @@ describe('MicroCompaction', () => {
       keepRecentMessages: 2,
       minContentTokens: 1,
       cacheMissedThresholdMs: 60 * MINUTE,
+      minContextUsageRatio: 0,
     };
     const ctx = testAgent({
       telemetry: recordingTelemetry(records),
@@ -408,6 +425,7 @@ describe('MicroCompaction', () => {
     appendMicroToolExchange(ctx, 3, { output: 'result three' });
 
     vi.setSystemTime(61 * MINUTE);
+    ctx.agent.microCompaction.detect();
     expect(toolTexts(ctx.agent.context.messages)).toEqual([
       DEFAULT_MARKER,
       DEFAULT_MARKER,
@@ -465,6 +483,7 @@ describe('MicroCompaction', () => {
         minContentTokens: 1,
         cacheMissedThresholdMs: 60 * MINUTE,
         truncatedMarker: marker,
+        minContextUsageRatio: 0,
       },
     });
 
@@ -473,6 +492,7 @@ describe('MicroCompaction', () => {
 
     vi.setSystemTime(61 * MINUTE);
 
+    ctx.agent.microCompaction.detect();
     expect(toolTexts(ctx.agent.context.messages)).toEqual([marker]);
     expect(textOf(ctx.agent.context.history[2])).toBe('abcd');
   });
@@ -497,6 +517,7 @@ describe('MicroCompaction', () => {
 
     vi.setSystemTime(61 * MINUTE);
 
+    ctx.agent.microCompaction.detect();
     const rawPending = ctx.agent.context.history.slice(-1);
     const projectedPending = ctx.agent.context.project(rawPending);
     expect(textOf(projectedPending[0])).toBe(DEFAULT_MARKER);
@@ -645,6 +666,7 @@ describe('MicroCompaction', () => {
 
     vi.setSystemTime(61 * MINUTE);
 
+    ctx.agent.microCompaction.detect();
     const messages = ctx.agent.context.messages;
     expect(hasMarker(messages)).toBe(true);
   });
