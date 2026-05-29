@@ -11,6 +11,41 @@ const REPO_ROOT = join(import.meta.dirname, '../../../..');
 const SERVER_ENTRY = join(REPO_ROOT, 'plugins/official/kimi-datasource/bin/kimi-datasource.mjs');
 
 describe('kimi-datasource MCP server', () => {
+  it('exposes the same two generic tools as the Python plugin', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'kimi-datasource-plugin-'));
+    const kimiHome = join(tempDir, 'kimi-home');
+    let child: ChildProcessWithoutNullStreams | undefined;
+
+    try {
+      await mkdir(join(kimiHome, 'credentials'), { recursive: true });
+      await writeFile(
+        join(kimiHome, 'credentials', 'kimi-code.json'),
+        JSON.stringify({ access_token: 'test-token', expires_at: 4_102_444_800 }),
+        'utf8',
+      );
+      child = spawn(process.execPath, [SERVER_ENTRY], {
+        cwd: REPO_ROOT,
+        env: {
+          ...process.env,
+          KIMI_CODE_HOME: kimiHome,
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      const client = createRpcClient(child);
+
+      await client.request('initialize', {});
+      const result = await client.request('tools/list', {});
+
+      expect(result.error).toBeUndefined();
+      const tools = (result.result as { tools: Array<{ name: string }> }).tools;
+      expect(tools.map((tool) => tool.name)).toEqual(['call_data_source_tool', 'get_data_source_desc']);
+    } finally {
+      child?.stdin.end();
+      child?.kill();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('prefers assistant text and writes response files', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'kimi-datasource-plugin-'));
     const kimiHome = join(tempDir, 'kimi-home');
