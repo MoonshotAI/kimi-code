@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentOptions } from '../../src/agent';
 import { DefaultCompactionStrategy, type CompactionStrategy } from '../../src/agent/compaction';
 import { HookEngine, type HookEngineTriggerArgs } from '../../src/session/hooks';
+import { estimateTokensForMessages } from '../../src/utils/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import type { TestAgentContext, TestAgentOptions } from './harness/agent';
 import { testAgent } from './harness/agent';
@@ -132,6 +133,24 @@ describe('Agent compaction', () => {
     expect(strategy.shouldBlock(210_000)).toBe(true);
   });
 
+  it('backs off overflow compaction by at least five percent of the context window', () => {
+    const strategy = testCompactionStrategy(1_000);
+    const messages = [
+      textMessage('user', 'old user'),
+      textMessage('assistant', 'old assistant'),
+      ...Array.from({ length: 20 }, () => [
+        textMessage('user', 'continue'),
+        textMessage('assistant', ''),
+      ]).flat(),
+    ];
+
+    const reduced = strategy.reduceCompactOnOverflow(messages);
+    const removed = messages.slice(reduced);
+
+    expect(reduced).toBeGreaterThan(0);
+    expect(estimateTokensForMessages(removed)).toBeGreaterThanOrEqual(50);
+  });
+
   it('ignores reserved context when the reserve is not smaller than the model window', () => {
     const strategy = new DefaultCompactionStrategy(() => 32_000, {
       triggerRatio: 0.85,
@@ -141,6 +160,7 @@ describe('Agent compaction', () => {
       maxRecentMessages: 3,
       maxRecentUserMessages: Infinity,
       maxRecentSizeRatio: 0.2,
+      minOverflowReductionRatio: 0.05,
     });
 
     expect(strategy.shouldCompact(1)).toBe(false);
@@ -1601,6 +1621,7 @@ function testCompactionStrategy(maxSize: number = 1_000): DefaultCompactionStrat
     maxRecentMessages: 10,
     maxRecentUserMessages: Infinity,
     maxRecentSizeRatio: 0.2,
+    minOverflowReductionRatio: 0.05,
   });
 }
 
@@ -1613,6 +1634,7 @@ function overflowOnlyCompactionStrategy(maxSize: number = 14): DefaultCompaction
     maxRecentMessages: 3,
     maxRecentUserMessages: Infinity,
     maxRecentSizeRatio: 0.2,
+    minOverflowReductionRatio: 0.05,
   });
 }
 

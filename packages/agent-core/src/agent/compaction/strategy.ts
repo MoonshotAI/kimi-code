@@ -10,6 +10,7 @@ export interface CompactionConfig {
   maxRecentMessages: number;
   maxRecentUserMessages: number;
   maxRecentSizeRatio: number;
+  minOverflowReductionRatio: number;
 }
 
 export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
@@ -20,6 +21,7 @@ export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   maxRecentMessages: 4,
   maxRecentUserMessages: Infinity,
   maxRecentSizeRatio: 0.2,
+  minOverflowReductionRatio: 0.05,
 };
 
 export interface CompactionStrategy {
@@ -117,12 +119,23 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
   }
 
   reduceCompactOnOverflow(messages: readonly Message[]): number {
+    const minReducedSize = Math.max(
+      1,
+      Math.ceil(this.maxSize * this.config.minOverflowReductionRatio),
+    );
+    let reducedSize = 0;
+    let bestN: number | undefined;
+
     for (let i = messages.length - 2; i > 0; i--) {
+      reducedSize += estimateTokensForMessage(messages[i + 1]!);
       if (canSplitAfter(messages, i)) {
-        return i + 1;
+        bestN = i + 1;
+        if (reducedSize >= minReducedSize) {
+          return i + 1;
+        }
       }
     }
-    return messages.length;
+    return bestN ?? messages.length;
   }
 
   get checkAfterStep(): boolean {
