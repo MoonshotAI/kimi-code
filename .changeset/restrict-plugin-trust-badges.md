@@ -4,4 +4,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Restrict plugin trust badges to verified Kimi-hosted built-in marketplace installs.
+Restrict plugin trust badges to Kimi-hosted plugin CDN URL patterns.

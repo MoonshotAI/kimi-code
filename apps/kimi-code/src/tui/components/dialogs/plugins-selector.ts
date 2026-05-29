@@ -10,11 +10,7 @@ import type { PluginInfo, PluginMcpServerInfo, PluginSummary } from '@moonshot-a
 import chalk from 'chalk';
 
 import type { ColorPalette } from '#/tui/theme/colors';
-import {
-  type PluginTrustContext,
-  formatPluginSourceLabel,
-  pluginTrustLabel,
-} from '#/tui/utils/plugin-source-label';
+import { formatPluginSourceLabel, pluginTrustLabel } from '#/tui/utils/plugin-source-label';
 import { printableChar } from '#/tui/utils/printable-key';
 import type { PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
 
@@ -54,7 +50,6 @@ export interface PluginsOverviewSelectorOptions {
     readonly id: string;
     readonly text: string;
   };
-  readonly trustContext?: PluginTrustContext;
   readonly colors: ColorPalette;
   readonly onSelect: (selection: PluginsOverviewSelection) => void;
   readonly onCancel: () => void;
@@ -70,7 +65,7 @@ export class PluginsOverviewSelectorComponent extends Container implements Focus
   constructor(opts: PluginsOverviewSelectorOptions) {
     super();
     this.opts = opts;
-    this.items = buildOverviewItems(opts.plugins, opts.trustContext);
+    this.items = buildOverviewItems(opts.plugins);
     const selectedIndex = this.items.findIndex(
       (item) => item.value === `${OVERVIEW_PLUGIN_PREFIX}${opts.selectedId}`,
     );
@@ -447,16 +442,13 @@ export class PluginRemoveConfirmComponent extends ChoicePickerComponent {
   }
 }
 
-function buildOverviewItems(
-  plugins: readonly PluginSummary[],
-  trustContext: PluginTrustContext | undefined,
-): PluginsOverviewItem[] {
+function buildOverviewItems(plugins: readonly PluginSummary[]): PluginsOverviewItem[] {
   const options: PluginsOverviewItem[] = plugins.map((plugin) => ({
     value: `${OVERVIEW_PLUGIN_PREFIX}${plugin.id}`,
     kind: 'plugin',
     label: plugin.displayName,
     status: pluginStatus(plugin),
-    description: overviewPluginDescription(plugin, trustContext),
+    description: overviewPluginDescription(plugin),
   }));
   options.push(
     {
@@ -481,10 +473,7 @@ function buildOverviewItems(
   return options;
 }
 
-function overviewPluginDescription(
-  plugin: PluginSummary,
-  trustContext: PluginTrustContext | undefined,
-): string {
+function overviewPluginDescription(plugin: PluginSummary): string {
   const state = plugin.state === 'ok' ? '' : ` · state ${plugin.state}`;
   const skills = `${plugin.skillCount} skill${plugin.skillCount === 1 ? '' : 's'}`;
   const mcp =
@@ -493,7 +482,7 @@ function overviewPluginDescription(
       : '';
   const diagnostics = plugin.hasErrors ? ' · diagnostics available' : '';
   const source = ` · ${formatPluginSourceLabel(plugin)}`;
-  const trust = ` · ${pluginTrustLabel(plugin, trustContext)}`;
+  const trust = ` · ${pluginTrustLabel(plugin)}`;
   return `id ${plugin.id} · ${skills}${mcp}${source}${trust}${state}${diagnostics}`;
 }
 

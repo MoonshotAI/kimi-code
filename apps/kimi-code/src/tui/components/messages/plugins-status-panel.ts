@@ -6,7 +6,6 @@ import {
   CURATED_BADGE,
   OFFICIAL_BADGE,
   THIRD_PARTY_BADGE,
-  type PluginTrustContext,
   type PluginTrustLabel,
   formatPluginSourceLabel,
   pluginTrustLabel,
@@ -15,7 +14,6 @@ import {
 export interface PluginsListPanelInput {
   readonly colors: ColorPalette;
   readonly plugins: readonly PluginSummary[];
-  readonly trustContext?: PluginTrustContext;
 }
 
 export function buildPluginsListLines(input: PluginsListPanelInput): readonly string[] {
@@ -43,7 +41,7 @@ export function buildPluginsListLines(input: PluginsListPanelInput): readonly st
     const version = plugin.version ?? '-';
     const diagnostics = plugin.hasErrors ? warning(' | diagnostics: see /plugins info') : '';
     const sourceTag = muted(`[${formatPluginSourceLabel(plugin)}]`);
-    const trustBadge = ` ${renderTrustBadge(pluginTrustLabel(plugin, input.trustContext))}`;
+    const trustBadge = ` ${renderTrustBadge(pluginTrustLabel(plugin))}`;
     lines.push(
       `${value(plugin.displayName)} (${muted(plugin.id)}) ${muted(version)} ${sourceTag}${trustBadge} | ${enabled}${state}`,
     );
@@ -60,7 +58,6 @@ export function buildPluginsListLines(input: PluginsListPanelInput): readonly st
 export interface PluginsInfoPanelInput {
   readonly colors: ColorPalette;
   readonly info: PluginInfo;
-  readonly trustContext?: PluginTrustContext;
 }
 
 export function buildPluginsInfoLines(input: PluginsInfoPanelInput): readonly string[] {
@@ -73,7 +70,7 @@ export function buildPluginsInfoLines(input: PluginsInfoPanelInput): readonly st
   const primary = chalk.hex(input.colors.primary);
   const status = info.enabled ? success('enabled') : muted('disabled');
   const trustLine = (() => {
-    const label = pluginTrustLabel(info, input.trustContext);
+    const label = pluginTrustLabel(info);
     if (label === 'official') {
       return `${muted('Trust:')}  ${success(OFFICIAL_BADGE)} ${muted('(Kimi-built and -maintained)')}`;
     }
