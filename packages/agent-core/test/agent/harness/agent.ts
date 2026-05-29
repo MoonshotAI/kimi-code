@@ -738,6 +738,7 @@ export class AgentTestContext {
       providerManagerOverrides: this.options.providerManagerOverrides,
       generate: failOnResumeGenerate,
       compactionStrategy: this.options.compactionStrategy,
+      microCompaction: this.options.microCompaction,
       persistence: new InMemoryAgentRecordPersistence(
         withMetadata(this.recordHistory.map(cloneRecord)),
       ),
@@ -1001,7 +1002,6 @@ function resumeContextSnapshot(agent: Agent) {
   const context = agent.context.data();
   return {
     ...context,
-    lastAssistantAt: agent.context.lastAssistantAt,
     history: context.history.filter((message) => !isSystemReminderMessage(message)),
   };
 }

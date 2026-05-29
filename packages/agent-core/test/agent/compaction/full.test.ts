@@ -176,6 +176,37 @@ describe('FullCompaction', () => {
     ).toBe(false);
   });
 
+  it('micro-compacts old tool results before sending the summary request', async () => {
+    vi.useFakeTimers();
+    const ctx = testAgent({
+      compactionStrategy: alwaysCompactOnce,
+      microCompaction: {
+        keepRecentMessages: 2,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * 60 * 1000,
+      },
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+
+    vi.setSystemTime(0);
+    ctx.appendToolExchange();
+    ctx.appendToolExchange();
+
+    vi.setSystemTime(61 * 60 * 1000);
+
+    const compacted = ctx.once('context.apply_compaction');
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    await ctx.rpc.beginCompaction({ instruction: 'Summarize tool exchanges.' });
+    await compacted;
+
+    const [compactionCall] = ctx.llmCalls;
+    expect(messageText(compactionCall?.history[2])).toBe('[Old tool result content cleared]');
+    expect(messageText(compactionCall?.history[5])).toBe('lookup result');
+  });
+
   it('force-refreshes OAuth credentials on compaction 401 and falls back to login_required when replay 401', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];

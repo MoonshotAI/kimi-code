@@ -1,5 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
-import { testAgent } from '../harness/agent';
+import type { ContentPart, Message } from '@moonshot-ai/kosong';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { AgentRecord } from '../../../src/agent';
+import {
+  AGENT_WIRE_PROTOCOL_VERSION,
+  InMemoryAgentRecordPersistence,
+} from '../../../src/agent/records';
+import { estimateTokensForMessages } from '../../../src/utils/tokens';
+import { testAgent, type TestAgentContext } from '../harness/agent';
 
 const CATALOGUED_PROVIDER = {
   type: 'kimi',
@@ -14,6 +22,9 @@ const CATALOGUED_MODEL_CAPABILITIES = {
   tool_use: true,
   max_context_tokens: 256_000,
 } as const;
+
+const MINUTE = 60 * 1000;
+const DEFAULT_MARKER = '[Old tool result content cleared]';
 
 describe('MicroCompaction', () => {
   it('truncates old tool results after cache miss', () => {
@@ -36,11 +47,9 @@ describe('MicroCompaction', () => {
     vi.setSystemTime(61 * 60 * 1000);
 
     const messages = ctx.agent.context.messages;
-    const marker = '[Old tool result content cleared]';
-
     expect(messages[2]).toMatchObject({
       role: 'tool',
-      content: [{ type: 'text', text: marker }],
+      content: [{ type: 'text', text: DEFAULT_MARKER }],
     });
     expect(messages[5]).toMatchObject({
       role: 'tool',
@@ -70,7 +79,7 @@ describe('MicroCompaction', () => {
     vi.setSystemTime(30 * 60 * 1000);
 
     const messages = ctx.agent.context.messages;
-    expect(messages.every((m) => m.role !== 'tool' || (m.content[0] as { text: string })?.text !== '[Old tool result content cleared]')).toBe(true);
+    expect(hasMarker(messages)).toBe(false);
   });
 
   it('persists cutoff across calls until cache miss resets it', () => {
@@ -92,7 +101,7 @@ describe('MicroCompaction', () => {
     const first = ctx.agent.context.messages;
     expect(first[2]).toMatchObject({
       role: 'tool',
-      content: [{ type: 'text', text: '[Old tool result content cleared]' }],
+      content: [{ type: 'text', text: DEFAULT_MARKER }],
     });
 
     vi.setSystemTime(62 * 60 * 1000);
@@ -100,7 +109,7 @@ describe('MicroCompaction', () => {
     const second = ctx.agent.context.messages;
     expect(second[2]).toMatchObject({
       role: 'tool',
-      content: [{ type: 'text', text: '[Old tool result content cleared]' }],
+      content: [{ type: 'text', text: DEFAULT_MARKER }],
     });
   });
 
@@ -123,7 +132,7 @@ describe('MicroCompaction', () => {
     ctx.agent.microCompaction.reset();
 
     const messages = ctx.agent.context.messages;
-    expect(messages.every((m) => m.role !== 'tool' || (m.content[0] as { text: string })?.text !== '[Old tool result content cleared]')).toBe(true);
+    expect(hasMarker(messages)).toBe(false);
   });
 
   it('skips tool results below minContentTokens', () => {
@@ -143,11 +152,7 @@ describe('MicroCompaction', () => {
     vi.setSystemTime(61 * 60 * 1000);
 
     const messages = ctx.agent.context.messages;
-    expect(
-      messages.every(
-        (m) => m.role !== 'tool' || (m.content[0] as { text: string })?.text !== '[Old tool result content cleared]',
-      ),
-    ).toBe(true);
+    expect(hasMarker(messages)).toBe(false);
   });
 
   it('skips non-tool messages', () => {
@@ -169,11 +174,7 @@ describe('MicroCompaction', () => {
 
     const messages = ctx.agent.context.messages;
     expect(messages.every((m) => m.role === 'user' || m.role === 'assistant')).toBe(true);
-    expect(
-      messages.every(
-        (m) => m.role !== 'tool' || (m.content[0] as { text: string })?.text !== '[Old tool result content cleared]',
-      ),
-    ).toBe(true);
+    expect(hasMarker(messages)).toBe(false);
   });
 
   it('clears cutoff on context clear', () => {
@@ -196,6 +197,206 @@ describe('MicroCompaction', () => {
 
     expect(ctx.agent.context.messages).toHaveLength(0);
     expect(ctx.agent.context.lastAssistantAt).toBe(0);
+  });
+
+  it('sends truncated old tool results to the next model request without mutating history', async () => {
+    vi.useFakeTimers();
+    const ctx = testAgent({
+      microCompaction: {
+        keepRecentMessages: 4,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * MINUTE,
+      },
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+
+    vi.setSystemTime(0);
+    appendMicroToolExchange(ctx, 1, { output: 'old result one' });
+    appendMicroToolExchange(ctx, 2, { output: 'middle result two' });
+    appendMicroToolExchange(ctx, 3, { output: 'recent result three' });
+
+    vi.setSystemTime(61 * MINUTE);
+
+    ctx.mockNextResponse({ type: 'text', text: 'done after micro compaction' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+    await ctx.untilTurnEnd();
+
+    const call = ctx.llmCalls.at(-1);
+    expect(textOf(call?.history[2])).toBe(DEFAULT_MARKER);
+    expect(textOf(call?.history[5])).toBe(DEFAULT_MARKER);
+    expect(textOf(call?.history[8])).toBe('recent result three');
+
+    expect(textOf(ctx.agent.context.history[2])).toBe('old result one');
+    expect(textOf(ctx.agent.context.history[5])).toBe('middle result two');
+    expect(textOf(ctx.agent.context.history[8])).toBe('recent result three');
+    await ctx.expectResumeMatches();
+  });
+
+  it('restores lastAssistantAt from record time before applying cache-miss rules', async () => {
+    vi.useFakeTimers();
+    const assistantRecordTime = 2_000;
+    const ctx = testAgent({
+      microCompaction: {
+        keepRecentMessages: 0,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * MINUTE,
+      },
+      persistence: new InMemoryAgentRecordPersistence(
+        resumeToolExchangeRecords(assistantRecordTime),
+      ),
+    });
+
+    vi.setSystemTime(999_999);
+    await ctx.agent.resume();
+
+    expect(ctx.agent.context.lastAssistantAt).toBe(assistantRecordTime);
+
+    vi.setSystemTime(assistantRecordTime + 30 * MINUTE);
+    expect(hasMarker(ctx.agent.context.messages)).toBe(false);
+
+    vi.setSystemTime(assistantRecordTime + 61 * MINUTE);
+    expect(toolTexts(ctx.agent.context.messages)).toEqual([DEFAULT_MARKER]);
+  });
+
+  it('keeps an old cutoff while cache is warm and advances it on the next miss', () => {
+    vi.useFakeTimers();
+    const ctx = testAgent({
+      microCompaction: {
+        keepRecentMessages: 2,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * MINUTE,
+      },
+    });
+
+    vi.setSystemTime(0);
+    appendMicroToolExchange(ctx, 1, { output: 'result one' });
+    appendMicroToolExchange(ctx, 2, { output: 'result two' });
+
+    vi.setSystemTime(61 * MINUTE);
+    expect(toolTexts(ctx.agent.context.messages)).toEqual([DEFAULT_MARKER, 'result two']);
+
+    vi.setSystemTime(62 * MINUTE);
+    appendMicroToolExchange(ctx, 3, { output: 'result three' });
+
+    vi.setSystemTime(63 * MINUTE);
+    expect(toolTexts(ctx.agent.context.messages)).toEqual([
+      DEFAULT_MARKER,
+      'result two',
+      'result three',
+    ]);
+
+    vi.setSystemTime(123 * MINUTE);
+    expect(toolTexts(ctx.agent.context.messages)).toEqual([
+      DEFAULT_MARKER,
+      DEFAULT_MARKER,
+      'result three',
+    ]);
+  });
+
+  it('uses the custom marker at the minContentTokens boundary', () => {
+    vi.useFakeTimers();
+    const marker = '[tool output removed for test]';
+    const ctx = testAgent({
+      microCompaction: {
+        keepRecentMessages: 0,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * MINUTE,
+        truncatedMarker: marker,
+      },
+    });
+
+    vi.setSystemTime(0);
+    appendMicroToolExchange(ctx, 1, { output: 'abcd' });
+
+    vi.setSystemTime(61 * MINUTE);
+
+    expect(toolTexts(ctx.agent.context.messages)).toEqual([marker]);
+    expect(textOf(ctx.agent.context.history[2])).toBe('abcd');
+  });
+
+  it('keeps raw pending token accounting even when projection truncates tool output', () => {
+    vi.useFakeTimers();
+    const ctx = testAgent({
+      microCompaction: {
+        keepRecentMessages: 0,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * MINUTE,
+      },
+    });
+    ctx.configure();
+
+    vi.setSystemTime(0);
+    appendMicroToolExchange(ctx, 1, {
+      output: 'x'.repeat(400),
+      usageTokens: 50,
+    });
+
+    vi.setSystemTime(61 * MINUTE);
+
+    const rawPending = ctx.agent.context.history.slice(-1);
+    const projectedPending = ctx.agent.context.project(rawPending);
+    expect(textOf(projectedPending[0])).toBe(DEFAULT_MARKER);
+    expect(ctx.agent.context.tokenCountWithPending).toBe(
+      ctx.agent.context.tokenCount + estimateTokensForMessages(rawPending),
+    );
+    expect(ctx.agent.context.tokenCountWithPending).toBeGreaterThan(
+      ctx.agent.context.tokenCount + estimateTokensForMessages(projectedPending),
+    );
+  });
+
+  it('replaces rich error tool content while preserving context metadata before projection', () => {
+    vi.useFakeTimers();
+    const ctx = testAgent({
+      microCompaction: {
+        keepRecentMessages: 0,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * MINUTE,
+      },
+    });
+
+    vi.setSystemTime(0);
+    appendMicroToolExchange(ctx, 1, {
+      output: [
+        { type: 'text', text: 'large rich output' },
+        { type: 'video_url', videoUrl: { url: 'ms://video-1', id: 'video-1' } },
+      ],
+      isError: true,
+    });
+
+    vi.setSystemTime(61 * MINUTE);
+
+    const compacted = ctx.agent.microCompaction.compact(ctx.agent.context.history);
+    const tool = compacted.find((message) => message.role === 'tool');
+    expect(tool).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_micro_1',
+      isError: true,
+      content: [{ type: 'text', text: DEFAULT_MARKER }],
+    });
+    expect(tool?.content).toHaveLength(1);
+  });
+
+  it('does not truncate tool-shaped messages without a toolCallId', () => {
+    vi.useFakeTimers();
+    const ctx = testAgent({
+      microCompaction: {
+        keepRecentMessages: 0,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * MINUTE,
+      },
+    });
+
+    vi.setSystemTime(61 * MINUTE);
+    ctx.agent.context.appendMessage({
+      role: 'tool',
+      content: [{ type: 'text', text: 'orphan tool-like output' }],
+      toolCalls: [],
+    });
+
+    expect(toolTexts(ctx.agent.context.messages)).toEqual(['orphan tool-like output']);
   });
 
   it('clears cutoff on full compaction', async () => {
@@ -247,10 +448,178 @@ describe('MicroCompaction', () => {
     vi.setSystemTime(61 * 60 * 1000);
 
     const messages = ctx.agent.context.messages;
-    expect(
-      messages.every(
-        (m) => m.role !== 'tool' || (m.content[0] as { text: string })?.text !== '[Old tool result content cleared]',
-      ),
-    ).toBe(true);
+    expect(hasMarker(messages)).toBe(false);
   });
 });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+interface MicroToolExchangeOptions {
+  readonly output?: string | ContentPart[] | undefined;
+  readonly isError?: boolean | undefined;
+  readonly usageTokens?: number | undefined;
+}
+
+function appendMicroToolExchange(
+  ctx: TestAgentContext,
+  index: number,
+  options: MicroToolExchangeOptions = {},
+): void {
+  const stepUuid = `micro-tool-step-${String(index)}`;
+  const toolCallId = `call_micro_${String(index)}`;
+  const output = options.output ?? `lookup result ${String(index)}`;
+  const usage =
+    options.usageTokens === undefined
+      ? undefined
+      : {
+          inputOther: options.usageTokens - 1,
+          output: 1,
+          inputCacheRead: 0,
+          inputCacheCreation: 0,
+        };
+
+  ctx.agent.context.appendUserMessage([{ type: 'text', text: `lookup ${String(index)}` }]);
+  ctx.dispatch({
+    type: 'context.append_loop_event',
+    event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: index },
+  });
+  ctx.dispatch({
+    type: 'context.append_loop_event',
+    event: {
+      type: 'content.part',
+      uuid: `micro-tool-part-${String(index)}`,
+      turnId: '',
+      step: index,
+      stepUuid,
+      part: { type: 'text', text: `calling Lookup ${String(index)}` },
+    },
+  });
+  ctx.dispatch({
+    type: 'context.append_loop_event',
+    event: {
+      type: 'tool.call',
+      uuid: toolCallId,
+      turnId: '',
+      step: index,
+      stepUuid,
+      toolCallId,
+      name: 'Lookup',
+      args: { query: `item-${String(index)}` },
+    },
+  });
+  ctx.dispatch({
+    type: 'context.append_loop_event',
+    event: {
+      type: 'step.end',
+      uuid: stepUuid,
+      turnId: '',
+      step: index,
+      usage,
+      finishReason: 'tool_use',
+    },
+  });
+  ctx.dispatch({
+    type: 'context.append_loop_event',
+    event: {
+      type: 'tool.result',
+      parentUuid: toolCallId,
+      toolCallId,
+      result: { output, isError: options.isError },
+    },
+  });
+}
+
+function resumeToolExchangeRecords(assistantRecordTime: number): AgentRecord[] {
+  return [
+    {
+      type: 'metadata',
+      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+      created_at: 1,
+    },
+    {
+      type: 'context.append_message',
+      time: 1_000,
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'lookup from restored session' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    },
+    {
+      type: 'context.append_loop_event',
+      time: assistantRecordTime,
+      event: { type: 'step.begin', uuid: 'resume-micro-step', turnId: '0', step: 1 },
+    },
+    {
+      type: 'context.append_loop_event',
+      time: assistantRecordTime + 1,
+      event: {
+        type: 'content.part',
+        uuid: 'resume-micro-part',
+        turnId: '0',
+        step: 1,
+        stepUuid: 'resume-micro-step',
+        part: { type: 'text', text: 'calling restored Lookup' },
+      },
+    },
+    {
+      type: 'context.append_loop_event',
+      time: assistantRecordTime + 2,
+      event: {
+        type: 'tool.call',
+        uuid: 'resume-micro-call',
+        turnId: '0',
+        step: 1,
+        stepUuid: 'resume-micro-step',
+        toolCallId: 'resume_micro_call',
+        name: 'Lookup',
+        args: { query: 'restored' },
+      },
+    },
+    {
+      type: 'context.append_loop_event',
+      time: assistantRecordTime + 3,
+      event: {
+        type: 'step.end',
+        uuid: 'resume-micro-step',
+        turnId: '0',
+        step: 1,
+        finishReason: 'tool_use',
+      },
+    },
+    {
+      type: 'context.append_loop_event',
+      time: assistantRecordTime + 4,
+      event: {
+        type: 'tool.result',
+        parentUuid: 'resume-micro-call',
+        toolCallId: 'resume_micro_call',
+        result: { output: 'restored lookup result' },
+      },
+    },
+  ];
+}
+
+function toolTexts(messages: readonly Message[]): string[] {
+  return messages
+    .filter((message) => message.role === 'tool')
+    .map((message) => textOf(message));
+}
+
+function textOf(message: Message | undefined): string {
+  return (
+    message?.content
+      .map((part) => {
+        if (part.type === 'text') return part.text;
+        return '';
+      })
+      .join('') ?? ''
+  );
+}
+
+function hasMarker(messages: readonly Message[]): boolean {
+  return toolTexts(messages).includes(DEFAULT_MARKER);
+}
