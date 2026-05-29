@@ -1,6 +1,7 @@
 import type { ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
+import { ToolManager } from '../../src/agent/tool';
 import { HookEngine } from '../../src/session/hooks';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
@@ -8,6 +9,87 @@ import { createCommandKaos, testAgent } from './harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;
+
+describe('ToolManager setActiveTools filtering', () => {
+  it('filters out unregistered profile tools from the active set', () => {
+    const warnings: string[] = [];
+    const agent = {
+      records: { logRecord: vi.fn() },
+      config: { hasProvider: false },
+      log: { warn: (msg: string) => { warnings.push(msg); } },
+      mcp: undefined,
+      emitEvent: vi.fn(),
+    } as unknown as import('../../src/agent').Agent;
+
+    const tm = new ToolManager(agent);
+    // Populate builtinTools map directly to simulate registered tools
+    (tm as any).builtinTools.set('Read', { name: 'Read', description: '', parameters: {}, resolveExecution: vi.fn() });
+    (tm as any).builtinTools.set('Write', { name: 'Write', description: '', parameters: {}, resolveExecution: vi.fn() });
+    (tm as any).builtinTools.set('Bash', { name: 'Bash', description: '', parameters: {}, resolveExecution: vi.fn() });
+
+    // Set active tools — WebSearch and NonExistentTool are not registered
+    tm.setActiveTools(['Read', 'Write', 'Bash', 'WebSearch', 'NonExistentTool']);
+
+    // Check active tools via toolInfos
+    const activeNames = [...tm.toolInfos()]
+      .filter((i) => i.active)
+      .map((i) => i.name)
+      .toSorted();
+    expect(activeNames).toEqual(['Bash', 'Read', 'Write']);
+
+    // Check warning was logged with missing tool names
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain('are not available');
+    expect(warnings[0]).toContain('WebSearch');
+    expect(warnings[0]).toContain('NonExistentTool');
+    // Read should not be mentioned as missing
+    expect(warnings[0]).not.toContain('Read');
+  });
+
+  it('keeps all tools when all profile names are registered', () => {
+    const warnings: string[] = [];
+    const agent = {
+      records: { logRecord: vi.fn() },
+      config: { hasProvider: false },
+      log: { warn: (msg: string) => { warnings.push(msg); } },
+      mcp: undefined,
+      emitEvent: vi.fn(),
+    } as unknown as import('../../src/agent').Agent;
+
+    const tm = new ToolManager(agent);
+    (tm as any).builtinTools.set('Read', { name: 'Read', description: '', parameters: {}, resolveExecution: vi.fn() });
+    (tm as any).builtinTools.set('Write', { name: 'Write', description: '', parameters: {}, resolveExecution: vi.fn() });
+    (tm as any).builtinTools.set('Bash', { name: 'Bash', description: '', parameters: {}, resolveExecution: vi.fn() });
+    (tm as any).builtinTools.set('Grep', { name: 'Grep', description: '', parameters: {}, resolveExecution: vi.fn() });
+    (tm as any).builtinTools.set('Glob', { name: 'Glob', description: '', parameters: {}, resolveExecution: vi.fn() });
+
+    tm.setActiveTools(['Read', 'Write', 'Bash', 'Grep', 'Glob']);
+
+    const activeNames = [...tm.toolInfos()]
+      .filter((i) => i.active)
+      .map((i) => i.name)
+      .toSorted();
+    expect(activeNames).toEqual(['Bash', 'Glob', 'Grep', 'Read', 'Write']);
+    expect(warnings.length).toBe(0);
+  });
+
+  it('does not warn when all tools are available', () => {
+    const warnings: string[] = [];
+    const agent = {
+      records: { logRecord: vi.fn() },
+      config: { hasProvider: false },
+      log: { warn: (msg: string) => { warnings.push(msg); } },
+      mcp: undefined,
+      emitEvent: vi.fn(),
+    } as unknown as import('../../src/agent').Agent;
+
+    const tm = new ToolManager(agent);
+    (tm as any).builtinTools.set('Read', { name: 'Read', description: '', parameters: {}, resolveExecution: vi.fn() });
+
+    tm.setActiveTools(['Read']);
+    expect(warnings.length).toBe(0);
+  });
+});
 
 describe('Agent tools', () => {
   it('blocks tools through PreToolUse before permission and emits PostToolUseFailure', async () => {
