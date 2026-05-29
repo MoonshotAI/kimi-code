@@ -5,13 +5,16 @@ import path from 'node:path';
 import type { McpServerConfig } from '../config/schema';
 import { discoverSkills, type SkillRoot } from '../skill';
 import { downloadZip, extractZip } from './archive';
+import { resolveGithubSource } from './github-resolver';
 import { parseManifest, type ParsedManifestResult } from './manifest';
 import { readInstalled, writeInstalled, type InstalledRecord } from './store';
 import { resolveInstallSource } from './source';
 import {
   type EnabledPluginSessionStart,
   type PluginCapabilityState,
+  type PluginGithubMetadata,
   type PluginInfo,
+  type PluginMarketplaceContext,
   type PluginMcpServerInfo,
   type PluginRecord,
   type PluginSource,
@@ -19,6 +22,15 @@ import {
   type ReloadSummary,
   normalizePluginId,
 } from './types';
+
+export interface InstallPluginOptions {
+  /**
+   * Set when the install originates from the Kimi marketplace selector.
+   * The CLI `/plugins install <url>` path leaves this undefined so the
+   * resulting record stays third-party.
+   */
+  readonly marketplace?: PluginMarketplaceContext;
+}
 
 // Hidden Kimi CLI subcommand that re-enters as a Node interpreter.
 // Used as fallback when an MCP server declares `"command": "node"` but the
@@ -54,7 +66,7 @@ export class PluginManager {
     return this.records.get(normalizePluginId(id));
   }
 
-  async install(source: string): Promise<PluginRecord> {
+  async install(source: string, options?: InstallPluginOptions): Promise<PluginRecord> {
     const resolved = resolveInstallSource(source);
 
     let normalizedRoot: string;
@@ -62,6 +74,7 @@ export class PluginManager {
     let sourceType: PluginSource;
     let parsed: ParsedManifestResult;
     let id: string;
+    let github: PluginGithubMetadata | undefined;
 
     if (resolved.kind === 'local-path') {
       const sourceRoot = await normalizeInstallRoot(resolved.path);
@@ -76,15 +89,30 @@ export class PluginManager {
       normalizedRoot = await copyPluginToManagedRoot(this.kimiHomeDir, id, sourceRoot);
       parsed = await parseManifest(normalizedRoot);
     } else {
-      // zip-url
-      const buffer = await downloadZip(resolved.path);
+      let zipUrl: string;
+      if (resolved.kind === 'github') {
+        const githubResolution = await resolveGithubSource(resolved);
+        zipUrl = githubResolution.tarballUrl;
+        originalSource = source.trim();
+        sourceType = 'github';
+        github = {
+          owner: resolved.owner,
+          repo: resolved.repo,
+          ref: githubResolution.ref,
+        };
+      } else {
+        zipUrl = resolved.path;
+        originalSource = resolved.path;
+        sourceType = 'zip-url';
+      }
+      const buffer = await downloadZip(zipUrl);
       const tmpDir = await mkdtemp(path.join(tmpdir(), 'kimi-plugin-zip-'));
       try {
         const detectedRoot = await extractZip(buffer, tmpDir);
         parsed = await parseManifest(detectedRoot);
         if (parsed.manifest === undefined) {
           const msg = parsed.diagnostics.find((d) => d.severity === 'error')?.message ?? 'no manifest';
-          throw new Error(`Cannot install plugin from ${resolved.path}: ${msg}`);
+          throw new Error(`Cannot install plugin from ${originalSource}: ${msg}`);
         }
         id = normalizePluginId(parsed.manifest.name);
         normalizedRoot = await copyPluginToManagedRoot(this.kimiHomeDir, id, detectedRoot);
@@ -92,8 +120,6 @@ export class PluginManager {
       } finally {
         await rm(tmpDir, { recursive: true, force: true });
       }
-      originalSource = resolved.path;
-      sourceType = 'zip-url';
     }
 
     if (parsed.manifest === undefined) {
@@ -112,6 +138,11 @@ export class PluginManager {
       originalSource,
       source: sourceType,
       capabilities: existing?.capabilities,
+      github,
+      // marketplace context is replaced on each install — a re-install from a
+      // non-marketplace source MUST clear any prior `kimi-official` badge,
+      // and a marketplace re-install MUST attach one regardless of prior state.
+      marketplace: options?.marketplace,
       parsed,
     });
     this.records.set(id, record);
@@ -241,6 +272,8 @@ export class PluginManager {
       updatedAt: record.updatedAt,
       originalSource: record.originalSource,
       capabilities: record.capabilities,
+      github: record.github,
+      marketplace: record.marketplace,
     }));
     await writeInstalled(this.kimiHomeDir, { version: 1, plugins: installed });
   }
@@ -255,6 +288,8 @@ export class PluginManager {
       updatedAt: entry.updatedAt,
       originalSource: entry.originalSource,
       capabilities: entry.capabilities,
+      github: entry.github,
+      marketplace: entry.marketplace,
       source: entry.source,
       parsed,
     });
@@ -306,6 +341,8 @@ async function recordFrom(input: {
   updatedAt?: string;
   originalSource?: string;
   capabilities?: PluginCapabilityState;
+  github?: PluginGithubMetadata;
+  marketplace?: PluginMarketplaceContext;
   source?: PluginSource;
   parsed: ParsedManifestResult;
 }): Promise<PluginRecord> {
@@ -321,6 +358,8 @@ async function recordFrom(input: {
     updatedAt: input.updatedAt,
     originalSource: input.originalSource,
     capabilities: input.capabilities,
+    github: input.github,
+    marketplace: input.marketplace,
     skillCount: await countDiscoveredPluginSkills(input.id, parsed.manifest),
     manifest: parsed.manifest,
     manifestKind: parsed.manifestKind,
@@ -342,6 +381,10 @@ function recordToSummary(record: PluginRecord): PluginSummary {
     mcpServerCount: Object.keys(record.manifest?.mcpServers ?? {}).length,
     enabledMcpServerCount: pluginMcpServersInfo(record).filter((server) => server.enabled).length,
     hasErrors: record.diagnostics.some((d) => d.severity === 'error'),
+    source: record.source,
+    originalSource: record.originalSource,
+    github: record.github,
+    marketplace: record.marketplace,
   };
 }
 
@@ -362,9 +405,9 @@ async function countDiscoveredPluginSkills(
 function recordToInfo(record: PluginRecord): PluginInfo {
   return {
     ...recordToSummary(record),
-    source: record.source,
     root: record.root,
-    originalSource: record.originalSource,
+    installedAt: record.installedAt,
+    updatedAt: record.updatedAt,
     manifestKind: record.manifestKind,
     manifestPath: record.manifestPath,
     manifest: record.manifest,

@@ -288,9 +288,12 @@ export class Session {
     return this.rpc.listPlugins();
   }
 
-  async installPlugin(source: string): Promise<PluginSummary> {
+  async installPlugin(
+    source: string,
+    options?: { readonly marketplace?: { readonly id: string; readonly tier: 'official' | 'curated' } },
+  ): Promise<PluginSummary> {
     this.ensureOpen();
-    return this.rpc.installPlugin(source);
+    return this.rpc.installPlugin(source, options);
   }
 
   async setPluginEnabled(id: string, enabled: boolean): Promise<void> {

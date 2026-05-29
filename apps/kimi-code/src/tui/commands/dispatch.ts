@@ -109,6 +109,7 @@ export interface SlashCommandHost {
   // UI
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle;
   showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle;
+  showProgressSpinner(label: string): LoginProgressSpinnerHandle;
 
   // Theme
   applyTheme(theme: Theme, resolved?: ResolvedTheme): void;

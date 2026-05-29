@@ -57,6 +57,7 @@ describe('plugins selector dialogs', () => {
           mcpServerCount: 1,
           enabledMcpServerCount: 1,
           hasErrors: false,
+          source: 'local-path',
         },
       ],
       colors: darkColors,
@@ -110,7 +111,7 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('Marketplace (1)');
     expect(out).toContain('? Superpowers  install v5.1.0');
     expect(out).toContain(
-      `Enter/Space install ${MID} Workflow skills ${MID} id superpowers ${MID} v5.1.0 ${MID} Curated plugin ${MID} workflow`,
+      `Workflow skills ${MID} id superpowers ${MID} v5.1.0 ${MID} Curated plugin ${MID} workflow`,
     );
     expect(raw).toContain(primaryShortcut('Enter'));
     expect(raw).toContain(primaryShortcut('Space'));
@@ -143,7 +144,7 @@ describe('plugins selector dialogs', () => {
 
     const out = picker.render(120).map(strip).join('\n');
     expect(out).toContain('? Superpowers  installed');
-    expect(out).toContain(`Enter/Space update ${MID} Plugin ${MID} id superpowers`);
+    expect(out).toContain(`Plugin ${MID} id superpowers`);
 
     picker.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({
@@ -166,6 +167,7 @@ describe('plugins selector dialogs', () => {
           mcpServerCount: 0,
           enabledMcpServerCount: 0,
           hasErrors: false,
+          source: 'local-path',
         },
       ],
       colors: darkColors,
@@ -196,6 +198,7 @@ describe('plugins selector dialogs', () => {
           mcpServerCount: 0,
           enabledMcpServerCount: 0,
           hasErrors: false,
+          source: 'local-path',
         },
       ],
       colors: darkColors,
@@ -222,6 +225,7 @@ describe('plugins selector dialogs', () => {
           mcpServerCount: 1,
           enabledMcpServerCount: 1,
           hasErrors: false,
+          source: 'local-path',
         },
       ],
       colors: darkColors,
@@ -248,6 +252,7 @@ describe('plugins selector dialogs', () => {
         enabledMcpServerCount: 1,
         hasErrors: false,
         source: 'local-path',
+        installedAt: '2026-05-29T00:00:00.000Z',
         root: '/plugins/kimi-datasource',
         manifest: undefined,
         mcpServers: [
@@ -297,6 +302,7 @@ describe('plugins selector dialogs', () => {
           mcpServerCount: 0,
           enabledMcpServerCount: 0,
           hasErrors: false,
+          source: 'local-path',
         },
       ],
       selectedId: 'kimi-datasource',

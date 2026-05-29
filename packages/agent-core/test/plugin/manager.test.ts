@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import yazl from 'yazl';
 
 import { PluginManager } from '../../src/plugin/manager';
@@ -651,7 +651,269 @@ describe('PluginManager', () => {
 
     await expect(manager.install(url)).rejects.toThrow(/manifest/i);
   });
+
+  it('install() from github URL resolves latest release and records github metadata', async () => {
+    const home = await makeKimiHome();
+    const zipBuffer = await createZipBuffer([
+      {
+        name: 'wbxl2000-superpowers-abc/kimi.plugin.json',
+        data: JSON.stringify({ name: 'gh-demo', version: '1.0.0' }),
+      },
+    ]);
+
+    using _ = mockGithubFetch({
+      releaseTag: 'v1.0.0',
+      tarball: zipBuffer,
+    });
+
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    const record = await manager.install('https://github.com/wbxl2000/superpowers');
+
+    expect(record.id).toBe('gh-demo');
+    expect(record.source).toBe('github');
+    expect(record.originalSource).toBe('https://github.com/wbxl2000/superpowers');
+    expect(record.github).toEqual({
+      owner: 'wbxl2000',
+      repo: 'superpowers',
+      ref: { kind: 'tag', value: 'v1.0.0' },
+    });
+
+    const reloaded = new PluginManager({ kimiHomeDir: home });
+    await reloaded.load();
+    expect(reloaded.get('gh-demo')?.source).toBe('github');
+    expect(reloaded.get('gh-demo')?.github?.ref).toEqual({ kind: 'tag', value: 'v1.0.0' });
+  });
+
+  it('install() from /tree/<tag-shaped-ref> downloads via short form, not refs/heads/ (P1 regression)', async () => {
+    // A repo whose only ref `v5.1.0` is a tag (no branch by that name). The
+    // previous resolver wrote `zip/refs/heads/v5.1.0` and 404'd. Verify the
+    // mock now sees the short-form request `zip/v5.1.0`.
+    const home = await makeKimiHome();
+    const zipBuffer = await createZipBuffer([
+      {
+        name: 'obra-superpowers-v5.1.0/kimi.plugin.json',
+        data: JSON.stringify({ name: 'pin-tag-demo', version: '5.1.0' }),
+      },
+    ]);
+
+    let codeloadPath = '';
+    const original = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      if (url.startsWith('https://codeload.github.com/')) {
+        codeloadPath = new URL(url).pathname;
+        return new Response(zipBuffer, { status: 200 });
+      }
+      throw new Error(`unexpected url ${url}`);
+    }) as typeof fetch;
+
+    try {
+      const manager = new PluginManager({ kimiHomeDir: home });
+      await manager.load();
+      const record = await manager.install(
+        'https://github.com/obra/superpowers/tree/v5.1.0',
+      );
+      expect(codeloadPath).toBe('/obra/superpowers/zip/v5.1.0');
+      expect(record.github?.ref).toEqual({ kind: 'branch', value: 'v5.1.0' });
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('install() from /releases/tag/<tag> resolves precisely via refs/tags/', async () => {
+    const home = await makeKimiHome();
+    const zipBuffer = await createZipBuffer([
+      {
+        name: 'obra-superpowers-v5.1.0/kimi.plugin.json',
+        data: JSON.stringify({ name: 'pin-tag-demo', version: '5.1.0' }),
+      },
+    ]);
+
+    let codeloadPath = '';
+    const original = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      if (url.startsWith('https://codeload.github.com/')) {
+        codeloadPath = new URL(url).pathname;
+        return new Response(zipBuffer, { status: 200 });
+      }
+      throw new Error(`unexpected url ${url}`);
+    }) as typeof fetch;
+
+    try {
+      const manager = new PluginManager({ kimiHomeDir: home });
+      await manager.load();
+      const record = await manager.install(
+        'https://github.com/obra/superpowers/releases/tag/v5.1.0',
+      );
+      // Explicit tag origin → kind is 'tag', URL uses refs/tags/ for
+      // disambiguation against same-named branches.
+      expect(codeloadPath).toBe('/obra/superpowers/zip/refs/tags/v5.1.0');
+      expect(record.github?.ref).toEqual({ kind: 'tag', value: 'v5.1.0' });
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('install() from github /tree/<branch> bypasses the GitHub API', async () => {
+    const home = await makeKimiHome();
+    const zipBuffer = await createZipBuffer([
+      {
+        name: 'wbxl2000-superpowers-main/kimi.plugin.json',
+        data: JSON.stringify({ name: 'gh-demo', version: '5.1.0' }),
+      },
+    ]);
+
+    let releaseLookups = 0;
+    using _ = mockGithubFetch({
+      tarball: zipBuffer,
+      onReleaseLookup: () => {
+        releaseLookups++;
+      },
+    });
+
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    const record = await manager.install(
+      'https://github.com/wbxl2000/superpowers/tree/main',
+    );
+
+    expect(releaseLookups).toBe(0);
+    expect(record.source).toBe('github');
+    expect(record.github?.ref).toEqual({ kind: 'branch', value: 'main' });
+  });
+
+  it('install() records marketplace context when caller passes it (kimi-official tier)', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('kimi-datasource', { version: '1.0.0' });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    const record = await manager.install(root, {
+      marketplace: { id: 'kimi-datasource', tier: 'official' },
+    });
+    expect(record.marketplace).toEqual({ id: 'kimi-datasource', tier: 'official' });
+
+    const reloaded = new PluginManager({ kimiHomeDir: home });
+    await reloaded.load();
+    expect(reloaded.get('kimi-datasource')?.marketplace).toEqual({
+      id: 'kimi-datasource',
+      tier: 'official',
+    });
+  });
+
+  it('install() leaves marketplace undefined when caller does not pass it (third-party path)', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('rando', { version: '1.0.0' });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    const record = await manager.install(root);
+    expect(record.marketplace).toBeUndefined();
+  });
+
+  it('install() clears prior marketplace context when re-installed from a third-party source', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('kimi-datasource', { version: '1.0.0' });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root, {
+      marketplace: { id: 'kimi-datasource', tier: 'official' },
+    });
+    expect(manager.get('kimi-datasource')?.marketplace).toBeDefined();
+
+    // Same id, but caller now passes no marketplace context (CLI path).
+    const reinstalled = await manager.install(root);
+    expect(reinstalled.marketplace).toBeUndefined();
+  });
+
+  it('install() from github URL overwrites an existing zip-url install (CDN migration)', async () => {
+    const home = await makeKimiHome();
+
+    // Original CDN install.
+    const cdnZip = await createZipBuffer([
+      { name: 'pkg/kimi.plugin.json', data: JSON.stringify({ name: 'superpowers', version: '5.0.0' }) },
+    ]);
+    const cdnUrl = await serveOnce(cdnZip);
+
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    const first = await manager.install(cdnUrl);
+    expect(first.source).toBe('zip-url');
+    await manager.setEnabled('superpowers', false);
+
+    // Now migrate via GitHub URL.
+    const ghZip = await createZipBuffer([
+      { name: 'pkg/kimi.plugin.json', data: JSON.stringify({ name: 'superpowers', version: '5.1.0' }) },
+    ]);
+    using _ = mockGithubFetch({
+      releaseTag: 'v5.1.0',
+      tarball: ghZip,
+    });
+    const updated = await manager.install('https://github.com/wbxl2000/superpowers');
+
+    expect(updated.source).toBe('github');
+    expect(updated.manifest?.version).toBe('5.1.0');
+    expect(updated.enabled).toBe(false); // preserved
+    expect(updated.installedAt).toBe(first.installedAt); // preserved
+    expect(updated.originalSource).toBe('https://github.com/wbxl2000/superpowers');
+    expect(updated.github?.ref).toEqual({ kind: 'tag', value: 'v5.1.0' });
+    expect(manager.list()).toHaveLength(1);
+  });
 });
+
+interface MockGithubFetchOptions {
+  /** Tag name to advertise via the github.com/.../releases/latest redirect. */
+  releaseTag?: string;
+  tarball: Buffer;
+  /** Optional hook to count requests against `github.com`. */
+  onReleaseLookup?: () => void;
+}
+
+function mockGithubFetch(options: MockGithubFetchOptions): { [Symbol.dispose](): void } {
+  const original = globalThis.fetch;
+  globalThis.fetch = vi.fn(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const url =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    if (/^https:\/\/github\.com\/[^/]+\/[^/]+\/releases\/latest$/.test(url)) {
+      options.onReleaseLookup?.();
+      if (options.releaseTag === undefined) {
+        return new Response(null, { status: 404 });
+      }
+      const tagUrl = url.replace(/\/releases\/latest$/, `/releases/tag/${options.releaseTag}`);
+      return new Response(null, {
+        status: 302,
+        headers: { location: tagUrl },
+      });
+    }
+    if (url.startsWith('https://codeload.github.com/')) {
+      // HEAD probe used by the no-release fallback path returns headers only.
+      if (init?.method === 'HEAD') {
+        return new Response(null, { status: 200 });
+      }
+      return new Response(options.tarball, { status: 200 });
+    }
+    throw new Error(`mockGithubFetch: unexpected url ${url}`);
+  }) as typeof fetch;
+  return {
+    [Symbol.dispose]() {
+      globalThis.fetch = original;
+    },
+  };
+}
 
 async function createZipBuffer(entries: Array<{ name: string; data: string | Buffer }>): Promise<Buffer> {
   return new Promise((resolve, reject) => {

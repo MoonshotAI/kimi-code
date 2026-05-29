@@ -1309,6 +1309,10 @@ export class KimiTUI {
   }
 
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle {
+    return this.showProgressSpinner(label);
+  }
+
+  showProgressSpinner(label: string): LoginProgressSpinnerHandle {
     const tint = (s: string): string => chalk.hex(this.state.theme.colors.primary)(s);
     const spinner = new MoonLoader(this.state.ui, 'braille', tint, label);
     this.state.transcriptContainer.addChild(new Spacer(1));

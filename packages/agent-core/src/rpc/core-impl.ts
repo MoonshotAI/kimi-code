@@ -578,7 +578,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   async installPlugin(payload: InstallPluginPayload): Promise<PluginSummary> {
     await this.pluginsReady;
     this.assertPluginsLoaded();
-    const record = await this.plugins.install(payload.source);
+    const record = await this.plugins.install(payload.source, {
+      marketplace: payload.marketplace,
+    });
     return this.plugins.summaries().find((s) => s.id === record.id)!;
   }
 

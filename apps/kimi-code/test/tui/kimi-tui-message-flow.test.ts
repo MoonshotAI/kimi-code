@@ -1401,7 +1401,10 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput('/plugins install ./plugins/kimi-datasource');
 
     await vi.waitFor(() => {
-      expect(session.installPlugin).toHaveBeenCalledWith('/tmp/proj-a/plugins/kimi-datasource');
+      expect(session.installPlugin).toHaveBeenCalledWith(
+        '/tmp/proj-a/plugins/kimi-datasource',
+        { marketplace: undefined },
+      );
     });
   });
 
@@ -1437,7 +1440,12 @@ describe('KimiTUI message flow', () => {
     picker.handleInput(' ');
 
     await vi.waitFor(() => {
-      expect(session.installPlugin).toHaveBeenCalledWith(join(marketplaceDir, 'kimi-datasource'));
+      // The marketplace.json entry in this test has no `tier` field, so the
+      // marketplace context plumb-through is undefined (skip the badge).
+      expect(session.installPlugin).toHaveBeenCalledWith(
+        join(marketplaceDir, 'kimi-datasource'),
+        { marketplace: undefined },
+      );
     });
     await vi.waitFor(() => {
       const transcript = stripSgr(renderTranscript(driver));

@@ -10,6 +10,10 @@ import type { PluginInfo, PluginMcpServerInfo, PluginSummary } from '@moonshot-a
 import chalk from 'chalk';
 
 import type { ColorPalette } from '#/tui/theme/colors';
+import {
+  formatPluginSourceLabel,
+  pluginTrustLabel,
+} from '#/tui/utils/plugin-source-label';
 import { printableChar } from '#/tui/utils/printable-key';
 import type { PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
 
@@ -480,7 +484,9 @@ function overviewPluginDescription(plugin: PluginSummary): string {
       ? ` · MCP ${plugin.enabledMcpServerCount}/${plugin.mcpServerCount}`
       : '';
   const diagnostics = plugin.hasErrors ? ' · diagnostics available' : '';
-  return `id ${plugin.id} · ${skills}${mcp}${state}${diagnostics}`;
+  const source = ` · ${formatPluginSourceLabel(plugin)}`;
+  const trust = ` · ${pluginTrustLabel(plugin)}`;
+  return `id ${plugin.id} · ${skills}${mcp}${source}${trust}${state}${diagnostics}`;
 }
 
 function pluginStatus(plugin: PluginSummary): string {
@@ -509,7 +515,7 @@ function buildMarketplaceItems(
     kind: 'plugin',
     label: entry.displayName,
     status: installedIds.has(entry.id) ? 'installed' : installStatus(entry),
-    description: marketplaceEntryDescription(entry, installedIds.has(entry.id)),
+    description: marketplaceEntryDescription(entry),
   }));
   items.push({
     value: 'back',
@@ -553,8 +559,7 @@ function mcpItemServerName(item: PluginsOverviewItem): string | undefined {
   return item.value.slice(MCP_SERVER_PREFIX.length);
 }
 
-function marketplaceEntryDescription(entry: PluginMarketplaceEntry, installed: boolean): string {
-  const action = installed ? 'Enter/Space update' : 'Enter/Space install';
+function marketplaceEntryDescription(entry: PluginMarketplaceEntry): string {
   const tier = marketplaceTierLabel(entry.tier);
   const description = entry.description ?? tier;
   const version = entry.version !== undefined ? ` · v${entry.version}` : '';
@@ -563,7 +568,7 @@ function marketplaceEntryDescription(entry: PluginMarketplaceEntry, installed: b
       ? ` · ${entry.keywords.join(', ')}`
       : '';
   const tierSuffix = entry.description !== undefined ? ` · ${tier}` : '';
-  return `${action} · ${description} · id ${entry.id}${version}${tierSuffix}${keywords}`;
+  return `${description} · id ${entry.id}${version}${tierSuffix}${keywords}`;
 }
 
 function marketplaceTierLabel(tier: PluginMarketplaceEntry['tier']): string {

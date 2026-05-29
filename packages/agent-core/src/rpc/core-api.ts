@@ -219,6 +219,10 @@ export interface ReconnectMcpServerPayload {
 
 export interface InstallPluginPayload {
   readonly source: string;
+  readonly marketplace?: {
+    readonly id: string;
+    readonly tier: 'official' | 'curated';
+  };
 }
 
 export interface SetPluginEnabledPayload {

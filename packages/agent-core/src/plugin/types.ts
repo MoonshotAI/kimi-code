@@ -61,8 +61,37 @@ export interface PluginMcpServerInfo {
 }
 
 export type PluginManifestKind = 'kimi-plugin-root' | 'kimi-plugin-dir';
-export type PluginSource = 'local-path' | 'zip-url';
+export type PluginSource = 'local-path' | 'zip-url' | 'github';
 export type PluginState = 'ok' | 'error';
+
+export interface PluginGithubRef {
+  readonly kind: 'branch' | 'tag' | 'sha';
+  readonly value: string;
+}
+
+export interface PluginGithubMetadata {
+  readonly owner: string;
+  readonly repo: string;
+  readonly ref: PluginGithubRef;
+  readonly installedSha?: string;
+}
+
+export type PluginMarketplaceTier = 'official' | 'curated';
+
+/**
+ * Recorded when a plugin was installed via the Kimi marketplace selector.
+ * Drives the `kimi-official` trust badge in the UI: present ⇒ Kimi-vetted
+ * source path; absent ⇒ third-party (raw URL, GitHub, or local install).
+ *
+ * We deliberately do NOT backfill this for plugins installed before the
+ * field existed — their installed.json records carry no marketplace
+ * context, so they show as third-party until re-installed via the
+ * marketplace selector.
+ */
+export interface PluginMarketplaceContext {
+  readonly id: string;
+  readonly tier: PluginMarketplaceTier;
+}
 
 export interface PluginRecord {
   readonly id: string;
@@ -74,6 +103,8 @@ export interface PluginRecord {
   readonly updatedAt?: string;
   readonly originalSource?: string;
   readonly capabilities?: PluginCapabilityState;
+  readonly github?: PluginGithubMetadata;
+  readonly marketplace?: PluginMarketplaceContext;
   readonly skillInstructions?: string;
   readonly skillCount: number;
   readonly manifest?: PluginManifest;
@@ -93,12 +124,16 @@ export interface PluginSummary {
   readonly mcpServerCount: number;
   readonly enabledMcpServerCount: number;
   readonly hasErrors: boolean;
+  readonly source: PluginSource;
+  readonly originalSource?: string;
+  readonly github?: PluginGithubMetadata;
+  readonly marketplace?: PluginMarketplaceContext;
 }
 
 export interface PluginInfo extends PluginSummary {
-  readonly source: PluginSource;
   readonly root: string;
-  readonly originalSource?: string;
+  readonly installedAt: string;
+  readonly updatedAt?: string;
   readonly manifestKind?: PluginManifestKind;
   readonly manifestPath?: string;
   readonly manifest?: PluginManifest;
