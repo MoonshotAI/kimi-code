@@ -1,0 +1,20 @@
+# Normalize line endings to LF in the repository for all text files.
+# Without this, Windows checkouts (core.autocrlf=true) introduce CRLF into
+# source and raw-text prompt/skill `.md` files that are loaded as model
+# input, which inflates token/byte counts and breaks snapshot tests.
+* text=auto eol=lf
+
+# Explicit binary types (never normalize)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.mp4 binary
+*.mov binary
+*.pdf binary
