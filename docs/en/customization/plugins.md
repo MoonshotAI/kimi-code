@@ -23,7 +23,7 @@ Most users only need the interactive manager. You can also use these slash comma
 | --- | --- |
 | `/plugins` | Open the interactive plugin manager. |
 | `/plugins list` | List installed plugins. |
-| `/plugins install <path-or-url>` | Install from a local directory (relative paths and `~/` supported) or a zip URL. |
+| `/plugins install <path-or-url>` | Install from a local directory (relative paths and `~/` supported), a zip URL, or a GitHub repository URL. |
 | `/plugins marketplace [source]` | Browse the official marketplace; optionally pass a marketplace JSON path or URL. |
 | `/plugins info <id>` | Show plugin details and diagnostics; opens the manager when `<id>` is omitted. |
 | `/plugins <id>` | Show details for a plugin; same as `/plugins info <id>`. |
@@ -35,6 +35,10 @@ Most users only need the interactive manager. You can also use these slash comma
 | `/plugins mcp disable <id> <server>` | Disable an MCP server declared by a plugin. |
 
 For general slash command behavior, see [Slash commands](../reference/slash-commands.md).
+
+GitHub URLs accept four forms. The bare URL `https://github.com/<owner>/<repo>` installs the repository's latest GitHub release; if the repo has no release, the default branch is installed instead. `https://github.com/<owner>/<repo>/tree/<ref>` installs a specific branch, tag, or short commit SHA. `https://github.com/<owner>/<repo>/releases/tag/<tag>` and `https://github.com/<owner>/<repo>/commit/<sha>` pin to an explicit tag or commit. Network calls go to `github.com` redirects and `codeload.github.com` archive downloads only; `api.github.com` is not used.
+
+The plugin manager shows each install's source and a trust badge. `kimi-official` marks plugins installed from the Kimi marketplace at the `official` tier; `curated` marks marketplace plugins at the `curated` tier; `third-party` marks anything else, including any plugin you installed directly with `/plugins install <url>` or from a local directory. A re-install replaces the badge to reflect the new source.
 
 Kimi Code CLI currently installs plugins per user. Records are stored under `$KIMI_CODE_HOME/plugins/` and apply across all projects. Project-local, repository-shared, admin-managed, and `--scope` installs are not supported yet.
 
