@@ -28,6 +28,11 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
 
+      # Nix must be installed before setup-node so that setup-node's PATH
+      # entry (Node >= 24) is prepended after Nix's, keeping Node 24 first.
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
@@ -50,9 +55,6 @@ jobs:
 
       - name: Build packages
         run: pnpm build
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
 
       - name: Create Release Pull Request or Publish to npm
         id: changesets
