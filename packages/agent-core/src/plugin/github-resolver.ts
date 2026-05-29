@@ -124,13 +124,32 @@ async function tryResolveLatestReleaseTag(
 
 function codeloadUrl(owner: string, repo: string, ref: GithubRef): string {
   const base = `https://codeload.github.com/${owner}/${repo}/zip`;
-  if (ref.kind === 'sha') return `${base}/${ref.value}`;
+  const encoded = encodeCodeloadRefPath(ref.value);
+  if (ref.kind === 'sha') return `${base}/${encoded}`;
   // For a ref we confirmed is a tag (came from /releases/tag/...), use the
   // explicit refs/tags/ path so the download is unambiguous even if a branch
   // with the same name exists in the repo.
-  if (ref.kind === 'tag') return `${base}/refs/tags/${ref.value}`;
+  if (ref.kind === 'tag') return `${base}/refs/tags/${encoded}`;
   // For a `branch`-kind ref we cannot tell whether the user-typed value names
   // a branch or a tag (e.g. `/tree/v5.1.0`). Use codeload's short form to let
   // the GitHub backend resolve it the same way `github.com/.../tree/<x>` does.
-  return `${base}/${ref.value}`;
+  return `${base}/${encoded}`;
+}
+
+/**
+ * Percent-encode a ref name for safe interpolation into a codeload URL path.
+ *
+ * Git permits characters in ref names that have special meaning in URLs.
+ * The reviewer-flagged case is `#`: a valid Git tag character (e.g. a release
+ * named `release#1`) but a URL fragment delimiter. Pasted naively into
+ * `…/refs/tags/release#1`, the `#1` is parsed as a fragment and the HTTP
+ * request reaches the server as `…/refs/tags/release` — which 404s, or worse,
+ * delivers a different ref.
+ *
+ * Refs may also legitimately contain `/` (a branch named `feat/foo`, or a
+ * tag named `series/v1`). We must preserve those as real path separators.
+ * So: split on `/`, percent-encode each segment, and rejoin.
+ */
+function encodeCodeloadRefPath(value: string): string {
+  return value.split('/').map(encodeURIComponent).join('/');
 }

@@ -174,5 +174,55 @@ describe('resolveInstallSource', () => {
       const result = resolveInstallSource(url);
       expect(result).toEqual({ kind: 'zip-url', path: url });
     });
+
+    it('percent-decodes %23 in /releases/tag/ so storage is human-readable', () => {
+      // Git allows `#` in tag names. GitHub UI URLs encode it as %23.
+      const result = resolveInstallSource(
+        'https://github.com/owner/repo/releases/tag/release%231',
+      );
+      expect(result).toEqual({
+        kind: 'github',
+        owner: 'owner',
+        repo: 'repo',
+        ref: { kind: 'tag', value: 'release#1' },
+      });
+    });
+
+    it('percent-decodes /tree/<encoded> ref values', () => {
+      const result = resolveInstallSource(
+        'https://github.com/owner/repo/tree/feat%231',
+      );
+      expect(result).toEqual({
+        kind: 'github',
+        owner: 'owner',
+        repo: 'repo',
+        ref: { kind: 'branch', value: 'feat#1' },
+      });
+    });
+
+    it('preserves slashes when decoding multi-segment refs (e.g. feat/foo with %20 in middle)', () => {
+      const result = resolveInstallSource(
+        'https://github.com/owner/repo/tree/feat/has%20space',
+      );
+      expect(result).toEqual({
+        kind: 'github',
+        owner: 'owner',
+        repo: 'repo',
+        ref: { kind: 'branch', value: 'feat/has space' },
+      });
+    });
+
+    it('keeps malformed percent-encoding verbatim instead of crashing', () => {
+      // `%ZZ` is invalid; decodeURIComponent throws. Don't propagate.
+      const result = resolveInstallSource(
+        'https://github.com/owner/repo/tree/bad%ZZname',
+      );
+      expect(result).toEqual({
+        kind: 'github',
+        owner: 'owner',
+        repo: 'repo',
+        ref: { kind: 'branch', value: 'bad%ZZname' },
+      });
+    });
   });
 });

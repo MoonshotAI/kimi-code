@@ -97,6 +97,53 @@ describe('resolveGithubSource', () => {
     );
   });
 
+  it('encodes URL-reserved characters in tag refs so codeload sees the full ref (P2 regression)', async () => {
+    // Git allows `#` in tag names. Without encoding, `#1` becomes a URL
+    // fragment and codeload only sees `refs/tags/release`.
+    const result = await resolveGithubSource({
+      kind: 'github',
+      owner: 'owner',
+      repo: 'repo',
+      ref: { kind: 'tag', value: 'release#1' },
+    });
+
+    expect(result.tarballUrl).toBe(
+      'https://codeload.github.com/owner/repo/zip/refs/tags/release%231',
+    );
+    // Sanity: parsing this URL should report the encoded form in the path,
+    // no fragment leakage.
+    const parsed = new URL(result.tarballUrl);
+    expect(parsed.hash).toBe('');
+    expect(parsed.pathname.endsWith('release%231')).toBe(true);
+  });
+
+  it('encodes URL-reserved characters in branch refs too', async () => {
+    const result = await resolveGithubSource({
+      kind: 'github',
+      owner: 'owner',
+      repo: 'repo',
+      ref: { kind: 'branch', value: 'feat#1' },
+    });
+
+    expect(result.tarballUrl).toBe(
+      'https://codeload.github.com/owner/repo/zip/feat%231',
+    );
+  });
+
+  it('preserves `/` as path separator when encoding multi-segment refs', async () => {
+    // A branch named `feat/has space` must encode the space but keep the `/`.
+    const result = await resolveGithubSource({
+      kind: 'github',
+      owner: 'owner',
+      repo: 'repo',
+      ref: { kind: 'branch', value: 'feat/has space' },
+    });
+
+    expect(result.tarballUrl).toBe(
+      'https://codeload.github.com/owner/repo/zip/feat/has%20space',
+    );
+  });
+
   it('bare URL: 302 with /releases/tag/X resolves to that tag', async () => {
     mockSequence([
       {
@@ -128,6 +175,26 @@ describe('resolveGithubSource', () => {
 
     const result = await resolveGithubSource({ kind: 'github', owner: 'o', repo: 'r' });
     expect(result.ref).toEqual({ kind: 'tag', value: 'feat/release' });
+  });
+
+  it('bare URL: latest release tag with `#` round-trips through to a properly encoded codeload URL (P2 regression)', async () => {
+    // GitHub redirects with the tag percent-encoded. We decode for storage,
+    // then must re-encode when building the codeload URL.
+    mockSequence([
+      {
+        status: 302,
+        headers: { location: 'https://github.com/o/r/releases/tag/release%231' },
+      },
+    ]);
+
+    const result = await resolveGithubSource({ kind: 'github', owner: 'o', repo: 'r' });
+
+    expect(result.ref).toEqual({ kind: 'tag', value: 'release#1' });
+    expect(result.tarballUrl).toBe(
+      'https://codeload.github.com/o/r/zip/refs/tags/release%231',
+    );
+    // Sanity: no fragment hijacking.
+    expect(new URL(result.tarballUrl).hash).toBe('');
   });
 
   it('bare URL: 404 from /releases/latest falls back to codeload HEAD', async () => {
