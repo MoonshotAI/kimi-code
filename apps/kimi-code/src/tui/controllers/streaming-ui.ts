@@ -201,6 +201,13 @@ export class StreamingUIController {
     agentId?: string | undefined;
     description: string;
     status: 'completed' | 'failed' | 'killed' | 'lost';
+    /**
+     * Real failure message to surface on the card. Pass the `subagent.failed`
+     * event's `error` for live crashes — it is far more useful than the
+     * friendly generic the card falls back to. Omit on the resume / terminate
+     * path where no real error is available.
+     */
+    errorText?: string | undefined;
   }): boolean {
     let agentIdMatch: ToolCallComponent | undefined;
     let descMatch: ToolCallComponent | undefined;
@@ -238,7 +245,7 @@ export class StreamingUIController {
     }
     const target = agentIdMatch ?? (descAmbiguous ? undefined : descMatch);
     if (target === undefined) return false;
-    target.setBackgroundTaskTerminalStatus(args.status);
+    target.setBackgroundTaskTerminalStatus(args.status, { errorText: args.errorText });
     return true;
   }
 

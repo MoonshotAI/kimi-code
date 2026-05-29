@@ -754,6 +754,17 @@ export class SessionEventHandler {
     if (backgroundMeta !== undefined) {
       this.backgroundAgentMetadata.delete(event.subagentId);
       this.syncBackgroundAgentBadge();
+      // Push the real subagent error onto the parent Agent card too —
+      // `background.task.terminated` arrives separately (possibly later)
+      // with no error string and would only stamp the generic
+      // `Background agent failed`. The card and the separate transcript
+      // entry now share the same actual reason.
+      streamingUI.applyBackgroundTaskTerminalStatus({
+        agentId: event.subagentId,
+        description: backgroundMeta.description ?? '',
+        status: 'failed',
+        errorText: event.error,
+      });
       const taskId = this.findAgentTaskId(event.subagentId);
       if (taskId !== undefined && this.backgroundTaskTranscriptedTerminal.has(taskId)) {
         return;

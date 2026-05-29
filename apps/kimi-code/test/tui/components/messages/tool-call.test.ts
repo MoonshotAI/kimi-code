@@ -867,6 +867,97 @@ describe('ToolCallComponent', () => {
       expect(out).not.toMatch(/Failed/);
       expect(out).not.toContain('task_id:');
     });
+
+    // Stable id routing — `tc.subagentAgentId` is left undefined for
+    // backgrounded agents both live (`handleSubagentSpawned` early-returns
+    // for `runInBackground`, never calling tc.onSubagentSpawned) and on
+    // resume (the wire format does not carry a `subagent` block back into
+    // `applySubagentReplay`). The AgentTool's spawn-success ToolResult,
+    // however, always carries `agent_id: agent-N` — fall back to parsing
+    // that so callers asking `getSubagentAgentId` always get the right id,
+    // and `applyBackgroundTaskTerminalStatus` can route by id instead of
+    // by description (which collides between unrelated cards).
+    it('getSubagentAgentId parses agent_id from the spawn-success ToolResult', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_bg_agent',
+          name: 'Agent',
+          args: { description: 'background agent 1', run_in_background: true },
+        },
+        spawnSuccessResult,
+        darkColors,
+      );
+      // No spawn metadata was wired in — exactly the resume / backgrounded
+      // case we are guarding against.
+      expect(component.getSubagentAgentId()).toBe('agent-0');
+    });
+
+    it('getSubagentAgentId still prefers in-memory subagent metadata when set', () => {
+      // If `setSubagentMeta` / `onSubagentSpawned` did wire an id, that one
+      // is authoritative — it survived the in-flight phase before any
+      // ToolResult landed and can disambiguate concurrent calls.
+      const component = new ToolCallComponent(
+        {
+          id: 'call_bg_agent',
+          name: 'Agent',
+          args: { description: 'X', run_in_background: true },
+        },
+        spawnSuccessResult,
+        darkColors,
+      );
+      component.setSubagentMeta('agent-explicit', 'coder');
+      expect(component.getSubagentAgentId()).toBe('agent-explicit');
+    });
+
+    it('getSubagentAgentId returns undefined for non-Agent tool calls even when output looks similar', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_bash',
+          name: 'Bash',
+          args: { command: 'echo agent_id: agent-fake' },
+        },
+        {
+          tool_call_id: 'call_bash',
+          output: 'agent_id: agent-fake\nstatus: running',
+          is_error: false,
+        },
+        darkColors,
+      );
+      expect(component.getSubagentAgentId()).toBeUndefined();
+    });
+
+    it('setBackgroundTaskTerminalStatus errorText overwrites the friendly generic', () => {
+      // Live failures arrive via `subagent.failed` with the real error from
+      // the subagent loop. That string is far more informative than the
+      // generic "Background agent failed" fallback the friendly path emits.
+      // When the caller supplies errorText it must win, regardless of
+      // whether the friendly message was written first.
+      const component = makeBackgroundAgentComponent();
+      component.setBackgroundTaskTerminalStatus('failed');
+      expect(component.getSubagentSnapshot().errorText).toBe('Background agent failed');
+
+      component.setBackgroundTaskTerminalStatus('failed', {
+        errorText: 'subagent exceeded max_steps',
+      });
+      expect(component.getSubagentSnapshot().errorText).toBe('subagent exceeded max_steps');
+    });
+
+    it('setBackgroundTaskTerminalStatus errorText is written even on first call', () => {
+      const component = makeBackgroundAgentComponent();
+      component.setBackgroundTaskTerminalStatus('failed', {
+        errorText: 'OAuth refresh failed',
+      });
+      expect(component.getSubagentSnapshot().errorText).toBe('OAuth refresh failed');
+    });
+
+    it('setBackgroundTaskTerminalStatus does not overwrite a real onSubagentFailed error with the generic', () => {
+      const component = makeBackgroundAgentComponent();
+      component.onSubagentFailed({ error: 'real crash from subagent' });
+      // background.task.terminated event arrives later without an errorText
+      // override; the friendly generic must NOT clobber the real message.
+      component.setBackgroundTaskTerminalStatus('failed');
+      expect(component.getSubagentSnapshot().errorText).toBe('real crash from subagent');
+    });
   });
 
   it('scrolls the Write streaming preview to the last COMMAND_PREVIEW_LINES', () => {

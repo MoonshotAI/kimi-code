@@ -974,18 +974,39 @@ export class ToolCallComponent extends Container {
    * terminates non-successfully) and on resume (when reconcile
    * reclassifies a previously-running task as `lost`).
    */
-  setBackgroundTaskTerminalStatus(status: 'completed' | 'failed' | 'killed' | 'lost'): void {
+  setBackgroundTaskTerminalStatus(
+    status: 'completed' | 'failed' | 'killed' | 'lost',
+    options: { errorText?: string | undefined } = {},
+  ): void {
     const phase: 'done' | 'failed' = status === 'completed' ? 'done' : 'failed';
-    if (this.backgroundTaskTerminalPhase === phase) return;
-    this.backgroundTaskTerminalPhase = phase;
-    // Surface a friendly failure line through the same `subagentError` slot
-    // that `onSubagentFailed` writes. The standalone card reads this in
-    // `buildSingleSubagentBlock`; the group card reads it via `errorText` in
-    // `getSubagentSnapshot`. A pre-existing real error from a prior
-    // `onSubagentFailed` event is more informative — keep it.
-    if (phase === 'failed' && this.subagentError === undefined) {
-      this.subagentError = backgroundFailureMessage(status);
+    const { errorText } = options;
+    const phaseUnchanged = this.backgroundTaskTerminalPhase === phase;
+    let errorChanged = false;
+    if (phase === 'failed') {
+      // Surface the failure line through the same `subagentError` slot that
+      // `onSubagentFailed` writes. The standalone card reads this in
+      // `buildSingleSubagentBlock`; the group card reads it via `errorText`
+      // in `getSubagentSnapshot`. Priority:
+      //   1. Explicit `errorText` from the caller (the real message from a
+      //      live `subagent.failed` event) always wins — it is the most
+      //      informative.
+      //   2. Existing `subagentError` (could be from a prior
+      //      `onSubagentFailed` or an earlier explicit override) is kept.
+      //   3. Fall back to a friendly generic so the failure has SOME
+      //      visible explanation when no source has supplied one.
+      if (errorText !== undefined && this.subagentError !== errorText) {
+        this.subagentError = errorText;
+        errorChanged = true;
+      } else if (this.subagentError === undefined) {
+        const generic = backgroundFailureMessage(status);
+        if (generic !== undefined) {
+          this.subagentError = generic;
+          errorChanged = true;
+        }
+      }
     }
+    if (phaseUnchanged && !errorChanged) return;
+    this.backgroundTaskTerminalPhase = phase;
     this.subagentEndedAtMs ??= Date.now();
     this.syncSubagentElapsedTimer();
     this.headerText.setText(this.buildHeader());
@@ -993,10 +1014,32 @@ export class ToolCallComponent extends Container {
     this.notifySnapshotChange();
   }
 
-  /** Spawned subagent id, if any. Used by routing to find a tool call's
-   *  backing subagent when reconciling background task lifecycle events. */
+  /**
+   * Subagent id for the backing AgentTool call, used by routing to find a
+   * tool call's backing subagent when reconciling background task lifecycle
+   * events.
+   *
+   * Two writers, in priority order:
+   *   1. In-memory `subagentAgentId` — wired by `setSubagentMeta` /
+   *      `onSubagentSpawned` for foreground agents. For backgrounded agents
+   *      this stays undefined: `handleSubagentSpawned` early-returns before
+   *      calling `tc.onSubagentSpawned`, and `applySubagentReplay` early-
+   *      returns when the wire payload omits the `subagent` block — which
+   *      it does for every replayed Agent call.
+   *   2. The spawn-success ToolResult body — AgentTool unconditionally
+   *      emits `agent_id: agent-N` for every Agent call (foreground and
+   *      background). Parsing it gives the stable identifier even when the
+   *      in-memory field is empty, which is the only way the resume path
+   *      can reliably route a `background.task.terminated` to the right
+   *      card and the only way the live path avoids matching by description
+   *      and accidentally updating an unrelated Agent card that happens to
+   *      share the same `args.description`.
+   */
   getSubagentAgentId(): string | undefined {
-    return this.subagentAgentId;
+    if (this.subagentAgentId !== undefined) return this.subagentAgentId;
+    if (this.toolCall.name !== 'Agent' || this.result === undefined) return undefined;
+    const match = this.result.output.match(/^agent_id:\s*(agent-[A-Za-z0-9_-]+)/m);
+    return match?.[1];
   }
 
   /** `args.description` for `Agent` tool calls, used as a resume-path
