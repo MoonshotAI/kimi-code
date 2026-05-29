@@ -42,10 +42,25 @@ export class MicroCompaction {
   }
 
   compact(messages: readonly ContextMessage[]): ContextMessage[] {
+    const config = this.config;
     const { lastAssistantAt } = this.agent.context;
-    const cacheMissed = lastAssistantAt !== null && Date.now() - lastAssistantAt >= this.config.cacheMissedThresholdMs;
+    const cacheAgeMs = lastAssistantAt === null ? null : Date.now() - lastAssistantAt;
+    const cacheMissed = cacheAgeMs !== null && cacheAgeMs >= config.cacheMissedThresholdMs;
     if (cacheMissed) {
-      this.apply(Math.max(0, messages.length - this.config.keepRecentMessages));
+      const previousCutoff = this.cutoff;
+      const nextCutoff = Math.max(0, messages.length - config.keepRecentMessages);
+      this.apply(nextCutoff);
+      if (previousCutoff !== nextCutoff) {
+        const effect = this.measureEffect(messages, nextCutoff);
+        this.agent.telemetry.track('micro_compaction_applied', {
+          ...config,
+          ...effect,
+          previous_cutoff: previousCutoff,
+          cutoff: nextCutoff,
+          message_count: messages.length,
+          cache_age_ms: cacheAgeMs,
+        });
+      }
     }
 
     const result: ContextMessage[] = [];
@@ -55,11 +70,11 @@ export class MicroCompaction {
         i < this.cutoff &&
         msg.role === 'tool' &&
         msg.toolCallId !== undefined &&
-        estimateTokensForContentParts(msg.content) >= this.config.minContentTokens
+        estimateTokensForContentParts(msg.content) >= config.minContentTokens
       ) {
         result.push({
           ...msg,
-          content: [{ type: 'text', text: this.config.truncatedMarker } satisfies ContentPart],
+          content: [{ type: 'text', text: config.truncatedMarker } satisfies ContentPart],
         });
       } else {
         result.push(msg);
@@ -67,5 +82,30 @@ export class MicroCompaction {
       i++;
     }
     return result;
+  }
+
+  private measureEffect(
+    messages: readonly ContextMessage[],
+    cutoff: number,
+  ) {
+    let markerTokenCount: number | undefined;
+    let truncatedToolResultCount = 0;
+    let beforeTokens = 0;
+    let afterTokens = 0;
+    for (let i = 0; i < messages.length && i < cutoff; i++) {
+      const message = messages[i];
+      if (message?.role !== 'tool' || message.toolCallId === undefined) continue;
+
+      const contentTokens = estimateTokensForContentParts(message.content);
+      if (contentTokens < this.config.minContentTokens) continue;
+
+      markerTokenCount ??= estimateTokensForContentParts([
+        { type: 'text', text: this.config.truncatedMarker },
+      ]);
+      truncatedToolResultCount += 1;
+      beforeTokens += contentTokens;
+      afterTokens += markerTokenCount;
+    }
+    return { truncatedToolResultCount, beforeTokens, afterTokens };
   }
 }
