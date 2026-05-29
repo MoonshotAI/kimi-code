@@ -84,7 +84,11 @@ export function toolToOpenAI(tool: Tool): OpenAIToolParam {
     },
   };
 }
-const NETWORK_RE = /network|connection|connect|disconnect/i;
+// `terminated` is the undici signature for an SSE/HTTP body stream that is
+// dropped mid-flight (common with Node's native fetch on long reasoning
+// streams). It surfaces as a raw `TypeError: terminated`, so it must be
+// recognized here as a transport-layer connection failure.
+const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;
 const TIMEOUT_RE = /timed?\s*out|timeout|deadline/i;
 
 function classifyBaseApiError(message: string): ChatProviderError {
@@ -129,8 +133,13 @@ export function convertOpenAIError(error: unknown): ChatProviderError {
   if (error instanceof OpenAIError) {
     return new ChatProviderError(`Error: ${error.message}`);
   }
+  // Raw, non-SDK errors (e.g. undici's `TypeError: terminated` raised when a
+  // streaming response body is dropped mid-flight) never get wrapped by the
+  // OpenAI SDK during stream iteration. Route them through the same
+  // transport-layer heuristic so genuine connection failures become
+  // retryable instead of fatal generic errors.
   if (error instanceof Error) {
-    return new ChatProviderError(`Error: ${error.message}`);
+    return classifyBaseApiError(error.message);
   }
   return new ChatProviderError(`Error: ${String(error)}`);
 }
