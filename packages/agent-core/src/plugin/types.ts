@@ -1,4 +1,5 @@
 import type { McpServerConfig } from '../config/schema';
+import type { SkillRoot } from '../skill';
 
 export type PluginDiagnosticSeverity = 'error' | 'warn' | 'info';
 
@@ -116,6 +117,40 @@ export interface ReloadSummary {
   readonly added: readonly string[];
   readonly removed: readonly string[];
   readonly errors: ReadonlyArray<{ readonly id: string; readonly message: string }>;
+}
+
+/**
+ * An immutable description of what the currently-enabled plugins want the
+ * runtime to look like: skill roots to load, MCP servers to run, and
+ * sessionStart skills to auto-inject. Produced by `PluginManager` and applied
+ * to a live session by `Session.applyPluginRuntimeSnapshot`.
+ */
+export interface PluginRuntimeSnapshot {
+  readonly pluginSkillRoots: readonly SkillRoot[];
+  readonly mcpServers: Record<string, McpServerConfig>;
+  readonly sessionStarts: readonly EnabledPluginSessionStart[];
+}
+
+/**
+ * What `Session.applyPluginRuntimeSnapshot` was actually able to hot-load into
+ * the current session. Only additive capabilities take effect live; anything
+ * that would require tearing down existing state sets `needsNewSession`.
+ */
+export interface PluginRuntimeApplyResult {
+  readonly addedSkills: readonly string[];
+  readonly addedMcpServers: readonly string[];
+  /**
+   * True when the live session still differs from the snapshot in a way that
+   * only a new session can reconcile: a disabled/removed plugin MCP server is
+   * still connected, or the set of sessionStart injections drifted (new ones
+   * cannot be injected mid-conversation, old ones cannot be retracted).
+   */
+  readonly needsNewSession: boolean;
+}
+
+/** Result of `/plugins reload`: the manager-level diff plus what was applied. */
+export interface PluginReloadResult extends ReloadSummary {
+  readonly applied?: PluginRuntimeApplyResult;
 }
 
 export const PLUGIN_NAME_REGEX = /^[a-z0-9][a-z0-9_-]{0,63}$/;

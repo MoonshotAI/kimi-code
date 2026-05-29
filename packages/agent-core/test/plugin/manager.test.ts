@@ -78,6 +78,43 @@ describe('PluginManager', () => {
     expect(manager.get('demo')?.originalSource).toBe(pluginRoot);
   });
 
+  it('runtimeSnapshot() bundles an enabled plugin\'s skills, MCP servers, and sessionStarts', async () => {
+    const home = await makeKimiHome();
+    const pluginRoot = await makePlugin('demo', {
+      skillNames: ['demo-skill'],
+      sessionStartSkill: 'demo-skill',
+      mcpServers: { finance: { command: 'finance-mcp' } },
+    });
+
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(pluginRoot);
+
+    const snapshot = manager.runtimeSnapshot();
+    expect(snapshot.pluginSkillRoots.some((root) => root.plugin?.id === 'demo')).toBe(true);
+    expect(snapshot.mcpServers).toHaveProperty('plugin-demo:finance');
+    expect(snapshot.sessionStarts).toContainEqual({ pluginId: 'demo', skillName: 'demo-skill' });
+  });
+
+  it('runtimeSnapshot() omits a disabled plugin', async () => {
+    const home = await makeKimiHome();
+    const pluginRoot = await makePlugin('demo', {
+      skillNames: ['demo-skill'],
+      sessionStartSkill: 'demo-skill',
+      mcpServers: { finance: { command: 'finance-mcp' } },
+    });
+
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(pluginRoot);
+    await manager.setEnabled('demo', false);
+
+    const snapshot = manager.runtimeSnapshot();
+    expect(snapshot.pluginSkillRoots).toEqual([]);
+    expect(snapshot.mcpServers).toEqual({});
+    expect(snapshot.sessionStarts).toEqual([]);
+  });
+
   it('install() accepts a .kimi-plugin manifest', async () => {
     const home = await makeKimiHome();
     const root = await mkdtemp(path.join(tmpdir(), 'kimi-plugin-'));

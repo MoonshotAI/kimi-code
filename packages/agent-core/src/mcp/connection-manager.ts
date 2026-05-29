@@ -167,7 +167,22 @@ export class McpConnectionManager {
     return Math.max(0, endedAt - this.initialLoadStartedAt);
   }
 
+  /**
+   * Connect additional MCP servers into an already-running manager without
+   * disturbing existing entries or resetting the initial-load timing metrics.
+   * Used to hot-add plugin servers when plugins are reloaded mid-session. Tool
+   * registration happens automatically via the {@link onStatusChange}
+   * subscription, so agents pick the new tools up on their next turn.
+   */
+  async connect(configs: Record<string, McpServerConfig>): Promise<void> {
+    await Promise.allSettled(this.spawnEntries(configs));
+  }
+
   private async connectAllNow(configs: Record<string, McpServerConfig>): Promise<void> {
+    await Promise.allSettled(this.spawnEntries(configs));
+  }
+
+  private spawnEntries(configs: Record<string, McpServerConfig>): Promise<unknown>[] {
     const tasks: Promise<unknown>[] = [];
     for (const [name, config] of Object.entries(configs)) {
       const disabled = config.enabled === false;
@@ -183,7 +198,7 @@ export class McpConnectionManager {
         tasks.push(this.connectOne(entry, this.beginConnectAttempt(entry)));
       }
     }
-    await Promise.allSettled(tasks);
+    return tasks;
   }
 
   async reconnect(name: string): Promise<void> {

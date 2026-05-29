@@ -92,7 +92,7 @@ describe('KimiCore plugin RPCs', () => {
       JSON.stringify({ version: 1, plugins: [] }),
       'utf8',
     );
-    await core.reloadPlugins({});
+    await core.reloadPlugins({ sessionId: 'no-session' });
     await expect(core.listPlugins({})).resolves.toEqual([]);
   });
 

@@ -14,6 +14,7 @@ import {
   type PluginInfo,
   type PluginMcpServerInfo,
   type PluginRecord,
+  type PluginRuntimeSnapshot,
   type PluginSource,
   type PluginSummary,
   type ReloadSummary,
@@ -204,6 +205,19 @@ export class PluginManager {
       out.push({ pluginId: record.id, skillName: skill });
     }
     return out;
+  }
+
+  /**
+   * Bundle the currently-enabled plugins' skill roots, MCP servers, and
+   * sessionStart skills into a single immutable snapshot. Used to hot-apply
+   * plugin changes to a live session via `Session.applyPluginRuntimeSnapshot`.
+   */
+  runtimeSnapshot(): PluginRuntimeSnapshot {
+    return {
+      pluginSkillRoots: this.pluginSkillRoots(),
+      mcpServers: this.enabledMcpServers(),
+      sessionStarts: this.enabledSessionStarts(),
+    };
   }
 
   enabledMcpServers(): Record<string, McpServerConfig> {

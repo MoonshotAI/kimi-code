@@ -56,7 +56,7 @@ Some commands are only available in the idle state. Running them while the sessi
 | `/usage` | — | Show token usage, context consumption, and quota information. | Yes |
 | `/status` | — | Show the current session runtime status, including version, model, working directory, and permission mode. | Yes |
 | `/mcp` | — | List the MCP servers in the current session and their connection status. | Yes |
-| `/plugins` | — | Open the interactive plugin manager for user/global installs: install, inspect, enable, disable, confirm removal, reload, browse the official marketplace, and toggle plugin MCP servers. Shortcut subcommands remain available. | Yes |
+| `/plugins` | — | Open the interactive plugin manager for user/global installs: install, inspect, enable, disable, confirm removal, reload (hot-applies new skills and MCP servers to the current session), browse the official marketplace, and toggle plugin MCP servers. Shortcut subcommands remain available. | Yes |
 | `/version` | — | Show the Kimi Code CLI version number. | Yes |
 | `/feedback` | — | Submit feedback to help improve Kimi Code CLI. | Yes |
 

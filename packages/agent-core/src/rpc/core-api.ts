@@ -10,7 +10,7 @@ import type { SessionMeta } from '#/session';
 import type { BackgroundTaskInfo } from '#/tools/builtin';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
-import type { PluginInfo, PluginSummary, ReloadSummary } from '#/plugin';
+import type { PluginInfo, PluginReloadResult, PluginSummary } from '#/plugin';
 import type { UsageStatus } from './events';
 import type { WithAgentId, WithSessionId } from './types';
 
@@ -240,8 +240,12 @@ export interface GetPluginInfoPayload {
   readonly id: string;
 }
 
-export type ReloadPluginsResult = ReloadSummary;
+export type ReloadPluginsResult = PluginReloadResult;
 export type { PluginSummary, PluginInfo };
+
+export interface ReloadPluginsPayload {
+  readonly sessionId: string;
+}
 
 export interface RenameSessionPayload {
   readonly title: string;
@@ -323,6 +327,6 @@ export interface CoreAPI extends SessionAPIWithId {
   setPluginEnabled: (payload: SetPluginEnabledPayload) => void;
   setPluginMcpServerEnabled: (payload: SetPluginMcpServerEnabledPayload) => void;
   removePlugin: (payload: RemovePluginPayload) => void;
-  reloadPlugins: (payload: EmptyPayload) => ReloadPluginsResult;
+  reloadPlugins: (payload: ReloadPluginsPayload) => ReloadPluginsResult;
   getPluginInfo: (payload: GetPluginInfoPayload) => PluginInfo;
 }

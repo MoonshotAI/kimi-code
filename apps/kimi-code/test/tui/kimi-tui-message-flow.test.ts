@@ -1487,9 +1487,11 @@ describe('KimiTUI message flow', () => {
       );
     });
     const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-    expect(out).toContain('❯ Demo  disabled  pending /new');
+    expect(out).toContain('❯ Demo  disabled  pending reload');
     expect(out).not.toContain('Space enable');
-    expect(stripSgr(renderTranscript(driver))).not.toContain('Disabled demo. Run /new to apply.');
+    expect(stripSgr(renderTranscript(driver))).not.toContain(
+      'Disabled demo. Run /plugins reload to apply to this session.',
+    );
   });
 
   it('toggles plugin MCP servers from the overview MCP picker', async () => {
@@ -1580,10 +1582,41 @@ describe('KimiTUI message flow', () => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginMcpSelectorComponent);
     });
     const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-    expect(out).toContain('❯ data  disabled  pending /new');
+    expect(out).toContain('❯ data  disabled  pending reload');
     expect(stripSgr(renderTranscript(driver))).not.toContain(
-      'Disabled MCP server data for kimi-datasource. Run /new to apply.',
+      'Disabled MCP server data for kimi-datasource. Run /plugins reload to apply to this session.',
     );
+  });
+
+  it('reports the reload summary and refreshes skill commands on /plugins reload', async () => {
+    const session = makeSession({
+      reloadPlugins: vi.fn(async () => ({
+        added: [],
+        removed: [],
+        errors: [],
+        applied: {
+          addedSkills: ['hot-skill'],
+          addedMcpServers: ['plugin-demo:data'],
+          needsNewSession: true,
+        },
+      })),
+    });
+    const { driver } = await makeDriver(session);
+    const refreshSpy = vi.spyOn(
+      driver as unknown as { refreshSkillCommands: (...args: unknown[]) => Promise<void> },
+      'refreshSkillCommands',
+    );
+
+    driver.handleUserInput('/plugins reload');
+
+    // The status line wraps at the terminal width, so collapse whitespace.
+    const transcript = () => stripSgr(renderTranscript(driver)).replaceAll(/\s+/g, ' ');
+    await vi.waitFor(() => {
+      expect(transcript()).toContain('Reload: +0 plugins, 1 skills, 1 MCP servers now active');
+    });
+    expect(transcript()).toContain('need a new session to fully apply');
+    expect(session.reloadPlugins).toHaveBeenCalled();
+    expect(refreshSpy).toHaveBeenCalled();
   });
 
   it('requires confirmation before /plugins remove removes a plugin', async () => {

@@ -35,6 +35,7 @@ import {
 } from './config';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 import { handlePluginsCommand } from './plugins';
+import type { SkillListSession } from './skills';
 import {
   handleExportDebugZipCommand,
   handleExportMdCommand,
@@ -121,6 +122,7 @@ export interface SlashCommandHost {
   showSessionPicker(): Promise<void>;
   sendNormalUserInput(text: string): void;
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void;
+  refreshSkillCommands(session?: SkillListSession): Promise<void>;
   readonly skillCommandMap: Map<string, string>;
 
   // Controller refs

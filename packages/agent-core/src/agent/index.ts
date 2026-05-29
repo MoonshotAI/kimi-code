@@ -109,6 +109,13 @@ export class Agent {
   readonly planMode: PlanMode;
   readonly usage: UsageRecorder;
   readonly skills: SkillManager | null;
+  /**
+   * The skill listing baked into the current system prompt, captured when the
+   * profile is applied. The {@link SkillRefreshInjector} compares the live
+   * listing against this to decide whether to surface an updated one after
+   * plugins are hot-loaded — without rewriting the (cache-prefix) system prompt.
+   */
+  systemPromptSkillListing: string | undefined;
   readonly tools: ToolManager;
   readonly background: BackgroundManager;
   readonly cron: CronManager | null;
@@ -264,6 +271,9 @@ export class Agent {
     });
     this.config.update({ profileName: profile.name, systemPrompt });
     this.tools.setActiveTools(profile.tools);
+    // Remember the skill listing baked into this prompt so the
+    // SkillRefreshInjector can detect when a hot-reload makes it stale.
+    this.systemPromptSkillListing = this.skills?.registry.getModelSkillListing();
   }
 
   async resume(): Promise<{ warning?: string }> {

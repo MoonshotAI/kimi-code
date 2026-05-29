@@ -30,7 +30,7 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元。一个 pl
 | `/plugins enable <id>` | 启用 plugin；省略 `<id>` 时打开管理器。 |
 | `/plugins disable <id>` | 禁用 plugin；省略 `<id>` 时打开管理器。 |
 | `/plugins remove <id>` | 移除 plugin，需二次确认。 |
-| `/plugins reload` | 重载 `installed.json` 和各 plugin manifest。 |
+| `/plugins reload` | 重载 `installed.json` 和各 plugin manifest，并把新增的 Skills 和新启用的 MCP servers 热加载到当前会话。 |
 | `/plugins mcp enable <id> <server>` | 启用 plugin 声明的 MCP server。 |
 | `/plugins mcp disable <id> <server>` | 禁用 plugin 声明的 MCP server。 |
 
@@ -38,9 +38,9 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元。一个 pl
 
 Kimi Code CLI 目前按用户安装 plugins，记录在 `$KIMI_CODE_HOME/plugins/` 下，对所有项目生效。暂不支持项目级、仓库级、管理员分发，以及带 `--scope` 的安装方式。
 
-Plugin 变更只对新会话生效。安装、启用/禁用、移除、重载 plugin，或修改 MCP server 开关后，需要通过 `/new` 开启新会话；当前会话不会更新，新的 Skills、会话启动行为和 MCP servers 只会在新会话中加载。
+安装或启用 plugin（或启用其某个 MCP server）后，运行 `/plugins reload` 即可把变更应用到当前会话，无需 `/new`。重载会热加载新增的 Skills（刷新 main agent 的 Skill 列表和 `Skill` 工具），并连接新启用的 MCP servers，其工具在下一个回合可用。仅作用于「新增」：禁用或移除 plugin、更新 plugin，以及 `sessionStart` 注入，不会在运行中的会话里被回收；存在这类待处理变更时，`/plugins reload` 会提示仍需开启新会话（`/new`）才能完全生效。
 
-本地安装会被拷贝到 `$KIMI_CODE_HOME/plugins/managed/<id>/`，Kimi Code CLI 始终从这份托管副本运行。安装后再编辑原始源目录不会生效，需要重新安装——`/plugins reload` 只会重读安装记录和 manifest，不会重读原始源。移除 plugin 只会删除其安装记录，托管副本和原始源文件仍保留在磁盘上。
+本地安装会被拷贝到 `$KIMI_CODE_HOME/plugins/managed/<id>/`，Kimi Code CLI 始终从这份托管副本运行。安装后再编辑原始源目录不会生效，需要重新安装——`/plugins reload` 只重读安装记录和 manifest（不会重读原始源），并应用上述「新增」变更。移除 plugin 只会删除其安装记录，托管副本和原始源文件仍保留在磁盘上。
 
 ## Plugin manifest
 
@@ -134,14 +134,16 @@ HTTP server：
 
 对于 stdio servers，`command` 可以是 `PATH` 上的命令，也可以是 plugin 根目录内以 `./` 开头的路径。如果设置了 `cwd`，它也必须以 `./` 开头并位于 plugin 根目录内；其他取值会被拒绝，该 server 会被忽略。Plugin MCP servers 会继承当前进程的环境变量；`env` 中的值会按字面量覆盖。
 
-Plugin MCP servers 只会在新会话中启动。要禁用或重新启用某个 server，运行 `/plugins`，选中 plugin 后按 `M`。也可以使用快捷命令：
+新启用的 plugin MCP servers 会在运行 `/plugins reload`（或新会话）时上线。要禁用或重新启用某个 server，运行 `/plugins`，选中 plugin 后按 `M`。也可以使用快捷命令：
 
 ```sh
+# 禁用不会在运行中的会话里回收——需新会话才能完全生效：
 /plugins mcp disable kimi-finance finance
 /new
 
+# 启用在当前会话 reload 后即生效：
 /plugins mcp enable kimi-finance finance
-/new
+/plugins reload
 ```
 
 ## 安全模型
@@ -151,5 +153,5 @@ Plugins 的加载范围有限：
 - 安装和会话启动时，仅读取 plugin manifests 和 Markdown Skill 文件。
 - 所有路径在解析符号链接后仍必须位于 plugin 根目录内。
 - 命令型 plugin tools、hooks 和旧式工具运行时不会由 plugin loader 执行。
-- 已启用 plugin 声明的 MCP servers 只会在新会话中启动，并且可以从 `/plugins` 中禁用。
+- 已启用 plugin 声明的 MCP servers 会通过 `/plugins reload`（或新会话）上线，并且可以从 `/plugins` 中禁用。
 - 损坏的 manifest 或不安全路径会显示在 `/plugins info <id>` 的 diagnostics 中，不会让无关会话崩溃。

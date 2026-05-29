@@ -3,6 +3,7 @@ import type { DynamicInjector } from './injector';
 import { PermissionModeInjector } from './permission-mode';
 import { PluginSessionStartInjector } from './plugin-session-start';
 import { PlanModeInjector } from './plan-mode';
+import { SkillRefreshInjector } from './skill-refresh';
 
 export class InjectionManager {
   private readonly injectors: DynamicInjector[];
@@ -10,6 +11,7 @@ export class InjectionManager {
   constructor(protected readonly agent: Agent) {
     this.injectors = [
       new PluginSessionStartInjector(agent),
+      new SkillRefreshInjector(agent),
       new PlanModeInjector(agent),
       new PermissionModeInjector(agent),
     ];

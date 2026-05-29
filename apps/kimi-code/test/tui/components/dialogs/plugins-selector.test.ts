@@ -300,7 +300,7 @@ describe('plugins selector dialogs', () => {
         },
       ],
       selectedId: 'kimi-datasource',
-      pluginHint: { id: 'kimi-datasource', text: 'pending /new' },
+      pluginHint: { id: 'kimi-datasource', text: 'pending reload' },
       colors: darkColors,
       onSelect: vi.fn(),
       onCancel: vi.fn(),
@@ -308,7 +308,7 @@ describe('plugins selector dialogs', () => {
 
     const out = picker.render(120).map(strip).join('\n');
 
-    expect(out).toContain('? Kimi Datasource  enabled  pending /new');
+    expect(out).toContain('? Kimi Datasource  enabled  pending reload');
   });
 
   it('defaults plugin removal confirmation to cancel', () => {

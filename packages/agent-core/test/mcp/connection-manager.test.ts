@@ -82,6 +82,30 @@ describe('McpConnectionManager', () => {
     }
   }, 20000);
 
+  it('connect() adds new servers without reconnecting existing ones or resetting initial-load timing', async () => {
+    const cm = new McpConnectionManager();
+    try {
+      await cm.connectAll({ alpha: stdioConfig() });
+      expect(cm.get('alpha')?.status).toBe('connected');
+      const initialDuration = cm.initialLoadDurationMs();
+
+      const events: McpServerEntry[] = [];
+      cm.onStatusChange((entry) => events.push(entry));
+
+      await cm.connect({ beta: stdioConfig() });
+
+      expect(cm.list().map((e) => e.name).toSorted()).toEqual(['alpha', 'beta']);
+      expect(cm.get('beta')?.status).toBe('connected');
+      // The incremental connect must not touch the already-connected server...
+      expect(events.some((entry) => entry.name === 'alpha')).toBe(false);
+      expect(events.some((entry) => entry.name === 'beta')).toBe(true);
+      // ...nor reset the initial-load timing metrics.
+      expect(cm.initialLoadDurationMs()).toBe(initialDuration);
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
   it('isolates failures: a bad server is marked failed without blocking the rest', async () => {
     const cm = new McpConnectionManager();
     try {

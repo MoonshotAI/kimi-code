@@ -1,6 +1,8 @@
 import { homedir as osHomedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
+import chalk from 'chalk';
+
 import type { PluginInfo, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 
 import {
@@ -87,7 +89,7 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
       }
       await session.setPluginMcpServerEnabled(id, server, action === 'enable');
       host.showStatus(
-        `${action === 'enable' ? 'Enabled' : 'Disabled'} MCP server ${server} for ${id}. Run /new to apply.`,
+        `${action === 'enable' ? 'Enabled' : 'Disabled'} MCP server ${server} for ${id}. Run ${reloadCommandText(host.state.theme.colors)} to apply to this session.`,
       );
       return;
     }
@@ -264,7 +266,9 @@ async function applyPluginEnabled(
       ? ` Some MCP servers are disabled; re-enable with /plugins mcp enable ${id} <server>.`
       : '';
   if (showStatus) {
-    host.showStatus(`${enabled ? 'Enabled' : 'Disabled'} ${id}. Run /new to apply.${mcpHint}`);
+    host.showStatus(
+      `${enabled ? 'Enabled' : 'Disabled'} ${id}. Run ${reloadCommandText(host.state.theme.colors)} to apply to this session.${mcpHint}`,
+    );
   }
   const inlineMcpHint = mcpHint.length > 0 ? ' · MCP servers disabled' : '';
   return `${pluginInlineChangeHint()}${inlineMcpHint}`;
@@ -393,22 +397,39 @@ async function installPluginFromSource(
       ? ` Declares ${summary.mcpServerCount} MCP ${serverWord}; enabled by default and configurable from /plugins.`
       : '';
   const installVerb = options?.successNotice === 'marketplace' ? 'Installed or updated' : 'Installed';
+  const reloadCmd = reloadCommandText(host.state.theme.colors);
   host.showStatus(
-    `${installVerb} ${summary.displayName} (${summary.id}).${mcpHint} Run /new to apply plugin changes.`,
+    `${installVerb} ${summary.displayName} (${summary.id}).${mcpHint} Run ${reloadCmd} to apply to this session.`,
   );
   if (options?.successNotice === 'marketplace') {
     host.showNotice(
       `Installed or updated ${summary.displayName}`,
-      `Marketplace install or update succeeded for ${summary.id}. Run /new to apply plugin changes.`,
+      `Marketplace install or update succeeded for ${summary.id}. Run ${reloadCmd} to apply to this session.`,
     );
   }
 }
 
 async function reloadPlugins(host: SlashCommandHost): Promise<void> {
-  const summary = await host.requireSession().reloadPlugins();
-  const line = `Reload: +${summary.added.length} -${summary.removed.length}` +
-    (summary.errors.length > 0 ? ` (${summary.errors.length} errors)` : '');
+  const session = host.requireSession();
+  const summary = await session.reloadPlugins();
+  const applied = summary.applied;
+  const parts = [`+${summary.added.length} plugins`];
+  if (applied !== undefined) {
+    parts.push(
+      `${applied.addedSkills.length} skills`,
+      `${applied.addedMcpServers.length} MCP servers`,
+    );
+  }
+  let line = `Reload: ${parts.join(', ')} now active`;
+  if (summary.errors.length > 0) {
+    line += ` (${summary.errors.length} errors)`;
+  }
+  if (summary.removed.length > 0 || (applied?.needsNewSession ?? false)) {
+    line += '. Removals, updates, and sessionStart changes need a new session to fully apply.';
+  }
   host.showStatus(line);
+  // New skills may add slash commands; refresh the palette/autocomplete.
+  await host.refreshSkillCommands(session);
 }
 
 function resolvePluginInstallSource(source: string, workDir: string): string {
@@ -420,5 +441,15 @@ function resolvePluginInstallSource(source: string, workDir: string): string {
 }
 
 function pluginInlineChangeHint(): string {
-  return 'pending /new';
+  return 'pending reload';
+}
+
+/**
+ * Render a `/plugins reload` reference with the theme accent + bold so the
+ * call to action stands out against the dimmed status line. chalk restores the
+ * surrounding status color after the highlighted span, so it composes with the
+ * status component's own coloring.
+ */
+function reloadCommandText(colors: { readonly accent: string }): string {
+  return chalk.hex(colors.accent).bold('/plugins reload');
 }

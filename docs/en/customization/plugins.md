@@ -30,7 +30,7 @@ Most users only need the interactive manager. You can also use these slash comma
 | `/plugins enable <id>` | Enable a plugin; opens the manager when `<id>` is omitted. |
 | `/plugins disable <id>` | Disable a plugin; opens the manager when `<id>` is omitted. |
 | `/plugins remove <id>` | Remove a plugin; requires confirmation. |
-| `/plugins reload` | Reload `installed.json` and each plugin manifest. |
+| `/plugins reload` | Reload `installed.json` and each plugin manifest, and hot-apply newly added skills and newly enabled MCP servers to the current session. |
 | `/plugins mcp enable <id> <server>` | Enable an MCP server declared by a plugin. |
 | `/plugins mcp disable <id> <server>` | Disable an MCP server declared by a plugin. |
 
@@ -38,9 +38,9 @@ For general slash command behavior, see [Slash commands](../reference/slash-comm
 
 Kimi Code CLI currently installs plugins per user. Records are stored under `$KIMI_CODE_HOME/plugins/` and apply across all projects. Project-local, repository-shared, admin-managed, and `--scope` installs are not supported yet.
 
-Plugin changes apply to new sessions only. After installing, enabling, disabling, removing, or reloading a plugin, or changing an MCP server toggle, start a fresh session with `/new`. The current session is not updated; new skills, session-start behavior, and MCP servers load only in new sessions.
+After installing or enabling a plugin (or enabling one of its MCP servers), run `/plugins reload` to apply the change to the current session — no `/new` required. Reload hot-loads newly added skills (the main agent's skill list and the `Skill` tool are refreshed) and connects newly enabled MCP servers; their tools become available on the next turn. Additive changes only: disabling or removing a plugin, updating one, and `sessionStart` injections are not torn down in a running session. When any of those are pending, `/plugins reload` reports that a new session (`/new`) is still required to fully apply them.
 
-Local installs are copied into `$KIMI_CODE_HOME/plugins/managed/<id>/`, and Kimi Code CLI always runs from that managed copy. Editing the original source directory after install has no effect until you reinstall — `/plugins reload` re-reads install records and manifests, not the original source. Removing a plugin deletes only its install record; the managed copy and the original source files are left on disk.
+Local installs are copied into `$KIMI_CODE_HOME/plugins/managed/<id>/`, and Kimi Code CLI always runs from that managed copy. Editing the original source directory after install has no effect until you reinstall — `/plugins reload` re-reads install records and manifests (not the original source) and applies the additive changes above. Removing a plugin deletes only its install record; the managed copy and the original source files are left on disk.
 
 ## Plugin manifest
 
@@ -134,14 +134,16 @@ HTTP server:
 
 For stdio servers, `command` may be a command on `PATH` or a `./` path inside the plugin root. If `cwd` is set, it must also start with `./` and stay inside the plugin root; other values are rejected and the server is omitted. Plugin MCP servers inherit the current process environment; values under `env` are literal overrides.
 
-Plugin MCP servers start only in new sessions. To disable or re-enable one, run `/plugins`, select the plugin, and press `M`. Shortcut commands are also available:
+Newly enabled plugin MCP servers come online when you run `/plugins reload` (or in a new session). To disable or re-enable one, run `/plugins`, select the plugin, and press `M`. Shortcut commands are also available:
 
 ```sh
+# Disabling is not torn down live — a new session fully applies it:
 /plugins mcp disable kimi-finance finance
 /new
 
+# Enabling takes effect in the current session after a reload:
 /plugins mcp enable kimi-finance finance
-/new
+/plugins reload
 ```
 
 ## Security model
@@ -151,5 +153,5 @@ Plugins expose a limited loading surface:
 - Install and session startup read only plugin manifests and Markdown skill files.
 - All paths must stay inside the plugin root after symlinks are resolved.
 - Command-backed plugin tools, hooks, and legacy tool runtimes are not executed by the plugin loader.
-- MCP servers declared by enabled plugins start only in new sessions and can be disabled from `/plugins`.
+- MCP servers declared by enabled plugins come online via `/plugins reload` (or a new session) and can be disabled from `/plugins`.
 - Bad manifests or unsafe paths produce diagnostics in `/plugins info <id>` without crashing unrelated sessions.

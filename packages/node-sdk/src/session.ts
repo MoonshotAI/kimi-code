@@ -8,9 +8,9 @@ import type {
   McpStartupMetrics,
   PermissionMode,
   PluginInfo,
+  PluginReloadResult,
   PluginSummary,
   PromptInput,
-  ReloadSummary,
   ResumedSessionState,
   SessionPlan,
   SessionStatus,
@@ -312,9 +312,9 @@ export class Session {
     await this.rpc.removePlugin(id);
   }
 
-  async reloadPlugins(): Promise<ReloadSummary> {
+  async reloadPlugins(): Promise<PluginReloadResult> {
     this.ensureOpen();
-    return this.rpc.reloadPlugins();
+    return this.rpc.reloadPlugins({ sessionId: this.id });
   }
 
   async getPluginInfo(id: string): Promise<PluginInfo> {

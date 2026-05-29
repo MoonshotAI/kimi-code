@@ -33,6 +33,8 @@ export type {
   OAuthRef,
   PluginInfo,
   PluginMcpServerInfo,
+  PluginReloadResult,
+  PluginRuntimeApplyResult,
   PluginSummary,
   PromptOrigin,
   ProviderConfig,
