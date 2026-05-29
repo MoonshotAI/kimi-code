@@ -34,8 +34,8 @@ export class MicroCompaction {
   }
 
   compact(messages: readonly ContextMessage[]): ContextMessage[] {
-    const cacheMissed =
-      Date.now() - this.agent.context.lastAssistantAt >= this.config.cacheMissedThresholdMs;
+    const { lastAssistantAt } = this.agent.context;
+    const cacheMissed = lastAssistantAt !== null && Date.now() - lastAssistantAt >= this.config.cacheMissedThresholdMs;
     if (cacheMissed) {
       this.cutoff = Math.max(0, messages.length - this.config.keepRecentMessages);
     }

@@ -27,11 +27,11 @@ export class ContextMemory {
   private openSteps: Map<string, ContextMessage> = new Map();
   private pendingToolResultIds = new Set<string>();
   private deferredMessages: ContextMessage[] = [];
-  private _lastAssistantAt = 0;
+  private _lastAssistantAt: number | null = null;
 
   constructor(protected readonly agent: Agent) {}
 
-  get lastAssistantAt(): number {
+  get lastAssistantAt(): number | null {
     return this._lastAssistantAt;
   }
 
@@ -65,7 +65,7 @@ export class ContextMemory {
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
     this.deferredMessages = [];
-    this._lastAssistantAt = 0;
+    this._lastAssistantAt = null;
     this.agent.microCompaction.reset();
     this.agent.injection.onContextClear();
     this.agent.emitStatusUpdated();

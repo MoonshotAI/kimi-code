@@ -196,7 +196,7 @@ describe('MicroCompaction', () => {
     ctx.agent.context.clear();
 
     expect(ctx.agent.context.messages).toHaveLength(0);
-    expect(ctx.agent.context.lastAssistantAt).toBe(0);
+    expect(ctx.agent.context.lastAssistantAt).toBeNull();
   });
 
   it('sends truncated old tool results to the next model request without mutating history', async () => {

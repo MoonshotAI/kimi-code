@@ -4,24 +4,7 @@ import {
 } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
-import type { AgentOptions } from '../../../src/agent';
 import { DefaultCompactionStrategy } from '../../../src/agent/compaction';
-
-type GenerateFn = NonNullable<AgentOptions['generate']>;
-
-const CATALOGUED_PROVIDER = {
-  type: 'kimi',
-  apiKey: 'test-key',
-  model: 'kimi-code',
-} as const;
-const CATALOGUED_MODEL_CAPABILITIES = {
-  image_in: true,
-  video_in: true,
-  audio_in: false,
-  thinking: true,
-  tool_use: true,
-  max_context_tokens: 256_000,
-} as const;
 
 describe('DefaultCompactionStrategy', () => {
   it('keeps an oversized trailing user message as recent', () => {
