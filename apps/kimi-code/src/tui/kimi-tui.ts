@@ -377,9 +377,7 @@ export class KimiTUI {
   private async initMainTui(): Promise<boolean> {
     const shouldReplayHistory = await this.init();
 
-    // init() reached the main TUI (it throws on fatal startup errors, e.g. a
-    // missing resume target, before we get here). Now it is safe to mount the
-    // footer chrome — earlier would risk a stray render leaking it on failure.
+    // Mount only after init() succeeds; see mountFooter().
     this.mountFooter();
     this.renderWelcome();
     this.setupAutocomplete();
@@ -590,19 +588,14 @@ export class KimiTUI {
     ui.addChild(this.state.todoPanelContainer);
     ui.addChild(this.state.queueContainer);
     ui.addChild(this.state.editorContainer);
-    // The footer is deliberately NOT mounted here: it is the only chrome that
-    // carries content (cwd/git/context) before a session is ready, so mounting
-    // it at construction lets a stray pre-`startEventLoop()` render (e.g. the
-    // `setAppState` in `init()`) paint the footer to the terminal. On a fatal
-    // startup failure — such as resuming a non-existent session — that paint
-    // is the last thing on screen, leaving the footer + statusline stranded
-    // above the error. `mountFooter()` adds it once startup reaches the main
-    // TUI. See initMainTui().
+    // Footer is mounted later (mountFooter), not here.
   }
 
-  // FooterComponent isn't a Container; wrap it so it picks up the same outer
-  // gutter as the transcript/panels above. Mounted only after init() succeeds
-  // so a failed startup never leaves footer chrome on screen.
+  // Footer is the only chrome with content before a session is ready, so
+  // mounting it at construction lets a stray pre-start render leak it to the
+  // terminal — e.g. above the error when resuming a missing session. Mount it
+  // only once init() succeeds. FooterComponent isn't a Container, so wrap it to
+  // pick up the same outer gutter as the panels above.
   private mountFooter(): void {
     const footerWrap = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
     footerWrap.addChild(this.state.footer);
