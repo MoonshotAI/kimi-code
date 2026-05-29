@@ -5,6 +5,7 @@ import {
   track,
   withTelemetryContext,
 } from '@moonshot-ai/kimi-telemetry';
+import chalk from 'chalk';
 import {
   KimiHarness,
   log,
@@ -164,9 +165,14 @@ async function resolvePromptSession(
       throw new Error(`Session "${opts.session}" not found.`);
     }
     if (target.workDir !== workDir) {
+      stderr.write(
+        `${chalk.yellow(
+          `Session "${opts.session}" was created under a different directory.\n` +
+            `  cd "${target.workDir}" && kimi -r ${opts.session}`,
+        )}\n\n`,
+      );
       throw new Error(
-        `Session "${opts.session}" was created under a different directory.\n` +
-          `  cd "${target.workDir}" && kimi -r ${opts.session}`,
+        `Session "${opts.session}" was created under a different directory.`,
       );
     }
     const session = await harness.resumeSession({ id: opts.session });

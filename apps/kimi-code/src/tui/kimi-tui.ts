@@ -457,9 +457,15 @@ export class KimiTUI {
             throw new Error(`Session "${startup.sessionFlag}" not found.`);
           }
           if (target.workDir !== workDir) {
+            this.state.ui.stop();
+            process.stderr.write(
+              `${chalk.yellow(
+                `Session "${startup.sessionFlag}" was created under a different directory.\n` +
+                  `  cd "${target.workDir}" && kimi -r ${startup.sessionFlag}`,
+              )}\n\n`,
+            );
             throw new Error(
-              `Session "${startup.sessionFlag}" was created under a different directory.\n` +
-                `  cd "${target.workDir}" && kimi -r ${startup.sessionFlag}`,
+              `Session "${startup.sessionFlag}" was created under a different directory.`,
             );
           }
           session = await this.harness.resumeSession({ id: startup.sessionFlag });
