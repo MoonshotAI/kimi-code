@@ -316,7 +316,6 @@ export class TurnFlow {
     signal.throwIfAborted();
     const blockResult = renderUserPromptHookBlockResult(promptHookResults);
     if (blockResult !== undefined) {
-      this.agent.context.markLastUserPromptBlocked('UserPromptSubmit');
       this.agent.context.appendMessage({
         role: 'assistant',
         content: [{ type: 'text', text: blockResult.text }],

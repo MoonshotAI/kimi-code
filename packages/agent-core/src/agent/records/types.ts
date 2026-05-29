@@ -66,7 +66,6 @@ export interface AgentRecordEvents {
   'full_compaction.complete': {};
 
   'context.append_message': { message: ContextMessage };
-  'context.mark_last_user_prompt_blocked': { hookEvent: string };
   'context.append_loop_event': { event: LoopRecordedEvent };
   'context.clear': {};
   'context.apply_compaction': CompactionResult;
