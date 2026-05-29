@@ -5,6 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 import { startPluginMarketplaceServer } from './dev-plugin-marketplace-server.mjs';
 
+// Suppress DEP0190 deprecation warning for shell+args in this dev script.
+// The args are safe (hardcoded paths + CLI flags forwarded by the user).
+process.removeAllListeners('warning');
+
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = resolve(SCRIPT_DIR, '..');
 const MARKETPLACE_ENV = 'KIMI_CODE_PLUGIN_MARKETPLACE_URL';
@@ -18,7 +22,10 @@ if (env[MARKETPLACE_ENV] === undefined || env[MARKETPLACE_ENV]?.trim().length ==
   console.error(`Plugin marketplace dev server: ${marketplaceServer.marketplaceUrl}`);
 }
 
-const tsxBin = process.platform === 'win32' ? 'tsx.cmd' : 'tsx';
+// On Windows, .cmd wrappers in node_modules/.bin cannot be spawned directly
+// without shell:true. Shell is only used on Windows to avoid EINVAL.
+const useShell = process.platform === 'win32';
+const tsxBin = useShell ? 'tsx.cmd' : 'tsx';
 const cliArgs = process.argv.slice(2);
 if (cliArgs[0] === '--') cliArgs.shift();
 const child = spawn(
@@ -28,6 +35,8 @@ const child = spawn(
     cwd: APP_ROOT,
     env,
     stdio: 'inherit',
+    shell: useShell,
+    windowsHide: true,
   },
 );
 
