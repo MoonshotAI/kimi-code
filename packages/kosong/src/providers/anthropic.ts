@@ -461,15 +461,27 @@ function convertMessage(message: Message): MessageParam {
     } else if (part.type === 'image_url') {
       blocks.push(imageUrlPartToAnthropic(part.imageUrl.url) as unknown as ContentBlockParam);
     } else if (part.type === 'think') {
-      // ThinkPart with encrypted -> ThinkingBlockParam; no encrypted -> skip
-      if (part.encrypted === undefined) {
-        continue;
+      // ThinkPart -> ThinkingBlockParam.
+      //
+      // Signed: emit the block with its signature. api.anthropic.com requires a
+      // valid signature and always supplies one, so Anthropic-sourced history
+      // always takes this branch.
+      //
+      // Unsigned: still PRESERVE the thinking, emitted *without* a `signature`
+      // field. Anthropic-compatible backends (e.g. Kimi) stream thinking with
+      // no signature_delta, yet reject a tool-call turn whose thinking is gone
+      // ("thinking is enabled but reasoning_content is missing"). Dropping it
+      // here is what broke multi-step tool use on those backends. An unsigned
+      // part with no text carries nothing, so it is skipped.
+      if (part.encrypted !== undefined) {
+        blocks.push({
+          type: 'thinking',
+          thinking: part.think,
+          signature: part.encrypted,
+        } satisfies ThinkingBlockParam);
+      } else if (part.think !== '') {
+        blocks.push({ type: 'thinking', thinking: part.think } as unknown as ThinkingBlockParam);
       }
-      blocks.push({
-        type: 'thinking',
-        thinking: part.think,
-        signature: part.encrypted,
-      } satisfies ThinkingBlockParam);
     }
     // audio_url, video_url: not supported by Anthropic, skip
   }
