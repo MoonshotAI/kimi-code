@@ -261,6 +261,90 @@ describe('MicroCompaction', () => {
     expect(toolTexts(ctx.agent.context.messages)).toEqual([DEFAULT_MARKER]);
   });
 
+  it('preserves the restored cutoff when resuming before the next cache miss', async () => {
+    vi.useFakeTimers();
+    const persistence = new InMemoryAgentRecordPersistence();
+    const config = {
+      keepRecentMessages: 2,
+      minContentTokens: 1,
+      cacheMissedThresholdMs: 60 * MINUTE,
+    };
+    const ctx = testAgent({
+      microCompaction: config,
+      persistence,
+    });
+
+    vi.setSystemTime(0);
+    appendMicroToolExchange(ctx, 1, { output: 'result one' });
+    appendMicroToolExchange(ctx, 2, { output: 'result two' });
+
+    vi.setSystemTime(61 * MINUTE);
+    expect(toolTexts(ctx.agent.context.messages)).toEqual([DEFAULT_MARKER, 'result two']);
+    expect(lastMicroCompactionCutoff(persistence.records)).toBe(4);
+
+    vi.setSystemTime(62 * MINUTE);
+    appendMicroToolExchange(ctx, 3, { output: 'result three' });
+
+    const resumed = testAgent({
+      microCompaction: config,
+      persistence: new InMemoryAgentRecordPersistence(cloneRecords(persistence.records)),
+    });
+
+    vi.setSystemTime(63 * MINUTE);
+    await resumed.agent.resume();
+
+    expect(resumed.agent.context.lastAssistantAt).toBe(62 * MINUTE);
+    expect(toolTexts(resumed.agent.context.messages)).toEqual([
+      DEFAULT_MARKER,
+      'result two',
+      'result three',
+    ]);
+  });
+
+  it('recomputes the restored cutoff when resuming after the cache-miss threshold', async () => {
+    vi.useFakeTimers();
+    const persistence = new InMemoryAgentRecordPersistence();
+    const config = {
+      keepRecentMessages: 2,
+      minContentTokens: 1,
+      cacheMissedThresholdMs: 60 * MINUTE,
+    };
+    const ctx = testAgent({
+      microCompaction: config,
+      persistence,
+    });
+
+    vi.setSystemTime(0);
+    appendMicroToolExchange(ctx, 1, { output: 'result one' });
+    appendMicroToolExchange(ctx, 2, { output: 'result two' });
+
+    vi.setSystemTime(61 * MINUTE);
+    expect(toolTexts(ctx.agent.context.messages)).toEqual([DEFAULT_MARKER, 'result two']);
+    expect(lastMicroCompactionCutoff(persistence.records)).toBe(4);
+
+    vi.setSystemTime(62 * MINUTE);
+    appendMicroToolExchange(ctx, 3, { output: 'result three' });
+
+    const resumedPersistence = new InMemoryAgentRecordPersistence(
+      cloneRecords(persistence.records),
+    );
+    const resumed = testAgent({
+      microCompaction: config,
+      persistence: resumedPersistence,
+    });
+
+    vi.setSystemTime(123 * MINUTE);
+    await resumed.agent.resume();
+
+    expect(resumed.agent.context.lastAssistantAt).toBe(62 * MINUTE);
+    expect(toolTexts(resumed.agent.context.messages)).toEqual([
+      DEFAULT_MARKER,
+      DEFAULT_MARKER,
+      'result three',
+    ]);
+    expect(lastMicroCompactionCutoff(resumedPersistence.records)).toBe(7);
+  });
+
   it('keeps an old cutoff while cache is warm and advances it on the next miss', () => {
     vi.useFakeTimers();
     const ctx = testAgent({
@@ -601,6 +685,14 @@ function resumeToolExchangeRecords(assistantRecordTime: number): AgentRecord[] {
       },
     },
   ];
+}
+
+function cloneRecords(records: readonly AgentRecord[]): AgentRecord[] {
+  return records.map((record) => structuredClone(record));
+}
+
+function lastMicroCompactionCutoff(records: readonly AgentRecord[]): number | undefined {
+  return records.findLast((record) => record.type === 'micro_compaction.apply')?.cutoff;
 }
 
 function toolTexts(messages: readonly Message[]): string[] {

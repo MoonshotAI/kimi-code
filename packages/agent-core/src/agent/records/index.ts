@@ -58,6 +58,9 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'full_compaction.complete':
       agent.fullCompaction.markCompleted();
       return;
+    case 'micro_compaction.apply':
+      agent.microCompaction.apply(input.cutoff);
+      return;
     case 'plan_mode.enter':
       agent.planMode.restoreEnter(input);
       return;

@@ -33,11 +33,19 @@ export class MicroCompaction {
     this.cutoff = 0;
   }
 
+  apply(cutoff: number): void {
+    this.agent.records.logRecord({
+      type: 'micro_compaction.apply',
+      cutoff,
+    });
+    this.cutoff = cutoff;
+  }
+
   compact(messages: readonly ContextMessage[]): ContextMessage[] {
     const { lastAssistantAt } = this.agent.context;
     const cacheMissed = lastAssistantAt !== null && Date.now() - lastAssistantAt >= this.config.cacheMissedThresholdMs;
     if (cacheMissed) {
-      this.cutoff = Math.max(0, messages.length - this.config.keepRecentMessages);
+      this.apply(Math.max(0, messages.length - this.config.keepRecentMessages));
     }
 
     const result: ContextMessage[] = [];
