@@ -38,7 +38,7 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元。一个 pl
 
 GitHub URL 支持四种形式。裸 URL `https://github.com/<owner>/<repo>` 会安装该仓库最新的 GitHub release；仓库没有 release 时回落到默认分支。`https://github.com/<owner>/<repo>/tree/<ref>` 用于安装指定分支、tag 或短 commit SHA。`https://github.com/<owner>/<repo>/releases/tag/<tag>` 和 `https://github.com/<owner>/<repo>/commit/<sha>` 用于钉死具体的 tag 或 commit。网络请求只走 `github.com` 重定向和 `codeload.github.com` 下载，**不会**调用 `api.github.com`。
 
-Plugin 管理器会展示每个安装的来源以及一个信任徽章。`kimi-official` 表示从 Kimi marketplace 以 `official` tier 安装的 plugin；`curated` 表示 marketplace 中 `curated` tier 的 plugin；`third-party` 表示其它所有情况，包括你直接用 `/plugins install <url>` 装的或本地目录装的 plugin。重新安装时徽章会根据新的来源刷新。
+Plugin 管理器会展示每个安装的来源以及一个信任徽章。`kimi-official` 表示 plugin 的来源能匹配内置 Kimi marketplace 中的 `official` 条目，并且下载地址来自 `https://code.kimi.com`；`curated` 对应同样校验通过的 `curated` 条目。`third-party` 表示其它所有情况，包括你直接用 `/plugins install <url>` 装的、本地目录装的，或从自定义 marketplace source 装的 plugin。只要来源无法通过内置 marketplace 校验，Kimi Code CLI 就不会给它展示信任徽章。
 
 Kimi Code CLI 目前按用户安装 plugins，记录在 `$KIMI_CODE_HOME/plugins/` 下，对所有项目生效。暂不支持项目级、仓库级、管理员分发，以及带 `--scope` 的安装方式。
 

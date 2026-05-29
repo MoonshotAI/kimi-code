@@ -446,12 +446,9 @@ export class SDKRpcClient {
     return rpc.listPlugins({});
   }
 
-  async installPlugin(
-    source: string,
-    options?: { readonly marketplace?: { readonly id: string; readonly tier: 'official' | 'curated' } },
-  ): Promise<PluginSummary> {
+  async installPlugin(source: string): Promise<PluginSummary> {
     const rpc = await this.getRpc();
-    return rpc.installPlugin({ source, marketplace: options?.marketplace });
+    return rpc.installPlugin({ source });
   }
 
   async setPluginEnabled(id: string, enabled: boolean): Promise<void> {

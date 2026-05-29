@@ -11,6 +11,7 @@ import chalk from 'chalk';
 
 import type { ColorPalette } from '#/tui/theme/colors';
 import {
+  type PluginTrustContext,
   formatPluginSourceLabel,
   pluginTrustLabel,
 } from '#/tui/utils/plugin-source-label';
@@ -53,6 +54,7 @@ export interface PluginsOverviewSelectorOptions {
     readonly id: string;
     readonly text: string;
   };
+  readonly trustContext?: PluginTrustContext;
   readonly colors: ColorPalette;
   readonly onSelect: (selection: PluginsOverviewSelection) => void;
   readonly onCancel: () => void;
@@ -68,7 +70,7 @@ export class PluginsOverviewSelectorComponent extends Container implements Focus
   constructor(opts: PluginsOverviewSelectorOptions) {
     super();
     this.opts = opts;
-    this.items = buildOverviewItems(opts.plugins);
+    this.items = buildOverviewItems(opts.plugins, opts.trustContext);
     const selectedIndex = this.items.findIndex(
       (item) => item.value === `${OVERVIEW_PLUGIN_PREFIX}${opts.selectedId}`,
     );
@@ -445,13 +447,16 @@ export class PluginRemoveConfirmComponent extends ChoicePickerComponent {
   }
 }
 
-function buildOverviewItems(plugins: readonly PluginSummary[]): PluginsOverviewItem[] {
+function buildOverviewItems(
+  plugins: readonly PluginSummary[],
+  trustContext: PluginTrustContext | undefined,
+): PluginsOverviewItem[] {
   const options: PluginsOverviewItem[] = plugins.map((plugin) => ({
     value: `${OVERVIEW_PLUGIN_PREFIX}${plugin.id}`,
     kind: 'plugin',
     label: plugin.displayName,
     status: pluginStatus(plugin),
-    description: overviewPluginDescription(plugin),
+    description: overviewPluginDescription(plugin, trustContext),
   }));
   options.push(
     {
@@ -476,7 +481,10 @@ function buildOverviewItems(plugins: readonly PluginSummary[]): PluginsOverviewI
   return options;
 }
 
-function overviewPluginDescription(plugin: PluginSummary): string {
+function overviewPluginDescription(
+  plugin: PluginSummary,
+  trustContext: PluginTrustContext | undefined,
+): string {
   const state = plugin.state === 'ok' ? '' : ` · state ${plugin.state}`;
   const skills = `${plugin.skillCount} skill${plugin.skillCount === 1 ? '' : 's'}`;
   const mcp =
@@ -485,7 +493,7 @@ function overviewPluginDescription(plugin: PluginSummary): string {
       : '';
   const diagnostics = plugin.hasErrors ? ' · diagnostics available' : '';
   const source = ` · ${formatPluginSourceLabel(plugin)}`;
-  const trust = ` · ${pluginTrustLabel(plugin)}`;
+  const trust = ` · ${pluginTrustLabel(plugin, trustContext)}`;
   return `id ${plugin.id} · ${skills}${mcp}${source}${trust}${state}${diagnostics}`;
 }
 

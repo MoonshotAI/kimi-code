@@ -4,7 +4,6 @@ import path from 'node:path';
 import type {
   PluginCapabilityState,
   PluginGithubMetadata,
-  PluginMarketplaceContext,
   PluginSource,
 } from './types';
 
@@ -20,7 +19,6 @@ export interface InstalledRecord {
   readonly originalSource?: string;
   readonly capabilities?: PluginCapabilityState;
   readonly github?: PluginGithubMetadata;
-  readonly marketplace?: PluginMarketplaceContext;
 }
 
 export interface InstalledFile {

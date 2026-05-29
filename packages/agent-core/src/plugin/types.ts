@@ -76,23 +76,6 @@ export interface PluginGithubMetadata {
   readonly installedSha?: string;
 }
 
-export type PluginMarketplaceTier = 'official' | 'curated';
-
-/**
- * Recorded when a plugin was installed via the Kimi marketplace selector.
- * Drives the `kimi-official` trust badge in the UI: present ⇒ Kimi-vetted
- * source path; absent ⇒ third-party (raw URL, GitHub, or local install).
- *
- * We deliberately do NOT backfill this for plugins installed before the
- * field existed — their installed.json records carry no marketplace
- * context, so they show as third-party until re-installed via the
- * marketplace selector.
- */
-export interface PluginMarketplaceContext {
-  readonly id: string;
-  readonly tier: PluginMarketplaceTier;
-}
-
 export interface PluginRecord {
   readonly id: string;
   readonly root: string;
@@ -104,7 +87,6 @@ export interface PluginRecord {
   readonly originalSource?: string;
   readonly capabilities?: PluginCapabilityState;
   readonly github?: PluginGithubMetadata;
-  readonly marketplace?: PluginMarketplaceContext;
   readonly skillInstructions?: string;
   readonly skillCount: number;
   readonly manifest?: PluginManifest;
@@ -127,7 +109,6 @@ export interface PluginSummary {
   readonly source: PluginSource;
   readonly originalSource?: string;
   readonly github?: PluginGithubMetadata;
-  readonly marketplace?: PluginMarketplaceContext;
 }
 
 export interface PluginInfo extends PluginSummary {

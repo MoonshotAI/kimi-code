@@ -14,7 +14,6 @@ import {
   type PluginCapabilityState,
   type PluginGithubMetadata,
   type PluginInfo,
-  type PluginMarketplaceContext,
   type PluginMcpServerInfo,
   type PluginRecord,
   type PluginSource,
@@ -22,15 +21,6 @@ import {
   type ReloadSummary,
   normalizePluginId,
 } from './types';
-
-export interface InstallPluginOptions {
-  /**
-   * Set when the install originates from the Kimi marketplace selector.
-   * The CLI `/plugins install <url>` path leaves this undefined so the
-   * resulting record stays third-party.
-   */
-  readonly marketplace?: PluginMarketplaceContext;
-}
 
 // Hidden Kimi CLI subcommand that re-enters as a Node interpreter.
 // Used as fallback when an MCP server declares `"command": "node"` but the
@@ -66,7 +56,7 @@ export class PluginManager {
     return this.records.get(normalizePluginId(id));
   }
 
-  async install(source: string, options?: InstallPluginOptions): Promise<PluginRecord> {
+  async install(source: string): Promise<PluginRecord> {
     const resolved = resolveInstallSource(source);
 
     let normalizedRoot: string;
@@ -139,10 +129,6 @@ export class PluginManager {
       source: sourceType,
       capabilities: existing?.capabilities,
       github,
-      // marketplace context is replaced on each install — a re-install from a
-      // non-marketplace source MUST clear any prior `kimi-official` badge,
-      // and a marketplace re-install MUST attach one regardless of prior state.
-      marketplace: options?.marketplace,
       parsed,
     });
     this.records.set(id, record);
@@ -273,7 +259,6 @@ export class PluginManager {
       originalSource: record.originalSource,
       capabilities: record.capabilities,
       github: record.github,
-      marketplace: record.marketplace,
     }));
     await writeInstalled(this.kimiHomeDir, { version: 1, plugins: installed });
   }
@@ -289,7 +274,6 @@ export class PluginManager {
       originalSource: entry.originalSource,
       capabilities: entry.capabilities,
       github: entry.github,
-      marketplace: entry.marketplace,
       source: entry.source,
       parsed,
     });
@@ -342,7 +326,6 @@ async function recordFrom(input: {
   originalSource?: string;
   capabilities?: PluginCapabilityState;
   github?: PluginGithubMetadata;
-  marketplace?: PluginMarketplaceContext;
   source?: PluginSource;
   parsed: ParsedManifestResult;
 }): Promise<PluginRecord> {
@@ -359,7 +342,6 @@ async function recordFrom(input: {
     originalSource: input.originalSource,
     capabilities: input.capabilities,
     github: input.github,
-    marketplace: input.marketplace,
     skillCount: await countDiscoveredPluginSkills(input.id, parsed.manifest),
     manifest: parsed.manifest,
     manifestKind: parsed.manifestKind,
@@ -384,7 +366,6 @@ function recordToSummary(record: PluginRecord): PluginSummary {
     source: record.source,
     originalSource: record.originalSource,
     github: record.github,
-    marketplace: record.marketplace,
   };
 }
 

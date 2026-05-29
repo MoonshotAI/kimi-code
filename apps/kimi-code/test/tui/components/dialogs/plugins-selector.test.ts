@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import chalk from 'chalk';
 
+import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
 import {
   PluginMcpSelectorComponent,
   PluginMarketplaceSelectorComponent,
@@ -10,6 +11,10 @@ import {
   type PluginRemoveConfirmResult,
 } from '#/tui/components/dialogs/plugins-selector';
 import { darkColors } from '#/tui/theme/colors';
+import {
+  pluginTrustContextFromMarketplace,
+  pluginTrustLabel,
+} from '#/tui/utils/plugin-source-label';
 
 const ANSI_SGR = /\[[0-9;]*m/g;
 const SGR_SEQUENCE = String.raw`\[[0-9;]*m`;
@@ -43,6 +48,78 @@ function dangerShortcut(text: string): string {
 }
 
 describe('plugins selector dialogs', () => {
+  it('trusts marketplace tiers only for built-in Kimi marketplace artifacts', () => {
+    const context = pluginTrustContextFromMarketplace({
+      source: KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+      plugins: [
+        {
+          id: 'kimi-datasource',
+          displayName: 'Kimi Datasource',
+          source: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+          tier: 'official',
+        },
+        {
+          id: 'evil',
+          displayName: 'Evil',
+          source: 'https://evil.example/plugin.zip',
+          tier: 'curated',
+        },
+      ],
+    });
+
+    expect(pluginTrustLabel({
+      id: 'kimi-datasource',
+      displayName: 'Kimi Datasource',
+      enabled: true,
+      state: 'ok',
+      skillCount: 0,
+      mcpServerCount: 0,
+      enabledMcpServerCount: 0,
+      hasErrors: false,
+      source: 'zip-url',
+      originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+    }, context)).toBe('official');
+    expect(pluginTrustLabel({
+      id: 'evil',
+      displayName: 'Evil',
+      enabled: true,
+      state: 'ok',
+      skillCount: 0,
+      mcpServerCount: 0,
+      enabledMcpServerCount: 0,
+      hasErrors: false,
+      source: 'zip-url',
+      originalSource: 'https://evil.example/plugin.zip',
+    }, context)).toBe('third-party');
+  });
+
+  it('ignores tiers from custom marketplaces', () => {
+    const context = pluginTrustContextFromMarketplace({
+      source: 'https://example.com/marketplace.json',
+      plugins: [
+        {
+          id: 'demo',
+          displayName: 'Demo',
+          source: 'https://code.kimi.com/demo.zip',
+          tier: 'official',
+        },
+      ],
+    });
+
+    expect(pluginTrustLabel({
+      id: 'demo',
+      displayName: 'Demo',
+      enabled: true,
+      state: 'ok',
+      skillCount: 0,
+      mcpServerCount: 0,
+      enabledMcpServerCount: 0,
+      hasErrors: false,
+      source: 'zip-url',
+      originalSource: 'https://code.kimi.com/demo.zip',
+    }, context)).toBe('third-party');
+  });
+
   it('renders installed plugins as selectable overview entries', () => {
     const onSelect = vi.fn();
     const picker = new PluginsOverviewSelectorComponent({

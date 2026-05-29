@@ -1,10 +1,17 @@
 import type { PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 
+import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import type { PluginMarketplace } from '#/utils/plugin-marketplace';
+
 export const OFFICIAL_BADGE = 'official';
 export const CURATED_BADGE = 'curated';
 export const THIRD_PARTY_BADGE = 'third-party';
 
 export type PluginTrustLabel = 'official' | 'curated' | 'third-party';
+
+export interface PluginTrustContext {
+  readonly trustedTiersBySource: ReadonlyMap<string, PluginTrustLabel>;
+}
 
 /**
  * Human-readable provenance label for a plugin, suitable for inline display
@@ -26,26 +33,42 @@ export function formatPluginSourceLabel(plugin: PluginSummary): string {
 }
 
 /**
- * Returns one of three trust labels for a plugin:
- *
- *   - `official`    — `marketplace.tier === 'official'`. Kimi-built and
- *                     -maintained code.
- *   - `curated`     — `marketplace.tier === 'curated'`. Third-party code that
- *                     Kimi reviewed and shipped through the marketplace, but
- *                     does not own ongoing maintenance for.
- *   - `third-party` — no marketplace context. Installed via raw URL, GitHub,
- *                     or local path (or installed before the marketplace
- *                     field existed; we deliberately don't backfill).
- *
- * Note that a marketplace re-install replaces the `marketplace` field on
- * the record, and a CLI re-install clears it. So this label always reflects
- * the most recent install path.
+ * Returns one of three trust labels for a plugin. Only plugin artifacts
+ * downloaded from the built-in Kimi marketplace on code.kimi.com can receive
+ * the official or curated badge. Custom marketplaces, GitHub installs, local
+ * installs, and dev loopback marketplaces remain third-party.
  */
-export function pluginTrustLabel(plugin: PluginSummary): PluginTrustLabel {
-  const tier = plugin.marketplace?.tier;
-  if (tier === 'official') return 'official';
-  if (tier === 'curated') return 'curated';
-  return 'third-party';
+export function pluginTrustLabel(
+  plugin: PluginSummary,
+  context?: PluginTrustContext,
+): PluginTrustLabel {
+  if (plugin.source !== 'zip-url' || plugin.originalSource === undefined) {
+    return 'third-party';
+  }
+  return context?.trustedTiersBySource.get(plugin.originalSource) ?? 'third-party';
+}
+
+export function pluginTrustContextFromMarketplace(
+  marketplace: PluginMarketplace | undefined,
+): PluginTrustContext | undefined {
+  if (marketplace === undefined || marketplace.source !== KIMI_CODE_PLUGIN_MARKETPLACE_URL) {
+    return undefined;
+  }
+  const trustedTiersBySource = new Map<string, PluginTrustLabel>();
+  for (const entry of marketplace.plugins) {
+    if (entry.tier === undefined || !isTrustedKimiPluginSource(entry.source)) continue;
+    trustedTiersBySource.set(entry.source, entry.tier);
+  }
+  return { trustedTiersBySource };
+}
+
+export function isTrustedKimiPluginSource(source: string): boolean {
+  try {
+    const url = new URL(source);
+    return url.protocol === 'https:' && url.hostname === 'code.kimi.com';
+  } catch {
+    return false;
+  }
 }
 
 function hostFromUrl(raw: string): string | undefined {

@@ -794,46 +794,17 @@ describe('PluginManager', () => {
     expect(record.github?.ref).toEqual({ kind: 'branch', value: 'main' });
   });
 
-  it('install() records marketplace context when caller passes it (kimi-official tier)', async () => {
-    const home = await makeKimiHome();
-    const root = await makePlugin('kimi-datasource', { version: '1.0.0' });
-    const manager = new PluginManager({ kimiHomeDir: home });
-    await manager.load();
-    const record = await manager.install(root, {
-      marketplace: { id: 'kimi-datasource', tier: 'official' },
-    });
-    expect(record.marketplace).toEqual({ id: 'kimi-datasource', tier: 'official' });
-
-    const reloaded = new PluginManager({ kimiHomeDir: home });
-    await reloaded.load();
-    expect(reloaded.get('kimi-datasource')?.marketplace).toEqual({
-      id: 'kimi-datasource',
-      tier: 'official',
-    });
-  });
-
-  it('install() leaves marketplace undefined when caller does not pass it (third-party path)', async () => {
+  it('install() ignores forged marketplace context from legacy callers', async () => {
     const home = await makeKimiHome();
     const root = await makePlugin('rando', { version: '1.0.0' });
     const manager = new PluginManager({ kimiHomeDir: home });
     await manager.load();
-    const record = await manager.install(root);
-    expect(record.marketplace).toBeUndefined();
-  });
 
-  it('install() clears prior marketplace context when re-installed from a third-party source', async () => {
-    const home = await makeKimiHome();
-    const root = await makePlugin('kimi-datasource', { version: '1.0.0' });
-    const manager = new PluginManager({ kimiHomeDir: home });
-    await manager.load();
-    await manager.install(root, {
-      marketplace: { id: 'kimi-datasource', tier: 'official' },
-    });
-    expect(manager.get('kimi-datasource')?.marketplace).toBeDefined();
+    const record = await (manager.install as (source: string, options?: unknown) => Promise<unknown>)(root, {
+      marketplace: { id: 'rando', tier: 'official' },
+    }) as Awaited<ReturnType<PluginManager['install']>>;
 
-    // Same id, but caller now passes no marketplace context (CLI path).
-    const reinstalled = await manager.install(root);
-    expect(reinstalled.marketplace).toBeUndefined();
+    expect((record as { marketplace?: unknown }).marketplace).toBeUndefined();
   });
 
   it('install() from github URL overwrites an existing zip-url install (CDN migration)', async () => {

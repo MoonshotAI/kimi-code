@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 
 import type { PluginInfo, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 
+import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
 import {
   PluginMcpSelectorComponent,
   PluginMarketplaceSelectorComponent,
@@ -19,7 +20,12 @@ import {
 } from '../components/messages/plugins-status-panel';
 import { UsagePanelComponent } from '../components/messages/usage-panel';
 import { formatErrorMessage } from '../utils/event-payload';
-import { formatPluginSourceLabel } from '../utils/plugin-source-label';
+import {
+  type PluginTrustContext,
+  formatPluginSourceLabel,
+  isTrustedKimiPluginSource,
+  pluginTrustContextFromMarketplace,
+} from '../utils/plugin-source-label';
 import { loadPluginMarketplace } from '#/utils/plugin-marketplace';
 import type { SlashCommandHost } from './dispatch';
 
@@ -142,8 +148,10 @@ async function showPluginsPicker(
   options?: ShowPluginsPickerOptions,
 ): Promise<void> {
   let plugins: readonly PluginSummary[];
+  let trustContext: PluginTrustContext | undefined;
   try {
     plugins = await host.requireSession().listPlugins();
+    trustContext = await loadDefaultPluginTrustContext(host, plugins);
   } catch (error) {
     host.showError(`Failed to load plugins: ${formatErrorMessage(error)}`);
     return;
@@ -154,6 +162,7 @@ async function showPluginsPicker(
       plugins,
       selectedId: options?.selectedId,
       pluginHint: options?.pluginHint,
+      trustContext,
       colors: host.state.theme.colors,
       onSelect: (selection) => {
         host.restoreEditor();
@@ -194,6 +203,24 @@ async function showPluginMarketplacePicker(host: SlashCommandHost, source?: stri
     );
   } catch (error) {
     host.showError(`Failed to load plugin marketplace: ${formatErrorMessage(error)}`);
+  }
+}
+
+async function loadDefaultPluginTrustContext(
+  host: SlashCommandHost,
+  plugins: readonly PluginSummary[],
+): Promise<PluginTrustContext | undefined> {
+  if (!plugins.some((plugin) => isTrustedKimiPluginSource(plugin.originalSource ?? ''))) {
+    return undefined;
+  }
+  try {
+    const marketplace = await loadPluginMarketplace({
+      workDir: host.state.appState.workDir,
+      source: KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+    });
+    return pluginTrustContextFromMarketplace(marketplace);
+  } catch {
+    return undefined;
   }
 }
 
@@ -355,12 +382,6 @@ async function handlePluginMarketplaceSelection(
       host.showStatus(`Installing or updating ${selection.entry.displayName} from marketplace...`);
       await installPluginFromSource(host, selection.entry.source, {
         successNotice: 'marketplace',
-        // tier is optional on marketplace.json entries. Skip the badge if a
-        // marketplace author left it off rather than guessing a tier.
-        marketplace:
-          selection.entry.tier !== undefined
-            ? { id: selection.entry.id, tier: selection.entry.tier }
-            : undefined,
       });
       await showPluginsPicker(host, { selectedId: selection.entry.id });
       return;
@@ -375,9 +396,11 @@ async function renderPluginsList(
   plugins?: readonly PluginSummary[],
 ): Promise<void> {
   const currentPlugins = plugins ?? (await host.requireSession().listPlugins());
+  const trustContext = await loadDefaultPluginTrustContext(host, currentPlugins);
   const lines = buildPluginsListLines({
     colors: host.state.theme.colors,
     plugins: currentPlugins,
+    trustContext,
   });
   const title = ` Plugins (${currentPlugins.length}) `;
   const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary, title);
@@ -387,7 +410,8 @@ async function renderPluginsList(
 
 async function renderPluginInfo(host: SlashCommandHost, id: string): Promise<void> {
   const info = await host.requireSession().getPluginInfo(id);
-  const lines = buildPluginsInfoLines({ colors: host.state.theme.colors, info });
+  const trustContext = await loadDefaultPluginTrustContext(host, [info]);
+  const lines = buildPluginsInfoLines({ colors: host.state.theme.colors, info, trustContext });
   const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary, ` ${info.id} `);
   host.state.transcriptContainer.addChild(panel);
   host.state.ui.requestRender();
@@ -398,15 +422,24 @@ async function installPluginFromSource(
   source: string,
   options?: {
     readonly successNotice?: 'marketplace';
-    readonly marketplace?: { readonly id: string; readonly tier: 'official' | 'curated' };
   },
 ): Promise<void> {
   const session = host.requireSession();
   const beforeList = await session.listPlugins();
   const summary = await session.installPlugin(
     resolvePluginInstallSource(source, host.state.appState.workDir),
-    { marketplace: options?.marketplace },
   );
+  showPluginInstallResult(host, beforeList, summary, options);
+}
+
+function showPluginInstallResult(
+  host: SlashCommandHost,
+  beforeList: readonly PluginSummary[],
+  summary: PluginSummary,
+  options?: {
+    readonly successNotice?: 'marketplace';
+  },
+): void {
   const previous = beforeList.find((entry) => entry.id === summary.id);
   const serverWord = summary.mcpServerCount === 1 ? 'server' : 'servers';
   const mcpHint =

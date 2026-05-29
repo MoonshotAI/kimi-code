@@ -34,8 +34,6 @@ export type {
   PluginGithubMetadata,
   PluginGithubRef,
   PluginInfo,
-  PluginMarketplaceContext,
-  PluginMarketplaceTier,
   PluginMcpServerInfo,
   PluginSource,
   PluginSummary,
