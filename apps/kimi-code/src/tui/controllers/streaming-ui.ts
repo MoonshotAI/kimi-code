@@ -174,6 +174,74 @@ export class StreamingUIController {
     }
   }
 
+  /**
+   * Push the actual terminal status of a background agent task into the
+   * matching `Agent` tool call component so its snapshot phase no longer
+   * trusts the spawn-success ToolResult (which would otherwise label every
+   * terminated bg agent — including `lost` ones — as `✓ Completed`).
+   *
+   * Resolution order, picked to handle both live and resume:
+   *   1. `agentId` → matches the subagent id recorded on `spawned`
+   *      (live path; replayed tool calls currently do not carry a
+   *      subagent id back, so this branch only catches live mismatches).
+   *   2. Description fallback — required on resume because reconcile's
+   *      `BackgroundTaskInfo` is the only handle the TUI has to a
+   *      replayed Agent card. Only used when exactly one Agent tool call
+   *      shares the description; ambiguous matches are skipped to avoid
+   *      corrupting an unrelated card.
+   *
+   * Search scope includes both in-flight components and already-mounted
+   * cards (some live in `transcriptContainer` standalone, others are
+   * borrowed by an `AgentGroupComponent` and reachable only via
+   * `getToolComponents()`).
+   *
+   * Returns true iff a component was found and updated.
+   */
+  applyBackgroundTaskTerminalStatus(args: {
+    agentId?: string | undefined;
+    description: string;
+    status: 'completed' | 'failed' | 'killed' | 'lost';
+  }): boolean {
+    let agentIdMatch: ToolCallComponent | undefined;
+    let descMatch: ToolCallComponent | undefined;
+    let descAmbiguous = false;
+    const visit = (tc: ToolCallComponent): void => {
+      if (agentIdMatch !== undefined) return;
+      if (args.agentId !== undefined && tc.getSubagentAgentId() === args.agentId) {
+        agentIdMatch = tc;
+        return;
+      }
+      if (tc.getAgentToolDescription() !== args.description) return;
+      if (descMatch !== undefined) {
+        descAmbiguous = true;
+        return;
+      }
+      descMatch = tc;
+    };
+
+    for (const tc of this._pendingToolComponents.values()) {
+      visit(tc);
+      if (agentIdMatch !== undefined) break;
+    }
+    if (agentIdMatch === undefined) {
+      for (const child of this.host.state.transcriptContainer.children) {
+        if (child instanceof ToolCallComponent) {
+          visit(child);
+        } else if (child instanceof AgentGroupComponent) {
+          for (const tc of child.getToolComponents()) {
+            visit(tc);
+            if (agentIdMatch !== undefined) break;
+          }
+        }
+        if (agentIdMatch !== undefined) break;
+      }
+    }
+    const target = agentIdMatch ?? (descAmbiguous ? undefined : descMatch);
+    if (target === undefined) return false;
+    target.setBackgroundTaskTerminalStatus(args.status);
+    return true;
+  }
+
   /** Registers a tool call that arrived via tool.call.started.
    *  Clears any pending streaming state for this id, updates or creates the
    *  component, and returns whether the call was new (no previous entry). */

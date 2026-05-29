@@ -66,6 +66,7 @@ export class SessionReplayRenderer {
 
       this.hydrateSnapshot(main);
       this.renderRecords(main);
+      this.applyTerminalBackgroundAgentStatuses(main);
       return true;
     } catch (error) {
       const message = formatErrorMessage(error);
@@ -102,6 +103,36 @@ export class SessionReplayRenderer {
     }
 
     this.host.streamingUI.setTodoList(todos);
+  }
+
+  /**
+   * Push real terminal status into each replayed `Agent` card whose
+   * backing background task is already in a terminal state. Runs AFTER
+   * `renderRecords` because the tool call components only exist once the
+   * replay has mounted them — `hydrateBackgroundState` runs too early to
+   * reach them. Without this, terminated bg agents (including ones that
+   * reconcile reclassified as `lost`) keep the spawn-success ToolResult's
+   * default of `✓ Completed`.
+   */
+  private applyTerminalBackgroundAgentStatuses(agent: ResumedAgentState): void {
+    for (const info of agent.background) {
+      if (!info.taskId.startsWith('agent-')) continue;
+      if (!isTerminalBackgroundTask(info)) continue;
+      const status = info.status;
+      if (
+        status !== 'completed' &&
+        status !== 'failed' &&
+        status !== 'killed' &&
+        status !== 'lost'
+      ) {
+        continue;
+      }
+      this.host.streamingUI.applyBackgroundTaskTerminalStatus({
+        agentId: info.agentId,
+        description: info.description,
+        status,
+      });
+    }
   }
 
   private hydrateBackgroundState(agent: ResumedAgentState): void {

@@ -96,6 +96,22 @@ export interface ToolCallReadSnapshot {
   readonly lines: number;
 }
 
+function backgroundFailureMessage(
+  status: 'completed' | 'failed' | 'killed' | 'lost' | undefined,
+): string | undefined {
+  switch (status) {
+    case 'lost':
+      return 'Background agent lost (session restarted before completion)';
+    case 'killed':
+      return 'Background agent killed';
+    case 'failed':
+      return 'Background agent failed';
+    case 'completed':
+    case undefined:
+      return undefined;
+  }
+}
+
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
@@ -474,6 +490,25 @@ export class ToolCallComponent extends Container {
   private subagentThinkingText = '';
   // ── Subagent lifecycle state from subagent.spawned/completed/failed ──
   private subagentPhase: 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded' | undefined;
+  /**
+   * Authoritative terminal phase for a backgrounded subagent. Set from
+   * `BackgroundTaskInfo.status` via `setBackgroundTaskTerminalStatus` once
+   * the backing task reaches a terminal state — either live (a bg agent
+   * fails / is killed) or on resume (reconcile reclassifies a still-running
+   * task as `lost`). Beats the spawn-success ToolResult in
+   * `getSubagentSnapshot`, which would otherwise mislabel every terminated
+   * background agent — including lost ones — as `✓ Completed`.
+   */
+  private backgroundTaskTerminalPhase: 'done' | 'failed' | undefined;
+  /** Raw `BackgroundTaskInfo.status` paired with `backgroundTaskTerminalPhase`.
+   *  Drives the snapshot's `errorText` so failed/lost/killed bg agents get a
+   *  meaningful error line instead of leaking the spawn-success ToolResult body. */
+  private backgroundTaskTerminalStatus:
+    | 'completed'
+    | 'failed'
+    | 'killed'
+    | 'lost'
+    | undefined;
   private subagentContextTokens: number | undefined;
   private subagentUsage: TokenUsage | undefined;
   private subagentResultSummary: string | undefined;
@@ -707,7 +742,19 @@ export class ToolCallComponent extends Container {
     // `backgrounded` has no result because background agents do not enter the
     // transcript.
     const derivedPhase: ToolCallSubagentSnapshot['phase'] =
-      this.result !== undefined ? (this.result.is_error ? 'failed' : 'done') : this.subagentPhase;
+      this.backgroundTaskTerminalPhase ??
+      (this.result !== undefined
+        ? this.result.is_error
+          ? 'failed'
+          : 'done'
+        : this.subagentPhase);
+    const errorText =
+      this.subagentError ??
+      (this.backgroundTaskTerminalPhase === 'failed'
+        ? backgroundFailureMessage(this.backgroundTaskTerminalStatus)
+        : derivedPhase === 'failed'
+          ? this.result?.output
+          : undefined);
     return {
       toolCallId: this.toolCall.id,
       toolName: this.toolCall.name,
@@ -717,8 +764,7 @@ export class ToolCallComponent extends Container {
       toolCount: finished,
       tokens,
       isError: derivedPhase === 'failed',
-      errorText:
-        this.subagentError ?? (derivedPhase === 'failed' ? this.result?.output : undefined),
+      errorText,
       latestActivity,
     };
   }
@@ -932,6 +978,43 @@ export class ToolCallComponent extends Container {
     this.rebuildContent();
     this.notifySnapshotChange();
     this.ui?.requestRender();
+  }
+
+  /**
+   * Records the actual terminal status of the backing background task so
+   * the snapshot phase no longer relies on the spawn-success ToolResult.
+   * Called for `agent-*` background tasks both live (when the bg agent
+   * terminates non-successfully) and on resume (when reconcile
+   * reclassifies a previously-running task as `lost`).
+   */
+  setBackgroundTaskTerminalStatus(status: 'completed' | 'failed' | 'killed' | 'lost'): void {
+    const phase: 'done' | 'failed' = status === 'completed' ? 'done' : 'failed';
+    if (
+      this.backgroundTaskTerminalPhase === phase &&
+      this.backgroundTaskTerminalStatus === status
+    ) {
+      return;
+    }
+    this.backgroundTaskTerminalPhase = phase;
+    this.backgroundTaskTerminalStatus = status;
+    this.subagentEndedAtMs ??= Date.now();
+    this.syncSubagentElapsedTimer();
+    this.notifySnapshotChange();
+  }
+
+  /** Spawned subagent id, if any. Used by routing to find a tool call's
+   *  backing subagent when reconciling background task lifecycle events. */
+  getSubagentAgentId(): string | undefined {
+    return this.subagentAgentId;
+  }
+
+  /** `args.description` for `Agent` tool calls, used as a resume-path
+   *  fallback when the wire format pre-dates persisted subagent ids and
+   *  the only stable cross-restart identifier is the description string. */
+  getAgentToolDescription(): string | undefined {
+    if (this.toolCall.name !== 'Agent') return undefined;
+    const desc = this.toolCall.args['description'];
+    return typeof desc === 'string' ? desc : undefined;
   }
 
   appendSubagentText(text: string, kind: SubagentTextKind = 'text'): void {

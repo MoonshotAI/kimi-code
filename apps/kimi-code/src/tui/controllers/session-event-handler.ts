@@ -872,6 +872,17 @@ export class SessionEventHandler {
     }
 
     if (event.type === 'background.task.terminated' && isTerminal) {
+      if (info.taskId.startsWith('agent-')) {
+        // The Agent tool's spawn-success ToolResult is not an error, so the
+        // parent toolCall card would otherwise render `✓ Completed` for any
+        // terminated bg agent — including `lost` / `failed` / `killed`.
+        // Push the actual terminal status so the card matches reality.
+        this.host.streamingUI.applyBackgroundTaskTerminalStatus({
+          agentId: info.agentId,
+          description: info.description,
+          status: info.status,
+        });
+      }
       if (!this.backgroundTaskTranscriptedTerminal.has(info.taskId)) {
         if (info.taskId.startsWith('bash-')) {
           this.appendBackgroundTaskEntry(info);
