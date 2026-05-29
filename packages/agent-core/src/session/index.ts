@@ -407,10 +407,12 @@ export class Session {
     config: Partial<AgentOptions> = {},
     parentAgentId: string | null = null,
   ): Agent {
+    const parentAgent = parentAgentId !== null ? this.agents.get(parentAgentId) : undefined;
+    const cwd = parentAgent?.config.cwd ?? this.options.kaos.getcwd();
     return new Agent({
       ...config,
       type,
-      kaos: this.options.kaos.withCwd(this.options.kaos.getcwd()),
+      kaos: this.options.kaos.withCwd(cwd),
       toolServices: this.options.toolServices,
       config: this.options.config,
       homedir,

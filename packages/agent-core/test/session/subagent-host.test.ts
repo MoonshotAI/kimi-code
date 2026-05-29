@@ -876,6 +876,49 @@ describe('Session.createAgent', () => {
     expect(created.agent.config.systemPrompt).toContain('leaf instructions');
   });
 
+  it('inherits the parent agent cwd when creating a subagent', async () => {
+    const sessionWorkDir = '/session/work';
+    const parentWorkDir = '/parent/work';
+
+    const kaos = createFakeKaos({
+      mkdir: vi.fn().mockResolvedValue(undefined),
+      writeText: vi.fn().mockResolvedValue(0),
+      stat: vi.fn(async (path: string) => {
+        if ([sessionWorkDir, parentWorkDir].includes(path)) {
+          return stat('dir');
+        }
+        throw new Error(`ENOENT ${path}`);
+      }),
+      // oxlint-disable-next-line require-yield
+      iterdir: async function* () {
+        return;
+      },
+      getcwd: () => sessionWorkDir,
+    });
+
+    const session = new Session({
+      id: 'test-subagent-parent-cwd',
+      kaos,
+      homedir: '/tmp/kimi-session',
+      rpc: createSessionRpc(),
+      initializeMainAgent: false,
+    });
+
+    // Create a parent agent — it should start at the session workDir.
+    const parent = await session.createAgent({ type: 'main' }, contextProfile());
+    expect(parent.agent.config.systemPrompt).toContain(`cwd=${sessionWorkDir}`);
+
+    // Move the parent agent to a different cwd (e.g. after a config.update replay).
+    parent.agent.config.update({ cwd: parentWorkDir });
+
+    // Create a subagent from the moved parent.
+    const child = await session.createAgent({ type: 'sub' }, contextProfile(), parent.id);
+
+    // The subagent should inherit the parent's current cwd, not the session default.
+    expect(child.agent.config.systemPrompt).toContain(`cwd=${parentWorkDir}`);
+    expect(child.agent.config.systemPrompt).not.toContain(`cwd=${sessionWorkDir}`);
+  });
+
   it('allocates the next unused generated agent id', async () => {
     const session = new Session({
       id: 'test-subagent-agent-id',
