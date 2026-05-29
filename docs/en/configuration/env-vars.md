@@ -3,7 +3,7 @@
 Kimi Code CLI uses environment variables to override default paths, switch OAuth endpoints, and adjust runtime behavior. Most variables are read when the `kimi` process starts up; a few (such as the telemetry switch, the OAuth lock, and diagnostic logging) are read when the relevant subsystem initializes. Kimi's own variables use the `KIMI_*` prefix; in addition, the CLI also reads a number of standard system variables.
 
 ::: warning Note
-**Provider credentials are not in this list**: key variables such as `KIMI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GOOGLE_API_KEY` are **not** read automatically from `process.env`. They must be written into the `[providers.<name>]` section of `config.toml` (as `api_key` / `base_url`) or into the `[providers.<name>.env]` subtable; merely `export`ing them in your shell will not give a provider credentials automatically. See [Configuration overrides](./overrides.md#provider-credentials) and [Providers](./providers.md) for details.
+**Provider credentials are not in this list**: key variables such as `KIMI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GOOGLE_API_KEY` are **not** read automatically from `process.env`. They must be written into the `[providers.<name>]` section of `config.toml` (as `api_key` / `base_url`) or into the `[providers.<name>.env]` subtable; merely `export`ing them in your shell will not give a provider credentials automatically. See [Configuration overrides](./overrides.md#provider-credentials) and [Providers](./providers.md) for details. **Exception:** the `KIMI_MODEL_*` variables are an explicit channel that *does* read a model and its credentials from the shell — see [Define a model from environment variables](#define-a-model-from-environment-variables-kimi-model).
 :::
 
 ## Core paths
@@ -66,6 +66,36 @@ When neither `KIMI_CODE_OAUTH_HOST` nor `KIMI_OAUTH_HOST` is set, the OAuth auth
 ::: warning Note
 `KIMI_CODE_BASE_URL` and the `KIMI_BASE_URL` from the previous section are two different variables: the former targets the OAuth-logged-in hosted service and defaults to `kimi.com`; the latter targets providers that use a Kimi API key directly and defaults to `moonshot.ai`. Distinguish them by use case.
 :::
+
+## Define a model from environment variables (`KIMI_MODEL_*`)
+
+For testing you can make Kimi Code use a specific model **without editing `config.toml` at all**. When `KIMI_MODEL_NAME` is set, the CLI synthesizes one provider and one model alias from the `KIMI_MODEL_*` variables — in memory only, nothing is written back to `config.toml` — and selects it as the default model. These variables take priority over `default_model` in `config.toml`; a `-m <alias>` flag still wins for that launch.
+
+| Environment variable | Required | Purpose | Default |
+| --- | --- | --- | --- |
+| `KIMI_MODEL_NAME` | Yes (also the enable switch) | Model id sent to the API | — |
+| `KIMI_MODEL_API_KEY` | Yes | API key | — |
+| `KIMI_MODEL_PROVIDER_TYPE` | No | Provider type; one of `kimi`, `anthropic`, `openai` | `kimi` |
+| `KIMI_MODEL_BASE_URL` | No | API base URL | `kimi` → `https://api.moonshot.ai/v1`; `openai` → `https://api.openai.com/v1`; `anthropic` → SDK default |
+| `KIMI_MODEL_MAX_CONTEXT_SIZE` | No | Max context length in tokens (positive integer) | `262144` (256K) |
+| `KIMI_MODEL_CAPABILITIES` | No | Comma-separated capability tags (e.g. `image_in,thinking`); unioned with auto-detected capabilities | `image_in,thinking` |
+| `KIMI_MODEL_DISPLAY_NAME` | No | Name shown in `/model` | Falls back to `KIMI_MODEL_NAME` |
+| `KIMI_MODEL_MAX_OUTPUT_SIZE` | No | Per-request output cap (`anthropic` only) | Per-model default |
+| `KIMI_MODEL_REASONING_KEY` | No | Reasoning field-name override (`openai` only) | Auto-detected |
+| `KIMI_MODEL_DEFAULT_THINKING` | No | Default Thinking toggle for new sessions | Unset follows the global default (Thinking on) |
+| `KIMI_MODEL_THINKING_MODE` | No | Thinking trigger policy; `auto`/`on`/`off` | — |
+| `KIMI_MODEL_THINKING_EFFORT` | No | Thinking effort (e.g. `low`/`medium`/`high`/`xhigh`/`max`; available levels depend on the provider) | — |
+
+The synthesized entries use the reserved keys `__kimi_env__` (provider) and `__kimi_env_model__` (model alias). When `KIMI_MODEL_NAME` is set but a required variable is missing or invalid, startup fails with a clear error.
+
+```sh
+export KIMI_MODEL_NAME="kimi-for-coding"
+export KIMI_MODEL_BASE_URL="https://api-staff.msh.team/v1"
+export KIMI_MODEL_API_KEY="$MOONSHOT_STAFF_KEY"
+export KIMI_MODEL_MAX_CONTEXT_SIZE="262144"
+export KIMI_MODEL_CAPABILITIES="image_in,thinking"
+kimi
+```
 
 ## Runtime switches
 

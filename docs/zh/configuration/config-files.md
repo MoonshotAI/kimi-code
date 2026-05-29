@@ -138,6 +138,8 @@ model = "gpt-4.1"
 max_context_size = 1047576
 ```
 
+为了便于测试，你也可以完全不修改本文件，直接用 `KIMI_MODEL_*` 环境变量合成出一个模型 —— 详见 [用环境变量定义模型](./env-vars.md#用环境变量定义模型-kimi-model)。
+
 ## `thinking`
 
 `thinking` 控制 Thinking 模式的默认行为。即便顶层 `default_thinking = true`，将 `mode` 设为 `"off"` 也会强制禁用 Thinking。

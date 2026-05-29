@@ -12,6 +12,7 @@ import { getCoreVersion } from '#/version';
 import { resolveThinkingLevel } from '../agent/config/thinking';
 import {
   ensureKimiHome,
+  loadRuntimeConfig,
   mergeConfigPatch,
   readConfigFile,
   resolveConfigPath,
@@ -151,7 +152,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.skillDirs = options.skillDirs ?? [];
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     ensureKimiHome(this.homeDir);
-    this.config = readConfigFile(this.configPath);
+    this.config = loadRuntimeConfig(this.configPath);
     this.sessionStore = new SessionStore(this.homeDir);
     this.plugins = new PluginManager({ kimiHomeDir: this.homeDir });
     // Capture the error rather than swallow it: mutators and explicit /plugins
@@ -375,7 +376,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   async getKimiConfig(input?: GetKimiConfigPayload): Promise<KimiConfig> {
     if (input?.reload) {
-      this.config = readConfigFile(this.configPath);
+      this.config = loadRuntimeConfig(this.configPath);
     }
     return this.config;
   }
@@ -383,7 +384,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   async setKimiConfig(input: SetKimiConfigPayload): Promise<KimiConfig> {
     const config = mergeConfigPatch(readConfigFile(this.configPath), input);
     await writeConfigFile(this.configPath, config);
-    return this.config = readConfigFile(this.configPath);
+    return this.config = loadRuntimeConfig(this.configPath);
   }
 
   async removeKimiProvider(input: RemoveKimiProviderPayload): Promise<KimiConfig> {
@@ -414,7 +415,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     }
 
     await writeConfigFile(this.configPath, config);
-    return this.config = readConfigFile(this.configPath);
+    return this.config = loadRuntimeConfig(this.configPath);
   }
 
   prompt({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {
@@ -702,7 +703,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   private reloadProviderManager(): KimiConfig {
-    return this.config = readConfigFile(this.configPath);
+    return this.config = loadRuntimeConfig(this.configPath);
   }
 
   private async refreshSessionRuntimeConfig(

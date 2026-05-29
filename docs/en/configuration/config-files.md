@@ -138,6 +138,8 @@ model = "gpt-4.1"
 max_context_size = 1047576
 ```
 
+For testing, you can also synthesize a model entirely from `KIMI_MODEL_*` environment variables without editing this file — see [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi-model).
+
 ## `thinking`
 
 `thinking` controls the default behavior of Thinking mode. Even when the top-level `default_thinking = true`, setting `mode` to `"off"` will still force Thinking off.
