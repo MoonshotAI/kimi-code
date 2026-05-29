@@ -1620,3 +1620,115 @@ function inputHistorySnapshot(history: readonly Message[]): string[] {
 function normalizeInputText(text: string): string {
   return text.includes('compact this conversation context') ? '<compaction-instruction>' : text;
 }
+
+describe('MicroCompaction', () => {
+  it('truncates old tool results after cache miss', () => {
+    vi.useFakeTimers();
+    const ctx = testAgent({
+      microCompaction: {
+        keepRecentMessages: 4,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * 60 * 1000,
+      },
+    });
+
+    vi.setSystemTime(0);
+    ctx.appendToolExchange();
+    ctx.appendToolExchange();
+    ctx.appendToolExchange();
+
+    expect(ctx.agent.context.messages).toHaveLength(9);
+
+    vi.setSystemTime(61 * 60 * 1000);
+
+    const messages = ctx.agent.context.messages;
+    const marker = '[Old tool result content cleared]';
+
+    expect(messages[2]).toMatchObject({
+      role: 'tool',
+      content: [{ type: 'text', text: marker }],
+    });
+    expect(messages[5]).toMatchObject({
+      role: 'tool',
+      content: [{ type: 'text', text: 'lookup result' }],
+    });
+    expect(messages[8]).toMatchObject({
+      role: 'tool',
+      content: [{ type: 'text', text: 'lookup result' }],
+    });
+  });
+
+  it('does nothing before cache miss threshold', () => {
+    vi.useFakeTimers();
+    const ctx = testAgent({
+      microCompaction: {
+        keepRecentMessages: 4,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * 60 * 1000,
+      },
+    });
+
+    vi.setSystemTime(0);
+    ctx.appendToolExchange();
+    ctx.appendToolExchange();
+    ctx.appendToolExchange();
+
+    vi.setSystemTime(30 * 60 * 1000);
+
+    const messages = ctx.agent.context.messages;
+    expect(messages.every((m) => m.role !== 'tool' || (m.content[0] as { text: string })?.text !== '[Old tool result content cleared]')).toBe(true);
+  });
+
+  it('persists cutoff across calls until cache miss resets it', () => {
+    vi.useFakeTimers();
+    const ctx = testAgent({
+      microCompaction: {
+        keepRecentMessages: 2,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * 60 * 1000,
+      },
+    });
+
+    vi.setSystemTime(0);
+    ctx.appendToolExchange();
+    ctx.appendToolExchange();
+
+    vi.setSystemTime(61 * 60 * 1000);
+
+    const first = ctx.agent.context.messages;
+    expect(first[2]).toMatchObject({
+      role: 'tool',
+      content: [{ type: 'text', text: '[Old tool result content cleared]' }],
+    });
+
+    vi.setSystemTime(62 * 60 * 1000);
+
+    const second = ctx.agent.context.messages;
+    expect(second[2]).toMatchObject({
+      role: 'tool',
+      content: [{ type: 'text', text: '[Old tool result content cleared]' }],
+    });
+  });
+
+  it('clears cutoff on reset', () => {
+    vi.useFakeTimers();
+    const ctx = testAgent({
+      microCompaction: {
+        keepRecentMessages: 4,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * 60 * 1000,
+      },
+    });
+
+    vi.setSystemTime(0);
+    ctx.appendToolExchange();
+    ctx.appendToolExchange();
+
+    vi.setSystemTime(61 * 60 * 1000);
+
+    ctx.agent.microCompaction.reset();
+
+    const messages = ctx.agent.context.messages;
+    expect(messages.every((m) => m.role !== 'tool' || (m.content[0] as { text: string })?.text !== '[Old tool result content cleared]')).toBe(true);
+  });
+});
