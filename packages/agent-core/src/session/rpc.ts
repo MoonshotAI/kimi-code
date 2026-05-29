@@ -55,11 +55,28 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
   }
 
   async updateSessionMetadata(payload: UpdateSessionMetadataPayload): Promise<void> {
+    // `metadata.custom.goal` is reserved for the goal lifecycle store. Generic
+    // metadata updates must neither overwrite an active goal nor write the goal
+    // field directly.
+    const reservedGoal = this.session.metadata.custom?.['goal'];
+    const patchCustom = (payload.metadata as Partial<SessionMeta> | undefined)?.custom;
+    if (patchCustom !== undefined && 'goal' in patchCustom) {
+      throw new KimiError(
+        ErrorCodes.GOAL_METADATA_RESERVED,
+        'metadata.custom.goal is reserved; use the goal lifecycle methods',
+      );
+    }
     this.session.metadata = {
       ...this.session.metadata,
       ...payload.metadata,
       agents: this.session.metadata.agents,
     };
+    if (reservedGoal !== undefined) {
+      this.session.metadata.custom = {
+        ...this.session.metadata.custom,
+        goal: reservedGoal,
+      };
+    }
     await this.session.writeMetadata();
   }
 

@@ -9,6 +9,7 @@ import type { KimiConfig, SDKSessionRPC } from '#/rpc';
 import { proxyWithExtraPayload } from '#/rpc/types';
 
 import { Agent, type AgentOptions, type AgentType } from '../agent';
+import { SessionGoalStore, type SessionGoalState } from './goal';
 import { HookEngine, type HookDef } from './hooks';
 import type { PermissionManagerOptions, PermissionRule } from '../agent/permission';
 import { parseBooleanEnv, resolveConfigValue, type BackgroundConfig } from '../config';
@@ -96,6 +97,7 @@ export class Session {
   readonly log: Logger;
   private readonly logHandle: SessionLogHandle | undefined;
   readonly hookEngine: HookEngine;
+  readonly goals: SessionGoalStore;
   private agentIdCounter = 0;
   private readonly skillsReady: Promise<void>;
   metadata: SessionMeta = {
@@ -128,6 +130,18 @@ export class Session {
       sessionId: options.id,
     });
     this.telemetry = options.telemetry ?? noopTelemetryClient;
+    this.goals = new SessionGoalStore({
+      sessionId: options.id,
+      readState: () => this.metadata.custom?.['goal'] as SessionGoalState | undefined,
+      writeState: (state) => {
+        if (state === undefined) {
+          delete this.metadata.custom['goal'];
+        } else {
+          this.metadata.custom['goal'] = state;
+        }
+        return this.writeMetadata();
+      },
+    });
     this.skills = new SkillRegistry({ sessionId: options.id });
     this.mcp = new McpConnectionManager({
       oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
@@ -423,6 +437,7 @@ export class Session {
       subagentHost:
         config.subagentHost ?? new SessionSubagentHost(this, id, this.backgroundTaskTimeoutMs()),
       mcp: this.mcp,
+      goals: this.goals,
       permission: this.permissionOptions(parentAgentId, config.permission),
       telemetry: this.telemetry,
       log: this.log.createChild({ agentId: id }),
