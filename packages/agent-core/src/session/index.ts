@@ -1,14 +1,15 @@
 import { homedir } from 'node:os';
 import { join } from 'pathe';
+import type { Kaos } from '@moonshot-ai/kaos';
 
 import { ErrorCodes, KimiError } from '#/errors';
 import { getRootLogger, log } from '#/logging/logger';
 import type { Logger, SessionLogHandle } from '#/logging/types';
-import type { SDKSessionRPC } from '#/rpc';
+import type { KimiConfig, SDKSessionRPC } from '#/rpc';
 import { proxyWithExtraPayload } from '#/rpc/types';
 
-import { Agent, type AgentConfig, type AgentType } from '../agent';
-import { HookEngine, type HookDef } from '../agent/hooks';
+import { Agent, type AgentOptions, type AgentType } from '../agent';
+import { HookEngine, type HookDef } from './hooks';
 import type { PermissionManagerOptions, PermissionRule } from '../agent/permission';
 import { parseBooleanEnv, resolveConfigValue, type BackgroundConfig } from '../config';
 import { makeErrorPayload } from '../errors';
@@ -26,8 +27,8 @@ import {
   prepareSystemPromptContext,
   type ResolvedAgentProfile,
 } from '../profile';
-import type { ProviderManager } from '../providers/provider-manager';
-import type { RuntimeConfig } from '../runtime-types';
+import type { ProviderManager } from './provider-manager';
+import type { ToolServices } from '../runtime-types';
 import {
   registerBuiltinSkills,
   resolveSkillRoots,
@@ -39,12 +40,14 @@ import {
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
 import { SessionSubagentHost } from './subagent-host';
 
-export interface SessionConfig {
-  readonly runtime: RuntimeConfig;
+export interface SessionOptions {
+  readonly kaos: Kaos;
+  readonly config?: KimiConfig;
   readonly id?: string | undefined;
   readonly homedir: string;
   readonly kimiHomeDir?: string;
   readonly rpc: SDKSessionRPC;
+  readonly toolServices?: ToolServices;
   readonly initializeMainAgent?: boolean | undefined;
   readonly providerManager?: ProviderManager | undefined;
   readonly background?: BackgroundConfig | undefined;
@@ -105,29 +108,29 @@ export class Session {
   };
   private writeMetadataPromise = Promise.resolve();
 
-  constructor(public readonly config: SessionConfig) {
+  constructor(public readonly options: SessionOptions) {
     // Attach the per-session log sink up front so the constructor's
     // fire-and-forget `loadSkills` / `loadMcpServers` failures (and
     // anything else that races) land in the session log, not just global.
     this.logHandle =
-      config.id === undefined
+      options.id === undefined
         ? undefined
         : getRootLogger().attachSession({
-            sessionId: config.id,
-            sessionDir: config.homedir,
+            sessionId: options.id,
+            sessionDir: options.homedir,
           });
     this.log =
       this.logHandle?.logger ??
-      (config.id === undefined ? log : log.createChild({ sessionId: config.id }));
-    this.rpc = config.rpc;
-    this.hookEngine = new HookEngine(config.hooks, {
-      cwd: config.runtime.kaos.getcwd(),
-      sessionId: config.id,
+      (options.id === undefined ? log : log.createChild({ sessionId: options.id }));
+    this.rpc = options.rpc;
+    this.hookEngine = new HookEngine(options.hooks, {
+      cwd: options.kaos.getcwd(),
+      sessionId: options.id,
     });
-    this.telemetry = config.telemetry ?? noopTelemetryClient;
-    this.skills = new SkillRegistry({ sessionId: config.id });
+    this.telemetry = options.telemetry ?? noopTelemetryClient;
+    this.skills = new SkillRegistry({ sessionId: options.id });
     this.mcp = new McpConnectionManager({
-      oauthService: new McpOAuthService({ kimiHomeDir: config.kimiHomeDir }),
+      oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
       log: this.log,
     });
     this.mcp.onStatusChange((entry) => {
@@ -181,6 +184,9 @@ export class Session {
 
   async close(): Promise<void> {
     try {
+      await Promise.allSettled(
+        Array.from(this.agents.values(), async (agent) => agent.cron?.stop()),
+      );
       await this.stopBackgroundTasksOnExit();
       await this.flushMetadata();
       await this.triggerSessionEnd('exit');
@@ -197,7 +203,7 @@ export class Session {
     const keepAliveOnExit = resolveConfigValue({
       env: process.env,
       envKey: BACKGROUND_KEEP_ALIVE_ON_EXIT_ENV,
-      configValue: this.config.background?.keepAliveOnExit,
+      configValue: this.options.background?.keepAliveOnExit,
       defaultValue: true,
       parseEnv: parseBooleanEnv,
     });
@@ -210,14 +216,14 @@ export class Session {
   }
 
   async createAgent(
-    config: Partial<AgentConfig>,
+    config: Partial<AgentOptions>,
     profile?: ResolvedAgentProfile,
     parentAgentId?: string | undefined,
   ): Promise<{ readonly id: string; readonly agent: Agent }> {
     await this.skillsReady;
     const type = config.type ?? 'main';
     const id = type === 'main' ? 'main' : this.nextGeneratedAgentId();
-    const homedir = config.homedir ?? join(this.config.homedir, 'agents', id);
+    const homedir = config.homedir ?? join(this.options.homedir, 'agents', id);
     const agent = this.instantiateAgent(id, homedir, type, config, parentAgentId ?? null);
     if (profile) {
       await this.bootstrapAgentProfile(agent, profile);
@@ -243,7 +249,7 @@ export class Session {
     agent: Agent,
     profile: ResolvedAgentProfile,
   ): Promise<void> {
-    const context = await prepareSystemPromptContext(agent.runtime.kaos);
+    const context = await prepareSystemPromptContext(agent.kaos);
     agent.useProfile(profile, context);
   }
 
@@ -262,7 +268,7 @@ export class Session {
       });
       await handle.completion;
 
-      const agentsMd = await loadAgentsMd(mainAgent.runtime.kaos);
+      const agentsMd = await loadAgentsMd(mainAgent.kaos);
       mainAgent.context.appendSystemReminder(initCompletionReminder(agentsMd), {
         kind: 'injection',
         variant: 'init',
@@ -285,21 +291,21 @@ export class Session {
   }
 
   protected get metadataPath() {
-    return join(this.config.homedir, 'state.json');
+    return join(this.options.homedir, 'state.json');
   }
 
   writeMetadata() {
     const text = JSON.stringify(this.metadata, null, 2);
     const write = async () => {
-      await this.config.runtime.kaos.mkdir(this.config.homedir, { parents: true, existOk: true });
-      await this.config.runtime.kaos.writeText(this.metadataPath, text);
+      await this.options.kaos.mkdir(this.options.homedir, { parents: true, existOk: true });
+      await this.options.kaos.writeText(this.metadataPath, text);
     };
     this.writeMetadataPromise = this.writeMetadataPromise.then(write, write);
     return this.writeMetadataPromise;
   }
 
   async readMetadata() {
-    const text = await this.config.runtime.kaos.readText(this.metadataPath);
+    const text = await this.options.kaos.readText(this.metadataPath);
     this.metadata = JSON.parse(text);
     return this.metadata;
   }
@@ -318,21 +324,21 @@ export class Session {
   private async loadSkills(): Promise<void> {
     const roots = await resolveSkillRoots({
       paths: {
-        userHomeDir: this.config.skills?.userHomeDir ?? homedir(),
-        workDir: this.config.runtime.kaos.getcwd(),
+        userHomeDir: this.options.skills?.userHomeDir ?? homedir(),
+        workDir: this.options.kaos.getcwd(),
       },
-      explicitDirs: this.config.skills?.explicitDirs,
-      extraDirs: this.config.skills?.extraDirs,
-      pluginSkillRoots: this.config.skills?.pluginSkillRoots,
-      mergeAllAvailableSkills: this.config.skills?.mergeAllAvailableSkills,
-      builtinDir: this.config.skills?.builtinDir,
+      explicitDirs: this.options.skills?.explicitDirs,
+      extraDirs: this.options.skills?.extraDirs,
+      pluginSkillRoots: this.options.skills?.pluginSkillRoots,
+      mergeAllAvailableSkills: this.options.skills?.mergeAllAvailableSkills,
+      builtinDir: this.options.skills?.builtinDir,
     });
     await this.skills.loadRoots(roots);
     registerBuiltinSkills(this.skills);
   }
 
   private async loadMcpServers(): Promise<void> {
-    const servers = this.config.mcpConfig?.servers;
+    const servers = this.options.mcpConfig?.servers;
     if (servers === undefined || Object.keys(servers).length === 0) return;
     await this.mcp.connectAll(servers);
     const entries = this.mcp.list().filter((entry) => entry.status !== 'disabled');
@@ -383,7 +389,7 @@ export class Session {
   }
 
   private backgroundTaskTimeoutMs(): number | undefined {
-    const timeoutS = this.config.background?.agentTaskTimeoutS;
+    const timeoutS = this.options.background?.agentTaskTimeoutS;
     return timeoutS === undefined ? undefined : timeoutS * 1000;
   }
 
@@ -398,28 +404,29 @@ export class Session {
     id: string,
     homedir: string,
     type: AgentType,
-    config: Partial<AgentConfig> = {},
+    config: Partial<AgentOptions> = {},
     parentAgentId: string | null = null,
   ): Agent {
+    const parentAgent = parentAgentId !== null ? this.agents.get(parentAgentId) : undefined;
+    const cwd = parentAgent?.config.cwd ?? this.options.kaos.getcwd();
     return new Agent({
       ...config,
       type,
-      runtime: this.config.runtime,
+      kaos: this.options.kaos.withCwd(cwd),
+      toolServices: this.options.toolServices,
+      config: this.options.config,
       homedir,
       skills: this.skills,
       rpc: proxyWithExtraPayload(this.rpc, { agentId: id }),
-      providerManager: this.config.providerManager,
-      sessionId: this.config.id,
+      modelProvider: this.options.providerManager,
       hookEngine: config.hookEngine ?? this.hookEngine,
       subagentHost:
         config.subagentHost ?? new SessionSubagentHost(this, id, this.backgroundTaskTimeoutMs()),
       mcp: this.mcp,
-      backgroundMaxRunningTasks: this.config.background?.maxRunningTasks,
-      backgroundSessionDir: homedir,
       permission: this.permissionOptions(parentAgentId, config.permission),
       telemetry: this.telemetry,
       log: this.log.createChild({ agentId: id }),
-      pluginSessionStarts: type === 'main' ? this.config.pluginSessionStarts : undefined,
+      pluginSessionStarts: type === 'main' ? this.options.pluginSessionStarts : undefined,
     });
   }
 
@@ -430,7 +437,7 @@ export class Session {
     if (parentAgentId === null) {
       return {
         ...input,
-        initialRules: input?.initialRules ?? this.config.permissionRules,
+        initialRules: input?.initialRules ?? this.options.permissionRules,
       };
     }
     return {

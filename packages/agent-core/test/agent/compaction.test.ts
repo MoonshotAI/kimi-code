@@ -12,16 +12,14 @@ import {
 } from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentConfig } from '../../src/agent';
+import type { AgentOptions } from '../../src/agent';
 import { DefaultCompactionStrategy, type CompactionStrategy } from '../../src/agent/compaction';
-import { HookEngine, type HookEngineTriggerArgs } from '../../src/agent/hooks';
-import type { KimiConfig } from '../../src/config';
-import { ProviderManager } from '../../src/providers/provider-manager';
+import { HookEngine, type HookEngineTriggerArgs } from '../../src/session/hooks';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
-import type { TestAgentContext } from './harness/agent';
+import type { TestAgentContext, TestAgentOptions } from './harness/agent';
 import { testAgent } from './harness/agent';
 
-type GenerateFn = NonNullable<AgentConfig['generate']>;
+type GenerateFn = NonNullable<AgentOptions['generate']>;
 
 const CATALOGUED_PROVIDER = {
   type: 'kimi',
@@ -294,7 +292,7 @@ describe('Agent compaction', () => {
   it('force-refreshes OAuth credentials on compaction 401 and falls back to login_required when replay 401', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
-    const providerManager = createOAuthProviderManager(async (options) => {
+    const oauthOptions = oauthTestAgentOptions(async (options) => {
       tokenCalls.push(options?.force);
       return options?.force === true ? 'forced-refresh-token' : 'fresh-token';
     });
@@ -312,7 +310,7 @@ describe('Agent compaction', () => {
       }
       return textResult('Recovered compacted summary.');
     };
-    const ctx = testAgent({ providerManager, generate });
+    const ctx = testAgent({ ...oauthOptions, generate });
     ctx.configure();
     await ctx.rpc.setModel({ model: 'kimi-code' });
     ctx.newEvents();
@@ -336,7 +334,7 @@ describe('Agent compaction', () => {
       }),
     );
     expect(authKeys).toEqual(['fresh-token', 'forced-refresh-token']);
-    expect(tokenCalls).toEqual([undefined, undefined, true]);
+    expect(tokenCalls).toEqual([undefined, true]);
     expect(ctx.compactHistory()).toEqual([
       { role: 'user', text: 'old user one' },
       { role: 'assistant', text: 'old assistant one' },
@@ -350,7 +348,7 @@ describe('Agent compaction', () => {
 
     expect(await retryOutcome).toBe('context.apply_compaction');
     expect(authKeys).toEqual(['fresh-token', 'forced-refresh-token', 'fresh-token']);
-    expect(tokenCalls).toEqual([undefined, undefined, true, undefined]);
+    expect(tokenCalls).toEqual([undefined, true, undefined]);
     expect(ctx.compactHistory()).toEqual([
       { role: 'assistant', text: 'Recovered compacted summary.' },
     ]);
@@ -1103,15 +1101,12 @@ describe('Agent compaction', () => {
   });
 
   it('does not auto compact small contexts when reserved size exceeds the model window', async () => {
-    const providerManager = new ProviderManager({
-      config: {
+    const ctx = testAgent({
+      initialConfig: {
         providers: {},
-        loopControl: {
-          reservedContextSize: 50_000,
-        },
+        loopControl: { reservedContextSize: 50_000 },
       },
     });
-    const ctx = testAgent({ providerManager });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: {
@@ -1133,15 +1128,12 @@ describe('Agent compaction', () => {
   });
 
   it('triggers auto compaction when pending tokens cross the reserved threshold', async () => {
-    const providerManager = new ProviderManager({
-      config: {
+    const ctx = testAgent({
+      initialConfig: {
         providers: {},
-        loopControl: {
-          reservedContextSize: 500,
-        },
+        loopControl: { reservedContextSize: 500 },
       },
     });
-    const ctx = testAgent({ providerManager });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: {
@@ -1317,15 +1309,13 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    const providerManager = ctx.agent.providerManager;
+    const providerManager = ctx.agent.modelProvider;
     if (providerManager === undefined) throw new Error('Expected provider manager');
-    const resolveProviderConfig = providerManager.resolveProviderConfigForModel.bind(providerManager);
-    providerManager.resolveProviderConfigForModel = (model) => {
-      const resolved = resolveProviderConfig(model);
-      return resolved === undefined
-        ? undefined
-        : { ...resolved, modelCapabilities: UNKNOWN_CAPABILITY };
-    };
+    const resolveProviderConfig = providerManager.resolveProviderConfig.bind(providerManager);
+    providerManager.resolveProviderConfig = (model) => ({
+      ...resolveProviderConfig(model),
+      modelCapabilities: UNKNOWN_CAPABILITY,
+    });
     expect(ctx.agent.config.modelCapabilities.max_context_tokens).toBe(0);
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.newEvents();
@@ -1499,30 +1489,31 @@ function eventIndex(events: ReturnType<TestAgentContext['newEvents']>, type: str
   });
 }
 
-function createOAuthProviderManager(
+function oauthTestAgentOptions(
   getAccessToken: (options?: { readonly force?: boolean }) => Promise<string>,
-): ProviderManager {
-  const oauthConfig: KimiConfig = {
-    defaultModel: 'kimi-code',
-    providers: {
-      'managed:kimi-code': {
-        type: 'vertexai',
-        baseUrl: 'https://api.example/v1',
-        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+): Pick<TestAgentOptions, 'initialConfig' | 'providerManagerOverrides'> {
+  return {
+    initialConfig: {
+      defaultModel: 'kimi-code',
+      providers: {
+        'managed:kimi-code': {
+          type: 'vertexai',
+          baseUrl: 'https://api.example/v1',
+          oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        },
+      },
+      models: {
+        'kimi-code': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+        },
       },
     },
-    models: {
-      'kimi-code': {
-        provider: 'managed:kimi-code',
-        model: 'kimi-for-coding',
-        maxContextSize: 1_000_000,
-      },
+    providerManagerOverrides: {
+      resolveOAuthTokenProvider: () => ({ getAccessToken }),
     },
   };
-  return new ProviderManager({
-    config: oauthConfig,
-    resolveOAuthTokenProvider: () => ({ getAccessToken }),
-  });
 }
 
 function textResult(text: string): Awaited<ReturnType<GenerateFn>> {

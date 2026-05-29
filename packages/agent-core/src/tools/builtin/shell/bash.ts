@@ -26,7 +26,7 @@
 import type { Readable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 
-import type { Environment, Kaos, KaosProcess } from '@moonshot-ai/kaos';
+import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
@@ -155,15 +155,14 @@ export class BashTool implements BuiltinTool<BashInput> {
   constructor(
     private readonly kaos: Kaos,
     private readonly cwd: string,
-    private readonly environment: Environment,
     private readonly backgroundManager?: BackgroundProcessManager,
     options?: {
       allowBackground?: boolean | undefined;
     },
   ) {
-    this.isWindowsBash = this.environment.osKind === 'Windows';
+    this.isWindowsBash = this.kaos.osEnv.osKind === 'Windows';
     this.allowBackground = options?.allowBackground ?? this.backgroundManager !== undefined;
-    const rendered = renderBashDescription(this.environment.shellName);
+    const rendered = renderBashDescription(this.kaos.osEnv.shellName);
     this.description = this.allowBackground ? rendered : withoutBackgroundDescription(rendered);
   }
 
@@ -189,7 +188,7 @@ export class BashTool implements BuiltinTool<BashInput> {
   private spawn(effectiveCwd: string, command: string): Promise<KaosProcess> {
     const shellCwd = this.isWindowsBash ? windowsPathToPosixPath(effectiveCwd) : effectiveCwd;
     const shellArgs = [
-      this.environment.shellPath,
+      this.kaos.osEnv.shellPath,
       '-c',
       `cd ${shellQuote(shellCwd)} && ${command}`,
     ];
@@ -201,7 +200,7 @@ export class BashTool implements BuiltinTool<BashInput> {
       // to be inherited; honour an explicit ambient value when the user has
       // set one.
       GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
-      SHELL: this.environment.shellPath,
+      SHELL: this.kaos.osEnv.shellPath,
     };
 
     // Merge ambient env + noninteractive knobs so tools like git / node
@@ -403,8 +402,8 @@ export class BashTool implements BuiltinTool<BashInput> {
       taskId = backgroundManager.register(proc, command, args.description.trim(), {
         reservation,
         shellInfo: {
-          shellName: this.environment.shellName,
-          shellPath: this.environment.shellPath,
+          shellName: this.kaos.osEnv.shellName,
+          shellPath: this.kaos.osEnv.shellPath,
           cwd: args.cwd ?? this.cwd,
         },
       });
@@ -430,7 +429,7 @@ export class BashTool implements BuiltinTool<BashInput> {
           }
           const info = backgroundManager.getTask(taskId);
           if (info && info.status === 'running') {
-            void backgroundManager.stop(taskId);
+            void backgroundManager.stop(taskId, 'Timed out');
           }
         })();
       }, timeoutMs);

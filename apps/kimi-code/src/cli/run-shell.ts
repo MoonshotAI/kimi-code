@@ -147,6 +147,7 @@ export async function runShell(
     trackLifecycle('started', {
       resumed,
       yolo: opts.yolo,
+      auto: opts.auto,
       plan: opts.plan,
       afk: false,
     });

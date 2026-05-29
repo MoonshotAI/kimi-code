@@ -2,6 +2,40 @@
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.5.0
+
+### Features
+
+- Add scheduled tasks:
+
+  You can now ask the agent to remind you at a specific time, run a task on a recurring cron schedule (for example, check a deploy every 5 minutes or run a daily report every weekday at 9am), or come back on its own in a few minutes to continue what it was doing.
+
+  Schedules use the standard 5-field cron syntax.
+
+- Add `/auto` slash command and `--auto` CLI flag for auto permission mode.
+- Show file content and diff in Write and Edit approval prompts, and open them in a dedicated full-screen viewer on ctrl+e instead of expanding inline.
+
+### Bug Fixes
+
+- Fix compaction to handle edge cases where no messages are compactable and improve retry logic.
+- Fix official datasource tools to preserve complete responses and write returned result files.
+- Fix migration mapping the legacy `default_yolo` key to the dead `yolo` field instead of `default_permission_mode`.
+
+### Polish
+
+- Add a clickable changelog link to the update prompt.
+- Show the full Bash command when expanding a Bash tool card with `ctrl+o`. The header still truncates long commands at 60 chars, but the expanded view now reveals the complete multi-line command above the output.
+- Shorten the session title written to the terminal window/tab from 80 to 32 characters so long first messages and pasted content no longer stretch the tab bar past readable width.
+- Cap the inline todo panel at five rows and show a `+N more` indicator so long task lists no longer fill the screen.
+- Clarify plugin manager keyboard shortcuts and show plugin state changes inline.
+- Report discovered plugin skills in plugin manager summaries.
+- Offload large base64 media payloads from `wire.jsonl` into external blob files to reduce wire size and memory pressure during session replay. Includes an in-memory read-through cache on `BlobStore` so repeated rehydration avoids redundant disk reads.
+- Wrap long question, body, and option text in the AskUserQuestion dialog instead of truncating with an ellipsis. The question prompt, body description, option label, option description, and submit-tab review entries now flow onto multiple lines with a hanging indent.
+
+### Refactors
+
+- Refactor TUI code structure.
+
 ## 0.4.0
 
 ### Features

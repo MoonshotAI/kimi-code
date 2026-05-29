@@ -106,7 +106,7 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
     }
 
     const skills = this.agent.skills;
-    if (skills === undefined) {
+    if (skills === null) {
       return errorResult(`Skill "${args.skill}" not found in the current skill listing.`);
     }
     const skill = skills.registry.getSkill(args.skill);

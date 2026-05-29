@@ -1,106 +1,68 @@
 # Plugins
 
-Plugins package reusable Kimi Code CLI behavior around a `kimi.plugin.json` manifest. A plugin can contribute skills, plugin-wide skill instructions, a declarative session-start skill, display metadata, and MCP servers. Multi-harness repositories can put the same Kimi manifest under `.kimi-plugin/plugin.json` instead of occupying the repository root.
+Plugins package reusable Kimi Code CLI capabilities into installable units. A plugin can add [Agent Skills](./skills.md), load a skill at session start, and declare MCP servers for real tool access.
 
-Installing a plugin does not execute plugin-provided Python, Node.js, shell, or hook scripts. Kimi Code CLI does not run command-backed plugin tools in this version; real tools should be exposed through plugin-declared MCP servers.
+Use plugins when you need to share workflows, connect to external services, or install extensions from the official marketplace. Kimi Code CLI loads plugins conservatively: installing a plugin does not run Python, Node.js, shell, hook, or command scripts bundled with it.
 
 ## Installing and managing plugins
 
-Run `/plugins` inside the TUI to open the interactive plugin manager. The picker lists installed plugins and lets you install, inspect, enable, disable, remove, reload, browse the official marketplace, and toggle plugin MCP servers. Use `Enter` or `→` to open details, `Space` to enable or disable an installed plugin, `M` to manage that plugin's MCP servers, and `←` or `Esc` to go back. In the marketplace view, `Enter` or `Space` installs or updates the selected plugin.
+Run `/plugins` in the TUI to open the plugin manager. From there you can install plugins, browse the official marketplace, inspect plugin details, enable or disable plugins, remove them, reload install records, and manage MCP servers.
 
-Kimi Code CLI currently supports only user/global plugin installation. Installed plugins are recorded under `$KIMI_CODE_HOME/plugins/` and are available to the current user across projects. Project-local, repository-shared, managed/admin, and `--scope` plugin installs are not supported yet.
+Useful keys:
 
-Shortcut commands remain available for quick or scripted actions:
+| Key | Action |
+| --- | --- |
+| `Enter` or `→` | Open the selected item, or install the selected marketplace plugin. |
+| `Space` | Enable or disable an installed plugin; install or update a marketplace plugin. |
+| `M` | Manage MCP servers for the selected plugin. |
+| `←` or `Esc` | Go back. |
 
-```sh
-/plugins
-/plugins list
-/plugins install /absolute/path/to/plugin
-/plugins install ./relative-plugin
-/plugins install https://example.com/plugin.zip
-/plugins marketplace
-/plugins marketplace ./plugins/marketplace.json
-/plugins info <id>
-/plugins enable <id>
-/plugins disable <id>
-/plugins remove <id>
-/plugins reload
-/plugins mcp enable <id> <server>
-/plugins mcp disable <id> <server>
-```
+Most users only need the interactive manager. You can also use these slash commands directly:
 
-Hosted example packages:
+| Command | Description |
+| --- | --- |
+| `/plugins` | Open the interactive plugin manager. |
+| `/plugins list` | List installed plugins. |
+| `/plugins install <path-or-url>` | Install from a local directory (relative paths and `~/` supported) or a zip URL. |
+| `/plugins marketplace [source]` | Browse the official marketplace; optionally pass a marketplace JSON path or URL. |
+| `/plugins info <id>` | Show plugin details and diagnostics; opens the manager when `<id>` is omitted. |
+| `/plugins <id>` | Show details for a plugin; same as `/plugins info <id>`. |
+| `/plugins enable <id>` | Enable a plugin; opens the manager when `<id>` is omitted. |
+| `/plugins disable <id>` | Disable a plugin; opens the manager when `<id>` is omitted. |
+| `/plugins remove <id>` | Remove a plugin; requires confirmation. |
+| `/plugins reload` | Reload `installed.json` and each plugin manifest. |
+| `/plugins mcp enable <id> <server>` | Enable an MCP server declared by a plugin. |
+| `/plugins mcp disable <id> <server>` | Disable an MCP server declared by a plugin. |
 
-```sh
-/plugins install https://kimi-1300010026.cos.ap-beijing.myqcloud.com/kimi-datasource.zip
-/plugins install https://kimi-1300010026.cos.ap-beijing.myqcloud.com/superpowers-kimi-5.1.0-kimi.1.zip
-```
+For general slash command behavior, see [Slash commands](../reference/slash-commands.md).
 
-The official marketplace loads from `https://cdn.kimi.com/kimi-code/plugins/marketplace.json` by default. In `/plugins`, choose **Browse official marketplace** to list the marketplace entries and install one directly. The CDN can host the whole marketplace directory with `marketplace.json` at its root; relative plugin sources are resolved next to that file.
+Kimi Code CLI currently installs plugins per user. Records are stored under `$KIMI_CODE_HOME/plugins/` and apply across all projects. Project-local, repository-shared, admin-managed, and `--scope` installs are not supported yet.
 
-To build the CDN-ready marketplace directory from this repository, run:
+Plugin changes apply to new sessions only. After installing, enabling, disabling, removing, or reloading a plugin, or changing an MCP server toggle, start a fresh session with `/new`. The current session is not updated; new skills, session-start behavior, and MCP servers load only in new sessions.
 
-```sh
-pnpm run build:plugin-marketplace
-```
+Local installs are copied into `$KIMI_CODE_HOME/plugins/managed/<id>/`, and Kimi Code CLI always runs from that managed copy. Editing the original source directory after install has no effect until you reinstall — `/plugins reload` re-reads install records and manifests, not the original source. Removing a plugin deletes only its install record; the managed copy and the original source files are left on disk.
 
-The command writes `plugins/cdn/marketplace.json` plus plugin zip archives under `plugins/cdn/`. Upload that directory as a unit so the relative `source` entries in `marketplace.json` keep pointing at the generated zip files.
+## Plugin manifest
 
-To test a staging CDN file or alternate marketplace, override the marketplace source:
-
-```sh
-KIMI_CODE_PLUGIN_MARKETPLACE_URL=https://staging.example.com/plugins/marketplace.json kimi
-```
-
-You can also open a one-off marketplace file without changing the environment:
-
-```sh
-/plugins marketplace plugins/marketplace.json
-```
-
-During CLI development, `pnpm dev:cli` starts a loopback marketplace server for the repository's `plugins/` directory and temporarily sets `KIMI_CODE_PLUGIN_MARKETPLACE_URL=http://127.0.0.1:<port>/marketplace.json` for that dev process. The server rewrites local directory sources to temporary zip URLs so marketplace installs exercise the same download path as the CDN. To test the real CDN from dev, set `KIMI_CODE_PLUGIN_MARKETPLACE_URL=https://cdn.kimi.com/kimi-code/plugins/marketplace.json pnpm dev:cli`; the dev wrapper will use that value instead of starting the local marketplace server.
-
-Local directories and zip URLs are copied into Kimi Code CLI's managed plugin directory under `$KIMI_CODE_HOME/plugins/managed/<id>/`. Installing the same plugin id again overwrites that managed copy, preserving the plugin's enabled state and MCP server toggles. `installed.json` records the managed copy plus the original source for display. Removing a plugin asks for confirmation, then only removes the install record; it does not delete the managed copy or the original local source directory.
-
-Plugin changes apply to new sessions. After installing, enabling, disabling, removing, reloading, or changing a plugin MCP server toggle, start a fresh session with `/new` for the change to affect the available skills, `sessionStart.skill`, and MCP servers. Existing sessions keep the snapshot they started with.
-
-The reload action re-reads `installed.json` and each plugin manifest so that `/plugins` and `/plugins info <id>` show the latest install state and diagnostics. It is not a hot reload for the current session's skills or MCP connections. Because local-path installs run from the managed copy, editing the original source directory after install has no effect until you reinstall the plugin.
-
-## Manifest format
-
-Kimi Code CLI treats a root `kimi.plugin.json` as the primary plugin manifest:
+A plugin is a directory or zip file with a manifest at one of these paths:
 
 ```text
 <plugin_root>/kimi.plugin.json
-```
-
-If `kimi.plugin.json` is absent, Kimi Code CLI reads the Kimi-scoped manifest:
-
-```text
 <plugin_root>/.kimi-plugin/plugin.json
 ```
 
-Kimi Code CLI does not read root `plugin.json` or `.codex-plugin/plugin.json`. If both `kimi.plugin.json` and `.kimi-plugin/plugin.json` exist, the root `kimi.plugin.json` wins and the `.kimi-plugin` manifest is shown as shadowed in `/plugins info`.
+When both files exist, `kimi.plugin.json` takes precedence. Kimi Code CLI does not read root `plugin.json` or `.codex-plugin/plugin.json`.
 
-A typical plugin manifest looks like this:
+Example:
 
 ```json
 {
   "name": "kimi-finance",
   "version": "1.0.0",
   "description": "Finance data and analysis workflows for Kimi Code CLI",
-  "keywords": ["finance", "mcp"],
   "skills": "./skills/",
   "sessionStart": {
     "skill": "using-finance"
-  },
-  "skillInstructions": "Prefer the finance MCP tools for live market data. Do not invent live prices.",
-  "mcpServers": {
-    "data": {
-      "command": "node",
-      "args": ["./bin/finance-mcp.mjs"],
-      "cwd": "./"
-    }
   },
   "interface": {
     "displayName": "Kimi Finance",
@@ -113,20 +75,19 @@ Supported fields:
 
 | Field | Description |
 | --- | --- |
-| `name` | Required plugin id source. Must match `[a-z0-9][a-z0-9_-]{0,63}`. |
+| `name` | Required plugin id. Must match `[a-z0-9][a-z0-9_-]{0,63}`. |
 | `version`, `description`, `keywords`, `author`, `homepage`, `license` | Display metadata. |
-| `skills` | One path or an array of paths. Each path must start with `./` and stay inside the plugin root after symlinks are resolved. |
-| root `SKILL.md` | If `skills` is omitted and the plugin root contains `SKILL.md`, the root is treated as a single skill root. |
-| `sessionStart.skill` | Declaratively injects the named skill into the main agent at the start of a new or resumed session. |
-| `skillInstructions` | Extra instructions prepended whenever a skill from this plugin is loaded. |
-| `mcpServers` | MCP server declarations. Servers are enabled by default and can be disabled from `/plugins` or with `/plugins mcp disable <id> <server>`. |
-| `interface` | Display fields for `/plugins info`, such as `displayName`, `shortDescription`, `longDescription`, `developerName`, and `websiteURL`. |
+| `interface` | Fields shown in `/plugins`, such as `displayName`, `shortDescription`, `longDescription`, `developerName`, and `websiteURL`. |
+| `skills` | One or more `./` paths inside the plugin root. If omitted, a root `SKILL.md` is treated as a single skill root. |
+| `sessionStart.skill` | Loads the named plugin skill into the main agent at the start of a new or resumed session. |
+| `skillInstructions` | Extra instructions included whenever a skill from this plugin is loaded. |
+| `mcpServers` | MCP server declarations. Enabled by default; can be disabled from `/plugins`. |
 
-Unsupported runtime fields such as `tools`, `commands`, `configFile`, `config_file`, `inject`, `bootstrap`, `hooks`, and `apps` are reported as diagnostics and ignored.
+Unsupported runtime fields such as `tools`, `commands`, `hooks`, `apps`, `inject`, `configFile`, `config_file`, and `bootstrap` are reported as diagnostics and ignored.
 
 ## Skills and session start
 
-Plugin skills use the same `SKILL.md` format as ordinary [Agent Skills](./skills.md). The common layout is:
+Plugin skills use the same `SKILL.md` format as ordinary [Agent Skills](./skills.md). A common layout:
 
 ```text
 my-plugin/
@@ -138,13 +99,15 @@ my-plugin/
       SKILL.md
 ```
 
-`sessionStart.skill` is a declarative session-start rule: it loads a skill into the main agent's context once at the start of a session. It does not execute code. Use it when the plugin needs to establish workflow rules before the first user task, such as mapping another tool harness's terminology to Kimi Code CLI tools.
+`sessionStart.skill` loads one plugin skill into the main agent at session startup. It is useful for setup instructions, workflow rules, or mapping terminology from another tool to Kimi Code CLI. It injects text only and does not execute code.
 
-`skillInstructions` stays next to the skill content whenever the skill is loaded, whether the skill was loaded by `sessionStart.skill`, by `/skill:<name>`, or by the model's automatic skill invocation.
+`skillInstructions` is included with every skill from the plugin, whether the skill is loaded by `sessionStart.skill`, by `/skill:<name>`, or by automatic skill invocation.
 
 ## MCP servers in plugins
 
-Plugin MCP servers reuse the same server schema as [MCP](./mcp.md). They can be stdio servers:
+Use `mcpServers` when a plugin needs real tool access, such as reading data from an external service or running a local helper process. Plugin MCP servers use the same schema as [MCP](./mcp.md).
+
+Stdio server:
 
 ```json
 {
@@ -157,7 +120,7 @@ Plugin MCP servers reuse the same server schema as [MCP](./mcp.md). They can be 
 }
 ```
 
-Or HTTP servers:
+HTTP server:
 
 ```json
 {
@@ -169,9 +132,9 @@ Or HTTP servers:
 }
 ```
 
-For stdio servers, `command` may be a command found on `PATH`, or a `./` path inside the plugin root. If `cwd` is omitted, Kimi Code CLI runs the server from the managed plugin root. If `cwd` is set, it must start with `./` and stay inside the plugin root. Plugin MCP servers inherit the current process environment; values written under `env` are literal overrides, not `${VAR}` interpolation.
+For stdio servers, `command` may be a command on `PATH` or a `./` path inside the plugin root. If `cwd` is set, it must also start with `./` and stay inside the plugin root; other values are rejected and the server is omitted. Plugin MCP servers inherit the current process environment; values under `env` are literal overrides.
 
-Plugin MCP servers are enabled by default, but they still only start in new sessions. To disable or re-enable one interactively, run `/plugins`, select the plugin, then press `M` to manage its servers. You can also use shortcut commands:
+Plugin MCP servers start only in new sessions. To disable or re-enable one, run `/plugins`, select the plugin, and press `M`. Shortcut commands are also available:
 
 ```sh
 /plugins mcp disable kimi-finance finance
@@ -181,14 +144,12 @@ Plugin MCP servers are enabled by default, but they still only start in new sess
 /new
 ```
 
-The enabled state is stored in `$KIMI_CODE_HOME/plugins/installed.json`. Once a new session starts, enabled plugin MCP servers go through the normal MCP lifecycle, status events, tool naming, and permission approval flow.
-
 ## Security model
 
-Plugins are loaded conservatively:
+Plugins expose a limited loading surface:
 
-- Only `kimi.plugin.json`, `.kimi-plugin/plugin.json`, and Markdown skill files are read during install and session startup.
+- Install and session startup read only plugin manifests and Markdown skill files.
+- All paths must stay inside the plugin root after symlinks are resolved.
 - Command-backed plugin tools, hooks, and legacy tool runtimes are not executed by the plugin loader.
-- Plugin paths must stay inside the plugin root after symlinks are resolved.
-- MCP servers declared by an enabled plugin are enabled by default, but only start in a new session and can be disabled from `/plugins` or with `/plugins mcp disable`.
-- Bad manifests or unsafe paths produce diagnostics shown by `/plugins info <id>` and do not crash unrelated sessions.
+- MCP servers declared by enabled plugins start only in new sessions and can be disabled from `/plugins`.
+- Bad manifests or unsafe paths produce diagnostics in `/plugins info <id>` without crashing unrelated sessions.

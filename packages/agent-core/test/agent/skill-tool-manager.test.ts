@@ -8,7 +8,7 @@ import { Agent, type AgentRecord } from '../../src/agent';
 import { testKaos } from '../fixtures/test-kaos';
 import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
 import type { AgentRecordPersistence } from '../../src/agent/records';
-import { ProviderManager } from '../../src/providers/provider-manager';
+import { ProviderManager } from '../../src/session/provider-manager';
 import type { ApprovalResponse, SDKAgentRPC, SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { SkillRegistry, type SkillDefinition } from '../../src/skill';
@@ -45,13 +45,11 @@ function makeAgent(
     toolCall: vi.fn(),
   } as unknown as SDKAgentRPC;
   const agent = new Agent({
-    runtime: {
-      kaos: testKaos,
-    },
+    kaos: testKaos,
     rpc,
     skills,
     persistence,
-    providerManager: testProviderManager(),
+    modelProvider: testProviderManager(),
   });
   agent.config.update({
     cwd: process.cwd(),
@@ -189,7 +187,7 @@ describe('ToolManager SkillTool registration', () => {
 
       const session = new Session({
         id: 'test-skill-tool',
-        runtime: runtime(workDir),
+        kaos: testKaos.withCwd(workDir),
         homedir: homeDir,
         rpc: sessionRpc(),
         providerManager: testProviderManager(),

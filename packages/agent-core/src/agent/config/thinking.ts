@@ -8,6 +8,25 @@ const DEFAULT_THINKING_EFFORT: ThinkingEffort = 'high';
 
 const THINKING_EFFORTS = new Set<ThinkingEffort>(['low', 'medium', 'high', 'xhigh', 'max']);
 
+export interface ResolveThinkingLevelOptions {
+  readonly defaultThinking?: boolean | undefined;
+  readonly thinking?: ThinkingConfig | undefined;
+}
+
+export function resolveThinkingLevel(
+  requestedThinking: string | undefined,
+  options: ResolveThinkingLevelOptions,
+): ThinkingEffort {
+  const resolvedRequest =
+    requestedThinking !== undefined && requestedThinking.trim().length > 0
+      ? requestedThinking
+      : options.defaultThinking === false
+        ? 'off'
+        : undefined;
+
+  return resolveThinkingEffort(resolvedRequest, options.thinking);
+}
+
 export function resolveThinkingEffort(
   requested: string | undefined,
   defaults: ThinkingConfig | undefined,

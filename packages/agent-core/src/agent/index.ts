@@ -4,7 +4,7 @@ import { join } from 'pathe';
 import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import { log } from '#/logging/logger';
 import type { Logger } from '#/logging/types';
-import type { AgentAPI, AgentEvent, SDKAgentRPC, UsageStatus } from '#/rpc';
+import type { AgentAPI, AgentEvent, KimiConfig, SDKAgentRPC, UsageStatus } from '#/rpc';
 import {
   generate,
   type ChatProvider,
@@ -16,9 +16,8 @@ import type { EnabledPluginSessionStart } from '#/plugin';
 
 import type { McpConnectionManager } from '../mcp';
 import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
-import type { ProviderManager } from '../providers/provider-manager';
-import { withProviderRequestAuth } from '../providers/request-auth';
-import type { RuntimeConfig } from '../runtime-types';
+import type { ModelProvider } from '../session/provider-manager';
+import type { ToolServices } from '../runtime-types';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import type { SkillRegistry } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
@@ -30,9 +29,10 @@ import {
 import type { PromisableMethods } from '../utils/types';
 import { BackgroundManager } from './background';
 import { FullCompaction, type CompactionStrategy } from './compaction';
+import { CronManager } from './cron';
 import { ConfigState } from './config';
 import { ContextMemory } from './context';
-import { HookEngine } from './hooks';
+import { HookEngine } from '../session/hooks';
 import { InjectionManager } from './injection/manager';
 import { PermissionManager, type PermissionManagerOptions } from './permission';
 import { PlanMode } from './plan';
@@ -54,49 +54,50 @@ import {
 } from './turn/kosong-llm';
 import { UsageRecorder } from './usage';
 import { resolveCompletionBudget } from '../utils/completion-budget';
+import type { Kaos } from '@moonshot-ai/kaos';
 
 export type { AgentRecord, AgentRecordPersistence } from './records';
 export type { BuiltinTool, ToolInfo, ToolSource, UserToolRegistration } from './tool';
 
 export type AgentType = 'main' | 'sub' | 'independent';
 
-export interface AgentConfig {
-  readonly runtime: RuntimeConfig;
+export interface AgentOptions {
+  readonly kaos: Kaos;
+  readonly config?: KimiConfig;
   readonly homedir?: string;
-  readonly skills?: SkillRegistry;
-  readonly rpc: SDKAgentRPC;
+  readonly rpc?: Partial<SDKAgentRPC>;
   readonly persistence?: AgentRecordPersistence;
   readonly type?: AgentType;
   readonly generate?: typeof generate;
+  readonly toolServices?: ToolServices;
   readonly compactionStrategy?: CompactionStrategy;
-  readonly providerManager?: ProviderManager | undefined;
-  readonly sessionId?: string;
+  readonly modelProvider?: ModelProvider | undefined;
   readonly subagentHost?: SessionSubagentHost | undefined;
+  readonly skills?: SkillRegistry;
   readonly mcp?: McpConnectionManager;
   readonly hookEngine?: HookEngine;
-  readonly backgroundMaxRunningTasks?: number;
-  readonly backgroundSessionDir?: string;
   readonly permission?: PermissionManagerOptions | undefined;
-  /** Parent logger; the agent appends its own ctx (agentId already bound by session). */
   readonly log?: Logger;
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
 }
 
 export class Agent {
-  readonly runtime: RuntimeConfig;
+  readonly type: AgentType;
+  readonly kaos: Kaos;
+  readonly kimiConfig?: KimiConfig;
   readonly homedir?: string;
-  readonly skills?: SkillManager;
+  readonly rpc?: Partial<SDKAgentRPC>;
+  readonly toolServices?: ToolServices;
   readonly pluginSessionStarts: readonly EnabledPluginSessionStart[];
   readonly rawGenerate: typeof generate;
-  readonly rpc: SDKAgentRPC;
+  readonly modelProvider?: ModelProvider;
+  readonly subagentHost?: SessionSubagentHost;
+  readonly mcp?: McpConnectionManager;
+  readonly hooks?: HookEngine;
+  readonly log: Logger;
   readonly telemetry: TelemetryClient;
-  readonly providerManager: ProviderManager | undefined;
-  readonly subagentHost: SessionSubagentHost | undefined;
-  readonly mcp: McpConnectionManager | undefined;
-  readonly hooks: HookEngine | undefined;
 
-  readonly type: AgentType;
   readonly blobStore: BlobStore | undefined;
   readonly records: AgentRecords;
   readonly fullCompaction: FullCompaction;
@@ -107,42 +108,38 @@ export class Agent {
   readonly permission: PermissionManager;
   readonly planMode: PlanMode;
   readonly usage: UsageRecorder;
+  readonly skills: SkillManager | null;
   readonly tools: ToolManager;
   readonly background: BackgroundManager;
+  readonly cron: CronManager | null;
   readonly replayBuilder: ReplayBuilder;
-  readonly log: Logger;
 
   private lastLlmConfigLogSignature?: string;
 
-  constructor(config: AgentConfig) {
-    this.log = config.log ?? log;
-    this.runtime = config.runtime;
-    this.homedir = config.homedir;
-    if (config.skills !== undefined) {
-      this.skills = new SkillManager(this, config.skills);
-    }
-    this.pluginSessionStarts = config.pluginSessionStarts ?? [];
-    this.rawGenerate = config.generate ?? generate;
-    this.providerManager =
-      config.sessionId === undefined
-        ? config.providerManager
-        : config.providerManager?.withPromptCacheKey(config.sessionId);
-    this.subagentHost = config.subagentHost;
-    this.mcp = config.mcp;
-    this.hooks = config.hookEngine;
+  constructor(options: AgentOptions) {
+    this.type = options.type ?? 'main';
+    this.kaos = options.kaos;
+    this.kimiConfig = options.config;
+    this.homedir = options.homedir;
+    this.rpc = options.rpc;
+    this.toolServices = options.toolServices;
+    this.pluginSessionStarts = options.pluginSessionStarts ?? [];
+    this.rawGenerate = options.generate ?? generate;
+    this.modelProvider = options.modelProvider;
+    this.subagentHost = options.subagentHost;
+    this.mcp = options.mcp;
+    this.hooks = options.hookEngine;
+    this.log = options.log ?? log;
+    this.telemetry = options.telemetry ?? noopTelemetryClient;
 
-    this.type = config.type ?? 'main';
-
-    this.rpc = config.rpc;
-    this.telemetry = config.telemetry ?? noopTelemetryClient;
-    this.blobStore = config.homedir
-      ? new BlobStore({ blobsDir: join(config.homedir, 'blobs') })
+    this.blobStore = options.homedir
+      ? new BlobStore({ blobsDir: join(options.homedir, 'blobs') })
       : undefined;
     this.records = new AgentRecords(
       this,
-      config.persistence ??
-        (config.homedir
-          ? new FileSystemAgentRecordPersistence(join(config.homedir, 'wire.jsonl'), {
+      options.persistence ??
+        (options.homedir
+          ? new FileSystemAgentRecordPersistence(join(options.homedir, 'wire.jsonl'), {
               onError: (error) => {
                 this.emitRecordsWriteError(error);
               },
@@ -150,19 +147,18 @@ export class Agent {
             })
           : undefined),
     );
-    this.fullCompaction = new FullCompaction(this, config.compactionStrategy);
+    this.fullCompaction = new FullCompaction(this, options.compactionStrategy);
     this.context = new ContextMemory(this);
     this.config = new ConfigState(this);
     this.turn = new TurnFlow(this);
     this.injection = new InjectionManager(this);
-    this.permission = new PermissionManager(this, config.permission);
+    this.permission = new PermissionManager(this, options.permission);
     this.planMode = new PlanMode(this);
     this.usage = new UsageRecorder(this);
+    this.skills = options.skills ? new SkillManager(this, options.skills) : null;
     this.tools = new ToolManager(this);
-    this.background = new BackgroundManager(this, {
-      maxRunningTasks: config.backgroundMaxRunningTasks,
-      sessionDir: config.backgroundSessionDir,
-    });
+    this.background = new BackgroundManager(this);
+    this.cron = this.type === 'sub' ? null : new CronManager(this);
     this.replayBuilder = new ReplayBuilder(this);
   }
 
@@ -173,14 +169,16 @@ export class Agent {
         return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, options);
       }
       const modelAlias = this.config.modelAlias;
-      const resolveAuth =
+      const withAuth =
         modelAlias === undefined
           ? undefined
-          : this.providerManager?.createAuthResolverForModel(modelAlias, {
-              log: this.log,
-            });
-      return withProviderRequestAuth(resolveAuth, (auth) => {
-        const requestOptions = auth === undefined ? options : { ...options, auth };
+          : this.modelProvider?.resolveAuth?.(modelAlias, { log: this.log });
+      if (withAuth === undefined) {
+        this.logLlmRequest(provider, systemPrompt, tools, history, options);
+        return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, options);
+      }
+      return withAuth((auth) => {
+        const requestOptions = { ...options, auth };
         this.logLlmRequest(provider, systemPrompt, tools, history, requestOptions);
         return this.rawGenerate(provider, systemPrompt, tools, history, callbacks, requestOptions);
       });
@@ -190,7 +188,7 @@ export class Agent {
   get llm(): KosongLLM {
     const model = this.config.model;
     const provider = this.config.provider.withThinking(this.config.thinkingLevel);
-    const loopControl = this.providerManager?.config.loopControl;
+    const loopControl = this.kimiConfig?.loopControl;
     const completionBudgetConfig = resolveCompletionBudget({
       reservedContextSize: loopControl?.reservedContextSize,
     });
@@ -223,9 +221,23 @@ export class Agent {
       configMetadata,
       buildLlmConfigSignature(configMetadata, systemPrompt, tools),
     );
+
+    let partialMessageCount = 0;
+    for (const message of history) {
+      if (message.partial === true) partialMessageCount += 1;
+    }
+    const requestMetadata: LlmRequestMetadata = {
+      estimatedInputTokens:
+        estimateTokens(systemPrompt) +
+        estimateTokensForMessages(history) +
+        estimateTokensForTools(tools),
+    };
+    if (partialMessageCount > 0) {
+      requestMetadata.partialMessageCount = partialMessageCount;
+    }
     this.log.info('llm request', {
       ...context,
-      ...buildLlmRequestMetadata(systemPrompt, tools, history),
+      ...requestMetadata,
     });
   }
 
@@ -244,7 +256,7 @@ export class Agent {
 
   useProfile(profile: ResolvedAgentProfile, context?: PreparedSystemPromptContext): void {
     const systemPrompt = profile.systemPrompt({
-      osEnv: this.runtime.kaos.osEnv,
+      osEnv: this.kaos.osEnv,
       cwd: this.config.cwd,
       skills: this.skills?.registry,
       cwdListing: context?.cwdListing,
@@ -258,6 +270,7 @@ export class Agent {
     const result = await this.records.replay();
     await this.background.loadFromDisk();
     await this.background.reconcile();
+    await this.cron?.loadFromDisk();
     this.turn.finishResume();
     return result;
   }
@@ -298,21 +311,18 @@ export class Agent {
           this.telemetry.track('afk_toggle', { enabled: afkEnabled });
         }
       },
-      setModel: async (payload) => {
-        const previous = this.config.modelAlias;
-        const resolved = await this.providerManager?.resolveProviderForModel(payload.model);
-        if (resolved === undefined) {
-          throw new Error('Runtime provider model cannot be empty');
-        }
-        this.config.update({
-          modelAlias: resolved.modelName,
-        });
-        if (previous !== resolved.modelName) {
-          this.telemetry.track('model_switch', { model: resolved.modelName });
+      setModel: (payload) => {
+        // Validate the alias resolves before recording it so resume / runtime
+        // callers fail fast on missing aliases instead of deferring to the
+        // next prompt.
+        const resolved = this.modelProvider?.resolveProviderConfig(payload.model);
+        if (this.config.modelAlias !== payload.model) {
+          this.config.update({ modelAlias: payload.model });
+          this.telemetry.track('model_switch', { model: payload.model });
         }
         return {
-          model: resolved.modelName,
-          providerName: resolved.providerName,
+          model: payload.model,
+          providerName: resolved?.providerName,
         };
       },
       getModel: () => {
@@ -350,7 +360,7 @@ export class Agent {
         this.context.clear();
       },
       activateSkill: (payload) => {
-        if (this.skills === undefined) {
+        if (this.skills === null) {
           throw new KimiError(ErrorCodes.SKILL_NOT_FOUND, `Skill "${payload.name}" was not found`);
         }
         this.skills.activate(payload);
@@ -369,7 +379,7 @@ export class Agent {
 
   emitEvent(event: AgentEvent): void {
     if (this.records.restoring) return;
-    void this.rpc.emitEvent(event);
+    void this.rpc?.emitEvent?.(event);
   }
 
   emitStatusUpdated(): void {
@@ -418,16 +428,12 @@ export class Agent {
 }
 
 interface LlmRequestContextFields {
-  turnId?: string;
-  step?: number;
-  attempt?: number;
-  maxAttempts?: number;
+  turnStep?: string;
+  attempt?: string;
 }
 
 interface LlmRequestMetadata {
   estimatedInputTokens: number;
-  messageCount: number;
-  toolCallCount: number;
   partialMessageCount?: number;
 }
 
@@ -451,47 +457,19 @@ function buildLlmRequestContext(options: Parameters<typeof generate>[5]): LlmReq
   if (context === undefined) return {};
 
   const fields: LlmRequestContextFields = {
-    turnId: context.turnId,
-    step: context.step,
+    turnStep:
+      context.turnId === undefined || context.step === undefined
+        ? undefined
+        : `${context.turnId}.${String(context.step)}`,
   };
   if (
     context.attempt !== undefined &&
     context.maxAttempts !== undefined &&
     context.attempt > 1
   ) {
-    fields.attempt = context.attempt;
-    fields.maxAttempts = context.maxAttempts;
+    fields.attempt = `${String(context.attempt)}/${String(context.maxAttempts)}`;
   }
   return fields;
-}
-
-function buildLlmRequestMetadata(
-  systemPrompt: string,
-  tools: readonly Tool[],
-  history: readonly Message[],
-): LlmRequestMetadata {
-  let toolCallCount = 0;
-  let partialMessageCount = 0;
-
-  for (const message of history) {
-    if (message.partial === true) partialMessageCount += 1;
-    toolCallCount += message.toolCalls.length;
-  }
-
-  const estimatedInputTokens =
-    estimateTokens(systemPrompt) +
-    estimateTokensForMessages(history) +
-    estimateTokensForTools(tools);
-
-  const metadata: LlmRequestMetadata = {
-    estimatedInputTokens,
-    messageCount: history.length,
-    toolCallCount,
-  };
-  if (partialMessageCount > 0) {
-    metadata.partialMessageCount = partialMessageCount;
-  }
-  return metadata;
 }
 
 function buildLlmConfigMetadata(

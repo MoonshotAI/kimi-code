@@ -36,6 +36,7 @@ describe('createTUIState', () => {
       startup: {
         continueLast: false,
         yolo: false,
+        auto: false,
         plan: false,
       },
     };

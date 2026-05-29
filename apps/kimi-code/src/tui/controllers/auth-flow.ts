@@ -66,7 +66,11 @@ export class AuthFlowController {
       workDir: host.state.appState.workDir,
       model,
       thinking: level,
-      permission: host.options.startup.yolo ? 'yolo' : undefined,
+      permission: host.options.startup.auto
+        ? 'auto'
+        : host.options.startup.yolo
+          ? 'yolo'
+          : undefined,
       planMode: host.state.appState.planMode ? true : undefined,
     });
     await host.setSession(session);

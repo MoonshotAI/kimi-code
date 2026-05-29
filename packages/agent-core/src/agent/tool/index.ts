@@ -11,7 +11,6 @@ import { mcpResultToExecutableOutput } from '../../mcp/output';
 import { isMcpToolName, qualifyMcpToolName } from '../../mcp/tool-naming';
 import type { MCPClient } from '../../mcp/types';
 import { DEFAULT_AGENT_PROFILES } from '../../profile';
-import { withProviderRequestAuth } from '../../providers/request-auth';
 import { extendWorkspaceWithSkillRoots } from '../../skill';
 import * as b from '../../tools/builtin';
 import type { ToolStore, ToolStoreData, ToolStoreKey } from '../../tools/store';
@@ -44,6 +43,9 @@ export class ToolManager {
 
   constructor(protected readonly agent: Agent) {
     this.attachMcpTools();
+    if (agent.config.hasProvider) {
+      this.initializeBuiltinTools();
+    }
   }
 
   protected get toolStore(): ToolStore {
@@ -94,7 +96,7 @@ export class ToolManager {
         return {
           approvalRule: name,
           execute: async (context) => {
-            return this.agent.rpc.toolCall(
+            return this.agent.rpc!.toolCall!(
               {
                 turnId: Number(context.turnId),
                 toolCallId: context.toolCallId,
@@ -338,9 +340,10 @@ export class ToolManager {
     return { ...this.store };
   }
 
-  initializeBuiltinTools(): void {
+  initializeBuiltinTools() {
     const {
-      runtime: { kaos, urlFetcher, webSearcher },
+      kaos,
+      toolServices,
       config: { cwd, provider, modelCapabilities },
       background,
     } = this.agent;
@@ -363,20 +366,22 @@ export class ToolManager {
         new b.EditTool(kaos, workspace),
         new b.GrepTool(kaos, workspace),
         new b.GlobTool(kaos, workspace),
-        new b.BashTool(kaos, cwd, kaos.osEnv, background, {
+        new b.BashTool(kaos, cwd, background, {
           allowBackground,
         }),
         (modelCapabilities.image_in || modelCapabilities.video_in) &&
           new b.ReadMediaFileTool(kaos, workspace, modelCapabilities, videoUploader),
         new b.EnterPlanModeTool(this.agent),
         new b.ExitPlanModeTool(this.agent),
-        new b.AskUserQuestionTool(this.agent),
+        this.agent.rpc?.requestQuestion && new b.AskUserQuestionTool(this.agent),
         new b.TodoListTool(this.toolStore),
         new b.TaskListTool(background),
         new b.TaskOutputTool(background),
         new b.TaskStopTool(background),
-        this.agent.skills !== undefined &&
-          this.agent.skills.registry.listInvocableSkills().length > 0 &&
+        this.agent.cron && new b.CronCreateTool(this.agent.cron),
+        this.agent.cron && new b.CronListTool(this.agent.cron),
+        this.agent.cron && new b.CronDeleteTool(this.agent.cron),
+        this.agent.skills?.registry.listInvocableSkills().length &&
           new b.SkillTool(this.agent),
         this.agent.subagentHost &&
           new b.AgentTool(
@@ -388,8 +393,8 @@ export class ToolManager {
               log: this.agent.log,
             },
           ),
-        webSearcher && new b.WebSearchTool(webSearcher),
-        urlFetcher && new b.FetchURLTool(urlFetcher),
+        toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
+        toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),
       ]
         .filter((tool) => !!tool)
         .map((tool) => [tool.name, tool] as const),
@@ -400,14 +405,12 @@ export class ToolManager {
     const uploadVideo = provider.uploadVideo?.bind(provider);
     if (uploadVideo === undefined) return undefined;
 
-    const modelAlias = this.agent.config.modelAlias;
-    const resolveAuth =
-      modelAlias === undefined
-        ? undefined
-        : this.agent.providerManager?.createAuthResolverForModel(modelAlias, {
-            log: this.agent.log,
-          });
-    return (input) => withProviderRequestAuth(resolveAuth, (auth) => uploadVideo(input, { auth }));
+    const modelAlias = this.agent.config.modelAlias!;
+    const withAuth = this.agent.modelProvider?.resolveAuth?.(modelAlias, {
+      log: this.agent.log,
+    });
+    if (withAuth === undefined) return (input) => uploadVideo(input);
+    return (input) => withAuth((auth) => uploadVideo(input, { auth }));
   }
 
   get loopTools(): readonly ExecutableTool[] {

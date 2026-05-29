@@ -7,7 +7,7 @@ import { testKaos } from '../fixtures/test-kaos';
 import type { ProviderConfig } from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ProviderManager } from '../../src/providers/provider-manager';
+import { ProviderManager } from '../../src/session/provider-manager';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
@@ -44,7 +44,7 @@ describe('Session.init', () => {
     const scripted = createScriptedGenerate();
     const session = new Session({
       id: 'test-init',
-      runtime: { kaos: testKaos.withCwd(workDir) },
+      kaos: testKaos.withCwd(workDir),
       homedir: sessionDir,
       rpc: createSessionRpc(events),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
@@ -120,7 +120,7 @@ describe('Session.init', () => {
     const sessionDir = await makeTempDir();
     const records: TelemetryRecord[] = [];
     const session = new Session({
-      runtime: { kaos: testKaos.withCwd(workDir) },
+      kaos: testKaos.withCwd(workDir),
       homedir: sessionDir,
       rpc: createSessionRpc([]),
       providerManager: testProviderManager(),

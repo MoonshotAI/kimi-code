@@ -62,7 +62,6 @@ max_context_size = 262144
 mode = "auto"
 
 [loop_control]
-max_steps_per_turn = 1000
 max_retries_per_step = 3
 reserved_context_size = 50000
 
@@ -154,7 +153,7 @@ max_context_size = 1047576
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `max_steps_per_turn` | `integer` | `1000` | 单轮最大步数 |
+| `max_steps_per_turn` | `integer` | — | 单轮最大步数；不设置或设为 `0` 则无上限。设为 `0` 可用于显式覆盖此前已配置的限制。 |
 | `max_retries_per_step` | `integer` | `3` | 单步最大重试次数 |
 | `reserved_context_size` | `integer` | — | 预留给响应生成的 token 数；上下文逼近该阈值时触发压缩 |
 

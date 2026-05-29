@@ -5,6 +5,7 @@ export interface CLIOptions {
   session: string | undefined;
   continue: boolean;
   yolo: boolean;
+  auto: boolean;
   plan: boolean;
   model: string | undefined;
   outputFormat: PromptOutputFormat | undefined;
@@ -39,6 +40,9 @@ export function validateOptions(opts: CLIOptions): ValidatedOptions {
   if (promptMode && opts.yolo) {
     throw new OptionConflictError('Cannot combine --prompt with --yolo.');
   }
+  if (promptMode && opts.auto) {
+    throw new OptionConflictError('Cannot combine --prompt with --auto.');
+  }
   if (promptMode && opts.plan) {
     throw new OptionConflictError('Cannot combine --prompt with --plan.');
   }
@@ -48,8 +52,14 @@ export function validateOptions(opts: CLIOptions): ValidatedOptions {
   if (opts.continue && opts.session !== undefined) {
     throw new OptionConflictError('Cannot combine --continue, --session.');
   }
+  if (opts.yolo && opts.auto) {
+    throw new OptionConflictError('Cannot combine --yolo with --auto.');
+  }
   if (!promptMode && (opts.continue || opts.session !== undefined) && opts.yolo) {
     throw new OptionConflictError('Cannot combine --yolo with --continue or --session.');
+  }
+  if (!promptMode && (opts.continue || opts.session !== undefined) && opts.auto) {
+    throw new OptionConflictError('Cannot combine --auto with --continue or --session.');
   }
   if (!promptMode && (opts.continue || opts.session !== undefined) && opts.plan) {
     throw new OptionConflictError('Cannot combine --plan with --continue or --session.');

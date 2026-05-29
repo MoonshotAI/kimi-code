@@ -1,4 +1,4 @@
-import { HOOK_EVENT_TYPES } from '#/agent/hooks/types';
+import { HOOK_EVENT_TYPES } from '../session/hooks/types';
 import { parsePattern } from '#/agent/permission/matches-rule';
 import { ErrorCodes, KimiError } from '#/errors';
 import { z } from 'zod';
@@ -80,7 +80,7 @@ export const PermissionConfigSchema = z.object({
 export type PermissionConfig = z.infer<typeof PermissionConfigSchema>;
 
 export const LoopControlSchema = z.object({
-  maxStepsPerTurn: z.number().int().min(1).optional(),
+  maxStepsPerTurn: z.number().int().min(0).optional(),
   maxRetriesPerStep: z.number().int().min(0).optional(),
   maxRalphIterations: z.number().int().min(-1).optional(),
   reservedContextSize: z.number().int().min(0).optional(),

@@ -39,11 +39,13 @@ export type {
   BackgroundTaskKind,
   BackgroundTaskStatus,
 } from './tools/background/manager';
-export type { RuntimeConfig } from './runtime-types';
+export type { ToolServices } from './runtime-types';
+export { SingleModelProvider } from './session/provider-manager';
 export type {
   BearerTokenProvider,
+  ModelProvider,
   OAuthTokenProviderResolver,
-} from './providers/runtime-provider';
+} from './session/provider-manager';
 
 // ─── Wire records (for in-monorepo consumers like apps/vis) ────────────────
 export type {

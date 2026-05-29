@@ -30,6 +30,16 @@ interface ShowPluginsPickerOptions {
   };
 }
 
+interface PluginMcpServerHint {
+  readonly server: string;
+  readonly text: string;
+}
+
+interface ShowPluginMcpPickerOptions {
+  readonly selectedServer?: string;
+  readonly serverHint?: PluginMcpServerHint;
+}
+
 export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: string): Promise<void> {
   const args = rawArgs.trim().split(/\s+/).filter((part) => part.length > 0);
   const sub = args[0];
@@ -179,7 +189,11 @@ async function showPluginMarketplacePicker(host: SlashCommandHost, source?: stri
   }
 }
 
-async function showPluginMcpPicker(host: SlashCommandHost, id: string): Promise<void> {
+async function showPluginMcpPicker(
+  host: SlashCommandHost,
+  id: string,
+  options?: ShowPluginMcpPickerOptions,
+): Promise<void> {
   let info: PluginInfo;
   try {
     info = await host.requireSession().getPluginInfo(id);
@@ -191,6 +205,8 @@ async function showPluginMcpPicker(host: SlashCommandHost, id: string): Promise<
   host.mountEditorReplacement(
     new PluginMcpSelectorComponent({
       info,
+      selectedServer: options?.selectedServer,
+      serverHint: options?.serverHint,
       colors: host.state.theme.colors,
       onSelect: (selection) => {
         host.restoreEditor();
@@ -229,7 +245,12 @@ async function confirmRemovePlugin(host: SlashCommandHost, id: string): Promise<
   });
 }
 
-async function applyPluginEnabled(host: SlashCommandHost, id: string, enabled: boolean): Promise<void> {
+async function applyPluginEnabled(
+  host: SlashCommandHost,
+  id: string,
+  enabled: boolean,
+  showStatus = true,
+): Promise<string> {
   const session = host.requireSession();
   await session.setPluginEnabled(id, enabled);
   let info: PluginInfo | undefined;
@@ -242,7 +263,11 @@ async function applyPluginEnabled(host: SlashCommandHost, id: string, enabled: b
     enabled && info !== undefined && info.mcpServerCount > info.enabledMcpServerCount
       ? ` Some MCP servers are disabled; re-enable with /plugins mcp enable ${id} <server>.`
       : '';
-  host.showStatus(`${enabled ? 'Enabled' : 'Disabled'} ${id}. Run /new to apply.${mcpHint}`);
+  if (showStatus) {
+    host.showStatus(`${enabled ? 'Enabled' : 'Disabled'} ${id}. Run /new to apply.${mcpHint}`);
+  }
+  const inlineMcpHint = mcpHint.length > 0 ? ' · MCP servers disabled' : '';
+  return `${pluginInlineChangeHint()}${inlineMcpHint}`;
 }
 
 async function handlePluginsOverviewSelection(
@@ -261,13 +286,14 @@ async function handlePluginsOverviewSelection(
     case 'show-list':
       await renderPluginsList(host);
       return;
-    case 'toggle':
-      await applyPluginEnabled(host, selection.id, selection.enabled);
+    case 'toggle': {
+      const hint = await applyPluginEnabled(host, selection.id, selection.enabled, false);
       await showPluginsPicker(host, {
         selectedId: selection.id,
-        pluginHint: { id: selection.id, text: 'saved · /new to apply' },
+        pluginHint: { id: selection.id, text: hint },
       });
       return;
+    }
     case 'mcp':
       await showPluginMcpPicker(host, selection.id);
       return;
@@ -298,10 +324,13 @@ async function handlePluginMcpSelection(
         selection.server,
         selection.enabled,
       );
-      host.showStatus(
-        `${selection.enabled ? 'Enabled' : 'Disabled'} MCP server ${selection.server} for ${selection.pluginId}. Run /new to apply.`,
-      );
-      await showPluginMcpPicker(host, selection.pluginId);
+      await showPluginMcpPicker(host, selection.pluginId, {
+        selectedServer: selection.server,
+        serverHint: {
+          server: selection.server,
+          text: pluginInlineChangeHint(),
+        },
+      });
       return;
     case 'back':
       await showPluginsPicker(host, { selectedId: selection.pluginId });
@@ -388,4 +417,8 @@ function resolvePluginInstallSource(source: string, workDir: string): string {
   if (trimmed === '~') return osHomedir();
   if (trimmed.startsWith('~/')) return join(osHomedir(), trimmed.slice(2));
   return isAbsolute(trimmed) ? trimmed : resolve(workDir, trimmed);
+}
+
+function pluginInlineChangeHint(): string {
+  return 'pending /new';
 }

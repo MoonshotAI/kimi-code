@@ -155,6 +155,7 @@ export interface TUIStartupOptions {
   readonly sessionFlag?: string;
   readonly continueLast: boolean;
   readonly yolo: boolean;
+  readonly auto: boolean;
   readonly plan: boolean;
   readonly model?: string;
   readonly startupNotice?: string;

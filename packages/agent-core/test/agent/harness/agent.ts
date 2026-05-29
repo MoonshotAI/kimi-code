@@ -4,11 +4,11 @@ import { Readable, type Writable } from 'node:stream';
 import { createControlledPromise } from '@antfu/utils';
 import { type Environment, type Kaos, type KaosProcess } from '@moonshot-ai/kaos';
 import type { ModelCapability, ProviderConfig } from '@moonshot-ai/kosong';
-import { expect, vi } from 'vitest';
+import { expect, onTestFinished, vi } from 'vitest';
 
 import {
   Agent,
-  type AgentConfig,
+  type AgentOptions,
   type AgentRecord,
   type AgentRecordPersistence,
 } from '../../../src/agent';
@@ -21,10 +21,10 @@ import {
 import type { KimiConfig } from '../../../src/config';
 import type { ExecutableToolResult } from '../../../src/loop';
 import type { Logger } from '../../../src/logging';
-import { ProviderManager } from '../../../src/providers/provider-manager';
+import { ProviderManager } from '../../../src/session/provider-manager';
 import type { QuestionResult, RPCCallOptions, SDKAgentRPC } from '../../../src/rpc';
 import type { AgentAPI } from '../../../src/rpc/core-api';
-import type { RuntimeConfig } from '../../../src/runtime-types';
+import type { ToolServices } from '../../../src/runtime-types';
 import type { TelemetryClient } from '../../../src/telemetry';
 import type { PromisifyMethods } from '../../../src/utils/types';
 import { createFakeKaos } from '../../tools/fixtures/fake-kaos';
@@ -65,7 +65,7 @@ type RpcLogEntry = RpcSnapshotEntry & {
 };
 
 type PromiseAgentAPI = PromisifyMethods<AgentAPI>;
-type GenerateFn = NonNullable<AgentConfig['generate']>;
+type GenerateFn = NonNullable<AgentOptions['generate']>;
 
 type TestToolResult = ExecutableToolResult & {
   readonly content?: unknown;
@@ -88,17 +88,19 @@ interface ResumeStateSnapshot {
   readonly usage: ReturnType<Agent['usage']['data']>;
 }
 
-interface TestAgentOptions {
+export interface TestAgentOptions {
   readonly kaos?: Kaos | undefined;
-  readonly runtime?: RuntimeConfig | undefined;
+  readonly runtime?: ToolServices | undefined;
   readonly compactionStrategy?: CompactionStrategy | undefined;
   readonly generate?: GenerateFn | undefined;
-  readonly hookEngine?: AgentConfig['hookEngine'];
-  readonly type?: AgentConfig['type'];
-  readonly permission?: AgentConfig['permission'];
+  readonly hookEngine?: AgentOptions['hookEngine'];
+  readonly type?: AgentOptions['type'];
+  readonly permission?: AgentOptions['permission'];
   readonly providerManager?: ProviderManager;
+  readonly initialConfig?: KimiConfig;
+  readonly providerManagerOverrides?: Omit<ConstructorParameters<typeof ProviderManager>[0], 'config'>;
   readonly sessionId?: string;
-  readonly subagentHost?: AgentConfig['subagentHost'];
+  readonly subagentHost?: AgentOptions['subagentHost'];
   readonly onEvent?: ((event: AgentRecord) => AgentRecord | undefined) | undefined;
   readonly persistence?: AgentRecordPersistence | undefined;
   readonly telemetry?: TelemetryClient | undefined;
@@ -155,25 +157,32 @@ export class AgentTestContext {
   readonly mockNextResponse = this.scriptedGenerate.mockNextResponse;
   readonly mockNextProviderResponse = this.scriptedGenerate.mockNextProviderResponse;
 
+  private kimiConfig: KimiConfig;
+
   constructor(options: TestAgentOptions = {}) {
     this.options = options;
     this.emitter.on('error', () => {});
-    const providerManager = options.providerManager ?? new ProviderManager({ config: emptyConfig() });
+    this.kimiConfig = options.initialConfig ?? emptyConfig();
+    const providerManager = options.providerManager ?? new ProviderManager({
+      config: () => this.kimiConfig,
+      ...(options.sessionId !== undefined ? { promptCacheKey: options.sessionId } : {}),
+      ...options.providerManagerOverrides,
+    });
 
-    const runtime = options.runtime ?? {
-      kaos: options.kaos ?? testKaos,
-    };
+    const kaos = options.kaos ?? testKaos;
+    const toolServices = options.runtime;
     const persistence = this.wrapPersistence(
       options.persistence ?? new InMemoryAgentRecordPersistence(),
     );
     this.agent = new Agent({
-      runtime,
+      kaos,
+      toolServices,
+      config: this.kimiConfig,
       rpc: this.createRpcProxy(),
       persistence,
       generate: options.generate ?? this.scriptedGenerate.generate,
       compactionStrategy: options.compactionStrategy,
-      providerManager,
-      sessionId: options.sessionId,
+      modelProvider: providerManager,
       subagentHost: options.subagentHost,
       type: options.type,
       permission: options.permission,
@@ -182,6 +191,16 @@ export class AgentTestContext {
       log: options.log,
     });
     this.rpc = this.createPromiseAgentApi(this.agent);
+    // The Agent constructor now eagerly binds a SIGUSR1 listener via
+    // CronManager.start(). Without per-test cleanup, every Agent built
+    // by this harness leaks one listener — Node prints a
+    // MaxListenersExceededWarning once the suite crosses 10 agents.
+    // onTestFinished is a vitest API callable from non-hook scopes, so
+    // we register cleanup transparently without forcing every test to
+    // remember an afterEach.
+    onTestFinished(async () => {
+      await this.agent.cron?.stop();
+    });
   }
 
   configure({
@@ -208,9 +227,9 @@ export class AgentTestContext {
     provider: ProviderConfig,
     modelCapabilities?: ModelCapability | undefined,
   ): void {
-    this.agent.providerManager?.updateConfig(
-      configWithProvider(this.agent.providerManager.config, provider, modelCapabilities),
-    );
+    if (this.options.providerManager === undefined) {
+      this.kimiConfig = configWithProvider(this.kimiConfig, provider, modelCapabilities);
+    }
     this.agent.config.update({ modelAlias: provider.model });
   }
 
@@ -707,12 +726,14 @@ export class AgentTestContext {
 
   async expectResumeMatches(): Promise<void> {
     const resumed = testAgent({
+      kaos: createResumeNoSideEffectKaos(this.agent.config.cwd),
       runtime: {
-        kaos: createResumeNoSideEffectKaos(this.agent.config.cwd),
-        urlFetcher: this.agent.runtime.urlFetcher,
-        webSearcher: this.agent.runtime.webSearcher,
+        urlFetcher: this.agent.toolServices?.urlFetcher,
+        webSearcher: this.agent.toolServices?.webSearcher,
       },
-      providerManager: this.agent.providerManager,
+      providerManager: this.options.providerManager,
+      initialConfig: this.kimiConfig,
+      providerManagerOverrides: this.options.providerManagerOverrides,
       generate: failOnResumeGenerate,
       compactionStrategy: this.options.compactionStrategy,
       persistence: new InMemoryAgentRecordPersistence(

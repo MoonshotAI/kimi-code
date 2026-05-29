@@ -64,7 +64,7 @@ describe('status panel report lines', () => {
     expect(output).toContain('25.0%');
     expect(output).toContain('(3.0k / 12.0k)');
     expect(output).toContain('Plan usage');
-    expect(output).toContain('92% left');
+    expect(output).toContain('8% used');
     expect(output).not.toContain('Account');
     expect(output).not.toContain('AGENTS.md');
     expect(output).not.toContain('Runtime');

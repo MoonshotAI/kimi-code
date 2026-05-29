@@ -69,21 +69,85 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
     return;
   }
 
-  let enabled: boolean;
-  if (args === 'on') enabled = true;
-  else if (args === 'off') enabled = false;
-  else enabled = host.state.appState.permissionMode !== 'yolo';
+  const subcmd = args.trim().toLowerCase();
+  const currentMode = host.state.appState.permissionMode;
 
-  await session.setPermission(enabled ? 'yolo' : 'manual');
-  host.setAppState({ permissionMode: enabled ? 'yolo' : 'manual' });
-  if (enabled) {
-    host.showNotice(
-      'YOLO mode: ON',
-      'All actions will be approved automatically. Use with caution.',
-    );
+  if (subcmd === 'on') {
+    if (currentMode === 'yolo') {
+      host.showNotice('YOLO mode is already on');
+      return;
+    }
+    await session.setPermission('yolo');
+    host.setAppState({ permissionMode: 'yolo' });
+    host.showNotice('YOLO mode: ON', 'Workspace tools auto-approved.');
     return;
   }
-  host.showNotice('YOLO mode: OFF');
+
+  if (subcmd === 'off') {
+    if (currentMode !== 'yolo') {
+      host.showNotice('YOLO mode is already off');
+      return;
+    }
+    await session.setPermission('manual');
+    host.setAppState({ permissionMode: 'manual' });
+    host.showNotice('YOLO mode: OFF');
+    return;
+  }
+
+  // toggle
+  if (currentMode === 'yolo') {
+    await session.setPermission('manual');
+    host.setAppState({ permissionMode: 'manual' });
+    host.showNotice('YOLO mode: OFF');
+  } else {
+    await session.setPermission('yolo');
+    host.setAppState({ permissionMode: 'yolo' });
+    host.showNotice('YOLO mode: ON', 'Workspace tools auto-approved.');
+  }
+}
+
+export async function handleAutoCommand(host: SlashCommandHost, args: string): Promise<void> {
+  const session = host.session;
+  if (session === undefined) {
+    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    return;
+  }
+
+  const subcmd = args.trim().toLowerCase();
+  const currentMode = host.state.appState.permissionMode;
+
+  if (subcmd === 'on') {
+    if (currentMode === 'auto') {
+      host.showNotice('Auto mode is already on');
+      return;
+    }
+    await session.setPermission('auto');
+    host.setAppState({ permissionMode: 'auto' });
+    host.showNotice('Auto mode: ON', 'Tools auto-approved. Agent will not ask questions.');
+    return;
+  }
+
+  if (subcmd === 'off') {
+    if (currentMode !== 'auto') {
+      host.showNotice('Auto mode is already off');
+      return;
+    }
+    await session.setPermission('manual');
+    host.setAppState({ permissionMode: 'manual' });
+    host.showNotice('Auto mode: OFF');
+    return;
+  }
+
+  // toggle
+  if (currentMode === 'auto') {
+    await session.setPermission('manual');
+    host.setAppState({ permissionMode: 'manual' });
+    host.showNotice('Auto mode: OFF');
+  } else {
+    await session.setPermission('auto');
+    host.setAppState({ permissionMode: 'auto' });
+    host.showNotice('Auto mode: ON', 'Tools auto-approved. Agent will not ask questions.');
+  }
 }
 
 export async function handleCompactCommand(host: SlashCommandHost, args: string): Promise<void> {

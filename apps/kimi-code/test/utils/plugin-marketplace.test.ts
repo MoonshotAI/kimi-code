@@ -112,7 +112,11 @@ describe('loadPluginMarketplace', () => {
         }),
     })) as unknown as typeof fetch;
 
-    const marketplace = await loadPluginMarketplace({ workDir: '/tmp/work', fetchImpl });
+    const marketplace = await loadPluginMarketplace({
+      workDir: '/tmp/work',
+      source: KIMI_CODE_PLUGIN_MARKETPLACE_URL,
+      fetchImpl,
+    });
 
     expect(fetchImpl).toHaveBeenCalledWith(KIMI_CODE_PLUGIN_MARKETPLACE_URL);
     expect(marketplace.plugins[0]).toEqual(

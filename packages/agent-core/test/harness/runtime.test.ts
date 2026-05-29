@@ -11,7 +11,7 @@ import {
   type CoreAPI,
   type SDKAPI,
 } from '../../src';
-import type { OAuthTokenProviderResolver } from '../../src/providers/runtime-provider';
+import type { OAuthTokenProviderResolver } from '../../src/session/provider-manager';
 
 describe('KimiCore runtime config', () => {
   let tmp: string;
@@ -73,9 +73,9 @@ custom_headers = { "X-Test" = "1" }
       storage: 'file',
       key: 'oauth/custom-kimi-code',
     });
-    expect(session?.config.runtime.webSearcher).toBeDefined();
+    expect(session?.options.toolServices?.webSearcher).toBeDefined();
 
-    await session!.config.runtime.webSearcher!.search('kimi');
+    await session!.options.toolServices?.webSearcher!.search('kimi');
 
     expect(getAccessToken).toHaveBeenCalledWith();
     const init = fetchImpl.mock.calls[0]?.[1] as RequestInit;
@@ -85,5 +85,42 @@ custom_headers = { "X-Test" = "1" }
       'X-Msh-Version': '0.0.0-test',
       'X-Test': '1',
     });
+  });
+
+  it('falls back to defaultModel when createSession receives no model option', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `default_model = "default-mock"
+
+[providers.test]
+type = "kimi"
+api_key = "test-key"
+
+[models."default-mock"]
+provider = "test"
+model = "default-mock"
+max_context_size = 100000
+`,
+    );
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({ id: 'ses_runtime_default_model', workDir });
+    const session = core.sessions.get(created.id);
+    const mainAgent = session?.agents.get('main');
+
+    expect(mainAgent?.config.modelAlias).toBe('default-mock');
   });
 });

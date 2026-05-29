@@ -32,6 +32,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       session: undefined,
       continue: false,
       yolo: false,
+      auto: false,
       plan: false,
       model: undefined,
       outputFormat: undefined,
@@ -369,6 +370,54 @@ describe('KimiTUI resume message replay', () => {
       'answer 10',
       'answer 11',
     ]);
+  });
+
+  it('skips cron_job origin records during replay', async () => {
+    const cronFire =
+      '<cron-fire jobId="job-1" cron="*/5 * * * *" recurring="true" coalescedCount="1">\nrun nightly\n</cron-fire>';
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'real prompt' }]),
+      message('assistant', [{ type: 'text', text: 'real answer' }]),
+      message('user', [{ type: 'text', text: cronFire }], {
+        origin: {
+          kind: 'cron_job',
+          jobId: 'job-1',
+          cron: '*/5 * * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        },
+      }),
+    ]);
+
+    const transcript = driver.state.transcriptContainer.render(120).join('\n');
+    expect(transcript).not.toContain('<cron-fire');
+    expect(
+      driver.state.transcriptEntries
+        .filter((entry) => entry.kind === 'user')
+        .map((entry) => entry.content),
+    ).toEqual(['real prompt']);
+  });
+
+  it('skips cron_missed origin records during replay', async () => {
+    const cronMissed =
+      '<cron-fire jobId="job-2" missed="true" count="3">\n3 one-shot tasks missed while offline\n</cron-fire>';
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'real prompt' }]),
+      message('assistant', [{ type: 'text', text: 'real answer' }]),
+      message('user', [{ type: 'text', text: cronMissed }], {
+        origin: { kind: 'cron_missed', count: 3 },
+      }),
+    ]);
+
+    const transcript = driver.state.transcriptContainer.render(120).join('\n');
+    expect(transcript).not.toContain('<cron-fire');
+    expect(transcript).not.toContain('missed while offline');
+    expect(
+      driver.state.transcriptEntries
+        .filter((entry) => entry.kind === 'user')
+        .map((entry) => entry.content),
+    ).toEqual(['real prompt']);
   });
 
   it('renders user-slash skill activation once without exposing injected prompt text', async () => {

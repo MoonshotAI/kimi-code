@@ -33,7 +33,7 @@ import type { AgentEvent, TurnEndedEvent } from '../../rpc';
 import type { TelemetryPropertyValue } from '../../telemetry';
 import { abortable } from '../../utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
-import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../hooks';
+import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
 import { ToolCallDeduplicator } from './tool-dedup';
 
@@ -362,7 +362,7 @@ export class TurnFlow {
     while (true) {
       signal.throwIfAborted();
       const model = this.agent.config.model;
-      const loopControl = this.agent.providerManager?.config.loopControl;
+      const loopControl = this.agent.kimiConfig?.loopControl;
       try {
         const result = await runTurn({
           turnId: String(turnId),
@@ -701,8 +701,8 @@ function summarizeTurnError(error: unknown, turnId: number): KimiErrorPayload {
   const details = { ...payload.details, turnId };
 
   // Substitute a friendlier TUI-aware message for model-not-configured.
-  // Raw kosong text ("Model not set" / "Provider not set") is not
-  // actionable; this string points the user at the login flow.
+  // The raw "Model not set" / "Provider not set" text is not actionable;
+  // this string points the user at the login flow.
   if (payload.code === 'model.not_configured') {
     return { ...payload, message: LLM_NOT_SET_MESSAGE, details };
   }

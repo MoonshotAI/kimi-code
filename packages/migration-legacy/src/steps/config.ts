@@ -310,8 +310,8 @@ export async function migrateConfigStep(input: ConfigStepInput): Promise<ConfigS
     if (k === 'providers' || k === 'models' || k === 'hooks') continue;
     if (TUI_TOP_LEVEL_KEYS.has(k)) continue;
     if (k === 'default_yolo') {
-      // kimi-cli's `default_yolo` is kimi-code's `yolo`.
-      if (v === true) migratedTop['yolo'] = true;
+      // kimi-cli's `default_yolo` maps to kimi-code's `default_permission_mode`.
+      if (v === true) migratedTop['default_permission_mode'] = 'yolo';
       continue;
     }
     if (!SUPPORTED_TOP_LEVEL_KEYS.has(k)) {

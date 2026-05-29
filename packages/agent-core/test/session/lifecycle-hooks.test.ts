@@ -26,7 +26,7 @@ describe('Session lifecycle hooks', () => {
   it('fires SessionStart on startup and SessionEnd on close', async () => {
     const { command, logPath, sessionDir, workDir } = await hookFixture();
     const session = new Session({
-      runtime: { kaos: testKaos.withCwd(workDir) },
+      kaos: testKaos.withCwd(workDir),
       id: 'session-123',
       homedir: sessionDir,
       rpc: createSessionRpc(),
@@ -71,7 +71,7 @@ describe('Session lifecycle hooks', () => {
       'utf-8',
     );
     const session = new Session({
-      runtime: { kaos: testKaos.withCwd(workDir) },
+      kaos: testKaos.withCwd(workDir),
       id: 'session-456',
       homedir: sessionDir,
       rpc: createSessionRpc(),
@@ -94,7 +94,7 @@ describe('Session lifecycle hooks', () => {
   it('does not let failing SessionStart or SessionEnd hook commands interrupt startup or close', async () => {
     const { sessionDir, workDir } = await hookFixture();
     const session = new Session({
-      runtime: { kaos: testKaos.withCwd(workDir) },
+      kaos: testKaos.withCwd(workDir),
       id: 'session-reject',
       homedir: sessionDir,
       rpc: createSessionRpc(),
@@ -112,7 +112,7 @@ describe('Session lifecycle hooks', () => {
   it('stops background tasks on close when keepAliveOnExit is false', async () => {
     const { sessionDir, workDir } = await hookFixture();
     const session = new Session({
-      runtime: { kaos: testKaos.withCwd(workDir) },
+      kaos: testKaos.withCwd(workDir),
       id: 'session-bg-cleanup',
       homedir: sessionDir,
       rpc: createSessionRpc(),
@@ -133,7 +133,7 @@ describe('Session lifecycle hooks', () => {
     vi.stubEnv('KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT', '0');
     const { sessionDir, workDir } = await hookFixture();
     const session = new Session({
-      runtime: { kaos: testKaos.withCwd(workDir) },
+      kaos: testKaos.withCwd(workDir),
       id: 'session-bg-env-cleanup',
       homedir: sessionDir,
       rpc: createSessionRpc(),

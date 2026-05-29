@@ -38,7 +38,6 @@ async function main(): Promise<void> {
       },
     },
     loopControl: {
-      maxStepsPerTurn: 1000,
       maxRetriesPerStep: 3,
       maxRalphIterations: 0,
       reservedContextSize: 50000,

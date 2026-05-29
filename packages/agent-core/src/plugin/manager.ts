@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import type { McpServerConfig } from '../config/schema';
-import type { SkillRoot } from '../skill';
+import { discoverSkills, type SkillRoot } from '../skill';
 import { downloadZip, extractZip } from './archive';
 import { parseManifest, type ParsedManifestResult } from './manifest';
 import { readInstalled, writeInstalled, type InstalledRecord } from './store';
@@ -103,7 +103,7 @@ export class PluginManager {
     id = normalizePluginId(parsed.manifest.name);
     const existing = this.records.get(id);
     const now = new Date().toISOString();
-    const record = recordFrom({
+    const record = await recordFrom({
       id,
       root: normalizedRoot,
       enabled: existing?.enabled ?? true,
@@ -298,7 +298,7 @@ async function copyPluginToManagedRoot(
   return realpath(managedRoot);
 }
 
-function recordFrom(input: {
+async function recordFrom(input: {
   id: string;
   root: string;
   enabled: boolean;
@@ -308,7 +308,7 @@ function recordFrom(input: {
   capabilities?: PluginCapabilityState;
   source?: PluginSource;
   parsed: ParsedManifestResult;
-}): PluginRecord {
+}): Promise<PluginRecord> {
   const { parsed } = input;
   const hasError = parsed.diagnostics.some((d) => d.severity === 'error');
   return {
@@ -321,6 +321,7 @@ function recordFrom(input: {
     updatedAt: input.updatedAt,
     originalSource: input.originalSource,
     capabilities: input.capabilities,
+    skillCount: await countDiscoveredPluginSkills(input.id, parsed.manifest),
     manifest: parsed.manifest,
     manifestKind: parsed.manifestKind,
     manifestPath: parsed.manifestPath,
@@ -337,11 +338,25 @@ function recordToSummary(record: PluginRecord): PluginSummary {
     version: record.manifest?.version,
     enabled: record.enabled,
     state: record.state,
-    skillCount: record.manifest?.skills?.length ?? 0,
+    skillCount: record.skillCount,
     mcpServerCount: Object.keys(record.manifest?.mcpServers ?? {}).length,
     enabledMcpServerCount: pluginMcpServersInfo(record).filter((server) => server.enabled).length,
     hasErrors: record.diagnostics.some((d) => d.severity === 'error'),
   };
+}
+
+async function countDiscoveredPluginSkills(
+  pluginId: string,
+  manifest: PluginRecord['manifest'],
+): Promise<number> {
+  const roots = (manifest?.skills ?? []).map((dir) => ({
+    path: dir,
+    source: 'extra',
+    plugin: { id: pluginId, instructions: manifest?.skillInstructions },
+  }) satisfies SkillRoot);
+  if (roots.length === 0) return 0;
+  const skills = await discoverSkills({ roots });
+  return skills.length;
 }
 
 function recordToInfo(record: PluginRecord): PluginInfo {

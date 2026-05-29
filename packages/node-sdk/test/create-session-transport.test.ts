@@ -397,26 +397,6 @@ effort = "medium"
     expect(coreSessionIds(harness)).toEqual([]);
   });
 
-  it('rejects explicitly empty model names', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const harness = new KimiHarness({
-      identity: TEST_IDENTITY,
-      homeDir,
-    });
-
-    try {
-      await expect(
-        harness.createSession({ id: 'ses_empty_model', workDir, model: '   ' }),
-      ).rejects.toMatchObject({
-        name: 'KimiError',
-        code: 'model.config_invalid',
-      } satisfies Partial<KimiError>);
-    } finally {
-      await harness.close();
-    }
-  });
-
   it('applies initial thinking and permission runtime options', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();

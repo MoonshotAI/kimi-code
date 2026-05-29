@@ -143,7 +143,11 @@ export interface KimiTUIStartupInput {
 type EffectiveActivityPaneMode = ActivityPaneMode | 'idle' | 'session';
 
 function createInitialAppState(input: KimiTUIStartupInput): AppState {
-  const startupPermission: PermissionMode = input.cliOptions.yolo ? 'yolo' : 'manual';
+  const startupPermission: PermissionMode = input.cliOptions.auto
+    ? 'auto'
+    : input.cliOptions.yolo
+      ? 'yolo'
+      : 'manual';
   return {
     model: '',
     workDir: input.workDir,
@@ -238,6 +242,7 @@ export class KimiTUI {
         sessionFlag: startupInput.cliOptions.session,
         continueLast: startupInput.cliOptions.continue,
         yolo: startupInput.cliOptions.yolo,
+        auto: startupInput.cliOptions.auto,
         plan: startupInput.cliOptions.plan,
         model: startupInput.cliOptions.model,
         startupNotice: startupInput.startupNotice,
@@ -431,7 +436,7 @@ export class KimiTUI {
     const createSessionOptions: CreateSessionOptions = {
       workDir,
       model: startup.model,
-      permission: startup.yolo ? 'yolo' : undefined,
+      permission: startup.auto ? 'auto' : startup.yolo ? 'yolo' : undefined,
       planMode: startup.plan ? true : undefined,
     };
 

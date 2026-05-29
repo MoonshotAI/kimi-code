@@ -249,6 +249,10 @@ export interface UpdateSessionMetadataPayload {
   readonly metadata: SessionMetadataPatch;
 }
 
+export interface GetKimiConfigPayload {
+  readonly reload?: boolean;
+}
+
 export type SetKimiConfigPayload = KimiConfigPatch;
 
 export interface RemoveKimiProviderPayload {
@@ -302,7 +306,7 @@ type SessionAPIWithId = WithSessionId<SessionAPI>;
 
 export interface CoreAPI extends SessionAPIWithId {
   getCoreInfo: (payload: EmptyPayload) => CoreInfo;
-  getKimiConfig: (payload: EmptyPayload) => KimiConfig;
+  getKimiConfig: (payload: GetKimiConfigPayload) => KimiConfig;
   setKimiConfig: (payload: SetKimiConfigPayload) => KimiConfig;
   removeKimiProvider: (payload: RemoveKimiProviderPayload) => KimiConfig;
   createSession: (payload: CreateSessionPayload) => SessionSummary;

@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 // Dynamic-import contract: locks the Agent <-> HookEngine integration shape
 // (engine ctor, trigger surface, summary, wire callbacks, event helpers,
 // config round-trip) before the implementation lands.
-const ENGINE_MODULE = '../../src/agent/hooks/engine' as string;
+const ENGINE_MODULE = '../../src/session/hooks/engine' as string;
 const CONFIG_MODULE = '../../src/config' as string;
 
 type HookDef = {

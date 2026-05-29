@@ -75,6 +75,7 @@ export interface PluginRecord {
   readonly originalSource?: string;
   readonly capabilities?: PluginCapabilityState;
   readonly skillInstructions?: string;
+  readonly skillCount: number;
   readonly manifest?: PluginManifest;
   readonly manifestKind?: PluginManifestKind;
   readonly manifestPath?: string;

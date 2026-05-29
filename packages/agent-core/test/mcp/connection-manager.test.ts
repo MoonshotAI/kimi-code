@@ -21,7 +21,7 @@ import type {
 import { z } from 'zod';
 
 import { KimiError } from '../../src/errors';
-import { ProviderManager } from '../../src/providers/provider-manager';
+import { ProviderManager } from '../../src/session/provider-manager';
 import { McpConnectionManager, type McpServerEntry } from '../../src/mcp/connection-manager';
 import { JsonFileStore, McpOAuthService } from '../../src/mcp/oauth';
 import type { AgentEvent, SDKSessionRPC } from '../../src/rpc';
@@ -488,7 +488,7 @@ describe('McpConnectionManager', () => {
           transport: 'stdio',
           command: process.execPath,
           args: [crashAfterConnectFixture],
-          env: { KIMI_TEST_MCP_EXIT_AFTER_MS: '50', KIMI_TEST_MCP_STDERR: 'fatal: out of memory' },
+          env: { KIMI_TEST_MCP_EXIT_AFTER_MS: '500', KIMI_TEST_MCP_STDERR: 'fatal: out of memory' },
           startupTimeoutMs: 4_000,
         },
       });
@@ -663,7 +663,7 @@ describe('Session MCP startup', () => {
 
     const session = new Session({
       id: 'test-mcp-oauth',
-      runtime: { kaos: testKaos.withCwd(tmp) },
+      kaos: testKaos.withCwd(tmp),
       homedir: join(tmp, 'session'),
       kimiHomeDir: kimiHome,
       rpc: sessionRpc(),
@@ -704,7 +704,7 @@ describe('Session MCP startup', () => {
     const tmp = await mkdtemp(join(tmpdir(), 'kimi-session-mcp-startup-'));
     const session = new Session({
       id: 'test-mcp-slow',
-      runtime: { kaos: testKaos.withCwd(tmp) },
+      kaos: testKaos.withCwd(tmp),
       homedir: join(tmp, 'session'),
       rpc: sessionRpc(),
       mcpConfig: {
@@ -744,7 +744,7 @@ describe('Session MCP startup', () => {
     scripted.mockNextResponse({ type: 'text', text: 'ready' });
     const session = new Session({
       id: 'test-mcp-turn-ended',
-      runtime: { kaos: testKaos.withCwd(tmp) },
+      kaos: testKaos.withCwd(tmp),
       homedir: join(tmp, 'session'),
       rpc: sessionRpc({
         events,
@@ -811,7 +811,7 @@ describe('Session MCP startup', () => {
     const events: SessionRpcEvent[] = [];
     const session = new Session({
       id: 'test-mcp-mixed',
-      runtime: { kaos: testKaos.withCwd(tmp) },
+      kaos: testKaos.withCwd(tmp),
       homedir: join(tmp, 'session'),
       rpc: sessionRpc({ events }),
       mcpConfig: {

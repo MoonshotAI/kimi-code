@@ -41,8 +41,8 @@ describe('UsagePanelComponent', () => {
     expect(lines).toContain('Context window');
     expect(lines.join('\n')).toContain('25.0%');
     expect(lines).toContain('Plan usage');
-    expect(lines.join('\n')).toContain('80% left');
-    expect(lines.join('\n')).toContain('(resets tomorrow)');
+    expect(lines.join('\n')).toContain('20% used');
+    expect(lines.join('\n')).toContain('resets tomorrow');
   });
 
   it('wraps preformatted usage lines in a bordered panel', () => {

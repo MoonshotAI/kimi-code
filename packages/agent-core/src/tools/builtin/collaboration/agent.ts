@@ -21,6 +21,7 @@ import { z } from 'zod';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { Logger } from '../../../logging';
 import { ToolAccesses } from '../../../loop/tool-access';
+import { isAbortError } from '../../../loop/errors';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import type { ResolvedAgentProfile } from '../../../profile';
 import type { SessionSubagentHost, SubagentHandle } from '../../../session/subagent-host';
@@ -299,12 +300,14 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         ];
         return { output: lines.join('\n') };
       } catch (error) {
-        const message =
-          foregroundDeadline?.timedOut() === true && args.timeout !== undefined
-            ? `Agent timed out after ${args.timeout}s.`
-            : error instanceof Error
-              ? error.message
-              : String(error);
+        let message: string;
+        if (foregroundDeadline?.timedOut() === true && args.timeout !== undefined) {
+          message = `Agent timed out after ${args.timeout}s.`;
+        } else if (isAbortError(error)) {
+          message = 'The subagent was stopped by the user.';
+        } else {
+          message = error instanceof Error ? error.message : String(error);
+        }
         const lines = [
           `agent_id: ${handle.agentId}`,
           `actual_subagent_type: ${handle.profileName}`,
@@ -315,12 +318,14 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         return { output: lines.join('\n'), isError: true };
       }
     } catch (error) {
-      const message =
-        foregroundDeadline?.timedOut() === true && args.timeout !== undefined
-          ? `Agent timed out after ${args.timeout}s.`
-          : error instanceof Error
-            ? error.message
-            : String(error);
+      let message: string;
+      if (foregroundDeadline?.timedOut() === true && args.timeout !== undefined) {
+        message = `Agent timed out after ${args.timeout}s.`;
+      } else if (isAbortError(error)) {
+        message = 'The subagent was stopped by the user.';
+      } else {
+        message = error instanceof Error ? error.message : String(error);
+      }
       return { output: `subagent error: ${message}`, isError: true };
     } finally {
       foregroundDeadline?.clear();
