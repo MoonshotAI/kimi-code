@@ -308,10 +308,15 @@ describe('CronListTool', () => {
     anchor.setMinutes(Math.floor(anchor.getMinutes() / 5) * 5);
     harness.setNow(anchor.getTime());
 
-    manager.store.add(
-      { cron: '*/5 * * * *', prompt: 'pending-jitter', recurring: true },
-      harness.now(),
-    );
+    manager.store.adopt({
+      // Use a high deterministic jitter id so advancing 1 s past the
+      // ideal fire remains inside the pending jitter window.
+      id: 'ffffffff',
+      cron: '*/5 * * * *',
+      prompt: 'pending-jitter',
+      recurring: true,
+      createdAt: harness.now(),
+    });
 
     // Advance 5 min + 1 s — past the next ideal but inside the 30 s
     // jitter cap.
