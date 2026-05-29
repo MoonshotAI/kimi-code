@@ -718,8 +718,7 @@ describe('Agent turn flow', () => {
     expect(configLogs).toHaveLength(1);
     const configPayload = configLogs[0]?.payload as Record<string, unknown>;
     expect(configPayload).toMatchObject({
-      turnId: '0',
-      step: 1,
+      turnStep: '0.1',
       provider: 'kimi',
       model: 'mock-model',
       modelAlias: 'mock-model',
@@ -731,12 +730,11 @@ describe('Agent turn flow', () => {
     expect(requestLogs).toHaveLength(1);
     const payload = requestLogs[0]?.payload as Record<string, unknown>;
     expect(payload).toMatchObject({
-      turnId: '0',
-      step: 1,
-      messageCount: 1,
-      toolCallCount: 0,
+      turnStep: '0.1',
     });
     expect(payload['estimatedInputTokens']).toEqual(expect.any(Number));
+    expect(payload).not.toHaveProperty('turnId');
+    expect(payload).not.toHaveProperty('step');
     expect(payload).not.toHaveProperty('attempt');
     expect(payload).not.toHaveProperty('maxAttempts');
     expect(payload).not.toHaveProperty('stepUuid');
@@ -746,6 +744,8 @@ describe('Agent turn flow', () => {
     expect(payload).not.toHaveProperty('thinkingEffort');
     expect(payload).not.toHaveProperty('systemPromptChars');
     expect(payload).not.toHaveProperty('partialMessageCount');
+    expect(payload).not.toHaveProperty('messageCount');
+    expect(payload).not.toHaveProperty('toolCallCount');
     expect(payload).not.toHaveProperty('toolCount');
     expect(payload).not.toHaveProperty('systemPromptHash');
     expect(payload).not.toHaveProperty('toolsHash');
@@ -1152,10 +1152,10 @@ describe('Agent turn flow', () => {
       }),
     );
     const requestLogs = entries.filter((entry) => entry.message === 'llm request');
-    expect(requestLogs.map((entry) => entry.payload)).toEqual([
-      expect.not.objectContaining({ attempt: expect.any(Number), maxAttempts: expect.any(Number) }),
-      expect.objectContaining({ attempt: 2, maxAttempts: 3 }),
-    ]);
+    const payloads = requestLogs.map((entry) => entry.payload as Record<string, unknown>);
+    expect(payloads[0]).toMatchObject({ turnStep: '0.1' });
+    expect(payloads[0]).not.toHaveProperty('attempt');
+    expect(payloads[1]).toMatchObject({ turnStep: '0.1', attempt: '2/3' });
   });
 
   it('force-refreshes OAuth credentials on video upload 401 and falls back to login_required when replay 401', async () => {

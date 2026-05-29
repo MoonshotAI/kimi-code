@@ -135,7 +135,10 @@ export class BackgroundManager extends BackgroundProcessManager {
       source_id: info.taskId,
       title: `Background ${label} ${info.status}`,
       severity: info.status === 'completed' ? 'info' : 'warning',
-      body: `${info.description} ${info.status}.`,
+      body:
+        info.status === 'killed' && info.stopReason
+          ? `${info.description} was killed: ${info.stopReason}.`
+          : `${info.description} ${info.status}.`,
       tail_output: tailOutput,
     };
     const content = [
