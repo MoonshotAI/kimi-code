@@ -123,9 +123,21 @@ describe('UsagePanelComponent', () => {
       maxContextTokens: 0,
     }).map(strip);
 
-    // Both model lines present
-    expect(lines).toContain('  kimi-k2.5  input 10.2k  output 500  total 10.7k');
-    expect(lines).toContain('  deepseek-v4  input 2.0k  output 1.0k  total 3.0k');
+    // Both model lines present (model padded to max width for alignment)
+    const modelLines = lines.filter(
+      (l) => l.startsWith('  ') && (l.includes('kimi-k2.5') || l.includes('deepseek-v4'))
+        && l.includes('input') && l.includes('output') && l.includes('total')
+        && !l.includes('cache'),
+    );
+    expect(modelLines).toHaveLength(2);
+    expect(modelLines[0]).toContain('kimi-k2.5');
+    expect(modelLines[0]).toContain('10.2k');
+    expect(modelLines[0]).toContain('500');
+    expect(modelLines[0]).toContain('10.7k');
+    expect(modelLines[1]).toContain('deepseek-v4');
+    expect(modelLines[1]).toContain('2.0k');
+    expect(modelLines[1]).toContain('1.0k');
+    expect(modelLines[1]).toContain('3.0k');
     // Both have cache sublines
     const cacheLines = lines.filter((l) => l.includes('cache') && l.includes('hit'));
     expect(cacheLines).toHaveLength(2);

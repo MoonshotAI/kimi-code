@@ -80,19 +80,24 @@ function buildSessionUsageSection(
   const lines: string[] = [];
   let totalInput = 0;
   let totalOutput = 0;
+  // Compute max model name width for alignment (include "total" for multi-model)
+  const maxModelWidth = Math.max(
+    ...entries.map(([model]) => model.length),
+    entries.length > 1 ? 'total'.length : 0,
+  );
   for (const [model, row] of entries) {
     const input = usageInputTotal(row);
     const output = usageNumber(row.output);
     totalInput += input;
     totalOutput += output;
+    const paddedModel = model.padEnd(maxModelWidth);
     lines.push(
-      `  ${muted(model)}  input ${value(formatTokenCount(input))}  output ${value(
+      `  ${muted(paddedModel)}  input ${value(formatTokenCount(input))}  output ${value(
         formatTokenCount(output),
       )}  total ${value(formatTokenCount(input + output))}`,
     );
     // Cache breakdown subline
-    const modelPrefix = `  ${model}  `;
-    const cacheIndent = ' '.repeat(modelPrefix.length);
+    const cacheIndent = ' '.repeat(maxModelWidth + 4); // "  model  " → 2 + maxModelWidth + 2
     const cacheRatio = input > 0 ? usageNumber(row.inputCacheRead) / input : 0;
     const bar = renderProgressBar(cacheRatio, 20);
     const pct = `${(cacheRatio * 100).toFixed(1).replace(/\.0$/, '')}%`;
@@ -103,8 +108,9 @@ function buildSessionUsageSection(
     );
   }
   if (entries.length > 1) {
+    const paddedTotal = 'total'.padEnd(maxModelWidth);
     lines.push(
-      `  ${muted('total')}  input ${value(formatTokenCount(totalInput))}  output ${value(
+      `  ${muted(paddedTotal)}  input ${value(formatTokenCount(totalInput))}  output ${value(
         formatTokenCount(totalOutput),
       )}  total ${value(formatTokenCount(totalInput + totalOutput))}`,
     );
