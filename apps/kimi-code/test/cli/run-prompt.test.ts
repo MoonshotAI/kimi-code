@@ -56,7 +56,7 @@ const mocks = vi.hoisted(() => {
     ),
     harnessCreateSession: vi.fn(async () => session),
     harnessResumeSession: vi.fn(async () => session),
-    harnessListSessions: vi.fn(async () => [{ id: 'ses_previous' }]),
+    harnessListSessions: vi.fn(async () => [{ id: 'ses_previous', workDir: process.cwd() }]),
     harnessClose: vi.fn(),
     harnessTrack: vi.fn(),
     harnessGetCachedAccessToken: vi.fn(),

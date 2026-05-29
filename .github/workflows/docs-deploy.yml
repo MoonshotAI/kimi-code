@@ -34,9 +34,6 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Install docs dependencies
-        run: pnpm --ignore-workspace -C docs install
-
       - name: Build docs
         run: pnpm -C docs run build
         env:
