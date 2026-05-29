@@ -5,7 +5,6 @@ import type { BackgroundTaskStatus } from '../../tools/background';
 
 export interface UserPromptOrigin {
   readonly kind: 'user';
-  readonly blockedByHook?: string | undefined;
 }
 
 export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };

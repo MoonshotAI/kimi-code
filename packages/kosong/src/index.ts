@@ -60,6 +60,7 @@ export {
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
+  isContextOverflowStatusError,
   isRetryableGenerateError,
 } from './errors';
 

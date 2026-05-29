@@ -77,7 +77,7 @@ interface SpawnCommand {
   readonly args: readonly string[];
 }
 
-function spawnForSource(
+export function spawnForSource(
   source: InstallSource,
   version: string,
   platform: NodeJS.Platform,
@@ -92,7 +92,12 @@ function spawnForSource(
     case 'bun-global':
       return { cmd: bunCommand(platform), args: ['add', '-g', `${NPM_PACKAGE_NAME}@${version}`] };
     case 'native':
-      return { cmd: 'bash', args: ['-c', NATIVE_INSTALL_COMMAND_UNIX] };
+      // `curl … | bash` reports only the trailing bash's exit status, so a
+      // failed download (curl can't connect → empty stdin → bash exits 0)
+      // would look like a successful update. `pipefail` makes the pipeline
+      // surface curl's non-zero status so installUpdate() rejects and we warn
+      // instead of printing "Updated …".
+      return { cmd: 'bash', args: ['-c', `set -o pipefail; ${NATIVE_INSTALL_COMMAND_UNIX}`] };
     case 'unsupported':
       throw new Error('unsupported install source cannot be auto-installed');
   }

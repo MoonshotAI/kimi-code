@@ -84,7 +84,7 @@ Hook 命令的退出码和 stdout 会被解释为以下结果：
 
 | 事件 | Matcher | 主要 payload | 行为 |
 | --- | --- | --- | --- |
-| `UserPromptSubmit` | 用户提交的文本内容 | `prompt`（`ContentPart[]` 数组） | 仅对真实 User 消息触发。hook 返回的文本会包裹为 hook 结果，写入会话历史用于 transcript/replay，并展示给用户；当前 LLM 轮次会继续，但不会把 hook 结果发给模型；若 hook 阻断，阻断原因会作为 Assistant 消息返回给用户，且不再调用模型；若所有 hook 均无输出，正常 LLM 轮次继续 |
+| `UserPromptSubmit` | 用户提交的文本内容 | `prompt`（`ContentPart[]` 数组） | 仅对真实 User 消息触发。hook 返回的文本会包裹为 hook 结果，写入会话历史用于 transcript/replay，展示给用户，并在当前 LLM 轮次继续前加入模型上下文；若 hook 阻断，阻断原因会作为 Assistant 消息返回给用户，且该轮次不再调用模型；若所有 hook 均无输出，正常 LLM 轮次继续 |
 | `PreToolUse` | 工具名 | `tool_name`、`tool_input`、`tool_call_id` | 在权限检查前触发；阻断后工具不会执行 |
 | `PostToolUse` | 工具名 | `tool_name`、`tool_input`、`tool_call_id`、`tool_output` | 工具成功后触发；`tool_output` 被截断至前 2000 个字符 |
 | `PostToolUseFailure` | 工具名 | `tool_name`、`tool_input`、`tool_call_id`、`error` | 工具失败或被 hook 阻断后触发 |
@@ -106,9 +106,9 @@ hook response
 </hook_result>
 ```
 
-如果多个 `UserPromptSubmit` hook 返回文本，每个结果都会拥有独立的 `<hook_result>` 标签。这条消息会带有 hook 结果来源，用于 transcript/replay，但不会发给模型。模型只看到原始用户输入，当前轮次继续。
+如果多个 `UserPromptSubmit` hook 返回文本，每个结果都会拥有独立的 `<hook_result>` 标签。这条消息会带有 hook 结果来源，用于 transcript/replay，并会在原始用户提示词之后发给模型，然后当前轮次继续。
 
-如果 `UserPromptSubmit` hook 阻断请求，阻断原因会使用同样格式返回给用户，但本轮不会继续请求模型。
+如果 `UserPromptSubmit` hook 阻断请求，阻断原因会使用同样格式返回给用户，但被阻断的轮次不会继续请求模型。被阻断的提示词和阻断原因会保留在会话历史中，并包含在后续模型上下文里。
 
 `Stop` 的阻断原因会直接作为系统触发的 User 消息写入上下文，让当前轮次继续：
 

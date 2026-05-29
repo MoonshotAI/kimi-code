@@ -3,6 +3,7 @@ packages:
   - apps/*
   - apps/vis/server
   - apps/vis/web
+  - docs
 
 catalog:
   zod: ^4.3.6

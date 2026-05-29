@@ -168,7 +168,7 @@ export class SDKRpcClient {
     return rpc.closeSession({ sessionId: input.sessionId });
   }
 
-  async listSessions(input: ListSessionsOptions): Promise<readonly SessionSummary[]> {
+  async listSessions(input: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
     const rpc = await this.getRpc();
     return rpc.listSessions(input);
   }

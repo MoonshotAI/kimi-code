@@ -156,18 +156,6 @@ export function renderHeadline(r: AgentRecord): HeadlineRender {
         ),
       };
 
-    case 'context.mark_last_user_prompt_blocked':
-      return {
-        main: (
-          <span className="flex items-center gap-2 min-w-0">
-            <Pill tone="warning" variant="soft">
-              blocked
-            </Pill>
-            <Dim>hook: {r.hookEvent}</Dim>
-          </span>
-        ),
-      };
-
     case 'context.clear':
       return { main: <Dim>context cleared</Dim> };
 

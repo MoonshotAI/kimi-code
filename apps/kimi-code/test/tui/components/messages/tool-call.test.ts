@@ -739,6 +739,227 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain('Used Agent');
   });
 
+  describe('background agent terminal state vs spawn-success ToolResult', () => {
+    // The Agent tool returns a "task spawned" result the moment a
+    // run_in_background=true call lands. That result is not an error and its
+    // body says `status: running`, so for backgrounded agents `this.result`
+    // alone cannot distinguish a successful completion from a failure / lost
+    // task. The fix is `setBackgroundTaskTerminalStatus`, which overrides the
+    // result-based derivation with the actual BackgroundTaskInfo status.
+    const spawnSuccessResult = {
+      tool_call_id: 'call_bg_agent',
+      output: [
+        'task_id: agent-deadbeef',
+        'status: running',
+        'agent_id: agent-0',
+        'actual_subagent_type: coder',
+        'automatic_notification: true',
+      ].join('\n'),
+      is_error: false,
+    };
+
+    function makeBackgroundAgentComponent(): ToolCallComponent {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_bg_agent',
+          name: 'Agent',
+          args: {
+            description: 'background agent 1',
+            run_in_background: true,
+          },
+        },
+        spawnSuccessResult,
+        darkColors,
+      );
+      component.onSubagentSpawned({
+        agentId: 'agent-0',
+        agentName: 'coder',
+        runInBackground: true,
+      });
+      return component;
+    }
+
+    it('reads as "done" by default after spawn — the existing behavior the fix replaces', () => {
+      // This pins the legacy behavior. Without overrides the snapshot
+      // trusts the spawn-success result and reports phase='done'. The
+      // 'lost' / 'killed' / 'failed' overrides below must beat this.
+      const component = makeBackgroundAgentComponent();
+      expect(component.getSubagentSnapshot().phase).toBe('done');
+    });
+
+    it('setBackgroundTaskTerminalStatus("lost") flips the snapshot phase to "failed"', () => {
+      const component = makeBackgroundAgentComponent();
+      component.setBackgroundTaskTerminalStatus('lost');
+      const snap = component.getSubagentSnapshot();
+      expect(snap.phase).toBe('failed');
+      // The agent-group renderer uses snap.errorText for the "Error:" line.
+      // The spawn-success ToolResult must NOT leak as the failure message.
+      expect(snap.errorText).toContain('lost');
+      expect(snap.errorText).not.toContain('task_id:');
+    });
+
+    it('setBackgroundTaskTerminalStatus("killed") flips the snapshot phase to "failed"', () => {
+      const component = makeBackgroundAgentComponent();
+      component.setBackgroundTaskTerminalStatus('killed');
+      const snap = component.getSubagentSnapshot();
+      expect(snap.phase).toBe('failed');
+      expect(snap.errorText).toContain('killed');
+      expect(snap.errorText).not.toContain('task_id:');
+    });
+
+    it('setBackgroundTaskTerminalStatus("failed") flips the snapshot phase to "failed"', () => {
+      const component = makeBackgroundAgentComponent();
+      component.setBackgroundTaskTerminalStatus('failed');
+      const snap = component.getSubagentSnapshot();
+      expect(snap.phase).toBe('failed');
+      expect(snap.errorText).toContain('failed');
+      expect(snap.errorText).not.toContain('task_id:');
+    });
+
+    it('setBackgroundTaskTerminalStatus("completed") keeps the snapshot phase at "done"', () => {
+      const component = makeBackgroundAgentComponent();
+      component.setBackgroundTaskTerminalStatus('completed');
+      const snap = component.getSubagentSnapshot();
+      expect(snap.phase).toBe('done');
+      expect(snap.errorText).toBeUndefined();
+    });
+
+    it('overrides win even when set before the spawn-success result is recorded', () => {
+      // Order-independence guard: reconcile may run before tool result
+      // has been replayed back into the component on some boot paths.
+      const component = new ToolCallComponent(
+        {
+          id: 'call_bg_agent',
+          name: 'Agent',
+          args: { description: 'background agent A', run_in_background: true },
+        },
+        undefined,
+        darkColors,
+      );
+      component.setBackgroundTaskTerminalStatus('lost');
+      // Now the spawn-success result lands.
+      component.setResult({ ...spawnSuccessResult, tool_call_id: 'call_bg_agent' });
+      expect(component.getSubagentSnapshot().phase).toBe('failed');
+    });
+
+    // Standalone render path — when only ONE Agent tool call lands in a
+    // step, the card is never upgraded into an `AgentGroupComponent` and is
+    // mounted on its own. The standalone header derives its label from
+    // `getDerivedSubagentPhase()` (separate from `getSubagentSnapshot`).
+    // Without the override threading into that path AND a header rebuild,
+    // a lost bg agent keeps the green "✓ Completed" label.
+    it('standalone render: lost bg agent must show Failed/Lost, not Completed', () => {
+      const component = makeBackgroundAgentComponent();
+      component.setBackgroundTaskTerminalStatus('lost');
+      const out = strip(component.render(120).join('\n'));
+      expect(out).not.toContain('Completed');
+      expect(out).toMatch(/Failed|Lost/);
+      // Friendly failure message must reach the rendered card.
+      expect(out).toContain('lost');
+      expect(out).not.toContain('task_id:');
+    });
+
+    it('standalone render: completed bg agent still shows Completed', () => {
+      const component = makeBackgroundAgentComponent();
+      component.setBackgroundTaskTerminalStatus('completed');
+      const out = strip(component.render(120).join('\n'));
+      expect(out).toContain('Completed');
+      expect(out).not.toMatch(/Failed/);
+      expect(out).not.toContain('task_id:');
+    });
+
+    // Stable id routing — `tc.subagentAgentId` is left undefined for
+    // backgrounded agents both live (`handleSubagentSpawned` early-returns
+    // for `runInBackground`, never calling tc.onSubagentSpawned) and on
+    // resume (the wire format does not carry a `subagent` block back into
+    // `applySubagentReplay`). The AgentTool's spawn-success ToolResult,
+    // however, always carries `agent_id: agent-N` — fall back to parsing
+    // that so callers asking `getSubagentAgentId` always get the right id,
+    // and `applyBackgroundTaskTerminalStatus` can route by id instead of
+    // by description (which collides between unrelated cards).
+    it('getSubagentAgentId parses agent_id from the spawn-success ToolResult', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_bg_agent',
+          name: 'Agent',
+          args: { description: 'background agent 1', run_in_background: true },
+        },
+        spawnSuccessResult,
+        darkColors,
+      );
+      // No spawn metadata was wired in — exactly the resume / backgrounded
+      // case we are guarding against.
+      expect(component.getSubagentAgentId()).toBe('agent-0');
+    });
+
+    it('getSubagentAgentId still prefers in-memory subagent metadata when set', () => {
+      // If `setSubagentMeta` / `onSubagentSpawned` did wire an id, that one
+      // is authoritative — it survived the in-flight phase before any
+      // ToolResult landed and can disambiguate concurrent calls.
+      const component = new ToolCallComponent(
+        {
+          id: 'call_bg_agent',
+          name: 'Agent',
+          args: { description: 'X', run_in_background: true },
+        },
+        spawnSuccessResult,
+        darkColors,
+      );
+      component.setSubagentMeta('agent-explicit', 'coder');
+      expect(component.getSubagentAgentId()).toBe('agent-explicit');
+    });
+
+    it('getSubagentAgentId returns undefined for non-Agent tool calls even when output looks similar', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_bash',
+          name: 'Bash',
+          args: { command: 'echo agent_id: agent-fake' },
+        },
+        {
+          tool_call_id: 'call_bash',
+          output: 'agent_id: agent-fake\nstatus: running',
+          is_error: false,
+        },
+        darkColors,
+      );
+      expect(component.getSubagentAgentId()).toBeUndefined();
+    });
+
+    it('setBackgroundTaskTerminalStatus errorText overwrites the friendly generic', () => {
+      // Live failures arrive via `subagent.failed` with the real error from
+      // the subagent loop. That string is far more informative than the
+      // generic "Background agent failed" fallback the friendly path emits.
+      // When the caller supplies errorText it must win, regardless of
+      // whether the friendly message was written first.
+      const component = makeBackgroundAgentComponent();
+      component.setBackgroundTaskTerminalStatus('failed');
+      expect(component.getSubagentSnapshot().errorText).toBe('Background agent failed');
+
+      component.setBackgroundTaskTerminalStatus('failed', {
+        errorText: 'subagent exceeded max_steps',
+      });
+      expect(component.getSubagentSnapshot().errorText).toBe('subagent exceeded max_steps');
+    });
+
+    it('setBackgroundTaskTerminalStatus errorText is written even on first call', () => {
+      const component = makeBackgroundAgentComponent();
+      component.setBackgroundTaskTerminalStatus('failed', {
+        errorText: 'OAuth refresh failed',
+      });
+      expect(component.getSubagentSnapshot().errorText).toBe('OAuth refresh failed');
+    });
+
+    it('setBackgroundTaskTerminalStatus does not overwrite a real onSubagentFailed error with the generic', () => {
+      const component = makeBackgroundAgentComponent();
+      component.onSubagentFailed({ error: 'real crash from subagent' });
+      // background.task.terminated event arrives later without an errorText
+      // override; the friendly generic must NOT clobber the real message.
+      component.setBackgroundTaskTerminalStatus('failed');
+      expect(component.getSubagentSnapshot().errorText).toBe('real crash from subagent');
+    });
+  });
+
   it('scrolls the Write streaming preview to the last COMMAND_PREVIEW_LINES', () => {
     const lines: string[] = [];
     for (let i = 1; i <= 30; i++) lines.push(`line${String(i)}`);

@@ -184,7 +184,7 @@ export class KimiHarness {
     return result;
   }
 
-  async listSessions(options: ListSessionsOptions): Promise<readonly SessionSummary[]> {
+  async listSessions(options: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
     return this.rpc.listSessions(options);
   }
 

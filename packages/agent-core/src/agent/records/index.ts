@@ -70,9 +70,6 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'context.append_message':
       agent.context.appendMessage(input.message);
       return;
-    case 'context.mark_last_user_prompt_blocked':
-      agent.context.markLastUserPromptBlocked(input.hookEvent);
-      return;
     case 'context.append_loop_event':
       agent.context.appendLoopEvent(input.event);
       return;

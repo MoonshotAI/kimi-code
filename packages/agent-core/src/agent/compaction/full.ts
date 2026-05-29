@@ -46,6 +46,7 @@ export class FullCompaction {
     startedAt: number;
     telemetryTrigger: CompactionTelemetryTrigger;
     promise: Promise<void>;
+    blockedByTurn: boolean;
   } | null = null;
   protected _compactedHistory: CompactedHistory[] = [];
   protected readonly strategy: CompactionStrategy;
@@ -112,6 +113,7 @@ export class FullCompaction {
       startedAt: Date.now(),
       telemetryTrigger: compactionTelemetryTrigger(data.source, data.instruction),
       promise: Promise.resolve(),
+      blockedByTurn: false,
     };
     this.compacting = active;
     active.promise = this.compactionWorker(abortController.signal, data, compactedCount);
@@ -195,6 +197,7 @@ export class FullCompaction {
   private async block(signal: AbortSignal): Promise<void> {
     const active = this.compacting;
     if (active) {
+      active.blockedByTurn = true;
       signal.addEventListener('abort', () => {
         if (this.compacting === active) {
           this.cancel();
@@ -312,19 +315,23 @@ export class FullCompaction {
       this.triggerPostCompactHook(data, result);
     } catch (error) {
       if (!isAbortError(error)) {
+        const active = this.compacting;
+        const blockedByTurn = active?.blockedByTurn === true;
         this.agent.log.error('compaction failed', {
           code: isKimiError(error) ? error.code : undefined,
           error,
         });
         this.markCanceled();
-        const payload =
-          isKimiError(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED
-            ? toKimiErrorPayload(error)
-            : makeErrorPayload(ErrorCodes.COMPACTION_FAILED, String(error));
-        this.agent.emitEvent({
-          type: 'error',
-          ...payload,
-        });
+        if (!blockedByTurn) {
+          const payload =
+            isKimiError(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED
+              ? toKimiErrorPayload(error)
+              : makeErrorPayload(ErrorCodes.COMPACTION_FAILED, String(error));
+          this.agent.emitEvent({
+            type: 'error',
+            ...payload,
+          });
+        }
         this.agent.telemetry.track('compaction_failed', {
           trigger_type: compactionTelemetryTrigger(data.source, data.instruction),
           before_tokens: tokensBefore,
@@ -332,6 +339,10 @@ export class FullCompaction {
           retry_count: retryCount,
           error_type: error instanceof Error ? error.name : 'Unknown',
         });
+        if (blockedByTurn) {
+          if (isKimiError(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED) throw error;
+          throw new KimiError(ErrorCodes.COMPACTION_FAILED, String(error), { cause: error });
+        }
       }
     }
   }

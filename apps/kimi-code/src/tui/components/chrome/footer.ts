@@ -23,36 +23,100 @@ import { safeUsageRatio } from '#/utils/usage/usage-format';
 
 const MAX_CWD_SEGMENTS = 3;
 
-// Toolbar tips — rotates every 30s, shows 2 tips joined by " | " when
-// space allows, falls back to 1.
-const TIP_ROTATE_INTERVAL_MS = 30_000;
+// Toolbar tips — rotates every 10s. Most tips are short and pair up (two
+// joined by " | ") when space allows; tips flagged `solo` are long or
+// important enough to take the whole slot on their own. A `priority` weight
+// makes a tip recur more often in the rotation (default 1). Width is always
+// the final arbiter (a pair that doesn't fit falls back to its first tip).
+//
+// This is deliberately code-level configuration: edit the interval and the
+// TOOLBAR_TIPS array below to change what the footer advertises.
+const TIP_ROTATE_INTERVAL_MS = 10_000;
 const TIP_SEPARATOR = ' | ';
-const TOOLBAR_TIPS: readonly string[] = [
-  'shift+tab: plan mode',
-  '/yolo: toggle yolo',
-  'ctrl+c: cancel',
-  '/help: show commands',
-  '/model: switch model',
-  '@: mention files',
+
+export interface ToolbarTip {
+  readonly text: string;
+  /**
+   * Long/important tips render on their own. They never pair with a
+   * neighbour and never appear as the second half of someone else's pair.
+   */
+  readonly solo?: boolean;
+  /**
+   * Rotation weight: a higher value makes the tip recur more often. Defaults
+   * to 1. Used to give newer/important features more airtime.
+   */
+  readonly priority?: number;
+}
+
+const TOOLBAR_TIPS: readonly ToolbarTip[] = [
+  { text: 'shift+tab: plan mode' },
+  { text: '/model: switch model' },
+  { text: 'ctrl+s: steer mid-turn', priority: 2 },
+  { text: '/compact: compact context', priority: 2 },
+  { text: 'ctrl+o: expand tool output' },
+  { text: '/tasks: background tasks' },
+  { text: 'shift+enter: newline' },
+  { text: '/init: generate AGENTS.md', priority: 2 },
+  { text: '@: mention files' },
+  { text: 'ctrl+c: cancel' },
+  { text: '/theme: switch theme' },
+  { text: '/auto: auto permission mode' },
+  { text: '/yolo: toggle yolo' },
+  { text: '/help: show commands' },
+  { text: '/plugins: manage plugins — try the "superpowers" plugin', solo: true, priority: 3 },
+  { text: 'ask Kimi to schedule tasks, e.g. "remind me at 5pm"', solo: true, priority: 3 },
 ];
+
+/**
+ * Expand tips into a rotation sequence using smooth weighted round-robin
+ * (the nginx SWRR algorithm). Higher-`priority` tips appear more often while
+ * staying evenly spread, so a tip generally does not land next to its own
+ * duplicate. Deterministic and computed once at module load. Exported for
+ * unit testing.
+ */
+export function buildWeightedTips(tips: readonly ToolbarTip[]): readonly ToolbarTip[] {
+  const items = tips.map((t) => ({
+    tip: t,
+    weight: Math.max(1, Math.trunc(t.priority ?? 1)),
+    current: 0,
+  }));
+  const total = items.reduce((sum, it) => sum + it.weight, 0);
+  const seq: ToolbarTip[] = [];
+  for (let n = 0; n < total; n++) {
+    let best = items[0]!;
+    for (const it of items) {
+      it.current += it.weight;
+      if (it.current > best.current) best = it;
+    }
+    best.current -= total;
+    seq.push(best.tip);
+  }
+  return seq;
+}
+
+const ROTATION: readonly ToolbarTip[] = buildWeightedTips(TOOLBAR_TIPS);
 
 function currentTipIndex(): number {
   return Math.floor(Date.now() / TIP_ROTATE_INTERVAL_MS);
 }
 
-function twoRotatingTips(index: number): string {
-  const n = TOOLBAR_TIPS.length;
-  if (n === 0) return '';
-  if (n === 1) return TOOLBAR_TIPS[0]!;
+/**
+ * Pick the tip(s) for a rotation index over the weighted ROTATION sequence.
+ * `primary` is always shown when it fits; `pair` (primary + next tip joined
+ * by the separator) is offered for wide terminals. Pairing is skipped when
+ * the current/next tip is `solo` or when the neighbour is a duplicate of the
+ * current tip (which can happen at the wrap boundary), keeping long/important
+ * tips on their own and avoiding "X | X".
+ */
+function tipsForIndex(index: number): { primary: string; pair: string | null } {
+  const n = ROTATION.length;
+  if (n === 0) return { primary: '', pair: null };
   const offset = ((index % n) + n) % n;
-  return TOOLBAR_TIPS[offset]! + TIP_SEPARATOR + TOOLBAR_TIPS[(offset + 1) % n]!;
-}
-
-function oneRotatingTip(index: number): string {
-  const n = TOOLBAR_TIPS.length;
-  if (n === 0) return '';
-  const offset = ((index % n) + n) % n;
-  return TOOLBAR_TIPS[offset]!;
+  const current = ROTATION[offset]!;
+  if (n === 1 || current.solo) return { primary: current.text, pair: null };
+  const next = ROTATION[(offset + 1) % n]!;
+  if (next.solo || next.text === current.text) return { primary: current.text, pair: null };
+  return { primary: current.text, pair: current.text + TIP_SEPARATOR + next.text };
 }
 
 function shortenModel(model: string): string {
@@ -214,16 +278,14 @@ export class FooterComponent implements Component {
     const leftWidth = visibleWidth(leftLine);
 
     // Rotating hint tips, fill remaining space on line 1.
-    const tipIndex = currentTipIndex();
-    const tipTwo = twoRotatingTips(tipIndex);
-    const tipOne = oneRotatingTip(tipIndex);
+    const { primary, pair } = tipsForIndex(currentTipIndex());
     const gap = 2;
     const remaining = Math.max(0, width - leftWidth - gap);
     let tipText = '';
-    if (tipTwo && visibleWidth(tipTwo) <= remaining) {
-      tipText = tipTwo;
-    } else if (tipOne && visibleWidth(tipOne) <= remaining) {
-      tipText = tipOne;
+    if (pair && visibleWidth(pair) <= remaining) {
+      tipText = pair;
+    } else if (primary && visibleWidth(primary) <= remaining) {
+      tipText = primary;
     }
 
     let line1: string;

@@ -382,6 +382,8 @@ export class KimiTUI {
   private async initMainTui(): Promise<boolean> {
     const shouldReplayHistory = await this.init();
 
+    // Mount only after init() succeeds; see mountFooter().
+    this.mountFooter();
     this.renderWelcome();
     setExperimentalFlags(await this.harness.getExperimentalFlags());
     this.setupAutocomplete();
@@ -454,10 +456,25 @@ export class KimiTUI {
         }
 
         if (startup.sessionFlag !== undefined) {
-          const sessions = await this.harness.listSessions({ workDir });
-          const target = sessions.find((candidate) => candidate.id === startup.sessionFlag);
+          const sessions = await this.harness.listSessions({
+            sessionId: startup.sessionFlag,
+            workDir,
+          });
+          const target = sessions[0];
           if (target === undefined) {
             throw new Error(`Session "${startup.sessionFlag}" not found.`);
+          }
+          if (target.workDir !== workDir) {
+            this.state.ui.stop();
+            process.stderr.write(
+              `${chalk.yellow(
+                `Session "${startup.sessionFlag}" was created under a different directory.\n` +
+                  `  cd "${target.workDir}" && kimi -r ${startup.sessionFlag}`,
+              )}\n\n`,
+            );
+            throw new Error(
+              `Session "${startup.sessionFlag}" was created under a different directory.`,
+            );
           }
           session = await this.harness.resumeSession({ id: startup.sessionFlag });
           shouldReplayHistory = true;
@@ -592,11 +609,18 @@ export class KimiTUI {
     ui.addChild(this.state.todoPanelContainer);
     ui.addChild(this.state.queueContainer);
     ui.addChild(this.state.editorContainer);
-    // FooterComponent isn't a Container; wrap it so it picks up the same
-    // outer gutter as the transcript/panels above.
+    // Footer is mounted later (mountFooter), not here.
+  }
+
+  // Footer is the only chrome with content before a session is ready, so
+  // mounting it at construction lets a stray pre-start render leak it to the
+  // terminal — e.g. above the error when resuming a missing session. Mount it
+  // only once init() succeeds. FooterComponent isn't a Container, so wrap it to
+  // pick up the same outer gutter as the panels above.
+  private mountFooter(): void {
     const footerWrap = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
     footerWrap.addChild(this.state.footer);
-    ui.addChild(footerWrap);
+    this.state.ui.addChild(footerWrap);
   }
 
   // =========================================================================

@@ -52,22 +52,6 @@ export class ContextMemory {
     });
   }
 
-  markLastUserPromptBlocked(hookEvent: string): void {
-    this.agent.records.logRecord({
-      type: 'context.mark_last_user_prompt_blocked',
-      hookEvent,
-    });
-    for (let i = this._history.length - 1; i >= 0; i--) {
-      const message = this._history[i];
-      if (message?.role !== 'user' || message.origin?.kind !== 'user') continue;
-      this._history[i] = {
-        ...message,
-        origin: { ...message.origin, blockedByHook: hookEvent },
-      };
-      return;
-    }
-  }
-
   clear(): void {
     this.agent.records.logRecord({ type: 'context.clear' });
     this._history = [];

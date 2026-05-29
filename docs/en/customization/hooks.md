@@ -84,7 +84,7 @@ The following events are triggered automatically today:
 
 | Event | Matcher | Main payload | Behavior |
 | --- | --- | --- | --- |
-| `UserPromptSubmit` | Text content submitted by the user | `prompt` (`ContentPart[]` array) | Fires only for real user messages. Text returned by the hook is wrapped as a hook result, written into session history for transcript/replay, shown to the user, and the current LLM turn continues without sending the hook result to the model; if the hook blocks, the block reason is returned to the user as an assistant message and no model call is made; if all hooks produce no output, the normal LLM turn continues |
+| `UserPromptSubmit` | Text content submitted by the user | `prompt` (`ContentPart[]` array) | Fires only for real user messages. Text returned by the hook is wrapped as a hook result, written into session history for transcript/replay, shown to the user, and included in model context before the current LLM turn continues; if the hook blocks, the block reason is returned to the user as an assistant message and no model call is made for that turn; if all hooks produce no output, the normal LLM turn continues |
 | `PreToolUse` | Tool name | `tool_name`, `tool_input`, `tool_call_id` | Fires before permission checks. If blocked, the tool does not run |
 | `PostToolUse` | Tool name | `tool_name`, `tool_input`, `tool_call_id`, `tool_output` | Fires after a successful tool call. `tool_output` is truncated to the first 2000 characters |
 | `PostToolUseFailure` | Tool name | `tool_name`, `tool_input`, `tool_call_id`, `error` | Fires after a tool call fails or is blocked by a hook |
@@ -106,9 +106,9 @@ hook response
 </hook_result>
 ```
 
-If multiple `UserPromptSubmit` hooks return text, each result gets its own `<hook_result>` tag. This message keeps its hook-result origin for transcript/replay, but is not sent to the model. The model sees the original user prompt and the current turn continues.
+If multiple `UserPromptSubmit` hooks return text, each result gets its own `<hook_result>` tag. This message keeps its hook-result origin for transcript/replay and is sent to the model after the original user prompt before the current turn continues.
 
-If a `UserPromptSubmit` hook blocks the request, the block reason uses the same format and is returned to the user, but the turn does not continue to a model call.
+If a `UserPromptSubmit` hook blocks the request, the block reason uses the same format and is returned to the user, but that blocked turn does not continue to a model call. The blocked prompt and block reason remain in session history and are included in later model context.
 
 `Stop` block reasons are appended directly as system-triggered user messages so the current turn can continue:
 

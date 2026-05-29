@@ -106,7 +106,8 @@ export interface ExportSessionResult {
 }
 
 export interface ListSessionsPayload {
-  readonly workDir: string;
+  readonly workDir?: string;
+  readonly sessionId?: string;
 }
 
 export interface CoreInfo {

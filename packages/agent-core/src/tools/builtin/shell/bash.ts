@@ -429,7 +429,7 @@ export class BashTool implements BuiltinTool<BashInput> {
           }
           const info = backgroundManager.getTask(taskId);
           if (info && info.status === 'running') {
-            void backgroundManager.stop(taskId);
+            void backgroundManager.stop(taskId, 'Timed out');
           }
         })();
       }, timeoutMs);
