@@ -377,6 +377,10 @@ export class KimiTUI {
   private async initMainTui(): Promise<boolean> {
     const shouldReplayHistory = await this.init();
 
+    // init() reached the main TUI (it throws on fatal startup errors, e.g. a
+    // missing resume target, before we get here). Now it is safe to mount the
+    // footer chrome — earlier would risk a stray render leaking it on failure.
+    this.mountFooter();
     this.renderWelcome();
     this.setupAutocomplete();
     void this.loadPersistedInputHistory();
@@ -586,11 +590,23 @@ export class KimiTUI {
     ui.addChild(this.state.todoPanelContainer);
     ui.addChild(this.state.queueContainer);
     ui.addChild(this.state.editorContainer);
-    // FooterComponent isn't a Container; wrap it so it picks up the same
-    // outer gutter as the transcript/panels above.
+    // The footer is deliberately NOT mounted here: it is the only chrome that
+    // carries content (cwd/git/context) before a session is ready, so mounting
+    // it at construction lets a stray pre-`startEventLoop()` render (e.g. the
+    // `setAppState` in `init()`) paint the footer to the terminal. On a fatal
+    // startup failure — such as resuming a non-existent session — that paint
+    // is the last thing on screen, leaving the footer + statusline stranded
+    // above the error. `mountFooter()` adds it once startup reaches the main
+    // TUI. See initMainTui().
+  }
+
+  // FooterComponent isn't a Container; wrap it so it picks up the same outer
+  // gutter as the transcript/panels above. Mounted only after init() succeeds
+  // so a failed startup never leaves footer chrome on screen.
+  private mountFooter(): void {
     const footerWrap = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
     footerWrap.addChild(this.state.footer);
-    ui.addChild(footerWrap);
+    this.state.ui.addChild(footerWrap);
   }
 
   // =========================================================================
