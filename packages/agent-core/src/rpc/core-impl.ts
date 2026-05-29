@@ -20,6 +20,13 @@ import {
   type KimiConfig,
   type MoonshotServiceConfig,
 } from '../config';
+import {
+  FLAG_DEFINITIONS,
+  flags,
+  type ExperimentalFlagMap,
+  type FlagDefinitionInput,
+  type FlagId,
+} from '../flags';
 import type { Logger } from '../logging/types';
 import { resolveSessionMcpConfig, type SessionMcpConfig } from '../mcp';
 import type { ToolServices } from '../runtime-types';
@@ -240,6 +247,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   getCoreInfo(): CoreInfo {
     return { version: getCoreVersion() };
+  }
+
+  getExperimentalFlags(): ExperimentalFlagMap {
+    const defs: readonly FlagDefinitionInput[] = FLAG_DEFINITIONS;
+    return Object.fromEntries(defs.map((def) => [def.id, flags.enabled(def.id as FlagId)]));
   }
 
   async closeSession({ sessionId }: CloseSessionPayload): Promise<void> {

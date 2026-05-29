@@ -1,3 +1,4 @@
+export * from './experimental-flags';
 export * from './parse';
 export * from './registry';
 export * from './resolve';

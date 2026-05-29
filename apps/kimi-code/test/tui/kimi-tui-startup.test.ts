@@ -132,6 +132,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     close: vi.fn(async () => {}),
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
+    getExperimentalFlags: vi.fn(async () => ({})),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),
       login: vi.fn(async () => {}),
