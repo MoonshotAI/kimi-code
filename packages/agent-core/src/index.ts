@@ -39,7 +39,7 @@ export type {
   BackgroundTaskKind,
   BackgroundTaskStatus,
 } from './tools/background/manager';
-export type { ToolServices } from './runtime-types';
+export type { ToolServices } from './tools/support/services';
 export { SingleModelProvider } from './session/provider-manager';
 export type {
   BearerTokenProvider,
