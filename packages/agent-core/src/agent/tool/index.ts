@@ -40,6 +40,13 @@ export class ToolManager {
   protected enabledTools: Set<string> = new Set();
   /** Glob patterns (e.g. `mcp__*`, `mcp__github__*`) gating which MCP tools the profile exposes. */
   private mcpAccessPatterns: string[] = [];
+  /**
+   * Profile-requested builtin tool names that could not be resolved because
+   * `initializeBuiltinTools()` had not run yet.  Replayed once builtins are
+   * available so tools such as `WebSearch` — which require a service that may
+   * be present at init time — are not silently dropped on first profile apply.
+   */
+  private pendingBuiltinToolNames: string[] = [];
   protected readonly store: Partial<ToolStoreData> = {};
   private mcpToolStatusUnsubscribe: (() => void) | undefined;
 
@@ -316,10 +323,18 @@ export class ToolManager {
     );
     const missingTools = nonMcpNames.filter((name) => !availableNames.includes(name));
     if (missingTools.length > 0) {
-      this.agent.log.warn(
-        `The following tools listed in the active profile are not available and will be omitted: ${missingTools.join(', ')}. ` +
-          `They may require additional service configuration.`,
-      );
+      if (this.builtinTools.size > 0) {
+        // Builtins are fully initialized — missing tools are genuinely unavailable.
+        this.agent.log.warn(
+          `The following tools listed in the active profile are not available and will be omitted: ${missingTools.join(', ')}. ` +
+            `They may require additional service configuration.`,
+        );
+      }
+      // Save pending builtin names so they can be re-applied once builtins
+      // are initialized (e.g. when the model is configured after profile apply).
+      this.pendingBuiltinToolNames = missingTools;
+    } else {
+      this.pendingBuiltinToolNames = [];
     }
     this.enabledTools = new Set(availableNames);
     this.mcpAccessPatterns = names.filter((name) => isMcpToolName(name));
@@ -439,6 +454,28 @@ export class ToolManager {
         .filter((tool) => !!tool)
         .map((tool) => [tool.name, tool] as const),
     );
+    // Re-apply pending profile tool names that were deferred because builtins
+    // had not been initialized when `setActiveTools` was first called.
+    if (this.pendingBuiltinToolNames.length > 0) {
+      const nowAvailable = this.pendingBuiltinToolNames.filter(
+        (name) => this.builtinTools.has(name) || this.userTools.has(name),
+      );
+      if (nowAvailable.length > 0) {
+        for (const name of nowAvailable) {
+          this.enabledTools.add(name);
+        }
+      }
+      const stillMissing = this.pendingBuiltinToolNames.filter(
+        (name) => !nowAvailable.includes(name),
+      );
+      if (stillMissing.length > 0) {
+        this.agent.log.warn(
+          `The following tools listed in the active profile are not available and will be omitted: ${stillMissing.join(', ')}. ` +
+            `They may require additional service configuration.`,
+        );
+      }
+      this.pendingBuiltinToolNames = [];
+    }
   }
 
   private createVideoUploader(provider: ChatProvider): b.VideoUploader | undefined {
