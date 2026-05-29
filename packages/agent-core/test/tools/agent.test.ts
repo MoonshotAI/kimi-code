@@ -475,6 +475,14 @@ describe('AgentTool', () => {
     // M9: resume_hint — continue the same subagent instance
     expect(result.output).toContain('resume_hint:');
     expect(result.output).toContain('Agent(resume="agent-child"');
+    // The hint disambiguates the two look-alike identifiers in this output:
+    // `agent_id` (what `subagentHost.resume` accepts) and `task_id` (the
+    // BackgroundManager ledger id, which also shows up as `source_id` in
+    // later <notification> entries). LLMs regularly copy the wrong one.
+    expect(result.output).toMatch(/agent_id.*not.*task_id|task_id.*not.*agent_id/i);
+    // Recovery scenario — `task.lost` etc. — must be called out so the
+    // model knows the hint is not only for happy-path follow-up work.
+    expect(result.output).toMatch(/task\.lost|task\.failed|task\.killed/);
   });
 
   it('rejects background subagents when background management is unavailable', async () => {

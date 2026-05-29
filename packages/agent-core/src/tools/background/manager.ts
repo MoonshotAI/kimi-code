@@ -1055,6 +1055,7 @@ export class BackgroundProcessManager {
   private persistLive(entry: ManagedProcess): Promise<void> {
     if (this.sessionDir === undefined) return Promise.resolve();
     const sessionDir = this.sessionDir;
+    const isAgentTask = entry.taskId.startsWith('agent-');
     const task: PersistedTask = {
       task_id: entry.taskId,
       command: entry.command,
@@ -1067,6 +1068,12 @@ export class BackgroundProcessManager {
       approval_reason: entry.approvalReason,
       timed_out: entry.timedOut,
       stop_reason: entry.stopReason,
+      // Only persist subagent identifiers for agent tasks. The base-class
+      // fallback `agentId ?? taskId` (registerAgentTask) makes them equal
+      // for tasks registered without an explicit id — skip those too so the
+      // disk record stays honest about whether we know a real agent_id.
+      agent_id: isAgentTask && entry.agentId !== entry.taskId ? entry.agentId : undefined,
+      subagent_type: isAgentTask ? entry.subagentType : undefined,
     };
     entry.persistWriteQueue = entry.persistWriteQueue
       .then(() => writeTask(sessionDir, task))
@@ -1185,6 +1192,8 @@ function persistedToInfo(t: PersistedTask): BackgroundTaskInfo {
     approvalReason: t.approval_reason,
     timedOut: t.timed_out,
     stopReason: t.stop_reason,
+    agentId: t.agent_id,
+    subagentType: t.subagent_type,
   };
 }
 
@@ -1201,5 +1210,7 @@ function infoToPersisted(info: BackgroundTaskInfo): PersistedTask {
     approval_reason: info.approvalReason,
     timed_out: info.timedOut,
     stop_reason: info.stopReason,
+    agent_id: info.agentId === info.taskId ? undefined : info.agentId,
+    subagent_type: info.subagentType,
   };
 }

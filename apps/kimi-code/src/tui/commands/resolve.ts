@@ -4,8 +4,13 @@ import {
   type BuiltinSlashCommand,
   type BuiltinSlashCommandName,
 } from './registry';
+import { isExperimentalFlagEnabled } from './experimental-flags';
 import { parseSlashInput } from './parse';
-import type { SlashCommandBusyReason, SlashCommandInvalidReason } from './types';
+import type {
+  KimiSlashCommand,
+  SlashCommandBusyReason,
+  SlashCommandInvalidReason,
+} from './types';
 
 export type SlashCommandIntent =
   | { readonly kind: 'not-command' }
@@ -45,7 +50,11 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
   if (parsed === null) return { kind: 'not-command' };
 
   const command = findBuiltInSlashCommand(parsed.name);
-  if (command !== undefined) {
+  // `command` is a literal union where only some members carry `experimentalFlag`; widen to read it.
+  if (
+    command !== undefined &&
+    isExperimentalFlagEnabled((command as KimiSlashCommand).experimentalFlag)
+  ) {
     const busyReason = slashCommandBusyReason(options);
     if (
       busyReason !== undefined &&

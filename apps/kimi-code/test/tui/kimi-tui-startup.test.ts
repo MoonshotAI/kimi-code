@@ -132,6 +132,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     close: vi.fn(async () => {}),
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
+    getExperimentalFlags: vi.fn(async () => ({})),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),
       login: vi.fn(async () => {}),
@@ -776,4 +777,51 @@ describe("KimiTUI startup", () => {
 
     await expect(driver.init()).rejects.toThrow("provider config is invalid");
   });
+
+  it("does not mount the footer when resuming a missing session fails", async () => {
+    // Regression: a stray pre-startEventLoop render used to paint the footer
+    // (cwd/git + "context:" statusline) to the terminal before the fatal
+    // error, leaving it stranded above the error message. The footer must not
+    // be in the layout tree when initMainTui() throws.
+    const harness = makeHarness(makeSession(), {
+      listSessions: vi.fn(async () => []),
+    });
+    const driver = makeDriver(
+      harness,
+      makeStartupInput({ session: "missing-session" }),
+    ) as unknown as MigrateExitDriver;
+
+    await expect(driver.initMainTui()).rejects.toThrow(
+      'Session "missing-session" not found.',
+    );
+    expect(uiContainsFooter(driver)).toBe(false);
+  });
+
+  it("mounts the footer once startup reaches the main TUI", async () => {
+    const session = makeSession({ id: "ses-target" });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: "ses-target", workDir: "/tmp/proj-a" }]),
+    });
+    const driver = makeDriver(
+      harness,
+      makeStartupInput({ session: "ses-target" }),
+    ) as unknown as MigrateExitDriver;
+
+    // Not mounted until init() succeeds.
+    expect(uiContainsFooter(driver)).toBe(false);
+
+    await driver.initMainTui();
+
+    expect(uiContainsFooter(driver)).toBe(true);
+  });
 });
+
+function uiContainsFooter(driver: StartupDriver): boolean {
+  const target: unknown = driver.state.footer;
+  const visit = (node: unknown): boolean => {
+    if (node === target) return true;
+    const children = (node as { children?: unknown[] }).children;
+    return Array.isArray(children) && children.some(visit);
+  };
+  return visit(driver.state.ui);
+}

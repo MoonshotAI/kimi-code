@@ -754,6 +754,17 @@ export class SessionEventHandler {
     if (backgroundMeta !== undefined) {
       this.backgroundAgentMetadata.delete(event.subagentId);
       this.syncBackgroundAgentBadge();
+      // Push the real subagent error onto the parent Agent card too —
+      // `background.task.terminated` arrives separately (possibly later)
+      // with no error string and would only stamp the generic
+      // `Background agent failed`. The card and the separate transcript
+      // entry now share the same actual reason.
+      streamingUI.applyBackgroundTaskTerminalStatus({
+        agentId: event.subagentId,
+        description: backgroundMeta.description ?? '',
+        status: 'failed',
+        errorText: event.error,
+      });
       const taskId = this.findAgentTaskId(event.subagentId);
       if (taskId !== undefined && this.backgroundTaskTranscriptedTerminal.has(taskId)) {
         return;
@@ -872,6 +883,17 @@ export class SessionEventHandler {
     }
 
     if (event.type === 'background.task.terminated' && isTerminal) {
+      if (info.taskId.startsWith('agent-')) {
+        // The Agent tool's spawn-success ToolResult is not an error, so the
+        // parent toolCall card would otherwise render `✓ Completed` for any
+        // terminated bg agent — including `lost` / `failed` / `killed`.
+        // Push the actual terminal status so the card matches reality.
+        this.host.streamingUI.applyBackgroundTaskTerminalStatus({
+          agentId: info.agentId,
+          description: info.description,
+          status: info.status,
+        });
+      }
       if (!this.backgroundTaskTranscriptedTerminal.has(info.taskId)) {
         if (info.taskId.startsWith('bash-')) {
           this.appendBackgroundTaskEntry(info);
