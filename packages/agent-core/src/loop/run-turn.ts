@@ -67,7 +67,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
     while (true) {
       signal.throwIfAborted();
 
-      if (maxSteps !== undefined && steps >= maxSteps) {
+      if (maxSteps !== undefined && maxSteps > 0 && steps >= maxSteps) {
         throw createMaxStepsExceededError(maxSteps);
       }
 

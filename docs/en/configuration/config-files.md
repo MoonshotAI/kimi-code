@@ -153,7 +153,7 @@ max_context_size = 1047576
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `max_steps_per_turn` | `integer` | — | Maximum number of steps per turn; leave unset for unlimited |
+| `max_steps_per_turn` | `integer` | — | Maximum number of steps per turn; set to `0` or leave unset for unlimited. Setting `0` is useful for overriding a previously configured limit. |
 | `max_retries_per_step` | `integer` | `3` | Maximum retries per step |
 | `reserved_context_size` | `integer` | — | Number of tokens reserved for response generation; compaction is triggered when the context approaches this threshold |
 
