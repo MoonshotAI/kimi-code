@@ -180,15 +180,26 @@ export class StreamingUIController {
    * trusts the spawn-success ToolResult (which would otherwise label every
    * terminated bg agent — including `lost` ones — as `✓ Completed`).
    *
-   * Resolution order, picked to handle both live and resume:
-   *   1. `agentId` → matches the subagent id recorded on `spawned`
-   *      (live path; replayed tool calls currently do not carry a
-   *      subagent id back, so this branch only catches live mismatches).
-   *   2. Description fallback — required on resume because reconcile's
-   *      `BackgroundTaskInfo` is the only handle the TUI has to a
-   *      replayed Agent card. Only used when exactly one Agent tool call
-   *      shares the description; ambiguous matches are skipped to avoid
-   *      corrupting an unrelated card.
+   * Resolution policy: an `args.agentId` is treated as authoritative — we
+   * either find a card whose `getSubagentAgentId()` returns the same id
+   * (in-memory metadata for live foreground, parsed from the spawn-success
+   * `agent_id: ...` line for live backgrounded and replayed cards) or we
+   * skip. We deliberately do NOT fall back to description match when
+   * `agentId` is provided, because:
+   *   - On resume, `applyTerminalBackgroundAgentStatuses` iterates every
+   *     persisted terminal task, including ones whose tool calls fell
+   *     outside the `REPLAY_TURN_LIMIT` window. A description fallback
+   *     would let an old `lost` task stamp its status onto an unrelated
+   *     recent Agent card that happens to share `args.description`.
+   *   - During a live spawn / terminate race, the same card can briefly
+   *     appear in both `_pendingToolComponents` and `transcriptContainer`,
+   *     so a description match could double-visit the same component and
+   *     mark itself ambiguous. agentId match short-circuits on the first
+   *     hit and is immune.
+   *
+   * Description fallback is kept as a best-effort path only when
+   * `agentId` is unknown — that is, on resume of pre-PR sessions whose
+   * disk records pre-date `agent_id` persistence.
    *
    * Search scope includes both in-flight components and already-mounted
    * cards (some live in `transcriptContainer` standalone, others are
@@ -209,13 +220,14 @@ export class StreamingUIController {
      */
     errorText?: string | undefined;
   }): boolean {
+    const useAgentIdOnly = args.agentId !== undefined;
     let agentIdMatch: ToolCallComponent | undefined;
     let descMatch: ToolCallComponent | undefined;
     let descAmbiguous = false;
     const visit = (tc: ToolCallComponent): void => {
       if (agentIdMatch !== undefined) return;
-      if (args.agentId !== undefined && tc.getSubagentAgentId() === args.agentId) {
-        agentIdMatch = tc;
+      if (useAgentIdOnly) {
+        if (tc.getSubagentAgentId() === args.agentId) agentIdMatch = tc;
         return;
       }
       if (tc.getAgentToolDescription() !== args.description) return;
@@ -243,7 +255,11 @@ export class StreamingUIController {
         if (agentIdMatch !== undefined) break;
       }
     }
-    const target = agentIdMatch ?? (descAmbiguous ? undefined : descMatch);
+    const target = useAgentIdOnly
+      ? agentIdMatch
+      : descAmbiguous
+        ? undefined
+        : descMatch;
     if (target === undefined) return false;
     target.setBackgroundTaskTerminalStatus(args.status, { errorText: args.errorText });
     return true;
