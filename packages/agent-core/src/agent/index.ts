@@ -221,9 +221,23 @@ export class Agent {
       configMetadata,
       buildLlmConfigSignature(configMetadata, systemPrompt, tools),
     );
+
+    let partialMessageCount = 0;
+    for (const message of history) {
+      if (message.partial === true) partialMessageCount += 1;
+    }
+    const requestMetadata: LlmRequestMetadata = {
+      estimatedInputTokens:
+        estimateTokens(systemPrompt) +
+        estimateTokensForMessages(history) +
+        estimateTokensForTools(tools),
+    };
+    if (partialMessageCount > 0) {
+      requestMetadata.partialMessageCount = partialMessageCount;
+    }
     this.log.info('llm request', {
       ...context,
-      ...buildLlmRequestMetadata(systemPrompt, tools, history),
+      ...requestMetadata,
     });
   }
 
@@ -414,16 +428,12 @@ export class Agent {
 }
 
 interface LlmRequestContextFields {
-  turnId?: string;
-  step?: number;
-  attempt?: number;
-  maxAttempts?: number;
+  turnStep?: string;
+  attempt?: string;
 }
 
 interface LlmRequestMetadata {
   estimatedInputTokens: number;
-  messageCount: number;
-  toolCallCount: number;
   partialMessageCount?: number;
 }
 
@@ -447,47 +457,19 @@ function buildLlmRequestContext(options: Parameters<typeof generate>[5]): LlmReq
   if (context === undefined) return {};
 
   const fields: LlmRequestContextFields = {
-    turnId: context.turnId,
-    step: context.step,
+    turnStep:
+      context.turnId === undefined || context.step === undefined
+        ? undefined
+        : `${context.turnId}.${String(context.step)}`,
   };
   if (
     context.attempt !== undefined &&
     context.maxAttempts !== undefined &&
     context.attempt > 1
   ) {
-    fields.attempt = context.attempt;
-    fields.maxAttempts = context.maxAttempts;
+    fields.attempt = `${String(context.attempt)}/${String(context.maxAttempts)}`;
   }
   return fields;
-}
-
-function buildLlmRequestMetadata(
-  systemPrompt: string,
-  tools: readonly Tool[],
-  history: readonly Message[],
-): LlmRequestMetadata {
-  let toolCallCount = 0;
-  let partialMessageCount = 0;
-
-  for (const message of history) {
-    if (message.partial === true) partialMessageCount += 1;
-    toolCallCount += message.toolCalls.length;
-  }
-
-  const estimatedInputTokens =
-    estimateTokens(systemPrompt) +
-    estimateTokensForMessages(history) +
-    estimateTokensForTools(tools);
-
-  const metadata: LlmRequestMetadata = {
-    estimatedInputTokens,
-    messageCount: history.length,
-    toolCallCount,
-  };
-  if (partialMessageCount > 0) {
-    metadata.partialMessageCount = partialMessageCount;
-  }
-  return metadata;
 }
 
 function buildLlmConfigMetadata(
