@@ -203,6 +203,12 @@ export class SessionReplayRenderer {
     if (message.origin?.kind === 'injection') {
       return;
     }
+    // WHY: cron fires are not user turns (see isReplayUserTurnRecord); skip
+    // visual render and turn advance so the raw <cron-fire ...> envelope never
+    // surfaces in the resumed transcript.
+    if (message.origin?.kind === 'cron_job' || message.origin?.kind === 'cron_missed') {
+      return;
+    }
 
     this.flushAssistant(context);
     const skill = skillActivationFromOrigin(message.origin);

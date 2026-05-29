@@ -67,7 +67,6 @@ describe('resolveRuntimeProvider model metadata', () => {
       tool_use: true,
       max_context_tokens: 1_000_000,
     });
-    expect(resolved.modelName).toBe('kimi-code/kimi-for-coding');
     expect(resolved.provider.model).toBe('kimi-for-coding');
   });
 
@@ -97,7 +96,6 @@ describe('resolveRuntimeProvider model metadata', () => {
     });
 
     expect(resolved.providerName).toBe('openai');
-    expect(resolved.modelName).toBe('gpt-alias');
     expect(resolved.provider).toMatchObject({
       type: 'openai',
       model: 'gpt-runtime',

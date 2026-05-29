@@ -131,11 +131,7 @@ export class PermissionManager {
     const startedAt = Date.now();
 
     let response: ApprovalResponse;
-    if (this.agent.rpc === undefined) {
-      response = {
-        decision: 'approved',
-      };
-    } else {
+    if (this.agent.rpc?.requestApproval) {
       try {
         response = await this.agent.rpc.requestApproval(
           {
@@ -163,6 +159,10 @@ export class PermissionManager {
           ? Promise.reject(error)
           : this.permissionPolicyResolutionToPrepare(resolved, context, policyName);
       }
+    } else {
+      response = {
+        decision: 'approved',
+      };
     }
 
     const sessionApprovalRule =

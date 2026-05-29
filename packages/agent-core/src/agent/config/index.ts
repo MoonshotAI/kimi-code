@@ -24,6 +24,7 @@ export class ConfigState {
 
   constructor(protected readonly agent: Agent) {
     this._cwd = agent.runtime.kaos.getcwd();
+    this._modelAlias = agent.modelProvider?.defaultModel;
   }
 
   update(changed: AgentConfigUpdateData): void {
@@ -50,7 +51,7 @@ export class ConfigState {
     if (changed.thinkingLevel !== undefined) {
       this._thinkingLevel = resolveThinkingEffort(
         changed.thinkingLevel,
-        this.agent.providerManager?.config.thinking,
+        this.agent.kimiConfig?.thinking,
       );
     }
     if (changed.systemPrompt !== undefined) {
@@ -128,7 +129,7 @@ export class ConfigState {
 
   private get resolvedProviderConfig(): ResolvedRuntimeProvider | undefined {
     if (this._modelAlias === undefined) return undefined;
-    return this.agent.providerManager?.resolveProviderConfig(this._modelAlias);
+    return this.agent.modelProvider?.resolveProviderConfig(this._modelAlias);
   }
 
   private tryResolvedProviderConfig(): ResolvedRuntimeProvider | undefined {

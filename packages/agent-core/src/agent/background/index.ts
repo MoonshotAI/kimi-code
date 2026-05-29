@@ -4,7 +4,6 @@ import type { Agent } from '../..';
 import type { TelemetryPropertyValue } from '../../telemetry';
 import {
   BackgroundProcessManager,
-  type BackgroundProcessManagerOptions,
   type BackgroundTaskInfo,
   isBackgroundTaskTerminal,
   type ReconcileResult,
@@ -36,11 +35,11 @@ export class BackgroundManager extends BackgroundProcessManager {
   private readonly scheduledNotificationKeys = new Set<string>();
   private readonly deliveredNotificationKeys = new Set<string>();
 
-  constructor(
-    public readonly agent: Agent,
-    options: BackgroundProcessManagerOptions = {},
-  ) {
-    super(options);
+  constructor(public readonly agent: Agent) {
+    super({
+      maxRunningTasks: agent.kimiConfig?.background?.maxRunningTasks,
+      sessionDir: agent.homedir,
+    });
 
     this.onLifecycle((event, info) => {
       switch (event) {

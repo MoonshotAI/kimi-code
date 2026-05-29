@@ -12,14 +12,14 @@ import {
 } from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentConfig } from '../../src/agent';
+import type { AgentOptions } from '../../src/agent';
 import { DefaultCompactionStrategy, type CompactionStrategy } from '../../src/agent/compaction';
-import { HookEngine, type HookEngineTriggerArgs } from '../../src/agent/hooks';
+import { HookEngine, type HookEngineTriggerArgs } from '../../src/session/hooks';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import type { TestAgentContext, TestAgentOptions } from './harness/agent';
 import { testAgent } from './harness/agent';
 
-type GenerateFn = NonNullable<AgentConfig['generate']>;
+type GenerateFn = NonNullable<AgentOptions['generate']>;
 
 const CATALOGUED_PROVIDER = {
   type: 'kimi',
@@ -1309,7 +1309,7 @@ describe('Agent compaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    const providerManager = ctx.agent.providerManager;
+    const providerManager = ctx.agent.modelProvider;
     if (providerManager === undefined) throw new Error('Expected provider manager');
     const resolveProviderConfig = providerManager.resolveProviderConfig.bind(providerManager);
     providerManager.resolveProviderConfig = (model) => ({

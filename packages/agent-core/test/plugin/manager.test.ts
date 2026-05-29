@@ -19,6 +19,7 @@ async function makePlugin(
   name: string,
   options: {
     skills?: boolean;
+    skillNames?: readonly string[];
     version?: string;
     sessionStartSkill?: string;
     mcpServers?: Record<string, unknown>;
@@ -29,15 +30,18 @@ async function makePlugin(
   if (options.version !== undefined) {
     manifest['version'] = options.version;
   }
-  if (options.skills === true) {
+  const skillNames = options.skillNames ?? (options.skills === true ? ['demo-skill'] : []);
+  if (skillNames.length > 0) {
     manifest['skills'] = './skills/';
     await mkdir(path.join(root, 'skills'), { recursive: true });
-    await mkdir(path.join(root, 'skills', 'demo-skill'), { recursive: true });
-    await writeFile(
-      path.join(root, 'skills', 'demo-skill', 'SKILL.md'),
-      '---\nname: demo-skill\ndescription: A demo\n---\nbody',
-      'utf8',
-    );
+    for (const skillName of skillNames) {
+      await mkdir(path.join(root, 'skills', skillName), { recursive: true });
+      await writeFile(
+        path.join(root, 'skills', skillName, 'SKILL.md'),
+        `---\nname: ${skillName}\ndescription: A demo\n---\nbody`,
+        'utf8',
+      );
+    }
   }
   if (options.sessionStartSkill !== undefined) {
     manifest['sessionStart'] = { skill: options.sessionStartSkill };
@@ -182,6 +186,24 @@ describe('PluginManager', () => {
       source: 'extra',
       plugin: { id: 'b', instructions: undefined },
     });
+  });
+
+  it('summaries count discovered skills inside plugin skill roots', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('superpowers', {
+      skillNames: ['brainstorming', 'systematic-debugging', 'writing-plans'],
+    });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+
+    expect(manager.summaries()).toContainEqual(
+      expect.objectContaining({
+        id: 'superpowers',
+        skillCount: 3,
+      }),
+    );
+    expect(manager.info('superpowers')?.skillCount).toBe(3);
   });
 
   it('reload() picks up edits to the managed plugin copy', async () => {

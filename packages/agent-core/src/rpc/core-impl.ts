@@ -180,6 +180,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const runtime = await this.resolveRuntime(config);
     const session = new Session({
       runtime: { ...runtime, kaos: runtime.kaos.withCwd(workDir) },
+      config,
       id,
       homedir: summary.sessionDir,
       kimiHomeDir: this.homeDir,
@@ -259,6 +260,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const runtime = await this.resolveRuntime(config);
     const session = new Session({
       runtime: { ...runtime, kaos: runtime.kaos.withCwd(summary.workDir) },
+      config,
       id: summary.id,
       homedir: summary.sessionDir,
       kimiHomeDir: this.homeDir,

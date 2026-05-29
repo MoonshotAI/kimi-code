@@ -3,7 +3,7 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 
 // Dynamic-import contract: locks the public shape of the future HookEngine
 // without forcing TS module resolution to find a file that doesn't exist yet.
-const ENGINE_MODULE = '../../src/agent/hooks/engine' as string;
+const ENGINE_MODULE = '../../src/session/hooks/engine' as string;
 
 type HookDef = {
   event: string;

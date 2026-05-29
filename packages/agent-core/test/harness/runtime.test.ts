@@ -73,9 +73,9 @@ custom_headers = { "X-Test" = "1" }
       storage: 'file',
       key: 'oauth/custom-kimi-code',
     });
-    expect(session?.config.runtime.webSearcher).toBeDefined();
+    expect(session?.options.runtime.webSearcher).toBeDefined();
 
-    await session!.config.runtime.webSearcher!.search('kimi');
+    await session!.options.runtime.webSearcher!.search('kimi');
 
     expect(getAccessToken).toHaveBeenCalledWith();
     const init = fetchImpl.mock.calls[0]?.[1] as RequestInit;

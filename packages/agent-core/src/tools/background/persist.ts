@@ -5,15 +5,19 @@
  * restart can list previously-running tasks (now lost) and emit terminal
  * notifications.
  *
- * Writes use `atomicWrite` (write-tmp-fsync-rename) so a crash mid-write
- * never leaves a half-truncated file.
+ * The per-id JSON layer (write / read / list / remove) is delegated to
+ * `createPerIdJsonStore`, which centralises atomic-write +
+ * path-traversal-guarded readdir for cron / background / anything else
+ * that needs session-scoped per-id JSON. This module keeps the
+ * background-specific shape, the output.log helpers, and the named
+ * exports (`writeTask`, …) the rest of `background/` already imports.
  */
 
 import { statSync } from 'node:fs';
-import { appendFile, mkdir, open, readFile, readdir, rm, stat, unlink } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'pathe';
 
-import { atomicWrite } from '../../utils/fs';
+import { createPerIdJsonStore, type PerIdJsonStore } from '../../utils/per-id-json-store';
 import type { BackgroundTaskStatus } from './manager';
 
 /**
@@ -67,13 +71,6 @@ function tasksDirOf(sessionDir: string): string {
   return join(sessionDir, 'tasks');
 }
 
-function taskFile(sessionDir: string, taskId: string): string {
-  if (!VALID_TASK_ID.test(taskId)) {
-    throw new Error(`Invalid task id: "${taskId}"`);
-  }
-  return join(tasksDirOf(sessionDir), `${taskId}.json`);
-}
-
 function taskOutputDir(sessionDir: string, taskId: string): string {
   if (!VALID_TASK_ID.test(taskId)) {
     throw new Error(`Invalid task id: "${taskId}"`);
@@ -85,11 +82,33 @@ export function taskOutputFile(sessionDir: string, taskId: string): string {
   return join(taskOutputDir(sessionDir, taskId), 'output.log');
 }
 
+/**
+ * Cache of `createPerIdJsonStore` instances keyed by sessionDir.
+ *
+ * Per-id stores hold no state beyond their options object, so reusing
+ * the same instance across calls into this module is purely an allocation
+ * micro-optimisation. The cache is unbounded; the number of distinct
+ * session directories per process is small (typically 1) and the
+ * lifetime matches the process.
+ */
+const storeCache = new Map<string, PerIdJsonStore<PersistedTask>>();
+function storeFor(sessionDir: string): PerIdJsonStore<PersistedTask> {
+  const cached = storeCache.get(sessionDir);
+  if (cached !== undefined) return cached;
+  const store = createPerIdJsonStore<PersistedTask>({
+    rootDir: sessionDir,
+    subdir: 'tasks',
+    idRegex: VALID_TASK_ID,
+    isValid: isValidPersistedTask,
+    entityName: 'task id',
+  });
+  storeCache.set(sessionDir, store);
+  return store;
+}
+
 /** Atomically write a task's persisted state. Creates dirs as needed. */
 export async function writeTask(sessionDir: string, task: PersistedTask): Promise<void> {
-  await mkdir(tasksDirOf(sessionDir), { recursive: true, mode: 0o700 });
-  const target = taskFile(sessionDir, task.task_id);
-  await atomicWrite(target, JSON.stringify(task, null, 2));
+  await storeFor(sessionDir).write(task.task_id, task);
 }
 
 /** Read a single task file. Returns undefined when missing/corrupt. */
@@ -97,22 +116,7 @@ export async function readTask(
   sessionDir: string,
   taskId: string,
 ): Promise<PersistedTask | undefined> {
-  // Path-traversal validation runs before the try/catch so callers see
-  // an explicit error instead of a misleading "missing" return.
-  const path = taskFile(sessionDir, taskId);
-  let raw: string;
-  try {
-    raw = await readFile(path, 'utf-8');
-  } catch {
-    return undefined;
-  }
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (typeof parsed !== 'object' || parsed === null) return undefined;
-    return parsed as unknown as PersistedTask;
-  } catch {
-    return undefined;
-  }
+  return storeFor(sessionDir).read(taskId);
 }
 
 export async function appendTaskOutput(
@@ -206,34 +210,22 @@ export async function readTaskOutputBytes(
   }
 }
 
-/** Enumerate all persisted tasks for a session. Skips corrupt entries. */
-export async function listTasks(sessionDir: string): Promise<PersistedTask[]> {
-  let entries: string[];
-  try {
-    entries = await readdir(tasksDirOf(sessionDir));
-  } catch {
-    return [];
-  }
-  const out: PersistedTask[] = [];
-  for (const entry of entries) {
-    if (!entry.endsWith('.json')) continue;
-    const taskId = entry.slice(0, -'.json'.length);
-    // Silently drop: filename basename is not a valid task id (stray files,
-    // legacy bg_* leftovers, etc.).
-    if (!VALID_TASK_ID.test(taskId)) continue;
-    const task = await readTask(sessionDir, taskId);
-    // Silently drop: JSON parse failed or file disappeared between readdir
-    // and readTask. writeTask uses an atomic temp+rename pattern so a
-    // genuinely truncated file in production is rare; if it happens we
-    // accept the loss rather than emit a ghost with no recoverable
-    // metadata beyond the filename.
-    if (task === undefined) continue;
-    // Silently drop: parsed JSON is missing one or more required fields
-    // for a PersistedTask. Treated the same as a missing file.
-    if (!isValidPersistedTask(task)) continue;
-    out.push(task);
-  }
-  return out;
+/**
+ * Enumerate all persisted tasks for a session.
+ *
+ * Skips, silently:
+ *   - basenames that don't match `VALID_TASK_ID` (stray files, legacy
+ *     `bg_*` leftovers, partially-written temp files);
+ *   - files that fail to read / parse;
+ *   - records that fail `isValidPersistedTask` (canonical "spec with
+ *     missing fields" failure mode).
+ *
+ * `writeTask` uses atomic temp+rename so a genuinely truncated file in
+ * production is rare; if it happens we accept the loss rather than
+ * emit a ghost with no recoverable metadata beyond the filename.
+ */
+export async function listTasks(sessionDir: string): Promise<readonly PersistedTask[]> {
+  return storeFor(sessionDir).list();
 }
 
 /**
@@ -256,14 +248,15 @@ function isValidPersistedTask(obj: unknown): obj is PersistedTask {
   );
 }
 
-/** Remove a task file (idempotent). */
+/**
+ * Remove a task — both the per-id JSON spec and the task's `output.log`
+ * directory. Idempotent: missing spec or missing output dir is not an
+ * error. Throws for an invalid `taskId` (path-traversal guard fires
+ * before any FS call).
+ */
 export async function removeTask(sessionDir: string, taskId: string): Promise<void> {
-  // Path-traversal validation outside try/catch.
-  const path = taskFile(sessionDir, taskId);
-  try {
-    await unlink(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
+  await storeFor(sessionDir).remove(taskId);
+  // `taskOutputDir` re-validates the id, so a malformed id throws here
+  // even if the spec rm above silently returned; matches prior behavior.
   await rm(taskOutputDir(sessionDir, taskId), { recursive: true, force: true });
 }

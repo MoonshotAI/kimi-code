@@ -1489,11 +1489,16 @@ describe('KimiTUI message flow', () => {
       );
     });
     const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-    expect(out).toContain('❯ Demo  disabled  saved · /new to apply');
-    expect(stripSgr(renderTranscript(driver))).toContain('Disabled demo. Run /new to apply.');
+    expect(out).toContain('❯ Demo  disabled  pending /new');
+    expect(out).not.toContain('Space enable');
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Disabled demo. Run /new to apply.');
   });
 
   it('toggles plugin MCP servers from the overview MCP picker', async () => {
+    const serverEnabled = new Map([
+      ['metadata', true],
+      ['data', true],
+    ]);
     const session = makeSession({
       listPlugins: vi.fn(async () => [
         {
@@ -1503,8 +1508,8 @@ describe('KimiTUI message flow', () => {
           enabled: true,
           state: 'ok',
           skillCount: 1,
-          mcpServerCount: 1,
-          enabledMcpServerCount: 1,
+          mcpServerCount: 2,
+          enabledMcpServerCount: 2,
           hasErrors: false,
         },
       ]),
@@ -1515,24 +1520,35 @@ describe('KimiTUI message flow', () => {
         enabled: true,
         state: 'ok',
         skillCount: 1,
-        mcpServerCount: 1,
-        enabledMcpServerCount: 1,
+        mcpServerCount: 2,
+        enabledMcpServerCount: [...serverEnabled.values()].filter(Boolean).length,
         hasErrors: false,
         source: 'local-path',
         root: '/plugins/kimi-datasource',
         manifest: undefined,
         mcpServers: [
           {
-            name: 'data',
-            runtimeName: 'plugin-kimi-datasource-data',
-            enabled: true,
+            name: 'metadata',
+            runtimeName: 'plugin-kimi-datasource-metadata',
+            enabled: serverEnabled.get('metadata') === true,
             transport: 'stdio',
             command: 'node',
-            args: ['./bin/kimi-datasource.mjs'],
+            args: ['./bin/kimi-datasource.mjs', 'metadata'],
+          },
+          {
+            name: 'data',
+            runtimeName: 'plugin-kimi-datasource-data',
+            enabled: serverEnabled.get('data') === true,
+            transport: 'stdio',
+            command: 'node',
+            args: ['./bin/kimi-datasource.mjs', 'data'],
           },
         ],
         diagnostics: [],
       })),
+      setPluginMcpServerEnabled: vi.fn(async (_id: string, _server: string, nextEnabled: boolean) => {
+        serverEnabled.set(_server, nextEnabled);
+      }),
     });
     const { driver } = await makeDriver(session);
 
@@ -1552,6 +1568,7 @@ describe('KimiTUI message flow', () => {
       );
     });
     const mcpPicker = driver.state.editorContainer.children[0] as PluginMcpSelectorComponent;
+    mcpPicker.handleInput('\u001B[B');
     mcpPicker.handleInput(' ');
 
     await vi.waitFor(() => {
@@ -1561,6 +1578,14 @@ describe('KimiTUI message flow', () => {
         false,
       );
     });
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginMcpSelectorComponent);
+    });
+    const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
+    expect(out).toContain('❯ data  disabled  pending /new');
+    expect(stripSgr(renderTranscript(driver))).not.toContain(
+      'Disabled MCP server data for kimi-datasource. Run /new to apply.',
+    );
   });
 
   it('requires confirmation before /plugins remove removes a plugin', async () => {

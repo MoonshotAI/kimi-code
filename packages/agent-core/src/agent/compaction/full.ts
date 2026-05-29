@@ -61,7 +61,7 @@ export class FullCompaction {
         {
           ...DEFAULT_COMPACTION_CONFIG,
           reservedContextSize:
-            agent.providerManager?.config.loopControl?.reservedContextSize ??
+            agent.kimiConfig?.loopControl?.reservedContextSize ??
             DEFAULT_COMPACTION_CONFIG.reservedContextSize,
         }
       );

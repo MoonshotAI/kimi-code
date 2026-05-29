@@ -4,11 +4,11 @@ import { Readable, type Writable } from 'node:stream';
 import { createControlledPromise } from '@antfu/utils';
 import { type Environment, type Kaos, type KaosProcess } from '@moonshot-ai/kaos';
 import type { ModelCapability, ProviderConfig } from '@moonshot-ai/kosong';
-import { expect, vi } from 'vitest';
+import { expect, onTestFinished, vi } from 'vitest';
 
 import {
   Agent,
-  type AgentConfig,
+  type AgentOptions,
   type AgentRecord,
   type AgentRecordPersistence,
 } from '../../../src/agent';
@@ -65,7 +65,7 @@ type RpcLogEntry = RpcSnapshotEntry & {
 };
 
 type PromiseAgentAPI = PromisifyMethods<AgentAPI>;
-type GenerateFn = NonNullable<AgentConfig['generate']>;
+type GenerateFn = NonNullable<AgentOptions['generate']>;
 
 type TestToolResult = ExecutableToolResult & {
   readonly content?: unknown;
@@ -93,14 +93,14 @@ export interface TestAgentOptions {
   readonly runtime?: RuntimeConfig | undefined;
   readonly compactionStrategy?: CompactionStrategy | undefined;
   readonly generate?: GenerateFn | undefined;
-  readonly hookEngine?: AgentConfig['hookEngine'];
-  readonly type?: AgentConfig['type'];
-  readonly permission?: AgentConfig['permission'];
+  readonly hookEngine?: AgentOptions['hookEngine'];
+  readonly type?: AgentOptions['type'];
+  readonly permission?: AgentOptions['permission'];
   readonly providerManager?: ProviderManager;
   readonly initialConfig?: KimiConfig;
   readonly providerManagerOverrides?: Omit<ConstructorParameters<typeof ProviderManager>[0], 'config'>;
   readonly sessionId?: string;
-  readonly subagentHost?: AgentConfig['subagentHost'];
+  readonly subagentHost?: AgentOptions['subagentHost'];
   readonly onEvent?: ((event: AgentRecord) => AgentRecord | undefined) | undefined;
   readonly persistence?: AgentRecordPersistence | undefined;
   readonly telemetry?: TelemetryClient | undefined;
@@ -177,11 +177,12 @@ export class AgentTestContext {
     );
     this.agent = new Agent({
       runtime,
+      config: this.kimiConfig,
       rpc: this.createRpcProxy(),
       persistence,
       generate: options.generate ?? this.scriptedGenerate.generate,
       compactionStrategy: options.compactionStrategy,
-      providerManager,
+      modelProvider: providerManager,
       subagentHost: options.subagentHost,
       type: options.type,
       permission: options.permission,
@@ -190,6 +191,16 @@ export class AgentTestContext {
       log: options.log,
     });
     this.rpc = this.createPromiseAgentApi(this.agent);
+    // The Agent constructor now eagerly binds a SIGUSR1 listener via
+    // CronManager.start(). Without per-test cleanup, every Agent built
+    // by this harness leaks one listener — Node prints a
+    // MaxListenersExceededWarning once the suite crosses 10 agents.
+    // onTestFinished is a vitest API callable from non-hook scopes, so
+    // we register cleanup transparently without forcing every test to
+    // remember an afterEach.
+    onTestFinished(async () => {
+      await this.agent.cron?.stop();
+    });
   }
 
   configure({
