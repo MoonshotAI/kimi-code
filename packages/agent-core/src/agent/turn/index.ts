@@ -430,7 +430,7 @@ export class TurnFlow {
             afterStep: async ({ usage }) => {
               this.agent.usage.record(model, usage, 'turn');
               // Goal token budgets count every session agent step.
-              if (this.agent.goals?.getActiveGoal() != null) {
+              if (this.agent.goals !== undefined && this.agent.goals.getActiveGoal() !== null) {
                 await this.agent.goals.recordTokenUsage({
                   tokenDelta: grandTotal(usage),
                   agentId: this.agentId,

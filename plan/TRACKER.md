@@ -20,9 +20,9 @@ coding agent, following the phase plans in this directory.
 | 4a | Goal context injection | ✅ | 687654c |
 | 4b | Goal usage accounting | ✅ | aea58a5 |
 | 4c | Goal continuation loop | ✅ | 0899188 |
-| 4d | Goal evaluator | ✅ | (this commit) |
-| 5  | End-to-end integration and gates | 🟡 | — |
-| 6  | Headless goal mode and hardening | ⬜ | — |
+| 4d | Goal evaluator | ✅ | d0dc822 |
+| 5  | End-to-end integration and gates | ✅ | (this commit) |
+| 6  | Headless goal mode and hardening | 🟡 | — |
 
 ## Detours / Notes
 
@@ -159,3 +159,30 @@ coding agent, following the phase plans in this directory.
 - Added the `Agent.goalEvaluatorFactory` injection seam (production-default undefined → real
   `GoalEvaluator`) so harness integration tests don't have to interleave evaluator JSON into the
   scripted-model queue. This matches the plan's "constructor seam for a future judge model".
+
+### Phase 5
+
+- Added `test/harness/goal-session.test.ts` (4): full core flow on a real `Session` +
+  `SessionAPIImpl` with a scripted model and a `vi.mock`'d evaluator — proves injection reaches
+  the model, token accounting runs, `UpdateGoal` records a report without ending the goal, the
+  evaluator confirms completion, terminal state persists in `state.json`, and
+  `agents/main/wire.jsonl` carries goal.create/account_usage/continuation/report/evaluate/update.
+  Plus turn-budget wrap-up, resume (active→paused), and user lifecycle controls.
+- Added an app dispatch-level integration test: `dispatchInput(host, '/goal Ship feature X')`
+  routes through the real resolver, creates the goal, and sends `Ship feature X` (not the raw
+  command); flag-off routes it as a normal message.
+- Export review: `SessionGoalStore`/`SessionGoalState`/`GoalContinuationController`/`GoalEvaluator`
+  and `goal.*` payload types stay internal; only the public goal value types are re-exported
+  (via core-api → agent-core index → node-sdk types); no public `Session.updateGoal`.
+- Documented `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND` (default off) + the master switch in
+  `docs/en/configuration/env-vars.md`.
+- Gates: full agent-core suite (2355) + app command suite (50) green; `pnpm run typecheck` OK
+  across all packages; `pnpm run lint` OK (fixed an `eqeqeq` error introduced in 4b's accounting
+  guard; remaining warnings are pre-existing repo-wide).
+
+### Detour note (Phase 5)
+
+- The plan's centerpiece harness test was built directly on the `Session` class (as `init.test.ts`
+  does) with a scripted `generate`, rather than the full CoreAPI/RPC `createTestRpc` harness, and
+  the evaluator is `vi.mock`'d so verdicts are deterministic without interleaving evaluator JSON
+  into the model queue. This keeps the e2e flow readable and stable.

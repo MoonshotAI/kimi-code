@@ -115,6 +115,21 @@ export KIMI_DISABLE_TELEMETRY="1"
 ```
 
 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` has higher priority than `config.toml`. For example, running `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT=0 kimi -p "..."` temporarily requests stopping background tasks before this process exits, even if the config file sets `keep_alive_on_exit = true`.
+
+## Experimental feature flags
+
+Experimental features are gated behind `KIMI_CODE_EXPERIMENTAL_*` environment variables and are **off by default**. Each flag accepts truthy values (`1`, `true`, `yes`, `on`); the master switch `KIMI_CODE_EXPERIMENTAL_FLAG` forces every experimental feature on.
+
+| Environment variable | Purpose | Default |
+| --- | --- | --- |
+| `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND` | Enable the `/goal` command and autonomous goal mode: the main agent works toward a stated objective across automatic continuations until an independent evaluator judges it complete, blocked, or impossible, or a hard budget (`--max-tokens` / `--max-turns` / `--max-minutes`) is reached. Registers the `CreateGoal` / `GetGoal` / `UpdateGoal` main-agent tools and injects goal guidance into the main agent's context. | `false` (off) |
+| `KIMI_CODE_EXPERIMENTAL_FLAG` | Master switch: force every experimental flag on | `false` (off) |
+
+```sh
+# Try goal mode for a single launch
+KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
+```
+
 ## Diagnostic logging
 
 The variables below control `kimi`'s diagnostic logs. Logs are written to two locations: the global diagnostic log at `$KIMI_CODE_HOME/logs/kimi-code.log`, and each session's own diagnostic log at `<sessionDir>/logs/kimi-code.log` (see [Data locations](./data-locations.md#logs-and-update-state) for path details). All of these variables are read only once at process startup.

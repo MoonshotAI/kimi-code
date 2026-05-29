@@ -1,7 +1,7 @@
 import { ErrorCodes, KimiError } from '@moonshot-ai/kimi-code-sdk';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { handleGoalCommand, parseGoalCommand } from '#/tui/commands/index';
+import { dispatchInput, handleGoalCommand, parseGoalCommand, setExperimentalFlags } from '#/tui/commands/index';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 
 function fakeSnapshot() {
@@ -50,9 +50,11 @@ function makeHost(overrides: { model?: string; hasSession?: boolean; streaming?:
       appState: {
         model: overrides.model ?? 'kimi-model',
         streamingPhase: overrides.streaming ? 'streaming' : 'idle',
+        isCompacting: false,
       },
     },
     session: hasSession ? session : undefined,
+    skillCommandMap: new Map<string, string>(),
     requireSession: () => session,
     showError: vi.fn(),
     showStatus: vi.fn(),
@@ -233,5 +235,38 @@ describe('handleGoalCommand', () => {
     await handleGoalCommand(noSessionHost, 'Ship feature X');
     expect(noSessionHost.showError).toHaveBeenCalled();
     expect(s.createGoal).not.toHaveBeenCalled();
+  });
+});
+
+describe('dispatchInput /goal integration', () => {
+  afterEach(() => {
+    setExperimentalFlags({});
+  });
+
+  it('routes /goal through the real resolver, creates the goal, and sends the objective', async () => {
+    setExperimentalFlags({ 'goal-command': true });
+    const { host, session } = makeHost();
+
+    dispatchInput(host, '/goal Ship feature X');
+
+    await vi.waitFor(() => {
+      expect(session.createGoal).toHaveBeenCalledWith(
+        expect.objectContaining({ objective: 'Ship feature X' }),
+      );
+    });
+    expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
+    expect(host.sendNormalUserInput).not.toHaveBeenCalledWith('/goal Ship feature X');
+  });
+
+  it('treats /goal as a normal message when the flag is disabled', async () => {
+    setExperimentalFlags({});
+    const { host, session } = makeHost();
+
+    dispatchInput(host, '/goal Ship feature X');
+
+    await vi.waitFor(() => {
+      expect(host.sendNormalUserInput).toHaveBeenCalledWith('/goal Ship feature X');
+    });
+    expect(session.createGoal).not.toHaveBeenCalled();
   });
 });
