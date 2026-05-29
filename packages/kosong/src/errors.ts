@@ -85,6 +85,10 @@ const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
   /request.*exceed(?:ed|s|ing)?.*model token limit/,
 ] as const;
 
+export function isContextOverflowErrorCode(code: string | null | undefined): boolean {
+  return code === 'context_length_exceeded';
+}
+
 export function normalizeAPIStatusError(
   statusCode: number,
   message: string,
@@ -96,7 +100,7 @@ export function normalizeAPIStatusError(
   return new APIStatusError(statusCode, message, requestId);
 }
 
-function isContextOverflowStatusError(statusCode: number, message: string): boolean {
+export function isContextOverflowStatusError(statusCode: number, message: string): boolean {
   if (statusCode !== 400 && statusCode !== 413 && statusCode !== 422) return false;
   const lowerMessage = message.toLowerCase();
   return CONTEXT_OVERFLOW_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));

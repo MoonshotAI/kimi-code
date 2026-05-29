@@ -7,6 +7,7 @@ import {
   APIStatusError,
   APITimeoutError,
   inputTotal,
+  isContextOverflowStatusError,
   type ContentPart,
   type TokenUsage,
 } from '@moonshot-ai/kosong';
@@ -738,7 +739,7 @@ function classifyApiError(error: unknown, summary: KimiErrorPayload): ApiErrorCl
     if (statusCode === 429) return { errorType: 'rate_limit', statusCode };
     if (statusCode === 401 || statusCode === 403) return { errorType: 'auth', statusCode };
     if (statusCode >= 500) return { errorType: '5xx_server', statusCode };
-    if (isContextOverflowMessage(summary.message)) {
+    if (isContextOverflowStatusError(statusCode, summary.message)) {
       return { errorType: 'context_overflow', statusCode };
     }
     if (statusCode >= 400) return { errorType: '4xx_client', statusCode };
@@ -785,17 +786,6 @@ function isApiTimeoutError(error: unknown, summary: KimiErrorPayload): boolean {
 
 function isApiEmptyResponseError(error: unknown, summary: KimiErrorPayload): boolean {
   return error instanceof APIEmptyResponseError || summary.name === 'APIEmptyResponseError';
-}
-
-function isContextOverflowMessage(message: string): boolean {
-  const lower = message.toLowerCase();
-  return (
-    lower.includes('context length') ||
-    lower.includes('context_length') ||
-    lower.includes('max tokens') ||
-    lower.includes('maximum context') ||
-    lower.includes('too many tokens')
-  );
 }
 
 function currentTurnInputTokens(usage: TokenUsage | undefined): number | undefined {
