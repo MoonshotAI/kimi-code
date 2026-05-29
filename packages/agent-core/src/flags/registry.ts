@@ -13,7 +13,7 @@ import type { FlagDefinitionInput } from './types';
 export const FLAG_DEFINITIONS = [
   {
     id: 'micro-compaction',
-    env: '$KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
+    env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
     default: false,
     surface: 'core',
   },
