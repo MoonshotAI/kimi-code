@@ -95,7 +95,7 @@ function buildSessionUsageSection(
     const cacheIndent = ' '.repeat(modelPrefix.length);
     const cacheRatio = input > 0 ? usageNumber(row.inputCacheRead) / input : 0;
     const bar = renderProgressBar(cacheRatio, 20);
-    const pct = `${Math.round(cacheRatio * 100)}%`;
+    const pct = `${(cacheRatio * 100).toFixed(1).replace(/\.0$/, '')}%`;
     lines.push(
       `${cacheIndent}${muted('cache')} ${bar} ${value(pct)} ${muted('hit')} ` +
         `(${value(formatTokenCount(usageNumber(row.inputCacheRead)))} ${muted('read')} ` +

@@ -129,8 +129,8 @@ describe('UsagePanelComponent', () => {
     // Both have cache sublines
     const cacheLines = lines.filter((l) => l.includes('cache') && l.includes('hit'));
     expect(cacheLines).toHaveLength(2);
-    // kimi-k2.5: 6000/10200 ≈ 59% hit
-    expect(cacheLines[0]).toContain('59% hit');
+    // kimi-k2.5: 6000/10200 ≈ 58.8% hit
+    expect(cacheLines[0]).toContain('58.8% hit');
     expect(cacheLines[0]).toContain('6.0k read');
     // deepseek-v4: 0% hit
     expect(cacheLines[1]).toContain('0% hit');
