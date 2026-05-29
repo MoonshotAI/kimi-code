@@ -190,8 +190,13 @@ export class ProviderManager implements ModelProvider {
       };
     }
 
-    // Key pool path — only for kimi provider when a pool is configured.
-    if (providerConfig?.type === 'kimi' && this.options.apiKeyPool !== undefined) {
+    // Key pool path — only for kimi provider when a pool is configured
+    // and the provider does not already have an explicit apiKey.
+    if (
+      providerConfig?.type === 'kimi' &&
+      this.options.apiKeyPool !== undefined &&
+      providerApiKey(providerConfig) === undefined
+    ) {
       const pool = this.options.apiKeyPool;
       return async (request) => {
         const key = pool.acquire();

@@ -38,13 +38,13 @@ export class ApiKeyPool {
   static fromEnv(prefix = 'KIMI_API_KEY'): ApiKeyPool | null {
     const keys: string[] = [];
     const primary = process.env[prefix];
-    if (primary !== undefined && primary.length > 0) {
-      keys.push(primary);
+    if (primary !== undefined && primary.trim().length > 0) {
+      keys.push(primary.trim());
     }
     for (let i = 1; i < 100; i++) {
       const val = process.env[`${prefix}_${i}`];
-      if (val !== undefined && val.length > 0) {
-        keys.push(val);
+      if (val !== undefined && val.trim().length > 0) {
+        keys.push(val.trim());
       }
     }
     if (keys.length < 2) {

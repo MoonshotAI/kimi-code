@@ -51,6 +51,24 @@ const BASE_CONFIG: KimiConfig = {
   },
 };
 
+const POOL_BASE_CONFIG: KimiConfig = {
+  defaultModel: 'kimi-code/kimi-for-coding',
+  providers: {
+    'managed:kimi-code': {
+      type: 'kimi',
+      baseUrl: 'https://api.example/v1',
+    },
+  },
+  models: {
+    'kimi-code/kimi-for-coding': {
+      provider: 'managed:kimi-code',
+      model: 'kimi-for-coding',
+      maxContextSize: 1_000_000,
+      capabilities: ['thinking', 'image_in', 'video_in', 'tool_use'],
+    },
+  },
+};
+
 const TEST_KIMI_HEADERS = {
   'User-Agent': 'kimi-code-cli/0.0.0-test',
   'X-Msh-Platform': 'kimi_code_cli',
@@ -674,7 +692,7 @@ describe('ProviderManager key pool', () => {
 
   it('returns a key-pool wrapper for kimi provider when pool is present', async () => {
     const pool = new ApiKeyPool(['pk-1', 'pk-2']);
-    const manager = new ProviderManager({ config: BASE_CONFIG, apiKeyPool: pool });
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
     const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding');
     expect(withAuth).toBeDefined();
 
@@ -688,7 +706,7 @@ describe('ProviderManager key pool', () => {
 
   it('rotates to the next key on each resolveAuth call', async () => {
     const pool = new ApiKeyPool(['pk-a', 'pk-b', 'pk-c']);
-    const manager = new ProviderManager({ config: BASE_CONFIG, apiKeyPool: pool });
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
     const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
 
     const keys: string[] = [];
@@ -706,7 +724,7 @@ describe('ProviderManager key pool', () => {
   it('records failure on retryable errors and re-throws', async () => {
     const pool = new ApiKeyPool(['pk-1']);
     const recordFailureSpy = vi.spyOn(pool, 'recordFailure');
-    const manager = new ProviderManager({ config: BASE_CONFIG, apiKeyPool: pool });
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
     const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
 
     const request = vi.fn(async () => {
@@ -721,7 +739,7 @@ describe('ProviderManager key pool', () => {
   it('records failure on connection errors', async () => {
     const pool = new ApiKeyPool(['pk-1']);
     const recordFailureSpy = vi.spyOn(pool, 'recordFailure');
-    const manager = new ProviderManager({ config: BASE_CONFIG, apiKeyPool: pool });
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
     const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
 
     const request = vi.fn(async () => {
@@ -735,7 +753,7 @@ describe('ProviderManager key pool', () => {
   it('does not record failure on non-retryable errors', async () => {
     const pool = new ApiKeyPool(['pk-1']);
     const recordFailureSpy = vi.spyOn(pool, 'recordFailure');
-    const manager = new ProviderManager({ config: BASE_CONFIG, apiKeyPool: pool });
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
     const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
 
     const request = vi.fn(async () => {
@@ -749,7 +767,7 @@ describe('ProviderManager key pool', () => {
   it('resets key after a successful request', async () => {
     const pool = new ApiKeyPool(['pk-1']);
     const resetKeySpy = vi.spyOn(pool, 'resetKey');
-    const manager = new ProviderManager({ config: BASE_CONFIG, apiKeyPool: pool });
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
     const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
 
     const request = vi.fn(async () => 'success');
@@ -780,9 +798,34 @@ describe('ProviderManager key pool', () => {
     expect(auth).toBeUndefined();
   });
 
+  it('does not use key pool when provider already has an explicit apiKey', () => {
+    const pool = new ApiKeyPool(['pk-1']);
+    const config: KimiConfig = {
+      defaultModel: 'kimi-code/kimi-for-coding',
+      providers: {
+        'managed:kimi-code': {
+          type: 'kimi',
+          apiKey: 'sk-explicit',
+          baseUrl: 'https://api.example/v1',
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+        },
+      },
+    };
+    const manager = new ProviderManager({ config, apiKeyPool: pool });
+    const auth = manager.resolveAuth('kimi-code/kimi-for-coding');
+    // Explicit apiKey on provider means pool should not override it.
+    expect(auth).toBeUndefined();
+  });
+
   it('rotates keys correctly under concurrent resolveAuth calls', async () => {
     const pool = new ApiKeyPool(['pk-a', 'pk-b', 'pk-c']);
-    const manager = new ProviderManager({ config: BASE_CONFIG, apiKeyPool: pool });
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
     const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
 
     const keys: string[] = [];
@@ -801,7 +844,7 @@ describe('ProviderManager key pool', () => {
 
   it('distributes keys evenly under 60 concurrent withAuth requests', async () => {
     const pool = new ApiKeyPool(['pk-0', 'pk-1', 'pk-2']);
-    const manager = new ProviderManager({ config: BASE_CONFIG, apiKeyPool: pool });
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
     const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
 
     const keys: string[] = [];
@@ -825,7 +868,7 @@ describe('ProviderManager key pool', () => {
 
   it('cools down failed keys and reroutes under concurrent load', async () => {
     const pool = new ApiKeyPool(['pk-good', 'pk-bad']);
-    const manager = new ProviderManager({ config: BASE_CONFIG, apiKeyPool: pool });
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
     const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
 
     let callIndex = 0;

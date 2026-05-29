@@ -56,6 +56,16 @@ describe('ApiKeyPool', () => {
       expect(pool!.keyCount).toBe(2);
     });
 
+    it('ignores whitespace-only keys', () => {
+      process.env['TEST_API_KEY'] = 'sk-primary';
+      process.env['TEST_API_KEY_1'] = '   ';
+      process.env['TEST_API_KEY_2'] = '\t\n';
+      process.env['TEST_API_KEY_3'] = 'sk-3';
+      const pool = ApiKeyPool.fromEnv('TEST_API_KEY');
+      expect(pool).not.toBeNull();
+      expect(pool!.keyCount).toBe(2);
+    });
+
     it('defaults to KIMI_API_KEY prefix', () => {
       // Use a unique prefix to avoid colliding with real environment keys.
       const prefix = `TEST_DEFAULT_${Date.now()}`;
