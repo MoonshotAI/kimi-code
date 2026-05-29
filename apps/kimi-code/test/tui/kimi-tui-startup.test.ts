@@ -799,7 +799,7 @@ describe("KimiTUI startup", () => {
   it("mounts the footer once startup reaches the main TUI", async () => {
     const session = makeSession({ id: "ses-target" });
     const harness = makeHarness(session, {
-      listSessions: vi.fn(async () => [{ id: "ses-target" }]),
+      listSessions: vi.fn(async () => [{ id: "ses-target", workDir: "/tmp/proj-a" }]),
     });
     const driver = makeDriver(
       harness,
