@@ -283,7 +283,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
           `description: ${args.description}`,
           '',
           `next_step: The completion arrives automatically in a later turn — no polling needed. To peek at progress without blocking, call TaskOutput(task_id="${taskId}", block=false).`,
-          `resume_hint: To continue this same subagent instance later, call Agent(resume="${handle.agentId}", prompt="...").`,
+          `resume_hint: To continue or recover this same subagent later, call Agent(resume="${handle.agentId}", prompt="..."). The parameter is agent_id ("${handle.agentId}"), NOT task_id ("${taskId}") or source_id from a later <notification>. Recovery cases: a later <notification type="task.lost" | "task.failed" | "task.killed"> for this subagent — its conversation history is preserved across session restarts and resume will pick it up.`,
         ];
         return { output: lines.join('\n') };
       }
