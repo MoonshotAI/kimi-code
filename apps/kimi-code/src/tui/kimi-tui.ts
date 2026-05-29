@@ -450,10 +450,25 @@ export class KimiTUI {
         }
 
         if (startup.sessionFlag !== undefined) {
-          const sessions = await this.harness.listSessions({ workDir });
-          const target = sessions.find((candidate) => candidate.id === startup.sessionFlag);
+          const sessions = await this.harness.listSessions({
+            sessionId: startup.sessionFlag,
+            workDir,
+          });
+          const target = sessions[0];
           if (target === undefined) {
             throw new Error(`Session "${startup.sessionFlag}" not found.`);
+          }
+          if (target.workDir !== workDir) {
+            this.state.ui.stop();
+            process.stderr.write(
+              `${chalk.yellow(
+                `Session "${startup.sessionFlag}" was created under a different directory.\n` +
+                  `  cd "${target.workDir}" && kimi -r ${startup.sessionFlag}`,
+              )}\n\n`,
+            );
+            throw new Error(
+              `Session "${startup.sessionFlag}" was created under a different directory.`,
+            );
           }
           session = await this.harness.resumeSession({ id: startup.sessionFlag });
           shouldReplayHistory = true;

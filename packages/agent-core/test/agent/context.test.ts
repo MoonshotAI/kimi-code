@@ -155,7 +155,6 @@ describe('Agent context', () => {
     ctx.configure();
 
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'blocked prompt' }]);
-    ctx.agent.context.markLastUserPromptBlocked('UserPromptSubmit');
     ctx.agent.context.appendMessage({
       role: 'assistant',
       content: [

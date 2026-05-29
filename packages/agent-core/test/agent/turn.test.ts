@@ -425,7 +425,7 @@ describe('Agent turn flow', () => {
         role: 'user',
         content: [{ type: 'text', text: 'bad words here' }],
         toolCalls: [],
-        origin: { kind: 'user', blockedByHook: 'UserPromptSubmit' },
+        origin: { kind: 'user' },
       },
       {
         role: 'assistant',
