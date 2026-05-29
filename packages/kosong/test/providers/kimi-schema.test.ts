@@ -372,6 +372,26 @@ describe('normalizeKimiToolSchema', () => {
     });
   });
 
+  it('fixes a mismatched type when enum/const values contradict it', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        operation: { type: 'object', enum: ['move', 'copy'] },
+        mode: { type: 'array', const: 'fast' },
+      },
+    };
+
+    const result = normalizeKimiToolSchema(schema);
+
+    expect(result).toEqual({
+      type: 'object',
+      properties: {
+        operation: { type: 'string', enum: ['move', 'copy'] },
+        mode: { type: 'string', const: 'fast' },
+      },
+    });
+  });
+
   it('infers object and array property types from container enum/const values', () => {
     const schema = {
       type: 'object',

@@ -300,15 +300,29 @@ function normalizeProperty(node: unknown): void {
     return;
   }
 
-  if (!hasOwn(node, 'type') && !hasAnyKey(node, TYPE_COMPLETION_SKIP_KEYS)) {
-    const enumValues = node['enum'];
-    if (Array.isArray(enumValues) && enumValues.length > 0) {
-      node['type'] = inferTypeFromValues(enumValues);
-    } else if (hasOwn(node, 'const')) {
-      node['type'] = inferTypeFromValues([node['const']]);
-    } else {
-      node['type'] = inferTypeFromStructure(node);
+  const enumValues = node['enum'];
+  const hasEnum = Array.isArray(enumValues) && enumValues.length > 0;
+  const hasConst = hasOwn(node, 'const');
+
+  if (hasEnum || hasConst) {
+    if (!hasOwn(node, 'type') && !hasAnyKey(node, TYPE_COMPLETION_SKIP_KEYS)) {
+      node['type'] = hasEnum
+        ? inferTypeFromValues(enumValues)
+        : inferTypeFromValues([node['const']]);
+    } else if (hasOwn(node, 'type') && !hasAnyKey(node, TYPE_COMPLETION_SKIP_KEYS)) {
+      const inferredType = hasEnum
+        ? inferTypeFromValues(enumValues)
+        : inferTypeFromValues([node['const']]);
+      if (node['type'] !== inferredType) {
+        node['type'] = inferredType;
+      }
     }
+    recurseSchema(node);
+    return;
+  }
+
+  if (!hasOwn(node, 'type') && !hasAnyKey(node, TYPE_COMPLETION_SKIP_KEYS)) {
+    node['type'] = inferTypeFromStructure(node);
   }
 
   recurseSchema(node);
