@@ -112,6 +112,7 @@ describe('DefaultCompactionStrategy', () => {
       maxRecentMessages: 3,
       maxRecentUserMessages: Infinity,
       maxRecentSizeRatio: 0.2,
+      minOverflowReductionRatio: 0.05,
     });
 
     expect(strategy.shouldCompact(1)).toBe(false);
@@ -130,6 +131,7 @@ function testCompactionStrategy(maxSize: number = 1_000): DefaultCompactionStrat
     maxRecentMessages: 10,
     maxRecentUserMessages: Infinity,
     maxRecentSizeRatio: 0.2,
+    minOverflowReductionRatio: 0.05,
   });
 }
 
@@ -142,6 +144,7 @@ function overflowOnlyCompactionStrategy(maxSize: number = 14): DefaultCompaction
     maxRecentMessages: 3,
     maxRecentUserMessages: Infinity,
     maxRecentSizeRatio: 0.2,
+    minOverflowReductionRatio: 0.05,
   });
 }
 
