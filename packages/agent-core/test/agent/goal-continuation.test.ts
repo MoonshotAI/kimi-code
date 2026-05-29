@@ -1,8 +1,20 @@
+import { emptyUsage } from '@moonshot-ai/kosong';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { Agent } from '../../src/agent';
-import { GoalContinuationController } from '../../src/agent/goal/continuation';
+import {
+  GoalContinuationController,
+  type GoalEvaluatorLike,
+} from '../../src/agent/goal/continuation';
+import type { GoalEvaluatorVerdict } from '../../src/agent/goal/evaluator';
 import type { LoopStoppedStepContext } from '../../src/loop/types';
+
+/** A fake evaluator factory returning a fixed verdict. */
+function fixedEvaluator(verdict: GoalEvaluatorVerdict, reason = 'judge'): () => GoalEvaluatorLike {
+  return () => ({
+    evaluate: async () => ({ ok: true, verdict, reason, usage: emptyUsage() }),
+  });
+}
 import { HookEngine } from '../../src/session/hooks';
 import { SessionGoalStore, type SessionGoalState } from '../../src/session/goal';
 import { testAgent } from './harness/agent';
@@ -94,7 +106,10 @@ describe('GoalContinuationController decisions', () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
     const { agent, messages } = controllerAgent({ goals: store });
-    const c = new GoalContinuationController(agent, { startedAt: 0 });
+    const c = new GoalContinuationController(agent, {
+      startedAt: 0,
+      createEvaluator: fixedEvaluator('continue'),
+    });
 
     const result = await c.shouldContinueAfterStop(stoppedCtx(1));
 
@@ -111,29 +126,6 @@ describe('GoalContinuationController decisions', () => {
     const { agent } = controllerAgent({ goals: store });
     const c = new GoalContinuationController(agent, { startedAt: 0 });
     expect(await c.shouldContinueAfterStop(stoppedCtx(1))).toEqual({ continue: false });
-  });
-
-  it('converts a complete model report into a terminal complete status', async () => {
-    const store = makeStore();
-    await store.createGoal({ objective: 'work' });
-    await store.recordModelReport({ requestedStatus: 'complete', reason: 'done' });
-    const { agent } = controllerAgent({ goals: store });
-    const c = new GoalContinuationController(agent, { startedAt: 0 });
-
-    expect(await c.shouldContinueAfterStop(stoppedCtx(1))).toEqual({ continue: false });
-    expect(store.getGoal().goal!.status).toBe('complete');
-  });
-
-  it('converts blocked and impossible model reports into distinct terminal statuses', async () => {
-    for (const status of ['blocked', 'impossible'] as const) {
-      const store = makeStore();
-      await store.createGoal({ objective: 'work' });
-      await store.recordModelReport({ requestedStatus: status, reason: 'r' });
-      const { agent } = controllerAgent({ goals: store });
-      const c = new GoalContinuationController(agent, { startedAt: 0 });
-      await c.shouldContinueAfterStop(stoppedCtx(1));
-      expect(store.getGoal().goal!.status).toBe(status);
-    }
   });
 
   it('stops the loop at a token budget with a single wrap-up continuation', async () => {
@@ -178,7 +170,10 @@ describe('GoalContinuationController decisions', () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
     const { agent } = controllerAgent({ goals: store, maxStepsPerTurn: 2 });
-    const c = new GoalContinuationController(agent, { startedAt: 0 });
+    const c = new GoalContinuationController(agent, {
+      startedAt: 0,
+      createEvaluator: fixedEvaluator('continue'),
+    });
     // stepNumber 2 == maxSteps -> remaining 0 -> stop, no MaxStepsExceeded.
     expect(await c.shouldContinueAfterStop(stoppedCtx(2))).toEqual({ continue: false });
     expect(store.getGoal().goal!.status).toBe('budget_limited');
@@ -189,7 +184,10 @@ describe('GoalContinuationController decisions', () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
     const { agent } = controllerAgent({ goals: store, maxStepsPerTurn: 3 });
-    const c = new GoalContinuationController(agent, { startedAt: 0 });
+    const c = new GoalContinuationController(agent, {
+      startedAt: 0,
+      createEvaluator: fixedEvaluator('continue'),
+    });
     // stepNumber 2, maxSteps 3 -> remaining 1 -> wrap-up + continue.
     expect(await c.shouldContinueAfterStop(stoppedCtx(2))).toEqual({ continue: true });
     expect(store.getGoal().goal!.status).toBe('budget_limited');
@@ -266,6 +264,7 @@ describe('GoalContinuationController turn integration', () => {
     const ctx = testAgent({
       type: 'main',
       goals: store,
+      goalEvaluatorFactory: fixedEvaluator('continue'),
       initialConfig: { providers: {}, loopControl: { maxStepsPerTurn: 2 } },
     });
     ctx.configure();
@@ -337,7 +336,12 @@ describe('GoalContinuationController turn integration', () => {
         command: `node -e "process.stderr.write('keep going'); process.exit(2)"`,
       },
     ]);
-    const ctx = testAgent({ type: 'main', goals: store, hookEngine });
+    const ctx = testAgent({
+      type: 'main',
+      goals: store,
+      hookEngine,
+      goalEvaluatorFactory: fixedEvaluator('continue'),
+    });
     ctx.configure();
     for (let i = 0; i < 5; i++) {
       ctx.mockNextResponse({ type: 'text', text: `step ${String(i)}` });

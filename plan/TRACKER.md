@@ -19,9 +19,9 @@ coding agent, following the phase plans in this directory.
 | 3  | Model goal tools | ✅ | c5d8a90 |
 | 4a | Goal context injection | ✅ | 687654c |
 | 4b | Goal usage accounting | ✅ | aea58a5 |
-| 4c | Goal continuation loop | ✅ | (this commit) |
-| 4d | Goal evaluator | 🟡 | — |
-| 5  | End-to-end integration and gates | ⬜ | — |
+| 4c | Goal continuation loop | ✅ | 0899188 |
+| 4d | Goal evaluator | ✅ | (this commit) |
+| 5  | End-to-end integration and gates | 🟡 | — |
 | 6  | Headless goal mode and hardening | ⬜ | — |
 
 ## Detours / Notes
@@ -132,3 +132,30 @@ coding agent, following the phase plans in this directory.
 - Tests: goal-continuation.test.ts (20) — controller unit decisions + harness integration
   (auto-continue, subagent/flag-off no-continue, maxSteps→budget_limited, fail→error,
   cancel→interrupted, Stop-hook interplay). Full agent-core suite (2334) green; typecheck clean.
+
+### Phase 4d
+
+- Added `GoalEvaluator` (`agent/goal/evaluator.ts`): no-tool judge over a bounded conversation
+  slice; strict-JSON verdict (`continue`/`complete`/`blocked`/`impossible`/`no_progress`) with
+  balanced-brace JSON extraction; returns typed result + `usage`; typed error on bad JSON or a
+  thrown call. Constructor seam (`{ llm }`) for a future lightweight judge.
+- `GoalContinuationController` now runs the evaluator after the pre-eval budget check: counts
+  evaluator tokens (`source: 'goal_evaluator'`), records the verdict, ends the goal on
+  complete/blocked/impossible, re-checks budgets, enforces `noProgressTurnLimit` (→ blocked) and
+  `failureTurnLimit` (→ error). The model self-report is now evidence for the evaluator, not a
+  direct terminal signal.
+- Store: added `recordEvaluatorFailure` (increments `consecutiveFailureTurns`, appends a
+  `goal.evaluate` record with verdict `error`) — the Phase 1a deferred failure-increment path.
+- Added `Agent.goalEvaluatorFactory` seam (threaded through `TurnFlow` and the test harness) so
+  tests inject a fake judge deterministically.
+- Tests: goal-evaluator.test.ts (24) — evaluator parsing/usage/errors + controller verdict
+  behavior incl. two-step decide; updated goal-continuation.test.ts to inject fakes where the
+  path now reaches the evaluator. Full agent-core suite (2351) green; typecheck clean.
+
+### Detour note (Phase 4d)
+
+- Added `recordEvaluatorFailure` to the store (not in the Phase 1a method list) to carry the
+  consecutive-failure increment that 4d's `failureTurnLimit` needs; flagged in the Phase 1a notes.
+- Added the `Agent.goalEvaluatorFactory` injection seam (production-default undefined → real
+  `GoalEvaluator`) so harness integration tests don't have to interleave evaluator JSON into the
+  scripted-model queue. This matches the plan's "constructor seam for a future judge model".

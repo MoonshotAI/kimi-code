@@ -1,6 +1,19 @@
+import { grandTotal } from '@moonshot-ai/kosong';
+
 import type { Agent } from '..';
 import { flags } from '../../flags';
+import type { LLM } from '../../loop/llm';
 import type { LoopStoppedStepContext, ShouldContinueAfterStopResult } from '../../loop/types';
+import {
+  GoalEvaluator,
+  type GoalEvaluatorInput,
+  type GoalEvaluatorResult,
+} from './evaluator';
+
+/** Minimal evaluator surface so tests can inject a fake judge. */
+export interface GoalEvaluatorLike {
+  evaluate(input: GoalEvaluatorInput): Promise<GoalEvaluatorResult>;
+}
 
 /**
  * Drives `/goal` autonomous continuation inside a single `TurnFlow.runTurn()`.
@@ -16,6 +29,12 @@ export interface GoalContinuationControllerOptions {
   readonly startedAt: number;
   /** Injectable clock for tests. */
   readonly now?: () => number;
+  /**
+   * Factory for the per-step evaluator. Defaults to {@link GoalEvaluator} over
+   * the step's `llm`; tests inject a fake, and a future lightweight judge model
+   * can be selected here.
+   */
+  readonly createEvaluator?: (llm: LLM) => GoalEvaluatorLike;
 }
 
 const CONTINUE: ShouldContinueAfterStopResult = { continue: true };
@@ -24,6 +43,7 @@ const STOP: ShouldContinueAfterStopResult = { continue: false };
 export class GoalContinuationController {
   private readonly now: () => number;
   private lastWallClockAccountedAt: number;
+  private readonly createEvaluator: (llm: LLM) => GoalEvaluatorLike;
 
   constructor(
     protected readonly agent: Agent,
@@ -31,6 +51,7 @@ export class GoalContinuationController {
   ) {
     this.now = options.now ?? (() => Date.now());
     this.lastWallClockAccountedAt = options.startedAt;
+    this.createEvaluator = options.createEvaluator ?? ((llm) => new GoalEvaluator({ llm }));
   }
 
   /** True when goal continuation is eligible to run for this agent. */
@@ -51,31 +72,103 @@ export class GoalContinuationController {
     // This stopped step participated in the goal loop.
     await store.incrementTurn();
 
-    // 4. Record elapsed wall-clock since the last checkpoint before budget checks.
+    // Record elapsed wall-clock since the last checkpoint before budget checks.
     await this.recordWallClock();
 
-    // 5. Accept the model's UpdateGoal report as a Level-1 terminal decision.
+    // Hard budgets (token / turn / wall-clock) before spending an evaluator call.
+    const beforeEval = store.getActiveGoal();
+    if (beforeEval !== null && beforeEval.budget.overBudget) {
+      return this.budgetLimitedWrapUp('A hard budget was reached');
+    }
+
+    // Run the independent evaluator. The model's self-report is evidence only.
+    const evaluator = this.createEvaluator(ctx.llm);
+    const modelReport =
+      goal.lastModelReportStatus !== undefined
+        ? {
+            status: goal.lastModelReportStatus,
+            reason: goal.lastModelReportReason,
+            evidence: goal.lastModelReportEvidence,
+          }
+        : undefined;
+    const result = await evaluator.evaluate({
+      goal,
+      messages: this.agent.context.messages,
+      modelReport,
+      signal: ctx.signal,
+    });
+
+    // Count evaluator token usage toward the goal token budget.
+    const evaluatorTokens = grandTotal(result.usage);
+    if (evaluatorTokens > 0) {
+      await store.recordTokenUsage({
+        tokenDelta: evaluatorTokens,
+        agentId: 'main',
+        agentType: 'main',
+        source: 'goal_evaluator',
+      });
+    }
+
+    if (!result.ok) {
+      await store.recordEvaluatorFailure({ reason: result.error });
+      const failed = store.getActiveGoal();
+      if (
+        failed !== null &&
+        failed.budget.failureTurnLimit !== null &&
+        failed.consecutiveFailureTurns >= failed.budget.failureTurnLimit
+      ) {
+        await store.markError({ reason: 'Goal evaluator failed repeatedly' });
+        return STOP;
+      }
+      // Evaluator tokens may have crossed a hard budget.
+      if (failed !== null && failed.budget.overBudget) {
+        return this.budgetLimitedWrapUp('A hard budget was reached');
+      }
+      this.appendContinuationPrompt();
+      return CONTINUE;
+    }
+
+    await store.recordEvaluatorVerdict({
+      verdict: result.verdict,
+      reason: result.reason,
+      evidence: result.evidence,
+    });
+
     if (
-      goal.lastModelReportStatus === 'complete' ||
-      goal.lastModelReportStatus === 'blocked' ||
-      goal.lastModelReportStatus === 'impossible'
+      result.verdict === 'complete' ||
+      result.verdict === 'blocked' ||
+      result.verdict === 'impossible'
     ) {
       await store.updateGoal({
-        status: goal.lastModelReportStatus,
-        actor: 'continuation',
-        reason: goal.lastModelReportReason,
-        evidence: goal.lastModelReportEvidence,
+        status: result.verdict,
+        actor: 'evaluator',
+        reason: result.reason,
+        evidence: result.evidence,
       });
       return STOP;
     }
 
-    // 6. Hard budgets (token / turn / wall-clock), re-read after this turn's accounting.
-    const current = store.getActiveGoal();
-    if (current !== null && current.budget.overBudget) {
+    // Re-check hard budgets because the evaluator call may have reached the token budget.
+    const afterEval = store.getActiveGoal();
+    if (afterEval !== null && afterEval.budget.overBudget) {
       return this.budgetLimitedWrapUp('A hard budget was reached');
     }
 
-    // 8. Reconcile with maxStepsPerTurn so the configured cap is a budget, not an error.
+    // no_progress streak: recordEvaluatorVerdict has already incremented the counter.
+    if (
+      afterEval !== null &&
+      afterEval.budget.noProgressTurnLimit !== null &&
+      afterEval.consecutiveNoProgressTurns >= afterEval.budget.noProgressTurnLimit
+    ) {
+      await store.updateGoal({
+        status: 'blocked',
+        actor: 'evaluator',
+        reason: 'No-progress limit reached',
+      });
+      return STOP;
+    }
+
+    // Reconcile with maxStepsPerTurn so the configured cap is a budget, not an error.
     const maxSteps = this.agent.kimiConfig?.loopControl?.maxStepsPerTurn;
     if (maxSteps !== undefined && maxSteps > 0) {
       const remaining = maxSteps - ctx.stepNumber;
@@ -90,7 +183,7 @@ export class GoalContinuationController {
       }
     }
 
-    // 9. Continue working toward the goal.
+    // Continue working toward the goal.
     this.appendContinuationPrompt();
     return CONTINUE;
   }

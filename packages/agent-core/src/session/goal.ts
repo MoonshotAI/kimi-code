@@ -529,6 +529,25 @@ export class SessionGoalStore {
     return this.toSnapshot(state);
   }
 
+  /**
+   * Records a failed evaluator run (invalid JSON or a thrown evaluator call).
+   * Increments the consecutive-failure counter that `failureTurnLimit` checks.
+   */
+  async recordEvaluatorFailure(input: { reason?: string } = {}): Promise<GoalSnapshot | null> {
+    const state = this.options.readState();
+    if (state === undefined || state.status !== 'active') return null;
+    state.consecutiveFailureTurns += 1;
+    state.updatedAt = new Date().toISOString();
+    await this.options.writeState(state);
+    this.appendAudit({
+      type: 'goal.evaluate',
+      goalId: state.goalId,
+      verdict: 'error',
+      reason: input.reason,
+    });
+    return this.toSnapshot(state);
+  }
+
   // --- Internals ---------------------------------------------------------
 
   private async markRuntimeTerminal(

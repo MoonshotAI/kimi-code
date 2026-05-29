@@ -97,6 +97,7 @@ export interface TestAgentOptions {
   readonly type?: AgentOptions['type'];
   readonly permission?: AgentOptions['permission'];
   readonly goals?: AgentOptions['goals'];
+  readonly goalEvaluatorFactory?: AgentOptions['goalEvaluatorFactory'];
   readonly providerManager?: ProviderManager;
   readonly initialConfig?: KimiConfig;
   readonly providerManagerOverrides?: Omit<ConstructorParameters<typeof ProviderManager>[0], 'config'>;
@@ -186,6 +187,7 @@ export class AgentTestContext {
       modelProvider: providerManager,
       subagentHost: options.subagentHost,
       goals: options.goals,
+      goalEvaluatorFactory: options.goalEvaluatorFactory,
       type: options.type,
       permission: options.permission,
       hookEngine: options.hookEngine,

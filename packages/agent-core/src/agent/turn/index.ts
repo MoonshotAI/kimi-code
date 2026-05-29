@@ -397,7 +397,10 @@ export class TurnFlow {
     let stopHookContinuationUsed = false;
     const deduper = new ToolCallDeduplicator();
     // Construct the goal continuation controller once per outer turn.
-    const goalContinuation = new GoalContinuationController(this.agent, { startedAt });
+    const goalContinuation = new GoalContinuationController(this.agent, {
+      startedAt,
+      createEvaluator: this.agent.goalEvaluatorFactory,
+    });
     const goalIdAtStart = this.agent.goals?.getActiveGoal()?.goalId;
     await this.agent.mcp?.waitForInitialLoad(signal);
     try {
