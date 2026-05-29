@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { APIConnectionError, APIStatusError } from '@moonshot-ai/kosong';
 
 import type { KimiConfig } from '../../src/config';
 import { ErrorCodes, KimiError } from '../../src/errors';
 import { ProviderManager } from '../../src/session/provider-manager';
+import { ApiKeyPool } from '../../src/session/api-key-pool';
+import type { ProviderRequestAuth } from '@moonshot-ai/kosong';
 import { resolveThinkingLevel } from '../../src/agent/config/thinking';
 
 // Thin wrapper that adapts the legacy `resolveRuntimeProvider(input)` shape to
@@ -659,5 +662,148 @@ describe('resolveThinkingLevel', () => {
     ).toBe('off');
 
     expect(resolveThinkingLevel(undefined, {})).toBe('high');
+  });
+});
+
+describe('ProviderManager key pool', () => {
+  it('returns undefined for resolveAuth when no pool is configured', () => {
+    const manager = new ProviderManager({ config: BASE_CONFIG });
+    const auth = manager.resolveAuth('kimi-code/kimi-for-coding');
+    expect(auth).toBeUndefined();
+  });
+
+  it('returns a key-pool wrapper for kimi provider when pool is present', async () => {
+    const pool = new ApiKeyPool(['pk-1', 'pk-2']);
+    const manager = new ProviderManager({ config: BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding');
+    expect(withAuth).toBeDefined();
+
+    const request = vi.fn(async (auth: ProviderRequestAuth) => {
+      return { ok: true, key: auth.apiKey! };
+    });
+    const result = await withAuth!(request);
+    expect(result.ok).toBe(true);
+    expect(result.key).toBe('pk-1');
+  });
+
+  it('rotates to the next key on each resolveAuth call', async () => {
+    const pool = new ApiKeyPool(['pk-a', 'pk-b', 'pk-c']);
+    const manager = new ProviderManager({ config: BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
+
+    const keys: string[] = [];
+    const request = vi.fn(async (auth: ProviderRequestAuth) => {
+      keys.push(auth.apiKey!);
+      return { ok: true };
+    });
+
+    await withAuth(request);
+    await withAuth(request);
+    await withAuth(request);
+    expect(keys).toEqual(['pk-a', 'pk-b', 'pk-c']);
+  });
+
+  it('records failure on retryable errors and re-throws', async () => {
+    const pool = new ApiKeyPool(['pk-1']);
+    const recordFailureSpy = vi.spyOn(pool, 'recordFailure');
+    const manager = new ProviderManager({ config: BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
+
+    const request = vi.fn(async () => {
+      throw new APIStatusError(429, 'Too Many Requests');
+    });
+
+    await expect(withAuth(request)).rejects.toThrow(APIStatusError);
+    expect(recordFailureSpy).toHaveBeenCalledWith('pk-1');
+    expect(recordFailureSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('records failure on connection errors', async () => {
+    const pool = new ApiKeyPool(['pk-1']);
+    const recordFailureSpy = vi.spyOn(pool, 'recordFailure');
+    const manager = new ProviderManager({ config: BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
+
+    const request = vi.fn(async () => {
+      throw new APIConnectionError('network error');
+    });
+
+    await expect(withAuth(request)).rejects.toThrow(APIConnectionError);
+    expect(recordFailureSpy).toHaveBeenCalledWith('pk-1');
+  });
+
+  it('does not record failure on non-retryable errors', async () => {
+    const pool = new ApiKeyPool(['pk-1']);
+    const recordFailureSpy = vi.spyOn(pool, 'recordFailure');
+    const manager = new ProviderManager({ config: BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
+
+    const request = vi.fn(async () => {
+      throw new APIStatusError(400, 'Bad Request');
+    });
+
+    await expect(withAuth(request)).rejects.toThrow(APIStatusError);
+    expect(recordFailureSpy).not.toHaveBeenCalled();
+  });
+
+  it('resets key after a successful request', async () => {
+    const pool = new ApiKeyPool(['pk-1']);
+    const resetKeySpy = vi.spyOn(pool, 'resetKey');
+    const manager = new ProviderManager({ config: BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
+
+    const request = vi.fn(async () => 'success');
+    await withAuth(request);
+    expect(resetKeySpy).toHaveBeenCalledWith('pk-1');
+  });
+
+  it('does not use key pool for non-kimi providers', () => {
+    const pool = new ApiKeyPool(['pk-1']);
+    const config: KimiConfig = {
+      defaultModel: 'gpt-alias',
+      providers: {
+        openai: {
+          type: 'openai',
+          apiKey: 'sk-openai',
+        },
+      },
+      models: {
+        'gpt-alias': {
+          provider: 'openai',
+          model: 'gpt-runtime',
+          maxContextSize: 200000,
+        },
+      },
+    };
+    const manager = new ProviderManager({ config, apiKeyPool: pool });
+    const auth = manager.resolveAuth('gpt-alias');
+    expect(auth).toBeUndefined();
+  });
+
+  it('prefers OAuth over key pool when both are configured', async () => {
+    const pool = new ApiKeyPool(['pk-1']);
+    const config: KimiConfig = {
+      defaultModel: 'kimi-code/kimi-for-coding',
+      providers: {
+        'managed:kimi-code': {
+          type: 'kimi',
+          apiKey: '',
+          baseUrl: 'https://api.example/v1',
+          oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+        },
+      },
+    };
+    const manager = new ProviderManager({ config, apiKeyPool: pool });
+    const auth = manager.resolveAuth('kimi-code/kimi-for-coding');
+    // OAuth path returns a function that throws login-required when no token provider is set
+    expect(auth).toBeDefined();
+    await expect(auth!(async () => 'ok')).rejects.toThrow(/requires login/);
   });
 });

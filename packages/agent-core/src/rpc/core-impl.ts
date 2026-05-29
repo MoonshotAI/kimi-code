@@ -29,6 +29,7 @@ import {
   ProviderManager, type BearerTokenProvider,
   type OAuthTokenProviderResolver
 } from '../session/provider-manager';
+import { ApiKeyPool } from '../session/api-key-pool';
 import { SessionAPIImpl } from '../session/rpc';
 import { normalizeWorkDir, SessionStore } from '../session/store';
 import { noopTelemetryClient, withTelemetryContext, type TelemetryClient } from '../telemetry';
@@ -118,6 +119,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private readonly resolveOAuthTokenProvider: OAuthTokenProviderResolver | undefined;
   private readonly skillDirs: readonly string[];
   private readonly sessionStore: SessionStore;
+  private readonly apiKeyPool: ApiKeyPool | undefined;
   readonly plugins: PluginManager;
   private pluginsReady: Promise<void>;
   private pluginsLoadError: Error | undefined;
@@ -143,6 +145,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.resolveOAuthTokenProvider = options.resolveOAuthTokenProvider;
     this.skillDirs = options.skillDirs ?? [];
     this.telemetry = options.telemetry ?? noopTelemetryClient;
+    this.apiKeyPool = ApiKeyPool.fromEnv() ?? undefined;
     ensureKimiHome(this.homeDir);
     this.config = readConfigFile(this.configPath);
     this.sessionStore = new SessionStore(this.homeDir);
@@ -669,6 +672,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       kimiRequestHeaders: this.kimiRequestHeaders,
       resolveOAuthTokenProvider: this.resolveOAuthTokenProvider,
       promptCacheKey: sessionId,
+      apiKeyPool: this.apiKeyPool,
     });
   }
 
