@@ -8,6 +8,7 @@ import {
   resolveKimiHome,
   resolveLoggingConfig,
   withTelemetryContext,
+  type ExperimentalFlagMap,
   type TelemetryClient,
   type TelemetryContextPatch,
   type TelemetryProperties,
@@ -189,6 +190,11 @@ export class KimiHarness {
 
   async getConfig(options: GetConfigOptions = {}): Promise<KimiConfig> {
     return this.rpc.getConfig(options);
+  }
+
+  /** Resolved enabled-state of every experimental flag (flag id → enabled). */
+  async getExperimentalFlags(): Promise<ExperimentalFlagMap> {
+    return this.rpc.getExperimentalFlags();
   }
 
   async ensureConfigFile(): Promise<void> {

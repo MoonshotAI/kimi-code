@@ -20,9 +20,15 @@ import {
   type KimiConfig,
   type MoonshotServiceConfig,
 } from '../config';
+import {
+  FLAG_DEFINITIONS,
+  flags,
+  type ExperimentalFlagMap,
+  type FlagDefinitionInput,
+  type FlagId,
+} from '../flags';
 import type { Logger } from '../logging/types';
 import { resolveSessionMcpConfig, type SessionMcpConfig } from '../mcp';
-import type { ToolServices } from '../runtime-types';
 import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
 import { exportSessionDirectory } from '../session/export';
 import {
@@ -84,6 +90,7 @@ import type { ResumedAgentState, ResumeSessionResult } from './resumed';
 import type { SDKRPC } from './sdk-api';
 import { proxyWithExtraPayload } from './types';
 import { KaosShellNotFoundError, LocalKaos, type Kaos } from '@moonshot-ai/kaos';
+import type { ToolServices } from '../tools/support/services';
 
 const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
 
@@ -240,6 +247,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   getCoreInfo(): CoreInfo {
     return { version: getCoreVersion() };
+  }
+
+  getExperimentalFlags(): ExperimentalFlagMap {
+    const defs: readonly FlagDefinitionInput[] = FLAG_DEFINITIONS;
+    return Object.fromEntries(defs.map((def) => [def.id, flags.enabled(def.id as FlagId)]));
   }
 
   async closeSession({ sessionId }: CloseSessionPayload): Promise<void> {

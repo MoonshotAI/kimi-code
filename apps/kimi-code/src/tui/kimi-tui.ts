@@ -34,6 +34,8 @@ import { detectFdPath } from '#/utils/process/fd-detect';
 import {
   BUILTIN_SLASH_COMMANDS,
   buildSkillSlashCommands,
+  isExperimentalFlagEnabled,
+  setExperimentalFlags,
   sortSlashCommands,
   type KimiSlashCommand,
   type SkillListSession,
@@ -287,7 +289,10 @@ export class KimiTUI {
   // =========================================================================
 
   private getSlashCommands(): readonly KimiSlashCommand[] {
-    return [...sortSlashCommands(BUILTIN_SLASH_COMMANDS), ...this.skillCommands];
+    const builtins = sortSlashCommands(BUILTIN_SLASH_COMMANDS).filter((command) =>
+      isExperimentalFlagEnabled(command.experimentalFlag),
+    );
+    return [...builtins, ...this.skillCommands];
   }
 
   private setupAutocomplete(): void {
@@ -380,6 +385,7 @@ export class KimiTUI {
     // Mount only after init() succeeds; see mountFooter().
     this.mountFooter();
     this.renderWelcome();
+    setExperimentalFlags(await this.harness.getExperimentalFlags());
     this.setupAutocomplete();
     void this.loadPersistedInputHistory();
     this.state.editorContainer.clear();

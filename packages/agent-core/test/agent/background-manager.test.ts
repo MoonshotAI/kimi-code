@@ -622,6 +622,70 @@ describe('BackgroundManager — RPC event emission', () => {
     );
   });
 
+  describe('agent task failure body — actionable recovery instructions', () => {
+    // For agent-* tasks that end non-successfully (lost / failed / killed),
+    // the notification body must carry enough information for the LLM to
+    // recover via `Agent(resume=...)` without digging through old context.
+    // Three things must land in the body:
+    //   1. The agent_id (NOT the task_id / source_id) — that is what
+    //      `subagentHost.resume` actually takes.
+    //   2. An explicit disambiguation between agent_id and source_id —
+    //      they look alike and the LLM regularly confuses them.
+    //   3. The notification must also surface agent_id as a structural
+    //      XML attribute, not just buried in prose.
+    it('failed agent task body includes resume instructions with the correct agent_id', async () => {
+      // Promise.reject (non-AbortError) routes through the registerAgentTask
+      // `.catch` branch and lands at status `failed`, which is the same
+      // agent-* failure branch reconcile uses for `lost` tasks.
+      const taskId = agent.background.registerAgentTask(
+        Promise.reject(new Error('subagent crashed')),
+        'inspect repository',
+        { agentId: 'agent-7' },
+      );
+      await agent.background.waitForTerminal(taskId);
+
+      await vi.waitFor(() => {
+        expect(agent.turn.steer).toHaveBeenCalled();
+      });
+      const [content] = vi.mocked(agent.turn.steer).mock.calls[0]!;
+      const text = (content as Array<{ text: string }>)[0]!.text;
+      expect(text).toContain('agent_id="agent-7"');
+      expect(text).toMatch(/Agent\(resume="agent-7"/);
+      expect(text).toMatch(/agent_id.*not.*source_id|source_id.*not.*agent_id/i);
+    });
+
+    it('completed agent task body does NOT add resume instructions', async () => {
+      const taskId = agent.background.registerAgentTask(
+        Promise.resolve({ result: 'all good' }),
+        'inspect repository',
+        { agentId: 'agent-8' },
+      );
+      await agent.background.wait(taskId);
+
+      await vi.waitFor(() => {
+        expect(agent.turn.steer).toHaveBeenCalled();
+      });
+      const [content] = vi.mocked(agent.turn.steer).mock.calls[0]!;
+      const text = (content as Array<{ text: string }>)[0]!.text;
+      expect(text).toContain('agent_id="agent-8"');
+      // Recovery prose belongs to failure bodies only.
+      expect(text).not.toMatch(/Agent\(resume="agent-8"/);
+    });
+
+    it('bash task body never mentions resume — bash background tasks are not resumable', async () => {
+      const taskId = agent.background.register(immediateProcess(1), 'false', 'shell');
+      await agent.background.waitForTerminal(taskId);
+
+      await vi.waitFor(() => {
+        expect(agent.turn.steer).toHaveBeenCalled();
+      });
+      const [content] = vi.mocked(agent.turn.steer).mock.calls[0]!;
+      const text = (content as Array<{ text: string }>)[0]!.text;
+      expect(text).not.toContain('agent_id=');
+      expect(text).not.toMatch(/Agent\(resume=/);
+    });
+  });
+
   // Note: the `records.restoring` guard is enforced inside `Agent.emitEvent`
   // (see agent/index.ts). BackgroundManager unconditionally forwards
   // lifecycle events to the agent; suppression is the agent's job.

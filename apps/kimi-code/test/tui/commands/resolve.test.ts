@@ -131,6 +131,7 @@ describe('resolveSlashCommandInput', () => {
       input: '/does-not-exist arg',
     });
   });
+
 });
 
 describe('slash command busy helpers', () => {

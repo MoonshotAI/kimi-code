@@ -1057,6 +1057,17 @@ describe('Agent turn flow', () => {
       statusCode: 422,
     },
     {
+      name: 'context overflow token count status',
+      createError: () =>
+        new APIStatusError(
+          400,
+          'input token count 131072 exceeds the maximum number of tokens allowed',
+          'req-token-count',
+        ),
+      errorType: 'context_overflow',
+      statusCode: 400,
+    },
+    {
       name: 'connection error',
       createError: () => new APIConnectionError('socket hang up'),
       errorType: 'network',

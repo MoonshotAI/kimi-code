@@ -105,6 +105,22 @@ export interface ToolCallReadSnapshot {
   readonly lines: number;
 }
 
+function backgroundFailureMessage(
+  status: 'completed' | 'failed' | 'killed' | 'lost' | undefined,
+): string | undefined {
+  switch (status) {
+    case 'lost':
+      return 'Background agent lost (session restarted before completion)';
+    case 'killed':
+      return 'Background agent killed';
+    case 'failed':
+      return 'Background agent failed';
+    case 'completed':
+    case undefined:
+      return undefined;
+  }
+}
+
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
@@ -483,6 +499,17 @@ export class ToolCallComponent extends Container {
   private subagentThinkingText = '';
   // ── Subagent lifecycle state from subagent.spawned/completed/failed ──
   private subagentPhase: 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded' | undefined;
+  /**
+   * Authoritative terminal phase for a backgrounded subagent. Set from
+   * `BackgroundTaskInfo.status` via `setBackgroundTaskTerminalStatus` once
+   * the backing task reaches a terminal state — either live (a bg agent
+   * fails / is killed) or on resume (reconcile reclassifies a still-running
+   * task as `lost`). Beats the spawn-success ToolResult in both render
+   * paths (`getDerivedSubagentPhase` for standalone, `getSubagentSnapshot`
+   * for grouped), which would otherwise mislabel every terminated
+   * background agent — including lost ones — as `✓ Completed`.
+   */
+  private backgroundTaskTerminalPhase: 'done' | 'failed' | undefined;
   private subagentContextTokens: number | undefined;
   private subagentUsage: TokenUsage | undefined;
   private subagentResultSummary: string | undefined;
@@ -772,7 +799,14 @@ export class ToolCallComponent extends Container {
     // `backgrounded` has no result because background agents do not enter the
     // transcript.
     const derivedPhase: ToolCallSubagentSnapshot['phase'] =
-      this.result !== undefined ? (this.result.is_error ? 'failed' : 'done') : this.subagentPhase;
+      this.backgroundTaskTerminalPhase ??
+      (this.result !== undefined
+        ? this.result.is_error
+          ? 'failed'
+          : 'done'
+        : this.subagentPhase);
+    const errorText =
+      this.subagentError ?? (derivedPhase === 'failed' ? this.result?.output : undefined);
     return {
       toolCallId: this.toolCall.id,
       toolName: this.toolCall.name,
@@ -782,8 +816,7 @@ export class ToolCallComponent extends Container {
       toolCount: finished,
       tokens,
       isError: derivedPhase === 'failed',
-      errorText:
-        this.subagentError ?? (derivedPhase === 'failed' ? this.result?.output : undefined),
+      errorText,
       latestActivity,
     };
   }
@@ -997,6 +1030,90 @@ export class ToolCallComponent extends Container {
     this.rebuildContent();
     this.notifySnapshotChange();
     this.ui?.requestRender();
+  }
+
+  /**
+   * Records the actual terminal status of the backing background task so
+   * the snapshot phase no longer relies on the spawn-success ToolResult.
+   * Called for `agent-*` background tasks both live (when the bg agent
+   * terminates non-successfully) and on resume (when reconcile
+   * reclassifies a previously-running task as `lost`).
+   */
+  setBackgroundTaskTerminalStatus(
+    status: 'completed' | 'failed' | 'killed' | 'lost',
+    options: { errorText?: string | undefined } = {},
+  ): void {
+    const phase: 'done' | 'failed' = status === 'completed' ? 'done' : 'failed';
+    const { errorText } = options;
+    const phaseUnchanged = this.backgroundTaskTerminalPhase === phase;
+    let errorChanged = false;
+    if (phase === 'failed') {
+      // Surface the failure line through the same `subagentError` slot that
+      // `onSubagentFailed` writes. The standalone card reads this in
+      // `buildSingleSubagentBlock`; the group card reads it via `errorText`
+      // in `getSubagentSnapshot`. Priority:
+      //   1. Explicit `errorText` from the caller (the real message from a
+      //      live `subagent.failed` event) always wins — it is the most
+      //      informative.
+      //   2. Existing `subagentError` (could be from a prior
+      //      `onSubagentFailed` or an earlier explicit override) is kept.
+      //   3. Fall back to a friendly generic so the failure has SOME
+      //      visible explanation when no source has supplied one.
+      if (errorText !== undefined && this.subagentError !== errorText) {
+        this.subagentError = errorText;
+        errorChanged = true;
+      } else if (this.subagentError === undefined) {
+        const generic = backgroundFailureMessage(status);
+        if (generic !== undefined) {
+          this.subagentError = generic;
+          errorChanged = true;
+        }
+      }
+    }
+    if (phaseUnchanged && !errorChanged) return;
+    this.backgroundTaskTerminalPhase = phase;
+    this.subagentEndedAtMs ??= Date.now();
+    this.syncSubagentElapsedTimer();
+    this.headerText.setText(this.buildHeader());
+    this.rebuildContent();
+    this.notifySnapshotChange();
+  }
+
+  /**
+   * Subagent id for the backing AgentTool call, used by routing to find a
+   * tool call's backing subagent when reconciling background task lifecycle
+   * events.
+   *
+   * Two writers, in priority order:
+   *   1. In-memory `subagentAgentId` — wired by `setSubagentMeta` /
+   *      `onSubagentSpawned` for foreground agents. For backgrounded agents
+   *      this stays undefined: `handleSubagentSpawned` early-returns before
+   *      calling `tc.onSubagentSpawned`, and `applySubagentReplay` early-
+   *      returns when the wire payload omits the `subagent` block — which
+   *      it does for every replayed Agent call.
+   *   2. The spawn-success ToolResult body — AgentTool unconditionally
+   *      emits `agent_id: agent-N` for every Agent call (foreground and
+   *      background). Parsing it gives the stable identifier even when the
+   *      in-memory field is empty, which is the only way the resume path
+   *      can reliably route a `background.task.terminated` to the right
+   *      card and the only way the live path avoids matching by description
+   *      and accidentally updating an unrelated Agent card that happens to
+   *      share the same `args.description`.
+   */
+  getSubagentAgentId(): string | undefined {
+    if (this.subagentAgentId !== undefined) return this.subagentAgentId;
+    if (this.toolCall.name !== 'Agent' || this.result === undefined) return undefined;
+    const match = this.result.output.match(/^agent_id:\s*(agent-[A-Za-z0-9_-]+)/m);
+    return match?.[1];
+  }
+
+  /** `args.description` for `Agent` tool calls, used as a resume-path
+   *  fallback when the wire format pre-dates persisted subagent ids and
+   *  the only stable cross-restart identifier is the description string. */
+  getAgentToolDescription(): string | undefined {
+    if (this.toolCall.name !== 'Agent') return undefined;
+    const desc = this.toolCall.args['description'];
+    return typeof desc === 'string' ? desc : undefined;
   }
 
   appendSubagentText(text: string, kind: SubagentTextKind = 'text'): void {
@@ -1323,7 +1440,8 @@ export class ToolCallComponent extends Container {
       this.ongoingSubCalls.size === 0 &&
       this.finishedSubCalls.length === 0 &&
       this.subagentText.length === 0 &&
-      this.subagentPhase === undefined
+      this.subagentPhase === undefined &&
+      this.backgroundTaskTerminalPhase === undefined
     ) {
       return;
     }
@@ -1446,7 +1564,8 @@ export class ToolCallComponent extends Container {
       this.subToolActivities.size > 0 ||
       this.subagentText.length > 0 ||
       this.subagentThinkingText.length > 0 ||
-      this.subagentPhase !== undefined
+      this.subagentPhase !== undefined ||
+      this.backgroundTaskTerminalPhase !== undefined
     );
   }
 
@@ -1461,6 +1580,9 @@ export class ToolCallComponent extends Container {
     | 'failed'
     | 'backgrounded'
     | undefined {
+    if (this.backgroundTaskTerminalPhase !== undefined) {
+      return this.backgroundTaskTerminalPhase;
+    }
     if (this.result !== undefined) return this.result.is_error ? 'failed' : 'done';
     return this.subagentPhase;
   }
