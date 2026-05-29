@@ -27,8 +27,13 @@ export class ContextMemory {
   private openSteps: Map<string, ContextMessage> = new Map();
   private pendingToolResultIds = new Set<string>();
   private deferredMessages: ContextMessage[] = [];
+  private _lastAssistantAt = 0;
 
   constructor(protected readonly agent: Agent) {}
+
+  get lastAssistantAt(): number {
+    return this._lastAssistantAt;
+  }
 
   appendUserMessage(
     content: readonly ContentPart[],
@@ -60,6 +65,8 @@ export class ContextMemory {
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
     this.deferredMessages = [];
+    this._lastAssistantAt = 0;
+    this.agent.microCompaction.reset();
     this.agent.injection.onContextClear();
     this.agent.emitStatusUpdated();
   }
@@ -82,6 +89,7 @@ export class ContextMemory {
     this.flushDeferredMessagesIfToolExchangeClosed();
     this._tokenCount = summary.tokensAfter;
     this.tokenCountCoveredMessageCount = this._history.length;
+    this.agent.microCompaction.reset();
     this.agent.injection.onContextCompacted(summary.compactedCount);
     this.agent.emitStatusUpdated();
   }
@@ -99,15 +107,19 @@ export class ContextMemory {
 
   get tokenCountWithPending(): number {
     const pendingMessages = this._history.slice(this.tokenCountCoveredMessageCount);
-    return this._tokenCount + estimateTokensForMessages(project(pendingMessages));
+    return this._tokenCount + estimateTokensForMessages(pendingMessages);
   }
 
   get history(): readonly ContextMessage[] {
     return this._history;
   }
 
+  project(messages: readonly ContextMessage[]): Message[] {
+    return project(this.agent.microCompaction.compact(messages));
+  }
+
   get messages(): Message[] {
-    return project(this.history);
+    return this.project(this.history);
   }
 
   appendLoopEvent(event: LoopRecordedEvent): void {
@@ -209,6 +221,9 @@ export class ContextMemory {
   private pushHistory(...messages: ContextMessage[]): void {
     this._history.push(...messages);
     for (const message of messages) {
+      if (message.role === 'assistant') {
+        this._lastAssistantAt = this.agent.records.restoring?.time ?? Date.now();
+      }
       if (message.origin?.kind === 'background_task') {
         this.agent.background.markDeliveredNotification(message.origin);
       }

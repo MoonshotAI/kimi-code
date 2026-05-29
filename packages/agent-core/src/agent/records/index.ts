@@ -94,8 +94,12 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
   }
 }
 
+export interface RestoringContext {
+  time?: number;
+}
+
 export class AgentRecords {
-  private _restoring = false;
+  private _restoring: RestoringContext | null = null;
   private metadataInitialized = false;
 
   constructor(
@@ -108,7 +112,7 @@ export class AgentRecords {
   }
 
   logRecord(record: AgentRecord): void {
-    if (this._restoring) return;
+    if (this._restoring !== null) return;
     const stamped: AgentRecord =
       record.time !== undefined ? record : { ...record, time: Date.now() };
     if (
@@ -130,11 +134,11 @@ export class AgentRecords {
   }
 
   restore(record: AgentRecord): void {
-    this._restoring = true;
+    this._restoring = { time: record.time ?? Date.now() };
     try {
       restoreAgentRecord(this.agent, record);
     } finally {
-      this._restoring = false;
+      this._restoring = null;
     }
   }
 
