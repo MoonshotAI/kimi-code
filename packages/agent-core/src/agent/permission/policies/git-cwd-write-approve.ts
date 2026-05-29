@@ -12,7 +12,7 @@ export class GitCwdWriteApprovePermissionPolicy implements PermissionPolicy {
   async evaluate(context: PermissionPolicyContext): Promise<PermissionPolicyResult | undefined> {
     const toolName = context.toolCall.name;
     if (toolName !== 'Write' && toolName !== 'Edit') return;
-    if (this.agent.runtime.kaos.pathClass() !== 'posix') return;
+    if (this.agent.kaos.pathClass() !== 'posix') return;
 
     const cwd = this.agent.config.cwd;
     if (cwd.length === 0) return;
@@ -23,7 +23,7 @@ export class GitCwdWriteApprovePermissionPolicy implements PermissionPolicy {
       return;
     }
 
-    const marker = await findGitWorkTreeMarker(this.agent.runtime.kaos, cwd);
+    const marker = await findGitWorkTreeMarker(this.agent.kaos, cwd);
     if (marker === null) return;
 
     return {

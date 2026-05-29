@@ -185,15 +185,17 @@ describe('current builtin file and shell tools', () => {
 
   it('Bash exposes parameters and returns foreground stdout', async () => {
     const tool = new BashTool(
-      createFakeKaos({ execWithEnv: vi.fn().mockResolvedValue(processWithOutput('ok\n')) }),
+      createFakeKaos({
+        execWithEnv: vi.fn().mockResolvedValue(processWithOutput('ok\n')),
+        osEnv: {
+          osKind: 'Linux',
+          osArch: 'arm64',
+          osVersion: 'test',
+          shellPath: '/bin/bash',
+          shellName: 'bash',
+        },
+      }),
       '/workspace',
-      {
-        osKind: 'Linux',
-        osArch: 'arm64',
-        osVersion: 'test',
-        shellPath: '/bin/bash',
-        shellName: 'bash',
-      },
     );
 
     expect(BashInputSchema.safeParse({ command: 'printf ok' }).success).toBe(true);

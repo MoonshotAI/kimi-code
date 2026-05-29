@@ -35,7 +35,7 @@ describe('BashTool cancellation contract', () => {
     };
     const execWithEnv = vi.fn().mockResolvedValue(proc);
     const controller = new AbortController();
-    const tool = new BashTool(createFakeKaos({ execWithEnv }), '/workspace', posixEnv);
+    const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace');
 
     const running = executeTool(tool, {
       turnId: '0',

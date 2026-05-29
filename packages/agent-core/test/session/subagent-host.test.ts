@@ -736,7 +736,7 @@ describe('Session resume permission parent chain', () => {
     await writeWire(childDir, []);
 
     const session = new Session({
-      runtime: { kaos: testKaos.withCwd(workDir) },
+      kaos: testKaos.withCwd(workDir),
       homedir: sessionDir,
       rpc: createSessionRpc(),
       initializeMainAgent: false,
@@ -787,9 +787,7 @@ describe('Session.createAgent', () => {
     });
     const session = new Session({
       id: 'test-subagent-remote-context',
-      runtime: {
-        kaos,
-      },
+      kaos,
       homedir: '/tmp/kimi-session',
       rpc: createSessionRpc(),
       initializeMainAgent: false,
@@ -854,7 +852,7 @@ describe('Session.createAgent', () => {
     });
     const session = new Session({
       id: 'test-subagent-agents-md',
-      runtime: { kaos: kaos.withCwd(workDir) },
+      kaos: kaos.withCwd(workDir),
       homedir: '/tmp/kimi-session',
       rpc: createSessionRpc(),
       initializeMainAgent: false,
@@ -881,12 +879,10 @@ describe('Session.createAgent', () => {
   it('allocates the next unused generated agent id', async () => {
     const session = new Session({
       id: 'test-subagent-agent-id',
-      runtime: {
-        kaos: createFakeKaos({
-          mkdir: vi.fn().mockResolvedValue(undefined),
-          writeText: vi.fn().mockResolvedValue(0),
-        }),
-      },
+      kaos: createFakeKaos({
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        writeText: vi.fn().mockResolvedValue(0),
+      }),
       homedir: '/tmp/kimi-session',
       rpc: createSessionRpc(),
       initializeMainAgent: false,
@@ -909,12 +905,10 @@ describe('Session.createAgent', () => {
 
   it('shares the session McpConnectionManager with sub and main agents', async () => {
     const session = new Session({
-      runtime: {
-        kaos: createFakeKaos({
-          mkdir: vi.fn().mockResolvedValue(undefined),
-          writeText: vi.fn().mockResolvedValue(0),
-        }),
-      },
+      kaos: createFakeKaos({
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        writeText: vi.fn().mockResolvedValue(0),
+      }),
       homedir: '/tmp/kimi-session',
       rpc: createSessionRpc(),
       initializeMainAgent: false,

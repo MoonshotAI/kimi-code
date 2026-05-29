@@ -29,7 +29,7 @@ describe('Session.close stops cron', () => {
   it('stops each agent cron scheduler on close', async () => {
     const { sessionDir, workDir } = await sessionFixture();
     const session = new Session({
-      runtime: { kaos: testKaos.withCwd(workDir) },
+      kaos: testKaos.withCwd(workDir),
       id: 'session-cron-stop',
       homedir: sessionDir,
       rpc: createSessionRpc(),
@@ -56,7 +56,7 @@ describe('Session.close stops cron', () => {
     const before = process.listenerCount('SIGUSR1');
     const { sessionDir, workDir } = await sessionFixture();
     const session = new Session({
-      runtime: { kaos: testKaos.withCwd(workDir) },
+      kaos: testKaos.withCwd(workDir),
       id: 'session-cron-stop-sigusr1',
       homedir: sessionDir,
       rpc: createSessionRpc(),

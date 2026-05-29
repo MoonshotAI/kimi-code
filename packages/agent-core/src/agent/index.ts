@@ -17,7 +17,7 @@ import type { EnabledPluginSessionStart } from '#/plugin';
 import type { McpConnectionManager } from '../mcp';
 import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
 import type { ModelProvider } from '../session/provider-manager';
-import type { RuntimeConfig } from '../runtime-types';
+import type { ToolServices } from '../runtime-types';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import type { SkillRegistry } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
@@ -54,6 +54,7 @@ import {
 } from './turn/kosong-llm';
 import { UsageRecorder } from './usage';
 import { resolveCompletionBudget } from '../utils/completion-budget';
+import type { Kaos } from '@moonshot-ai/kaos';
 
 export type { AgentRecord, AgentRecordPersistence } from './records';
 export type { BuiltinTool, ToolInfo, ToolSource, UserToolRegistration } from './tool';
@@ -61,13 +62,14 @@ export type { BuiltinTool, ToolInfo, ToolSource, UserToolRegistration } from './
 export type AgentType = 'main' | 'sub' | 'independent';
 
 export interface AgentOptions {
-  readonly runtime: RuntimeConfig;
+  readonly kaos: Kaos;
   readonly config?: KimiConfig;
   readonly homedir?: string;
   readonly rpc?: Partial<SDKAgentRPC>;
   readonly persistence?: AgentRecordPersistence;
   readonly type?: AgentType;
   readonly generate?: typeof generate;
+  readonly toolServices?: ToolServices;
   readonly compactionStrategy?: CompactionStrategy;
   readonly modelProvider?: ModelProvider | undefined;
   readonly subagentHost?: SessionSubagentHost | undefined;
@@ -82,10 +84,11 @@ export interface AgentOptions {
 
 export class Agent {
   readonly type: AgentType;
-  readonly runtime: RuntimeConfig;
+  readonly kaos: Kaos;
   readonly kimiConfig?: KimiConfig;
   readonly homedir?: string;
   readonly rpc?: Partial<SDKAgentRPC>;
+  readonly toolServices?: ToolServices;
   readonly pluginSessionStarts: readonly EnabledPluginSessionStart[];
   readonly rawGenerate: typeof generate;
   readonly modelProvider?: ModelProvider;
@@ -115,10 +118,11 @@ export class Agent {
 
   constructor(options: AgentOptions) {
     this.type = options.type ?? 'main';
-    this.runtime = options.runtime;
+    this.kaos = options.kaos;
     this.kimiConfig = options.config;
     this.homedir = options.homedir;
     this.rpc = options.rpc;
+    this.toolServices = options.toolServices;
     this.pluginSessionStarts = options.pluginSessionStarts ?? [];
     this.rawGenerate = options.generate ?? generate;
     this.modelProvider = options.modelProvider;
@@ -238,7 +242,7 @@ export class Agent {
 
   useProfile(profile: ResolvedAgentProfile, context?: PreparedSystemPromptContext): void {
     const systemPrompt = profile.systemPrompt({
-      osEnv: this.runtime.kaos.osEnv,
+      osEnv: this.kaos.osEnv,
       cwd: this.config.cwd,
       skills: this.skills?.registry,
       cwdListing: context?.cwdListing,

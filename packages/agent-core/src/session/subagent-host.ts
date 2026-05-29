@@ -228,7 +228,7 @@ export class SessionSubagentHost {
       // in the repository before searching.
       let childPrompt = options.prompt;
       if (profileName === 'explore') {
-        const gitContext = await collectGitContext(child.runtime.kaos, child.config.cwd);
+        const gitContext = await collectGitContext(child.kaos, child.config.cwd);
         if (gitContext) childPrompt = `${gitContext}\n\n${childPrompt}`;
       }
       const origin: PromptOrigin = options.origin ?? { kind: 'system_trigger', name: 'subagent' };
@@ -283,7 +283,7 @@ export class SessionSubagentHost {
       thinkingLevel: parent.config.thinkingLevel,
     });
 
-    const context = await prepareSystemPromptContext(child.runtime.kaos);
+    const context = await prepareSystemPromptContext(child.kaos);
     child.useProfile(profile, context);
   }
 

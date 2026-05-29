@@ -9,7 +9,6 @@ import { MoonshotFetchURLProvider } from '#/tools/providers/moonshot-fetch-url';
 import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search';
 import type { PromisableMethods } from '#/utils/types';
 import { getCoreVersion } from '#/version';
-import { KaosShellNotFoundError, LocalKaos } from '@moonshot-ai/kaos';
 import { resolveThinkingLevel } from '../agent/config/thinking';
 import {
   ensureKimiHome,
@@ -23,7 +22,7 @@ import {
 } from '../config';
 import type { Logger } from '../logging/types';
 import { resolveSessionMcpConfig, type SessionMcpConfig } from '../mcp';
-import type { RuntimeConfig } from '../runtime-types';
+import type { ToolServices } from '../runtime-types';
 import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
 import { exportSessionDirectory } from '../session/export';
 import {
@@ -84,6 +83,7 @@ import type {
 import type { ResumedAgentState, ResumeSessionResult } from './resumed';
 import type { SDKRPC } from './sdk-api';
 import { proxyWithExtraPayload } from './types';
+import { KaosShellNotFoundError, LocalKaos, type Kaos } from '@moonshot-ai/kaos';
 
 const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
 
@@ -96,7 +96,7 @@ type UpdateSessionMetadataRequest = SessionScopedPayload<UpdateSessionMetadataPa
 export interface KimiCoreOptions {
   readonly homeDir?: string | undefined;
   readonly configPath?: string | undefined;
-  readonly runtime?: RuntimeConfig | undefined;
+  readonly runtime?: ToolServices | undefined;
   readonly kimiRequestHeaders?: Record<string, string> | undefined;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
   readonly skillDirs?: readonly string[];
@@ -110,7 +110,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   readonly sessions = new Map<string, Session>();
   readonly telemetry: TelemetryClient;
 
-  private runtime: RuntimeConfig | undefined;
+  private kaos: Promise<Kaos>;
+  private runtime: ToolServices | undefined;
   private config: KimiConfig;
   private readonly userHomeDir: string;
   private readonly kimiRequestHeaders: Record<string, string> | undefined;
@@ -130,6 +131,12 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.configPath = resolveConfigPath({
       homeDir: this.homeDir,
       configPath: options.configPath,
+    });
+    this.kaos = LocalKaos.create().catch((error: unknown) => {
+      if (error instanceof KaosShellNotFoundError) {
+        throw new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, error.message);
+      }
+      throw error;
     });
     this.runtime = options.runtime;
     this.kimiRequestHeaders = options.kimiRequestHeaders;
@@ -179,7 +186,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     // ctor block throws, `session.close()` releases the sink (and mcp).
     const runtime = await this.resolveRuntime(config);
     const session = new Session({
-      runtime: { ...runtime, kaos: runtime.kaos.withCwd(workDir) },
+      kaos: (await this.kaos).withCwd(workDir),
+      toolServices: runtime,
       config,
       id,
       homedir: summary.sessionDir,
@@ -259,7 +267,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const mcpConfig = this.mergePluginMcpConfig(baseMcpConfig);
     const runtime = await this.resolveRuntime(config);
     const session = new Session({
-      runtime: { ...runtime, kaos: runtime.kaos.withCwd(summary.workDir) },
+      kaos: (await this.kaos).withCwd(summary.workDir),
+      toolServices: runtime,
       config,
       id: summary.id,
       homedir: summary.sessionDir,
@@ -632,7 +641,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     );
   }
 
-  private async resolveRuntime(config: KimiConfig): Promise<RuntimeConfig> {
+  private async resolveRuntime(config: KimiConfig): Promise<ToolServices> {
     if (this.runtime !== undefined) return this.runtime;
     const runtime = await createRuntimeConfig({
       config,
@@ -729,20 +738,12 @@ async function createRuntimeConfig(input: {
   readonly config: KimiConfig;
   readonly kimiRequestHeaders?: Record<string, string> | undefined;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
-}): Promise<RuntimeConfig> {
+}): Promise<ToolServices> {
   const localFetcher = new LocalFetchURLProvider();
   const searchService = input.config.services?.moonshotSearch;
   const fetchService = input.config.services?.moonshotFetch;
 
-  const kaos = await LocalKaos.create().catch((error: unknown) => {
-    if (error instanceof KaosShellNotFoundError) {
-      throw new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, error.message);
-    }
-    throw error;
-  });
-
   return {
-    kaos,
     urlFetcher:
       fetchService?.baseUrl === undefined
         ? localFetcher

@@ -31,7 +31,7 @@ const signal = new AbortController().signal;
 
 async function captureSpawnEnv(): Promise<Record<string, string>> {
   const execWithEnv = vi.fn().mockResolvedValue(fakeProcess());
-  const tool = new BashTool(createFakeKaos({ execWithEnv }), '/workspace', posixEnv);
+  const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace');
   await executeTool(tool, {
     turnId: '0',
     toolCallId: 'tc_env',

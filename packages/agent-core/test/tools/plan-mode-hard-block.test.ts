@@ -20,10 +20,8 @@ async function activePlanAgent(): Promise<{ agent: Agent; planMode: PlanMode }> 
     emitStatusUpdated: vi.fn(),
     records: { logRecord: vi.fn() },
     replayBuilder: { push: vi.fn() },
-    runtime: {
-      kaos: {
-        mkdir: vi.fn().mockResolvedValue(undefined),
-      },
+    kaos: {
+      mkdir: vi.fn().mockResolvedValue(undefined),
     },
   } as unknown as Agent;
   const planMode = new PlanMode(agent);
