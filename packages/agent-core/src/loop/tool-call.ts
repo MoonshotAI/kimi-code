@@ -181,7 +181,10 @@ function preflightToolCall(
       toolCall,
       toolName,
       args,
-      output: `Tool "${toolName}" not found`,
+      output:
+        `Tool "${toolName}" is not available. The tool was not found in the current session's tool list. ` +
+        `It may require configuration or have been removed from the active profile. ` +
+        `Use the available tools listed in your tool list instead.`,
     };
   }
   if (!parsedArgs.success) {

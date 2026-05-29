@@ -310,7 +310,18 @@ export class ToolManager {
     });
     // MCP entries are glob patterns gated separately; the rest are exact
     // builtin/user tool names. The split keeps every caller on one string[].
-    this.enabledTools = new Set(names.filter((name) => !isMcpToolName(name)));
+    const nonMcpNames = names.filter((name) => !isMcpToolName(name));
+    const availableNames = nonMcpNames.filter(
+      (name) => this.builtinTools.has(name) || this.userTools.has(name),
+    );
+    const missingTools = nonMcpNames.filter((name) => !availableNames.includes(name));
+    if (missingTools.length > 0) {
+      this.agent.log.warn(
+        `The following tools listed in the active profile are not available and will be omitted: ${missingTools.join(', ')}. ` +
+          `They may require additional service configuration.`,
+      );
+    }
+    this.enabledTools = new Set(availableNames);
     this.mcpAccessPatterns = names.filter((name) => isMcpToolName(name));
   }
 
