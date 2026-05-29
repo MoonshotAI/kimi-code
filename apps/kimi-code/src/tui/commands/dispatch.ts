@@ -42,6 +42,7 @@ import {
   handleInitCommand,
   handleTitleCommand,
 } from './session';
+import { handleSwarmCommand } from './swarm';
 
 // ---------------------------------------------------------------------------
 // Re-exports — keep existing consumers working
@@ -253,6 +254,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'plan':
       await handlePlanCommand(host, args);
+      return;
+    case 'swarm':
+      await handleSwarmCommand(host, args);
       return;
     case 'compact':
       await handleCompactCommand(host, args);
