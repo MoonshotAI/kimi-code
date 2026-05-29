@@ -244,6 +244,14 @@ describe('KimiHarness.createSession transport link', () => {
       expect(summary?.sessionDir).toContain(join(homeDir, 'sessions'));
       expect(existsSync(join(summary!.sessionDir, 'state.json'))).toBe(true);
       expect(await readFile(join(homeDir, 'session_index.jsonl'), 'utf-8')).toContain(session.id);
+
+      const summariesById = await harness.listSessions({ sessionId: session.id });
+      expect(summariesById).toHaveLength(1);
+      expect(summariesById[0]).toMatchObject({
+        id: session.id,
+        workDir,
+      });
+      await expect(harness.listSessions({ sessionId: 'ses_missing' })).resolves.toEqual([]);
     } finally {
       await harness.close();
     }

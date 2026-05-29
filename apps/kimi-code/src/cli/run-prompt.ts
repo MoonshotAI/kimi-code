@@ -158,6 +158,17 @@ async function resolvePromptSession(
   setRestorePermission: (restorePermission: () => Promise<void>) => void,
 ): Promise<ResolvedPromptSession> {
   if (opts.session !== undefined) {
+    const sessions = await harness.listSessions({ sessionId: opts.session, workDir });
+    const target = sessions[0];
+    if (target === undefined) {
+      throw new Error(`Session "${opts.session}" not found.`);
+    }
+    if (target.workDir !== workDir) {
+      throw new Error(
+        `Session "${opts.session}" was created under a different directory.\n` +
+          `  cd "${target.workDir}" && kimi -r ${opts.session}`,
+      );
+    }
     const session = await harness.resumeSession({ id: opts.session });
     const status = await session.getStatus();
     const restorePermission = await forcePromptPermission(

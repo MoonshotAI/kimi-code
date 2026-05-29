@@ -705,7 +705,7 @@ describe("KimiTUI startup", () => {
 
   it("starts TUI without replaying when an explicit resume needs OAuth login", async () => {
     const harness = makeHarness(makeSession(), {
-      listSessions: vi.fn(async () => [{ id: "ses-target" }]),
+      listSessions: vi.fn(async () => [{ id: "ses-target", workDir: "/tmp/proj-a" }]),
       resumeSession: vi.fn(async () => {
         throw loginRequiredError();
       }),

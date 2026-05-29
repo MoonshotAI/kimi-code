@@ -308,12 +308,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.resumeSession({ sessionId: id });
   }
 
-  async listSessions(input: ListSessionsPayload): Promise<readonly SessionSummary[]> {
-    const options = input;
-    return this.sessionStore.list({
-      ...options,
-      workDir: requiredWorkDir('listSessions', options.workDir),
-    });
+  async listSessions(input: ListSessionsPayload = {}): Promise<readonly SessionSummary[]> {
+    return this.sessionStore.list(input);
   }
 
   async renameSession({ sessionId, ...payload }: RenameSessionRequest): Promise<void> {
