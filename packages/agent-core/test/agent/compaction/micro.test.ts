@@ -214,6 +214,7 @@ describe('MicroCompaction', () => {
         keepRecentMessages: 4,
         minContentTokens: 1,
         cacheMissedThresholdMs: 60 * MINUTE,
+        minContextUsageRatio: 0,
       },
     });
     ctx.configure({
@@ -483,6 +484,7 @@ describe('MicroCompaction', () => {
         keepRecentMessages: 0,
         minContentTokens: 1,
         cacheMissedThresholdMs: 60 * MINUTE,
+        minContextUsageRatio: 0,
       },
     });
     ctx.configure();
@@ -513,6 +515,7 @@ describe('MicroCompaction', () => {
         keepRecentMessages: 0,
         minContentTokens: 1,
         cacheMissedThresholdMs: 60 * MINUTE,
+        minContextUsageRatio: 0,
       },
     });
 
@@ -527,6 +530,7 @@ describe('MicroCompaction', () => {
 
     vi.setSystemTime(61 * MINUTE);
 
+    ctx.agent.microCompaction.detect();
     const compacted = ctx.agent.microCompaction.compact(ctx.agent.context.history);
     const tool = compacted.find((message) => message.role === 'tool');
     expect(tool).toMatchObject({
@@ -588,6 +592,61 @@ describe('MicroCompaction', () => {
       role: 'assistant',
       content: [{ type: 'text', text: 'Summary.' }],
     });
+  });
+
+  it('does not apply when context usage is below minContextUsageRatio', () => {
+    vi.useFakeTimers();
+    const ctx = testAgent({
+      microCompaction: {
+        keepRecentMessages: 0,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * MINUTE,
+        minContextUsageRatio: 0.9,
+      },
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+
+    vi.setSystemTime(0);
+    appendMicroToolExchange(ctx, 1, { output: 'result one' });
+
+    vi.setSystemTime(61 * MINUTE);
+
+    const messages = ctx.agent.context.messages;
+    expect(hasMarker(messages)).toBe(false);
+  });
+
+  it('applies when context usage is above minContextUsageRatio', () => {
+    vi.useFakeTimers();
+    const ctx = testAgent({
+      microCompaction: {
+        keepRecentMessages: 0,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * MINUTE,
+        minContextUsageRatio: 0.5,
+      },
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        image_in: true,
+        video_in: true,
+        audio_in: false,
+        thinking: true,
+        tool_use: true,
+        max_context_tokens: 100,
+      },
+    });
+
+    vi.setSystemTime(0);
+    appendMicroToolExchange(ctx, 1, { output: 'x'.repeat(300) });
+
+    vi.setSystemTime(61 * MINUTE);
+
+    const messages = ctx.agent.context.messages;
+    expect(hasMarker(messages)).toBe(true);
   });
 
   it('does not truncate when messages are fewer than keepRecentMessages', () => {

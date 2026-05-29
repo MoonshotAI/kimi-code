@@ -10,6 +10,7 @@ export interface MicroCompactionConfig {
   minContentTokens: number;
   cacheMissedThresholdMs: number;
   truncatedMarker: string;
+  minContextUsageRatio: number;
 }
 
 const DEFAULT_CONFIG: MicroCompactionConfig = {
@@ -17,6 +18,7 @@ const DEFAULT_CONFIG: MicroCompactionConfig = {
   minContentTokens: 100,
   cacheMissedThresholdMs: 60 * 60 * 1000,
   truncatedMarker: '[Old tool result content cleared]',
+  minContextUsageRatio: 0.5,
 };
 
 export class MicroCompaction {
@@ -42,30 +44,43 @@ export class MicroCompaction {
     this.cutoff = cutoff;
   }
 
+  detect(): void {
+    if (!flags.enabled('micro-compaction')) return;
+
+    const config = this.config;
+    const { history, lastAssistantAt } = this.agent.context;
+    const cacheAgeMs = lastAssistantAt === null ? null : Date.now() - lastAssistantAt;
+    const cacheMissed = cacheAgeMs !== null && cacheAgeMs >= config.cacheMissedThresholdMs;
+    if (!cacheMissed) return;
+
+    const maxContextTokens = this.agent.config.modelCapabilities.max_context_tokens;
+    const contextTokens = this.agent.context.tokenCountWithPending;
+    const contextUsageRatio =
+      maxContextTokens !== undefined && maxContextTokens > 0
+        ? contextTokens / maxContextTokens
+        : 1;
+    if (contextUsageRatio < config.minContextUsageRatio) return;
+
+    const previousCutoff = this.cutoff;
+    const nextCutoff = Math.max(0, history.length - config.keepRecentMessages);
+    this.apply(nextCutoff);
+    if (previousCutoff !== nextCutoff) {
+      const effect = this.measureEffect(history, nextCutoff);
+      this.agent.telemetry.track('micro_compaction_applied', {
+        ...config,
+        ...effect,
+        previous_cutoff: previousCutoff,
+        cutoff: nextCutoff,
+        message_count: history.length,
+        cache_age_ms: cacheAgeMs,
+      });
+    }
+  }
+
   compact(messages: readonly ContextMessage[]): readonly ContextMessage[] {
     if (!flags.enabled('micro-compaction')) return messages;
 
     const config = this.config;
-    const { lastAssistantAt } = this.agent.context;
-    const cacheAgeMs = lastAssistantAt === null ? null : Date.now() - lastAssistantAt;
-    const cacheMissed = cacheAgeMs !== null && cacheAgeMs >= config.cacheMissedThresholdMs;
-    if (cacheMissed) {
-      const previousCutoff = this.cutoff;
-      const nextCutoff = Math.max(0, messages.length - config.keepRecentMessages);
-      this.apply(nextCutoff);
-      if (previousCutoff !== nextCutoff) {
-        const effect = this.measureEffect(messages, nextCutoff);
-        this.agent.telemetry.track('micro_compaction_applied', {
-          ...config,
-          ...effect,
-          previous_cutoff: previousCutoff,
-          cutoff: nextCutoff,
-          message_count: messages.length,
-          cache_age_ms: cacheAgeMs,
-        });
-      }
-    }
-
     const result: ContextMessage[] = [];
     let i = 0;
     for (const msg of messages) {

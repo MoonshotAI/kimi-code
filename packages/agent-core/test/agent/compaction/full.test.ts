@@ -320,6 +320,7 @@ describe('FullCompaction', () => {
         keepRecentMessages: 2,
         minContentTokens: 1,
         cacheMissedThresholdMs: 60 * 60 * 1000,
+        minContextUsageRatio: 0,
       },
     });
     ctx.configure({

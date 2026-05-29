@@ -377,6 +377,7 @@ export class TurnFlow {
           hooks: {
             beforeStep: async ({ signal: stepSignal }) => {
               this.flushSteerBuffer();
+              this.agent.microCompaction.detect();
               await this.agent.fullCompaction.beforeStep(stepSignal);
               await this.agent.injection.inject();
               deduper.beginStep();
