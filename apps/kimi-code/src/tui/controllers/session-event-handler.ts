@@ -162,10 +162,11 @@ export class SessionEventHandler {
       hidden.push(server);
     }
     if (hidden.length > 0) {
-      host.showStatus(
-        formatMcpStartupStatusSummary(hidden, visible.length),
-        host.state.theme.colors.textMuted,
-      );
+      host.setAppState({
+        mcpServersSummary: formatMcpStartupStatusSummary(hidden, visible.length),
+      });
+    } else {
+      host.setAppState({ mcpServersSummary: null });
     }
   }
 

@@ -32,6 +32,7 @@ export interface AppState {
   availableModels: Record<string, ModelAlias>;
   availableProviders: Record<string, ProviderConfig>;
   sessionTitle: string | null;
+  mcpServersSummary: string | null;
 }
 
 export interface ToolCallBlockData {
