@@ -16,9 +16,9 @@ import type { AgentOptions } from '../../../src/agent';
 import { DefaultCompactionStrategy, type CompactionStrategy } from '../../../src/agent/compaction';
 import { HookEngine, type HookEngineTriggerArgs } from '../../../src/session/hooks';
 import { recordingTelemetry, type TelemetryRecord } from '../../fixtures/telemetry';
-import { estimateTokensForMessages } from '../../src/utils/tokens';
 import type { TestAgentContext, TestAgentOptions } from '../harness/agent';
 import { testAgent } from '../harness/agent';
+import { estimateTokensForMessages } from '../../../src/utils/tokens';
 
 type GenerateFn = NonNullable<AgentOptions['generate']>;
 
