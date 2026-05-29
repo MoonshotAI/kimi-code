@@ -51,12 +51,15 @@ jobs:
       - name: Build packages
         run: pnpm build
 
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
       - name: Create Release Pull Request or Publish to npm
         id: changesets
         uses: changesets/action@v1
         with:
           publish: pnpm changeset publish
-          version: pnpm changeset version
+          version: pnpm run version:release
           commit: 'ci: release packages'
           title: 'ci: release packages'
         env:
