@@ -89,6 +89,97 @@ describe('ToolManager setActiveTools filtering', () => {
     tm.setActiveTools(['Read']);
     expect(warnings.length).toBe(0);
   });
+
+  it('defers builtin tool names as pending when builtins not yet initialized', () => {
+    const warnings: string[] = [];
+    const agent = {
+      records: { logRecord: vi.fn() },
+      config: { hasProvider: false },
+      log: { warn: (msg: string) => { warnings.push(msg); } },
+      mcp: undefined,
+      emitEvent: vi.fn(),
+    } as unknown as import('../../src/agent').Agent;
+
+    const tm = new ToolManager(agent);
+    // builtinTools map is empty — simulate pre-initialization state
+
+    tm.setActiveTools(['Read', 'Write', 'Bash']);
+
+    // No warning because builtins are not yet initialized
+    expect(warnings.length).toBe(0);
+
+    // Active set is empty since no builtins are registered
+    const activeNames = [...tm.toolInfos()]
+      .filter((i) => i.active)
+      .map((i) => i.name);
+    expect(activeNames).toEqual([]);
+
+    // Names should be stored as pending
+    expect((tm as any).pendingBuiltinToolNames).toEqual(['Read', 'Write', 'Bash']);
+  });
+
+  it('resolves previously deferred tools when setActiveTools is recalled after builtin init', () => {
+    const makeTool = (name: string) => ({ name, description: '', parameters: {}, resolveExecution: vi.fn() });
+    const agent = {
+      records: { logRecord: vi.fn() },
+      config: { hasProvider: false },
+      log: { warn: vi.fn() },
+      mcp: undefined,
+      emitEvent: vi.fn(),
+    } as unknown as import('../../src/agent').Agent;
+
+    const tm = new ToolManager(agent);
+    // builtinTools empty — pre-init state
+
+    // First call: builtins not initialized — names deferred
+    tm.setActiveTools(['Read', 'Write']);
+    expect((tm as any).pendingBuiltinToolNames).toEqual(['Read', 'Write']);
+
+    // Builtins become available
+    (tm as any).builtinTools.set('Read', makeTool('Read'));
+    (tm as any).builtinTools.set('Write', makeTool('Write'));
+
+    // Second call: builtins populated — names resolve
+    tm.setActiveTools(['Read', 'Write']);
+    expect((tm as any).pendingBuiltinToolNames).toEqual([]);
+
+    const activeNames = [...tm.toolInfos()]
+      .filter((i) => i.active)
+      .map((i) => i.name)
+      .toSorted();
+    expect(activeNames).toEqual(['Read', 'Write']);
+    // No warning because all tools resolved
+    expect(agent.log.warn).not.toHaveBeenCalled();
+  });
+
+  it('warns about tools still missing when builtins were already initialized', () => {
+    const warnings: string[] = [];
+    const agent = {
+      records: { logRecord: vi.fn() },
+      config: { hasProvider: false },
+      log: { warn: (msg: string) => { warnings.push(msg); } },
+      mcp: undefined,
+      emitEvent: vi.fn(),
+    } as unknown as import('../../src/agent').Agent;
+
+    const tm = new ToolManager(agent);
+    // Populate builtins BEFORE setActiveTools (simulates initialized state)
+    (tm as any).builtinTools.set('Read', { name: 'Read', description: '', parameters: {}, resolveExecution: vi.fn() });
+
+    // Call setActiveTools with a genuinely missing tool
+    tm.setActiveTools(['Read', 'BogusTool']);
+
+    // Warning should fire immediately (builtins already initialized)
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain('BogusTool');
+    expect(warnings[0]).toContain('not available');
+
+    // Read should be active, BogusTool should not
+    const activeNames = [...tm.toolInfos()]
+      .filter((i) => i.active)
+      .map((i) => i.name);
+    expect(activeNames).toEqual(['Read']);
+  });
 });
 
 describe('Agent tools', () => {
