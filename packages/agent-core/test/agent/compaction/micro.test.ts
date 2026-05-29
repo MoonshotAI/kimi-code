@@ -1,5 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { recordingTelemetry, type TelemetryRecord } from '../../fixtures/telemetry';
+import { describe, expect, it, vi } from 'vitest';
 import { testAgent } from '../harness/agent';
 
 const CATALOGUED_PROVIDER = {

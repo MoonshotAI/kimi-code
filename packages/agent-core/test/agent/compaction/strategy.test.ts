@@ -1,23 +1,11 @@
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'pathe';
 
 import {
-  APIConnectionError,
-  APIContextOverflowError,
-  APIStatusError,
-  UNKNOWN_CAPABILITY,
-  type Message,
-  type ToolCall,
+  type Message
 } from '@moonshot-ai/kosong';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type { AgentOptions } from '../../../src/agent';
-import { DefaultCompactionStrategy, type CompactionStrategy } from '../../../src/agent/compaction';
-import { HookEngine, type HookEngineTriggerArgs } from '../../../src/session/hooks';
-import { recordingTelemetry, type TelemetryRecord } from '../../fixtures/telemetry';
-import type { TestAgentContext, TestAgentOptions } from '../harness/agent';
-import { testAgent } from '../harness/agent';
+import { DefaultCompactionStrategy } from '../../../src/agent/compaction';
 
 type GenerateFn = NonNullable<AgentOptions['generate']>;
 
