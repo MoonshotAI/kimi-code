@@ -841,6 +841,32 @@ describe('ToolCallComponent', () => {
       component.setResult({ ...spawnSuccessResult, tool_call_id: 'call_bg_agent' });
       expect(component.getSubagentSnapshot().phase).toBe('failed');
     });
+
+    // Standalone render path — when only ONE Agent tool call lands in a
+    // step, the card is never upgraded into an `AgentGroupComponent` and is
+    // mounted on its own. The standalone header derives its label from
+    // `getDerivedSubagentPhase()` (separate from `getSubagentSnapshot`).
+    // Without the override threading into that path AND a header rebuild,
+    // a lost bg agent keeps the green "✓ Completed" label.
+    it('standalone render: lost bg agent must show Failed/Lost, not Completed', () => {
+      const component = makeBackgroundAgentComponent();
+      component.setBackgroundTaskTerminalStatus('lost');
+      const out = strip(component.render(120).join('\n'));
+      expect(out).not.toContain('Completed');
+      expect(out).toMatch(/Failed|Lost/);
+      // Friendly failure message must reach the rendered card.
+      expect(out).toContain('lost');
+      expect(out).not.toContain('task_id:');
+    });
+
+    it('standalone render: completed bg agent still shows Completed', () => {
+      const component = makeBackgroundAgentComponent();
+      component.setBackgroundTaskTerminalStatus('completed');
+      const out = strip(component.render(120).join('\n'));
+      expect(out).toContain('Completed');
+      expect(out).not.toMatch(/Failed/);
+      expect(out).not.toContain('task_id:');
+    });
   });
 
   it('scrolls the Write streaming preview to the last COMMAND_PREVIEW_LINES', () => {
