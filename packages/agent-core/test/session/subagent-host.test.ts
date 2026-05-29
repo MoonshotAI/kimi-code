@@ -617,7 +617,8 @@ describe('SessionSubagentHost', () => {
       system: "explore prompt"
       tools: Read
       messages:
-        user: text "Earlier context\\n\\nContinue from context"
+        user: text "Earlier context"
+        user: text "Continue from context"
     `);
     expect(parent.allEvents).toContainEqual(
       expect.objectContaining({

@@ -264,7 +264,7 @@ describe('Agent turn flow', () => {
     );
   });
 
-  it('continues the turn after showing UserPromptSubmit hook output without injecting it', async () => {
+  it('continues the turn after projecting UserPromptSubmit hook output', async () => {
     const hookEngine = new HookEngine([
       {
         event: 'UserPromptSubmit',
@@ -293,6 +293,7 @@ describe('Agent turn flow', () => {
       tools: []
       messages:
         user: text "hooked input"
+        user: text "<hook_result hook_event=\\"UserPromptSubmit\\">\\nhook response 1\\n</hook_result>\\n<hook_result hook_event=\\"UserPromptSubmit\\">\\nhook response 2\\n</hook_result>"
     `);
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -330,7 +331,7 @@ describe('Agent turn flow', () => {
     ]);
   });
 
-  it('shows structured UserPromptSubmit stdout without injecting it', async () => {
+  it('projects structured UserPromptSubmit stdout', async () => {
     const hookEngine = new HookEngine([
       {
         event: 'UserPromptSubmit',
@@ -356,6 +357,7 @@ describe('Agent turn flow', () => {
       tools: []
       messages:
         user: text "hooked input"
+        user: text "<hook_result hook_event=\\"UserPromptSubmit\\">\\n{}\\n</hook_result>\\n<hook_result hook_event=\\"UserPromptSubmit\\">\\n{\\"hookSpecificOutput\\":{}}\\n</hook_result>"
     `);
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -442,6 +444,8 @@ describe('Agent turn flow', () => {
       system: <system-prompt>
       tools: []
       messages:
+        user: text "bad words here"
+        assistant: text "<hook_result hook_event=\\"UserPromptSubmit\\">\\nno profanity\\n</hook_result>"
         user: text "safe followup"
     `);
   });
