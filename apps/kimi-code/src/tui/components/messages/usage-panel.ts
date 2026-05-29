@@ -20,6 +20,7 @@ import type { ColorPalette } from '#/tui/theme/colors';
 const LEFT_MARGIN = 2;
 const SIDE_PADDING = 1;
 const MIN_INTERIOR_WIDTH = 20;
+const PROGRESS_BAR_WIDTH = 20;
 
 type Colorize = (text: string) => string;
 
@@ -81,10 +82,13 @@ function buildSessionUsageSection(
   let totalInput = 0;
   let totalOutput = 0;
   // Compute max model name width for alignment (include "total" for multi-model)
-  const maxModelWidth = Math.max(
-    ...entries.map(([model]) => model.length),
-    entries.length > 1 ? 'total'.length : 0,
-  );
+  const maxModelWidth =
+    entries.length === 0
+      ? 0
+      : Math.max(
+          ...entries.map(([model]) => model.length),
+          entries.length > 1 ? 'total'.length : 0,
+        );
   for (const [model, row] of entries) {
     const input = usageInputTotal(row);
     const output = usageNumber(row.output);
@@ -99,7 +103,7 @@ function buildSessionUsageSection(
     // Cache breakdown subline
     const cacheIndent = ' '.repeat(maxModelWidth + 4); // "  model  " → 2 + maxModelWidth + 2
     const cacheRatio = input > 0 ? usageNumber(row.inputCacheRead) / input : 0;
-    const bar = renderProgressBar(cacheRatio, 20);
+    const bar = renderProgressBar(cacheRatio, PROGRESS_BAR_WIDTH);
     const pct = `${(cacheRatio * 100).toFixed(1).replace(/\.0$/, '')}%`;
     lines.push(
       `${cacheIndent}${muted('cache')} ${bar} ${value(pct)} ${muted('hit')} ` +
@@ -144,7 +148,7 @@ function buildManagedUsageSection(
   const out: string[] = [accent('Plan usage')];
   for (const row of rows) {
     const ratioUsed = usedRatio(row);
-    const bar = renderProgressBar(ratioUsed, 20);
+    const bar = renderProgressBar(ratioUsed, PROGRESS_BAR_WIDTH);
     const pct = `${Math.round(ratioUsed * 100)}% used`;
     const barColoured = chalk.hex(severityHex(ratioSeverity(ratioUsed)))(bar);
     const label = row.label.padEnd(labelWidth, ' ');
@@ -196,7 +200,7 @@ export function buildUsageReportLines(options: UsageReportOptions): string[] {
 
   if (options.maxContextTokens > 0) {
     const ratio = safeUsageRatio(options.contextUsage);
-    const bar = renderProgressBar(ratio, 20);
+    const bar = renderProgressBar(ratio, PROGRESS_BAR_WIDTH);
     const pct = `${(ratio * 100).toFixed(1)}%`;
     const barColoured = chalk.hex(severityHex(ratioSeverity(ratio)))(bar);
     lines.push('');
