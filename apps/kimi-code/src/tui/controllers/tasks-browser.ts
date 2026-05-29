@@ -309,7 +309,7 @@ export class TasksBrowserController {
 
     this.flash(`Stopping ${taskId}…`, 1500);
     try {
-      await session.stopBackgroundTask(taskId, { reason: 'stopped from /tasks' });
+      await session.stopBackgroundTask(taskId, { reason: 'User initiated stop' });
       await this.refresh({ silent: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
