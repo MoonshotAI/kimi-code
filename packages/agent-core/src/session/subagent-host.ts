@@ -24,6 +24,17 @@ const HOOK_TEXT_PREVIEW_LENGTH = 500;
 const SUBAGENT_MAX_TOKENS_ERROR =
   'Subagent turn failed before completing its final summary: reason=max_tokens';
 
+export function buildOverrideProfile(
+  name: string,
+  override: { systemPrompt: string; tools: string[] },
+): ResolvedAgentProfile {
+  return {
+    name,
+    systemPrompt: () => override.systemPrompt,
+    tools: override.tools,
+  };
+}
+
 type RunSubagentOptions = {
   readonly parentToolCallId: string;
   readonly parentToolCallUuid?: string | undefined;
@@ -32,6 +43,7 @@ type RunSubagentOptions = {
   readonly runInBackground: boolean;
   readonly origin?: PromptOrigin | undefined;
   readonly signal: AbortSignal;
+  readonly profileOverride?: { readonly systemPrompt: string; readonly tools: string[] } | undefined;
 };
 
 type SubagentCompletion = {
@@ -68,7 +80,9 @@ export class SessionSubagentHost {
       throw new Error(`Parent agent "${this.ownerAgentId}" was not found`);
     }
 
-    const profile = this.resolveProfile(parent, profileName);
+    const profile = options.profileOverride
+      ? buildOverrideProfile(profileName, options.profileOverride)
+      : this.resolveProfile(parent, profileName);
     const { id, agent } = await this.session.createAgent(
       { type: 'sub', generate: parent.rawGenerate },
       undefined,
