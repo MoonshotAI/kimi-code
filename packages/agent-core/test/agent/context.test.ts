@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { renderNotificationXml } from '../../src/agent/context/notification-xml';
 import { project } from '../../src/agent/context/projector';
+import type { ContextMessage } from '../../src/agent/context/types';
 import { estimateTokensForMessages } from '../../src/utils/tokens';
 import { testAgent } from './harness/agent';
 
@@ -79,7 +80,7 @@ describe('Agent context', () => {
     ]);
   });
 
-  it('keeps hook result transcript messages out of LLM projection', async () => {
+  it('projects hook result messages into LLM projection', async () => {
     const ctx = testAgent();
     ctx.configure();
 
@@ -117,14 +118,39 @@ describe('Agent context', () => {
     expect(ctx.agent.context.messages).toEqual([
       {
         role: 'user',
-        content: [{ type: 'text', text: 'hooked input\n\ncontinue from stop hook' }],
+        content: [{ type: 'text', text: 'hooked input' }],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nhook response\n</hook_result>',
+          },
+        ],
+        toolCalls: [],
+      },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nblocked reason\n</hook_result>',
+          },
+        ],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'continue from stop hook' }],
         toolCalls: [],
       },
     ]);
     await ctx.expectResumeMatches();
   });
 
-  it('keeps blocked UserPromptSubmit prompts out of LLM projection', async () => {
+  it('projects blocked UserPromptSubmit prompts into LLM projection', async () => {
     const ctx = testAgent();
     ctx.configure();
 
@@ -145,6 +171,21 @@ describe('Agent context', () => {
 
     expect(ctx.agent.context.history).toHaveLength(3);
     expect(ctx.agent.context.messages).toEqual([
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'blocked prompt' }],
+        toolCalls: [],
+      },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nblocked reason\n</hook_result>',
+          },
+        ],
+        toolCalls: [],
+      },
       {
         role: 'user',
         content: [{ type: 'text', text: 'safe followup' }],
@@ -509,56 +550,60 @@ describe('Agent context notification projection', () => {
     expect(text).not.toContain('should stay out of the XML');
   });
 
-  it('keeps pending notification injections separate from real user prompts', () => {
-    const messages = project(
-      [userMessage('Actual user prompt')],
-      [
-        {
-          kind: 'pending_notification',
-          content: {
-            id: 'n_1',
-            category: 'task',
-            type: 'task.done',
-            source_kind: 'background_task',
-            source_id: 'bg_1',
-            title: 'Task done',
-            severity: 'info',
-            body: 'Background task finished.',
-          },
-        },
-      ],
-    );
-
-    expect(messages).toHaveLength(2);
-    expect(textOf(messages[0]!)).toMatch(/^<notification /);
-    expect(textOf(messages[0]!)).toContain('Task done');
-    expect(textOf(messages[1]!)).toBe('Actual user prompt');
-  });
-
   it('does not merge a cron-fire envelope into an adjacent user message', () => {
-    // Cron fires arrive as user-role messages whose text starts with
-    // `<cron-fire `. `mergeAdjacentUserMessages` must treat them like
-    // <notification>/<system-reminder>/<hook_result> and keep them in
-    // separate messages — otherwise the envelope XML smears into a
-    // real user turn and confuses the LLM about where the system
-    // annotation ends.
     const cronEnvelope =
       '<cron-fire jobId="deadbeef" cron="*/5 * * * *" recurring="true" coalescedCount="1" stale="false">\n<prompt>\ncheck the deploy\n</prompt>\n</cron-fire>';
     const messages = project([
-      userMessage(cronEnvelope),
-      userMessage('Actual follow-up from the user'),
+      userMessage(cronEnvelope, {
+        kind: 'cron_job',
+        jobId: 'deadbeef',
+        cron: '*/5 * * * *',
+        recurring: true,
+        coalescedCount: 1,
+        stale: false,
+      }),
+      userMessage('Actual follow-up from the user', { kind: 'user' }),
     ]);
     expect(messages).toHaveLength(2);
     expect(textOf(messages[0]!)).toBe(cronEnvelope);
     expect(textOf(messages[1]!)).toBe('Actual follow-up from the user');
   });
+
+  it('uses message origin to keep non-user-origin messages separate', () => {
+    const messages = project([
+      userMessage('Host reminder without an XML prefix', {
+        kind: 'injection',
+        variant: 'host',
+      }),
+      userMessage('Actual follow-up from the user', { kind: 'user' }),
+    ]);
+
+    expect(messages).toHaveLength(2);
+    expect(textOf(messages[0]!)).toBe('Host reminder without an XML prefix');
+    expect(textOf(messages[1]!)).toBe('Actual follow-up from the user');
+  });
+
+  it('only merges user-role messages with user origin', () => {
+    const messages = project([
+      userMessage('First real prompt', { kind: 'user' }),
+      userMessage('Second real prompt', { kind: 'user' }),
+      userMessage('No origin prompt'),
+      userMessage('Third real prompt', { kind: 'user' }),
+    ]);
+
+    expect(messages).toHaveLength(3);
+    expect(textOf(messages[0]!)).toBe('First real prompt\n\nSecond real prompt');
+    expect(textOf(messages[1]!)).toBe('No origin prompt');
+    expect(textOf(messages[2]!)).toBe('Third real prompt');
+  });
 });
 
-function userMessage(text: string): Message {
+function userMessage(text: string, origin?: ContextMessage['origin']): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text }],
     toolCalls: [],
+    origin,
   };
 }
 
