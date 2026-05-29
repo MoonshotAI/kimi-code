@@ -121,6 +121,15 @@ export class ApiKeyPool {
 
   /** Clear the failure state for a key (e.g. after a successful call). */
   resetKey(key: string): void {
+    const state = this.states.get(key);
+    if (state === undefined) {
+      return;
+    }
+    // Don't clear an active cooldown that may have been set by a concurrent
+    // failure while this request was still in flight.
+    if (state.cooldownUntil !== null && Date.now() < state.cooldownUntil) {
+      return;
+    }
     this.states.set(key, { consecutiveFailures: 0, cooldownUntil: null });
   }
 }

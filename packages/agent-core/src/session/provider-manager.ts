@@ -206,7 +206,10 @@ export class ProviderManager implements ModelProvider {
           pool.resetKey(key);
           return result;
         } catch (error) {
-          if (isRetryableGenerateError(error)) {
+          if (
+            isRetryableGenerateError(error) ||
+            (error instanceof APIStatusError && error.statusCode === 401)
+          ) {
             pool.recordFailure(key);
           }
           throw error;

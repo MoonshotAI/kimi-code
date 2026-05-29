@@ -750,6 +750,21 @@ describe('ProviderManager key pool', () => {
     expect(recordFailureSpy).toHaveBeenCalledWith('pk-1');
   });
 
+  it('records failure on 401 unauthorized errors', async () => {
+    const pool = new ApiKeyPool(['pk-1']);
+    const recordFailureSpy = vi.spyOn(pool, 'recordFailure');
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
+
+    const request = vi.fn(async () => {
+      throw new APIStatusError(401, 'Unauthorized');
+    });
+
+    await expect(withAuth(request)).rejects.toThrow(APIStatusError);
+    expect(recordFailureSpy).toHaveBeenCalledWith('pk-1');
+    expect(recordFailureSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('does not record failure on non-retryable errors', async () => {
     const pool = new ApiKeyPool(['pk-1']);
     const recordFailureSpy = vi.spyOn(pool, 'recordFailure');

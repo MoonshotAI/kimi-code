@@ -170,12 +170,23 @@ describe('ApiKeyPool', () => {
   });
 
   describe('resetKey', () => {
-    it('clears failure state immediately', () => {
+    it('clears failure state when cooldown has expired', () => {
       vi.useFakeTimers();
       const pool = new ApiKeyPool(['a', 'b']);
-      pool.recordFailure('a');
+      pool.recordFailure('a'); // 30s cooldown
+      vi.advanceTimersByTime(30_001);
       pool.resetKey('a');
       expect(pool.acquire()).toBe('a');
+    });
+
+    it('does not clear an active cooldown', () => {
+      vi.useFakeTimers();
+      const pool = new ApiKeyPool(['a', 'b']);
+      pool.recordFailure('a'); // 30s cooldown
+      pool.resetKey('a');      // concurrent success should not wipe it
+      expect(pool.acquire()).toBe('b'); // a still cooling
+      vi.advanceTimersByTime(30_001);
+      expect(pool.acquire()).toBe('a'); // a recovered after cooldown
     });
 
     it('is a no-op for unknown keys', () => {
