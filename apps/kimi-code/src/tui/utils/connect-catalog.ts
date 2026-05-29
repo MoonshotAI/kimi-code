@@ -1,4 +1,4 @@
-import { DEFAULT_CATALOG_URL } from '@moonshot-ai/kimi-code-sdk';
+import { DEFAULT_CATALOG_URL, type CatalogModel, type KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 
 const BARE_HTTP_URL_RE = /^https?:\/\/\S+$/;
 
@@ -79,4 +79,71 @@ export function resolveConnectCatalogRequest(args: string): ConnectCatalogResolu
       allowBuiltInFallback: true,
     },
   };
+}
+
+export interface CatalogModelSelectionInitialState {
+  readonly selectedAliases: readonly string[];
+  readonly defaultAlias?: string;
+  readonly thinking?: boolean;
+}
+
+export function catalogProviderExistingApiKey(
+  providerId: string,
+  config: KimiConfig,
+): string | undefined {
+  const apiKey = config.providers[providerId]?.apiKey?.trim();
+  return apiKey !== undefined && apiKey.length > 0 ? apiKey : undefined;
+}
+
+/**
+ * Project the current config into the initial state for the /connect
+ * multi-select picker: which catalog aliases are already configured for this
+ * provider, which (if any) is the default, and whether the saved default has
+ * thinking on. Aliases that no longer exist in the catalog are dropped.
+ */
+export function catalogModelSelectionInitialState(
+  providerId: string,
+  models: readonly CatalogModel[],
+  config: KimiConfig,
+): CatalogModelSelectionInitialState {
+  const aliasByModelId = new Map(models.map((model) => [model.id, `${providerId}/${model.id}`]));
+  const selectedAliases: string[] = [];
+  const seen = new Set<string>();
+  for (const model of Object.values(config.models ?? {})) {
+    if (model.provider !== providerId) continue;
+    const alias = aliasByModelId.get(model.model);
+    if (alias !== undefined && !seen.has(alias)) {
+      selectedAliases.push(alias);
+      seen.add(alias);
+    }
+  }
+
+  let defaultAlias: string | undefined;
+  const defaultModel =
+    config.defaultModel !== undefined ? config.models?.[config.defaultModel] : undefined;
+  if (defaultModel?.provider === providerId) {
+    const alias = aliasByModelId.get(defaultModel.model);
+    if (alias !== undefined && seen.has(alias)) defaultAlias = alias;
+  }
+
+  return {
+    selectedAliases,
+    defaultAlias,
+    thinking: defaultAlias !== undefined ? config.defaultThinking : undefined,
+  };
+}
+
+/**
+ * Map providerId → number of models wired up to that provider in `config`.
+ * Only providers that also have a `[providers.<id>]` entry are included, so
+ * orphan model aliases (whose provider block was hand-deleted) don't get
+ * badged as configured in the picker.
+ */
+export function configuredProviderModelCounts(config: KimiConfig): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const model of Object.values(config.models ?? {})) {
+    if (config.providers[model.provider] === undefined) continue;
+    counts.set(model.provider, (counts.get(model.provider) ?? 0) + 1);
+  }
+  return counts;
 }

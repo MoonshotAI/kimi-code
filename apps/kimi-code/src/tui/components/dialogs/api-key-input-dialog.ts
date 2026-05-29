@@ -15,6 +15,10 @@ export type ApiKeyInputResult =
   | { readonly kind: 'ok'; readonly value: string }
   | { readonly kind: 'cancel' };
 
+export interface ApiKeyInputDialogOptions {
+  readonly existingApiKey?: string;
+}
+
 const FOOTER = 'Enter to submit  ·  Esc to cancel';
 
 function maskInputLine(raw: string): string {
@@ -50,6 +54,7 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
   private readonly colors: ColorPalette;
   private readonly title: string;
   private readonly subtitle: string;
+  private readonly existingApiKey: string | undefined;
   private done = false;
   private emptyHinted = false;
 
@@ -57,12 +62,19 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
     platformName: string,
     onDone: (result: ApiKeyInputResult) => void,
     colors: ColorPalette,
+    options: ApiKeyInputDialogOptions = {},
   ) {
     super();
     this.onDone = onDone;
     this.colors = colors;
+    const existingApiKey = options.existingApiKey?.trim();
+    this.existingApiKey =
+      existingApiKey !== undefined && existingApiKey.length > 0 ? existingApiKey : undefined;
     this.title = `Enter API key for ${platformName}`;
-    this.subtitle = 'Your key will be saved to ~/.kimi-code/config.toml';
+    this.subtitle =
+      this.existingApiKey === undefined
+        ? 'Your key will be saved to ~/.kimi-code/config.toml'
+        : 'Press Enter to keep the existing key, or type a new one.';
     this.input.onSubmit = (value) => {
       this.submit(value);
     };
@@ -133,6 +145,11 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
     if (this.done) return;
     const trimmed = value.trim();
     if (trimmed.length === 0) {
+      if (this.existingApiKey !== undefined) {
+        this.done = true;
+        this.onDone({ kind: 'ok', value: this.existingApiKey });
+        return;
+      }
       this.emptyHinted = true;
       return;
     }

@@ -134,4 +134,21 @@ export class AuthFlowController {
       contextTokens: 0,
     });
   }
+
+  /**
+   * Refresh UI state after a provider's config has been removed. When the
+   * removed provider owned the active model, the current model and session are
+   * no longer valid, so clear them as a logout would; otherwise just refresh the
+   * available model/provider lists.
+   */
+  async refreshAfterProviderRemoval(removedProviderId: string): Promise<void> {
+    const currentModel = this.host.state.appState.model.trim();
+    const currentProvider = this.host.state.appState.availableModels[currentModel]?.provider;
+    if (removedProviderId === currentProvider) {
+      await this.refreshConfigAfterLogout();
+      await this.clearActiveSessionAfterLogout();
+    } else {
+      await this.refreshAvailableModels();
+    }
+  }
 }

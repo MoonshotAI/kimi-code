@@ -1,6 +1,7 @@
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
+import { ApiKeyInputDialogComponent } from '#/tui/components/dialogs/api-key-input-dialog';
 import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { EditorSelectorComponent } from '#/tui/components/dialogs/editor-selector';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
@@ -213,6 +214,41 @@ const ENTER = String.fromCodePoint(13);
 function rendered(component: { render: (w: number) => string[] }, width = 80): string {
   return component.render(width).map(strip).join('\n');
 }
+
+describe('ApiKeyInputDialogComponent', () => {
+  it('rejects empty input when no existing key is available', () => {
+    const onDone = vi.fn();
+    const dialog = new ApiKeyInputDialogComponent('Acme', onDone, darkColors);
+
+    dialog.handleInput(ENTER);
+
+    expect(onDone).not.toHaveBeenCalled();
+    expect(rendered(dialog)).toContain('API key cannot be empty.');
+  });
+
+  it('keeps the existing key when submitted empty', () => {
+    const onDone = vi.fn();
+    const dialog = new ApiKeyInputDialogComponent('Acme', onDone, darkColors, {
+      existingApiKey: 'sk-existing',
+    });
+
+    dialog.handleInput(ENTER);
+
+    expect(onDone).toHaveBeenCalledWith({ kind: 'ok', value: 'sk-existing' });
+  });
+
+  it('submits a new key over the existing key when the user types one', () => {
+    const onDone = vi.fn();
+    const dialog = new ApiKeyInputDialogComponent('Acme', onDone, darkColors, {
+      existingApiKey: 'sk-existing',
+    });
+
+    for (const ch of 'sk-new') dialog.handleInput(ch);
+    dialog.handleInput(ENTER);
+
+    expect(onDone).toHaveBeenCalledWith({ kind: 'ok', value: 'sk-new' });
+  });
+});
 
 describe('ChoicePickerComponent search and pagination', () => {
   function makePicker(over: { options?: { value: string; label: string }[]; searchable?: boolean }) {

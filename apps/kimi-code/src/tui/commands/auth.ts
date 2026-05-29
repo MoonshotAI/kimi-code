@@ -23,7 +23,10 @@ import {
 import { BUILT_IN_CATALOG_JSON } from '../../built-in-catalog';
 import type { ChoiceOption } from '../components/dialogs/choice-picker';
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '../constant/kimi-tui';
-import { resolveConnectCatalogRequest } from '../utils/connect-catalog';
+import {
+  catalogProviderExistingApiKey,
+  resolveConnectCatalogRequest,
+} from '../utils/connect-catalog';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { LoginProgressSpinnerHandle } from '../types';
 import {
@@ -237,7 +240,9 @@ export async function handleConnectCommand(host: SlashCommandHost, args: string)
 
   if (catalog === undefined) return;
 
-  const providerId = await promptCatalogProviderSelection(host, catalog);
+  const existingConfig = await host.harness.getConfig();
+
+  const providerId = await promptCatalogProviderSelection(host, catalog, existingConfig);
   if (providerId === undefined) return;
   const entry = catalog[providerId];
   if (entry === undefined) return;
@@ -248,17 +253,26 @@ export async function handleConnectCommand(host: SlashCommandHost, args: string)
     return;
   }
 
-  const selection = await promptModelSelectionForCatalog(host, providerId, models);
+  const selection = await promptModelSelectionForCatalog(host, providerId, models, existingConfig);
   if (selection === undefined) return;
 
-  const apiKey = await promptApiKey(host, entry.name ?? providerId);
+  if (selection.kind === 'remove') {
+    await host.harness.removeProvider(providerId);
+    await host.authFlow.refreshAfterProviderRemoval(providerId);
+    host.track('connect', { provider: providerId, removed: true });
+    host.showStatus(`Removed: ${entry.name ?? providerId}`);
+    return;
+  }
+
+  const apiKey = await promptApiKey(host, entry.name ?? providerId, {
+    existingApiKey: catalogProviderExistingApiKey(providerId, existingConfig),
+  });
   if (apiKey === undefined) return;
 
   const wire = inferWireType(entry);
   if (wire === undefined) return;
   const baseUrl = catalogBaseUrl(entry, wire);
 
-  const existingConfig = await host.harness.getConfig();
   if (existingConfig.providers[providerId] !== undefined) {
     await host.harness.removeProvider(providerId);
   }
@@ -269,8 +283,8 @@ export async function handleConnectCommand(host: SlashCommandHost, args: string)
     wire,
     baseUrl,
     apiKey,
-    models,
-    selectedModelId: selection.model.id,
+    models: selection.models,
+    selectedModelId: selection.defaultModelId,
     thinking: selection.thinking,
   });
 
@@ -282,8 +296,8 @@ export async function handleConnectCommand(host: SlashCommandHost, args: string)
   });
 
   await host.authFlow.refreshConfigAfterLogin();
-  host.track('connect', { provider: providerId, model: selection.model.id });
-  host.showStatus(`Connected: ${entry.name ?? providerId} · ${selection.model.id}`);
+  host.track('connect', { provider: providerId, model: selection.defaultModelId });
+  host.showStatus(`Connected: ${entry.name ?? providerId} · ${selection.defaultModelId}`);
 }
 
 export async function handleLogoutCommand(host: SlashCommandHost): Promise<void> {
@@ -332,16 +346,7 @@ export async function handleLogoutCommand(host: SlashCommandHost): Promise<void>
     await host.harness.removeProvider(target);
   }
 
-  if (target === currentProvider) {
-    await host.authFlow.refreshConfigAfterLogout();
-    await host.authFlow.clearActiveSessionAfterLogout();
-  } else {
-    const updated = await host.harness.getConfig({ reload: true });
-    host.setAppState({
-      availableModels: updated.models ?? {},
-      availableProviders: updated.providers ?? {},
-    });
-  }
+  await host.authFlow.refreshAfterProviderRemoval(target);
 
   host.track('logout', { provider: target });
   const label = target === DEFAULT_OAUTH_PROVIDER_NAME ? PRODUCT_NAME : target;

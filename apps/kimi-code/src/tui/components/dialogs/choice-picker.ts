@@ -31,6 +31,8 @@ export interface ChoiceOption {
   readonly tone?: 'danger';
   /** Optional explanatory text shown below the label. */
   readonly description?: string | undefined;
+  /** Optional success-tinted suffix rendered after the label, e.g. `← configured · 2 models`. */
+  readonly badge?: string | undefined;
 }
 
 export interface ChoicePickerOptions {
@@ -162,6 +164,9 @@ export class ChoicePickerComponent extends Container implements Focusable {
       line += labelStyle(opt.label);
       if (isCurrent) {
         line += ' ' + chalk.hex(colors.success)(CURRENT_MARK);
+      }
+      if (opt.badge !== undefined && opt.badge.length > 0) {
+        line += ' ' + chalk.hex(colors.success)(opt.badge);
       }
       lines.push(line);
       if (opt.description !== undefined && opt.description.length > 0) {
