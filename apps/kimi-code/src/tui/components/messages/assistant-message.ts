@@ -5,7 +5,7 @@
  * to align after the bullet.
  */
 
-import type { Component, MarkdownTheme } from '@earendil-works/pi-tui';
+import type { Component, DefaultTextStyle, MarkdownTheme } from '@earendil-works/pi-tui';
 import { Container, Markdown, visibleWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
@@ -19,12 +19,14 @@ export class AssistantMessageComponent implements Component {
   private bulletColor: string;
   private lastText = '';
   private showBullet: boolean;
+  private defaultTextStyle: DefaultTextStyle;
 
   constructor(markdownTheme: MarkdownTheme, colors: ColorPalette, showBullet: boolean = true) {
     this.markdownTheme = markdownTheme;
     this.bulletColor = colors.roleAssistant;
     this.showBullet = showBullet;
     this.contentContainer = new Container();
+    this.defaultTextStyle = { color: (text) => chalk.hex(colors.text)(text) };
   }
 
   setShowBullet(show: boolean): void {
@@ -37,7 +39,7 @@ export class AssistantMessageComponent implements Component {
     this.lastText = displayText;
     this.contentContainer.clear();
     if (displayText.trim().length > 0) {
-      this.contentContainer.addChild(new Markdown(displayText.trim(), 0, 0, this.markdownTheme));
+      this.contentContainer.addChild(new Markdown(displayText.trim(), 0, 0, this.markdownTheme, this.defaultTextStyle));
     }
   }
 
