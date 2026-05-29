@@ -230,4 +230,28 @@ describe('MicroCompaction', () => {
       content: [{ type: 'text', text: 'Summary.' }],
     });
   });
+
+  it('does not truncate when messages are fewer than keepRecentMessages', () => {
+    vi.useFakeTimers();
+    const ctx = testAgent({
+      microCompaction: {
+        keepRecentMessages: 20,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * 60 * 1000,
+      },
+    });
+
+    vi.setSystemTime(0);
+    ctx.appendToolExchange();
+    ctx.appendToolExchange();
+
+    vi.setSystemTime(61 * 60 * 1000);
+
+    const messages = ctx.agent.context.messages;
+    expect(
+      messages.every(
+        (m) => m.role !== 'tool' || (m.content[0] as { text: string })?.text !== '[Old tool result content cleared]',
+      ),
+    ).toBe(true);
+  });
 });
