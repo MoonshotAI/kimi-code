@@ -256,6 +256,14 @@ export async function handleConnectCommand(host: SlashCommandHost, args: string)
   const selection = await promptModelSelectionForCatalog(host, providerId, models, existingConfig);
   if (selection === undefined) return;
 
+  if (selection.kind === 'remove') {
+    await host.harness.removeProvider(providerId);
+    await host.authFlow.refreshAfterProviderRemoval(providerId);
+    host.track('connect', { provider: providerId, removed: true });
+    host.showStatus(`Removed: ${entry.name ?? providerId}`);
+    return;
+  }
+
   const apiKey = await promptApiKey(host, entry.name ?? providerId, {
     existingApiKey: catalogProviderExistingApiKey(providerId, existingConfig),
   });
@@ -338,16 +346,7 @@ export async function handleLogoutCommand(host: SlashCommandHost): Promise<void>
     await host.harness.removeProvider(target);
   }
 
-  if (target === currentProvider) {
-    await host.authFlow.refreshConfigAfterLogout();
-    await host.authFlow.clearActiveSessionAfterLogout();
-  } else {
-    const updated = await host.harness.getConfig({ reload: true });
-    host.setAppState({
-      availableModels: updated.models ?? {},
-      availableProviders: updated.providers ?? {},
-    });
-  }
+  await host.authFlow.refreshAfterProviderRemoval(target);
 
   host.track('logout', { provider: target });
   const label = target === DEFAULT_OAUTH_PROVIDER_NAME ? PRODUCT_NAME : target;

@@ -175,28 +175,48 @@ export async function promptModelSelectionForOpenPlatform(
   return model ? { model, thinking: selection.thinking } : undefined;
 }
 
+/**
+ * Outcome of the /connect model picker for an already-resolved provider.
+ * `select` carries the models to write; `remove` means the user cleared every
+ * model on an already-configured provider and wants the channel removed.
+ * `undefined` (from the caller) means the picker was cancelled.
+ */
+export type ConnectModelSelection =
+  | { kind: 'select'; models: CatalogModel[]; defaultModelId: string; thinking: boolean }
+  | { kind: 'remove' };
+
 export async function promptModelSelectionForCatalog(
   host: SlashCommandHost,
   providerId: string,
   models: CatalogModel[],
   config: KimiConfig,
-): Promise<{ models: CatalogModel[]; defaultModelId: string; thinking: boolean } | undefined> {
+): Promise<ConnectModelSelection | undefined> {
+  // Clearing every model only removes a provider that is already configured;
+  // for a fresh provider an empty selection is a no-op (Esc cancels instead).
+  const removable = config.providers[providerId] !== undefined;
   const modelDict: Record<string, ModelAlias> = {};
   for (const m of models) {
     modelDict[`${providerId}/${m.id}`] = catalogModelToAlias(providerId, m);
   }
   const initialSelection = catalogModelSelectionInitialState(providerId, models, config);
-  const selection = await runCatalogModelMultiSelect(host, modelDict, initialSelection);
+  const selection = await runCatalogModelMultiSelect(host, modelDict, initialSelection, removable);
   if (selection === undefined) return undefined;
 
   const byAlias = new Map(models.map((m) => [`${providerId}/${m.id}`, m]));
   const selectedModels = selection.aliases
     .map((alias) => byAlias.get(alias))
     .filter((m): m is CatalogModel => m !== undefined);
-  const defaultModel = byAlias.get(selection.defaultAlias);
-  if (selectedModels.length === 0 || defaultModel === undefined) return undefined;
+  const defaultModel =
+    selection.defaultAlias !== undefined ? byAlias.get(selection.defaultAlias) : undefined;
+  if (selectedModels.length === 0 || defaultModel === undefined) {
+    // The picker only emits an empty selection when `removable`, so this is the
+    // remove path; for a non-removable provider it is unreachable, but treat a
+    // degenerate selection as a cancel rather than writing nothing.
+    return removable ? { kind: 'remove' } : undefined;
+  }
 
   return {
+    kind: 'select',
     models: selectedModels,
     defaultModelId: defaultModel.id,
     thinking: selection.thinking,
@@ -207,6 +227,7 @@ function runCatalogModelMultiSelect(
   host: SlashCommandHost,
   modelDict: Record<string, ModelAlias>,
   initialSelection: CatalogModelSelectionInitialState,
+  removable: boolean,
 ): Promise<ModelMultiSelection | undefined> {
   return new Promise((resolve) => {
     const selector = new CatalogModelMultiSelectComponent({
@@ -214,6 +235,7 @@ function runCatalogModelMultiSelect(
       currentThinking: initialSelection.thinking ?? true,
       selectedAliases: initialSelection.selectedAliases,
       defaultAlias: initialSelection.defaultAlias,
+      removable,
       colors: host.state.theme.colors,
       searchable: true,
       onSelect: (selection) => {

@@ -27,9 +27,13 @@ import {
 } from './model-choice';
 
 export interface ModelMultiSelection {
-  /** Checked model aliases, in the order the user checked them. */
+  /**
+   * Checked model aliases, in the order the user checked them. Empty means the
+   * user confirmed with nothing selected — a request to remove the channel
+   * (only reachable when the picker was opened with `removable: true`).
+   */
   readonly aliases: readonly string[];
-  readonly defaultAlias: string;
+  readonly defaultAlias?: string;
   readonly thinking: boolean;
 }
 
@@ -39,6 +43,12 @@ export interface CatalogModelMultiSelectOptions {
   readonly colors: ColorPalette;
   readonly selectedAliases?: readonly string[];
   readonly defaultAlias?: string;
+  /**
+   * When true, confirming with zero models checked is allowed and signals that
+   * the channel should be removed. Used when re-entering an already-configured
+   * provider. When false/undefined, Enter with nothing checked is a no-op.
+   */
+  readonly removable?: boolean;
   /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
   readonly searchable?: boolean;
   /** Items per page. Lists longer than this paginate (PgUp/PgDn). */
@@ -150,7 +160,14 @@ export class CatalogModelMultiSelectComponent extends Container implements Focus
     // Space/Tab the picker stays open — never silently include the highlighted
     // row, since that would contradict the "only the models you check are
     // written" guarantee.
-    if (this.checked.size === 0) return;
+    if (this.checked.size === 0) {
+      // For an already-configured provider, confirming with nothing checked
+      // means "remove this channel". Otherwise there is nothing to do.
+      if (this.opts.removable === true) {
+        this.opts.onSelect({ aliases: [], defaultAlias: undefined, thinking: this.thinkingDraft });
+      }
+      return;
+    }
     const aliases = [...this.checked];
     const defaultAlias = this.defaultAlias();
     if (defaultAlias === undefined) return;
@@ -204,7 +221,9 @@ export class CatalogModelMultiSelectComponent extends Container implements Focus
     if (this.checked.size === 0) {
       lines.push(
         chalk.hex(colors.textMuted)(
-          ' Press Space to select at least one model — Tab makes the highlighted one the default.',
+          this.opts.removable === true
+            ? ' Deselect all and press Enter to remove this channel — or Space to keep models.'
+            : ' Press Space to select at least one model — Tab makes the highlighted one the default.',
         ),
       );
     } else {

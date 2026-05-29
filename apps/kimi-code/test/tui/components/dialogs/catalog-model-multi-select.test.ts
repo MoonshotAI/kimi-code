@@ -49,7 +49,11 @@ describe('CatalogModelMultiSelectComponent', () => {
   }
 
   function makeSelector(
-    initial: { selectedAliases?: readonly string[]; defaultAlias?: string } = {},
+    initial: {
+      selectedAliases?: readonly string[];
+      defaultAlias?: string;
+      removable?: boolean;
+    } = {},
   ) {
     const onSelect = vi.fn();
     const onCancel = vi.fn();
@@ -59,6 +63,7 @@ describe('CatalogModelMultiSelectComponent', () => {
       colors: darkColors,
       selectedAliases: initial.selectedAliases,
       defaultAlias: initial.defaultAlias,
+      removable: initial.removable,
       searchable: true,
       onSelect,
       onCancel,
@@ -160,6 +165,39 @@ describe('CatalogModelMultiSelectComponent', () => {
   it('Enter does nothing when no model is checked', () => {
     const { selector, onSelect, onCancel } = makeSelector();
     selector.handleInput(DOWN); // highlight Beta but don't check it
+    selector.handleInput(ENTER);
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it('when removable, confirming with everything deselected requests channel removal', () => {
+    const { selector, onSelect, onCancel } = makeSelector({
+      selectedAliases: ['prov/alpha', 'prov/beta'],
+      removable: true,
+    });
+
+    selector.handleInput(SPACE); // uncheck Alpha (highlighted)
+    selector.handleInput(DOWN); // highlight Beta
+    selector.handleInput(SPACE); // uncheck Beta
+    expect(rendered(selector)).toContain('press Enter to remove this channel');
+    selector.handleInput(ENTER);
+
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(onSelect).toHaveBeenCalledWith({
+      aliases: [],
+      defaultAlias: undefined,
+      thinking: true,
+    });
+  });
+
+  it('when not removable, Enter with everything deselected stays a no-op', () => {
+    const { selector, onSelect, onCancel } = makeSelector({
+      selectedAliases: ['prov/alpha'],
+    });
+    expect(rendered(selector)).not.toContain('remove this channel');
+
+    selector.handleInput(SPACE); // uncheck Alpha (highlighted)
     selector.handleInput(ENTER);
 
     expect(onSelect).not.toHaveBeenCalled();
