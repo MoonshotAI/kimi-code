@@ -155,6 +155,53 @@ describe('resolveRuntimeProvider model metadata', () => {
     });
   });
 
+  it('treats alias.adaptiveThinking as advertising the thinking capability', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          anthropic: { type: 'anthropic', apiKey: 'sk-anthropic' },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'okapi-alias': {
+            provider: 'anthropic',
+            model: 'coding-model-okapi-0527-vibe',
+            maxContextSize: 200000,
+            adaptiveThinking: true,
+          },
+        },
+      },
+      model: 'okapi-alias',
+    });
+
+    expect(resolved.modelCapabilities.thinking).toBe(true);
+  });
+
+  it('does not advertise thinking for a custom-named alias without adaptiveThinking or a thinking capability', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          anthropic: { type: 'anthropic', apiKey: 'sk-anthropic' },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'okapi-alias': {
+            provider: 'anthropic',
+            model: 'coding-model-okapi-0527-vibe',
+            maxContextSize: 200000,
+          },
+        },
+      },
+      model: 'okapi-alias',
+    });
+
+    expect(resolved.modelCapabilities.thinking).toBe(false);
+  });
+
   it('rejects provider model names that are not configured aliases', () => {
     expect(() =>
       resolveRuntimeProvider({
