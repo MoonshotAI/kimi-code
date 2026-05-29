@@ -6,18 +6,6 @@ import type { FlagDefinitionInput } from './types';
 /** Master switch: when truthy, forces every flag on (highest priority). */
 export const MASTER_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
 
-/** Shared prefix for per-feature variables. */
-export const EXPERIMENTAL_PREFIX = 'KIMI_CODE_EXPERIMENTAL_';
-
-/**
- * Conventional env-name generator: flag id → recommended env variable name. Only used when
- * authoring a new flag (to fill `env`) and for an optional consistency test; NOT used during
- * resolution.
- */
-export function flagEnvKey(id: string): string {
-  return `${EXPERIMENTAL_PREFIX}${id.toUpperCase().replaceAll('-', '_')}`;
-}
-
 /**
  * Pure, synchronous flag resolver. State comes entirely from (env, registry) and nothing is
  * cached: env is read live on every call, so a single shared instance always reflects the current
@@ -48,13 +36,6 @@ export class FlagResolver {
     if (override !== undefined) return override;
     return def.default; // L3 default
   }
-}
-
-export function createFlagResolver(
-  env?: Readonly<Record<string, string | undefined>>,
-  definitions?: readonly FlagDefinitionInput[],
-): FlagResolver {
-  return new FlagResolver(env, definitions);
 }
 
 /**
