@@ -82,3 +82,7 @@ to the resumed session id, not to the working directory.
 
 `id` (8-hex), `humanSchedule` (English summary), `recurring`,
 `nextFireAt` (local ISO timestamp with numeric offset, or null). `id` is needed by `CronDelete`.
+
+## Tell the user how to cancel or modify
+
+After successfully creating a task, proactively tell the user how they can cancel or modify it later. Users have no direct `/cron` command or self-service UI to manage reminders themselves; they must ask the model to make changes (e.g. "cancel my 9am reminder" or "change my daily check to 10am"). Include the task `id` in your message so the user can reference it.
