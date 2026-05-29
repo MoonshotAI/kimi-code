@@ -151,6 +151,26 @@ describe('applyEnvModelConfig', () => {
     );
   });
 
+  it('maps KIMI_MODEL_ADAPTIVE_THINKING onto the alias', () => {
+    expect(
+      apply({ ...MIN, KIMI_MODEL_ADAPTIVE_THINKING: 'true' })
+        .models?.[ENV_MODEL_ALIAS_KEY]?.adaptiveThinking,
+    ).toBe(true);
+    expect(
+      apply({ ...MIN, KIMI_MODEL_ADAPTIVE_THINKING: 'false' })
+        .models?.[ENV_MODEL_ALIAS_KEY]?.adaptiveThinking,
+    ).toBe(false);
+    expect(
+      apply({ ...MIN }).models?.[ENV_MODEL_ALIAS_KEY]?.adaptiveThinking,
+    ).toBeUndefined();
+  });
+
+  it('rejects an invalid KIMI_MODEL_ADAPTIVE_THINKING', () => {
+    expectConfigInvalid(() =>
+      apply({ ...MIN, KIMI_MODEL_ADAPTIVE_THINKING: 'maybe' }),
+    );
+  });
+
   it('preserves unrelated config fields', () => {
     const base = getDefaultConfig();
     base.defaultPermissionMode = 'auto';

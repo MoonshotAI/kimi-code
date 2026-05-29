@@ -925,6 +925,61 @@ describe('AnthropicChatProvider', () => {
       expect(body['output_config']).toEqual({ effort: 'max' });
     });
 
+    it('adaptiveThinking=true forces adaptive on an unversioned model name', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'coding-model-okapi-0527-vibe',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        adaptiveThinking: true,
+      }).withThinking('high');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' });
+      expect(body['output_config']).toEqual({ effort: 'high' });
+    });
+
+    it('forced adaptive allows max effort without clamping to high', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'coding-model-okapi-0527-vibe',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        adaptiveThinking: true,
+      }).withThinking('max');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' });
+      expect(body['output_config']).toEqual({ effort: 'max' });
+    });
+
+    it('unversioned model name without adaptiveThinking stays budget-based', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'coding-model-okapi-0527-vibe',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+      }).withThinking('high');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: 32000 });
+      expect(body['output_config']).toBeUndefined();
+    });
+
+    it('adaptiveThinking=false forces budget on a 4.6 model name', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'claude-opus-4-6',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        adaptiveThinking: false,
+      }).withThinking('high');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: 32000 });
+      expect(body['output_config']).toBeUndefined();
+    });
+
     it('pre-4.6 model clamps xhigh and max to high without output_config', async () => {
       for (const effort of ['xhigh', 'max'] as const) {
         const provider = createProvider('claude-sonnet-4-5').withThinking(effort);

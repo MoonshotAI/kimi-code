@@ -43,6 +43,10 @@ export const ModelAliasSchema = z.object({
   capabilities: z.array(z.string()).optional(),
   displayName: z.string().optional(),
   reasoningKey: z.string().optional(),
+  // Explicitly declare adaptive-thinking support, overriding the kosong
+  // model-name version inference. Needed for custom-named Anthropic endpoints
+  // whose model name does not encode a parseable Claude version.
+  adaptiveThinking: z.boolean().optional(),
 });
 
 export type ModelAlias = z.infer<typeof ModelAliasSchema>;
