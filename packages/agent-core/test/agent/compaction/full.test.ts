@@ -14,11 +14,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentOptions } from '../../../src/agent';
 import { DefaultCompactionStrategy, type CompactionStrategy } from '../../../src/agent/compaction';
+import { FLAG_DEFINITIONS, MASTER_ENV } from '../../../src/flags';
 import { HookEngine, type HookEngineTriggerArgs } from '../../../src/session/hooks';
+import { estimateTokensForMessages } from '../../../src/utils/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../fixtures/telemetry';
 import type { TestAgentContext, TestAgentOptions } from '../harness/agent';
 import { testAgent } from '../harness/agent';
-import { estimateTokensForMessages } from '../../../src/utils/tokens';
 
 type GenerateFn = NonNullable<AgentOptions['generate']>;
 
@@ -35,6 +36,7 @@ const CATALOGUED_MODEL_CAPABILITIES = {
   tool_use: true,
   max_context_tokens: 256_000,
 } as const;
+const MICRO_COMPACTION_FLAG_ENV = getMicroCompactionFlagEnv();
 
 describe('FullCompaction', () => {
   it('keeps an oversized trailing user message as recent', () => {
@@ -311,6 +313,7 @@ describe('FullCompaction', () => {
 
   it('micro-compacts old tool results before sending the summary request', async () => {
     vi.useFakeTimers();
+    enableMicroCompactionFlag();
     const ctx = testAgent({
       compactionStrategy: alwaysCompactOnce,
       microCompaction: {
@@ -1560,7 +1563,21 @@ describe('FullCompaction', () => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
 });
+
+function enableMicroCompactionFlag(): void {
+  vi.stubEnv(MASTER_ENV, '0');
+  vi.stubEnv(MICRO_COMPACTION_FLAG_ENV, '1');
+}
+
+function getMicroCompactionFlagEnv(): string {
+  const flag = FLAG_DEFINITIONS.find((definition) => definition.id === 'micro-compaction');
+  if (flag === undefined) {
+    throw new Error('Missing micro-compaction flag definition.');
+  }
+  return flag.env;
+}
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;

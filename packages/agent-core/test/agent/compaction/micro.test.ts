@@ -1,12 +1,14 @@
 import type { ContentPart, Message } from '@moonshot-ai/kosong';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentRecord } from '../../../src/agent';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
   InMemoryAgentRecordPersistence,
 } from '../../../src/agent/records';
+import { FLAG_DEFINITIONS, MASTER_ENV } from '../../../src/flags';
 import { estimateTokensForMessages } from '../../../src/utils/tokens';
+import { recordingTelemetry, type TelemetryRecord } from '../../fixtures/telemetry';
 import { testAgent, type TestAgentContext } from '../harness/agent';
 
 const CATALOGUED_PROVIDER = {
@@ -25,8 +27,14 @@ const CATALOGUED_MODEL_CAPABILITIES = {
 
 const MINUTE = 60 * 1000;
 const DEFAULT_MARKER = '[Old tool result content cleared]';
+const MICRO_COMPACTION_FLAG_ENV = getMicroCompactionFlagEnv();
 
 describe('MicroCompaction', () => {
+  beforeEach(() => {
+    vi.stubEnv(MASTER_ENV, '0');
+    vi.stubEnv(MICRO_COMPACTION_FLAG_ENV, '1');
+  });
+
   it('truncates old tool results after cache miss', () => {
     vi.useFakeTimers();
     const ctx = testAgent({
@@ -380,6 +388,73 @@ describe('MicroCompaction', () => {
     ]);
   });
 
+  it('tracks telemetry when a cache miss advances the micro-compaction cutoff', () => {
+    vi.useFakeTimers();
+    const records: TelemetryRecord[] = [];
+    const microCompaction = {
+      keepRecentMessages: 2,
+      minContentTokens: 1,
+      cacheMissedThresholdMs: 60 * MINUTE,
+    };
+    const ctx = testAgent({
+      telemetry: recordingTelemetry(records),
+      microCompaction,
+    });
+
+    vi.setSystemTime(0);
+    appendMicroToolExchange(ctx, 1, { output: 'result one '.repeat(20) });
+    appendMicroToolExchange(ctx, 2, { output: 'result two '.repeat(20) });
+    appendMicroToolExchange(ctx, 3, { output: 'result three' });
+
+    vi.setSystemTime(61 * MINUTE);
+    expect(toolTexts(ctx.agent.context.messages)).toEqual([
+      DEFAULT_MARKER,
+      DEFAULT_MARKER,
+      'result three',
+    ]);
+
+    const event = singleTelemetryEvent(records, 'micro_compaction_applied');
+    expect(event.properties).toMatchObject({
+      ...microCompaction,
+      truncatedMarker: DEFAULT_MARKER,
+      previous_cutoff: 0,
+      cutoff: 7,
+      message_count: 9,
+      cache_age_ms: 61 * MINUTE,
+      truncatedToolResultCount: 2,
+      beforeTokens: expect.any(Number),
+      afterTokens: expect.any(Number),
+    });
+    expect(numberProperty(event, 'beforeTokens')).toBeGreaterThan(
+      numberProperty(event, 'afterTokens'),
+    );
+
+    expect(ctx.agent.context.messages).toHaveLength(9);
+    expect(records.filter((record) => record.event === 'micro_compaction_applied')).toHaveLength(1);
+  });
+
+  it('leaves context unchanged when the micro-compaction flag is disabled', () => {
+    vi.stubEnv(MICRO_COMPACTION_FLAG_ENV, '0');
+    vi.useFakeTimers();
+    const persistence = new InMemoryAgentRecordPersistence();
+    const ctx = testAgent({
+      microCompaction: {
+        keepRecentMessages: 0,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * MINUTE,
+      },
+      persistence,
+    });
+
+    vi.setSystemTime(0);
+    appendMicroToolExchange(ctx, 1, { output: 'result one' });
+
+    vi.setSystemTime(61 * MINUTE);
+
+    expect(toolTexts(ctx.agent.context.messages)).toEqual(['result one']);
+    expect(lastMicroCompactionCutoff(persistence.records)).toBeUndefined();
+  });
+
   it('uses the custom marker at the minContentTokens boundary', () => {
     vi.useFakeTimers();
     const marker = '[tool output removed for test]';
@@ -538,6 +613,7 @@ describe('MicroCompaction', () => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
 });
 
 interface MicroToolExchangeOptions {
@@ -714,4 +790,27 @@ function textOf(message: Message | undefined): string {
 
 function hasMarker(messages: readonly Message[]): boolean {
   return toolTexts(messages).includes(DEFAULT_MARKER);
+}
+
+function getMicroCompactionFlagEnv(): string {
+  const flag = FLAG_DEFINITIONS.find((definition) => definition.id === 'micro-compaction');
+  if (flag === undefined) {
+    throw new Error('Missing micro-compaction flag definition.');
+  }
+  return flag.env;
+}
+
+function singleTelemetryEvent(
+  records: readonly TelemetryRecord[],
+  event: string,
+): TelemetryRecord {
+  const matches = records.filter((record) => record.event === event);
+  expect(matches).toHaveLength(1);
+  return matches[0]!;
+}
+
+function numberProperty(record: TelemetryRecord, key: string): number {
+  const value = record.properties?.[key];
+  expect(typeof value).toBe('number');
+  return value as number;
 }

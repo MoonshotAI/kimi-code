@@ -3,6 +3,7 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 import type { Agent } from '..';
 import type { ContextMessage } from '../context';
 import { estimateTokensForContentParts } from '../../utils/tokens';
+import { flags } from '../../flags';
 
 export interface MicroCompactionConfig {
   keepRecentMessages: number;
@@ -41,7 +42,9 @@ export class MicroCompaction {
     this.cutoff = cutoff;
   }
 
-  compact(messages: readonly ContextMessage[]): ContextMessage[] {
+  compact(messages: readonly ContextMessage[]): readonly ContextMessage[] {
+    if (!flags.enabled('micro-compaction')) return messages;
+
     const config = this.config;
     const { lastAssistantAt } = this.agent.context;
     const cacheAgeMs = lastAssistantAt === null ? null : Date.now() - lastAssistantAt;
