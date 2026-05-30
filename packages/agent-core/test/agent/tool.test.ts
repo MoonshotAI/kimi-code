@@ -181,7 +181,7 @@ describe('ToolManager setActiveTools filtering', () => {
     expect(activeNames).toEqual(['Read']);
   });
 
-  it('preserves pending builtin names across intermediate user‑tool‑only calls but clears on empty replacement', () => {
+  it('only keeps pending builtin names when the replacement set contains unresolved tools', () => {
     const agent = {
       records: { logRecord: vi.fn() },
       config: { hasProvider: false },
@@ -193,36 +193,31 @@ describe('ToolManager setActiveTools filtering', () => {
     const tm = new ToolManager(agent);
     // builtins empty — pre-init state
 
-    // First call: task tools saved as pending
+    // First call: task tools saved as pending (missing builtins)
     tm.setActiveTools(['Bash', 'TaskList', 'TaskOutput', 'TaskStop']);
     expect((tm as any).pendingBuiltinToolNames).toEqual([
       'Bash', 'TaskList', 'TaskOutput', 'TaskStop',
     ]);
 
-    // Second call: user-tool-only — all names available; pending must survive
-    // because this call doesn't express intent about builtin tools.
+    // Second call: user-tool-only replacement — clears pending because
+    // this is a replacement, not an incremental addition. The new active
+    // set explicitly replaces the previous one.
     const userTool = {
       name: 'UserTool', description: '', parameters: {},
       resolveExecution: vi.fn(),
     };
     (tm as any).userTools.set('UserTool', userTool);
     tm.setActiveTools(['UserTool']);
-    expect((tm as any).pendingBuiltinToolNames).toEqual([
-      'Bash', 'TaskList', 'TaskOutput', 'TaskStop',
-    ]);
-
-    // Third call: empty replacement — must clear pending since the caller
-    // explicitly removed all tools.
-    tm.setActiveTools([]);
     expect((tm as any).pendingBuiltinToolNames).toEqual([]);
+    expect([...tm.toolInfos()].filter((t) => t.active).map((t) => t.name)).toEqual(['UserTool']);
 
-    // Fourth call: re-establish pending
+    // Third call: re-establish pending
     tm.setActiveTools(['Bash', 'TaskList', 'TaskOutput', 'TaskStop']);
     expect((tm as any).pendingBuiltinToolNames).toEqual([
       'Bash', 'TaskList', 'TaskOutput', 'TaskStop',
     ]);
 
-    // Fifth call: MCP-only — no non-MCP names, acts like empty replacement
+    // Fourth call: MCP-only — no non-MCP names, acts like empty replacement
     tm.setActiveTools(['mcp__*']);
     expect((tm as any).pendingBuiltinToolNames).toEqual([]);
   });
