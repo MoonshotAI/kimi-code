@@ -22,7 +22,34 @@ coding agent, following the phase plans in this directory.
 | 4c | Goal continuation loop | ✅ | 0899188 |
 | 4d | Goal evaluator | ✅ | d0dc822 |
 | 5  | End-to-end integration and gates | ✅ | 674b2c1 |
-| 6  | Headless goal mode and hardening | ✅ | (this commit) |
+| 6  | Headless goal mode and hardening | ✅ | abb938d |
+
+## Post-implementation fixes
+
+### Fix: `maxStepsPerTurn` no longer fatally caps long goals (continuation checkpoint)
+
+- **Symptom:** a long goal died with `loop.max_steps_exceeded` (e.g. maxSteps=100).
+- **Root cause:** goal continuation keeps the *same* loop-level `runTurn` alive across all
+  continuations, so the single `steps` counter accumulated across the whole goal and
+  `maxStepsPerTurn` capped the entire run (not one turn). The Phase 4c reconciliation only caught
+  the boundary on a *terminal* step; an uninterrupted tool-call streak threw mid-stream and the
+  goal stopped with a runtime error.
+- **Fix:** `maxStepsPerTurn` now bounds a single continuation **segment**.
+  - `run-turn.ts` tracks a `stepBudgetBase`; the cap compares `steps - stepBudgetBase`. Goal
+    continuations return `resetStepBudget: true`, which advances the base (steps stay monotonic for
+    numbering).
+  - New `LoopHooks.shouldContinueOnMaxSteps` is consulted *before* throwing. For an active goal it
+    runs the same evaluator-driven decision (your suggestion: validate at the cap, then continue or
+    stop); it returns `undefined` for non-goal turns so the cap still throws as before.
+  - `GoalContinuationController` extracted a shared `decide()` used by both the stop hook and the
+    cap checkpoint; the old `remaining`/`Model step limit reached` reconciliation was removed.
+  - The goal's real ceiling is now its own budgets (`turnBudget` default 20, token, wall-clock) and
+    the evaluator's `no_progress`/`failure` limits — `maxStepsPerTurn` is just a per-segment bound.
+- **Tests:** replaced the old reconciliation unit tests with `shouldContinueOnMaxSteps` cases
+  (checkpoint continue/reset, evaluator-ends-at-cap, undefined for non-goal, hard-budget stop);
+  updated the integration test to prove a goal runs *more* total steps than `maxStepsPerTurn`
+  without a fatal error and stops via its own turn budget. Full agent-core suite (2360) green;
+  typecheck + lint OK across packages.
 
 ## Detours / Notes
 

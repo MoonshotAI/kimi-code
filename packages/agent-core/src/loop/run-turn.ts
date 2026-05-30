@@ -56,6 +56,11 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
   } = input;
   let usage: TokenUsage = emptyUsage();
   let steps = 0;
+  // Steps consumed before the current segment. `maxSteps` bounds `steps -
+  // stepBudgetBase`, so a continuation that resets the budget gets a fresh cap
+  // while `steps` stays monotonic for step numbering. Non-goal turns never move
+  // this, so the cap behaves exactly as before.
+  let stepBudgetBase = 0;
   // Normal exits overwrite this with the completed step's stop reason.
   let stopReason: LoopTurnStopReason = 'end_turn';
   let activeStep: number | undefined;
@@ -67,8 +72,23 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
     while (true) {
       signal.throwIfAborted();
 
-      if (maxSteps !== undefined && maxSteps > 0 && steps >= maxSteps) {
-        throw createMaxStepsExceededError(maxSteps);
+      if (maxSteps !== undefined && maxSteps > 0 && steps - stepBudgetBase >= maxSteps) {
+        // Let a hook (goal mode) treat the cap as a checkpoint. No hook, or an
+        // undefined result, preserves the original fatal behavior.
+        const decision = await hooks?.shouldContinueOnMaxSteps?.({
+          turnId,
+          stepNumber: steps,
+          signal,
+          llm,
+          maxSteps,
+        });
+        if (decision === undefined) {
+          throw createMaxStepsExceededError(maxSteps);
+        }
+        if (!decision.continue) {
+          break; // Goal decided to stop (terminal/budget); end the turn cleanly.
+        }
+        stepBudgetBase = steps; // Start a fresh segment budget and keep going.
       }
 
       steps += 1;
@@ -95,19 +115,21 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
       const terminalStopReason: LoopTerminalStepStopReason = stepResult.stopReason;
       stopReason = terminalStopReason;
 
-      if (
-        !(
-          await hooks?.shouldContinueAfterStop?.({
-            turnId,
-            stepNumber: steps,
-            usage: stepResult.usage,
-            stopReason: terminalStopReason,
-            signal,
-            llm,
-          })
-        )?.continue
-      ) {
+      const continuation = await hooks?.shouldContinueAfterStop?.({
+        turnId,
+        stepNumber: steps,
+        usage: stepResult.usage,
+        stopReason: terminalStopReason,
+        signal,
+        llm,
+      });
+      if (continuation?.continue !== true) {
         break;
+      }
+      if (continuation.resetStepBudget === true) {
+        // Goal continuation: bound `maxStepsPerTurn` to this segment, not the
+        // whole goal run.
+        stepBudgetBase = steps;
       }
     }
   } catch (error) {

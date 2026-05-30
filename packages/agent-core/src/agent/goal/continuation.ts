@@ -3,7 +3,12 @@ import { grandTotal } from '@moonshot-ai/kosong';
 import type { Agent } from '..';
 import { flags } from '../../flags';
 import type { LLM } from '../../loop/llm';
-import type { LoopStoppedStepContext, ShouldContinueAfterStopResult } from '../../loop/types';
+import type {
+  LoopMaxStepsContext,
+  LoopStoppedStepContext,
+  MaxStepsDecision,
+  ShouldContinueAfterStopResult,
+} from '../../loop/types';
 import {
   GoalEvaluator,
   type GoalEvaluatorInput,
@@ -37,8 +42,10 @@ export interface GoalContinuationControllerOptions {
   readonly createEvaluator?: (llm: LLM) => GoalEvaluatorLike;
 }
 
-const CONTINUE: ShouldContinueAfterStopResult = { continue: true };
-const STOP: ShouldContinueAfterStopResult = { continue: false };
+// Continuing always restarts the per-turn step budget so `maxStepsPerTurn`
+// bounds one continuation segment, not the entire goal run.
+const CONTINUE: MaxStepsDecision = { continue: true, resetStepBudget: true };
+const STOP: MaxStepsDecision = { continue: false };
 
 export class GoalContinuationController {
   private readonly now: () => number;
@@ -59,17 +66,41 @@ export class GoalContinuationController {
     return flags.enabled('goal-command') && this.agent.type === 'main' && this.agent.goals !== undefined;
   }
 
+  /** Runs after a stopped (terminal) model step. */
   async shouldContinueAfterStop(
     ctx: LoopStoppedStepContext,
   ): Promise<ShouldContinueAfterStopResult> {
     if (!this.enabled) return STOP;
+    return this.decide(ctx.llm, ctx.signal);
+  }
+
+  /**
+   * Runs when the per-turn step budget is exhausted mid-segment. Returns
+   * `undefined` for non-goal turns so the loop throws `MaxStepsExceededError` as
+   * usual; for an active goal it treats the cap as a continuation checkpoint —
+   * the same evaluator-driven decision as a normal stop.
+   */
+  async shouldContinueOnMaxSteps(ctx: LoopMaxStepsContext): Promise<MaxStepsDecision | undefined> {
+    if (!this.enabled) return undefined;
+    const goal = this.agent.goals!.getGoal().goal;
+    if (goal === null || goal.status !== 'active') return undefined;
+    return this.decide(ctx.llm, ctx.signal);
+  }
+
+  /**
+   * The shared goal-continuation decision, used by both the normal stop hook and
+   * the step-budget checkpoint. Increments the goal turn, accounts wall-clock,
+   * enforces hard budgets, runs the evaluator, and applies the verdict.
+   */
+  private async decide(llm: LLM, signal: AbortSignal): Promise<MaxStepsDecision> {
+    if (!this.enabled) return STOP;
     const store = this.agent.goals!;
 
-    // 1-3. Stop if the goal disappeared, is paused, or is terminal.
+    // Stop if the goal disappeared, is paused, or is terminal.
     const goal = store.getGoal().goal;
     if (goal === null || goal.status !== 'active') return STOP;
 
-    // This stopped step participated in the goal loop.
+    // This stopped step / checkpoint participated in the goal loop.
     await store.incrementTurn();
 
     // Record elapsed wall-clock since the last checkpoint before budget checks.
@@ -82,7 +113,7 @@ export class GoalContinuationController {
     }
 
     // Run the independent evaluator. The model's self-report is evidence only.
-    const evaluator = this.createEvaluator(ctx.llm);
+    const evaluator = this.createEvaluator(llm);
     const modelReport =
       goal.lastModelReportStatus !== undefined
         ? {
@@ -95,7 +126,7 @@ export class GoalContinuationController {
       goal,
       messages: this.agent.context.messages,
       modelReport,
-      signal: ctx.signal,
+      signal,
     });
 
     // Count evaluator token usage toward the goal token budget.
@@ -168,20 +199,10 @@ export class GoalContinuationController {
       return STOP;
     }
 
-    // Reconcile with maxStepsPerTurn so the configured cap is a budget, not an error.
-    const maxSteps = this.agent.kimiConfig?.loopControl?.maxStepsPerTurn;
-    if (maxSteps !== undefined && maxSteps > 0) {
-      const remaining = maxSteps - ctx.stepNumber;
-      if (remaining <= 0) {
-        // No model step left under the cap: stop without triggering MaxStepsExceededError.
-        await store.markBudgetLimited({ reason: 'Model step limit reached' });
-        return STOP;
-      }
-      if (remaining === 1) {
-        // Exactly one step left: spend it on a wrap-up, then stop.
-        return this.budgetLimitedWrapUp('Model step limit reached');
-      }
-    }
+    // `maxStepsPerTurn` is no longer reconciled here: it bounds a single
+    // continuation segment (run-turn resets the budget on each continue) and a
+    // mid-segment cap is handled as a checkpoint via shouldContinueOnMaxSteps.
+    // The goal's own budgets (turn / token / wall-clock) remain the ceiling.
 
     // Continue working toward the goal.
     this.appendContinuationPrompt();
@@ -206,7 +227,7 @@ export class GoalContinuationController {
     }
   }
 
-  private async budgetLimitedWrapUp(reason: string): Promise<ShouldContinueAfterStopResult> {
+  private async budgetLimitedWrapUp(reason: string): Promise<MaxStepsDecision> {
     // markBudgetLimited makes the goal terminal, so the next stopped step stops
     // at the status check above — the wrap-up therefore runs exactly once.
     await this.agent.goals!.markBudgetLimited({ reason });

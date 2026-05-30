@@ -189,7 +189,7 @@ describe('GoalContinuationController with evaluator', () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
     const { result, messages } = await runWith(store, factoryOf(() => ({ ok: true, verdict: 'continue', reason: 'more', usage: emptyUsage() })));
-    expect(result).toEqual({ continue: true });
+    expect(result).toEqual({ continue: true, resetStepBudget: true });
     expect(messages.at(-1)!.origin).toEqual({ kind: 'system_trigger', name: 'goal_continuation' });
     expect(store.getGoal().goal!.status).toBe('active');
   });
@@ -213,7 +213,7 @@ describe('GoalContinuationController with evaluator', () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
     const { result } = await runWith(store, factoryOf(() => ({ ok: false, error: 'bad json', usage: emptyUsage() })));
-    expect(result).toEqual({ continue: true });
+    expect(result).toEqual({ continue: true, resetStepBudget: true });
     expect(store.getGoal().goal!.consecutiveFailureTurns).toBe(1);
     expect(store.getGoal().goal!.status).toBe('active');
   });
@@ -238,7 +238,7 @@ describe('GoalContinuationController with evaluator', () => {
     await store.createGoal({ objective: 'work', budgetLimits: { tokenBudget: 20 } });
     const { result } = await runWith(store, factoryOf(() => ({ ok: true, verdict: 'continue', reason: 'go', usage: tokens(50) })));
     // Evaluator usage (50) exceeds the 20-token budget -> wrap-up continuation, terminal.
-    expect(result).toEqual({ continue: true });
+    expect(result).toEqual({ continue: true, resetStepBudget: true });
     expect(store.getGoal().goal!.status).toBe('budget_limited');
   });
 
@@ -262,7 +262,7 @@ describe('GoalContinuationController with evaluator', () => {
     await store.createGoal({ objective: 'work' });
     await store.recordModelReport({ requestedStatus: 'complete', reason: 'done' });
     const { result } = await runWith(store, factoryOf(() => ({ ok: true, verdict: 'continue', reason: 'not yet', usage: emptyUsage() })));
-    expect(result).toEqual({ continue: true });
+    expect(result).toEqual({ continue: true, resetStepBudget: true });
     expect(store.getGoal().goal!.status).toBe('active');
   });
 
@@ -279,7 +279,7 @@ describe('GoalContinuationController with evaluator', () => {
     const { agent } = controllerAgent({ goals: store });
     const c = new GoalContinuationController(agent, { startedAt: 0, createEvaluator: factory });
 
-    expect(await c.shouldContinueAfterStop(stoppedCtx(1))).toEqual({ continue: true });
+    expect(await c.shouldContinueAfterStop(stoppedCtx(1))).toEqual({ continue: true, resetStepBudget: true });
     expect(store.getGoal().goal!.status).toBe('active');
     expect(await c.shouldContinueAfterStop(stoppedCtx(2))).toEqual({ continue: false });
     expect(store.getGoal().goal!.status).toBe('complete');

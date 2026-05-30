@@ -473,6 +473,10 @@ export class TurnFlow {
               //    is inactive, preserving the previous stop-by-default behavior).
               return goalContinuation.shouldContinueAfterStop(ctx);
             },
+            // The step-budget cap is a goal checkpoint, not a fatal error: run
+            // the evaluator and either start a fresh segment or stop cleanly.
+            // Returns undefined for non-goal turns so the cap still throws.
+            shouldContinueOnMaxSteps: (ctx) => goalContinuation.shouldContinueOnMaxSteps(ctx),
             prepareToolExecution: async (ctx) => {
               const cached = deduper.checkSameStep(
                 ctx.toolCall.id,

@@ -74,6 +74,10 @@ function stoppedCtx(stepNumber: number): LoopStoppedStepContext {
   return { stepNumber } as unknown as LoopStoppedStepContext;
 }
 
+function maxStepsCtx(maxSteps: number) {
+  return { stepNumber: maxSteps, maxSteps, signal: new AbortController().signal } as never;
+}
+
 describe('GoalContinuationController decisions', () => {
   beforeEach(() => {
     process.env[GOAL_FLAG] = 'true';
@@ -117,7 +121,7 @@ describe('GoalContinuationController decisions', () => {
 
     const result = await c.shouldContinueAfterStop(stoppedCtx(1));
 
-    expect(result).toEqual({ continue: true });
+    expect(result).toEqual({ continue: true, resetStepBudget: true });
     expect(store.getGoal().goal!.turnsUsed).toBe(1);
     expect(messages).toHaveLength(1);
     expect(messages[0]!.origin).toEqual({ kind: 'system_trigger', name: 'goal_continuation' });
@@ -140,7 +144,7 @@ describe('GoalContinuationController decisions', () => {
     const c = new GoalContinuationController(agent, { startedAt: 0 });
 
     // First stop: budget reached -> wrap-up continuation, status becomes terminal.
-    expect(await c.shouldContinueAfterStop(stoppedCtx(1))).toEqual({ continue: true });
+    expect(await c.shouldContinueAfterStop(stoppedCtx(1))).toEqual({ continue: true, resetStepBudget: true });
     expect(store.getGoal().goal!.status).toBe('budget_limited');
     expect(messages.at(-1)!.origin).toEqual({ kind: 'system_trigger', name: 'goal_continuation' });
 
@@ -154,7 +158,7 @@ describe('GoalContinuationController decisions', () => {
     const { agent } = controllerAgent({ goals: store });
     const c = new GoalContinuationController(agent, { startedAt: 0 });
     // incrementTurn brings turnsUsed to 1 == turnBudget -> budget reached.
-    expect(await c.shouldContinueAfterStop(stoppedCtx(1))).toEqual({ continue: true });
+    expect(await c.shouldContinueAfterStop(stoppedCtx(1))).toEqual({ continue: true, resetStepBudget: true });
     expect(store.getGoal().goal!.status).toBe('budget_limited');
   });
 
@@ -165,35 +169,74 @@ describe('GoalContinuationController decisions', () => {
     const { agent } = controllerAgent({ goals: store });
     const c = new GoalContinuationController(agent, { startedAt: 0, now: () => nowValue });
     nowValue = 1500; // 1.5s elapsed > 1s budget
-    expect(await c.shouldContinueAfterStop(stoppedCtx(1))).toEqual({ continue: true });
+    expect(await c.shouldContinueAfterStop(stoppedCtx(1))).toEqual({ continue: true, resetStepBudget: true });
     expect(store.getGoal().goal!.wallClockMs).toBe(1500);
     expect(store.getGoal().goal!.status).toBe('budget_limited');
   });
 
-  it('maps maxStepsPerTurn to budget_limited without throwing when no step remains', async () => {
+  it('resets the step budget on each continuation so maxStepsPerTurn bounds a segment', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
-    const { agent } = controllerAgent({ goals: store, maxStepsPerTurn: 2 });
+    const { agent } = controllerAgent({ goals: store });
     const c = new GoalContinuationController(agent, {
       startedAt: 0,
       createEvaluator: fixedEvaluator('continue'),
     });
-    // stepNumber 2 == maxSteps -> remaining 0 -> stop, no MaxStepsExceeded.
-    expect(await c.shouldContinueAfterStop(stoppedCtx(2))).toEqual({ continue: false });
-    expect(store.getGoal().goal!.status).toBe('budget_limited');
-    expect(store.getGoal().goal!.terminalReason).toBe('Model step limit reached');
+    expect(await c.shouldContinueAfterStop(stoppedCtx(1))).toEqual({
+      continue: true,
+      resetStepBudget: true,
+    });
   });
 
-  it('spends the last step on a wrap-up when exactly one model step remains', async () => {
+  it('treats a mid-segment step cap as a goal checkpoint, not a fatal error', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
-    const { agent } = controllerAgent({ goals: store, maxStepsPerTurn: 3 });
+    const { agent } = controllerAgent({ goals: store });
     const c = new GoalContinuationController(agent, {
       startedAt: 0,
       createEvaluator: fixedEvaluator('continue'),
     });
-    // stepNumber 2, maxSteps 3 -> remaining 1 -> wrap-up + continue.
-    expect(await c.shouldContinueAfterStop(stoppedCtx(2))).toEqual({ continue: true });
+    // An active goal hitting the cap continues with a fresh segment budget.
+    expect(await c.shouldContinueOnMaxSteps(maxStepsCtx(100))).toEqual({
+      continue: true,
+      resetStepBudget: true,
+    });
+    expect(store.getGoal().goal!.status).toBe('active');
+    expect(store.getGoal().goal!.turnsUsed).toBe(1);
+  });
+
+  it('lets the evaluator end the goal at the step cap', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    const { agent } = controllerAgent({ goals: store });
+    const c = new GoalContinuationController(agent, {
+      startedAt: 0,
+      createEvaluator: fixedEvaluator('complete'),
+    });
+    expect(await c.shouldContinueOnMaxSteps(maxStepsCtx(100))).toEqual({ continue: false });
+    expect(store.getGoal().goal!.status).toBe('complete');
+  });
+
+  it('returns undefined at the cap for a non-goal turn so the loop still throws', async () => {
+    const store = makeStore();
+    const { agent } = controllerAgent({ goals: store }); // no active goal
+    const c = new GoalContinuationController(agent, { startedAt: 0 });
+    expect(await c.shouldContinueOnMaxSteps(maxStepsCtx(100))).toBeUndefined();
+  });
+
+  it('stops at the step cap when a hard budget is already reached', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work', budgetLimits: { turnBudget: 1 } });
+    const { agent } = controllerAgent({ goals: store });
+    const c = new GoalContinuationController(agent, {
+      startedAt: 0,
+      createEvaluator: fixedEvaluator('continue'),
+    });
+    // incrementTurn pushes turnsUsed to 1 == turnBudget -> budget_limited wrap-up.
+    expect(await c.shouldContinueOnMaxSteps(maxStepsCtx(2))).toEqual({
+      continue: true,
+      resetStepBudget: true,
+    });
     expect(store.getGoal().goal!.status).toBe('budget_limited');
   });
 
@@ -282,10 +325,11 @@ describe('GoalContinuationController turn integration', () => {
     expect(ctx.llmCalls.length).toBe(1);
   });
 
-  it('maps maxStepsPerTurn to budget_limited, not error', async () => {
+  it('runs more total steps than maxStepsPerTurn without a fatal error', async () => {
     process.env[GOAL_FLAG] = 'true';
     const store = makeStore();
-    await store.createGoal({ objective: 'work' });
+    // turnBudget 2 is the real ceiling; maxStepsPerTurn 2 must NOT cap the goal.
+    await store.createGoal({ objective: 'work', budgetLimits: { turnBudget: 2 } });
     const ctx = testAgent({
       type: 'main',
       goals: store,
@@ -293,14 +337,19 @@ describe('GoalContinuationController turn integration', () => {
       initialConfig: { providers: {}, loopControl: { maxStepsPerTurn: 2 } },
     });
     ctx.configure();
+    // 3 model steps total > maxStepsPerTurn (2): the old whole-goal cap would
+    // have thrown loop.max_steps_exceeded before the third step.
     ctx.mockNextResponse({ type: 'text', text: 'step 1' });
+    ctx.mockNextResponse({ type: 'text', text: 'step 2' });
     ctx.mockNextResponse({ type: 'text', text: 'wrap up' });
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'work' }] });
     const events = await ctx.untilTurnEnd();
 
-    expect(store.getGoal().goal!.status).toBe('budget_limited');
     expect(JSON.stringify(events)).not.toContain('loop.max_steps_exceeded');
+    expect(ctx.llmCalls.length).toBe(3);
+    // The goal stopped via its own turn budget, not a runtime error.
+    expect(store.getGoal().goal!.status).toBe('budget_limited');
   });
 
   it('marks an active goal error when the turn fails', async () => {

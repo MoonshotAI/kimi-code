@@ -180,6 +180,29 @@ export interface BeforeStepResult {
 
 export interface ShouldContinueAfterStopResult {
   readonly continue: boolean;
+  /**
+   * When true, the turn-level step budget restarts from the current step.
+   * Goal continuation sets this so `maxStepsPerTurn` bounds a single
+   * continuation segment rather than the whole (possibly long) goal run.
+   */
+  readonly resetStepBudget?: boolean;
+}
+
+/** Context passed to {@link ShouldContinueOnMaxStepsHook} when the step budget is exhausted. */
+export interface LoopMaxStepsContext extends LoopStepHookContext {
+  readonly maxSteps: number;
+}
+
+/**
+ * Decision returned when the per-turn step budget is reached. `undefined` means
+ * the hook does not handle this turn, so the loop throws `MaxStepsExceededError`
+ * as usual. A returned decision lets goal mode treat the cap as a checkpoint:
+ * `{ continue: true }` starts a fresh segment, `{ continue: false }` stops the
+ * turn cleanly (no error).
+ */
+export interface MaxStepsDecision {
+  readonly continue: boolean;
+  readonly resetStepBudget?: boolean;
 }
 
 export type BeforeStepHook = (ctx: LoopStepHookContext) => Promise<BeforeStepResult | undefined>;
@@ -202,6 +225,10 @@ export type ShouldContinueAfterStopHook = (
   ctx: LoopStoppedStepContext,
 ) => Promise<ShouldContinueAfterStopResult | undefined>;
 
+export type ShouldContinueOnMaxStepsHook = (
+  ctx: LoopMaxStepsContext,
+) => Promise<MaxStepsDecision | undefined>;
+
 /**
  * Groups every awaited phase hook.
  *
@@ -219,4 +246,10 @@ export interface LoopHooks {
   authorizeToolExecution?: AuthorizeToolExecutionHook | undefined;
   finalizeToolResult?: FinalizeToolResultHook | undefined;
   shouldContinueAfterStop?: ShouldContinueAfterStopHook | undefined;
+  /**
+   * Consulted when the per-turn step budget is exhausted, before throwing
+   * `MaxStepsExceededError`. Lets goal mode treat the cap as a continuation
+   * checkpoint instead of a fatal error.
+   */
+  shouldContinueOnMaxSteps?: ShouldContinueOnMaxStepsHook | undefined;
 }
