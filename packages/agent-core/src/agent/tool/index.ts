@@ -44,7 +44,7 @@ export class ToolManager {
    * available so tools such as `WebSearch` — which require a service that may
    * be present at init time — are not silently dropped on first profile apply.
    */
-  private pendingBuiltinToolNames: string[] = [];
+  protected pendingBuiltinToolNames: string[] = [];
   protected readonly store: Partial<ToolStoreData> = {};
   private mcpToolStatusUnsubscribe: (() => void) | undefined;
 
@@ -317,10 +317,17 @@ export class ToolManager {
             `They may require additional service configuration.`,
         );
       }
-      // Save pending builtin names so they can be re-applied once builtins
-      // are initialized (e.g. when the model is configured after profile apply).
-      this.pendingBuiltinToolNames = missingTools;
-    } else {
+      // Merge into pending so previously deferred names survive repeated
+      // calls (e.g. a user‑tool‑only setActiveTools between profile apply
+      // and provider init clears the state that initializeBuiltinTools
+      // needs for the allowBackground computation).
+      this.pendingBuiltinToolNames = [
+        ...new Set([...this.pendingBuiltinToolNames, ...missingTools]),
+      ];
+    } else if (this.builtinTools.size > 0) {
+      // Only clear pending when builtins are initialized so that deferred
+      // names are not lost by an intermediate setActiveTools call that
+      // happens to have no missing tools (e.g. a user‑tool‑only call).
       this.pendingBuiltinToolNames = [];
     }
     this.enabledTools = new Set(availableNames);
@@ -440,6 +447,9 @@ export class ToolManager {
         for (const name of nowAvailable) {
           this.enabledTools.add(name);
         }
+        this.agent.log.info(
+          `Re-applied pending tool names that are now available: ${nowAvailable.join(', ')}.`,
+        );
       }
       const stillMissing = this.pendingBuiltinToolNames.filter(
         (name) => !nowAvailable.includes(name),
