@@ -33,8 +33,8 @@ Plan: `plan/phase-07-goal-ux-and-budget.md`. Sequenced commits:
 |---|--------|--------|------|
 | 1 | Generic subcommand autocomplete (`/goal` subcommands + flags) | ✅ | 7cbb37f |
 | 2 | Budget model: drop default turn cap, surface counters to evaluator | ✅ | — |
-| 3 | `goal.updated` event spine + terminal stats on `goal.update` record | 🟡 | 5d… |
-| 4 | Footer badge | ✅ | 5d… |
+| 3 | `goal.updated` event spine + terminal stats on `goal.update` record | 🟡 | cc35725 |
+| 4 | Footer badge | ✅ | cc35725 |
 | 5 | `/goal` status box | ⬜ | — |
 | 6 | Transcript markers + completion card (live + resume) | ⬜ | — |
 
