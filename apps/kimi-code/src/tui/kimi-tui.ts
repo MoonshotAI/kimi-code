@@ -171,6 +171,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
+    mcpServersSummary: null,
   };
 }
 

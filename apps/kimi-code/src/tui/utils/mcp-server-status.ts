@@ -63,9 +63,10 @@ export function formatMcpStartupStatusSummary(
   if (connecting > 0) parts.push(`${connecting} connecting`);
   if (connected > 0) parts.push(`${connected} connected`);
   if (disabled > 0) parts.push(`${disabled} disabled`);
+  if (parts.length === 0) return '';
   const detail = parts.join(', ');
-  if (visibleCount === 0) return `MCP servers: ${detail}`;
-  return `MCP servers: ${hidden.length} more (${detail})`;
+  if (visibleCount === 0) return detail;
+  return `${hidden.length} more (${detail})`;
 }
 
 export function mcpServerStatusKey(server: McpServerStatusSnapshot): string {
