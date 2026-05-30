@@ -29,8 +29,15 @@ describe('handleSwarmCommand', () => {
     const showError = vi.fn();
     const beginSessionRequest = vi.fn();
     const failSessionRequest = vi.fn();
+    const appendUserTranscriptEntry = vi.fn();
     await handleSwarmCommand(
-      { session: { prompt }, showError, beginSessionRequest, failSessionRequest } as never,
+      {
+        session: { prompt },
+        showError,
+        beginSessionRequest,
+        failSessionRequest,
+        appendUserTranscriptEntry,
+      } as never,
       'compare libs',
     );
     expect(prompt).toHaveBeenCalledTimes(1);
@@ -42,8 +49,15 @@ describe('handleSwarmCommand', () => {
     const showError = vi.fn();
     const beginSessionRequest = vi.fn();
     const failSessionRequest = vi.fn();
+    const appendUserTranscriptEntry = vi.fn();
     await handleSwarmCommand(
-      { session: { prompt }, showError, beginSessionRequest, failSessionRequest } as never,
+      {
+        session: { prompt },
+        showError,
+        beginSessionRequest,
+        failSessionRequest,
+        appendUserTranscriptEntry,
+      } as never,
       'compare libs',
     );
     expect(beginSessionRequest).toHaveBeenCalledTimes(1);
@@ -55,6 +69,31 @@ describe('handleSwarmCommand', () => {
     expect(failSessionRequest).not.toHaveBeenCalled();
   });
 
+  it('appends the user request to the transcript before prompting', async () => {
+    const prompt = vi.fn<(text: string) => Promise<void>>(async () => undefined);
+    const showError = vi.fn();
+    const beginSessionRequest = vi.fn();
+    const failSessionRequest = vi.fn();
+    const appendUserTranscriptEntry = vi.fn();
+    await handleSwarmCommand(
+      {
+        session: { prompt },
+        showError,
+        beginSessionRequest,
+        failSessionRequest,
+        appendUserTranscriptEntry,
+      } as never,
+      'compare libs',
+    );
+    // The user's command must appear in the live transcript (as the readable
+    // "/swarm <task>", not the verbose internal wrapper), before the turn starts.
+    expect(appendUserTranscriptEntry).toHaveBeenCalledTimes(1);
+    expect(String(appendUserTranscriptEntry.mock.calls[0]?.[0])).toBe('/swarm compare libs');
+    expect(appendUserTranscriptEntry.mock.invocationCallOrder[0]).toBeLessThan(
+      beginSessionRequest.mock.invocationCallOrder[0] ?? Infinity,
+    );
+  });
+
   it('fails the session request when the prompt rejects', async () => {
     const prompt = vi.fn<(text: string) => Promise<void>>(async () => {
       throw new Error('boom');
@@ -62,8 +101,15 @@ describe('handleSwarmCommand', () => {
     const showError = vi.fn();
     const beginSessionRequest = vi.fn();
     const failSessionRequest = vi.fn();
+    const appendUserTranscriptEntry = vi.fn();
     await handleSwarmCommand(
-      { session: { prompt }, showError, beginSessionRequest, failSessionRequest } as never,
+      {
+        session: { prompt },
+        showError,
+        beginSessionRequest,
+        failSessionRequest,
+        appendUserTranscriptEntry,
+      } as never,
       'compare libs',
     );
     expect(beginSessionRequest).toHaveBeenCalledTimes(1);

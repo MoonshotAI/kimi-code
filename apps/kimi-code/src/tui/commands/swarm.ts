@@ -23,6 +23,11 @@ export async function handleSwarmCommand(host: SlashCommandHost, args: string): 
     host.showError('Usage: /swarm <task>');
     return;
   }
+  // Show the readable command in the transcript before the turn starts. The
+  // prompt actually sent to the model is the verbose buildSwarmPrompt wrapper,
+  // so without this the live transcript would show a Swarm tool card with no
+  // preceding user request.
+  host.appendUserTranscriptEntry(`/swarm ${task}`);
   // Route through the same session-request lifecycle as a normal send /
   // skill activation rather than calling session.prompt raw. beginSessionRequest
   // flips streamingPhase out of 'idle' synchronously, so the input gate closes

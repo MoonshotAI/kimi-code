@@ -105,6 +105,7 @@ export interface SlashCommandHost {
   switchToSession(session: Session, message: string): Promise<void>;
   beginSessionRequest(): void;
   failSessionRequest(message: string): void;
+  appendUserTranscriptEntry(content: string): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
 
   // UI

@@ -1239,6 +1239,23 @@ export class KimiTUI {
     }
   }
 
+  /**
+   * Appends a plain user-request line to the live transcript. Used by framed
+   * slash commands (e.g. /swarm) that drive a model turn via session.prompt
+   * with an internal wrapper prompt: the wrapper would otherwise be the only
+   * record of the request, so the live transcript should show the readable
+   * command the user actually entered before the turn's tool card appears.
+   */
+  appendUserTranscriptEntry(content: string): void {
+    this.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'user',
+      turnId: undefined,
+      renderMode: 'plain',
+      content,
+    });
+  }
+
   private appendApprovalTranscriptEntry(request: ApprovalRequest, response: ApprovalResponse): void {
     if (request.toolName === 'ExitPlanMode' || request.display.kind === 'plan_review') return;
     const parts: string[] = [];
