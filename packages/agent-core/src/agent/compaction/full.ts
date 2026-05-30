@@ -25,7 +25,6 @@ import {
   estimateTokens,
   estimateTokensForMessages,
 } from '../../utils/tokens';
-import { project } from '../context/projector';
 import compactionInstructionTemplate from './compaction-instruction.md';
 import { renderMessagesToText } from './render-messages';
 import type { CompactionBeginData, CompactionResult } from './types';
@@ -233,7 +232,7 @@ export class FullCompaction {
       while (true) {
         const messagesToCompact = originalHistory.slice(0, compactedCount);
         const messages = [
-          ...project(messagesToCompact),
+          ...this.agent.context.project(messagesToCompact),
           {
             role: 'user',
             content: [
