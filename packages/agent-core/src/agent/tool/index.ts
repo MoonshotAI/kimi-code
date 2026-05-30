@@ -338,12 +338,16 @@ export class ToolManager {
       // Builtins are initialized and all requested tools resolved — clear
       // deferred state so a subsequent init does not re-apply old names.
       this.pendingBuiltinToolNames = [];
+    } else if (nonMcpNames.length === 0) {
+      // Empty or MCP-only call before init — explicit replacement of the
+      // tool set.  Clear pending so initializeBuiltinTools does not
+      // re-enable tools the caller explicitly removed.
+      this.pendingBuiltinToolNames = [];
     }
-    // When builtins.size === 0 and missingTools.length === 0, the current
-    // call resolved all its names against user/MCP tools without touching
-    // builtins.  Keep the existing pending names alive so a previous
-    // deferral (e.g. a profile‑requested builtin tool before provider
-    // configuration) is not silently dropped.
+    // When builtins.size === 0, missingTools.length === 0, and
+    // nonMcpNames.length > 0, the call resolved all names against
+    // user tools without touching builtins.  Keep existing pending alive
+    // so a previous deferral is not silently dropped.
     this.enabledTools = new Set(availableNames);
     this.mcpAccessPatterns = names.filter((name) => isMcpToolName(name));
   }
