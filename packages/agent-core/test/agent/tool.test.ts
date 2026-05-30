@@ -181,7 +181,7 @@ describe('ToolManager setActiveTools filtering', () => {
     expect(activeNames).toEqual(['Read']);
   });
 
-  it('merges pendingBuiltinToolNames across repeated setActiveTools calls before builtin init', () => {
+  it('preserves pending builtin names across intermediate all‑available calls before builtin init', () => {
     const agent = {
       records: { logRecord: vi.fn() },
       config: { hasProvider: false },
@@ -200,7 +200,6 @@ describe('ToolManager setActiveTools filtering', () => {
     ]);
 
     // Second call: user-tool-only — all names available; pending must survive
-    // because builtins are not yet initialized.
     const userTool = {
       name: 'UserTool', description: '', parameters: {},
       resolveExecution: vi.fn(),
@@ -211,11 +210,10 @@ describe('ToolManager setActiveTools filtering', () => {
       'Bash', 'TaskList', 'TaskOutput', 'TaskStop',
     ]);
 
-    // Third call with additional missing tool: merge, don't replace
+    // Third call replaces pending — no stale merge that could re-enable
+    // tools the intermediate call explicitly removed.
     tm.setActiveTools(['WebSearch']);
-    expect((tm as any).pendingBuiltinToolNames).toEqual([
-      'Bash', 'TaskList', 'TaskOutput', 'TaskStop', 'WebSearch',
-    ]);
+    expect((tm as any).pendingBuiltinToolNames).toEqual(['WebSearch']);
   });
 
   it('enables Bash background mode when task tools arrive via pendingBuiltinToolNames', async () => {

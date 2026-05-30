@@ -317,19 +317,20 @@ export class ToolManager {
             `They may require additional service configuration.`,
         );
       }
-      // Merge into pending so previously deferred names survive repeated
-      // calls (e.g. a user‑tool‑only setActiveTools between profile apply
-      // and provider init clears the state that initializeBuiltinTools
-      // needs for the allowBackground computation).
-      this.pendingBuiltinToolNames = [
-        ...new Set([...this.pendingBuiltinToolNames, ...missingTools]),
-      ];
+      // Replace pending with the current missing set.  The most recent
+      // pre-init call expressing intent about builtin tools wins, so stale
+      // names from an earlier profile are not re-enabled at init time.
+      this.pendingBuiltinToolNames = [...missingTools];
     } else if (this.builtinTools.size > 0) {
-      // Only clear pending when builtins are initialized so that deferred
-      // names are not lost by an intermediate setActiveTools call that
-      // happens to have no missing tools (e.g. a user‑tool‑only call).
+      // Builtins are initialized and all requested tools resolved — clear
+      // deferred state so a subsequent init does not re-apply old names.
       this.pendingBuiltinToolNames = [];
     }
+    // When builtins.size === 0 and missingTools.length === 0, the current
+    // call resolved all its names against user/MCP tools without touching
+    // builtins.  Keep the existing pending names alive so a previous
+    // deferral (e.g. a profile‑requested builtin tool before provider
+    // configuration) is not silently dropped.
     this.enabledTools = new Set(availableNames);
     this.mcpAccessPatterns = names.filter((name) => isMcpToolName(name));
   }
