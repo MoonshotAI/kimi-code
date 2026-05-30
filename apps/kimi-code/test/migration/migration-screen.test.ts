@@ -578,7 +578,7 @@ describe('MigrationScreenComponent — execution wiring', () => {
     expect(onCompleteResult?.migrated).toBe(true);
   });
 
-  it('lands on the failure screen when the runner rejects', async () => {
+  it('lands on the failure screen with the runner rejection reason', async () => {
     const c = new MigrationScreenComponent({
       plan: makePlan(),
       sourceHome: '/x/.kimi',
@@ -592,6 +592,8 @@ describe('MigrationScreenComponent — execution wiring', () => {
     c.handleInput('\r'); // ask1: Migrate now
     c.handleInput('\r'); // ask2: Config only -> begins migration
     await new Promise((res) => setTimeout(res, 0));
-    expect(c.render(80).join('\n')).toContain('Migration failed');
+    const out = c.render(80).join('\n');
+    expect(out).toContain('Migration failed');
+    expect(out).toContain('Reason: boom');
   });
 });
