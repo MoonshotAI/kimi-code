@@ -763,6 +763,46 @@ describe('KimiTUI message flow', () => {
     }
   });
 
+  it('renders cron fired events as distinct transcript entries', async () => {
+    const { driver } = await makeDriver();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'cron.fired',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        origin: {
+          kind: 'cron_job',
+          jobId: 'deadbeef',
+          cron: '* * * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        },
+        prompt: '提醒用户：这是每分钟提醒',
+      } as Event,
+      vi.fn(),
+    );
+
+    const entry = driver.state.transcriptEntries.at(-1);
+    expect(entry).toMatchObject({
+      kind: 'cron',
+      content: '提醒用户：这是每分钟提醒',
+      cronData: {
+        jobId: 'deadbeef',
+        cron: '* * * * *',
+        coalescedCount: 1,
+        stale: false,
+      },
+    });
+
+    const transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('Scheduled reminder fired');
+    expect(transcript).toContain('* * * * *');
+    expect(transcript).toContain('提醒用户：这是每分钟提醒');
+    expect(transcript).not.toContain('<cron-fire');
+  });
+
   it('coalesces assistant delta component updates', async () => {
     vi.useFakeTimers();
     try {

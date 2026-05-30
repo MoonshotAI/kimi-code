@@ -35,6 +35,11 @@ describe('Event public types', () => {
     expectTypeOf<EventByType<'subagent.spawned'>['runInBackground']>().toEqualTypeOf<boolean>();
   });
 
+  it('narrows cron fired events by type', () => {
+    expectTypeOf<EventByType<'cron.fired'>['prompt']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'cron.fired'>['origin']['kind']>().toEqualTypeOf<'cron_job'>();
+  });
+
   it('exposes approval and question reverse-RPC requests', () => {
     expectTypeOf<ApprovalRequest['turnId']>().toEqualTypeOf<number | undefined>();
     expectTypeOf<ApprovalRequest['toolName']>().toEqualTypeOf<string>();
@@ -78,6 +83,7 @@ describe('Event public types', () => {
         case 'background.task.started':
         case 'background.task.updated':
         case 'background.task.terminated':
+        case 'cron.fired':
           return;
         default:
           assertNever(event);

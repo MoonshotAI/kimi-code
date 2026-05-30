@@ -67,6 +67,7 @@ import { TasksBrowserController } from './controllers/tasks-browser';
 import { FileMentionProvider } from './components/editor/file-mention-provider';
 import { AssistantMessageComponent } from './components/messages/assistant-message';
 import { BackgroundAgentStatusComponent } from './components/messages/background-agent-status';
+import { CronMessageComponent } from './components/messages/cron-message';
 import { SkillActivationComponent } from './components/messages/skill-activation';
 import {
   NoticeMessageComponent,
@@ -1175,6 +1176,12 @@ export class KimiTUI {
         return new SkillActivationComponent(
           entry.skillName ?? entry.content,
           entry.skillArgs,
+          this.state.theme.colors,
+        );
+      case 'cron':
+        return new CronMessageComponent(
+          entry.content,
+          entry.cronData ?? {},
           this.state.theme.colors,
         );
       case 'assistant': {
