@@ -150,7 +150,10 @@ export class SDKRpcClient {
 
   async resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary> {
     const rpc = await this.getRpc();
-    return rpc.resumeSession({ sessionId: input.id });
+    return rpc.resumeSession({
+      sessionId: input.id,
+      mcpServers: input.mcpServers,
+    });
   }
 
   async forkSession(input: ForkSessionInput): Promise<SessionSummary> {
@@ -160,6 +163,7 @@ export class SDKRpcClient {
       id: input.forkId,
       title: input.title,
       metadata: input.metadata,
+      mcpServers: input.mcpServers,
     });
   }
 
