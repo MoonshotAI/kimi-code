@@ -261,4 +261,41 @@ describe('SessionPickerComponent', () => {
       }
     }
   });
+
+  // Regression for #240: a long session id, the inline time + "(current)"
+  // badge, and a long prompt all used to be appended past the terminal edge,
+  // which crashed the renderer with "Rendered line exceeds terminal width" on
+  // very narrow terminals.
+  it('never renders a line wider than the terminal, even on tiny widths (#240)', () => {
+    const now = new Date('2026-05-11T12:00:00.000Z').getTime();
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+
+    const id = 'ses_fbe574f3-572d-487f-9fa0-d09694f599d4';
+    const component = new SessionPickerComponent({
+      sessions: [
+        {
+          id,
+          title: '现在要重构一下 sessions 列表，让 UI 更好看一些',
+          last_prompt: 'please redesign the picker UI to be much nicer than before',
+          work_dir: '/Users/getlong/Development/cesiumdb',
+          updated_at: now - 5 * 60 * 1000,
+          metadata: { imported_from_kimi_cli: true },
+        },
+      ],
+      loading: false,
+      currentSessionId: id,
+      colors: getColorPalette('dark'),
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    for (let width = 10; width <= 60; width++) {
+      const lines = component.render(width);
+      for (const [idx, line] of lines.entries()) {
+        expect(visibleWidth(line), `width=${String(width)} line#${String(idx)}`).toBeLessThanOrEqual(
+          width,
+        );
+      }
+    }
+  });
 });
