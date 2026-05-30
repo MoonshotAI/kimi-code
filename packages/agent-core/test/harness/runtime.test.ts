@@ -21,6 +21,11 @@ describe('KimiCore runtime config', () => {
       await rm(tmp, { recursive: true, force: true });
     }
     vi.unstubAllGlobals();
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('KIMI_API_KEY')) {
+        delete process.env[key];
+      }
+    }
   });
 
   it('uses the shared OAuth resolver for Moonshot service tokens', async () => {
@@ -122,5 +127,38 @@ max_context_size = 100000
     const mainAgent = session?.agents.get('main');
 
     expect(mainAgent?.config.modelAlias).toBe('default-mock');
+  });
+
+  it('does not create apiKeyPool when KIMI_API_KEY_POOL is not set', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    await mkdir(homeDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), '');
+
+    // Multiple keys present but opt-in flag missing
+    process.env['KIMI_API_KEY'] = 'sk-primary';
+    process.env['KIMI_API_KEY_1'] = 'sk-backup';
+
+    const [coreRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+
+    expect((core as any).apiKeyPool).toBeUndefined();
+  });
+
+  it('creates apiKeyPool when KIMI_API_KEY_POOL is set', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    await mkdir(homeDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), '');
+
+    process.env['KIMI_API_KEY_POOL'] = '1';
+    process.env['KIMI_API_KEY'] = 'sk-primary';
+    process.env['KIMI_API_KEY_1'] = 'sk-backup';
+
+    const [coreRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+
+    expect((core as any).apiKeyPool).toBeDefined();
+    expect((core as any).apiKeyPool.keyCount).toBe(2);
   });
 });

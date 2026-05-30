@@ -1,6 +1,7 @@
 import type { Logger } from '#/logging/types';
 import type { ProviderConfig as KosongProviderConfig, ModelCapability, ProviderRequestAuth } from '@moonshot-ai/kosong';
-import { APIStatusError, createProvider, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
+import { ApiKeyPool } from './api-key-pool';
+import { APIStatusError, createProvider, isRetryableGenerateError, UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
 import type { KimiConfig, ModelAlias, OAuthRef, ProviderConfig } from '../config';
 import { ErrorCodes, isKimiError, KimiError } from '../errors';
 
@@ -24,6 +25,7 @@ interface ProviderManagerOptions {
   readonly kimiRequestHeaders?: Record<string, string>;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver;
   readonly promptCacheKey?: string;
+  readonly apiKeyPool?: ApiKeyPool;
 }
 
 type AuthorizedRequest = <T>(
@@ -124,68 +126,99 @@ export class ProviderManager implements ModelProvider {
   ): AuthorizedRequest | undefined {
     const { providerName } = this.resolveProviderConfig(model);
     const providerConfig = this.config.providers[providerName];
-    if (providerConfig?.oauth === undefined) return undefined;
 
-    if (providerApiKey(providerConfig) !== undefined) {
-      // oauth + apiKey on the same provider makes request auth ambiguous:
-      // provider construction would prefer apiKey while runtime auth resolves
-      // OAuth. Reject it so misconfiguration surfaces at model resolution.
-      throw new KimiError(
-        ErrorCodes.CONFIG_INVALID,
-        `Provider "${providerName}" has both apiKey and oauth set in config.toml — they are mutually exclusive. Remove one.`,
-      );
-    }
+    // OAuth path
+    if (providerConfig?.oauth !== undefined) {
+      if (providerApiKey(providerConfig) !== undefined) {
+        // oauth + apiKey on the same provider makes request auth ambiguous:
+        // provider construction would prefer apiKey while runtime auth resolves
+        // OAuth. Reject it so misconfiguration surfaces at model resolution.
+        throw new KimiError(
+          ErrorCodes.CONFIG_INVALID,
+          `Provider "${providerName}" has both apiKey and oauth set in config.toml — they are mutually exclusive. Remove one.`,
+        );
+      }
 
-    const loginRequired = (cause?: unknown): KimiError =>
-      new KimiError(
-        ErrorCodes.AUTH_LOGIN_REQUIRED,
-        `OAuth provider "${providerName}" requires login before it can be used.`,
-        cause === undefined ? undefined : { cause },
-      );
+      const loginRequired = (cause?: unknown): KimiError =>
+        new KimiError(
+          ErrorCodes.AUTH_LOGIN_REQUIRED,
+          `OAuth provider "${providerName}" requires login before it can be used.`,
+          cause === undefined ? undefined : { cause },
+        );
 
-    const tokenProvider = this.options.resolveOAuthTokenProvider?.(providerName, providerConfig.oauth);
-    if (tokenProvider === undefined) {
-      return async () => {
-        throw loginRequired();
+      const tokenProvider = this.options.resolveOAuthTokenProvider?.(providerName, providerConfig.oauth);
+      if (tokenProvider === undefined) {
+        return async () => {
+          throw loginRequired();
+        };
+      }
+
+      const log = options?.log;
+      const fetchAuth = async (force: boolean): Promise<ProviderRequestAuth> => {
+        let apiKey: string;
+        try {
+          apiKey = await tokenProvider.getAccessToken(force ? { force: true } : undefined);
+        } catch (error) {
+          if (!isKimiError(error) || error.code !== ErrorCodes.AUTH_LOGIN_REQUIRED) {
+            log?.warn('oauth token fetch failed', { providerName, error });
+          }
+          throw loginRequired(error);
+        }
+        if (apiKey.trim().length === 0) throw loginRequired();
+        return { apiKey };
+      };
+
+      return async (request) => {
+        let auth = await fetchAuth(false);
+        for (let refreshed = false; ; refreshed = true) {
+          try {
+            return await request(auth);
+          } catch (error) {
+            if (!(error instanceof APIStatusError) || error.statusCode !== 401) throw error;
+            if (refreshed) {
+              throw new KimiError(
+                ErrorCodes.AUTH_LOGIN_REQUIRED,
+                'OAuth provider credentials were rejected. Send /login to login.',
+                {
+                  cause: error,
+                  details: { statusCode: error.statusCode, requestId: error.requestId },
+                },
+              );
+            }
+            auth = await fetchAuth(true);
+          }
+        }
       };
     }
 
-    const log = options?.log;
-    const fetchAuth = async (force: boolean): Promise<ProviderRequestAuth> => {
-      let apiKey: string;
-      try {
-        apiKey = await tokenProvider.getAccessToken(force ? { force: true } : undefined);
-      } catch (error) {
-        if (!isKimiError(error) || error.code !== ErrorCodes.AUTH_LOGIN_REQUIRED) {
-          log?.warn('oauth token fetch failed', { providerName, error });
-        }
-        throw loginRequired(error);
-      }
-      if (apiKey.trim().length === 0) throw loginRequired();
-      return { apiKey };
-    };
-
-    return async (request) => {
-      let auth = await fetchAuth(false);
-      for (let refreshed = false; ; refreshed = true) {
+    // Key pool path — only for kimi provider when a pool is configured
+    // and the provider does not already have an explicit apiKey.
+    if (
+      providerConfig?.type === 'kimi' &&
+      this.options.apiKeyPool !== undefined &&
+      providerApiKey(providerConfig) === undefined
+    ) {
+      const pool = this.options.apiKeyPool;
+      return async (request) => {
+        const key = pool.acquire();
+        const auth: ProviderRequestAuth = { apiKey: key };
         try {
-          return await request(auth);
+          const result = await request(auth);
+          pool.resetKey(key);
+          return result;
         } catch (error) {
-          if (!(error instanceof APIStatusError) || error.statusCode !== 401) throw error;
-          if (refreshed) {
-            throw new KimiError(
-              ErrorCodes.AUTH_LOGIN_REQUIRED,
-              'OAuth provider credentials were rejected. Send /login to login.',
-              {
-                cause: error,
-                details: { statusCode: error.statusCode, requestId: error.requestId },
-              },
-            );
+          if (
+            isRetryableGenerateError(error) ||
+            (error instanceof APIStatusError && error.statusCode === 401)
+          ) {
+            pool.recordFailure(key);
           }
-          auth = await fetchAuth(true);
+          throw error;
         }
-      }
-    };
+      };
+    }
+
+    return undefined;
   }
 }
 

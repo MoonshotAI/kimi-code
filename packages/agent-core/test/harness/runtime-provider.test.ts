@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { APIConnectionError, APIStatusError } from '@moonshot-ai/kosong';
 
 import type { KimiConfig } from '../../src/config';
 import { ErrorCodes, KimiError } from '../../src/errors';
 import { ProviderManager } from '../../src/session/provider-manager';
+import { ApiKeyPool } from '../../src/session/api-key-pool';
+import type { ProviderRequestAuth } from '@moonshot-ai/kosong';
 import { resolveThinkingLevel } from '../../src/agent/config/thinking';
 
 // Thin wrapper that adapts the legacy `resolveRuntimeProvider(input)` shape to
@@ -35,6 +38,24 @@ const BASE_CONFIG: KimiConfig = {
     'managed:kimi-code': {
       type: 'kimi',
       apiKey: 'test-key',
+      baseUrl: 'https://api.example/v1',
+    },
+  },
+  models: {
+    'kimi-code/kimi-for-coding': {
+      provider: 'managed:kimi-code',
+      model: 'kimi-for-coding',
+      maxContextSize: 1_000_000,
+      capabilities: ['thinking', 'image_in', 'video_in', 'tool_use'],
+    },
+  },
+};
+
+const POOL_BASE_CONFIG: KimiConfig = {
+  defaultModel: 'kimi-code/kimi-for-coding',
+  providers: {
+    'managed:kimi-code': {
+      type: 'kimi',
       baseUrl: 'https://api.example/v1',
     },
   },
@@ -710,5 +731,272 @@ describe('resolveThinkingLevel', () => {
     ).toBe('off');
 
     expect(resolveThinkingLevel(undefined, {})).toBe('high');
+  });
+});
+
+describe('ProviderManager key pool', () => {
+  it('returns undefined for resolveAuth when no pool is configured', () => {
+    const manager = new ProviderManager({ config: BASE_CONFIG });
+    const auth = manager.resolveAuth('kimi-code/kimi-for-coding');
+    expect(auth).toBeUndefined();
+  });
+
+  it('returns a key-pool wrapper for kimi provider when pool is present', async () => {
+    const pool = new ApiKeyPool(['pk-1', 'pk-2']);
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding');
+    expect(withAuth).toBeDefined();
+
+    const request = vi.fn(async (auth: ProviderRequestAuth) => {
+      return { ok: true, key: auth.apiKey! };
+    });
+    const result = await withAuth!(request);
+    expect(result.ok).toBe(true);
+    expect(result.key).toBe('pk-1');
+  });
+
+  it('rotates to the next key on each resolveAuth call', async () => {
+    const pool = new ApiKeyPool(['pk-a', 'pk-b', 'pk-c']);
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
+
+    const keys: string[] = [];
+    const request = vi.fn(async (auth: ProviderRequestAuth) => {
+      keys.push(auth.apiKey!);
+      return { ok: true };
+    });
+
+    await withAuth(request);
+    await withAuth(request);
+    await withAuth(request);
+    expect(keys).toEqual(['pk-a', 'pk-b', 'pk-c']);
+  });
+
+  it('records failure on retryable errors and re-throws', async () => {
+    const pool = new ApiKeyPool(['pk-1']);
+    const recordFailureSpy = vi.spyOn(pool, 'recordFailure');
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
+
+    const request = vi.fn(async () => {
+      throw new APIStatusError(429, 'Too Many Requests');
+    });
+
+    await expect(withAuth(request)).rejects.toThrow(APIStatusError);
+    expect(recordFailureSpy).toHaveBeenCalledWith('pk-1');
+    expect(recordFailureSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('records failure on connection errors', async () => {
+    const pool = new ApiKeyPool(['pk-1']);
+    const recordFailureSpy = vi.spyOn(pool, 'recordFailure');
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
+
+    const request = vi.fn(async () => {
+      throw new APIConnectionError('network error');
+    });
+
+    await expect(withAuth(request)).rejects.toThrow(APIConnectionError);
+    expect(recordFailureSpy).toHaveBeenCalledWith('pk-1');
+  });
+
+  it('records failure on 401 unauthorized errors', async () => {
+    const pool = new ApiKeyPool(['pk-1']);
+    const recordFailureSpy = vi.spyOn(pool, 'recordFailure');
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
+
+    const request = vi.fn(async () => {
+      throw new APIStatusError(401, 'Unauthorized');
+    });
+
+    await expect(withAuth(request)).rejects.toThrow(APIStatusError);
+    expect(recordFailureSpy).toHaveBeenCalledWith('pk-1');
+    expect(recordFailureSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not record failure on non-retryable errors', async () => {
+    const pool = new ApiKeyPool(['pk-1']);
+    const recordFailureSpy = vi.spyOn(pool, 'recordFailure');
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
+
+    const request = vi.fn(async () => {
+      throw new APIStatusError(400, 'Bad Request');
+    });
+
+    await expect(withAuth(request)).rejects.toThrow(APIStatusError);
+    expect(recordFailureSpy).not.toHaveBeenCalled();
+  });
+
+  it('resets key after a successful request', async () => {
+    const pool = new ApiKeyPool(['pk-1']);
+    const resetKeySpy = vi.spyOn(pool, 'resetKey');
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
+
+    const request = vi.fn(async () => 'success');
+    await withAuth(request);
+    expect(resetKeySpy).toHaveBeenCalledWith('pk-1');
+  });
+
+  it('does not use key pool for non-kimi providers', () => {
+    const pool = new ApiKeyPool(['pk-1']);
+    const config: KimiConfig = {
+      defaultModel: 'gpt-alias',
+      providers: {
+        openai: {
+          type: 'openai',
+          apiKey: 'sk-openai',
+        },
+      },
+      models: {
+        'gpt-alias': {
+          provider: 'openai',
+          model: 'gpt-runtime',
+          maxContextSize: 200000,
+        },
+      },
+    };
+    const manager = new ProviderManager({ config, apiKeyPool: pool });
+    const auth = manager.resolveAuth('gpt-alias');
+    expect(auth).toBeUndefined();
+  });
+
+  it('does not use key pool when provider already has an explicit apiKey', () => {
+    const pool = new ApiKeyPool(['pk-1']);
+    const config: KimiConfig = {
+      defaultModel: 'kimi-code/kimi-for-coding',
+      providers: {
+        'managed:kimi-code': {
+          type: 'kimi',
+          apiKey: 'sk-explicit',
+          baseUrl: 'https://api.example/v1',
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+        },
+      },
+    };
+    const manager = new ProviderManager({ config, apiKeyPool: pool });
+    const auth = manager.resolveAuth('kimi-code/kimi-for-coding');
+    // Explicit apiKey on provider means pool should not override it.
+    expect(auth).toBeUndefined();
+  });
+
+  it('rotates keys correctly under concurrent resolveAuth calls', async () => {
+    const pool = new ApiKeyPool(['pk-a', 'pk-b', 'pk-c']);
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
+
+    const keys: string[] = [];
+    const requests = Array.from({ length: 5 }, async () => {
+      await withAuth(async (auth: ProviderRequestAuth) => {
+        keys.push(auth.apiKey!);
+        // Small async gap so the event loop can interleave other requests.
+        await new Promise<void>((r) => { setTimeout(r, 1); });
+        return 'ok';
+      });
+    });
+    await Promise.all(requests);
+
+    expect(keys).toEqual(['pk-a', 'pk-b', 'pk-c', 'pk-a', 'pk-b']);
+  });
+
+  it('distributes keys evenly under 60 concurrent withAuth requests', async () => {
+    const pool = new ApiKeyPool(['pk-0', 'pk-1', 'pk-2']);
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
+
+    const keys: string[] = [];
+    await Promise.all(
+      Array.from({ length: 60 }, () =>
+        withAuth(async (auth: ProviderRequestAuth) => {
+          keys.push(auth.apiKey!);
+          return 'ok';
+        }),
+      ),
+    );
+
+    const counts = new Map<string, number>();
+    for (const k of keys) {
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    expect(counts.get('pk-0')).toBe(20);
+    expect(counts.get('pk-1')).toBe(20);
+    expect(counts.get('pk-2')).toBe(20);
+  });
+
+  it('cools down failed keys and reroutes under concurrent load', async () => {
+    const pool = new ApiKeyPool(['pk-good', 'pk-bad']);
+    const manager = new ProviderManager({ config: POOL_BASE_CONFIG, apiKeyPool: pool });
+    const withAuth = manager.resolveAuth('kimi-code/kimi-for-coding')!;
+
+    let callIndex = 0;
+    const keys: string[] = [];
+    const results = await Promise.allSettled(
+      Array.from({ length: 20 }, () =>
+        withAuth(async (auth: ProviderRequestAuth) => {
+          keys.push(auth.apiKey!);
+          const idx = callIndex++;
+          // First 10 calls: even-indexed requests (0,2,4,6,8) get pk-good and succeed,
+          // odd-indexed get pk-bad and throw 429. Because acquire() is round-robin,
+          // the exact key depends on starting state, so we simulate by key value.
+          if (auth.apiKey === 'pk-bad') {
+            throw new APIStatusError(429, 'Too Many Requests');
+          }
+          return 'success';
+        }),
+      ),
+    );
+
+    // All pk-bad requests should have failed; pk-good should succeed.
+    const badCount = keys.filter((k) => k === 'pk-bad').length;
+    const goodCount = keys.filter((k) => k === 'pk-good').length;
+    expect(badCount).toBe(10);
+    expect(goodCount).toBe(10);
+
+    const failures = results.filter((r) => r.status === 'rejected').length;
+    const successes = results.filter((r) => r.status === 'fulfilled').length;
+    expect(failures).toBe(10);
+    expect(successes).toBe(10);
+
+    // After failures, pk-bad should be in cooldown.
+    const nextKey = pool.acquire();
+    // Round-robin: after 20 calls index is at 0 again. pk-bad had 10 failures -> cooldown.
+    // It should be skipped, so next acquire returns pk-good.
+    expect(nextKey).toBe('pk-good');
+  });
+
+  it('prefers OAuth over key pool when both are configured', async () => {
+    const pool = new ApiKeyPool(['pk-1']);
+    const config: KimiConfig = {
+      defaultModel: 'kimi-code/kimi-for-coding',
+      providers: {
+        'managed:kimi-code': {
+          type: 'kimi',
+          apiKey: '',
+          baseUrl: 'https://api.example/v1',
+          oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        },
+      },
+      models: {
+        'kimi-code/kimi-for-coding': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+        },
+      },
+    };
+    const manager = new ProviderManager({ config, apiKeyPool: pool });
+    const auth = manager.resolveAuth('kimi-code/kimi-for-coding');
+    // OAuth path returns a function that throws login-required when no token provider is set
+    expect(auth).toBeDefined();
+    await expect(auth!(async () => 'ok')).rejects.toThrow(/requires login/);
   });
 });
