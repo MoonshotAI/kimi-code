@@ -66,6 +66,7 @@
     "postinstall": "node scripts/postinstall.mjs"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^0.22.1",
     "@earendil-works/pi-tui": "^0.74.0",
     "@mariozechner/clipboard": "^0.3.2",
     "chalk": "^5.4.1",

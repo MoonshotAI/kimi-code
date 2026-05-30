@@ -109,6 +109,32 @@ describe('CLI options parsing', () => {
     });
   });
 
+  describe('ACP command', () => {
+    it('routes acp without calling the main action', () => {
+      const acp = { calls: 0 };
+      const program = createProgram(
+        '0.0.0',
+        () => {
+          throw new Error('main action should not run');
+        },
+        () => {},
+        () => {},
+        () => {
+          acp.calls += 1;
+        },
+      );
+      program.exitOverride();
+      program.configureOutput({
+        writeOut: () => {},
+        writeErr: () => {},
+      });
+
+      program.parse(['node', 'kimi', 'acp']);
+
+      expect(acp.calls).toBe(1);
+    });
+  });
+
   describe('--yolo family', () => {
     it('--yolo sets yolo to true', () => {
       expect(parse(['--yolo']).yolo).toBe(true);
@@ -261,7 +287,7 @@ describe('CLI options parsing', () => {
       const commandNames: string[] = program.commands
         .filter((command) => !command.name().startsWith('__'))
         .map((command) => command.name());
-      expect(commandNames).toEqual(['export', 'migrate']);
+      expect(commandNames).toEqual(['export', 'migrate', 'acp']);
     });
   });
 

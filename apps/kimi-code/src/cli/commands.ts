@@ -10,12 +10,14 @@ import { registerExportCommand } from './sub/export';
 export type MainCommandHandler = (opts: CLIOptions) => void;
 export type MigrateCommandHandler = () => void;
 export type PluginNodeRunnerHandler = (entry: string, args: readonly string[]) => void;
+export type AcpCommandHandler = () => void;
 
 export function createProgram(
   version: string,
   onMain: MainCommandHandler,
   onMigrate: MigrateCommandHandler,
   onPluginNodeRunner: PluginNodeRunnerHandler = () => {},
+  onAcp: AcpCommandHandler = () => {},
 ): Command {
   const program = new Command(CLI_COMMAND_NAME)
     .description('The Starting Point for Next-Gen Agents')
@@ -75,6 +77,13 @@ export function createProgram(
 
   registerExportCommand(program);
   registerMigrateCommand(program, onMigrate);
+
+  program
+    .command('acp')
+    .description('Run as an ACP agent server over stdio.')
+    .action(() => {
+      onAcp();
+    });
 
   program
     .command('__plugin_run_node', { hidden: true })

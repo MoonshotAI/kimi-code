@@ -152,6 +152,32 @@ kimi export 01HZ...XYZ -o ./bug-report.zip
 kimi export 01HZ...XYZ -o ./bug-report.zip --no-include-global-log
 ```
 
+### `kimi acp`
+
+以 [Agent Client Protocol](https://agentclientprotocol.com/) agent server 形式通过 stdio 运行 Kimi Code CLI。该模式面向兼容 ACP 的编辑器和工具，它们会把 Kimi Code 作为子进程启动。
+
+```sh
+kimi acp
+```
+
+在 ACP 模式下，stdout 只用于输出以换行分隔的 JSON-RPC 协议消息。日志、诊断、认证错误和进度文本会写到 stderr 或诊断日志。该命令不会打开 TUI，也不会运行交互式更新预检。
+
+在 ACP client 中，将 `command` 配置为 `kimi`，并把 `acp` 作为唯一参数：
+
+```json
+{
+  "agent_servers": {
+    "Kimi Code": {
+      "type": "custom",
+      "command": "kimi",
+      "args": ["acp"]
+    }
+  }
+}
+```
+
+如果 Kimi Code 尚未认证或没有配置默认模型，`kimi acp` 会通过 ACP 认证错误上报，而不会向 stdout 打印设置说明。你可以在终端中运行 `kimi` 并使用 `/login`，也可以为 ACP server 进程配置 `KIMI_MODEL_*` 环境变量。
+
 ### `kimi migrate`
 
 将旧版 kimi-cli 的本地数据迁移到 kimi-code。该命令无任何 flag，纯交互式运行，会引导你完成数据迁移的全流程。

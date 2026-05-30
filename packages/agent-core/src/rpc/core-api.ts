@@ -3,7 +3,7 @@ import type { AgentContextData } from '#/agent/context';
 import type { PermissionData, PermissionMode } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
 import type { ToolInfo } from '#/agent/tool';
-import type { KimiConfig, KimiConfigPatch } from '#/config';
+import type { KimiConfig, KimiConfigPatch, McpServerConfig } from '#/config';
 import type { ExperimentalFlagMap } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
@@ -37,6 +37,7 @@ export interface CreateSessionPayload {
   readonly thinking?: string | undefined;
   readonly permission?: PermissionMode | undefined;
   readonly metadata?: JsonObject | undefined;
+  readonly mcpServers?: Record<string, McpServerConfig>;
 }
 
 export interface CloseSessionPayload {
@@ -45,6 +46,7 @@ export interface CloseSessionPayload {
 
 export interface ResumeSessionPayload {
   readonly sessionId: string;
+  readonly mcpServers?: Record<string, McpServerConfig>;
 }
 
 export interface ForkSessionPayload {
@@ -52,6 +54,7 @@ export interface ForkSessionPayload {
   readonly id?: string;
   readonly title?: string;
   readonly metadata?: JsonObject;
+  readonly mcpServers?: Record<string, McpServerConfig>;
 }
 
 export interface ShellEnvironment {
