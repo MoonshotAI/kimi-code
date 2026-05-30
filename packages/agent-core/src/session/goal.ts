@@ -16,8 +16,14 @@ export interface GoalAuditSink {
  * slash command, model tools, continuation loop, and evaluator depend on.
  */
 
-/** Conservative default safety cap applied when a goal provides no turn budget. */
-export const DEFAULT_GOAL_TURN_BUDGET = 20;
+/**
+ * Default malfunction guard: stop a goal after this many *consecutive evaluator
+ * failures* (invalid JSON / judge errors). This is not a work cap — it only
+ * protects against a broken evaluator looping forever. Work limits (turns,
+ * tokens, time) have no defaults; an unbounded goal runs until the evaluator
+ * judges it terminal, and any stop-clause lives in the objective.
+ */
+export const DEFAULT_GOAL_FAILURE_TURN_LIMIT = 3;
 
 /** Maximum objective length in characters. */
 export const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
@@ -621,9 +627,12 @@ export class SessionGoalStore {
   }
 
   private normalizeBudgetLimits(input?: GoalBudgetLimits): GoalBudgetLimits {
+    // No default work caps (turns / tokens / time): an unbounded goal runs until
+    // the evaluator judges it terminal. Only keep a malfunction guard so a
+    // perpetually failing evaluator cannot loop forever.
     const limits: GoalBudgetLimits = {
       ...input,
-      turnBudget: input?.turnBudget ?? DEFAULT_GOAL_TURN_BUDGET,
+      failureTurnLimit: input?.failureTurnLimit ?? DEFAULT_GOAL_FAILURE_TURN_LIMIT,
     };
     return limits;
   }

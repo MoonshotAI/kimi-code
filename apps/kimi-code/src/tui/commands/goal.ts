@@ -159,7 +159,15 @@ async function createGoal(
     return;
   }
   host.track('goal_create', { replace: parsed.replace });
-  host.showStatus(`Goal set: ${parsed.objective}`);
+  const unbounded =
+    parsed.budgetLimits.tokenBudget === undefined &&
+    parsed.budgetLimits.turnBudget === undefined &&
+    parsed.budgetLimits.wallClockBudgetMs === undefined;
+  host.showStatus(
+    unbounded
+      ? `Goal set: ${parsed.objective}\nNo stop condition set — runs until the evaluator judges it complete. Add a clause like "…or stop after 20 turns", or pass --max-turns / --max-minutes / --max-tokens, to bound it.`
+      : `Goal set: ${parsed.objective}`,
+  );
   host.sendNormalUserInput(parsed.objective);
 }
 

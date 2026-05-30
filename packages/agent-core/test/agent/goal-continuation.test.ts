@@ -17,7 +17,6 @@ function fixedEvaluator(verdict: GoalEvaluatorVerdict, reason = 'judge'): () => 
 }
 import { HookEngine } from '../../src/session/hooks';
 import {
-  DEFAULT_GOAL_TURN_BUDGET,
   SessionGoalStore,
   type SessionGoalState,
 } from '../../src/session/goal';
@@ -292,9 +291,9 @@ describe('GoalContinuationController decisions', () => {
     expect(await c.shouldContinueOnMaxSteps(maxStepsCtx(2))).toEqual({ continue: false });
   });
 
-  it('the default turn budget caps an evaluator that always says continue', async () => {
+  it('an explicit turn budget caps an evaluator that always says continue', async () => {
     const store = makeStore();
-    await store.createGoal({ objective: 'work' }); // no explicit budget -> DEFAULT_GOAL_TURN_BUDGET
+    await store.createGoal({ objective: 'work', budgetLimits: { turnBudget: 5 } });
     const { agent } = controllerAgent({ goals: store });
     const c = new GoalContinuationController(agent, {
       startedAt: 0,
@@ -310,7 +309,27 @@ describe('GoalContinuationController decisions', () => {
 
     expect(result.continue).toBe(false);
     expect(store.getGoal().goal!.status).toBe('budget_limited');
-    expect(store.getGoal().goal!.turnsUsed).toBeLessThanOrEqual(DEFAULT_GOAL_TURN_BUDGET);
+    expect(store.getGoal().goal!.turnsUsed).toBeLessThanOrEqual(5);
+  });
+
+  it('an unbounded goal does not hard-stop on an always-continue evaluator', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' }); // no budget flags -> no hard cap
+    const { agent } = controllerAgent({ goals: store });
+    const c = new GoalContinuationController(agent, {
+      startedAt: 0,
+      createEvaluator: fixedEvaluator('continue'),
+    });
+
+    // Far past the old default cap of 20: still continuing, still active.
+    for (let i = 1; i <= 30; i += 1) {
+      expect(await c.shouldContinueAfterStop(stoppedCtx(i))).toEqual({
+        continue: true,
+        resetStepBudget: true,
+      });
+    }
+    expect(store.getGoal().goal!.status).toBe('active');
+    expect(store.getGoal().goal!.turnsUsed).toBe(30);
   });
 
   it('finalizeWallClock records the trailing interval', async () => {

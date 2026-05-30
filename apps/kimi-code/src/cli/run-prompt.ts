@@ -171,6 +171,16 @@ async function runHeadlessGoal(
     replace: goal.replace,
     budgetLimits: goal.budgetLimits,
   });
+  const unbounded =
+    goal.budgetLimits.tokenBudget === undefined &&
+    goal.budgetLimits.turnBudget === undefined &&
+    goal.budgetLimits.wallClockBudgetMs === undefined;
+  if (unbounded) {
+    stderr.write(
+      'Warning: goal has no stop condition (no --max-turns/--max-tokens/--max-minutes and no ' +
+        'clause in the objective). It will run until the evaluator judges it complete.\n',
+    );
+  }
   try {
     // The objective is sent as the normal prompt; goal continuation keeps the
     // turn alive until a terminal state is reached.

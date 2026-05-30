@@ -8,7 +8,7 @@ import { ErrorCodes } from '../../src/errors';
 import { Session } from '../../src/session';
 import { SessionAPIImpl } from '../../src/session/rpc';
 import {
-  DEFAULT_GOAL_TURN_BUDGET,
+  DEFAULT_GOAL_FAILURE_TURN_LIMIT,
   SessionGoalStore,
   type GoalAuditSink,
   type SessionGoalState,
@@ -116,10 +116,16 @@ describe('SessionGoalStore creation', () => {
     expect(store.getGoal().goal?.goalId).toBe(snapshot.goalId);
   });
 
-  it('fills a default turn budget when none is provided', async () => {
+  it('sets no default work caps but keeps a failure guard when none is provided', async () => {
     const { store } = makeStore();
     const snapshot = await store.createGoal({ objective: 'Do work' });
-    expect(snapshot.budget.turnBudget).toBe(DEFAULT_GOAL_TURN_BUDGET);
+    // No default turn / token / time cap: an unbounded goal runs until the
+    // evaluator judges it terminal.
+    expect(snapshot.budget.turnBudget).toBeNull();
+    expect(snapshot.budget.tokenBudget).toBeNull();
+    expect(snapshot.budget.wallClockBudgetMs).toBeNull();
+    // The malfunction guard is still defaulted.
+    expect(snapshot.budget.failureTurnLimit).toBe(DEFAULT_GOAL_FAILURE_TURN_LIMIT);
   });
 
   it('rejects empty objectives', async () => {

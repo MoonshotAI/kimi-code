@@ -31,8 +31,8 @@ Plan: `plan/phase-07-goal-ux-and-budget.md`. Sequenced commits:
 
 | # | Commit | Status | Hash |
 |---|--------|--------|------|
-| 1 | Generic subcommand autocomplete (`/goal` subcommands + flags) | ✅ | — |
-| 2 | Budget model: drop default turn cap, surface counters to evaluator | ⬜ | — |
+| 1 | Generic subcommand autocomplete (`/goal` subcommands + flags) | ✅ | 7cbb37f |
+| 2 | Budget model: drop default turn cap, surface counters to evaluator | ✅ | — |
 | 3 | `goal.updated` event spine + terminal stats on `goal.update` record | ⬜ | — |
 | 4 | Footer badge | ⬜ | — |
 | 5 | `/goal` status box | ⬜ | — |
@@ -46,6 +46,15 @@ Plan: `plan/phase-07-goal-ux-and-budget.md`. Sequenced commits:
   never pulls the command handler / SDK into the widely-imported registry. Note: full-suite
   parallel runs flake on timing-sensitive TUI/telemetry tests under CPU contention (reproduces
   on baseline); `--no-file-parallelism` is green (1059 passed).
+- **Commit 2:** dropped the default turn cap — `normalizeBudgetLimits` no longer fills `turnBudget`
+  (removed `DEFAULT_GOAL_TURN_BUDGET`); an unflagged goal now has no work caps and runs until the
+  evaluator judges it terminal. Kept a malfunction guard only: default `failureTurnLimit`
+  (`DEFAULT_GOAL_FAILURE_TURN_LIMIT = 3`). The evaluator prompt now surfaces live counters
+  (`Progress so far: N turn(s), <elapsed>, <tokens> tokens`) + configured hard budgets and asks
+  whether any stop condition stated in the objective has been reached — so the evaluator can enforce
+  natural-language stop-clauses. Added TUI + headless "no stop condition" nudges. Tests updated:
+  unbounded goal does not hard-stop; explicit `turnBudget` still caps; evaluator prompt carries the
+  counters + stop-condition check. agent-core 2367, app 185, typecheck + lint clean.
 
 ## Post-implementation fixes
 

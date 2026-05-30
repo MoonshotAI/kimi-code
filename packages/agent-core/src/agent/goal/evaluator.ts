@@ -168,11 +168,22 @@ function buildEvaluatorPrompt(input: GoalEvaluatorInput): string {
     );
   }
   lines.push('');
+  lines.push(
+    `Progress so far: ${goal.turnsUsed} continuation turn(s), ${formatElapsed(goal.wallClockMs)} elapsed, ${goal.tokensUsed} tokens used.`,
+  );
+  const configured = formatConfiguredBudgets(goal);
+  if (configured !== undefined) {
+    lines.push(`Configured hard budgets: ${configured}.`);
+  }
+  lines.push('');
   lines.push('Recent conversation (most recent last):');
   lines.push(summarizeMessages(input.messages));
   lines.push('');
   lines.push('Decide:');
   lines.push('- Has the completion criterion been met, with required validation evidence present?');
+  lines.push(
+    '- Has any stop condition stated in the objective (e.g. a turn, time, or token limit) been reached, given the progress above? If so, return "complete".',
+  );
   lines.push('- Is the model blocked by user input or an external condition?');
   lines.push('- Is the objective impossible as stated?');
   lines.push('- Did the last step make meaningful progress?');
@@ -183,6 +194,26 @@ function buildEvaluatorPrompt(input: GoalEvaluatorInput): string {
     '{"verdict":"continue|complete|blocked|impossible|no_progress","reason":"<short reason>","evidence":[{"summary":"..."}]}',
   );
   return lines.join('\n');
+}
+
+/** Human-readable list of the goal's configured hard budgets, or undefined when none. */
+function formatConfiguredBudgets(goal: GoalSnapshot): string | undefined {
+  const { budget } = goal;
+  const parts: string[] = [];
+  if (budget.turnBudget !== null) parts.push(`turns ${goal.turnsUsed}/${budget.turnBudget}`);
+  if (budget.tokenBudget !== null) parts.push(`tokens ${goal.tokensUsed}/${budget.tokenBudget}`);
+  if (budget.wallClockBudgetMs !== null) {
+    parts.push(`time ${formatElapsed(goal.wallClockMs)}/${formatElapsed(budget.wallClockBudgetMs)}`);
+  }
+  return parts.length > 0 ? parts.join('; ') : undefined;
+}
+
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m${seconds.toString().padStart(2, '0')}s`;
 }
 
 function summarizeMessages(messages: readonly Message[]): string {

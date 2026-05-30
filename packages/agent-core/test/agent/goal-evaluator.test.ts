@@ -14,7 +14,7 @@ import {
 } from '../../src/agent/goal/evaluator';
 import type { LLM } from '../../src/loop/llm';
 import type { LoopStoppedStepContext } from '../../src/loop/types';
-import { SessionGoalStore, type SessionGoalState } from '../../src/session/goal';
+import { SessionGoalStore, type GoalSnapshot, type SessionGoalState } from '../../src/session/goal';
 
 const GOAL_FLAG = 'KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND';
 
@@ -91,7 +91,13 @@ function factoryOf(impl: (input: GoalEvaluatorInput) => GoalEvaluatorResult): ()
 }
 
 const goalInput = (): GoalEvaluatorInput => ({
-  goal: { objective: 'work' } as never,
+  goal: {
+    objective: 'work',
+    turnsUsed: 0,
+    tokensUsed: 0,
+    wallClockMs: 0,
+    budget: { turnBudget: null, tokenBudget: null, wallClockBudgetMs: null },
+  } as unknown as GoalSnapshot,
   messages: [],
   signal: new AbortController().signal,
 });
@@ -142,6 +148,36 @@ describe('GoalEvaluator', () => {
     const judge = fakeLLM('{"verdict":"complete","reason":"ok"}');
     const evaluator = new GoalEvaluator({ llm: judge });
     expect((await evaluator.evaluate(goalInput())).ok).toBe(true);
+  });
+
+  it('surfaces the live counters and a stop-condition check to the judge', async () => {
+    let seenPrompt = '';
+    const capturingLLM = {
+      systemPrompt: '',
+      modelName: 'judge',
+      chat: async ({ messages, onTextDelta }: LLMChatParams) => {
+        const first = messages[0]?.content[0];
+        seenPrompt = first !== undefined && first.type === 'text' ? first.text : '';
+        onTextDelta?.('{"verdict":"continue","reason":"go"}');
+        return { toolCalls: [], usage: emptyUsage() };
+      },
+    } as unknown as LLM;
+    const evaluator = new GoalEvaluator({ llm: capturingLLM });
+    await evaluator.evaluate({
+      goal: {
+        objective: 'work',
+        turnsUsed: 7,
+        tokensUsed: 1234,
+        wallClockMs: 65_000,
+        budget: { turnBudget: 20, tokenBudget: null, wallClockBudgetMs: null },
+      } as unknown as GoalSnapshot,
+      messages: [],
+      signal: new AbortController().signal,
+    });
+    expect(seenPrompt).toContain('Progress so far: 7 continuation turn');
+    expect(seenPrompt).toContain('1234 tokens');
+    expect(seenPrompt).toContain('turns 7/20');
+    expect(seenPrompt).toContain('stop condition stated in the objective');
   });
 });
 
