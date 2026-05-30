@@ -1,5 +1,12 @@
 # @moonshot-ai/migration-legacy
 
+## 0.1.6
+
+### Patch Changes
+
+- Updated dependencies [[`a24bfb1`](https://github.com/MoonshotAI/kimi-code/commit/a24bfb1df38e58120827a1d8ed881724af2e7b23)]:
+  - @moonshot-ai/agent-core@0.6.0
+
 ## 0.1.5
 
 ### Patch Changes
