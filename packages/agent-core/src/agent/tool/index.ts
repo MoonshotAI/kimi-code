@@ -393,6 +393,9 @@ export class ToolManager {
               log: this.agent.log,
             },
           ),
+        this.agent.subagentHost &&
+          this.agent.type !== 'sub' &&
+          new b.SwarmTool(this.agent.subagentHost, { log: this.agent.log }),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),
       ]

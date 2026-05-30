@@ -37,6 +37,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: (args) => (args.trim().toLowerCase() === 'clear' ? 'idle-only' : 'always'),
   },
   {
+    name: 'swarm',
+    aliases: [],
+    description: 'Run a task as a parallel agent swarm',
+    priority: 100,
+    availability: 'idle-only',
+  },
+  {
     name: 'model',
     aliases: [],
     description: 'Switch LLM model',

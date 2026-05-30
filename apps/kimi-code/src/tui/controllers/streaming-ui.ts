@@ -3,7 +3,9 @@ import type { Session } from '@moonshot-ai/kimi-code-sdk';
 import { AgentGroupComponent } from '../components/messages/agent-group';
 import { AssistantMessageComponent } from '../components/messages/assistant-message';
 import { CompactionComponent } from '../components/dialogs/compaction';
+import type { ManagedToolCard } from '../components/messages/managed-tool-card';
 import { ReadGroupComponent } from '../components/messages/read-group';
+import { SwarmCard } from '../components/messages/swarm-card';
 import { ThinkingComponent } from '../components/messages/thinking';
 import { ToolCallComponent } from '../components/messages/tool-call';
 import { STREAMING_UI_FLUSH_MS } from '../constant/streaming';
@@ -59,7 +61,7 @@ export class StreamingUIController {
     string,
     { name?: string; argumentsText: string; startedAtMs: number }
   >();
-  private _pendingToolComponents = new Map<string, ToolCallComponent>();
+  private _pendingToolComponents = new Map<string, ManagedToolCard>();
   private _pendingAgentGroup: {
     readonly turnId: string | undefined;
     readonly step: number;
@@ -152,7 +154,7 @@ export class StreamingUIController {
     this._activeToolCalls.delete(id);
   }
 
-  getToolComponent(id: string): ToolCallComponent | undefined {
+  getToolComponent(id: string): ManagedToolCard | undefined {
     return this._pendingToolComponents.get(id);
   }
 
@@ -239,7 +241,9 @@ export class StreamingUIController {
     };
 
     for (const tc of this._pendingToolComponents.values()) {
-      visit(tc);
+      // Only ToolCallComponent carries the Agent background-task API; SwarmCard
+      // is never a background Agent, so skip it.
+      if (tc instanceof ToolCallComponent) visit(tc);
       if (agentIdMatch !== undefined) break;
     }
     if (agentIdMatch === undefined) {
@@ -594,7 +598,28 @@ export class StreamingUIController {
   onToolCallStart(toolCall: ToolCallBlockData): void {
     if (toolCall.name === 'AskUserQuestion') return;
 
+    // A tool call of any other kind breaks an in-flight Agent/Read run, so the
+    // pending groups are reset here to avoid a non-Agent/Read call (e.g. Swarm)
+    // between Agent/Read calls leaving a stale pending group. Swarm renders its
+    // dashboard through the dedicated SwarmCard branch below — still a single
+    // managed component per tool id, never the Agent/Read group-attach paths.
+    if (toolCall.name !== 'Agent') this._pendingAgentGroup = null;
+    if (toolCall.name !== 'Read') this._pendingReadGroup = null;
+
     const { state } = this.host;
+
+    // Swarm is hosted by the same managed lifecycle but rendered by a
+    // dedicated top-level SwarmCard, selected here at tool-call-start time.
+    // It is the single creation point, stored in the same registry and added
+    // to the transcript exactly once; later events mutate it in place.
+    if (toolCall.name === 'Swarm') {
+      const swarmCard = new SwarmCard(toolCall, undefined, state.theme.colors, state.ui);
+      this._pendingToolComponents.set(toolCall.id, swarmCard);
+      state.transcriptContainer.addChild(swarmCard);
+      state.ui.requestRender();
+      return;
+    }
+
     const tc = new ToolCallComponent(
       toolCall,
       undefined,
@@ -606,9 +631,6 @@ export class StreamingUIController {
     if (state.toolOutputExpanded) tc.setExpanded(true);
     if (state.planExpanded) tc.setPlanExpanded(true);
     this._pendingToolComponents.set(toolCall.id, tc);
-
-    if (toolCall.name !== 'Agent') this._pendingAgentGroup = null;
-    if (toolCall.name !== 'Read') this._pendingReadGroup = null;
 
     let handled = this.tryAttachAgentToolCall(toolCall, tc);
     if (!handled) handled = this.tryAttachReadToolCall(toolCall, tc);
@@ -633,6 +655,7 @@ export class StreamingUIController {
   onToolCallEnd(toolCallId: string, result: ToolResultBlockData): void {
     const { state } = this.host;
     const matchedCall = this._activeToolCalls.get(toolCallId);
+
     const tc = this._pendingToolComponents.get(toolCallId);
     if (tc) {
       tc.setResult(result);

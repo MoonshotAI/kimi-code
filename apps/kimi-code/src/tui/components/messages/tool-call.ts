@@ -23,8 +23,11 @@ import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
 
+import type { ManagedToolCard } from './managed-tool-card';
 import { PlanBoxComponent } from './plan-box';
 import { ShellExecutionComponent } from './shell-execution';
+import type { SwarmEvent } from './swarm-dashboard-model';
+import { formatTokens, str } from './tool-call-shared';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
 import { pickResultRenderer } from './tool-renderers/registry';
 
@@ -110,10 +113,6 @@ function backgroundFailureMessage(
     case undefined:
       return undefined;
   }
-}
-
-function str(v: unknown): string {
-  return typeof v === 'string' ? v : '';
 }
 
 function formatSubagentContextTokens(contextTokens: number | undefined): string | undefined {
@@ -448,7 +447,7 @@ class PrefixedWrappedLine implements Component {
   }
 }
 
-export class ToolCallComponent extends Container {
+export class ToolCallComponent extends Container implements ManagedToolCard {
   private expanded = false;
   private planExpanded = false;
   private toolCall: ToolCallBlockData;
@@ -627,6 +626,25 @@ export class ToolCallComponent extends Container {
     this.rebuildBody();
     this.notifySnapshotChange();
     this.ui?.requestRender();
+  }
+
+  /**
+   * Always false: the `Swarm` coordinator renders via the dedicated
+   * {@link SwarmCard}, which `streaming-ui` selects at tool-call-start time.
+   * Kept on `ToolCallComponent` so routing guards can call `isSwarm()` on the
+   * `ManagedToolCard` union without re-narrowing.
+   */
+  isSwarm(): boolean {
+    return false;
+  }
+
+  /**
+   * Swarm dashboard events are handled by {@link SwarmCard}; on a non-swarm
+   * `ToolCallComponent` this is a safe no-op so callers can route blindly after
+   * an `isSwarm()` guard.
+   */
+  applySwarm(_event: SwarmEvent): void {
+    void _event;
   }
 
   dispose(): void {
@@ -1858,12 +1876,6 @@ function computeLatestActivity(
     if (tail !== undefined) return tail.trim();
   }
   return undefined;
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M tok`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k tok`;
-  return `${String(n)} tok`;
 }
 
 function formatActivityLine(

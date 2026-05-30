@@ -14,6 +14,7 @@ import {
 
 import type { EnabledPluginSessionStart } from '#/plugin';
 
+import type { SubagentLoopHooks } from './swarm/stall-hook';
 import type { McpConnectionManager } from '../mcp';
 import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
 import type { ModelProvider } from '../session/provider-manager';
@@ -113,6 +114,16 @@ export class Agent {
   readonly background: BackgroundManager;
   readonly cron: CronManager | null;
   readonly replayBuilder: ReplayBuilder;
+
+  /**
+   * Loop hooks scoped to this agent when it runs as a subagent (e.g. swarm
+   * worker stall detection). Set by {@link SessionSubagentHost} when spawning;
+   * `undefined` for the main agent and regular subagents, so they run with
+   * identical (default) turn hooks. Narrowed to the only phase `TurnFlow`
+   * consumes (`prepareToolExecution`) so the unaffected-paths invariant is
+   * enforced by the type.
+   */
+  subagentLoopHooks?: SubagentLoopHooks | undefined;
 
   private lastLlmConfigLogSignature?: string;
 

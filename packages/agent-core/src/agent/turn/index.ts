@@ -367,6 +367,10 @@ export class TurnFlow {
   private async runTurn(turnId: number, signal: AbortSignal): Promise<LoopTurnStopReason> {
     let stopHookContinuationUsed = false;
     const deduper = new ToolCallDeduplicator();
+    // Per-subagent loop hooks (e.g. swarm worker stall detection). Composed
+    // ahead of the built-in prepareToolExecution; undefined for the main agent
+    // and regular subagents, leaving their hook behavior unchanged.
+    const subagentPrepareToolExecution = this.agent.subagentLoopHooks?.prepareToolExecution;
     await this.agent.mcp?.waitForInitialLoad(signal);
     while (true) {
       signal.throwIfAborted();
@@ -422,6 +426,13 @@ export class TurnFlow {
               return { continue: false };
             },
             prepareToolExecution: async (ctx) => {
+              // Run the subagent-scoped hook first; honor its decision (a block
+              // ends the call) before the built-in dedup logic. Falls through
+              // when it returns undefined, preserving the dedup behavior.
+              if (subagentPrepareToolExecution !== undefined) {
+                const subagentResult = await subagentPrepareToolExecution(ctx);
+                if (subagentResult !== undefined) return subagentResult;
+              }
               const cached = deduper.checkSameStep(
                 ctx.toolCall.id,
                 ctx.toolCall.name,

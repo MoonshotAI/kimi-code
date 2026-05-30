@@ -33,6 +33,8 @@ import type {
 
 import { MoonLoader } from '../components/chrome/moon-loader';
 import { StatusMessageComponent } from '../components/messages/status-message';
+import { workerActivityFromTool } from '../components/messages/swarm-dashboard-model';
+import { ToolCallComponent } from '../components/messages/tool-call';
 import {
   MAIN_AGENT_ID,
   OAUTH_LOGIN_REQUIRED_CODE,
@@ -71,6 +73,28 @@ import type {
   TranscriptEntry,
 } from '../types';
 import type { TUIState } from '../tui-state';
+
+/**
+ * Live token figure for a swarm worker from its `agent.status.updated` event,
+ * computed identically to the non-swarm grouped-subagent path so a running
+ * worker shows the same `· X tok` the grouped card would: prefer the per-agent
+ * `contextTokens` when positive, otherwise fall back to the usage grand total
+ * (`total ?? currentTurn`, summing input + output). Returns `undefined` when no
+ * positive figure is available so the dashboard line stays unchanged.
+ */
+function liveSwarmWorkerTokens(event: AgentStatusUpdatedEvent): number | undefined {
+  if (event.contextTokens !== undefined && event.contextTokens > 0) {
+    return event.contextTokens;
+  }
+  const usage = event.usage?.total ?? event.usage?.currentTurn;
+  if (usage === undefined) return undefined;
+  const total =
+    (usage.inputOther ?? 0) +
+    (usage.inputCacheRead ?? 0) +
+    (usage.inputCacheCreation ?? 0) +
+    usage.output;
+  return total > 0 ? total : undefined;
+}
 
 export interface SessionEventHost {
   state: TUIState;
@@ -232,8 +256,38 @@ export class SessionEventHandler {
     if (info === undefined || info.parentToolCallId.length === 0) return true;
     const { parentToolCallId } = info;
     const sourceName = info.name;
+
     const toolCall = streamingUI.getToolComponent(parentToolCallId);
     if (toolCall === undefined) return true;
+
+    // Swarm worker events drive the swarm dashboard, not the subagent block, and
+    // never fall through to the regular Agent appendSubToolCall path.
+    if (toolCall.isSwarm()) {
+      if (event.type === 'tool.call.started') {
+        toolCall.applySwarm({
+          t: 'worker.toolcall',
+          id: subagentId,
+          activity: workerActivityFromTool(event.name, argsRecord(event.args)),
+        });
+      } else if (event.type === 'agent.status.updated') {
+        // Mirror the non-swarm `agent.status.updated` path's live-token
+        // computation (prefer the per-agent context tokens, fall back to the
+        // usage total) so a running worker shows the same live `· X tok` the
+        // grouped subagent card would. Matches the value `worker.done` later
+        // records via `SubagentCompletedEvent.contextTokens`.
+        const tokens = liveSwarmWorkerTokens(event);
+        if (tokens !== undefined) {
+          toolCall.applySwarm({ t: 'worker.tokens', id: subagentId, tokens });
+        }
+      }
+      return true;
+    }
+
+    // Past the swarm guard, the generic subagent block API is ToolCallComponent
+    // only. A non-ToolCallComponent card here would be a swarm card (already
+    // handled above), so this narrows the registry union for the calls below.
+    if (!(toolCall instanceof ToolCallComponent)) return true;
+
     toolCall.setSubagentMeta(subagentId, sourceName);
 
     switch (event.type) {
@@ -483,11 +537,54 @@ export class SessionEventHandler {
   }
 
   private handleToolProgress(event: ToolProgressEvent): void {
+    if (event.update.kind === 'custom' && event.update.customKind === 'swarm') {
+      const tc = this.host.streamingUI.getToolComponent(event.toolCallId);
+      if (tc === undefined || !tc.isSwarm()) return;
+      const p = event.update.customData as {
+        phase?: string;
+        total?: number;
+        role?: string;
+        newRole?: string;
+        decision?: string;
+        reason?: string;
+        message?: string;
+      };
+      if (p.phase === 'planned' && typeof p.total === 'number') {
+        tc.applySwarm({ t: 'planned', total: p.total });
+      } else if (p.phase === 'synthesizing') {
+        tc.applySwarm({ t: 'synthesizing' });
+      } else if (p.phase === 'done') {
+        tc.applySwarm({ t: 'done', succeeded: 0, failed: 0 });
+      } else if (p.phase === 'failed') {
+        // An ordinary swarm failure (planner/synthesizer error) — show it as a
+        // failed dashboard with the reason, not a success-toned 'cancelled'.
+        tc.applySwarm({ t: 'failed', message: typeof p.message === 'string' ? p.message : '' });
+      } else if (p.phase === 'revising' && typeof p.role === 'string') {
+        // Route by the reviser's decision so each recovery path shows the right
+        // transient state:
+        //   - retry/regenerate re-run the same role → mark it retrying.
+        //   - reassign moves the subtask to a new role → re-key the existing
+        //     row so the subtask keeps ONE row (no orphan left in retrying).
+        //   - drop emits nothing here; the subsequent 'dropped' event fully
+        //     describes it (and skipping this avoids a drop→retrying flash).
+        if (p.decision === 'reassign' && typeof p.newRole === 'string') {
+          tc.applySwarm({ t: 'worker.reassigned', fromRole: p.role, toRole: p.newRole });
+        } else if (p.decision === 'retry' || p.decision === 'regenerate') {
+          tc.applySwarm({ t: 'worker.retrying', role: p.role });
+        }
+      } else if (p.phase === 'dropped' && typeof p.role === 'string') {
+        // The subtask was given up on — show it as a dropped gap with the reason.
+        tc.applySwarm({ t: 'worker.dropped', role: p.role, reason: p.reason ?? '' });
+      }
+      return;
+    }
     if (event.update.kind !== 'status') return;
     const text = event.update.text;
     if (text === undefined || text.length === 0) return;
     const tc = this.host.streamingUI.getToolComponent(event.toolCallId);
-    if (tc === undefined) return;
+    // Status progress lines target ToolCallComponent only; the swarm card uses
+    // custom swarm progress (handled above) and never status progress.
+    if (!(tc instanceof ToolCallComponent)) return;
     tc.appendProgress(text);
   }
 
@@ -695,6 +792,25 @@ export class SessionEventHandler {
       name: event.subagentName,
     });
 
+    const swarmTc = streamingUI.getToolComponent(event.parentToolCallId);
+    if (swarmTc?.isSwarm() === true) {
+      // Only real workers (profile `swarm:<role>`) become dashboard rows. The
+      // planner (`swarm-planner`, plus a possible retry) and synthesizer
+      // (`swarm-synthesizer`) share the same parent tool-call id but must not
+      // appear as workers or inflate the worker counts. Any non-worker subagent
+      // under a swarm coordinator returns without falling through to the
+      // foreground path.
+      const workerPrefix = 'swarm:';
+      if (event.subagentName.startsWith(workerPrefix)) {
+        swarmTc.applySwarm({
+          t: 'worker.spawned',
+          id: event.subagentId,
+          role: event.description ?? event.subagentName.slice(workerPrefix.length),
+        });
+      }
+      return;
+    }
+
     if (event.runInBackground) {
       const meta = this.buildBackgroundAgentMetadata(event);
       this.backgroundAgentMetadata.set(event.subagentId, meta);
@@ -712,7 +828,7 @@ export class SessionEventHandler {
       }
     }
     tc ??= this.createStandaloneSubagentToolCall(event);
-    if (tc === undefined) return;
+    if (!(tc instanceof ToolCallComponent)) return;
     tc.onSubagentSpawned({
       agentId: event.subagentId,
       agentName: event.subagentName,
@@ -740,6 +856,15 @@ export class SessionEventHandler {
     }
     const tc = streamingUI.getToolComponent(event.parentToolCallId);
     if (tc === undefined) return;
+    if (tc.isSwarm()) {
+      tc.applySwarm({
+        t: 'worker.done',
+        id: event.subagentId,
+        ...(event.contextTokens !== undefined ? { tokens: event.contextTokens } : {}),
+      });
+      return;
+    }
+    if (!(tc instanceof ToolCallComponent)) return;
     tc.onSubagentCompleted({
       contextTokens: event.contextTokens,
       usage: event.usage,
@@ -777,6 +902,11 @@ export class SessionEventHandler {
     }
     const tc = streamingUI.getToolComponent(event.parentToolCallId);
     if (tc === undefined) return;
+    if (tc.isSwarm()) {
+      tc.applySwarm({ t: 'worker.failed', id: event.subagentId, error: event.error });
+      return;
+    }
+    if (!(tc instanceof ToolCallComponent)) return;
     tc.onSubagentFailed({ error: event.error });
     streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
   }

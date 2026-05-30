@@ -3,6 +3,7 @@ import type { TokenUsage } from '@moonshot-ai/kosong';
 import type { Agent } from '../agent';
 import type { PromptOrigin } from '../agent/context';
 import type { LoopTurnStopReason } from '../loop';
+import type { SubagentLoopHooks } from '../agent/swarm/stall-hook';
 import {
   DEFAULT_AGENT_PROFILES,
   prepareSystemPromptContext,
@@ -11,18 +12,21 @@ import {
 import { linkAbortSignal, userCancellationReason } from '../utils/abort';
 import { collectGitContext } from './git-context';
 import type { Session } from './index';
-import SUMMARY_CONTINUATION_PROMPT from './summary-continuation.md';
 
-/**
- * A subagent summary shorter than this many characters triggers one
- * follow-up turn that asks the subagent to expand it, so the parent
- * agent receives a technically complete handoff.
- */
-const SUMMARY_MIN_LENGTH = 200;
-const SUMMARY_CONTINUATION_ATTEMPTS = 1;
 const HOOK_TEXT_PREVIEW_LENGTH = 500;
 const SUBAGENT_MAX_TOKENS_ERROR =
   'Subagent turn failed before completing its final summary: reason=max_tokens';
+
+export function buildOverrideProfile(
+  name: string,
+  override: { systemPrompt: string; tools: string[] },
+): ResolvedAgentProfile {
+  return {
+    name,
+    systemPrompt: () => override.systemPrompt,
+    tools: override.tools,
+  };
+}
 
 type RunSubagentOptions = {
   readonly parentToolCallId: string;
@@ -32,6 +36,14 @@ type RunSubagentOptions = {
   readonly runInBackground: boolean;
   readonly origin?: PromptOrigin | undefined;
   readonly signal: AbortSignal;
+  readonly profileOverride?: { readonly systemPrompt: string; readonly tools: string[] } | undefined;
+  /**
+   * Loop hooks scoped to this subagent only (e.g. swarm worker stall
+   * detection). Composed into the subagent's turn hooks alongside the
+   * built-in ones. Absent for the main agent and regular subagents, so their
+   * behavior is unchanged.
+   */
+  readonly loopHooks?: SubagentLoopHooks | undefined;
 };
 
 type SubagentCompletion = {
@@ -68,7 +80,9 @@ export class SessionSubagentHost {
       throw new Error(`Parent agent "${this.ownerAgentId}" was not found`);
     }
 
-    const profile = this.resolveProfile(parent, profileName);
+    const profile = options.profileOverride
+      ? buildOverrideProfile(profileName, options.profileOverride)
+      : this.resolveProfile(parent, profileName);
     const { id, agent } = await this.session.createAgent(
       { type: 'sub', generate: parent.rawGenerate },
       undefined,
@@ -90,7 +104,7 @@ export class SessionSubagentHost {
         ...options,
         signal: controller.signal,
       },
-      () => this.configureChild(parent, agent, profile),
+      () => this.configureChild(parent, agent, profile, options),
     ).finally(() => {
       unlinkAbortSignal();
       this.activeChildren.delete(id);
@@ -152,6 +166,7 @@ export class SessionSubagentHost {
       // reflected — a subagent always uses the parent agent's model.
       () => {
         child.config.update({ modelAlias: parent.config.modelAlias });
+        child.subagentLoopHooks = options.loopHooks;
         return Promise.resolve();
       },
     ).finally(() => {
@@ -237,19 +252,7 @@ export class SessionSubagentHost {
       child.turn.prompt([{ type: 'text', text: childPrompt }], origin);
       await runChildTurnToCompletion(child, options.signal);
 
-      // A subagent that returns an overly terse summary leaves the parent
-      // agent under-informed. Give it a bounded number of chances to expand
-      // the handoff; if it is still short after that, accept it as-is rather
-      // than retrying indefinitely.
-      let result = lastAssistantText(child);
-      let remainingContinuations = SUMMARY_CONTINUATION_ATTEMPTS;
-      while (remainingContinuations > 0 && result.length < SUMMARY_MIN_LENGTH) {
-        remainingContinuations -= 1;
-        options.signal.throwIfAborted();
-        child.turn.prompt([{ type: 'text', text: SUMMARY_CONTINUATION_PROMPT }], origin);
-        await runChildTurnToCompletion(child, options.signal);
-        result = lastAssistantText(child);
-      }
+      const result = lastAssistantText(child);
       const usage = child.usage.data().total;
       parent.emitEvent({
         type: 'subagent.completed',
@@ -277,6 +280,7 @@ export class SessionSubagentHost {
     parent: Agent,
     child: Agent,
     profile: ResolvedAgentProfile,
+    options: RunSubagentOptions,
   ): Promise<void> {
     // A subagent always inherits the parent agent's model.
     child.config.update({
@@ -284,6 +288,10 @@ export class SessionSubagentHost {
       modelAlias: parent.config.modelAlias,
       thinkingLevel: parent.config.thinkingLevel,
     });
+
+    // Per-worker loop hooks (e.g. swarm stall detection) are scoped to this
+    // child only; absent for regular subagents, leaving them unaffected.
+    child.subagentLoopHooks = options.loopHooks;
 
     const context = await prepareSystemPromptContext(child.kaos);
     child.useProfile(profile, context);
