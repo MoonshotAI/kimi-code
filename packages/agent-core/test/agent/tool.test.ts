@@ -245,6 +245,62 @@ describe('ToolManager setActiveTools filtering', () => {
     expect(bashTool).toBeDefined();
     expect(bashTool!.description).toContain('run_in_background=true');
   });
+
+  it('re-resolves deferred pending tool names when they become available in a later initializeBuiltinTools call', () => {
+    const makeTool = (name: string) => ({ name, description: '', parameters: {}, resolveExecution: vi.fn() });
+    const warnings: string[] = [];
+    const infos: string[] = [];
+
+    const agent = {
+      records: { logRecord: vi.fn() },
+      config: {
+        hasProvider: false,
+        cwd: '/workspace',
+        provider: {} as import('@moonshot-ai/kosong').ChatProvider,
+        modelCapabilities: {} as import('@moonshot-ai/kosong').ModelCapability,
+      },
+      log: { warn: (msg: string) => { warnings.push(msg); }, info: (msg: string) => { infos.push(msg); } },
+      mcp: undefined,
+      emitEvent: vi.fn(),
+      background: {} as unknown as import('../../src/agent').Agent['background'],
+      modelProvider: undefined,
+      cron: undefined,
+      skills: undefined,
+      subagentHost: undefined,
+      toolServices: undefined,
+      rpc: undefined,
+      kaos: createFakeKaos(),
+    } as unknown as import('../../src/agent').Agent;
+
+    const tm = new ToolManager(agent);
+
+    // Step 1: pre-init — setActiveTools defers names not in builtinTools
+    tm.setActiveTools(['Bash', 'ReadMediaFile']);
+    expect((tm as any).pendingBuiltinToolNames).toEqual(['Bash', 'ReadMediaFile']);
+    expect((tm as any).enabledTools.size).toBe(0);
+
+    // Step 2: first initializeBuiltinTools — ReadMediaFile NOT in builtinTools
+    tm.initializeBuiltinTools();
+    // ReadMediaFile stays in pending (not cleared)
+    expect((tm as any).pendingBuiltinToolNames).toEqual(['ReadMediaFile']);
+    // Warning fired
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain('ReadMediaFile');
+    expect(warnings[0]).toContain('not available');
+
+    // Step 3: tool becomes available — model now supports image_in
+    agent.config.modelCapabilities = { image_in: true } as import('@moonshot-ai/kosong').ModelCapability;
+
+    // Step 4: second initializeBuiltinTools — ReadMediaFile now resolves
+    tm.initializeBuiltinTools();
+    expect((tm as any).pendingBuiltinToolNames).toEqual([]);
+    expect((tm as any).enabledTools.has('ReadMediaFile')).toBe(true);
+    // No second warning
+    expect(warnings.length).toBe(1);
+    // Info logged about re-application (Bash on first call, ReadMediaFile on second)
+    expect(infos.length).toBe(2);
+    expect(infos[1]).toContain('ReadMediaFile');
+  });
 });
 
 describe('Agent tools', () => {
