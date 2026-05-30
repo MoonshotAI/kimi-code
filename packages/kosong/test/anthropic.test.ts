@@ -689,7 +689,7 @@ describe('AnthropicChatProvider', () => {
       ]);
     });
 
-    it('thinking without signature is stripped', async () => {
+    it('thinking without signature is preserved (no signature field)', async () => {
       const provider = createProvider();
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
@@ -706,10 +706,17 @@ describe('AnthropicChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
       const messages = body['messages'] as unknown[];
 
-      // Assistant message should have thinking stripped (no encrypted)
+      // Unsigned thinking must be PRESERVED, emitted without a `signature`
+      // field — not stripped. Anthropic-compatible backends (e.g. Kimi) reject
+      // a tool-call turn whose thinking is missing ("reasoning_content is
+      // missing"); api.anthropic.com never emits unsigned thinking, so the
+      // signed branch always handles its history and this path is backend-neutral.
       expect(messages[1]).toEqual({
         role: 'assistant',
-        content: [{ type: 'text', text: 'Hello!' }],
+        content: [
+          { type: 'thinking', thinking: 'Thinking...' },
+          { type: 'text', text: 'Hello!' },
+        ],
       });
     });
 
@@ -769,6 +776,38 @@ describe('AnthropicChatProvider', () => {
           { type: 'text', text: '4.' },
         ],
       });
+    });
+
+    it('unsigned thinking is preserved before a tool_use block', async () => {
+      // Reproduces the real failure: a streamed assistant turn whose thinking
+      // arrived without a signature_delta, followed by a tool_use. Dropping the
+      // thinking made Kimi reject the *next* request with
+      // "thinking is enabled but reasoning_content is missing".
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Search for 429' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [{ type: 'think', think: 'Let me grep for 429.' }],
+          toolCalls: [
+            { type: 'function', id: 'toolu_1', name: 'Grep', arguments: '{"pattern":"429"}' },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'found in chat.go' }],
+          toolCallId: 'toolu_1',
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+      const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
+
+      expect(messages[1]!.role).toBe('assistant');
+      expect(messages[1]!.content).toEqual([
+        { type: 'thinking', thinking: 'Let me grep for 429.' },
+        { type: 'tool_use', id: 'toolu_1', name: 'Grep', input: { pattern: '429' } },
+      ]);
     });
   });
 
@@ -884,6 +923,61 @@ describe('AnthropicChatProvider', () => {
 
       expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' });
       expect(body['output_config']).toEqual({ effort: 'max' });
+    });
+
+    it('adaptiveThinking=true forces adaptive on an unversioned model name', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'coding-model-okapi-0527-vibe',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        adaptiveThinking: true,
+      }).withThinking('high');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' });
+      expect(body['output_config']).toEqual({ effort: 'high' });
+    });
+
+    it('forced adaptive allows max effort without clamping to high', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'coding-model-okapi-0527-vibe',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        adaptiveThinking: true,
+      }).withThinking('max');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' });
+      expect(body['output_config']).toEqual({ effort: 'max' });
+    });
+
+    it('unversioned model name without adaptiveThinking stays budget-based', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'coding-model-okapi-0527-vibe',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+      }).withThinking('high');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: 32000 });
+      expect(body['output_config']).toBeUndefined();
+    });
+
+    it('adaptiveThinking=false forces budget on a 4.6 model name', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'claude-opus-4-6',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        adaptiveThinking: false,
+      }).withThinking('high');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: 32000 });
+      expect(body['output_config']).toBeUndefined();
     });
 
     it('pre-4.6 model clamps xhigh and max to high without output_config', async () => {

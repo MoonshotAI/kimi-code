@@ -51,9 +51,10 @@ export class WelcomeComponent implements Component {
       primary(logo[1]!.padEnd(logoWidth)) + gap + rightRow1,
     ];
 
+    const activeModel = this.state.availableModels[this.state.model];
     const modelValue = isLoggedOut
       ? chalk.hex(this.colors.warning)('not set, run /login or /connect')
-      : this.state.model;
+      : (activeModel?.displayName ?? activeModel?.model ?? this.state.model);
 
     const infoLines = [
       labelStyle('Directory: ') + this.state.workDir,

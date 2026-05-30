@@ -135,8 +135,27 @@ export class SessionStore {
     await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
   }
 
-  async list(options: ListSessionsPayload): Promise<readonly SessionSummary[]> {
-    const workDir = normalizeWorkDir(options.workDir);
+  async list(options: ListSessionsPayload = {}): Promise<readonly SessionSummary[]> {
+    const workDir =
+      options.workDir === undefined ? undefined : normalizeRequiredWorkDir(options.workDir);
+    const sessionId = normalizeOptionalSessionId(options.sessionId);
+
+    if (workDir !== undefined) {
+      if (sessionId !== undefined) {
+        const local = await this.summaryFromWorkDirSession(sessionId, workDir);
+        if (local !== undefined) return [local];
+        return this.listSessionId(sessionId);
+      }
+      return this.listWorkDir(workDir);
+    }
+
+    if (sessionId !== undefined) {
+      return this.listSessionId(sessionId);
+    }
+    return this.listAll();
+  }
+
+  private async listWorkDir(workDir: string): Promise<readonly SessionSummary[]> {
     const bucketDir = join(this.sessionsDir, encodeWorkDirKey(workDir));
     let entries;
     try {
@@ -155,6 +174,38 @@ export class SessionStore {
     }
     sessions.sort(compareSessionSummary);
     return sessions;
+  }
+
+  private async listSessionId(sessionId: string): Promise<readonly SessionSummary[]> {
+    try {
+      return [await this.get(sessionId)];
+    } catch (error) {
+      if (error instanceof KimiError && error.code === ErrorCodes.SESSION_NOT_FOUND) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  private async listAll(): Promise<readonly SessionSummary[]> {
+    const index = await readSessionIndex(this.homeDir, this.sessionsDir);
+    const sessions: SessionSummary[] = [];
+    for (const entry of index.values()) {
+      if (!(await isDirectory(entry.sessionDir))) continue;
+      sessions.push(await this.summaryFromDir(entry.sessionId, entry.sessionDir, entry.workDir));
+    }
+    sessions.sort(compareSessionSummary);
+    return sessions;
+  }
+
+  private async summaryFromWorkDirSession(
+    sessionId: string,
+    workDir: string,
+  ): Promise<SessionSummary | undefined> {
+    if (!isSafeSessionId(sessionId)) return undefined;
+    const sessionDir = this.sessionDirFor({ id: sessionId, workDir });
+    if (!(await isDirectory(sessionDir))) return undefined;
+    return this.summaryFromDir(sessionId, sessionDir, workDir);
   }
 
   async assertDirectory(id: string): Promise<string> {
@@ -285,6 +336,17 @@ async function readOptionalState(sessionDir: string): Promise<SessionSummaryStat
   } catch {
     return undefined;
   }
+}
+
+function normalizeRequiredWorkDir(workDir: string): string {
+  if (workDir.trim() === '') {
+    throw new KimiError(ErrorCodes.REQUEST_WORK_DIR_REQUIRED, 'listSessions requires workDir');
+  }
+  return normalizeWorkDir(workDir);
+}
+
+function normalizeOptionalSessionId(sessionId: string | undefined): string | undefined {
+  return sessionId === undefined ? undefined : sessionId.trim();
 }
 
 function normalizeForkTitle(title: string | undefined, fallback: unknown): string {

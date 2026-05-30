@@ -11,6 +11,7 @@ import type { ApprovalRequest, ApprovalResponse, Event } from '@moonshot-ai/kimi
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
+import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import {
   PluginMcpSelectorComponent,
@@ -26,12 +27,12 @@ import {
   runModelSelector,
 } from '#/tui/commands/prompts';
 import type { QueuedMessage } from '#/tui/types';
+import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
 vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/tui/commands/prompts')>();
   return { ...actual, promptFeedbackInput: vi.fn() };
 });
-import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
 vi.mock('#/tui/utils/open-url', () => ({ openUrl: vi.fn() }));
 
@@ -200,6 +201,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
     interactiveAgentId: 'main',
+    getExperimentalFlags: vi.fn(async () => ({})),
     auth: {
       status: vi.fn(),
       login: vi.fn(),
@@ -1443,6 +1445,44 @@ describe('KimiTUI message flow', () => {
       expect(transcript).toContain('Installing or updating Kimi Datasource from marketplace...');
       expect(transcript).toContain('Installed or updated Demo');
     });
+  });
+
+  it('installs default marketplace entries through plain install', async () => {
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      plugins: [
+        {
+          id: 'kimi-datasource',
+          tier: 'official',
+          displayName: 'Kimi Datasource',
+          description: 'Datasource plugin',
+          source: './official/kimi-datasource.zip',
+        },
+      ],
+    }))));
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    try {
+      driver.handleUserInput('/plugins marketplace');
+
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+          PluginMarketplaceSelectorComponent,
+        );
+      });
+      const picker = driver.state.editorContainer.children[0] as PluginMarketplaceSelectorComponent;
+      picker.handleInput(' ');
+
+      await vi.waitFor(() => {
+        expect(session.installPlugin).toHaveBeenCalledWith(
+          'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+        );
+      });
+      expect(globalThis.fetch).toHaveBeenCalledWith(KIMI_CODE_PLUGIN_MARKETPLACE_URL);
+    } finally {
+      vi.stubGlobal('fetch', originalFetch);
+    }
   });
 
   it('toggles plugins from the overview with space', async () => {

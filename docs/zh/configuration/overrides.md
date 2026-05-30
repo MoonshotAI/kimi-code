@@ -20,7 +20,7 @@ Kimi Code CLI 的运行参数来自用户配置文件、命令行选项，以及
 少数环境变量会明确覆盖配置文件中的相关字段，例如 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 的优先级高于 `[background].keep_alive_on_exit`。这类例外会在 [环境变量](./env-vars.md) 与对应的 [配置文件](./config-files.md) 字段说明里标出。
 
 ::: warning 注意
-普通运行参数**不会**从 shell 环境变量取后备值。例如供应商 `api_key` / `base_url` 只读取 `config.toml` 中的字段（包括 `[providers.<name>.env]` 子表），不会回退到 `export KIMI_API_KEY` 这类终端变量；详见下文 [供应商凭证](#供应商凭证)。
+普通运行参数**不会**从 shell 环境变量取后备值。例如供应商 `api_key` / `base_url` 只读取 `config.toml` 中的字段（包括 `[providers.<name>.env]` 子表），不会回退到 `export KIMI_API_KEY` 这类终端变量；详见下文 [供应商凭证](#供应商凭证)。唯一的例外是显式的 `KIMI_MODEL_*` 通道，它会从 shell 合成出一个模型（及其凭证）；详见 [用环境变量定义模型](./env-vars.md#用环境变量定义模型-kimi-model)。
 :::
 
 Kimi Code CLI 目前只读取一份用户级配置文件，没有项目级（仓库内）配置文件机制。如果需要在不同项目之间隔离配置，可以通过 `KIMI_CODE_HOME` 指向不同的数据目录（详见下文 [典型场景](#典型场景)），或在启动时用 CLI 选项临时覆盖具体字段。
@@ -31,7 +31,7 @@ Kimi Code CLI 目前只读取一份用户级配置文件，没有项目级（仓
 
 ## 供应商凭证
 
-供应商凭证（`api_key`、`base_url`）的解析有自己的规则：Kimi Code CLI 只从 `config.toml` 中读取供应商字段，**不会**从 shell 环境变量取后备值。仅在终端里 `export KIMI_API_KEY` 不会让某个 `[providers.<name>]` 自动获得凭证，必须显式写到配置文件里。
+供应商凭证（`api_key`、`base_url`）的解析有自己的规则：Kimi Code CLI 只从 `config.toml` 中读取供应商字段，**不会**从 shell 环境变量取后备值。仅在终端里 `export KIMI_API_KEY` 不会让某个 `[providers.<name>]` 自动获得凭证，必须显式写到配置文件里。唯一的例外是显式的 `KIMI_MODEL_*` 通道，它会从 shell 合成出一个模型（及其凭证）；详见 [用环境变量定义模型](./env-vars.md#用环境变量定义模型-kimi-model)。
 
 对单个供应商而言，凭证按以下顺序解析：
 

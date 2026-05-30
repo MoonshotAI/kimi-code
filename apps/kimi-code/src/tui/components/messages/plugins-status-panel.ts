@@ -2,6 +2,14 @@ import type { PluginInfo, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 
 import type { ColorPalette } from '../../theme/colors';
+import {
+  CURATED_BADGE,
+  OFFICIAL_BADGE,
+  THIRD_PARTY_BADGE,
+  type PluginTrustLabel,
+  formatPluginSourceLabel,
+  pluginTrustLabel,
+} from '../../utils/plugin-source-label';
 
 export interface PluginsListPanelInput {
   readonly colors: ColorPalette;
@@ -12,6 +20,7 @@ export function buildPluginsListLines(input: PluginsListPanelInput): readonly st
   const muted = chalk.hex(input.colors.textDim);
   const value = chalk.hex(input.colors.text);
   const success = chalk.hex(input.colors.success);
+  const primary = chalk.hex(input.colors.primary);
   const warning = chalk.hex(input.colors.warning);
   if (input.plugins.length === 0) {
     return [
@@ -20,13 +29,22 @@ export function buildPluginsListLines(input: PluginsListPanelInput): readonly st
       value('Run /plugins to install one.'),
     ];
   }
+  const renderTrustBadge = (label: PluginTrustLabel): string => {
+    if (label === 'official') return success(`[${OFFICIAL_BADGE}]`);
+    if (label === 'curated') return primary(`[${CURATED_BADGE}]`);
+    return muted(`[${THIRD_PARTY_BADGE}]`);
+  };
   const lines: string[] = [];
   for (const plugin of input.plugins) {
     const enabled = plugin.enabled ? success('enabled') : muted('disabled');
     const state = plugin.state === 'ok' ? '' : ` [${plugin.state}]`;
     const version = plugin.version ?? '-';
     const diagnostics = plugin.hasErrors ? warning(' | diagnostics: see /plugins info') : '';
-    lines.push(`${value(plugin.displayName)} (${muted(plugin.id)}) ${muted(version)} | ${enabled}${state}`);
+    const sourceTag = muted(`[${formatPluginSourceLabel(plugin)}]`);
+    const trustBadge = ` ${renderTrustBadge(pluginTrustLabel(plugin))}`;
+    lines.push(
+      `${value(plugin.displayName)} (${muted(plugin.id)}) ${muted(version)} ${sourceTag}${trustBadge} | ${enabled}${state}`,
+    );
     const mcp =
       plugin.mcpServerCount > 0
         ? ` | ${plugin.enabledMcpServerCount}/${plugin.mcpServerCount} mcp`
@@ -35,6 +53,7 @@ export function buildPluginsListLines(input: PluginsListPanelInput): readonly st
   }
   return lines;
 }
+
 
 export interface PluginsInfoPanelInput {
   readonly colors: ColorPalette;
@@ -48,14 +67,37 @@ export function buildPluginsInfoLines(input: PluginsInfoPanelInput): readonly st
   const success = chalk.hex(input.colors.success);
   const warning = chalk.hex(input.colors.warning);
   const error = chalk.hex(input.colors.error);
+  const primary = chalk.hex(input.colors.primary);
   const status = info.enabled ? success('enabled') : muted('disabled');
+  const trustLine = (() => {
+    const label = pluginTrustLabel(info);
+    if (label === 'official') {
+      return `${muted('Trust:')}  ${success(OFFICIAL_BADGE)} ${muted('(Kimi-built and -maintained)')}`;
+    }
+    if (label === 'curated') {
+      return `${muted('Trust:')}  ${primary(CURATED_BADGE)} ${muted('(Kimi-reviewed, upstream-maintained)')}`;
+    }
+    return `${muted('Trust:')}  ${muted(THIRD_PARTY_BADGE)}`;
+  })();
   const lines: string[] = [
     `${value(info.displayName)} (${muted(info.id)}) ${muted(info.version ?? '')}`.trim(),
     `${muted('Status:')} ${status} | ${muted('state:')} ${stateText(info.state, input.colors)}`,
+    trustLine,
     `${muted('Source:')} ${value(info.source)}`,
     `${muted('Root:')}   ${value(info.root)}`,
   ];
+  if (info.source === 'github' && info.github !== undefined) {
+    const refLabel = `${info.github.ref.kind}:${info.github.ref.value}`;
+    lines.push(`${muted('GitHub:')} ${value(`${info.github.owner}/${info.github.repo}`)} ${muted(`@${refLabel}`)}`);
+    if (info.github.installedSha !== undefined) {
+      lines.push(`${muted('Installed SHA:')} ${value(info.github.installedSha)}`);
+    }
+  }
   if (info.originalSource !== undefined) lines.push(`${muted('Original source:')} ${value(info.originalSource)}`);
+  lines.push(`${muted('Installed at:')} ${value(info.installedAt)}`);
+  if (info.updatedAt !== undefined && info.updatedAt !== info.installedAt) {
+    lines.push(`${muted('Last updated:')} ${value(info.updatedAt)}`);
+  }
   if (info.manifestPath !== undefined) {
     const kindSuffix = info.manifestKind !== undefined ? ` ${muted(`(${info.manifestKind})`)}` : '';
     lines.push(`${muted('Manifest:')} ${value(info.manifestPath)}${kindSuffix}`);

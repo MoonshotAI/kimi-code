@@ -1,4 +1,4 @@
-import { ChatProviderError } from '#/errors';
+import { APIContextOverflowError, ChatProviderError } from '#/errors';
 import { generate } from '#/generate';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import {
@@ -1633,6 +1633,35 @@ describe('OpenAIResponsesChatProvider', () => {
       await expect(collectStreamParts(stream)).rejects.toThrow(
         /rate_limit_exceeded.*too many/,
       );
+    });
+
+    it('normalizes response.failed context overflow events', async () => {
+      const events = [
+        {
+          type: 'response.failed',
+          response: {
+            id: 'resp_context_overflow',
+            status: 'failed',
+            error: {
+              code: 'context_length_exceeded',
+              message:
+                'Your input exceeds the context window of this model. Please adjust your input and try again.',
+            },
+          },
+        },
+      ];
+      const stream = new OpenAIResponsesStreamedMessage(makeAsyncIterable(events), true);
+
+      let caughtError: unknown;
+      try {
+        await collectStreamParts(stream);
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError).toBeInstanceOf(APIContextOverflowError);
+      expect((caughtError as APIContextOverflowError).statusCode).toBe(400);
+      expect((caughtError as Error).message).toMatch(/context_length_exceeded/);
     });
 
     it('throws when a known stream event is missing a required field', async () => {

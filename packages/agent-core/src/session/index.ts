@@ -28,7 +28,6 @@ import {
   type ResolvedAgentProfile,
 } from '../profile';
 import type { ProviderManager } from './provider-manager';
-import type { ToolServices } from '../runtime-types';
 import {
   registerBuiltinSkills,
   resolveSkillRoots,
@@ -39,6 +38,7 @@ import {
 } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
 import { SessionSubagentHost } from './subagent-host';
+import type { ToolServices } from '../tools/support/services';
 
 export interface SessionOptions {
   readonly kaos: Kaos;

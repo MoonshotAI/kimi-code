@@ -55,6 +55,17 @@ export class AgentGroupComponent extends Container {
   }
 
   /**
+   * Exposes the borrowed tool call components so external code (e.g.
+   * routing background task terminal events back to the corresponding
+   * Agent card) can reach them — the group renders the tcs' snapshots
+   * but never mounts the tcs as Container children, so a plain tree
+   * walk of `transcriptContainer` cannot discover them.
+   */
+  getToolComponents(): readonly ToolCallComponent[] {
+    return this.entries.map((entry) => entry.tc);
+  }
+
+  /**
    * Borrows a standalone `ToolCallComponent` into the group as a hidden state
    * container. Snapshot changes trigger throttled refreshes. Re-attaching the
    * same toolCallId is a no-op.

@@ -281,6 +281,57 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
     });
     expect('defaultMaxTokens' in resolved.provider).toBe(false);
   });
+
+  it('forwards alias.adaptiveThinking to the anthropic provider config', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          anthropic: { type: 'anthropic', apiKey: 'sk-anthropic' },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'okapi-alias': {
+            provider: 'anthropic',
+            model: 'coding-model-okapi-0527-vibe',
+            maxContextSize: 200000,
+            adaptiveThinking: true,
+          },
+        },
+      },
+      model: 'okapi-alias',
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'anthropic',
+      model: 'coding-model-okapi-0527-vibe',
+      adaptiveThinking: true,
+    });
+  });
+
+  it('omits adaptiveThinking when alias.adaptiveThinking is unset', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          anthropic: { type: 'anthropic', apiKey: 'sk-anthropic' },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'opus-alias': {
+            provider: 'anthropic',
+            model: 'claude-opus-4-7',
+            maxContextSize: 200000,
+          },
+        },
+      },
+      model: 'opus-alias',
+    });
+
+    expect('adaptiveThinking' in resolved.provider).toBe(false);
+  });
 });
 
 describe('resolveRuntimeProvider Kimi request headers', () => {
