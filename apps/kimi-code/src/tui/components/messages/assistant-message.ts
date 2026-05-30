@@ -33,6 +33,18 @@ export class AssistantMessageComponent implements Component {
     this.showBullet = show;
   }
 
+  applyTheme(markdownTheme: MarkdownTheme, colors: ColorPalette): void {
+    this.markdownTheme = markdownTheme;
+    this.bulletColor = colors.roleAssistant;
+    this.defaultTextStyle = { color: (text) => chalk.hex(colors.text)(text) };
+    if (this.lastText) {
+      this.contentContainer.clear();
+      this.contentContainer.addChild(
+        new Markdown(this.lastText.trim(), 0, 0, this.markdownTheme, this.defaultTextStyle),
+      );
+    }
+  }
+
   updateContent(text: string): void {
     const displayText = text;
     if (displayText === this.lastText) return;
