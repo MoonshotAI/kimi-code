@@ -38,7 +38,7 @@ Plan: `plan/phase-07-goal-ux-and-budget.md`. Sequenced commits:
 | 5 | `/goal` status box | ✅ | e65abcb |
 | 6a | `goal.updated` change payload + terminal stats on record | ✅ | — |
 | 6b | Transcript markers + completion card (live) | ✅ | — |
-| 6c | Transcript markers + completion card (resume) | ⬜ | — |
+| 6c | Transcript markers + completion card (resume) | ⏸ deferred | — |
 
 - **Commit 1:** added a generic `completeArgs` capability to the slash-command registry
   (`KimiSlashCommand.completeArgs`, generic `completeLeadingArg` helper), wired `/goal` to
@@ -94,6 +94,22 @@ Plan: `plan/phase-07-goal-ux-and-budget.md`. Sequenced commits:
   silent. New `components/messages/goal-markers.ts`. Tests: marker build matrix (verdict/lifecycle/
   terminal-null) + collapse/expand. app typecheck + lint clean; full app suite green. Resume
   reconstruction (scrollback after `/resume`) is Commit 6c.
+- **Commit 6c (deferred):** rebuild goal markers + completion card on resume/scrollback. Design
+  decided, not yet implemented. The TUI replay rebuilds from a curated `AgentReplayRecord` stream
+  (resumed.ts); `goal.*` records are excluded (audit-only). Plan:
+  - Add a `{ type: 'goal'; change: GoalChange }` variant to `AgentReplayRecord`; during record
+    restore (`agent/records/index.ts`, currently a no-op for `goal.*`), `replayBuilder.push` a goal
+    change derived from `goal.update` (lifecycle paused/resumed/cancelled; terminal complete/blocked/
+    impossible/budget_limited/interrupted/error) and `goal.evaluate` (verdict). Use the
+    `turnsUsed`/`tokensUsed`/`wallClockMs` already added to `goal.update` (6a) for stats.
+  - In `SessionReplayRenderer.renderRecord`, handle the `goal` case → `buildGoalMarker` for
+    lifecycle/verdict; for terminal render a **stats-only completion card** (decided): a box titled
+    `Goal · <status>` showing `<status> — <reason>` + Running/Turns/Tokens from the record stats.
+    (Deliberately simpler than the live card, which has the full snapshot incl. objective/budgets —
+    historical objective/budgets aren't reliably reconstructable from current durable state.)
+  - Needs a `buildGoalCompletionLines(change)` (stats-based) shared by the resume card; live can keep
+    the richer `buildGoalReportLines(snapshot)` box.
+  - Tests: replay of `goal.*` records produces markers + a stats-only completion card.
 
 ## Post-implementation fixes
 
