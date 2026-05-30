@@ -5,7 +5,7 @@
  * to align after the bullet.
  */
 
-import type { Component, MarkdownTheme } from '@earendil-works/pi-tui';
+import type { Component, DefaultTextStyle, MarkdownTheme } from '@earendil-works/pi-tui';
 import { Container, Markdown, visibleWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
@@ -16,12 +16,14 @@ import type { ColorPalette } from '#/tui/theme/colors';
 export class AssistantMessageComponent implements Component {
   private contentContainer: Container;
   private markdownTheme: MarkdownTheme;
+  private defaultTextStyle: DefaultTextStyle;
   private bulletColor: string;
   private lastText = '';
   private showBullet: boolean;
 
   constructor(markdownTheme: MarkdownTheme, colors: ColorPalette, showBullet: boolean = true) {
     this.markdownTheme = markdownTheme;
+    this.defaultTextStyle = { color: (text) => chalk.hex(colors.text)(text) };
     this.bulletColor = colors.roleAssistant;
     this.showBullet = showBullet;
     this.contentContainer = new Container();
@@ -31,13 +33,25 @@ export class AssistantMessageComponent implements Component {
     this.showBullet = show;
   }
 
+  applyTheme(markdownTheme: MarkdownTheme, colors: ColorPalette): void {
+    this.markdownTheme = markdownTheme;
+    this.bulletColor = colors.roleAssistant;
+    this.defaultTextStyle = { color: (text) => chalk.hex(colors.text)(text) };
+    if (this.lastText) {
+      this.contentContainer.clear();
+      this.contentContainer.addChild(
+        new Markdown(this.lastText.trim(), 0, 0, this.markdownTheme, this.defaultTextStyle),
+      );
+    }
+  }
+
   updateContent(text: string): void {
     const displayText = text;
     if (displayText === this.lastText) return;
     this.lastText = displayText;
     this.contentContainer.clear();
     if (displayText.trim().length > 0) {
-      this.contentContainer.addChild(new Markdown(displayText.trim(), 0, 0, this.markdownTheme));
+      this.contentContainer.addChild(new Markdown(displayText.trim(), 0, 0, this.markdownTheme, this.defaultTextStyle));
     }
   }
 

@@ -1,3 +1,7 @@
+import type { MarkdownTheme } from '@earendil-works/pi-tui';
+
+import type { ColorPalette } from '#/tui/theme/colors';
+
 export interface Expandable {
   setExpanded(expanded: boolean): void;
 }
@@ -10,6 +14,19 @@ export interface PlanExpandable {
 
 export interface Disposable {
   dispose(): void;
+}
+
+export interface ThemeAwareComponent {
+  applyTheme(markdownTheme: MarkdownTheme, colors: ColorPalette): void;
+}
+
+export function isThemeAware(obj: unknown): obj is ThemeAwareComponent {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'applyTheme' in obj &&
+    typeof (obj as ThemeAwareComponent).applyTheme === 'function'
+  );
 }
 
 export function isExpandable(obj: unknown): obj is Expandable {
