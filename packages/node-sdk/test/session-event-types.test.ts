@@ -50,6 +50,7 @@ describe('Event public types', () => {
       switch (event.type) {
         case 'agent.status.updated':
         case 'session.meta.updated':
+        case 'goal.updated':
         case 'skill.activated':
         case 'error':
         case 'warning':

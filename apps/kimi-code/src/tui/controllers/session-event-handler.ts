@@ -11,6 +11,7 @@ import type {
   CompactionStartedEvent,
   ErrorEvent,
   Event,
+  GoalUpdatedEvent,
   HookResultEvent,
   Session,
   SessionMetaUpdatedEvent,
@@ -192,6 +193,7 @@ export class SessionEventHandler {
       case 'tool.result': this.handleToolResult(event); break;
       case 'agent.status.updated': this.handleStatusUpdate(event); break;
       case 'session.meta.updated': this.handleSessionMetaChanged(event); break;
+      case 'goal.updated': this.handleGoalUpdated(event); break;
       case 'skill.activated': this.handleSkillActivated(event); break;
       case 'error': this.handleSessionError(event); break;
       case 'warning': this.handleSessionWarning(event); break;
@@ -526,6 +528,10 @@ export class SessionEventHandler {
     }
     if (event.model !== undefined) patch.model = event.model;
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
+  }
+
+  private handleGoalUpdated(event: GoalUpdatedEvent): void {
+    this.host.setAppState({ goal: event.snapshot });
   }
 
   private handleSessionMetaChanged(event: SessionMetaUpdatedEvent): void {

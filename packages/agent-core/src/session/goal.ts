@@ -177,6 +177,12 @@ export interface SessionGoalStoreOptions {
    * here once the sink exists, and queued in order until then.
    */
   readonly auditSink?: () => GoalAuditSink | undefined;
+  /**
+   * Notified with the current goal snapshot (or `null` when cleared) after each
+   * durable state change, so live UI (e.g. the footer badge) can update. Not
+   * called for per-step token / wall-clock accounting, to avoid chatty updates.
+   */
+  readonly onGoalUpdated?: (snapshot: GoalSnapshot | null) => void;
 }
 
 /**
@@ -232,19 +238,19 @@ export class SessionGoalStore {
     if (state === undefined) return;
 
     if (!isValidGoalState(state)) {
-      await this.options.writeState(undefined);
+      await this.persistState(undefined);
       return;
     }
 
     // A `cancelled` status persisted to disk means clear did not complete; drop it.
     if (state.status === 'cancelled') {
-      await this.options.writeState(undefined);
+      await this.persistState(undefined);
       return;
     }
 
     if (state.status === 'active') {
       this.applyStatus(state, 'paused', 'runtime', 'Paused after session resume');
-      await this.options.writeState(state);
+      await this.persistState(state);
       this.appendStatusUpdate(state, 'runtime', 'Paused after session resume');
       return;
     }
@@ -314,7 +320,7 @@ export class SessionGoalStore {
       state.completionCriterion = input.completionCriterion.trim();
     }
 
-    await this.options.writeState(state);
+    await this.persistState(state);
     this.appendAudit({
       type: 'goal.create',
       goalId: state.goalId,
@@ -339,7 +345,7 @@ export class SessionGoalStore {
     }
     const actor = input.actor ?? 'user';
     this.applyStatus(state, 'paused', actor, input.reason);
-    await this.options.writeState(state);
+    await this.persistState(state);
     this.appendStatusUpdate(state, actor, input.reason);
     return this.toSnapshot(state);
   }
@@ -355,7 +361,7 @@ export class SessionGoalStore {
     }
     const actor = input.actor ?? 'user';
     this.applyStatus(state, 'active', actor, input.reason);
-    await this.options.writeState(state);
+    await this.persistState(state);
     this.appendStatusUpdate(state, actor, input.reason);
     return this.toSnapshot(state);
   }
@@ -367,7 +373,7 @@ export class SessionGoalStore {
     state.terminalReason = input.reason;
     const snapshot = this.toSnapshot(state);
     // Persist the cancelled transition and audit it, then clear the goal.
-    await this.options.writeState(state);
+    await this.persistState(state);
     this.appendStatusUpdate(state, actor, input.reason);
     await this.clearInternal(actor, input.reason);
     return snapshot;
@@ -399,7 +405,7 @@ export class SessionGoalStore {
       state.terminalEvidence = input.evidence;
       state.lastEvidence = input.evidence;
     }
-    await this.options.writeState(state);
+    await this.persistState(state);
     this.appendStatusUpdate(state, actor, input.reason, input.evidence);
     return this.toSnapshot(state);
   }
@@ -434,7 +440,7 @@ export class SessionGoalStore {
     const delta = Math.max(0, input.tokenDelta);
     state.tokensUsed += delta;
     state.updatedAt = new Date().toISOString();
-    await this.options.writeState(state);
+    await this.persistState(state, true); // per-step: don't emit a UI update
     this.appendAudit({
       type: 'goal.account_usage',
       goalId: state.goalId,
@@ -455,7 +461,7 @@ export class SessionGoalStore {
     const delta = Math.max(0, input.wallClockMs);
     state.wallClockMs += delta;
     state.updatedAt = new Date().toISOString();
-    await this.options.writeState(state);
+    await this.persistState(state, true); // per-step: don't emit a UI update
     this.appendAudit({
       type: 'goal.account_usage',
       goalId: state.goalId,
@@ -474,7 +480,7 @@ export class SessionGoalStore {
     state.turnsUsed += 1;
     state.updatedAt = new Date().toISOString();
     if (input.evidence !== undefined) state.lastEvidence = input.evidence;
-    await this.options.writeState(state);
+    await this.persistState(state);
     this.appendAudit({
       type: 'goal.continuation',
       goalId: state.goalId,
@@ -495,7 +501,7 @@ export class SessionGoalStore {
     state.updatedAt = new Date().toISOString();
     // recordModelReport never changes status; it stores the model's requested
     // terminal state as evidence for the continuation controller / evaluator.
-    await this.options.writeState(state);
+    await this.persistState(state);
     this.appendAudit({
       type: 'goal.report',
       goalId: state.goalId,
@@ -524,7 +530,7 @@ export class SessionGoalStore {
     // A produced verdict means the evaluator ran successfully.
     state.consecutiveFailureTurns = 0;
     state.updatedAt = new Date().toISOString();
-    await this.options.writeState(state);
+    await this.persistState(state);
     this.appendAudit({
       type: 'goal.evaluate',
       goalId: state.goalId,
@@ -544,7 +550,7 @@ export class SessionGoalStore {
     if (state === undefined || state.status !== 'active') return null;
     state.consecutiveFailureTurns += 1;
     state.updatedAt = new Date().toISOString();
-    await this.options.writeState(state);
+    await this.persistState(state);
     this.appendAudit({
       type: 'goal.evaluate',
       goalId: state.goalId,
@@ -570,7 +576,7 @@ export class SessionGoalStore {
       state.terminalEvidence = evidence;
       state.lastEvidence = evidence;
     }
-    await this.options.writeState(state);
+    await this.persistState(state);
     this.appendStatusUpdate(state, 'runtime', reason, evidence);
     return this.toSnapshot(state);
   }
@@ -579,7 +585,7 @@ export class SessionGoalStore {
     const state = this.options.readState();
     if (state === undefined) return; // idempotent
     const goalId = state.goalId;
-    await this.options.writeState(undefined);
+    await this.persistState(undefined);
     this.appendAudit({ type: 'goal.clear', goalId, actor, reason });
   }
 
@@ -624,6 +630,21 @@ export class SessionGoalStore {
       throw new KimiError(ErrorCodes.GOAL_NOT_FOUND, 'No active goal');
     }
     return state;
+  }
+
+  /**
+   * Persists goal state and (unless `silent`) notifies `onGoalUpdated` with the
+   * resulting snapshot. `silent` is used for per-step token / wall-clock
+   * accounting so the UI is not updated on every step.
+   */
+  private async persistState(
+    state: SessionGoalState | undefined,
+    silent = false,
+  ): Promise<void> {
+    await this.options.writeState(state);
+    if (!silent) {
+      this.options.onGoalUpdated?.(state === undefined ? null : this.toSnapshot(state));
+    }
   }
 
   private normalizeBudgetLimits(input?: GoalBudgetLimits): GoalBudgetLimits {

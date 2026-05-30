@@ -33,8 +33,8 @@ Plan: `plan/phase-07-goal-ux-and-budget.md`. Sequenced commits:
 |---|--------|--------|------|
 | 1 | Generic subcommand autocomplete (`/goal` subcommands + flags) | ✅ | 7cbb37f |
 | 2 | Budget model: drop default turn cap, surface counters to evaluator | ✅ | — |
-| 3 | `goal.updated` event spine + terminal stats on `goal.update` record | ⬜ | — |
-| 4 | Footer badge | ⬜ | — |
+| 3 | `goal.updated` event spine + terminal stats on `goal.update` record | 🟡 | 5d… |
+| 4 | Footer badge | ✅ | 5d… |
 | 5 | `/goal` status box | ⬜ | — |
 | 6 | Transcript markers + completion card (live + resume) | ⬜ | — |
 
@@ -55,6 +55,17 @@ Plan: `plan/phase-07-goal-ux-and-budget.md`. Sequenced commits:
   natural-language stop-clauses. Added TUI + headless "no stop condition" nudges. Tests updated:
   unbounded goal does not hard-stop; explicit `turnBudget` still caps; evaluator prompt carries the
   counters + stop-condition check. agent-core 2367, app 185, typecheck + lint clean.
+- **Commit 4 (+ partial 3):** built the `goal.updated` event spine and the footer badge. Added
+  `GoalUpdatedEvent { snapshot }` to agent-core's event union, re-exported via the SDK; the goal
+  store gained an `onGoalUpdated` callback emitted through a centralized `persistState()` on every
+  durable change *except* per-step token/wall-clock accounting (silent, to avoid chatty updates);
+  `Session` wires it to `rpc.emitEvent`. TUI: `AppState.goal`, a `goal.updated` handler, and a
+  footer badge `[goal ● <status> · <elapsed> · N turns]` (raw turn count; `used/limit` only when a
+  turn budget is set; shown only for active/paused; cleared on terminal). Tests: store emits on
+  lifecycle but not token usage; footer badge variants. **Deferred to Commit 6 (the 🟡 part of 3):**
+  the `change` payload (verdict/lifecycle/terminal detail) and terminal stats on the `goal.update`
+  record, which the transcript markers + completion card need. agent-core 2368, node-sdk 153, app
+  1065 (sequential), all typechecks + lint clean.
 
 ## Post-implementation fixes
 

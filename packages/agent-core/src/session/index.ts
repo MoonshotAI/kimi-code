@@ -142,6 +142,9 @@ export class Session {
         return this.writeMetadata();
       },
       auditSink: () => this.agents.get('main')?.records,
+      onGoalUpdated: (snapshot) => {
+        void this.rpc.emitEvent({ type: 'goal.updated', agentId: 'main', snapshot });
+      },
     });
     this.skills = new SkillRegistry({ sessionId: options.id });
     this.mcp = new McpConnectionManager({

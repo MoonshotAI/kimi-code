@@ -119,6 +119,36 @@ function tipsForIndex(index: number): { primary: string; pair: string | null } {
   return { primary: current.text, pair: current.text + TIP_SEPARATOR + next.text };
 }
 
+/**
+ * Footer goal badge, e.g. `[goal ● active · 4m · 7 turns]`. Only shown for a
+ * live (active/paused) goal; terminal/no goal -> no badge. Turn count is a raw
+ * count unless an explicit turn budget is set, in which case it shows used/limit.
+ */
+function formatGoalBadge(goal: AppState['goal'], colors: ColorPalette): string | null {
+  if (goal === null || goal === undefined) return null;
+  if (goal.status !== 'active' && goal.status !== 'paused') return null;
+  const dotColor = goal.status === 'paused' ? colors.textMuted : colors.primary;
+  const turns =
+    goal.budget.turnBudget !== null
+      ? `${goal.turnsUsed}/${goal.budget.turnBudget} turns`
+      : `${goal.turnsUsed} ${goal.turnsUsed === 1 ? 'turn' : 'turns'}`;
+  const label = `${goal.status} · ${formatBadgeElapsed(goal.wallClockMs)} · ${turns}`;
+  return (
+    chalk.hex(colors.textMuted)('[goal ') +
+    chalk.hex(dotColor)('●') +
+    chalk.hex(colors.textMuted)(` ${label}]`)
+  );
+}
+
+function formatBadgeElapsed(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h${minutes % 60}m`;
+}
+
 function shortenModel(model: string): string {
   if (!model) return model;
   const slash = model.lastIndexOf('/');
@@ -243,6 +273,9 @@ export class FooterComponent implements Component {
     if (state.permissionMode === 'auto') left.push(chalk.hex(colors.warning).bold('auto'));
     if (state.permissionMode === 'yolo') left.push(chalk.hex(colors.warning).bold('yolo'));
     if (state.planMode) left.push(chalk.hex(colors.primary).bold('plan'));
+
+    const goalBadge = formatGoalBadge(state.goal, colors);
+    if (goalBadge !== null) left.push(goalBadge);
 
     const model = shortenModel(modelDisplayName(state));
     if (model) {

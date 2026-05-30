@@ -1,4 +1,5 @@
 import type {
+  GoalSnapshot,
   ModelAlias,
   PermissionMode,
   ProviderConfig,
@@ -32,6 +33,8 @@ export interface AppState {
   availableModels: Record<string, ModelAlias>;
   availableProviders: Record<string, ProviderConfig>;
   sessionTitle: string | null;
+  /** Current goal snapshot for the footer badge; null/undefined when no active goal. */
+  goal?: GoalSnapshot | null;
 }
 
 export interface ToolCallBlockData {

@@ -11,6 +11,7 @@ import {
   DEFAULT_GOAL_FAILURE_TURN_LIMIT,
   SessionGoalStore,
   type GoalAuditSink,
+  type GoalSnapshot,
   type SessionGoalState,
 } from '../../src/session/goal';
 import type { AgentRecord } from '../../src/agent/records';
@@ -68,6 +69,7 @@ function activeState(overrides: Partial<SessionGoalState> = {}): SessionGoalStat
 function makeStore() {
   let state: SessionGoalState | undefined;
   let writeCount = 0;
+  const updates: (GoalSnapshot | null)[] = [];
   const store = new SessionGoalStore({
     sessionId: 'test',
     readState: () => state,
@@ -75,11 +77,15 @@ function makeStore() {
       state = next;
       writeCount += 1;
     },
+    onGoalUpdated: (snapshot) => {
+      updates.push(snapshot);
+    },
   });
   return {
     store,
     current: () => state,
     writeCount: () => writeCount,
+    updates: () => updates,
   };
 }
 
@@ -126,6 +132,33 @@ describe('SessionGoalStore creation', () => {
     expect(snapshot.budget.wallClockBudgetMs).toBeNull();
     // The malfunction guard is still defaulted.
     expect(snapshot.budget.failureTurnLimit).toBe(DEFAULT_GOAL_FAILURE_TURN_LIMIT);
+  });
+
+  it('notifies onGoalUpdated on lifecycle changes but not on token accounting', async () => {
+    const { store, updates } = makeStore();
+    await store.createGoal({ objective: 'work' });
+    expect(updates().at(-1)?.status).toBe('active');
+    const afterCreate = updates().length;
+
+    // Per-step token usage must NOT emit a UI update (chatty).
+    await store.recordTokenUsage({
+      tokenDelta: 100,
+      agentId: 'main',
+      agentType: 'main',
+      source: 'agent_step',
+    });
+    expect(updates().length).toBe(afterCreate);
+
+    // A turn increment emits (badge turn count refreshes per turn).
+    await store.incrementTurn();
+    expect(updates().length).toBe(afterCreate + 1);
+    expect(updates().at(-1)?.turnsUsed).toBe(1);
+
+    // Pause emits the paused snapshot; clear emits null.
+    await store.pauseGoal();
+    expect(updates().at(-1)?.status).toBe('paused');
+    await store.clearGoal();
+    expect(updates().at(-1)).toBeNull();
   });
 
   it('rejects empty objectives', async () => {
