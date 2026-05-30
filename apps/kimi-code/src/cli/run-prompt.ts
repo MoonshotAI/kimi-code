@@ -166,7 +166,7 @@ async function resolvePromptSession(
     }
     if (target.workDir !== workDir) {
       stderr.write(
-        `${chalk.yellow(
+        `${chalk.hex('#E8A838')(
           `Session "${opts.session}" was created under a different directory.\n` +
             `  cd "${target.workDir}" && kimi -r ${opts.session}`,
         )}\n\n`,
