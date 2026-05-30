@@ -201,15 +201,7 @@ function resolveModelCapabilities(
     image_in: declared.has('image_in') || detected.image_in,
     video_in: declared.has('video_in') || detected.video_in,
     audio_in: declared.has('audio_in') || detected.audio_in,
-    // Forcing adaptive thinking implies the model supports thinking, so advertise
-    // it even when the alias declares no capabilities and the custom model name is
-    // not in the capability catalog. Otherwise the model picker would classify the
-    // alias as "thinking unsupported" and disable it.
-    thinking:
-      declared.has('thinking') ||
-      declared.has('always_thinking') ||
-      alias.adaptiveThinking === true ||
-      detected.thinking,
+    thinking: declared.has('thinking') || declared.has('always_thinking') || detected.thinking,
     tool_use: declared.has('tool_use') || detected.tool_use,
     max_context_tokens: alias.maxContextSize,
   };
