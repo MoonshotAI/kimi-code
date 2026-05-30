@@ -181,7 +181,7 @@ describe('ToolManager setActiveTools filtering', () => {
     expect(activeNames).toEqual(['Read']);
   });
 
-  it('preserves pending builtin names across intermediate all‑available calls before builtin init', () => {
+  it('preserves pending builtin names across intermediate user‑tool‑only calls but clears on empty replacement', () => {
     const agent = {
       records: { logRecord: vi.fn() },
       config: { hasProvider: false },
@@ -200,6 +200,7 @@ describe('ToolManager setActiveTools filtering', () => {
     ]);
 
     // Second call: user-tool-only — all names available; pending must survive
+    // because this call doesn't express intent about builtin tools.
     const userTool = {
       name: 'UserTool', description: '', parameters: {},
       resolveExecution: vi.fn(),
@@ -210,10 +211,20 @@ describe('ToolManager setActiveTools filtering', () => {
       'Bash', 'TaskList', 'TaskOutput', 'TaskStop',
     ]);
 
-    // Third call replaces pending — no stale merge that could re-enable
-    // tools the intermediate call explicitly removed.
-    tm.setActiveTools(['WebSearch']);
-    expect((tm as any).pendingBuiltinToolNames).toEqual(['WebSearch']);
+    // Third call: empty replacement — must clear pending since the caller
+    // explicitly removed all tools.
+    tm.setActiveTools([]);
+    expect((tm as any).pendingBuiltinToolNames).toEqual([]);
+
+    // Fourth call: re-establish pending
+    tm.setActiveTools(['Bash', 'TaskList', 'TaskOutput', 'TaskStop']);
+    expect((tm as any).pendingBuiltinToolNames).toEqual([
+      'Bash', 'TaskList', 'TaskOutput', 'TaskStop',
+    ]);
+
+    // Fifth call: MCP-only — no non-MCP names, acts like empty replacement
+    tm.setActiveTools(['mcp__*']);
+    expect((tm as any).pendingBuiltinToolNames).toEqual([]);
   });
 
   it('enables Bash background mode when task tools arrive via pendingBuiltinToolNames', async () => {
