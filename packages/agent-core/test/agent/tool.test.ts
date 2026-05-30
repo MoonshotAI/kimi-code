@@ -180,6 +180,62 @@ describe('ToolManager setActiveTools filtering', () => {
       .map((i) => i.name);
     expect(activeNames).toEqual(['Read']);
   });
+
+  it('merges pendingBuiltinToolNames across repeated setActiveTools calls before builtin init', () => {
+    const agent = {
+      records: { logRecord: vi.fn() },
+      config: { hasProvider: false },
+      log: { warn: vi.fn(), info: vi.fn() },
+      mcp: undefined,
+      emitEvent: vi.fn(),
+    } as unknown as import('../../src/agent').Agent;
+
+    const tm = new ToolManager(agent);
+    // builtins empty — pre-init state
+
+    // First call: task tools saved as pending
+    tm.setActiveTools(['Bash', 'TaskList', 'TaskOutput', 'TaskStop']);
+    expect((tm as any).pendingBuiltinToolNames).toEqual([
+      'Bash', 'TaskList', 'TaskOutput', 'TaskStop',
+    ]);
+
+    // Second call: user-tool-only — all names available; pending must survive
+    // because builtins are not yet initialized.
+    const userTool = {
+      name: 'UserTool', description: '', parameters: {},
+      resolveExecution: vi.fn(),
+    };
+    (tm as any).userTools.set('UserTool', userTool);
+    tm.setActiveTools(['UserTool']);
+    expect((tm as any).pendingBuiltinToolNames).toEqual([
+      'Bash', 'TaskList', 'TaskOutput', 'TaskStop',
+    ]);
+
+    // Third call with additional missing tool: merge, don't replace
+    tm.setActiveTools(['WebSearch']);
+    expect((tm as any).pendingBuiltinToolNames).toEqual([
+      'Bash', 'TaskList', 'TaskOutput', 'TaskStop', 'WebSearch',
+    ]);
+  });
+
+  it('enables Bash background mode when task tools arrive via pendingBuiltinToolNames', async () => {
+    const ctx = testAgent();
+    ctx.configure({ tools: ['Bash'] });
+
+    const tm = ctx.agent.tools;
+    // Simulate deferred profile: task tools are in pending, not in enabledTools
+    (tm as any).pendingBuiltinToolNames = [
+      'Bash', 'TaskList', 'TaskOutput', 'TaskStop',
+    ];
+
+    // Re-initialize builtins — allowBackground computation should pick up
+    // pending task tools and construct Bash with run_in_background=true.
+    tm.initializeBuiltinTools();
+
+    const bashTool = tm.loopTools.find((t) => t.name === 'Bash');
+    expect(bashTool).toBeDefined();
+    expect(bashTool!.description).toContain('run_in_background=true');
+  });
 });
 
 describe('Agent tools', () => {
