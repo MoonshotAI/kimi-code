@@ -597,6 +597,23 @@ describe('ReadTool', () => {
     expect(result.output).not.toContain(`${String(MAX_LINES + 1)}\tline ${String(MAX_LINES + 1)}`);
   });
 
+  it('reports both MAX_LINES and MAX_BYTES when both caps are hit', async () => {
+    const lineCount = MAX_LINES + 5;
+    const lineContent = 'x'.repeat(105);
+    const content = Array.from({ length: lineCount }, (_, i) => `${lineContent} ${String(i + 1)}`).join(
+      '\n',
+    );
+    const tool = toolWithContent(content);
+
+    const result = await executeTool(tool, context({ path: '/tmp/both-caps.txt' }));
+    const output = toolContentString(result);
+
+    expect(result.isError).toBeFalsy();
+    expect(output).toContain(`Max ${String(MAX_LINES)} lines reached.`);
+    expect(output).toContain(`Max ${String(MAX_BYTES)} bytes reached.`);
+    expect(output).not.toContain('End of file reached.');
+  });
+
   it('tail byte truncation keeps the newest lines closest to EOF', async () => {
     const numLines = Math.floor(MAX_BYTES / 1001) + 20;
     const content = Array.from({ length: numLines }, (_, i) => {
