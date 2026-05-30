@@ -1,5 +1,6 @@
 import type {
   ExportSessionManifest,
+  McpServerConfig,
   ResumeSessionResult,
   ShellEnvironment,
   TelemetryClient,
@@ -26,6 +27,7 @@ export type {
   KimiConfig,
   KimiConfigPatch,
   LoopControl,
+  McpServerConfig,
   McpServerInfo,
   McpStartupMetrics,
   ModelAlias,
@@ -79,6 +81,7 @@ export interface CreateSessionOptions {
   readonly permission?: PermissionMode | undefined;
   readonly planMode?: boolean;
   readonly metadata?: JsonObject | undefined;
+  readonly mcpServers?: Record<string, McpServerConfig>;
 }
 
 export interface RenameSessionInput {
@@ -88,6 +91,7 @@ export interface RenameSessionInput {
 
 export interface ResumeSessionInput {
   readonly id: string;
+  readonly mcpServers?: Record<string, McpServerConfig>;
 }
 
 export interface ForkSessionInput {
@@ -95,6 +99,7 @@ export interface ForkSessionInput {
   readonly forkId?: string;
   readonly title?: string;
   readonly metadata?: JsonObject;
+  readonly mcpServers?: Record<string, McpServerConfig>;
 }
 
 export interface ExportSessionInput {

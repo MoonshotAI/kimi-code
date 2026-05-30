@@ -13,6 +13,7 @@ import {
 } from '@moonshot-ai/kimi-code-sdk';
 import { installCrashHandlers, track } from '@moonshot-ai/kimi-telemetry';
 
+import { runAcpServer } from './acp/index';
 import { createProgram } from './cli/commands';
 import type { CLIOptions } from './cli/options';
 import { OptionConflictError, validateOptions } from './cli/options';
@@ -58,6 +59,11 @@ export async function handleMainCommand(opts: CLIOptions, version: string): Prom
 /** `kimi migrate`: launch the migration screen only, then exit. */
 async function handleMigrateCommand(version: string): Promise<void> {
   await runShell(MIGRATE_CLI_OPTIONS, version, { migrateOnly: true });
+}
+
+/** `kimi acp`: speak ACP JSON-RPC over stdio. */
+export async function handleAcpCommand(version: string): Promise<void> {
+  await runAcpServer({ version });
 }
 
 /** A neutral CLIOptions value — `kimi migrate` never opens a chat session. */
@@ -117,6 +123,14 @@ export function main(): void {
       void runPluginNodeEntry(entry, args).catch(async (error: unknown) => {
         await logStartupFailure('run plugin node entry', error);
         process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+        process.exit(1);
+      });
+    },
+    () => {
+      void handleAcpCommand(version).catch(async (error: unknown) => {
+        await logStartupFailure('run ACP server', error);
+        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+        process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
         process.exit(1);
       });
     },

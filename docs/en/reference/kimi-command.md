@@ -152,6 +152,32 @@ kimi export 01HZ...XYZ -o ./bug-report.zip
 kimi export 01HZ...XYZ -o ./bug-report.zip --no-include-global-log
 ```
 
+### `kimi acp`
+
+Run Kimi Code CLI as an [Agent Client Protocol](https://agentclientprotocol.com/) agent server over stdio. This mode is intended for ACP-compatible editors and tools that launch Kimi Code as a subprocess.
+
+```sh
+kimi acp
+```
+
+In ACP mode, stdout is reserved for newline-delimited JSON-RPC protocol messages. Logs, diagnostics, authentication errors, and progress text are written to stderr or the diagnostic log instead. The command does not open the TUI and does not run the interactive update preflight.
+
+Configure your ACP client to run the `kimi` binary with `acp` as its only argument:
+
+```json
+{
+  "agent_servers": {
+    "Kimi Code": {
+      "type": "custom",
+      "command": "kimi",
+      "args": ["acp"]
+    }
+  }
+}
+```
+
+If Kimi Code is not authenticated or no default model is configured, `kimi acp` reports that through ACP authentication errors instead of printing setup instructions to stdout. Run `kimi` in a terminal and use `/login`, or configure `KIMI_MODEL_*` environment variables for the ACP server process.
+
 ### `kimi migrate`
 
 Migrate local data from an older version of kimi-cli to kimi-code. This command has no flags and runs fully interactively, guiding you through the entire migration process.

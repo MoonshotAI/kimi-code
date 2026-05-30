@@ -124,7 +124,10 @@ export class KimiHarness {
     const active = this.activeSessions.get(id);
     if (active !== undefined) return active;
 
-    const summary = await this.rpc.resumeSession({ id });
+    const summary = await this.rpc.resumeSession({
+      id,
+      mcpServers: input.mcpServers,
+    });
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,
@@ -146,6 +149,7 @@ export class KimiHarness {
       forkId: input.forkId,
       title: input.title,
       metadata: input.metadata,
+      mcpServers: input.mcpServers,
     });
     const session = new Session({
       id: summary.id,

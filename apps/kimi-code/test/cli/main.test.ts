@@ -8,7 +8,8 @@ import { runPrompt } from '#/cli/run-prompt';
 import { runShell } from '#/cli/run-shell';
 import { formatStartupError } from '#/cli/startup-error';
 import { runUpdatePreflight } from '#/cli/update/preflight';
-import { handleMainCommand, main } from '#/main';
+import { handleAcpCommand, handleMainCommand, main } from '#/main';
+import { runAcpServer } from '../../src/acp/index';
 
 const mocks = vi.hoisted(() => {
   const parse = vi.fn();
@@ -20,6 +21,7 @@ const mocks = vi.hoisted(() => {
     runUpdatePreflight: vi.fn(),
     runShell: vi.fn(),
     runPrompt: vi.fn(),
+    runAcpServer: vi.fn(),
     installCrashHandlers: vi.fn(),
   };
 });
@@ -55,6 +57,10 @@ vi.mock('../../src/cli/run-shell', () => ({
 
 vi.mock('../../src/cli/run-prompt', () => ({
   runPrompt: mocks.runPrompt,
+}));
+
+vi.mock('../../src/acp/index', () => ({
+  runAcpServer: mocks.runAcpServer,
 }));
 
 class ExitCalled extends Error {
@@ -153,6 +159,17 @@ describe('main entry command handling', () => {
       track: expect.any(Function),
     });
     expect(runShell).toHaveBeenCalledWith(opts, '0.0.1-alpha.2');
+  });
+
+  it('runs ACP server without update preflight', async () => {
+    mocks.runAcpServer.mockResolvedValue(void 0);
+
+    await handleAcpCommand('0.0.1-alpha.2');
+
+    expect(runAcpServer).toHaveBeenCalledWith({ version: '0.0.1-alpha.2' });
+    expect(runUpdatePreflight).not.toHaveBeenCalled();
+    expect(runShell).not.toHaveBeenCalled();
+    expect(runPrompt).not.toHaveBeenCalled();
   });
 
   it('installs crash handlers before parsing CLI arguments', () => {

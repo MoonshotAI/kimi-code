@@ -188,7 +188,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
     await this.pluginsReady;
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
-    const mcpConfig = this.mergePluginMcpConfig(baseMcpConfig);
+    const mcpConfig = this.mergeMcpConfig(baseMcpConfig, options.mcpServers);
 
     // Session ctor attaches its own log sink. If anything in the setup-after-
     // ctor block throws, `session.close()` releases the sink (and mcp).
@@ -277,7 +277,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     });
     await this.pluginsReady;
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
-    const mcpConfig = this.mergePluginMcpConfig(baseMcpConfig);
+    const mcpConfig = this.mergeMcpConfig(baseMcpConfig, input.mcpServers);
     const runtime = await this.resolveRuntime(config);
     const session = new Session({
       kaos: (await this.kaos).withCwd(summary.workDir),
@@ -327,7 +327,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       title: input.title,
       metadata: input.metadata,
     });
-    return this.resumeSession({ sessionId: id });
+    return this.resumeSession({ sessionId: id, mcpServers: input.mcpServers });
   }
 
   async listSessions(input: ListSessionsPayload = {}): Promise<readonly SessionSummary[]> {
@@ -681,13 +681,19 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     });
   }
 
-  private mergePluginMcpConfig(base: SessionMcpConfig | undefined): SessionMcpConfig | undefined {
+  private mergeMcpConfig(
+    base: SessionMcpConfig | undefined,
+    sessionServers?: SessionMcpConfig['servers'],
+  ): SessionMcpConfig | undefined {
     const pluginServers = this.plugins.enabledMcpServers();
-    if (Object.keys(pluginServers).length === 0) return base;
+    if (Object.keys(pluginServers).length === 0 && Object.keys(sessionServers ?? {}).length === 0) {
+      return base;
+    }
     return {
       servers: {
         ...base?.servers,
         ...pluginServers,
+        ...sessionServers,
       },
     };
   }
