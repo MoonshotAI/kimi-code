@@ -28,7 +28,8 @@ vi.mock('node:fs/promises', async () => {
 import { editInExternalEditor, resolveEditorCommand } from '#/utils/process/external-editor';
 
 function shellPath(cmd: string): string {
-  const match = cmd.match(/'([^']+)'$/);
+  // Accept both POSIX single-quoted and Windows double-quoted temp paths.
+  const match = cmd.match(/['"]([^'"]+)['"]$/);
   if (!match) throw new Error(`Could not parse temp path from: ${cmd}`);
   return match[1]!;
 }
@@ -49,20 +50,21 @@ describe('external-editor helpers', () => {
     expect(resolveEditorCommand()).toBe('vim');
   });
 
-  it('returns the edited contents on success and cleans up the temp directory', async () => {
-    mocks.spawn.mockImplementation((_cmd: string, args: string[]) => {
+  it('runs the command through the platform shell and cleans up the temp directory', async () => {
+    mocks.spawn.mockImplementation((cmd: string) => {
       const child = new EventEmitter();
-      void writeFile(shellPath(args[1]!), 'edited text', 'utf8').then(() => {
+      void writeFile(shellPath(cmd), 'edited text', 'utf8').then(() => {
         child.emit('exit', 0);
       });
       return child as never;
     });
 
     await expect(editInExternalEditor('seed', 'code --wait')).resolves.toBe('edited text');
+    // `shell: true` lets Node pick the platform shell — hardcoding `/bin/sh`
+    // here was the cause of `spawn ENOENT` on Windows.
     expect(mocks.spawn).toHaveBeenCalledWith(
-      '/bin/sh',
-      ['-c', expect.stringMatching(/^code --wait /)],
-      { stdio: 'inherit' },
+      expect.stringMatching(/^code --wait /),
+      { stdio: 'inherit', shell: true },
     );
     expect(mocks.rmCalls).toHaveBeenCalled();
   });

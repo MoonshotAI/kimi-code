@@ -28,8 +28,9 @@ export function resolveEditorCommand(configured?: string | null): string | undef
  * with `initialText`. Returns the edited contents on success, or
  * `undefined` if the editor exited non-zero / the file disappeared.
  *
- * The command is passed to `/bin/sh -c "<cmd> <tmpfile>"` so users can
- * supply argv-style strings like `"code --wait"` or `"nvim +set ft=markdown"`.
+ * The command is run through the platform shell (`/bin/sh -c` on POSIX,
+ * `cmd.exe /d /s /c` on Windows) so users can supply argv-style strings
+ * like `"code --wait"` or `"nvim +set ft=markdown"`.
  */
 export async function editInExternalEditor(
   initialText: string,
@@ -41,7 +42,9 @@ export async function editInExternalEditor(
   try {
     const code = await new Promise<number>((resolve, reject) => {
       const shellCmd = `${command} ${shellQuote(file)}`;
-      const child = spawn('/bin/sh', ['-c', shellCmd], { stdio: 'inherit' });
+      // `shell: true` lets Node pick the right shell per platform — POSIX
+      // hardcoding `/bin/sh` here breaks on Windows with spawn ENOENT.
+      const child = spawn(shellCmd, { stdio: 'inherit', shell: true });
       child.on('exit', (c) =>{  resolve(c ?? 0); });
       child.on('error', reject);
     });
@@ -55,6 +58,11 @@ export async function editInExternalEditor(
 }
 
 function shellQuote(path: string): string {
+  if (process.platform === 'win32') {
+    // cmd.exe treats single quotes literally; wrap in double quotes so
+    // temp paths under a profile dir with spaces still resolve.
+    return `"${path}"`;
+  }
   // Single-quote and escape any embedded single quotes.
   return `'${path.replaceAll('\'', "'\\''")}'`;
 }
