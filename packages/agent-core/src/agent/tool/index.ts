@@ -398,10 +398,15 @@ export class ToolManager {
       },
       this.agent.skills?.registry.getSkillRoots() ?? [],
     );
+    const pendingIncludesBackgroundTools =
+      this.pendingBuiltinToolNames.includes('TaskList') &&
+      this.pendingBuiltinToolNames.includes('TaskOutput') &&
+      this.pendingBuiltinToolNames.includes('TaskStop');
     const allowBackground =
-      this.enabledTools.has('TaskList') &&
-      this.enabledTools.has('TaskOutput') &&
-      this.enabledTools.has('TaskStop');
+      (this.enabledTools.has('TaskList') &&
+        this.enabledTools.has('TaskOutput') &&
+        this.enabledTools.has('TaskStop')) ||
+      pendingIncludesBackgroundTools;
     this.builtinTools = new Map(
       [
         new b.ReadTool(kaos, workspace),
