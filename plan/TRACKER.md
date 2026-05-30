@@ -37,7 +37,7 @@ Plan: `plan/phase-07-goal-ux-and-budget.md`. Sequenced commits:
 | 4 | Footer badge | ✅ | cc35725 |
 | 5 | `/goal` status box | ✅ | e65abcb |
 | 6a | `goal.updated` change payload + terminal stats on record | ✅ | — |
-| 6b | Transcript markers + completion card (live) | ⬜ | — |
+| 6b | Transcript markers + completion card (live) | ✅ | — |
 | 6c | Transcript markers + completion card (resume) | ⬜ | — |
 
 - **Commit 1:** added a generic `completeArgs` capability to the slash-command registry
@@ -85,6 +85,15 @@ Plan: `plan/phase-07-goal-ux-and-budget.md`. Sequenced commits:
   reconstruction. Re-exported `GoalChange`/`GoalChangeStats` through agent-core (`core-api`) and the
   SDK. Tests: store emits typed change for lifecycle/verdict/terminal and none for snapshot-only.
   agent-core 2369, node-sdk 153, typecheck + lint clean. Live rendering is Commit 6b; resume 6c.
+- **Commit 6b (live rendering):** `SessionEventHandler.handleGoalUpdated` now, on a `change`, renders
+  into the transcript: terminal → a prominent completion card (reuses the `/goal` box —
+  `buildGoalReportLines` + `UsagePanelComponent` over the terminal snapshot, so it shows objective +
+  Status + time/turns/tokens); lifecycle (paused/resumed/cancelled) and `no_progress` verdict → a
+  low-profile `GoalMarkerComponent` (dim `◦ Goal …` one-liner, ctrl+o-expandable to the reason,
+  participating in the shared tool-output expand). Plain `continue`/report/snapshot-only changes stay
+  silent. New `components/messages/goal-markers.ts`. Tests: marker build matrix (verdict/lifecycle/
+  terminal-null) + collapse/expand. app typecheck + lint clean; full app suite green. Resume
+  reconstruction (scrollback after `/resume`) is Commit 6c.
 
 ## Post-implementation fixes
 

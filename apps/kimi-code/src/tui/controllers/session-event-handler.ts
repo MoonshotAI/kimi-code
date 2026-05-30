@@ -33,7 +33,10 @@ import type {
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { MoonLoader } from '../components/chrome/moon-loader';
+import { buildGoalReportLines, goalPanelTitle } from '../components/messages/goal-panel';
+import { buildGoalMarker } from '../components/messages/goal-markers';
 import { StatusMessageComponent } from '../components/messages/status-message';
+import { UsagePanelComponent } from '../components/messages/usage-panel';
 import {
   MAIN_AGENT_ID,
   OAUTH_LOGIN_REQUIRED_CODE,
@@ -532,6 +535,29 @@ export class SessionEventHandler {
 
   private handleGoalUpdated(event: GoalUpdatedEvent): void {
     this.host.setAppState({ goal: event.snapshot });
+    const change = event.change;
+    if (change === undefined) return;
+    const { state } = this.host;
+
+    // Terminal outcome -> a prominent completion card (the /goal box, inline).
+    if (change.kind === 'terminal' && event.snapshot !== null) {
+      const lines = buildGoalReportLines({ colors: state.theme.colors, goal: event.snapshot });
+      const panel = new UsagePanelComponent(
+        lines,
+        state.theme.colors.primary,
+        goalPanelTitle(event.snapshot),
+      );
+      state.transcriptContainer.addChild(panel);
+      state.ui.requestRender();
+      return;
+    }
+
+    // Lifecycle / no-progress -> a low-profile, ctrl+o-expandable marker.
+    const marker = buildGoalMarker(change, state.theme.colors, state.toolOutputExpanded);
+    if (marker !== null) {
+      state.transcriptContainer.addChild(marker);
+      state.ui.requestRender();
+    }
   }
 
   private handleSessionMetaChanged(event: SessionMetaUpdatedEvent): void {
