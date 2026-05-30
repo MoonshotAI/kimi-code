@@ -28,15 +28,52 @@ describe('AssistantMessageComponent', () => {
     expect(visibleWidth(lines[1] ?? '')).toBe(8);
   });
 
-  it('renders unknown markdown fence languages as plain text without stderr noise', () => {
+  it('renders unknown markdown fence languages without stderr noise', () => {
     const stderr = captureProcessWrite('stderr');
     try {
       const theme = createMarkdownTheme(darkColors);
-      expect(theme.highlightCode?.('hello\nworld', 'abcxyz')).toEqual(['hello', 'world']);
+      const result = theme.highlightCode?.('hello\nworld', 'abcxyz') ?? [];
+      expect(result).toHaveLength(2);
+      expect(strip(result[0])).toBe('hello');
+      expect(strip(result[1])).toBe('world');
       expect(stderr.text()).not.toContain('Could not find the language');
     } finally {
       stderr.restore();
     }
+  });
+
+  it('renders headings without raw hash prefix', () => {
+    const component = new AssistantMessageComponent(createMarkdownTheme(darkColors), darkColors);
+    component.updateContent('# Heading 1\n## Heading 2\n### Heading 3');
+    const text = component.render(80).map(strip).join('\n');
+    expect(text).toContain('Heading 1');
+    expect(text).toContain('Heading 2');
+    expect(text).toContain('Heading 3');
+    expect(text).not.toContain('# Heading 1');
+    expect(text).not.toContain('## Heading 2');
+    expect(text).not.toContain('### Heading 3');
+  });
+
+  it('renders bold text without raw asterisks', () => {
+    const component = new AssistantMessageComponent(createMarkdownTheme(darkColors), darkColors);
+    component.updateContent('This is **bold** and __also bold__');
+    const text = component.render(80).map(strip).join('\n');
+    expect(text).toContain('bold');
+    expect(text).toContain('also bold');
+    expect(text).not.toContain('**bold**');
+    expect(text).not.toContain('__also bold__');
+  });
+
+  it('renders lists without raw dash markers', () => {
+    const component = new AssistantMessageComponent(createMarkdownTheme(darkColors), darkColors);
+    component.updateContent('- item 1\n- item 2\n- item 3');
+    const text = component.render(80).map(strip).join('\n');
+    expect(text).toContain('item 1');
+    expect(text).toContain('item 2');
+    expect(text).toContain('item 3');
+    expect(text).not.toContain('- item 1');
+    expect(text).not.toContain('- item 2');
+    expect(text).not.toContain('- item 3');
   });
 
   it('preserves literal hook result XML in normal assistant text', () => {

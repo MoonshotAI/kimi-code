@@ -106,7 +106,7 @@ import {
   type TUIStartupState,
 } from './types';
 import { createTUIState, type TUIState } from './tui-state';
-import { isExpandable, isPlanExpandable } from './utils/component-capabilities';
+import { isExpandable, isPlanExpandable, isThemeAware } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
@@ -1486,6 +1486,11 @@ export class KimiTUI {
     this.state.theme.styles = nextTheme.styles;
     this.state.theme.markdownTheme = nextTheme.markdownTheme;
     this.setAppState({ theme });
+    for (const child of this.state.transcriptContainer.children) {
+      if (isThemeAware(child)) {
+        child.applyTheme(this.state.theme.markdownTheme, this.state.theme.colors);
+      }
+    }
     this.updateEditorBorderHighlight();
     this.state.ui.requestRender(true);
   }

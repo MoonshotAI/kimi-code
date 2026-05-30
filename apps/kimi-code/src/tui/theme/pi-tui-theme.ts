@@ -30,7 +30,7 @@ export function createMarkdownTheme(colors: ColorPalette): MarkdownTheme {
     linkUrl: (text) => muted(text),
     code: (text) => chalk.hex(colors.primary)(text),
     codeBlock: (text) => text,
-    codeBlockBorder: (text) => muted(text),
+    codeBlockBorder: (text) => dim(text),
     quote: (text) => dim(text),
     quoteBorder: (text) => dim(text),
     hr: (text) => border(text),
@@ -45,13 +45,16 @@ export function createMarkdownTheme(colors: ColorPalette): MarkdownTheme {
     highlightCode: (code: string, lang?: string) => {
       const normalizedLang = lang?.trim().toLowerCase();
       const language =
-        normalizedLang !== undefined && supportsLanguage(normalizedLang) ? normalizedLang : 'text';
-      try {
-        const highlighted = highlight(code, { language, ignoreIllegals: true });
-        return highlighted.split('\n');
-      } catch {
-        return code.split('\n');
+        normalizedLang !== undefined && supportsLanguage(normalizedLang) ? normalizedLang : undefined;
+      if (language) {
+        try {
+          const highlighted = highlight(code, { language, ignoreIllegals: true });
+          return highlighted.split('\n');
+        } catch {
+          // fall through to dim-styled fallback
+        }
       }
+      return code.split('\n').map((line) => dim(line));
     },
   };
 }
