@@ -51,6 +51,26 @@ coding agent, following the phase plans in this directory.
   without a fatal error and stops via its own turn budget. Full agent-core suite (2360) green;
   typecheck + lint OK across packages.
 
+### Fix: budget wrap-up no longer throws `loop.max_steps_exceeded` (residual cap gap)
+
+- **How it surfaced:** replay of session `398e1aba` (worktree `feat-goal-impl-2`, pre-fix code at
+  `76d4141`) showed the goal marked `budget_limited` with `terminalReason: "Model step limit
+  reached"` and `turnsUsed: 0` — the *old* reconciliation fired at the very first 100-step cap. The
+  wire log then had 4 consecutive turns each ending at exactly 100 steps: turn#0 prematurely killed
+  the goal, then every "Please continue" ran 100 steps and threw, because once the goal is terminal
+  the cap hook returns `undefined` → fatal error. This confirmed the primary fix above (removes the
+  premature termination) but also revealed a residual gap.
+- **Residual gap:** after a *legitimate* budget wrap-up makes the goal terminal, the wrap-up segment
+  gets a fresh step budget to summarize. If the model keeps calling tools instead of summarizing and
+  hits the cap again, `shouldContinueOnMaxSteps` saw a non-active goal and returned `undefined` →
+  threw `loop.max_steps_exceeded` instead of stopping cleanly.
+- **Fix:** `GoalContinuationController` tracks an `engaged` flag (set once `decide()` runs for an
+  active goal). When the cap is hit and the goal is terminal/gone, it returns `{ continue: false }`
+  (graceful stop) **iff** goal continuation already drove this turn; otherwise `undefined` (a stale
+  terminal goal from a resumed session, or no goal, still throws as vanilla turns do).
+- **Tests:** added a case asserting that a second cap hit after a budget wrap-up returns
+  `{ continue: false }`. agent-core suite (2361) green; typecheck + lint OK.
+
 ## Detours / Notes
 
 (None yet.)

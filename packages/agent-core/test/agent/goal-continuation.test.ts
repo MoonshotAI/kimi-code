@@ -240,6 +240,26 @@ describe('GoalContinuationController decisions', () => {
     expect(store.getGoal().goal!.status).toBe('budget_limited');
   });
 
+  it('stops gracefully when the cap is hit again after a budget wrap-up made the goal terminal', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work', budgetLimits: { turnBudget: 1 } });
+    const { agent } = controllerAgent({ goals: store });
+    const c = new GoalContinuationController(agent, {
+      startedAt: 0,
+      createEvaluator: fixedEvaluator('continue'),
+    });
+    // First cap: turnsUsed hits the budget -> budget_limited wrap-up segment.
+    expect(await c.shouldContinueOnMaxSteps(maxStepsCtx(2))).toEqual({
+      continue: true,
+      resetStepBudget: true,
+    });
+    expect(store.getGoal().goal!.status).toBe('budget_limited');
+    // The model keeps calling tools instead of summarizing and hits the cap
+    // again. The goal is already terminal, but goal continuation drove this
+    // turn, so the cap must stop gracefully -- never throw.
+    expect(await c.shouldContinueOnMaxSteps(maxStepsCtx(2))).toEqual({ continue: false });
+  });
+
   it('the default turn budget caps an evaluator that always says continue', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' }); // no explicit budget -> DEFAULT_GOAL_TURN_BUDGET

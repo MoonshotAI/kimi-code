@@ -51,6 +51,11 @@ export class GoalContinuationController {
   private readonly now: () => number;
   private lastWallClockAccountedAt: number;
   private readonly createEvaluator: (llm: LLM) => GoalEvaluatorLike;
+  // True once goal continuation has driven this turn. Lets a step-budget cap hit
+  // *after* the goal went terminal (e.g. during a budget wrap-up where the model
+  // kept working instead of summarizing) stop the turn gracefully instead of
+  // throwing loop.max_steps_exceeded.
+  private engaged = false;
 
   constructor(
     protected readonly agent: Agent,
@@ -75,16 +80,21 @@ export class GoalContinuationController {
   }
 
   /**
-   * Runs when the per-turn step budget is exhausted mid-segment. Returns
-   * `undefined` for non-goal turns so the loop throws `MaxStepsExceededError` as
-   * usual; for an active goal it treats the cap as a continuation checkpoint —
-   * the same evaluator-driven decision as a normal stop.
+   * Runs when the per-turn step budget is exhausted mid-segment. For an active
+   * goal it treats the cap as a continuation checkpoint — the same
+   * evaluator-driven decision as a normal stop. If the goal already went
+   * terminal earlier in *this* turn (e.g. a budget wrap-up and the model kept
+   * calling tools instead of summarizing), the cap stops the turn gracefully.
+   * Otherwise (no goal, or a stale terminal goal from a resumed session) it
+   * returns `undefined` so the loop throws `MaxStepsExceededError` as usual.
    */
   async shouldContinueOnMaxSteps(ctx: LoopMaxStepsContext): Promise<MaxStepsDecision | undefined> {
     if (!this.enabled) return undefined;
     const goal = this.agent.goals!.getGoal().goal;
-    if (goal === null || goal.status !== 'active') return undefined;
-    return this.decide(ctx.llm, ctx.signal);
+    if (goal !== null && goal.status === 'active') return this.decide(ctx.llm, ctx.signal);
+    // Goal terminal or gone: only suppress the fatal throw if goal continuation
+    // already drove this turn (the wrap-up case).
+    return this.engaged ? STOP : undefined;
   }
 
   /**
@@ -99,6 +109,10 @@ export class GoalContinuationController {
     // Stop if the goal disappeared, is paused, or is terminal.
     const goal = store.getGoal().goal;
     if (goal === null || goal.status !== 'active') return STOP;
+
+    // Goal continuation is now driving this turn; a later cap (e.g. during a
+    // budget wrap-up) must stop gracefully rather than throw.
+    this.engaged = true;
 
     // This stopped step / checkpoint participated in the goal loop.
     await store.incrementTurn();
