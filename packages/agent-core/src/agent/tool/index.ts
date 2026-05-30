@@ -465,7 +465,7 @@ export class ToolManager {
             `They may require additional service configuration.`,
         );
       }
-      this.pendingBuiltinToolNames = [];
+      this.pendingBuiltinToolNames = stillMissing;
     }
   }
 
