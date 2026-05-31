@@ -24,6 +24,7 @@ coding agent, following the phase plans in this directory.
 | 5  | End-to-end integration and gates | ✅ | 674b2c1 |
 | 6  | Headless goal mode and hardening | ✅ | abb938d |
 | 7  | Goal UX and budget model | 🟡 | see below |
+| 8  | Goal state consolidation | ✅ | 8ab5078, 60b6b4c |
 
 ## Phase 7: Goal UX and budget model
 
@@ -110,6 +111,47 @@ Plan: `plan/phase-07-goal-ux-and-budget.md`. Sequenced commits:
   - Needs a `buildGoalCompletionLines(change)` (stats-based) shared by the resume card; live can keep
     the richer `buildGoalReportLines(snapshot)` box.
   - Tests: replay of `goal.*` records produces markers + a stats-only completion card.
+
+## Phase 8: Goal state consolidation
+
+Plan: `plan/phase-08-goal-state-consolidation.md`. Collapsed the lifecycle to the minimal,
+unambiguous set validated against Codex's `/goal`. Preceded by a separate fix that removed the
+terminal `interrupted` state (an aborted turn now pauses — see Post-implementation fixes).
+
+| # | Commit | Status | Hash |
+|---|--------|--------|------|
+| 1 | Core consolidation (state machine + continuation/evaluator/turn/injector + app surface) | ✅ | 8ab5078 |
+| 2 | Deterministic completion message (replaces the live card) | ✅ | 60b6b4c |
+
+- **Statuses → `active` / `paused` / `blocked` / `complete`.** The durable record only ever
+  holds `active`, `paused`, or `blocked`; `complete` is transient (announce-then-clear) so the
+  box disappears. `impossible`, `budget_limited`, `error`, `cancelled` (and the earlier
+  `interrupted`) are folded away: an unachievable goal, an exhausted budget, a no-progress
+  streak, and a runtime/evaluator failure all become `blocked(+reason)`; "cancel" is just a clear
+  that returns the discarded snapshot. The `reason` string carries the nuance; nothing branches
+  on a distinct status.
+- **`blocked` is resumable** (a sibling of `paused`, not a dead end): `resumeGoal` accepts it,
+  `/goal resume` re-activates it, and a plain message just runs one normal turn (the loop gates on
+  `active`). `markComplete`/`markBlocked` replace `updateGoal`/`markBudgetLimited`/`markError`;
+  `createGoal` now blocks on *any* existing goal; `normalizeMetadata` drops a stray `complete`.
+- **Default `noProgressTurnLimit = 3`** so an unclear/unachievable goal (e.g. "prove me wrong",
+  "1+1=3") blocks after a few stuck turns instead of spinning. Dropped the evaluator `impossible`
+  verdict and the UpdateGoal tool's `impossible` option. Dropped the budget wrap-up segment — a
+  budget/cap now blocks (resumable) directly.
+- **Light injection for `paused`/`blocked`** (reverses "paused = silent"): a non-demanding note
+  keeps the current objective visible so an edit takes effect next turn, without driving the loop.
+  `active` keeps the full reminder + budget guidance.
+- **Completion message (point 5):** `buildGoalCompletionMessage(snapshot)` in agent-core (exported
+  via the SDK) is the single source of truth for "✓ Goal complete — <reason>. Worked N turns over
+  <time>, using <tokens> tokens." The continuation controller appends it as an assistant message
+  (persisted, renders on resume); the TUI renders the same text live off the `goal.updated`
+  terminal event. Replaced the live completion card.
+- **App surface:** exit codes simplified (complete 0 / blocked 3 / paused 6); `/goal` panel
+  (blocked shows reason + stop; complete is the message), markers (`Goal blocked`), `/goal cancel`
+  → clear. Gates green: agent-core 2373, node-sdk 153, app 1079; typecheck + lint (0 errors).
+- **Known follow-up:** the completion message is appended as an assistant message adjacent to the
+  model's last assistant message; if a provider rejects consecutive assistant messages on the next
+  turn this may need a role/merge tweak. Not observed in tests (the turn ends on completion).
 
 ## Post-implementation fixes
 
