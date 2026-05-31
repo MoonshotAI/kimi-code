@@ -1,7 +1,6 @@
 import {
   RequestError,
   type AgentSideConnection,
-  type InitializeResponse,
   type SessionNotification,
 } from '@agentclientprotocol/sdk';
 import {
@@ -9,8 +8,10 @@ import {
   KimiError,
   type ApprovalRequest,
   type Event,
+  type KimiConfig,
   type KimiHarness,
   type Session,
+  type SessionStatus,
   type SessionSummary,
 } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
@@ -27,13 +28,19 @@ describe('KimiAcpAgent', () => {
       clientCapabilities: { auth: { terminal: true } },
     });
 
-    expect(response).toMatchObject<InitializeResponse>({
+    expect(response).toMatchObject({
       protocolVersion: 1,
       agentInfo: { name: 'kimi-code', title: 'Kimi Code', version: '0.0.0-test' },
       agentCapabilities: {
         promptCapabilities: { image: true, embeddedContext: true },
         mcpCapabilities: { http: true },
-        sessionCapabilities: { close: {}, fork: {}, list: {}, resume: {} },
+        sessionCapabilities: {
+          close: {},
+          configOptions: {},
+          fork: {},
+          list: {},
+          resume: {},
+        },
       },
     });
     expect(response.authMethods?.map((method) => method.id)).toContain('kimi-code-terminal');
@@ -77,16 +84,8 @@ describe('KimiAcpAgent', () => {
 
     expect(response).toEqual({
       sessionId: 'ses_acp',
-      models: {
-        availableModels: [
-          {
-            modelId: 'kimi-test',
-            name: 'Kimi Test',
-            description: 'local/kimi-test (1000 context)',
-          },
-        ],
-        currentModelId: 'kimi-test',
-      },
+      models: expectedModelState,
+      configOptions: expectedModelConfigOptions,
     });
     expect(fake.harness.ensureConfigFile).toHaveBeenCalledTimes(1);
     expect(fake.harness.createSession).toHaveBeenCalledWith({
@@ -116,6 +115,84 @@ describe('KimiAcpAgent', () => {
       }),
     ).resolves.toEqual({});
     expect(session.setModel).toHaveBeenCalledWith('kimi-test');
+  });
+
+  it('sets the stable ACP model config option through the SDK session', async () => {
+    let currentModel = 'kimi-test';
+    const session = makeSession({
+      getStatus: vi.fn(async () => statusWithModel(currentModel)),
+      setModel: vi.fn(async (modelId: string) => {
+        currentModel = modelId;
+      }),
+    });
+    const fake = makeAgent({
+      session,
+      config: configWithModels({
+        'kimi-test': {
+          provider: 'local',
+          model: 'kimi-test',
+          maxContextSize: 1000,
+          displayName: 'Kimi Test',
+        },
+        'kimi-flash': {
+          provider: 'local',
+          model: 'kimi-flash',
+          maxContextSize: 2000,
+          displayName: 'Kimi Flash',
+        },
+      }),
+    });
+
+    await fake.agent.newSession({ cwd: '/tmp/project', mcpServers: [] });
+
+    await expect(
+      fake.agent.setSessionConfigOption({
+        sessionId: 'ses_acp',
+        configId: 'model',
+        value: 'kimi-flash',
+      }),
+    ).resolves.toEqual({
+      configOptions: [
+        {
+          id: 'model',
+          name: 'Model',
+          category: 'model',
+          type: 'select',
+          currentValue: 'kimi-flash',
+          options: [
+            {
+              value: 'kimi-test',
+              name: 'Kimi Test',
+              description: 'local/kimi-test (1000 context)',
+            },
+            {
+              value: 'kimi-flash',
+              name: 'Kimi Flash',
+              description: 'local/kimi-flash (2000 context)',
+            },
+          ],
+        },
+      ],
+    });
+    expect(session.setModel).toHaveBeenCalledWith('kimi-flash');
+  });
+
+  it('maps unknown ACP config options to invalid params', async () => {
+    const session = makeSession();
+    const fake = makeAgent({ session });
+
+    await fake.agent.newSession({ cwd: '/tmp/project', mcpServers: [] });
+
+    await expect(
+      fake.agent.setSessionConfigOption({
+        sessionId: 'ses_acp',
+        configId: 'temperature',
+        value: 'low',
+      }),
+    ).rejects.toMatchObject({
+      code: -32602,
+    });
+    expect(session.setModel).not.toHaveBeenCalled();
   });
 
   it('maps unknown ACP model selections to invalid params', async () => {
@@ -170,16 +247,8 @@ describe('KimiAcpAgent', () => {
         ],
       }),
     ).resolves.toEqual({
-      models: {
-        availableModels: [
-          {
-            modelId: 'kimi-test',
-            name: 'Kimi Test',
-            description: 'local/kimi-test (1000 context)',
-          },
-        ],
-        currentModelId: 'kimi-test',
-      },
+      models: expectedModelState,
+      configOptions: expectedModelConfigOptions,
     });
     expect(fake.harness.resumeSession).toHaveBeenCalledWith({
       id: 'ses_acp',
@@ -247,16 +316,8 @@ describe('KimiAcpAgent', () => {
       }),
     ).resolves.toEqual({
       sessionId: 'ses_fork',
-      models: {
-        availableModels: [
-          {
-            modelId: 'kimi-test',
-            name: 'Kimi Test',
-            description: 'local/kimi-test (1000 context)',
-          },
-        ],
-        currentModelId: 'kimi-test',
-      },
+      models: expectedModelState,
+      configOptions: expectedModelConfigOptions,
     });
     expect(fake.harness.forkSession).toHaveBeenCalledWith({
       id: 'ses_acp',
@@ -492,6 +553,7 @@ function makeAgent(
     session?: Session;
     forkedSession?: Session;
     sessions?: SessionSummary[];
+    config?: KimiConfig;
   } = {},
 ) {
   const session = options.session ?? makeSession();
@@ -501,23 +563,7 @@ function makeAgent(
   };
   const harness = {
     ensureConfigFile: vi.fn(async () => {}),
-    getConfig: vi.fn(async () => ({
-      providers: {
-        local: {
-          type: 'kimi',
-          apiKey: 'sk-test',
-        },
-      },
-      defaultModel: 'kimi-test',
-      models: {
-        'kimi-test': {
-          provider: 'local',
-          model: 'kimi-test',
-          maxContextSize: 1000,
-          displayName: 'Kimi Test',
-        },
-      },
-    })),
+    getConfig: vi.fn(async () => options.config ?? defaultConfig()),
     createSession: vi.fn(async () => session),
     resumeSession: vi.fn(async () => session),
     forkSession: vi.fn(async () => options.forkedSession ?? session),
@@ -547,17 +593,73 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     setApprovalHandler: vi.fn(),
     prompt: vi.fn(async () => {}),
     cancel: vi.fn(async () => {}),
-    getStatus: vi.fn(async () => ({
-      model: 'kimi-test',
-      thinkingLevel: 'auto',
-      permission: 'manual',
-      planMode: false,
-      contextTokens: 0,
-      maxContextTokens: 1000,
-      contextUsage: 0,
-    })),
+    getStatus: vi.fn(async () => statusWithModel('kimi-test')),
     setModel: vi.fn(async () => {}),
     close: vi.fn(async () => {}),
     ...overrides,
   } as unknown as Session;
+}
+
+const expectedModelState = {
+  availableModels: [
+    {
+      modelId: 'kimi-test',
+      name: 'Kimi Test',
+      description: 'local/kimi-test (1000 context)',
+    },
+  ],
+  currentModelId: 'kimi-test',
+};
+
+const expectedModelConfigOptions = [
+  {
+    id: 'model',
+    name: 'Model',
+    category: 'model',
+    type: 'select',
+    currentValue: 'kimi-test',
+    options: [
+      {
+        value: 'kimi-test',
+        name: 'Kimi Test',
+        description: 'local/kimi-test (1000 context)',
+      },
+    ],
+  },
+];
+
+function defaultConfig(): KimiConfig {
+  return configWithModels({
+    'kimi-test': {
+      provider: 'local',
+      model: 'kimi-test',
+      maxContextSize: 1000,
+      displayName: 'Kimi Test',
+    },
+  });
+}
+
+function configWithModels(models: KimiConfig['models']): KimiConfig {
+  return {
+    providers: {
+      local: {
+        type: 'kimi',
+        apiKey: 'sk-test',
+      },
+    },
+    defaultModel: 'kimi-test',
+    models,
+  };
+}
+
+function statusWithModel(model: string): SessionStatus {
+  return {
+    model,
+    thinkingLevel: 'auto',
+    permission: 'manual',
+    planMode: false,
+    contextTokens: 0,
+    maxContextTokens: 1000,
+    contextUsage: 0,
+  };
 }

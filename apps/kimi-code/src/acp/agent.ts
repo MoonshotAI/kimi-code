@@ -23,7 +23,11 @@ import {
   type PromptResponse,
   type ResumeSessionRequest,
   type ResumeSessionResponse,
+  type SessionConfigOption,
   type SessionInfo,
+  type SessionModelState,
+  type SetSessionConfigOptionRequest,
+  type SetSessionConfigOptionResponse,
   type SetSessionModelRequest,
   type SetSessionModelResponse,
 } from '@agentclientprotocol/sdk';
@@ -38,6 +42,10 @@ import {
 } from './auth-adapter';
 import { toAcpRequestError, toAcpSetModelRequestError } from './errors';
 import { acpMcpServersToKimiConfig } from './mcp-adapter';
+import {
+  createAcpModelConfigOptions,
+  MODEL_CONFIG_OPTION_ID,
+} from './model-adapter';
 import { KimiAcpSession } from './session';
 
 export interface KimiAcpAgentOptions {
@@ -45,6 +53,12 @@ export interface KimiAcpAgentOptions {
   readonly version: string;
   readonly harness?: KimiHarness;
 }
+
+type KimiAgentCapabilities = AgentCapabilities & {
+  readonly sessionCapabilities: NonNullable<AgentCapabilities['sessionCapabilities']> & {
+    readonly configOptions: Record<string, never>;
+  };
+};
 
 export class KimiAcpAgent implements Agent {
   private readonly harness: KimiHarness;
@@ -105,10 +119,10 @@ export class KimiAcpAgent implements Agent {
       });
       const acpSession = new KimiAcpSession(session, this.options.connection);
       this.sessions.set(acpSession.id, acpSession);
-      const models = await this.modelState(acpSession);
+      const configuration = await this.sessionConfiguration(acpSession);
       return {
         sessionId: acpSession.id,
-        models,
+        ...configuration,
       };
     } catch (error) {
       throw toAcpRequestError(error);
@@ -121,6 +135,33 @@ export class KimiAcpAgent implements Agent {
     try {
       await this.getSession(params.sessionId).setModel(params.modelId);
       return {};
+    } catch (error) {
+      throw toAcpSetModelRequestError(error);
+    }
+  }
+
+  async setSessionConfigOption(
+    params: SetSessionConfigOptionRequest,
+  ): Promise<SetSessionConfigOptionResponse> {
+    try {
+      if (params.configId !== MODEL_CONFIG_OPTION_ID) {
+        throw RequestError.invalidParams(
+          { configId: params.configId },
+          `Unsupported session config option "${params.configId}".`,
+        );
+      }
+      if (typeof params.value !== 'string') {
+        throw RequestError.invalidParams(
+          { configId: params.configId, value: params.value },
+          'Model config option value must be a string.',
+        );
+      }
+
+      const session = this.getSession(params.sessionId);
+      await session.setModel(params.value);
+      return {
+        configOptions: await this.configOptions(session),
+      };
     } catch (error) {
       throw toAcpSetModelRequestError(error);
     }
@@ -175,10 +216,10 @@ export class KimiAcpAgent implements Agent {
       });
       const acpSession = new KimiAcpSession(session, this.options.connection);
       this.sessions.set(acpSession.id, acpSession);
-      const models = await this.modelState(acpSession);
+      const configuration = await this.sessionConfiguration(acpSession);
       return {
         sessionId: acpSession.id,
-        models,
+        ...configuration,
       };
     } catch (error) {
       throw toAcpRequestError(error);
@@ -221,14 +262,28 @@ export class KimiAcpAgent implements Agent {
     return session;
   }
 
-  private async modelState(session: KimiAcpSession) {
+  private async modelState(session: KimiAcpSession): Promise<SessionModelState | undefined> {
     const config = await this.harness.getConfig({ reload: true });
     return session.modelState(config);
   }
 
-  private async resumeResponse(session: KimiAcpSession): Promise<ResumeSessionResponse> {
+  private async configOptions(session: KimiAcpSession): Promise<SessionConfigOption[]> {
+    return createAcpModelConfigOptions(await this.modelState(session));
+  }
+
+  private async sessionConfiguration(session: KimiAcpSession): Promise<{
+    readonly models: SessionModelState | undefined;
+    readonly configOptions: SessionConfigOption[];
+  }> {
     const models = await this.modelState(session);
-    return { models };
+    return {
+      models,
+      configOptions: createAcpModelConfigOptions(models),
+    };
+  }
+
+  private async resumeResponse(session: KimiAcpSession): Promise<ResumeSessionResponse> {
+    return this.sessionConfiguration(session);
   }
 
   private async findSessionSummary(sessionId: string): Promise<SessionSummary> {
@@ -241,7 +296,7 @@ export class KimiAcpAgent implements Agent {
   }
 }
 
-function createAgentCapabilities(): AgentCapabilities {
+function createAgentCapabilities(): KimiAgentCapabilities {
   return {
     promptCapabilities: {
       image: true,
@@ -252,6 +307,7 @@ function createAgentCapabilities(): AgentCapabilities {
     },
     sessionCapabilities: {
       close: {},
+      configOptions: {},
       fork: {},
       list: {},
       resume: {},
