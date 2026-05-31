@@ -1,5 +1,5 @@
 ---
-"@moonshot-ai/kimi-code": minor
+"@moonshot-ai/kimi-code": patch
 ---
 
-Add a hidden rainbow dance easter egg to the TUI.
+Polish a small TUI visual interaction.
