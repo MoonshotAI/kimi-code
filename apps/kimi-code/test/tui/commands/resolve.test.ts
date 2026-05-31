@@ -1,10 +1,19 @@
 import {
   resolveSkillCommand,
   resolveSlashCommandInput,
+  setExperimentalFlags,
   slashBusyMessage,
   slashCommandBusyReason,
 } from '#/tui/commands/index';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+beforeEach(() => {
+  setExperimentalFlags({ 'goal-mode': true });
+});
+
+afterEach(() => {
+  setExperimentalFlags({});
+});
 
 function resolve(
   input: string,
@@ -35,6 +44,11 @@ describe('resolveSlashCommandInput', () => {
       args: 'New title',
     });
     expect(resolve('/init')).toMatchObject({ kind: 'builtin', name: 'init', args: '' });
+    expect(resolve('/goal Finish migration')).toMatchObject({
+      kind: 'builtin',
+      name: 'goal',
+      args: 'Finish migration',
+    });
   });
 
   it('blocks idle-only built-ins while streaming', () => {
@@ -99,12 +113,45 @@ describe('resolveSlashCommandInput', () => {
       name: 'mcp',
       args: '',
     });
+    expect(resolve('/goal', { isStreaming: true })).toMatchObject({
+      kind: 'builtin',
+      name: 'goal',
+      args: '',
+    });
+    expect(resolve('/goal pause', { isStreaming: true })).toMatchObject({
+      kind: 'builtin',
+      name: 'goal',
+      args: 'pause',
+    });
+    expect(resolve('/goal resume', { isStreaming: true })).toMatchObject({
+      kind: 'builtin',
+      name: 'goal',
+      args: 'resume',
+    });
+    expect(resolve('/goal clear', { isStreaming: true })).toMatchObject({
+      kind: 'builtin',
+      name: 'goal',
+      args: 'clear',
+    });
   });
 
   it('blocks plan clear while compacting because it is idle-only', () => {
     expect(resolve('/plan clear', { isCompacting: true })).toEqual({
       kind: 'blocked',
       commandName: 'plan',
+      reason: 'compacting',
+    });
+  });
+
+  it('blocks goal creation while busy', () => {
+    expect(resolve('/goal Finish migration', { isStreaming: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'goal',
+      reason: 'streaming',
+    });
+    expect(resolve('/goal Finish migration', { isCompacting: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'goal',
       reason: 'compacting',
     });
   });
@@ -129,6 +176,15 @@ describe('resolveSlashCommandInput', () => {
     expect(resolve('/does-not-exist arg')).toEqual({
       kind: 'message',
       input: '/does-not-exist arg',
+    });
+  });
+
+  it('hides experimental commands while their flag is disabled', () => {
+    setExperimentalFlags({});
+
+    expect(resolve('/goal Finish migration')).toEqual({
+      kind: 'message',
+      input: '/goal Finish migration',
     });
   });
 

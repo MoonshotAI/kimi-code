@@ -72,6 +72,7 @@ export class TurnFlow {
 
   // Returns the new turnId, or null if the turn was marked as resuming.
   prompt(input: readonly ContentPart[], origin: PromptOrigin = USER_PROMPT_ORIGIN): number | null {
+    if (origin.kind === 'user') this.agent.goal.noteUserActivity();
     this.agent.records.logRecord({
       type: 'turn.prompt',
       input,
@@ -297,6 +298,11 @@ export class TurnFlow {
         this.activeTurn = null;
       }
     }
+    if (ended.reason === 'cancelled') {
+      this.agent.goal.pauseAfterInterrupt();
+    } else if (ended.reason === 'completed') {
+      this.agent.goal.continueAfterCompletedTurn();
+    }
     if (ended.reason !== 'completed') {
       this.trackTurnInterrupted(turnId, this.currentStepByTurn.get(turnId) ?? this.currentStep);
     }
@@ -385,6 +391,7 @@ export class TurnFlow {
           maxRetryAttempts: loopControl?.maxRetriesPerStep,
           hooks: {
             beforeStep: async ({ signal: stepSignal }) => {
+              this.agent.goal.consumeBudgetPromptBeforeStep();
               this.flushSteerBuffer();
               await this.agent.fullCompaction.beforeStep(stepSignal);
               await this.agent.injection.inject();
@@ -393,6 +400,7 @@ export class TurnFlow {
             },
             afterStep: async ({ usage }) => {
               this.agent.usage.record(model, usage, 'turn');
+              this.agent.goal.appendBudgetPromptIfNeeded();
               await this.agent.fullCompaction.afterStep();
               deduper.endStep();
             },
@@ -400,6 +408,7 @@ export class TurnFlow {
             shouldContinueAfterStop: async ({ signal }) => {
               if (this.flushSteerBuffer()) return { continue: true };
               signal.throwIfAborted();
+              if (this.agent.goal.shouldContinueAfterStop()) return { continue: true };
 
               // Stop hooks get one continuation; otherwise a hook that always blocks would loop forever.
               if (stopHookContinuationUsed) return { continue: false };
@@ -444,6 +453,7 @@ export class TurnFlow {
                 ctx.result,
               );
               const { isError, output } = finalResult;
+              this.agent.goal.noteToolCompleted(ctx.toolCall.name);
               const event = isError === true ? 'PostToolUseFailure' : 'PostToolUse';
               void this.agent.hooks?.fireAndForgetTrigger(event, {
                 matcherValue: ctx.toolCall.name,

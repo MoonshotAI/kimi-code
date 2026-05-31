@@ -2,6 +2,7 @@ import type { AgentConfigData } from '#/agent/config';
 import type { AgentContextData } from '#/agent/context';
 import type { PermissionData, PermissionMode } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
+import type { GoalData } from '#/agent/goal';
 import type { ToolInfo } from '#/agent/tool';
 import type { KimiConfig, KimiConfigPatch } from '#/config';
 import type { ExperimentalFlagMap } from '#/flags';
@@ -151,6 +152,10 @@ export interface SetModelResult {
 export interface CancelPlanPayload {
   readonly id?: string;
 }
+export interface SetGoalPayload {
+  readonly objective: string;
+  readonly tokenBudget?: number;
+}
 export interface BeginCompactionPayload {
   readonly instruction?: string;
 }
@@ -272,6 +277,10 @@ export interface AgentAPI {
   enterPlan: (payload: EmptyPayload) => void;
   cancelPlan: (payload: CancelPlanPayload) => void;
   clearPlan: (payload: EmptyPayload) => void;
+  setGoal: (payload: SetGoalPayload) => GoalData;
+  pauseGoal: (payload: EmptyPayload) => GoalData;
+  resumeGoal: (payload: EmptyPayload) => GoalData;
+  clearGoal: (payload: EmptyPayload) => void;
   beginCompaction: (payload: BeginCompactionPayload) => void;
   cancelCompaction: (payload: EmptyPayload) => void;
   registerTool: (payload: RegisterToolPayload) => void;
@@ -286,6 +295,7 @@ export interface AgentAPI {
   getConfig: (payload: EmptyPayload) => AgentConfigData;
   getPermission: (payload: EmptyPayload) => PermissionData;
   getPlan: (payload: EmptyPayload) => PlanData;
+  getGoal: (payload: EmptyPayload) => GoalData | null;
   getUsage: (payload: EmptyPayload) => UsageStatus;
   getTools: (payload: EmptyPayload) => readonly ToolInfo[];
   getBackground: (payload: GetBackgroundPayload) => readonly BackgroundTaskInfo[];

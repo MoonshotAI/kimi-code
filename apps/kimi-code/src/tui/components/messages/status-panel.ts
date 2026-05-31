@@ -107,6 +107,10 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
     { label: 'Plan mode', value: planMode ? 'on' : 'off' },
     { label: 'Session', value: sessionId },
   ];
+  const goal = options.status?.goal;
+  if (goal !== undefined && goal !== null) {
+    rows.push({ label: 'Goal', value: goal.status });
+  }
   const title = options.sessionTitle?.trim();
   if (title !== undefined && title.length > 0) rows.push({ label: 'Title', value: title });
   if (options.statusError !== undefined) {

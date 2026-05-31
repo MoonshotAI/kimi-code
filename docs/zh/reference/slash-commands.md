@@ -43,6 +43,15 @@
 | `/auto [on\|off]` | — | 切换 auto 权限模式。不带参数时按当前状态翻转；显式传 `on`/`off` 时强制设为对应状态。开启后工具审批自动处理，Agent 不会向用户提问。 | 是 |
 | `/plan [on\|off]` | — | 切换 Plan 模式。不带参数时按当前状态翻转；显式传 `on`/`off` 时强制设为对应状态。单纯切换不会创建空计划文件。 | 是 |
 | `/plan clear` | — | 清除当前 plan 方案。 | 否 |
+| `/goal` | — | 显示当前目标。 | 是 |
+| `/goal <objective>` | — | 设置持久化 goal，并开始围绕目标执行任务。 | 否 |
+| `/goal pause` | — | 暂停 goal 的自动续跑。 | 是 |
+| `/goal resume` | — | 恢复 goal 的自动续跑。 | 是 |
+| `/goal clear` | — | 清除当前 goal。 | 是 |
+
+goal 处于 active 状态时，Agent 会在每次模型停止后继续执行，直到将目标标记为完成或阻塞。恢复会话时会保留 goal 状态。
+
+goal 模式是实验性功能，默认关闭。使用 `KIMI_CODE_EXPERIMENTAL_GOAL_MODE=1` 启用。
 
 ::: warning 注意
 `/yolo` 会跳过普通工具调用的审批确认，使用前请确保了解可能的风险。Plan 模式的退出审批不会被 `/yolo` 跳过；Plan 模式下的 `Bash` 也按 `/yolo` 的普通放行规则处理。

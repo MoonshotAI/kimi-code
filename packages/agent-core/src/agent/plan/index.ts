@@ -76,6 +76,7 @@ export class PlanMode {
     this._planId = null;
     this._planFilePath = null;
     this.agent.emitStatusUpdated();
+    this.agent.goal.continueIfIdle();
   }
 
   async clear(): Promise<void> {
@@ -93,6 +94,7 @@ export class PlanMode {
     this._planId = null;
     this._planFilePath = null;
     this.agent.emitStatusUpdated();
+    this.agent.goal.continueIfIdle();
   }
 
   get isActive() {

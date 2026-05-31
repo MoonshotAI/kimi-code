@@ -20,6 +20,7 @@ import type {
   SetModelPayload,
   SetPermissionPayload,
   SetThinkingPayload,
+  SetGoalPayload,
   SkillSummary,
   SteerPayload,
   StopBackgroundPayload,
@@ -131,6 +132,22 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return this.getAgent(agentId).clearPlan(payload);
   }
 
+  setGoal({ agentId, ...payload }: AgentScopedPayload<SetGoalPayload>) {
+    return this.getAgent(agentId).setGoal(payload);
+  }
+
+  pauseGoal({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return this.getAgent(agentId).pauseGoal(payload);
+  }
+
+  resumeGoal({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return this.getAgent(agentId).resumeGoal(payload);
+  }
+
+  clearGoal({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return this.getAgent(agentId).clearGoal(payload);
+  }
+
   beginCompaction({ agentId, ...payload }: AgentScopedPayload<BeginCompactionPayload>) {
     return this.getAgent(agentId).beginCompaction(payload);
   }
@@ -191,6 +208,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   getPlan({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
     return this.getAgent(agentId).getPlan(payload);
+  }
+
+  getGoal({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return this.getAgent(agentId).getGoal(payload);
   }
 
   getUsage({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {

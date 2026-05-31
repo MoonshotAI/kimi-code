@@ -67,6 +67,15 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'plan_mode.exit':
       agent.planMode.exit(input.id);
       return;
+    case 'goal.set':
+      agent.goal.restoreSet(input);
+      return;
+    case 'goal.status':
+      agent.goal.restoreStatus(input);
+      return;
+    case 'goal.clear':
+      agent.goal.restoreClear();
+      return;
     case 'context.append_message':
       agent.context.appendMessage(input.message);
       return;

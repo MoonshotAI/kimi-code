@@ -136,6 +136,25 @@ export interface PlanInfo {
 
 export type SessionPlan = PlanInfo | null;
 
+export type GoalStatus =
+  | 'active'
+  | 'paused'
+  | 'blocked'
+  | 'usage_limited'
+  | 'budget_limited'
+  | 'complete';
+
+export interface SessionGoal {
+  readonly objective: string;
+  readonly status: GoalStatus;
+  readonly tokenBudget?: number;
+  readonly tokensUsed: number;
+  readonly timeUsedSeconds: number;
+  readonly remainingTokens?: number;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
 export interface TokenUsage {
   readonly inputOther: number;
   readonly output: number;
@@ -154,6 +173,7 @@ export interface SessionStatus {
   readonly thinkingLevel: string;
   readonly permission: PermissionMode;
   readonly planMode: boolean;
+  readonly goal?: SessionGoal | null;
   readonly contextTokens: number;
   readonly maxContextTokens: number;
   readonly contextUsage: number;

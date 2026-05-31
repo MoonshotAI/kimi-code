@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { KimiHarness, type Event, type KimiError } from '#/index';
+import { ErrorCodes, KimiHarness, type Event, type KimiError } from '#/index';
 
 import { makeTempDir, removeTempDirs } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
@@ -112,6 +112,58 @@ describe('Session plan, compact, usage, and resume APIs', () => {
       await expect(session.getUsage()).resolves.toEqual({});
     } finally {
       await harness.close();
+    }
+  });
+
+  it('persists goal state and exposes goal lifecycle APIs', async () => {
+    const previousGoalFlag = process.env['KIMI_CODE_EXPERIMENTAL_GOAL_MODE'];
+    process.env['KIMI_CODE_EXPERIMENTAL_GOAL_MODE'] = '1';
+    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-goal-home-');
+    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-goal-work-');
+    await writeTestConfig(homeDir);
+    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const created = await harness.createSession({
+        id: 'ses_goal_runtime',
+        workDir,
+        model: 'test-model',
+      });
+      await expect(created.setGoal('Finish the migration', 2_000)).resolves.toMatchObject({
+        objective: 'Finish the migration',
+        status: 'active',
+        tokenBudget: 2_000,
+      });
+      await expect(created.setGoal('   ')).rejects.toMatchObject({
+        name: 'KimiError',
+        code: ErrorCodes.SESSION_GOAL_OBJECTIVE_EMPTY,
+      } satisfies Partial<KimiError>);
+      await expect(created.pauseGoal()).resolves.toMatchObject({ status: 'paused' });
+      await created.close();
+
+      const resumed = await harness.resumeSession({ id: created.id });
+      await expect(resumed.getGoal()).resolves.toMatchObject({
+        objective: 'Finish the migration',
+        status: 'paused',
+        remainingTokens: 2_000,
+      });
+      await expect(resumed.getStatus()).resolves.toMatchObject({
+        goal: { objective: 'Finish the migration', status: 'paused' },
+      });
+      const goalCleared = waitForSessionEvent(
+        resumed,
+        (event) => event.type === 'agent.status.updated' && event.goal === null,
+      );
+      await resumed.clearGoal();
+      await expect(goalCleared).resolves.toMatchObject({
+        type: 'agent.status.updated',
+        goal: null,
+      });
+      await expect(resumed.getGoal()).resolves.toBeNull();
+    } finally {
+      await harness.close();
+      if (previousGoalFlag === undefined) delete process.env['KIMI_CODE_EXPERIMENTAL_GOAL_MODE'];
+      else process.env['KIMI_CODE_EXPERIMENTAL_GOAL_MODE'] = previousGoalFlag;
     }
   });
 

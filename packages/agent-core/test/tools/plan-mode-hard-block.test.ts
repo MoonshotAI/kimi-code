@@ -18,6 +18,7 @@ async function activePlanAgent(): Promise<{ agent: Agent; planMode: PlanMode }> 
   const agent = {
     homedir: '/tmp/kimi-plan-test',
     emitStatusUpdated: vi.fn(),
+    goal: { continueIfIdle: vi.fn() },
     records: { logRecord: vi.fn() },
     replayBuilder: { push: vi.fn() },
     kaos: {

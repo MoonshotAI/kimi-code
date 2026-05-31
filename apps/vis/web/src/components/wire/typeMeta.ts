@@ -27,6 +27,9 @@ export const TYPE_TONE: Record<RecordType, PillTone> = {
   'plan_mode.enter':                       'lifecycle',
   'plan_mode.cancel':                      'warning',
   'plan_mode.exit':                        'success',
+  'goal.set':                              'lifecycle',
+  'goal.status':                           'meta',
+  'goal.clear':                            'warning',
   'background.stop':                       'warning',
 };
 
@@ -54,5 +57,8 @@ export const TYPE_LABEL: Record<RecordType, string> = {
   'plan_mode.enter': 'plan↻',
   'plan_mode.cancel': 'plan×',
   'plan_mode.exit': 'plan✓',
+  'goal.set': 'goal+',
+  'goal.status': 'goal',
+  'goal.clear': 'goal×',
   'background.stop': 'bg-stop',
 };

@@ -3,6 +3,7 @@ import type { FinishReason, TokenUsage } from '@moonshot-ai/kosong';
 import type { PromptOrigin } from '../agent/context';
 import type { KimiErrorPayload } from '../errors';
 import type { PermissionMode } from '../agent/permission';
+import type { GoalData } from '../agent/goal';
 import type { SkillSource } from '../skill';
 import type { BackgroundTaskInfo } from '../tools/background/manager';
 import type { ToolInputDisplay } from '../tools/display';
@@ -47,6 +48,7 @@ export interface AgentStatusUpdatedEvent {
   readonly maxContextTokens?: number | undefined;
   readonly contextUsage?: number | undefined;
   readonly planMode?: boolean | undefined;
+  readonly goal?: GoalData | null | undefined;
   readonly permission?: PermissionMode | undefined;
   readonly usage?: UsageStatus | undefined;
 }

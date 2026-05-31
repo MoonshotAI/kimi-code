@@ -63,6 +63,7 @@ export type {
   PermissionMode,
 } from './agent/permission';
 export type { UsageRecordScope } from './agent/usage';
+export type { GoalData, GoalStatus } from './agent/goal';
 export type { ToolStoreUpdate } from './tools/store';
 export type {
   LoopRecordedEvent,

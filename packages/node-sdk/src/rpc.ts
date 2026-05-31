@@ -40,6 +40,7 @@ import type {
   ReloadSummary,
   CompactOptions,
   SessionPlan,
+  SessionGoal,
   SessionStatus,
   SessionUsage,
   PromptInput,
@@ -91,6 +92,11 @@ export interface SetSessionPermissionRpcInput extends SessionIdRpcInput {
 
 export interface SetSessionPlanModeRpcInput extends SessionIdRpcInput {
   readonly enabled: boolean;
+}
+
+export interface SetSessionGoalRpcInput extends SessionIdRpcInput {
+  readonly objective: string;
+  readonly tokenBudget?: number;
 }
 
 export interface ActivateSkillRpcInput extends SessionIdRpcInput {
@@ -301,6 +307,48 @@ export class SDKRpcClient {
     });
   }
 
+  async setGoal(input: SetSessionGoalRpcInput): Promise<SessionGoal> {
+    const rpc = await this.getRpc();
+    return rpc.setGoal({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      objective: input.objective,
+      tokenBudget: input.tokenBudget,
+    });
+  }
+
+  async pauseGoal(input: SessionIdRpcInput): Promise<SessionGoal> {
+    const rpc = await this.getRpc();
+    return rpc.pauseGoal({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
+  }
+
+  async resumeGoal(input: SessionIdRpcInput): Promise<SessionGoal> {
+    const rpc = await this.getRpc();
+    return rpc.resumeGoal({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
+  }
+
+  async clearGoal(input: SessionIdRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.clearGoal({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
+  }
+
+  async getGoal(input: SessionIdRpcInput): Promise<SessionGoal | null> {
+    const rpc = await this.getRpc();
+    return rpc.getGoal({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
+  }
+
   async compact(input: SessionIdRpcInput & CompactOptions): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.beginCompaction({
@@ -353,6 +401,10 @@ export class SDKRpcClient {
       sessionId: input.sessionId,
       agentId,
     });
+    const goal = await rpc.getGoal({
+      sessionId: input.sessionId,
+      agentId,
+    });
     const usage = await rpc.getUsage({
       sessionId: input.sessionId,
       agentId,
@@ -367,6 +419,7 @@ export class SDKRpcClient {
       thinkingLevel: config.thinkingLevel,
       permission: permission.mode,
       planMode: plan !== null,
+      goal,
       contextTokens,
       maxContextTokens,
       contextUsage,

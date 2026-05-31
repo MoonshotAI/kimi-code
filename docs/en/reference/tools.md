@@ -68,8 +68,13 @@ Plan mode is a constrained working state: once entered, `Write` and `Edit` are t
 | Tool | Default approval | Description |
 | --- | --- | --- |
 | `TodoList` | Auto-approved | Manage the task to-do list |
+| `get_goal` | Auto-approved | Read the current persistent goal |
+| `create_goal` | Auto-approved | Create a persistent goal |
+| `update_goal` | Auto-approved | Mark the current goal complete or blocked |
 
 **`TodoList`** maintains a visible subtask list across multi-step operations; state is stored within the agent session. The `todos` parameter accepts an array where each item has a `title` and a `status` (`pending` / `in_progress` / `done`). Omitting `todos` queries the current list; passing an empty array clears it.
+
+**`get_goal`** returns the current goal and its status, token usage, elapsed active time, and optional token budget. **`create_goal`** accepts an `objective` and optional positive integer `token_budget`; it is reserved for explicitly requested goal mode and rejects creation while a goal already exists. **`update_goal`** accepts `complete` only after the objective is fully achieved. It accepts `blocked` only when the same blocker repeats for at least three consecutive goal turns and meaningful progress requires user input or an external-state change.
 
 ## Collaboration tools
 

@@ -17,6 +17,7 @@ import { describe, expect, it } from 'vitest';
 import { TaskListTool } from '../../src/tools/background/task-list';
 import { compileToolArgsValidator, validateToolArgs } from '../../src/tools/args-validator';
 import { AskUserQuestionTool } from '../../src/tools/builtin/collaboration/ask-user';
+import { CreateGoalTool } from '../../src/tools/builtin/state/goal';
 
 /** Collect every `required` array nested anywhere inside a JSON Schema. */
 function collectRequired(schema: unknown, acc: string[] = []): string[] {
@@ -86,5 +87,19 @@ describe('builtin tool input JSON Schema', () => {
     };
     // The closed-object guard must hold at every nesting level.
     expect(validateToolArgs(validator, { questions: [question] })).not.toBeNull();
+  });
+
+  it('accepts a 4000-code-point emoji goal objective through runtime validation', () => {
+    const tool = new CreateGoalTool({} as never);
+    const validator = compileToolArgsValidator(tool.parameters);
+
+    expect(validateToolArgs(validator, { objective: '🚀'.repeat(4_000) })).toBeNull();
+  });
+
+  it('rejects a whitespace-only goal objective through runtime validation', () => {
+    const tool = new CreateGoalTool({} as never);
+    const validator = compileToolArgsValidator(tool.parameters);
+
+    expect(validateToolArgs(validator, { objective: '   \n\t' })).not.toBeNull();
   });
 });

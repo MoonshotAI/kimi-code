@@ -31,6 +31,7 @@ import { FullCompaction, type CompactionStrategy } from './compaction';
 import { CronManager } from './cron';
 import { ConfigState } from './config';
 import { ContextMemory } from './context';
+import { GoalManager } from './goal';
 import { HookEngine } from '../session/hooks';
 import { InjectionManager } from './injection/manager';
 import { PermissionManager, type PermissionManagerOptions } from './permission';
@@ -103,6 +104,7 @@ export class Agent {
   readonly fullCompaction: FullCompaction;
   readonly context: ContextMemory;
   readonly config: ConfigState;
+  readonly goal: GoalManager;
   readonly turn: TurnFlow;
   readonly injection: InjectionManager;
   readonly permission: PermissionManager;
@@ -150,6 +152,7 @@ export class Agent {
     this.fullCompaction = new FullCompaction(this, options.compactionStrategy);
     this.context = new ContextMemory(this);
     this.config = new ConfigState(this);
+    this.goal = new GoalManager(this);
     this.turn = new TurnFlow(this);
     this.injection = new InjectionManager(this);
     this.permission = new PermissionManager(this, options.permission);
@@ -335,6 +338,16 @@ export class Agent {
         this.planMode.cancel(payload.id);
       },
       clearPlan: () => this.planMode.clear(),
+      setGoal: (payload) => this.goal.set(payload.objective, payload.tokenBudget),
+      pauseGoal: () => this.goal.pause(),
+      resumeGoal: () => {
+        const goal = this.goal.resume();
+        this.goal.continueAfterResume();
+        return goal;
+      },
+      clearGoal: () => {
+        this.goal.clear();
+      },
       beginCompaction: (payload) => {
         this.fullCompaction.begin({ source: 'manual', instruction: payload.instruction });
       },
@@ -371,6 +384,7 @@ export class Agent {
       getConfig: () => this.config.data(),
       getPermission: () => this.permission.data(),
       getPlan: () => this.planMode.data(),
+      getGoal: () => this.goal.get(),
       getUsage: () => this.usage.data(),
       getTools: () => this.tools.data(),
       getBackground: (payload) => this.background.list(payload.activeOnly ?? false, payload.limit),
@@ -382,7 +396,9 @@ export class Agent {
     void this.rpc?.emitEvent?.(event);
   }
 
-  emitStatusUpdated(): void {
+  emitStatusUpdated(
+    goal: ReturnType<GoalManager['data']> | undefined = this.goal.data() ?? undefined,
+  ): void {
     if (this.records.restoring) return;
     if (!this.config.hasModel) return;
 
@@ -402,6 +418,7 @@ export class Agent {
       maxContextTokens,
       contextUsage,
       planMode: this.planMode.isActive,
+      goal,
       permission: this.permission.mode,
       usage,
     });

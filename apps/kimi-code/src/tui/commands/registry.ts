@@ -37,6 +37,14 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: (args) => (args.trim().toLowerCase() === 'clear' ? 'idle-only' : 'always'),
   },
   {
+    name: 'goal',
+    aliases: [],
+    description: 'Set, pause, resume, view, or clear a task goal',
+    priority: 100,
+    availability: (args) => (isGoalManagementCommand(args) ? 'always' : 'idle-only'),
+    experimentalFlag: 'goal-mode',
+  },
+  {
     name: 'model',
     aliases: [],
     description: 'Switch LLM model',
@@ -208,4 +216,9 @@ export function sortSlashCommands(commands: readonly KimiSlashCommand[]): KimiSl
   return [...commands].toSorted(
     (a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.name.localeCompare(b.name),
   );
+}
+
+function isGoalManagementCommand(args: string): boolean {
+  const subcmd = args.trim().toLowerCase();
+  return subcmd.length === 0 || subcmd === 'pause' || subcmd === 'resume' || subcmd === 'clear';
 }

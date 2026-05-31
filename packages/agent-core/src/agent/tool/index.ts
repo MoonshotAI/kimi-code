@@ -4,6 +4,7 @@ import picomatch from 'picomatch';
 
 import type { Agent } from '..';
 import { makeErrorPayload } from '../../errors';
+import { flags } from '../../flags';
 import type { ExecutableTool } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
 import type { McpConnectionManager, McpServerEntry } from '../../mcp';
@@ -375,6 +376,9 @@ export class ToolManager {
         new b.ExitPlanModeTool(this.agent),
         this.agent.rpc?.requestQuestion && new b.AskUserQuestionTool(this.agent),
         new b.TodoListTool(this.toolStore),
+        flags.enabled('goal-mode') && new b.GetGoalTool(this.agent.goal),
+        flags.enabled('goal-mode') && new b.CreateGoalTool(this.agent.goal),
+        flags.enabled('goal-mode') && new b.UpdateGoalTool(this.agent.goal),
         new b.TaskListTool(background),
         new b.TaskOutputTool(background),
         new b.TaskStopTool(background),

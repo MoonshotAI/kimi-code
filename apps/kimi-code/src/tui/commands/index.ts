@@ -14,6 +14,7 @@ export {
 export {
   handleCompactCommand,
   handleEditorCommand,
+  handleGoalCommand,
   handleModelCommand,
   handlePlanCommand,
   handleThemeCommand,

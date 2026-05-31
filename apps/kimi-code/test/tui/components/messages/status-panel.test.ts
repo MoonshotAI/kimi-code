@@ -35,6 +35,14 @@ describe('status panel report lines', () => {
         thinkingLevel: 'high',
         permission: 'auto',
         planMode: true,
+        goal: {
+          objective: 'Finish migration',
+          status: 'active',
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: 1,
+          updatedAt: 1,
+        },
         contextTokens: 3000,
         maxContextTokens: 12000,
         contextUsage: 0.25,
@@ -58,6 +66,7 @@ describe('status panel report lines', () => {
     expect(output).toContain('Directory    /tmp/project');
     expect(output).toContain('Permissions  auto');
     expect(output).toContain('Plan mode    on');
+    expect(output).toContain('Goal         active');
     expect(output).toContain('Session      ses-1');
     expect(output).toContain('Title        Implement status');
     expect(output).toContain('Context window');

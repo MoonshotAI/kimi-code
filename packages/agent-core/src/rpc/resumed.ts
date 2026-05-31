@@ -7,6 +7,7 @@ import type {
   PermissionMode,
 } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
+import type { GoalData } from '#/agent/goal';
 import type { ToolInfo } from '#/agent/tool';
 import type { SessionSummary } from '#/rpc/core-api';
 import type { UsageStatus } from '#/rpc/events';
@@ -27,6 +28,7 @@ export interface ResumedAgentState {
   readonly replay: readonly AgentReplayRecord[];
   readonly permission: PermissionData;
   readonly plan: PlanData;
+  readonly goal?: GoalData | null;
   readonly usage: UsageStatus;
   readonly tools: readonly ToolInfo[];
   readonly toolStore?: Readonly<Record<string, unknown>>;

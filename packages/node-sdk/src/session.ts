@@ -13,6 +13,7 @@ import type {
   ReloadSummary,
   ResumedSessionState,
   SessionPlan,
+  SessionGoal,
   SessionStatus,
   SessionSummary,
   SessionUsage,
@@ -150,6 +151,36 @@ export class Session {
   async clearPlan(): Promise<void> {
     this.ensureOpen();
     await this.rpc.clearPlan({ sessionId: this.id });
+  }
+
+  async setGoal(objective: string, tokenBudget?: number): Promise<SessionGoal> {
+    this.ensureOpen();
+    const normalized = normalizeRequiredString(
+      objective,
+      'Session goal objective cannot be empty',
+      ErrorCodes.SESSION_GOAL_OBJECTIVE_EMPTY,
+    );
+    return this.rpc.setGoal({ sessionId: this.id, objective: normalized, tokenBudget });
+  }
+
+  async pauseGoal(): Promise<SessionGoal> {
+    this.ensureOpen();
+    return this.rpc.pauseGoal({ sessionId: this.id });
+  }
+
+  async resumeGoal(): Promise<SessionGoal> {
+    this.ensureOpen();
+    return this.rpc.resumeGoal({ sessionId: this.id });
+  }
+
+  async clearGoal(): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.clearGoal({ sessionId: this.id });
+  }
+
+  async getGoal(): Promise<SessionGoal | null> {
+    this.ensureOpen();
+    return this.rpc.getGoal({ sessionId: this.id });
   }
 
   async compact(options: CompactOptions = {}): Promise<void> {

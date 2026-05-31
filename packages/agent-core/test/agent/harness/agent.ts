@@ -82,6 +82,7 @@ interface ResumeStateSnapshot {
   };
   readonly context: ReturnType<Agent['context']['data']>;
   readonly fullCompaction: Agent['fullCompaction']['compactedHistory'];
+  readonly goal: ReturnType<typeof goalStateSnapshot>;
   readonly permission: ReturnType<Agent['permission']['data']>;
   readonly tools: ReturnType<Agent['tools']['data']>;
   readonly toolStore: ReturnType<Agent['tools']['storeData']>;
@@ -988,11 +989,22 @@ function resumeStateSnapshot(agent: Agent): ResumeStateSnapshot {
     config: configStateSnapshot(agent),
     context: resumeContextSnapshot(agent),
     fullCompaction: agent.fullCompaction.compactedHistory,
+    goal: goalStateSnapshot(agent),
     permission: agent.permission.data(),
     tools: agent.tools.data(),
     toolStore: agent.tools.storeData(),
     usage: agent.usage.data(),
   };
+}
+
+function goalStateSnapshot(agent: Agent) {
+  const goal = agent.goal.data();
+  if (goal === null) {
+    return null;
+  }
+
+  const { timeUsedSeconds: _timeUsedSeconds, ...snapshot } = goal;
+  return snapshot;
 }
 
 function resumeContextSnapshot(agent: Agent): ReturnType<Agent['context']['data']> {

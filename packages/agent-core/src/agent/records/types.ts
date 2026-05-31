@@ -6,6 +6,7 @@ import type { CompactionBeginData, CompactionResult } from '../compaction';
 import type { AgentConfigUpdateData } from '../config';
 import type { ContextMessage, PromptOrigin } from '../context';
 import type { PermissionApprovalResultRecord, PermissionMode } from '../permission';
+import type { GoalStatus } from '../goal';
 import type { UserToolRegistration } from '../tool';
 import type { UsageRecordScope } from '../usage';
 
@@ -43,6 +44,27 @@ export interface AgentRecordEvents {
   'plan_mode.exit': {
     id?: string;
   };
+
+  'goal.set': {
+    objective: string;
+    status: GoalStatus;
+    tokenBudget?: number;
+    tokensUsed: number;
+    timeUsedSeconds: number;
+    usageBaseline: number;
+    activeSince?: number;
+    createdAt: number;
+    updatedAt: number;
+  };
+  'goal.status': {
+    status: GoalStatus;
+    tokensUsed: number;
+    timeUsedSeconds: number;
+    usageBaseline: number;
+    activeSince?: number;
+    updatedAt: number;
+  };
+  'goal.clear': {};
 
   'tools.register_user_tool': UserToolRegistration;
   'tools.unregister_user_tool': {

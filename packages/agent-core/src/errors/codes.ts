@@ -26,6 +26,7 @@ export const ErrorCodes = {
   SESSION_PERMISSION_MODE_INVALID: 'session.permission_mode_invalid',
   SESSION_THINKING_EMPTY: 'session.thinking_empty',
   SESSION_MODEL_EMPTY: 'session.model_empty',
+  SESSION_GOAL_OBJECTIVE_EMPTY: 'session.goal_objective_empty',
   SESSION_PLAN_MODE_INVALID: 'session.plan_mode_invalid',
   SESSION_APPROVAL_HANDLER_ERROR: 'session.approval_handler_error',
   SESSION_QUESTION_HANDLER_ERROR: 'session.question_handler_error',
@@ -182,6 +183,12 @@ export const KIMI_ERROR_INFO = {
     retryable: false,
     public: true,
     action: 'Provide a non-empty model identifier.',
+  },
+  'session.goal_objective_empty': {
+    title: 'Goal objective is empty',
+    retryable: false,
+    public: true,
+    action: 'Provide a non-empty goal objective.',
   },
   'session.plan_mode_invalid': {
     title: 'Invalid plan mode',

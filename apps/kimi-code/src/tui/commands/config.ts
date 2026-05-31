@@ -43,6 +43,62 @@ export async function handlePlanCommand(host: SlashCommandHost, args: string): P
   await applyPlanMode(host, session, enabled);
 }
 
+export async function handleGoalCommand(host: SlashCommandHost, args: string): Promise<void> {
+  const session = host.session;
+  if (session === undefined) {
+    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    return;
+  }
+
+  const objective = args.trim();
+  const subcmd = objective.toLowerCase();
+  if (objective.length === 0) {
+    const goal = await session.getGoal();
+    if (goal === null) {
+      host.showNotice('No active goal');
+      return;
+    }
+    host.showNotice(`Goal ${goal.status}`, goal.objective);
+    return;
+  }
+  if (subcmd === 'pause') {
+    if ((await session.getGoal()) === null) {
+      host.showNotice('No active goal');
+      return;
+    }
+    const goal = await session.pauseGoal();
+    host.showNotice('Goal paused', goal.objective);
+    return;
+  }
+  if (subcmd === 'resume') {
+    if ((await session.getGoal()) === null) {
+      host.showNotice('No active goal');
+      return;
+    }
+    const goal = await session.resumeGoal();
+    host.showNotice('Goal resumed', goal.objective);
+    return;
+  }
+  if (subcmd === 'clear') {
+    if ((await session.getGoal()) === null) {
+      host.showNotice('No goal to clear');
+      return;
+    }
+    await session.clearGoal();
+    host.showNotice('Goal cleared');
+    return;
+  }
+
+  const existing = await session.getGoal();
+  if (existing !== null && existing.status !== 'complete') {
+    host.showError('A goal is already set. Run /goal clear before replacing it.');
+    return;
+  }
+  const goal = await session.setGoal(objective);
+  host.showNotice('Goal active', goal.objective);
+  host.sendNormalUserInput(goal.objective);
+}
+
 async function applyPlanMode(host: SlashCommandHost, session: Session, enabled: boolean): Promise<void> {
   try {
     await session.setPlanMode(enabled);

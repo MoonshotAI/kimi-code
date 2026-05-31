@@ -43,6 +43,15 @@ Some commands are only available in the idle state. Running them while the sessi
 | `/auto [on\|off]` | — | Toggle auto permission mode. Without arguments, flip the current state; pass `on`/`off` explicitly to force the corresponding state. When enabled, tool approvals are handled automatically and the agent will not ask questions. | Yes |
 | `/plan [on\|off]` | — | Toggle Plan mode. Without arguments, flip the current state; pass `on`/`off` explicitly to force the corresponding state. Toggling alone does not create an empty plan file. | Yes |
 | `/plan clear` | — | Clear the current plan. | No |
+| `/goal` | — | Show the current goal. | Yes |
+| `/goal <objective>` | — | Set a persistent goal and start working toward it. | No |
+| `/goal pause` | — | Pause automatic goal continuation. | Yes |
+| `/goal resume` | — | Resume automatic goal continuation. | Yes |
+| `/goal clear` | — | Clear the current goal. | Yes |
+
+While a goal is active, the agent continues working after each model stop until it marks the objective complete or blocked. Goal state is preserved when the session is resumed.
+
+Goal mode is experimental and disabled by default. Enable it with `KIMI_CODE_EXPERIMENTAL_GOAL_MODE=1`.
 
 ::: warning Note
 `/yolo` skips approval confirmation for ordinary tool calls. Make sure you understand the potential risks before enabling it. It does not skip the approval required to leave Plan mode; in Plan mode, `Bash` follows the same ordinary allow rules as `/yolo`.

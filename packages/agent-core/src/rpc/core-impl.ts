@@ -81,6 +81,7 @@ import type {
   SetPluginEnabledPayload,
   SetPluginMcpServerEnabledPayload,
   SetThinkingPayload,
+  SetGoalPayload,
   SkillSummary,
   SteerPayload,
   StopBackgroundPayload,
@@ -462,6 +463,22 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).clearPlan(payload);
   }
 
+  setGoal({ sessionId, ...payload }: SessionAgentPayload<SetGoalPayload>) {
+    return this.sessionApi(sessionId).setGoal(payload);
+  }
+
+  pauseGoal({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).pauseGoal(payload);
+  }
+
+  resumeGoal({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).resumeGoal(payload);
+  }
+
+  clearGoal({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).clearGoal(payload);
+  }
+
   beginCompaction({ sessionId, ...payload }: SessionAgentPayload<BeginCompactionPayload>) {
     return this.sessionApi(sessionId).beginCompaction(payload);
   }
@@ -522,6 +539,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   getPlan({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
     return this.sessionApi(sessionId).getPlan(payload);
+  }
+
+  getGoal({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).getGoal(payload);
   }
 
   getUsage({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
@@ -826,6 +847,7 @@ async function resumeSessionResult(
     const context = await api.getContext({ agentId });
     const permission = await api.getPermission({ agentId });
     const plan = await api.getPlan({ agentId });
+    const goal = await api.getGoal({ agentId });
     const usage = await api.getUsage({ agentId });
     agents[agentId] = {
       type: agent.type,
@@ -834,6 +856,7 @@ async function resumeSessionResult(
       replay: agent.replayBuilder.buildResult(),
       permission,
       plan,
+      goal,
       usage,
       tools: await api.getTools({ agentId }),
       toolStore: agent.tools.storeData(),
