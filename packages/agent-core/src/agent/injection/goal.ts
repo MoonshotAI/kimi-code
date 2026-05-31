@@ -18,26 +18,31 @@ export class GoalInjector extends DynamicInjector {
     if (store === undefined) return undefined;
     const goal = store.getGoal().goal;
     if (goal === null) return undefined;
-    // `active`: full reminder + budget guidance; the continuation loop is driving.
+    // Three intensity levels by status:
+    // - `active`: full reminder + budget guidance; the continuation loop is driving.
+    // - `blocked`: a light, non-demanding note so the model stays aware of the
+    //   (possibly just-edited) goal and can help unstick it if the user asks.
+    // - `paused`: silent. Pausing is the user deliberately setting the goal aside
+    //   to do other work; carrying it into every unrelated turn would be noise.
+    //   `/goal resume` restores the full reminder (and surfaces any edit then).
+    // `complete` never reaches here (it clears the record).
     if (goal.status === 'active') return buildGoalReminder(goal);
-    // `paused` / `blocked`: a light, non-demanding note so the model is aware of
-    // the (possibly just-edited) goal and can act on it if the user asks, without
-    // being driven autonomously. `complete` never reaches here (it clears).
-    return buildStoppedNote(goal);
+    if (goal.status === 'blocked') return buildBlockedNote(goal);
+    return undefined;
   }
 }
 
 /**
- * Light context for a stopped-but-resumable goal (`paused` / `blocked`). Unlike
- * the active reminder it makes no demands and carries no budget guidance — it
- * just keeps the current objective visible so an edit takes effect next turn and
- * the model can pick it up if the user asks, otherwise handle requests normally.
+ * Light context for a `blocked` goal. Unlike the active reminder it makes no
+ * demands and carries no budget guidance — it just keeps the current objective
+ * visible so an edit takes effect next turn and the model can help unstick the
+ * goal if the user asks, otherwise handle requests normally.
  */
-function buildStoppedNote(goal: GoalSnapshot): string {
+function buildBlockedNote(goal: GoalSnapshot): string {
   const reason = goal.terminalReason ?? goal.lastEvaluatorReason;
   const lines: string[] = [];
   lines.push(
-    `There is a goal, currently ${goal.status}${reason ? ` (${reason})` : ''}. It is not being ` +
+    `There is a goal, currently blocked${reason ? ` (${reason})` : ''}. It is not being ` +
       'pursued autonomously right now.',
   );
   lines.push('');

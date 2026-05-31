@@ -169,11 +169,15 @@ cleanups are now fixed.
   `clearInternal` still backs `createGoal` replacement). `/goal clear` now parses as an objective.
 - **`GoalChange.kind` renamed `terminal` → `completion`:** since the consolidation it only ever
   meant `complete` (`blocked` rides on `lifecycle`), so the name now matches.
-- **Not yet done (deferred from the review):** #3 — whether `paused` should inject a light note
-  every turn (point 4) or stay silent ("set it aside", point 3); currently both paused and blocked
-  inject. #5 — the active injection's over-budget guidance still tells the model to "report a
-  terminal state via UpdateGoal", but the runtime now auto-`blocks` on over-budget before the
-  evaluator runs, so that guidance is stale.
+- **Injection intensity by status (#3):** three levels — `active` = full reminder (loud),
+  `blocked` = a light, non-demanding note (the model stays aware so the user can unstick it),
+  `paused` = **silent**. Pausing is the deliberate "set it aside" gesture, so a parked goal no
+  longer whispers into every unrelated turn; `/goal resume` restores the full reminder (and
+  surfaces any edit made while paused). `complete` clears, so it never injects.
+- **Over-budget injection guidance removed (#5):** the active reminder kept the within-budget and
+  "nearing a budget — converge" bands but dropped the over-budget "report the best terminal state
+  via UpdateGoal" line, which was stale (the runtime auto-`blocks` on over-budget before the
+  evaluator runs, so the model could never act on it).
 
 ## Post-implementation fixes
 

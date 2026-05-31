@@ -55,16 +55,12 @@ describe('GoalInjector content', () => {
     expect(await injectOnce(makeStore())).toBeUndefined();
   });
 
-  it('produces a light, non-demanding note for a paused goal', async () => {
+  it('is silent for a paused goal (the user set it aside)', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
     await store.pauseGoal();
-    const text = (await injectOnce(store))!;
-    expect(text).toContain('currently paused');
-    expect(text).toContain('<untrusted_objective>\nwork\n</untrusted_objective>');
-    expect(text).toContain('/goal resume');
-    // No active-goal budget guidance / demands.
-    expect(text).not.toContain('Budget guidance');
+    // Pausing means "set it aside"; nothing is injected until `/goal resume`.
+    expect(await injectOnce(store)).toBeUndefined();
   });
 
   it('produces a light note (with reason) for a blocked goal', async () => {
