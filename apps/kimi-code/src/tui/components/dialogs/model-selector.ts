@@ -69,13 +69,13 @@ function createModelChoices(models: Record<string, ModelAlias>): readonly ModelC
 }
 
 function thinkingAvailability(model: ModelAlias): ThinkingAvailability {
-  const caps = model.capabilities ?? [];
-  if (caps.includes('always_thinking')) return 'always-on';
-  // Forcing adaptive thinking implies the model supports thinking, even when the
-  // alias declares no capabilities — e.g. a custom-named endpoint configured with
-  // only `adaptive_thinking = true`. Without this it would render as "unsupported"
-  // and switching to it would force thinking off.
-  if (caps.includes('thinking') || model.adaptiveThinking === true) return 'toggle';
+  const caps = model.capabilities;
+  if (caps?.includes('always_thinking')) return 'always-on';
+  // Missing capabilities means the model is unknown rather than unsupported. Keep
+  // the thinking toggle available so merely opening /model does not force it off.
+  if (caps === undefined || caps.includes('thinking') || model.adaptiveThinking === true) {
+    return 'toggle';
+  }
   return 'unsupported';
 }
 

@@ -98,14 +98,23 @@ describe('AnthropicChatProvider.getCapability', () => {
   });
 
   it('claude-3-haiku → image_in + tool_use, audio_in=false, thinking=false', () => {
-    // Claude 3 Haiku supports vision (all Claude 3.x share vision support);
-    // Anthropic has no audio models; thinking is a Claude 4 feature.
+    // Claude 3 Haiku supports vision; Anthropic has no audio models.
     const cap = make('claude-3-haiku').getCapability();
     expect(cap.image_in).toBe(true);
     expect(cap.tool_use).toBe(true);
     expect(cap.audio_in).toBe(false);
     expect(cap.thinking).toBe(false);
   });
+
+  it.each(['claude-3-7-sonnet', 'claude-3.7-sonnet'])(
+    '%s → image_in + thinking + tool_use',
+    (model) => {
+      const cap = make(model).getCapability();
+      expect(cap.image_in).toBe(true);
+      expect(cap.thinking).toBe(true);
+      expect(cap.tool_use).toBe(true);
+    },
+  );
 
   it('claude-opus-4 → image_in + thinking + tool_use', () => {
     const cap = make('claude-opus-4').getCapability();
@@ -150,6 +159,22 @@ describe('OpenAILegacyChatProvider.getCapability', () => {
     expect(cap.tool_use).toBe(true);
   });
 
+  it.each(['gpt-5', 'gpt-5.1', 'o3', 'o3-20250416', 'o3-pro', 'o4-mini'])(
+    '%s → image_in + thinking + tool_use',
+    (model) => {
+      const cap = make(model).getCapability();
+      expect(cap.image_in).toBe(true);
+      expect(cap.thinking).toBe(true);
+      expect(cap.tool_use).toBe(true);
+    },
+  );
+
+  it('o3-mini → thinking=true, image_in=false', () => {
+    const cap = make('o3-mini').getCapability();
+    expect(cap.thinking).toBe(true);
+    expect(cap.image_in).toBe(false);
+  });
+
   it('unknown OpenAI-legacy model → UNKNOWN_CAPABILITY', () => {
     const cap = make('gpt-mystery').getCapability();
     expect(cap).toEqual(UNKNOWN_CAPABILITY);
@@ -172,9 +197,20 @@ describe('OpenAIResponsesChatProvider.getCapability', () => {
     expect(cap.tool_use).toBe(true);
   });
 
-  it('o3-mini → thinking=true', () => {
+  it.each(['gpt-5', 'gpt-5.1', 'o3', 'o3-20250416', 'o3-pro', 'o4-mini'])(
+    '%s → image_in + thinking + tool_use',
+    (model) => {
+      const cap = make(model).getCapability();
+      expect(cap.image_in).toBe(true);
+      expect(cap.thinking).toBe(true);
+      expect(cap.tool_use).toBe(true);
+    },
+  );
+
+  it('o3-mini → thinking=true, image_in=false', () => {
     const cap = make('o3-mini').getCapability();
     expect(cap.thinking).toBe(true);
+    expect(cap.image_in).toBe(false);
   });
 
   it('unknown Responses model → UNKNOWN_CAPABILITY', () => {

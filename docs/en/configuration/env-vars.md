@@ -78,7 +78,7 @@ For testing you can make Kimi Code use a specific model **without editing `confi
 | `KIMI_MODEL_PROVIDER_TYPE` | No | Provider type; one of `kimi`, `anthropic`, `openai` | `kimi` |
 | `KIMI_MODEL_BASE_URL` | No | API base URL | `kimi` → `https://api.moonshot.ai/v1`; `openai` → `https://api.openai.com/v1`; `anthropic` → SDK default |
 | `KIMI_MODEL_MAX_CONTEXT_SIZE` | No | Max context length in tokens (positive integer) | `262144` (256K) |
-| `KIMI_MODEL_CAPABILITIES` | No | Comma-separated capability tags (e.g. `image_in,thinking`); unioned with auto-detected capabilities | `image_in,thinking` |
+| `KIMI_MODEL_CAPABILITIES` | No | Comma-separated capability tags (e.g. `image_in,thinking`); unioned with auto-detected capabilities | `kimi` → `image_in,thinking`; other providers → auto-detected |
 | `KIMI_MODEL_DISPLAY_NAME` | No | Name shown in `/model` | Falls back to `KIMI_MODEL_NAME` |
 | `KIMI_MODEL_MAX_OUTPUT_SIZE` | No | Per-request output cap (`anthropic` only) | Per-model default |
 | `KIMI_MODEL_REASONING_KEY` | No | Reasoning field-name override (`openai` only) | Auto-detected |
@@ -88,6 +88,8 @@ For testing you can make Kimi Code use a specific model **without editing `confi
 | `KIMI_MODEL_ADAPTIVE_THINKING` | No | Force adaptive thinking (`thinking: { type: 'adaptive' }`) on or off, overriding the model-name version inference (`anthropic` only) | Inferred from the model name (Claude ≥ 4.6 uses adaptive) |
 
 The synthesized entries use the reserved keys `__kimi_env__` (provider) and `__kimi_env_model__` (model alias). When `KIMI_MODEL_NAME` is set but a required variable is missing or invalid, startup fails with a clear error.
+
+For standard OpenAI and Anthropic model names, leave `KIMI_MODEL_CAPABILITIES` unset so Kimi Code can use provider/model capability detection. Set it explicitly for custom model names or compatible gateways whose capabilities cannot be inferred reliably.
 
 Set `KIMI_MODEL_ADAPTIVE_THINKING=true` when a custom-named Anthropic-compatible endpoint backs a model that supports adaptive thinking but whose model name does not encode a parseable Claude version (so the automatic inference would otherwise fall back to budget-based thinking). Forcing it on for an endpoint that does **not** support adaptive thinking makes the API reject the request, so leave it unset unless you know the backing model supports it.
 
