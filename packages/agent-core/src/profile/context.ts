@@ -6,6 +6,10 @@ import { listDirectory } from '../tools/support/list-directory';
 import type { SystemPromptContext } from './types';
 
 const AGENTS_MD_MAX_BYTES = 32 * 1024;
+
+// Per-directory filename candidates, in priority order. AGENTS.md wins; CLAUDE.md
+// is a Claude Code compatibility fallback read only when no AGENTS.md is present.
+const AGENT_FILE_NAMES = ['AGENTS.md', 'agents.md', 'CLAUDE.md'] as const;
 const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
 
@@ -42,10 +46,11 @@ export async function loadAgentsMd(kaos: Kaos): Promise<string> {
   const home = kaos.gethome();
   await collect(join(home, '.kimi-code', 'AGENTS.md'));
 
-  // Generic user-level dir (.agents) matches skill discovery.
+  // Generic user-level dir (.agents) matches skill discovery. CLAUDE.md is a
+  // fallback for Claude Code compatibility — only read when no AGENTS.md exists.
   const genericDirs = [join(home, '.agents')];
   const genericFiles = genericDirs.flatMap((dir) =>
-    ['AGENTS.md', 'agents.md'].map((name) => join(dir, name)),
+    AGENT_FILE_NAMES.map((name) => join(dir, name)),
   );
   for (const file of genericFiles) {
     if (await collect(file)) break;
@@ -53,7 +58,7 @@ export async function loadAgentsMd(kaos: Kaos): Promise<string> {
 
   for (const dir of dirs) {
     await collect(join(dir, '.kimi-code', 'AGENTS.md'));
-    for (const fileName of ['AGENTS.md', 'agents.md']) {
+    for (const fileName of AGENT_FILE_NAMES) {
       if (await collect(join(dir, fileName))) break;
     }
   }

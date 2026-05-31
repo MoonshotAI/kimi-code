@@ -58,6 +58,33 @@ describe('loadAgentsMd user-level discovery', () => {
     expect(result).not.toContain(homeDir);
   });
 
+  it('loads CLAUDE.md when no AGENTS.md is present', async () => {
+    await writeFile(join(workDir, 'CLAUDE.md'), 'claude instructions', 'utf-8');
+
+    const result = await loadAgentsMd(testKaos);
+
+    expect(result).toContain('claude instructions');
+  });
+
+  it('prefers AGENTS.md over CLAUDE.md in the same directory', async () => {
+    await writeFile(join(workDir, 'AGENTS.md'), 'agents instructions', 'utf-8');
+    await writeFile(join(workDir, 'CLAUDE.md'), 'claude instructions', 'utf-8');
+
+    const result = await loadAgentsMd(testKaos);
+
+    expect(result).toContain('agents instructions');
+    expect(result).not.toContain('claude instructions');
+  });
+
+  it('loads generic user-level .agents/CLAUDE.md', async () => {
+    await mkdir(join(homeDir, '.agents'), { recursive: true });
+    await writeFile(join(homeDir, '.agents', 'CLAUDE.md'), 'dot-agents claude', 'utf-8');
+
+    const result = await loadAgentsMd(testKaos);
+
+    expect(result).toContain('dot-agents claude');
+  });
+
   it('does not load the same file twice when the work dir is the home dir', async () => {
     vi.spyOn(testKaos, 'getcwd').mockReturnValue(homeDir);
     await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
