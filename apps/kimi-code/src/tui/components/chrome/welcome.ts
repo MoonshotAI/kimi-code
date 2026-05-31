@@ -7,6 +7,7 @@ import type { Component } from '@earendil-works/pi-tui';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
+import { isRainbowDancing, renderDanceWelcomeHeader } from '#/tui/easter-eggs/dance';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
 
@@ -27,7 +28,7 @@ export class WelcomeComponent implements Component {
     const pad = '  ';
 
     // Logo + side-by-side text.
-    const logo = ['▐█▛█▛█▌', '▐█████▌'];
+    const logo = ['▐█▛█▛█▌', '▐█████▌'] as const;
     const logoWidth = Math.max(...logo.map((row) => visibleWidth(row)));
     const gap = '  ';
     const textWidth = Math.max(4, innerWidth - logoWidth - gap.length);
@@ -46,10 +47,13 @@ export class WelcomeComponent implements Component {
       '…',
     );
 
-    const headerLines = [
-      primary(logo[0]!.padEnd(logoWidth)) + gap + rightRow0,
-      primary(logo[1]!.padEnd(logoWidth)) + gap + rightRow1,
+    let renderedHeaderLines = [
+      primary(logo[0].padEnd(logoWidth)) + gap + rightRow0,
+      primary(logo[1].padEnd(logoWidth)) + gap + rightRow1,
     ];
+    if (isRainbowDancing()) {
+      renderedHeaderLines = renderDanceWelcomeHeader(this.colors, logo, textWidth, rightRow1);
+    }
 
     const modelValue = isLoggedOut
       ? chalk.hex(this.colors.warning)('not set, run /login or /connect')
@@ -62,7 +66,7 @@ export class WelcomeComponent implements Component {
       labelStyle('Version:   ') + this.state.version,
     ];
 
-    const contentLines: string[] = [...headerLines, '', ...infoLines];
+    const contentLines: string[] = [...renderedHeaderLines, '', ...infoLines];
 
     const lines: string[] = [
       '',

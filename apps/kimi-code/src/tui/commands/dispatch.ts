@@ -21,6 +21,7 @@ import type { AppState, LoginProgressSpinnerHandle, QueuedMessage } from '../typ
 import type { TUIState } from '../tui-state';
 
 import { handleConnectCommand, handleLoginCommand, handleLogoutCommand } from './auth';
+import { tryHandleDanceCommand } from '../easter-eggs/dance';
 import {
   handleAutoCommand,
   handleCompactCommand,
@@ -171,6 +172,12 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
       return;
     }
     case 'message':
+      // Unknown slash command: let /dance claim it before it falls through to
+      // the model as a normal message. This runs *after* builtin and skill
+      // resolution, so a real command or a same-named skill always wins.
+      if (parsedCommand !== null && tryHandleDanceCommand(host, parsedCommand)) {
+        return;
+      }
       host.sendNormalUserInput(intent.input);
       return;
     case 'builtin':

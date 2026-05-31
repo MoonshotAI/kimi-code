@@ -12,6 +12,7 @@ import type { SessionRow } from './components/dialogs/session-picker';
 import { CustomEditor } from './components/editor/custom-editor';
 import { CHROME_GUTTER } from './constant/rendering';
 import type { TasksBrowserState } from './controllers/tasks-browser';
+import { installRainbowDance } from './easter-eggs/dance';
 import { createKimiTUIThemeBundle, type KimiTUIThemeBundle } from './theme/bundle';
 import { createTerminalState, type TerminalState } from './utils/terminal-state';
 import {
@@ -58,6 +59,9 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
 
   const terminal = new ProcessTerminal();
   const ui = new TUI(terminal);
+  installRainbowDance(() => {
+    ui.requestRender();
+  });
 
   const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
