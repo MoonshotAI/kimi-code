@@ -528,7 +528,7 @@ export class KimiTUI {
     await this.closeSession('shutting down');
     await this.harness.close();
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
-    this.state.dispose();
+    this.state.disposeRainbowDance();
     this.state.ui.stop();
     if (this.onExit) {
       await this.onExit(exitCode);

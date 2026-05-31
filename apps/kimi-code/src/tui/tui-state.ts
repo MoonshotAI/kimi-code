@@ -51,7 +51,7 @@ export interface TUIState {
   tasksBrowser: TasksBrowserState | undefined;
   externalEditorRunning: boolean;
   queuedMessages: QueuedMessage[];
-  dispose: () => void;
+  disposeRainbowDance: () => void;
 }
 
 export function createTUIState(options: KimiTUIOptions): TUIState {
@@ -101,7 +101,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     tasksBrowser: undefined,
     externalEditorRunning: false,
     queuedMessages: [],
-    dispose: () => {
+    disposeRainbowDance: () => {
       disposeRainbowDance();
     },
   };
