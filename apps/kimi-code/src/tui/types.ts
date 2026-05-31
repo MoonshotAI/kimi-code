@@ -35,6 +35,13 @@ export interface AppState {
   sessionTitle: string | null;
   /** Current goal snapshot for the footer badge; null/undefined when no active goal. */
   goal?: GoalSnapshot | null;
+  /**
+   * True while the independent goal evaluator is running between a stopped step
+   * and the continuation decision. Drives a dedicated "Evaluating the goal…"
+   * activity label instead of the generic working spinner. Set/cleared by the
+   * `goal.evaluation.started` / `goal.evaluation.ended` events.
+   */
+  goalEvaluating?: boolean;
 }
 
 export interface ToolCallBlockData {

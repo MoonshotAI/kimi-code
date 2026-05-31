@@ -70,6 +70,22 @@ export interface GoalUpdatedEvent {
   readonly change?: GoalChange;
 }
 
+/**
+ * The independent goal evaluator (a no-tools judge) has started running between
+ * a stopped step and the continuation decision. Purely an ephemeral UI phase
+ * signal — not persisted as a wire record — so the TUI can show "Evaluating the
+ * goal…" instead of the generic working spinner while the judge call is in
+ * flight. Always paired with a later {@link GoalEvaluationEndedEvent}.
+ */
+export interface GoalEvaluationStartedEvent {
+  readonly type: 'goal.evaluation.started';
+}
+
+/** The goal evaluator call finished (success, failure, or abort). */
+export interface GoalEvaluationEndedEvent {
+  readonly type: 'goal.evaluation.ended';
+}
+
 export interface SkillActivatedEvent {
   readonly type: 'skill.activated';
   readonly activationId: string;
@@ -289,6 +305,8 @@ export type AgentEvent =
   | AgentStatusUpdatedEvent
   | SessionMetaUpdatedEvent
   | GoalUpdatedEvent
+  | GoalEvaluationStartedEvent
+  | GoalEvaluationEndedEvent
   | SkillActivatedEvent
   | TurnStartedEvent
   | TurnEndedEvent

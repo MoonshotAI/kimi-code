@@ -196,6 +196,8 @@ export class SessionEventHandler {
       case 'agent.status.updated': this.handleStatusUpdate(event); break;
       case 'session.meta.updated': this.handleSessionMetaChanged(event); break;
       case 'goal.updated': this.handleGoalUpdated(event); break;
+      case 'goal.evaluation.started': this.host.setAppState({ goalEvaluating: true }); break;
+      case 'goal.evaluation.ended': this.host.setAppState({ goalEvaluating: false }); break;
       case 'skill.activated': this.handleSkillActivated(event); break;
       case 'error': this.handleSessionError(event); break;
       case 'warning': this.handleSessionWarning(event); break;
@@ -325,6 +327,11 @@ export class SessionEventHandler {
 
   private handleTurnEnd(_event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
     void _event;
+    // Defensive: the evaluator's `finally` normally emits goal.evaluation.ended,
+    // but clear the flag here too so a missed end-event can't strand the phase.
+    if (this.host.state.appState.goalEvaluating === true) {
+      this.host.setAppState({ goalEvaluating: false });
+    }
     this.host.streamingUI.flushNow();
     const todos = this.host.state.todoPanel.getTodos();
     if (todos.length > 0 && todos.every((t) => t.status === 'done')) {

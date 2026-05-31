@@ -114,7 +114,10 @@ export const BUILTIN_SLASH_COMMANDS = [
     description: 'Start or manage an autonomous goal',
     priority: 80,
     experimentalFlag: 'goal-command',
-    argumentHint: '<objective> | status | pause | resume | cancel | replace',
+    // No argumentHint: the menu description stays as short as every other
+    // command's. The subcommands (status/pause/resume/cancel/replace) surface in
+    // the argument autocomplete list once the user types `/goal ` (see
+    // completeArgs), so they don't need to be spelled out inline.
     completeArgs: goalArgumentCompletions,
     // status / pause / cancel are always available; creation, replacement, and
     // resume start (or restart) a turn and so are idle-only.

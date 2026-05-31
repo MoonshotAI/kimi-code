@@ -62,12 +62,17 @@ interface AppendedMessage {
 function controllerAgent(opts: { goals: SessionGoalStore }): {
   agent: Agent;
   messages: AppendedMessage[];
+  events: string[];
 } {
   const messages: AppendedMessage[] = [];
+  const events: string[] = [];
   const agent = {
     type: 'main',
     goals: opts.goals,
     kimiConfig: undefined,
+    emitEvent: (event: { type: string }) => {
+      events.push(event.type);
+    },
     injection: {
       injectGoal: async () => {},
     },
@@ -83,7 +88,7 @@ function controllerAgent(opts: { goals: SessionGoalStore }): {
       },
     },
   } as unknown as Agent;
-  return { agent, messages };
+  return { agent, messages, events };
 }
 
 function stoppedCtx(stepNumber: number): LoopStoppedStepContext {
@@ -197,12 +202,46 @@ describe('GoalContinuationController with evaluator', () => {
     store: SessionGoalStore,
     factory: () => GoalEvaluatorLike,
     step = 1,
-  ): Promise<{ result: { continue: boolean }; messages: AppendedMessage[] }> {
-    const { agent, messages } = controllerAgent({ goals: store });
+  ): Promise<{ result: { continue: boolean }; messages: AppendedMessage[]; events: string[] }> {
+    const { agent, messages, events } = controllerAgent({ goals: store });
     const c = new GoalContinuationController(agent, { startedAt: 0, createEvaluator: factory });
     const result = await c.shouldContinueAfterStop(stoppedCtx(step));
-    return { result, messages };
+    return { result, messages, events };
   }
+
+  it('brackets the evaluator call with goal.evaluation start/end phase events', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    const { events } = await runWith(
+      store,
+      factoryOf(() => ({ ok: true, verdict: 'continue', reason: 'go', usage: emptyUsage() })),
+    );
+    expect(events).toContain('goal.evaluation.started');
+    expect(events).toContain('goal.evaluation.ended');
+    // started precedes ended.
+    expect(events.indexOf('goal.evaluation.started')).toBeLessThan(
+      events.indexOf('goal.evaluation.ended'),
+    );
+  });
+
+  it('still emits goal.evaluation.ended when the evaluator throws', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    const { agent, events } = controllerAgent({ goals: store });
+    const c = new GoalContinuationController(agent, {
+      startedAt: 0,
+      createEvaluator: () => ({
+        evaluate: async () => {
+          throw new Error('boom');
+        },
+      }),
+    });
+    // The unexpected throw propagates, but the `finally` must still end the phase
+    // so the TUI never strands on "Evaluating the goal…".
+    await expect(c.shouldContinueAfterStop(stoppedCtx(1))).rejects.toThrow('boom');
+    expect(events).toContain('goal.evaluation.started');
+    expect(events).toContain('goal.evaluation.ended');
+  });
 
   it('completes and clears the goal on a complete verdict', async () => {
     const store = makeStore();

@@ -29,5 +29,13 @@ export function completeLeadingArg(
   const items = specs
     .filter((spec) => spec.value.toLowerCase().startsWith(lower))
     .map((spec) => ({ value: spec.value, label: spec.value, description: spec.description }));
+  // Nothing left to complete: the user has finished typing a token that is the
+  // sole remaining match (e.g. `status`). Keeping the menu open here would make
+  // Enter confirm the no-op completion instead of submitting the command, so we
+  // suppress it. (A space after the token already returns null above.)
+  const [only] = items;
+  if (items.length === 1 && only !== undefined && only.value.toLowerCase() === lower) {
+    return null;
+  }
   return items.length > 0 ? items : null;
 }

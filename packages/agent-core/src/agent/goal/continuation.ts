@@ -138,12 +138,22 @@ export class GoalContinuationController {
             evidence: goal.lastModelReportEvidence,
           }
         : undefined;
-    const result = await evaluator.evaluate({
-      goal,
-      messages: this.agent.context.messages,
-      modelReport,
-      signal,
-    });
+    // Surface the judge call as its own UI phase: the main model isn't streaming
+    // here, so without this the TUI would show a stale generic spinner. These are
+    // ephemeral signals (not wire records); the `finally` guarantees the phase
+    // ends even if the call throws or is aborted.
+    this.agent.emitEvent({ type: 'goal.evaluation.started' });
+    let result: GoalEvaluatorResult;
+    try {
+      result = await evaluator.evaluate({
+        goal,
+        messages: this.agent.context.messages,
+        modelReport,
+        signal,
+      });
+    } finally {
+      this.agent.emitEvent({ type: 'goal.evaluation.ended' });
+    }
 
     // Count evaluator token usage toward the goal token budget.
     const evaluatorTokens = grandTotal(result.usage);

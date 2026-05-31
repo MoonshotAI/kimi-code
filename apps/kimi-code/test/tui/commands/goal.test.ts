@@ -300,10 +300,21 @@ describe('goalArgumentCompletions', () => {
   });
 
   it('returns items whose value/label are the token itself', () => {
-    const items = goalArgumentCompletions('pause');
+    const items = goalArgumentCompletions('paus');
     expect(items).toEqual([
       { value: 'pause', label: 'pause', description: 'Pause the active goal' },
     ]);
+  });
+
+  it('suppresses the menu once a token is fully typed and unambiguous', () => {
+    // `status` is the sole match and equals the prefix exactly, so there is
+    // nothing left to complete: the menu hides and Enter submits `/goal status`
+    // instead of confirming a no-op completion.
+    expect(values('status')).toBeNull();
+    expect(values('pause')).toBeNull();
+    expect(values('--max-turns')).toBeNull();
+    // `re` still has two completions, so the menu stays open.
+    expect(values('re')).toEqual(['resume', 'replace']);
   });
 
   it('stops completing once past the first token (space typed)', () => {

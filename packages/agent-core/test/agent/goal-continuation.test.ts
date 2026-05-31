@@ -57,6 +57,7 @@ function controllerAgent(opts: {
   const agent = {
     type: opts.type ?? 'main',
     goals: opts.goals,
+    emitEvent: () => {},
     kimiConfig:
       opts.maxStepsPerTurn !== undefined
         ? { loopControl: { maxStepsPerTurn: opts.maxStepsPerTurn } }
