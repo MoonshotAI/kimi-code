@@ -16,6 +16,7 @@
 | `/logout` | — | 清除当前所选账号的凭据（Kimi Code OAuth 凭据，或对应开放平台的供应商配置）。 | 否 |
 | `/connect [--refresh] [--url=<catalog-url>]` | — | 从模型目录中选择并配置供应商与模型。CLI 已内置默认目录；传入 `--refresh` 可从 models.dev 拉取最新目录，传入 `--url` 可指向自定义目录地址。详见 [平台与模型 — `/connect` 与模型目录](../configuration/providers.md#connect-与模型目录)。 | 否 |
 | `/model` | — | 切换当前会话使用的 LLM 模型。 | 否 |
+| `/effort [<level>]` | `/thinking` | 设置模型的思考强度（thinking effort）。可传入 `off`、`low`、`medium`、`high`、`xhigh`、`max` 之一；不带参数时弹出选择器并高亮当前等级。 | 是 |
 | `/settings` | `/config` | 打开 TUI 内的设置面板。 | 是 |
 | `/permission` | — | 选择权限模式（permission mode）。 | 是 |
 | `/editor` | — | 配置 `Ctrl-G` 调起的外部编辑器。 | 是 |

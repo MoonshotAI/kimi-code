@@ -43,6 +43,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     priority: 100,
   },
   {
+    name: 'effort',
+    aliases: ['thinking'],
+    description: 'Set model thinking effort (off/low/medium/high/xhigh/max)',
+    priority: 100,
+    availability: 'always',
+  },
+  {
     name: 'help',
     aliases: ['h', '?'],
     description: 'Show available commands and shortcuts',

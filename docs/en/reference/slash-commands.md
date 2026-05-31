@@ -16,6 +16,7 @@ Some commands are only available in the idle state. Running them while the sessi
 | `/logout` | — | Clear the credentials of the currently selected account (Kimi Code OAuth credentials, or the corresponding open platform provider config). | No |
 | `/connect [--refresh] [--url=<catalog-url>]` | — | Configure a provider and model from a model catalog. The default catalog is bundled with the CLI; pass `--refresh` to fetch the latest catalog from models.dev, or `--url` to read it from a custom URL. See [Providers and models — `/connect` and the model catalog](../configuration/providers.md#connect-and-the-model-catalog). | No |
 | `/model` | — | Switch the LLM model used by the current session. | No |
+| `/effort [<level>]` | `/thinking` | Set the model thinking effort. Pass one of `off`, `low`, `medium`, `high`, `xhigh`, `max`; with no argument, open a picker highlighting the current level. | Yes |
 | `/settings` | `/config` | Open the settings panel inside the TUI. | Yes |
 | `/permission` | — | Choose a permission mode. | Yes |
 | `/editor` | — | Configure the external editor launched by `Ctrl-G`. | Yes |

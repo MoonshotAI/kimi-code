@@ -38,6 +38,14 @@ describe('built-in slash command registry', () => {
     expect(findBuiltInSlashCommand('unknown')).toBeUndefined();
   });
 
+  it('exposes /effort with a thinking alias, always available', () => {
+    const effort = findBuiltInSlashCommand('effort');
+    expect(effort?.name).toBe('effort');
+    expect(effort?.aliases).toContain('thinking');
+    expect(findBuiltInSlashCommand('thinking')?.name).toBe('effort');
+    expect(resolveSlashCommandAvailability(effort!, '')).toBe('always');
+  });
+
   it('marks plan clear as idle-only while normal plan toggles are always available', () => {
     const plan = findBuiltInSlashCommand('plan');
     expect(plan).toBeDefined();
@@ -80,6 +88,7 @@ describe('built-in slash command registry', () => {
       expect.arrayContaining([
         'compact',
         'editor',
+        'effort',
         'exit',
         'export-debug-zip',
         'fork',
