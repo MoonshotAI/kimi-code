@@ -1,6 +1,12 @@
 import type { PermissionMode, Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
+import {
+  EffortSelectorComponent,
+  isThinkingEffortLevel,
+  THINKING_EFFORT_LEVELS,
+  type ThinkingEffortLevel,
+} from '../components/dialogs/effort-selector';
 import { ModelSelectorComponent } from '../components/dialogs/model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
@@ -195,9 +201,63 @@ export function handleModelCommand(host: SlashCommandHost, args: string): void {
   showModelPicker(host, alias);
 }
 
+export async function handleEffortCommand(host: SlashCommandHost, args: string): Promise<void> {
+  if (host.session === undefined) {
+    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    return;
+  }
+
+  const requested = args.trim().toLowerCase();
+  if (requested.length === 0) {
+    showEffortPicker(host);
+    return;
+  }
+  if (!isThinkingEffortLevel(requested)) {
+    host.showError(
+      `Unknown thinking effort: ${requested}. Valid levels: ${THINKING_EFFORT_LEVELS.join(', ')}.`,
+    );
+    return;
+  }
+  await applyEffortChoice(host, requested);
+}
+
 // ---------------------------------------------------------------------------
 // Pickers & config apply
 // ---------------------------------------------------------------------------
+
+function showEffortPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new EffortSelectorComponent({
+      currentValue: host.state.appState.thinkingLevel,
+      colors: host.state.theme.colors,
+      onSelect: (level) => {
+        host.restoreEditor();
+        void applyEffortChoice(host, level);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+async function applyEffortChoice(host: SlashCommandHost, level: ThinkingEffortLevel): Promise<void> {
+  if (level === host.state.appState.thinkingLevel) {
+    host.showStatus(`Thinking effort unchanged: ${level}.`);
+    return;
+  }
+
+  try {
+    await host.requireSession().setThinking(level);
+  } catch (error) {
+    host.showError(`Failed to set thinking effort: ${formatErrorMessage(error)}`);
+    return;
+  }
+
+  host.setAppState({ thinkingLevel: level, thinking: level !== 'off' });
+  host.track('thinking_toggle', { enabled: level !== 'off' });
+  host.showStatus(`Thinking effort set to ${level}.`, host.state.theme.colors.success);
+}
 
 function showEditorPicker(host: SlashCommandHost): void {
   const currentValue = host.state.appState.editorCommand ?? '';

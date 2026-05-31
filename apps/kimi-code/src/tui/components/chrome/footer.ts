@@ -51,6 +51,7 @@ export interface ToolbarTip {
 const TOOLBAR_TIPS: readonly ToolbarTip[] = [
   { text: 'shift+tab: plan mode' },
   { text: '/model: switch model' },
+  { text: '/effort: set thinking effort' },
   { text: 'ctrl+s: steer mid-turn', priority: 2 },
   { text: '/compact: compact context', priority: 2 },
   { text: 'ctrl+o: expand tool output' },

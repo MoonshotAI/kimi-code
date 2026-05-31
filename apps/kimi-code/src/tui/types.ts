@@ -18,6 +18,7 @@ export interface AppState {
   permissionMode: PermissionMode;
   planMode: boolean;
   thinking: boolean;
+  thinkingLevel: string;
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;
