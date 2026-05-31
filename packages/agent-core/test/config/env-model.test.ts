@@ -88,6 +88,18 @@ describe('applyEnvModelConfig', () => {
     expect(anthropic?.baseUrl).toBeUndefined();
   });
 
+  it('does not default non-Kimi env models to Kimi capabilities', () => {
+    expect(
+      apply({ ...MIN, KIMI_MODEL_PROVIDER_TYPE: 'openai' })
+        .models?.[ENV_MODEL_ALIAS_KEY]?.capabilities,
+    ).toBeUndefined();
+
+    expect(
+      apply({ ...MIN, KIMI_MODEL_PROVIDER_TYPE: 'anthropic' })
+        .models?.[ENV_MODEL_ALIAS_KEY]?.capabilities,
+    ).toBeUndefined();
+  });
+
   it('rejects unsupported provider types', () => {
     expectConfigInvalid(() =>
       apply({ ...MIN, KIMI_MODEL_PROVIDER_TYPE: 'google-genai' }),
