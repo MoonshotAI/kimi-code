@@ -85,6 +85,18 @@ describe('loadAgentsMd user-level discovery', () => {
     expect(result).toContain('global claude memory');
   });
 
+  it('does not load ~/.claude/CLAUDE.md when ~/.kimi-code/AGENTS.md exists', async () => {
+    await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
+    await writeFile(join(homeDir, '.kimi-code', 'AGENTS.md'), 'kimi user memory', 'utf-8');
+    await mkdir(join(homeDir, '.claude'), { recursive: true });
+    await writeFile(join(homeDir, '.claude', 'CLAUDE.md'), 'global claude memory', 'utf-8');
+
+    const result = await loadAgentsMd(testKaos);
+
+    expect(result).toContain('kimi user memory');
+    expect(result).not.toContain('global claude memory');
+  });
+
   it('prefers .agents/AGENTS.md over ~/.claude/CLAUDE.md', async () => {
     await mkdir(join(homeDir, '.agents'), { recursive: true });
     await writeFile(join(homeDir, '.agents', 'AGENTS.md'), 'dot-agents', 'utf-8');

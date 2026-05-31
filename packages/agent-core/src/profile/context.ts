@@ -40,16 +40,17 @@ export async function loadAgentsMd(kaos: Kaos): Promise<string> {
 
   // User-level files come first so any project-level AGENTS.md overrides them.
   const home = kaos.gethome();
-  await collect(join(home, '.kimi-code', 'AGENTS.md'));
+  const foundBrandedUser = await collect(join(home, '.kimi-code', 'AGENTS.md'));
 
   // Generic user-level dir (.agents) matches skill discovery. Load the first
   // AGENTS-style file found; fall back to ~/.claude/CLAUDE.md (Claude Code's
-  // documented global memory path) only when no AGENTS file exists there.
+  // documented global memory path) only when no user-level AGENTS file exists
+  // at all — including the branded ~/.kimi-code/AGENTS.md checked above.
   let foundGenericUser = false;
   for (const name of ['AGENTS.md', 'agents.md']) {
     if (await collect(join(home, '.agents', name))) { foundGenericUser = true; break; }
   }
-  if (!foundGenericUser) {
+  if (!foundBrandedUser && !foundGenericUser) {
     await collect(join(home, '.claude', 'CLAUDE.md'));
   }
 
