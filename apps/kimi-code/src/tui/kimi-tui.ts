@@ -952,7 +952,7 @@ export class KimiTUI {
       workDir: this.state.appState.workDir,
       model,
       thinking:
-        this.session === undefined ? undefined : this.state.appState.thinking ? 'on' : 'off',
+        this.session === undefined ? undefined : this.state.appState.thinkingLevel || 'off',
       permission: this.state.appState.permissionMode,
       planMode: this.state.appState.planMode ? true : undefined,
     });
