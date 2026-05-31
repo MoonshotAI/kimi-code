@@ -2,6 +2,7 @@ import type { ModelCapability, ProviderConfig, ToolCall } from '@moonshot-ai/kos
 import { describe, expect, it } from 'vitest';
 
 import type { ResolvedAgentProfile } from '../../src/profile';
+import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { createCommandKaos, testAgent } from './harness/agent';
 import { DEFAULT_TEST_SYSTEM_PROMPT } from './harness/snapshots';
 
@@ -91,6 +92,29 @@ describe('Agent config', () => {
     expect(toolNames(tools)).toEqual(
       expect.arrayContaining(['Bash', 'Read', 'Write', 'Edit', 'Grep', 'Glob']),
     );
+    await ctx.expectResumeMatches();
+  });
+
+  it('omits Bash when the runtime shell is unavailable', async () => {
+    const ctx = testAgent({
+      kaos: createFakeKaos({
+        osEnv: {
+          osKind: 'Windows',
+          osArch: 'x64',
+          osVersion: '10.0.22631.0',
+          shellName: 'bash',
+          shellPath: 'C:\\Program Files\\Git\\bin\\bash.exe',
+          shellAvailable: false,
+          shellUnavailableReason: 'Git Bash was not found.',
+        },
+      }),
+    });
+    ctx.configure();
+
+    const tools = await ctx.rpc.getTools({});
+
+    expect(toolNames(tools)).not.toContain('Bash');
+    expect(toolNames(tools)).toEqual(expect.arrayContaining(['Read', 'Write', 'Edit']));
     await ctx.expectResumeMatches();
   });
 

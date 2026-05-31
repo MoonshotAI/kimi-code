@@ -7,8 +7,8 @@
  *   - POSIX path probing prefers /bin/bash, falls back to /usr/bin/bash,
  *     /usr/local/bin/bash, then /bin/sh (with shellName 'sh').
  *   - Windows resolves Git Bash via `KIMI_SHELL_PATH`, `git.exe` on PATH,
- *     or well-known install locations; throws `KaosShellNotFoundError`
- *     if none are present.
+ *     or well-known install locations; if none are present, it returns an
+ *     unavailable shell marker so the CLI can still start.
  *   - `osArch` / `osVersion` are populated from the Node OS APIs.
  *
  * All tests expect `detectEnvironment()` to be a pure function of
@@ -24,7 +24,6 @@ import {
   type OsKind,
   type ShellName,
 } from '#/environment';
-import { KaosShellNotFoundError } from '#/errors';
 
 interface StubOpts {
   readonly platform: NodeJS.Platform;
@@ -178,37 +177,32 @@ describe('detectEnvironment', () => {
     expect(env.shellPath).toBe('C:\\Users\\me\\AppData\\Local\\Programs\\Git\\bin\\bash.exe');
   });
 
-  it('throws KaosShellNotFoundError when no Git Bash candidate is found', async () => {
-    const error = await detectEnvironment(
+  it('returns an unavailable shell marker when no Windows Git Bash candidate is found', async () => {
+    const env = await detectEnvironment(
       stubDeps({
         platform: 'win32',
         env: { LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local' },
         existingPaths: [],
       }),
-    ).then(
-      () => {
-        throw new Error('expected throw');
-      },
-      (error: unknown) => error,
     );
-    expect(error).toBeInstanceOf(KaosShellNotFoundError);
+    expect(env.shellName).toBe('bash');
+    expect(env.shellPath).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
+    expect(env.shellAvailable).toBe(false);
+    expect(env.shellUnavailableReason).toContain('Git Bash was not found');
   });
 
-  it('includes attempted paths in the thrown error message', async () => {
-    const error = await detectEnvironment(
+  it('includes attempted paths in the unavailable shell reason', async () => {
+    const env = await detectEnvironment(
       stubDeps({
         platform: 'win32',
         env: { KIMI_SHELL_PATH: 'D:\\custom\\bash.exe' },
         existingPaths: [],
       }),
-    ).then(
-      () => {
-        throw new Error('expected throw');
-      },
-      (error: unknown) => error as KaosShellNotFoundError,
     );
-    expect(error.message).toContain('D:\\custom\\bash.exe');
-    expect(error.message).toContain('C:\\Program Files\\Git\\bin\\bash.exe');
+    expect(env.shellPath).toBe('D:\\custom\\bash.exe');
+    expect(env.shellAvailable).toBe(false);
+    expect(env.shellUnavailableReason).toContain('D:\\custom\\bash.exe');
+    expect(env.shellUnavailableReason).toContain('C:\\Program Files\\Git\\bin\\bash.exe');
   });
 
   // ── arch / version passthrough ─────────────────────────────────────

@@ -220,6 +220,24 @@ describe('default agent profiles', () => {
     expect(second).toContain('/workspace/two');
     expect(second).not.toContain('/workspace/one');
   });
+
+  it('renders unavailable shell guidance without Windows Git Bash command advice', () => {
+    const prompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt({
+      ...promptContext,
+      osEnv: {
+        osKind: 'Windows',
+        osArch: 'x64',
+        osVersion: '10.0.22631.0',
+        shellName: 'bash',
+        shellPath: 'C:\\Program Files\\Git\\bin\\bash.exe',
+        shellAvailable: false,
+        shellUnavailableReason: 'Git Bash was not found.',
+      },
+    });
+
+    expect(prompt).toContain('The Bash tool is unavailable: Git Bash was not found.');
+    expect(prompt).not.toContain('The Bash tool runs through Git Bash, so use Unix shell syntax');
+  });
 });
 
 async function write(fileName: string, content: string): Promise<string> {

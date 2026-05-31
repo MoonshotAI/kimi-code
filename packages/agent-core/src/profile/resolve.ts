@@ -154,6 +154,8 @@ function buildTemplateVars(
     ...promptVars,
     KIMI_OS: context.osEnv.osKind,
     KIMI_SHELL: `${context.osEnv.shellName} (\`${context.osEnv.shellPath}\`)`,
+    KIMI_SHELL_AVAILABLE: context.osEnv.shellAvailable === false ? 'false' : 'true',
+    KIMI_SHELL_UNAVAILABLE_REASON: context.osEnv.shellUnavailableReason ?? '',
     KIMI_NOW: now,
     KIMI_WORK_DIR: context.cwd,
     KIMI_WORK_DIR_LS: context.cwdListing ?? '',

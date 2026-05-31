@@ -37,7 +37,7 @@
 
 **`Bash`** 是最通用也是权限要求最严格的工具。它接受 `command`（必填）以及可选的 `cwd`（工作目录）、`timeout`（毫秒）、`description`（后台任务描述，`run_in_background=true` 时必填）、`run_in_background`（是否以后台任务运行）和 `disable_timeout`（后台任务是否取消超时）。前台 `timeout` 默认 60 秒、最长 5 分钟；后台 `timeout` 默认 10 分钟、最长 10 分钟。
 
-前台模式下 `Bash` 会阻塞当前轮次，直到命令结束或超时；后台模式会立即返回任务 ID。后台任务默认 10 分钟后超时；如果确实需要让任务不受超时限制，可以设置 `disable_timeout=true`。任务结束、失败或被停止时会自动通知 Agent 继续处理，过程中也可通过 `TaskOutput` 主动查看结果。stdin 始终被关闭，交互式命令会立即收到 EOF。两阶段终止策略（SIGTERM → 5 秒宽限期 → SIGKILL）确保超时后进程能可靠结束。Windows 平台下默认使用 Git Bash 作为 shell。
+前台模式下 `Bash` 会阻塞当前轮次，直到命令结束或超时；后台模式会立即返回任务 ID。后台任务默认 10 分钟后超时；如果确实需要让任务不受超时限制，可以设置 `disable_timeout=true`。任务结束、失败或被停止时会自动通知 Agent 继续处理，过程中也可通过 `TaskOutput` 主动查看结果。stdin 始终被关闭，交互式命令会立即收到 EOF。两阶段终止策略（SIGTERM → 5 秒宽限期 → SIGKILL）确保超时后进程能可靠结束。Windows 平台下默认使用 Git Bash 作为 shell；如果未安装 Git Bash，且 `KIMI_SHELL_PATH` 没有指向 `bash.exe`，Kimi Code CLI 仍会启动，但 `Bash` 工具会被省略，直到 shell 可用。
 
 ## 网络类
 
