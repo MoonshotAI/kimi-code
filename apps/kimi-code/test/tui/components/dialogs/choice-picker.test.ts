@@ -195,6 +195,32 @@ describe('ChoicePickerComponent', () => {
     expect(onSelect).toHaveBeenLastCalledWith({ alias: 'okapi', thinking: false });
   });
 
+  it('keeps thinking configurable when model capabilities are unknown', () => {
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        env: {
+          provider: '__kimi_env__',
+          model: 'custom-model',
+          maxContextSize: 200_000,
+        },
+      },
+      currentValue: 'env',
+      currentThinking: true,
+      colors: darkColors,
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    expect(picker.render(120).map(strip)).toContain('  [ On ]    Off  ');
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'env', thinking: true });
+
+    picker.handleInput('\u001B[C');
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'env', thinking: false });
+  });
+
   it('keeps the thinking draft when moving across models', () => {
     const onSelect = vi.fn();
     const picker = new ModelSelectorComponent({

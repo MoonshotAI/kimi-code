@@ -21,6 +21,12 @@ const OPENAI_RESPONSES_DEVELOPER_ROLE_MODELS = new Set([
   'o4-mini',
 ]);
 
+const OPENAI_REASONING_VISION_PREFIXES = [
+  'gpt-5',
+  'o3-pro',
+  'o4-mini',
+] as const;
+
 const OPENAI_VISION_TOOL_PREFIXES = [
   'gpt-4o',
   'gpt-4-turbo',
@@ -30,7 +36,9 @@ const OPENAI_VISION_TOOL_PREFIXES = [
 
 const CLAUDE_3_PREFIXES = ['claude-3-', 'claude-3.5-', 'claude-3.7-'] as const;
 
-const CLAUDE_4_PREFIXES = [
+const CLAUDE_THINKING_VISION_PREFIXES = [
+  'claude-3-7-',
+  'claude-3.7-',
   'claude-opus-4',
   'claude-sonnet-4',
   'claude-haiku-4',
@@ -47,6 +55,15 @@ const GEMINI_CATALOGUED_PREFIXES = [
 
 const OPENAI_REASONING_CAPABILITY: ModelCapability = Object.freeze({
   image_in: false,
+  video_in: false,
+  audio_in: false,
+  thinking: true,
+  tool_use: true,
+  max_context_tokens: 0,
+});
+
+const OPENAI_REASONING_VISION_TOOL_CAPABILITY: ModelCapability = Object.freeze({
+  image_in: true,
   video_in: false,
   audio_in: false,
   thinking: true,
@@ -110,6 +127,10 @@ const GEMINI_THINKING_MULTIMODAL_TOOL_CAPABILITY: ModelCapability = Object.freez
 
 const OPENAI_LEGACY_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
   {
+    matches: isOpenAIReasoningVisionModel,
+    capability: OPENAI_REASONING_VISION_TOOL_CAPABILITY,
+  },
+  {
     matches: isOpenAIReasoningModel,
     capability: OPENAI_REASONING_CAPABILITY,
   },
@@ -125,6 +146,10 @@ const OPENAI_LEGACY_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
 
 const OPENAI_RESPONSES_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
   {
+    matches: isOpenAIReasoningVisionModel,
+    capability: OPENAI_REASONING_VISION_TOOL_CAPABILITY,
+  },
+  {
     matches: isOpenAIReasoningModel,
     capability: OPENAI_REASONING_CAPABILITY,
   },
@@ -136,12 +161,12 @@ const OPENAI_RESPONSES_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
 
 const ANTHROPIC_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
   {
-    matches: (name) => hasPrefix(name, CLAUDE_3_PREFIXES),
-    capability: ANTHROPIC_VISION_TOOL_CAPABILITY,
+    matches: (name) => hasPrefix(name, CLAUDE_THINKING_VISION_PREFIXES),
+    capability: ANTHROPIC_THINKING_VISION_TOOL_CAPABILITY,
   },
   {
-    matches: (name) => hasPrefix(name, CLAUDE_4_PREFIXES),
-    capability: ANTHROPIC_THINKING_VISION_TOOL_CAPABILITY,
+    matches: (name) => hasPrefix(name, CLAUDE_3_PREFIXES),
+    capability: ANTHROPIC_VISION_TOOL_CAPABILITY,
   },
 ];
 
@@ -155,6 +180,19 @@ function hasPrefix(modelName: string, prefixes: readonly string[]): boolean {
 
 function isOpenAIReasoningModel(modelName: string): boolean {
   return /^o\d/.test(modelName);
+}
+
+function isOpenAIReasoningVisionModel(modelName: string): boolean {
+  return /^o3(?:-\d|$)/.test(modelName) || hasModelFamily(modelName, OPENAI_REASONING_VISION_PREFIXES);
+}
+
+function hasModelFamily(modelName: string, families: readonly string[]): boolean {
+  return families.some(
+    (family) =>
+      modelName === family ||
+      modelName.startsWith(`${family}-`) ||
+      modelName.startsWith(`${family}.`),
+  );
 }
 
 function capabilityFromCatalog(
