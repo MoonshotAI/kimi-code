@@ -76,13 +76,56 @@ describe('loadAgentsMd user-level discovery', () => {
     expect(result).not.toContain('claude instructions');
   });
 
-  it('loads generic user-level .agents/CLAUDE.md', async () => {
-    await mkdir(join(homeDir, '.agents'), { recursive: true });
-    await writeFile(join(homeDir, '.agents', 'CLAUDE.md'), 'dot-agents claude', 'utf-8');
+  it('loads ~/.claude/CLAUDE.md when no .agents file exists', async () => {
+    await mkdir(join(homeDir, '.claude'), { recursive: true });
+    await writeFile(join(homeDir, '.claude', 'CLAUDE.md'), 'global claude memory', 'utf-8');
 
     const result = await loadAgentsMd(testKaos);
 
-    expect(result).toContain('dot-agents claude');
+    expect(result).toContain('global claude memory');
+  });
+
+  it('prefers .agents/AGENTS.md over ~/.claude/CLAUDE.md', async () => {
+    await mkdir(join(homeDir, '.agents'), { recursive: true });
+    await writeFile(join(homeDir, '.agents', 'AGENTS.md'), 'dot-agents', 'utf-8');
+    await mkdir(join(homeDir, '.claude'), { recursive: true });
+    await writeFile(join(homeDir, '.claude', 'CLAUDE.md'), 'global claude memory', 'utf-8');
+
+    const result = await loadAgentsMd(testKaos);
+
+    expect(result).toContain('dot-agents');
+    expect(result).not.toContain('global claude memory');
+  });
+
+  it('loads .claude/CLAUDE.md in the project directory', async () => {
+    await mkdir(join(workDir, '.claude'), { recursive: true });
+    await writeFile(join(workDir, '.claude', 'CLAUDE.md'), 'dot-claude instructions', 'utf-8');
+
+    const result = await loadAgentsMd(testKaos);
+
+    expect(result).toContain('dot-claude instructions');
+  });
+
+  it('prefers bare CLAUDE.md over .claude/CLAUDE.md in the same directory', async () => {
+    await writeFile(join(workDir, 'CLAUDE.md'), 'bare claude', 'utf-8');
+    await mkdir(join(workDir, '.claude'), { recursive: true });
+    await writeFile(join(workDir, '.claude', 'CLAUDE.md'), 'dot-claude', 'utf-8');
+
+    const result = await loadAgentsMd(testKaos);
+
+    expect(result).toContain('bare claude');
+    expect(result).not.toContain('dot-claude');
+  });
+
+  it('does not load CLAUDE.md when .kimi-code/AGENTS.md exists in the same scope', async () => {
+    await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+    await writeFile(join(workDir, '.kimi-code', 'AGENTS.md'), 'kimi override', 'utf-8');
+    await writeFile(join(workDir, 'CLAUDE.md'), 'claude instructions', 'utf-8');
+
+    const result = await loadAgentsMd(testKaos);
+
+    expect(result).toContain('kimi override');
+    expect(result).not.toContain('claude instructions');
   });
 
   it('does not load the same file twice when the work dir is the home dir', async () => {

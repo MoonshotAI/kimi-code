@@ -6,10 +6,6 @@ import { listDirectory } from '../tools/support/list-directory';
 import type { SystemPromptContext } from './types';
 
 const AGENTS_MD_MAX_BYTES = 32 * 1024;
-
-// Per-directory filename candidates, in priority order. AGENTS.md wins; CLAUDE.md
-// is a Claude Code compatibility fallback read only when no AGENTS.md is present.
-const AGENT_FILE_NAMES = ['AGENTS.md', 'agents.md', 'CLAUDE.md'] as const;
 const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
 
@@ -46,20 +42,32 @@ export async function loadAgentsMd(kaos: Kaos): Promise<string> {
   const home = kaos.gethome();
   await collect(join(home, '.kimi-code', 'AGENTS.md'));
 
-  // Generic user-level dir (.agents) matches skill discovery. CLAUDE.md is a
-  // fallback for Claude Code compatibility — only read when no AGENTS.md exists.
-  const genericDirs = [join(home, '.agents')];
-  const genericFiles = genericDirs.flatMap((dir) =>
-    AGENT_FILE_NAMES.map((name) => join(dir, name)),
-  );
-  for (const file of genericFiles) {
-    if (await collect(file)) break;
+  // Generic user-level dir (.agents) matches skill discovery. Load the first
+  // AGENTS-style file found; fall back to ~/.claude/CLAUDE.md (Claude Code's
+  // documented global memory path) only when no AGENTS file exists there.
+  let foundGenericUser = false;
+  for (const name of ['AGENTS.md', 'agents.md']) {
+    if (await collect(join(home, '.agents', name))) { foundGenericUser = true; break; }
+  }
+  if (!foundGenericUser) {
+    await collect(join(home, '.claude', 'CLAUDE.md'));
   }
 
   for (const dir of dirs) {
-    await collect(join(dir, '.kimi-code', 'AGENTS.md'));
-    for (const fileName of AGENT_FILE_NAMES) {
-      if (await collect(join(dir, fileName))) break;
+    // Kimi-branded override takes highest priority within this scope.
+    const foundKimiCode = await collect(join(dir, '.kimi-code', 'AGENTS.md'));
+    // Standard AGENTS.md / agents.md (second priority).
+    let foundRegular = false;
+    for (const name of ['AGENTS.md', 'agents.md']) {
+      if (await collect(join(dir, name))) { foundRegular = true; break; }
+    }
+    // CLAUDE.md paths are Claude Code compatibility fallbacks. Only check them
+    // when no AGENTS-style file exists anywhere in this directory scope, so that
+    // .kimi-code/AGENTS.md (or a top-level AGENTS.md) fully supersedes them.
+    if (!foundKimiCode && !foundRegular) {
+      if (!(await collect(join(dir, 'CLAUDE.md')))) {
+        await collect(join(dir, '.claude', 'CLAUDE.md'));
+      }
     }
   }
 
