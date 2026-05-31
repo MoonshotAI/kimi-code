@@ -1054,6 +1054,7 @@ export class KimiTUI {
     this.state.footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 0 });
     this.streamingUI.setTodoList([]);
     this.streamingUI.setTurnId(undefined);
+    this.setAppState({ mcpServersSummary: null });
     this.streamingUI.setStep(0);
     this.streamingUI.resetLiveText();
     this.updateQueueDisplay();
