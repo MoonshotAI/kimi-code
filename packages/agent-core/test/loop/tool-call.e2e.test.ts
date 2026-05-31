@@ -114,6 +114,47 @@ describe('runTurn — tool-call behaviour', () => {
     });
   });
 
+  it('uses the first registered tool when duplicate names are present', async () => {
+    const firstCalls: string[] = [];
+    const secondCalls: string[] = [];
+    const first: ExecutableTool = {
+      name: 'dupe',
+      description: 'first duplicate tool',
+      parameters: { type: 'object', additionalProperties: true },
+      resolveExecution: () => ({
+        approvalRule: 'dupe',
+        execute: async (ctx) => {
+          firstCalls.push(ctx.toolCallId);
+          return { output: 'first' };
+        },
+      }),
+    };
+    const second: ExecutableTool = {
+      name: 'dupe',
+      description: 'second duplicate tool',
+      parameters: { type: 'object', additionalProperties: true },
+      resolveExecution: () => ({
+        approvalRule: 'dupe',
+        execute: async (ctx) => {
+          secondCalls.push(ctx.toolCallId);
+          return { output: 'second' };
+        },
+      }),
+    };
+
+    const { context } = await runTurn({
+      tools: [first, second],
+      responses: [
+        makeToolUseResponse([makeToolCall('dupe', {}, 'tc-1')]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    expect(firstCalls).toEqual(['tc-1']);
+    expect(secondCalls).toEqual([]);
+    expect(context.toolResults()[0]?.result.output).toBe('first');
+  });
+
   it('records an error tool.result when the tool name is unknown', async () => {
     const { sink, context } = await runTurn({
       tools: [], // no tools at all
