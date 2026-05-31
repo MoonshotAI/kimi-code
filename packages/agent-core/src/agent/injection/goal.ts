@@ -135,11 +135,12 @@ function maxBudgetFraction(goal: GoalSnapshot): number {
 
 function budgetBandGuidance(goal: GoalSnapshot): string {
   const fraction = maxBudgetFraction(goal);
-  if (fraction >= 1) {
-    return 'Budget guidance: you have reached or exceeded a budget. Stop starting new discretionary work and report the best terminal state via UpdateGoal.';
-  }
+  // No separate over-budget band: the runtime auto-blocks the goal when a hard
+  // budget is reached (before the evaluator runs), so an "over budget, report a
+  // terminal state" instruction would never be acted on. We only nudge the model
+  // to converge as it nears a budget.
   if (fraction >= 0.75) {
-    return 'Budget guidance: you are approaching a budget. Converge on the objective and avoid expanding scope.';
+    return 'Budget guidance: you are nearing a budget. Converge on the objective and avoid starting new discretionary work.';
   }
   return 'Budget guidance: you are within budget. Make steady, focused progress toward the objective.';
 }

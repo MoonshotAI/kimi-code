@@ -111,25 +111,27 @@ describe('GoalInjector content', () => {
     expect(text).toContain('within budget');
   });
 
-  it('uses the convergence band between 75 and 99 percent', async () => {
+  it('uses the convergence band at or above 75 percent', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work', budgetLimits: { turnBudget: 4 } });
     await store.incrementTurn();
     await store.incrementTurn();
     await store.incrementTurn(); // 3/4 = 75%
     const text = (await injectOnce(store))!;
-    expect(text).toContain('approaching a budget');
-    expect(text).toContain('avoid expanding scope');
+    expect(text).toContain('nearing a budget');
+    expect(text).toContain('avoid starting new discretionary work');
   });
 
-  it('uses the over-budget band at or above 100 percent', async () => {
+  it('has no separate over-budget guidance (the runtime auto-blocks instead)', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work', budgetLimits: { turnBudget: 2 } });
     await store.incrementTurn();
     await store.incrementTurn(); // 2/2 = 100%
     const text = (await injectOnce(store))!;
-    expect(text).toContain('reached or exceeded a budget');
-    expect(text).toContain('report the best terminal state');
+    // The stale "report the best terminal state via UpdateGoal" line is gone;
+    // over budget falls into the same "nearing" convergence nudge.
+    expect(text).not.toContain('report the best terminal state');
+    expect(text).toContain('nearing a budget');
   });
 
   it('includes model-report and evaluator context when present', async () => {
