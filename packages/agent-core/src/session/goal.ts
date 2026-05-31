@@ -25,18 +25,79 @@ export interface GoalAuditSink {
  */
 export const DEFAULT_GOAL_FAILURE_TURN_LIMIT = 3;
 
+/**
+ * Default no-progress guard: block a goal after this many *consecutive
+ * evaluator `no_progress` verdicts*. Unlike work caps (turns/tokens/time, which
+ * have no defaults), this one defaults on so an unclear or unachievable
+ * objective (e.g. "prove me wrong", "1 + 1 = 3") cannot spin forever — it lands
+ * in `blocked` after a few stuck turns and waits for the user to resume or
+ * refine it. Matches Codex's "blocked after three turns" behavior.
+ */
+export const DEFAULT_GOAL_NO_PROGRESS_TURN_LIMIT = 3;
+
 /** Maximum objective length in characters. */
 export const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
 
+/**
+ * Lifecycle status of a goal — deliberately minimal. The durable record only
+ * ever holds `active`, `paused`, or `blocked`; `complete` is transient
+ * (announce-then-clear) and never rests on disk. There is exactly one running
+ * state, two resumable "stopped" states, and one success outcome:
+ *
+ * | Status     | Persisted | Resumable | Set by                          | Meaning                                          |
+ * |------------|-----------|-----------|---------------------------------|--------------------------------------------------|
+ * | `active`   | yes       | (running) | createGoal / resumeGoal         | The continuation loop may drive work.            |
+ * | `paused`   | yes       | yes       | pauseGoal / pauseOnInterrupt /  | User (or interrupt) stopped it; intact.          |
+ * |            |           |           | normalizeMetadata               |                                                  |
+ * | `blocked`  | yes       | yes       | markBlocked                     | The system stopped it for some `reason`.         |
+ * | `complete` | no        | —         | markComplete                    | Success — announced in a message, then cleared.  |
+ *
+ * Only an `active` goal advances: accounting, evaluator runs, and continuation
+ * all gate on `status === 'active'`. `paused` and `blocked` are the same kind of
+ * thing — "the loop is not driving, but the goal is intact and resumable via
+ * `/goal resume`" — differing only in *who* stopped it (the user vs the system)
+ * and the human-readable `reason`. There is no separate `impossible`,
+ * `budget_limited`, `error`, or `cancelled` status: an unachievable goal, an
+ * exhausted budget, a runtime/evaluator failure all become `blocked(+reason)`,
+ * and "cancel" is just `clearGoal` (the record is discarded). See
+ * {@link SessionGoalStore} for the setters and the per-status notes below.
+ */
 export type GoalStatus =
+  /**
+   * The goal is live and the continuation loop may drive work toward it. Set on
+   * creation (`createGoal`) and when a paused/blocked goal is resumed
+   * (`resumeGoal`). The only status under which turns/tokens/wall-clock are
+   * accounted and the evaluator runs.
+   */
   | 'active'
+  /**
+   * The user stopped the goal but it is fully intact and resumable via
+   * `/goal resume`. Reached three ways: the user pauses (`pauseGoal`); a live
+   * turn is aborted mid-flight, e.g. Esc/shutdown (`pauseOnInterrupt`); or a
+   * session is resumed from disk, where an `active` goal cannot still be running
+   * and is demoted (`normalizeMetadata`).
+   */
   | 'paused'
-  | 'complete'
+  /**
+   * The *system* stopped pursuing the goal, for a reason carried in
+   * `terminalReason`: the evaluator judged it cannot proceed (an external
+   * blocker, or an objective it deems unachievable); no progress was made for
+   * `noProgressTurnLimit` consecutive turns; a configured hard budget
+   * (token/turn/time/step) was reached; or a runtime/evaluator failure occurred.
+   * Set by `markBlocked` (from the continuation controller and the turn catch).
+   * Resumable like `paused` — `/goal resume` re-activates it; a plain message
+   * just runs one normal turn without reactivating the loop. Editing the goal
+   * while blocked takes effect on the next turn.
+   */
   | 'blocked'
-  | 'impossible'
-  | 'budget_limited'
-  | 'error'
-  | 'cancelled';
+  /**
+   * Success: the independent evaluator judged the objective met. Set by
+   * `markComplete` from the continuation controller. This status is **transient**
+   * — `markComplete` emits the completion, appends a completion message, and then
+   * clears the durable record, so the goal box disappears and `complete` never
+   * rests on disk (like the old `cancelled` pattern, but with an announcement).
+   */
+  | 'complete';
 
 /** Who performed a goal action. `cleared` is an audit action, not a status. */
 export type GoalActor = 'user' | 'model' | 'evaluator' | 'continuation' | 'runtime' | 'system';
@@ -152,24 +213,16 @@ export interface GoalChange {
   readonly stats?: GoalChangeStats;
 }
 
-const TERMINAL_STATUSES: ReadonlySet<GoalStatus> = new Set([
-  'complete',
-  'blocked',
-  'impossible',
-  'budget_limited',
-  'error',
-  'cancelled',
-]);
+/**
+ * Statuses a stopped goal can be resumed from via `resumeGoal` / `/goal resume`.
+ * Both are non-`active` but intact: `paused` (user/interrupt) and `blocked`
+ * (system). `active` is already running and `complete` is transient, so neither
+ * is resumable.
+ */
+const RESUMABLE_STATUSES: ReadonlySet<GoalStatus> = new Set<GoalStatus>(['paused', 'blocked']);
 
-/** Terminal statuses an evaluator or continuation controller may set via `updateGoal`. */
-const UPDATABLE_TERMINAL_STATUSES: ReadonlySet<GoalStatus> = new Set<GoalStatus>([
-  'complete',
-  'blocked',
-  'impossible',
-]);
-
-export function isTerminalGoalStatus(status: GoalStatus): boolean {
-  return TERMINAL_STATUSES.has(status);
+export function isResumableGoalStatus(status: GoalStatus): boolean {
+  return RESUMABLE_STATUSES.has(status);
 }
 
 export interface CreateGoalInput {
@@ -212,14 +265,20 @@ export interface SessionGoalStoreOptions {
 /**
  * Single durable owner of the current goal.
  *
- * Lifecycle rules:
- * - `updateGoal()` only sets `complete`, `blocked`, or `impossible` (model/evaluator
- *   self-reported terminal states confirmed by the runtime).
- * - Runtime owns `budget_limited` and `error` via the `mark*` methods.
- * - An aborted turn (Esc / shutdown) is not terminal: it pauses the goal via
- *   `pauseOnInterrupt`, so it stays resumable via `/goal resume` — mirroring how
- *   `normalizeMetadata` demotes an `active` goal to `paused` on session resume.
- * - User owns `paused`, `cancelled`, and the `cleared` audit action.
+ * Lifecycle rules (see the {@link GoalStatus} union for the full per-status map):
+ * - Success: only the continuation controller calls `markComplete`, carrying the
+ *   independent evaluator's `complete` verdict. The model's own `UpdateGoal` tool
+ *   call is recorded as a *report* (evidence), never a direct status change — see
+ *   `recordModelReport`. `markComplete` announces, then clears the record.
+ * - System stop: `markBlocked(reason)` sets `blocked` for any reason the system
+ *   stops pursuing — evaluator `blocked` verdict, no-progress limit, a hard budget,
+ *   a `maxStepsPerTurn` cap, or a runtime/evaluator failure. `blocked` is resumable.
+ * - User stop: `pauseGoal` and the interrupt path `pauseOnInterrupt` set `paused`
+ *   (resumable); `clearGoal` discards the record entirely (no status — this is
+ *   what `/goal cancel` and `/goal clear` both do).
+ * - An aborted turn (Esc / shutdown) is not terminal: it pauses the goal, so it
+ *   stays resumable — mirroring how `normalizeMetadata` demotes an `active` goal
+ *   to `paused` on session resume.
  */
 export class SessionGoalStore {
   /** Audit records queued until the main-agent sink becomes available. */
@@ -257,8 +316,9 @@ export class SessionGoalStore {
    *
    * An `active` goal cannot still be running after a process restart (goal
    * continuation only advances inside a live turn), so it is demoted to
-   * `paused`, requiring `/goal resume` to restart work. Paused and terminal
-   * goals are preserved. Malformed and stale-`cancelled` records are removed.
+   * `paused`, requiring `/goal resume` to restart work. `paused` and `blocked`
+   * goals are preserved (both resumable). Malformed records, and any stray
+   * `complete` (which should have been cleared on completion), are removed.
    */
   async normalizeMetadata(): Promise<void> {
     const state = this.options.readState();
@@ -269,8 +329,9 @@ export class SessionGoalStore {
       return;
     }
 
-    // A `cancelled` status persisted to disk means clear did not complete; drop it.
-    if (state.status === 'cancelled') {
+    // `complete` is transient and should never rest on disk; a persisted one
+    // means completion did not finish clearing. Drop it.
+    if (state.status === 'complete') {
       await this.persistState(undefined);
       return;
     }
@@ -282,7 +343,7 @@ export class SessionGoalStore {
       return;
     }
 
-    // Paused and terminal goals are left intact.
+    // `paused` and `blocked` goals are left intact (both resumable).
   }
 
   // --- Reads -------------------------------------------------------------
@@ -314,11 +375,14 @@ export class SessionGoalStore {
 
     const existing = this.options.readState();
     if (existing !== undefined) {
-      const blocking = existing.status === 'active' || existing.status === 'paused';
-      if (blocking && input.replace !== true) {
+      // Any persisted goal (active / paused / blocked) is intact and blocks a
+      // new one unless `replace` is set; `complete` never persists, so it is not
+      // observed here. This protects a resumable paused/blocked goal from being
+      // silently overwritten.
+      if (input.replace !== true) {
         throw new KimiError(
           ErrorCodes.GOAL_ALREADY_EXISTS,
-          'A goal is already active; use replace to start a new one',
+          'A goal already exists; use replace to start a new one',
         );
       }
       // Clear the previous goal through the same internal clear path so audit
@@ -382,13 +446,16 @@ export class SessionGoalStore {
   async resumeGoal(input: GoalControlInput = {}): Promise<GoalSnapshot> {
     const state = this.requireState();
     if (state.status === 'active') return this.toSnapshot(state);
-    if (state.status !== 'paused') {
+    if (!isResumableGoalStatus(state.status)) {
       throw new KimiError(
         ErrorCodes.GOAL_NOT_RESUMABLE,
         `Cannot resume a goal in status "${state.status}"`,
       );
     }
     const actor = input.actor ?? 'user';
+    // Clear the stop reason from the previous paused/blocked transition; the
+    // goal is being pursued again.
+    state.terminalReason = undefined;
     this.applyStatus(state, 'active', actor, input.reason);
     await this.persistState(state, {
       change: { kind: 'lifecycle', status: 'active', reason: input.reason },
@@ -397,76 +464,98 @@ export class SessionGoalStore {
     return this.toSnapshot(state);
   }
 
-  async cancelGoal(input: GoalControlInput = {}): Promise<GoalSnapshot> {
-    const state = this.requireState();
-    const actor = input.actor ?? 'user';
-    this.applyStatus(state, 'cancelled', actor, input.reason);
-    state.terminalReason = input.reason;
-    const snapshot = this.toSnapshot(state);
-    // Persist the cancelled transition and audit it, then clear the goal.
-    await this.persistState(state, {
-      change: { kind: 'lifecycle', status: 'cancelled', reason: input.reason },
-    });
-    this.appendStatusUpdate(state, actor, input.reason);
-    await this.clearInternal(actor, input.reason);
-    return snapshot;
-  }
-
   async clearGoal(input: GoalControlInput = {}): Promise<void> {
     await this.clearInternal(input.actor ?? 'user', input.reason);
   }
 
-  // --- Model / evaluator confirmed terminal states ----------------------
-
-  async updateGoal(input: {
-    status: GoalStatus;
-    actor?: GoalActor;
-    reason?: string;
-    evidence?: readonly GoalEvidence[];
-  }): Promise<GoalSnapshot> {
-    if (!UPDATABLE_TERMINAL_STATUSES.has(input.status)) {
-      throw new KimiError(
-        ErrorCodes.GOAL_STATUS_INVALID,
-        `updateGoal cannot set status "${input.status}"; allowed: complete, blocked, impossible`,
-      );
-    }
+  /**
+   * Discards the current goal (`/goal cancel`). There is no `cancelled` status —
+   * cancel is just a clear that returns the snapshot it removed, so callers can
+   * report what was cancelled. Throws if no goal exists.
+   */
+  async cancelGoal(input: GoalControlInput = {}): Promise<GoalSnapshot> {
     const state = this.requireState();
-    const actor = input.actor ?? 'evaluator';
-    this.applyStatus(state, input.status, actor, input.reason);
+    const snapshot = this.toSnapshot(state);
+    await this.clearInternal(input.actor ?? 'user', input.reason);
+    return snapshot;
+  }
+
+  // --- Terminal outcomes (system-decided) -------------------------------
+
+  /**
+   * Marks the goal `blocked`: the system stopped pursuing it for `reason` — an
+   * evaluator `blocked` verdict (incl. objectives it deems unachievable), the
+   * no-progress limit, a hard budget, a `maxStepsPerTurn` cap, or a
+   * runtime/evaluator failure. `blocked` is persisted and **resumable** via
+   * `/goal resume` (it is a sibling of `paused`, not a dead end), so it emits a
+   * `lifecycle` change. No-ops for a goal that is missing or not active, so a
+   * user pause / clear is never overwritten.
+   */
+  async markBlocked(
+    input: { actor?: GoalActor; reason?: string; evidence?: readonly GoalEvidence[] } = {},
+  ): Promise<GoalSnapshot | null> {
+    const state = this.options.readState();
+    if (state === undefined || state.status !== 'active') return null;
+    const actor = input.actor ?? 'runtime';
+    this.applyStatus(state, 'blocked', actor, input.reason);
     state.terminalReason = input.reason;
     if (input.evidence !== undefined) {
       state.terminalEvidence = input.evidence;
       state.lastEvidence = input.evidence;
     }
     await this.persistState(state, {
-      change: {
-        kind: 'terminal',
-        status: input.status,
-        reason: input.reason,
-        evidence: input.evidence,
-        stats: this.statsOf(state),
-      },
+      change: { kind: 'lifecycle', status: 'blocked', reason: input.reason, evidence: input.evidence },
     });
     this.appendStatusUpdate(state, actor, input.reason, input.evidence);
     return this.toSnapshot(state);
   }
 
-  // --- Runtime-owned transitions (abort / budget / error) ---------------
-
-  async markBudgetLimited(input: {
-    reason?: string;
-    evidence?: readonly GoalEvidence[];
-  } = {}): Promise<GoalSnapshot | null> {
-    return this.markRuntimeTerminal('budget_limited', input.reason, input.evidence);
+  /**
+   * Records goal success, then clears the durable record. `complete` is
+   * transient: this emits a terminal `complete` change carrying the final stats
+   * (so the UI/caller can render the outcome) WITHOUT writing `complete` to disk,
+   * then clears the goal so the box disappears. The continuation controller is
+   * responsible for the user-facing completion message. Returns the final
+   * snapshot (status `complete`) so the caller can build that message. No-ops for
+   * a goal that is missing or not active.
+   */
+  async markComplete(
+    input: { actor?: GoalActor; reason?: string; evidence?: readonly GoalEvidence[] } = {},
+  ): Promise<GoalSnapshot | null> {
+    const state = this.options.readState();
+    if (state === undefined || state.status !== 'active') return null;
+    const actor = input.actor ?? 'evaluator';
+    this.applyStatus(state, 'complete', actor, input.reason);
+    state.terminalReason = input.reason;
+    if (input.evidence !== undefined) {
+      state.terminalEvidence = input.evidence;
+      state.lastEvidence = input.evidence;
+    }
+    const snapshot = this.toSnapshot(state);
+    // Audit + notify the UI of completion (with final stats) directly, without
+    // persisting `complete` to disk...
+    this.appendStatusUpdate(state, actor, input.reason, input.evidence);
+    this.options.onGoalUpdated?.(snapshot, {
+      kind: 'terminal',
+      status: 'complete',
+      reason: input.reason,
+      evidence: input.evidence,
+      stats: this.statsOf(state),
+    });
+    // ...then clear the durable record (emits onGoalUpdated(null) → box clears).
+    await this.clearInternal(actor, input.reason);
+    return snapshot;
   }
+
+  // --- User-interrupt transition ----------------------------------------
 
   /**
    * Parks an active goal when its live turn is aborted (Esc, shutdown, or any
    * other turn-level cancellation). This is **not** terminal: the goal becomes
    * `paused` and stays resumable via `/goal resume`, mirroring how
    * `normalizeMetadata` demotes an `active` goal on session resume. No-ops for a
-   * goal that is missing or already non-active, so a user pause / cancel / clear
-   * or an already-terminal goal is never overwritten.
+   * goal that is missing or already non-active, so a user pause / clear or an
+   * already-stopped goal is never overwritten.
    */
   async pauseOnInterrupt(input: { reason?: string } = {}): Promise<GoalSnapshot | null> {
     const state = this.options.readState();
@@ -477,10 +566,6 @@ export class SessionGoalStore {
     });
     this.appendStatusUpdate(state, 'user', input.reason);
     return this.toSnapshot(state);
-  }
-
-  async markError(input: { reason?: string } = {}): Promise<GoalSnapshot | null> {
-    return this.markRuntimeTerminal('error', input.reason);
   }
 
   // --- Accounting & reporting -------------------------------------------
@@ -625,33 +710,6 @@ export class SessionGoalStore {
 
   // --- Internals ---------------------------------------------------------
 
-  private async markRuntimeTerminal(
-    status: GoalStatus,
-    reason?: string,
-    evidence?: readonly GoalEvidence[],
-  ): Promise<GoalSnapshot | null> {
-    const state = this.options.readState();
-    // Do not overwrite paused, cancelled, or already-terminal states.
-    if (state === undefined || state.status !== 'active') return null;
-    this.applyStatus(state, status, 'runtime', reason);
-    state.terminalReason = reason;
-    if (evidence !== undefined) {
-      state.terminalEvidence = evidence;
-      state.lastEvidence = evidence;
-    }
-    await this.persistState(state, {
-      change: {
-        kind: 'terminal',
-        status,
-        reason,
-        evidence,
-        stats: this.statsOf(state),
-      },
-    });
-    this.appendStatusUpdate(state, 'runtime', reason, evidence);
-    return this.toSnapshot(state);
-  }
-
   private async clearInternal(actor: GoalActor, reason?: string): Promise<void> {
     const state = this.options.readState();
     if (state === undefined) return; // idempotent
@@ -734,11 +792,13 @@ export class SessionGoalStore {
   }
 
   private normalizeBudgetLimits(input?: GoalBudgetLimits): GoalBudgetLimits {
-    // No default work caps (turns / tokens / time): an unbounded goal runs until
-    // the evaluator judges it terminal. Only keep a malfunction guard so a
-    // perpetually failing evaluator cannot loop forever.
+    // No default *work* caps (turns / tokens / time): an unbounded goal runs
+    // until the evaluator judges it complete. Two guards default on, though, so
+    // an unclear/unachievable goal cannot spin forever: the no-progress limit
+    // (blocks after N stuck turns) and the evaluator malfunction limit.
     const limits: GoalBudgetLimits = {
       ...input,
+      noProgressTurnLimit: input?.noProgressTurnLimit ?? DEFAULT_GOAL_NO_PROGRESS_TURN_LIMIT,
       failureTurnLimit: input?.failureTurnLimit ?? DEFAULT_GOAL_FAILURE_TURN_LIMIT,
     };
     return limits;
@@ -775,12 +835,8 @@ export class SessionGoalStore {
 const ALL_GOAL_STATUSES: ReadonlySet<string> = new Set<GoalStatus>([
   'active',
   'paused',
-  'complete',
   'blocked',
-  'impossible',
-  'budget_limited',
-  'error',
-  'cancelled',
+  'complete',
 ]);
 
 /** Structural validity check for a persisted goal record (used on resume). */

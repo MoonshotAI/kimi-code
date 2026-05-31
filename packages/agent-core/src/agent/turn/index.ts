@@ -256,17 +256,17 @@ export class TurnFlow {
       }
     } catch (error) {
       // Mark an active goal when the outer turn ends abnormally. These store
-      // methods no-op for non-active goals, so a user pause/cancel/clear (or an
-      // already-terminal goal) is never overwritten. Main-agent only.
+      // methods no-op for non-active goals, so a user pause/clear (or an
+      // already-stopped goal) is never overwritten. Main-agent only. An abort
+      // pauses (resumable); a step-cap or runtime error blocks (also resumable).
       if (this.goalRuntimeEnabled) {
         if (isAbortError(error)) {
           await this.agent.goals?.pauseOnInterrupt({ reason: 'Paused after interruption' });
         } else if (isMaxStepsExceededError(error)) {
-          // A configured step cap is a budget, not a runtime failure.
-          await this.agent.goals?.markBudgetLimited({ reason: 'Model step limit reached' });
+          await this.agent.goals?.markBlocked({ reason: 'Model step limit reached' });
         } else {
-          await this.agent.goals?.markError({
-            reason: error instanceof Error ? error.message : String(error),
+          await this.agent.goals?.markBlocked({
+            reason: `Runtime error: ${error instanceof Error ? error.message : String(error)}`,
           });
         }
       }

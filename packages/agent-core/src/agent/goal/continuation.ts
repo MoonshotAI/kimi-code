@@ -123,7 +123,7 @@ export class GoalContinuationController {
     // Hard budgets (token / turn / wall-clock) before spending an evaluator call.
     const beforeEval = store.getActiveGoal();
     if (beforeEval !== null && beforeEval.budget.overBudget) {
-      return this.budgetLimitedWrapUp('A hard budget was reached');
+      return this.block('A configured budget was reached');
     }
 
     // Run the independent evaluator. The model's self-report is evidence only.
@@ -162,12 +162,11 @@ export class GoalContinuationController {
         failed.budget.failureTurnLimit !== null &&
         failed.consecutiveFailureTurns >= failed.budget.failureTurnLimit
       ) {
-        await store.markError({ reason: 'Goal evaluator failed repeatedly' });
-        return STOP;
+        return this.block('The goal evaluator failed repeatedly');
       }
       // Evaluator tokens may have crossed a hard budget.
       if (failed !== null && failed.budget.overBudget) {
-        return this.budgetLimitedWrapUp('A hard budget was reached');
+        return this.block('A configured budget was reached');
       }
       return this.continueToward();
     }
@@ -178,13 +177,20 @@ export class GoalContinuationController {
       evidence: result.evidence,
     });
 
-    if (
-      result.verdict === 'complete' ||
-      result.verdict === 'blocked' ||
-      result.verdict === 'impossible'
-    ) {
-      await store.updateGoal({
-        status: result.verdict,
+    // Success: complete + clear (the store announces; the box disappears).
+    if (result.verdict === 'complete') {
+      await store.markComplete({
+        actor: 'evaluator',
+        reason: result.reason,
+        evidence: result.evidence,
+      });
+      return STOP;
+    }
+
+    // The evaluator judged the goal cannot proceed (incl. objectives it deems
+    // unachievable — there is no separate `impossible`): block with its reason.
+    if (result.verdict === 'blocked') {
+      await store.markBlocked({
         actor: 'evaluator',
         reason: result.reason,
         evidence: result.evidence,
@@ -195,7 +201,7 @@ export class GoalContinuationController {
     // Re-check hard budgets because the evaluator call may have reached the token budget.
     const afterEval = store.getActiveGoal();
     if (afterEval !== null && afterEval.budget.overBudget) {
-      return this.budgetLimitedWrapUp('A hard budget was reached');
+      return this.block('A configured budget was reached');
     }
 
     // no_progress streak: recordEvaluatorVerdict has already incremented the counter.
@@ -204,12 +210,7 @@ export class GoalContinuationController {
       afterEval.budget.noProgressTurnLimit !== null &&
       afterEval.consecutiveNoProgressTurns >= afterEval.budget.noProgressTurnLimit
     ) {
-      await store.updateGoal({
-        status: 'blocked',
-        actor: 'evaluator',
-        reason: 'No-progress limit reached',
-      });
-      return STOP;
+      return this.block(`No progress after ${afterEval.budget.noProgressTurnLimit} turns`);
     }
 
     // `maxStepsPerTurn` is no longer reconciled here: it bounds a single
@@ -250,12 +251,15 @@ export class GoalContinuationController {
     }
   }
 
-  private async budgetLimitedWrapUp(reason: string): Promise<MaxStepsDecision> {
-    // markBudgetLimited makes the goal terminal, so the next stopped step stops
-    // at the status check above — the wrap-up therefore runs exactly once.
-    await this.agent.goals!.markBudgetLimited({ reason });
-    this.appendBudgetWrapUpPrompt(reason);
-    return CONTINUE;
+  /**
+   * Stop pursuing the goal: mark it `blocked` with `reason` and end the turn.
+   * `blocked` is resumable (`/goal resume`), so this is not a dead end — the user
+   * can refine the goal, raise a budget, or resume. `markBlocked` no-ops if the
+   * goal is no longer active, so this is safe to call at any checkpoint.
+   */
+  private async block(reason: string): Promise<MaxStepsDecision> {
+    await this.agent.goals!.markBlocked({ reason });
+    return STOP;
   }
 
   private appendContinuationPrompt(): void {
@@ -264,28 +268,14 @@ export class GoalContinuationController {
       { kind: 'system_trigger', name: 'goal_continuation' },
     );
   }
-
-  private appendBudgetWrapUpPrompt(reason: string): void {
-    this.agent.context.appendUserMessage(
-      [{ type: 'text', text: budgetWrapUpPrompt(reason) }],
-      { kind: 'system_trigger', name: 'goal_continuation' },
-    );
-  }
 }
 
 const CONTINUATION_PROMPT = [
   'Continue working toward the active goal.',
   'First, briefly self-audit: weigh the objective and any completion criteria against the work done',
-  'so far. If the goal is now complete, blocked, or impossible, call UpdateGoal with that status, a',
-  'short reason, and validation evidence when available — then stop. Otherwise keep going.',
+  'so far. If the goal is complete, call UpdateGoal with status `complete`, a short reason, and',
+  'validation evidence when available — then stop. If an external condition or required user input',
+  'prevents progress, call UpdateGoal with status `blocked` and a short reason. Otherwise keep going.',
   'Use the existing conversation context and your tools. Do not ask the user for input unless a real',
   'blocker prevents progress.',
 ].join(' ');
-
-function budgetWrapUpPrompt(reason: string): string {
-  return [
-    `You have reached a goal budget (${reason}).`,
-    'Stop starting new substantive work now. Summarize the progress you have made, list the',
-    'remaining work, and explain which budget was reached. Then stop.',
-  ].join(' ');
-}

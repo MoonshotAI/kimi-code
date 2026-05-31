@@ -26,16 +26,16 @@ describe('buildGoalMarker', () => {
     ).toBeNull();
   });
 
-  it('builds lifecycle markers for paused / resumed / cancelled', () => {
+  it('builds lifecycle markers for paused / resumed / blocked', () => {
     const paused = buildGoalMarker({ kind: 'lifecycle', status: 'paused' } as GoalChange, darkColors, false);
     const resumed = buildGoalMarker({ kind: 'lifecycle', status: 'active' } as GoalChange, darkColors, false);
-    const cancelled = buildGoalMarker({ kind: 'lifecycle', status: 'cancelled' } as GoalChange, darkColors, false);
+    const blocked = buildGoalMarker({ kind: 'lifecycle', status: 'blocked' } as GoalChange, darkColors, false);
     expect(strip(paused!.render(80))).toContain('Goal paused');
     expect(strip(resumed!.render(80))).toContain('Goal resumed');
-    expect(strip(cancelled!.render(80))).toContain('Goal cancelled');
+    expect(strip(blocked!.render(80))).toContain('Goal blocked');
   });
 
-  it('returns null for a terminal change (handled by the completion card)', () => {
+  it('returns null for a terminal (complete) change (handled by the completion card)', () => {
     expect(
       buildGoalMarker({ kind: 'terminal', status: 'complete' } as GoalChange, darkColors, false),
     ).toBeNull();

@@ -82,13 +82,14 @@ function markerSpec(
         return { headline: 'Goal paused', accentHex: colors.textDim };
       case 'active':
         return { headline: 'Goal resumed', accentHex: colors.primary };
-      case 'cancelled':
-        return { headline: 'Goal cancelled', accentHex: colors.textDim };
+      case 'blocked':
+        // The system stopped pursuing the goal; resumable via `/goal resume`.
+        return { headline: 'Goal blocked', accentHex: colors.warning };
       default:
         return null;
     }
   }
-  return null; // terminal -> completion card
+  return null; // terminal (complete) -> completion card / message
 }
 
 function wrap(text: string, width: number): string[] {

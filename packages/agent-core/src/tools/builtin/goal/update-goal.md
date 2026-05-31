@@ -5,8 +5,9 @@ whether your report ends the goal.
 Use:
 
 - `complete` only when no required work remains and any stated validation has passed.
-- `blocked` only when the same external condition or required user input prevents progress.
-- `impossible` when the objective cannot be completed as stated.
+- `blocked` when an external condition or required user input prevents progress, or when the
+  objective cannot be completed as stated (there is no separate "impossible" — report it as
+  `blocked` with a reason).
 
 Always include a short `reason`. Include `evidence` (validation results, command output
 summaries, file references) when available — the evaluator uses it to confirm your report.

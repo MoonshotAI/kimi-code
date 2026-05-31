@@ -1,8 +1,8 @@
 /**
- * UpdateGoalTool — records the model's terminal judgment (complete / blocked /
- * impossible) as a *report*. It does not end the goal directly: the continuation
- * controller (Phase 4c) and the independent evaluator (Phase 4d) decide whether
- * the report ends the goal.
+ * UpdateGoalTool — records the model's terminal judgment (complete / blocked) as
+ * a *report*. It does not end the goal directly: the continuation controller and
+ * the independent evaluator decide whether the report ends the goal. There is no
+ * `impossible` option — an unachievable objective is reported as `blocked`.
  */
 
 import type { Agent } from '#/agent';
@@ -25,7 +25,7 @@ const EvidenceSchema = z
 export const UpdateGoalToolInputSchema = z
   .object({
     status: z
-      .enum(['complete', 'blocked', 'impossible'])
+      .enum(['complete', 'blocked'])
       .describe('The terminal judgment you are reporting.'),
     reason: z.string().min(1).describe('A short reason for the judgment.'),
     evidence: z.array(EvidenceSchema).optional().describe('Validation evidence when available.'),

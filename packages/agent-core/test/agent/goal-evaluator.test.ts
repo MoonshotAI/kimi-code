@@ -200,28 +200,21 @@ describe('GoalContinuationController with evaluator', () => {
     return { result, messages };
   }
 
-  it('marks complete and stops on a complete verdict', async () => {
+  it('completes and clears the goal on a complete verdict', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
     const { result } = await runWith(store, factoryOf(() => ({ ok: true, verdict: 'complete', reason: 'done', usage: emptyUsage() })));
     expect(result).toEqual({ continue: false });
-    expect(store.getGoal().goal!.status).toBe('complete');
+    // `complete` is transient — the goal box disappears.
+    expect(store.getGoal().goal).toBeNull();
   });
 
-  it('marks blocked and stops on a blocked verdict', async () => {
+  it('marks blocked (resumable) and stops on a blocked verdict', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
     const { result } = await runWith(store, factoryOf(() => ({ ok: true, verdict: 'blocked', reason: 'stuck', usage: emptyUsage() })));
     expect(result).toEqual({ continue: false });
     expect(store.getGoal().goal!.status).toBe('blocked');
-  });
-
-  it('marks impossible and stops on an impossible verdict', async () => {
-    const store = makeStore();
-    await store.createGoal({ objective: 'work' });
-    const { result } = await runWith(store, factoryOf(() => ({ ok: true, verdict: 'impossible', reason: 'cannot', usage: emptyUsage() })));
-    expect(result).toEqual({ continue: false });
-    expect(store.getGoal().goal!.status).toBe('impossible');
   });
 
   it('appends a continuation prompt on a continue verdict', async () => {
@@ -257,12 +250,12 @@ describe('GoalContinuationController with evaluator', () => {
     expect(store.getGoal().goal!.status).toBe('active');
   });
 
-  it('marks error when the failure limit is reached', async () => {
+  it('marks blocked when the evaluator failure limit is reached', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work', budgetLimits: { failureTurnLimit: 1 } });
     const { result } = await runWith(store, factoryOf(() => ({ ok: false, error: 'bad json', usage: emptyUsage() })));
     expect(result).toEqual({ continue: false });
-    expect(store.getGoal().goal!.status).toBe('error');
+    expect(store.getGoal().goal!.status).toBe('blocked');
   });
 
   it('counts evaluator token usage toward the goal token budget', async () => {
@@ -272,13 +265,13 @@ describe('GoalContinuationController with evaluator', () => {
     expect(store.getGoal().goal!.tokensUsed).toBe(30);
   });
 
-  it('lets evaluator token usage trigger budget_limited', async () => {
+  it('lets evaluator token usage trigger a blocked (budget) stop', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work', budgetLimits: { tokenBudget: 20 } });
     const { result } = await runWith(store, factoryOf(() => ({ ok: true, verdict: 'continue', reason: 'go', usage: tokens(50) })));
-    // Evaluator usage (50) exceeds the 20-token budget -> wrap-up continuation, terminal.
-    expect(result).toEqual({ continue: true, resetStepBudget: true });
-    expect(store.getGoal().goal!.status).toBe('budget_limited');
+    // Evaluator usage (50) exceeds the 20-token budget -> blocked (resumable), stop.
+    expect(result).toEqual({ continue: false });
+    expect(store.getGoal().goal!.status).toBe('blocked');
   });
 
   it('passes the model self-report to the evaluator as evidence', async () => {
@@ -321,6 +314,7 @@ describe('GoalContinuationController with evaluator', () => {
     expect(await c.shouldContinueAfterStop(stoppedCtx(1))).toEqual({ continue: true, resetStepBudget: true });
     expect(store.getGoal().goal!.status).toBe('active');
     expect(await c.shouldContinueAfterStop(stoppedCtx(2))).toEqual({ continue: false });
-    expect(store.getGoal().goal!.status).toBe('complete');
+    // Completion clears the goal.
+    expect(store.getGoal().goal).toBeNull();
   });
 });

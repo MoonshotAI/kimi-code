@@ -55,27 +55,26 @@ describe('GoalInjector content', () => {
     expect(await injectOnce(makeStore())).toBeUndefined();
   });
 
-  it('produces no injection for a paused goal', async () => {
+  it('produces a light, non-demanding note for a paused goal', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
     await store.pauseGoal();
-    expect(await injectOnce(store)).toBeUndefined();
+    const text = (await injectOnce(store))!;
+    expect(text).toContain('currently paused');
+    expect(text).toContain('<untrusted_objective>\nwork\n</untrusted_objective>');
+    expect(text).toContain('/goal resume');
+    // No active-goal budget guidance / demands.
+    expect(text).not.toContain('Budget guidance');
   });
 
-  it('announces a terminal goal once, then stays silent', async () => {
+  it('produces a light note (with reason) for a blocked goal', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
-    await store.updateGoal({ status: 'complete', reason: 'done' });
-    const { agent, reminders } = injectorAgent(store);
-    const injector = new GoalInjector(agent);
-
-    await injector.inject();
-    expect(reminders.at(-1)).toContain('no longer active');
-    expect(reminders).toHaveLength(1);
-
-    // A second boundary on the same terminal goal must not re-announce.
-    await injector.inject();
-    expect(reminders).toHaveLength(1);
+    await store.markBlocked({ reason: 'no progress' });
+    const text = (await injectOnce(store))!;
+    expect(text).toContain('currently blocked');
+    expect(text).toContain('no progress');
+    expect(text).toContain('<untrusted_objective>\nwork\n</untrusted_objective>');
   });
 
   it('wraps the objective and completion criterion for an active goal', async () => {

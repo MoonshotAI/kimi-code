@@ -145,16 +145,14 @@ describe('goal session end-to-end', () => {
     const firstHistory = JSON.stringify(scripted.calls[0]?.history ?? []);
     expect(firstHistory).toContain('<untrusted_objective>');
 
-    // Terminal complete state persisted to state.json.
+    // Completion is transient: it announces, then clears the durable record, so
+    // the goal box disappears and nothing is left on disk.
     const raw = await readFile(join(sessionDir, 'state.json'), 'utf-8');
     const parsed = JSON.parse(raw) as { custom: { goal?: { status: string } } };
-    expect(parsed.custom.goal?.status).toBe('complete');
-    expect(api.getGoal({}).goal?.status).toBe('complete');
+    expect(parsed.custom.goal).toBeUndefined();
+    expect(api.getGoal({}).goal).toBeNull();
 
-    // Token accounting ran for the goal.
-    expect(api.getGoal({}).goal?.tokensUsed).toBeGreaterThan(0);
-
-    // Audit trail in the main agent wire.
+    // Audit trail in the main agent wire records the whole run incl. completion.
     const wire = await readFile(join(sessionDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
     const types = new Set(
       wire
@@ -162,12 +160,20 @@ describe('goal session end-to-end', () => {
         .filter((l) => l.trim().length > 0)
         .map((l) => (JSON.parse(l) as { type: string }).type),
     );
-    for (const t of ['goal.create', 'goal.account_usage', 'goal.continuation', 'goal.report', 'goal.evaluate', 'goal.update']) {
+    for (const t of [
+      'goal.create',
+      'goal.account_usage',
+      'goal.continuation',
+      'goal.report',
+      'goal.evaluate',
+      'goal.update',
+      'goal.clear',
+    ]) {
       expect(types.has(t)).toBe(true);
     }
   });
 
-  it('stops at a turn budget with a single wrap-up', async () => {
+  it('blocks at a turn budget (no wrap-up segment)', async () => {
     const sessionDir = await makeTempDir();
     const events: Array<Record<string, unknown>> = [];
     const { session, agent, scripted } = await setupSession(sessionDir, events, ['GetGoal', 'UpdateGoal']);
@@ -175,14 +181,14 @@ describe('goal session end-to-end', () => {
     await api.createGoal({ objective: 'work', budgetLimits: { turnBudget: 1 } });
 
     scripted.mockNextResponse({ type: 'text', text: 'step 1' });
-    scripted.mockNextResponse({ type: 'text', text: 'wrap up' });
 
     agent.turn.prompt([{ type: 'text', text: 'work' }]);
     await waitForTurnEnd(events);
     await session.flushMetadata();
 
-    expect(api.getGoal({}).goal?.status).toBe('budget_limited');
-    expect(scripted.calls.length).toBe(2);
+    // One step, then the turn budget blocks the goal (resumable) — no wrap-up.
+    expect(api.getGoal({}).goal?.status).toBe('blocked');
+    expect(scripted.calls.length).toBe(1);
   });
 
   it('preserves terminal status and demotes active goals across resume', async () => {
@@ -211,8 +217,7 @@ describe('goal session end-to-end', () => {
     const events: Array<Record<string, unknown>> = [];
     const { session } = await setupSession(sessionDir, events, ['GetGoal', 'UpdateGoal']);
     await new SessionAPIImpl(session).createGoal({ objective: 'work' });
-    await session.goals.updateGoal({
-      status: 'blocked',
+    await session.goals.markBlocked({
       actor: 'evaluator',
       reason: 'needs credentials',
       evidence: [{ summary: 'auth step failed' }],
@@ -244,7 +249,8 @@ describe('goal session end-to-end', () => {
     await api.createGoal({ objective: 'work' });
     expect((await api.pauseGoal({})).status).toBe('paused');
     expect((await api.resumeGoal({})).status).toBe('active');
-    expect((await api.cancelGoal({})).status).toBe('cancelled');
+    // cancel discards the goal and returns its prior (active) snapshot.
+    expect((await api.cancelGoal({})).status).toBe('active');
     expect(api.getGoal({}).goal).toBeNull();
 
     await api.createGoal({ objective: 'again' });

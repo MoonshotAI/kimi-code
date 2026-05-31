@@ -40,7 +40,11 @@ export function buildGoalReportLines(options: GoalReportOptions): string[] {
   const value = chalk.hex(colors.text);
   const muted = chalk.hex(colors.textDim);
   const bar = chalk.hex(statusHex(goal.status, colors));
-  const isLive = goal.status === 'active' || goal.status === 'paused';
+  // `complete` is the terminal outcome (the completion card); everything else
+  // (active / paused / blocked) is a persisted, resumable goal that still shows
+  // its stop condition. A reason is worth surfacing for blocked / complete.
+  const isComplete = goal.status === 'complete';
+  const showReason = goal.status === 'blocked' || isComplete;
   const lines: string[] = [];
 
   // Condition as a blockquote left-trail.
@@ -56,7 +60,7 @@ export function buildGoalReportLines(options: GoalReportOptions): string[] {
 
   const row = (label: string, val: string): string => `${muted(label.padEnd(LABEL_WIDTH))}${val}`;
 
-  if (!isLive) {
+  if (showReason) {
     const reason = goal.terminalReason ?? goal.lastEvaluatorReason;
     lines.push(
       row(
@@ -78,7 +82,7 @@ export function buildGoalReportLines(options: GoalReportOptions): string[] {
       ),
     );
   }
-  if (isLive) {
+  if (!isComplete) {
     const stop = formatStopRow(goal);
     lines.push(
       stop !== null
@@ -112,12 +116,8 @@ function statusHex(status: GoalStatus, colors: ColorPalette): string {
     case 'complete':
       return colors.success;
     case 'blocked':
-    case 'budget_limited':
       return colors.warning;
-    case 'impossible':
-    case 'error':
-      return colors.error;
-    default: // paused, cancelled
+    default: // paused
       return colors.textDim;
   }
 }

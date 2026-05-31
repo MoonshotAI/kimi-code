@@ -112,7 +112,7 @@ describe('GetGoalTool', () => {
     expect(parsed.goal.budget.remainingTokens).toBe(100);
   });
 
-  it('returns paused and terminal snapshots', async () => {
+  it('returns paused and blocked snapshots', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
     await store.pauseGoal();
@@ -120,18 +120,18 @@ describe('GetGoalTool', () => {
     let parsed = JSON.parse((await executeTool(tool, ctx({}))).output as string);
     expect(parsed.goal.status).toBe('paused');
     await store.resumeGoal();
-    await store.updateGoal({ status: 'complete', reason: 'done' });
+    await store.markBlocked({ reason: 'stuck' });
     parsed = JSON.parse((await executeTool(tool, ctx({}))).output as string);
-    expect(parsed.goal.status).toBe('complete');
+    expect(parsed.goal.status).toBe('blocked');
   });
 });
 
 describe('UpdateGoalTool', () => {
-  it('accepts only complete, blocked, and impossible', () => {
-    for (const status of ['complete', 'blocked', 'impossible']) {
+  it('accepts only complete and blocked', () => {
+    for (const status of ['complete', 'blocked']) {
       expect(UpdateGoalToolInputSchema.safeParse({ status, reason: 'r' }).success).toBe(true);
     }
-    for (const status of ['active', 'paused', 'cancelled', 'budget_limited', 'error']) {
+    for (const status of ['active', 'paused', 'impossible', 'cancelled', 'budget_limited', 'error']) {
       expect(UpdateGoalToolInputSchema.safeParse({ status, reason: 'r' }).success).toBe(false);
     }
   });

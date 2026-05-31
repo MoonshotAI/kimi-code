@@ -29,15 +29,14 @@ function snapshot(overrides: Record<string, unknown> = {}) {
 }
 
 describe('goalExitCode', () => {
-  it('maps terminal statuses to distinct codes', () => {
+  it('maps final statuses to distinct codes', () => {
     expect(goalExitCode('complete')).toBe(GOAL_EXIT_CODES.complete);
     expect(goalExitCode('blocked')).toBe(GOAL_EXIT_CODES.blocked);
-    expect(goalExitCode('impossible')).toBe(GOAL_EXIT_CODES.impossible);
-    expect(goalExitCode('budget_limited')).toBe(GOAL_EXIT_CODES.budget_limited);
     expect(goalExitCode('paused')).toBe(GOAL_EXIT_CODES.paused);
-    expect(goalExitCode('error')).toBe(GOAL_EXIT_CODES.error);
     expect(goalExitCode(undefined)).toBe(0);
-    // The distinct codes are unique across the terminal statuses.
+    // Folded-away statuses map to success (treated as complete/absent).
+    expect(goalExitCode('impossible')).toBe(0);
+    // The distinct codes are unique across the statuses.
     expect(new Set(Object.values(GOAL_EXIT_CODES)).size).toBe(Object.values(GOAL_EXIT_CODES).length);
   });
 });
@@ -196,8 +195,8 @@ describe('runPrompt headless goal mode', () => {
     expect(stdout.text()).toContain('"status":"complete"');
   });
 
-  it('sets a distinct exit code for a non-complete terminal status', async () => {
-    mocks.session.getGoal.mockResolvedValue({ goal: snapshot({ status: 'budget_limited' }) } as never);
+  it('sets a distinct exit code for a non-complete final status', async () => {
+    mocks.session.getGoal.mockResolvedValue({ goal: snapshot({ status: 'blocked' }) } as never);
     const stdout = writer();
     const stderr = writer();
     await runPrompt(opts(), 'test', {
@@ -205,7 +204,7 @@ describe('runPrompt headless goal mode', () => {
       stderr,
       process: { once: () => {}, off: () => {}, exit: () => undefined as never },
     });
-    expect(process.exitCode).toBe(GOAL_EXIT_CODES.budget_limited);
+    expect(process.exitCode).toBe(GOAL_EXIT_CODES.blocked);
   });
 
   it('treats /goal as a normal prompt when the flag is disabled', async () => {

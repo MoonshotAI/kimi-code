@@ -10,13 +10,18 @@ import type { GoalEvidence, GoalSnapshot } from '../../session/goal';
  * to decide whether to continue, and uses that verdict — not the main model's
  * self-report alone — to drive terminal state.
  */
-export type GoalEvaluatorVerdict = 'continue' | 'complete' | 'blocked' | 'impossible' | 'no_progress';
+/**
+ * There is deliberately no `impossible` verdict: an objective the judge deems
+ * unachievable is reported as `blocked` (with a reason), the same resumable
+ * stopped state as any other "cannot proceed". This keeps the lifecycle minimal
+ * and lets the user resume or refine rather than hit a dead end.
+ */
+export type GoalEvaluatorVerdict = 'continue' | 'complete' | 'blocked' | 'no_progress';
 
 const VERDICTS: ReadonlySet<string> = new Set<GoalEvaluatorVerdict>([
   'continue',
   'complete',
   'blocked',
-  'impossible',
   'no_progress',
 ]);
 
@@ -184,14 +189,15 @@ function buildEvaluatorPrompt(input: GoalEvaluatorInput): string {
   lines.push(
     '- Has any stop condition stated in the objective (e.g. a turn, time, or token limit) been reached, given the progress above? If so, return "complete".',
   );
-  lines.push('- Is the model blocked by user input or an external condition?');
-  lines.push('- Is the objective impossible as stated?');
+  lines.push(
+    '- Is the goal blocked — by user input, an external condition, or because the objective is impossible/contradictory as stated? Either way, return "blocked" with a short reason.',
+  );
   lines.push('- Did the last step make meaningful progress?');
   lines.push('- Is another continuation likely to help?');
   lines.push('');
   lines.push(
     'Respond with STRICT JSON only, no prose, in this shape:',
-    '{"verdict":"continue|complete|blocked|impossible|no_progress","reason":"<short reason>","evidence":[{"summary":"..."}]}',
+    '{"verdict":"continue|complete|blocked|no_progress","reason":"<short reason>","evidence":[{"summary":"..."}]}',
   );
   return lines.join('\n');
 }

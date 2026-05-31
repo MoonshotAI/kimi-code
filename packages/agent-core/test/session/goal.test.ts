@@ -181,10 +181,22 @@ describe('SessionGoalStore creation', () => {
     await store.resumeGoal();
     expect(changes().at(-1)).toMatchObject({ kind: 'lifecycle', status: 'active' });
 
-    await store.updateGoal({ status: 'complete', reason: 'done', actor: 'evaluator' });
-    const terminal = changes().at(-1);
+    // markComplete emits a terminal `complete` change (with stats), then clears
+    // the durable record (a final null update), so the goal box disappears.
+    await store.markComplete({ reason: 'done', actor: 'evaluator' });
+    const terminal = changes().find((c) => c?.kind === 'terminal');
     expect(terminal).toMatchObject({ kind: 'terminal', status: 'complete', reason: 'done' });
     expect(terminal?.stats).toMatchObject({ turnsUsed: 1 });
+    expect(store.getGoal().goal).toBeNull();
+  });
+
+  it('emits a blocked lifecycle change (resumable, not a terminal card)', async () => {
+    const { store, changes } = makeStore();
+    await store.createGoal({ objective: 'work' });
+    await store.markBlocked({ reason: 'stuck' });
+    expect(changes().at(-1)).toMatchObject({ kind: 'lifecycle', status: 'blocked', reason: 'stuck' });
+    // Blocked persists and is resumable.
+    expect(store.getGoal().goal?.status).toBe('blocked');
   });
 
   it('rejects empty objectives', async () => {
@@ -226,10 +238,19 @@ describe('SessionGoalStore creation', () => {
     expect(store.getGoal().goal?.objective).toBe('second');
   });
 
-  it('replaces a terminal goal without replace flag', async () => {
+  it('rejects a duplicate blocked goal without replace (blocked is resumable)', async () => {
     const { store } = makeStore();
     await store.createGoal({ objective: 'first' });
-    await store.updateGoal({ status: 'complete', reason: 'done' });
+    await store.markBlocked({ reason: 'stuck' });
+    await expect(store.createGoal({ objective: 'second' })).rejects.toMatchObject({
+      code: ErrorCodes.GOAL_ALREADY_EXISTS,
+    });
+  });
+
+  it('creating after completion needs no replace (completion cleared the goal)', async () => {
+    const { store } = makeStore();
+    await store.createGoal({ objective: 'first' });
+    await store.markComplete({ reason: 'done' });
     const second = await store.createGoal({ objective: 'second' });
     expect(second.objective).toBe('second');
     expect(second.status).toBe('active');
@@ -242,23 +263,30 @@ describe('SessionGoalStore reads', () => {
     expect(store.getGoal()).toEqual({ goal: null });
   });
 
-  it('getGoal returns terminal snapshots until explicit clear', async () => {
+  it('getGoal returns a blocked snapshot until resumed or cleared', async () => {
     const { store } = makeStore();
     await store.createGoal({ objective: 'work' });
-    await store.updateGoal({ status: 'complete', reason: 'done' });
-    expect(store.getGoal().goal?.status).toBe('complete');
+    await store.markBlocked({ reason: 'stuck' });
+    expect(store.getGoal().goal?.status).toBe('blocked');
     await store.clearGoal();
     expect(store.getGoal()).toEqual({ goal: null });
   });
 
-  it('getActiveGoal returns null for paused and terminal goals', async () => {
+  it('markComplete clears the goal (transient — box disappears)', async () => {
+    const { store } = makeStore();
+    await store.createGoal({ objective: 'work' });
+    await store.markComplete({ reason: 'done' });
+    expect(store.getGoal()).toEqual({ goal: null });
+  });
+
+  it('getActiveGoal returns null for paused and blocked goals', async () => {
     const { store } = makeStore();
     await store.createGoal({ objective: 'work' });
     expect(store.getActiveGoal()?.status).toBe('active');
     await store.pauseGoal();
     expect(store.getActiveGoal()).toBeNull();
     await store.resumeGoal();
-    await store.updateGoal({ status: 'blocked', reason: 'stuck' });
+    await store.markBlocked({ reason: 'stuck' });
     expect(store.getActiveGoal()).toBeNull();
   });
 });
@@ -370,62 +398,37 @@ describe('SessionGoalStore lifecycle', () => {
     expect((await store.resumeGoal()).status).toBe('active');
   });
 
-  it('updateGoal({ status: complete }) stores reason and evidence', async () => {
+  it('markComplete returns a complete snapshot with reason and evidence, then clears', async () => {
     const { store } = makeStore();
     await store.createGoal({ objective: 'work' });
-    const snap = await store.updateGoal({
-      status: 'complete',
+    const snap = await store.markComplete({
       reason: 'all tests pass',
       evidence: [{ summary: 'tests green' }],
     });
-    expect(snap.status).toBe('complete');
-    expect(snap.terminalReason).toBe('all tests pass');
-    expect(snap.terminalEvidence).toEqual([{ summary: 'tests green' }]);
+    expect(snap?.status).toBe('complete');
+    expect(snap?.terminalReason).toBe('all tests pass');
+    expect(snap?.terminalEvidence).toEqual([{ summary: 'tests green' }]);
+    // Transient: the durable record is gone.
+    expect(store.getGoal().goal).toBeNull();
   });
 
-  it('updateGoal({ status: blocked }) stores reason and evidence', async () => {
+  it('markBlocked stores reason and evidence and persists (resumable)', async () => {
     const { store } = makeStore();
     await store.createGoal({ objective: 'work' });
-    const snap = await store.updateGoal({ status: 'blocked', reason: 'need creds' });
-    expect(snap.status).toBe('blocked');
-    expect(snap.terminalReason).toBe('need creds');
+    const snap = await store.markBlocked({ reason: 'need creds', evidence: [{ summary: 'no token' }] });
+    expect(snap?.status).toBe('blocked');
+    expect(snap?.terminalReason).toBe('need creds');
+    expect(store.getGoal().goal?.status).toBe('blocked');
+    // Resumable back to active.
+    expect((await store.resumeGoal()).status).toBe('active');
   });
 
-  it('updateGoal({ status: impossible }) stores reason', async () => {
-    const { store } = makeStore();
-    await store.createGoal({ objective: 'work' });
-    const snap = await store.updateGoal({ status: 'impossible', reason: 'contradiction' });
-    expect(snap.status).toBe('impossible');
-  });
-
-  it('updateGoal rejects runtime-owned and user-owned statuses', async () => {
-    const { store } = makeStore();
-    await store.createGoal({ objective: 'work' });
-    for (const status of ['active', 'paused', 'cancelled', 'budget_limited', 'error'] as const) {
-      await expect(store.updateGoal({ status })).rejects.toMatchObject({
-        code: ErrorCodes.GOAL_STATUS_INVALID,
-      });
-    }
-  });
-
-  it('mark* methods store runtime terminal states', async () => {
-    for (const [method, status] of [
-      ['markBudgetLimited', 'budget_limited'],
-      ['markError', 'error'],
-    ] as const) {
-      const { store } = makeStore();
-      await store.createGoal({ objective: 'work' });
-      const snap = await store[method]({ reason: 'r' });
-      expect(snap?.status).toBe(status);
-    }
-  });
-
-  it('mark* methods do not overwrite non-active goals', async () => {
+  it('markComplete and markBlocked no-op for non-active goals', async () => {
     const { store } = makeStore();
     await store.createGoal({ objective: 'work' });
     await store.pauseGoal();
-    const result = await store.markError({ reason: 'boom' });
-    expect(result).toBeNull();
+    expect(await store.markBlocked({ reason: 'boom' })).toBeNull();
+    expect(await store.markComplete({ reason: 'done' })).toBeNull();
     expect(store.getGoal().goal?.status).toBe('paused');
   });
 
@@ -444,17 +447,18 @@ describe('SessionGoalStore lifecycle', () => {
   it('pauseOnInterrupt no-ops for a non-active goal', async () => {
     const { store } = makeStore();
     await store.createGoal({ objective: 'work' });
-    await store.markError({ reason: 'boom' });
+    await store.markBlocked({ reason: 'boom' });
     const result = await store.pauseOnInterrupt({ reason: 'Paused after interruption' });
     expect(result).toBeNull();
-    expect(store.getGoal().goal?.status).toBe('error');
+    expect(store.getGoal().goal?.status).toBe('blocked');
   });
 
-  it('cancelGoal clears the current goal', async () => {
+  it('cancelGoal discards the goal and returns what it removed (no cancelled status)', async () => {
     const { store, current } = makeStore();
     await store.createGoal({ objective: 'work' });
     const snap = await store.cancelGoal({ reason: 'changed mind' });
-    expect(snap.status).toBe('cancelled');
+    // The returned snapshot is the goal that was discarded, in its prior status.
+    expect(snap.status).toBe('active');
     expect(current()).toBeUndefined();
     expect(store.getGoal()).toEqual({ goal: null });
   });
@@ -514,12 +518,19 @@ describe('SessionGoalStore audit records', () => {
     expect(types()).toEqual(['goal.create', 'goal.update', 'goal.update']);
   });
 
-  it('updateGoal appends a terminal goal.update', async () => {
+  it('markBlocked appends a goal.update with the blocked status', async () => {
     const { store, records } = makeAuditStore();
     await store.createGoal({ objective: 'work' });
-    await store.updateGoal({ status: 'complete', reason: 'done' });
+    await store.markBlocked({ reason: 'stuck' });
     const last = records.at(-1);
-    expect(last).toMatchObject({ type: 'goal.update', status: 'complete' });
+    expect(last).toMatchObject({ type: 'goal.update', status: 'blocked' });
+  });
+
+  it('markComplete appends a goal.update (complete) then a goal.clear', async () => {
+    const { store, types } = makeAuditStore();
+    await store.createGoal({ objective: 'work' });
+    await store.markComplete({ reason: 'done' });
+    expect(types()).toEqual(['goal.create', 'goal.update', 'goal.clear']);
   });
 
   it('accounting appends goal.account_usage with usage kind', async () => {
@@ -552,11 +563,11 @@ describe('SessionGoalStore audit records', () => {
     expect(types().at(-1)).toBe('goal.evaluate');
   });
 
-  it('cancelGoal appends goal.update before goal.clear', async () => {
+  it('cancelGoal appends only goal.clear (cancel = discard)', async () => {
     const { store, types } = makeAuditStore();
     await store.createGoal({ objective: 'work' });
     await store.cancelGoal({ reason: 'stop' });
-    expect(types()).toEqual(['goal.create', 'goal.update', 'goal.clear']);
+    expect(types()).toEqual(['goal.create', 'goal.clear']);
   });
 
   it('clearGoal appends goal.clear', async () => {
@@ -591,11 +602,12 @@ describe('SessionGoalStore normalizeMetadata', () => {
     expect(types()).toEqual([]);
   });
 
-  it('keeps terminal goal snapshots on resume', async () => {
-    const { store, current, setState } = makeAuditStore();
-    setState(activeState({ status: 'complete', terminalReason: 'done' }));
+  it('keeps blocked goals on resume (resumable)', async () => {
+    const { store, types, current, setState } = makeAuditStore();
+    setState(activeState({ status: 'blocked', terminalReason: 'stuck' }));
     await store.normalizeMetadata();
-    expect(current()?.status).toBe('complete');
+    expect(current()?.status).toBe('blocked');
+    expect(types()).toEqual([]);
   });
 
   it('removes malformed goal data on resume', async () => {
@@ -605,9 +617,9 @@ describe('SessionGoalStore normalizeMetadata', () => {
     expect(current()).toBeUndefined();
   });
 
-  it('removes stale cancelled goals on resume', async () => {
+  it('removes a stray complete goal on resume (complete is transient)', async () => {
     const { store, current, setState } = makeAuditStore();
-    setState(activeState({ status: 'cancelled' }));
+    setState(activeState({ status: 'complete', terminalReason: 'done' }));
     await store.normalizeMetadata();
     expect(current()).toBeUndefined();
   });
@@ -694,19 +706,19 @@ describe('Session resume goal lifecycle', () => {
     await resumed.flushMetadata();
   });
 
-  it('preserves a terminal goal snapshot after resume', async () => {
+  it('preserves a blocked goal after resume (resumable)', async () => {
     const sessionDir = await makeTempDir();
     const session = new Session(sessionOptions(sessionDir));
     await session.createMain();
     await session.goals.createGoal({ objective: 'finish me' });
-    await session.goals.updateGoal({ status: 'complete', reason: 'done' });
+    await session.goals.markBlocked({ reason: 'need input' });
     await session.flushMetadata();
 
     const resumed = new Session(sessionOptions(sessionDir));
     await resumed.resume();
     const goal = resumed.goals.getGoal().goal;
-    expect(goal?.status).toBe('complete');
-    expect(goal?.terminalReason).toBe('done');
+    expect(goal?.status).toBe('blocked');
+    expect(goal?.terminalReason).toBe('need input');
     await resumed.flushMetadata();
   });
 });
