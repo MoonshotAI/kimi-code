@@ -423,6 +423,24 @@ describe('SessionGoalStore lifecycle', () => {
     expect((await store.resumeGoal()).status).toBe('active');
   });
 
+  it('resumeGoal is a fresh attempt: clears the stop reason and resets stuck/failure streaks', async () => {
+    const { store } = makeStore();
+    await store.createGoal({ objective: 'work', budgetLimits: { noProgressTurnLimit: 3 } });
+    // Accumulate a no-progress streak up to the limit, then block.
+    await store.recordEvaluatorVerdict({ verdict: 'no_progress', reason: 'stuck' });
+    await store.recordEvaluatorVerdict({ verdict: 'no_progress', reason: 'stuck' });
+    await store.recordEvaluatorVerdict({ verdict: 'no_progress', reason: 'stuck' });
+    await store.markBlocked({ reason: 'No progress after 3 turns' });
+    expect(store.getGoal().goal?.consecutiveNoProgressTurns).toBe(3);
+
+    const resumed = await store.resumeGoal();
+    expect(resumed.status).toBe('active');
+    expect(resumed.terminalReason).toBeUndefined();
+    // The streak is reset so the goal gets a full fresh run, not one strike.
+    expect(resumed.consecutiveNoProgressTurns).toBe(0);
+    expect(resumed.consecutiveFailureTurns).toBe(0);
+  });
+
   it('markComplete and markBlocked no-op for non-active goals', async () => {
     const { store } = makeStore();
     await store.createGoal({ objective: 'work' });

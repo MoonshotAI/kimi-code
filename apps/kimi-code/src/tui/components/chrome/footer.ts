@@ -126,8 +126,17 @@ function tipsForIndex(index: number): { primary: string; pair: string | null } {
  */
 function formatGoalBadge(goal: AppState['goal'], colors: ColorPalette): string | null {
   if (goal === null || goal === undefined) return null;
-  if (goal.status !== 'active' && goal.status !== 'paused') return null;
-  const dotColor = goal.status === 'paused' ? colors.textMuted : colors.primary;
+  // Show the badge for every persisted, resumable status. `complete` clears the
+  // goal, so it never reaches here; only the unset case returns null.
+  if (goal.status !== 'active' && goal.status !== 'paused' && goal.status !== 'blocked') {
+    return null;
+  }
+  const dotColor =
+    goal.status === 'active'
+      ? colors.primary
+      : goal.status === 'blocked'
+        ? colors.warning
+        : colors.textMuted;
   const turns =
     goal.budget.turnBudget !== null
       ? `${goal.turnsUsed}/${goal.budget.turnBudget} turns`

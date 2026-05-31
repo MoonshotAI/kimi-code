@@ -81,7 +81,14 @@ describe('FooterComponent — goal badge', () => {
     expect(strip(footer.render(160)[0]!)).toContain('paused');
   });
 
-  it('hides the badge for a terminal goal', () => {
+  it('shows a blocked badge (resumable, still present)', () => {
+    const footer = new FooterComponent(baseState({ goal: goal({ status: 'blocked' }) }), darkColors);
+    const out = strip(footer.render(160)[0]!);
+    expect(out).toContain('[goal');
+    expect(out).toContain('blocked');
+  });
+
+  it('hides the badge for a completed goal', () => {
     const footer = new FooterComponent(baseState({ goal: goal({ status: 'complete' }) }), darkColors);
     expect(strip(footer.render(160)[0]!)).not.toMatch(/goal/);
   });

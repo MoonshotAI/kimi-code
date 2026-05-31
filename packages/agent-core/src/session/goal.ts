@@ -453,9 +453,12 @@ export class SessionGoalStore {
       );
     }
     const actor = input.actor ?? 'user';
-    // Clear the stop reason from the previous paused/blocked transition; the
-    // goal is being pursued again.
+    // Resuming is a fresh attempt: clear the stop reason and reset the
+    // stuck/failure streaks so a goal that was `blocked` on the no-progress or
+    // evaluator-failure limit gets a full N turns again, not a single strike.
     state.terminalReason = undefined;
+    state.consecutiveNoProgressTurns = 0;
+    state.consecutiveFailureTurns = 0;
     this.applyStatus(state, 'active', actor, input.reason);
     await this.persistState(state, {
       change: { kind: 'lifecycle', status: 'active', reason: input.reason },
