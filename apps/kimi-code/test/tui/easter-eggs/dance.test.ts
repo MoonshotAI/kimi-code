@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DANCE_FLOW_MS,
   DANCE_FRAME_MS,
+  getRainbowDanceView,
+  installRainbowDance,
   RainbowDance,
   rainbowText,
   setRainbowDance,
@@ -150,6 +152,33 @@ describe('rainbowText', () => {
     const out = rainbowText('a', ['#111111', '#226622'], 1);
 
     expect(truecolorCodes(out)).toEqual(['34,102,34']);
+  });
+});
+
+describe('installRainbowDance', () => {
+  afterEach(() => {
+    setRainbowDance(undefined);
+    vi.useRealTimers();
+  });
+
+  it('returns a disposer that clears timers and uninstalls the controller', () => {
+    vi.useFakeTimers();
+    const requestRender = vi.fn();
+    const dispose = installRainbowDance(requestRender);
+    const host = {
+      showStatus: vi.fn(),
+    } as unknown as SlashCommandHost;
+
+    tryHandleDanceCommand(host, { name: 'dance', args: 'on' });
+    vi.advanceTimersByTime(DANCE_FRAME_MS * 2);
+    expect(requestRender).toHaveBeenCalled();
+
+    requestRender.mockClear();
+    dispose();
+
+    expect(getRainbowDanceView()).toBeUndefined();
+    vi.advanceTimersByTime(DANCE_FLOW_MS + DANCE_FRAME_MS * 10);
+    expect(requestRender).not.toHaveBeenCalled();
   });
 });
 

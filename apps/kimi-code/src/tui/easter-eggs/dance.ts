@@ -89,9 +89,16 @@ export function setRainbowDance(dance: RainbowDanceController | undefined): void
   currentDanceView = dance;
 }
 
-export function installRainbowDance(requestRender: () => void): void {
+export function installRainbowDance(requestRender: () => void): () => void {
   currentDanceController?.dispose();
-  setRainbowDance(new RainbowDance(requestRender));
+  const dance = new RainbowDance(requestRender);
+  setRainbowDance(dance);
+  return () => {
+    dance.dispose();
+    if (currentDanceController === dance) {
+      setRainbowDance(undefined);
+    }
+  };
 }
 
 export function getRainbowDanceView(): RainbowDanceView | undefined {

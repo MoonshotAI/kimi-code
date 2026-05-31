@@ -51,6 +51,7 @@ export interface TUIState {
   tasksBrowser: TasksBrowserState | undefined;
   externalEditorRunning: boolean;
   queuedMessages: QueuedMessage[];
+  dispose: () => void;
 }
 
 export function createTUIState(options: KimiTUIOptions): TUIState {
@@ -59,7 +60,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
 
   const terminal = new ProcessTerminal();
   const ui = new TUI(terminal);
-  installRainbowDance(() => {
+  const disposeRainbowDance = installRainbowDance(() => {
     ui.requestRender();
   });
 
@@ -100,5 +101,8 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     tasksBrowser: undefined,
     externalEditorRunning: false,
     queuedMessages: [],
+    dispose: () => {
+      disposeRainbowDance();
+    },
   };
 }
