@@ -372,9 +372,9 @@ describe('KimiTUI resume message replay', () => {
     ]);
   });
 
-  it('skips cron_job origin records during replay', async () => {
+  it('renders cron_job origin records during replay without exposing raw XML', async () => {
     const cronFire =
-      '<cron-fire jobId="job-1" cron="*/5 * * * *" recurring="true" coalescedCount="1">\nrun nightly\n</cron-fire>';
+      '<cron-fire jobId="job-1" cron="*/5 * * * *" recurring="true" coalescedCount="1" stale="false">\n<prompt>\nrun nightly\n</prompt>\n</cron-fire>';
     const driver = await replayIntoDriver([
       message('user', [{ type: 'text', text: 'real prompt' }]),
       message('assistant', [{ type: 'text', text: 'real answer' }]),
@@ -392,14 +392,21 @@ describe('KimiTUI resume message replay', () => {
 
     const transcript = driver.state.transcriptContainer.render(120).join('\n');
     expect(transcript).not.toContain('<cron-fire');
+    expect(transcript).toContain('Scheduled reminder fired');
+    expect(transcript).toContain('run nightly');
     expect(
       driver.state.transcriptEntries
         .filter((entry) => entry.kind === 'user')
         .map((entry) => entry.content),
     ).toEqual(['real prompt']);
+    expect(
+      driver.state.transcriptEntries
+        .filter((entry) => entry.kind === 'cron')
+        .map((entry) => entry.content),
+    ).toEqual(['run nightly']);
   });
 
-  it('skips cron_missed origin records during replay', async () => {
+  it('renders cron_missed origin records during replay without exposing raw XML', async () => {
     const cronMissed =
       '<cron-fire jobId="job-2" missed="true" count="3">\n3 one-shot tasks missed while offline\n</cron-fire>';
     const driver = await replayIntoDriver([
@@ -412,12 +419,18 @@ describe('KimiTUI resume message replay', () => {
 
     const transcript = driver.state.transcriptContainer.render(120).join('\n');
     expect(transcript).not.toContain('<cron-fire');
-    expect(transcript).not.toContain('missed while offline');
+    expect(transcript).toContain('Missed scheduled reminders');
+    expect(transcript).toContain('3 one-shot tasks missed while offline');
     expect(
       driver.state.transcriptEntries
         .filter((entry) => entry.kind === 'user')
         .map((entry) => entry.content),
     ).toEqual(['real prompt']);
+    expect(
+      driver.state.transcriptEntries
+        .filter((entry) => entry.kind === 'cron')
+        .map((entry) => entry.content),
+    ).toEqual(['3 one-shot tasks missed while offline']);
   });
 
   it('renders user-slash skill activation once without exposing injected prompt text', async () => {

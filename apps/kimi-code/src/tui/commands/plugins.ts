@@ -19,6 +19,7 @@ import {
 } from '../components/messages/plugins-status-panel';
 import { UsagePanelComponent } from '../components/messages/usage-panel';
 import { formatErrorMessage } from '../utils/event-payload';
+import { formatPluginSourceLabel } from '../utils/plugin-source-label';
 import { loadPluginMarketplace } from '#/utils/plugin-marketplace';
 import type { SlashCommandHost } from './dispatch';
 
@@ -61,7 +62,14 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
         host.showError('Usage: /plugins install <local-path-or-zip-url>');
         return;
       }
-      await installPluginFromSource(host, source);
+      const spinner = host.showProgressSpinner(`Installing plugin from ${truncateForStatus(source)}…`);
+      try {
+        await installPluginFromSource(host, source);
+        spinner.stop({ ok: true, label: `Install finished — see details below.` });
+      } catch (error) {
+        spinner.stop({ ok: false, label: `Install failed: ${formatErrorMessage(error)}` });
+        throw error;
+      }
       return;
     }
     if (sub === 'marketplace') {
@@ -382,19 +390,35 @@ async function renderPluginInfo(host: SlashCommandHost, id: string): Promise<voi
 async function installPluginFromSource(
   host: SlashCommandHost,
   source: string,
-  options?: { readonly successNotice?: 'marketplace' },
+  options?: {
+    readonly successNotice?: 'marketplace';
+  },
 ): Promise<void> {
-  const summary = await host.requireSession().installPlugin(
+  const session = host.requireSession();
+  const beforeList = await session.listPlugins();
+  const summary = await session.installPlugin(
     resolvePluginInstallSource(source, host.state.appState.workDir),
   );
+  showPluginInstallResult(host, beforeList, summary, options);
+}
+
+function showPluginInstallResult(
+  host: SlashCommandHost,
+  beforeList: readonly PluginSummary[],
+  summary: PluginSummary,
+  options?: {
+    readonly successNotice?: 'marketplace';
+  },
+): void {
+  const previous = beforeList.find((entry) => entry.id === summary.id);
   const serverWord = summary.mcpServerCount === 1 ? 'server' : 'servers';
   const mcpHint =
     summary.mcpServerCount > 0
       ? ` Declares ${summary.mcpServerCount} MCP ${serverWord}; enabled by default and configurable from /plugins.`
       : '';
-  const installVerb = options?.successNotice === 'marketplace' ? 'Installed or updated' : 'Installed';
+  const action = describeInstallAction(previous, summary);
   host.showStatus(
-    `${installVerb} ${summary.displayName} (${summary.id}).${mcpHint} Run /new to apply plugin changes.`,
+    `${action} (${summary.id}).${mcpHint} Run /new to apply plugin changes.`,
   );
   if (options?.successNotice === 'marketplace') {
     host.showNotice(
@@ -402,6 +426,37 @@ async function installPluginFromSource(
       `Marketplace install or update succeeded for ${summary.id}. Run /new to apply plugin changes.`,
     );
   }
+}
+
+function describeInstallAction(
+  previous: PluginSummary | undefined,
+  next: PluginSummary,
+): string {
+  const sourceLabel = formatPluginSourceLabel(next);
+  const versionFromTo = (prev?: string, cur?: string): string => {
+    if (prev === undefined || prev === cur) return cur === undefined ? '' : ` ${cur}`;
+    return ` ${prev} → ${cur ?? '-'}`;
+  };
+  if (previous === undefined) {
+    return `Installed ${next.displayName}${versionFromTo(undefined, next.version)} from ${sourceLabel}`;
+  }
+  if (sourceIdentity(previous) !== sourceIdentity(next)) {
+    const prevSourceLabel = formatPluginSourceLabel(previous);
+    return `Migrated ${next.displayName}: ${prevSourceLabel} → ${sourceLabel}${versionFromTo(previous.version, next.version)}`;
+  }
+  return `Updated ${next.displayName}${versionFromTo(previous.version, next.version)} from ${sourceLabel}`;
+}
+
+function sourceIdentity(plugin: PluginSummary): string {
+  if (plugin.source === 'github' && plugin.github !== undefined) {
+    return `github:${plugin.github.owner}/${plugin.github.repo}`;
+  }
+  return plugin.source;
+}
+
+function truncateForStatus(input: string): string {
+  const max = 80;
+  return input.length > max ? `${input.slice(0, max - 1)}…` : input;
 }
 
 async function reloadPlugins(host: SlashCommandHost): Promise<void> {

@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  EXPERIMENTAL_PREFIX,
   FLAG_DEFINITIONS,
   MASTER_ENV,
-  createFlagResolver,
-  flagEnvKey,
+  FlagResolver,
   type FlagDefinitionInput,
   type FlagId,
 } from '../../src/flags';
@@ -30,7 +28,7 @@ const DEFS = [
 type Env = Record<string, string | undefined>;
 
 function make(env: Env) {
-  const resolver = createFlagResolver(env, DEFS);
+  const resolver = new FlagResolver(env, DEFS);
   // The fake ids are not part of the real FlagId union, so cast to FlagId when calling.
   return (id: string) => resolver.enabled(id as FlagId);
 }
@@ -84,10 +82,6 @@ describe('FlagResolver', () => {
   it('unknown id resolves to false (defensive)', () => {
     expect(make({})('not-a-real-flag')).toBe(false);
   });
-
-  it('flagEnvKey convention: kebab -> prefix + upper snake', () => {
-    expect(flagEnvKey('my-feature')).toBe('KIMI_CODE_EXPERIMENTAL_MY_FEATURE');
-  });
 });
 
 describe('FLAG_DEFINITIONS invariants', () => {
@@ -96,7 +90,7 @@ describe('FLAG_DEFINITIONS invariants', () => {
     const seenId = new Set<string>();
     const defs: readonly FlagDefinitionInput[] = FLAG_DEFINITIONS;
     for (const def of defs) {
-      expect(def.env.startsWith(EXPERIMENTAL_PREFIX)).toBe(true);
+      expect(def.env.startsWith('KIMI_CODE_EXPERIMENTAL_')).toBe(true);
       expect(def.env).not.toBe(MASTER_ENV);
       expect(def.id).not.toBe('flag'); // reserved: would collide with the master switch
       expect(seenEnv.has(def.env)).toBe(false);

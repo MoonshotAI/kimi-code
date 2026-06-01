@@ -49,12 +49,13 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
   private readonly onDone: (result: ApiKeyInputResult) => void;
   private readonly colors: ColorPalette;
   private readonly title: string;
-  private readonly subtitle: string;
+  private readonly subtitleLines: readonly string[];
   private done = false;
   private emptyHinted = false;
 
   constructor(
     platformName: string,
+    subtitleLines: readonly string[],
     onDone: (result: ApiKeyInputResult) => void,
     colors: ColorPalette,
   ) {
@@ -62,7 +63,7 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
     this.onDone = onDone;
     this.colors = colors;
     this.title = `Enter API key for ${platformName}`;
-    this.subtitle = 'Your key will be saved to ~/.kimi-code/config.toml';
+    this.subtitleLines = subtitleLines;
     this.input.onSubmit = (value) => {
       this.submit(value);
     };
@@ -98,17 +99,26 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
 
     const border = (s: string): string => chalk.hex(this.colors.primary)(s);
     const titleStyled = chalk.bold.hex(this.colors.textStrong)(this.title);
-    const subtitleText = this.emptyHinted ? 'API key cannot be empty.' : this.subtitle;
-    const subtitleStyled = chalk.hex(this.colors.textDim)(subtitleText);
+    const subtitleSource = this.emptyHinted ? ['API key cannot be empty.'] : this.subtitleLines;
+    const subtitleLines = subtitleSource.map((line) =>
+      truncateToWidth(chalk.hex(this.colors.textDim)(line), innerWidth, '…'),
+    );
     const footerStyled = chalk.hex(this.colors.textDim)(FOOTER);
 
     const titleLine = truncateToWidth(titleStyled, innerWidth, '…');
-    const subtitleLine = truncateToWidth(subtitleStyled, innerWidth, '…');
     const footerLine = truncateToWidth(footerStyled, innerWidth, '…');
     const rawInputLine = this.input.render(innerWidth)[0] ?? '> ';
     const inputLine = this.input.getValue() === '' ? rawInputLine : maskInputLine(rawInputLine);
 
-    const contentLines: string[] = [titleLine, '', subtitleLine, '', inputLine, '', footerLine];
+    const contentLines: string[] = [
+      titleLine,
+      '',
+      ...subtitleLines,
+      '',
+      inputLine,
+      '',
+      footerLine,
+    ];
 
     const lines: string[] = [
       '',

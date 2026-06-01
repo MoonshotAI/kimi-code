@@ -68,6 +68,7 @@ import { installRainbowDance } from './easter-eggs/dance';
 import { FileMentionProvider } from './components/editor/file-mention-provider';
 import { AssistantMessageComponent } from './components/messages/assistant-message';
 import { BackgroundAgentStatusComponent } from './components/messages/background-agent-status';
+import { CronMessageComponent } from './components/messages/cron-message';
 import { SkillActivationComponent } from './components/messages/skill-activation';
 import {
   NoticeMessageComponent,
@@ -405,6 +406,26 @@ export class KimiTUI {
     this.refreshTerminalThemeTracking();
   }
 
+  private async refreshProviderModelsInBackground(): Promise<void> {
+    try {
+      const result = await this.authFlow.refreshProviderModels();
+      for (const c of result.changed) {
+        const parts: string[] = [c.providerName];
+        if (c.added > 0) parts.push(`+${String(c.added)} model${c.added > 1 ? 's' : ''}`);
+        if (c.removed > 0) parts.push(`-${String(c.removed)} model${c.removed > 1 ? 's' : ''}`);
+        this.showStatus(parts.join(' · ') + '.');
+      }
+      for (const f of result.failed) {
+        this.showStatus(
+          `Skipped refreshing ${f.provider}: ${f.reason}`,
+          this.state.theme.colors.warning,
+        );
+      }
+    } catch {
+      // Best-effort: startup must not crash on background refresh failures.
+    }
+  }
+
   private async finishStartup(shouldReplayHistory: boolean): Promise<void> {
     if (this.startupNotice !== undefined) {
       this.showStatus(this.startupNotice);
@@ -440,6 +461,7 @@ export class KimiTUI {
 
   private async init(): Promise<boolean> {
     await this.authFlow.refreshAvailableModels();
+    void this.refreshProviderModelsInBackground();
 
     const { startup } = this.options;
     const { workDir } = this.state.appState;
@@ -1183,6 +1205,12 @@ export class KimiTUI {
           entry.skillArgs,
           this.state.theme.colors,
         );
+      case 'cron':
+        return new CronMessageComponent(
+          entry.content,
+          entry.cronData ?? {},
+          this.state.theme.colors,
+        );
       case 'assistant': {
         const component = new AssistantMessageComponent(
           this.state.theme.markdownTheme,
@@ -1315,6 +1343,10 @@ export class KimiTUI {
   }
 
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle {
+    return this.showProgressSpinner(label);
+  }
+
+  showProgressSpinner(label: string): LoginProgressSpinnerHandle {
     const tint = (s: string): string => chalk.hex(this.state.theme.colors.primary)(s);
     const spinner = new MoonLoader(this.state.ui, 'braille', tint, label);
     this.state.transcriptContainer.addChild(new Spacer(1));

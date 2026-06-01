@@ -41,6 +41,7 @@ import {
   jitteredNextCronRunMs,
   oneShotJitteredNextCronRunMs,
 } from './jitter';
+import { formatLocalIsoWithOffset } from './time-format';
 import CRON_CREATE_DESCRIPTION from './cron-create.md';
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -224,9 +225,9 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
           isError: true,
           output: `One-shot cron ${JSON.stringify(
             normalizedCron,
-          )} would not fire until ${new Date(
+          )} would not fire until ${formatLocalIsoWithOffset(
             firstFire,
-          ).toISOString()} (more than a year out). If you meant "today" or a near date, the pinned day/month has already passed this year — pick a future date or use wildcards.`,
+          )} (more than a year out). If you meant "today" or a near date, the pinned day/month has already passed this year — pick a future date or use wildcards.`,
         };
       }
     }
@@ -320,7 +321,7 @@ function formatOutput(o: CronCreateOutput): string {
     `humanSchedule: ${o.humanSchedule}`,
     `recurring: ${String(o.recurring)}`,
     `nextFireAt: ${
-      o.nextFireAt === null ? 'null' : new Date(o.nextFireAt).toISOString()
+      o.nextFireAt === null ? 'null' : formatLocalIsoWithOffset(o.nextFireAt)
     }`,
   ];
   return lines.join('\n');

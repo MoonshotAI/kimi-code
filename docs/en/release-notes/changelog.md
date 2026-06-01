@@ -2,6 +2,43 @@
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.6.0
+
+### Features
+
+- Add a `KIMI_MODEL_*` environment-variable channel that lets you run Kimi Code against a specific model (provider type, base URL, API key, context size, capabilities, and thinking settings) without editing `config.toml`.
+- Install plugins directly from GitHub repository URLs, and surface each install's origin and trust level (kimi-official, curated, third-party) in the plugin manager.
+
+### Bug Fixes
+
+- Show the real terminal status of background agents in the transcript so lost, failed, and killed ones no longer appear as completed, and include the resume agent id and recovery instructions in the failure notification so the model can resume reliably.
+- Recover from provider model token limit errors during long conversations.
+- Automatically retry when a model response stream is dropped mid-flight (a `terminated` error) instead of failing the turn.
+- Handle context overflow errors consistently across provider responses.
+- Back off failed compaction retries by a fixed slice of the model context window.
+- Fix the native self-updater reporting a successful update when the install command actually failed.
+- Project persisted hook and blocked prompt messages into model context.
+- Keep blocked prompt hook conversations available to subsequent model turns.
+- Fix footer leaking onto the terminal when resuming a non-existent session.
+- Fix automatic ripgrep installation when temporary files are on another filesystem.
+
+### Polish
+
+- Remove the default per-turn step limit of 1000. Users can still set `max_steps_per_turn` in config to enforce a custom limit.
+- Support querying sessions by sessionId or workDir in listSessions, and show a helpful cd command when resuming a session from a different working directory.
+- Expand the footer's rotating tips to surface more commands and shortcuts, featuring newer and important ones more prominently.
+- Improve the usage information display in the TUI.
+- Restrict plugin trust badges to Kimi-hosted plugin CDN URL patterns.
+- Clarify subagent and background task stop messages as user-initiated.
+- Align the datasource plugin with the generic two-tool workflow.
+
+### Refactors
+
+- Introduce `ModelProvider` interface and `SingleModelProvider` to decouple `Agent` from `ProviderManager`.
+- Split `RuntimeConfig` into `Kaos` and `ToolServices` and update all references accordingly.
+- Slim the LLM diagnostic logs with fewer, more compact fields.
+- Relocate shared tool service typing to the tool support layer.
+
 ## 0.5.0
 
 ### Features

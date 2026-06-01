@@ -975,6 +975,10 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     return clone;
   }
 
+  withMaxCompletionTokens(maxCompletionTokens: number): OpenAIResponsesChatProvider {
+    return this.withGenerationKwargs({ max_output_tokens: maxCompletionTokens });
+  }
+
   private _clone(): OpenAIResponsesChatProvider {
     const clone = Object.assign(
       Object.create(Object.getPrototypeOf(this) as object) as OpenAIResponsesChatProvider,

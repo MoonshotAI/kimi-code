@@ -20,7 +20,7 @@ import type { TasksBrowserController } from '../controllers/tasks-browser';
 import type { AppState, LoginProgressSpinnerHandle, QueuedMessage } from '../types';
 import type { TUIState } from '../tui-state';
 
-import { handleConnectCommand, handleLoginCommand, handleLogoutCommand } from './auth';
+import { handleLoginCommand, handleLogoutCommand } from './auth';
 import { tryHandleDanceCommand } from '../easter-eggs/dance';
 import {
   handleAutoCommand,
@@ -34,6 +34,7 @@ import {
   showPermissionPicker,
   showSettingsSelector,
 } from './config';
+import { handleProviderCommand } from './provider';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 import { handlePluginsCommand } from './plugins';
 import {
@@ -110,6 +111,7 @@ export interface SlashCommandHost {
   // UI
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle;
   showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle;
+  showProgressSpinner(label: string): LoginProgressSpinnerHandle;
 
   // Theme
   applyTheme(theme: Theme, resolved?: ResolvedTheme): void;
@@ -234,6 +236,9 @@ async function handleBuiltInSlashCommand(
     case 'model':
       handleModelCommand(host, args);
       return;
+    case 'provider':
+      await handleProviderCommand(host);
+      return;
     case 'permission':
       showPermissionPicker(host);
       return;
@@ -278,9 +283,6 @@ async function handleBuiltInSlashCommand(
       return;
     case 'login':
       await handleLoginCommand(host);
-      return;
-    case 'connect':
-      await handleConnectCommand(host, args);
       return;
     case 'logout':
       await handleLogoutCommand(host);
