@@ -87,8 +87,7 @@ describe('formatBackgroundTaskTranscript', () => {
     const data = formatBackgroundTaskTranscript(
       task({
         taskId: 'agent-aaaaaaaa',
-        status: 'failed',
-        stopReason: 'Timed out',
+        status: 'timed_out',
         endedAt: Date.now(),
       }),
     );
@@ -100,6 +99,7 @@ describe('formatBackgroundTaskTranscript', () => {
       'running',
       'completed',
       'failed',
+      'timed_out',
       'killed',
       'lost',
     ];
