@@ -212,7 +212,7 @@ function backgroundTask(
       description,
       status,
       startedAt: 1,
-      endedAt: status === 'running' || status === 'awaiting_approval' ? null : 2,
+      endedAt: status === 'running' ? null : 2,
     };
   }
   return {
@@ -224,7 +224,7 @@ function backgroundTask(
     pid: 0,
     exitCode: status === 'completed' ? 0 : null,
     startedAt: 1,
-    endedAt: status === 'running' || status === 'awaiting_approval' ? null : 2,
+    endedAt: status === 'running' ? null : 2,
   };
 }
 

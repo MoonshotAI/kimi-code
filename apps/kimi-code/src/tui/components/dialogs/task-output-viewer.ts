@@ -36,7 +36,6 @@ export interface TaskOutputViewerProps {
 
 const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
   running: 'running',
-  awaiting_approval: 'awaiting',
   completed: 'completed',
   failed: 'failed',
   timed_out: 'timed out',
@@ -48,8 +47,6 @@ function statusColor(colors: ColorPalette, status: BackgroundTaskStatus): string
   switch (status) {
     case 'running':
       return colors.success;
-    case 'awaiting_approval':
-      return colors.warning;
     case 'completed':
       return colors.textMuted;
     case 'failed':

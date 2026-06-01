@@ -198,7 +198,6 @@ describe('TasksBrowserApp — full-screen rendering', () => {
   it('renders without throwing for every BackgroundTaskStatus', () => {
     const statuses: BackgroundTaskStatus[] = [
       'running',
-      'awaiting_approval',
       'completed',
       'failed',
       'killed',

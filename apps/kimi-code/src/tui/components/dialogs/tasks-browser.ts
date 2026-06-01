@@ -54,7 +54,6 @@ export interface TasksBrowserProps {
 
 const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
   running: 'running',
-  awaiting_approval: 'awaiting',
   completed: 'completed',
   failed: 'failed',
   timed_out: 'timed out',
@@ -78,8 +77,6 @@ function statusColor(colors: ColorPalette, status: BackgroundTaskStatus): string
   switch (status) {
     case 'running':
       return colors.success;
-    case 'awaiting_approval':
-      return colors.warning;
     case 'completed':
       return colors.textMuted;
     case 'failed':
@@ -148,20 +145,16 @@ function compareTasks(a: BackgroundTaskInfo, b: BackgroundTaskInfo): number {
 
 interface StatusCounts {
   running: number;
-  awaiting: number;
   completed: number;
   terminalFailed: number;
 }
 
 function countByStatus(tasks: readonly BackgroundTaskInfo[]): StatusCounts {
-  const counts: StatusCounts = { running: 0, awaiting: 0, completed: 0, terminalFailed: 0 };
+  const counts: StatusCounts = { running: 0, completed: 0, terminalFailed: 0 };
   for (const t of tasks) {
     switch (t.status) {
       case 'running':
         counts.running += 1;
-        break;
-      case 'awaiting_approval':
-        counts.awaiting += 1;
         break;
       case 'completed':
         counts.completed += 1;
@@ -345,8 +338,6 @@ export class TasksBrowserApp extends Container implements Focusable {
     const countSegments: string[] = [];
     if (counts.running > 0)
       countSegments.push(chalk.hex(colors.success)(` ${String(counts.running)} running `));
-    if (counts.awaiting > 0)
-      countSegments.push(chalk.hex(colors.warning)(` ${String(counts.awaiting)} awaiting `));
     if (counts.completed > 0)
       countSegments.push(chalk.hex(colors.textDim)(` ${String(counts.completed)} completed `));
     if (counts.terminalFailed > 0)
@@ -555,7 +546,7 @@ export class TasksBrowserApp extends Container implements Focusable {
       lines.push(`${label('Agent type:')}${value(task.subagentType)}`);
     }
     const timing =
-      task.status === 'running' || task.status === 'awaiting_approval'
+      task.status === 'running'
         ? `running ${formatRelativeTime(task.startedAt)}`
         : task.endedAt !== null && task.endedAt !== undefined
           ? `finished ${formatRelativeTime(task.endedAt)}`
@@ -570,12 +561,6 @@ export class TasksBrowserApp extends Container implements Focusable {
     if (task.stopReason !== undefined && task.stopReason.length > 0) {
       lines.push(`${label('Reason:')}${chalk.hex(colors.textMuted)(task.stopReason)}`);
     }
-    if (task.approvalReason !== undefined && task.approvalReason.length > 0) {
-      lines.push(
-        `${label('Awaiting:')}${chalk.hex(colors.warning)(singleLine(task.approvalReason))}`,
-      );
-    }
-
     while (lines.length < innerHeight) lines.push('');
     return this.renderFrame('Detail', lines, width, height);
   }

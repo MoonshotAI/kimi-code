@@ -34,14 +34,6 @@ import {
  * `'lost'` is a reconcile-only terminal state. Tasks loaded from disk
  * that were marked `running` at startup but have no live KaosProcess
  * (the previous CLI process died) are reclassified as lost.
- *
- * `'awaiting_approval'` is a non-terminal state entered when a background
- * agent task is paused waiting for tool-call approval from the root
- * agent. The BPM state machine is the single source of truth for "is
- * this task actively running vs. gated on approval" — UI reads from BPM
- * instead of reverse-querying the ApprovalRuntime. The loop boundary is
- * preserved because `awaiting_approval` in BPM does not leak permission
- * vocabulary into the loop.
  */
 export function isBackgroundTaskTerminal(status: BackgroundTaskStatus): boolean {
   return TERMINAL_STATUSES.has(status);
@@ -71,8 +63,6 @@ interface ManagedTask {
   readonly waiters: Array<() => void>;
   /** True once terminal notification/event side effects have already run. */
   terminalFired: boolean;
-  /** Reason carried while awaiting approval. */
-  approvalReason?: string | undefined;
   /** Human-readable reason for the terminal status, when available. */
   stopReason?: string | undefined;
   /** Deadline supplied at registration; surfaced via task info. */
@@ -306,9 +296,6 @@ export class BackgroundManager {
   list(activeOnly = true, limit?: number): BackgroundTaskInfo[] {
     const result: BackgroundTaskInfo[] = [];
     for (const entry of this.tasks.values()) {
-      // An awaiting_approval task is non-terminal and therefore counts
-      // as active in listings (UI needs to show it alongside plain
-      // running tasks).
       if (activeOnly && TERMINAL_STATUSES.has(entry.status)) continue;
       result.push(this.toInfo(entry));
       if (limit !== undefined && result.length >= limit) return result;
@@ -389,15 +376,12 @@ export class BackgroundManager {
     const trimmedReason = reason?.trim();
     const stopReason =
       trimmedReason === undefined || trimmedReason.length === 0 ? undefined : trimmedReason;
-    // Terminal tasks short-circuit. awaiting_approval tasks can still
-    // be stopped (the approval gate is lifted when we transition to
-    // 'killed').
+    // Terminal tasks short-circuit.
     if (TERMINAL_STATUSES.has(entry.status)) {
       await entry.persistWriteQueue;
       return this.toInfo(entry);
     }
 
-    entry.approvalReason = undefined;
     entry.stopReason = stopReason;
     entry.abortController.abort(stopReason);
 
@@ -444,9 +428,7 @@ export class BackgroundManager {
   }
 
   async stopAll(reason?: string): Promise<readonly BackgroundTaskInfo[]> {
-    const taskIds = Array.from(this.tasks.values())
-      .filter((entry) => !TERMINAL_STATUSES.has(entry.status))
-      .map((entry) => entry.taskId);
+    const taskIds = Array.from(this.tasks.keys());
     const results = await Promise.all(taskIds.map((taskId) => this.stop(taskId, reason)));
     return results.filter((info): info is BackgroundTaskInfo => info !== undefined);
   }
@@ -489,41 +471,6 @@ export class BackgroundManager {
     return this.toInfo(entry);
   }
 
-  // ── awaiting_approval state transitions ────────────────────────────
-
-  /**
-   * Mark a running task as paused pending approval. The approval reason
-   * (tool call description) is retained until the task either returns
-   * to `'running'` via `clearAwaitingApproval()` or reaches a terminal
-   * state. Calls on terminal or unknown tasks are silently ignored so
-   * the ApprovalRuntime callback path is race-safe.
-   */
-  markAwaitingApproval(taskId: string, reason: string): void {
-    const entry = this.tasks.get(taskId);
-    if (!entry) return;
-    if (TERMINAL_STATUSES.has(entry.status)) return;
-    entry.status = 'awaiting_approval';
-    entry.approvalReason = reason;
-    void this.persistLive(entry);
-    this.emitTaskUpdated(this.toInfo(entry));
-  }
-
-  /**
-   * Drop the approval gate and return to `'running'`. Clears the stored
-   * reason so stale text cannot leak into a future `awaiting_approval`
-   * cycle. No-op unless the task is currently in the awaiting_approval
-   * state.
-   */
-  clearAwaitingApproval(taskId: string): void {
-    const entry = this.tasks.get(taskId);
-    if (!entry) return;
-    if (entry.status !== 'awaiting_approval') return;
-    entry.status = 'running';
-    entry.approvalReason = undefined;
-    void this.persistLive(entry);
-    this.emitTaskUpdated(this.toInfo(entry));
-  }
-
   // ── persistence + reconcile ────────────────────────────────────────
 
   /**
@@ -554,15 +501,12 @@ export class BackgroundManager {
     const lostInfo: BackgroundTaskInfo[] = [];
     const persistence = this.persistence;
     for (const [id, info] of this.ghosts) {
-      // Any non-terminal ghost is lost. Includes `awaiting_approval`
-      // (the approval context died with the previous process so it
-      // cannot be resumed).
+      // Any non-terminal ghost is lost.
       if (TERMINAL_STATUSES.has(info.status)) continue;
       const updated: BackgroundTaskInfo = {
         ...info,
         status: 'lost',
         endedAt: info.endedAt ?? Date.now(),
-        approvalReason: undefined,
       };
       this.ghosts.set(id, updated);
       if (persistence !== undefined) {
@@ -723,12 +667,6 @@ export class BackgroundManager {
     entry.endedAt = Date.now();
     entry.stopReason =
       settlement.stopReason ?? (settlement.status === 'killed' ? entry.stopReason : undefined);
-    // A task that ended while still in awaiting_approval (e.g. crashed
-    // mid-prompt, deadline fired, or got killed) must not leak the
-    // stale approvalReason onto the terminal record. The awaiting →
-    // running path (clearAwaitingApproval) already clears it; mirror
-    // that here for the awaiting → terminal path.
-    entry.approvalReason = undefined;
     await this.persistLive(entry);
     this.fireTerminalEffects(entry);
     this.resolveWaiters(entry);
@@ -743,7 +681,6 @@ export class BackgroundManager {
       status: entry.status,
       startedAt: entry.startedAt,
       endedAt: entry.endedAt,
-      approvalReason: entry.approvalReason,
       stopReason: entry.stopReason,
       timeoutMs: entry.timeoutMs,
     };

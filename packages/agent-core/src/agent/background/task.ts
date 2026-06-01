@@ -3,7 +3,6 @@ import type { ProcessBackgroundTaskInfo } from './process-task';
 
 export type BackgroundTaskStatus =
   | 'running'
-  | 'awaiting_approval'
   | 'completed'
   | 'failed'
   | 'timed_out'
@@ -35,8 +34,6 @@ export interface BackgroundTaskInfoBase {
   readonly status: BackgroundTaskStatus;
   readonly startedAt: number;
   readonly endedAt: number | null;
-  /** Populated only while `status === 'awaiting_approval'`. */
-  readonly approvalReason?: string;
   /** Human-readable reason for the terminal status, when available. */
   readonly stopReason?: string;
   /** Deadline supplied at registration; surfaced via task info. */

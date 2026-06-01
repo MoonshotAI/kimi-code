@@ -186,31 +186,6 @@ describe('BackgroundManager — loadFromDisk + reconcile', () => {
     expect(fired[0]?.status).toBe('lost');
   });
 
-  it('reconcile treats corrupted runtime (awaiting_approval ghost) as lost', async () => {
-    // awaiting_approval is non-terminal — when the previous process
-    // died mid-approval, the task cannot possibly resume; reconcile
-    // must downgrade it to `lost` just like a running ghost.
-    await writeTask(sessionDir, {
-      task_id: 'bash-corrupt0',
-      command: 'do_approval',
-      description: 'corrupted approval',
-      pid: 7777,
-      started_at: 1_700_000_000,
-      ended_at: null,
-      exit_code: null,
-      status: 'awaiting_approval',
-      approval_reason: 'ghost reason that should be cleared',
-    });
-    const mgr = new BackgroundManager();
-    mgr.attachSessionDir(sessionDir);
-    await mgr.loadFromDisk();
-    const result = await mgr.reconcile();
-
-    expect(result.lost).toEqual(['bash-corrupt0']);
-    expect(result.lostInfo[0]?.status).toBe('lost');
-    expect(result.lostInfo[0]?.approvalReason).toBeUndefined();
-  });
-
   it('reconcile does not republish already-lost ghosts on second pass', async () => {
     await writeTask(sessionDir, {
       task_id: 'bash-nodup000',

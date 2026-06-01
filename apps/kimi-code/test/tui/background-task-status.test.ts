@@ -83,15 +83,6 @@ describe('formatBackgroundTaskTranscript', () => {
     expect(data.detail).toContain('session restarted');
   });
 
-  it('surfaces awaiting_approval reason', () => {
-    const data = formatBackgroundTaskTranscript(
-      task({ status: 'awaiting_approval', approvalReason: 'needs network' }),
-    );
-    expect(data.phase).toBe('started');
-    expect(data.headline).toContain('awaiting');
-    expect(data.detail).toContain('needs network');
-  });
-
   it('surfaces timeout stop reason for agent deadlines', () => {
     const data = formatBackgroundTaskTranscript(
       task({
@@ -107,7 +98,6 @@ describe('formatBackgroundTaskTranscript', () => {
   it('handles every BackgroundTaskStatus without throwing', () => {
     const statuses: BackgroundTaskStatus[] = [
       'running',
-      'awaiting_approval',
       'completed',
       'failed',
       'killed',

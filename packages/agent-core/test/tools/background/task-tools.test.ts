@@ -410,19 +410,6 @@ describe('TaskOutputTool', () => {
     }
   });
 
-  it('reports awaiting_approval as not_ready when block=false', async () => {
-    const proc = pendingProcess();
-    const taskId = manager.register(proc, 'sleep 60', 'approval output test');
-    manager.markAwaitingApproval(taskId, 'waiting for root approval');
-
-    const result = await executeTool(tool, context('c_awaiting_output', { task_id: taskId }));
-
-    expect(result.isError).toBe(false);
-    const content = toolContentString(result);
-    expect(content).toContain('retrieval_status: not_ready');
-    expect(content).toContain('status: awaiting_approval');
-  });
-
   it('settles an already-exited process before reporting non-blocking output', async () => {
     const proc = processExitingAfterTimer(143, 0);
     const taskId = manager.register(proc, 'sleep 60', 'external kill output test');
@@ -439,20 +426,6 @@ describe('TaskOutputTool', () => {
     expect(content).toContain('exit_code: 143');
   });
 
-  it('waits on awaiting_approval when block=true and reports timeout if still non-terminal', async () => {
-    const proc = pendingProcess();
-    const taskId = manager.register(proc, 'sleep 60', 'approval blocking output test');
-    manager.markAwaitingApproval(taskId, 'waiting for root approval');
-
-    const result = await executeTool(tool,
-      context('c_awaiting_output_block', { task_id: taskId, block: true, timeout: 0 }),
-    );
-
-    expect(result.isError).toBe(false);
-    const content = toolContentString(result);
-    expect(content).toContain('retrieval_status: timeout');
-    expect(content).toContain('status: awaiting_approval');
-  });
 });
 
 describe('TaskOutputTool — large output truncation + paging protocol', () => {
@@ -818,18 +791,6 @@ describe('TaskStopTool', () => {
     expect(toolContentString(result)).toContain('killed');
     expect(toolContentString(result)).toContain('custom stop reason');
     expect(manager.getTask(taskId)?.stopReason).toBe('custom stop reason');
-  });
-
-  it('stops an awaiting_approval task', async () => {
-    const proc = pendingProcess();
-    const taskId = manager.register(proc, 'sleep 60', 'approval stop test');
-    manager.markAwaitingApproval(taskId, 'waiting for root approval');
-
-    const result = await executeTool(tool, context('c_awaiting_stop', { task_id: taskId }));
-
-    expect(result.isError).toBe(false);
-    expect(toolContentString(result)).toContain('status: killed');
-    expect(manager.getTask(taskId)?.approvalReason).toBeUndefined();
   });
 
   it('persists stop reason when attached to a session directory', async () => {
@@ -1212,40 +1173,6 @@ describe('background store — partial output reads (TS surface)', () => {
     // "line1\nline2\nline3\n" yields "line2\nline3\n".
     const tail = manager.getOutput(taskId, 12);
     expect(tail).toBe('line2\nline3\n');
-  });
-});
-
-// A background agent paused in `awaiting_approval` can be killed via
-// the TaskStop tool — the task transitions to `killed`. The
-// downstream side effect (clearing pending approvals on the
-// ApprovalRuntime) lives outside the BPM in TS by design and is
-// covered by ApprovalRuntime's own tests; this test scopes only the
-// status transition through the tool boundary.
-describe('TaskStopTool on awaiting-approval agents', () => {
-  const manager = new BackgroundManager();
-  const stop = new TaskStopTool(manager);
-
-  afterEach(() => {
-    manager._reset();
-  });
-
-  it('TaskStop on an awaiting_approval agent transitions the task to killed', async () => {
-    let rejectCompletion!: (err: unknown) => void;
-    const completion = new Promise<{ result: string }>((_res, rej) => {
-      rejectCompletion = rej;
-    });
-    const taskId = manager.registerTask(new AgentBackgroundTask(completion, 'awaiting kill', {
-      abort: () => {
-        const abortError = new Error('cancelled');
-        abortError.name = 'AbortError';
-        rejectCompletion(abortError);
-      },
-    }));
-    manager.markAwaitingApproval(taskId, 'edit file');
-    const result = await executeTool(stop, context('c_stop_awaiting', { task_id: taskId }));
-    expect(result.isError).toBe(false);
-    const info = manager.getTask(taskId);
-    expect(info?.status).toBe('killed');
   });
 });
 

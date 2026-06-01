@@ -127,19 +127,6 @@ describe('BackgroundManager — RPC event emission', () => {
     });
   });
 
-  it('emits background.task.updated on awaiting_approval transitions', () => {
-    const taskId = agent.background.register(pendingProcess(), 'sleep', 'demo');
-    agent.emittedEvents.length = 0;
-
-    agent.background.markAwaitingApproval(taskId, 'needs approval');
-    agent.background.clearAwaitingApproval(taskId);
-
-    const updated = agent.emittedEvents.filter((e) => e.type === 'background.task.updated');
-    expect(updated.length).toBe(2);
-    expect(updated[0]!.info.status).toBe('awaiting_approval');
-    expect(updated[1]!.info.status).toBe('running');
-  });
-
   it('emits background.task.terminated on natural exit', async () => {
     agent.background.register(immediateProcess(0), 'echo', 'done');
     await new Promise((r) => setTimeout(r, 20));
