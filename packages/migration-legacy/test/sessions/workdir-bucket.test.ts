@@ -27,9 +27,10 @@ function referenceEncodeWorkDirKey(workDir: string): string {
 
 describe('computeWorkdirBucket', () => {
   it('produces wd_<slug>_<sha256-12> for a normal path', () => {
-    const bucket = computeWorkdirBucket('/Users/me/Developer/proj');
+    const input = '/Users/me/Developer/proj';
+    const bucket = computeWorkdirBucket(input);
     expect(bucket).toMatch(/^wd_proj_[0-9a-f]{12}$/);
-    const expected = createHash('sha256').update('/Users/me/Developer/proj').digest('hex').slice(0, 12);
+    const expected = createHash('sha256').update(resolve(input)).digest('hex').slice(0, 12);
     expect(bucket).toBe(`wd_proj_${expected}`);
   });
 
