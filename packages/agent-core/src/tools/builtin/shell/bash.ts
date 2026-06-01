@@ -366,16 +366,6 @@ export class BashTool implements BuiltinTool<BashInput> {
       };
     }
 
-    let reservation: ReturnType<BackgroundManager['reserveSlot']>;
-    try {
-      reservation = backgroundManager.reserveSlot();
-    } catch (error) {
-      return {
-        isError: true,
-        output: error instanceof Error ? error.message : String(error),
-      };
-    }
-
     const timeoutMs = args.disable_timeout ? undefined : normalizeTimeoutMs(args.timeout, true);
 
     let proc: KaosProcess;
@@ -384,7 +374,6 @@ export class BashTool implements BuiltinTool<BashInput> {
       const effectiveCwd = args.cwd ?? this.cwd;
       proc = await this.spawn(effectiveCwd, command);
     } catch (error) {
-      reservation.release();
       return {
         isError: true,
         output: error instanceof Error ? error.message : String(error),
@@ -397,10 +386,22 @@ export class BashTool implements BuiltinTool<BashInput> {
       /* process already gone */
     }
 
-    const taskId = backgroundManager.registerTask(
-      new ProcessBackgroundTask(proc, command, args.description.trim()),
-      reservation,
-    );
+    let taskId: string;
+    try {
+      taskId = backgroundManager.registerTask(
+        new ProcessBackgroundTask(proc, command, args.description.trim()),
+      );
+    } catch (error) {
+      try {
+        await proc.kill('SIGTERM');
+      } catch {
+        /* process already gone */
+      }
+      return {
+        isError: true,
+        output: error instanceof Error ? error.message : String(error),
+      };
+    }
 
     if (timeoutMs !== undefined) {
       setTimeout(() => {

@@ -145,10 +145,6 @@ export interface ReconcileResult {
   readonly lostInfo: readonly BackgroundTaskInfo[];
 }
 
-export interface BackgroundTaskReservation {
-  release(): void;
-}
-
 export interface BackgroundTaskOutputSnapshot {
   readonly outputPath?: string;
   readonly outputSizeBytes: number;
@@ -194,7 +190,6 @@ const NOTIFICATION_TAIL_BYTES = 3_000;
 
 export class BackgroundManager {
   private readonly tasks = new Map<string, ManagedTask>();
-  private reservedTaskSlots = 0;
   public readonly agent: Agent;
   /**
    * Ghosts: tasks loaded from disk during reconcile that have no live
@@ -273,28 +268,11 @@ export class BackgroundManager {
     };
   }
 
-  assertCanRegister(): void {
+  private assertCanRegister(): void {
     const maxRunningTasks = this.agent.kimiConfig?.background?.maxRunningTasks;
     if (maxRunningTasks === undefined) return;
-    if (this.activeTaskCount() + this.reservedTaskSlots < maxRunningTasks) return;
+    if (this.activeTaskCount() < maxRunningTasks) return;
     throw new Error('Too many background tasks are already running.');
-  }
-
-  reserveSlot(): BackgroundTaskReservation {
-    const maxRunningTasks = this.agent.kimiConfig?.background?.maxRunningTasks;
-    if (maxRunningTasks === undefined) {
-      return { release: () => {} };
-    }
-    this.assertCanRegister();
-    this.reservedTaskSlots++;
-    let released = false;
-    return {
-      release: () => {
-        if (released) return;
-        released = true;
-        this.reservedTaskSlots--;
-      },
-    };
   }
 
   private activeTaskCount(): number {
@@ -305,15 +283,8 @@ export class BackgroundManager {
     return count;
   }
 
-  registerTask(
-    task: BackgroundTask,
-    reservation?: BackgroundTaskReservation,
-  ): string {
-    if (reservation) {
-      reservation.release();
-    } else {
-      this.assertCanRegister();
-    }
+  registerTask(task: BackgroundTask): string {
+    this.assertCanRegister();
     const taskId = generateTaskId(task.idPrefix);
     const entry: ManagedTask = {
       taskId,

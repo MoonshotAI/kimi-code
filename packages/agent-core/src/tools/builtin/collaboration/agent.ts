@@ -182,19 +182,10 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         };
       }
 
-      let reservation: ReturnType<BackgroundManager['reserveSlot']> | undefined;
       if (runInBackground) {
         if (this.backgroundManager === undefined) {
           return {
             output: BACKGROUND_AGENT_UNAVAILABLE,
-            isError: true,
-          };
-        }
-        try {
-          reservation = this.backgroundManager.reserveSlot();
-        } catch (error) {
-          return {
-            output: error instanceof Error ? error.message : String(error),
             isError: true,
           };
         }
@@ -224,7 +215,6 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
           handle = await this.subagentHost.spawn(profileName, options);
         }
       } catch (error) {
-        reservation?.release();
         this.log?.warn('subagent launch failed', {
           toolCallId,
           runInBackground,
@@ -248,10 +238,8 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
                 backgroundController?.abort();
               },
             }),
-            reservation,
           );
         } catch (error) {
-          reservation?.release();
           backgroundController?.abort();
           void handle.completion.catch(() => {});
           this.log?.warn('background agent task registration failed', {
