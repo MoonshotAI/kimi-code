@@ -112,6 +112,8 @@ const mocks = vi.hoisted(() => {
   };
   return {
     session,
+    eventHandlers,
+    mainEvent,
     experimentalFlags: { 'goal-command': true } as Record<string, boolean>,
   };
 });
@@ -205,6 +207,36 @@ describe('runPrompt headless goal mode', () => {
       process: { once: () => {}, off: () => {}, exit: () => undefined as never },
     });
     expect(process.exitCode).toBe(GOAL_EXIT_CODES.blocked);
+  });
+
+  it('uses the completion event snapshot when the goal has already been cleared', async () => {
+    const completed = snapshot({ status: 'complete', turnsUsed: 4, tokensUsed: 240 });
+    mocks.session.getGoal.mockResolvedValue({ goal: null } as never);
+    mocks.session.prompt.mockImplementationOnce(async () => {
+      for (const handler of mocks.eventHandlers) {
+        handler(
+          mocks.mainEvent({
+            type: 'goal.updated',
+            snapshot: completed,
+            change: { kind: 'completion', status: 'complete' },
+          }),
+        );
+        handler(mocks.mainEvent({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
+        handler(mocks.mainEvent({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+      }
+    });
+    const stdout = writer();
+    const stderr = writer();
+
+    await runPrompt(opts({ outputFormat: 'stream-json' }), 'test', {
+      stdout,
+      stderr,
+      process: { once: () => {}, off: () => {}, exit: () => undefined as never },
+    });
+
+    expect(stdout.text()).toContain('"status":"complete"');
+    expect(stdout.text()).toContain('"turnsUsed":4');
+    expect(stdout.text()).not.toContain('"goalId":null');
   });
 
   it('treats /goal as a normal prompt when the flag is disabled', async () => {

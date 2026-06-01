@@ -10,6 +10,7 @@ import {
   KimiHarness,
   log,
   type Event,
+  type GoalSnapshot,
   type HookResultEvent,
   type Session,
   type SessionStatus,
@@ -170,12 +171,23 @@ async function runHeadlessGoal(
     objective: goal.objective,
     replace: goal.replace,
   });
+  let completedSnapshot: GoalSnapshot | null = null;
+  const unsubscribeGoalEvents = session.onEvent((event) => {
+    if (
+      event.type === 'goal.updated' &&
+      event.change?.kind === 'completion' &&
+      event.snapshot !== null
+    ) {
+      completedSnapshot = event.snapshot;
+    }
+  });
   try {
     // The objective is sent as the normal prompt; goal continuation keeps the
     // turn alive until a terminal state is reached.
     await runPromptTurn(session, goal.objective, outputFormat, stdout, stderr);
   } finally {
-    const snapshot = (await session.getGoal()).goal;
+    unsubscribeGoalEvents();
+    const snapshot = completedSnapshot ?? (await session.getGoal()).goal;
     if (outputFormat === 'stream-json') {
       stdout.write(`${JSON.stringify(goalSummaryJson(snapshot))}\n`);
     } else {
