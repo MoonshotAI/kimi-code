@@ -910,7 +910,9 @@ export class KimiTUI {
     }
 
     const entries = this.state.transcriptEntries;
-    const lastUserIndex = entries.findLastIndex((e) => e.kind === 'user');
+    const lastUserIndex = entries.findLastIndex(
+      (e) => e.kind === 'user' || e.kind === 'skill_activation',
+    );
     if (lastUserIndex < 0) {
       this.showError('Nothing to undo.');
       return;
@@ -919,7 +921,10 @@ export class KimiTUI {
     const children = this.state.transcriptContainer.children;
     let lastUserComponentIndex = -1;
     for (let i = children.length - 1; i >= 0; i--) {
-      if (children[i] instanceof UserMessageComponent) {
+      if (
+        children[i] instanceof UserMessageComponent ||
+        children[i] instanceof SkillActivationComponent
+      ) {
         lastUserComponentIndex = i;
         break;
       }

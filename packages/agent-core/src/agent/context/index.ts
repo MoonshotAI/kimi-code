@@ -90,7 +90,7 @@ export class ContextMemory {
         this._tokenCount -= estimateTokensForMessages([message]);
       }
 
-      if (message.role === 'user') {
+      if (isRealUserPrompt(message)) {
         removedUserCount++;
         if (removedUserCount >= count) break;
       }
@@ -295,4 +295,14 @@ function toolResultOutputForModel(result: ExecutableToolResult): string | Conten
 
 function isEmptyOutputText(output: string): boolean {
   return output.length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT;
+}
+
+function isRealUserPrompt(message: ContextMessage): boolean {
+  if (message.role !== 'user') return false;
+  const origin = message.origin;
+  if (origin === undefined || origin.kind === 'user') return true;
+  if (origin.kind === 'skill_activation') {
+    return origin.trigger === 'user-slash';
+  }
+  return false;
 }

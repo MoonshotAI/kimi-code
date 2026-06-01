@@ -507,6 +507,40 @@ describe('Agent context', () => {
     );
   });
 
+  it('undo only counts real user prompts, skipping background notifications', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.appendAssistantText(1, 'first response');
+    ctx.appendAssistantText(2, 'second response');
+
+    // Append a background task notification (role: 'user' but not a real prompt)
+    ctx.agent.context.appendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: 'background task completed' }],
+      toolCalls: [],
+      origin: {
+        kind: 'background_task',
+        taskId: 'bash-001',
+        status: 'completed',
+        notificationId: 'task:bash-001:completed',
+      },
+    });
+
+    expect(ctx.agent.context.history.map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+      'user',
+    ]);
+
+    ctx.agent.context.undo(1);
+
+    // Should remove the background notification, the second assistant, and the second user prompt
+    expect(ctx.agent.context.history.map((m) => m.role)).toEqual(['user', 'assistant']);
+  });
+
 });
 
 describe('Agent context notification projection', () => {
