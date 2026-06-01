@@ -1418,12 +1418,14 @@ describe('FullCompaction', () => {
 
   it('compacts provider overflow when model context size is unknown', async () => {
     let callCount = 0;
-    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {
+    const compactionMaxCompletionTokens: unknown[] = [];
+    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-unknown-context');
       }
       if (callCount === 2) {
+        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
         return textResult('Unknown window compacted summary.');
       }
       if (callCount === 3) {
@@ -1455,6 +1457,7 @@ describe('FullCompaction', () => {
     const events = await ctx.untilTurnEnd();
 
     expect(callCount).toBe(3);
+    expect(compactionMaxCompletionTokens).toEqual([undefined]);
     expect(events).toContainEqual(
       expect.objectContaining({
         event: 'compaction.started',
@@ -1659,6 +1662,14 @@ function oauthTestAgentOptions(
       resolveOAuthTokenProvider: () => ({ getAccessToken }),
     },
   };
+}
+
+function providerMaxCompletionTokens(provider: Parameters<GenerateFn>[0]): unknown {
+  return (
+    provider as {
+      readonly modelParameters?: Record<string, unknown>;
+    }
+  ).modelParameters?.['max_completion_tokens'];
 }
 
 function textResult(text: string): Awaited<ReturnType<GenerateFn>> {

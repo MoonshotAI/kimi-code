@@ -232,10 +232,12 @@ export class FullCompaction {
       await this.triggerPreCompactHook(data, tokensBefore, signal);
 
       const model = this.agent.config.model;
+      const baseProvider = this.agent.config.provider;
+      const maxContextTokens = this.agent.config.modelCapabilities.max_context_tokens;
       const provider =
-        this.agent.config.provider.withMaxCompletionTokens?.(
-          this.agent.config.modelCapabilities.max_context_tokens,
-        ) ?? this.agent.config.provider;
+        maxContextTokens > 0
+          ? baseProvider.withMaxCompletionTokens?.(maxContextTokens) ?? baseProvider
+          : baseProvider;
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
       let usage: TokenUsage | null;

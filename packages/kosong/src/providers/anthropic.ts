@@ -1082,6 +1082,12 @@ export class AnthropicChatProvider implements ChatProvider {
     return this._withGenerationKwargs(kwargs);
   }
 
+  withMaxCompletionTokens(maxCompletionTokens: number): AnthropicChatProvider {
+    return this._withGenerationKwargs({
+      max_tokens: resolveDefaultMaxTokens(this._model, maxCompletionTokens),
+    });
+  }
+
   private _withGenerationKwargs(kwargs: Partial<AnthropicGenerationKwargs>): AnthropicChatProvider {
     const clone = this._clone();
     clone._generationKwargs = { ...clone._generationKwargs, ...kwargs };

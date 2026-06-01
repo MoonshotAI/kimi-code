@@ -2138,4 +2138,34 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
   it('clamps defaultMaxTokens above the documented ceiling for known models', async () => {
     expect(await maxTokensFor('claude-opus-4-7', { defaultMaxTokens: 999999 })).toBe(128000);
   });
+
+  it('withMaxCompletionTokens sets max_tokens on the cloned provider', async () => {
+    const original = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+    });
+    const provider = original.withMaxCompletionTokens(2048);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(provider).not.toBe(original);
+    expect(body['max_tokens']).toBe(2048);
+  });
+
+  it('withMaxCompletionTokens clamps above the documented ceiling for known models', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+    }).withMaxCompletionTokens(999999);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['max_tokens']).toBe(128000);
+  });
 });
