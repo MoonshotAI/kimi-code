@@ -397,24 +397,10 @@ export class BashTool implements BuiltinTool<BashInput> {
       /* process already gone */
     }
 
-    let taskId: string;
-    try {
-      taskId = backgroundManager.registerTask(
-        new ProcessBackgroundTask(proc, command, args.description.trim()),
-        reservation,
-      );
-    } catch (error) {
-      reservation.release();
-      try {
-        await proc.kill('SIGTERM');
-      } catch {
-        /* process already gone */
-      }
-      return {
-        isError: true,
-        output: error instanceof Error ? error.message : String(error),
-      };
-    }
+    const taskId = backgroundManager.registerTask(
+      new ProcessBackgroundTask(proc, command, args.description.trim()),
+      reservation,
+    );
 
     if (timeoutMs !== undefined) {
       setTimeout(() => {

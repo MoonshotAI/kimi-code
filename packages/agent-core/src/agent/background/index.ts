@@ -377,17 +377,13 @@ export class BackgroundManager {
     this.tasks.set(taskId, entry);
 
     const sink = this.createTaskSink(entry);
-    try {
-      entry.lifecyclePromise = Promise.resolve(task.start(sink)).catch(async () => {
+    entry.lifecyclePromise = Promise.resolve()
+      .then(() => task.start(sink))
+      .catch(async () => {
         await this.settleTask(entry, {
           status: entry.abortController.signal.aborted ? 'killed' : 'failed',
         });
       });
-    } catch {
-      entry.lifecyclePromise = this.settleTask(entry, {
-        status: entry.abortController.signal.aborted ? 'killed' : 'failed',
-      }).then(() => {});
-    }
 
     // Initial persistence (snapshot at start).
     void this.persistLive(entry);
