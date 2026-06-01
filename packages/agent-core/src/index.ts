@@ -46,6 +46,7 @@ export type {
   BearerTokenProvider,
   ModelProvider,
   OAuthTokenProviderResolver,
+  ResolvedRuntimeProvider,
 } from './session/provider-manager';
 
 // ─── Wire records (for in-monorepo consumers like apps/vis) ────────────────
