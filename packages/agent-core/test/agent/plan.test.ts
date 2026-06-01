@@ -579,6 +579,22 @@ describe('plan mode injection cadence', () => {
     expect(ctx.agent.context.history).toHaveLength(afterExit);
     await ctx.expectResumeMatches();
   });
+
+  it('keeps the preserved injection index aligned after undo removes earlier messages', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    await ctx.agent.planMode.enter('test-plan', false);
+
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'draft the plan' }]);
+    await ctx.agent.injection.inject();
+    ctx.appendAssistantTurn(1, 'Plan drafted.');
+
+    ctx.agent.context.undo(1);
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'new plan request' }]);
+    await ctx.agent.injection.inject();
+
+    expect(lastUserText(ctx.agent.context.history)).toContain('Plan mode is active');
+  });
 });
 
 function delay(ms: number): Promise<void> {

@@ -897,7 +897,7 @@ export class KimiTUI {
     return this.state.transcriptEntries.length > 0;
   }
 
-  undoLastTurn(): void {
+  async undoLastTurn(): Promise<void> {
     if (this.state.appState.streamingPhase !== 'idle') {
       this.showError('Cannot undo while streaming — press Esc or Ctrl-C first.');
       return;
@@ -915,6 +915,14 @@ export class KimiTUI {
     );
     if (lastUserIndex < 0) {
       this.showError('Nothing to undo.');
+      return;
+    }
+
+    try {
+      await session.undoHistory(1);
+    } catch (error) {
+      const message = formatErrorMessage(error);
+      this.showError(`Failed to undo: ${message}`);
       return;
     }
 
@@ -942,8 +950,6 @@ export class KimiTUI {
     }
 
     this.state.ui.requestRender();
-
-    void session.undoHistory(1);
   }
 
   async getStartupMcpMs(): Promise<number> {

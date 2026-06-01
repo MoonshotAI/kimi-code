@@ -56,6 +56,7 @@ interface MessageDriver {
   handleUserInput(text: string): void;
   persistInputHistory(text: string): Promise<void>;
   getCurrentSessionId(): string;
+  undoLastTurn(): Promise<void>;
 }
 
 interface FeedbackDriver extends MessageDriver {
@@ -110,6 +111,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     prompt: vi.fn(async () => {}),
     steer: vi.fn(async () => {}),
     init: vi.fn(async () => {}),
+    undoHistory: vi.fn(async () => {}),
     cancel: vi.fn(async () => {}),
     cancelCompaction: vi.fn(async () => {}),
     getStatus: vi.fn(async () => ({
@@ -683,6 +685,31 @@ describe('KimiTUI message flow', () => {
         content: 'hello',
       }),
     ]);
+  });
+
+  it('keeps the transcript intact when undo RPC fails', async () => {
+    const session = makeSession({
+      undoHistory: vi.fn(async () => {
+        throw new Error('core rpc unavailable');
+      }),
+    });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+
+    await driver.undoLastTurn();
+
+    expect(session.undoHistory).toHaveBeenCalledWith(1);
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        content: 'hello',
+      }),
+    ]);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('hello');
+    expect(transcript).toContain('Error: Failed to undo: core rpc unavailable');
   });
 
   it('sends pasted image placeholders as image content parts', async () => {

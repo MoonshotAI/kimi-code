@@ -541,6 +541,48 @@ describe('Agent context', () => {
     expect(ctx.agent.context.history.map((m) => m.role)).toEqual(['user', 'assistant']);
   });
 
+  it('preserves injection messages when undo removes the surrounding turn', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('do the work', { kind: 'user' }),
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('Plan mode is active', {
+        kind: 'injection',
+        variant: 'plan_mode',
+      }),
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'work done' }],
+        toolCalls: [],
+      },
+    });
+
+    ctx.agent.context.undo(1);
+
+    expect(ctx.agent.context.history).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        origin: { kind: 'injection', variant: 'plan_mode' },
+      }),
+    ]);
+    expect(ctx.agent.replayBuilder.buildResult()).toEqual([
+      expect.objectContaining({
+        type: 'message',
+        message: expect.objectContaining({
+          origin: { kind: 'injection', variant: 'plan_mode' },
+        }),
+      }),
+    ]);
+  });
+
 });
 
 describe('Agent context notification projection', () => {

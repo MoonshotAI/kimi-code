@@ -77,13 +77,16 @@ export class ContextMemory {
 
     this.agent.records.logRecord({ type: 'context.undo', count });
 
-    let removedCount = 0;
     let removedUserCount = 0;
+    const removedMessages = new Set<ContextMessage>();
     for (let i = this._history.length - 1; i >= 0; i--) {
-      const message = this._history.pop();
+      const message = this._history[i];
       if (message === undefined) continue;
+      if (isInjectionMessage(message)) continue;
 
-      removedCount++;
+      removedMessages.add(message);
+      this._history.splice(i, 1);
+      this.agent.injection.onContextMessageRemoved(i);
 
       if (i < this.tokenCountCoveredMessageCount) {
         this.tokenCountCoveredMessageCount--;
@@ -96,7 +99,7 @@ export class ContextMemory {
       }
     }
 
-    this.agent.replayBuilder.removeLastMessages(removedCount);
+    this.agent.replayBuilder.removeLastMessages(removedMessages);
 
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
@@ -305,4 +308,8 @@ function isRealUserPrompt(message: ContextMessage): boolean {
     return origin.trigger === 'user-slash';
   }
   return false;
+}
+
+function isInjectionMessage(message: ContextMessage): boolean {
+  return message.origin?.kind === 'injection';
 }
