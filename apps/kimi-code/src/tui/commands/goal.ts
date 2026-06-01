@@ -19,7 +19,7 @@ export type ParsedGoalCommand =
       readonly objective: string;
       readonly replace: boolean;
     }
-  | { readonly kind: 'error'; readonly message: string };
+  | { readonly kind: 'error'; readonly message: string; readonly severity?: 'error' | 'hint' };
 
 const CONTROL_SUBCOMMANDS = new Set(['pause', 'resume', 'cancel']);
 
@@ -55,7 +55,13 @@ export function parseGoalCommand(rawArgs: string): ParsedGoalCommand {
 
   const objective = tokens.slice(index).join(' ').trim();
   if (objective.length === 0) {
-    return { kind: 'error', message: 'Provide a goal objective, e.g. `/goal Ship feature X`.' };
+    // A usage hint, not a failure — shown in the same calm style as the other
+    // "nothing to act on" messages (no goal to pause/resume/cancel).
+    return {
+      kind: 'error',
+      severity: 'hint',
+      message: 'Provide a goal objective, e.g. `/goal Ship feature X`.',
+    };
   }
   if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
     return {
@@ -70,7 +76,8 @@ export async function handleGoalCommand(host: SlashCommandHost, args: string): P
   const parsed = parseGoalCommand(args);
   switch (parsed.kind) {
     case 'error':
-      host.showError(parsed.message);
+      if (parsed.severity === 'hint') host.showStatus(parsed.message);
+      else host.showError(parsed.message);
       return;
     case 'status':
       await showGoalStatus(host);
@@ -123,13 +130,31 @@ async function createGoal(
 }
 
 async function pauseGoal(host: SlashCommandHost): Promise<void> {
-  await host.requireSession().pauseGoal();
+  try {
+    await host.requireSession().pauseGoal();
+  } catch (error) {
+    if (isKimiError(error) && error.code === ErrorCodes.GOAL_NOT_FOUND) {
+      host.showStatus('No goal to pause.');
+      return;
+    }
+    host.showError(formatErrorMessage(error));
+    return;
+  }
   if (isStreaming(host)) host.cancelInFlight?.();
   host.showStatus('Goal paused. Use `/goal resume` to continue.');
 }
 
 async function resumeGoal(host: SlashCommandHost): Promise<void> {
-  await host.requireSession().resumeGoal();
+  try {
+    await host.requireSession().resumeGoal();
+  } catch (error) {
+    if (isKimiError(error) && error.code === ErrorCodes.GOAL_NOT_FOUND) {
+      host.showStatus('No goal to resume.');
+      return;
+    }
+    host.showError(formatErrorMessage(error));
+    return;
+  }
   host.showStatus('Goal resumed.');
   host.sendNormalUserInput(RESUME_GOAL_INPUT);
 }

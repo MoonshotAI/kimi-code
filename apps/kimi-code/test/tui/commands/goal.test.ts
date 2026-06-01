@@ -208,6 +208,27 @@ describe('handleGoalCommand', () => {
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
+  // No-goal control commands all read as calm status messages, never red errors.
+  it('pausing with no goal shows a friendly status, not an error', async () => {
+    session.pauseGoal.mockRejectedValueOnce(new KimiError(ErrorCodes.GOAL_NOT_FOUND, 'No current goal'));
+    await handleGoalCommand(host, 'pause');
+    expect(host.showStatus).toHaveBeenCalledWith('No goal to pause.');
+    expect(host.showError).not.toHaveBeenCalled();
+  });
+
+  it('resuming with no goal shows a friendly status, not an error', async () => {
+    session.resumeGoal.mockRejectedValueOnce(new KimiError(ErrorCodes.GOAL_NOT_FOUND, 'No current goal'));
+    await handleGoalCommand(host, 'resume');
+    expect(host.showStatus).toHaveBeenCalledWith('No goal to resume.');
+    expect(host.showError).not.toHaveBeenCalled();
+  });
+
+  it('`replace` with no objective is a hint (status), not an error', async () => {
+    await handleGoalCommand(host, 'replace');
+    expect(host.showStatus).toHaveBeenCalledWith(expect.stringContaining('Provide a goal objective'));
+    expect(host.showError).not.toHaveBeenCalled();
+  });
+
   it('status/pause/cancel work without a configured model', async () => {
     const { host: noModelHost, session: s } = makeHost({ model: '' });
     await handleGoalCommand(noModelHost, 'status');

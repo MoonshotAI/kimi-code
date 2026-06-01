@@ -1410,19 +1410,6 @@ export class KimiTUI {
         );
         break;
       }
-      case 'goal-eval': {
-        const label = this.state.appState.goalEvalLabel ?? 'Reviewing progress…';
-        const spinner = this.ensureActivitySpinner('braille', label, (s) =>
-          chalk.hex(this.state.theme.colors.primary)(s),
-        );
-        this.state.activityContainer.addChild(
-          new ActivityPaneComponent({
-            mode: 'goal-eval',
-            spinner,
-          }),
-        );
-        break;
-      }
       case 'idle':
       case 'session': {
         this.stopActivitySpinner();
@@ -1437,10 +1424,6 @@ export class KimiTUI {
     if (this.state.livePane.pendingApproval !== null) return 'hidden';
     if (this.state.appState.isCompacting) return 'hidden';
     if (this.state.livePane.pendingQuestion !== null) return 'hidden';
-
-    // The goal evaluator runs between a stopped step and the continuation
-    // decision; surface it as its own phase instead of a stale generic spinner.
-    if (this.state.appState.goalEvaluating === true) return 'goal-eval';
 
     const streamingPhase = this.state.appState.streamingPhase;
     if (this.state.livePane.mode === 'idle') {
@@ -1540,8 +1523,7 @@ export class KimiTUI {
       effectiveMode === 'waiting' ||
       effectiveMode === 'thinking' ||
       effectiveMode === 'composing' ||
-      effectiveMode === 'tool' ||
-      effectiveMode === 'goal-eval'
+      effectiveMode === 'tool'
     );
   }
 

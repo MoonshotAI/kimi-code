@@ -256,6 +256,22 @@ turn took any action and what the status is. So:
 - **Hard floor:** existing resource ceilings (context window / configured token budget), not a new
   goal-specific magic number.
 
+### Follow-ups after the sequential-turn refactor
+
+- **Removed the dead evaluator-phase spinner.** With the evaluator gone, nothing emitted
+  `goal.evaluation.started` / `goal.evaluation.ended`, so the "Reviewing progress…" rotating label,
+  the `goal-eval` activity mode, the `goalEvaluating`/`goalEvalLabel` app state, and the two events
+  were all inert. Deleted them.
+- **Consistent no-goal messages.** `/goal pause` and `/goal resume` with no goal leaked a raw red
+  `[goal.not_found] No current goal`; they now show calm status lines ("No goal to pause/resume."),
+  matching `status` ("No goal set…") and `cancel` ("No goal to cancel."). `replace` with no
+  objective is treated as a usage *hint* (status, not a red error) via a `severity` on the parser's
+  error result. Red is now reserved for genuine failures (objective too long, duplicate goal, SDK
+  errors).
+- **`UpdateGoal` timer / approval / authorship** — see the commit; `UpdateGoal` + `GetGoal` are now
+  default-approved, the wall-clock timer is live (clock-anchored in the store), and the completion
+  message is appended by the `UpdateGoal` tool from the final snapshot.
+
 ## Post-implementation fixes
 
 ### Fix: `maxStepsPerTurn` no longer fatally caps long goals (continuation checkpoint)

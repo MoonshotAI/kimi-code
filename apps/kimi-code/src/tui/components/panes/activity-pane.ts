@@ -2,13 +2,7 @@ import { Container, Spacer } from '@earendil-works/pi-tui';
 
 import type { MoonLoader } from '../chrome/moon-loader';
 
-export type ActivityPaneMode =
-  | 'hidden'
-  | 'waiting'
-  | 'thinking'
-  | 'composing'
-  | 'tool'
-  | 'goal-eval';
+export type ActivityPaneMode = 'hidden' | 'waiting' | 'thinking' | 'composing' | 'tool';
 
 export interface ActivityPaneOptions {
   readonly mode: ActivityPaneMode;
@@ -27,10 +21,7 @@ export class ActivityPaneComponent extends Container {
       return;
     }
 
-    if (
-      (options.mode === 'composing' || options.mode === 'goal-eval') &&
-      options.spinner !== undefined
-    ) {
+    if (options.mode === 'composing' && options.spinner !== undefined) {
       this.addChild(new Spacer(1));
       this.addChild(options.spinner);
     }

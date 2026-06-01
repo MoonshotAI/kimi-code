@@ -35,19 +35,6 @@ export interface AppState {
   sessionTitle: string | null;
   /** Current goal snapshot for the footer badge; null/undefined when no active goal. */
   goal?: GoalSnapshot | null;
-  /**
-   * True while the independent goal evaluator is running between a stopped step
-   * and the continuation decision. Drives a dedicated progress-review activity
-   * label instead of the generic working spinner. Set/cleared by the
-   * `goal.evaluation.started` / `goal.evaluation.ended` events.
-   */
-  goalEvaluating?: boolean;
-  /**
-   * The spinner label for the current evaluation phase, picked once (at random
-   * from {@link GOAL_EVAL_LABELS}) when `goal.evaluation.started` fires and held
-   * stable until it ends, so it doesn't flicker across re-renders mid-phase.
-   */
-  goalEvalLabel?: string;
 }
 
 export interface ToolCallBlockData {
