@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -6,6 +6,23 @@ import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 
 import { FileMentionProvider } from '#/tui/components/editor/file-mention-provider';
 import type { GitLsFilesCache, GitSnapshot } from '#/utils/git/git-ls-files';
+
+// Probe whether symlink creation works in this environment. On
+// Windows this requires developer mode or admin; on Linux/macOS it
+// just works. The symlink test is gated on this so CI without
+// symlink support does not get a noisy failure.
+let supportsSymlinks = false;
+try {
+  const probeDir = mkdtempSync(join(tmpdir(), 'symlink-probe-'));
+  try {
+    symlinkSync('target', join(probeDir, 'link'));
+    supportsSymlinks = true;
+  } finally {
+    rmSync(probeDir, { recursive: true, force: true });
+  }
+} catch {
+  supportsSymlinks = false;
+}
 
 function stubGitCache(
   files: string[] | null,
@@ -393,6 +410,48 @@ describe('FileMentionProvider — readdir fallback when no git cache', () => {
     const values = result!.items.map((i) => i.value);
     expect(values).toContain('@README.md');
   });
+
+  it('surfaces a root-level hidden file when a visible subdirectory would otherwise exhaust the cap', async () => {
+    // Codex P2 follow-up: even with the visible-before-hidden sort,
+    // root-level hidden files like `.env` were still sorted behind
+    // visible directories. A large visible subdirectory could fill
+    // READDIR_MAX_ENTRIES and leave `.env` out of the snapshot,
+    // making `@.env` fail. The walker now processes all files in
+    // the current directory (visible and hidden) before recursing.
+    writeFileSync(join(dir, '.env'), '');
+    mkdirSync(join(dir, 'big'));
+    for (let i = 0; i < 1000; i += 1) {
+      writeFileSync(join(dir, 'big', `file${i}.ts`), '');
+    }
+
+    const provider = new FileMentionProvider([], dir, NO_FD, stubGitCache(null));
+    const result = await provider.getSuggestions(['@.env'], 0, 5, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    const values = result!.items.map((i) => i.value);
+    expect(values).toContain('@.env');
+  });
+
+  it.runIf(supportsSymlinks)(
+    'follows symlinks to files in the readdir fallback',
+    async () => {
+      // Codex P2 follow-up: symlink entries are skipped because
+      // `Dirent.isFile()` is false for symlinks. A `real.ts` file
+      // linked as `link.ts` would not surface in @-mention. The
+      // walker now follows symlinks and records the entry if the
+      // target is a file. Symlinks to directories are not recursed
+      // into (cycle risk) and not added to the snapshot.
+      writeFileSync(join(dir, 'real.ts'), '');
+      symlinkSync(join(dir, 'real.ts'), join(dir, 'link.ts'));
+
+      const provider = new FileMentionProvider([], dir, NO_FD, stubGitCache(null));
+      const result = await provider.getSuggestions(['@link'], 0, 5, { signal: ctrl() });
+
+      expect(result).not.toBeNull();
+      const values = result!.items.map((i) => i.value);
+      expect(values).toContain('@link.ts');
+    },
+  );
 
   it('caches the walk result: new files do not appear within the 2s TTL window', async () => {
     writeFileSync(join(dir, 'old.ts'), '');

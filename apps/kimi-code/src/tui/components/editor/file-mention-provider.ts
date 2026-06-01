@@ -290,49 +290,64 @@ class ReadDirWalker {
     } catch {
       return;
     }
-    // Walk visible (non-dot) entries before hidden ones so a hidden
-    // subtree like `.config/` cannot exhaust READDIR_MAX_ENTRIES with
-    // hidden paths and push a visible file out of the snapshot. Within
-    // the same visibility bucket, files come before directories so a
-    // single large subdirectory cannot fill the cap and leave sibling
-    // files in the same parent unmentioned. Hidden paths are still
-    // collected — they fill any remaining capacity, so the opt-in
-    // `@.env` / `@.github/` queries still work.
+    // Two-tier priority:
+    //   1. Visibility — visible (non-dot) entries before hidden ones,
+    //      so a hidden subtree like `.config/` cannot exhaust
+    //      READDIR_MAX_ENTRIES with hidden paths and push a visible
+    //      file out of the snapshot.
+    //   2. Within each visibility bucket, files before directories —
+    //      so a single large subdirectory cannot fill the cap and
+    //      leave sibling files (including opt-in hidden files like
+    //      `.env` at the root) unmentioned.
+    // Hidden paths are still collected — they fill any remaining
+    // capacity, so the opt-in `@.env` / `@.github/` queries still
+    // work.
     const ordered = entries.toSorted((a, b) => {
-      // Hidden (dot-prefixed) entries sort after visible ones.
       const aHidden = a.name.startsWith('.') ? 1 : 0;
       const bHidden = b.name.startsWith('.') ? 1 : 0;
       if (aHidden !== bHidden) return aHidden - bHidden;
-      // Within the same visibility bucket, files sort before
-      // directories so the current directory's files are captured
-      // before the cap fills inside a sibling subdirectory.
       const aDir = a.isDirectory() ? 1 : 0;
       const bDir = b.isDirectory() ? 1 : 0;
       return aDir - bDir;
     });
+
+    // Phase 1: collect files in this directory (regular files and
+    // symlinks that resolve to files) before recursing into any
+    // subdirectory. Doing this in a separate pass — instead of
+    // interleaving with directory recursion — guarantees that
+    // current-directory files are captured first. Symlinks that
+    // resolve to directories are intentionally NOT recursed into
+    // (cycle risk) and NOT added to the snapshot.
     for (const entry of ordered) {
-      // Short-circuit the loop once the cap is reached. The top-of-
-      // function check guards the recursion entry; this one stops the
-      // per-entry iteration so a single large directory doesn't
-      // statSync every remaining file after the cap is filled.
       if (files.length >= READDIR_MAX_ENTRIES) break;
       if (entry.name === '.' || entry.name === '..') continue;
-      if (entry.isDirectory()) {
-        if (SKIP_DIRS.has(entry.name)) continue;
-        const absChild = join(absDir, entry.name);
-        const relChild = relDir === '' ? entry.name : `${relDir}/${entry.name}`;
-        this.walkDir(absChild, relChild, depth + 1, files, mtimeByPath);
-      } else if (entry.isFile()) {
-        const absPath = join(absDir, entry.name);
-        const relPath = relDir === '' ? entry.name : `${relDir}/${entry.name}`;
-        try {
-          const stat = statSync(absPath);
-          files.push(relPath);
-          mtimeByPath.set(relPath, stat.mtimeMs);
-        } catch {
-          // File disappeared between readdir and stat — skip it.
-        }
+      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+      const absPath = join(absDir, entry.name);
+      const relPath = relDir === '' ? entry.name : `${relDir}/${entry.name}`;
+      try {
+        // statSync follows symlinks. If the target is a file we
+        // add it; if it is a directory or unresolvable we skip.
+        const stat = statSync(absPath);
+        if (!stat.isFile()) continue;
+        files.push(relPath);
+        mtimeByPath.set(relPath, stat.mtimeMs);
+      } catch {
+        // File/link disappeared or unresolvable — skip it.
       }
+    }
+
+    // Phase 2: recurse into subdirectories. The cap check at the
+    // top of walkDir guards the recursion entry; the inner check
+    // at the top of this loop stops further descent once the cap
+    // is filled.
+    for (const entry of ordered) {
+      if (files.length >= READDIR_MAX_ENTRIES) break;
+      if (entry.name === '.' || entry.name === '..') continue;
+      if (!entry.isDirectory()) continue;
+      if (SKIP_DIRS.has(entry.name)) continue;
+      const absChild = join(absDir, entry.name);
+      const relChild = relDir === '' ? entry.name : `${relDir}/${entry.name}`;
+      this.walkDir(absChild, relChild, depth + 1, files, mtimeByPath);
     }
   }
 }
