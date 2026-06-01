@@ -820,6 +820,46 @@ describe('Session resume permission parent chain', () => {
       await session.close();
     }
   });
+
+  it('streams background subagent progress and omits the stream for foreground', async () => {
+    const detailedText =
+      'Implemented the requested change across the affected module, traced every call site to confirm nothing else depended on the old behaviour, applied the edit, ran the existing test suite, and verified it still passes end to end before handing the work back to the parent agent.';
+
+    // Foreground: no progress stream is created (nothing would consume it).
+    const fgParent = testAgent();
+    fgParent.configure();
+    const fgChild = testAgent();
+    fgChild.mockNextResponse({ type: 'text', text: detailedText });
+    const fgHost = new SessionSubagentHost(fakeSession(fgParent.agent, fgChild.agent), 'main');
+    const fgHandle = await fgHost.spawn('coder', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Do it',
+      description: 'Foreground task',
+      runInBackground: false,
+      signal,
+    });
+    await fgHandle.completion;
+    expect(fgHandle.progress).toBeUndefined();
+
+    // Background: the progress stream receives the child's formatted output.
+    const bgParent = testAgent();
+    bgParent.configure();
+    const bgChild = testAgent();
+    bgChild.mockNextResponse({ type: 'text', text: detailedText });
+    const bgHost = new SessionSubagentHost(fakeSession(bgParent.agent, bgChild.agent), 'main');
+    const bgHandle = await bgHost.spawn('coder', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Do it',
+      description: 'Background task',
+      runInBackground: true,
+      signal,
+    });
+    expect(bgHandle.progress).toBeDefined();
+    const chunks: string[] = [];
+    bgHandle.progress?.subscribe((chunk) => chunks.push(chunk));
+    await bgHandle.completion;
+    expect(chunks.join('')).toContain('traced every call site');
+  });
 });
 
 describe('Session.createAgent', () => {

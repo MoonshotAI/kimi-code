@@ -11,7 +11,12 @@ import {
 import { linkAbortSignal, userCancellationReason } from '../utils/abort';
 import { collectGitContext } from './git-context';
 import type { Session } from './index';
+import { formatSubagentEvent, SubagentProgress } from './subagent-progress';
 import SUMMARY_CONTINUATION_PROMPT from './summary-continuation.md';
+
+/** Coalesce `assistant.delta` text up to this many bytes before flushing, so
+ *  per-token deltas don't become a storm of tiny `output.log` appends. */
+const PROGRESS_FLUSH_THRESHOLD = 512;
 
 /**
  * A subagent summary shorter than this many characters triggers one
@@ -49,6 +54,8 @@ export type SubagentHandle = {
   readonly profileName: string;
   readonly resumed: boolean;
   readonly completion: Promise<SubagentCompletion>;
+  /** Progress feed, present only for background runs (foreground has no task to feed). */
+  readonly progress?: SubagentProgress | undefined;
 };
 
 export class SessionSubagentHost {
@@ -74,6 +81,8 @@ export class SessionSubagentHost {
       undefined,
       this.ownerAgentId,
     );
+    // Tap before runChild so events emitted during child setup aren't missed.
+    const tap = this.attachProgress(agent, options.runInBackground);
     const controller = new AbortController();
     const unlinkAbortSignal = linkAbortSignal(options.signal, controller);
     this.activeChildren.set(id, {
@@ -92,6 +101,7 @@ export class SessionSubagentHost {
       },
       () => this.configureChild(parent, agent, profile),
     ).finally(() => {
+      tap?.detach();
       unlinkAbortSignal();
       this.activeChildren.delete(id);
     });
@@ -101,6 +111,7 @@ export class SessionSubagentHost {
       profileName: profile.name,
       resumed: false,
       completion,
+      progress: tap?.progress,
     };
   }
 
@@ -131,6 +142,7 @@ export class SessionSubagentHost {
 
     const profileName = child.config.profileName ?? 'subagent';
 
+    const tap = this.attachProgress(child, options.runInBackground);
     const controller = new AbortController();
     const unlinkAbortSignal = linkAbortSignal(options.signal, controller);
     this.activeChildren.set(agentId, {
@@ -155,6 +167,7 @@ export class SessionSubagentHost {
         return Promise.resolve();
       },
     ).finally(() => {
+      tap?.detach();
       unlinkAbortSignal();
       this.activeChildren.delete(agentId);
     });
@@ -164,6 +177,7 @@ export class SessionSubagentHost {
       profileName,
       resumed: true,
       completion,
+      progress: tap?.progress,
     };
   }
 
@@ -185,6 +199,42 @@ export class SessionSubagentHost {
       return undefined;
     }
     return this.session.agents.get(agentId)?.config.profileName;
+  }
+
+  // Tap a background subagent's events into a progress buffer (foreground gets
+  // none — no task to feed). `detach()` flushes the remainder and unsubscribes.
+  private attachProgress(
+    child: Agent,
+    runInBackground: boolean,
+  ): { readonly progress: SubagentProgress; readonly detach: () => void } | undefined {
+    if (!runInBackground) return undefined;
+    const progress = new SubagentProgress();
+    let pending = '';
+    const flush = (): void => {
+      if (pending.length > 0) {
+        progress.push(pending);
+        pending = '';
+      }
+    };
+    const unsubscribe = child.onEvent((event) => {
+      const text = formatSubagentEvent(event);
+      if (text === undefined) return;
+      if (event.type === 'assistant.delta') {
+        pending += text;
+        if (pending.length >= PROGRESS_FLUSH_THRESHOLD) flush();
+      } else {
+        // flush prose before the tool boundary so order is preserved
+        flush();
+        progress.push(text);
+      }
+    });
+    return {
+      progress,
+      detach: () => {
+        flush();
+        unsubscribe();
+      },
+    };
   }
 
   private resolveProfile(parent: Agent, profileName: string): ResolvedAgentProfile {

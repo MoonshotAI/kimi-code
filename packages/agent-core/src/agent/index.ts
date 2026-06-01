@@ -123,6 +123,9 @@ export class Agent {
 
   private lastLlmConfigLogSignature?: string;
 
+  // In-process event taps, fanned out alongside the RPC sink in `emitEvent`.
+  private readonly eventListeners = new Set<(event: AgentEvent) => void>();
+
   constructor(options: AgentOptions) {
     this.type = options.type ?? 'main';
     this.kaos = options.kaos;
@@ -385,8 +388,25 @@ export class Agent {
     };
   }
 
+  onEvent(listener: (event: AgentEvent) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => {
+      this.eventListeners.delete(listener);
+    };
+  }
+
   emitEvent(event: AgentEvent): void {
     if (this.records.restoring) return;
+    // size check keeps the common no-tap path off this hot loop
+    if (this.eventListeners.size > 0) {
+      for (const listener of this.eventListeners) {
+        try {
+          listener(event);
+        } catch {
+          /* a tap must not break emission */
+        }
+      }
+    }
     void this.rpc?.emitEvent?.(event);
   }
 

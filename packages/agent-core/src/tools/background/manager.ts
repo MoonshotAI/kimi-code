@@ -138,6 +138,9 @@ interface ManagedProcess {
   stopRequested: boolean;
   /** Session dir captured at registration for output.log writes. */
   readonly outputSessionDir?: string | undefined;
+  /** Run once from `finalizeTerminal` (every terminal path) to release an
+   *  agent task's output subscription so its progress listener cannot leak. */
+  onTerminalCleanup?: (() => void) | undefined;
   lifecyclePromise: Promise<void>;
   persistWriteQueue: Promise<void>;
   outputWriteQueue: Promise<void>;
@@ -761,7 +764,10 @@ export class BackgroundProcessManager {
   /**
    * Register a Promise-based agent task (no KaosProcess). Used by
    * AgentTool for background subagent dispatch. Agent tasks appear in
-   * `list()` / `getTask()` but have pid=0 and empty output.
+   * `list()` / `getTask()` with pid=0. Because there is no live
+   * `proc.stdout`, intermediate output is streamed via the optional
+   * `opts.outputSource` (the subagent's formatted progress); without it
+   * the only output is the final summary appended on completion.
    *
    * `opts.timeoutMs` wraps the completion in an external deadline. On
    * deadline fire, the task is marked `failed` with `timedOut=true`
@@ -780,6 +786,8 @@ export class BackgroundProcessManager {
       agentId?: string;
       /** Subagent profile name; surfaced on task info. */
       subagentType?: string;
+      /** Live progress source; subscribed immediately, unsubscribed at terminal state. */
+      outputSource?: (onChunk: (chunk: string) => void) => () => void;
     } = {},
   ): string {
     if (opts.reservation) {
@@ -826,6 +834,12 @@ export class BackgroundProcessManager {
       outputWriteQueue: Promise.resolve(),
     };
     this.processes.set(taskId, entry);
+    // Pipe progress into the ring buffer + output.log, like register() does for
+    // bash stdout; chunks after terminal are dropped, and finalizeTerminal owns
+    // the unsubscribe so it fires even on the direct stop() path.
+    entry.onTerminalCleanup = opts.outputSource?.((chunk) => {
+      if (!TERMINAL_STATUSES.has(entry.status)) this.appendOutput(entry, chunk);
+    });
     void this.persistLive(entry);
     this.fireLifecycle('started', this.toInfo(entry));
 
@@ -858,7 +872,13 @@ export class BackgroundProcessManager {
         // `completion` resolved before deadline.
         const r = outcome as { result: string };
         if (TERMINAL_STATUSES.has(entry.status)) return;
-        this.appendOutput(entry, r.result);
+        // A streaming task already logged the assistant's prose (its tail is the
+        // final message), so re-appending the result would just duplicate it —
+        // only fall back to the result when nothing streamed. Non-streaming
+        // tasks have no other output, so the result is their whole log.
+        if (opts.outputSource === undefined || entry.outputSizeBytes === 0) {
+          this.appendOutput(entry, r.result);
+        }
         await this.finalizeTerminal(entry, 'completed', 0);
       })
       .catch(async (error: unknown) => {
@@ -1170,6 +1190,9 @@ export class BackgroundProcessManager {
     // that here for the awaiting → terminal path.
     entry.approvalReason = undefined;
     entry.stopRequested = false;
+    // Runs once (guarded above): release any output subscription.
+    entry.onTerminalCleanup?.();
+    entry.onTerminalCleanup = undefined;
     await this.persistLive(entry);
     this.fireTerminalCallbacks(entry);
     this.resolveWaiters(entry);

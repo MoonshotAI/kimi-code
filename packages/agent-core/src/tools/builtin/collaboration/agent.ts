@@ -253,11 +253,14 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         }
         let taskId: string;
         try {
+          const progress = handle.progress;
           taskId = backgroundManager.registerAgentTask(handle.completion, args.description, {
             timeoutMs: timeoutMs ?? this.subagentHost.backgroundTaskTimeoutMs,
             reservation,
             agentId: handle.agentId,
             subagentType: handle.profileName,
+            outputSource:
+              progress !== undefined ? (onChunk) => progress.subscribe(onChunk) : undefined,
             abort: () => {
               backgroundController?.abort();
             },
