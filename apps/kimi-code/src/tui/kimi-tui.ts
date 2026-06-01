@@ -171,6 +171,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
+    goal: null,
   };
 }
 
@@ -973,7 +974,7 @@ export class KimiTUI {
   }
 
   async syncRuntimeState(session: Session = this.requireSession()): Promise<void> {
-    const status = await session.getStatus();
+    const [status, goalResult] = await Promise.all([session.getStatus(), session.getGoal()]);
     this.setAppState({
       sessionId: session.id,
       model: status.model ?? '',
@@ -984,6 +985,7 @@ export class KimiTUI {
       maxContextTokens: status.maxContextTokens,
       contextUsage: status.contextUsage,
       sessionTitle: session.summary?.title ?? null,
+      goal: goalResult.goal,
     });
   }
 
@@ -1010,6 +1012,7 @@ export class KimiTUI {
     this.questionController.cancelAll(reason);
     this.session = undefined;
     this.harness.setTelemetryContext({ sessionId: null });
+    this.setAppState({ goal: null });
     return previous;
   }
 
