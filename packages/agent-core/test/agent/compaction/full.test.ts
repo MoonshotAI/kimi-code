@@ -731,6 +731,42 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('names truncated compaction responses when retries are exhausted', async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const generate: GenerateFn = async () => {
+      attempts += 1;
+      return {
+        ...textResult('Partial summary.'),
+        finishReason: 'truncated',
+        rawFinishReason: 'length',
+      };
+    };
+    const ctx = testAgent({ generate, compactionStrategy: alwaysCompactOnce });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Trigger truncated auto compaction' }] });
+    await vi.advanceTimersByTimeAsync(60_000);
+    const events = await ctx.untilTurnEnd();
+
+    expect(attempts).toBe(5);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: {
+          turnId: 0,
+          reason: 'failed',
+          error: expect.objectContaining({
+            code: 'compaction.failed',
+            message:
+              'CompactionTruncatedError: Compaction response was truncated before producing a complete summary.',
+          }),
+        },
+      }),
+    );
+    await ctx.expectResumeMatches();
+  });
+
   it('reports compaction retry_count when retryable generation failures are exhausted', async () => {
     vi.useFakeTimers();
     const records: TelemetryRecord[] = [];

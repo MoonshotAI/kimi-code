@@ -38,6 +38,13 @@ export interface CompactedHistory {
 
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
 
+class CompactionTruncatedError extends Error {
+  constructor() {
+    super('Compaction response was truncated before producing a complete summary.');
+    this.name = 'CompactionTruncatedError';
+  }
+}
+
 export class FullCompaction {
   protected compactionCountInTurn = 0;
   protected compacting: {
@@ -225,6 +232,10 @@ export class FullCompaction {
       await this.triggerPreCompactHook(data, tokensBefore, signal);
 
       const model = this.agent.config.model;
+      const provider =
+        this.agent.config.provider.withMaxCompletionTokens?.(
+          this.agent.config.modelCapabilities.max_context_tokens,
+        ) ?? this.agent.config.provider;
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
       let usage: TokenUsage | null;
@@ -244,10 +255,9 @@ export class FullCompaction {
             toolCalls: [],
           } satisfies Message,
         ];
-        class TruncatedError extends Error {}
         try {
           const response = await this.agent.generate(
-            this.agent.config.provider,
+            provider,
             this.agent.config.systemPrompt,
             [...this.agent.tools.loopTools],
             messages,
@@ -255,13 +265,13 @@ export class FullCompaction {
             { signal },
           );
           if (response.finishReason === 'truncated') {
-            throw new TruncatedError();
+            throw new CompactionTruncatedError();
           }
           usage = response.usage;
           summary = extractCompactionSummary(response);
           break;
         } catch (error) {
-          if (error instanceof APIContextOverflowError || error instanceof TruncatedError) {
+          if (error instanceof APIContextOverflowError || error instanceof CompactionTruncatedError) {
             compactedCount = this.strategy.reduceCompactOnOverflow(messagesToCompact);
           }
           else if (!isRetryableGenerateError(error)) {
