@@ -12,7 +12,7 @@
 
 | 命令 | 别名 | 说明 | 随时可用 |
 | --- | --- | --- | --- |
-| `/login` | — | 选择账号或平台并登录：Kimi Code 走 OAuth device code 流程，Moonshot AI 开放平台通过 API 密钥登录。 | 否 |
+| `/login` | — | 选择账号或平台并登录：Kimi Code 走 OAuth 验证码流程，Kimi Platform 通过 API 密钥登录。 | 否 |
 | `/logout` | — | 清除当前所选账号的凭据（Kimi Code OAuth 凭据，或对应开放平台的供应商配置）。 | 否 |
 | `/connect [--refresh] [--url=<catalog-url>]` | — | 从模型目录中选择并配置供应商与模型。CLI 已内置默认目录；传入 `--refresh` 可从 models.dev 拉取最新目录，传入 `--url` 可指向自定义目录地址。详见 [平台与模型 — `/connect` 与模型目录](../configuration/providers.md#connect-与模型目录)。 | 否 |
 | `/model` | — | 切换当前会话使用的 LLM 模型。 | 否 |

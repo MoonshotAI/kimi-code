@@ -12,7 +12,7 @@ Some commands are only available in the idle state. Running them while the sessi
 
 | Command | Alias | Description | Always available |
 | --- | --- | --- | --- |
-| `/login` | — | Pick an account or platform and sign in: Kimi Code uses the OAuth device code flow, while the Moonshot AI Open Platform signs in with an API key. | No |
+| `/login` | — | Pick an account or platform and sign in: Kimi Code uses the OAuth device code flow, while Kimi Platform signs in with an API key. | No |
 | `/logout` | — | Clear the credentials of the currently selected account (Kimi Code OAuth credentials, or the corresponding open platform provider config). | No |
 | `/connect [--refresh] [--url=<catalog-url>]` | — | Configure a provider and model from a model catalog. The default catalog is bundled with the CLI; pass `--refresh` to fetch the latest catalog from models.dev, or `--url` to read it from a custom URL. See [Providers and models — `/connect` and the model catalog](../configuration/providers.md#connect-and-the-model-catalog). | No |
 | `/model` | — | Switch the LLM model used by the current session. | No |
