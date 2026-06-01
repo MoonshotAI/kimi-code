@@ -119,7 +119,6 @@ function handleEvent(
     case 'compaction.cancelled':
     case 'compaction.completed':
     case 'background.task.started':
-    case 'background.task.updated':
     case 'background.task.terminated':
       break;
   }
