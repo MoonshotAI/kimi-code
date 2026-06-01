@@ -9,7 +9,7 @@ import {
   AGENT_WIRE_PROTOCOL_VERSION,
   InMemoryAgentRecordPersistence,
 } from '../../src/agent/records';
-import { appendTaskOutput, writeTask } from '../../src/agent/background/persist';
+import { BackgroundTaskPersistence } from '../../src/agent/background';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { testAgent } from './harness/agent';
 import { DEFAULT_TEST_SYSTEM_PROMPT } from './harness/snapshots';
@@ -194,19 +194,20 @@ describe('Agent resume', () => {
     ]);
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-resume-delivered-'));
     try {
-      const ctx = testAgent({ persistence });
-      ctx.agent.background.attachSessionDir(sessionDir);
-      await writeTask(sessionDir, {
-        task_id: 'agent-seen0000',
-        command: '[agent] already delivered',
+      const backgroundPersistence = new BackgroundTaskPersistence(sessionDir);
+      const ctx = testAgent({ persistence, homedir: sessionDir });
+      await backgroundPersistence.writeTask({
+        taskId: 'agent-seen0000',
+        kind: 'agent',
         description: 'already delivered',
-        pid: 0,
-        started_at: 1_700_000_000,
-        ended_at: 1_700_000_010,
-        exit_code: 0,
+        startedAt: 1_700_000_000,
+        endedAt: 1_700_000_010,
         status: 'completed',
       });
-      await appendTaskOutput(sessionDir, 'agent-seen0000', 'already delivered summary');
+      await backgroundPersistence.appendTaskOutput(
+        'agent-seen0000',
+        'already delivered summary',
+      );
       const steer = vi.spyOn(ctx.agent.turn, 'steer');
 
       await ctx.agent.resume();
@@ -233,19 +234,17 @@ describe('Agent resume', () => {
     ]);
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-resume-undelivered-'));
     try {
-      const ctx = testAgent({ persistence });
-      ctx.agent.background.attachSessionDir(sessionDir);
-      await writeTask(sessionDir, {
-        task_id: 'agent-new00000',
-        command: '[agent] newly delivered',
+      const backgroundPersistence = new BackgroundTaskPersistence(sessionDir);
+      const ctx = testAgent({ persistence, homedir: sessionDir });
+      await backgroundPersistence.writeTask({
+        taskId: 'agent-new00000',
+        kind: 'agent',
         description: 'newly delivered',
-        pid: 0,
-        started_at: 1_700_000_000,
-        ended_at: 1_700_000_010,
-        exit_code: 0,
+        startedAt: 1_700_000_000,
+        endedAt: 1_700_000_010,
         status: 'completed',
       });
-      await appendTaskOutput(sessionDir, 'agent-new00000', 'newly delivered summary');
+      await backgroundPersistence.appendTaskOutput('agent-new00000', 'newly delivered summary');
       const steer = vi.spyOn(ctx.agent.turn, 'steer');
 
       await ctx.agent.resume();

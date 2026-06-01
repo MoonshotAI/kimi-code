@@ -13,7 +13,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../../src/agent';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
 import { SkillRegistry } from '../../src/skill';
-import { BackgroundManager } from '../../src/agent/background';
 import { TaskListInputSchema } from '../../src/tools/background/task-list';
 import { TaskOutputInputSchema } from '../../src/tools/background/task-output';
 import { TaskStopInputSchema } from '../../src/tools/background/task-stop';
@@ -32,6 +31,7 @@ import { BashInputSchema, BashTool } from '../../src/tools/builtin/shell/bash';
 import type { WorkspaceConfig } from '../../src/tools/support/workspace';
 import { createFakeKaos } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
+import { createBackgroundManager } from '../agent/background/helpers';
 
 const signal = new AbortController().signal;
 const workspace: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
@@ -310,7 +310,7 @@ describe('current builtin collaboration tools', () => {
 
 describe('current builtin background tool schemas', () => {
   it('background task schemas and manager-backed tools are covered', () => {
-    const manager = new BackgroundManager();
+    const manager = createBackgroundManager().manager;
 
     expect(TaskListInputSchema.safeParse({ active_only: true }).success).toBe(true);
     expect(TaskOutputInputSchema.safeParse({ task_id: 'bash-1' }).success).toBe(true);

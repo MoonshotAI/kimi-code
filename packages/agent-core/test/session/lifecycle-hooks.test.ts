@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
+import { ProcessBackgroundTask } from '../../src/agent/background';
 
 
 const tempDirs: string[] = [];
@@ -121,7 +122,9 @@ describe('Session lifecycle hooks', () => {
     });
     const agent = await session.createMain();
     const { proc, killSpy } = pendingProcess();
-    const taskId = agent.background.register(proc, 'sleep 60', 'exit cleanup');
+    const taskId = agent.background.registerTask(
+      new ProcessBackgroundTask(proc, 'sleep 60', 'exit cleanup'),
+    );
 
     await session.close();
 
@@ -142,7 +145,9 @@ describe('Session lifecycle hooks', () => {
     });
     const agent = await session.createMain();
     const { proc, killSpy } = pendingProcess();
-    const taskId = agent.background.register(proc, 'sleep 60', 'env cleanup');
+    const taskId = agent.background.registerTask(
+      new ProcessBackgroundTask(proc, 'sleep 60', 'env cleanup'),
+    );
 
     await session.close();
 

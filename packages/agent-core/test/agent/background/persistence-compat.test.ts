@@ -4,7 +4,7 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { BackgroundManager, BackgroundTaskPersistence } from '../../src/agent/background';
+import { BackgroundManager, BackgroundTaskPersistence } from '../../../src/agent/background';
 
 let sessionDir: string;
 

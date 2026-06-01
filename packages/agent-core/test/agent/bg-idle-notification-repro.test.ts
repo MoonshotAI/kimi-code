@@ -22,9 +22,8 @@ import { join } from 'pathe';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { appendTaskOutput, writeTask } from '../../src/agent/background/persist';
 import { testAgent } from './harness/agent';
-import { AgentBackgroundTask } from '../../src/agent/background';
+import { AgentBackgroundTask, BackgroundTaskPersistence } from '../../src/agent/background';
 
 describe('background notification → main agent (real Agent instance)', () => {
   it('IDLE: completed bg agent auto-starts a new turn with <notification> XML', async () => {
@@ -42,7 +41,7 @@ describe('background notification → main agent (real Agent instance)', () => {
       'idle-state repro',
     ));
 
-    await ctx.agent.background.waitForTerminal(taskId);
+    await ctx.agent.background.wait(taskId);
 
     // Give the steer→launch→turnWorker→generate chain time to run.
     await vi.waitFor(
@@ -148,7 +147,7 @@ describe('background notification → main agent (real Agent instance)', () => {
     ];
 
     for (const id of taskIds) {
-      await ctx.agent.background.waitForTerminal(id);
+      await ctx.agent.background.wait(id);
     }
 
     await vi.waitFor(
@@ -211,7 +210,7 @@ describe('background notification → main agent (real Agent instance)', () => {
       'race-after-turn',
     ));
 
-    await ctx.agent.background.waitForTerminal(taskId);
+    await ctx.agent.background.wait(taskId);
 
     // The notification arriving while idle should auto-launch a turn.
     await vi.waitFor(
@@ -245,44 +244,43 @@ describe('background notification → main agent (real Agent instance)', () => {
     try {
       // Simulate a previous session's bash bg task that completed
       // before exit and an agent bg task that didn't (will be lost).
-      await writeTask(sessionDir, {
-        task_id: 'bash-prev0000',
+      const backgroundPersistence = new BackgroundTaskPersistence(sessionDir);
+      await backgroundPersistence.writeTask({
+        taskId: 'bash-prev0000',
+        kind: 'process',
         command: 'echo previous',
         description: 'previous bash task',
         pid: 12345,
-        started_at: 1_700_000_000,
-        ended_at: 1_700_000_005,
-        exit_code: 0,
+        startedAt: 1_700_000_000,
+        endedAt: 1_700_000_005,
+        exitCode: 0,
         status: 'completed',
       });
-      await appendTaskOutput(sessionDir, 'bash-prev0000', 'previous bash output');
+      await backgroundPersistence.appendTaskOutput('bash-prev0000', 'previous bash output');
 
-      await writeTask(sessionDir, {
-        task_id: 'agent-prev0000',
-        command: '[agent] previous agent task',
+      await backgroundPersistence.writeTask({
+        taskId: 'agent-prev0000',
+        kind: 'agent',
         description: 'previous agent task',
-        pid: 0,
-        started_at: 1_700_000_000,
-        ended_at: null,
-        exit_code: null,
+        startedAt: 1_700_000_000,
+        endedAt: null,
         status: 'running',
       });
 
-      const ctx = testAgent();
+      const ctx = testAgent({ homedir: sessionDir });
       ctx.configure({ tools: [] });
 
       // We do NOT mock any LLM response. If the resume path
       // mistakenly launches a turn, scripted-generate throws
       // "Unexpected generate call" and the test fails loudly.
-      ctx.agent.background.attachSessionDir(sessionDir);
       const steerSpy = vi.spyOn(ctx.agent.turn, 'steer');
 
       // Reproduce Agent.resume()'s post-replay sequence.
       await ctx.agent.background.loadFromDisk();
-      const reconcileResult = await ctx.agent.background.reconcile();
+      await ctx.agent.background.reconcile();
 
       // The agent-* running task should now be lost.
-      expect(reconcileResult.lost).toContain('agent-prev0000');
+      expect(ctx.agent.background.getTask('agent-prev0000')?.status).toBe('lost');
 
       // Give the silent append a beat.
       await vi.waitFor(() => {

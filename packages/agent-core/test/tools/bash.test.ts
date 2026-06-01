@@ -3,8 +3,8 @@ import { PassThrough, Readable, type Writable } from 'node:stream';
 import type { Environment, KaosProcess } from '@moonshot-ai/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
-import { BackgroundManager } from '../../src/agent/background';
 import { type BashInput, BashInputSchema, BashTool } from '../../src/tools/builtin/shell/bash';
+import { createBackgroundManager, registerProcess } from '../agent/background/helpers';
 import { createFakeKaos } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 
@@ -242,7 +242,7 @@ describe('BashTool', () => {
     const tool = new BashTool(
       createFakeKaos({ osEnv: posixEnv }),
       '/workspace',
-      new BackgroundManager(),
+      createBackgroundManager().manager,
     );
 
     expect(tool.description).toContain('Commands available');
@@ -454,7 +454,7 @@ describe('BashTool', () => {
     expect(unavailable.output).toContain('Background execution is not available');
     expect(execWithEnv).not.toHaveBeenCalled();
 
-    const manager = new BackgroundManager();
+    const manager = createBackgroundManager().manager;
     const withManager = new BashTool(
       createFakeKaos({ execWithEnv, osEnv: posixEnv }),
       '/workspace',
@@ -472,7 +472,7 @@ describe('BashTool', () => {
   it('registers background commands and returns a task id', async () => {
     const proc = processWithOutput();
     const execWithEnv = vi.fn().mockResolvedValue(proc);
-    const manager = new BackgroundManager();
+    const manager = createBackgroundManager().manager;
     const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace', manager);
 
     const result = await executeTool(tool,
@@ -484,10 +484,11 @@ describe('BashTool', () => {
     expect(manager.list(false)).toHaveLength(1);
   });
 
-  it('does not spawn background commands when the task limit is reached', async () => {
-    const manager = new BackgroundManager({ maxRunningTasks: 1 });
-    manager.register(processWithOutput(), 'sleep 10', 'existing task');
-    const execWithEnv = vi.fn().mockResolvedValue(processWithOutput());
+  it('kills a spawned background command when the task limit is reached', async () => {
+    const manager = createBackgroundManager({ maxRunningTasks: 1 }).manager;
+    registerProcess(manager, processWithOutput(), 'sleep 10', 'existing task');
+    const rejectedProc = processWithOutput();
+    const execWithEnv = vi.fn().mockResolvedValue(rejectedProc);
     const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace', manager);
 
     const result = await executeTool(tool,
@@ -498,19 +499,20 @@ describe('BashTool', () => {
       isError: true,
       output: 'Too many background tasks are already running.',
     });
-    expect(execWithEnv).not.toHaveBeenCalled();
+    expect(execWithEnv).toHaveBeenCalledTimes(1);
+    expect(rejectedProc.kill).toHaveBeenCalledWith('SIGTERM');
   });
 
-  it('reserves a task slot before spawning concurrent background commands', async () => {
-    const manager = new BackgroundManager({ maxRunningTasks: 1 });
+  it('rejects one of two concurrent background commands when the task limit is reached', async () => {
+    const manager = createBackgroundManager({ maxRunningTasks: 1 }).manager;
+    const firstProc = processWithOutput({
+      wait: () => new Promise(() => {}),
+    });
+    const secondProc = processWithOutput();
     const execWithEnv = vi
       .fn()
-      .mockResolvedValueOnce(
-        processWithOutput({
-          wait: () => new Promise(() => {}),
-        }),
-      )
-      .mockResolvedValueOnce(processWithOutput());
+      .mockResolvedValueOnce(firstProc)
+      .mockResolvedValueOnce(secondProc);
     const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace', manager);
 
     const first = executeTool(tool,
@@ -522,7 +524,8 @@ describe('BashTool', () => {
 
     const results = await Promise.all([first, second]);
 
-    expect(execWithEnv).toHaveBeenCalledTimes(1);
+    expect(execWithEnv).toHaveBeenCalledTimes(2);
+    expect(secondProc.kill).toHaveBeenCalledWith('SIGTERM');
     expect(results).toContainEqual(expect.objectContaining({ isError: false }));
     expect(results).toContainEqual(
       expect.objectContaining({
@@ -532,16 +535,16 @@ describe('BashTool', () => {
     );
   });
 
-  it('preserves background reservations while using Git Bash semantics on Windows', async () => {
-    const manager = new BackgroundManager({ maxRunningTasks: 1 });
+  it('uses Git Bash semantics and rejects the concurrent command at the task limit', async () => {
+    const manager = createBackgroundManager({ maxRunningTasks: 1 }).manager;
+    const firstProc = processWithOutput({
+      wait: () => new Promise(() => {}),
+    });
+    const secondProc = processWithOutput();
     const execWithEnv = vi
       .fn()
-      .mockResolvedValueOnce(
-        processWithOutput({
-          wait: () => new Promise(() => {}),
-        }),
-      )
-      .mockResolvedValueOnce(processWithOutput());
+      .mockResolvedValueOnce(firstProc)
+      .mockResolvedValueOnce(secondProc);
     const tool = new BashTool(
       createFakeKaos({ execWithEnv, osEnv: windowsBashEnv }),
       'C:\\Users\\me\\project',
@@ -565,7 +568,7 @@ describe('BashTool', () => {
 
     const results = await Promise.all([first, second]);
 
-    expect(execWithEnv).toHaveBeenCalledTimes(1);
+    expect(execWithEnv).toHaveBeenCalledTimes(2);
     const [argv, env] = execWithEnv.mock.calls[0]!;
     expect(argv).toEqual([
       'C:\\Program Files\\Git\\bin\\bash.exe',
@@ -573,6 +576,7 @@ describe('BashTool', () => {
       "cd '/c/Users/me/project' && echo ok 2>/dev/null",
     ]);
     expect(env).toMatchObject({ SHELL: 'C:\\Program Files\\Git\\bin\\bash.exe' });
+    expect(secondProc.kill).toHaveBeenCalledWith('SIGTERM');
     expect(results).toContainEqual(expect.objectContaining({ isError: false }));
     expect(results).toContainEqual(
       expect.objectContaining({
@@ -587,7 +591,7 @@ describe('BashTool', () => {
     try {
       const { proc, finishWait, markExited } = processWithVisibleExitBeforeWait(0);
       const execWithEnv = vi.fn().mockResolvedValue(proc);
-      const manager = new BackgroundManager();
+      const manager = createBackgroundManager().manager;
       const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace', manager);
 
       const result = await executeTool(tool,
@@ -623,7 +627,7 @@ describe('BashTool', () => {
     try {
       const proc = processThatNeverExits();
       const execWithEnv = vi.fn().mockResolvedValue(proc);
-      const manager = new BackgroundManager();
+      const manager = createBackgroundManager().manager;
       const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace', manager);
 
       const result = await executeTool(tool,
@@ -648,7 +652,7 @@ describe('BashTool', () => {
     try {
       const proc = processThatNeverExits();
       const execWithEnv = vi.fn().mockResolvedValue(proc);
-      const manager = new BackgroundManager();
+      const manager = createBackgroundManager().manager;
       const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace', manager);
 
       const result = await executeTool(tool,
@@ -779,7 +783,7 @@ describe('BashTool', () => {
   it('reports background task startup with task_id, status, automatic_notification, and a human-shell hint', async () => {
     const proc = processWithOutput();
     const execWithEnv = vi.fn().mockResolvedValue(proc);
-    const manager = new BackgroundManager();
+    const manager = createBackgroundManager().manager;
     const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace', manager);
 
     const result = await executeTool(
@@ -797,7 +801,7 @@ describe('BashTool', () => {
   });
 
   it('rejects background command without description (description-required guard)', async () => {
-    const manager = new BackgroundManager();
+    const manager = createBackgroundManager().manager;
     const execWithEnv = vi.fn().mockResolvedValue(processWithOutput());
     const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace', manager);
 
@@ -838,7 +842,7 @@ describe('BashTool', () => {
     const tool = new BashTool(
       createFakeKaos({ osEnv: posixEnv }),
       '/workspace',
-      new BackgroundManager(),
+      createBackgroundManager().manager,
     );
 
     const description = tool.description;
@@ -862,7 +866,7 @@ describe('BashTool prompt / runtime consistency', () => {
     const enabledTool = new BashTool(
       createFakeKaos({ execWithEnv, osEnv: posixEnv }),
       '/workspace',
-      new BackgroundManager(),
+      createBackgroundManager().manager,
     );
     const promptToolNames = new Set(
       [...enabledTool.description.matchAll(/`(Task[A-Za-z]+)`/g)].map((match) => match[1]),
