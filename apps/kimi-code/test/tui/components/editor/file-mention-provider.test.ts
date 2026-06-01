@@ -340,6 +340,33 @@ describe('FileMentionProvider — readdir fallback when no git cache', () => {
     expect(result).toBeNull();
   });
 
+  it('prioritizes visible entries when a hidden subtree exhausts the entry cap', async () => {
+    // Codex P2 follow-up: a hidden dir like `.config/` with 1000+
+    // entries used to fill READDIR_MAX_ENTRIES with hidden paths, so
+    // a visible root-level file was missing from the default `@` menu.
+    // The walker now sorts entries to process visible ones first, so
+    // the visible file makes it into the snapshot even when the cap
+    // is reached by a hidden subtree.
+    writeFileSync(join(dir, 'visible.ts'), '');
+    mkdirSync(join(dir, '.config'));
+    for (let i = 0; i < 1000; i += 1) {
+      writeFileSync(join(dir, '.config', `entry${i}.txt`), '');
+    }
+
+    const provider = new FileMentionProvider([], dir, NO_FD, stubGitCache(null));
+    const result = await provider.getSuggestions(['@'], 0, 1, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    const values = result!.items.map((i) => i.value);
+    // The visible file must survive even though the hidden subtree
+    // alone has more entries than READDIR_MAX_ENTRIES.
+    expect(values).toContain('@visible.ts');
+    // The default filter still strips dot-segments from suggestions,
+    // so .config/* entries don't surface in the empty-query menu
+    // regardless of the cap behavior.
+    expect(values.every((v) => !v.startsWith('@.'))).toBe(true);
+  });
+
   it('caches the walk result: new files do not appear within the 2s TTL window', async () => {
     writeFileSync(join(dir, 'old.ts'), '');
 

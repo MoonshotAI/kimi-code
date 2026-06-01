@@ -290,7 +290,17 @@ class ReadDirWalker {
     } catch {
       return;
     }
-    for (const entry of entries) {
+    // Walk visible (non-dot) entries before hidden ones so a hidden
+    // subtree like `.config/` cannot exhaust READDIR_MAX_ENTRIES with
+    // hidden paths and push a visible file out of the snapshot. Hidden
+    // paths are still collected — they fill any remaining capacity, so
+    // the opt-in `@.env` / `@.github/` queries still work.
+    const ordered = entries.toSorted((a, b) => {
+      const aHidden = a.name.startsWith('.') ? 1 : 0;
+      const bHidden = b.name.startsWith('.') ? 1 : 0;
+      return aHidden - bHidden;
+    });
+    for (const entry of ordered) {
       // Short-circuit the loop once the cap is reached. The top-of-
       // function check guards the recursion entry; this one stops the
       // per-entry iteration so a single large directory doesn't
