@@ -26,9 +26,9 @@ import type { BackgroundTaskInfo } from './task';
  * persistence layer. The prefix is intentionally open-ended so new task
  * kinds do not need persistence-layer changes.
  */
-export const VALID_TASK_ID: RegExp = /^[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-z]{8}$/;
+const VALID_TASK_ID: RegExp = /^[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-z]{8}$/;
 
-export type PersistedTask = BackgroundTaskInfo;
+type PersistedTask = BackgroundTaskInfo;
 
 function tasksDirOf(sessionDir: string): string {
   return join(sessionDir, 'tasks');
@@ -64,11 +64,6 @@ export class BackgroundTaskPersistence {
   /** Atomically write a task's persisted state. Creates dirs as needed. */
   async writeTask(task: PersistedTask): Promise<void> {
     await this.store.write(task.taskId, task);
-  }
-
-  /** Read a single task file. Returns undefined when missing/corrupt. */
-  async readTask(taskId: string): Promise<PersistedTask | undefined> {
-    return this.store.read(taskId);
   }
 
   async appendTaskOutput(taskId: string, chunk: string): Promise<void> {

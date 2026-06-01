@@ -389,7 +389,6 @@ function runPromptTurn(
         case 'agent.status.updated':
         case 'background.task.started':
         case 'background.task.terminated':
-        case 'background.task.updated':
         case 'compaction.blocked':
         case 'compaction.cancelled':
         case 'compaction.completed':

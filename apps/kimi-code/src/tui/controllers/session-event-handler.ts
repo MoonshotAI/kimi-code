@@ -5,7 +5,6 @@ import type {
   BackgroundTaskInfo,
   BackgroundTaskStartedEvent,
   BackgroundTaskTerminatedEvent,
-  BackgroundTaskUpdatedEvent,
   CompactionCancelledEvent,
   CompactionCompletedEvent,
   CompactionStartedEvent,
@@ -204,7 +203,6 @@ export class SessionEventHandler {
       case 'subagent.completed': this.handleSubagentCompleted(event); break;
       case 'subagent.failed': this.handleSubagentFailed(event); break;
       case 'background.task.started':
-      case 'background.task.updated':
       case 'background.task.terminated':
         this.handleBackgroundTaskEvent(event); break;
       case 'cron.fired': this.handleCronFired(event); break;
@@ -279,7 +277,6 @@ export class SessionEventHandler {
         return true;
       }
       case 'background.task.started':
-      case 'background.task.updated':
       case 'background.task.terminated':
       case 'compaction.blocked':
       case 'compaction.cancelled':
@@ -874,7 +871,7 @@ export class SessionEventHandler {
   // ---------------------------------------------------------------------------
 
   private handleBackgroundTaskEvent(
-    event: BackgroundTaskStartedEvent | BackgroundTaskUpdatedEvent | BackgroundTaskTerminatedEvent,
+    event: BackgroundTaskStartedEvent | BackgroundTaskTerminatedEvent,
   ): void {
     const { state } = this.host;
     const { info } = event;

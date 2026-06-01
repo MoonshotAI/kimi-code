@@ -3,34 +3,21 @@ import type { KaosProcess } from '@moonshot-ai/kaos';
 import { errorMessage } from '../../loop/errors';
 import type {
   BackgroundTask,
+  BackgroundTaskInfo,
   BackgroundTaskInfoBase,
   BackgroundTaskSink,
 } from './task';
 
-export interface ProcessBackgroundTaskInfo extends BackgroundTaskInfoBase {
-  readonly kind: 'process';
-  readonly command: string;
-  readonly pid: number;
-  readonly exitCode: number | null;
-}
-
-export interface ProcessBackgroundTaskOptions {
-  readonly idPrefix?: string;
-}
-
 export class ProcessBackgroundTask implements BackgroundTask {
   readonly kind = 'process' as const;
-  readonly idPrefix: string;
+  readonly idPrefix = 'bash';
   private exitCode: number | null = null;
 
   constructor(
     readonly proc: KaosProcess,
     readonly command: string,
     readonly description: string,
-    options: ProcessBackgroundTaskOptions = {},
-  ) {
-    this.idPrefix = options.idPrefix ?? 'bash';
-  }
+  ) {}
 
   async start(sink: BackgroundTaskSink): Promise<void> {
     for (const stream of [this.proc.stdout, this.proc.stderr]) {
@@ -71,7 +58,7 @@ export class ProcessBackgroundTask implements BackgroundTask {
     await this.proc.kill('SIGKILL');
   }
 
-  toInfo(base: BackgroundTaskInfoBase): ProcessBackgroundTaskInfo {
+  toInfo(base: BackgroundTaskInfoBase): BackgroundTaskInfo {
     return {
       ...base,
       kind: 'process',

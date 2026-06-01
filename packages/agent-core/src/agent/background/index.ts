@@ -40,13 +40,10 @@ export function isBackgroundTaskTerminal(status: BackgroundTaskStatus): boolean 
 }
 
 export { AgentBackgroundTask } from './agent-task';
-export type { AgentBackgroundTaskInfo } from './agent-task';
 export { ProcessBackgroundTask } from './process-task';
-export type { ProcessBackgroundTaskInfo } from './process-task';
-export { BackgroundTaskPersistence, VALID_TASK_ID } from './persist';
+export { BackgroundTaskPersistence } from './persist';
 export type {
   BackgroundTaskInfo,
-  BackgroundTaskKind,
   BackgroundTaskStatus,
 } from './task';
 
@@ -65,8 +62,6 @@ interface ManagedTask {
   terminalFired: boolean;
   /** Human-readable reason for the terminal status, when available. */
   stopReason?: string | undefined;
-  /** Deadline supplied at registration; surfaced via task info. */
-  timeoutMs?: number | undefined;
   /** Cancellation signal owned by the manager and observed by the concrete task. */
   readonly abortController: AbortController;
   lifecyclePromise: Promise<void>;
@@ -98,25 +93,13 @@ const _ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
  * over an 8-char suffix yields ~36^8 ≈ 2.8e12 distinct ids which is
  * more than enough uniqueness for per-session task ids.
  */
-export function generateTaskId(kind: string): string {
+function generateTaskId(kind: string): string {
   const bytes = randomBytes(8);
   let suffix = '';
   for (let i = 0; i < 8; i++) {
     suffix += _ALPHABET[bytes[i]! % 36];
   }
   return `${kind}-${suffix}`;
-}
-
-/**
- * Terminal-state info for tasks reconciled as lost on resume. They
- * have no live KaosProcess and no captured output (the buffer died
- * with the previous process), so list/get returns this minimal record.
- */
-export interface ReconcileResult {
-  /** Task IDs that were marked `lost` because their process is gone. */
-  readonly lost: readonly string[];
-  /** Snapshot of each lost task's persisted info for terminal notifications. */
-  readonly lostInfo: readonly BackgroundTaskInfo[];
 }
 
 export interface BackgroundTaskOutputSnapshot {
@@ -200,10 +183,6 @@ export class BackgroundManager {
     });
   }
 
-  private emitTaskUpdated(info: BackgroundTaskInfo): void {
-    this.agent.emitEvent({ type: 'background.task.updated', info });
-  }
-
   private emitTaskTerminated(info: BackgroundTaskInfo): void {
     this.agent.emitEvent({ type: 'background.task.terminated', info });
     this.agent.telemetry.track('background_task_completed', {
@@ -247,7 +226,6 @@ export class BackgroundManager {
       waiters: [],
       terminalFired: false,
       abortController: new AbortController(),
-      timeoutMs: task.timeoutMs,
       lifecyclePromise: Promise.resolve(),
       persistWriteQueue: Promise.resolve(),
       outputWriteQueue: Promise.resolve(),
@@ -327,7 +305,7 @@ export class BackgroundManager {
     await this.tasks.get(taskId)?.outputWriteQueue;
 
     const previewLimit = Math.max(0, Math.trunc(maxPreviewBytes));
-    const persistence = this.persistenceFor(taskId);
+    const persistence = this.persistence;
     if (persistence !== undefined && (await persistence.taskOutputExists(taskId))) {
       const outputSizeBytes = await persistence.taskOutputSizeBytes(taskId);
       const previewOffset = Math.max(0, outputSizeBytes - previewLimit);
@@ -494,10 +472,9 @@ export class BackgroundManager {
    * Reconcile loaded ghost tasks. Any ghost with status `running` is
    * reclassified as `lost` (its previous CLI process died without
    * writing a terminal state). Updates the on-disk record and returns
-   * the lost task ids so the caller can emit user-facing notifications.
+   * the lost task snapshots so the caller can emit user-facing notifications.
    */
-  protected async markLoadedTasksLost(): Promise<ReconcileResult> {
-    const lost: string[] = [];
+  private async markLoadedTasksLost(): Promise<readonly BackgroundTaskInfo[]> {
     const lostInfo: BackgroundTaskInfo[] = [];
     const persistence = this.persistence;
     for (const [id, info] of this.ghosts) {
@@ -512,19 +489,17 @@ export class BackgroundManager {
       if (persistence !== undefined) {
         await persistence.writeTask(updated);
       }
-      lost.push(id);
       lostInfo.push(updated);
     }
-    return { lost, lostInfo };
+    return lostInfo;
   }
 
-  async reconcile(): Promise<ReconcileResult> {
-    const result = await this.markLoadedTasksLost();
-    for (const info of result.lostInfo) {
+  async reconcile(): Promise<void> {
+    const lostInfo = await this.markLoadedTasksLost();
+    for (const info of lostInfo) {
       this.emitTaskTerminated(info);
     }
     await this.restoreBackgroundTaskNotifications();
-    return result;
   }
 
   /**
@@ -559,12 +534,6 @@ export class BackgroundManager {
       .catch(() => { });
   }
 
-  private persistenceFor(taskId: string): BackgroundTaskPersistence | undefined {
-    if (this.tasks.has(taskId)) return this.persistence;
-    if (this.ghosts.has(taskId)) return this.persistence;
-    return undefined;
-  }
-
   private async restoreBackgroundTaskNotifications(): Promise<void> {
     for (const info of this.list(false)) {
       if (!isBackgroundTaskTerminal(info.status)) continue;
@@ -595,25 +564,21 @@ export class BackgroundManager {
       status: info.status,
       notificationId: `task:${info.taskId}:${info.status}`,
     };
-    const notificationId = origin.notificationId;
     const key = notificationKey(origin);
     if (this.scheduledNotificationKeys.has(key)) return;
-    if (this.hasDeliveredNotification(origin)) return;
+    if (this.deliveredNotificationKeys.has(key)) return;
 
     this.scheduledNotificationKeys.add(key);
     const tailOutput = (await this.getOutputSnapshot(info.taskId, NOTIFICATION_TAIL_BYTES))
       .preview;
-    if (this.hasDeliveredNotification(origin)) return;
-    const isAgentTask = info.kind === 'agent';
-    const label = isAgentTask ? 'agent' : 'task';
     const notification: BackgroundTaskNotification = {
-      id: notificationId,
+      id: origin.notificationId,
       category: 'task',
       type: `task.${info.status}`,
       source_kind: 'background_task',
       source_id: info.taskId,
       agent_id: info.kind === 'agent' ? info.agentId : undefined,
-      title: `Background ${label} ${info.status}`,
+      title: `Background ${info.kind} ${info.status}`,
       severity: info.status === 'completed' ? 'info' : 'warning',
       body: buildBackgroundTaskNotificationBody(info),
       tail_output: tailOutput,
@@ -646,10 +611,6 @@ export class BackgroundManager {
     this.deliveredNotificationKeys.add(notificationKey(origin));
   }
 
-  private hasDeliveredNotification(origin: BackgroundTaskOrigin): boolean {
-    return this.deliveredNotificationKeys.has(notificationKey(origin));
-  }
-
   private async settleTask(
     entry: ManagedTask,
     settlement: BackgroundTaskSettlement,
@@ -676,13 +637,12 @@ export class BackgroundManager {
   private toInfo(entry: ManagedTask): BackgroundTaskInfo {
     const base: BackgroundTaskInfoBase = {
       taskId: entry.taskId,
-      kind: entry.task.kind,
       description: entry.task.description,
       status: entry.status,
       startedAt: entry.startedAt,
       endedAt: entry.endedAt,
       stopReason: entry.stopReason,
-      timeoutMs: entry.timeoutMs,
+      timeoutMs: entry.task.timeoutMs,
     };
     return entry.task.toInfo(base);
   }

@@ -239,11 +239,6 @@ export interface BackgroundTaskStartedEvent {
   readonly info: BackgroundTaskInfo;
 }
 
-export interface BackgroundTaskUpdatedEvent {
-  readonly type: 'background.task.updated';
-  readonly info: BackgroundTaskInfo;
-}
-
 export interface BackgroundTaskTerminatedEvent {
   readonly type: 'background.task.terminated';
   readonly info: BackgroundTaskInfo;
@@ -305,7 +300,6 @@ export type AgentEvent =
   | CompactionCancelledEvent
   | CompactionCompletedEvent
   | BackgroundTaskStartedEvent
-  | BackgroundTaskUpdatedEvent
   | BackgroundTaskTerminatedEvent
   | CronFiredEvent;
 

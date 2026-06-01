@@ -3,17 +3,10 @@ import { sleep } from '@antfu/utils';
 import { errorMessage, isAbortError } from '../../loop/errors';
 import {
   type BackgroundTask,
+  type BackgroundTaskInfo,
   type BackgroundTaskInfoBase,
   type BackgroundTaskSink,
 } from './task';
-
-export interface AgentBackgroundTaskInfo extends BackgroundTaskInfoBase {
-  readonly kind: 'agent';
-  /** Subagent identifier accepted by Agent(resume=...). */
-  readonly agentId?: string;
-  /** Subagent profile name. */
-  readonly subagentType?: string;
-}
 
 export interface AgentBackgroundTaskOptions {
   readonly timeoutMs?: number;
@@ -81,7 +74,7 @@ export class AgentBackgroundTask implements BackgroundTask {
     }
   }
 
-  toInfo(base: BackgroundTaskInfoBase): AgentBackgroundTaskInfo {
+  toInfo(base: BackgroundTaskInfoBase): BackgroundTaskInfo {
     return {
       ...base,
       kind: 'agent',
