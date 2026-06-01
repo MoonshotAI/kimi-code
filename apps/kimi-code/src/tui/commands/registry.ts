@@ -18,7 +18,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'permission',
     aliases: [],
-    description: 'Select permission mode',
+    description: 'Select or persist permission mode',
     priority: 100,
     availability: 'always',
   },

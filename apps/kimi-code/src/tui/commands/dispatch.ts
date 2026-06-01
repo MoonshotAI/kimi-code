@@ -26,6 +26,7 @@ import {
   handleCompactCommand,
   handleEditorCommand,
   handleModelCommand,
+  handlePermissionCommand,
   handlePlanCommand,
   handleThemeCommand,
   handleYoloCommand,
@@ -58,6 +59,7 @@ export {
   handleCompactCommand,
   handleEditorCommand,
   handleModelCommand,
+  handlePermissionCommand,
   handlePlanCommand,
   handleThemeCommand,
   handleYoloCommand,
@@ -233,7 +235,7 @@ async function handleBuiltInSlashCommand(
       await handleProviderCommand(host);
       return;
     case 'permission':
-      showPermissionPicker(host);
+      await handlePermissionCommand(host, args);
       return;
     case 'settings':
       showSettingsSelector(host);

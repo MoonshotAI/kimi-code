@@ -17,6 +17,14 @@ import type { SlashCommandHost } from './dispatch';
 // Plan / Config commands
 // ---------------------------------------------------------------------------
 
+const PERMISSION_COMMAND_USAGE =
+  'Usage: /permission [manual|auto|yolo] or /permission default <manual|auto|yolo>';
+
+function parsePermissionMode(value: string): PermissionMode | undefined {
+  if (value === 'manual' || value === 'auto' || value === 'yolo') return value;
+  return undefined;
+}
+
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
   if (session === undefined) {
@@ -148,6 +156,35 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
     host.setAppState({ permissionMode: 'auto' });
     host.showNotice('Auto mode: ON', 'Tools auto-approved. Agent will not ask questions.');
   }
+}
+
+export async function handlePermissionCommand(host: SlashCommandHost, args: string): Promise<void> {
+  const tokens = args
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
+  if (tokens.length === 0) {
+    showPermissionPicker(host);
+    return;
+  }
+
+  if (tokens[0] === 'default') {
+    const mode = tokens.length === 2 ? parsePermissionMode(tokens[1] ?? '') : undefined;
+    if (mode === undefined) {
+      host.showError(PERMISSION_COMMAND_USAGE);
+      return;
+    }
+    await applyDefaultPermissionChoice(host, mode);
+    return;
+  }
+
+  const mode = tokens.length === 1 ? parsePermissionMode(tokens[0] ?? '') : undefined;
+  if (mode === undefined) {
+    host.showError(PERMISSION_COMMAND_USAGE);
+    return;
+  }
+  await applyPermissionChoice(host, mode);
 }
 
 export async function handleCompactCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -403,13 +440,19 @@ export function showPermissionPicker(host: SlashCommandHost): void {
 }
 
 async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMode): Promise<void> {
+  const session = host.session;
+  if (session === undefined) {
+    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    return;
+  }
+
   if (mode === host.state.appState.permissionMode) {
     host.showStatus(`Permission mode unchanged: ${mode}.`);
     return;
   }
 
   try {
-    await host.requireSession().setPermission(mode);
+    await session.setPermission(mode);
   } catch (error) {
     const msg = formatErrorMessage(error);
     host.showError(`Failed to set permission mode: ${msg}`);
@@ -418,6 +461,70 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
 
   host.setAppState({ permissionMode: mode });
   host.showNotice(`Permission mode: ${mode}`);
+}
+
+function showDefaultPermissionPicker(host: SlashCommandHost): void {
+  void (async () => {
+    let currentValue: PermissionMode = 'manual';
+    try {
+      const config = await host.harness.getConfig({ reload: true });
+      currentValue = config.defaultPermissionMode ?? 'manual';
+    } catch {
+      currentValue = host.state.appState.permissionMode;
+    }
+
+    host.mountEditorReplacement(
+      new PermissionSelectorComponent({
+        currentValue,
+        colors: host.state.theme.colors,
+        onSelect: (value) => {
+          host.restoreEditor();
+          void applyDefaultPermissionChoice(host, value);
+        },
+        onCancel: () => {
+          host.restoreEditor();
+        },
+      }),
+    );
+  })();
+}
+
+async function applyDefaultPermissionChoice(host: SlashCommandHost, mode: PermissionMode): Promise<void> {
+  let persisted = false;
+  try {
+    const config = await host.harness.getConfig({ reload: true });
+    if (config.defaultPermissionMode !== mode) {
+      await host.harness.setConfig({ defaultPermissionMode: mode });
+      persisted = true;
+    }
+  } catch (error) {
+    const msg = formatErrorMessage(error);
+    host.showError(`Failed to save default permission mode: ${msg}`);
+    return;
+  }
+
+  let currentUpdated = false;
+  const session = host.session;
+  if (session !== undefined && mode !== host.state.appState.permissionMode) {
+    try {
+      await session.setPermission(mode);
+      host.setAppState({ permissionMode: mode });
+      currentUpdated = true;
+    } catch (error) {
+      const msg = formatErrorMessage(error);
+      const prefix = persisted
+        ? `Default permission mode set to ${mode}`
+        : `Default permission mode already ${mode}`;
+      host.showError(`${prefix}, but failed to update current session: ${msg}`);
+      return;
+    }
+  }
+
+  const status = persisted
+    ? `Default permission mode set to ${mode}.`
+    : `Default permission mode already ${mode}.`;
+  const detail = currentUpdated ? ' Current session updated.' : '';
+  host.showStatus(`${status}${detail}`, host.state.theme.colors.success);
 }
 
 export function showSettingsSelector(host: SlashCommandHost): void {
@@ -439,6 +546,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
   switch (value) {
     case 'model': showModelPicker(host); return;
     case 'permission': showPermissionPicker(host); return;
+    case 'default-permission': showDefaultPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
     case 'editor': showEditorPicker(host); return;
     case 'usage': void showUsage(host); return;

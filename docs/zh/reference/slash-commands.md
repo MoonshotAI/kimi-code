@@ -17,7 +17,7 @@
 | `/provider` | — | 打开交互式供应商管理器，查看、添加和删除已配置的供应商。详见 [平台与模型 — `/provider` 与供应商管理](../configuration/providers.md#provider-与供应商管理)。 | 是 |
 | `/model` | — | 切换当前会话使用的 LLM 模型。 | 是 |
 | `/settings` | `/config` | 打开 TUI 内的设置面板。 | 是 |
-| `/permission` | — | 选择权限模式（permission mode）。 | 是 |
+| `/permission [manual\|auto\|yolo]` | — | 选择当前会话的权限模式；运行 `/permission default <mode>` 可持久化新会话默认模式。 | 是 |
 | `/editor` | — | 配置 `Ctrl-G` 调起的外部编辑器。 | 是 |
 | `/theme` | — | 切换终端 UI 配色主题。 | 是 |
 

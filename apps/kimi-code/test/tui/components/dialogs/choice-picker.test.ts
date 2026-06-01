@@ -100,6 +100,8 @@ describe('ChoicePickerComponent', () => {
     const settingsOutput = settings.render(120).map(strip);
     expect(settingsOutput).toContain('  ❯ Model');
     expect(settingsOutput).toContain('    Switch the active model and thinking mode.');
+    expect(settingsOutput).toContain('    Default Permission');
+    expect(settingsOutput).toContain('    Persist the permission mode for new sessions.');
   });
 
   it('submits the selected model and inline thinking state', () => {

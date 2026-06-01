@@ -529,6 +529,41 @@ describe('KimiTUI message flow', () => {
     expect(harness.track).not.toHaveBeenCalledWith('yolo_toggle', expect.anything());
   });
 
+  it('sets permission mode directly from /permission arguments', async () => {
+    const { driver, session, harness } = await makeDriver();
+
+    driver.handleUserInput('/permission auto');
+
+    await vi.waitFor(() => {
+      expect(session.setPermission).toHaveBeenCalledWith('auto');
+    });
+    expect(driver.state.appState.permissionMode).toBe('auto');
+    expect(harness.setConfig).not.toHaveBeenCalled();
+  });
+
+  it('persists /permission default and applies it to the active session', async () => {
+    const session = makeSession();
+    const getConfig = vi.fn(async () => ({
+      models: {
+        k2: { model: 'moonshot-v1', maxContextSize: 100 },
+      },
+      defaultPermissionMode: 'manual',
+    }));
+    const setConfig = vi.fn(async () => ({
+      providers: {},
+      defaultPermissionMode: 'yolo',
+    }));
+    const { driver } = await makeDriver(session, { getConfig, setConfig });
+
+    driver.handleUserInput('/permission default yolo');
+
+    await vi.waitFor(() => {
+      expect(setConfig).toHaveBeenCalledWith({ defaultPermissionMode: 'yolo' });
+      expect(session.setPermission).toHaveBeenCalledWith('yolo');
+    });
+    expect(driver.state.appState.permissionMode).toBe('yolo');
+  });
+
   it('hydrates MCP server status after subscribing to session events', async () => {
     const session = makeSession({
       listMcpServers: vi.fn(async () => [

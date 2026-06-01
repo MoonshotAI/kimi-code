@@ -2,7 +2,13 @@ import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 
 import type { ColorPalette } from '#/tui/theme/colors';
 
-export type SettingsSelection = 'model' | 'theme' | 'editor' | 'permission' | 'usage';
+export type SettingsSelection =
+  | 'model'
+  | 'theme'
+  | 'editor'
+  | 'permission'
+  | 'default-permission'
+  | 'usage';
 
 const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
   {
@@ -14,6 +20,11 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     value: 'permission',
     label: 'Permission',
     description: 'Choose how tool actions are approved.',
+  },
+  {
+    value: 'default-permission',
+    label: 'Default Permission',
+    description: 'Persist the permission mode for new sessions.',
   },
   {
     value: 'theme',
@@ -38,6 +49,7 @@ function isSettingsSelection(value: string): value is SettingsSelection {
     value === 'theme' ||
     value === 'editor' ||
     value === 'permission' ||
+    value === 'default-permission' ||
     value === 'usage'
   );
 }

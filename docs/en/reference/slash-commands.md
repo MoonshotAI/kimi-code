@@ -17,7 +17,7 @@ Some commands are only available in the idle state. Running them while the sessi
 | `/provider` | — | Open the interactive provider manager to view, add, and delete configured providers. See [Providers and models — `/provider` and provider management](../configuration/providers.md#provider-and-provider-management). | Yes |
 | `/model` | — | Switch the LLM model used by the current session. | Yes |
 | `/settings` | `/config` | Open the settings panel inside the TUI. | Yes |
-| `/permission` | — | Choose a permission mode. | Yes |
+| `/permission [manual\|auto\|yolo]` | — | Choose a permission mode for the current session; run `/permission default <mode>` to persist the default for new sessions. | Yes |
 | `/editor` | — | Configure the external editor launched by `Ctrl-G`. | Yes |
 | `/theme` | — | Switch the terminal UI color theme. | Yes |
 
