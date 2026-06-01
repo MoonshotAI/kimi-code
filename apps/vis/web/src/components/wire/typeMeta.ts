@@ -27,7 +27,6 @@ export const TYPE_TONE: Record<RecordType, PillTone> = {
   'plan_mode.enter':                       'lifecycle',
   'plan_mode.cancel':                      'warning',
   'plan_mode.exit':                        'success',
-  'background.stop':                       'warning',
 };
 
 /** Compact human label for each record type (used in the type badge). */
@@ -54,5 +53,4 @@ export const TYPE_LABEL: Record<RecordType, string> = {
   'plan_mode.enter': 'plan↻',
   'plan_mode.cancel': 'plan×',
   'plan_mode.exit': 'plan✓',
-  'background.stop': 'bg-stop',
 };

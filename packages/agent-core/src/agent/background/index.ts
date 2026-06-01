@@ -323,20 +323,6 @@ export class BackgroundManager {
   }
 
   /**
-   * Await all pending `output.log` appends for a task to settle.
-   *
-   * Output chunks are persisted to disk on an async queue, so a task can
-   * reach a terminal state before its final chunks have landed on disk.
-   * Callers should `await flushOutput()` before reading the on-disk log
-   * directly. No-op for unknown/ghost tasks.
-   */
-  async flushOutput(taskId: string): Promise<void> {
-    const entry = this.tasks.get(taskId);
-    if (entry === undefined) return;
-    await entry.outputWriteQueue;
-  }
-
-  /**
    * Return the output snapshot used by TaskOutput.
    *
    * Persisted logs are preferred when the task was registered with an
@@ -351,7 +337,7 @@ export class BackgroundManager {
   ): Promise<BackgroundTaskOutputSnapshot> {
     if (this.getTask(taskId) === undefined) return emptyOutputSnapshot();
 
-    await this.flushOutput(taskId);
+    await this.tasks.get(taskId)?.outputWriteQueue;
 
     const previewLimit = Math.max(0, Math.trunc(maxPreviewBytes));
     const persistence = this.persistenceFor(taskId);
@@ -386,7 +372,7 @@ export class BackgroundManager {
   }
 
   /** Get the combined output of a task (tail of the ring buffer). */
-  getOutput(taskId: string, tail?: number): string {
+  private getOutput(taskId: string, tail?: number): string {
     const entry = this.tasks.get(taskId);
     if (!entry) return '';
     const full = entry.outputChunks.join('');
@@ -421,10 +407,6 @@ export class BackgroundManager {
 
   /** Stop a running task. SIGTERM → 5s grace → SIGKILL. */
   async stop(taskId: string, reason?: string): Promise<BackgroundTaskInfo | undefined> {
-    this.agent.records.logRecord({
-      type: 'background.stop',
-      taskId,
-    });
     const entry = this.tasks.get(taskId);
     if (!entry) return undefined;
     // Normalize at this shared boundary: every public stop path (the TaskStop

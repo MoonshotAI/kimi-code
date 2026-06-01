@@ -52,10 +52,6 @@ export interface AgentRecordEvents {
     names: readonly string[];
   };
 
-  'background.stop': {
-    taskId: string;
-  };
-
   'usage.record': {
     model: string;
     usage: TokenUsage;
