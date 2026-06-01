@@ -13,8 +13,82 @@ permissions:
   pull-requests: write
 
 jobs:
+  check-workspace-sync:
+    name: Check flake.nix workspace sync
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check workspace sync
+        id: check
+        run: |
+          set -euo pipefail
+          if node scripts/check-nix-workspace.mjs; then
+            echo "SYNC_OK=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "SYNC_OK=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract missing items
+        if: steps.check.outputs.SYNC_OK == 'false' && github.event_name == 'pull_request'
+        id: missing
+        run: |
+          {
+            echo "body<<EOF"
+            echo "<!-- nix-workspace-sync-bot -->"
+            echo "❌ flake.nix workspace lists out of sync"
+            echo ""
+            echo "The recursive workspace dependencies of \`apps/kimi-code\` do not match \`flake.nix\`. Please run \`node scripts/check-nix-workspace.mjs\` locally for details."
+            echo ""
+            echo "Typical fix: add the missing package name to \`workspaceNames\` and its path to \`workspacePaths\` in \`flake.nix\`."
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post or update PR comment
+        if: steps.check.outputs.SYNC_OK == 'false' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          COMMENT_BODY: ${{ steps.missing.outputs.body }}
+        with:
+          script: |
+            const marker = '<!-- nix-workspace-sync-bot -->';
+            const body = process.env.COMMENT_BODY;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c =>
+              c.user.login === 'github-actions[bot]' && c.body.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Fail if workspace sync failed
+        if: steps.check.outputs.SYNC_OK == 'false'
+        run: exit 1
+
   nix-build:
     name: nix build .#kimi-code
+    needs: check-workspace-sync
     runs-on: ubuntu-latest
 
     steps:

@@ -64,6 +64,7 @@
       workspacePaths = [
         ./packages/agent-core
         ./packages/kaos
+        ./packages/kosong
         ./packages/migration-legacy
         ./packages/node-sdk
         ./packages/oauth
@@ -78,6 +79,7 @@
       workspaceNames = [
         "@moonshot-ai/agent-core"
         "@moonshot-ai/kaos"
+        "@moonshot-ai/kosong"
         "@moonshot-ai/migration-legacy"
         "@moonshot-ai/kimi-code-sdk"
         "@moonshot-ai/kimi-code-oauth"
