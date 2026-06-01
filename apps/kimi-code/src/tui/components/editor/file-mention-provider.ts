@@ -26,8 +26,10 @@
  *
  * When `fd` is available the inner pi-tui provider owns the `@` branch
  * verbatim — its fd invocation respects `.gitignore` and is strictly
- * better than anything we can cheaply reproduce in TS. We only kick in
- * when `fd` is missing AND we're in a git repo.
+ * better than anything we can cheaply reproduce in TS. When `fd` is
+ * missing, we only fall back to our own recursive readdir when the
+ * work dir is not a git repository; inside a git repo we trust the
+ * `git ls-files` snapshot to honor `.gitignore`.
  */
 
 import { existsSync, readdirSync, statSync } from 'node:fs';
@@ -118,11 +120,10 @@ export class FileMentionProvider implements AutocompleteProvider {
     }
 
     const snapshot = this.gitCache.getSnapshot();
-    if (snapshot === null || snapshot.files.length === 0) {
-      // No git snapshot: try a recursive readdir of the work dir as a
-      // fallback before giving up. This is the non-git-repo case —
-      // see issue #266. Inner's getFuzzyFileSuggestions is a dead end
-      // without `fd`, so we own the candidate source here.
+    if (snapshot === null) {
+      // Not in a git repo. Inner's getFuzzyFileSuggestions is a dead
+      // end without `fd`, so we own the candidate source here. See
+      // issue #266.
       const readdirResult = this.buildFromReadDir(atPrefix);
       if (readdirResult !== null) {
         return { items: readdirResult, prefix: atPrefix };
@@ -142,13 +143,11 @@ export class FileMentionProvider implements AutocompleteProvider {
         : rankForQuery(candidates, query, snapshot);
 
     if (items.length === 0) {
-      // Git cache had nothing useful — fall through to readdir (user
-      // may be typing a path that exists but isn't tracked, e.g. a
-      // freshly created file not yet in the 2s cache).
-      const readdirResult = this.buildFromReadDir(atPrefix);
-      if (readdirResult !== null) {
-        return { items: readdirResult, prefix: atPrefix };
-      }
+      // Git ls-files had no match for this query. Inside a git repo we
+      // do NOT consult readdir — a recursive readdir would bypass
+      // `git ls-files --exclude-standard` and could surface
+      // .gitignored paths. Fall through to the inner provider, which
+      // can still resolve `/path` or quoted-path completions.
       return this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
     }
     return { items, prefix: atPrefix };
@@ -167,9 +166,15 @@ export class FileMentionProvider implements AutocompleteProvider {
     if (candidates.length === 0) {
       return null;
     }
-    return query.length === 0
-      ? rankForEmptyQuery(candidates, snapshot)
-      : rankForQuery(candidates, query, snapshot);
+    const ranked =
+      query.length === 0
+        ? rankForEmptyQuery(candidates, snapshot)
+        : rankForQuery(candidates, query, snapshot);
+    // An empty ranking means the walker saw files but none matched the
+    // query. Returning `null` (rather than `{ items: [] }`) lets the
+    // caller dismiss the autocomplete menu instead of presenting an
+    // empty state.
+    return ranked.length === 0 ? null : ranked;
   }
 
   applyCompletion(
@@ -214,10 +219,14 @@ function containsDotSegment(path: string): boolean {
 
 /**
  * Recursive readdir of the work dir, used as the @-completion source
- * when `fd` is missing and we're not in a git repo (or the git cache
- * is empty). Caches the result for `READDIR_TTL_MS` to keep keystroke
- * latency low. Skips well-known build/dependency directories so a
- * `node_modules`-laden repo still walks in under ~50ms.
+ * when `fd` is missing and we're not in a git repository. Caches the
+ * result for `READDIR_TTL_MS` to keep keystroke latency low. Skips
+ * well-known build/dependency directories so a `node_modules`-laden
+ * repo still walks in under ~50ms.
+ *
+ * The walker collects dot entries too (so callers can opt in via
+ * `@.env` / `@.github/`); the actual dot-filtering is the caller's
+ * responsibility, mirroring the git-backed path.
  */
 class ReadDirWalker {
   private snapshot: ReadDirSnapshot | null = null;
@@ -259,6 +268,7 @@ class ReadDirWalker {
     mtimeByPath: Map<string, number>,
   ): void {
     if (depth > READDIR_MAX_DEPTH) return;
+    if (files.length >= READDIR_MAX_ENTRIES) return;
     let entries: import('node:fs').Dirent[];
     try {
       entries = readdirSync(absDir, { withFileTypes: true });
@@ -266,10 +276,7 @@ class ReadDirWalker {
       return;
     }
     for (const entry of entries) {
-      // Hidden entries (dotfiles) require explicit query opt-in
-      // (handled in buildFromReadDir, not here — we always skip them
-      // at the walk level to keep cost bounded; opt-in re-includes).
-      if (entry.name.startsWith('.')) continue;
+      if (entry.name === '.' || entry.name === '..') continue;
       if (entry.isDirectory()) {
         if (SKIP_DIRS.has(entry.name)) continue;
         const absChild = join(absDir, entry.name);

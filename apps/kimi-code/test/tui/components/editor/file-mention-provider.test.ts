@@ -262,7 +262,11 @@ describe('FileMentionProvider — readdir fallback when no git cache', () => {
     expect(values.some((v) => v.includes('/dist/'))).toBe(false);
   });
 
-  it('skips hidden entries (dotfiles, .git/, etc.)', async () => {
+  it('hides dotfiles by default but keeps .git/ unmentionable', async () => {
+    // The walker collects all entries (including dotfiles) so the
+    // opt-in below can surface them. Default filtering happens in
+    // buildFromReadDir via containsDotSegment, mirroring the git-backed
+    // path. .git/ is filtered earlier by the SKIP_DIRS set.
     writeFileSync(join(dir, 'visible.ts'), '');
     writeFileSync(join(dir, '.hidden.ts'), '');
     mkdirSync(join(dir, '.git'));
@@ -276,6 +280,45 @@ describe('FileMentionProvider — readdir fallback when no git cache', () => {
     expect(values).toContain('@visible.ts');
     expect(values.some((v) => v.includes('.hidden'))).toBe(false);
     expect(values.some((v) => v.includes('.git/'))).toBe(false);
+  });
+
+  it('surfaces dotfiles when the query explicitly opts in (e.g. @.env)', async () => {
+    writeFileSync(join(dir, '.env'), '');
+    writeFileSync(join(dir, 'foo.ts'), '');
+
+    const provider = new FileMentionProvider([], dir, NO_FD, stubGitCache(null));
+    const result = await provider.getSuggestions(['@.env'], 0, 5, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    const values = result!.items.map((i) => i.value);
+    expect(values).toContain('@.env');
+    expect(values).not.toContain('@foo.ts');
+  });
+
+  it('returns null from getSuggestions when the readdir ranking has no matches', async () => {
+    // The walker finds foo.ts, but `does-not-exist` matches nothing —
+    // ranking returns an empty array. buildFromReadDir must turn that
+    // into null so the editor dismisses the menu instead of showing
+    // an empty autocomplete state.
+    writeFileSync(join(dir, 'foo.ts'), '');
+
+    const provider = new FileMentionProvider([], dir, NO_FD, stubGitCache(null));
+    const result = await provider.getSuggestions(['@does-not-exist'], 0, 16, { signal: ctrl() });
+
+    expect(result).toBeNull();
+  });
+
+  it('does not invoke the readdir fallback inside a git repo, even when the snapshot is empty', async () => {
+    // stubGitCache([]) simulates a git repo with an empty snapshot
+    // (e.g. a fresh repo with no files). The readdir fallback MUST
+    // NOT be consulted — otherwise .gitignored paths in a real repo
+    // could leak through raw readdir.
+    writeFileSync(join(dir, 'a.ts'), '');
+
+    const provider = new FileMentionProvider([], dir, NO_FD, stubGitCache([]));
+    const result = await provider.getSuggestions(['@a'], 0, 2, { signal: ctrl() });
+
+    expect(result).toBeNull();
   });
 
   it('caches the walk result: new files do not appear within the 2s TTL window', async () => {
