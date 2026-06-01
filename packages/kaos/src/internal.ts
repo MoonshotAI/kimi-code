@@ -218,7 +218,7 @@ export function globPatternToRegex(pattern: string, caseSensitive: boolean): Reg
       }
       case '\\': {
         if (i + 1 < pattern.length) {
-          const next = pattern[i + 1];
+          const next = pattern.charAt(i + 1);
           regex += next.replaceAll(/[{}()+.\\[\]^$|]/g, '\\$&');
           // Advance past the escaped character so it is not processed
           // again as a regex metacharacter. match literally.
