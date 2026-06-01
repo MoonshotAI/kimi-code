@@ -2,6 +2,7 @@ export * from './agent';
 export * from './session';
 export * from './rpc';
 export * from './config';
+export * from './flags';
 export * from './session/export';
 export * from './telemetry';
 export * from './errors';
@@ -39,7 +40,7 @@ export type {
   BackgroundTaskKind,
   BackgroundTaskStatus,
 } from './tools/background/manager';
-export type { RuntimeConfig } from './runtime-types';
+export type { ToolServices } from './tools/support/services';
 export { SingleModelProvider } from './session/provider-manager';
 export type {
   BearerTokenProvider,

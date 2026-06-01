@@ -56,7 +56,6 @@ capabilities = ["image_in", "thinking", "video_in"]
 display_name = "Kimi for Coding"
 
 [loop_control]
-max_steps_per_turn = 1000
 max_retries_per_step = 3
 max_ralph_iterations = 0
 reserved_context_size = 50000
@@ -111,7 +110,6 @@ describe('SDK config TOML', () => {
     });
 
     expect(config.loopControl).toEqual({
-      maxStepsPerTurn: 1000,
       maxRetriesPerStep: 3,
       maxRalphIterations: 0,
       reservedContextSize: 50000,

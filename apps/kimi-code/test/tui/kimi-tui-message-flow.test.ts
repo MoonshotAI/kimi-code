@@ -14,6 +14,7 @@ import { ApiKeyInputDialogComponent } from '#/tui/components/dialogs/api-key-inp
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { CatalogModelMultiSelectComponent } from '#/tui/components/dialogs/catalog-model-multi-select';
 import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
+import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import {
   PluginMcpSelectorComponent,
@@ -203,6 +204,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
     interactiveAgentId: 'main',
+    getExperimentalFlags: vi.fn(async () => ({})),
     auth: {
       status: vi.fn(),
       login: vi.fn(),
@@ -762,6 +764,46 @@ describe('KimiTUI message flow', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('renders cron fired events as distinct transcript entries', async () => {
+    const { driver } = await makeDriver();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'cron.fired',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        origin: {
+          kind: 'cron_job',
+          jobId: 'deadbeef',
+          cron: '* * * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        },
+        prompt: '提醒用户：这是每分钟提醒',
+      } as Event,
+      vi.fn(),
+    );
+
+    const entry = driver.state.transcriptEntries.at(-1);
+    expect(entry).toMatchObject({
+      kind: 'cron',
+      content: '提醒用户：这是每分钟提醒',
+      cronData: {
+        jobId: 'deadbeef',
+        cron: '* * * * *',
+        coalescedCount: 1,
+        stale: false,
+      },
+    });
+
+    const transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('Scheduled reminder fired');
+    expect(transcript).toContain('* * * * *');
+    expect(transcript).toContain('提醒用户：这是每分钟提醒');
+    expect(transcript).not.toContain('<cron-fire');
   });
 
   it('coalesces assistant delta component updates', async () => {
@@ -1446,6 +1488,44 @@ describe('KimiTUI message flow', () => {
       expect(transcript).toContain('Installing or updating Kimi Datasource from marketplace...');
       expect(transcript).toContain('Installed or updated Demo');
     });
+  });
+
+  it('installs default marketplace entries through plain install', async () => {
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      plugins: [
+        {
+          id: 'kimi-datasource',
+          tier: 'official',
+          displayName: 'Kimi Datasource',
+          description: 'Datasource plugin',
+          source: './official/kimi-datasource.zip',
+        },
+      ],
+    }))));
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    try {
+      driver.handleUserInput('/plugins marketplace');
+
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+          PluginMarketplaceSelectorComponent,
+        );
+      });
+      const picker = driver.state.editorContainer.children[0] as PluginMarketplaceSelectorComponent;
+      picker.handleInput(' ');
+
+      await vi.waitFor(() => {
+        expect(session.installPlugin).toHaveBeenCalledWith(
+          'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+        );
+      });
+      expect(globalThis.fetch).toHaveBeenCalledWith(KIMI_CODE_PLUGIN_MARKETPLACE_URL);
+    } finally {
+      vi.stubGlobal('fetch', originalFetch);
+    }
   });
 
   it('toggles plugins from the overview with space', async () => {

@@ -120,17 +120,19 @@ function buildManagedUsageSection(
   const rows: ManagedUsageRow[] = [];
   if (summary !== null) rows.push(summary);
   rows.push(...limits);
+  const usedRatio = (r: ManagedUsageRow): number =>
+    r.limit > 0 ? Math.max(0, Math.min(r.used / r.limit, 1)) : 0;
   const labelWidth = Math.max(10, ...rows.map((r) => r.label.length));
+  const pctWidth = Math.max(...rows.map((r) => `${Math.round(usedRatio(r) * 100)}% used`.length));
   const out: string[] = [accent('Plan usage')];
   for (const row of rows) {
-    const ratioUsed = row.limit > 0 ? row.used / row.limit : 0;
-    const leftRatio = 1 - Math.max(0, Math.min(ratioUsed, 1));
-    const bar = renderProgressBar(Math.max(0, Math.min(ratioUsed, 1)), 20);
-    const pct = `${Math.round(leftRatio * 100)}% left`;
+    const ratioUsed = usedRatio(row);
+    const bar = renderProgressBar(ratioUsed, 20);
+    const pct = `${Math.round(ratioUsed * 100)}% used`;
     const barColoured = chalk.hex(severityHex(ratioSeverity(ratioUsed)))(bar);
     const label = row.label.padEnd(labelWidth, ' ');
-    const resetStr = row.resetHint ? muted(` (${row.resetHint})`) : '';
-    out.push(`  ${muted(label)}  ${barColoured}  ${value(pct)}${resetStr}`);
+    const resetStr = row.resetHint ? `  ${muted(row.resetHint)}` : '';
+    out.push(`  ${muted(label)}  ${barColoured}  ${value(pct.padEnd(pctWidth, ' '))}${resetStr}`);
   }
   return out;
 }

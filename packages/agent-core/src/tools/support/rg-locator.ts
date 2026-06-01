@@ -14,7 +14,7 @@
 
 import { createHash } from 'node:crypto';
 import { createWriteStream, existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'pathe';
 import { Readable } from 'node:stream';
@@ -243,8 +243,15 @@ async function downloadAndInstallRg(shareDir: string): Promise<string> {
             'CDN content may have changed.',
         );
       }
-      await rename(extracted, destination);
-      await chmod(destination, 0o755);
+      const installDir = await mkdtemp(join(binDir, '.rg-install-'));
+      const staged = join(installDir, rgBinaryName());
+      try {
+        await copyFile(extracted, staged);
+        await chmod(staged, 0o755);
+        await rename(staged, destination);
+      } finally {
+        await rm(installDir, { recursive: true, force: true });
+      }
     }
     return destination;
   } finally {

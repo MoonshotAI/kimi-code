@@ -23,7 +23,7 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元。一个 pl
 | --- | --- |
 | `/plugins` | 打开交互式 plugin 管理器。 |
 | `/plugins list` | 列出已安装 plugins。 |
-| `/plugins install <path-or-url>` | 从本地目录（支持相对路径和 `~/`）或 zip URL 安装。 |
+| `/plugins install <path-or-url>` | 从本地目录（支持相对路径和 `~/`）、zip URL 或 GitHub 仓库 URL 安装。 |
 | `/plugins marketplace [source]` | 浏览官方 marketplace；可选传入 marketplace JSON 的路径或 URL。 |
 | `/plugins info <id>` | 查看 plugin 详情和 diagnostics；省略 `<id>` 时打开管理器。 |
 | `/plugins <id>` | 查看指定 plugin 详情，等同于 `/plugins info <id>`。 |
@@ -35,6 +35,10 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元。一个 pl
 | `/plugins mcp disable <id> <server>` | 禁用 plugin 声明的 MCP server。 |
 
 斜杠命令的通用行为见 [斜杠命令](../reference/slash-commands.md)。
+
+GitHub URL 支持四种形式。裸 URL `https://github.com/<owner>/<repo>` 会安装该仓库最新的 GitHub release；仓库没有 release 时回落到默认分支。`https://github.com/<owner>/<repo>/tree/<ref>` 用于安装指定分支、tag 或短 commit SHA。`https://github.com/<owner>/<repo>/releases/tag/<tag>` 和 `https://github.com/<owner>/<repo>/commit/<sha>` 用于钉死具体的 tag 或 commit。网络请求只走 `github.com` 重定向和 `codeload.github.com` 下载，**不会**调用 `api.github.com`。
+
+Plugin 管理器会展示每个安装的来源以及一个信任徽章。`kimi-official` 表示 plugin zip 来自 `https://code.kimi.com/kimi-code/plugins/official/`；`curated` 表示 plugin zip 来自 `https://code.kimi.com/kimi-code/plugins/curated/`。`third-party` 表示其它所有情况，包括 GitHub 安装、本地目录、自定义 marketplace source 和其它 URL。
 
 Kimi Code CLI 目前按用户安装 plugins，记录在 `$KIMI_CODE_HOME/plugins/` 下，对所有项目生效。暂不支持项目级、仓库级、管理员分发，以及带 `--scope` 的安装方式。
 

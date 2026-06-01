@@ -24,7 +24,7 @@ import type { Logger } from '../../../src/logging';
 import { ProviderManager } from '../../../src/session/provider-manager';
 import type { QuestionResult, RPCCallOptions, SDKAgentRPC } from '../../../src/rpc';
 import type { AgentAPI } from '../../../src/rpc/core-api';
-import type { RuntimeConfig } from '../../../src/runtime-types';
+import type { ToolServices } from '../../../src/tools/support/services';
 import type { TelemetryClient } from '../../../src/telemetry';
 import type { PromisifyMethods } from '../../../src/utils/types';
 import { createFakeKaos } from '../../tools/fixtures/fake-kaos';
@@ -90,7 +90,7 @@ interface ResumeStateSnapshot {
 
 export interface TestAgentOptions {
   readonly kaos?: Kaos | undefined;
-  readonly runtime?: RuntimeConfig | undefined;
+  readonly runtime?: ToolServices | undefined;
   readonly compactionStrategy?: CompactionStrategy | undefined;
   readonly generate?: GenerateFn | undefined;
   readonly hookEngine?: AgentOptions['hookEngine'];
@@ -169,14 +169,14 @@ export class AgentTestContext {
       ...options.providerManagerOverrides,
     });
 
-    const runtime = options.runtime ?? {
-      kaos: options.kaos ?? testKaos,
-    };
+    const kaos = options.kaos ?? testKaos;
+    const toolServices = options.runtime;
     const persistence = this.wrapPersistence(
       options.persistence ?? new InMemoryAgentRecordPersistence(),
     );
     this.agent = new Agent({
-      runtime,
+      kaos,
+      toolServices,
       config: this.kimiConfig,
       rpc: this.createRpcProxy(),
       persistence,
@@ -726,10 +726,10 @@ export class AgentTestContext {
 
   async expectResumeMatches(): Promise<void> {
     const resumed = testAgent({
+      kaos: createResumeNoSideEffectKaos(this.agent.config.cwd),
       runtime: {
-        kaos: createResumeNoSideEffectKaos(this.agent.config.cwd),
-        urlFetcher: this.agent.runtime.urlFetcher,
-        webSearcher: this.agent.runtime.webSearcher,
+        urlFetcher: this.agent.toolServices?.urlFetcher,
+        webSearcher: this.agent.toolServices?.webSearcher,
       },
       providerManager: this.options.providerManager,
       initialConfig: this.kimiConfig,

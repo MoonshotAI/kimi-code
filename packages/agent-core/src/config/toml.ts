@@ -3,6 +3,7 @@ import { mkdir, open } from 'node:fs/promises';
 import { dirname } from 'pathe';
 
 import { ErrorCodes, KimiError } from '#/errors';
+import { applyEnvModelConfig, stripEnvModelConfig } from './env-model';
 import {
   KimiConfigSchema,
   formatConfigValidationError,
@@ -66,6 +67,19 @@ export function readConfigFile(filePath: string): KimiConfig {
   }
   const text = readFileSync(filePath, 'utf-8');
   return parseConfigString(text, filePath);
+}
+
+/**
+ * Load the config for runtime consumption: the on-disk config plus any model
+ * synthesized from `KIMI_MODEL_*` environment variables. Use this everywhere a
+ * value is assigned to the live runtime config; use the raw `readConfigFile`
+ * for write-back paths so the synthesized model is never persisted.
+ */
+export function loadRuntimeConfig(
+  filePath: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): KimiConfig {
+  return applyEnvModelConfig(readConfigFile(filePath), env);
 }
 
 export function parseConfigString(tomlText: string, filePath = 'config.toml'): KimiConfig {
@@ -249,7 +263,10 @@ function transformLoopControlData(data: Record<string, unknown>): Record<string,
 /* ------------------------------------------------------------------ */
 
 export async function writeConfigFile(filePath: string, config: KimiConfig): Promise<void> {
-  const validated = validateConfig(config);
+  // Final guard: never persist the env-synthesized model/provider to disk,
+  // even if a caller passes back the runtime config as a patch (see
+  // stripEnvModelConfig / the getConfig -> setConfig round-trip).
+  const validated = validateConfig(stripEnvModelConfig(config));
   await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
   await atomicWrite(filePath, `${stringifyToml(configToTomlData(validated))}\n`);
 }

@@ -62,7 +62,6 @@ max_context_size = 262144
 mode = "auto"
 
 [loop_control]
-max_steps_per_turn = 1000
 max_retries_per_step = 3
 reserved_context_size = 50000
 
@@ -127,6 +126,7 @@ custom_headers = { "X-Custom-Header" = "value" }
 | `capabilities` | `array<string>` | 否 | 显式追加的模型能力标签，例如 `thinking`、`image_in`、`video_in`、`audio_in`、`tool_use` |
 | `display_name` | `string` | 否 | 在 UI 中显示的名称，未设置时回退到 `model` |
 | `reasoning_key` | `string` | 否 | 仅 `openai` 供应商。覆盖推理内容所用的字段名。默认情况下供应商会自动识别响应中的 `reasoning_content`、`reasoning_details`、`reasoning`，并以 `reasoning_content` 回传思考内容 —— 只有当网关使用非标准字段名时才需要设置 |
+| `adaptive_thinking` | `boolean` | 否 | 仅 `anthropic` 供应商。强制开启或关闭 adaptive thinking（`thinking: { type: 'adaptive' }`），覆盖按模型名推断版本的逻辑。当某个自定义命名的端点背后的模型支持 adaptive、但其名称无法解析出可识别的 Claude 版本时，可设为 `true`；若对不支持 adaptive thinking 的端点强制开启，API 会直接拒绝请求。省略时按模型名推断（Claude ≥ 4.6 使用 adaptive） |
 
 `capabilities` 与供应商 capability registry 按模型名前缀自动匹配出来的能力做并集 —— 只能追加、不能移除。通常无需手写；只有当模型未被 registry 覆盖、或希望强制启用某项能力时才用得到。
 
@@ -138,6 +138,8 @@ provider = "openai"
 model = "gpt-4.1"
 max_context_size = 1047576
 ```
+
+为了便于测试，你也可以完全不修改本文件，直接用 `KIMI_MODEL_*` 环境变量合成出一个模型 —— 详见 [用环境变量定义模型](./env-vars.md#用环境变量定义模型-kimi-model)。
 
 ## `thinking`
 
@@ -154,7 +156,7 @@ max_context_size = 1047576
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `max_steps_per_turn` | `integer` | `1000` | 单轮最大步数 |
+| `max_steps_per_turn` | `integer` | — | 单轮最大步数；不设置或设为 `0` 则无上限。设为 `0` 可用于显式覆盖此前已配置的限制。 |
 | `max_retries_per_step` | `integer` | `3` | 单步最大重试次数 |
 | `reserved_context_size` | `integer` | — | 预留给响应生成的 token 数；上下文逼近该阈值时触发压缩 |
 

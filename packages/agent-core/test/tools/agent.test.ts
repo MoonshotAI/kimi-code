@@ -6,6 +6,7 @@ import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
 import { BackgroundProcessManager } from '../../src/tools/background/manager';
 import { AgentTool, AgentToolInputSchema } from '../../src/tools/builtin/collaboration/agent';
+import { userCancellationReason } from '../../src/utils/abort';
 import { executeTool } from './fixtures/execute-tool';
 
 const signal = new AbortController().signal;
@@ -475,6 +476,14 @@ describe('AgentTool', () => {
     // M9: resume_hint — continue the same subagent instance
     expect(result.output).toContain('resume_hint:');
     expect(result.output).toContain('Agent(resume="agent-child"');
+    // The hint disambiguates the two look-alike identifiers in this output:
+    // `agent_id` (what `subagentHost.resume` accepts) and `task_id` (the
+    // BackgroundManager ledger id, which also shows up as `source_id` in
+    // later <notification> entries). LLMs regularly copy the wrong one.
+    expect(result.output).toMatch(/agent_id.*not.*task_id|task_id.*not.*agent_id/i);
+    // Recovery scenario — `task.lost` etc. — must be called out so the
+    // model knows the hint is not only for happy-path follow-up work.
+    expect(result.output).toMatch(/task\.lost|task\.failed|task\.killed/);
   });
 
   it('rejects background subagents when background management is unavailable', async () => {
@@ -656,6 +665,47 @@ describe('AgentTool', () => {
         }),
       },
     ]);
+  });
+
+  it('reports a deliberate user interruption when a foreground subagent is cancelled by the user', async () => {
+    const controller = new AbortController();
+    const host = mockSubagentHost({
+      spawn: vi.fn((_profileName: string, options: { signal: AbortSignal }) =>
+        Promise.resolve({
+          agentId: 'agent-child',
+          profileName: 'coder',
+          resumed: false,
+          completion: new Promise<{ result: string }>((_resolve, reject) => {
+            const onAbort = (): void => {
+              reject(options.signal.reason);
+            };
+            if (options.signal.aborted) onAbort();
+            else options.signal.addEventListener('abort', onAbort, { once: true });
+          }),
+        }),
+      ),
+    });
+    const tool = new AgentTool(host);
+
+    const resultPromise = executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_agent',
+      args: { prompt: 'Investigate', description: 'Find cause' },
+      signal: controller.signal,
+    });
+    // Let spawn wire up and the tool reach `await handle.completion`.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort(userCancellationReason());
+    const result = await resultPromise;
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('status: failed');
+    // The old message ("The subagent was stopped by the user.") is too weak —
+    // the model still blamed a "system limit". The new message rules that out.
+    expect(result.output).not.toContain('was stopped by the user');
+    expect(result.output).toContain('not a system error');
+    expect(result.output).toContain('capacity');
+    expect(result.output).toContain('wait for the user');
   });
 
   it('returns the spawned agent id when a foreground subagent times out', async () => {

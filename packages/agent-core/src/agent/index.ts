@@ -17,7 +17,6 @@ import type { EnabledPluginSessionStart } from '#/plugin';
 import type { McpConnectionManager } from '../mcp';
 import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
 import type { ModelProvider } from '../session/provider-manager';
-import type { RuntimeConfig } from '../runtime-types';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import type { SkillRegistry } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
@@ -54,6 +53,8 @@ import {
 } from './turn/kosong-llm';
 import { UsageRecorder } from './usage';
 import { resolveCompletionBudget } from '../utils/completion-budget';
+import type { Kaos } from '@moonshot-ai/kaos';
+import type { ToolServices } from '../tools/support/services';
 
 export type { AgentRecord, AgentRecordPersistence } from './records';
 export type { BuiltinTool, ToolInfo, ToolSource, UserToolRegistration } from './tool';
@@ -61,13 +62,14 @@ export type { BuiltinTool, ToolInfo, ToolSource, UserToolRegistration } from './
 export type AgentType = 'main' | 'sub' | 'independent';
 
 export interface AgentOptions {
-  readonly runtime: RuntimeConfig;
+  readonly kaos: Kaos;
   readonly config?: KimiConfig;
   readonly homedir?: string;
   readonly rpc?: Partial<SDKAgentRPC>;
   readonly persistence?: AgentRecordPersistence;
   readonly type?: AgentType;
   readonly generate?: typeof generate;
+  readonly toolServices?: ToolServices;
   readonly compactionStrategy?: CompactionStrategy;
   readonly modelProvider?: ModelProvider | undefined;
   readonly subagentHost?: SessionSubagentHost | undefined;
@@ -82,10 +84,11 @@ export interface AgentOptions {
 
 export class Agent {
   readonly type: AgentType;
-  readonly runtime: RuntimeConfig;
+  readonly kaos: Kaos;
   readonly kimiConfig?: KimiConfig;
   readonly homedir?: string;
   readonly rpc?: Partial<SDKAgentRPC>;
+  readonly toolServices?: ToolServices;
   readonly pluginSessionStarts: readonly EnabledPluginSessionStart[];
   readonly rawGenerate: typeof generate;
   readonly modelProvider?: ModelProvider;
@@ -115,10 +118,11 @@ export class Agent {
 
   constructor(options: AgentOptions) {
     this.type = options.type ?? 'main';
-    this.runtime = options.runtime;
+    this.kaos = options.kaos;
     this.kimiConfig = options.config;
     this.homedir = options.homedir;
     this.rpc = options.rpc;
+    this.toolServices = options.toolServices;
     this.pluginSessionStarts = options.pluginSessionStarts ?? [];
     this.rawGenerate = options.generate ?? generate;
     this.modelProvider = options.modelProvider;
@@ -217,9 +221,23 @@ export class Agent {
       configMetadata,
       buildLlmConfigSignature(configMetadata, systemPrompt, tools),
     );
+
+    let partialMessageCount = 0;
+    for (const message of history) {
+      if (message.partial === true) partialMessageCount += 1;
+    }
+    const requestMetadata: LlmRequestMetadata = {
+      estimatedInputTokens:
+        estimateTokens(systemPrompt) +
+        estimateTokensForMessages(history) +
+        estimateTokensForTools(tools),
+    };
+    if (partialMessageCount > 0) {
+      requestMetadata.partialMessageCount = partialMessageCount;
+    }
     this.log.info('llm request', {
       ...context,
-      ...buildLlmRequestMetadata(systemPrompt, tools, history),
+      ...requestMetadata,
     });
   }
 
@@ -238,7 +256,7 @@ export class Agent {
 
   useProfile(profile: ResolvedAgentProfile, context?: PreparedSystemPromptContext): void {
     const systemPrompt = profile.systemPrompt({
-      osEnv: this.runtime.kaos.osEnv,
+      osEnv: this.kaos.osEnv,
       cwd: this.config.cwd,
       skills: this.skills?.registry,
       cwdListing: context?.cwdListing,
@@ -410,16 +428,12 @@ export class Agent {
 }
 
 interface LlmRequestContextFields {
-  turnId?: string;
-  step?: number;
-  attempt?: number;
-  maxAttempts?: number;
+  turnStep?: string;
+  attempt?: string;
 }
 
 interface LlmRequestMetadata {
   estimatedInputTokens: number;
-  messageCount: number;
-  toolCallCount: number;
   partialMessageCount?: number;
 }
 
@@ -443,47 +457,19 @@ function buildLlmRequestContext(options: Parameters<typeof generate>[5]): LlmReq
   if (context === undefined) return {};
 
   const fields: LlmRequestContextFields = {
-    turnId: context.turnId,
-    step: context.step,
+    turnStep:
+      context.turnId === undefined || context.step === undefined
+        ? undefined
+        : `${context.turnId}.${String(context.step)}`,
   };
   if (
     context.attempt !== undefined &&
     context.maxAttempts !== undefined &&
     context.attempt > 1
   ) {
-    fields.attempt = context.attempt;
-    fields.maxAttempts = context.maxAttempts;
+    fields.attempt = `${String(context.attempt)}/${String(context.maxAttempts)}`;
   }
   return fields;
-}
-
-function buildLlmRequestMetadata(
-  systemPrompt: string,
-  tools: readonly Tool[],
-  history: readonly Message[],
-): LlmRequestMetadata {
-  let toolCallCount = 0;
-  let partialMessageCount = 0;
-
-  for (const message of history) {
-    if (message.partial === true) partialMessageCount += 1;
-    toolCallCount += message.toolCalls.length;
-  }
-
-  const estimatedInputTokens =
-    estimateTokens(systemPrompt) +
-    estimateTokensForMessages(history) +
-    estimateTokensForTools(tools);
-
-  const metadata: LlmRequestMetadata = {
-    estimatedInputTokens,
-    messageCount: history.length,
-    toolCallCount,
-  };
-  if (partialMessageCount > 0) {
-    metadata.partialMessageCount = partialMessageCount;
-  }
-  return metadata;
 }
 
 function buildLlmConfigMetadata(

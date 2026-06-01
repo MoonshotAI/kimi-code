@@ -24,6 +24,7 @@ import {
 } from '../tools/args-validator';
 import { PathSecurityError } from '../tools/policies/path-access';
 
+import { isUserCancellation } from '../utils/abort';
 import { errorMessage, isAbortError } from './errors';
 import type { LoopEventDispatcher, LoopToolCallEvent } from './events';
 import type { LLM, LLMChatResponse } from './llm';
@@ -45,6 +46,19 @@ const TOOL_OUTPUT_EMPTY = 'Tool output is empty.';
 const TOOL_OUTPUT_NON_TEXT = 'Tool returned non-text content.';
 
 const validators = new WeakMap<ExecutableTool, ToolArgsValidator>();
+
+/**
+ * Output for an aborted tool call. When the abort carries a user-cancellation
+ * reason (the user pressed stop), say so explicitly so the model treats it as a
+ * deliberate interruption instead of a system fault to theorise about or retry.
+ * Any other abort keeps the neutral wording.
+ */
+function abortedToolOutput(toolName: string, signal: AbortSignal): string {
+  if (isUserCancellation(signal.reason)) {
+    return `The user manually interrupted "${toolName}" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.`;
+  }
+  return `Tool "${toolName}" was aborted`;
+}
 
 export interface ToolCallStepContext {
   readonly tools?: readonly ExecutableTool[] | undefined;
@@ -285,7 +299,7 @@ async function prepareToolCall(
 
   const displayFields = toolCallDisplayFieldsFromExecution(execution);
   const settleAborted = (): Promise<PreparedToolCallTask> =>
-    settleError(effectiveArgs, `Tool "${call.toolName}" was aborted`, displayFields);
+    settleError(effectiveArgs, abortedToolOutput(call.toolName, step.signal), displayFields);
 
   if (step.signal.aborted) return settleAborted();
 
@@ -452,7 +466,7 @@ async function runRunnableToolCall(
   const { toolCall, toolName } = call;
 
   if (signal.aborted) {
-    return makeErrorToolResult(call, effectiveArgs, `Tool "${toolName}" was aborted`);
+    return makeErrorToolResult(call, effectiveArgs, abortedToolOutput(toolName, signal));
   }
 
   let toolResult: ExecutableToolResult;
@@ -469,7 +483,7 @@ async function runRunnableToolCall(
       });
     }
     const output = aborted
-      ? `Tool "${toolName}" was aborted`
+      ? abortedToolOutput(toolName, signal)
       : `Tool "${toolName}" failed: ${errorMessage(error)}`;
     return makeErrorToolResult(call, effectiveArgs, output);
   }

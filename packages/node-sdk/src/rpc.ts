@@ -9,6 +9,7 @@ import {
   type ApprovalResponse,
   type CoreAPI,
   type Event,
+  type ExperimentalFlagMap,
   type OAuthTokenProviderResolver,
   type QuestionRequest,
   type QuestionResult,
@@ -167,7 +168,7 @@ export class SDKRpcClient {
     return rpc.closeSession({ sessionId: input.sessionId });
   }
 
-  async listSessions(input: ListSessionsOptions): Promise<readonly SessionSummary[]> {
+  async listSessions(input: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
     const rpc = await this.getRpc();
     return rpc.listSessions(input);
   }
@@ -195,6 +196,11 @@ export class SDKRpcClient {
   async getConfig(input?: GetConfigOptions): Promise<KimiConfig> {
     const rpc = await this.getRpc();
     return rpc.getKimiConfig(input ?? {});
+  }
+
+  async getExperimentalFlags(): Promise<ExperimentalFlagMap> {
+    const rpc = await this.getRpc();
+    return rpc.getExperimentalFlags({});
   }
 
   async setConfig(input: KimiConfigPatch): Promise<KimiConfig> {

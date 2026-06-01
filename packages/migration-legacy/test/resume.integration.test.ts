@@ -126,7 +126,7 @@ describe('migrated session loads in real kimi-core', () => {
     // If `agents.main.homedir` were the project workdir (the bug), the agent
     // would replay an absent file and the history would be empty.
     const session = new Session({
-      runtime: { kaos: (await LocalKaos.create()).withCwd(WORK_DIR) },
+      kaos: (await LocalKaos.create()).withCwd(WORK_DIR),
       id: 'ses_tiny-resume',
       homedir: targetDir,
       rpc: createSessionRpc(),

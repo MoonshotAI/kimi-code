@@ -9,6 +9,7 @@ import type {
   CompactionCancelledEvent,
   CompactionCompletedEvent,
   CompactionStartedEvent,
+  CronFiredEvent,
   ErrorEvent,
   Event,
   HookResultEvent,
@@ -206,6 +207,7 @@ export class SessionEventHandler {
       case 'background.task.updated':
       case 'background.task.terminated':
         this.handleBackgroundTaskEvent(event); break;
+      case 'cron.fired': this.handleCronFired(event); break;
       case 'mcp.server.status': this.renderMcpServerStatus(event.server); break;
       case 'tool.list.updated': break;
       default: break;
@@ -283,7 +285,9 @@ export class SessionEventHandler {
       case 'compaction.cancelled':
       case 'compaction.completed':
       case 'compaction.started':
+      case 'cron.fired':
       case 'error':
+      case 'warning':
       case 'session.meta.updated':
       case 'skill.activated':
       case 'subagent.completed':
@@ -316,6 +320,24 @@ export class SessionEventHandler {
     this.host.setAppState({
       streamingPhase: 'waiting',
       streamingStartTime: Date.now(),
+    });
+  }
+
+  private handleCronFired(event: CronFiredEvent): void {
+    this.host.streamingUI.flushNow();
+    this.host.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'cron',
+      turnId: this.host.streamingUI.getTurnContext().turnId,
+      renderMode: 'plain',
+      content: event.prompt,
+      cronData: {
+        jobId: event.origin.jobId,
+        cron: event.origin.cron,
+        recurring: event.origin.recurring,
+        coalescedCount: event.origin.coalescedCount,
+        stale: event.origin.stale,
+      },
     });
   }
 
@@ -754,6 +776,17 @@ export class SessionEventHandler {
     if (backgroundMeta !== undefined) {
       this.backgroundAgentMetadata.delete(event.subagentId);
       this.syncBackgroundAgentBadge();
+      // Push the real subagent error onto the parent Agent card too —
+      // `background.task.terminated` arrives separately (possibly later)
+      // with no error string and would only stamp the generic
+      // `Background agent failed`. The card and the separate transcript
+      // entry now share the same actual reason.
+      streamingUI.applyBackgroundTaskTerminalStatus({
+        agentId: event.subagentId,
+        description: backgroundMeta.description ?? '',
+        status: 'failed',
+        errorText: event.error,
+      });
       const taskId = this.findAgentTaskId(event.subagentId);
       if (taskId !== undefined && this.backgroundTaskTranscriptedTerminal.has(taskId)) {
         return;
@@ -872,6 +905,17 @@ export class SessionEventHandler {
     }
 
     if (event.type === 'background.task.terminated' && isTerminal) {
+      if (info.taskId.startsWith('agent-')) {
+        // The Agent tool's spawn-success ToolResult is not an error, so the
+        // parent toolCall card would otherwise render `✓ Completed` for any
+        // terminated bg agent — including `lost` / `failed` / `killed`.
+        // Push the actual terminal status so the card matches reality.
+        this.host.streamingUI.applyBackgroundTaskTerminalStatus({
+          agentId: info.agentId,
+          description: info.description,
+          status: info.status,
+        });
+      }
       if (!this.backgroundTaskTranscriptedTerminal.has(info.taskId)) {
         if (info.taskId.startsWith('bash-')) {
           this.appendBackgroundTaskEntry(info);

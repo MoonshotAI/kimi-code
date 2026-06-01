@@ -39,7 +39,7 @@ export function createModelChoices(models: Record<string, ModelAlias>): readonly
 export function thinkingAvailability(model: ModelAlias): ThinkingAvailability {
   const caps = model.capabilities ?? [];
   if (caps.includes('always_thinking')) return 'always-on';
-  if (caps.includes('thinking')) return 'toggle';
+  if (caps.includes('thinking') || model.adaptiveThinking === true) return 'toggle';
   return 'unsupported';
 }
 

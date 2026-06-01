@@ -43,6 +43,10 @@ export const ModelAliasSchema = z.object({
   capabilities: z.array(z.string()).optional(),
   displayName: z.string().optional(),
   reasoningKey: z.string().optional(),
+  // Explicitly declare adaptive-thinking support, overriding the kosong
+  // model-name version inference. Needed for custom-named Anthropic endpoints
+  // whose model name does not encode a parseable Claude version.
+  adaptiveThinking: z.boolean().optional(),
 });
 
 export type ModelAlias = z.infer<typeof ModelAliasSchema>;
@@ -80,7 +84,7 @@ export const PermissionConfigSchema = z.object({
 export type PermissionConfig = z.infer<typeof PermissionConfigSchema>;
 
 export const LoopControlSchema = z.object({
-  maxStepsPerTurn: z.number().int().min(1).optional(),
+  maxStepsPerTurn: z.number().int().min(0).optional(),
   maxRetriesPerStep: z.number().int().min(0).optional(),
   maxRalphIterations: z.number().int().min(-1).optional(),
   reservedContextSize: z.number().int().min(0).optional(),

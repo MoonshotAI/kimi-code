@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'pathe';
+import type { Kaos } from '@moonshot-ai/kaos';
 
 import { ErrorCodes, KimiError } from '#/errors';
 import { getRootLogger, log } from '#/logging/logger';
@@ -27,7 +28,6 @@ import {
   type ResolvedAgentProfile,
 } from '../profile';
 import type { ProviderManager } from './provider-manager';
-import type { RuntimeConfig } from '../runtime-types';
 import {
   registerBuiltinSkills,
   resolveSkillRoots,
@@ -38,14 +38,16 @@ import {
 } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
 import { SessionSubagentHost } from './subagent-host';
+import type { ToolServices } from '../tools/support/services';
 
 export interface SessionOptions {
-  readonly runtime: RuntimeConfig;
+  readonly kaos: Kaos;
   readonly config?: KimiConfig;
   readonly id?: string | undefined;
   readonly homedir: string;
   readonly kimiHomeDir?: string;
   readonly rpc: SDKSessionRPC;
+  readonly toolServices?: ToolServices;
   readonly initializeMainAgent?: boolean | undefined;
   readonly providerManager?: ProviderManager | undefined;
   readonly background?: BackgroundConfig | undefined;
@@ -122,7 +124,7 @@ export class Session {
       (options.id === undefined ? log : log.createChild({ sessionId: options.id }));
     this.rpc = options.rpc;
     this.hookEngine = new HookEngine(options.hooks, {
-      cwd: options.runtime.kaos.getcwd(),
+      cwd: options.kaos.getcwd(),
       sessionId: options.id,
     });
     this.telemetry = options.telemetry ?? noopTelemetryClient;
@@ -247,7 +249,7 @@ export class Session {
     agent: Agent,
     profile: ResolvedAgentProfile,
   ): Promise<void> {
-    const context = await prepareSystemPromptContext(agent.runtime.kaos);
+    const context = await prepareSystemPromptContext(agent.kaos);
     agent.useProfile(profile, context);
   }
 
@@ -266,7 +268,7 @@ export class Session {
       });
       await handle.completion;
 
-      const agentsMd = await loadAgentsMd(mainAgent.runtime.kaos);
+      const agentsMd = await loadAgentsMd(mainAgent.kaos);
       mainAgent.context.appendSystemReminder(initCompletionReminder(agentsMd), {
         kind: 'injection',
         variant: 'init',
@@ -295,15 +297,15 @@ export class Session {
   writeMetadata() {
     const text = JSON.stringify(this.metadata, null, 2);
     const write = async () => {
-      await this.options.runtime.kaos.mkdir(this.options.homedir, { parents: true, existOk: true });
-      await this.options.runtime.kaos.writeText(this.metadataPath, text);
+      await this.options.kaos.mkdir(this.options.homedir, { parents: true, existOk: true });
+      await this.options.kaos.writeText(this.metadataPath, text);
     };
     this.writeMetadataPromise = this.writeMetadataPromise.then(write, write);
     return this.writeMetadataPromise;
   }
 
   async readMetadata() {
-    const text = await this.options.runtime.kaos.readText(this.metadataPath);
+    const text = await this.options.kaos.readText(this.metadataPath);
     this.metadata = JSON.parse(text);
     return this.metadata;
   }
@@ -323,7 +325,7 @@ export class Session {
     const roots = await resolveSkillRoots({
       paths: {
         userHomeDir: this.options.skills?.userHomeDir ?? homedir(),
-        workDir: this.options.runtime.kaos.getcwd(),
+        workDir: this.options.kaos.getcwd(),
       },
       explicitDirs: this.options.skills?.explicitDirs,
       extraDirs: this.options.skills?.extraDirs,
@@ -405,10 +407,13 @@ export class Session {
     config: Partial<AgentOptions> = {},
     parentAgentId: string | null = null,
   ): Agent {
+    const parentAgent = parentAgentId !== null ? this.agents.get(parentAgentId) : undefined;
+    const cwd = parentAgent?.config.cwd ?? this.options.kaos.getcwd();
     return new Agent({
       ...config,
       type,
-      runtime: this.options.runtime,
+      kaos: this.options.kaos.withCwd(cwd),
+      toolServices: this.options.toolServices,
       config: this.options.config,
       homedir,
       skills: this.skills,

@@ -30,28 +30,20 @@
         );
 
       minNodeVersion = "24.15.0";
-      requiredNodeMajor = "24";
 
-      # nodejsFor picks pkgs.nodejs_24 when it satisfies the minimum, otherwise
-      # falls back to pkgs.nodejs_latest. The build pipeline (tsdown target
-      # `node24`, SEA flags) assumes a 24.x runtime, so we hard-fail if neither
-      # candidate is in the 24.x line.
+      # Hardcode to Node.js 24.x; fail the evaluation if the pinned nixpkgs
+      # does not offer a new enough 24.x.
       nodejsFor =
         pkgs:
         let
-          candidate =
-            if lib.versionAtLeast pkgs.nodejs_24.version minNodeVersion then
-              pkgs.nodejs_24
-            else
-              pkgs.nodejs_latest;
-          major = lib.versions.major candidate.version;
+          node = pkgs.nodejs_24;
         in
-        if major == requiredNodeMajor then
-          candidate
+        if lib.versionAtLeast node.version minNodeVersion then
+          node
         else
           throw ''
-            Kimi Code requires Node.js ${requiredNodeMajor}.x (>= ${minNodeVersion}),
-            but nixpkgs only offers ${candidate.version}.
+            Kimi Code requires Node.js >= ${minNodeVersion},
+            but nixpkgs only offers ${node.version}.
             Pin a newer nixpkgs revision or update minNodeVersion in flake.nix.
           '';
 
@@ -61,87 +53,43 @@
           nodejs = nodejsFor pkgs;
         };
 
-      # ---------------------------------------------------------------------
-      # Derive workspace members from pnpm-workspace.yaml + each package.json.
+      # -------------------------------------------------------------------
+      # Workspace members (kept in sync with pnpm-workspace.yaml).
       #
-      # Source of truth is pnpm-workspace.yaml's `packages:` section. We expand
-      # each glob (or literal path) against the repo root, keep only entries
-      # that contain a package.json, and read their `name` field. Both the
-      # `src` fileset and the `pnpmWorkspaces` filter for pnpmConfigHook are
-      # derived from this list, so adding/removing a workspace only requires
-      # updating pnpm-workspace.yaml (followed by `nix run .#update-pnpm-deps`).
-      # ---------------------------------------------------------------------
+      # HARD REQUIREMENT: whenever you add or remove a workspace package,
+      # you MUST update both lists below. Missing a path will break the Nix
+      # build (src fileset silently drops files); missing a name will break
+      # pnpmConfigHook (dependencies for that workspace won't be fetched).
+      # -------------------------------------------------------------------
+      workspacePaths = [
+        ./packages/agent-core
+        ./packages/kaos
+        ./packages/kosong
+        ./packages/migration-legacy
+        ./packages/node-sdk
+        ./packages/oauth
+        ./packages/telemetry
+        ./apps/kimi-code
+        ./apps/vis
+        ./apps/vis/server
+        ./apps/vis/web
+        ./docs
+      ];
 
-      # Minimal parser for the `packages:` list in pnpm-workspace.yaml. Only
-      # handles top-level `- <entry>` items under the `packages:` key; other
-      # sections (catalog, overrides) are ignored. Sufficient for the format
-      # pnpm produces and we maintain.
-      parsePnpmWorkspaceGlobs =
-        file:
-        let
-          lines = lib.splitString "\n" (builtins.readFile file);
-          isPackagesHeader = l: builtins.match "^packages:[[:space:]]*$" l != null;
-          isTopLevelKey = l: builtins.match "^[^[:space:]#].*:.*$" l != null;
-          extractItem =
-            l:
-            let
-              m = builtins.match "^[[:space:]]+-[[:space:]]+['\"]?([^'\"#[:space:]]+)['\"]?[[:space:]]*$" l;
-            in
-            if m == null then null else builtins.head m;
-          step =
-            state: line:
-            if state.done then
-              state
-            else if !state.inSection then
-              if isPackagesHeader line then state // { inSection = true; } else state
-            else
-              let
-                item = extractItem line;
-              in
-              if item != null then
-                state // { items = state.items ++ [ item ]; }
-              else if isTopLevelKey line then
-                state // { inSection = false; done = true; }
-              else
-                state;
-          result = lib.foldl' step {
-            inSection = false;
-            items = [ ];
-            done = false;
-          } lines;
-        in
-        result.items;
-
-      expandWorkspaceGlob =
-        root: glob:
-        if lib.hasSuffix "/*" glob then
-          let
-            dir = lib.removeSuffix "/*" glob;
-            absDir = root + "/${dir}";
-          in
-          if builtins.pathExists absDir then
-            map (n: "${dir}/${n}") (
-              builtins.attrNames (lib.filterAttrs (_: t: t == "directory") (builtins.readDir absDir))
-            )
-          else
-            [ ]
-        else if builtins.pathExists (root + "/${glob}") then
-          [ glob ]
-        else
-          [ ];
-
-      workspaceMembers =
-        let
-          globs = parsePnpmWorkspaceGlobs ./pnpm-workspace.yaml;
-          paths = lib.unique (lib.concatMap (expandWorkspaceGlob ./.) globs);
-        in
-        builtins.filter (p: builtins.pathExists (./. + "/${p}/package.json")) paths;
-
-      workspacePaths = map (p: ./. + "/${p}") workspaceMembers;
-
-      workspaceNames = map (
-        p: (builtins.fromJSON (builtins.readFile (./. + "/${p}/package.json"))).name
-      ) workspaceMembers;
+      workspaceNames = [
+        "@moonshot-ai/agent-core"
+        "@moonshot-ai/kaos"
+        "@moonshot-ai/kosong"
+        "@moonshot-ai/migration-legacy"
+        "@moonshot-ai/kimi-code-sdk"
+        "@moonshot-ai/kimi-code-oauth"
+        "@moonshot-ai/kimi-telemetry"
+        "@moonshot-ai/kimi-code"
+        "@moonshot-ai/vis"
+        "@moonshot-ai/vis-server"
+        "@moonshot-ai/vis-web"
+        "kimi-code-docs"
+      ];
     in
     {
       packages = forAllSystems (
@@ -190,7 +138,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 3;
-              hash = "sha256-dht627zodv/xeefY7fEvSaKXavTxi+JWA3gwL18U8dk=";
+              hash = "sha256-HpRlxlXZoVqAzrdMdSWhLcTRM1DvDvytVbzIGBo8QUo=";
             };
 
             nativeBuildInputs = [
@@ -248,27 +196,9 @@
               platforms = systems;
             };
           });
-
-          # Expose pnpmDeps as a top-level package so `nix build .#kimi-code-pnpm-deps`
-          # (used by the update-pnpm-deps app) is a stable selector that doesn't
-          # depend on attribute drilling into a derivation.
-          kimi-code-pnpm-deps = kimi-code.pnpmDeps;
-
-          update-pnpm-deps = pkgs.writeShellApplication {
-            name = "update-pnpm-deps";
-            runtimeInputs = [
-              pkgs.nix
-              pkgs.git
-              nodejs
-              pkgs.gnused
-              pkgs.gnugrep
-              pkgs.coreutils
-            ];
-            text = builtins.readFile ./build/nix/update-pnpm-deps.sh;
-          };
         in
         {
-          inherit kimi-code kimi-code-pnpm-deps update-pnpm-deps;
+          inherit kimi-code;
           default = kimi-code;
         }
       );
@@ -277,10 +207,6 @@
         kimi-code = {
           type = "app";
           program = "${self.packages.${pkgs.system}.kimi-code}/bin/kimi";
-        };
-        update-pnpm-deps = {
-          type = "app";
-          program = "${self.packages.${pkgs.system}.update-pnpm-deps}/bin/update-pnpm-deps";
         };
         default = self.apps.${pkgs.system}.kimi-code;
       });

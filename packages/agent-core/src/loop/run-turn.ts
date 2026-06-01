@@ -28,8 +28,6 @@ import type {
   TurnResult,
 } from './types';
 
-const DEFAULT_MAX_STEPS = 1000;
-
 export interface RunTurnInput {
   readonly turnId: string;
   readonly signal: AbortSignal;
@@ -53,7 +51,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
     tools,
     hooks,
     log,
-    maxSteps = DEFAULT_MAX_STEPS,
+    maxSteps,
     maxRetryAttempts,
   } = input;
   let usage: TokenUsage = emptyUsage();
@@ -69,7 +67,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
     while (true) {
       signal.throwIfAborted();
 
-      if (steps >= maxSteps) {
+      if (maxSteps !== undefined && maxSteps > 0 && steps >= maxSteps) {
         throw createMaxStepsExceededError(maxSteps);
       }
 

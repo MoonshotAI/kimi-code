@@ -31,8 +31,11 @@ export type {
   ModelAlias,
   MoonshotServiceConfig,
   OAuthRef,
+  PluginGithubMetadata,
+  PluginGithubRef,
   PluginInfo,
   PluginMcpServerInfo,
+  PluginSource,
   PluginSummary,
   PromptOrigin,
   ProviderConfig,
@@ -113,7 +116,8 @@ export interface ExportSessionResult {
 }
 
 export interface ListSessionsOptions {
-  readonly workDir: string;
+  readonly workDir?: string;
+  readonly sessionId?: string;
 }
 
 export interface GetConfigOptions {

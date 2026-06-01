@@ -663,7 +663,7 @@ describe('Session MCP startup', () => {
 
     const session = new Session({
       id: 'test-mcp-oauth',
-      runtime: { kaos: testKaos.withCwd(tmp) },
+      kaos: testKaos.withCwd(tmp),
       homedir: join(tmp, 'session'),
       kimiHomeDir: kimiHome,
       rpc: sessionRpc(),
@@ -704,7 +704,7 @@ describe('Session MCP startup', () => {
     const tmp = await mkdtemp(join(tmpdir(), 'kimi-session-mcp-startup-'));
     const session = new Session({
       id: 'test-mcp-slow',
-      runtime: { kaos: testKaos.withCwd(tmp) },
+      kaos: testKaos.withCwd(tmp),
       homedir: join(tmp, 'session'),
       rpc: sessionRpc(),
       mcpConfig: {
@@ -744,7 +744,7 @@ describe('Session MCP startup', () => {
     scripted.mockNextResponse({ type: 'text', text: 'ready' });
     const session = new Session({
       id: 'test-mcp-turn-ended',
-      runtime: { kaos: testKaos.withCwd(tmp) },
+      kaos: testKaos.withCwd(tmp),
       homedir: join(tmp, 'session'),
       rpc: sessionRpc({
         events,
@@ -811,7 +811,7 @@ describe('Session MCP startup', () => {
     const events: SessionRpcEvent[] = [];
     const session = new Session({
       id: 'test-mcp-mixed',
-      runtime: { kaos: testKaos.withCwd(tmp) },
+      kaos: testKaos.withCwd(tmp),
       homedir: join(tmp, 'session'),
       rpc: sessionRpc({ events }),
       mcpConfig: {

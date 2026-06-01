@@ -34,6 +34,8 @@ import { detectFdPath } from '#/utils/process/fd-detect';
 import {
   BUILTIN_SLASH_COMMANDS,
   buildSkillSlashCommands,
+  isExperimentalFlagEnabled,
+  setExperimentalFlags,
   sortSlashCommands,
   type KimiSlashCommand,
   type SkillListSession,
@@ -65,6 +67,7 @@ import { TasksBrowserController } from './controllers/tasks-browser';
 import { FileMentionProvider } from './components/editor/file-mention-provider';
 import { AssistantMessageComponent } from './components/messages/assistant-message';
 import { BackgroundAgentStatusComponent } from './components/messages/background-agent-status';
+import { CronMessageComponent } from './components/messages/cron-message';
 import { SkillActivationComponent } from './components/messages/skill-activation';
 import {
   NoticeMessageComponent,
@@ -287,7 +290,10 @@ export class KimiTUI {
   // =========================================================================
 
   private getSlashCommands(): readonly KimiSlashCommand[] {
-    return [...sortSlashCommands(BUILTIN_SLASH_COMMANDS), ...this.skillCommands];
+    const builtins = sortSlashCommands(BUILTIN_SLASH_COMMANDS).filter((command) =>
+      isExperimentalFlagEnabled(command.experimentalFlag),
+    );
+    return [...builtins, ...this.skillCommands];
   }
 
   private setupAutocomplete(): void {
@@ -377,7 +383,10 @@ export class KimiTUI {
   private async initMainTui(): Promise<boolean> {
     const shouldReplayHistory = await this.init();
 
+    // Mount only after init() succeeds; see mountFooter().
+    this.mountFooter();
     this.renderWelcome();
+    setExperimentalFlags(await this.harness.getExperimentalFlags());
     this.setupAutocomplete();
     void this.loadPersistedInputHistory();
     this.state.editorContainer.clear();
@@ -448,10 +457,25 @@ export class KimiTUI {
         }
 
         if (startup.sessionFlag !== undefined) {
-          const sessions = await this.harness.listSessions({ workDir });
-          const target = sessions.find((candidate) => candidate.id === startup.sessionFlag);
+          const sessions = await this.harness.listSessions({
+            sessionId: startup.sessionFlag,
+            workDir,
+          });
+          const target = sessions[0];
           if (target === undefined) {
             throw new Error(`Session "${startup.sessionFlag}" not found.`);
+          }
+          if (target.workDir !== workDir) {
+            this.state.ui.stop();
+            process.stderr.write(
+              `${chalk.yellow(
+                `Session "${startup.sessionFlag}" was created under a different directory.\n` +
+                  `  cd "${target.workDir}" && kimi -r ${startup.sessionFlag}`,
+              )}\n\n`,
+            );
+            throw new Error(
+              `Session "${startup.sessionFlag}" was created under a different directory.`,
+            );
           }
           session = await this.harness.resumeSession({ id: startup.sessionFlag });
           shouldReplayHistory = true;
@@ -586,11 +610,18 @@ export class KimiTUI {
     ui.addChild(this.state.todoPanelContainer);
     ui.addChild(this.state.queueContainer);
     ui.addChild(this.state.editorContainer);
-    // FooterComponent isn't a Container; wrap it so it picks up the same
-    // outer gutter as the transcript/panels above.
+    // Footer is mounted later (mountFooter), not here.
+  }
+
+  // Footer is the only chrome with content before a session is ready, so
+  // mounting it at construction lets a stray pre-start render leak it to the
+  // terminal — e.g. above the error when resuming a missing session. Mount it
+  // only once init() succeeds. FooterComponent isn't a Container, so wrap it to
+  // pick up the same outer gutter as the panels above.
+  private mountFooter(): void {
     const footerWrap = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
     footerWrap.addChild(this.state.footer);
-    ui.addChild(footerWrap);
+    this.state.ui.addChild(footerWrap);
   }
 
   // =========================================================================
@@ -1147,6 +1178,12 @@ export class KimiTUI {
           entry.skillArgs,
           this.state.theme.colors,
         );
+      case 'cron':
+        return new CronMessageComponent(
+          entry.content,
+          entry.cronData ?? {},
+          this.state.theme.colors,
+        );
       case 'assistant': {
         const component = new AssistantMessageComponent(
           this.state.theme.markdownTheme,
@@ -1279,6 +1316,10 @@ export class KimiTUI {
   }
 
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle {
+    return this.showProgressSpinner(label);
+  }
+
+  showProgressSpinner(label: string): LoginProgressSpinnerHandle {
     const tint = (s: string): string => chalk.hex(this.state.theme.colors.primary)(s);
     const spinner = new MoonLoader(this.state.ui, 'braille', tint, label);
     this.state.transcriptContainer.addChild(new Spacer(1));

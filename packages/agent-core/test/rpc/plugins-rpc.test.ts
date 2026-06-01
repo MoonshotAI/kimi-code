@@ -34,6 +34,26 @@ describe('KimiCore plugin RPCs', () => {
     await expect(core.listPlugins({})).resolves.toEqual([]);
   });
 
+  it('installPlugin ignores forged marketplace context from public RPC callers', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'kimi-home-'));
+    const pluginRoot = await mkdtemp(path.join(tmpdir(), 'plugin-'));
+    await writeFile(
+      path.join(pluginRoot, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', version: '1.0.0' }),
+      'utf8',
+    );
+
+    const core = new KimiCore(async () => ({}) as never, { homeDir: home });
+    await new Promise((r) => setImmediate(r));
+
+    const installed = await core.installPlugin({
+      source: pluginRoot,
+      marketplace: { id: 'demo', tier: 'official' },
+    } as never);
+
+    expect((installed as { marketplace?: unknown }).marketplace).toBeUndefined();
+  });
+
   it('setPluginMcpServerEnabled toggles plugin MCP state', async () => {
     const home = await mkdtemp(path.join(tmpdir(), 'kimi-home-'));
     const pluginRoot = await mkdtemp(path.join(tmpdir(), 'plugin-'));

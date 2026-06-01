@@ -65,6 +65,18 @@ export interface PersistedTask {
         readonly cwd?: string | undefined;
       }
     | undefined;
+  /**
+   * Subagent identifier for agent-* tasks (the id `subagentHost.resume`
+   * accepts). Persisted so a session restart can re-emit recovery
+   * instructions in the next `<notification>` without forcing the LLM to
+   * cross-reference the original spawn-success ToolResult. Omitted for
+   * bash tasks. Optional in the schema for forward/backward compatibility:
+   * pre-PR sessions reload without it and simply skip the recovery hint.
+   */
+  readonly agent_id?: string | undefined;
+  /** Subagent profile name (agent-* tasks only). Persisted for symmetry
+   *  with `agent_id` so resume surfaces match between disk and memory. */
+  readonly subagent_type?: string | undefined;
 }
 
 function tasksDirOf(sessionDir: string): string {

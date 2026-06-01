@@ -71,6 +71,24 @@ function assertSuccess(result: ExecutableToolResult): string {
   return result.output as string;
 }
 
+function localIsoWithOffset(ms: number): string {
+  const date = new Date(ms);
+  const offsetMin = -date.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? '+' : '-';
+  const abs = Math.abs(offsetMin);
+  const offset = `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${String(date.getMilliseconds()).padStart(
+    3,
+    '0',
+  )}${offset}`;
+}
+
+function pad(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
 describe('CronListTool', () => {
   beforeEach(() => {
     // Disable jitter so `nextFireAt` is the unmodified ideal — keeps
@@ -115,6 +133,23 @@ describe('CronListTool', () => {
       ageDays: 0.00
       stale: false"
     `);
+  });
+
+  it('renders nextFireAt in local time with an explicit offset', async () => {
+    const now = new Date(2026, 4, 29, 8, 35, 0, 0).getTime();
+    const { manager, tool } = makeHarness(now);
+    manager.store.add(
+      { cron: '0 9 * * *', prompt: 'morning', recurring: true },
+      now,
+    );
+
+    const out = assertSuccess(await runTool(tool, {}));
+    const expected = new Date(now);
+    expected.setSeconds(0, 0);
+    expected.setMinutes(0);
+    expected.setHours(9);
+    expect(out).toContain(`nextFireAt: ${localIsoWithOffset(expected.getTime())}`);
+    expect(out).not.toContain('nextFireAt: 2026-05-29T01:00:00.000Z');
   });
 
   it('separates multiple records with \\n---\\n in insertion order', async () => {
@@ -308,10 +343,15 @@ describe('CronListTool', () => {
     anchor.setMinutes(Math.floor(anchor.getMinutes() / 5) * 5);
     harness.setNow(anchor.getTime());
 
-    manager.store.add(
-      { cron: '*/5 * * * *', prompt: 'pending-jitter', recurring: true },
-      harness.now(),
-    );
+    manager.store.adopt({
+      // Use a high deterministic jitter id so advancing 1 s past the
+      // ideal fire remains inside the pending jitter window.
+      id: 'ffffffff',
+      cron: '*/5 * * * *',
+      prompt: 'pending-jitter',
+      recurring: true,
+      createdAt: harness.now(),
+    });
 
     // Advance 5 min + 1 s — past the next ideal but inside the 30 s
     // jitter cap.

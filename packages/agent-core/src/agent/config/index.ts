@@ -23,7 +23,7 @@ export class ConfigState {
   private _systemPrompt: string = '';
 
   constructor(protected readonly agent: Agent) {
-    this._cwd = agent.runtime.kaos.getcwd();
+    this._cwd = agent.kaos.getcwd();
     this._modelAlias = agent.modelProvider?.defaultModel;
   }
 
@@ -40,7 +40,7 @@ export class ConfigState {
     });
     if (changed.cwd) {
       this._cwd = changed.cwd;
-      void this.agent.runtime.kaos.chdir(changed.cwd);
+      void this.agent.kaos.chdir(changed.cwd);
     }
     if (changed.modelAlias) {
       this._modelAlias = changed.modelAlias;

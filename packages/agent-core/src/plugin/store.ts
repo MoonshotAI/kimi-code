@@ -1,7 +1,11 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { PluginCapabilityState, PluginSource } from './types';
+import type {
+  PluginCapabilityState,
+  PluginGithubMetadata,
+  PluginSource,
+} from './types';
 
 const INSTALLED_REL = path.join('plugins', 'installed.json');
 
@@ -14,6 +18,7 @@ export interface InstalledRecord {
   readonly updatedAt?: string;
   readonly originalSource?: string;
   readonly capabilities?: PluginCapabilityState;
+  readonly github?: PluginGithubMetadata;
 }
 
 export interface InstalledFile {

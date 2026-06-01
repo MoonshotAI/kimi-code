@@ -108,6 +108,7 @@ export class ProviderManager implements ModelProvider {
       alias.maxOutputSize,
       alias.reasoningKey,
       this.options.promptCacheKey,
+      alias.adaptiveThinking,
     );
 
     return {
@@ -213,6 +214,7 @@ function toKosongProviderConfig(
   maxOutputSize: number | undefined,
   reasoningKey: string | undefined,
   promptCacheKey: string | undefined,
+  adaptiveThinking: boolean | undefined,
 ): KosongProviderConfig {
   switch (provider.type) {
     case 'anthropic':
@@ -222,6 +224,7 @@ function toKosongProviderConfig(
         baseUrl: providerValue(provider.baseUrl, provider.env, 'ANTHROPIC_BASE_URL'),
         apiKey: providerApiKey(provider),
         ...(maxOutputSize !== undefined ? { defaultMaxTokens: maxOutputSize } : {}),
+        ...(adaptiveThinking !== undefined ? { adaptiveThinking } : {}),
         ...defaultHeadersField(provider.customHeaders),
       };
     case 'openai':

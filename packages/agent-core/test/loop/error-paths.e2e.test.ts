@@ -57,10 +57,8 @@ describe('runTurn — error paths', () => {
         level: 'warn',
         message: 'llm request failed',
         payload: {
-          turnId: 'turn-1',
-          step: 1,
-          attempt: 1,
-          maxAttempts: 3,
+          turnStep: 'turn-1.1',
+          attempt: '1/3',
           model: 'fake-model',
           errorName: 'Error',
           errorMessage: 'upstream blew up',

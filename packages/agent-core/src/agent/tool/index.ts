@@ -340,9 +340,10 @@ export class ToolManager {
     return { ...this.store };
   }
 
-  initializeBuiltinTools(): void {
+  initializeBuiltinTools() {
     const {
-      runtime: { kaos, urlFetcher, webSearcher },
+      kaos,
+      toolServices,
       config: { cwd, provider, modelCapabilities },
       background,
     } = this.agent;
@@ -365,7 +366,7 @@ export class ToolManager {
         new b.EditTool(kaos, workspace),
         new b.GrepTool(kaos, workspace),
         new b.GlobTool(kaos, workspace),
-        new b.BashTool(kaos, cwd, kaos.osEnv, background, {
+        new b.BashTool(kaos, cwd, background, {
           allowBackground,
         }),
         (modelCapabilities.image_in || modelCapabilities.video_in) &&
@@ -392,8 +393,8 @@ export class ToolManager {
               log: this.agent.log,
             },
           ),
-        webSearcher && new b.WebSearchTool(webSearcher),
-        urlFetcher && new b.FetchURLTool(urlFetcher),
+        toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
+        toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),
       ]
         .filter((tool) => !!tool)
         .map((tool) => [tool.name, tool] as const),

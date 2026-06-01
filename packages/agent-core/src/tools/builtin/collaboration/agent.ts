@@ -21,10 +21,15 @@ import { z } from 'zod';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { Logger } from '../../../logging';
 import { ToolAccesses } from '../../../loop/tool-access';
+import { isAbortError } from '../../../loop/errors';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import type { ResolvedAgentProfile } from '../../../profile';
 import type { SessionSubagentHost, SubagentHandle } from '../../../session/subagent-host';
-import { createDeadlineAbortSignal, type DeadlineAbortSignal } from '../../../utils/abort';
+import {
+  createDeadlineAbortSignal,
+  isUserCancellation,
+  type DeadlineAbortSignal,
+} from '../../../utils/abort';
 import type { BackgroundProcessManager } from '../../background/manager';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { matchesGlobRuleSubject } from '../../support/rule-match';
@@ -282,7 +287,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
           `description: ${args.description}`,
           '',
           `next_step: The completion arrives automatically in a later turn — no polling needed. To peek at progress without blocking, call TaskOutput(task_id="${taskId}", block=false).`,
-          `resume_hint: To continue this same subagent instance later, call Agent(resume="${handle.agentId}", prompt="...").`,
+          `resume_hint: To continue or recover this same subagent later, call Agent(resume="${handle.agentId}", prompt="..."). The parameter is agent_id ("${handle.agentId}"), NOT task_id ("${taskId}") or source_id from a later <notification>. Recovery cases: a later <notification type="task.lost" | "task.failed" | "task.killed"> for this subagent — its conversation history is preserved across session restarts and resume will pick it up.`,
         ];
         return { output: lines.join('\n') };
       }
@@ -299,12 +304,17 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         ];
         return { output: lines.join('\n') };
       } catch (error) {
-        const message =
-          foregroundDeadline?.timedOut() === true && args.timeout !== undefined
-            ? `Agent timed out after ${args.timeout}s.`
-            : error instanceof Error
-              ? error.message
-              : String(error);
+        let message: string;
+        if (foregroundDeadline?.timedOut() === true && args.timeout !== undefined) {
+          message = `Agent timed out after ${args.timeout}s.`;
+        } else if (isUserCancellation(signal.reason)) {
+          message =
+            'The user manually interrupted this subagent (and any sibling agents launched alongside it). This was a deliberate user action, not a system error, a timeout, or a capacity/concurrency limit. Do not retry automatically or speculate about why it failed — wait for the user\'s next instruction.';
+        } else if (isAbortError(error)) {
+          message = 'The subagent was stopped before it finished.';
+        } else {
+          message = error instanceof Error ? error.message : String(error);
+        }
         const lines = [
           `agent_id: ${handle.agentId}`,
           `actual_subagent_type: ${handle.profileName}`,
@@ -315,12 +325,17 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         return { output: lines.join('\n'), isError: true };
       }
     } catch (error) {
-      const message =
-        foregroundDeadline?.timedOut() === true && args.timeout !== undefined
-          ? `Agent timed out after ${args.timeout}s.`
-          : error instanceof Error
-            ? error.message
-            : String(error);
+      let message: string;
+      if (foregroundDeadline?.timedOut() === true && args.timeout !== undefined) {
+        message = `Agent timed out after ${args.timeout}s.`;
+      } else if (isUserCancellation(signal.reason)) {
+        message =
+          'The user manually interrupted this subagent (and any sibling agents launched alongside it). This was a deliberate user action, not a system error, a timeout, or a capacity/concurrency limit. Do not retry automatically or speculate about why it failed — wait for the user\'s next instruction.';
+      } else if (isAbortError(error)) {
+        message = 'The subagent was stopped before it finished.';
+      } else {
+        message = error instanceof Error ? error.message : String(error);
+      }
       return { output: `subagent error: ${message}`, isError: true };
     } finally {
       foregroundDeadline?.clear();

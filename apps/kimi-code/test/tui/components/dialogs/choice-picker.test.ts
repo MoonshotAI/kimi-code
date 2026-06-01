@@ -167,6 +167,35 @@ describe('ChoicePickerComponent', () => {
     expect(onSelect).toHaveBeenLastCalledWith({ alias: 'plain', thinking: false });
   });
 
+  it('treats adaptiveThinking models as thinking-capable without a thinking capability', () => {
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        okapi: {
+          provider: 'anthropic',
+          model: 'coding-model-okapi-0527-vibe',
+          maxContextSize: 200_000,
+          adaptiveThinking: true,
+        },
+      },
+      currentValue: 'okapi',
+      currentThinking: true,
+      colors: darkColors,
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    // adaptiveThinking makes the alias togglable (not 'unsupported'): the current
+    // thinking state is preserved on select instead of being forced off.
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'okapi', thinking: true });
+
+    // Right (ESC[C) toggles thinking off, proving it is an interactive toggle.
+    picker.handleInput('\u001B[C');
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'okapi', thinking: false });
+  });
+
   it('keeps the thinking draft when moving across models', () => {
     const onSelect = vi.fn();
     const picker = new ModelSelectorComponent({
