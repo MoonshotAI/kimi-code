@@ -405,6 +405,39 @@ describe('MicroCompaction', () => {
     ]);
   });
 
+  it('clamps cutoff when undo shortens the context', () => {
+    vi.useFakeTimers();
+    const ctx = testAgent({
+      microCompaction: {
+        keepRecentMessages: 2,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * MINUTE,
+        minContextUsageRatio: 0,
+      },
+    });
+
+    vi.setSystemTime(0);
+    appendMicroToolExchange(ctx, 1, { output: 'result one' });
+    appendMicroToolExchange(ctx, 2, { output: 'result two' });
+    appendMicroToolExchange(ctx, 3, { output: 'result three' });
+
+    vi.setSystemTime(61 * MINUTE);
+    ctx.agent.microCompaction.detect();
+    expect(toolTexts(ctx.agent.context.messages)).toEqual([
+      DEFAULT_MARKER,
+      DEFAULT_MARKER,
+      'result three',
+    ]);
+
+    ctx.agent.context.undo(2);
+    appendMicroToolExchange(ctx, 4, { output: 'result four' });
+
+    expect(toolTexts(ctx.agent.context.messages)).toEqual([
+      DEFAULT_MARKER,
+      'result four',
+    ]);
+  });
+
   it('tracks telemetry when a cache miss advances the micro-compaction cutoff', () => {
     vi.useFakeTimers();
     const records: TelemetryRecord[] = [];

@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import {
   PluginMcpSelectorComponent,
@@ -710,6 +711,21 @@ describe('KimiTUI message flow', () => {
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('hello');
     expect(transcript).toContain('Error: Failed to undo: core rpc unavailable');
+  });
+
+  it('does not duplicate welcome after undoing the only turn', async () => {
+    const { driver } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+
+    await driver.undoLastTurn();
+
+    expect(
+      driver.state.transcriptContainer.children.filter(
+        (child) => child instanceof WelcomeComponent,
+      ),
+    ).toHaveLength(1);
   });
 
   it('sends pasted image placeholders as image content parts', async () => {

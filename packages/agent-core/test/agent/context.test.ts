@@ -541,6 +541,73 @@ describe('Agent context', () => {
     expect(ctx.agent.context.history.map((m) => m.role)).toEqual(['user', 'assistant']);
   });
 
+  it('stops at compaction summary and records the requested undo count', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'old user message' }]);
+    ctx.agent.context.applyCompaction({
+      summary: 'summary of compacted context',
+      compactedCount: 1,
+      tokensBefore: 100,
+      tokensAfter: 20,
+    });
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'recent user message' }]);
+    ctx.agent.context.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'recent answer' }],
+      toolCalls: [],
+    });
+    ctx.newEvents();
+
+    expect(() => {
+      ctx.agent.context.undo(2);
+    }).toThrow('Nothing to undo in the active context.');
+
+    expect(ctx.agent.context.history).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        origin: { kind: 'compaction_summary' },
+        content: [{ type: 'text', text: 'summary of compacted context' }],
+      }),
+    ]);
+    expect(ctx.newEvents()).toContainEqual(
+      expect.objectContaining({
+        type: '[wire]',
+        event: 'context.undo',
+        args: expect.objectContaining({ count: 2 }),
+      }),
+    );
+  });
+
+  it('does not throw while restoring an undo that stops at compaction summary', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'old user message' }]);
+    ctx.agent.context.applyCompaction({
+      summary: 'summary of compacted context',
+      compactedCount: 1,
+      tokensBefore: 100,
+      tokensAfter: 20,
+    });
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'recent user message' }]);
+    ctx.agent.context.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'recent answer' }],
+      toolCalls: [],
+    });
+
+    expect(() => {
+      ctx.agent.records.restore({ type: 'context.undo', count: 2 });
+    }).not.toThrow();
+    expect(ctx.agent.context.history).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        origin: { kind: 'compaction_summary' },
+        content: [{ type: 'text', text: 'summary of compacted context' }],
+      }),
+    ]);
+  });
+
   it('preserves injection messages when undo removes the surrounding turn', () => {
     const ctx = testAgent();
     ctx.configure();

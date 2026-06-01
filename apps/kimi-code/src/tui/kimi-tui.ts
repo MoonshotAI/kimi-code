@@ -1328,6 +1328,13 @@ export class KimiTUI {
   }
 
   private renderWelcome(): void {
+    if (
+      this.state.transcriptContainer.children.some(
+        (child) => child instanceof WelcomeComponent,
+      )
+    ) {
+      return;
+    }
     const welcome = new WelcomeComponent(this.state.appState, this.state.theme.colors);
     this.state.transcriptContainer.addChild(welcome);
   }

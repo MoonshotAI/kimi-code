@@ -1,6 +1,7 @@
 import { createToolMessage, type ContentPart, type Message } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
+import { ErrorCodes, KimiError } from '../../errors';
 import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
 import { estimateTokensForMessages } from '../../utils/tokens';
 import type { CompactionResult } from '../compaction';
@@ -79,10 +80,15 @@ export class ContextMemory {
 
     let removedUserCount = 0;
     const removedMessages = new Set<ContextMessage>();
+    let stoppedAtBoundary = false;
     for (let i = this._history.length - 1; i >= 0; i--) {
       const message = this._history[i];
       if (message === undefined) continue;
-      if (isInjectionMessage(message)) continue;
+      if (message.origin?.kind === 'injection') continue;
+      if (message.origin?.kind === 'compaction_summary') {
+        stoppedAtBoundary = true;
+        break;
+      }
 
       removedMessages.add(message);
       this._history.splice(i, 1);
@@ -104,7 +110,18 @@ export class ContextMemory {
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
     this.deferredMessages = [];
+    this.agent.microCompaction.reset(this._history.length);
     this.agent.emitStatusUpdated();
+
+    if (
+      !this.agent.records.restoring &&
+      (stoppedAtBoundary || removedUserCount < count)
+    ) {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'Nothing to undo in the active context.',
+      );
+    }
   }
 
   applyCompaction(summary: CompactionResult): void {
@@ -308,8 +325,4 @@ function isRealUserPrompt(message: ContextMessage): boolean {
     return origin.trigger === 'user-slash';
   }
   return false;
-}
-
-function isInjectionMessage(message: ContextMessage): boolean {
-  return message.origin?.kind === 'injection';
 }
