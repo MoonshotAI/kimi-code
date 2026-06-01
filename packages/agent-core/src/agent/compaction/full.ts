@@ -25,10 +25,18 @@ import {
   estimateTokens,
   estimateTokensForMessages,
 } from '../../utils/tokens';
+import {
+  applyCompletionBudget,
+  resolveCompletionBudget,
+} from '../../utils/completion-budget';
 import compactionInstructionTemplate from './compaction-instruction.md';
 import { renderMessagesToText } from './render-messages';
 import type { CompactionBeginData, CompactionResult } from './types';
-import { DEFAULT_COMPACTION_CONFIG, DefaultCompactionStrategy, type CompactionStrategy } from './strategy';
+import {
+  DEFAULT_COMPACTION_CONFIG,
+  DefaultCompactionStrategy,
+  type CompactionStrategy,
+} from './strategy';
 
 type CompactionTelemetryTrigger = CompactionBeginData['source'] | 'manual-with-prompt' | 'unknown';
 
@@ -232,12 +240,13 @@ export class FullCompaction {
       await this.triggerPreCompactHook(data, tokensBefore, signal);
 
       const model = this.agent.config.model;
-      const baseProvider = this.agent.config.provider;
-      const maxContextTokens = this.agent.config.modelCapabilities.max_context_tokens;
-      const provider =
-        maxContextTokens > 0
-          ? baseProvider.withMaxCompletionTokens?.(maxContextTokens) ?? baseProvider
-          : baseProvider;
+      const provider = applyCompletionBudget({
+        provider: this.agent.config.provider,
+        budget: resolveCompletionBudget({
+          reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
+        }),
+        capability: this.agent.config.modelCapabilities,
+      });
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
       let usage: TokenUsage | null;

@@ -1084,7 +1084,9 @@ export class AnthropicChatProvider implements ChatProvider {
 
   withMaxCompletionTokens(maxCompletionTokens: number): AnthropicChatProvider {
     return this._withGenerationKwargs({
-      max_tokens: resolveDefaultMaxTokens(this._model, maxCompletionTokens),
+      max_tokens:
+        this._generationKwargs.max_tokens ??
+        resolveDefaultMaxTokens(this._model, maxCompletionTokens),
     });
   }
 
