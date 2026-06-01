@@ -3,10 +3,16 @@ import type { KaosProcess } from '@moonshot-ai/kaos';
 import { errorMessage } from '../../loop/errors';
 import type {
   BackgroundTask,
-  BackgroundTaskInfo,
   BackgroundTaskInfoBase,
   BackgroundTaskSink,
 } from './task';
+
+export interface ProcessBackgroundTaskInfo extends BackgroundTaskInfoBase {
+  readonly kind: 'process';
+  readonly command: string;
+  readonly pid: number;
+  readonly exitCode: number | null;
+}
 
 export class ProcessBackgroundTask implements BackgroundTask {
   readonly kind = 'process' as const;
@@ -58,7 +64,7 @@ export class ProcessBackgroundTask implements BackgroundTask {
     await this.proc.kill('SIGKILL');
   }
 
-  toInfo(base: BackgroundTaskInfoBase): BackgroundTaskInfo {
+  toInfo(base: BackgroundTaskInfoBase): ProcessBackgroundTaskInfo {
     return {
       ...base,
       kind: 'process',

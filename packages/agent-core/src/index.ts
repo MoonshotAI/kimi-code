@@ -35,8 +35,10 @@ export type {
   UserPromptOrigin,
 } from './agent/context';
 export type {
+  AgentBackgroundTaskInfo,
   BackgroundTaskInfo,
   BackgroundTaskStatus,
+  ProcessBackgroundTaskInfo,
 } from './agent/background';
 export type { ToolServices } from './tools/support/services';
 export { SingleModelProvider } from './session/provider-manager';

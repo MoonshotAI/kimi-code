@@ -1,3 +1,6 @@
+import type { AgentBackgroundTaskInfo } from './agent-task';
+import type { ProcessBackgroundTaskInfo } from './process-task';
+
 export type BackgroundTaskStatus =
   | 'running'
   | 'completed'
@@ -33,20 +36,7 @@ export interface BackgroundTaskInfoBase {
   readonly timeoutMs?: number;
 }
 
-export type BackgroundTaskInfo =
-  | (BackgroundTaskInfoBase & {
-      readonly kind: 'process';
-      readonly command: string;
-      readonly pid: number;
-      readonly exitCode: number | null;
-    })
-  | (BackgroundTaskInfoBase & {
-      readonly kind: 'agent';
-      /** Subagent identifier accepted by Agent(resume=...). */
-      readonly agentId?: string;
-      /** Subagent profile name. */
-      readonly subagentType?: string;
-    });
+export type BackgroundTaskInfo = ProcessBackgroundTaskInfo | AgentBackgroundTaskInfo;
 
 export interface BackgroundTaskSink {
   readonly signal: AbortSignal;
@@ -56,7 +46,7 @@ export interface BackgroundTaskSink {
 
 export interface BackgroundTask {
   readonly idPrefix: string;
-  readonly kind: string;
+  readonly kind: BackgroundTaskInfo['kind'];
   readonly description: string;
   readonly timeoutMs?: number;
 
