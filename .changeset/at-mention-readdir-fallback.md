@@ -1,5 +1,5 @@
 ---
-"@moonshot-ai/kimi-code": minor
+"@moonshot-ai/kimi-code": patch
 ---
 
-Fix `@` file-mention completion in non-git directories. Previously the autocomplete only surfaced files when `fd` was installed or the working directory was inside a git worktree; the new readdir fallback recursively walks the work dir (with a 2s TTL cache, skipping `node_modules` and other heavy directories) so `@` works anywhere.
+`@` file completion now works in non-git directories.
