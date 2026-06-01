@@ -28,7 +28,6 @@ import {
   taskOutputFile,
   taskOutputSizeBytes,
   writeTask,
-  type PersistedTask,
 } from './persist';
 import {
   TERMINAL_BACKGROUND_TASK_STATUSES,
@@ -197,7 +196,6 @@ export class BackgroundManager {
   private readonly tasks = new Map<string, ManagedTask>();
   private reservedTaskSlots = 0;
   public readonly agent: Agent;
-  private readonly maxRunningTasks?: number;
   /**
    * Ghosts: tasks loaded from disk during reconcile that have no live
    * KaosProcess. They appear in `list()` / `getTask()` with status
@@ -212,7 +210,6 @@ export class BackgroundManager {
 
   constructor(agent: Agent) {
     this.agent = agent;
-    this.maxRunningTasks = agent.kimiConfig?.background?.maxRunningTasks;
     this.sessionDir = agent.homedir;
   }
 
@@ -277,14 +274,14 @@ export class BackgroundManager {
   }
 
   assertCanRegister(): void {
-    const maxRunningTasks = this.maxRunningTasks;
+    const maxRunningTasks = this.agent.kimiConfig?.background?.maxRunningTasks;
     if (maxRunningTasks === undefined) return;
     if (this.activeTaskCount() + this.reservedTaskSlots < maxRunningTasks) return;
     throw new Error('Too many background tasks are already running.');
   }
 
   reserveSlot(): BackgroundTaskReservation {
-    const maxRunningTasks = this.maxRunningTasks;
+    const maxRunningTasks = this.agent.kimiConfig?.background?.maxRunningTasks;
     if (maxRunningTasks === undefined) {
       return { release: () => {} };
     }
@@ -667,8 +664,8 @@ export class BackgroundManager {
     const persisted = await listTasks(this.sessionDir);
     for (const t of persisted) {
       // Skip ids that already exist as live processes — live wins.
-      if (this.tasks.has(t.task_id)) continue;
-      this.ghosts.set(t.task_id, persistedToInfo(t));
+      if (this.tasks.has(t.taskId)) continue;
+      this.ghosts.set(t.taskId, t);
     }
   }
 
@@ -694,7 +691,7 @@ export class BackgroundManager {
       };
       this.ghosts.set(id, updated);
       if (this.sessionDir !== undefined) {
-        await writeTask(this.sessionDir, infoToPersisted(updated));
+        await writeTask(this.sessionDir, updated);
       }
       lost.push(id);
       lostInfo.push(updated);
@@ -719,9 +716,8 @@ export class BackgroundManager {
     if (this.sessionDir === undefined) return Promise.resolve();
     const sessionDir = this.sessionDir;
     const info = this.toInfo(entry);
-    const task: PersistedTask = infoToPersisted(info);
     entry.persistWriteQueue = entry.persistWriteQueue
-      .then(() => writeTask(sessionDir, task))
+      .then(() => writeTask(sessionDir, info))
       .catch(() => {});
     return entry.persistWriteQueue;
   }
@@ -893,57 +889,6 @@ export class BackgroundManager {
     return entry.task.toInfo(base);
   }
 
-}
-
-// ── persistence shape <-> in-memory shape ──────────────────────────────
-
-function persistedToInfo(t: PersistedTask): BackgroundTaskInfo {
-  const status = t.timed_out === true ? 'timed_out' : t.status;
-  const base: BackgroundTaskInfoBase = {
-    taskId: t.task_id,
-    kind: t.kind ?? (t.task_id.startsWith('agent-') ? 'agent' : 'process'),
-    description: t.description,
-    status,
-    startedAt: t.started_at,
-    endedAt: t.ended_at,
-    approvalReason: t.approval_reason,
-    stopReason: t.stop_reason,
-  };
-  if (base.kind === 'agent') {
-    return {
-      ...base,
-      kind: 'agent',
-      agentId: t.agent_id,
-      subagentType: t.subagent_type,
-    };
-  }
-  return {
-    ...base,
-    kind: 'process',
-    command: t.command,
-    pid: t.pid,
-    exitCode: t.exit_code,
-  };
-}
-
-function infoToPersisted(info: BackgroundTaskInfo): PersistedTask {
-  const command = info.kind === 'process' ? info.command : `[agent] ${info.description}`;
-  const pid = info.kind === 'process' ? info.pid : 0;
-  return {
-    task_id: info.taskId,
-    kind: info.kind,
-    command,
-    description: info.description,
-    pid,
-    started_at: info.startedAt,
-    ended_at: info.endedAt,
-    exit_code: info.kind === 'process' ? info.exitCode : null,
-    status: info.status,
-    approval_reason: info.approvalReason,
-    stop_reason: info.stopReason,
-    agent_id: info.kind === 'agent' ? info.agentId : undefined,
-    subagent_type: info.kind === 'agent' ? info.subagentType : undefined,
-  };
 }
 
 function notificationKey(origin: BackgroundTaskOrigin): string {
