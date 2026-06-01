@@ -142,7 +142,7 @@ export class TabbedModelSelectorComponent extends Container implements Focusable
     // If everything fits with a leading space, show all.
     const totalSegmentWidth = segments.reduce((sum, s) => sum + visibleWidth(s), 0);
     if (1 + totalSegmentWidth <= width) {
-      const hint = chalk.hex(colors.textMuted)('Tab / Shift+Tab switch');
+      const hint = chalk.hex(colors.textMuted)('Tab / Shift+Tab provider');
       let strip = ' ' + segments.join('');
       const available = width - visibleWidth(strip) - 1;
       if (available >= visibleWidth(hint) + 1) {
@@ -201,7 +201,7 @@ export class TabbedModelSelectorComponent extends Container implements Focusable
       strip += chalk.hex(colors.textMuted)(' >');
     }
 
-    const hint = chalk.hex(colors.textMuted)('Tab / Shift+Tab switch');
+    const hint = chalk.hex(colors.textMuted)('Tab / Shift+Tab provider');
     const available = width - visibleWidth(strip) - 1;
     if (available >= visibleWidth(hint) + 1) {
       const pad = ' '.repeat(available - visibleWidth(hint));
@@ -257,6 +257,7 @@ function makeSelector(
     currentThinking: opts.currentThinking,
     colors: opts.colors,
     searchable: true,
+    providerSwitchHint: true,
     onSelect: opts.onSelect,
     onCancel: opts.onCancel,
   };

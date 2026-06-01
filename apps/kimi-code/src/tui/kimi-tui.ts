@@ -400,6 +400,26 @@ export class KimiTUI {
     this.refreshTerminalThemeTracking();
   }
 
+  private async refreshProviderModelsInBackground(): Promise<void> {
+    try {
+      const result = await this.authFlow.refreshProviderModels();
+      for (const c of result.changed) {
+        const parts: string[] = [c.providerName];
+        if (c.added > 0) parts.push(`+${String(c.added)} model${c.added > 1 ? 's' : ''}`);
+        if (c.removed > 0) parts.push(`-${String(c.removed)} model${c.removed > 1 ? 's' : ''}`);
+        this.showStatus(parts.join(' · ') + '.');
+      }
+      for (const f of result.failed) {
+        this.showStatus(
+          `Skipped refreshing ${f.provider}: ${f.reason}`,
+          this.state.theme.colors.warning,
+        );
+      }
+    } catch {
+      // Best-effort: startup must not crash on background refresh failures.
+    }
+  }
+
   private async finishStartup(shouldReplayHistory: boolean): Promise<void> {
     if (this.startupNotice !== undefined) {
       this.showStatus(this.startupNotice);
@@ -435,6 +455,7 @@ export class KimiTUI {
 
   private async init(): Promise<boolean> {
     await this.authFlow.refreshAvailableModels();
+    void this.refreshProviderModelsInBackground();
 
     const { startup } = this.options;
     const { workDir } = this.state.appState;

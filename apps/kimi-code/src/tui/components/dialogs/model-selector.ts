@@ -57,6 +57,8 @@ export interface ModelSelectorOptions {
   readonly searchable?: boolean;
   /** Items per page. Lists longer than this paginate (PgUp/PgDn). */
   readonly pageSize?: number;
+  /** When true, the hint line includes a Tab/Shift+Tab provider switch tip. */
+  readonly providerSwitchHint?: boolean;
   readonly onSelect: (selection: ModelSelection) => void;
   readonly onCancel: () => void;
 }
@@ -147,10 +149,15 @@ export class ModelSelectorComponent extends Container implements Focusable {
     const view = this.list.view();
     const titleSuffix =
       view.query.length === 0 ? chalk.hex(colors.textMuted)('  (type to search)') : '';
+    const hintParts: string[] = [];
+    if (this.opts.providerSwitchHint) {
+      hintParts.push('Tab/Shift+Tab provider');
+    }
+    hintParts.push('↑↓ model', '←→ page', '/ thinking', 'Enter apply', 'Esc cancel');
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(' Select a model') + titleSuffix,
-      chalk.hex(colors.textMuted)(' ↑↓ model · ←→ page · / thinking · Enter apply · Esc cancel'),
+      chalk.hex(colors.textMuted)(' ' + hintParts.join(' · ')),
       '',
     ];
 
