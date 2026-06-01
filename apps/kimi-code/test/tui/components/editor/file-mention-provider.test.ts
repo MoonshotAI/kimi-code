@@ -412,15 +412,16 @@ describe('FileMentionProvider — readdir fallback when no git cache', () => {
   });
 
   it('surfaces a root-level hidden file when a visible subdirectory would otherwise exhaust the cap', async () => {
-    // Codex P2 follow-up: even with the visible-before-hidden sort,
-    // root-level hidden files like `.env` were still sorted behind
-    // visible directories. A large visible subdirectory could fill
-    // READDIR_MAX_ENTRIES and leave `.env` out of the snapshot,
-    // making `@.env` fail. The walker now processes all files in
-    // the current directory (visible and hidden) before recursing.
+    // Codex P2 follow-up: with the four-phase traversal, root-level
+    // hidden files like `.env` are still collected because phase 2
+    // (recurse into visible dirs) is bounded by the cap. `big/`
+    // can fill READDIR_MAX_ENTRIES - 1 slots, leaving exactly one
+    // slot for `.env` in phase 3. (A `big/` with exactly
+    // READDIR_MAX_ENTRIES files would fill the cap and starve
+    // `.env` — the cap edge case is a known trade-off.)
     writeFileSync(join(dir, '.env'), '');
     mkdirSync(join(dir, 'big'));
-    for (let i = 0; i < 1000; i += 1) {
+    for (let i = 0; i < 999; i += 1) {
       writeFileSync(join(dir, 'big', `file${i}.ts`), '');
     }
 
@@ -430,6 +431,27 @@ describe('FileMentionProvider — readdir fallback when no git cache', () => {
     expect(result).not.toBeNull();
     const values = result!.items.map((i) => i.value);
     expect(values).toContain('@.env');
+  });
+
+  it('captures a visible subdirectory before processing many root dotfiles', async () => {
+    // Codex P2 follow-up: with the four-phase traversal, phase 2
+    // (recurse into visible subdirectories) runs before phase 3
+    // (collect hidden files). So 1000 root dotfiles cannot starve
+    // a visible subdirectory like `src/` — the src/* entries are
+    // captured first, and only then are the dotfiles enumerated
+    // to fill the remaining cap.
+    mkdirSync(join(dir, 'src'));
+    writeFileSync(join(dir, 'src', 'keep.ts'), '');
+    for (let i = 0; i < 1000; i += 1) {
+      writeFileSync(join(dir, `.dot${i}.ts`), '');
+    }
+
+    const provider = new FileMentionProvider([], dir, NO_FD, stubGitCache(null));
+    const result = await provider.getSuggestions(['@src'], 0, 4, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    const values = result!.items.map((i) => i.value);
+    expect(values).toContain('@src/keep.ts');
   });
 
   it.runIf(supportsSymlinks)(

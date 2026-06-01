@@ -246,6 +246,13 @@ function containsDotSegment(path: string): boolean {
 class ReadDirWalker {
   private snapshot: ReadDirSnapshot | null = null;
   private fetchedAt = 0;
+  // Cap on the number of directories visited during a single
+  // walk. Without this, a directory-heavy tree (e.g. 10 000 empty
+  // subdirectories) would synchronously recurse into every one
+  // even though the file cap is never hit. Reset at the start of
+  // each walk so the snapshot TTL does not leak the counter
+  // across refreshes.
+  private dirsVisited = 0;
 
   constructor(private readonly workDir: string) {}
 
@@ -263,6 +270,7 @@ class ReadDirWalker {
   }
 
   private walk(): ReadDirSnapshot | null {
+    this.dirsVisited = 0;
     const files: string[] = [];
     const mtimeByPath = new Map<string, number>();
     try {
@@ -284,70 +292,79 @@ class ReadDirWalker {
   ): void {
     if (depth > READDIR_MAX_DEPTH) return;
     if (files.length >= READDIR_MAX_ENTRIES) return;
+    if (this.dirsVisited >= READDIR_MAX_ENTRIES) return;
+    this.dirsVisited++;
     let entries: import('node:fs').Dirent[];
     try {
       entries = readdirSync(absDir, { withFileTypes: true });
     } catch {
       return;
     }
-    // Two-tier priority:
-    //   1. Visibility — visible (non-dot) entries before hidden ones,
-    //      so a hidden subtree like `.config/` cannot exhaust
-    //      READDIR_MAX_ENTRIES with hidden paths and push a visible
-    //      file out of the snapshot.
-    //   2. Within each visibility bucket, files before directories —
-    //      so a single large subdirectory cannot fill the cap and
-    //      leave sibling files (including opt-in hidden files like
-    //      `.env` at the root) unmentioned.
-    // Hidden paths are still collected — they fill any remaining
-    // capacity, so the opt-in `@.env` / `@.github/` queries still
-    // work.
-    const ordered = entries.toSorted((a, b) => {
-      const aHidden = a.name.startsWith('.') ? 1 : 0;
-      const bHidden = b.name.startsWith('.') ? 1 : 0;
-      if (aHidden !== bHidden) return aHidden - bHidden;
-      const aDir = a.isDirectory() ? 1 : 0;
-      const bDir = b.isDirectory() ? 1 : 0;
-      return aDir - bDir;
-    });
-
-    // Phase 1: collect files in this directory (regular files and
-    // symlinks that resolve to files) before recursing into any
-    // subdirectory. Doing this in a separate pass — instead of
-    // interleaving with directory recursion — guarantees that
-    // current-directory files are captured first. Symlinks that
-    // resolve to directories are intentionally NOT recursed into
-    // (cycle risk) and NOT added to the snapshot.
-    for (const entry of ordered) {
-      if (files.length >= READDIR_MAX_ENTRIES) break;
-      if (entry.name === '.' || entry.name === '..') continue;
-      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+    // Four-phase traversal in priority order so a single large
+    // directory of any kind (visible or hidden) cannot fill
+    // READDIR_MAX_ENTRIES and starve entries of other types:
+    //   1. Visible files at this level — captured first.
+    //   2. Recurse into visible subdirectories.
+    //   3. Hidden files at this level — captured after visible
+    //      dirs so an explicit `@.env` query isn't starved by
+    //      a sibling large visible dir.
+    //   4. Recurse into hidden subdirectories.
+    // Hidden paths are still collected, so the opt-in `@.env` /
+    // `@.github/` queries still work.
+    const collectFile = (entry: import('node:fs').Dirent): void => {
+      if (entry.name === '.' || entry.name === '..') return;
+      if (!entry.isFile() && !entry.isSymbolicLink()) return;
       const absPath = join(absDir, entry.name);
       const relPath = relDir === '' ? entry.name : `${relDir}/${entry.name}`;
       try {
-        // statSync follows symlinks. If the target is a file we
-        // add it; if it is a directory or unresolvable we skip.
+        // statSync follows symlinks; if the target is a file we
+        // record it, otherwise we skip.
         const stat = statSync(absPath);
-        if (!stat.isFile()) continue;
+        if (!stat.isFile()) return;
         files.push(relPath);
         mtimeByPath.set(relPath, stat.mtimeMs);
       } catch {
         // File/link disappeared or unresolvable — skip it.
       }
-    }
+    };
 
-    // Phase 2: recurse into subdirectories. The cap check at the
-    // top of walkDir guards the recursion entry; the inner check
-    // at the top of this loop stops further descent once the cap
-    // is filled.
-    for (const entry of ordered) {
-      if (files.length >= READDIR_MAX_ENTRIES) break;
-      if (entry.name === '.' || entry.name === '..') continue;
-      if (!entry.isDirectory()) continue;
-      if (SKIP_DIRS.has(entry.name)) continue;
+    const recurseDir = (entry: import('node:fs').Dirent): void => {
+      if (entry.name === '.' || entry.name === '..') return;
+      if (!entry.isDirectory()) return;
+      if (SKIP_DIRS.has(entry.name)) return;
       const absChild = join(absDir, entry.name);
       const relChild = relDir === '' ? entry.name : `${relDir}/${entry.name}`;
       this.walkDir(absChild, relChild, depth + 1, files, mtimeByPath);
+    };
+
+    // Phase 1: visible files at this level
+    for (const entry of entries) {
+      if (files.length >= READDIR_MAX_ENTRIES) break;
+      if (entry.name.startsWith('.')) continue;
+      collectFile(entry);
+    }
+
+    // Phase 2: recurse into visible subdirectories
+    for (const entry of entries) {
+      if (files.length >= READDIR_MAX_ENTRIES) break;
+      if (this.dirsVisited >= READDIR_MAX_ENTRIES) break;
+      if (entry.name.startsWith('.')) continue;
+      recurseDir(entry);
+    }
+
+    // Phase 3: hidden files at this level
+    for (const entry of entries) {
+      if (files.length >= READDIR_MAX_ENTRIES) break;
+      if (!entry.name.startsWith('.')) continue;
+      collectFile(entry);
+    }
+
+    // Phase 4: recurse into hidden subdirectories
+    for (const entry of entries) {
+      if (files.length >= READDIR_MAX_ENTRIES) break;
+      if (this.dirsVisited >= READDIR_MAX_ENTRIES) break;
+      if (!entry.name.startsWith('.')) continue;
+      recurseDir(entry);
     }
   }
 }
