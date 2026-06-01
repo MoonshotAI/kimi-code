@@ -12,8 +12,8 @@ Some commands are only available in the idle state. Running them while the sessi
 
 | Command | Alias | Description | Always available |
 | --- | --- | --- | --- |
-| `/login` | — | Select a platform and authenticate. | No |
-| `/logout` | `/disconnect` | Log out of a configured provider. | No |
+| `/login` | — | Pick an account or platform and sign in: Kimi Code uses the OAuth device code flow, while Kimi Platform signs in with an API key. | No |
+| `/logout` | — | Clear the credentials of the currently selected account (Kimi Code OAuth credentials, or the corresponding open platform provider config). | No |
 | `/provider` | — | Open the interactive provider manager to view, add, and delete configured providers. See [Providers and models — `/provider` and provider management](../configuration/providers.md#provider-and-provider-management). | Yes |
 | `/model` | — | Switch the LLM model used by the current session. | Yes |
 | `/settings` | `/config` | Open the settings panel inside the TUI. | Yes |

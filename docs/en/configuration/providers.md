@@ -8,7 +8,7 @@ The `type` field of each entry in the `providers` table determines which impleme
 
 | Type | Protocol | Typical platforms |
 | --- | --- | --- |
-| `kimi` | OpenAI-compatible (chat completions style) | Kimi Code, Moonshot AI Open Platform |
+| `kimi` | OpenAI-compatible (chat completions style) | Kimi Code, Kimi Platform API key |
 | `anthropic` | Anthropic Messages | Claude API |
 | `openai` | OpenAI Chat Completions | OpenAI and compatible services |
 | `openai_responses` | OpenAI Responses API | OpenAI's newer Responses endpoint |

@@ -815,6 +815,7 @@ export class AnthropicChatProvider implements ChatProvider {
   private _defaultHeaders: Record<string, string> | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => Anthropic) | undefined;
   private _adaptiveThinking: boolean | undefined;
+  private _explicitMaxTokens: boolean;
 
   constructor(options: AnthropicOptions) {
     this._model = options.model;
@@ -827,6 +828,7 @@ export class AnthropicChatProvider implements ChatProvider {
     this._defaultHeaders = options.defaultHeaders;
     this._clientFactory = options.clientFactory;
     this._client = this._apiKey === undefined ? undefined : this._buildClient(this._apiKey);
+    this._explicitMaxTokens = options.defaultMaxTokens !== undefined;
     this._generationKwargs = {
       max_tokens: resolveDefaultMaxTokens(options.model, options.defaultMaxTokens),
       betaFeatures: options.betaFeatures ?? [INTERLEAVED_THINKING_BETA],
@@ -1082,9 +1084,25 @@ export class AnthropicChatProvider implements ChatProvider {
     return this._withGenerationKwargs(kwargs);
   }
 
+  withMaxCompletionTokens(maxCompletionTokens: number): AnthropicChatProvider {
+    const requestedCap = resolveDefaultMaxTokens(this._model, maxCompletionTokens);
+    const existingCap = this._generationKwargs.max_tokens;
+    const clone = this._withGenerationKwargs({
+      max_tokens:
+        existingCap === undefined || this._explicitMaxTokens
+          ? existingCap ?? requestedCap
+          : Math.min(existingCap, requestedCap),
+    });
+    clone._explicitMaxTokens = this._explicitMaxTokens;
+    return clone;
+  }
+
   private _withGenerationKwargs(kwargs: Partial<AnthropicGenerationKwargs>): AnthropicChatProvider {
     const clone = this._clone();
     clone._generationKwargs = { ...clone._generationKwargs, ...kwargs };
+    if ('max_tokens' in kwargs) {
+      clone._explicitMaxTokens = kwargs.max_tokens !== undefined;
+    }
     return clone;
   }
 
