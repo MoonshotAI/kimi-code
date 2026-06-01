@@ -1,4 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 
 import { FileMentionProvider } from '#/tui/components/editor/file-mention-provider';
 import type { GitLsFilesCache, GitSnapshot } from '#/utils/git/git-ls-files';
@@ -211,5 +215,84 @@ describe('FileMentionProvider — @ prefix detection + git-backed suggestions', 
     const result = await provider.getSuggestions(['@foo'], 0, 4, { signal: ctrl() });
     // pi-tui readdir on a nonexistent basePath returns [] → null.
     expect(result).toBeNull();
+  });
+});
+
+describe('FileMentionProvider — readdir fallback when no git cache', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'file-mention-readdir-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('surfaces files recursively when @ is typed in a non-git directory', async () => {
+    writeFileSync(join(dir, 'a.ts'), '');
+    mkdirSync(join(dir, 'src'));
+    writeFileSync(join(dir, 'src/b.ts'), '');
+
+    const provider = new FileMentionProvider([], dir, NO_FD, stubGitCache(null));
+    const result = await provider.getSuggestions(['@'], 0, 1, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    expect(result!.prefix).toBe('@');
+    const values = result!.items.map((i) => i.value);
+    expect(values).toContain('@a.ts');
+    expect(values).toContain('@src/b.ts');
+  });
+
+  it('skips files under blacklisted directories (node_modules, dist, etc.)', async () => {
+    mkdirSync(join(dir, 'src'));
+    writeFileSync(join(dir, 'src/keep.ts'), '');
+    mkdirSync(join(dir, 'node_modules'));
+    writeFileSync(join(dir, 'node_modules/skip.ts'), '');
+    mkdirSync(join(dir, 'dist'));
+    writeFileSync(join(dir, 'dist/skip.ts'), '');
+
+    const provider = new FileMentionProvider([], dir, NO_FD, stubGitCache(null));
+    const result = await provider.getSuggestions(['@'], 0, 1, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    const values = result!.items.map((i) => i.value);
+    expect(values).toContain('@src/keep.ts');
+    expect(values.some((v) => v.includes('node_modules'))).toBe(false);
+    expect(values.some((v) => v.includes('/dist/'))).toBe(false);
+  });
+
+  it('skips hidden entries (dotfiles, .git/, etc.)', async () => {
+    writeFileSync(join(dir, 'visible.ts'), '');
+    writeFileSync(join(dir, '.hidden.ts'), '');
+    mkdirSync(join(dir, '.git'));
+    writeFileSync(join(dir, '.git/HEAD'), '');
+
+    const provider = new FileMentionProvider([], dir, NO_FD, stubGitCache(null));
+    const result = await provider.getSuggestions(['@'], 0, 1, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    const values = result!.items.map((i) => i.value);
+    expect(values).toContain('@visible.ts');
+    expect(values.some((v) => v.includes('.hidden'))).toBe(false);
+    expect(values.some((v) => v.includes('.git/'))).toBe(false);
+  });
+
+  it('caches the walk result: new files do not appear within the 2s TTL window', async () => {
+    writeFileSync(join(dir, 'old.ts'), '');
+
+    const provider = new FileMentionProvider([], dir, NO_FD, stubGitCache(null));
+    const first = await provider.getSuggestions(['@'], 0, 1, { signal: ctrl() });
+    const firstValues = first!.items.map((i) => i.value);
+    expect(firstValues).toContain('@old.ts');
+
+    // Immediately create a new file and re-query. Within the TTL
+    // window the walker should return the cached snapshot, so the
+    // new file must NOT surface until the cache expires.
+    writeFileSync(join(dir, 'new.ts'), '');
+    const second = await provider.getSuggestions(['@'], 0, 1, { signal: ctrl() });
+    const secondValues = second!.items.map((i) => i.value);
+    expect(secondValues).toContain('@old.ts');
+    expect(secondValues).not.toContain('@new.ts');
   });
 });

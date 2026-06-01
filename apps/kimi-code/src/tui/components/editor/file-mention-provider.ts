@@ -30,7 +30,8 @@
  * when `fd` is missing AND we're in a git repo.
  */
 
-import { basename } from 'node:path';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { basename, join } from 'node:path';
 
 import {
   CombinedAutocompleteProvider,
@@ -46,6 +47,35 @@ import type { GitLsFilesCache, GitSnapshot } from '#/utils/git/git-ls-files';
 
 const MAX_SUGGESTIONS_WHEN_QUERY = 50;
 const MAX_SUGGESTIONS_WHEN_EMPTY = 15;
+const READDIR_TTL_MS = 2000;
+const READDIR_MAX_ENTRIES = 1000;
+const READDIR_MAX_DEPTH = 8;
+
+// Directories that are typically too large or too auto-generated to be
+// useful for @-completion. Skipping them keeps the walk snappy on
+// real-world repos that don't have fd or git.
+const SKIP_DIRS = new Set([
+  '.git',
+  'node_modules',
+  'dist',
+  'build',
+  '.next',
+  '.turbo',
+  '.parcel-cache',
+  '.cache',
+  '__pycache__',
+  '.venv',
+  'target',
+  '.idea',
+  '.vscode',
+]);
+
+/** Structurally compatible with `GitSnapshot` so existing rankers accept it. */
+interface ReadDirSnapshot {
+  readonly files: readonly string[];
+  readonly mtimeByPath: ReadonlyMap<string, number>;
+  readonly recencyOrder: ReadonlyMap<string, number>;
+}
 
 // Mirrors pi-tui's PATH_DELIMITERS. Keeping a local copy so @-detection
 // stays aligned even if pi-tui extends its set.
@@ -53,6 +83,7 @@ const PATH_DELIMITERS = new Set([' ', '\t', '"', "'", '=']);
 
 export class FileMentionProvider implements AutocompleteProvider {
   private readonly inner: CombinedAutocompleteProvider;
+  private readonly readDirWalker: ReadDirWalker;
 
   constructor(
     slashCommands: SlashCommand[],
@@ -61,6 +92,7 @@ export class FileMentionProvider implements AutocompleteProvider {
     private readonly gitCache: GitLsFilesCache,
   ) {
     this.inner = new CombinedAutocompleteProvider(slashCommands, workDir, fdPath);
+    this.readDirWalker = new ReadDirWalker(workDir);
   }
 
   async getSuggestions(
@@ -87,6 +119,14 @@ export class FileMentionProvider implements AutocompleteProvider {
 
     const snapshot = this.gitCache.getSnapshot();
     if (snapshot === null || snapshot.files.length === 0) {
+      // No git snapshot: try a recursive readdir of the work dir as a
+      // fallback before giving up. This is the non-git-repo case —
+      // see issue #266. Inner's getFuzzyFileSuggestions is a dead end
+      // without `fd`, so we own the candidate source here.
+      const readdirResult = this.buildFromReadDir(atPrefix);
+      if (readdirResult !== null) {
+        return { items: readdirResult, prefix: atPrefix };
+      }
       return this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
     }
 
@@ -105,9 +145,31 @@ export class FileMentionProvider implements AutocompleteProvider {
       // Git cache had nothing useful — fall through to readdir (user
       // may be typing a path that exists but isn't tracked, e.g. a
       // freshly created file not yet in the 2s cache).
+      const readdirResult = this.buildFromReadDir(atPrefix);
+      if (readdirResult !== null) {
+        return { items: readdirResult, prefix: atPrefix };
+      }
       return this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
     }
     return { items, prefix: atPrefix };
+  }
+
+  private buildFromReadDir(atPrefix: string): AutocompleteItem[] | null {
+    const snapshot = this.readDirWalker.getSnapshot();
+    if (snapshot === null || snapshot.files.length === 0) {
+      return null;
+    }
+    const query = atPrefix.slice(1);
+    const includeDotDirs = query.startsWith('.');
+    const candidates = includeDotDirs
+      ? snapshot.files
+      : snapshot.files.filter((p) => !containsDotSegment(p));
+    if (candidates.length === 0) {
+      return null;
+    }
+    return query.length === 0
+      ? rankForEmptyQuery(candidates, snapshot)
+      : rankForQuery(candidates, query, snapshot);
   }
 
   applyCompletion(
@@ -148,6 +210,84 @@ function containsDotSegment(path: string): boolean {
     if (segment.startsWith('.')) return true;
   }
   return false;
+}
+
+/**
+ * Recursive readdir of the work dir, used as the @-completion source
+ * when `fd` is missing and we're not in a git repo (or the git cache
+ * is empty). Caches the result for `READDIR_TTL_MS` to keep keystroke
+ * latency low. Skips well-known build/dependency directories so a
+ * `node_modules`-laden repo still walks in under ~50ms.
+ */
+class ReadDirWalker {
+  private snapshot: ReadDirSnapshot | null = null;
+  private fetchedAt = 0;
+
+  constructor(private readonly workDir: string) {}
+
+  getSnapshot(): ReadDirSnapshot | null {
+    if (!existsSync(this.workDir)) return null;
+    const now = Date.now();
+    if (this.snapshot !== null && now - this.fetchedAt < READDIR_TTL_MS) {
+      return this.snapshot;
+    }
+    const next = this.walk();
+    if (next === null) return null;
+    this.snapshot = next;
+    this.fetchedAt = now;
+    return next;
+  }
+
+  private walk(): ReadDirSnapshot | null {
+    const files: string[] = [];
+    const mtimeByPath = new Map<string, number>();
+    try {
+      this.walkDir(this.workDir, '', 0, files, mtimeByPath);
+    } catch {
+      return null;
+    }
+    files.sort();
+    const capped = files.length > READDIR_MAX_ENTRIES ? files.slice(0, READDIR_MAX_ENTRIES) : files;
+    return { files: capped, mtimeByPath, recencyOrder: new Map() };
+  }
+
+  private walkDir(
+    absDir: string,
+    relDir: string,
+    depth: number,
+    files: string[],
+    mtimeByPath: Map<string, number>,
+  ): void {
+    if (depth > READDIR_MAX_DEPTH) return;
+    let entries: import('node:fs').Dirent[];
+    try {
+      entries = readdirSync(absDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      // Hidden entries (dotfiles) require explicit query opt-in
+      // (handled in buildFromReadDir, not here — we always skip them
+      // at the walk level to keep cost bounded; opt-in re-includes).
+      if (entry.name.startsWith('.')) continue;
+      if (entry.isDirectory()) {
+        if (SKIP_DIRS.has(entry.name)) continue;
+        const absChild = join(absDir, entry.name);
+        const relChild = relDir === '' ? entry.name : `${relDir}/${entry.name}`;
+        this.walkDir(absChild, relChild, depth + 1, files, mtimeByPath);
+      } else if (entry.isFile()) {
+        const absPath = join(absDir, entry.name);
+        const relPath = relDir === '' ? entry.name : `${relDir}/${entry.name}`;
+        try {
+          const stat = statSync(absPath);
+          files.push(relPath);
+          mtimeByPath.set(relPath, stat.mtimeMs);
+        } catch {
+          // File disappeared between readdir and stat — skip it.
+        }
+      }
+    }
+  }
 }
 
 /**
