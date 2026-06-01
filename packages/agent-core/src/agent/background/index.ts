@@ -371,38 +371,12 @@ export class BackgroundManager {
     };
   }
 
-  /** Get the combined output of a task (tail of the ring buffer). */
-  private getOutput(taskId: string, tail?: number): string {
-    const entry = this.tasks.get(taskId);
-    if (!entry) return '';
-    const full = entry.outputChunks.join('');
-    if (tail !== undefined && tail < full.length) {
-      return full.slice(-tail);
-    }
-    return full;
-  }
-
   async readOutput(taskId: string, tail?: number): Promise<string> {
-    const entry = this.tasks.get(taskId);
-    const persistence = this.persistenceFor(taskId);
-    if (persistence !== undefined) {
-      await entry?.outputWriteQueue;
-      const persisted = await persistence.readTaskOutput(taskId);
-      if (persisted.length > 0) {
-        if (tail !== undefined && tail < persisted.length) {
-          return persisted.slice(-tail);
-        }
-        return persisted;
-      }
+    const output = (await this.getOutputSnapshot(taskId, Number.MAX_SAFE_INTEGER)).preview;
+    if (tail !== undefined && tail < output.length) {
+      return output.slice(-tail);
     }
-    return this.getOutput(taskId, tail);
-  }
-
-  getOutputPath(taskId: string): string | undefined {
-    const persistence = this.persistenceFor(taskId);
-    if (persistence === undefined) return undefined;
-    if (!persistence.taskOutputExistsSync(taskId)) return undefined;
-    return persistence.taskOutputFile(taskId);
+    return output;
   }
 
   /** Stop a running task. SIGTERM → 5s grace → SIGKILL. */

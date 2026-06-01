@@ -6,7 +6,6 @@ import type {
   CancelPayload,
   CancelPlanPayload,
   EmptyPayload,
-  GetBackgroundOutputPathPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
   McpServerInfo,
@@ -168,13 +167,6 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   getBackgroundOutput({ agentId, ...payload }: AgentScopedPayload<GetBackgroundOutputPayload>) {
     return this.getAgent(agentId).getBackgroundOutput(payload);
-  }
-
-  getBackgroundOutputPath({
-    agentId,
-    ...payload
-  }: AgentScopedPayload<GetBackgroundOutputPathPayload>) {
-    return this.getAgent(agentId).getBackgroundOutputPath(payload);
   }
 
   getContext({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {

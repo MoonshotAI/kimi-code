@@ -174,9 +174,6 @@ export interface GetBackgroundOutputPayload {
   readonly taskId: string;
   readonly tail?: number;
 }
-export interface GetBackgroundOutputPathPayload {
-  readonly taskId: string;
-}
 export interface GetBackgroundPayload {
   /**
    * When omitted, returns all tasks (including terminal/lost). Pass
@@ -281,7 +278,6 @@ export interface AgentAPI {
   clearContext: (payload: EmptyPayload) => void;
   activateSkill: (payload: ActivateSkillPayload) => void;
   getBackgroundOutput: (payload: GetBackgroundOutputPayload) => string;
-  getBackgroundOutputPath: (payload: GetBackgroundOutputPathPayload) => string | undefined;
   getContext: (payload: EmptyPayload) => AgentContextData;
   getConfig: (payload: EmptyPayload) => AgentConfigData;
   getPermission: (payload: EmptyPayload) => PermissionData;

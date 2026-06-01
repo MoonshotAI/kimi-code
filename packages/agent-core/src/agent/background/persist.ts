@@ -12,8 +12,7 @@
  * background-specific shape and the output.log helpers together.
  */
 
-import { statSync } from 'node:fs';
-import { appendFile, mkdir, open, readFile, stat } from 'node:fs/promises';
+import { appendFile, mkdir, open, stat } from 'node:fs/promises';
 import { dirname, join } from 'pathe';
 
 import { createPerIdJsonStore, type PerIdJsonStore } from '../../utils/per-id-json-store';
@@ -78,14 +77,6 @@ export class BackgroundTaskPersistence {
     await appendFile(path, chunk, 'utf-8');
   }
 
-  async readTaskOutput(taskId: string): Promise<string> {
-    try {
-      return await readFile(this.taskOutputFile(taskId), 'utf-8');
-    } catch {
-      return '';
-    }
-  }
-
   /**
    * Total byte size of a task's `output.log`. Returns 0 when the log does
    * not exist yet (the task has produced no output, or is unknown).
@@ -106,14 +97,6 @@ export class BackgroundTaskPersistence {
   async taskOutputExists(taskId: string): Promise<boolean> {
     try {
       return (await stat(this.taskOutputFile(taskId))).isFile();
-    } catch {
-      return false;
-    }
-  }
-
-  taskOutputExistsSync(taskId: string): boolean {
-    try {
-      return statSync(this.taskOutputFile(taskId)).isFile();
     } catch {
       return false;
     }

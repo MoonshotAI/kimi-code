@@ -250,24 +250,6 @@ export class Session {
     });
   }
 
-  /**
-   * Return the absolute path to the task's `output.log` on disk, or
-   * `undefined` when the task is unknown or has no persisted output.
-   * Callers can hand the path to an external pager.
-   */
-  async getBackgroundTaskOutputPath(taskId: string): Promise<string | undefined> {
-    this.ensureOpen();
-    const trimmedTaskId = normalizeRequiredString(
-      taskId,
-      'Task id cannot be empty',
-      ErrorCodes.BACKGROUND_TASK_ID_EMPTY,
-    );
-    return this.rpc.getBackgroundTaskOutputPath({
-      sessionId: this.id,
-      taskId: trimmedTaskId,
-    });
-  }
-
   async listMcpServers(): Promise<readonly McpServerInfo[]> {
     this.ensureOpen();
     return this.rpc.listMcpServers({ sessionId: this.id });

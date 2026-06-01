@@ -53,7 +53,6 @@ import type {
   ExportSessionPayload,
   ExportSessionResult,
   ForkSessionPayload,
-  GetBackgroundOutputPathPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
   GetKimiConfigPayload,
@@ -499,13 +498,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   getBackgroundOutput({ sessionId, ...payload }: SessionAgentPayload<GetBackgroundOutputPayload>) {
     return this.sessionApi(sessionId).getBackgroundOutput(payload);
-  }
-
-  getBackgroundOutputPath({
-    sessionId,
-    ...payload
-  }: SessionAgentPayload<GetBackgroundOutputPathPayload>) {
-    return this.sessionApi(sessionId).getBackgroundOutputPath(payload);
   }
 
   getContext({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {

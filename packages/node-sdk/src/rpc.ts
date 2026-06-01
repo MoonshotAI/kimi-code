@@ -403,17 +403,6 @@ export class SDKRpcClient {
     });
   }
 
-  async getBackgroundTaskOutputPath(
-    input: SessionIdRpcInput & { taskId: string },
-  ): Promise<string | undefined> {
-    const rpc = await this.getRpc();
-    return rpc.getBackgroundOutputPath({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      taskId: input.taskId,
-    });
-  }
-
   async stopBackgroundTask(
     input: SessionIdRpcInput & { taskId: string; reason?: string },
   ): Promise<void> {

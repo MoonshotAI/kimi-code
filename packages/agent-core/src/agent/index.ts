@@ -377,7 +377,6 @@ export class Agent {
         this.skills.activate(payload);
       },
       getBackgroundOutput: (payload) => this.background.readOutput(payload.taskId, payload.tail),
-      getBackgroundOutputPath: (payload) => this.background.getOutputPath(payload.taskId),
       getContext: () => this.context.data(),
       getConfig: () => this.config.data(),
       getPermission: () => this.permission.data(),
