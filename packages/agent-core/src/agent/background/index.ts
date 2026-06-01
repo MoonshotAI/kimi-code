@@ -6,14 +6,12 @@
  * Each task gets a unique ID, captures stdout+stderr to a ring buffer,
  * and supports status query / output retrieval / stop operations.
  *
- * Accepts `KaosProcess` (not `ChildProcess`) so there is no unsafe cast
- * at the BashTool call site. Lifecycle detection uses `wait()` instead
- * of EventEmitter `on('exit')`.
+ * Concrete task classes own execution details; the manager owns task
+ * registration, lifecycle state, persistence, output, and notifications.
  */
 
 import { randomBytes } from 'node:crypto';
 
-import type { KaosProcess } from '@moonshot-ai/kaos';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '../..';
@@ -33,7 +31,6 @@ import {
   writeTask,
   type PersistedTask,
 } from './persist';
-import { ProcessBackgroundTask } from './process-task';
 import {
   TERMINAL_BACKGROUND_TASK_STATUSES,
   type BackgroundTask,
@@ -75,9 +72,6 @@ export type {
   BackgroundTaskKind,
   BackgroundTaskStatus,
 } from './task';
-
-/** Lifecycle phases observed by `onLifecycle` subscribers. */
-export type BackgroundLifecycleEvent = 'started' | 'updated' | 'terminated';
 
 interface ManagedTask {
   readonly taskId: string;
@@ -155,11 +149,6 @@ export interface ReconcileResult {
   readonly lostInfo: readonly BackgroundTaskInfo[];
 }
 
-export interface BackgroundManagerOptions {
-  readonly maxRunningTasks?: number;
-  readonly sessionDir?: string;
-}
-
 export interface BackgroundTaskReservation {
   release(): void;
 }
@@ -210,7 +199,7 @@ const NOTIFICATION_TAIL_BYTES = 3_000;
 export class BackgroundManager {
   private readonly tasks = new Map<string, ManagedTask>();
   private reservedTaskSlots = 0;
-  public readonly agent?: Agent;
+  public readonly agent: Agent;
   private readonly maxRunningTasks?: number;
   /**
    * Ghosts: tasks loaded from disk during reconcile that have no live
@@ -228,65 +217,13 @@ export class BackgroundManager {
   private readonly terminalCallbacks: Array<(info: BackgroundTaskInfo) => void | Promise<void>> =
     [];
 
-  /**
-   * Registered lifecycle callbacks. Fired for every observable
-   * transition (started / updated / terminated). Errors thrown by
-   * callbacks are silently swallowed so the BPM main flow never breaks
-   * because of a buggy subscriber.
-   */
-  private readonly lifecycleCallbacks: Array<
-    (event: BackgroundLifecycleEvent, info: BackgroundTaskInfo) => void
-  > = [];
   private readonly scheduledNotificationKeys = new Set<string>();
   private readonly deliveredNotificationKeys = new Set<string>();
 
-  constructor(agentOrOptions: Agent | BackgroundManagerOptions = {}) {
-    if (isAgent(agentOrOptions)) {
-      this.agent = agentOrOptions;
-      this.maxRunningTasks = agentOrOptions.kimiConfig?.background?.maxRunningTasks;
-      this.sessionDir = agentOrOptions.homedir;
-    } else {
-      this.maxRunningTasks = agentOrOptions.maxRunningTasks;
-      this.sessionDir = agentOrOptions.sessionDir;
-    }
-
-    const agent = this.agent;
-    if (agent === undefined) return;
-
-    this.onLifecycle((event, info) => {
-      switch (event) {
-        case 'started':
-          agent.emitEvent({ type: 'background.task.started', info });
-          agent.telemetry.track('background_task_created', {
-            kind: info.kind === 'agent' ? 'agent' : 'bash',
-          });
-          return;
-        case 'updated':
-          agent.emitEvent({ type: 'background.task.updated', info });
-          return;
-        case 'terminated': {
-          agent.emitEvent({ type: 'background.task.terminated', info });
-          const success = info.status === 'completed';
-          const duration_s =
-            info.endedAt !== null ? (info.endedAt - info.startedAt) / 1000 : null;
-          const properties: Record<string, TelemetryPropertyValue> = {
-            kind: info.kind === 'agent' ? 'agent' : 'bash',
-            success,
-            duration_s,
-          };
-          if (!success) {
-            properties['reason'] =
-              info.status === 'timed_out'
-                ? 'timeout'
-                : info.status === 'killed'
-                  ? 'killed'
-                  : 'error';
-          }
-          agent.telemetry.track('background_task_completed', properties);
-          return;
-        }
-      }
-    });
+  constructor(agent: Agent) {
+    this.agent = agent;
+    this.maxRunningTasks = agent.kimiConfig?.background?.maxRunningTasks;
+    this.sessionDir = agent.homedir;
   }
 
   /**
@@ -297,33 +234,6 @@ export class BackgroundManager {
    */
   onTerminal(callback: (info: BackgroundTaskInfo) => void | Promise<void>): void {
     this.terminalCallbacks.push(callback);
-  }
-
-  /**
-   * Register a callback that fires on every lifecycle transition:
-   *   - 'started':    task just registered (either bash or agent)
-   *   - 'updated':    awaiting_approval entered / cleared
-   *   - 'terminated': task reached a terminal state (also triggers
-   *                   onTerminal); fires exactly once per task.
-   *
-   * Synchronous callback. Errors are swallowed so the BPM lifecycle
-   * machinery (status updates, persistence, waiters) cannot be blocked
-   * by a buggy subscriber. Use it for fan-out to RPC events; do not put
-   * heavy work in it (defer to microtask if needed).
-   */
-  onLifecycle(callback: (event: BackgroundLifecycleEvent, info: BackgroundTaskInfo) => void): void {
-    this.lifecycleCallbacks.push(callback);
-  }
-
-  /** Fan out a lifecycle event to subscribers. */
-  private fireLifecycle(event: BackgroundLifecycleEvent, info: BackgroundTaskInfo): void {
-    for (const cb of this.lifecycleCallbacks) {
-      try {
-        cb(event, info);
-      } catch {
-        /* swallow callback errors */
-      }
-    }
   }
 
   /**
@@ -356,7 +266,38 @@ export class BackgroundManager {
         /* swallow callback errors */
       }
     }
-    this.fireLifecycle('terminated', info);
+    this.emitTaskTerminated(info);
+  }
+
+  private emitTaskStarted(info: BackgroundTaskInfo): void {
+    this.agent.emitEvent({ type: 'background.task.started', info });
+    this.agent.telemetry.track('background_task_created', {
+      kind: info.kind === 'agent' ? 'agent' : 'bash',
+    });
+  }
+
+  private emitTaskUpdated(info: BackgroundTaskInfo): void {
+    this.agent.emitEvent({ type: 'background.task.updated', info });
+  }
+
+  private emitTaskTerminated(info: BackgroundTaskInfo): void {
+    this.agent.emitEvent({ type: 'background.task.terminated', info });
+    const success = info.status === 'completed';
+    const duration_s = info.endedAt !== null ? (info.endedAt - info.startedAt) / 1000 : null;
+    const properties: Record<string, TelemetryPropertyValue> = {
+      kind: info.kind === 'agent' ? 'agent' : 'bash',
+      success,
+      duration_s,
+    };
+    if (!success) {
+      properties['reason'] =
+        info.status === 'timed_out'
+          ? 'timeout'
+          : info.status === 'killed'
+            ? 'killed'
+            : 'error';
+    }
+    this.agent.telemetry.track('background_task_completed', properties);
   }
 
   private resolveWaiters(entry: ManagedTask): void {
@@ -406,44 +347,6 @@ export class BackgroundManager {
     return count;
   }
 
-  /**
-   * Register a KaosProcess as a background task.
-   * Starts capturing stdout/stderr and monitors lifecycle via `wait()`.
-   * Returns the assigned task ID.
-   *
-   * `opts.kind` picks the id prefix. Defaults to `'bash'` because bash
-   * subprocess registration is the only caller on the process path today.
-   * Agent tasks are constructed by their caller and registered through
-   * `registerTask`.
-   */
-  register(
-    proc: KaosProcess,
-    command: string,
-    description: string,
-    opts:
-      | {
-          kind?: string;
-          /**
-           * Optional shell metadata. Carried so the `/task` UI and the
-           * background persist snapshot can surface which dialect a
-           * task was launched under. Legacy callers omitting this
-           * field keep the implicit 'bash' default.
-           */
-          shellInfo?: {
-            shellName: string;
-            shellPath: string;
-            cwd: string;
-          };
-          reservation?: BackgroundTaskReservation;
-        }
-      | undefined = undefined,
-  ): string {
-    return this.registerTask(
-      new ProcessBackgroundTask(proc, command, description, { idPrefix: opts?.kind }),
-      opts?.reservation,
-    );
-  }
-
   registerTask(
     task: BackgroundTask,
     reservation?: BackgroundTaskReservation,
@@ -488,7 +391,7 @@ export class BackgroundManager {
 
     // Initial persistence (snapshot at start).
     void this.persistLive(entry);
-    this.fireLifecycle('started', this.toInfo(entry));
+    this.emitTaskStarted(this.toInfo(entry));
 
     void entry.lifecyclePromise;
 
@@ -685,7 +588,7 @@ export class BackgroundManager {
 
   /** Stop a running task. SIGTERM → 5s grace → SIGKILL. */
   async stop(taskId: string, reason?: string): Promise<BackgroundTaskInfo | undefined> {
-    this.agent?.records.logRecord({
+    this.agent.records.logRecord({
       type: 'background.stop',
       taskId,
     });
@@ -813,7 +716,7 @@ export class BackgroundManager {
     entry.status = 'awaiting_approval';
     entry.approvalReason = reason;
     void this.persistLive(entry);
-    this.fireLifecycle('updated', this.toInfo(entry));
+    this.emitTaskUpdated(this.toInfo(entry));
   }
 
   /**
@@ -829,7 +732,7 @@ export class BackgroundManager {
     entry.status = 'running';
     entry.approvalReason = undefined;
     void this.persistLive(entry);
-    this.fireLifecycle('updated', this.toInfo(entry));
+    this.emitTaskUpdated(this.toInfo(entry));
   }
 
   // ── completion event (await lifecycle end) ────────────────────────
@@ -870,7 +773,7 @@ export class BackgroundManager {
 
   /**
    * Attach the manager to a session directory for persistence. Tasks
-   * created via `register()` after this call are written to
+   * created via `registerTask()` after this call are written to
    * `<sessionDir>/tasks/<task_id>.json` and updated on lifecycle change.
    * Tasks created before attach are NOT retroactively persisted.
    */
@@ -951,7 +854,7 @@ export class BackgroundManager {
 
   /**
    * Persist the current state of a live ManagedTask. Called from
-   * `register()` and the lifecycle finally block. No-op unless attached.
+   * `registerTask()` and the lifecycle finally block. No-op unless attached.
    */
   private persistLive(entry: ManagedTask): Promise<void> {
     if (this.sessionDir === undefined) return Promise.resolve();
@@ -997,20 +900,16 @@ export class BackgroundManager {
   }
 
   private async notifyBackgroundTask(info: BackgroundTaskInfo): Promise<void> {
-    const agent = this.agent;
-    if (agent === undefined) return;
     const context = await this.buildBackgroundTaskNotificationContext(info);
     if (context === undefined) return;
-    agent.turn.steer(context.content, context.origin);
+    this.agent.turn.steer(context.content, context.origin);
     this.fireNotificationHook(context.notification);
   }
 
   private async restoreBackgroundTaskNotification(info: BackgroundTaskInfo): Promise<void> {
-    const agent = this.agent;
-    if (agent === undefined) return;
     const context = await this.buildBackgroundTaskNotificationContext(info);
     if (context === undefined) return;
-    agent.context.appendUserMessage(context.content, context.origin);
+    this.agent.context.appendUserMessage(context.content, context.origin);
     this.fireNotificationHook(context.notification);
   }
 
@@ -1187,10 +1086,6 @@ function infoToPersisted(info: BackgroundTaskInfo): PersistedTask {
     agent_id: info.kind === 'agent' ? info.agentId : undefined,
     subagent_type: info.kind === 'agent' ? info.subagentType : undefined,
   };
-}
-
-function isAgent(value: Agent | BackgroundManagerOptions): value is Agent {
-  return typeof value === 'object' && value !== null && 'emitEvent' in value && 'turn' in value;
 }
 
 function notificationKey(origin: BackgroundTaskOrigin): string {

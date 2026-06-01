@@ -472,8 +472,8 @@ describe('BackgroundManager', () => {
     try {
       const local = new BackgroundManager();
       const terminated: string[] = [];
-      local.onLifecycle((event, info) => {
-        if (event === 'terminated') terminated.push(info.status);
+      local.onTerminal((info) => {
+        terminated.push(info.status);
       });
       const { proc, killSpy } = processExitingAfterSigkill(137, 25);
       const taskId = local.register(proc, 'sleep 60', 'forced kill test');

@@ -29,7 +29,7 @@ import { StringDecoder } from 'node:string_decoder';
 import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
 import { z } from 'zod';
 
-import type { BackgroundManager } from '../../../agent/background';
+import { ProcessBackgroundTask, type BackgroundManager } from '../../../agent/background';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { renderPrompt } from '../../../utils/render-prompt';
@@ -399,14 +399,10 @@ export class BashTool implements BuiltinTool<BashInput> {
 
     let taskId: string;
     try {
-      taskId = backgroundManager.register(proc, command, args.description.trim(), {
+      taskId = backgroundManager.registerTask(
+        new ProcessBackgroundTask(proc, command, args.description.trim()),
         reservation,
-        shellInfo: {
-          shellName: this.kaos.osEnv.shellName,
-          shellPath: this.kaos.osEnv.shellPath,
-          cwd: args.cwd ?? this.cwd,
-        },
-      });
+      );
     } catch (error) {
       reservation.release();
       try {
@@ -435,7 +431,7 @@ export class BashTool implements BuiltinTool<BashInput> {
       }, timeoutMs);
     }
 
-    // register() synchronously inserts taskId into the manager's Map, so
+    // registerTask() synchronously inserts taskId into the manager's Map, so
     // this lookup in the same tick cannot return undefined.
     const status = backgroundManager.getTask(taskId)!.status;
     const builder = new ToolResultBuilder();

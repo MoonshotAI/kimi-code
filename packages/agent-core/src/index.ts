@@ -35,7 +35,6 @@ export type {
   UserPromptOrigin,
 } from './agent/context';
 export type {
-  BackgroundLifecycleEvent,
   AgentBackgroundTaskInfo,
   BackgroundTaskInfo,
   BackgroundTaskKind,
