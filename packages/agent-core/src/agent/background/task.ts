@@ -36,8 +36,6 @@ export interface BackgroundTaskInfoBase {
   readonly stopReason?: string;
   /** Deadline supplied at registration; surfaced via task info. */
   readonly timeoutMs?: number;
-  /** Human-readable reason recorded when a task is reclassified. */
-  readonly failureReason?: string;
 }
 
 export interface BackgroundTaskSink {

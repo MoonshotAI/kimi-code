@@ -14,7 +14,7 @@
  */
 
 import { statSync } from 'node:fs';
-import { appendFile, mkdir, open, readFile, rm, stat } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, stat } from 'node:fs/promises';
 import { dirname, join } from 'pathe';
 
 import { createPerIdJsonStore, type PerIdJsonStore } from '../../utils/per-id-json-store';
@@ -53,18 +53,6 @@ export interface PersistedTask {
   readonly timed_out?: boolean | undefined;
   /** Reason recorded when a task is explicitly stopped or aborted. */
   readonly stop_reason?: string | undefined;
-  /**
-   * Shell origin metadata (name / path / cwd) captured when
-   * `BackgroundManager.register` attached a `shellInfo` option.
-   * Persisted so restart can reconstruct the spawn environment.
-   */
-  readonly shell_info?:
-    | {
-        readonly name: string;
-        readonly path?: string | undefined;
-        readonly cwd?: string | undefined;
-      }
-    | undefined;
   /**
    * Subagent identifier for agent-* tasks (the id `subagentHost.resume`
    * accepts). Persisted so a session restart can re-emit recovery
@@ -259,17 +247,4 @@ function isValidPersistedTask(obj: unknown): obj is PersistedTask {
     (o['exit_code'] === null || typeof o['exit_code'] === 'number') &&
     typeof o['status'] === 'string'
   );
-}
-
-/**
- * Remove a task — both the per-id JSON spec and the task's `output.log`
- * directory. Idempotent: missing spec or missing output dir is not an
- * error. Throws for an invalid `taskId` (path-traversal guard fires
- * before any FS call).
- */
-export async function removeTask(sessionDir: string, taskId: string): Promise<void> {
-  await storeFor(sessionDir).remove(taskId);
-  // `taskOutputDir` re-validates the id, so a malformed id throws here
-  // even if the spec rm above silently returned; matches prior behavior.
-  await rm(taskOutputDir(sessionDir, taskId), { recursive: true, force: true });
 }

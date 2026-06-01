@@ -23,7 +23,6 @@ import {
   listTasks,
   readTaskOutput,
   readTaskOutputBytes,
-  removeTask,
   taskOutputExists,
   taskOutputExistsSync,
   taskOutputFile,
@@ -84,7 +83,7 @@ interface ManagedTask {
   endedAt: number | null;
   /** Listeners awaiting task completion. */
   readonly waiters: Array<() => void>;
-  /** True once `fireTerminalCallbacks` has already run. */
+  /** True once terminal notification/event side effects have already run. */
   terminalFired: boolean;
   /** Reason carried while awaiting approval. */
   approvalReason?: string | undefined;
@@ -92,8 +91,6 @@ interface ManagedTask {
   stopReason?: string | undefined;
   /** Deadline supplied at registration; surfaced via task info. */
   timeoutMs?: number | undefined;
-  /** Non-terminal-reclassification reason (e.g. stale heartbeat). */
-  failureReason?: string | undefined;
   /** Cancellation signal owned by the manager and observed by the concrete task. */
   readonly abortController: AbortController;
   /** Session dir captured at registration for output.log writes. */
@@ -111,8 +108,8 @@ interface ManagedTask {
  * terminal notifications only — it deliberately discards old output to
  * cap memory. It is NOT the authoritative full output: the complete,
  * never-truncated log lives on disk at `<sessionDir>/tasks/<id>/output.log`.
- * Callers that need the full output (e.g. `TaskOutput`) must read the
- * disk log via `getOutputSizeBytes` / `readOutputBytesFromDisk`.
+ * Callers that need task output should use `getOutputSnapshot()`, which
+ * reads the persisted log when available.
  */
 const MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MiB
 
@@ -210,13 +207,6 @@ export class BackgroundManager {
   /** When set, register/lifecycle changes persist to disk. */
   private sessionDir: string | undefined;
 
-  /**
-   * Registered terminal-state callbacks. Fired once per task when the
-   * task reaches a terminal state (completed / failed / timed_out / killed).
-   */
-  private readonly terminalCallbacks: Array<(info: BackgroundTaskInfo) => void | Promise<void>> =
-    [];
-
   private readonly scheduledNotificationKeys = new Set<string>();
   private readonly deliveredNotificationKeys = new Set<string>();
 
@@ -227,45 +217,16 @@ export class BackgroundManager {
   }
 
   /**
-   * Register a callback that fires when any task reaches a terminal
-   * state. The callback receives the task's `BackgroundTaskInfo`
-   * snapshot. Multiple callbacks may be registered; they are invoked in
-   * registration order. Errors thrown by callbacks are silently swallowed.
+   * Fire terminal side effects for a live task. Idempotent: the second
+   * invocation for the same task is a no-op so a lagging `wait()`
+   * resolver or a race between `stop()` and natural exit cannot yield
+   * duplicate notifications/events.
    */
-  onTerminal(callback: (info: BackgroundTaskInfo) => void | Promise<void>): void {
-    this.terminalCallbacks.push(callback);
-  }
-
-  /**
-   * Fire all registered terminal callbacks for a task. Idempotent: the
-   * second invocation for the same task is a no-op so `reconcile()` /
-   * a lagging `wait()` resolver / a race between `stop()` and natural
-   * exit cannot yield duplicate notifications. This is the manager-side
-   * half of the dedupe pact with `NotificationManager.dedupe_key`.
-   */
-  private fireTerminalCallbacks(entry: ManagedTask): void {
+  private fireTerminalEffects(entry: ManagedTask): void {
     if (entry.terminalFired) return;
     entry.terminalFired = true;
     const info = this.toInfo(entry);
-    try {
-      void this.notifyBackgroundTask(info).catch(() => {});
-    } catch {
-      /* swallow */
-    }
-    this.fireTerminalSubscribers(info);
-  }
-
-  private fireTerminalSubscribers(info: BackgroundTaskInfo): void {
-    for (const cb of this.terminalCallbacks) {
-      try {
-        const result = cb(info);
-        if (result && typeof result.catch === 'function') {
-          result.catch(() => {});
-        }
-      } catch {
-        /* swallow callback errors */
-      }
-    }
+    void this.notifyBackgroundTask(info).catch(() => {});
     this.emitTaskTerminated(info);
   }
 
@@ -389,8 +350,6 @@ export class BackgroundManager {
     void this.persistLive(entry);
     this.emitTaskStarted(this.toInfo(entry));
 
-    void entry.lifecyclePromise;
-
     return taskId;
   }
 
@@ -449,49 +408,13 @@ export class BackgroundManager {
    *
    * Output chunks are persisted to disk on an async queue, so a task can
    * reach a terminal state before its final chunks have landed on disk.
-   * Callers that read the on-disk log (`getOutputSizeBytes` /
-   * `readOutputBytesFromDisk`) should `await flushOutput()` first so they
-   * observe the complete log. No-op for unknown/ghost tasks.
+   * Callers should `await flushOutput()` before reading the on-disk log
+   * directly. No-op for unknown/ghost tasks.
    */
   async flushOutput(taskId: string): Promise<void> {
     const entry = this.tasks.get(taskId);
     if (entry === undefined) return;
     await entry.outputWriteQueue;
-  }
-
-  /**
-   * Total byte size of a task's full output as stored on disk.
-   *
-   * Reads `<sessionDir>/tasks/<id>/output.log`, which is the complete,
-   * never-truncated log — unlike the in-memory ring buffer it never drops
-   * old chunks. Returns 0 when the manager is detached, the task is
-   * unknown, or the task has produced no output yet.
-   */
-  async getOutputSizeBytes(taskId: string): Promise<number> {
-    const outputSessionDir = this.outputSessionDirFor(taskId);
-    if (outputSessionDir === undefined) return 0;
-    return taskOutputSizeBytes(outputSessionDir, taskId);
-  }
-
-  /**
-   * Read a byte range of a task's full output from the on-disk log.
-   *
-   * Reads up to `maxBytes` bytes starting at `offset` of `output.log`,
-   * straight from disk so it never loses the head of a large task the way
-   * the in-memory ring buffer would. Callers derive `offset` and `maxBytes`
-   * from a single `getOutputSizeBytes` snapshot, so the bytes returned stay
-   * consistent with the size used for metadata even when a still-running
-   * task keeps growing its log. Returns an empty string when the manager
-   * is detached, the task is unknown, or the log is absent.
-   */
-  async readOutputBytesFromDisk(
-    taskId: string,
-    offset: number,
-    maxBytes: number,
-  ): Promise<string> {
-    const outputSessionDir = this.outputSessionDirFor(taskId);
-    if (outputSessionDir === undefined) return '';
-    return readTaskOutputBytes(outputSessionDir, taskId, offset, maxBytes);
   }
 
   /**
@@ -731,58 +654,12 @@ export class BackgroundManager {
     this.emitTaskUpdated(this.toInfo(entry));
   }
 
-  // ── completion event (await lifecycle end) ────────────────────────
-
-  /**
-   * Resolve when the task reaches a terminal state. If the task is
-   * already terminal, resolves synchronously on the next microtask.
-   * Intended for integration code that wants to `await` a specific
-   * task's exit without installing a full `onTerminal` subscriber.
-   * Returns `undefined` for unknown ids (matching `getTask`). Ghost
-   * (reconciled-lost) entries are considered terminal from the
-   * manager's perspective.
-   */
-  async waitForTerminal(taskId: string): Promise<BackgroundTaskInfo | undefined> {
-    const entry = this.tasks.get(taskId);
-    if (entry === undefined) return this.ghosts.get(taskId);
-    if (TERMINAL_STATUSES.has(entry.status)) {
-      await entry.persistWriteQueue;
-      return this.toInfo(entry);
-    }
-    await new Promise<void>((resolve) => {
-      entry.waiters.push(resolve);
-    });
-    await entry.persistWriteQueue;
-    return this.toInfo(entry);
-  }
-
-  /** Reset internal state (for testing). */
-  _reset(): void {
-    this.tasks.clear();
-    this.ghosts.clear();
-    this.sessionDir = undefined;
-    this.scheduledNotificationKeys.clear();
-    this.deliveredNotificationKeys.clear();
-  }
-
   // ── persistence + reconcile ────────────────────────────────────────
-
-  /**
-   * Attach the manager to a session directory for persistence. Tasks
-   * created via `registerTask()` after this call are written to
-   * `<sessionDir>/tasks/<task_id>.json` and updated on lifecycle change.
-   * Tasks created before attach are NOT retroactively persisted.
-   */
-  attachSessionDir(sessionDir: string): void {
-    this.sessionDir = sessionDir;
-  }
 
   /**
    * Load persisted task records into the ghost map. Does NOT reconcile
    * (call `reconcile()` after `loadFromDisk()`). Idempotent; subsequent
    * calls overwrite the ghost map.
-   *
-   * Requires `attachSessionDir()` first; no-op otherwise.
    */
   async loadFromDisk(): Promise<void> {
     if (this.sessionDir === undefined) return;
@@ -814,7 +691,6 @@ export class BackgroundManager {
         status: 'lost',
         endedAt: info.endedAt ?? Date.now(),
         approvalReason: undefined,
-        failureReason: 'Background worker heartbeat expired',
       };
       this.ghosts.set(id, updated);
       if (this.sessionDir !== undefined) {
@@ -828,24 +704,11 @@ export class BackgroundManager {
 
   async reconcile(): Promise<ReconcileResult> {
     const result = await this.markLoadedTasksLost();
-    // Fire onTerminal for newly-lost ghosts so NotificationManager
-    // receives a `task.lost` notification. Dedupe on the consumer side
-    // is by `dedupe_key`; a second reconcile() on the same ghost is a
-    // no-op because the status flips to `lost` above and we guard on
-    // TERMINAL_STATUSES on the next pass.
     for (const info of result.lostInfo) {
-      this.fireTerminalSubscribers(info);
+      this.emitTaskTerminated(info);
     }
     await this.restoreBackgroundTaskNotifications();
     return result;
-  }
-
-  /** Drop a persisted task from disk and ghost map. */
-  async forgetTask(taskId: string): Promise<void> {
-    this.ghosts.delete(taskId);
-    if (this.sessionDir !== undefined) {
-      await removeTask(this.sessionDir, taskId);
-    }
   }
 
   /**
@@ -951,7 +814,7 @@ export class BackgroundManager {
   }
 
   private fireNotificationHook(notification: BackgroundTaskNotification): void {
-    void this.agent?.hooks?.fireAndForgetTrigger('Notification', {
+    void this.agent.hooks?.fireAndForgetTrigger('Notification', {
       matcherValue: notification.type,
       inputData: {
         sink: 'context',
@@ -984,7 +847,7 @@ export class BackgroundManager {
       if (entry.status === 'killed' && settlement.status === 'killed') {
         entry.endedAt = Math.max(Date.now(), (entry.endedAt ?? 0) + 1);
         await this.persistLive(entry);
-        this.fireTerminalCallbacks(entry);
+        this.fireTerminalEffects(entry);
         this.resolveWaiters(entry);
       }
       return false;
@@ -1000,7 +863,7 @@ export class BackgroundManager {
     // that here for the awaiting → terminal path.
     entry.approvalReason = undefined;
     await this.persistLive(entry);
-    this.fireTerminalCallbacks(entry);
+    this.fireTerminalEffects(entry);
     this.resolveWaiters(entry);
     return true;
   }
@@ -1026,7 +889,6 @@ export class BackgroundManager {
       approvalReason: entry.approvalReason,
       stopReason: entry.stopReason,
       timeoutMs: entry.timeoutMs,
-      failureReason: entry.failureReason,
     };
     return entry.task.toInfo(base);
   }
