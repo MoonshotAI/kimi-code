@@ -18,7 +18,7 @@ import { appendFile, mkdir, open, readFile, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'pathe';
 
 import { createPerIdJsonStore, type PerIdJsonStore } from '../../utils/per-id-json-store';
-import type { BackgroundTaskStatus } from './manager';
+import type { BackgroundTaskKind, BackgroundTaskStatus } from './task';
 
 /**
  * Task id format: `{bash|agent}-{8 chars of [0-9a-z]}`.
@@ -32,6 +32,7 @@ export const VALID_TASK_ID: RegExp = /^(bash|agent)-[0-9a-z]{8}$/;
 /** On-disk task representation (snake_case, Python-friendly). */
 export interface PersistedTask {
   readonly task_id: string;
+  readonly kind?: BackgroundTaskKind;
   readonly command: string;
   readonly description: string;
   readonly pid: number;
@@ -45,13 +46,12 @@ export interface PersistedTask {
    */
   readonly approval_reason?: string | undefined;
   /**
-   * True when an agent task was forcibly terminated by its external
-   * deadline (`registerAgentTask(..., { timeoutMs })`). An internal
-   * `TimeoutError` raised by the agent promise itself is a generic
-   * failure and does NOT set this flag.
+   * Legacy timeout marker from older persisted task files. New task info
+   * records timeout as `status: "timed_out"`; this field is retained only
+   * so old session state can be read and normalized.
    */
   readonly timed_out?: boolean | undefined;
-  /** Reason recorded when a task is explicitly stopped. */
+  /** Reason recorded when a task is explicitly stopped or aborted. */
   readonly stop_reason?: string | undefined;
   /**
    * Shell origin metadata (name / path / cwd) captured when
@@ -250,6 +250,7 @@ function isValidPersistedTask(obj: unknown): obj is PersistedTask {
   const o = obj as Record<string, unknown>;
   return (
     typeof o['task_id'] === 'string' &&
+    (o['kind'] === undefined || o['kind'] === 'process' || o['kind'] === 'agent') &&
     typeof o['command'] === 'string' &&
     typeof o['description'] === 'string' &&
     typeof o['pid'] === 'number' &&

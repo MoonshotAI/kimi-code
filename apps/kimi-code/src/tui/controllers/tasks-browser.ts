@@ -188,6 +188,7 @@ export class TasksBrowserController {
             (t) =>
               t.status !== 'completed' &&
               t.status !== 'failed' &&
+              t.status !== 'timed_out' &&
               t.status !== 'killed' &&
               t.status !== 'lost',
           );

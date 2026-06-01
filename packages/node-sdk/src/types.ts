@@ -17,6 +17,7 @@ export type Unsubscribe = () => void;
 
 export type {
   AgentReplayRecord,
+  AgentBackgroundTaskInfo,
   BackgroundConfig,
   BackgroundTaskInfo,
   BackgroundTaskKind,
@@ -37,6 +38,7 @@ export type {
   PluginMcpServerInfo,
   PluginSource,
   PluginSummary,
+  ProcessBackgroundTaskInfo,
   PromptOrigin,
   ProviderConfig,
   ProviderType,

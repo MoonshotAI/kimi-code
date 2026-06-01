@@ -156,8 +156,11 @@ describe('BackgroundProcessManager — onLifecycle', () => {
 
     const terminated = records.filter((r) => r.event === 'terminated');
     expect(terminated.length).toBe(1);
-    expect(terminated[0]!.info.status).toBe('completed');
-    expect(terminated[0]!.info.exitCode).toBe(0);
+    expect(terminated[0]!.info).toMatchObject({
+      kind: 'process',
+      status: 'completed',
+      exitCode: 0,
+    });
   });
 
   it("fires 'terminated' on non-zero exit (failed)", async () => {
@@ -169,8 +172,11 @@ describe('BackgroundProcessManager — onLifecycle', () => {
 
     const terminated = records.filter((r) => r.event === 'terminated');
     expect(terminated.length).toBe(1);
-    expect(terminated[0]!.info.status).toBe('failed');
-    expect(terminated[0]!.info.exitCode).toBe(2);
+    expect(terminated[0]!.info).toMatchObject({
+      kind: 'process',
+      status: 'failed',
+      exitCode: 2,
+    });
   });
 
   it("fires 'terminated' exactly once for the same task (idempotent)", async () => {
@@ -226,7 +232,6 @@ describe('BackgroundProcessManager — onLifecycle', () => {
         exit_code: null,
         status: 'running',
         approval_reason: undefined,
-        timed_out: undefined,
         stop_reason: undefined,
       };
       writeFileSync(join(tasksDir, 'bash-deadbeef.json'), JSON.stringify(ghost));

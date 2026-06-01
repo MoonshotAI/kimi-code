@@ -62,6 +62,7 @@ export function isTerminalBackgroundTask(info: BackgroundTaskInfo): boolean {
   return (
     info.status === 'completed' ||
     info.status === 'failed' ||
+    info.status === 'timed_out' ||
     info.status === 'killed' ||
     info.status === 'lost'
   );
@@ -75,7 +76,7 @@ export function countActiveBackgroundTasks(tasks: ReadonlyMap<string, Background
   let agentTasks = 0;
   for (const info of tasks.values()) {
     if (isTerminalBackgroundTask(info)) continue;
-    if (info.taskId.startsWith('agent-')) {
+    if (info.kind === 'agent') {
       agentTasks += 1;
     } else {
       bashTasks += 1;
@@ -89,10 +90,10 @@ export function replayBackgroundProjection(
 ): ReplayBackgroundProjection {
   const backgroundAgentMetadata = new Map<string, BackgroundAgentMetadata>();
   for (const info of background) {
-    if (!info.taskId.startsWith('agent-')) continue;
+    if (info.kind !== 'agent') continue;
     if (isTerminalBackgroundTask(info)) continue;
     backgroundAgentMetadata.set(info.taskId, {
-      agentId: info.taskId,
+      agentId: info.agentId ?? info.taskId,
       parentToolCallId: info.taskId,
       description: info.description,
     });

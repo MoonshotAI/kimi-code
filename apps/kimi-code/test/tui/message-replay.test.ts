@@ -203,8 +203,21 @@ function backgroundTask(
   description: string,
   status: BackgroundTaskInfo['status'] = 'running',
 ): BackgroundTaskInfo {
+  if (taskId.startsWith('agent-')) {
+    return {
+      taskId,
+      kind: 'agent',
+      agentId: taskId,
+      subagentType: 'coder',
+      description,
+      status,
+      startedAt: 1,
+      endedAt: status === 'running' || status === 'awaiting_approval' ? null : 2,
+    };
+  }
   return {
     taskId,
+    kind: 'process',
     command: `[agent] ${description}`,
     description,
     status,

@@ -104,12 +104,12 @@ function manuallyResolvedProcess(): {
 }
 
 function waiterCount(manager: BackgroundProcessManager, taskId: string): number {
-  const processes = (
+  const tasks = (
     manager as unknown as {
-      processes: Map<string, { waiters: Array<() => void> }>;
+      tasks: Map<string, { waiters: Array<() => void> }>;
     }
-  ).processes;
-  return processes.get(taskId)?.waiters.length ?? 0;
+  ).tasks;
+  return tasks.get(taskId)?.waiters.length ?? 0;
 }
 
 function processExitingAfterSigkill(
@@ -186,6 +186,8 @@ describe('BackgroundProcessManager', () => {
     expect(taskId).toMatch(/^bash-[0-9a-z]{8}$/);
     const info = manager.getTask(taskId);
     expect(info).toBeDefined();
+    expect(info!.kind).toBe('process');
+    if (info!.kind !== 'process') throw new Error('expected process task');
     expect(info!.command).toBe('echo hello');
     expect(info!.description).toBe('test echo');
     expect(info!.pid).toBe(proc.pid);
@@ -223,12 +225,10 @@ describe('BackgroundProcessManager', () => {
     expect(taskId).toMatch(/^agent-[0-9a-z]{8}$/);
     const info = manager.getTask(taskId);
     expect(info).toBeDefined();
+    expect(info!.kind).toBe('agent');
     expect(info!.status).toBe('running');
-    // Agent tasks use pid=0 (dummy KaosProcess).
-    expect(info!.pid).toBe(0);
-    // Spec marker: command includes the `[agent]` tag so LLM renderers
-    // can distinguish bash vs agent entries when scrolling tasks.
-    expect(info!.command).toContain('[agent]');
+    expect('pid' in info!).toBe(false);
+    expect('command' in info!).toBe(false);
   });
 
   it('getTask on an unknown id does not touch disk or create state', () => {
@@ -293,8 +293,7 @@ describe('BackgroundProcessManager', () => {
     });
 
     const info = manager.getTask(taskId);
-    expect(info!.status).toBe('completed');
-    expect(info!.exitCode).toBe(0);
+    expect(info).toMatchObject({ kind: 'process', status: 'completed', exitCode: 0 });
   });
 
   it('task status transitions to failed on non-zero exit', async () => {
@@ -306,8 +305,7 @@ describe('BackgroundProcessManager', () => {
     });
 
     const info = manager.getTask(taskId);
-    expect(info!.status).toBe('failed');
-    expect(info!.exitCode).toBe(42);
+    expect(info).toMatchObject({ kind: 'process', status: 'failed', exitCode: 42 });
   });
 
   it('does not finalize task status from a visible process exit code before wait settles', () => {
@@ -317,8 +315,7 @@ describe('BackgroundProcessManager', () => {
     markExited();
 
     const info = manager.getTask(taskId);
-    expect(info!.status).toBe('running');
-    expect(info!.exitCode).toBeNull();
+    expect(info).toMatchObject({ kind: 'process', status: 'running', exitCode: null });
     expect(info!.endedAt).toBeNull();
   });
 
@@ -329,8 +326,7 @@ describe('BackgroundProcessManager', () => {
     markExited();
 
     const info = await manager.wait(taskId, 1);
-    expect(info!.status).toBe('running');
-    expect(info!.exitCode).toBeNull();
+    expect(info).toMatchObject({ kind: 'process', status: 'running', exitCode: null });
   });
 
   it('stop kills a running task via KaosProcess.kill()', async () => {
@@ -388,8 +384,7 @@ describe('BackgroundProcessManager', () => {
       await reader.loadFromDisk();
 
       const persisted = reader.getTask(taskId);
-      expect(persisted?.status).toBe('killed');
-      expect(persisted?.exitCode).toBe(0);
+      expect(persisted).toMatchObject({ kind: 'process', status: 'killed', exitCode: 0 });
       expect(persisted?.stopReason).toBe('user requested');
     } finally {
       await rm(sessionDir, { recursive: true, force: true });
@@ -494,7 +489,7 @@ describe('BackgroundProcessManager', () => {
       await vi.advanceTimersByTimeAsync(25);
 
       const info = local.getTask(taskId);
-      expect(info!.exitCode).toBe(137);
+      expect(info).toMatchObject({ kind: 'process', exitCode: 137 });
       expect(info!.endedAt).toBeGreaterThan(stopEndedAt!);
       expect(terminated).toEqual(['killed']);
     } finally {
@@ -564,6 +559,8 @@ describe('BackgroundProcessManager — registration semantics', () => {
     expect(taskId.startsWith('bash-')).toBe(true);
     const info = manager.getTask(taskId);
     expect(info).toBeDefined();
+    expect(info!.kind).toBe('process');
+    if (info!.kind !== 'process') throw new Error('expected process task');
     // Py: 'starting' state visible. TS: starting status is collapsed
     // into 'running' here — the assertion lives at the py level.
     expect((info!.status as string) === 'starting' || info!.status === 'running').toBe(true);
@@ -581,8 +578,7 @@ describe('BackgroundProcessManager — registration semantics', () => {
       setTimeout(r, 20);
     });
     const info = manager.getTask(taskId);
-    expect(info!.status).toBe('completed');
-    expect(info!.exitCode).toBe(0);
+    expect(info).toMatchObject({ kind: 'process', status: 'completed', exitCode: 0 });
   });
 
   // Worker launch raises → manager re-raises, AND persists a `failed`
@@ -610,21 +606,17 @@ describe('BackgroundProcessManager — registration semantics', () => {
   // Agent task registration places kind_payload-style info on the task
   // info (agent_id / subagent_type carried through), status visible.
   it('agent task registration exposes agent metadata on the task info', () => {
-    const taskId = manager.registerAgentTask(new Promise(() => {}), 'investigate bug');
+    const taskId = manager.registerAgentTask(new Promise(() => {}), 'investigate bug', {
+      agentId: 'agent-child',
+      subagentType: 'coder',
+    });
     expect(taskId.startsWith('agent-')).toBe(true);
     const info = manager.getTask(taskId);
     expect(info).toBeDefined();
-    // Py: `kind_payload.agent_id / subagent_type`. TS exposes neither
-    // today — assertion lives at the py spec level.
-    const extended = info as unknown as {
-      readonly agentId?: string;
-      readonly subagentType?: string;
-      readonly kindPayload?: { agent_id?: string; subagent_type?: string };
-    };
-    const agentId = extended.agentId ?? extended.kindPayload?.agent_id;
-    const subagentType = extended.subagentType ?? extended.kindPayload?.subagent_type;
-    expect(agentId).toBeDefined();
-    expect(subagentType).toBeDefined();
+    expect(info!.kind).toBe('agent');
+    if (info!.kind !== 'agent') throw new Error('expected agent task');
+    expect(info!.agentId).toBe('agent-child');
+    expect(info!.subagentType).toBe('coder');
   });
 
   // Lookup for an unknown task id must return undefined AND must NOT
@@ -708,8 +700,7 @@ describe('BackgroundProcessManager — registration semantics', () => {
     };
     const taskId = manager.register(proc, 'node -e <stdout bg-ok>', 'real worker smoke');
     const info = await manager.wait(taskId, 10_000);
-    expect(info!.status).toBe('completed');
-    expect(info!.exitCode).toBe(0);
+    expect(info).toMatchObject({ kind: 'process', status: 'completed', exitCode: 0 });
     expect(manager.getOutput(taskId)).toContain('bg-ok');
   }, 15_000);
 

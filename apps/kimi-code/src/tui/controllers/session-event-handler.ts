@@ -828,7 +828,7 @@ export class SessionEventHandler {
     if (description === undefined) return undefined;
     let match: string | undefined;
     for (const info of this.backgroundTasks.values()) {
-      if (!info.taskId.startsWith('agent-')) continue;
+      if (info.kind !== 'agent') continue;
       if (info.description !== description) continue;
       if (match !== undefined) return undefined;
       match = info.taskId;
@@ -889,11 +889,12 @@ export class SessionEventHandler {
     const isTerminal =
       info.status === 'completed' ||
       info.status === 'failed' ||
+      info.status === 'timed_out' ||
       info.status === 'killed' ||
       info.status === 'lost';
 
     if (event.type === 'background.task.started') {
-      if (info.taskId.startsWith('agent-')) {
+      if (info.kind === 'agent') {
         this.syncBackgroundTaskBadge();
         this.host.tasksBrowserController.repaint();
         return;
@@ -905,7 +906,7 @@ export class SessionEventHandler {
     }
 
     if (event.type === 'background.task.terminated' && isTerminal) {
-      if (info.taskId.startsWith('agent-')) {
+      if (info.kind === 'agent') {
         // The Agent tool's spawn-success ToolResult is not an error, so the
         // parent toolCall card would otherwise render `✓ Completed` for any
         // terminated bg agent — including `lost` / `failed` / `killed`.
@@ -917,7 +918,7 @@ export class SessionEventHandler {
         });
       }
       if (!this.backgroundTaskTranscriptedTerminal.has(info.taskId)) {
-        if (info.taskId.startsWith('bash-')) {
+        if (info.kind === 'process') {
           this.appendBackgroundTaskEntry(info);
         }
         this.backgroundTaskTranscriptedTerminal.add(info.taskId);
@@ -955,12 +956,13 @@ export class SessionEventHandler {
       if (
         info.status === 'completed' ||
         info.status === 'failed' ||
+        info.status === 'timed_out' ||
         info.status === 'killed' ||
         info.status === 'lost'
       ) {
         continue;
       }
-      if (info.taskId.startsWith('agent-')) {
+      if (info.kind === 'agent') {
         agentTasks += 1;
       } else {
         bashTasks += 1;

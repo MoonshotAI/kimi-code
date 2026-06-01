@@ -30,6 +30,7 @@ import {
   isUserCancellation,
   type DeadlineAbortSignal,
 } from '../../../utils/abort';
+import { AgentBackgroundTask } from '../../background/agent-task';
 import type { BackgroundProcessManager } from '../../background/manager';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { matchesGlobRuleSubject } from '../../support/rule-match';
@@ -115,22 +116,18 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   readonly name: string = 'Agent';
   readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentToolInputSchema);
-  private readonly allowBackground: boolean;
-
   constructor(
     private readonly subagentHost: SessionSubagentHost,
     private readonly backgroundManager?: BackgroundProcessManager | undefined,
     subagents?: ResolvedAgentProfile['subagents'] | undefined,
     options?: {
-      allowBackground?: boolean;
       log?: Logger;
     },
   ) {
-    this.allowBackground = options?.allowBackground ?? this.backgroundManager !== undefined;
     const log = options?.log;
     const typeLines = buildSubagentDescriptions(subagents);
     const baseDescription = `${AGENT_DESCRIPTION_BASE}\n\n${
-      this.allowBackground ? AGENT_BACKGROUND_DESCRIPTION : AGENT_BACKGROUND_DISABLED_DESCRIPTION
+      this.backgroundManager !== undefined ? AGENT_BACKGROUND_DESCRIPTION : AGENT_BACKGROUND_DISABLED_DESCRIPTION
     }`;
     this.description = typeLines
       ? `${baseDescription}\n\nAvailable agent types (pass via subagent_type):\n${typeLines}`
@@ -187,18 +184,15 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       }
 
       let reservation: ReturnType<BackgroundProcessManager['reserveSlot']> | undefined;
-      let backgroundManager: BackgroundProcessManager | undefined;
       if (runInBackground) {
-        const configuredBackgroundManager = this.backgroundManager;
-        if (!this.allowBackground || configuredBackgroundManager === undefined) {
+        if (this.backgroundManager === undefined) {
           return {
             output: BACKGROUND_AGENT_UNAVAILABLE,
             isError: true,
           };
         }
         try {
-          reservation = configuredBackgroundManager.reserveSlot();
-          backgroundManager = configuredBackgroundManager;
+          reservation = this.backgroundManager.reserveSlot();
         } catch (error) {
           return {
             output: error instanceof Error ? error.message : String(error),
@@ -244,24 +238,19 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       }
 
       if (runInBackground) {
-        if (backgroundManager === undefined) {
-          reservation?.release();
-          return {
-            output: BACKGROUND_AGENT_UNAVAILABLE,
-            isError: true,
-          };
-        }
         let taskId: string;
         try {
-          taskId = backgroundManager.registerAgentTask(handle.completion, args.description, {
-            timeoutMs: timeoutMs ?? this.subagentHost.backgroundTaskTimeoutMs,
+          taskId = this.backgroundManager!.registerTask(
+            new AgentBackgroundTask(handle.completion, args.description, {
+              timeoutMs: timeoutMs ?? this.subagentHost.backgroundTaskTimeoutMs,
+              agentId: handle.agentId,
+              subagentType: handle.profileName,
+              abort: () => {
+                backgroundController?.abort();
+              },
+            }),
             reservation,
-            agentId: handle.agentId,
-            subagentType: handle.profileName,
-            abort: () => {
-              backgroundController?.abort();
-            },
-          });
+          );
         } catch (error) {
           reservation?.release();
           backgroundController?.abort();

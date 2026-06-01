@@ -52,7 +52,7 @@ export class BackgroundManager extends BackgroundProcessManager {
         case 'started':
           this.agent.emitEvent({ type: 'background.task.started', info });
           this.agent.telemetry.track('background_task_created', {
-            kind: info.taskId.startsWith('agent-') ? 'agent' : 'bash',
+            kind: info.kind === 'agent' ? 'agent' : 'bash',
           });
           return;
         case 'updated':
@@ -64,13 +64,13 @@ export class BackgroundManager extends BackgroundProcessManager {
           const duration_s =
             info.endedAt !== null ? (info.endedAt - info.startedAt) / 1000 : null;
           const properties: Record<string, TelemetryPropertyValue> = {
-            kind: info.taskId.startsWith('agent-') ? 'agent' : 'bash',
+            kind: info.kind === 'agent' ? 'agent' : 'bash',
             success,
             duration_s,
           };
           if (!success) {
             properties['reason'] =
-              info.timedOut === true
+              info.status === 'timed_out'
                 ? 'timeout'
                 : info.status === 'killed'
                   ? 'killed'
@@ -132,7 +132,7 @@ export class BackgroundManager extends BackgroundProcessManager {
     const tailOutput = (await this.getOutputSnapshot(info.taskId, NOTIFICATION_TAIL_BYTES))
       .preview;
     if (this.hasDeliveredNotification(origin)) return;
-    const isAgentTask = info.taskId.startsWith('agent-');
+    const isAgentTask = info.kind === 'agent';
     const label = isAgentTask ? 'agent' : 'task';
     const notification: BackgroundTaskNotification = {
       id: notificationId,
@@ -140,10 +140,10 @@ export class BackgroundManager extends BackgroundProcessManager {
       type: `task.${info.status}`,
       source_kind: 'background_task',
       source_id: info.taskId,
-      agent_id: isAgentTask ? info.agentId : undefined,
+      agent_id: info.kind === 'agent' ? info.agentId : undefined,
       title: `Background ${label} ${info.status}`,
       severity: info.status === 'completed' ? 'info' : 'warning',
-      body: buildBackgroundTaskNotificationBody(info, isAgentTask),
+      body: buildBackgroundTaskNotificationBody(info),
       tail_output: tailOutput,
     };
     const content = [
@@ -210,16 +210,17 @@ function notificationKey(origin: BackgroundTaskOrigin): string {
  * sessions that pre-date `agent_id` persistence keep the original
  * single-sentence body.
  */
-function buildBackgroundTaskNotificationBody(
-  info: BackgroundTaskInfo,
-  isAgentTask: boolean,
-): string {
+function buildBackgroundTaskNotificationBody(info: BackgroundTaskInfo): string {
   const baseLine =
-    info.status === 'killed' && info.stopReason
-      ? `${info.description} was killed: ${info.stopReason}.`
+    info.status === 'timed_out'
+      ? `${info.description} timed out.`
+      : info.stopReason
+      ? `${info.description} ${info.status === 'killed' ? 'was killed' : info.status}: ${
+          info.stopReason
+        }.`
       : `${info.description} ${info.status}.`;
 
-  if (!isAgentTask) return baseLine;
+  if (info.kind !== 'agent') return baseLine;
   if (info.status === 'completed') return baseLine;
   const agentId = info.agentId;
   if (agentId === undefined || agentId === info.taskId) return baseLine;

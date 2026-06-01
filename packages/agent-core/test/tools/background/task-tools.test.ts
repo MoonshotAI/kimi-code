@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { BackgroundProcessManager } from '../../../src/tools/background/manager';
 import { writeTask } from '../../../src/tools/background/persist';
+import { BACKGROUND_TASK_TIMEOUT_STOP_REASON } from '../../../src/tools/background/task';
 import { TaskListTool } from '../../../src/tools/background/task-list';
 import { TaskOutputTool } from '../../../src/tools/background/task-output';
 import { TaskStopTool } from '../../../src/tools/background/task-stop';
@@ -154,6 +155,8 @@ describe('TaskListTool', () => {
     // Synchronous check — the task is running immediately after register.
     const tasks = manager.list(true);
     expect(tasks.length).toBe(1);
+    expect(tasks[0]!.kind).toBe('process');
+    if (tasks[0]!.kind !== 'process') throw new Error('expected process task');
     expect(tasks[0]!.command).toBe('sleep 60');
   });
 
@@ -229,8 +232,7 @@ describe('TaskListTool', () => {
     await manager.stop(taskId, 'superseded by newer task');
     const result = await executeTool(tool, context('c_stop_reason', { active_only: false }));
     const content = toolContentString(result);
-    expect(content).toContain('reason: superseded by newer task');
-    expect(content).not.toContain('stop_reason:');
+    expect(content).toContain('stop_reason: superseded by newer task');
   });
 
   it('omits exit_code and reason for non-terminal tasks', async () => {
@@ -357,6 +359,30 @@ describe('TaskOutputTool', () => {
       `output_size_bytes: ${String(Buffer.byteLength('DETACHED-PAYLOAD-LINE\n'))}`,
     );
     expect(content).not.toContain('output_path:');
+  });
+
+  it('returns agent metadata and final summary without process fields', async () => {
+    const taskId = manager.registerAgentTask(
+      Promise.resolve({ result: 'SUBAGENT-FINAL-SUMMARY\n' }),
+      'agent output test',
+      {
+        agentId: 'agent-child',
+        subagentType: 'coder',
+      },
+    );
+    await expect(manager.wait(taskId, 5_000)).resolves.toMatchObject({ status: 'completed' });
+
+    const result = await executeTool(tool, context('c_agent_output', { task_id: taskId }));
+
+    expect(result.isError).toBe(false);
+    const content = toolContentString(result);
+    expect(content).toContain('kind: agent');
+    expect(content).toContain('agent_id: agent-child');
+    expect(content).toContain('actual_subagent_type: coder');
+    expect(content).toContain('[output]\nSUBAGENT-FINAL-SUMMARY');
+    expect(content).not.toMatch(/^pid:/m);
+    expect(content).not.toMatch(/^command:/m);
+    expect(content).not.toMatch(/^exit_code:/m);
   });
 
   it('reads persisted output for a task loaded after restart', async () => {
@@ -621,28 +647,32 @@ describe('TaskOutputTool — large output truncation + paging protocol', () => {
 });
 
 describe('TaskOutputTool — terminal metadata fields', () => {
-  it('exposes timed_out and terminal_reason for an agent task aborted by its deadline', async () => {
+  it('exposes stop_reason and terminal_reason for an agent task aborted by its deadline', async () => {
     const manager = new BackgroundProcessManager();
     try {
-      // An agent task whose completion never resolves, with a 0ms deadline:
-      // the external deadline fires and finalizes the task with timedOut=true.
-      const taskId = manager.registerAgentTask(new Promise<{ result: string }>(() => {}), 'slow agent', {
-        timeoutMs: 1,
-      });
+      // An agent task whose completion never resolves: the external deadline
+      // fires and finalizes the task with a timeout stop reason.
+      const taskId = manager.registerAgentTask(
+        new Promise<{ result: string }>(() => {}),
+        'slow agent',
+        {
+          timeoutMs: 1,
+        },
+      );
       await expect(manager.wait(taskId, 5_000)).resolves.toMatchObject({
         status: 'failed',
-        timedOut: true,
+        stopReason: BACKGROUND_TASK_TIMEOUT_STOP_REASON,
       });
 
       const result = await executeTool(
         new TaskOutputTool(manager),
-        context('c_timed_out', { task_id: taskId }),
+        context('c_timeout', { task_id: taskId }),
       );
       expect(result.isError).toBe(false);
       const content = toolContentString(result);
-      expect(content).toContain('timed_out: true');
+      expect(content).toContain(`stop_reason: ${BACKGROUND_TASK_TIMEOUT_STOP_REASON}`);
       expect(content).toContain('terminal_reason: timed_out');
-      expect(content).not.toContain('stop_reason:');
+      expect(content).not.toContain('timed_out:');
     } finally {
       manager._reset();
     }
@@ -672,7 +702,7 @@ describe('TaskOutputTool — terminal metadata fields', () => {
     }
   });
 
-  it('omits timed_out / stop_reason / terminal_reason for a normally completed task', async () => {
+  it('omits stop_reason / terminal_reason for a normally completed task', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-meta-'));
     const manager = new BackgroundProcessManager();
     manager.attachSessionDir(sessionDir);
@@ -988,8 +1018,8 @@ describe('TaskOutputTool — py envelope contract', () => {
     }
   });
 
-  // For a task that timed out (failed terminal state with timedOut=true),
-  // the envelope surfaces: status:failed + timed_out:true +
+  // For a task that timed out (failed terminal state with timeout stop reason),
+  // the envelope surfaces: status:failed + stop_reason:Timed out +
   // terminal_reason:timed_out. The Python contract also includes
   // `interrupted: true` and a standalone `reason:` line; TS deliberately
   // omits both — `interrupted` is not modeled, and the categorical
@@ -997,13 +1027,13 @@ describe('TaskOutputTool — py envelope contract', () => {
   // (PR#243 by-design exclusion). The TS contract assertions below
   // suffice; the dropped assertions are documented for traceability.
   it('a timed-out task surfaces the full timeout contract', async () => {
-    // Build a manager state where status=failed and timedOut=true.
+    // Build a manager state where status=failed and stopReason=Timed out.
     const taskId = manager.registerAgentTask(new Promise(() => {}), 'will time out', {
       timeoutMs: 50,
     });
     const info = await manager.waitForTerminal(taskId);
     expect(info?.status).toBe('failed');
-    expect(info?.timedOut).toBe(true);
+    expect(info?.stopReason).toBe(BACKGROUND_TASK_TIMEOUT_STOP_REASON);
 
     const result = await executeTool(
       tool,
@@ -1012,8 +1042,9 @@ describe('TaskOutputTool — py envelope contract', () => {
     expect(result.isError).toBe(false);
     const text = toolContentString(result);
     expect(text).toContain('status: failed');
-    expect(text).toContain('timed_out: true');
+    expect(text).toContain(`stop_reason: ${BACKGROUND_TASK_TIMEOUT_STOP_REASON}`);
     expect(text).toContain('terminal_reason: timed_out');
+    expect(text).not.toContain('timed_out:');
   });
 
   // Oversized output (>32KB): the envelope truncates to a preview
@@ -1107,6 +1138,7 @@ describe('background tool descriptions', () => {
     const tool = new TaskOutputTool(manager);
     const desc = tool.description;
     expect(desc).toMatch(/background/i);
+    expect(desc).toContain('Agent(run_in_background=true)');
     expect(desc).toMatch(/block/);
     expect(desc).toMatch(/output_path/);
     // TS uses `Read` rather than Python's `ReadFile` for the full-log

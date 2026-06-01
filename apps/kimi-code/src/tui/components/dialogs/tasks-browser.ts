@@ -57,6 +57,7 @@ const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
   awaiting_approval: 'awaiting',
   completed: 'completed',
   failed: 'failed',
+  timed_out: 'timed out',
   killed: 'killed',
   lost: 'lost',
 };
@@ -82,6 +83,7 @@ function statusColor(colors: ColorPalette, status: BackgroundTaskStatus): string
     case 'completed':
       return colors.textMuted;
     case 'failed':
+    case 'timed_out':
     case 'killed':
     case 'lost':
       return colors.error;
@@ -90,7 +92,11 @@ function statusColor(colors: ColorPalette, status: BackgroundTaskStatus): string
 
 function isTerminal(status: BackgroundTaskStatus): boolean {
   return (
-    status === 'completed' || status === 'failed' || status === 'killed' || status === 'lost'
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'timed_out' ||
+    status === 'killed' ||
+    status === 'lost'
   );
 }
 
@@ -161,6 +167,7 @@ function countByStatus(tasks: readonly BackgroundTaskInfo[]): StatusCounts {
         counts.completed += 1;
         break;
       case 'failed':
+      case 'timed_out':
       case 'killed':
       case 'lost':
         counts.terminalFailed += 1;
@@ -467,7 +474,7 @@ export class TasksBrowserApp extends Container implements Focusable {
     const pointer = selected ? '> ' : '  ';
     const pointerStyled = chalk.hex(selected ? colors.primary : colors.textDim)(pointer);
 
-    const idColor = selected ? colors.primary : task.taskId.startsWith('agent-')
+    const idColor = selected ? colors.primary : task.kind === 'agent'
       ? colors.success
       : colors.accent;
     const idText = selected
@@ -484,7 +491,9 @@ export class TasksBrowserApp extends Container implements Focusable {
     if (descBudget < 4) return fitExactly(prefix, innerWidth);
 
     const description =
-      singleLine(task.description) || singleLine(task.command) || '(no description)';
+      singleLine(task.description) ||
+      (task.kind === 'process' ? singleLine(task.command) : '') ||
+      '(no description)';
     const desc = truncateToWidth(description, descBudget, ELLIPSIS);
     return fitExactly(`${prefix} ${chalk.hex(colors.text)(desc)}`, innerWidth);
   }
@@ -536,8 +545,14 @@ export class TasksBrowserApp extends Container implements Focusable {
       `${label('Status:')}${chalk.hex(statusColor(colors, task.status))(STATUS_LABEL[task.status])}`,
       `${label('Description:')}${value(singleLine(task.description) || '—')}`,
     ];
-    if (task.command && task.command !== task.description) {
+    if (task.kind === 'process' && task.command && task.command !== task.description) {
       lines.push(`${label('Command:')}${value(singleLine(task.command))}`);
+    }
+    if (task.kind === 'agent' && task.agentId !== undefined) {
+      lines.push(`${label('Agent ID:')}${value(task.agentId)}`);
+    }
+    if (task.kind === 'agent' && task.subagentType !== undefined) {
+      lines.push(`${label('Agent type:')}${value(task.subagentType)}`);
     }
     const timing =
       task.status === 'running' || task.status === 'awaiting_approval'
@@ -546,15 +561,14 @@ export class TasksBrowserApp extends Container implements Focusable {
           ? `finished ${formatRelativeTime(task.endedAt)}`
           : '';
     if (timing.length > 0) lines.push(`${label('Time:')}${chalk.hex(colors.textMuted)(timing)}`);
-    if (task.pid > 0) lines.push(`${label('Pid:')}${chalk.hex(colors.textMuted)(String(task.pid))}`);
-    if (task.exitCode !== null && task.exitCode !== undefined) {
+    if (task.kind === 'process' && task.pid > 0) {
+      lines.push(`${label('Pid:')}${chalk.hex(colors.textMuted)(String(task.pid))}`);
+    }
+    if (task.kind === 'process' && task.exitCode !== null) {
       lines.push(`${label('Exit code:')}${chalk.hex(colors.textMuted)(String(task.exitCode))}`);
     }
     if (task.stopReason !== undefined && task.stopReason.length > 0) {
-      lines.push(`${label('Stop reason:')}${chalk.hex(colors.textMuted)(task.stopReason)}`);
-    }
-    if (task.timedOut === true) {
-      lines.push(`${label('Timed out:')}${chalk.hex(colors.warning)('yes')}`);
+      lines.push(`${label('Reason:')}${chalk.hex(colors.textMuted)(task.stopReason)}`);
     }
     if (task.approvalReason !== undefined && task.approvalReason.length > 0) {
       lines.push(

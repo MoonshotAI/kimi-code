@@ -2,16 +2,17 @@
  * `registerAgentTask` `timeoutMs` option.
  *
  * Semantics:
- *   - external deadline fires → status=`failed`, `timedOut=true`
+ *   - external deadline fires → status=`failed`, `stopReason="Timed out"`
  *   - no `timeoutMs` → the task runs to completion without a wrapper
  *   - internal `TimeoutError` rejection (e.g. aiohttp sock_read) is a
- *     generic `failed` with `timedOut` left unset — the flag must
+ *     generic `failed` with no stop reason — the timeout reason must
  *     only be set for the caller-driven deadline
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { BackgroundProcessManager } from '../../../src/tools/background/manager';
+import { BACKGROUND_TASK_TIMEOUT_STOP_REASON } from '../../../src/tools/background/task';
 
 describe('BackgroundProcessManager.registerAgentTask — timeoutMs', () => {
   const manager = new BackgroundProcessManager();
@@ -21,7 +22,7 @@ describe('BackgroundProcessManager.registerAgentTask — timeoutMs', () => {
     vi.useRealTimers();
   });
 
-  it('external deadline marks task failed with timedOut=true', async () => {
+  it('external deadline marks task failed with a timeout stop reason', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     // A never-resolving completion — only the deadline will fire.
     const hangForever = new Promise<{ result: string }>(() => {});
@@ -34,7 +35,7 @@ describe('BackgroundProcessManager.registerAgentTask — timeoutMs', () => {
     const info = await terminalPromise;
 
     expect(info?.status).toBe('failed');
-    expect(info?.timedOut).toBe(true);
+    expect(info?.stopReason).toBe(BACKGROUND_TASK_TIMEOUT_STOP_REASON);
   });
 
   it('omitting timeoutMs lets the task run to completion (no wrapper)', async () => {
@@ -47,10 +48,10 @@ describe('BackgroundProcessManager.registerAgentTask — timeoutMs', () => {
     resolveFn({ result: 'finished' });
     const info = await manager.waitForTerminal(taskId);
     expect(info?.status).toBe('completed');
-    expect(info?.timedOut).toBeUndefined();
+    expect(info?.stopReason).toBeUndefined();
   });
 
-  it('internal TimeoutError rejection = generic failure, timedOut unset', async () => {
+  it('internal TimeoutError rejection = generic failure, stop reason unset', async () => {
     // Even with a deadline set, an internal TimeoutError that fires
     // BEFORE the deadline must land as a plain `failed` (not as a
     // deadline-driven timeout).
@@ -63,8 +64,8 @@ describe('BackgroundProcessManager.registerAgentTask — timeoutMs', () => {
 
     const info = await manager.waitForTerminal(taskId);
     expect(info?.status).toBe('failed');
-    // Deadline never fired → timedOut must NOT be set.
-    expect(info?.timedOut).toBeUndefined();
+    // Deadline never fired → timeout stop reason must NOT be set.
+    expect(info?.stopReason).toBeUndefined();
   });
 
   // Explicit per-task timeoutMs must be surfaced on the task info so
@@ -121,17 +122,17 @@ describe('BackgroundProcessManager.registerAgentTask — timeoutMs', () => {
     // with a short race so the test does not hang on the never-
     // settling completion promise; the racing branch winning is the
     // expected outcome.
-    const raced = await Promise.race<{ status: string; timedOut?: boolean } | undefined>([
+    const raced = await Promise.race<{ status: string; stopReason?: string } | undefined>([
       manager.waitForTerminal(taskId).then((info) =>
-        info === undefined ? undefined : { status: info.status, timedOut: info.timedOut },
+        info === undefined ? undefined : { status: info.status, stopReason: info.stopReason },
       ),
-      new Promise<{ status: string; timedOut?: boolean }>((res) => {
+      new Promise<{ status: string; stopReason?: string }>((res) => {
         setTimeout(() => {
           res({ status: 'running' });
         }, 100);
       }),
     ]);
     expect(raced?.status).toBe('running');
-    expect(raced?.timedOut).toBeUndefined();
+    expect(raced?.stopReason).toBeUndefined();
   });
 });

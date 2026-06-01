@@ -4,12 +4,16 @@
 
 export { BackgroundProcessManager, generateTaskId } from './manager';
 export type {
+  AgentBackgroundTaskInfo,
   BackgroundTaskInfo,
   BackgroundTaskKind,
   BackgroundTaskOutputSnapshot,
   BackgroundTaskStatus,
+  ProcessBackgroundTaskInfo,
   ReconcileResult,
 } from './manager';
+export { AgentBackgroundTask } from './agent-task';
+export { ProcessBackgroundTask } from './process-task';
 export { VALID_TASK_ID } from './persist';
 export { TaskListTool, TaskListInputSchema } from './task-list';
 export type { TaskListInput } from './task-list';

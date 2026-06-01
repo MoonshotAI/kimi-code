@@ -36,9 +36,11 @@ export type {
 } from './agent/context';
 export type {
   BackgroundLifecycleEvent,
+  AgentBackgroundTaskInfo,
   BackgroundTaskInfo,
   BackgroundTaskKind,
   BackgroundTaskStatus,
+  ProcessBackgroundTaskInfo,
 } from './tools/background/manager';
 export type { ToolServices } from './tools/support/services';
 export { SingleModelProvider } from './session/provider-manager';
