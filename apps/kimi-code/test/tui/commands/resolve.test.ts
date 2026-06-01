@@ -63,6 +63,11 @@ describe('resolveSlashCommandInput', () => {
       commandName: 'resume',
       reason: 'streaming',
     });
+    expect(resolve('/undo', { isStreaming: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'undo',
+      reason: 'streaming',
+    });
   });
 
   it('blocks model and session pickers while compacting', () => {

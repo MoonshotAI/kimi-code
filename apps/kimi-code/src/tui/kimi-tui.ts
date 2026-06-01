@@ -897,6 +897,45 @@ export class KimiTUI {
     return this.state.transcriptEntries.length > 0;
   }
 
+  undoLastTurn(): void {
+    if (this.state.appState.streamingPhase !== 'idle') {
+      this.showError('Cannot undo while streaming — press Esc or Ctrl-C first.');
+      return;
+    }
+
+    const session = this.session;
+    if (session === undefined) {
+      this.showError(NO_ACTIVE_SESSION_MESSAGE);
+      return;
+    }
+
+    const entries = this.state.transcriptEntries;
+    const lastUserIndex = entries.findLastIndex((e) => e.kind === 'user');
+    if (lastUserIndex < 0) {
+      this.showError('Nothing to undo.');
+      return;
+    }
+
+    entries.splice(lastUserIndex);
+
+    this.state.transcriptContainer.clear();
+    this.clearTerminalInlineImages();
+    for (const entry of entries) {
+      const component = this.createTranscriptComponent(entry);
+      if (component) {
+        this.state.transcriptContainer.addChild(component);
+      }
+    }
+
+    if (entries.length === 0) {
+      this.renderWelcome();
+    }
+
+    this.state.ui.requestRender();
+
+    void session.undoHistory(1);
+  }
+
   async getStartupMcpMs(): Promise<number> {
     const session = this.session;
     if (session === undefined) return 0;

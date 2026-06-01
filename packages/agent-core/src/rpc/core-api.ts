@@ -154,6 +154,9 @@ export interface CancelPlanPayload {
 export interface BeginCompactionPayload {
   readonly instruction?: string;
 }
+export interface UndoHistoryPayload {
+  readonly count: number;
+}
 export interface RegisterToolPayload {
   readonly name: string;
   readonly description: string;
@@ -265,6 +268,7 @@ export interface AgentAPI {
   prompt: (payload: PromptPayload) => void;
   steer: (payload: SteerPayload) => void;
   cancel: (payload: CancelPayload) => void;
+  undoHistory: (payload: UndoHistoryPayload) => void;
   setThinking: (payload: SetThinkingPayload) => void;
   setPermission: (payload: SetPermissionPayload) => void;
   setModel: (payload: SetModelPayload) => SetModelResult;

@@ -318,6 +318,15 @@ export class SDKRpcClient {
     });
   }
 
+  async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.undoHistory({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      count: input.count,
+    });
+  }
+
   async getContext(input: SessionIdRpcInput): Promise<AgentContextData> {
     const rpc = await this.getRpc();
     return rpc.getContext({

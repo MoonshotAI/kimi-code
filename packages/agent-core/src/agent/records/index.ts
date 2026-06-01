@@ -82,6 +82,9 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'context.apply_compaction':
       agent.context.applyCompaction(input);
       return;
+    case 'context.undo':
+      agent.context.undo(input.count);
+      return;
     case 'tools.register_user_tool':
       agent.tools.registerUserTool(input);
       return;

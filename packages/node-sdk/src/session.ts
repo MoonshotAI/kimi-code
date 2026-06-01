@@ -166,6 +166,11 @@ export class Session {
     await this.rpc.cancelCompaction({ sessionId: this.id });
   }
 
+  async undoHistory(count: number = 1): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.undoHistory({ sessionId: this.id, count });
+  }
+
   async getContext(): Promise<AgentContextData> {
     this.ensureOpen();
     return this.rpc.getContext({ sessionId: this.id });

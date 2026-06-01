@@ -298,6 +298,9 @@ export class Agent {
         }
         this.turn.cancel(payload.turnId);
       },
+      undoHistory: (payload) => {
+        this.context.undo(payload.count);
+      },
       setThinking: (payload) => {
         const wasEnabled = this.config.thinkingLevel !== 'off';
         this.config.update({ thinkingLevel: payload.level });

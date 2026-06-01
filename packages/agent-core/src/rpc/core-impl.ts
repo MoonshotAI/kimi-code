@@ -84,6 +84,7 @@ import type {
   SkillSummary,
   SteerPayload,
   StopBackgroundPayload,
+  UndoHistoryPayload,
   UnregisterToolPayload,
   UpdateSessionMetadataPayload,
 } from './core-api';
@@ -428,6 +429,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   cancel({ sessionId, ...payload }: SessionAgentPayload<CancelPayload>) {
     return this.sessionApi(sessionId).cancel(payload);
+  }
+
+  undoHistory({ sessionId, ...payload }: SessionAgentPayload<UndoHistoryPayload>) {
+    return this.sessionApi(sessionId).undoHistory(payload);
   }
 
   async setModel({

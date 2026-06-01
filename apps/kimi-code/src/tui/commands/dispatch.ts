@@ -124,6 +124,9 @@ export interface SlashCommandHost {
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void;
   readonly skillCommandMap: Map<string, string>;
 
+  // Undo
+  undoLastTurn(): void;
+
   // Controller refs
   readonly streamingUI: StreamingUIController;
   readonly tasksBrowserController: TasksBrowserController;
@@ -278,6 +281,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'logout':
       await handleLogoutCommand(host);
+      return;
+    case 'undo':
+      host.undoLastTurn();
       return;
     default:
       host.showError(`Unknown slash command: /${String(name)}`);

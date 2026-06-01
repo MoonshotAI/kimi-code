@@ -71,6 +71,34 @@ export class ContextMemory {
     this.agent.emitStatusUpdated();
   }
 
+  undo(count: number): void {
+    if (count <= 0) return;
+    if (this._history.length === 0) return;
+
+    this.agent.records.logRecord({ type: 'context.undo', count });
+
+    let removedUserCount = 0;
+    for (let i = this._history.length - 1; i >= 0; i--) {
+      const message = this._history.pop();
+      if (message === undefined) continue;
+
+      if (i < this.tokenCountCoveredMessageCount) {
+        this.tokenCountCoveredMessageCount--;
+        this._tokenCount -= estimateTokensForMessages([message]);
+      }
+
+      if (message.role === 'user') {
+        removedUserCount++;
+        if (removedUserCount >= count) break;
+      }
+    }
+
+    this.openSteps.clear();
+    this.pendingToolResultIds.clear();
+    this.deferredMessages = [];
+    this.agent.emitStatusUpdated();
+  }
+
   applyCompaction(summary: CompactionResult): void {
     this.agent.records.logRecord({
       type: 'context.apply_compaction',
