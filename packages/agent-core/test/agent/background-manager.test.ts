@@ -15,9 +15,9 @@ import type { Writable } from 'node:stream';
 import type { KaosProcess } from '@moonshot-ai/kaos';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { BackgroundManager } from '../../src/agent/background';
+import { AgentBackgroundTask, BackgroundManager } from '../../src/agent/background';
 import type { AgentEvent } from '../../src/rpc/events';
-import { appendTaskOutput, writeTask } from '../../src/tools/background/persist';
+import { appendTaskOutput, writeTask } from '../../src/agent/background/persist';
 
 interface FakeAgent {
   emitEvent: (event: AgentEvent) => void;
@@ -116,7 +116,7 @@ describe('BackgroundManager — RPC event emission', () => {
   });
 
   it('emits background.task.started on registerAgentTask()', () => {
-    const taskId = agent.background.registerAgentTask(new Promise(() => {}), 'agent task');
+    const taskId = agent.background.registerTask(new AgentBackgroundTask(new Promise(() => {}), 'agent task'));
 
     const started = agent.emittedEvents.filter((e) => e.type === 'background.task.started');
     expect(started.length).toBe(1);
@@ -184,9 +184,9 @@ describe('BackgroundManager — RPC event emission', () => {
   });
 
   it('tracks timed-out agent tasks with reason=timeout', async () => {
-    const taskId = agent.background.registerAgentTask(new Promise(() => {}), 'slow agent', {
+    const taskId = agent.background.registerTask(new AgentBackgroundTask(new Promise(() => {}), 'slow agent', {
       timeoutMs: 1,
-    });
+    }));
     agent.telemetry.track.mockClear();
 
     await agent.background.waitForTerminal(taskId);
@@ -244,10 +244,10 @@ describe('BackgroundManager — RPC event emission', () => {
   });
 
   it('steers completed agent task notifications into the turn flow', async () => {
-    const taskId = agent.background.registerAgentTask(
+    const taskId = agent.background.registerTask(new AgentBackgroundTask(
       Promise.resolve({ result: 'final subagent summary' }),
       'agent task',
-    );
+    ));
     await agent.background.waitForTerminal(taskId);
 
     await vi.waitFor(() => {
@@ -314,10 +314,10 @@ describe('BackgroundManager — RPC event emission', () => {
 
   it('queues background agent notifications without waiting for an active turn', async () => {
     agent.turn.hasActiveTurn = true;
-    const taskId = agent.background.registerAgentTask(
+    const taskId = agent.background.registerTask(new AgentBackgroundTask(
       Promise.resolve({ result: 'active turn summary' }),
       'agent task',
-    );
+    ));
     await agent.background.waitForTerminal(taskId);
 
     await vi.waitFor(() => {
@@ -525,10 +525,10 @@ describe('BackgroundManager — RPC event emission', () => {
     const fireAndForgetTrigger = vi.fn(() => Promise.resolve([]));
     agent = makeAgent({ hooks: { fireAndForgetTrigger } });
 
-    const taskId = agent.background.registerAgentTask(
+    const taskId = agent.background.registerTask(new AgentBackgroundTask(
       Promise.resolve({ result: 'final agent output' }),
       'inspect repository',
-    );
+    ));
     await agent.background.wait(taskId);
 
     await vi.waitFor(() => {
@@ -555,10 +555,10 @@ describe('BackgroundManager — RPC event emission', () => {
     });
     agent = makeAgent({ hooks: { fireAndForgetTrigger } });
 
-    const taskId = agent.background.registerAgentTask(
+    const taskId = agent.background.registerTask(new AgentBackgroundTask(
       Promise.resolve({ result: 'final agent output' }),
       'inspect repository',
-    );
+    ));
     await agent.background.wait(taskId);
 
     await vi.waitFor(() => {
@@ -637,11 +637,11 @@ describe('BackgroundManager — RPC event emission', () => {
       // Promise.reject (non-AbortError) routes through the registerAgentTask
       // `.catch` branch and lands at status `failed`, which is the same
       // agent-* failure branch reconcile uses for `lost` tasks.
-      const taskId = agent.background.registerAgentTask(
+      const taskId = agent.background.registerTask(new AgentBackgroundTask(
         Promise.reject(new Error('subagent crashed')),
         'inspect repository',
         { agentId: 'agent-7' },
-      );
+      ));
       await agent.background.waitForTerminal(taskId);
 
       await vi.waitFor(() => {
@@ -655,11 +655,11 @@ describe('BackgroundManager — RPC event emission', () => {
     });
 
     it('completed agent task body does NOT add resume instructions', async () => {
-      const taskId = agent.background.registerAgentTask(
+      const taskId = agent.background.registerTask(new AgentBackgroundTask(
         Promise.resolve({ result: 'all good' }),
         'inspect repository',
         { agentId: 'agent-8' },
-      );
+      ));
       await agent.background.wait(taskId);
 
       await vi.waitFor(() => {

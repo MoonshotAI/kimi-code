@@ -30,8 +30,7 @@ import {
   isUserCancellation,
   type DeadlineAbortSignal,
 } from '../../../utils/abort';
-import { AgentBackgroundTask } from '../../background/agent-task';
-import type { BackgroundProcessManager } from '../../background/manager';
+import { AgentBackgroundTask, type BackgroundManager } from '../../../agent/background';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { matchesGlobRuleSubject } from '../../support/rule-match';
 import AGENT_BACKGROUND_DISABLED_DESCRIPTION from './agent-background-disabled.md';
@@ -118,7 +117,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentToolInputSchema);
   constructor(
     private readonly subagentHost: SessionSubagentHost,
-    private readonly backgroundManager?: BackgroundProcessManager | undefined,
+    private readonly backgroundManager?: BackgroundManager | undefined,
     subagents?: ResolvedAgentProfile['subagents'] | undefined,
     options?: {
       log?: Logger;
@@ -183,7 +182,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         };
       }
 
-      let reservation: ReturnType<BackgroundProcessManager['reserveSlot']> | undefined;
+      let reservation: ReturnType<BackgroundManager['reserveSlot']> | undefined;
       if (runInBackground) {
         if (this.backgroundManager === undefined) {
           return {

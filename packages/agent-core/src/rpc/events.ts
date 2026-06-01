@@ -4,7 +4,7 @@ import type { CronJobOrigin, PromptOrigin } from '../agent/context';
 import type { KimiErrorPayload } from '../errors';
 import type { PermissionMode } from '../agent/permission';
 import type { SkillSource } from '../skill';
-import type { BackgroundTaskInfo } from '../tools/background/manager';
+import type { BackgroundTaskInfo } from '../agent/background';
 import type { ToolInputDisplay } from '../tools/display';
 
 export type { ToolInputDisplay } from '../tools/display';

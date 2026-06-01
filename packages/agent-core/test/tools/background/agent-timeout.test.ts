@@ -1,8 +1,8 @@
 /**
- * `registerAgentTask` `timeoutMs` option.
+ * AgentBackgroundTask `timeoutMs` option.
  *
  * Semantics:
- *   - external deadline fires → status=`failed`, `stopReason="Timed out"`
+ *   - external deadline fires → status=`timed_out`
  *   - no `timeoutMs` → the task runs to completion without a wrapper
  *   - internal `TimeoutError` rejection (e.g. aiohttp sock_read) is a
  *     generic `failed` with no stop reason — the timeout reason must
@@ -11,22 +11,21 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { BackgroundProcessManager } from '../../../src/tools/background/manager';
-import { BACKGROUND_TASK_TIMEOUT_STOP_REASON } from '../../../src/tools/background/task';
+import { AgentBackgroundTask, BackgroundManager } from '../../../src/agent/background';
 
-describe('BackgroundProcessManager.registerAgentTask — timeoutMs', () => {
-  const manager = new BackgroundProcessManager();
+describe('AgentBackgroundTask — timeoutMs', () => {
+  const manager = new BackgroundManager();
 
   afterEach(() => {
     manager._reset();
     vi.useRealTimers();
   });
 
-  it('external deadline marks task failed with a timeout stop reason', async () => {
+  it('external deadline marks task timed_out', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     // A never-resolving completion — only the deadline will fire.
     const hangForever = new Promise<{ result: string }>(() => {});
-    const taskId = manager.registerAgentTask(hangForever, 'hang', { timeoutMs: 2_000 });
+    const taskId = manager.registerTask(new AgentBackgroundTask(hangForever, 'hang', { timeoutMs: 2_000 }));
 
     // Advance past the deadline; awaitTerminal resolves once the race
     // finishes and the `.finally` block runs.
@@ -34,8 +33,8 @@ describe('BackgroundProcessManager.registerAgentTask — timeoutMs', () => {
     await vi.advanceTimersByTimeAsync(2_100);
     const info = await terminalPromise;
 
-    expect(info?.status).toBe('failed');
-    expect(info?.stopReason).toBe(BACKGROUND_TASK_TIMEOUT_STOP_REASON);
+    expect(info?.status).toBe('timed_out');
+    expect(info?.stopReason).toBeUndefined();
   });
 
   it('omitting timeoutMs lets the task run to completion (no wrapper)', async () => {
@@ -43,7 +42,7 @@ describe('BackgroundProcessManager.registerAgentTask — timeoutMs', () => {
     const completion = new Promise<{ result: string }>((res) => {
       resolveFn = res;
     });
-    const taskId = manager.registerAgentTask(completion, 'no deadline');
+    const taskId = manager.registerTask(new AgentBackgroundTask(completion, 'no deadline'));
 
     resolveFn({ result: 'finished' });
     const info = await manager.waitForTerminal(taskId);
@@ -58,9 +57,9 @@ describe('BackgroundProcessManager.registerAgentTask — timeoutMs', () => {
     const internalErr = new Error('aiohttp sock_read timeout');
     internalErr.name = 'TimeoutError';
     const rejecting = Promise.reject(internalErr);
-    const taskId = manager.registerAgentTask(rejecting, 'internal timeout', {
+    const taskId = manager.registerTask(new AgentBackgroundTask(rejecting, 'internal timeout', {
       timeoutMs: 900_000,
-    });
+    }));
 
     const info = await manager.waitForTerminal(taskId);
     expect(info?.status).toBe('failed');
@@ -78,9 +77,9 @@ describe('BackgroundProcessManager.registerAgentTask — timeoutMs', () => {
   // promise's `.finally(clearTimeout)` would not run under real time.
   it('explicit timeoutMs is persisted on the task info', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    const taskId = manager.registerAgentTask(new Promise(() => {}), 'persist timeout', {
+    const taskId = manager.registerTask(new AgentBackgroundTask(new Promise(() => {}), 'persist timeout', {
       timeoutMs: 1_800_000,
-    });
+    }));
     const info = manager.getTask(taskId);
     expect((info as unknown as { timeoutMs?: number }).timeoutMs).toBe(1_800_000);
   });
@@ -98,7 +97,7 @@ describe('BackgroundProcessManager.registerAgentTask — timeoutMs', () => {
   // guard: if someone later adds a hard-coded default in
   // registerAgentTask, the assertion below catches it.
   it('omitted timeoutMs leaves the task info field undefined', () => {
-    const taskId = manager.registerAgentTask(new Promise(() => {}), 'default timeout');
+    const taskId = manager.registerTask(new AgentBackgroundTask(new Promise(() => {}), 'default timeout'));
     const info = manager.getTask(taskId);
     expect((info as unknown as { timeoutMs?: number }).timeoutMs).toBeUndefined();
   });
@@ -111,9 +110,9 @@ describe('BackgroundProcessManager.registerAgentTask — timeoutMs', () => {
   // zero so a caller writing `0` does not lose its task to an
   // immediate kill.
   it('timeoutMs=0 is preserved on the task info and does not arm a deadline', async () => {
-    const taskId = manager.registerAgentTask(new Promise(() => {}), 'zero timeout', {
+    const taskId = manager.registerTask(new AgentBackgroundTask(new Promise(() => {}), 'zero timeout', {
       timeoutMs: 0,
-    });
+    }));
     // The literal zero is preserved on the task info.
     const initial = manager.getTask(taskId);
     expect((initial as unknown as { timeoutMs?: number }).timeoutMs).toBe(0);

@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { generateTaskId, VALID_TASK_ID } from '../../../src/tools/background/index';
+import { generateTaskId, VALID_TASK_ID } from '../../../src/agent/background';
 
 describe('background task id format', () => {
   it('generated ids pass VALID_TASK_ID for every kind', () => {

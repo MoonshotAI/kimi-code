@@ -18,8 +18,8 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { BackgroundProcessManager } from '../../../src/tools/background/manager';
-import { writeTask } from '../../../src/tools/background/persist';
+import { BackgroundManager } from '../../../src/agent/background';
+import { writeTask } from '../../../src/agent/background/persist';
 
 let sessionDir: string;
 
@@ -50,7 +50,7 @@ describe('BPM reconcile — stale heartbeat ghost detection', () => {
       status: 'running',
     });
 
-    const mgr = new BackgroundProcessManager();
+    const mgr = new BackgroundManager();
     const fired: Array<{ taskId: string; status: string }> = [];
     mgr.onTerminal((info) => {
       fired.push({ taskId: info.taskId, status: info.status });
@@ -74,7 +74,7 @@ describe('BPM reconcile — stale heartbeat ghost detection', () => {
       status: 'running',
     });
 
-    const mgr = new BackgroundProcessManager();
+    const mgr = new BackgroundManager();
     const fired: string[] = [];
     mgr.onTerminal((info) => {
       fired.push(info.taskId);

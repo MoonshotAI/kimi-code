@@ -1,7 +1,7 @@
 import type { ContentPart, Message } from '@moonshot-ai/kosong';
 
 import type { SkillSource } from '../../skill';
-import type { BackgroundTaskStatus } from '../../tools/background';
+import type { BackgroundTaskStatus } from '../background';
 
 export interface UserPromptOrigin {
   readonly kind: 'user';

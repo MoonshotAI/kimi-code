@@ -1,5 +1,5 @@
 /**
- * BackgroundProcessManager reconcile + persistence integration tests.
+ * BackgroundManager reconcile + persistence integration tests.
  */
 
 import { mkdir, rm } from 'node:fs/promises';
@@ -8,8 +8,8 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { BackgroundProcessManager } from '../../../src/tools/background/manager';
-import { writeTask, listTasks } from '../../../src/tools/background/persist';
+import { BackgroundManager } from '../../../src/agent/background';
+import { writeTask, listTasks } from '../../../src/agent/background/persist';
 
 let sessionDir: string;
 
@@ -25,9 +25,9 @@ afterEach(async () => {
   await rm(sessionDir, { recursive: true, force: true });
 });
 
-describe('BackgroundProcessManager — loadFromDisk + reconcile', () => {
+describe('BackgroundManager — loadFromDisk + reconcile', () => {
   it('loadFromDisk does nothing when sessionDir not attached', async () => {
-    const mgr = new BackgroundProcessManager();
+    const mgr = new BackgroundManager();
     await mgr.loadFromDisk();
     expect(mgr.list(false)).toEqual([]);
   });
@@ -45,7 +45,7 @@ describe('BackgroundProcessManager — loadFromDisk + reconcile', () => {
       status: 'running',
     });
 
-    const mgr = new BackgroundProcessManager();
+    const mgr = new BackgroundManager();
     mgr.attachSessionDir(sessionDir);
     await mgr.loadFromDisk();
     const result = await mgr.reconcile();
@@ -80,7 +80,7 @@ describe('BackgroundProcessManager — loadFromDisk + reconcile', () => {
       status: 'running',
     });
 
-    const mgr = new BackgroundProcessManager();
+    const mgr = new BackgroundManager();
     mgr.attachSessionDir(sessionDir);
     await mgr.loadFromDisk();
     const result = await mgr.reconcile();
@@ -103,7 +103,7 @@ describe('BackgroundProcessManager — loadFromDisk + reconcile', () => {
       exit_code: null,
       status: 'running',
     });
-    const mgr = new BackgroundProcessManager();
+    const mgr = new BackgroundManager();
     mgr.attachSessionDir(sessionDir);
     await mgr.loadFromDisk();
     await mgr.reconcile();
@@ -124,7 +124,7 @@ describe('BackgroundProcessManager — loadFromDisk + reconcile', () => {
       exit_code: null,
       status: 'running',
     });
-    const mgr = new BackgroundProcessManager();
+    const mgr = new BackgroundManager();
     mgr.attachSessionDir(sessionDir);
     await mgr.loadFromDisk();
     await mgr.reconcile();
@@ -143,7 +143,7 @@ describe('BackgroundProcessManager — loadFromDisk + reconcile', () => {
       exit_code: null,
       status: 'running',
     });
-    const mgr = new BackgroundProcessManager();
+    const mgr = new BackgroundManager();
     mgr.attachSessionDir(sessionDir);
     await mgr.loadFromDisk();
     await mgr.reconcile();
@@ -153,7 +153,7 @@ describe('BackgroundProcessManager — loadFromDisk + reconcile', () => {
   });
 
   it('reconcile returns empty when no ghosts loaded', async () => {
-    const mgr = new BackgroundProcessManager();
+    const mgr = new BackgroundManager();
     mgr.attachSessionDir(sessionDir);
     await mgr.loadFromDisk();
     const result = await mgr.reconcile();
@@ -172,7 +172,7 @@ describe('BackgroundProcessManager — loadFromDisk + reconcile', () => {
       exit_code: null,
       status: 'running',
     });
-    const mgr = new BackgroundProcessManager();
+    const mgr = new BackgroundManager();
     const fired: { taskId: string; status: string }[] = [];
     mgr.onTerminal((info) => {
       fired.push({ taskId: info.taskId, status: info.status });
@@ -201,7 +201,7 @@ describe('BackgroundProcessManager — loadFromDisk + reconcile', () => {
       status: 'awaiting_approval',
       approval_reason: 'ghost reason that should be cleared',
     });
-    const mgr = new BackgroundProcessManager();
+    const mgr = new BackgroundManager();
     mgr.attachSessionDir(sessionDir);
     await mgr.loadFromDisk();
     const result = await mgr.reconcile();
@@ -222,7 +222,7 @@ describe('BackgroundProcessManager — loadFromDisk + reconcile', () => {
       exit_code: null,
       status: 'running',
     });
-    const mgr = new BackgroundProcessManager();
+    const mgr = new BackgroundManager();
     const fired: string[] = [];
     mgr.onTerminal((info) => {
       fired.push(info.taskId);
@@ -250,7 +250,7 @@ describe('BackgroundProcessManager — loadFromDisk + reconcile', () => {
       exit_code: null,
       status: 'running',
     });
-    const mgr = new BackgroundProcessManager();
+    const mgr = new BackgroundManager();
     mgr.attachSessionDir(sessionDir);
     await mgr.loadFromDisk();
     const result = await mgr.reconcile();
@@ -278,7 +278,7 @@ describe('BackgroundProcessManager — loadFromDisk + reconcile', () => {
       status: 'running',
     });
     const fired: { taskId: string; status: string }[] = [];
-    const mgr = new BackgroundProcessManager();
+    const mgr = new BackgroundManager();
     mgr.onTerminal((info) => {
       fired.push({ taskId: info.taskId, status: info.status });
     });
@@ -302,7 +302,7 @@ describe('BackgroundProcessManager — loadFromDisk + reconcile', () => {
       status: 'completed',
     });
     const fired: string[] = [];
-    const mgr = new BackgroundProcessManager();
+    const mgr = new BackgroundManager();
     mgr.onTerminal((info) => {
       fired.push(info.taskId);
     });

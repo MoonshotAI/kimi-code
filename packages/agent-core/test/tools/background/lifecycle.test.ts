@@ -1,5 +1,5 @@
 /**
- * BackgroundProcessManager — onLifecycle hook.
+ * BackgroundManager — onLifecycle hook.
  *
  * Covers the three lifecycle events emitted to subscribers:
  *   - 'started' on register / registerAgentTask
@@ -19,10 +19,7 @@ import type { Writable } from 'node:stream';
 import type { KaosProcess } from '@moonshot-ai/kaos';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  BackgroundProcessManager,
-  type BackgroundTaskInfo,
-} from '../../../src/tools/background/manager';
+import { AgentBackgroundTask, BackgroundManager, type BackgroundTaskInfo } from '../../../src/agent/background';
 
 type LifecycleEvent = 'started' | 'updated' | 'terminated';
 
@@ -80,11 +77,11 @@ function pendingProcess(): KaosProcess {
   };
 }
 
-describe('BackgroundProcessManager — onLifecycle', () => {
-  let manager: BackgroundProcessManager;
+describe('BackgroundManager — onLifecycle', () => {
+  let manager: BackgroundManager;
 
   beforeEach(() => {
-    manager = new BackgroundProcessManager();
+    manager = new BackgroundManager();
   });
 
   afterEach(() => {
@@ -107,7 +104,7 @@ describe('BackgroundProcessManager — onLifecycle', () => {
     const { records, callback } = makeRecorder();
     manager.onLifecycle(callback);
 
-    const taskId = manager.registerAgentTask(new Promise(() => {}), 'an agent');
+    const taskId = manager.registerTask(new AgentBackgroundTask(new Promise(() => {}), 'an agent'));
 
     expect(records.length).toBe(1);
     expect(records[0]!.event).toBe('started');

@@ -8,7 +8,7 @@
  *   - `Kaos`        — shell execution abstraction (exec / execWithEnv)
  *   - `cwd`         — default working directory for commands
  *   - `Environment` — cross-platform probe (shellName / shellPath)
- *   - `BackgroundProcessManager?` — optional: required iff run_in_background=true
+ *   - `BackgroundManager?` — optional: required iff run_in_background=true
  *
  * Execution goes through Kaos, never directly via node:child_process.
  *
@@ -29,10 +29,10 @@ import { StringDecoder } from 'node:string_decoder';
 import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
 import { z } from 'zod';
 
+import type { BackgroundManager } from '../../../agent/background';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { renderPrompt } from '../../../utils/render-prompt';
-import type { BackgroundProcessManager } from '../../background/manager';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';
@@ -155,7 +155,7 @@ export class BashTool implements BuiltinTool<BashInput> {
   constructor(
     private readonly kaos: Kaos,
     private readonly cwd: string,
-    private readonly backgroundManager?: BackgroundProcessManager,
+    private readonly backgroundManager?: BackgroundManager,
     options?: {
       allowBackground?: boolean | undefined;
     },
@@ -354,7 +354,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     if (!this.backgroundManager) {
       return {
         isError: true,
-        output: 'Background execution is not available (no BackgroundProcessManager configured).',
+        output: 'Background execution is not available (no BackgroundManager configured).',
       };
     }
     const backgroundManager = this.backgroundManager;
@@ -366,7 +366,7 @@ export class BashTool implements BuiltinTool<BashInput> {
       };
     }
 
-    let reservation: ReturnType<BackgroundProcessManager['reserveSlot']>;
+    let reservation: ReturnType<BackgroundManager['reserveSlot']>;
     try {
       reservation = backgroundManager.reserveSlot();
     } catch (error) {

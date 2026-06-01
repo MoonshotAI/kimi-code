@@ -4,7 +4,7 @@ import { ToolAccesses } from '../../src/loop';
 import type { Logger, LogPayload } from '../../src/logging';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
-import { BackgroundProcessManager } from '../../src/tools/background/manager';
+import { AgentBackgroundTask, BackgroundManager } from '../../src/agent/background';
 import { AgentTool, AgentToolInputSchema } from '../../src/tools/builtin/collaboration/agent';
 import { userCancellationReason } from '../../src/utils/abort';
 import { executeTool } from './fixtures/execute-tool';
@@ -109,7 +109,7 @@ describe('AgentTool', () => {
 
   it('explains background timeout fallback in the background-enabled description without claiming a 15min default', () => {
     const host = mockSubagentHost({ spawn: vi.fn() });
-    const tool = new AgentTool(host, new BackgroundProcessManager());
+    const tool = new AgentTool(host, new BackgroundManager());
 
     // #5: the background-enabled variant describes the real timeout fallback —
     // an omitted timeout falls back to the operator-configured background
@@ -315,7 +315,7 @@ describe('AgentTool', () => {
 
   it('does not consume a background task slot when validation fails before launch', async () => {
     const completion = new Promise<{ result: string }>(() => {});
-    const background = new BackgroundProcessManager({ maxRunningTasks: 1 });
+    const background = new BackgroundManager({ maxRunningTasks: 1 });
     const host = mockSubagentHost({
       spawn: vi.fn().mockResolvedValue({
         agentId: 'agent-child',
@@ -425,7 +425,7 @@ describe('AgentTool', () => {
         completion,
       }),
     });
-    const background = new BackgroundProcessManager();
+    const background = new BackgroundManager();
     const tool = new AgentTool(host, background);
 
     const result = await executeTool(tool,
@@ -456,7 +456,7 @@ describe('AgentTool', () => {
         completion: new Promise<{ result: string }>(() => {}),
       }),
     });
-    const background = new BackgroundProcessManager();
+    const background = new BackgroundManager();
     const tool = new AgentTool(host, background);
 
     const result = await executeTool(tool,
@@ -517,8 +517,8 @@ describe('AgentTool', () => {
   });
 
   it('does not spawn background subagents when the task limit is reached', async () => {
-    const background = new BackgroundProcessManager({ maxRunningTasks: 1 });
-    background.registerAgentTask(new Promise(() => {}), 'existing agent');
+    const background = new BackgroundManager({ maxRunningTasks: 1 });
+    background.registerTask(new AgentBackgroundTask(new Promise(() => {}), 'existing agent'));
     const host = mockSubagentHost({
       spawn: vi.fn().mockResolvedValue({
         agentId: 'agent-child',
@@ -545,7 +545,7 @@ describe('AgentTool', () => {
   });
 
   it('reserves a task slot before spawning concurrent background subagents', async () => {
-    const background = new BackgroundProcessManager({ maxRunningTasks: 1 });
+    const background = new BackgroundManager({ maxRunningTasks: 1 });
     const host = mockSubagentHost({
       spawn: vi
         .fn()
@@ -635,8 +635,8 @@ describe('AgentTool', () => {
         completion: new Promise<{ result: string }>(() => {}),
       }),
     });
-    const background = new BackgroundProcessManager();
-    vi.spyOn(background, 'registerAgentTask').mockImplementation(() => {
+    const background = new BackgroundManager();
+    vi.spyOn(background, 'registerTask').mockImplementation(() => {
       throw error;
     });
     const tool = new AgentTool(host, background, undefined, { log: logger });

@@ -9,7 +9,7 @@ import {
   AGENT_WIRE_PROTOCOL_VERSION,
   InMemoryAgentRecordPersistence,
 } from '../../src/agent/records';
-import { appendTaskOutput, writeTask } from '../../src/tools/background/persist';
+import { appendTaskOutput, writeTask } from '../../src/agent/background/persist';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { testAgent } from './harness/agent';
 import { DEFAULT_TEST_SYSTEM_PROMPT } from './harness/snapshots';

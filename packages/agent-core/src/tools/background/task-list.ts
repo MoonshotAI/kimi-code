@@ -4,12 +4,12 @@
 
 import { z } from 'zod';
 
+import type { BackgroundManager, BackgroundTaskInfo } from '../../agent/background';
 import type { BuiltinTool } from '../../agent/tool';
 import type { ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
 import { matchesGlobRuleSubject } from '../support/rule-match';
 import { formatPlainObject } from './format';
-import type { BackgroundProcessManager, BackgroundTaskInfo } from './manager';
 import TASK_LIST_DESCRIPTION from './task-list.md';
 
 // ── Input schema ─────────────────────────────────────────────────────
@@ -48,7 +48,7 @@ export class TaskListTool implements BuiltinTool<TaskListInput> {
   readonly description = TASK_LIST_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TaskListInputSchema);
 
-  constructor(private readonly manager: BackgroundProcessManager) {}
+  constructor(private readonly manager: BackgroundManager) {}
 
   resolveExecution(args: TaskListInput): ToolExecution {
     const listScope = (args.active_only ?? true) ? 'active' : 'all';

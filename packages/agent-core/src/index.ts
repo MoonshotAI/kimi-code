@@ -41,7 +41,7 @@ export type {
   BackgroundTaskKind,
   BackgroundTaskStatus,
   ProcessBackgroundTaskInfo,
-} from './tools/background/manager';
+} from './agent/background';
 export type { ToolServices } from './tools/support/services';
 export { SingleModelProvider } from './session/provider-manager';
 export type {

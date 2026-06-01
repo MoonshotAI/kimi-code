@@ -1,3 +1,5 @@
+import { sleep } from '@antfu/utils';
+
 import { isAbortError } from '../../loop/errors';
 import {
   type BackgroundTask,
@@ -49,21 +51,14 @@ export class AgentBackgroundTask implements BackgroundTask {
       sink.signal.addEventListener('abort', requestAbort, { once: true });
     }
 
-    const deadlineTimeout = Symbol('background-agent-deadline');
-    const raceInputs: Array<Promise<{ result: string }> | Promise<typeof deadlineTimeout>> = [
+    const deadlineTimeout: unique symbol = Symbol('background-agent-deadline');
+    const raceInputs: Array<Promise<{ result: string } | typeof deadlineTimeout>> = [
       this.completion,
     ];
     const timeoutMs = this.timeoutMs;
-    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
 
     if (timeoutMs !== undefined && timeoutMs > 0) {
-      raceInputs.push(
-        new Promise<typeof deadlineTimeout>((resolve) => {
-          deadlineTimer = setTimeout(() => {
-            resolve(deadlineTimeout);
-          }, timeoutMs);
-        }),
-      );
+      raceInputs.push(sleep(timeoutMs).then(() => deadlineTimeout));
     }
 
     try {
@@ -86,7 +81,6 @@ export class AgentBackgroundTask implements BackgroundTask {
       }
       await sink.settle({ status: 'failed' });
     } finally {
-      if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
       sink.signal.removeEventListener('abort', requestAbort);
     }
   }

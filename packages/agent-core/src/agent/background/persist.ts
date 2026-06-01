@@ -55,7 +55,7 @@ export interface PersistedTask {
   readonly stop_reason?: string | undefined;
   /**
    * Shell origin metadata (name / path / cwd) captured when
-   * `BackgroundProcessManager.register` attached a `shellInfo` option.
+   * `BackgroundManager.register` attached a `shellInfo` option.
    * Persisted so restart can reconstruct the spawn environment.
    */
   readonly shell_info?:

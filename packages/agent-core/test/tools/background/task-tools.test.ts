@@ -13,9 +13,8 @@ import type { Writable } from 'node:stream';
 import type { KaosProcess } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { BackgroundProcessManager } from '../../../src/tools/background/manager';
-import { writeTask } from '../../../src/tools/background/persist';
-import { BACKGROUND_TASK_TIMEOUT_STOP_REASON } from '../../../src/tools/background/task';
+import { AgentBackgroundTask, BackgroundManager } from '../../../src/agent/background';
+import { writeTask } from '../../../src/agent/background/persist';
 import { TaskListTool } from '../../../src/tools/background/task-list';
 import { TaskOutputTool } from '../../../src/tools/background/task-output';
 import { TaskStopTool } from '../../../src/tools/background/task-stop';
@@ -94,7 +93,7 @@ function processExitingAfterTimer(exitCode = 143, delayMs = 5): KaosProcess {
 }
 
 async function waitForPersistedOutput(
-  manager: BackgroundProcessManager,
+  manager: BackgroundManager,
   taskId: string,
   expectedOutput: string,
 ) {
@@ -119,7 +118,7 @@ async function waitForPersistedOutput(
 }
 
 async function waitForLiveOutput(
-  manager: BackgroundProcessManager,
+  manager: BackgroundManager,
   taskId: string,
   expectedOutput: string,
 ): Promise<void> {
@@ -133,7 +132,7 @@ async function waitForLiveOutput(
 }
 
 describe('TaskListTool', () => {
-  const manager = new BackgroundProcessManager();
+  const manager = new BackgroundManager();
   const tool = new TaskListTool(manager);
 
   afterEach(() => {
@@ -286,7 +285,7 @@ describe('TaskListTool', () => {
 });
 
 describe('TaskOutputTool', () => {
-  const manager = new BackgroundProcessManager();
+  const manager = new BackgroundManager();
   const tool = new TaskOutputTool(manager);
 
   afterEach(() => {
@@ -310,7 +309,7 @@ describe('TaskOutputTool', () => {
     // manager + a terminal task keep teardown free of the cleanup race
     // that non-terminal tasks (still flushing persistence) would cause.
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-output-tool-'));
-    const ownManager = new BackgroundProcessManager();
+    const ownManager = new BackgroundManager();
     ownManager.attachSessionDir(sessionDir);
     try {
       const taskId = ownManager.register(
@@ -362,14 +361,14 @@ describe('TaskOutputTool', () => {
   });
 
   it('returns agent metadata and final summary without process fields', async () => {
-    const taskId = manager.registerAgentTask(
+    const taskId = manager.registerTask(new AgentBackgroundTask(
       Promise.resolve({ result: 'SUBAGENT-FINAL-SUMMARY\n' }),
       'agent output test',
       {
         agentId: 'agent-child',
         subagentType: 'coder',
       },
-    );
+    ));
     await expect(manager.wait(taskId, 5_000)).resolves.toMatchObject({ status: 'completed' });
 
     const result = await executeTool(tool, context('c_agent_output', { task_id: taskId }));
@@ -378,7 +377,7 @@ describe('TaskOutputTool', () => {
     const content = toolContentString(result);
     expect(content).toContain('kind: agent');
     expect(content).toContain('agent_id: agent-child');
-    expect(content).toContain('actual_subagent_type: coder');
+    expect(content).toContain('subagent_type: coder');
     expect(content).toContain('[output]\nSUBAGENT-FINAL-SUMMARY');
     expect(content).not.toMatch(/^pid:/m);
     expect(content).not.toMatch(/^command:/m);
@@ -388,7 +387,7 @@ describe('TaskOutputTool', () => {
   it('reads persisted output for a task loaded after restart', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-output-'));
     try {
-      const writer = new BackgroundProcessManager();
+      const writer = new BackgroundManager();
       writer.attachSessionDir(sessionDir);
       const taskId = writer.register(
         immediateProcess(0, 'persisted output\n'),
@@ -398,7 +397,7 @@ describe('TaskOutputTool', () => {
 
       await expect(writer.wait(taskId, 5_000)).resolves.toMatchObject({ status: 'completed' });
 
-      const reader = new BackgroundProcessManager();
+      const reader = new BackgroundManager();
       reader.attachSessionDir(sessionDir);
       const { result, content } = await waitForPersistedOutput(reader, taskId, 'persisted output');
 
@@ -468,7 +467,7 @@ describe('TaskOutputTool — large output truncation + paging protocol', () => {
 
   it('truncates output > 32 KiB to a tail preview and reports paging metadata', async () => {
     sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-trunc-'));
-    const manager = new BackgroundProcessManager();
+    const manager = new BackgroundManager();
     manager.attachSessionDir(sessionDir);
     try {
       // 200 KiB of distinct content: head marker ... tail marker.
@@ -503,7 +502,7 @@ describe('TaskOutputTool — large output truncation + paging protocol', () => {
 
   it('does not silently drop the head of a > 1 MiB running task', async () => {
     sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-ring-'));
-    const manager = new BackgroundProcessManager();
+    const manager = new BackgroundManager();
     manager.attachSessionDir(sessionDir);
     try {
       // Stream > 1 MiB so the in-memory ring buffer (1 MiB cap) would
@@ -542,7 +541,7 @@ describe('TaskOutputTool — large output truncation + paging protocol', () => {
   });
 
   it('exposes paging guidance (Read + output_path) in the tool description', () => {
-    const tool = new TaskOutputTool(new BackgroundProcessManager());
+    const tool = new TaskOutputTool(new BackgroundManager());
     const desc = tool.description;
     // Guideline 6 from the parity source: when the preview is truncated,
     // page the full log with the `Read` tool and the returned output_path.
@@ -555,7 +554,7 @@ describe('TaskOutputTool — large output truncation + paging protocol', () => {
 
   it('does not mark small output (< 32 KiB) as truncated', async () => {
     sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-small-'));
-    const manager = new BackgroundProcessManager();
+    const manager = new BackgroundManager();
     manager.attachSessionDir(sessionDir);
     try {
       const small = 'small output line\n';
@@ -578,7 +577,7 @@ describe('TaskOutputTool — large output truncation + paging protocol', () => {
 
   it('flags truncation when the tail window starts mid-multibyte character', async () => {
     sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-utf8-'));
-    const manager = new BackgroundProcessManager();
+    const manager = new BackgroundManager();
     manager.attachSessionDir(sessionDir);
     try {
       // A 3-byte char at the head, then ASCII filler so the log is exactly
@@ -612,7 +611,7 @@ describe('TaskOutputTool — large output truncation + paging protocol', () => {
 
   it('keeps preview and metadata consistent from a single log-size snapshot', async () => {
     sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-grow-'));
-    const manager = new BackgroundProcessManager();
+    const manager = new BackgroundManager();
     manager.attachSessionDir(sessionDir);
     try {
       // A 40 KiB ASCII log — larger than the 32 KiB preview window.
@@ -648,20 +647,20 @@ describe('TaskOutputTool — large output truncation + paging protocol', () => {
 
 describe('TaskOutputTool — terminal metadata fields', () => {
   it('exposes stop_reason and terminal_reason for an agent task aborted by its deadline', async () => {
-    const manager = new BackgroundProcessManager();
+    const manager = new BackgroundManager();
     try {
       // An agent task whose completion never resolves: the external deadline
-      // fires and finalizes the task with a timeout stop reason.
-      const taskId = manager.registerAgentTask(
+      // fires and finalizes the task with the timed_out status.
+      const taskId = manager.registerTask(new AgentBackgroundTask(
         new Promise<{ result: string }>(() => {}),
         'slow agent',
         {
           timeoutMs: 1,
         },
-      );
+      ));
       await expect(manager.wait(taskId, 5_000)).resolves.toMatchObject({
-        status: 'failed',
-        stopReason: BACKGROUND_TASK_TIMEOUT_STOP_REASON,
+        status: 'timed_out',
+        stopReason: undefined,
       });
 
       const result = await executeTool(
@@ -670,7 +669,8 @@ describe('TaskOutputTool — terminal metadata fields', () => {
       );
       expect(result.isError).toBe(false);
       const content = toolContentString(result);
-      expect(content).toContain(`stop_reason: ${BACKGROUND_TASK_TIMEOUT_STOP_REASON}`);
+      expect(content).toContain('status: timed_out');
+      expect(content).not.toContain('stop_reason:');
       expect(content).toContain('terminal_reason: timed_out');
       expect(content).not.toContain('timed_out:');
     } finally {
@@ -679,7 +679,7 @@ describe('TaskOutputTool — terminal metadata fields', () => {
   });
 
   it('exposes stop_reason and terminal_reason for a task stopped via TaskStop', async () => {
-    const manager = new BackgroundProcessManager();
+    const manager = new BackgroundManager();
     try {
       const proc = pendingProcess();
       const taskId = manager.register(proc, 'sleep 60', 'stoppable task');
@@ -704,7 +704,7 @@ describe('TaskOutputTool — terminal metadata fields', () => {
 
   it('omits stop_reason / terminal_reason for a normally completed task', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-meta-'));
-    const manager = new BackgroundProcessManager();
+    const manager = new BackgroundManager();
     manager.attachSessionDir(sessionDir);
     try {
       const taskId = manager.register(immediateProcess(0, 'done\n'), 'echo done', 'normal task');
@@ -729,7 +729,7 @@ describe('TaskOutputTool — terminal metadata fields', () => {
 describe('TaskOutputTool — full-output guidance', () => {
   it('does not advertise an output_path when the persisted log file does not exist', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-empty-'));
-    const manager = new BackgroundProcessManager();
+    const manager = new BackgroundManager();
     manager.attachSessionDir(sessionDir);
     try {
       const taskId = manager.register(immediateProcess(0), 'sleep 1', 'silent task');
@@ -753,7 +753,7 @@ describe('TaskOutputTool — full-output guidance', () => {
 
   it('emits full_output_available / full_output_tool even when output is not truncated', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-untrunc-'));
-    const manager = new BackgroundProcessManager();
+    const manager = new BackgroundManager();
     manager.attachSessionDir(sessionDir);
     try {
       const small = 'small output line\n';
@@ -779,7 +779,7 @@ describe('TaskOutputTool — full-output guidance', () => {
 });
 
 describe('TaskStopTool', () => {
-  const manager = new BackgroundProcessManager();
+  const manager = new BackgroundManager();
   const tool = new TaskStopTool(manager);
 
   afterEach(() => {
@@ -835,7 +835,7 @@ describe('TaskStopTool', () => {
   it('persists stop reason when attached to a session directory', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-stop-reason-'));
     try {
-      const writer = new BackgroundProcessManager();
+      const writer = new BackgroundManager();
       writer.attachSessionDir(sessionDir);
       const taskId = writer.register(pendingProcess(), 'sleep 60', 'persist stop reason test');
 
@@ -844,7 +844,7 @@ describe('TaskStopTool', () => {
       );
       expect(result.isError).toBe(false);
 
-      const reader = new BackgroundProcessManager();
+      const reader = new BackgroundManager();
       reader.attachSessionDir(sessionDir);
       await reader.loadFromDisk();
       expect(reader.getTask(taskId)?.stopReason).toBe('operator cancelled');
@@ -911,7 +911,7 @@ describe('TaskStopTool', () => {
         status: 'killed',
         stop_reason: '',
       });
-      const reader = new BackgroundProcessManager();
+      const reader = new BackgroundManager();
       reader.attachSessionDir(sessionDir);
       await reader.loadFromDisk();
 
@@ -932,7 +932,7 @@ describe('TaskStopTool', () => {
 // ── py-aligned envelope contracts ──────────────────────────────────────
 
 describe('TaskOutputTool — py envelope contract', () => {
-  const manager = new BackgroundProcessManager();
+  const manager = new BackgroundManager();
   const tool = new TaskOutputTool(manager);
 
   afterEach(() => {
@@ -948,7 +948,7 @@ describe('TaskOutputTool — py envelope contract', () => {
     const { mkdtemp, rm } = await import('node:fs/promises');
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-env-'));
     try {
-      const m2 = new BackgroundProcessManager();
+      const m2 = new BackgroundManager();
       m2.attachSessionDir(sessionDir);
       const t = new TaskOutputTool(m2);
       const proc = immediateProcess(0, 'build line 1\nbuild line 2\n');
@@ -1005,7 +1005,7 @@ describe('TaskOutputTool — py envelope contract', () => {
     const { mkdtemp, readdir, rm } = await import('node:fs/promises');
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-missing-'));
     try {
-      const m2 = new BackgroundProcessManager();
+      const m2 = new BackgroundManager();
       m2.attachSessionDir(sessionDir);
       const t = new TaskOutputTool(m2);
       const r = await executeTool(t, context('c_missing', { task_id: 'bash-noex0000' }));
@@ -1018,22 +1018,21 @@ describe('TaskOutputTool — py envelope contract', () => {
     }
   });
 
-  // For a task that timed out (failed terminal state with timeout stop reason),
-  // the envelope surfaces: status:failed + stop_reason:Timed out +
-  // terminal_reason:timed_out. The Python contract also includes
+  // For a task that timed out, the envelope surfaces:
+  // status:timed_out + terminal_reason:timed_out. The Python contract also includes
   // `interrupted: true` and a standalone `reason:` line; TS deliberately
   // omits both — `interrupted` is not modeled, and the categorical
   // `terminal_reason` is preferred over a separate prose `reason` field
   // (PR#243 by-design exclusion). The TS contract assertions below
   // suffice; the dropped assertions are documented for traceability.
   it('a timed-out task surfaces the full timeout contract', async () => {
-    // Build a manager state where status=failed and stopReason=Timed out.
-    const taskId = manager.registerAgentTask(new Promise(() => {}), 'will time out', {
+    // Build a manager state where status=timed_out.
+    const taskId = manager.registerTask(new AgentBackgroundTask(new Promise(() => {}), 'will time out', {
       timeoutMs: 50,
-    });
+    }));
     const info = await manager.waitForTerminal(taskId);
-    expect(info?.status).toBe('failed');
-    expect(info?.stopReason).toBe(BACKGROUND_TASK_TIMEOUT_STOP_REASON);
+    expect(info?.status).toBe('timed_out');
+    expect(info?.stopReason).toBeUndefined();
 
     const result = await executeTool(
       tool,
@@ -1041,8 +1040,8 @@ describe('TaskOutputTool — py envelope contract', () => {
     );
     expect(result.isError).toBe(false);
     const text = toolContentString(result);
-    expect(text).toContain('status: failed');
-    expect(text).toContain(`stop_reason: ${BACKGROUND_TASK_TIMEOUT_STOP_REASON}`);
+    expect(text).toContain('status: timed_out');
+    expect(text).not.toContain('stop_reason:');
     expect(text).toContain('terminal_reason: timed_out');
     expect(text).not.toContain('timed_out:');
   });
@@ -1057,7 +1056,7 @@ describe('TaskOutputTool — py envelope contract', () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-trunc-'));
     try {
       const big = 'first marker\n' + 'x'.repeat(33 * 1024) + '\nlast marker\n';
-      const m2 = new BackgroundProcessManager();
+      const m2 = new BackgroundManager();
       m2.attachSessionDir(sessionDir);
       const taskId = m2.register(immediateProcess(0, big), 'big', 'big output');
       await m2.wait(taskId, 5_000);
@@ -1087,7 +1086,7 @@ describe('TaskOutputTool — py envelope contract', () => {
 });
 
 describe('TaskListTool — py envelope contract', () => {
-  const manager = new BackgroundProcessManager();
+  const manager = new BackgroundManager();
   const tool = new TaskListTool(manager);
 
   afterEach(() => {
@@ -1129,7 +1128,7 @@ describe('TaskListTool — py envelope contract', () => {
 // agents know when to reach for each tool.
 
 describe('background tool descriptions', () => {
-  const manager = new BackgroundProcessManager();
+  const manager = new BackgroundManager();
   afterEach(() => {
     manager._reset();
   });
@@ -1175,7 +1174,7 @@ describe('background tool descriptions', () => {
 // `getOutput(taskId, tail)`. These tests exercise the TS surface to
 // lock down the underlying behavior, not the Python method names.
 describe('background store — partial output reads (TS surface)', () => {
-  const manager = new BackgroundProcessManager();
+  const manager = new BackgroundManager();
   afterEach(() => {
     manager._reset();
   });
@@ -1184,7 +1183,7 @@ describe('background store — partial output reads (TS surface)', () => {
     const { mkdtemp, rm } = await import('node:fs/promises');
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-range-'));
     try {
-      const m2 = new BackgroundProcessManager();
+      const m2 = new BackgroundManager();
       m2.attachSessionDir(sessionDir);
       const proc = immediateProcess(0, 'line1\nline2\nline3\n');
       const taskId = m2.register(proc, 'echo lines', 'range read');
@@ -1223,7 +1222,7 @@ describe('background store — partial output reads (TS surface)', () => {
 // covered by ApprovalRuntime's own tests; this test scopes only the
 // status transition through the tool boundary.
 describe('TaskStopTool on awaiting-approval agents', () => {
-  const manager = new BackgroundProcessManager();
+  const manager = new BackgroundManager();
   const stop = new TaskStopTool(manager);
 
   afterEach(() => {
@@ -1235,13 +1234,13 @@ describe('TaskStopTool on awaiting-approval agents', () => {
     const completion = new Promise<{ result: string }>((_res, rej) => {
       rejectCompletion = rej;
     });
-    const taskId = manager.registerAgentTask(completion, 'awaiting kill', {
+    const taskId = manager.registerTask(new AgentBackgroundTask(completion, 'awaiting kill', {
       abort: () => {
         const abortError = new Error('cancelled');
         abortError.name = 'AbortError';
         rejectCompletion(abortError);
       },
-    });
+    }));
     manager.markAwaitingApproval(taskId, 'edit file');
     const result = await executeTool(stop, context('c_stop_awaiting', { task_id: taskId }));
     expect(result.isError).toBe(false);

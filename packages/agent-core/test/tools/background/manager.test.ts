@@ -1,5 +1,5 @@
 /**
- * Covers: BackgroundProcessManager.
+ * Covers: BackgroundManager.
  *
  * Uses KaosProcess fakes — the manager accepts KaosProcess directly,
  * with no ChildProcess dependency.
@@ -14,7 +14,7 @@ import type { Writable } from 'node:stream';
 import type { KaosProcess } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { BackgroundProcessManager } from '../../../src/tools/background/manager';
+import { AgentBackgroundTask, BackgroundManager } from '../../../src/agent/background';
 
 /**
  * Creates a KaosProcess that completes immediately with the given exit code.
@@ -103,7 +103,7 @@ function manuallyResolvedProcess(): {
   };
 }
 
-function waiterCount(manager: BackgroundProcessManager, taskId: string): number {
+function waiterCount(manager: BackgroundManager, taskId: string): number {
   const tasks = (
     manager as unknown as {
       tasks: Map<string, { waiters: Array<() => void> }>;
@@ -172,8 +172,8 @@ function processWithVisibleExitCodeBeforeWait(exitCode = 143): {
   };
 }
 
-describe('BackgroundProcessManager', () => {
-  const manager = new BackgroundProcessManager();
+describe('BackgroundManager', () => {
+  const manager = new BackgroundManager();
 
   afterEach(() => {
     manager._reset();
@@ -221,7 +221,7 @@ describe('BackgroundProcessManager', () => {
   it('registerAgentTask registers as running with agent- id prefix', () => {
     // Promise that never resolves — we only inspect the initial register
     // snapshot here.
-    const taskId = manager.registerAgentTask(new Promise(() => {}), 'agent task');
+    const taskId = manager.registerTask(new AgentBackgroundTask(new Promise(() => {}), 'agent task'));
     expect(taskId).toMatch(/^agent-[0-9a-z]{8}$/);
     const info = manager.getTask(taskId);
     expect(info).toBeDefined();
@@ -249,7 +249,7 @@ describe('BackgroundProcessManager', () => {
   });
 
   it('rejects new bash tasks when maxRunningTasks is reached', () => {
-    const limited = new BackgroundProcessManager({ maxRunningTasks: 1 });
+    const limited = new BackgroundManager({ maxRunningTasks: 1 });
     const { proc: first } = pendingProcess();
     const { proc: second } = pendingProcess();
 
@@ -261,12 +261,12 @@ describe('BackgroundProcessManager', () => {
   });
 
   it('rejects new agent tasks when maxRunningTasks is reached', () => {
-    const limited = new BackgroundProcessManager({ maxRunningTasks: 1 });
+    const limited = new BackgroundManager({ maxRunningTasks: 1 });
 
-    limited.registerAgentTask(new Promise(() => {}), 'first agent');
+    limited.registerTask(new AgentBackgroundTask(new Promise(() => {}), 'first agent'));
 
     expect(() => {
-      limited.registerAgentTask(new Promise(() => {}), 'second agent');
+      limited.registerTask(new AgentBackgroundTask(new Promise(() => {}), 'second agent'));
     }).toThrow('Too many background tasks are already running.');
   });
 
@@ -370,7 +370,7 @@ describe('BackgroundProcessManager', () => {
   it('persists graceful process shutdown as killed when stop requested', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-stop-race-'));
     try {
-      const writer = new BackgroundProcessManager();
+      const writer = new BackgroundManager();
       writer.attachSessionDir(sessionDir);
       const { proc, resolve } = manuallyResolvedProcess();
       const taskId = writer.register(proc, 'sleep 60', 'persisted process race test');
@@ -379,7 +379,7 @@ describe('BackgroundProcessManager', () => {
       resolve(0);
       await stopPromise;
 
-      const reader = new BackgroundProcessManager();
+      const reader = new BackgroundManager();
       reader.attachSessionDir(sessionDir);
       await reader.loadFromDisk();
 
@@ -397,7 +397,7 @@ describe('BackgroundProcessManager', () => {
       resolveCompletion = resolve;
     });
     const abort = vi.fn();
-    const taskId = manager.registerAgentTask(completion, 'agent race test', { abort });
+    const taskId = manager.registerTask(new AgentBackgroundTask(completion, 'agent race test', { abort }));
 
     const stopPromise = manager.stop(taskId, 'user requested');
     resolveCompletion({ result: 'finished naturally' });
@@ -415,7 +415,7 @@ describe('BackgroundProcessManager', () => {
       rejectCompletion = reject;
     });
     const abort = vi.fn();
-    const taskId = manager.registerAgentTask(completion, 'agent failure race test', { abort });
+    const taskId = manager.registerTask(new AgentBackgroundTask(completion, 'agent failure race test', { abort }));
 
     const stopPromise = manager.stop(taskId, 'user requested');
     rejectCompletion(new Error('model failed'));
@@ -436,7 +436,7 @@ describe('BackgroundProcessManager', () => {
     const abort = vi.fn(() => {
       rejectCompletion(abortError);
     });
-    const taskId = manager.registerAgentTask(completion, 'agent abort test', { abort });
+    const taskId = manager.registerTask(new AgentBackgroundTask(completion, 'agent abort test', { abort }));
 
     const result = await manager.stop(taskId, 'user requested');
 
@@ -448,9 +448,9 @@ describe('BackgroundProcessManager', () => {
   it('stop finalizes a never-settling agent task after the grace window', async () => {
     vi.useFakeTimers();
     try {
-      const local = new BackgroundProcessManager();
+      const local = new BackgroundManager();
       const abort = vi.fn();
-      const taskId = local.registerAgentTask(new Promise(() => {}), 'hung agent task', { abort });
+      const taskId = local.registerTask(new AgentBackgroundTask(new Promise(() => {}), 'hung agent task', { abort }));
       const terminalPromise = local.waitForTerminal(taskId);
 
       const stopPromise = local.stop(taskId, 'user requested');
@@ -470,7 +470,7 @@ describe('BackgroundProcessManager', () => {
   it('updates endedAt when a killed task finally exits after SIGKILL', async () => {
     vi.useFakeTimers();
     try {
-      const local = new BackgroundProcessManager();
+      const local = new BackgroundManager();
       const terminated: string[] = [];
       local.onLifecycle((event, info) => {
         if (event === 'terminated') terminated.push(info.status);
@@ -542,8 +542,8 @@ describe('BackgroundProcessManager', () => {
 
 // ── py-aligned coverage for bash + agent registration semantics ────────
 
-describe('BackgroundProcessManager — registration semantics', () => {
-  const manager = new BackgroundProcessManager();
+describe('BackgroundManager — registration semantics', () => {
+  const manager = new BackgroundManager();
 
   afterEach(() => {
     manager._reset();
@@ -606,10 +606,10 @@ describe('BackgroundProcessManager — registration semantics', () => {
   // Agent task registration places kind_payload-style info on the task
   // info (agent_id / subagent_type carried through), status visible.
   it('agent task registration exposes agent metadata on the task info', () => {
-    const taskId = manager.registerAgentTask(new Promise(() => {}), 'investigate bug', {
+    const taskId = manager.registerTask(new AgentBackgroundTask(new Promise(() => {}), 'investigate bug', {
       agentId: 'agent-child',
       subagentType: 'coder',
-    });
+    }));
     expect(taskId.startsWith('agent-')).toBe(true);
     const info = manager.getTask(taskId);
     expect(info).toBeDefined();
@@ -626,7 +626,7 @@ describe('BackgroundProcessManager — registration semantics', () => {
       m.mkdtemp(join(tmpdir(), 'kimi-bg-mgr-missing-')),
     );
     try {
-      const m2 = new BackgroundProcessManager();
+      const m2 = new BackgroundManager();
       m2.attachSessionDir(sessionDir);
       expect(m2.getTask('bash-bogusss0')).toBeUndefined();
       const { readdir } = await import('node:fs/promises');
@@ -718,13 +718,13 @@ describe('BackgroundProcessManager — registration semantics', () => {
     const completion = new Promise<{ result: string }>((_res, rej) => {
       rejectCompletion = rej;
     });
-    const taskId = manager.registerAgentTask(completion, 'killable', {
+    const taskId = manager.registerTask(new AgentBackgroundTask(completion, 'killable', {
       abort: () => {
         const abortError = new Error('cancelled');
         abortError.name = 'AbortError';
         rejectCompletion(abortError);
       },
-    });
+    }));
     const stopped = await manager.stop(taskId, 'test kill');
     expect(stopped?.status).toBe('killed');
     expect(stopped?.stopReason).toBe('test kill');

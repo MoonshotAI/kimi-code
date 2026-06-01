@@ -3,7 +3,7 @@ function formatValue(value: unknown): string {
 }
 
 function fieldName(key: string): string {
-  return key.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`);
+  return key.replaceAll(/[A-Z]/g, (match) => `_${match.toLowerCase()}`);
 }
 
 export function formatPlainObject(record: object): string {

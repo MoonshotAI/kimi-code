@@ -15,14 +15,14 @@
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../agent/tool';
-import type { ExecutableToolResult, ToolExecution } from '../../loop/types';
 import {
+  type BackgroundManager,
   isBackgroundTaskTerminal,
-  type BackgroundProcessManager,
   type BackgroundTaskInfo,
   type BackgroundTaskOutputSnapshot,
   type BackgroundTaskStatus,
-} from './manager';
+} from '../../agent/background';
+import type { ExecutableToolResult, ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
 import { matchesGlobRuleSubject } from '../support/rule-match';
 import { formatPlainObject } from './format';
@@ -98,7 +98,7 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
   readonly description: string = TASK_OUTPUT_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TaskOutputInputSchema);
 
-  constructor(private readonly manager: BackgroundProcessManager) {}
+  constructor(private readonly manager: BackgroundManager) {}
 
   resolveExecution(args: TaskOutputInput): ToolExecution {
     return {
@@ -145,12 +145,12 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
           output.fullOutputAvailable && output.outputPath !== undefined ? 'Read' : undefined,
         fullOutputHint: fullOutputHint(output),
       }),
+      '',
     ];
 
     // When the preview omits the head of the log, emit an explicit
     // banner just before the `[output]` marker so the model knows it is
     // looking at a tail, not the full output.
-    lines.push('');
     if (output.truncated) {
       lines.push(
         output.fullOutputAvailable && output.outputPath !== undefined

@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../../src/agent';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
 import { SkillRegistry } from '../../src/skill';
-import { BackgroundProcessManager } from '../../src/tools/background/manager';
+import { BackgroundManager } from '../../src/agent/background';
 import { TaskListInputSchema } from '../../src/tools/background/task-list';
 import { TaskOutputInputSchema } from '../../src/tools/background/task-output';
 import { TaskStopInputSchema } from '../../src/tools/background/task-stop';
@@ -310,7 +310,7 @@ describe('current builtin collaboration tools', () => {
 
 describe('current builtin background tool schemas', () => {
   it('background task schemas and manager-backed tools are covered', () => {
-    const manager = new BackgroundProcessManager();
+    const manager = new BackgroundManager();
 
     expect(TaskListInputSchema.safeParse({ active_only: true }).success).toBe(true);
     expect(TaskOutputInputSchema.safeParse({ task_id: 'bash-1' }).success).toBe(true);

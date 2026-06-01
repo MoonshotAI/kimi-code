@@ -17,7 +17,7 @@ import {
   taskOutputSizeBytes,
   writeTask,
   type PersistedTask,
-} from '../../../src/tools/background/persist';
+} from '../../../src/agent/background/persist';
 
 let sessionDir: string;
 

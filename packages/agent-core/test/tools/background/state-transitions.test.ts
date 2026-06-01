@@ -20,7 +20,7 @@ import type { Writable } from 'node:stream';
 import type { KaosProcess } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { BackgroundProcessManager } from '../../../src/tools/background/manager';
+import { AgentBackgroundTask, BackgroundManager } from '../../../src/agent/background';
 
 function pendingProcess(): { proc: KaosProcess; resolve: (code: number) => void } {
   let resolveWait: (code: number) => void = () => {};
@@ -55,8 +55,8 @@ function pendingProcess(): { proc: KaosProcess; resolve: (code: number) => void 
   };
 }
 
-describe('BackgroundProcessManager — awaiting_approval state', () => {
-  const manager = new BackgroundProcessManager();
+describe('BackgroundManager — awaiting_approval state', () => {
+  const manager = new BackgroundManager();
 
   afterEach(() => {
     manager._reset();
@@ -180,10 +180,10 @@ describe('BackgroundProcessManager — awaiting_approval state', () => {
         this.name = 'RunCancelled';
       }
     }
-    const taskId = manager.registerAgentTask(
+    const taskId = manager.registerTask(new AgentBackgroundTask(
       Promise.reject(new RunCancelled()),
       'run cancelled bg',
-    );
+    ));
     const info = await manager.waitForTerminal(taskId);
     expect(info?.status).toBe('killed');
   });

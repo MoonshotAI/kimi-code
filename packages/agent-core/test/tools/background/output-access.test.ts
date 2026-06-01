@@ -1,5 +1,5 @@
 /**
- * BackgroundProcessManager — output retrieval surface.
+ * BackgroundManager — output retrieval surface.
  *
  * Covers the two methods consumed by the `/tasks` UI:
  *   - `readOutput(taskId, tail?)` reads the persisted
@@ -18,8 +18,8 @@ import type { Writable } from 'node:stream';
 import type { KaosProcess } from '@moonshot-ai/kaos';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { BackgroundProcessManager } from '../../../src/tools/background/manager';
-import { appendTaskOutput } from '../../../src/tools/background/persist';
+import { BackgroundManager } from '../../../src/agent/background';
+import { appendTaskOutput } from '../../../src/agent/background/persist';
 
 function immediateProcess(exitCode: number, stdoutText = ''): KaosProcess {
   return {
@@ -34,7 +34,7 @@ function immediateProcess(exitCode: number, stdoutText = ''): KaosProcess {
 }
 
 async function waitForLiveOutput(
-  manager: BackgroundProcessManager,
+  manager: BackgroundManager,
   taskId: string,
   expected: string,
 ): Promise<void> {
@@ -45,13 +45,13 @@ async function waitForLiveOutput(
   throw new Error(`Timed out waiting for live output: ${expected}`);
 }
 
-describe('BackgroundProcessManager — readOutput / getOutputPath', () => {
+describe('BackgroundManager — readOutput / getOutputPath', () => {
   let sessionDir: string;
-  let manager: BackgroundProcessManager;
+  let manager: BackgroundManager;
 
   beforeEach(() => {
     sessionDir = mkdtempSync(join(tmpdir(), 'bpm-output-'));
-    manager = new BackgroundProcessManager();
+    manager = new BackgroundManager();
     manager.attachSessionDir(sessionDir);
   });
 
@@ -115,7 +115,7 @@ describe('BackgroundProcessManager — readOutput / getOutputPath', () => {
     expect((await manager.readOutput(taskId)).length).toBeGreaterThan(0);
 
     // Stage 2: simulate a fresh restart — new manager, same sessionDir.
-    const fresh = new BackgroundProcessManager();
+    const fresh = new BackgroundManager();
     fresh.attachSessionDir(sessionDir);
     await fresh.loadFromDisk();
     await fresh.reconcile();

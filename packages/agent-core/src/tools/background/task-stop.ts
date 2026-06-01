@@ -5,10 +5,13 @@
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../agent/tool';
+import {
+  isBackgroundTaskTerminal,
+  type BackgroundManager,
+} from '../../agent/background';
 import type { ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
 import { matchesGlobRuleSubject } from '../support/rule-match';
-import { isBackgroundTaskTerminal, type BackgroundProcessManager } from './manager';
 import TASK_STOP_DESCRIPTION from './task-stop.md';
 
 // ── Input schema ─────────────────────────────────────────────────────
@@ -31,7 +34,7 @@ export class TaskStopTool implements BuiltinTool<TaskStopInput> {
   readonly description = TASK_STOP_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TaskStopInputSchema);
 
-  constructor(private readonly manager: BackgroundProcessManager) {}
+  constructor(private readonly manager: BackgroundManager) {}
 
   resolveExecution(args: TaskStopInput): ToolExecution {
     return {
