@@ -323,6 +323,106 @@ describe('Agent resume', () => {
       }),
     });
   });
+
+  it('removes replay messages matching undone history', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'first prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.begin',
+          uuid: 'step-1',
+          turnId: '0',
+          step: 1,
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          uuid: 'part-1',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'step-1',
+          part: { type: 'text', text: 'first response' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.end',
+          uuid: 'step-1',
+          turnId: '0',
+          step: 1,
+        },
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'second prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.begin',
+          uuid: 'step-2',
+          turnId: '1',
+          step: 1,
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          uuid: 'part-2',
+          turnId: '1',
+          step: 1,
+          stepUuid: 'step-2',
+          part: { type: 'text', text: 'second response' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.end',
+          uuid: 'step-2',
+          turnId: '1',
+          step: 1,
+        },
+      },
+      { type: 'context.undo', count: 1 },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.context.history).toHaveLength(2);
+    expect(ctx.agent.context.history[0]?.role).toBe('user');
+    expect(ctx.agent.context.history[1]?.role).toBe('assistant');
+
+    const replay = ctx.agent.replayBuilder.buildResult();
+    expect(replay).toHaveLength(2);
+    expect(replay[0]).toMatchObject({
+      type: 'message',
+      message: expect.objectContaining({ role: 'user', content: [{ type: 'text', text: 'first prompt' }] }),
+    });
+    expect(replay[1]).toMatchObject({
+      type: 'message',
+      message: expect.objectContaining({ role: 'assistant', content: [{ type: 'text', text: 'first response' }] }),
+    });
+  });
 });
 
 class RecordingAgentPersistence extends InMemoryAgentRecordPersistence {

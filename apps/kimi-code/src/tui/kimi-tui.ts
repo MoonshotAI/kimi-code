@@ -916,16 +916,21 @@ export class KimiTUI {
       return;
     }
 
-    entries.splice(lastUserIndex);
-
-    this.state.transcriptContainer.clear();
-    this.clearTerminalInlineImages();
-    for (const entry of entries) {
-      const component = this.createTranscriptComponent(entry);
-      if (component) {
-        this.state.transcriptContainer.addChild(component);
+    const children = this.state.transcriptContainer.children;
+    let lastUserComponentIndex = -1;
+    for (let i = children.length - 1; i >= 0; i--) {
+      if (children[i] instanceof UserMessageComponent) {
+        lastUserComponentIndex = i;
+        break;
       }
     }
+
+    if (lastUserComponentIndex >= 0) {
+      children.splice(lastUserComponentIndex);
+      this.state.transcriptContainer.invalidate();
+    }
+
+    entries.splice(lastUserIndex);
 
     if (entries.length === 0) {
       this.renderWelcome();

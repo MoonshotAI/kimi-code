@@ -12,6 +12,16 @@ export class ReplayBuilder {
     }
   }
 
+  removeLastMessages(count: number): void {
+    let removed = 0;
+    for (let i = this.records.length - 1; i >= 0 && removed < count; i--) {
+      if (this.records[i]!.type === 'message') {
+        this.records.splice(i, 1);
+        removed++;
+      }
+    }
+  }
+
   buildResult(): readonly AgentReplayRecord[] {
     return this.records;
   }

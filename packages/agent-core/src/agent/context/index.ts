@@ -77,10 +77,13 @@ export class ContextMemory {
 
     this.agent.records.logRecord({ type: 'context.undo', count });
 
+    let removedCount = 0;
     let removedUserCount = 0;
     for (let i = this._history.length - 1; i >= 0; i--) {
       const message = this._history.pop();
       if (message === undefined) continue;
+
+      removedCount++;
 
       if (i < this.tokenCountCoveredMessageCount) {
         this.tokenCountCoveredMessageCount--;
@@ -92,6 +95,8 @@ export class ContextMemory {
         if (removedUserCount >= count) break;
       }
     }
+
+    this.agent.replayBuilder.removeLastMessages(removedCount);
 
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
