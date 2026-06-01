@@ -11,6 +11,7 @@ import type {
 import type {
   AppState,
   BackgroundAgentMetadata,
+  SkillActivationTrigger,
   ToolCallBlockData,
   TranscriptEntry,
 } from '#/tui/types';
@@ -38,6 +39,7 @@ export interface SkillActivationProjection {
   readonly activationId: string;
   readonly skillName: string;
   readonly skillArgs?: string;
+  readonly trigger: SkillActivationTrigger;
 }
 
 export interface ReplayBackgroundProjection {
@@ -203,6 +205,7 @@ export function skillActivationFromOrigin(
     activationId: origin.activationId,
     skillName: origin.skillName,
     skillArgs: origin.skillArgs,
+    trigger: origin.trigger,
   };
 }
 

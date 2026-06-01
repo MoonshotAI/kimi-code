@@ -728,6 +728,59 @@ describe('KimiTUI message flow', () => {
     ).toHaveLength(1);
   });
 
+  it('undoes from the real user turn when the last skill activation came from the model', async () => {
+    const { driver } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'skill.activated',
+        agentId: 'main',
+        activationId: 'act-model',
+        skillName: 'review',
+        trigger: 'model-tool',
+      } as Event,
+      () => {},
+    );
+    driver.state.appState.streamingPhase = 'idle';
+
+    await driver.undoLastTurn();
+
+    expect(driver.state.transcriptEntries).toEqual([]);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).not.toContain('hello');
+    expect(transcript).not.toContain('review');
+  });
+
+  it('keeps user-slash skill activations as undo anchors', async () => {
+    const { driver } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'skill.activated',
+        agentId: 'main',
+        activationId: 'act-user',
+        skillName: 'review',
+        trigger: 'user-slash',
+      } as Event,
+      () => {},
+    );
+    driver.state.appState.streamingPhase = 'idle';
+
+    await driver.undoLastTurn();
+
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        content: 'hello',
+      }),
+    ]);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('hello');
+    expect(transcript).not.toContain('review');
+  });
+
   it('sends pasted image placeholders as image content parts', async () => {
     const { driver, session } = await makeDriver();
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;

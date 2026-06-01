@@ -910,9 +910,7 @@ export class KimiTUI {
     }
 
     const entries = this.state.transcriptEntries;
-    const lastUserIndex = entries.findLastIndex(
-      (e) => e.kind === 'user' || e.kind === 'skill_activation',
-    );
+    const lastUserIndex = entries.findLastIndex(isUndoAnchorEntry);
     if (lastUserIndex < 0) {
       this.showError('Nothing to undo.');
       return;
@@ -929,9 +927,10 @@ export class KimiTUI {
     const children = this.state.transcriptContainer.children;
     let lastUserComponentIndex = -1;
     for (let i = children.length - 1; i >= 0; i--) {
+      const child = children[i];
       if (
-        children[i] instanceof UserMessageComponent ||
-        children[i] instanceof SkillActivationComponent
+        child instanceof UserMessageComponent ||
+        (child instanceof SkillActivationComponent && child.trigger === 'user-slash')
       ) {
         lastUserComponentIndex = i;
         break;
@@ -1232,6 +1231,7 @@ export class KimiTUI {
           entry.skillName ?? entry.content,
           entry.skillArgs,
           this.state.theme.colors,
+          entry.skillTrigger,
         );
       case 'cron':
         return new CronMessageComponent(
@@ -1834,4 +1834,11 @@ export class KimiTUI {
     this.restoreEditor();
   }
 
+}
+
+function isUndoAnchorEntry(entry: TranscriptEntry): boolean {
+  return (
+    entry.kind === 'user' ||
+    (entry.kind === 'skill_activation' && entry.skillTrigger === 'user-slash')
+  );
 }

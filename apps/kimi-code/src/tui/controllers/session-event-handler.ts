@@ -662,6 +662,7 @@ export class SessionEventHandler {
       skillActivationId: event.activationId,
       skillName: event.skillName,
       skillArgs: event.skillArgs,
+      skillTrigger: event.trigger,
     });
   }
 
