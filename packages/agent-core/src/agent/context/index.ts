@@ -19,6 +19,8 @@ const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';
 const TOOL_EMPTY_ERROR_STATUS =
   '<system>ERROR: Tool execution failed. Tool output is empty.</system>';
 const TOOL_OUTPUT_EMPTY_TEXT = 'Tool output is empty.';
+const INTERRUPTED_TOOL_RESULT =
+  'Kimi Code was interrupted before this tool call could record a result. Treat this tool call as failed and continue from the latest user instruction.';
 
 export class ContextMemory {
   private _history: ContextMessage[] = [];
@@ -204,6 +206,27 @@ export class ContextMemory {
       return;
     }
     this.pushHistory(message);
+  }
+
+  recoverInterruptedToolExchanges(): number {
+    // A sealed step can intentionally keep waiting for async tool output across
+    // context operations. An open step at replay EOF means the process stopped
+    // before the loop could finish pairing recorded tool calls.
+    const missingToolResultIds = this.openSteps.size > 0 ? [...this.pendingToolResultIds] : [];
+    for (const toolCallId of missingToolResultIds) {
+      this.appendLoopEvent({
+        type: 'tool.result',
+        parentUuid: toolCallId,
+        toolCallId,
+        result: {
+          output: INTERRUPTED_TOOL_RESULT,
+          isError: true,
+        },
+      });
+    }
+    this.openSteps.clear();
+    this.flushDeferredMessagesIfToolExchangeClosed();
+    return missingToolResultIds.length;
   }
 
   private flushDeferredMessagesIfToolExchangeClosed(): void {

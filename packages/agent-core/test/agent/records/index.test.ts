@@ -91,6 +91,87 @@ describe('AgentRecords persistence metadata', () => {
     expect(persistence.records.filter((record) => record.type === 'metadata')).toHaveLength(1);
   });
 
+  it('repairs orphan tool calls after replaying an interrupted session', async () => {
+    const stepUuid = 'interrupted-step';
+    const persistence = new InMemoryAgentRecordPersistence([
+      {
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: 1,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'wait for task output' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.begin', uuid: stepUuid, turnId: '0', step: 1 },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: 'call_task_output',
+          turnId: '0',
+          step: 1,
+          stepUuid,
+          toolCallId: 'call_task_output',
+          name: 'TaskOutput',
+          args: { block: true },
+        },
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'continue' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.records.replay();
+
+    expect(ctx.agent.context.history.map((message) => message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'user',
+    ]);
+    expect(ctx.agent.context.history[2]).toMatchObject({
+      role: 'tool',
+      toolCallId: 'call_task_output',
+      isError: true,
+    });
+    expect(ctx.agent.context.messages[2]?.content).toEqual([
+      {
+        type: 'text',
+        text: expect.stringContaining(
+          'Kimi Code was interrupted before this tool call could record a result.',
+        ),
+      },
+    ]);
+    expect(persistence.records.at(-1)).toMatchObject({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'call_task_output',
+        toolCallId: 'call_task_output',
+        result: {
+          output: expect.stringContaining('interrupted before this tool call'),
+          isError: true,
+        },
+      },
+    });
+  });
+
   it('does not rewrite records that already use the current wire version', async () => {
     const persistence = new RecordingInMemoryAgentRecordPersistence([
       {

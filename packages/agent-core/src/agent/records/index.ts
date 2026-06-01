@@ -185,6 +185,10 @@ export class AgentRecords {
       this.persistence.rewrite(replayedRecords);
       await this.persistence.flush();
     }
+    const recoveredToolResults = this.agent.context.recoverInterruptedToolExchanges();
+    if (recoveredToolResults > 0) {
+      await this.persistence.flush();
+    }
     if (this.agent.blobStore !== undefined) {
       for (const msg of this.agent.context.history) {
         await this.agent.blobStore.rehydrateParts(msg.content);
