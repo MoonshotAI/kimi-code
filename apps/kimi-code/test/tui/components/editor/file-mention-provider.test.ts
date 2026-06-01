@@ -9,7 +9,7 @@ import type { GitLsFilesCache, GitSnapshot } from '#/utils/git/git-ls-files';
 
 function stubGitCache(
   files: string[] | null,
-  opts: { mtimes?: Record<string, number>; recency?: string[] } = {},
+  opts: { mtimes?: Record<string, number>; recency?: string[]; isGitRepo?: boolean } = {},
 ): GitLsFilesCache {
   const snapshot: GitSnapshot | null =
     files === null
@@ -20,7 +20,7 @@ function stubGitCache(
           recencyOrder: new Map((opts.recency ?? []).map((p, i) => [p, i])),
         };
   return {
-    isGitRepo: () => files !== null,
+    isGitRepo: () => opts.isGitRepo ?? files !== null,
     getSnapshot: () => snapshot,
     list: () => (files === null ? null : files.slice()),
   };
@@ -310,12 +310,31 @@ describe('FileMentionProvider — readdir fallback when no git cache', () => {
 
   it('does not invoke the readdir fallback inside a git repo, even when the snapshot is empty', async () => {
     // stubGitCache([]) simulates a git repo with an empty snapshot
-    // (e.g. a fresh repo with no files). The readdir fallback MUST
-    // NOT be consulted — otherwise .gitignored paths in a real repo
-    // could leak through raw readdir.
+    // (e.g. a fresh repo with no files). Gated on `!isGitRepo()`, the
+    // readdir fallback MUST NOT be consulted — otherwise .gitignored
+    // paths in a real repo could leak through raw readdir.
     writeFileSync(join(dir, 'a.ts'), '');
 
     const provider = new FileMentionProvider([], dir, NO_FD, stubGitCache([]));
+    const result = await provider.getSuggestions(['@a'], 0, 2, { signal: ctrl() });
+
+    expect(result).toBeNull();
+  });
+
+  it('does not invoke the readdir fallback when git ls-files transiently fails inside a git repo', async () => {
+    // The transient-failure case the codex review flagged: a real git
+    // repo whose `git ls-files` invocation returned null. `isGitRepo()`
+    // is still true (the repo exists), `getSnapshot()` is null (the
+    // spawn failed). The readdir fallback MUST NOT run — that would
+    // bypass `.gitignore` and could surface ignored files.
+    writeFileSync(join(dir, 'a.ts'), '');
+
+    const provider = new FileMentionProvider(
+      [],
+      dir,
+      NO_FD,
+      stubGitCache(null, { isGitRepo: true }),
+    );
     const result = await provider.getSuggestions(['@a'], 0, 2, { signal: ctrl() });
 
     expect(result).toBeNull();

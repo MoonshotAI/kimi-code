@@ -119,15 +119,30 @@ export class FileMentionProvider implements AutocompleteProvider {
       return this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
     }
 
-    const snapshot = this.gitCache.getSnapshot();
-    if (snapshot === null) {
-      // Not in a git repo. Inner's getFuzzyFileSuggestions is a dead
-      // end without `fd`, so we own the candidate source here. See
-      // issue #266.
+    if (!this.gitCache.isGitRepo()) {
+      // Not in a git repo (stable for the cache's lifetime — `isGitRepo`
+      // is captured at TUI startup by `git rev-parse --show-toplevel`).
+      // Transient `git ls-files` failures inside a real repo leave
+      // `getSnapshot()` returning null but `isGitRepo()` still true, in
+      // which case we deliberately do NOT fall back to raw readdir
+      // (that would bypass `.gitignore`). Inner's getFuzzyFileSuggestions
+      // is a dead end without `fd`, so we own the candidate source here.
+      // See issue #266.
       const readdirResult = this.buildFromReadDir(atPrefix);
       if (readdirResult !== null) {
         return { items: readdirResult, prefix: atPrefix };
       }
+      return this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
+    }
+    const snapshot = this.gitCache.getSnapshot();
+    if (snapshot === null) {
+      // Inside a git repo but the snapshot fetch failed transiently
+      // (e.g. `git ls-files` returned non-zero, lock contention, or
+      // the index mtime lookup raced). Don't consult raw readdir —
+      // it would bypass `.gitignore` and could surface ignored files.
+      // Fall through to the inner provider, which can still resolve
+      // `/path` or quoted-path completions; on failure it returns
+      // null and the editor dismisses the menu.
       return this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
     }
 
@@ -276,6 +291,11 @@ class ReadDirWalker {
       return;
     }
     for (const entry of entries) {
+      // Short-circuit the loop once the cap is reached. The top-of-
+      // function check guards the recursion entry; this one stops the
+      // per-entry iteration so a single large directory doesn't
+      // statSync every remaining file after the cap is filled.
+      if (files.length >= READDIR_MAX_ENTRIES) break;
       if (entry.name === '.' || entry.name === '..') continue;
       if (entry.isDirectory()) {
         if (SKIP_DIRS.has(entry.name)) continue;
