@@ -5,6 +5,9 @@ Good patterns:
 - `src/**/*.ts` — recursive with a subdirectory anchor and extension
 - `test_*.py` — files whose name starts with a literal prefix
 
+Path argument:
+- Omit `path` to search the current working directory. Provide an absolute `path` to search another directory, including one outside the workspace.
+
 Rejected patterns (no literal anchor — nothing bounds the result set):
 - `**`, `**/*`, `*/*` — pure wildcards. Add an extension or subdirectory to give the walk a concrete target.
 - Anything that starts with `**/` (e.g. `**/*.md`, `**/main/*.py`). The leading `**/` has no literal anchor in front of it. Anchor it with a top-level subdirectory like `src/**/*.md`.

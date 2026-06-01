@@ -18,8 +18,9 @@
  *   - Patterns using brace expansion (`{a,b,c}`) are rejected up-front
  *     because the underlying `_globWalk` treats `{` / `}` as literals,
  *     so such patterns would silently match zero files.
- *   - `path` is validated by `resolvePathAccess` in strict mode. Explicit
- *     paths must be absolute and within the workspace roots.
+ *   - `path` is validated by `resolvePathAccess` in `absolute-outside-allowed`
+ *     mode. Explicit absolute paths outside the workspace are allowed; relative
+ *     paths that escape the workspace stay rejected.
  *   - match count is capped at `MAX_MATCHES`; a separate `YIELD_SAFETY_CAP`
  *     (MAX_MATCHES × 2) on the raw yield stream is a secondary belt that
  *     still terminates the stream if the kaos layer's own symlink-cycle
@@ -112,7 +113,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
         kaos: this.kaos,
         workspace: this.workspace,
         operation: 'search',
-        policy: { guardMode: 'strict', checkSensitive: false },
+        policy: { guardMode: 'absolute-outside-allowed', checkSensitive: false },
       });
     }
     const searchRoots = [path ?? this.workspace.workspaceDir];
@@ -164,7 +165,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
           `large trees. Add an extension ` +
           `("${args.pattern === '**' || args.pattern === '**/*' ? '**/*.ts' : '**/*.md'}") ` +
           `or a subdirectory ("src/**/*.ts") to constrain the walk.\n\n` +
-          `Allowed roots for explicit path searches:\n${rootList}\n\n` +
+          `Configured workspace roots:\n${rootList}\n\n` +
           `Top of ${this.workspace.workspaceDir}:\n${tree}`,
       };
     }

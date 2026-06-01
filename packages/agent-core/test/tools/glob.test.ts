@@ -483,11 +483,9 @@ describe('GlobTool', () => {
     expect(result.output).toContain('.github/workflows/ci.yml');
   });
 
-  it('picks up a freshly appended additionalDir without rebuilding the tool', async () => {
-    // py rejects `/extra` before it is registered in additional_dirs, then
-    // allows it after a runtime append. TS Glob runs with the
-    // `absolute-outside-allowed` policy so the first call is NOT rejected.
-    // Divergence lockdown — captures the cost of TS's looser default.
+  it('allows an explicit absolute search root outside registered workspace roots', async () => {
+    // Explicit absolute paths outside the workspace are allowed. Registering
+    // the same directory later must not change that behavior.
     const additionalDirs: string[] = [];
     const mutable: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs };
     const glob = vi.fn((root: string) =>
@@ -499,8 +497,8 @@ describe('GlobTool', () => {
     );
 
     const before = await executeTool(tool, context({ pattern: '*.py', path: '/extra' }));
-    expect(before).toMatchObject({ isError: true });
-    expect(before.output).toContain('outside the working directory');
+    expect(before.isError).toBeFalsy();
+    expect(before.output).toContain('test.py');
 
     additionalDirs.push('/extra');
 
@@ -509,11 +507,8 @@ describe('GlobTool', () => {
     expect(after.output).toContain('test.py');
   });
 
-  it('rejects a relative path argument before resolving it against any cwd', async () => {
-    // py rejects any relative `directory` outright with "not an absolute
-    // path". TS currently joins relative paths onto the workspace cwd and
-    // proceeds — divergence lockdown.
-    const glob = vi.fn().mockReturnValue(asyncPaths([]));
+  it('allows a relative path argument that resolves inside the workspace', async () => {
+    const glob = vi.fn().mockReturnValue(asyncPaths(['/workspace/relative/path/test.py']));
     const tool = new GlobTool(
       createFakeKaos({ glob, stat: vi.fn().mockResolvedValue(stat(1)) }),
       workspace,
@@ -521,19 +516,12 @@ describe('GlobTool', () => {
 
     const result = await executeTool(tool, context({ pattern: '*.py', path: 'relative/path' }));
 
-    expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('not an absolute path');
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('test.py');
+    expect(glob).toHaveBeenCalledWith('/workspace/relative/path', '*.py');
   });
 
-  it('expands a leading "~/" path before applying the workspace guard', async () => {
-    // py: `~/` is expanded to the home dir, which is outside the
-    // workspace; the guard then rejects with "outside the workspace".
-    // The key invariant under test is that tilde expansion happens BEFORE
-    // the absolute-path check — otherwise the user would see the misleading
-    // "not an absolute path" error. TS currently runs Glob with
-    // `absolute-outside-allowed` so the workspace check does NOT reject
-    // outside paths once tilde expansion makes them absolute — divergence
-    // lockdown.
+  it('expands a leading "~/" path before searching outside the workspace', async () => {
     const glob = vi.fn().mockReturnValue(asyncPaths([]));
     const tool = new GlobTool(
       createFakeKaos({ glob, gethome: () => '/home/test', stat: vi.fn().mockResolvedValue(stat(1)) }),
@@ -542,15 +530,12 @@ describe('GlobTool', () => {
 
     const result = await executeTool(tool, context({ pattern: '*.py', path: '~/' }));
 
-    expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('outside the workspace');
-    expect(result.output).not.toContain('not an absolute path');
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toBe('No matches found');
+    expect(glob).toHaveBeenCalledWith('/home/test', '*.py');
   });
 
-  it('rejects a path sharing the workspace prefix but outside it', async () => {
-    // py rejects shared-prefix outside paths with "outside the workspace".
-    // TS Glob uses `absolute-outside-allowed`, so an absolute path outside
-    // the workspace is accepted by design. Divergence lockdown.
+  it('allows a path sharing the workspace prefix when it is absolute', async () => {
     const glob = vi.fn().mockReturnValue(asyncPaths([]));
     const tool = new GlobTool(
       createFakeKaos({ glob, stat: vi.fn().mockResolvedValue(stat(1)) }),
@@ -561,8 +546,9 @@ describe('GlobTool', () => {
       context({ pattern: '*.py', path: '/parent/workdir-sneaky' }),
     );
 
-    expect(result).toMatchObject({ isError: true });
-    expect(result.output).toMatch(/outside the workspace|outside the working directory/);
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toBe('No matches found');
+    expect(glob).toHaveBeenCalledWith('/parent/workdir-sneaky', '*.py');
   });
 
   it('locks down rejection phrasing and large-directory caveats in the description', () => {
