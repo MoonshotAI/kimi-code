@@ -10,6 +10,7 @@ import chalk from 'chalk';
 
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '#/constant/app';
 import type { ColorPalette } from '#/tui/theme/colors';
+import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
 import type { ChoiceOption } from './choice-picker';
@@ -71,10 +72,6 @@ function createModelChoices(models: Record<string, ModelAlias>): readonly ModelC
 function thinkingAvailability(model: ModelAlias): ThinkingAvailability {
   const caps = model.capabilities ?? [];
   if (caps.includes('always_thinking')) return 'always-on';
-  // Forcing adaptive thinking implies the model supports thinking, even when the
-  // alias declares no capabilities — e.g. a custom-named endpoint configured with
-  // only `adaptive_thinking = true`. Without this it would render as "unsupported"
-  // and switching to it would force thinking off.
   if (caps.includes('thinking') || model.adaptiveThinking === true) return 'toggle';
   return 'unsupported';
 }
@@ -100,7 +97,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
     const selectedIdx = choices.findIndex((choice) => choice.alias === selectedValue);
     this.list = new SearchableList({
       items: choices,
-      toSearchText: (c) => c.label,
+      toSearchText: (choice) => choice.label,
       pageSize: opts.pageSize,
       initialIndex: Math.max(selectedIdx, 0),
       searchable: opts.searchable === true,
@@ -114,18 +111,27 @@ export class ModelSelectorComponent extends Container implements Focusable {
       this.opts.onCancel();
       return;
     }
-    const selected = this.list.selected();
-    // Left/Right toggle thinking (only when the model supports it); paging is on
-    // PgUp/PgDn so the horizontal arrows stay free for the thinking control.
+
+    const selected = this.selectedChoice();
     if (selected !== undefined && thinkingAvailability(selected.model) === 'toggle') {
-      if (matchesKey(data, Key.left)) {
-        this.thinkingDraft = true;
+      const ch = printableChar(data);
+      if (ch === '/') {
+        this.thinkingDraft = !this.thinkingDraft;
         return;
       }
-      if (matchesKey(data, Key.right)) {
-        this.thinkingDraft = false;
-        return;
-      }
+    }
+
+    if (this.list.handleKey(data)) {
+      // Consumed by SearchableList (↑/↓/PgUp/PgDn/typing/Backspace).
+      return;
+    }
+    if (matchesKey(data, Key.left)) {
+      this.list.pageUp();
+      return;
+    }
+    if (matchesKey(data, Key.right)) {
+      this.list.pageDown();
+      return;
     }
     if (matchesKey(data, Key.enter)) {
       if (selected === undefined) return;
@@ -133,66 +139,66 @@ export class ModelSelectorComponent extends Container implements Focusable {
         alias: selected.alias,
         thinking: effectiveThinking(selected.model, this.thinkingDraft),
       });
-      return;
     }
-    this.list.handleKey(data);
   }
 
   override render(width: number): string[] {
     const { colors } = this.opts;
-    const searchable = this.opts.searchable === true;
     const view = this.list.view();
-    const choices = view.items;
-
-    const navParts = ['↑↓ model', '←→ thinking'];
-    if (view.page.pageCount > 1) navParts.push('PgUp/PgDn page');
-    navParts.push('Enter apply', 'Esc cancel');
-
     const titleSuffix =
-      searchable && view.query.length === 0 ? chalk.hex(colors.textMuted)('  (type to search)') : '';
+      view.query.length === 0 ? chalk.hex(colors.textMuted)('  (type to search)') : '';
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(' Select a model') + titleSuffix,
+      chalk.hex(colors.textMuted)(' ↑↓ model · ←→ page · / thinking · Enter apply · Esc cancel'),
+      '',
     ];
-    if (searchable && view.query.length > 0) {
+
+    if (view.query.length > 0) {
       lines.push(chalk.hex(colors.primary)(' Search: ') + chalk.hex(colors.text)(view.query));
     }
-    lines.push(chalk.hex(colors.textMuted)(` ${navParts.join(' · ')}`));
-    lines.push('');
 
-    if (choices.length === 0) {
+    if (view.items.length === 0) {
       lines.push(chalk.hex(colors.textMuted)('   No matches'));
-    }
-    for (let i = view.page.start; i < view.page.end; i++) {
-      const choice = choices[i]!;
-      const isSelected = i === view.selectedIndex;
-      const isCurrent = choice.alias === this.opts.currentValue;
-      const pointer = isSelected ? '❯' : ' ';
-      const labelStyle = isSelected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
-      let line = chalk.hex(isSelected ? colors.primary : colors.textDim)(`  ${pointer} `);
-      line += labelStyle(choice.label);
-      if (isCurrent) {
-        line += ' ' + chalk.hex(colors.success)('← current');
+    } else {
+      for (let i = view.page.start; i < view.page.end; i++) {
+        const choice = view.items[i];
+        if (choice === undefined) continue;
+        const isSelected = i === view.selectedIndex;
+        const isCurrent = choice.alias === this.opts.currentValue;
+        const pointer = isSelected ? '❯' : ' ';
+        const labelStyle = isSelected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
+        let line = chalk.hex(isSelected ? colors.primary : colors.textDim)(`  ${pointer} `);
+        line += labelStyle(choice.label);
+        if (isCurrent) {
+          line += ' ' + chalk.hex(colors.success)('← current');
+        }
+        lines.push(line);
       }
-      lines.push(line);
     }
 
-    lines.push('');
-    lines.push(chalk.hex(colors.textMuted)(' Thinking'));
-    const selected = choices[view.selectedIndex];
-    if (selected !== undefined) {
-      lines.push(this.renderThinkingControl(selected.model));
-    }
-    lines.push('');
     if (view.page.pageCount > 1) {
+      lines.push('');
       lines.push(
         chalk.hex(colors.textMuted)(
           ` Page ${String(view.page.page + 1)}/${String(view.page.pageCount)}`,
         ),
       );
     }
+
+    lines.push('');
+    lines.push(chalk.hex(colors.textMuted)(' Thinking  (/ to toggle)'));
+    const selected = this.selectedChoice();
+    if (selected !== undefined) {
+      lines.push(this.renderThinkingControl(selected.model));
+    }
+    lines.push('');
     lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width));
+  }
+
+  private selectedChoice(): ModelChoice | undefined {
+    return this.list.selected();
   }
 
   private renderThinkingControl(model: ModelAlias): string {

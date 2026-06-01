@@ -29,18 +29,22 @@ ANTHROPIC_BASE_URL = "https://my-proxy.example.com"
 
 切换供应商最常见的方式有两种：在 TUI 里用 `/model` 斜杠命令选择已配置的模型，或者直接编辑 `config.toml` 调整 `[providers.*]` 与 `[models.*]` 表。完整字段说明见 [配置文件](./config-files.md)。
 
-## `/connect` 与模型目录
+## `/provider` 与供应商管理
 
-除了在 `config.toml` 中手写 `[providers.*]` 与 `[models.*]` 表，你也可以在 TUI 中运行 `/connect` 斜杠命令，从 **模型目录**（model catalog）添加供应商。模型目录记录了已知的供应商和模型，以及它们的上下文长度、输出长度和能力。`/connect` 会引导你选择供应商、选择模型、输入 API 密钥，然后把对应的 `[providers.<name>]` 与 `[models.<alias>]` 写入 `config.toml`。
+在 TUI 中运行 `/provider` 斜杠命令可打开 **供应商管理器**，以交互方式查看按来源分组的所有已配置供应商。在这个界面里，你可以直接添加或删除供应商，而无需手动编辑 `config.toml`。
 
-CLI 已经内置了默认的模型目录，因此 `/connect` 无需联网即可使用。如果想换用别的来源，可以传入以下参数：
+管理器把每种平台来源（开放平台登录、自定义 registry 导入、独立供应商）显示为一行。用 ↑/↓ 移动光标，←/→ 翻页。在某一行的位置按 `d` 可删除该来源；删除前会出现 `[y/N]` 确认提示。在 `[ Add New Platform ]` 行按 `Enter` 即可添加新供应商。
 
-- `/connect --refresh`：在打开选择器之前，从 [models.dev](https://models.dev/) 拉取最新模型目录。
-- `/connect --url=<catalog-url>`：从自定义地址读取模型目录（格式需与默认目录一致），只接受 `http://` 或 `https://` 的 URL。
+添加供应商时提供两条路径：
 
-`/connect` 只能配置上表列出的供应商类型；不在目录范围内的供应商类型，请按下面各小节的说明，在 `config.toml` 中手写配置。
+- **Known third-party provider** — 从 [models.dev](https://models.dev/) 拉取最新模型目录，选择供应商并输入 API 密钥，随后打开模型选择器让你挑选默认模型。
+- **Custom registry (api.json)** — 从自定义 registry 地址导入一个或多个供应商。粘贴 registry 地址及其 Bearer token；CLI 会拉取 registry 内容，自动创建对应的 `[providers.<name>]` 与 `[models.<alias>]` 条目，并刷新可用模型列表。
 
-对通过 `/connect` 配置的供应商，`/logout` 同样有效：它会从 `config.toml` 中删除对应的 `[providers.<name>]` 配置块。
+添加供应商或切换模型时，**标签页式模型选择器** 会把可用模型按供应商拆分为多个标签页。按 `Tab` / `Shift-Tab` 切换标签页，随后用 ↑/↓ 与 `Enter` 选择想要的模型即可。
+
+::: warning 注意
+通过 `/login` 登录的 Kimi Code OAuth 供应商（托管账号）在 `/provider` 中会被故意隐藏；该账号请通过 `/login` 与 `/logout` 管理。
+:::
 
 ## `kimi`
 
