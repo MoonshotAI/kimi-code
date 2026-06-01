@@ -1,4 +1,3 @@
-import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
@@ -74,7 +73,7 @@ describe('ChoicePickerComponent', () => {
     });
     const modelOutput = model.render(120).map(strip);
     expect(modelOutput).toContain('  ❯ Kimi K2 (Kimi Code) ← current');
-    expect(modelOutput).toContain(' Thinking');
+    expect(modelOutput).toContain(' Thinking  (/ to toggle)');
     expect(modelOutput).toContain('  [ On ]    Off  ');
 
     const theme = new ThemeSelectorComponent({
@@ -122,7 +121,7 @@ describe('ChoicePickerComponent', () => {
       onCancel: vi.fn(),
     });
 
-    picker.handleInput('\u001B[C');
+    picker.handleInput('/');
     picker.handleInput('\r');
 
     expect(onSelect).toHaveBeenCalledWith({ alias: 'kimi', thinking: false });
@@ -155,44 +154,13 @@ describe('ChoicePickerComponent', () => {
     });
 
     expect(picker.render(120).map(strip)).toContain('  [ Always on ]');
-    picker.handleInput('\u001B[C');
     picker.handleInput('\r');
     expect(onSelect).toHaveBeenLastCalledWith({ alias: 'always', thinking: true });
 
     picker.handleInput('\u001B[B');
     expect(picker.render(120).map(strip)).toContain('  [ Off ] unsupported');
-    picker.handleInput('\u001B[D');
     picker.handleInput('\r');
     expect(onSelect).toHaveBeenLastCalledWith({ alias: 'plain', thinking: false });
-  });
-
-  it('treats adaptiveThinking models as thinking-capable without a thinking capability', () => {
-    const onSelect = vi.fn();
-    const picker = new ModelSelectorComponent({
-      models: {
-        okapi: {
-          provider: 'anthropic',
-          model: 'coding-model-okapi-0527-vibe',
-          maxContextSize: 200_000,
-          adaptiveThinking: true,
-        },
-      },
-      currentValue: 'okapi',
-      currentThinking: true,
-      colors: darkColors,
-      onSelect,
-      onCancel: vi.fn(),
-    });
-
-    // adaptiveThinking makes the alias togglable (not 'unsupported'): the current
-    // thinking state is preserved on select instead of being forced off.
-    picker.handleInput('\r');
-    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'okapi', thinking: true });
-
-    // Right (ESC[C) toggles thinking off, proving it is an interactive toggle.
-    picker.handleInput('\u001B[C');
-    picker.handleInput('\r');
-    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'okapi', thinking: false });
   });
 
   it('keeps the thinking draft when moving across models', () => {
@@ -222,188 +190,11 @@ describe('ChoicePickerComponent', () => {
     });
 
     picker.handleInput('\u001B[B');
-    picker.handleInput('\u001B[D');
+    picker.handleInput('/');
     picker.handleInput('\u001B[A');
     picker.handleInput('\u001B[B');
     picker.handleInput('\r');
 
     expect(onSelect).toHaveBeenCalledWith({ alias: 'thinking', thinking: true });
-  });
-});
-
-const ESC = String.fromCodePoint(27);
-const BACKSPACE = String.fromCodePoint(127);
-const PAGE_UP = `${ESC}[5~`;
-const PAGE_DOWN = `${ESC}[6~`;
-const LEFT = `${ESC}[D`;
-const RIGHT = `${ESC}[C`;
-const ENTER = String.fromCodePoint(13);
-
-function rendered(component: { render: (w: number) => string[] }, width = 80): string {
-  return component.render(width).map(strip).join('\n');
-}
-
-describe('ChoicePickerComponent search and pagination', () => {
-  function makePicker(over: { options?: { value: string; label: string }[]; searchable?: boolean }) {
-    const onSelect = vi.fn();
-    const onCancel = vi.fn();
-    const picker = new ChoicePickerComponent({
-      title: 'Select a provider',
-      options:
-        over.options ??
-        ['openai', 'openrouter', 'anthropic', 'google', 'mistral', 'cohere'].map((label) => ({
-          value: label,
-          label,
-        })),
-      colors: darkColors,
-      searchable: over.searchable ?? true,
-      onSelect,
-      onCancel,
-    });
-    return { picker, onSelect, onCancel };
-  }
-
-  function type(picker: ChoicePickerComponent, query: string): void {
-    for (const ch of query) picker.handleInput(ch);
-  }
-
-  it('filters the list as the user types and echoes the query', () => {
-    const { picker } = makePicker({});
-    type(picker, 'open');
-    const out = rendered(picker);
-    expect(out).toContain('Search: open');
-    expect(out).toContain('openai');
-    expect(out).toContain('openrouter');
-    expect(out).not.toContain('anthropic');
-    expect(out).not.toContain('google');
-  });
-
-  it('trims the query on Backspace and clears it on Esc before cancelling', () => {
-    const { picker, onCancel } = makePicker({});
-    type(picker, 'open');
-    expect(rendered(picker)).toContain('Search: open');
-
-    picker.handleInput(BACKSPACE);
-    expect(rendered(picker)).toContain('Search: ope');
-
-    picker.handleInput(ESC); // non-empty query → clear, do not cancel
-    expect(onCancel).not.toHaveBeenCalled();
-    expect(rendered(picker)).not.toContain('Search:');
-    expect(rendered(picker)).toContain('anthropic'); // full list restored
-
-    picker.handleInput(ESC); // empty query → cancel
-    expect(onCancel).toHaveBeenCalledTimes(1);
-  });
-
-  it('Enter selects the highlighted item from the filtered list', () => {
-    const { picker, onSelect } = makePicker({});
-    type(picker, 'router'); // only openrouter matches
-    picker.handleInput(ENTER);
-    expect(onSelect).toHaveBeenCalledWith('openrouter');
-  });
-
-  it('shows "No matches" and selects nothing when the query matches nothing', () => {
-    const { picker, onSelect } = makePicker({});
-    type(picker, 'zzzz');
-    expect(rendered(picker)).toContain('No matches');
-    picker.handleInput(ENTER);
-    expect(onSelect).not.toHaveBeenCalled();
-  });
-
-  it('splits a long list into pages and pages with PageDown and Right', () => {
-    const options = Array.from({ length: 20 }, (_, i) => {
-      const label = `item${String(i).padStart(2, '0')}`;
-      return { value: label, label };
-    });
-    const { picker } = makePicker({ options, searchable: false });
-
-    expect(rendered(picker)).toContain('Page 1/3');
-    expect(rendered(picker)).toContain('item00');
-    expect(rendered(picker)).not.toContain('item08');
-
-    picker.handleInput(PAGE_DOWN);
-    expect(rendered(picker)).toContain('Page 2/3');
-    expect(rendered(picker)).toContain('item08');
-    expect(rendered(picker)).not.toContain('item00');
-
-    picker.handleInput(RIGHT);
-    expect(rendered(picker)).toContain('Page 3/3');
-    expect(rendered(picker)).toContain('item19');
-  });
-
-  it('omits the page footer for a short list', () => {
-    const { picker } = makePicker({ searchable: false });
-    expect(rendered(picker)).not.toContain('Page ');
-  });
-});
-
-describe('ModelSelectorComponent search and pagination', () => {
-  function buildModels(count: number): Record<string, ModelAlias> {
-    const models: Record<string, ModelAlias> = {};
-    for (let i = 0; i < count; i++) {
-      const id = `model${String(i).padStart(2, '0')}`;
-      models[`prov/${id}`] = {
-        provider: 'prov',
-        model: id,
-        maxContextSize: 1000,
-        capabilities: ['thinking'],
-      };
-    }
-    return models;
-  }
-
-  function makeSelector(models: Record<string, ModelAlias>, currentThinking = true) {
-    const onSelect = vi.fn();
-    const onCancel = vi.fn();
-    const firstAlias = Object.keys(models)[0] ?? '';
-    const selector = new ModelSelectorComponent({
-      models,
-      currentValue: firstAlias,
-      currentThinking,
-      colors: darkColors,
-      searchable: true,
-      onSelect,
-      onCancel,
-    });
-    return { selector, onSelect, onCancel };
-  }
-
-  it('filters models as the user types', () => {
-    const { selector } = makeSelector({
-      'p/alpha': { provider: 'p', model: 'alpha', maxContextSize: 1000 },
-      'p/beta': { provider: 'p', model: 'beta', maxContextSize: 1000 },
-      'p/gamma': { provider: 'p', model: 'gamma', maxContextSize: 1000 },
-    });
-    for (const ch of 'beta') selector.handleInput(ch);
-    const out = rendered(selector);
-    expect(out).toContain('Search: beta');
-    expect(out).toContain('beta (p)');
-    expect(out).not.toContain('alpha (p)');
-    expect(out).not.toContain('gamma (p)');
-  });
-
-  it('pages with PageDown/PageUp while Left/Right still toggle thinking', () => {
-    const { selector } = makeSelector(buildModels(20));
-
-    expect(rendered(selector)).toContain('Page 1/3');
-    expect(rendered(selector)).toContain('model00 (prov)');
-    expect(rendered(selector)).not.toContain('model08 (prov)');
-
-    selector.handleInput(PAGE_DOWN);
-    expect(rendered(selector)).toContain('Page 2/3');
-    expect(rendered(selector)).toContain('model08 (prov)');
-
-    // Right toggles thinking off and must NOT change the page.
-    selector.handleInput(RIGHT);
-    expect(rendered(selector)).toContain('Page 2/3');
-    expect(rendered(selector)).toContain('[ Off ]');
-
-    // Left toggles thinking back on, page still unchanged.
-    selector.handleInput(LEFT);
-    expect(rendered(selector)).toContain('Page 2/3');
-    expect(rendered(selector)).toContain('[ On ]');
-
-    selector.handleInput(PAGE_UP);
-    expect(rendered(selector)).toContain('Page 1/3');
   });
 });

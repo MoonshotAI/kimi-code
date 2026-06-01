@@ -33,6 +33,10 @@ pending).
 
 Guidelines:
 
+- Users have no direct `/cron` command or self-service UI to delete
+  tasks themselves; they must ask the model to cancel a reminder.
+  When deleting on behalf of a user, confirm the action and report
+  the result plainly.
 - Cron deletion is irreversible — there is no undo. If you delete the
   wrong task, you must re-create it with `CronCreate`.
 - If the model is unsure which id is current (e.g. after a context

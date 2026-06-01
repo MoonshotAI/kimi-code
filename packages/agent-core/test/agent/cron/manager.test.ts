@@ -104,6 +104,18 @@ describe('CronManager', () => {
       // content from a future refactor).
       expect((text.match(/<cron-fire /g) ?? []).length).toBe(1);
 
+      expect(stub.eventCalls).toHaveLength(1);
+      expect(stub.eventCalls[0]!.event).toMatchObject({
+        type: 'cron.fired',
+        prompt: 'check the deploy',
+        origin: {
+          kind: 'cron_job',
+          cron: '*/5 * * * *',
+          recurring: true,
+          stale: false,
+        },
+      });
+
       expect(stub.telemetryCalls.length).toBe(1);
       const tc = stub.telemetryCalls[0]!;
       expect(tc.event).toBe(CRON_FIRED);

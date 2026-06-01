@@ -102,6 +102,8 @@ export type {
   BackgroundTaskTerminatedEvent,
 } from '@moonshot-ai/agent-core';
 
+export type { CronFiredEvent } from '@moonshot-ai/agent-core';
+
 export type MaybePromise<T> = T | Promise<T>;
 
 export type ApprovalHandler = (request: ApprovalRequest) => MaybePromise<ApprovalResponse>;

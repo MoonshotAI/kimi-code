@@ -41,14 +41,20 @@ export function estimateTokensForTools(tools: readonly Tool[]): number {
 
 export function estimateTokensForMessage(message: Message): number {
   let total = estimateTokens(message.role);
-  for (const part of message.content) {
-    total += estimateTokensForContentPart(part);
-  }
+  total += estimateTokensForContentParts(message.content);
   if (message.toolCalls !== undefined) {
     for (const call of message.toolCalls) {
       total += estimateTokens(call.name);
       total += estimateTokens(JSON.stringify(call.arguments));
     }
+  }
+  return total;
+}
+
+export function estimateTokensForContentParts(parts: readonly ContentPart[]): number {
+  let total = 0;
+  for (const part of parts) {
+    total += estimateTokensForContentPart(part);
   }
   return total;
 }

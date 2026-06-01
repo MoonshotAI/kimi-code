@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
+import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
 import {
   PluginMcpSelectorComponent,
   PluginMarketplaceSelectorComponent,
@@ -423,7 +424,7 @@ describe('KimiTUI message flow', () => {
     const { driver, harness } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
 
-    for (const command of ['/new', '/model', '/sessions']) {
+    for (const command of ['/new', '/sessions']) {
       harness.track.mockClear();
 
       driver.handleUserInput(command);
@@ -761,6 +762,46 @@ describe('KimiTUI message flow', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('renders cron fired events as distinct transcript entries', async () => {
+    const { driver } = await makeDriver();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'cron.fired',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        origin: {
+          kind: 'cron_job',
+          jobId: 'deadbeef',
+          cron: '* * * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        },
+        prompt: '提醒用户：这是每分钟提醒',
+      } as Event,
+      vi.fn(),
+    );
+
+    const entry = driver.state.transcriptEntries.at(-1);
+    expect(entry).toMatchObject({
+      kind: 'cron',
+      content: '提醒用户：这是每分钟提醒',
+      cronData: {
+        jobId: 'deadbeef',
+        cron: '* * * * *',
+        coalescedCount: 1,
+        stale: false,
+      },
+    });
+
+    const transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('Scheduled reminder fired');
+    expect(transcript).toContain('* * * * *');
+    expect(transcript).toContain('提醒用户：这是每分钟提醒');
+    expect(transcript).not.toContain('<cron-fire');
   });
 
   it('coalesces assistant delta component updates', async () => {
@@ -1703,18 +1744,18 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput('/model turbo');
 
     const picker = driver.state.editorContainer.children[0];
-    expect(picker).toBeInstanceOf(ModelSelectorComponent);
-    const pickerOutput = stripSgr((picker as ModelSelectorComponent).render(120).join('\n'));
+    expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
+    const pickerOutput = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
     expect(pickerOutput).toContain('Kimi K2 (Kimi Code) ← current');
     expect(pickerOutput).toContain('❯ Kimi Turbo (Kimi Code)');
-    (picker as ModelSelectorComponent).handleInput('t');
-    (picker as ModelSelectorComponent).handleInput('u');
-    const filteredOutput = stripSgr((picker as ModelSelectorComponent).render(120).join('\n'));
+    (picker as TabbedModelSelectorComponent).handleInput('t');
+    (picker as TabbedModelSelectorComponent).handleInput('u');
+    const filteredOutput = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
     expect(filteredOutput).toContain('Search: tu');
     expect(filteredOutput).toContain('Kimi Turbo (Kimi Code)');
     expect(filteredOutput).not.toContain('Kimi K2 (Kimi Code)');
-    (picker as ModelSelectorComponent).handleInput('\u001B[D');
-    (picker as ModelSelectorComponent).handleInput('\r');
+    (picker as TabbedModelSelectorComponent).handleInput('/');
+    (picker as TabbedModelSelectorComponent).handleInput('\r');
 
     await vi.waitFor(() => {
       expect(session.setModel).toHaveBeenCalledWith('turbo');
@@ -1751,8 +1792,8 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput('/model k2');
 
     const picker = driver.state.editorContainer.children[0];
-    expect(picker).toBeInstanceOf(ModelSelectorComponent);
-    (picker as ModelSelectorComponent).handleInput('\r');
+    expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
+    (picker as TabbedModelSelectorComponent).handleInput('\r');
 
     await vi.waitFor(() => {
       expect(setConfig).toHaveBeenCalledWith({

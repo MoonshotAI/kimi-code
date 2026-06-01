@@ -1,6 +1,8 @@
 export { KimiHarness } from '#/kimi-harness';
 export { Session } from '#/session';
 export { KimiAuthFacade } from '#/auth';
+export { KimiForCodingProvider } from '#/kimi-code-model-provider';
+export type { KimiForCodingProviderOptions } from '#/kimi-code-model-provider';
 
 export {
   applyCatalogProvider,

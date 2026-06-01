@@ -393,6 +393,7 @@ export class TurnFlow {
             beforeStep: async ({ signal: stepSignal }) => {
               this.agent.goal.consumeBudgetPromptBeforeStep();
               this.flushSteerBuffer();
+              this.agent.microCompaction.detect();
               await this.agent.fullCompaction.beforeStep(stepSignal);
               await this.agent.injection.inject();
               deduper.beginStep();

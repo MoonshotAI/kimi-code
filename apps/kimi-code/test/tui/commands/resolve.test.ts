@@ -62,11 +62,6 @@ describe('resolveSlashCommandInput', () => {
       commandName: 'init',
       reason: 'streaming',
     });
-    expect(resolve('/model', { isStreaming: true })).toEqual({
-      kind: 'blocked',
-      commandName: 'model',
-      reason: 'streaming',
-    });
     expect(resolve('/sessions', { isStreaming: true })).toEqual({
       kind: 'blocked',
       commandName: 'sessions',
@@ -80,11 +75,6 @@ describe('resolveSlashCommandInput', () => {
   });
 
   it('blocks model and session pickers while compacting', () => {
-    expect(resolve('/model', { isCompacting: true })).toEqual({
-      kind: 'blocked',
-      commandName: 'model',
-      reason: 'compacting',
-    });
     expect(resolve('/sessions', { isCompacting: true })).toEqual({
       kind: 'blocked',
       commandName: 'sessions',

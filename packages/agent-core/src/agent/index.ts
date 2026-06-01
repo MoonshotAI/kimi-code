@@ -27,7 +27,12 @@ import {
 } from '../utils/tokens';
 import type { PromisableMethods } from '../utils/types';
 import { BackgroundManager } from './background';
-import { FullCompaction, type CompactionStrategy } from './compaction';
+import {
+  FullCompaction,
+  MicroCompaction,
+  type CompactionStrategy,
+  type MicroCompactionConfig,
+} from './compaction';
 import { CronManager } from './cron';
 import { ConfigState } from './config';
 import { ContextMemory } from './context';
@@ -72,6 +77,7 @@ export interface AgentOptions {
   readonly generate?: typeof generate;
   readonly toolServices?: ToolServices;
   readonly compactionStrategy?: CompactionStrategy;
+  readonly microCompaction?: Partial<MicroCompactionConfig>;
   readonly modelProvider?: ModelProvider | undefined;
   readonly subagentHost?: SessionSubagentHost | undefined;
   readonly skills?: SkillRegistry;
@@ -102,6 +108,7 @@ export class Agent {
   readonly blobStore: BlobStore | undefined;
   readonly records: AgentRecords;
   readonly fullCompaction: FullCompaction;
+  readonly microCompaction: MicroCompaction;
   readonly context: ContextMemory;
   readonly config: ConfigState;
   readonly goal: GoalManager;
@@ -150,6 +157,7 @@ export class Agent {
           : undefined),
     );
     this.fullCompaction = new FullCompaction(this, options.compactionStrategy);
+    this.microCompaction = new MicroCompaction(this, options.microCompaction);
     this.context = new ContextMemory(this);
     this.config = new ConfigState(this);
     this.goal = new GoalManager(this);

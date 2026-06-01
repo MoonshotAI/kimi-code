@@ -1,6 +1,6 @@
 import type { FinishReason, TokenUsage } from '@moonshot-ai/kosong';
 
-import type { PromptOrigin } from '../agent/context';
+import type { CronJobOrigin, PromptOrigin } from '../agent/context';
 import type { KimiErrorPayload } from '../errors';
 import type { PermissionMode } from '../agent/permission';
 import type { GoalData } from '../agent/goal';
@@ -251,6 +251,12 @@ export interface BackgroundTaskTerminatedEvent {
   readonly info: BackgroundTaskInfo;
 }
 
+export interface CronFiredEvent {
+  readonly type: 'cron.fired';
+  readonly origin: CronJobOrigin;
+  readonly prompt: string;
+}
+
 export type ToolListUpdatedReason = 'mcp.connected' | 'mcp.disconnected' | 'mcp.failed';
 
 export interface ToolListUpdatedEvent {
@@ -302,6 +308,7 @@ export type AgentEvent =
   | CompactionCompletedEvent
   | BackgroundTaskStartedEvent
   | BackgroundTaskUpdatedEvent
-  | BackgroundTaskTerminatedEvent;
+  | BackgroundTaskTerminatedEvent
+  | CronFiredEvent;
 
 export type Event = AgentEvent & { agentId: string; sessionId: string };

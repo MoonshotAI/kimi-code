@@ -49,6 +49,14 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Switch LLM model',
     priority: 100,
+    availability: 'always',
+  },
+  {
+    name: 'provider',
+    aliases: ['providers'],
+    description: 'Manage AI providers (add / delete / refresh)',
+    priority: 95,
+    availability: 'always',
   },
   {
     name: 'help',
@@ -159,12 +167,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     name: 'login',
     aliases: [],
     description: 'Select a platform and authenticate',
-    priority: 40,
-  },
-  {
-    name: 'connect',
-    aliases: [],
-    description: 'Connect a provider from a model catalog',
     priority: 40,
   },
   {

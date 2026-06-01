@@ -11,20 +11,23 @@ export interface OpenPlatformDefinition {
   readonly id: string;
   readonly name: string;
   readonly baseUrl: string;
+  readonly consoleUrl?: string;
   readonly allowedPrefixes?: readonly string[] | undefined;
 }
 
 export const OPEN_PLATFORMS: readonly OpenPlatformDefinition[] = [
   {
     id: 'moonshot-cn',
-    name: 'Moonshot AI Open Platform (moonshot.cn)',
+    name: 'Kimi Platform (API key · platform.kimi.com)',
     baseUrl: 'https://api.moonshot.cn/v1',
+    consoleUrl: 'https://platform.kimi.com',
     allowedPrefixes: ['kimi-k'],
   },
   {
     id: 'moonshot-ai',
-    name: 'Moonshot AI Open Platform (moonshot.ai)',
+    name: 'Kimi Platform (API key · platform.kimi.ai)',
     baseUrl: 'https://api.moonshot.ai/v1',
+    consoleUrl: 'https://platform.kimi.ai',
     allowedPrefixes: ['kimi-k'],
   },
 ];

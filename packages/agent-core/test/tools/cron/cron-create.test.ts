@@ -33,10 +33,10 @@ interface Harness {
   readonly tool: CronCreateTool;
 }
 
-function makeHarness(): Harness {
+function makeHarness(wall?: number): Harness {
   const stub = createAgentStub();
   const manager = new CronManager(stub.agent, {
-    clocks: createClocks().clocks,
+    clocks: createClocks(wall).clocks,
     pollIntervalMs: null,
   });
   const tool = new CronCreateTool(manager);
@@ -79,6 +79,24 @@ function assertError(result: ExecutableToolResult): string {
   expect(result.isError).toBe(true);
   expect(typeof result.output).toBe('string');
   return result.output as string;
+}
+
+function localIsoWithOffset(ms: number): string {
+  const date = new Date(ms);
+  const offsetMin = -date.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? '+' : '-';
+  const abs = Math.abs(offsetMin);
+  const offset = `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${String(date.getMilliseconds()).padStart(
+    3,
+    '0',
+  )}${offset}`;
+}
+
+function pad(n: number): string {
+  return String(n).padStart(2, '0');
 }
 
 function extractApprovalRule(execution: ToolExecution): string {
@@ -129,6 +147,24 @@ describe('CronCreateTool', () => {
     expect(stub.telemetryCalls[0]!.props).toEqual({
       recurring: true,
     });
+  });
+
+  it('renders nextFireAt in local time with an explicit offset', async () => {
+    const now = new Date(2026, 4, 29, 8, 35, 0, 0).getTime();
+    const { tool } = makeHarness(now);
+    const result = await runTool(tool, {
+      cron: '0 9 * * *',
+      prompt: 'morning',
+      recurring: true,
+    });
+
+    const out = assertSuccess(result);
+    const expected = new Date(now);
+    expected.setSeconds(0, 0);
+    expected.setMinutes(0);
+    expected.setHours(9);
+    expect(out).toContain(`nextFireAt: ${localIsoWithOffset(expected.getTime())}`);
+    expect(out).not.toContain('nextFireAt: 2026-05-29T01:00:00.000Z');
   });
 
   it('schedules a one-shot task with recurring=false in the stored record', async () => {

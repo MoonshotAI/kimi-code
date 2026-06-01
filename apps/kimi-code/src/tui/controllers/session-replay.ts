@@ -234,10 +234,12 @@ export class SessionReplayRenderer {
     if (message.origin?.kind === 'injection') {
       return;
     }
-    // WHY: cron fires are not user turns (see isReplayUserTurnRecord); skip
-    // visual render and turn advance so the raw <cron-fire ...> envelope never
-    // surfaces in the resumed transcript.
-    if (message.origin?.kind === 'cron_job' || message.origin?.kind === 'cron_missed') {
+    if (message.origin?.kind === 'cron_job') {
+      this.renderCronJob(context, message);
+      return;
+    }
+    if (message.origin?.kind === 'cron_missed') {
+      this.renderCronMissed(context, message);
       return;
     }
 
@@ -361,6 +363,37 @@ export class SessionReplayRenderer {
         'markdown',
       ),
     );
+  }
+
+  private renderCronJob(context: ReplayRenderContext, message: ContextMessage): void {
+    if (message.origin?.kind !== 'cron_job') return;
+    this.flushAssistant(context);
+    this.host.appendTranscriptEntry({
+      ...replayEntry(
+        context,
+        'cron',
+        extractCronPrompt(contentPartsToText(message.content)),
+        'plain',
+      ),
+      cronData: {
+        jobId: message.origin.jobId,
+        cron: message.origin.cron,
+        recurring: message.origin.recurring,
+        coalescedCount: message.origin.coalescedCount,
+        stale: message.origin.stale,
+      },
+    });
+  }
+
+  private renderCronMissed(context: ReplayRenderContext, message: ContextMessage): void {
+    if (message.origin?.kind !== 'cron_missed') return;
+    this.flushAssistant(context);
+    this.host.appendTranscriptEntry({
+      ...replayEntry(context, 'cron', stripCronEnvelope(contentPartsToText(message.content)), 'plain'),
+      cronData: {
+        missedCount: message.origin.count,
+      },
+    });
   }
 
   private renderPermissionUpdate(context: ReplayRenderContext, mode: PermissionMode): void {
@@ -501,4 +534,27 @@ export class SessionReplayRenderer {
     });
     sessionEventHandler.backgroundAgentMetadata.delete(meta.agentId);
   }
+}
+
+function extractCronPrompt(text: string): string {
+  const open = '<prompt>\n';
+  const close = '\n</prompt>';
+  const start = text.indexOf(open);
+  const end = text.lastIndexOf(close);
+  if (start >= 0 && end >= start + open.length) {
+    return text.slice(start + open.length, end);
+  }
+  return stripCronEnvelope(text);
+}
+
+function stripCronEnvelope(text: string): string {
+  const lines = text.split('\n');
+  if (
+    lines.length >= 2 &&
+    lines[0]?.startsWith('<cron-fire ') &&
+    lines.at(-1) === '</cron-fire>'
+  ) {
+    return lines.slice(1, -1).join('\n');
+  }
+  return text;
 }

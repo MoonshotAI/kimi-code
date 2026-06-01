@@ -9,6 +9,7 @@ import type {
   CompactionCancelledEvent,
   CompactionCompletedEvent,
   CompactionStartedEvent,
+  CronFiredEvent,
   ErrorEvent,
   Event,
   HookResultEvent,
@@ -206,6 +207,7 @@ export class SessionEventHandler {
       case 'background.task.updated':
       case 'background.task.terminated':
         this.handleBackgroundTaskEvent(event); break;
+      case 'cron.fired': this.handleCronFired(event); break;
       case 'mcp.server.status': this.renderMcpServerStatus(event.server); break;
       case 'tool.list.updated': break;
       default: break;
@@ -283,7 +285,9 @@ export class SessionEventHandler {
       case 'compaction.cancelled':
       case 'compaction.completed':
       case 'compaction.started':
+      case 'cron.fired':
       case 'error':
+      case 'warning':
       case 'session.meta.updated':
       case 'skill.activated':
       case 'subagent.completed':
@@ -316,6 +320,24 @@ export class SessionEventHandler {
     this.host.setAppState({
       streamingPhase: 'waiting',
       streamingStartTime: Date.now(),
+    });
+  }
+
+  private handleCronFired(event: CronFiredEvent): void {
+    this.host.streamingUI.flushNow();
+    this.host.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'cron',
+      turnId: this.host.streamingUI.getTurnContext().turnId,
+      renderMode: 'plain',
+      content: event.prompt,
+      cronData: {
+        jobId: event.origin.jobId,
+        cron: event.origin.cron,
+        recurring: event.origin.recurring,
+        coalescedCount: event.origin.coalescedCount,
+        stale: event.origin.stale,
+      },
     });
   }
 

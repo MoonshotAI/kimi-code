@@ -394,6 +394,22 @@ function extractKeyArgument(
     Agent: ['description', 'prompt'],
   };
 
+  // Glob: concatenate multiple args into a single summary so the header
+  // shows pattern, optional explicit path, and include_dirs override.
+  if (toolName === 'Glob') {
+    const pattern = args['pattern'];
+    if (typeof pattern !== 'string' || pattern.length === 0) return null;
+    let summary = pattern;
+    const path = args['path'];
+    if (typeof path === 'string' && path.length > 0) {
+      summary += ` · ${makeWorkspaceRelativePath(path, workspaceDir)}`;
+    }
+    if (args['include_dirs'] === false) {
+      summary += ' · no dirs';
+    }
+    return truncateArgValue('pattern', summary);
+  }
+
   const candidates = keyMap[toolName] ?? Object.keys(args);
   for (const key of candidates) {
     const val = args[key];
