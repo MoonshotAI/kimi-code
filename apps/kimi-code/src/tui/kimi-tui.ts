@@ -393,11 +393,20 @@ export class KimiTUI {
     this.renderWelcome();
     setExperimentalFlags(await this.harness.getExperimentalFlags());
     this.setupAutocomplete();
+    this.showFileCompletionWarningIfNeeded();
     void this.loadPersistedInputHistory();
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
     return shouldReplayHistory;
+  }
+
+  private showFileCompletionWarningIfNeeded(): void {
+    if (this.fdPath !== null || this.gitLsFilesCache.isGitRepo()) return;
+    this.showStatus(
+      'Warning: fd not found and this directory is not a git repository. @ file completion may be unavailable. Install fd for full file search.',
+      this.state.theme.colors.warning,
+    );
   }
 
   private startEventLoop(): void {

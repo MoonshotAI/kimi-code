@@ -1,8 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MigrationPlan } from "@moonshot-ai/migration-legacy";
 import { log } from "@moonshot-ai/kimi-code-sdk";
-
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from "#/tui/kimi-tui";
 import {
   handleLoginCommand,
@@ -12,11 +11,6 @@ import {
   promptPlatformSelection,
   promptLogoutProviderSelection,
 } from "#/tui/commands/prompts";
-
-vi.mock("#/tui/commands/prompts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("#/tui/commands/prompts")>();
-  return { ...actual, promptPlatformSelection: vi.fn(), promptLogoutProviderSelection: vi.fn() };
-});
 import {
   DISABLE_TERMINAL_THEME_REPORTING,
   ENABLE_TERMINAL_THEME_REPORTING,
@@ -24,6 +18,32 @@ import {
   QUERY_TERMINAL_THEME,
   TERMINAL_THEME_LIGHT,
 } from "#/tui/utils/terminal-theme";
+
+vi.mock("#/tui/commands/prompts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("#/tui/commands/prompts")>();
+  return { ...actual, promptPlatformSelection: vi.fn(), promptLogoutProviderSelection: vi.fn() };
+});
+
+const moduleMocks = vi.hoisted(() => ({
+  detectFdPath: vi.fn(() => "fd" as string | null),
+  createGitLsFilesCache: vi.fn(),
+}));
+
+function makeGitCache(isGitRepo: boolean) {
+  return {
+    isGitRepo: () => isGitRepo,
+    getSnapshot: () => null,
+    list: () => null,
+  };
+}
+
+vi.mock("#/utils/process/fd-detect", () => ({
+  detectFdPath: moduleMocks.detectFdPath,
+}));
+
+vi.mock("#/utils/git/git-ls-files", () => ({
+  createGitLsFilesCache: moduleMocks.createGitLsFilesCache,
+}));
 
 interface StartupDriver {
   state: TUIState;
@@ -169,6 +189,11 @@ function captureInputListeners(driver: StartupDriver) {
 }
 
 describe("KimiTUI startup", () => {
+  beforeEach(() => {
+    moduleMocks.detectFdPath.mockReturnValue("fd");
+    moduleMocks.createGitLsFilesCache.mockReturnValue(makeGitCache(true));
+  });
+
   it("creates a fresh session from startup flags and syncs runtime state", async () => {
     const session = makeSession({
       getStatus: vi.fn(async () => ({
@@ -813,6 +838,49 @@ describe("KimiTUI startup", () => {
     await driver.initMainTui();
 
     expect(uiContainsFooter(driver)).toBe(true);
+  });
+
+  it("warns when fd is missing outside a git repository", async () => {
+    moduleMocks.detectFdPath.mockReturnValue(null);
+    moduleMocks.createGitLsFilesCache.mockReturnValue(makeGitCache(false));
+    const harness = makeHarness();
+    const driver = makeDriver(harness, makeStartupInput()) as unknown as MigrateExitDriver;
+    const showStatus = vi.spyOn(driver as unknown as KimiTUI, "showStatus").mockImplementation(() => {});
+
+    await driver.initMainTui();
+
+    expect(showStatus).toHaveBeenCalledWith(
+      expect.stringContaining("fd not found and this directory is not a git repository"),
+      driver.state.theme.colors.warning,
+    );
+  });
+
+  it("does not warn when fd is missing inside a git repository", async () => {
+    moduleMocks.detectFdPath.mockReturnValue(null);
+    moduleMocks.createGitLsFilesCache.mockReturnValue(makeGitCache(true));
+    const harness = makeHarness();
+    const driver = makeDriver(harness, makeStartupInput()) as unknown as MigrateExitDriver;
+    const showStatus = vi.spyOn(driver as unknown as KimiTUI, "showStatus").mockImplementation(() => {});
+
+    await driver.initMainTui();
+
+    expect(showStatus.mock.calls.filter(([message]) => message.includes("fd not found"))).toEqual(
+      [],
+    );
+  });
+
+  it("does not warn when fd is available outside a git repository", async () => {
+    moduleMocks.detectFdPath.mockReturnValue("fd");
+    moduleMocks.createGitLsFilesCache.mockReturnValue(makeGitCache(false));
+    const harness = makeHarness();
+    const driver = makeDriver(harness, makeStartupInput()) as unknown as MigrateExitDriver;
+    const showStatus = vi.spyOn(driver as unknown as KimiTUI, "showStatus").mockImplementation(() => {});
+
+    await driver.initMainTui();
+
+    expect(showStatus.mock.calls.filter(([message]) => message.includes("fd not found"))).toEqual(
+      [],
+    );
   });
 });
 
