@@ -340,6 +340,7 @@ class ReadDirWalker {
     // Phase 1: visible files at this level
     for (const entry of entries) {
       if (files.length >= READDIR_MAX_ENTRIES) break;
+      if (this.dirsVisited >= READDIR_MAX_ENTRIES) break;
       if (entry.name.startsWith('.')) continue;
       collectFile(entry);
     }
@@ -355,6 +356,7 @@ class ReadDirWalker {
     // Phase 3: hidden files at this level
     for (const entry of entries) {
       if (files.length >= READDIR_MAX_ENTRIES) break;
+      if (this.dirsVisited >= READDIR_MAX_ENTRIES) break;
       if (!entry.name.startsWith('.')) continue;
       collectFile(entry);
     }
