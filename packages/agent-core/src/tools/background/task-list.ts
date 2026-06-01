@@ -57,7 +57,6 @@ export class TaskListTool implements BuiltinTool<TaskListInput> {
       approvalRule: this.name,
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, listScope),
       execute: async () => {
-        await this.manager.settlePendingExits();
         const activeOnly = args.active_only ?? true;
         const tasks = this.manager.list(activeOnly, args.limit ?? 20);
         return {

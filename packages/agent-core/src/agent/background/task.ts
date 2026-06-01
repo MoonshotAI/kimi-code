@@ -10,8 +10,13 @@ export type BackgroundTaskStatus =
   | 'killed'
   | 'lost';
 
-export const TERMINAL_BACKGROUND_TASK_STATUSES: ReadonlySet<BackgroundTaskStatus> =
-  new Set<BackgroundTaskStatus>(['completed', 'failed', 'timed_out', 'killed', 'lost']);
+export const TERMINAL_STATUSES: ReadonlySet<BackgroundTaskStatus> = new Set<BackgroundTaskStatus>([
+  'completed',
+  'failed',
+  'timed_out',
+  'killed',
+  'lost',
+]);
 
 export type BackgroundTaskInfo = ProcessBackgroundTaskInfo | AgentBackgroundTaskInfo;
 export type BackgroundTaskKind = BackgroundTaskInfo['kind'];
@@ -52,6 +57,5 @@ export interface BackgroundTask {
 
   start(sink: BackgroundTaskSink): void | Promise<void>;
   forceStop?(): Promise<void>;
-  hasObservedTerminal?(): boolean;
   toInfo(base: BackgroundTaskInfoBase): BackgroundTaskInfo;
 }

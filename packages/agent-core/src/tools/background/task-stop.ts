@@ -42,7 +42,6 @@ export class TaskStopTool implements BuiltinTool<TaskStopInput> {
       approvalRule: this.name,
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.task_id),
       execute: async () => {
-        await this.manager.settlePendingExits();
         const info = this.manager.getTask(args.task_id);
         if (!info) {
           return { isError: true, output: `Task not found: ${args.task_id}` };

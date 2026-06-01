@@ -406,10 +406,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     if (timeoutMs !== undefined) {
       setTimeout(() => {
         void (async (): Promise<void> => {
-          if (proc.exitCode !== null) {
-            await backgroundManager.settlePendingExits();
-            return;
-          }
+          if (proc.exitCode !== null) return;
           const info = backgroundManager.getTask(taskId);
           if (info && info.status === 'running') {
             void backgroundManager.stop(taskId, 'Timed out');

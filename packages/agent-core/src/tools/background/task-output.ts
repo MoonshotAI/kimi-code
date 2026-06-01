@@ -111,7 +111,6 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
   }
 
   private async execute(args: TaskOutputInput): Promise<ExecutableToolResult> {
-    await this.manager.settlePendingExits();
     const info = this.manager.getTask(args.task_id);
     if (!info) {
       return { isError: true, output: `Task not found: ${args.task_id}` };

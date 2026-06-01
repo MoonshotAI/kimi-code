@@ -16,16 +16,14 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '../..';
 import { errorMessage } from '../../loop/errors';
-import type { TelemetryPropertyValue } from '../../telemetry';
 import type { BackgroundTaskOrigin } from '../context';
 import { renderNotificationXml } from '../context/notification-xml';
 import { type BackgroundTaskPersistence } from './persist';
 import {
-  TERMINAL_BACKGROUND_TASK_STATUSES,
+  TERMINAL_STATUSES,
   type BackgroundTask,
   type BackgroundTaskInfo,
   type BackgroundTaskInfoBase,
-  type BackgroundTaskSink,
   type BackgroundTaskSettlement,
   type BackgroundTaskStatus,
 } from './task';
@@ -45,9 +43,6 @@ import {
  * preserved because `awaiting_approval` in BPM does not leak permission
  * vocabulary into the loop.
  */
-/** Terminal states tasks never leave once reached. */
-const TERMINAL_STATUSES = TERMINAL_BACKGROUND_TASK_STATUSES;
-
 export function isBackgroundTaskTerminal(status: BackgroundTaskStatus): boolean {
   return TERMINAL_STATUSES.has(status);
 }
@@ -103,7 +98,6 @@ interface ManagedTask {
 const MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MiB
 
 const SIGTERM_GRACE_MS = 5_000;
-const EXIT_SETTLE_GRACE_MS = 10;
 
 const _ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 
@@ -193,7 +187,7 @@ export class BackgroundManager {
   constructor(
     private readonly agent: Agent,
     private readonly persistence?: BackgroundTaskPersistence,
-  ) {}
+  ) { }
 
   /**
    * Fire terminal side effects for a live task. Idempotent: the second
@@ -205,7 +199,7 @@ export class BackgroundManager {
     if (entry.terminalFired) return;
     entry.terminalFired = true;
     const info = this.toInfo(entry);
-    void this.notifyBackgroundTask(info).catch(() => {});
+    void this.notifyBackgroundTask(info).catch(() => { });
     this.emitTaskTerminated(info);
   }
 
@@ -222,37 +216,16 @@ export class BackgroundManager {
 
   private emitTaskTerminated(info: BackgroundTaskInfo): void {
     this.agent.emitEvent({ type: 'background.task.terminated', info });
-    const success = info.status === 'completed';
-    const duration_s = info.endedAt !== null ? (info.endedAt - info.startedAt) / 1000 : null;
-    const properties: Record<string, TelemetryPropertyValue> = {
-      kind: info.kind === 'agent' ? 'agent' : 'bash',
-      success,
-      duration_s,
-    };
-    if (!success) {
-      properties['reason'] =
-        info.status === 'timed_out'
-          ? 'timeout'
-          : info.status === 'killed'
-            ? 'killed'
-            : 'error';
-    }
-    this.agent.telemetry.track('background_task_completed', properties);
+    this.agent.telemetry.track('background_task_completed', {
+      kind: info.kind,
+      duration: info.endedAt !== null ? info.endedAt - info.startedAt : null,
+      status: info.status,
+    });
   }
 
   private resolveWaiters(entry: ManagedTask): void {
     const waiters = entry.waiters.splice(0);
     for (const resolve of waiters) resolve();
-  }
-
-  private createTaskSink(entry: ManagedTask): BackgroundTaskSink {
-    return {
-      signal: entry.abortController.signal,
-      appendOutput: (chunk) => {
-        this.appendOutput(entry, chunk);
-      },
-      settle: (settlement) => this.settleTask(entry, settlement),
-    };
   }
 
   private assertCanRegister(): void {
@@ -291,9 +264,14 @@ export class BackgroundManager {
     };
     this.tasks.set(taskId, entry);
 
-    const sink = this.createTaskSink(entry);
     entry.lifecyclePromise = Promise.resolve()
-      .then(() => task.start(sink))
+      .then(() => task.start({
+        signal: entry.abortController.signal,
+        appendOutput: (chunk) => {
+          this.appendOutput(entry, chunk);
+        },
+        settle: (settlement) => this.settleTask(entry, settlement),
+      }))
       .catch(async (error: unknown) => {
         const aborted = entry.abortController.signal.aborted;
         await this.settleTask(entry, {
@@ -316,21 +294,6 @@ export class BackgroundManager {
       return this.toInfo(entry);
     }
     return this.ghosts.get(taskId);
-  }
-
-  /**
-   * Give just-ended processes a short grace period to settle their `wait()`
-   * promise, then return with whatever lifecycle state has been finalized.
-   */
-  async settlePendingExits(): Promise<void> {
-    const pendingCompletions = this.observedExitCompletions();
-    if (pendingCompletions.length === 0) return;
-    await Promise.race([
-      Promise.allSettled(pendingCompletions).then(() => {}),
-      new Promise<void>((resolve) => {
-        setTimeout(resolve, EXIT_SETTLE_GRACE_MS);
-      }),
-    ]);
   }
 
   /**
@@ -674,7 +637,7 @@ export class BackgroundManager {
     const info = this.toInfo(entry);
     entry.persistWriteQueue = entry.persistWriteQueue
       .then(() => persistence.writeTask(info))
-      .catch(() => {});
+      .catch(() => { });
     return entry.persistWriteQueue;
   }
 
@@ -693,7 +656,7 @@ export class BackgroundManager {
     if (persistence === undefined) return;
     entry.outputWriteQueue = entry.outputWriteQueue
       .then(() => persistence.appendTaskOutput(entry.taskId, chunk))
-      .catch(() => {});
+      .catch(() => { });
   }
 
   private persistenceFor(taskId: string): BackgroundTaskPersistence | undefined {
@@ -816,16 +779,6 @@ export class BackgroundManager {
     return true;
   }
 
-  private observedExitCompletions(): Promise<void>[] {
-    const completions: Promise<void>[] = [];
-    for (const entry of this.tasks.values()) {
-      if (!TERMINAL_STATUSES.has(entry.status) && entry.task.hasObservedTerminal?.() === true) {
-        completions.push(entry.lifecyclePromise);
-      }
-    }
-    return completions;
-  }
-
   private toInfo(entry: ManagedTask): BackgroundTaskInfo {
     const base: BackgroundTaskInfoBase = {
       taskId: entry.taskId,
@@ -851,9 +804,8 @@ function buildBackgroundTaskNotificationBody(info: BackgroundTaskInfo): string {
     info.status === 'timed_out'
       ? `${info.description} timed out.`
       : info.stopReason
-        ? `${info.description} ${info.status === 'killed' ? 'was killed' : info.status}: ${
-            info.stopReason
-          }.`
+        ? `${info.description} ${info.status === 'killed' ? 'was killed' : info.status}: ${info.stopReason
+        }.`
         : `${info.description} ${info.status}.`;
 
   if (info.kind !== 'agent') return baseLine;

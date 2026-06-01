@@ -71,10 +71,6 @@ export class ProcessBackgroundTask implements BackgroundTask {
     await this.proc.kill('SIGKILL');
   }
 
-  hasObservedTerminal(): boolean {
-    return this.proc.exitCode !== null;
-  }
-
   toInfo(base: BackgroundTaskInfoBase): ProcessBackgroundTaskInfo {
     return {
       ...base,
