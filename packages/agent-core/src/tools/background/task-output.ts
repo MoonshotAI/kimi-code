@@ -9,7 +9,7 @@
  *
  * For terminal tasks the output also surfaces why the task ended:
  * `stop_reason` records the concrete reason; `terminal_reason` classifies
- * timeout vs. explicit stop for callers that need stable labels.
+ * timeout vs. explicit stop vs. failure for callers that need stable labels.
  */
 
 import { z } from 'zod';
@@ -69,9 +69,10 @@ function retrievalStatus(
   return block ? 'timeout' : 'not_ready';
 }
 
-function terminalReason(info: BackgroundTaskInfo): 'timed_out' | 'stopped' | undefined {
+function terminalReason(info: BackgroundTaskInfo): 'timed_out' | 'stopped' | 'failed' | undefined {
   if (info.status === 'timed_out') return 'timed_out';
-  if (info.stopReason !== undefined) return 'stopped';
+  if (info.status === 'killed' && info.stopReason !== undefined) return 'stopped';
+  if (info.status === 'failed' && info.stopReason !== undefined) return 'failed';
   return undefined;
 }
 

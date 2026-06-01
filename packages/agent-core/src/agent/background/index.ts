@@ -15,26 +15,18 @@ import { randomBytes } from 'node:crypto';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '../..';
+import { errorMessage } from '../../loop/errors';
 import type { TelemetryPropertyValue } from '../../telemetry';
 import type { BackgroundTaskOrigin } from '../context';
 import { renderNotificationXml } from '../context/notification-xml';
-import {
-  appendTaskOutput,
-  listTasks,
-  readTaskOutput,
-  readTaskOutputBytes,
-  taskOutputExists,
-  taskOutputExistsSync,
-  taskOutputFile,
-  taskOutputSizeBytes,
-  writeTask,
-} from './persist';
+import { type BackgroundTaskPersistence } from './persist';
 import {
   TERMINAL_BACKGROUND_TASK_STATUSES,
   type BackgroundTask,
   type BackgroundTaskInfo,
   type BackgroundTaskInfoBase,
   type BackgroundTaskSink,
+  type BackgroundTaskSettlement,
   type BackgroundTaskStatus,
 } from './task';
 
@@ -64,7 +56,7 @@ export { AgentBackgroundTask } from './agent-task';
 export type { AgentBackgroundTaskInfo } from './agent-task';
 export { ProcessBackgroundTask } from './process-task';
 export type { ProcessBackgroundTaskInfo } from './process-task';
-export { VALID_TASK_ID } from './persist';
+export { BackgroundTaskPersistence, VALID_TASK_ID } from './persist';
 export type {
   BackgroundTaskInfo,
   BackgroundTaskKind,
@@ -86,14 +78,12 @@ interface ManagedTask {
   terminalFired: boolean;
   /** Reason carried while awaiting approval. */
   approvalReason?: string | undefined;
-  /** Reason recorded when a task is explicitly stopped or aborted. */
+  /** Human-readable reason for the terminal status, when available. */
   stopReason?: string | undefined;
   /** Deadline supplied at registration; surfaced via task info. */
   timeoutMs?: number | undefined;
   /** Cancellation signal owned by the manager and observed by the concrete task. */
   readonly abortController: AbortController;
-  /** Session dir captured at registration for output.log writes. */
-  readonly outputSessionDir?: string | undefined;
   lifecyclePromise: Promise<void>;
   persistWriteQueue: Promise<void>;
   outputWriteQueue: Promise<void>;
@@ -190,23 +180,20 @@ const NOTIFICATION_TAIL_BYTES = 3_000;
 
 export class BackgroundManager {
   private readonly tasks = new Map<string, ManagedTask>();
-  public readonly agent: Agent;
   /**
    * Ghosts: tasks loaded from disk during reconcile that have no live
    * KaosProcess. They appear in `list()` / `getTask()` with status
    * `lost` so users see what was running before the crash/restart.
    */
   private readonly ghosts = new Map<string, BackgroundTaskInfo>();
-  /** When set, register/lifecycle changes persist to disk. */
-  private sessionDir: string | undefined;
 
   private readonly scheduledNotificationKeys = new Set<string>();
   private readonly deliveredNotificationKeys = new Set<string>();
 
-  constructor(agent: Agent) {
-    this.agent = agent;
-    this.sessionDir = agent.homedir;
-  }
+  constructor(
+    private readonly agent: Agent,
+    private readonly persistence?: BackgroundTaskPersistence,
+  ) {}
 
   /**
    * Fire terminal side effects for a live task. Idempotent: the second
@@ -298,7 +285,6 @@ export class BackgroundManager {
       terminalFired: false,
       abortController: new AbortController(),
       timeoutMs: task.timeoutMs,
-      outputSessionDir: this.sessionDir,
       lifecyclePromise: Promise.resolve(),
       persistWriteQueue: Promise.resolve(),
       outputWriteQueue: Promise.resolve(),
@@ -308,9 +294,11 @@ export class BackgroundManager {
     const sink = this.createTaskSink(entry);
     entry.lifecyclePromise = Promise.resolve()
       .then(() => task.start(sink))
-      .catch(async () => {
+      .catch(async (error: unknown) => {
+        const aborted = entry.abortController.signal.aborted;
         await this.settleTask(entry, {
-          status: entry.abortController.signal.aborted ? 'killed' : 'failed',
+          status: aborted ? 'killed' : 'failed',
+          stopReason: aborted ? undefined : errorMessage(error),
         });
       });
 
@@ -403,19 +391,14 @@ export class BackgroundManager {
     await this.flushOutput(taskId);
 
     const previewLimit = Math.max(0, Math.trunc(maxPreviewBytes));
-    const outputSessionDir = this.outputSessionDirFor(taskId);
-    if (outputSessionDir !== undefined && (await taskOutputExists(outputSessionDir, taskId))) {
-      const outputSizeBytes = await taskOutputSizeBytes(outputSessionDir, taskId);
+    const persistence = this.persistenceFor(taskId);
+    if (persistence !== undefined && (await persistence.taskOutputExists(taskId))) {
+      const outputSizeBytes = await persistence.taskOutputSizeBytes(taskId);
       const previewOffset = Math.max(0, outputSizeBytes - previewLimit);
       const previewBytes = outputSizeBytes - previewOffset;
-      const preview = await readTaskOutputBytes(
-        outputSessionDir,
-        taskId,
-        previewOffset,
-        previewBytes,
-      );
+      const preview = await persistence.readTaskOutputBytes(taskId, previewOffset, previewBytes);
       return {
-        outputPath: taskOutputFile(outputSessionDir, taskId),
+        outputPath: persistence.taskOutputFile(taskId),
         outputSizeBytes,
         previewBytes,
         truncated: previewOffset > 0,
@@ -452,10 +435,10 @@ export class BackgroundManager {
 
   async readOutput(taskId: string, tail?: number): Promise<string> {
     const entry = this.tasks.get(taskId);
-    const outputSessionDir = this.outputSessionDirFor(taskId);
-    if (outputSessionDir !== undefined) {
+    const persistence = this.persistenceFor(taskId);
+    if (persistence !== undefined) {
       await entry?.outputWriteQueue;
-      const persisted = await readTaskOutput(outputSessionDir, taskId);
+      const persisted = await persistence.readTaskOutput(taskId);
       if (persisted.length > 0) {
         if (tail !== undefined && tail < persisted.length) {
           return persisted.slice(-tail);
@@ -467,10 +450,10 @@ export class BackgroundManager {
   }
 
   getOutputPath(taskId: string): string | undefined {
-    const outputSessionDir = this.outputSessionDirFor(taskId);
-    if (outputSessionDir === undefined) return undefined;
-    if (!taskOutputExistsSync(outputSessionDir, taskId)) return undefined;
-    return taskOutputFile(outputSessionDir, taskId);
+    const persistence = this.persistenceFor(taskId);
+    if (persistence === undefined) return undefined;
+    if (!persistence.taskOutputExistsSync(taskId)) return undefined;
+    return persistence.taskOutputFile(taskId);
   }
 
   /** Stop a running task. SIGTERM → 5s grace → SIGKILL. */
@@ -630,9 +613,10 @@ export class BackgroundManager {
    * calls overwrite the ghost map.
    */
   async loadFromDisk(): Promise<void> {
-    if (this.sessionDir === undefined) return;
+    const persistence = this.persistence;
+    if (persistence === undefined) return;
     this.ghosts.clear();
-    const persisted = await listTasks(this.sessionDir);
+    const persisted = await persistence.listTasks();
     for (const t of persisted) {
       // Skip ids that already exist as live processes — live wins.
       if (this.tasks.has(t.taskId)) continue;
@@ -649,6 +633,7 @@ export class BackgroundManager {
   protected async markLoadedTasksLost(): Promise<ReconcileResult> {
     const lost: string[] = [];
     const lostInfo: BackgroundTaskInfo[] = [];
+    const persistence = this.persistence;
     for (const [id, info] of this.ghosts) {
       // Any non-terminal ghost is lost. Includes `awaiting_approval`
       // (the approval context died with the previous process so it
@@ -661,8 +646,8 @@ export class BackgroundManager {
         approvalReason: undefined,
       };
       this.ghosts.set(id, updated);
-      if (this.sessionDir !== undefined) {
-        await writeTask(this.sessionDir, updated);
+      if (persistence !== undefined) {
+        await persistence.writeTask(updated);
       }
       lost.push(id);
       lostInfo.push(updated);
@@ -684,11 +669,11 @@ export class BackgroundManager {
    * `registerTask()` and the lifecycle finally block. No-op unless attached.
    */
   private persistLive(entry: ManagedTask): Promise<void> {
-    if (this.sessionDir === undefined) return Promise.resolve();
-    const sessionDir = this.sessionDir;
+    const persistence = this.persistence;
+    if (persistence === undefined) return Promise.resolve();
     const info = this.toInfo(entry);
     entry.persistWriteQueue = entry.persistWriteQueue
-      .then(() => writeTask(sessionDir, info))
+      .then(() => persistence.writeTask(info))
       .catch(() => {});
     return entry.persistWriteQueue;
   }
@@ -704,17 +689,16 @@ export class BackgroundManager {
       total -= removed.length;
     }
 
-    const outputSessionDir = entry.outputSessionDir;
-    if (outputSessionDir === undefined) return;
+    const persistence = this.persistence;
+    if (persistence === undefined) return;
     entry.outputWriteQueue = entry.outputWriteQueue
-      .then(() => appendTaskOutput(outputSessionDir, entry.taskId, chunk))
+      .then(() => persistence.appendTaskOutput(entry.taskId, chunk))
       .catch(() => {});
   }
 
-  private outputSessionDirFor(taskId: string): string | undefined {
-    const entry = this.tasks.get(taskId);
-    if (entry !== undefined) return entry.outputSessionDir;
-    if (this.ghosts.has(taskId)) return this.sessionDir;
+  private persistenceFor(taskId: string): BackgroundTaskPersistence | undefined {
+    if (this.tasks.has(taskId)) return this.persistence;
+    if (this.ghosts.has(taskId)) return this.persistence;
     return undefined;
   }
 
@@ -805,10 +789,7 @@ export class BackgroundManager {
 
   private async settleTask(
     entry: ManagedTask,
-    settlement: {
-      readonly status: 'completed' | 'failed' | 'timed_out' | 'killed';
-      readonly stopReason?: string;
-    },
+    settlement: BackgroundTaskSettlement,
   ): Promise<boolean> {
     if (TERMINAL_STATUSES.has(entry.status)) {
       if (entry.status === 'killed' && settlement.status === 'killed') {
@@ -859,7 +840,6 @@ export class BackgroundManager {
     };
     return entry.task.toInfo(base);
   }
-
 }
 
 function notificationKey(origin: BackgroundTaskOrigin): string {

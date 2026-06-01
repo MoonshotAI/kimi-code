@@ -1,5 +1,6 @@
 import type { KaosProcess } from '@moonshot-ai/kaos';
 
+import { errorMessage } from '../../loop/errors';
 import type {
   BackgroundTask,
   BackgroundTaskInfoBase,
@@ -54,10 +55,11 @@ export class ProcessBackgroundTask implements BackgroundTask {
       await sink.settle({
         status: sink.signal.aborted ? 'killed' : exitCode === 0 ? 'completed' : 'failed',
       });
-    } catch {
+    } catch (error: unknown) {
       this.exitCode = this.proc.exitCode;
       await sink.settle({
         status: sink.signal.aborted ? 'killed' : 'failed',
+        stopReason: sink.signal.aborted ? undefined : errorMessage(error),
       });
     } finally {
       sink.signal.removeEventListener('abort', requestStop);

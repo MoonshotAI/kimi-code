@@ -26,7 +26,7 @@ import {
   estimateTokensForTools,
 } from '../utils/tokens';
 import type { PromisableMethods } from '../utils/types';
-import { BackgroundManager } from './background';
+import { BackgroundManager, BackgroundTaskPersistence } from './background';
 import {
   FullCompaction,
   MicroCompaction,
@@ -165,7 +165,10 @@ export class Agent {
     this.usage = new UsageRecorder(this);
     this.skills = options.skills ? new SkillManager(this, options.skills) : null;
     this.tools = new ToolManager(this);
-    this.background = new BackgroundManager(this);
+    this.background = new BackgroundManager(
+      this,
+      this.homedir === undefined ? undefined : new BackgroundTaskPersistence(this.homedir),
+    );
     this.cron = this.type === 'sub' ? null : new CronManager(this);
     this.replayBuilder = new ReplayBuilder(this);
   }

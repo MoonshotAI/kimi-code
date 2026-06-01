@@ -19,7 +19,7 @@ export type BackgroundTaskSettlementStatus = 'completed' | 'failed' | 'timed_out
 
 export interface BackgroundTaskSettlement {
   readonly status: BackgroundTaskSettlementStatus;
-  /** Reason recorded when a task is explicitly stopped or aborted. */
+  /** Human-readable reason for the terminal status, when available. */
   readonly stopReason?: string;
 }
 
@@ -32,7 +32,7 @@ export interface BackgroundTaskInfoBase {
   readonly endedAt: number | null;
   /** Populated only while `status === 'awaiting_approval'`. */
   readonly approvalReason?: string;
-  /** Reason recorded when a task is explicitly stopped or aborted. */
+  /** Human-readable reason for the terminal status, when available. */
   readonly stopReason?: string;
   /** Deadline supplied at registration; surfaced via task info. */
   readonly timeoutMs?: number;

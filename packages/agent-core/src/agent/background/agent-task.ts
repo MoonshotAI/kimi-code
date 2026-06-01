@@ -1,6 +1,6 @@
 import { sleep } from '@antfu/utils';
 
-import { isAbortError } from '../../loop/errors';
+import { errorMessage, isAbortError } from '../../loop/errors';
 import {
   type BackgroundTask,
   type BackgroundTaskInfoBase,
@@ -75,11 +75,7 @@ export class AgentBackgroundTask implements BackgroundTask {
         await sink.settle({ status: 'killed' });
         return;
       }
-      if (error instanceof Error && error.name === 'RunCancelled') {
-        await sink.settle({ status: 'killed' });
-        return;
-      }
-      await sink.settle({ status: 'failed' });
+      await sink.settle({ status: 'failed', stopReason: errorMessage(error) });
     } finally {
       sink.signal.removeEventListener('abort', requestAbort);
     }
