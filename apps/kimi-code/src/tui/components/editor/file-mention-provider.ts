@@ -292,13 +292,23 @@ class ReadDirWalker {
     }
     // Walk visible (non-dot) entries before hidden ones so a hidden
     // subtree like `.config/` cannot exhaust READDIR_MAX_ENTRIES with
-    // hidden paths and push a visible file out of the snapshot. Hidden
-    // paths are still collected — they fill any remaining capacity, so
-    // the opt-in `@.env` / `@.github/` queries still work.
+    // hidden paths and push a visible file out of the snapshot. Within
+    // the same visibility bucket, files come before directories so a
+    // single large subdirectory cannot fill the cap and leave sibling
+    // files in the same parent unmentioned. Hidden paths are still
+    // collected — they fill any remaining capacity, so the opt-in
+    // `@.env` / `@.github/` queries still work.
     const ordered = entries.toSorted((a, b) => {
+      // Hidden (dot-prefixed) entries sort after visible ones.
       const aHidden = a.name.startsWith('.') ? 1 : 0;
       const bHidden = b.name.startsWith('.') ? 1 : 0;
-      return aHidden - bHidden;
+      if (aHidden !== bHidden) return aHidden - bHidden;
+      // Within the same visibility bucket, files sort before
+      // directories so the current directory's files are captured
+      // before the cap fills inside a sibling subdirectory.
+      const aDir = a.isDirectory() ? 1 : 0;
+      const bDir = b.isDirectory() ? 1 : 0;
+      return aDir - bDir;
     });
     for (const entry of ordered) {
       // Short-circuit the loop once the cap is reached. The top-of-

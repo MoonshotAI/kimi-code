@@ -367,6 +367,33 @@ describe('FileMentionProvider — readdir fallback when no git cache', () => {
     expect(values.every((v) => !v.startsWith('@.'))).toBe(true);
   });
 
+  it('captures sibling files before recursing into a large subdirectory', async () => {
+    // Codex P2 follow-up: the walker used to recurse into the first
+    // subdirectory depth-first, so a large sibling subdirectory
+    // could fill READDIR_MAX_ENTRIES and leave sibling files in
+    // the same parent directory unmentioned. The walker now sorts
+    // files before subdirectories within the same visibility
+    // bucket, so the parent file is captured before the cap fills.
+    writeFileSync(join(dir, 'README.md'), '');
+    mkdirSync(join(dir, 'big'));
+    for (let i = 0; i < 1000; i += 1) {
+      writeFileSync(join(dir, 'big', `file${i}.ts`), '');
+    }
+
+    const provider = new FileMentionProvider([], dir, NO_FD, stubGitCache(null));
+    // Query specifically for `@README` rather than a bare `@`: the
+    // empty-query ranking returns only the top 15 by mtime, and
+    // README.md is the oldest entry (it was created first), so it
+    // wouldn't surface in the menu even when present in the snapshot.
+    // A targeted query makes the test directly exercise snapshot
+    // membership.
+    const result = await provider.getSuggestions(['@README'], 0, 7, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    const values = result!.items.map((i) => i.value);
+    expect(values).toContain('@README.md');
+  });
+
   it('caches the walk result: new files do not appear within the 2s TTL window', async () => {
     writeFileSync(join(dir, 'old.ts'), '');
 
