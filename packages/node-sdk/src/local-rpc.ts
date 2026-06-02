@@ -93,8 +93,7 @@ export class LocalSDKRpcClient extends SDKRpcClient {
     if (this.identity === undefined) return undefined;
     return createKimiDefaultHeaders({
       homeDir: this.homeDir,
-      userAgentProduct: this.identity.userAgentProduct,
-      version: this.identity.version,
+      ...this.identity,
     });
   }
 }
