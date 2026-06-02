@@ -189,9 +189,7 @@ async function startGoal(
     return;
   }
   host.track('goal_create', { replace: parsed.replace });
-  host.state.transcriptContainer.addChild(
-    new GoalSetMessageComponent(parsed.objective, host.state.theme.colors),
-  );
+  host.state.transcriptContainer.addChild(new GoalSetMessageComponent(host.state.theme.colors));
   host.state.ui.requestRender();
   host.sendNormalUserInput(parsed.objective);
 }

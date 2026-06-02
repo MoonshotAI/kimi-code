@@ -92,28 +92,20 @@ describe('buildGoalReportLines', () => {
 });
 
 describe('GoalSetMessageComponent', () => {
-  it('leads with a blank line and indents every (wrapped) objective line', () => {
-    const objective =
-      'Generate a random number from 1 to 20 in each turn. Stop when you get 1 or you have finished at least 5 turns.';
-    const rendered = new GoalSetMessageComponent(objective, darkColors).render(60);
+  it('renders a marker-style lifecycle line without repeating the objective', () => {
+    const rendered = new GoalSetMessageComponent(darkColors).render(60);
     // Leading blank line separates it from the line above.
     expect(rendered[0]).toBe('');
-    expect(strip([rendered[1]!])).toBe('  Goal set');
-    // The objective wraps to more than one line, and every line is indented.
-    const body = rendered.slice(2);
-    expect(body.length).toBeGreaterThan(1);
-    for (const line of body) {
-      expect(strip([line]).startsWith('  ')).toBe(true);
-    }
+    expect(strip(rendered)).toBe('\n● Goal set');
   });
 
-  it('renders the label in the primary accent and the objective as normal text', () => {
-    const rendered = new GoalSetMessageComponent('Fix three bugs one by one.', darkColors).render(
-      60,
-    );
+  it('renders the marker and label in the primary accent', () => {
+    const rendered = new GoalSetMessageComponent(darkColors).render(60);
 
-    expect(rendered[1]).toBe(`  ${chalk.hex(darkColors.primary).bold('Goal set')}`);
-    expect(rendered[2]).toBe(`  ${chalk.hex(darkColors.text)('Fix three bugs one by one.')}`);
+    expect(rendered[1]).toBe(
+      chalk.hex(darkColors.primary).bold(STATUS_BULLET) +
+        chalk.hex(darkColors.primary).bold('Goal set'),
+    );
   });
 });
 

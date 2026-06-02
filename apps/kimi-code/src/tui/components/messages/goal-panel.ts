@@ -27,29 +27,21 @@ const WRAP_WIDTH = 72;
 const MAX_OBJECTIVE_LINES = 6;
 const MAX_CRITERION_LINES = 3;
 const LABEL_WIDTH = 11;
-const SET_INDENT = '  ';
 
 /**
- * The "Goal set" confirmation shown after `/goal <objective>`. Renders a leading
- * blank line, a `Goal set` label, then the objective wrapped with every line
- * indented (a hanging indent), so a long objective reads as one tidy block
- * rather than spilling to column 0.
+ * The "Goal set" confirmation shown after `/goal <objective>`. The objective is
+ * rendered as the following user prompt, so this message only marks the state
+ * change in the transcript.
  */
 export class GoalSetMessageComponent implements Component {
-  constructor(
-    private readonly objective: string,
-    private readonly colors: ColorPalette,
-  ) {}
+  constructor(private readonly colors: ColorPalette) {}
 
   invalidate(): void {}
 
-  render(width: number): string[] {
-    const wrapWidth = Math.max(20, Math.min(WRAP_WIDTH, width) - SET_INDENT.length);
-    const lines = ['', `${SET_INDENT}${chalk.hex(this.colors.primary).bold('Goal set')}`];
-    for (const line of wrap(this.objective, wrapWidth, MAX_OBJECTIVE_LINES)) {
-      lines.push(SET_INDENT + chalk.hex(this.colors.text)(line));
-    }
-    return lines;
+  render(_width: number): string[] {
+    const marker = chalk.hex(this.colors.primary).bold(STATUS_BULLET);
+    const label = chalk.hex(this.colors.primary).bold('Goal set');
+    return ['', marker + label];
   }
 }
 
