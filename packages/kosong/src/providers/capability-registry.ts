@@ -53,6 +53,18 @@ const MIMO_THINKING_TOOL_MODELS = [
 
 const MIMO_THINKING_VISION_TOOL_MODELS = ['mimo-v2.5', 'mimo-v2-omni'] as const;
 
+const MINIMAX_THINKING_VISION_TOOL_MODELS = ['minimax-m3'] as const;
+
+const MINIMAX_TEXT_TOOL_MODELS = [
+  'minimax-m2.7',
+  'minimax-m2.7-highspeed',
+  'minimax-m2.5',
+  'minimax-m2.5-highspeed',
+  'minimax-m2.1',
+  'minimax-m2.1-highspeed',
+  'minimax-m2',
+] as const;
+
 const OPENAI_REASONING_CAPABILITY: ModelCapability = Object.freeze({
   image_in: false,
   video_in: false,
@@ -116,6 +128,24 @@ const MIMO_THINKING_VISION_TOOL_CAPABILITY: ModelCapability = Object.freeze({
   max_context_tokens: 0,
 });
 
+const MINIMAX_THINKING_VISION_TOOL_CAPABILITY: ModelCapability = Object.freeze({
+  image_in: true,
+  video_in: false,
+  audio_in: false,
+  thinking: true,
+  tool_use: true,
+  max_context_tokens: 0,
+});
+
+const MINIMAX_TEXT_TOOL_CAPABILITY: ModelCapability = Object.freeze({
+  image_in: false,
+  video_in: false,
+  audio_in: false,
+  thinking: false,
+  tool_use: true,
+  max_context_tokens: 0,
+});
+
 const GEMINI_MULTIMODAL_TOOL_CAPABILITY: ModelCapability = Object.freeze({
   image_in: true,
   video_in: true,
@@ -168,6 +198,14 @@ const ANTHROPIC_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
   {
     matches: (name) => hasExactModel(name, MIMO_THINKING_VISION_TOOL_MODELS),
     capability: MIMO_THINKING_VISION_TOOL_CAPABILITY,
+  },
+  {
+    matches: (name) => hasExactModel(name, MINIMAX_THINKING_VISION_TOOL_MODELS),
+    capability: MINIMAX_THINKING_VISION_TOOL_CAPABILITY,
+  },
+  {
+    matches: (name) => hasExactModel(name, MINIMAX_TEXT_TOOL_MODELS),
+    capability: MINIMAX_TEXT_TOOL_CAPABILITY,
   },
   {
     matches: (name) => hasPrefix(name, CLAUDE_3_PREFIXES),

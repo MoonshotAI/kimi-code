@@ -165,10 +165,38 @@ describe('AnthropicChatProvider.getCapability', () => {
     }
   });
 
+  it('MiniMax-M3 → image_in + thinking + tool_use, video_in=false', () => {
+    const cap = make('MiniMax-M3').getCapability();
+    expect(cap.image_in).toBe(true);
+    expect(cap.video_in).toBe(false);
+    expect(cap.audio_in).toBe(false);
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+  });
+
+  it('MiniMax M2.x Anthropic models → tool_use only', () => {
+    for (const m of [
+      'MiniMax-M2.7',
+      'MiniMax-M2.7-highspeed',
+      'MiniMax-M2.5',
+      'MiniMax-M2.5-highspeed',
+      'MiniMax-M2.1',
+      'MiniMax-M2.1-highspeed',
+      'MiniMax-M2',
+    ]) {
+      const cap = make(m).getCapability();
+      expect(cap.tool_use).toBe(true);
+      expect(cap.image_in).toBe(false);
+      expect(cap.video_in).toBe(false);
+      expect(cap.audio_in).toBe(false);
+      expect(cap.thinking).toBe(false);
+    }
+  });
+
   it('no Anthropic model supports audio_in', () => {
     // Sanity: Anthropic has no audio-input models today. If one ships later
     // and this fails, update the table — but make it a conscious decision.
-    for (const m of ['claude-3-5-sonnet', 'claude-3-haiku', 'claude-opus-4']) {
+    for (const m of ['claude-3-5-sonnet', 'claude-3-haiku', 'claude-opus-4', 'MiniMax-M3']) {
       expect(make(m).getCapability().audio_in).toBe(false);
     }
   });
