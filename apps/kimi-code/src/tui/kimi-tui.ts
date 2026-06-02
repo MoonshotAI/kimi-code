@@ -897,60 +897,6 @@ export class KimiTUI {
     return this.state.transcriptEntries.length > 0;
   }
 
-  async undoLastTurn(): Promise<void> {
-    if (this.state.appState.streamingPhase !== 'idle') {
-      this.showError('Cannot undo while streaming — press Esc or Ctrl-C first.');
-      return;
-    }
-
-    const session = this.session;
-    if (session === undefined) {
-      this.showError(NO_ACTIVE_SESSION_MESSAGE);
-      return;
-    }
-
-    const entries = this.state.transcriptEntries;
-    const lastUserIndex = entries.findLastIndex(isUndoAnchorEntry);
-    if (lastUserIndex < 0) {
-      this.showError('Nothing to undo.');
-      return;
-    }
-
-    try {
-      await session.undoHistory(1);
-    } catch (error) {
-      const message = formatErrorMessage(error);
-      this.showError(`Failed to undo: ${message}`);
-      return;
-    }
-
-    const children = this.state.transcriptContainer.children;
-    let lastUserComponentIndex = -1;
-    for (let i = children.length - 1; i >= 0; i--) {
-      const child = children[i];
-      if (
-        child instanceof UserMessageComponent ||
-        (child instanceof SkillActivationComponent && child.trigger === 'user-slash')
-      ) {
-        lastUserComponentIndex = i;
-        break;
-      }
-    }
-
-    if (lastUserComponentIndex >= 0) {
-      children.splice(lastUserComponentIndex);
-      this.state.transcriptContainer.invalidate();
-    }
-
-    entries.splice(lastUserIndex);
-
-    if (entries.length === 0) {
-      this.renderWelcome();
-    }
-
-    this.state.ui.requestRender();
-  }
-
   async getStartupMcpMs(): Promise<number> {
     const session = this.session;
     if (session === undefined) return 0;
@@ -1834,11 +1780,4 @@ export class KimiTUI {
     this.restoreEditor();
   }
 
-}
-
-function isUndoAnchorEntry(entry: TranscriptEntry): boolean {
-  return (
-    entry.kind === 'user' ||
-    (entry.kind === 'skill_activation' && entry.skillTrigger === 'user-slash')
-  );
 }

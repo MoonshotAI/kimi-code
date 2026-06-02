@@ -57,7 +57,6 @@ interface MessageDriver {
   handleUserInput(text: string): void;
   persistInputHistory(text: string): Promise<void>;
   getCurrentSessionId(): string;
-  undoLastTurn(): Promise<void>;
 }
 
 interface FeedbackDriver extends MessageDriver {
@@ -699,9 +698,17 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput('hello');
     driver.state.appState.streamingPhase = 'idle';
 
-    await driver.undoLastTurn();
+    driver.handleUserInput('/undo');
 
-    expect(session.undoHistory).toHaveBeenCalledWith(1);
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Error: Failed to undo: core rpc unavailable',
+      );
+    });
+
     expect(driver.state.transcriptEntries).toEqual([
       expect.objectContaining({
         kind: 'user',
@@ -710,7 +717,6 @@ describe('KimiTUI message flow', () => {
     ]);
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('hello');
-    expect(transcript).toContain('Error: Failed to undo: core rpc unavailable');
   });
 
   it('does not duplicate welcome after undoing the only turn', async () => {
@@ -719,7 +725,11 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput('hello');
     driver.state.appState.streamingPhase = 'idle';
 
-    await driver.undoLastTurn();
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptEntries).toEqual([]);
+    });
 
     expect(
       driver.state.transcriptContainer.children.filter(
@@ -744,7 +754,11 @@ describe('KimiTUI message flow', () => {
     );
     driver.state.appState.streamingPhase = 'idle';
 
-    await driver.undoLastTurn();
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptEntries).toEqual([]);
+    });
 
     expect(driver.state.transcriptEntries).toEqual([]);
     const transcript = stripSgr(renderTranscript(driver));
@@ -768,7 +782,16 @@ describe('KimiTUI message flow', () => {
     );
     driver.state.appState.streamingPhase = 'idle';
 
-    await driver.undoLastTurn();
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptEntries).toEqual([
+        expect.objectContaining({
+          kind: 'user',
+          content: 'hello',
+        }),
+      ]);
+    });
 
     expect(driver.state.transcriptEntries).toEqual([
       expect.objectContaining({

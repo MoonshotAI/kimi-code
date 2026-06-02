@@ -42,6 +42,7 @@ import {
   handleInitCommand,
   handleTitleCommand,
 } from './session';
+import { handleUndoCommand } from './undo';
 
 // ---------------------------------------------------------------------------
 // Re-exports — keep existing consumers working
@@ -78,6 +79,7 @@ export {
   handleInitCommand,
   handleTitleCommand,
 } from './session';
+export { handleUndoCommand } from './undo';
 
 // ---------------------------------------------------------------------------
 // Host interface
@@ -123,9 +125,6 @@ export interface SlashCommandHost {
   sendNormalUserInput(text: string): void;
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void;
   readonly skillCommandMap: Map<string, string>;
-
-  // Undo
-  undoLastTurn(): Promise<void>;
 
   // Controller refs
   readonly streamingUI: StreamingUIController;
@@ -283,7 +282,7 @@ async function handleBuiltInSlashCommand(
       await handleLogoutCommand(host);
       return;
     case 'undo':
-      await host.undoLastTurn();
+      await handleUndoCommand(host);
       return;
     default:
       host.showError(`Unknown slash command: /${String(name)}`);
