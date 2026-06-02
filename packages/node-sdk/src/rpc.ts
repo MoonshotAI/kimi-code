@@ -127,6 +127,7 @@ export class SDKRpcClient {
       resolveOAuthTokenProvider: options.resolveOAuthTokenProvider,
       skillDirs: options.skillDirs,
       telemetry: options.telemetry,
+      appVersion: options.identity?.version,
     });
     this.ready = sdkRpc(new ClientAPI(this)).then((rpc) => {
       this.rpc = rpc;
