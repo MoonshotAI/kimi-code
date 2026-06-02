@@ -96,9 +96,9 @@ describe('applyEnvModelConfig', () => {
 
   it('lets an explicit base url override the default', () => {
     expect(
-      apply({ ...MIN, KIMI_MODEL_BASE_URL: 'https://api-staff.msh.team/v1' })
+      apply({ ...MIN, KIMI_MODEL_BASE_URL: 'https://api.example.com/v1' })
         .providers[ENV_MODEL_PROVIDER_KEY]?.baseUrl,
-    ).toBe('https://api-staff.msh.team/v1');
+    ).toBe('https://api.example.com/v1');
   });
 
   it('parses comma-separated capabilities (trimmed, lowercased)', () => {
@@ -113,9 +113,9 @@ describe('applyEnvModelConfig', () => {
     expect(withoutName).toBeDefined();
     expect(withoutName?.displayName).toBeUndefined();
     expect(
-      apply({ ...MIN, KIMI_MODEL_DISPLAY_NAME: 'Staff Model' })
+      apply({ ...MIN, KIMI_MODEL_DISPLAY_NAME: 'Custom Model' })
         .models?.[ENV_MODEL_ALIAS_KEY]?.displayName,
-    ).toBe('Staff Model');
+    ).toBe('Custom Model');
   });
 
   it('writes type-specific fields and validates max_output_size', () => {

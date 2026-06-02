@@ -136,12 +136,12 @@ async function tryRun<T>(fn: () => Promise<T>): Promise<T | undefined> {
   }
 }
 
-const REGISTRY_URL = 'https://free-tokens.example.test/v1/models/api.json';
+const REGISTRY_URL = 'https://registry.example.test/v1/models/api.json';
 const REGISTRY_BODY = {
   kohub: {
     id: 'kohub',
     name: 'KoHub Anthropic',
-    api: 'https://free-tokens.example.test',
+    api: 'https://registry.example.test',
     type: 'anthropic',
     models: {
       'claude-opus-4-7': { id: 'claude-opus-4-7', name: 'Claude Opus 4-7', tool_call: true },
@@ -150,7 +150,7 @@ const REGISTRY_BODY = {
   'kohub-responses': {
     id: 'kohub-responses',
     name: 'KoHub Responses',
-    api: 'https://free-tokens.example.test/v1',
+    api: 'https://registry.example.test/v1',
     type: 'openai_responses',
     models: {
       'gpt-5.5': { id: 'gpt-5.5', name: 'GPT 5.5', reasoning: true },
@@ -248,7 +248,7 @@ describe('kimi provider add', () => {
     expect(Object.keys(finalConfig.providers).toSorted()).toEqual(['kohub', 'kohub-responses']);
     const kohub = finalConfig.providers['kohub']!;
     expect(kohub.type).toBe('anthropic');
-    expect(kohub.baseUrl).toBe('https://free-tokens.example.test');
+    expect(kohub.baseUrl).toBe('https://registry.example.test');
     expect(kohub.apiKey).toBe('sk-test-token');
     expect(kohub.source).toEqual({
       kind: 'apiJson',

@@ -8,7 +8,7 @@
 
 - 新增用于管理 AI 供应商的 `/provider` 命令，支持自定义 registry 导入，并引入标签页式模型选择器。该命令替代了已废弃的 `/connect`，请改用 `/provider`。
 - 在终端界面中以独立样式渲染定时提醒，向 SDK 客户端暴露 cron 触发事件，并在报告 cron 触发时间时附带本地时区偏移。
-- 新增 `KIMI_MODEL_ADAPTIVE_THINKING`（以及对应的 `adaptive_thinking` 模型别名字段），用于强制开启或关闭自适应 thinking（`thinking: { type: 'adaptive' }`），覆盖基于 Anthropic 模型名的版本推断。这样一来，背后由支持自适应能力的模型驱动、且使用自定义名称的 staff 端点，即使模型名没有编码出可解析的 Claude 版本，也能选择启用该能力。
+- 新增 `KIMI_MODEL_ADAPTIVE_THINKING`（以及对应的 `adaptive_thinking` 模型别名字段），用于强制开启或关闭自适应 thinking（`thinking: { type: 'adaptive' }`），覆盖基于 Anthropic 模型名的版本推断。这样一来，背后由支持自适应能力的模型驱动、且使用自定义名称的兼容端点，即使模型名没有编码出可解析的 Claude 版本，也能选择启用该能力。
 
 ### 修复
 

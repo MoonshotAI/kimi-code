@@ -188,15 +188,15 @@ kimi provider <action> [options]
 
 | 参数 / 选项 | 说明 |
 | --- | --- |
-| `<url>` | Registry 地址，例如 `https://free-tokens.msh.team/v1/models/api.json`。 |
+| `<url>` | Registry 地址，例如 `https://registry.example.com/v1/models/api.json`。 |
 | `--api-key <key>` | 访问 registry 时携带的 Bearer token。未传时回退到环境变量 `KIMI_REGISTRY_API_KEY`。必填。 |
 
 ```sh
 # 一行导入：registry 中的所有 provider 与 model 全部写入 ~/.kimi-code/config.toml
-kimi provider add https://free-tokens.msh.team/v1/models/api.json --api-key YOUR_KEY
+kimi provider add https://registry.example.com/v1/models/api.json --api-key YOUR_KEY
 
 # 或通过环境变量，便于 CI / .envrc 等场景
-KIMI_REGISTRY_API_KEY=YOUR_KEY kimi provider add https://free-tokens.msh.team/v1/models/api.json
+KIMI_REGISTRY_API_KEY=YOUR_KEY kimi provider add https://registry.example.com/v1/models/api.json
 ```
 
 如果某个 provider id 已存在，会先删除（包括其残留的模型 alias），再按 registry 重新写入，与 TUI 的行为一致。不会自动设置默认模型 —— 后续可以用 `-m` 或 TUI 内的 `/model` 选择。
