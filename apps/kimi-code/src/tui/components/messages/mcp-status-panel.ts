@@ -138,6 +138,7 @@ export function buildMcpStatusReportLines(options: McpStatusReportOptions): stri
 
   lines.push('');
   lines.push(`  ${value(buildSummary(servers))}`);
+  lines.push(`  ${muted('Configure with')} ${value('/mcp-config')}`);
 
   return lines;
 }

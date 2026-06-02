@@ -101,8 +101,8 @@ On the first launch, Kimi Code CLI has no credentials yet, and you need to confi
 
 `/login` opens a platform selector supporting:
 
-- **Kimi Code** — OAuth device code flow; open the URL on any device, sign in, and enter the code to authorize
-- **Moonshot AI Open Platform** — log in directly with an API key
+- **Kimi Code (OAuth)** — device code flow; open the URL on any device, sign in, and enter the code to authorize
+- **Kimi Platform API key** — enter an API key from `platform.kimi.com` or `platform.kimi.ai`
 
 To sign out, enter `/logout` to clear the current credentials.
 

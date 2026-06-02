@@ -7,7 +7,6 @@ export * from './types';
 
 export { dispatchInput, type SlashCommandHost } from './dispatch';
 export {
-  handleConnectCommand,
   handleLoginCommand,
   handleLogoutCommand,
 } from './auth';

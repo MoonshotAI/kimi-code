@@ -26,6 +26,7 @@ function fakeInitialAppState(): AppState {
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
+    mcpServersSummary: null,
   };
 }
 

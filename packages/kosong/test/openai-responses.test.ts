@@ -742,6 +742,18 @@ describe('OpenAIResponsesChatProvider', () => {
       expect(body['temperature']).toBe(0.7);
       expect(body['max_output_tokens']).toBe(2048);
     });
+
+    it('withMaxCompletionTokens sets max_output_tokens on the cloned provider', async () => {
+      const original = createProvider();
+      const provider = original.withMaxCompletionTokens(1024);
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(provider).not.toBe(original);
+      expect(body['max_output_tokens']).toBe(1024);
+    });
   });
 
   describe('reasoning configuration', () => {

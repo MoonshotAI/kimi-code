@@ -14,7 +14,8 @@
  *   - `humanSchedule` — best-effort plain-English rendering via
  *                       `cronToHuman`; falls back to the raw `cron`
  *                       string if the expression can't be parsed.
- *   - `nextFireAt`    — post-jitter ISO timestamp, or the literal
+ *   - `nextFireAt`    — post-jitter local ISO timestamp with offset,
+ *                       or the literal
  *                       string `null` when there is no fire in the
  *                       5-year window (or the expression is malformed).
  *                       This is the same jittered value `CronCreate`
@@ -49,6 +50,7 @@ import {
   cronToHuman,
   parseCronExpression,
 } from './cron-expr';
+import { formatLocalIsoWithOffset } from './time-format';
 import type { CronTask } from './types';
 import CRON_LIST_DESCRIPTION from './cron-list.md';
 
@@ -144,7 +146,7 @@ export class CronListTool implements BuiltinTool<CronListInput> {
       // slot in the current period.
       const nextFireMs = this.manager.getNextFireForTask(task.id);
       if (nextFireMs !== null) {
-        nextFireAtIso = new Date(nextFireMs).toISOString();
+        nextFireAtIso = formatLocalIsoWithOffset(nextFireMs);
       }
     } catch {
       // Malformed cron string — leave humanSchedule as the raw

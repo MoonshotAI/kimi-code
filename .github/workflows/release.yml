@@ -18,7 +18,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      id-token: write  # Required for NPM Trusted Publishing (OIDC)
+      id-token: write # Required for NPM Trusted Publishing (OIDC)
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -28,17 +28,12 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
 
-      # Nix must be installed before setup-node so that setup-node's PATH
-      # entry (Node >= 24) is prepended after Nix's, keeping Node 24 first.
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
-
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
-          cache: 'pnpm'
-          registry-url: 'https://registry.npmjs.org'
+          cache: "pnpm"
+          registry-url: "https://registry.npmjs.org"
 
       - name: Upgrade npm for Trusted Publishing
         run: npm install -g npm@latest
@@ -62,8 +57,8 @@ jobs:
         with:
           publish: pnpm changeset publish
           version: pnpm run version:release
-          commit: 'ci: release packages'
-          title: 'ci: release packages'
+          commit: "ci: release packages"
+          title: "ci: release packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # NPM_TOKEN is not needed with Trusted Publishing (OIDC)

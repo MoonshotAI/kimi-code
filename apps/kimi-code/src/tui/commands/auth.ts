@@ -8,36 +8,22 @@ import {
   type ManagedKimiConfigShape,
   type OpenPlatformDefinition,
 } from '@moonshot-ai/kimi-code-oauth';
-import {
-  applyCatalogProvider,
-  catalogBaseUrl,
-  catalogProviderModels,
-  CatalogFetchError,
-  fetchCatalog,
-  inferWireType,
-  loadBuiltInCatalog,
-  log,
-  type Catalog,
-} from '@moonshot-ai/kimi-code-sdk';
+import { log } from '@moonshot-ai/kimi-code-sdk';
 
-import { BUILT_IN_CATALOG_JSON } from '../../built-in-catalog';
 import type { ChoiceOption } from '../components/dialogs/choice-picker';
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '../constant/kimi-tui';
-import { resolveConnectCatalogRequest } from '../utils/connect-catalog';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { LoginProgressSpinnerHandle } from '../types';
 import {
   promptApiKey,
-  promptCatalogProviderSelection,
   promptLogoutProviderSelection,
-  promptModelSelectionForCatalog,
   promptModelSelectionForOpenPlatform,
   promptPlatformSelection,
 } from './prompts';
 import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
-// Auth: login / logout / connect
+// Auth: login / logout
 // ---------------------------------------------------------------------------
 
 export async function handleLoginCommand(host: SlashCommandHost): Promise<void> {
@@ -116,7 +102,13 @@ async function handleOpenPlatformLogin(
   host: SlashCommandHost,
   platform: OpenPlatformDefinition,
 ): Promise<void> {
-  const apiKey = await promptApiKey(host, platform.name);
+  const consoleHost = platform.consoleUrl?.replace(/^https?:\/\//, '') ?? '';
+  const platformName = consoleHost.length > 0 ? `Kimi Platform (${consoleHost})` : 'Kimi Platform';
+  const subtitleLines = [
+    `${'base_url'.padEnd(12)}${platform.baseUrl}`,
+    `${'saved to'.padEnd(12)}~/.kimi-code/config.toml`,
+  ];
+  const apiKey = await promptApiKey(host, platformName, subtitleLines);
   if (apiKey === undefined) return;
 
   const controller = new AbortController();
@@ -180,110 +172,6 @@ async function handleOpenPlatformLogin(
   await host.authFlow.refreshConfigAfterLogin();
   host.track('login', { provider: platform.id, method: 'api_key' });
   host.showStatus(`Setup complete: ${platform.name} · ${selection.model.id}`);
-}
-
-export async function handleConnectCommand(host: SlashCommandHost, args: string): Promise<void> {
-  const resolution = resolveConnectCatalogRequest(args);
-  if (resolution.kind === 'error') {
-    host.showError(resolution.message);
-    return;
-  }
-  const { url, preferBuiltIn, allowBuiltInFallback } = resolution.request;
-
-  let catalog: Catalog | undefined;
-
-  if (preferBuiltIn) {
-    const builtIn = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
-    if (builtIn !== undefined) {
-      host.showStatus('Loaded built-in catalog. Run /connect refresh for the latest.');
-      catalog = builtIn;
-    }
-  }
-
-  if (catalog === undefined) {
-    const controller = new AbortController();
-    const cancel = (): void => {
-      controller.abort();
-    };
-    host.cancelInFlight = cancel;
-
-    const spinner = host.showLoginProgressSpinner(`Fetching catalog from ${url}`);
-    try {
-      catalog = await fetchCatalog(url, controller.signal);
-      spinner.stop({ ok: true, label: 'Catalog loaded.' });
-    } catch (error) {
-      if (controller.signal.aborted) {
-        spinner.stop({ ok: false, label: 'Aborted.' });
-      } else {
-        const hint = error instanceof CatalogFetchError ? ` (HTTP ${error.status})` : '';
-        if (!allowBuiltInFallback) {
-          spinner.stop({ ok: false, label: 'Failed to load catalog.' });
-          host.showError(`Failed to fetch catalog${hint}: ${formatErrorMessage(error)}`);
-        } else {
-          const fallback = loadBuiltInCatalog(BUILT_IN_CATALOG_JSON);
-          if (fallback !== undefined) {
-            spinner.stop({ ok: true, label: 'Using built-in catalog (offline mode).' });
-            catalog = fallback;
-          } else {
-            spinner.stop({ ok: false, label: 'Failed to load catalog.' });
-            host.showError(`Failed to fetch catalog${hint}: ${formatErrorMessage(error)}`);
-          }
-        }
-      }
-    } finally {
-      if (host.cancelInFlight === cancel) host.cancelInFlight = undefined;
-    }
-  }
-
-  if (catalog === undefined) return;
-
-  const providerId = await promptCatalogProviderSelection(host, catalog);
-  if (providerId === undefined) return;
-  const entry = catalog[providerId];
-  if (entry === undefined) return;
-
-  const models = catalogProviderModels(entry);
-  if (models.length === 0) {
-    host.showError(`Provider "${providerId}" has no usable models in this catalog.`);
-    return;
-  }
-
-  const selection = await promptModelSelectionForCatalog(host, providerId, models);
-  if (selection === undefined) return;
-
-  const apiKey = await promptApiKey(host, entry.name ?? providerId);
-  if (apiKey === undefined) return;
-
-  const wire = inferWireType(entry);
-  if (wire === undefined) return;
-  const baseUrl = catalogBaseUrl(entry, wire);
-
-  const existingConfig = await host.harness.getConfig();
-  if (existingConfig.providers[providerId] !== undefined) {
-    await host.harness.removeProvider(providerId);
-  }
-
-  const config = await host.harness.getConfig();
-  applyCatalogProvider(config, {
-    providerId,
-    wire,
-    baseUrl,
-    apiKey,
-    models,
-    selectedModelId: selection.model.id,
-    thinking: selection.thinking,
-  });
-
-  await host.harness.setConfig({
-    providers: config.providers,
-    models: config.models,
-    defaultModel: config.defaultModel,
-    defaultThinking: config.defaultThinking,
-  });
-
-  await host.authFlow.refreshConfigAfterLogin();
-  host.track('connect', { provider: providerId, model: selection.model.id });
-  host.showStatus(`Connected: ${entry.name ?? providerId} · ${selection.model.id}`);
 }
 
 export async function handleLogoutCommand(host: SlashCommandHost): Promise<void> {

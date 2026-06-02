@@ -10,6 +10,7 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '../../../../src/agent';
 import type { PromptOrigin } from '../../../../src/agent/context/types';
+import type { AgentEvent } from '../../../../src/rpc';
 import type { ClockSources } from '../../../../src/tools/cron/clock';
 
 /**
@@ -30,6 +31,10 @@ export interface TelemetryCall {
   readonly props: unknown;
 }
 
+export interface EventCall {
+  readonly event: AgentEvent;
+}
+
 export interface AgentStubOptions {
   /** Initial value of `agent.turn.hasActiveTurn`. Default false (idle). */
   readonly hasActiveTurn?: boolean;
@@ -46,12 +51,14 @@ export interface AgentStub {
   readonly agent: Agent;
   readonly steerCalls: SteerCall[];
   readonly telemetryCalls: TelemetryCall[];
+  readonly eventCalls: EventCall[];
   setHasActiveTurn(v: boolean): void;
 }
 
 export function createAgentStub(opts: AgentStubOptions = {}): AgentStub {
   const steerCalls: SteerCall[] = [];
   const telemetryCalls: TelemetryCall[] = [];
+  const eventCalls: EventCall[] = [];
   let hasActiveTurn = opts.hasActiveTurn ?? false;
   // `?? 42` would collapse explicit `null` (buffered) into 42, so probe
   // the property's presence instead of relying on nullish coalescing.
@@ -72,11 +79,19 @@ export function createAgentStub(opts: AgentStubOptions = {}): AgentStub {
       telemetryCalls.push({ event, props });
     },
   };
-  const agent = { turn, telemetry, homedir: opts.homedir } as unknown as Agent;
+  const agent = {
+    turn,
+    telemetry,
+    homedir: opts.homedir,
+    emitEvent: (event: AgentEvent) => {
+      eventCalls.push({ event });
+    },
+  } as unknown as Agent;
   return {
     agent,
     steerCalls,
     telemetryCalls,
+    eventCalls,
     setHasActiveTurn: (v: boolean) => {
       hasActiveTurn = v;
     },
@@ -121,5 +136,8 @@ export function createClocks(initial: number = WALL_ANCHOR): ClockHarness {
 export function scrubCronOutput(out: string): string {
   return out
     .replaceAll(/\b[0-9a-f]{8}\b/g, '<id>')
-    .replaceAll(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, '<iso>');
+    .replaceAll(
+      /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(?:Z|[+-]\d{2}:\d{2})/g,
+      '<iso>',
+    );
 }
