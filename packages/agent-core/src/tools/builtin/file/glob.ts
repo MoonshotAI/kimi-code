@@ -161,7 +161,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     // would exceed MAX_BRACE_EXPANSIONS we also return the original so
     // the caller sees an obvious zero-match outcome rather than a silent
     // partial walk.
-    const subPatterns = expandBraces(args.pattern);
+    const subPatterns = expandBraces(normalize(args.pattern));
 
     // Default true. When false, directories yielded by kaos are
     // filtered out using the same stat that fuels the mtime sort

@@ -144,6 +144,46 @@ describe('GlobTool', () => {
     expect(lines.filter((l) => l === 'shared.ts')).toHaveLength(1);
   });
 
+  it('normalizes the pattern before brace expansion so redundant separators are collapsed', async () => {
+    // `src//*.{ts,tsx}` should be normalized → `src/*.{ts,tsx}` before
+    // expandBraces splits it, so each sub-pattern is clean.
+    const glob = vi.fn((_root: string, pattern: string) => {
+      if (pattern === 'src/*.ts') return asyncPaths(['/workspace/src/a.ts']);
+      if (pattern === 'src/*.tsx') return asyncPaths(['/workspace/src/b.tsx']);
+      return asyncPaths([]);
+    });
+    const tool = new GlobTool(
+      createFakeKaos({ glob, stat: vi.fn().mockResolvedValue(stat(1)) }),
+      workspace,
+    );
+
+    const result = await executeTool(tool, context({ pattern: 'src//*.{ts,tsx}' }));
+
+    expect(result.isError).toBeFalsy();
+    expect(glob).toHaveBeenCalledWith('/workspace', 'src/*.ts');
+    expect(glob).toHaveBeenCalledWith('/workspace', 'src/*.tsx');
+  });
+
+  it('normalizes the pattern before brace expansion so a leading ./ is removed', async () => {
+    // `./src/*.{ts,tsx}` should be normalized → `src/*.{ts,tsx}` before
+    // expandBraces splits it, so each sub-pattern is clean.
+    const glob = vi.fn((_root: string, pattern: string) => {
+      if (pattern === 'src/*.ts') return asyncPaths(['/workspace/src/a.ts']);
+      if (pattern === 'src/*.tsx') return asyncPaths(['/workspace/src/b.tsx']);
+      return asyncPaths([]);
+    });
+    const tool = new GlobTool(
+      createFakeKaos({ glob, stat: vi.fn().mockResolvedValue(stat(1)) }),
+      workspace,
+    );
+
+    const result = await executeTool(tool, context({ pattern: './src/*.{ts,tsx}' }));
+
+    expect(result.isError).toBeFalsy();
+    expect(glob).toHaveBeenCalledWith('/workspace', 'src/*.ts');
+    expect(glob).toHaveBeenCalledWith('/workspace', 'src/*.tsx');
+  });
+
   it('searches only the current workspace when path is omitted', async () => {
     const glob = vi.fn().mockReturnValue(asyncPaths(['/workspace/a.ts', '/workspace/shared.ts']));
     const tool = new GlobTool(
