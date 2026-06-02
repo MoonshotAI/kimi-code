@@ -3,4 +3,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix cross-provider tool call ID normalization when replaying tool history.
+Fix cross-provider replay failures from incompatible tool call IDs and unsigned Claude thinking history.

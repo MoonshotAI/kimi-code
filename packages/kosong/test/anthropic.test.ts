@@ -785,11 +785,10 @@ describe('AnthropicChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
       const messages = body['messages'] as unknown[];
 
-      // Unsigned thinking must be PRESERVED, emitted without a `signature`
-      // field — not stripped. Anthropic-compatible backends (e.g. Kimi) reject
-      // a tool-call turn whose thinking is missing ("reasoning_content is
-      // missing"); api.anthropic.com never emits unsigned thinking, so the
-      // signed branch always handles its history and this path is backend-neutral.
+      // Unsigned thinking must still be PRESERVED for non-Claude models,
+      // emitted without a `signature` field. Anthropic-compatible backends
+      // (e.g. Kimi) reject a tool-call turn whose thinking is missing
+      // ("reasoning_content is missing").
       expect(messages[1]).toEqual({
         role: 'assistant',
         content: [
@@ -798,6 +797,36 @@ describe('AnthropicChatProvider', () => {
         ],
       });
     });
+
+    it.each(['claude-opus-4-6', 'opus-4-6'])(
+      'drops unsigned thinking for Claude model %s before tool_use blocks',
+      async (model) => {
+        const provider = createProvider(model);
+        const history: Message[] = [
+          { role: 'user', content: [{ type: 'text', text: 'Search for 429' }], toolCalls: [] },
+          {
+            role: 'assistant',
+            content: [{ type: 'think', think: 'Let me grep for 429.' }],
+            toolCalls: [
+              { type: 'function', id: 'toolu_1', name: 'Grep', arguments: '{"pattern":"429"}' },
+            ],
+          },
+          {
+            role: 'tool',
+            content: [{ type: 'text', text: 'found in chat.go' }],
+            toolCallId: 'toolu_1',
+            toolCalls: [],
+          },
+        ];
+        const body = await captureRequestBody(provider, '', [], history);
+        const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
+
+        expect(messages[1]!.role).toBe('assistant');
+        expect(messages[1]!.content).toEqual([
+          { type: 'tool_use', id: 'toolu_1', name: 'Grep', input: { pattern: '429' } },
+        ]);
+      },
+    );
 
     it('base64 image', async () => {
       const provider = createProvider();
