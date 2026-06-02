@@ -16,6 +16,7 @@ import { SessionSubagentHost } from '../../src/session/subagent-host';
 import { abortError, userCancellationReason } from '../../src/utils/abort';
 import { testAgent, type AgentTestContext } from '../agent/harness/agent';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
+import { executeTool } from '../tools/fixtures/execute-tool';
 
 // Git context collection is exercised in git-context.test.ts; here it is
 // mocked so subagent-host tests stay deterministic and assert only the
@@ -221,6 +222,62 @@ describe('SessionSubagentHost', () => {
         content: [{ type: 'text', text: 'Find the cause' }],
       },
     ]);
+  });
+
+  it('inherits active parent user tools when spawning a subagent', async () => {
+    const parent = testAgent();
+    parent.configure();
+    await parent.rpc.registerTool(lookupToolRegistration());
+    parent.newEvents();
+
+    const summary =
+      'Investigated the delegated task thoroughly, used the inherited custom lookup surface where appropriate, and returned a detailed summary that lets the parent agent continue without repeating the work. '.repeat(
+        2,
+      );
+    const child = testAgent();
+    child.mockNextResponse({
+      type: 'text',
+      text: summary,
+    });
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await host.spawn('coder', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Use the available lookup tool',
+      description: 'Use lookup',
+      runInBackground: false,
+      signal,
+    });
+
+    await expect(handle.completion).resolves.toMatchObject({
+      result: summary.trim(),
+    });
+    expect(child.llmCalls[0]?.tools.map((tool) => tool.name)).toContain('Lookup');
+    expect(child.agent.tools.data()).toContainEqual({
+      name: 'Lookup',
+      description: 'Look up a short test value.',
+      active: true,
+      source: 'user',
+    });
+
+    const lookupTool = child.agent.tools.loopTools.find((tool) => tool.name === 'Lookup');
+    expect(lookupTool).toBeDefined();
+
+    const execution = executeTool(lookupTool!, {
+      turnId: '0',
+      toolCallId: 'call_lookup',
+      args: { query: 'moon' },
+      signal,
+    });
+    const routedTo = await Promise.race([
+      child.untilToolCall({ output: 'moon-result' }).then(() => 'child'),
+      parent.untilToolCall({ output: 'moon-result' }).then(() => 'parent'),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 50)),
+    ]);
+
+    expect(routedTo).toBe('child');
+    await expect(execution).resolves.toMatchObject({ output: 'moon-result' });
   });
 
   it('falls back to bundled subagent profiles when the parent profile is missing', async () => {
@@ -1081,6 +1138,21 @@ function contextProfile(): ResolvedAgentProfile {
         `agents=${context.agentsMd ?? ''}`,
       ].join('\n'),
     tools: [],
+  };
+}
+
+function lookupToolRegistration() {
+  return {
+    name: 'Lookup',
+    description: 'Look up a short test value.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
   };
 }
 
