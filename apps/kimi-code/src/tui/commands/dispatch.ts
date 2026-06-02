@@ -20,7 +20,8 @@ import type { TasksBrowserController } from '../controllers/tasks-browser';
 import type { AppState, LoginProgressSpinnerHandle, QueuedMessage } from '../types';
 import type { TUIState } from '../tui-state';
 
-import { handleConnectCommand, handleLoginCommand, handleLogoutCommand } from './auth';
+import { handleLoginCommand, handleLogoutCommand } from './auth';
+import { tryHandleDanceCommand } from '../easter-eggs/dance';
 import {
   handleAutoCommand,
   handleCompactCommand,
@@ -33,6 +34,7 @@ import {
   showPermissionPicker,
   showSettingsSelector,
 } from './config';
+import { handleProviderCommand } from './provider';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 import { handlePluginsCommand } from './plugins';
 import {
@@ -109,6 +111,7 @@ export interface SlashCommandHost {
   // UI
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle;
   showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle;
+  showProgressSpinner(label: string): LoginProgressSpinnerHandle;
 
   // Theme
   applyTheme(theme: Theme, resolved?: ResolvedTheme): void;
@@ -171,6 +174,12 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
       return;
     }
     case 'message':
+      // Unknown slash command: let /dance claim it before it falls through to
+      // the model as a normal message. This runs *after* builtin and skill
+      // resolution, so a real command or a same-named skill always wins.
+      if (parsedCommand !== null && tryHandleDanceCommand(host, parsedCommand)) {
+        return;
+      }
       host.sendNormalUserInput(intent.input);
       return;
     case 'builtin':
@@ -227,6 +236,9 @@ async function handleBuiltInSlashCommand(
     case 'model':
       handleModelCommand(host, args);
       return;
+    case 'provider':
+      await handleProviderCommand(host);
+      return;
     case 'permission':
       showPermissionPicker(host);
       return;
@@ -271,9 +283,6 @@ async function handleBuiltInSlashCommand(
       return;
     case 'login':
       await handleLoginCommand(host);
-      return;
-    case 'connect':
-      await handleConnectCommand(host, args);
       return;
     case 'logout':
       await handleLogoutCommand(host);

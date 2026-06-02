@@ -32,7 +32,7 @@ import {
 } from '../../loop/index';
 import type { AgentEvent, TurnEndedEvent } from '../../rpc';
 import type { TelemetryPropertyValue } from '../../telemetry';
-import { abortable } from '../../utils/abort';
+import { abortable, userCancellationReason } from '../../utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
@@ -147,13 +147,18 @@ export class TurnFlow {
     this.activeTurn = 'resuming';
   }
 
-  cancel(turnId?: number): void {
+  cancel(turnId?: number, reason?: unknown): void {
     this.agent.records.logRecord({ type: 'turn.cancel', turnId });
     if (turnId !== undefined && turnId !== this.currentId) {
       return; // Ignore cancel for non-active turn
     }
-    this.abortTurn();
-    this.agent.subagentHost?.cancelAll();
+    // A direct cancel (RPC / replay) is the user pressing stop. When the cancel
+    // is propagated from an aborting signal (e.g. a subagent's deadline via
+    // waitForCurrentTurn), carry that original reason instead so a timeout is
+    // not mislabeled to the model as a deliberate user interruption.
+    const cancelReason = reason ?? userCancellationReason();
+    this.abortTurn(cancelReason);
+    this.agent.subagentHost?.cancelAll(cancelReason);
   }
 
   get currentId() {
@@ -174,7 +179,7 @@ export class TurnFlow {
 
     const turnId = this.currentId;
     const onAbort = (): void => {
-      this.agent.turn.cancel(turnId);
+      this.agent.turn.cancel(turnId, signal.reason);
     };
     signal.addEventListener('abort', onAbort, { once: true });
 
@@ -183,9 +188,13 @@ export class TurnFlow {
     });
   }
 
-  private abortTurn() {
+  private abortTurn(reason: unknown) {
     if (this.activeTurn !== 'resuming') {
-      this.activeTurn?.controller.abort();
+      // The reason (a user cancellation by default, or the originating signal's
+      // reason when propagated) travels as signal.reason so tools settling on
+      // this signal can report a deliberate user interruption distinctly from a
+      // timeout/system abort. linkAbortSignal forwards it to linked subagents.
+      this.activeTurn?.controller.abort(reason);
     }
     this.activeTurn = null;
   }
@@ -377,6 +386,7 @@ export class TurnFlow {
           hooks: {
             beforeStep: async ({ signal: stepSignal }) => {
               this.flushSteerBuffer();
+              this.agent.microCompaction.detect();
               await this.agent.fullCompaction.beforeStep(stepSignal);
               await this.agent.injection.inject();
               deduper.beginStep();
@@ -798,7 +808,11 @@ type ToolTelemetryResult = Extract<LoopEvent, { type: 'tool.result' }>['result']
 function telemetryToolOutcome(result: ToolTelemetryResult): 'success' | 'error' | 'cancelled' {
   if (result.isError !== true) return 'success';
   const text = toolResultText(result).toLowerCase();
-  return text.includes('aborted') || text.includes('cancelled') ? 'cancelled' : 'error';
+  return text.includes('aborted') ||
+    text.includes('cancelled') ||
+    text.includes('manually interrupted')
+    ? 'cancelled'
+    : 'error';
 }
 
 function telemetryToolErrorType(result: ToolTelemetryResult): string {

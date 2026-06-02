@@ -85,6 +85,13 @@ export interface AnthropicOptions {
   metadata?: Record<string, string> | undefined;
   /** Use streaming API. Defaults to true. Set to false for non-streaming (test/fallback). */
   stream?: boolean | undefined;
+  /**
+   * Explicitly declare whether the model supports adaptive thinking
+   * (`thinking: { type: 'adaptive' }`), overriding the model-name version
+   * inference. Useful for custom-named endpoints whose model name does not
+   * encode a parseable Claude version. Leave undefined to infer from the name.
+   */
+  adaptiveThinking?: boolean | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => Anthropic;
 }
 
@@ -285,22 +292,22 @@ function isOpus47(model: string): boolean {
   return version.major === 4 && version.minor === 7;
 }
 
-function supportsEffortParam(model: string): boolean {
-  if (supportsAdaptiveThinking(model)) {
+function supportsEffortParam(model: string, adaptive: boolean): boolean {
+  if (adaptive) {
     return true;
   }
   const normalized = model.toLowerCase();
   return normalized.includes('opus-4-5') || normalized.includes('opus-4.5');
 }
 
-function clampEffort(effort: ThinkingEffort, model: string): ThinkingEffort {
+function clampEffort(effort: ThinkingEffort, model: string, adaptive: boolean): ThinkingEffort {
   if (effort === 'off') {
     return effort;
   }
   if (effort === 'xhigh' && !isOpus47(model)) {
     return 'high';
   }
-  if (effort === 'max' && !supportsAdaptiveThinking(model)) {
+  if (effort === 'max' && !adaptive) {
     return 'high';
   }
   return effort;
@@ -807,17 +814,21 @@ export class AnthropicChatProvider implements ChatProvider {
   private _baseUrl: string | undefined;
   private _defaultHeaders: Record<string, string> | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => Anthropic) | undefined;
+  private _adaptiveThinking: boolean | undefined;
+  private _explicitMaxTokens: boolean;
 
   constructor(options: AnthropicOptions) {
     this._model = options.model;
     this._stream = options.stream ?? true;
     this._metadata = options.metadata;
+    this._adaptiveThinking = options.adaptiveThinking;
     const apiKey = options.apiKey ?? process.env['ANTHROPIC_API_KEY'];
     this._apiKey = apiKey === undefined || apiKey.length === 0 ? undefined : apiKey;
     this._baseUrl = options.baseUrl;
     this._defaultHeaders = options.defaultHeaders;
     this._clientFactory = options.clientFactory;
     this._client = this._apiKey === undefined ? undefined : this._buildClient(this._apiKey);
+    this._explicitMaxTokens = options.defaultMaxTokens !== undefined;
     this._generationKwargs = {
       max_tokens: resolveDefaultMaxTokens(options.model, options.defaultMaxTokens),
       betaFeatures: options.betaFeatures ?? [INTERLEAVED_THINKING_BETA],
@@ -1020,9 +1031,13 @@ export class AnthropicChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): AnthropicChatProvider {
+    // Resolve once: an explicit `adaptiveThinking` option overrides the
+    // model-name version inference, so custom-named endpoints can opt in/out.
+    const adaptive = this._adaptiveThinking ?? supportsAdaptiveThinking(this._model);
+
     if (effort === 'off') {
       let newBetas = [...(this._generationKwargs.betaFeatures ?? [])];
-      if (supportsAdaptiveThinking(this._model)) {
+      if (adaptive) {
         newBetas = newBetas.filter((b) => b !== INTERLEAVED_THINKING_BETA);
       }
       const clone = this._withGenerationKwargs({
@@ -1033,14 +1048,14 @@ export class AnthropicChatProvider implements ChatProvider {
       return clone;
     }
 
-    const effectiveEffort = clampEffort(effort, this._model);
+    const effectiveEffort = clampEffort(effort, this._model, adaptive);
     if (effectiveEffort === 'off') {
       throw new Error('Non-off thinking effort unexpectedly clamped to off.');
     }
 
     let newBetas = [...(this._generationKwargs.betaFeatures ?? [])];
 
-    if (supportsAdaptiveThinking(this._model)) {
+    if (adaptive) {
       newBetas = newBetas.filter((b) => b !== INTERLEAVED_THINKING_BETA);
       return this._withGenerationKwargs({
         thinking: { type: 'adaptive', display: 'summarized' },
@@ -1053,13 +1068,13 @@ export class AnthropicChatProvider implements ChatProvider {
       thinking: { type: 'enabled', budget_tokens: budgetTokensForEffort(effectiveEffort) },
       betaFeatures: newBetas,
     };
-    if (supportsEffortParam(this._model)) {
+    if (supportsEffortParam(this._model, adaptive)) {
       kwargs.output_config = { effort: effectiveEffort };
     } else {
       kwargs.output_config = undefined;
     }
     const clone = this._withGenerationKwargs(kwargs);
-    if (!supportsEffortParam(this._model)) {
+    if (!supportsEffortParam(this._model, adaptive)) {
       delete clone._generationKwargs.output_config;
     }
     return clone;
@@ -1069,9 +1084,25 @@ export class AnthropicChatProvider implements ChatProvider {
     return this._withGenerationKwargs(kwargs);
   }
 
+  withMaxCompletionTokens(maxCompletionTokens: number): AnthropicChatProvider {
+    const requestedCap = resolveDefaultMaxTokens(this._model, maxCompletionTokens);
+    const existingCap = this._generationKwargs.max_tokens;
+    const clone = this._withGenerationKwargs({
+      max_tokens:
+        existingCap === undefined || this._explicitMaxTokens
+          ? existingCap ?? requestedCap
+          : Math.min(existingCap, requestedCap),
+    });
+    clone._explicitMaxTokens = this._explicitMaxTokens;
+    return clone;
+  }
+
   private _withGenerationKwargs(kwargs: Partial<AnthropicGenerationKwargs>): AnthropicChatProvider {
     const clone = this._clone();
     clone._generationKwargs = { ...clone._generationKwargs, ...kwargs };
+    if ('max_tokens' in kwargs) {
+      clone._explicitMaxTokens = kwargs.max_tokens !== undefined;
+    }
     return clone;
   }
 

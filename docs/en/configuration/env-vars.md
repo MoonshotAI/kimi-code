@@ -85,8 +85,11 @@ For testing you can make Kimi Code use a specific model **without editing `confi
 | `KIMI_MODEL_DEFAULT_THINKING` | No | Default Thinking toggle for new sessions | Unset follows the global default (Thinking on) |
 | `KIMI_MODEL_THINKING_MODE` | No | Thinking trigger policy; `auto`/`on`/`off` | — |
 | `KIMI_MODEL_THINKING_EFFORT` | No | Thinking effort (e.g. `low`/`medium`/`high`/`xhigh`/`max`; available levels depend on the provider) | — |
+| `KIMI_MODEL_ADAPTIVE_THINKING` | No | Force adaptive thinking (`thinking: { type: 'adaptive' }`) on or off, overriding the model-name version inference (`anthropic` only) | Inferred from the model name (Claude ≥ 4.6 uses adaptive) |
 
 The synthesized entries use the reserved keys `__kimi_env__` (provider) and `__kimi_env_model__` (model alias). When `KIMI_MODEL_NAME` is set but a required variable is missing or invalid, startup fails with a clear error.
+
+Set `KIMI_MODEL_ADAPTIVE_THINKING=true` when a custom-named Anthropic-compatible endpoint backs a model that supports adaptive thinking but whose model name does not encode a parseable Claude version (so the automatic inference would otherwise fall back to budget-based thinking). Forcing it on for an endpoint that does **not** support adaptive thinking makes the API reject the request, so leave it unset unless you know the backing model supports it.
 
 ```sh
 export KIMI_MODEL_NAME="kimi-for-coding"

@@ -69,10 +69,15 @@ export function promptFeedbackInput(host: SlashCommandHost): Promise<string | un
   });
 }
 
-export function promptApiKey(host: SlashCommandHost, platformName: string): Promise<string | undefined> {
+export function promptApiKey(
+  host: SlashCommandHost,
+  platformName: string,
+  subtitleLines: readonly string[] = ['Your key will be saved to ~/.kimi-code/config.toml'],
+): Promise<string | undefined> {
   return new Promise((resolve) => {
     const dialog = new ApiKeyInputDialogComponent(
       platformName,
+      subtitleLines,
       (result: ApiKeyInputResult) => {
         host.restoreEditor();
         resolve(result.kind === 'ok' ? result.value : undefined);

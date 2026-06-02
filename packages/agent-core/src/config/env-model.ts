@@ -68,15 +68,13 @@ function parseCapabilities(raw: string | undefined): string[] | undefined {
 // `parseBooleanEnv` returns undefined for unrecognized input. Treat a non-empty
 // but unparseable value (e.g. a typo like `flase`) as a config error so it
 // fails fast like the other KIMI_MODEL_* values, instead of silently keeping
-// config.toml's existing default_thinking.
-function parseDefaultThinking(raw: string | undefined): boolean | undefined {
+// config.toml's existing value.
+function parseBooleanVar(raw: string | undefined, varName: string): boolean | undefined {
   const value = trimmed(raw);
   if (value === undefined) return undefined;
   const parsed = parseBooleanEnv(value);
   if (parsed === undefined) {
-    fail(
-      `KIMI_MODEL_DEFAULT_THINKING must be a boolean (true/false/1/0/yes/no/on/off), got "${raw}".`,
-    );
+    fail(`${varName} must be a boolean (true/false/1/0/yes/no/on/off), got "${raw}".`);
   }
   return parsed;
 }
@@ -124,6 +122,10 @@ export function applyEnvModelConfig(config: KimiConfig, env: Env = process.env):
   const capabilities = parseCapabilities(env['KIMI_MODEL_CAPABILITIES']) ?? DEFAULT_CAPABILITIES;
   const displayName = trimmed(env['KIMI_MODEL_DISPLAY_NAME']);
   const reasoningKey = trimmed(env['KIMI_MODEL_REASONING_KEY']);
+  const adaptiveThinking = parseBooleanVar(
+    env['KIMI_MODEL_ADAPTIVE_THINKING'],
+    'KIMI_MODEL_ADAPTIVE_THINKING',
+  );
 
   const alias: ModelAlias = {
     provider: ENV_MODEL_PROVIDER_KEY,
@@ -133,6 +135,7 @@ export function applyEnvModelConfig(config: KimiConfig, env: Env = process.env):
     ...(displayName !== undefined ? { displayName } : {}),
     ...(maxOutputSize !== undefined ? { maxOutputSize } : {}),
     ...(reasoningKey !== undefined ? { reasoningKey } : {}),
+    ...(adaptiveThinking !== undefined ? { adaptiveThinking } : {}),
   };
 
   const thinkingMode = trimmed(env['KIMI_MODEL_THINKING_MODE']);
@@ -148,7 +151,10 @@ export function applyEnvModelConfig(config: KimiConfig, env: Env = process.env):
           ...(thinkingEffort !== undefined ? { effort: thinkingEffort } : {}),
         }
       : config.thinking;
-  const defaultThinking = parseDefaultThinking(env['KIMI_MODEL_DEFAULT_THINKING']);
+  const defaultThinking = parseBooleanVar(
+    env['KIMI_MODEL_DEFAULT_THINKING'],
+    'KIMI_MODEL_DEFAULT_THINKING',
+  );
 
   const merged: KimiConfig = {
     ...config,

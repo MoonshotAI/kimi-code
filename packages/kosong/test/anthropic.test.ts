@@ -925,6 +925,61 @@ describe('AnthropicChatProvider', () => {
       expect(body['output_config']).toEqual({ effort: 'max' });
     });
 
+    it('adaptiveThinking=true forces adaptive on an unversioned model name', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'coding-model-okapi-0527-vibe',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        adaptiveThinking: true,
+      }).withThinking('high');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' });
+      expect(body['output_config']).toEqual({ effort: 'high' });
+    });
+
+    it('forced adaptive allows max effort without clamping to high', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'coding-model-okapi-0527-vibe',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        adaptiveThinking: true,
+      }).withThinking('max');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' });
+      expect(body['output_config']).toEqual({ effort: 'max' });
+    });
+
+    it('unversioned model name without adaptiveThinking stays budget-based', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'coding-model-okapi-0527-vibe',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+      }).withThinking('high');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: 32000 });
+      expect(body['output_config']).toBeUndefined();
+    });
+
+    it('adaptiveThinking=false forces budget on a 4.6 model name', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'claude-opus-4-6',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        adaptiveThinking: false,
+      }).withThinking('high');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: 32000 });
+      expect(body['output_config']).toBeUndefined();
+    });
+
     it('pre-4.6 model clamps xhigh and max to high without output_config', async () => {
       for (const effort of ['xhigh', 'max'] as const) {
         const provider = createProvider('claude-sonnet-4-5').withThinking(effort);
@@ -2082,5 +2137,81 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
 
   it('clamps defaultMaxTokens above the documented ceiling for known models', async () => {
     expect(await maxTokensFor('claude-opus-4-7', { defaultMaxTokens: 999999 })).toBe(128000);
+  });
+
+  it('withMaxCompletionTokens sets max_tokens when no existing cap is present', async () => {
+    const original = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+    });
+    const provider = original
+      .withGenerationKwargs({ max_tokens: undefined })
+      .withMaxCompletionTokens(2048);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(provider).not.toBe(original);
+    expect(body['max_tokens']).toBe(2048);
+  });
+
+  it('withMaxCompletionTokens lowers the inferred model default cap', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+    }).withMaxCompletionTokens(8192);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['max_tokens']).toBe(8192);
+  });
+
+  it('withMaxCompletionTokens preserves an existing lower max_tokens cap', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+      defaultMaxTokens: 1024,
+    }).withMaxCompletionTokens(128000);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['max_tokens']).toBe(1024);
+  });
+
+  it('withMaxCompletionTokens preserves an existing higher max_tokens cap', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'unknown-model',
+      apiKey: 'test-key',
+      stream: false,
+      defaultMaxTokens: 128000,
+    }).withMaxCompletionTokens(1024);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['max_tokens']).toBe(128000);
+  });
+
+  it('withMaxCompletionTokens clamps above the documented ceiling for known models', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+    }).withMaxCompletionTokens(999999);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['max_tokens']).toBe(128000);
   });
 });

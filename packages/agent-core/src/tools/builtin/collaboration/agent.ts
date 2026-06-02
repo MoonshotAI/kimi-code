@@ -25,7 +25,11 @@ import { isAbortError } from '../../../loop/errors';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import type { ResolvedAgentProfile } from '../../../profile';
 import type { SessionSubagentHost, SubagentHandle } from '../../../session/subagent-host';
-import { createDeadlineAbortSignal, type DeadlineAbortSignal } from '../../../utils/abort';
+import {
+  createDeadlineAbortSignal,
+  isUserCancellation,
+  type DeadlineAbortSignal,
+} from '../../../utils/abort';
 import type { BackgroundProcessManager } from '../../background/manager';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { matchesGlobRuleSubject } from '../../support/rule-match';
@@ -303,8 +307,11 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         let message: string;
         if (foregroundDeadline?.timedOut() === true && args.timeout !== undefined) {
           message = `Agent timed out after ${args.timeout}s.`;
+        } else if (isUserCancellation(signal.reason)) {
+          message =
+            'The user manually interrupted this subagent (and any sibling agents launched alongside it). This was a deliberate user action, not a system error, a timeout, or a capacity/concurrency limit. Do not retry automatically or speculate about why it failed — wait for the user\'s next instruction.';
         } else if (isAbortError(error)) {
-          message = 'The subagent was stopped by the user.';
+          message = 'The subagent was stopped before it finished.';
         } else {
           message = error instanceof Error ? error.message : String(error);
         }
@@ -321,8 +328,11 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       let message: string;
       if (foregroundDeadline?.timedOut() === true && args.timeout !== undefined) {
         message = `Agent timed out after ${args.timeout}s.`;
+      } else if (isUserCancellation(signal.reason)) {
+        message =
+          'The user manually interrupted this subagent (and any sibling agents launched alongside it). This was a deliberate user action, not a system error, a timeout, or a capacity/concurrency limit. Do not retry automatically or speculate about why it failed — wait for the user\'s next instruction.';
       } else if (isAbortError(error)) {
-        message = 'The subagent was stopped by the user.';
+        message = 'The subagent was stopped before it finished.';
       } else {
         message = error instanceof Error ? error.message : String(error);
       }
