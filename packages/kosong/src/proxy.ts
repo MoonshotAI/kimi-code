@@ -10,6 +10,9 @@ let proxyFetch: typeof fetch | undefined;
  *
  * When no proxy environment variables are set this returns the global
  * `fetch` so there is no runtime overhead.
+ *
+ * Note: this module is intentionally duplicated in `packages/oauth/src/proxy-fetch.ts`
+ * because `oauth` does not depend on `kosong`. Keep the two files in sync.
  */
 export function getProxyFetch(): typeof fetch {
   if (proxyFetch !== undefined) {
