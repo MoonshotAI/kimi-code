@@ -24,12 +24,57 @@ describe('KimiChatProvider.getCapability', () => {
     return new KimiChatProvider({ model, apiKey: 'test-key' });
   }
 
-  it('does not infer capabilities from Kimi model names', () => {
+  it('kimi-k2.6 → image_in + video_in + thinking + tool_use', () => {
+    const cap = make('kimi-k2.6').getCapability();
+    expect(cap.image_in).toBe(true);
+    expect(cap.video_in).toBe(true);
+    expect(cap.audio_in).toBe(false);
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+  });
+
+  it('kimi-k2.5 → image_in + thinking + tool_use, video_in=false', () => {
+    const cap = make('kimi-k2.5').getCapability();
+    expect(cap.image_in).toBe(true);
+    expect(cap.video_in).toBe(false);
+    expect(cap.audio_in).toBe(false);
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+  });
+
+  it('moonshot-v1 vision models → image_in + tool_use', () => {
+    for (const model of [
+      'moonshot-v1-8k-vision-preview',
+      'moonshot-v1-32k-vision-preview',
+      'moonshot-v1-128k-vision-preview',
+    ]) {
+      const cap = make(model).getCapability();
+      expect(cap.image_in).toBe(true);
+      expect(cap.video_in).toBe(false);
+      expect(cap.thinking).toBe(false);
+      expect(cap.tool_use).toBe(true);
+    }
+  });
+
+  it('moonshot-v1 text models → tool_use only', () => {
+    for (const model of ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k']) {
+      const cap = make(model).getCapability();
+      expect(cap.image_in).toBe(false);
+      expect(cap.video_in).toBe(false);
+      expect(cap.thinking).toBe(false);
+      expect(cap.tool_use).toBe(true);
+    }
+  });
+
+  it('does not infer capabilities from managed or retired Kimi model names', () => {
     for (const model of [
       'kimi-for-coding',
       'kimi-code',
+      'kimi-k2-0905-preview',
+      'kimi-k2-0711-preview',
       'kimi-k2-turbo-preview',
-      'kimi-k2.5',
+      'kimi-k2-thinking',
+      'kimi-k2-thinking-turbo',
       'kimi-thinking-preview',
     ]) {
       expect(make(model).getCapability()).toEqual(UNKNOWN_CAPABILITY);
@@ -38,7 +83,7 @@ describe('KimiChatProvider.getCapability', () => {
 
   it('explicit model arg overrides this.modelName', () => {
     const provider = make('kimi-k2-turbo-preview');
-    expect(provider.getCapability('kimi-for-coding')).toEqual(UNKNOWN_CAPABILITY);
+    expect(provider.getCapability('kimi-k2.6').video_in).toBe(true);
   });
 
   it('unknown Kimi model → UNKNOWN_CAPABILITY (no throw)', () => {
