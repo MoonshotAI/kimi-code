@@ -10,6 +10,7 @@ import { STREAMING_UI_FLUSH_MS } from '../constant/streaming';
 import { hasDispose } from '../utils/component-capabilities';
 import { appendStreamingArgsPreview, parseStreamingArgs } from '../utils/event-payload';
 import { notifyTerminalOnce } from '../utils/terminal-notification';
+import { markTranscriptComponent } from '../utils/transcript-component-metadata';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { TodoItem } from '../components/chrome/todo-panel';
 import type {
@@ -546,6 +547,7 @@ export class StreamingUIController {
     );
     this._streamingBlock = { component, entry };
     this.host.pushTranscriptEntry(entry);
+    markTranscriptComponent(component, entry);
     state.transcriptContainer.addChild(component);
     state.ui.requestRender();
   }

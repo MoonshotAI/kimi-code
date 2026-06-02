@@ -22,6 +22,11 @@ export interface EditorKeyboardHost {
   cancelInFlight: (() => void) | undefined;
 
   handleUserInput(text: string): void;
+  isUndoPreviewActive(): boolean;
+  moveUndoPreviewUp(): boolean;
+  moveUndoPreviewDown(): boolean;
+  commitUndoPreview(): void;
+  cancelUndoPreview(): boolean;
   steerMessage(session: Session, input: string[]): void;
   recallLastQueued(): string | undefined;
   showError(msg: string): void;
@@ -50,15 +55,29 @@ export class EditorKeyboardController {
     const editor = host.state.editor;
 
     editor.onSubmit = (text: string) => {
+      if (host.isUndoPreviewActive() && text.trim().length === 0) {
+        host.commitUndoPreview();
+        return;
+      }
+      if (host.isUndoPreviewActive()) host.cancelUndoPreview();
       host.handleUserInput(text);
     };
 
     editor.onChange = (text: string) => {
       if (this.pendingExit) this.clearPendingExit();
+      if (host.isUndoPreviewActive() && text.length > 0) {
+        host.cancelUndoPreview();
+      }
       host.updateEditorBorderHighlight(text);
     };
 
     editor.onCtrlC = () => {
+      if (host.isUndoPreviewActive()) {
+        this.clearPendingExit();
+        host.cancelUndoPreview();
+        return;
+      }
+
       if (host.cancelInFlight !== undefined) {
         const cancel = host.cancelInFlight;
         host.cancelInFlight = undefined;
@@ -92,6 +111,12 @@ export class EditorKeyboardController {
     };
 
     editor.onCtrlD = () => {
+      if (host.isUndoPreviewActive()) {
+        this.clearPendingExit();
+        host.cancelUndoPreview();
+        return;
+      }
+
       if (this.pendingExit?.kind === 'ctrl-d') {
         this.clearPendingExit();
         void host.stop();
@@ -102,6 +127,10 @@ export class EditorKeyboardController {
 
     editor.onEscape = () => {
       if (this.pendingExit) this.clearPendingExit();
+      if (host.isUndoPreviewActive()) {
+        host.cancelUndoPreview();
+        return;
+      }
       if (host.state.activeDialog === 'session-picker') {
         host.hideSessionPicker();
         return;
@@ -177,6 +206,10 @@ export class EditorKeyboardController {
     };
 
     editor.onUpArrowEmpty = () => {
+      if (host.isUndoPreviewActive()) {
+        host.moveUndoPreviewUp();
+        return true;
+      }
       if (host.state.appState.streamingPhase === 'idle' && !host.state.appState.isCompacting) return false;
       const recalled = host.recallLastQueued();
       if (recalled !== undefined) {
@@ -186,6 +219,12 @@ export class EditorKeyboardController {
         return true;
       }
       return false;
+    };
+
+    editor.onDownArrowEmpty = () => {
+      if (!host.isUndoPreviewActive()) return false;
+      host.moveUndoPreviewDown();
+      return true;
     };
 
     editor.onPasteImage = async () => this.handleClipboardImagePaste();

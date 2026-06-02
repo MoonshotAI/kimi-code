@@ -64,6 +64,7 @@ import * as slashCommands from './commands/dispatch';
 import { SessionReplayRenderer } from './controllers/session-replay';
 import { StreamingUIController } from './controllers/streaming-ui';
 import { TasksBrowserController } from './controllers/tasks-browser';
+import { UndoPreviewController } from './controllers/undo-preview';
 import { installRainbowDance } from './easter-eggs/dance';
 import { FileMentionProvider } from './components/editor/file-mention-provider';
 import { AssistantMessageComponent } from './components/messages/assistant-message';
@@ -216,6 +217,7 @@ export class KimiTUI {
   readonly sessionEventHandler: SessionEventHandler;
   readonly sessionReplay: SessionReplayRenderer;
   readonly tasksBrowserController: TasksBrowserController;
+  readonly undoPreviewController: UndoPreviewController;
   readonly editorKeyboard: EditorKeyboardController;
 
   // The currently-mounted approval panel, if any. Kept so the full-screen
@@ -287,6 +289,7 @@ export class KimiTUI {
     this.sessionEventHandler = new SessionEventHandler(this);
     this.sessionReplay = new SessionReplayRenderer(this);
     this.tasksBrowserController = new TasksBrowserController(this);
+    this.undoPreviewController = new UndoPreviewController(this);
     this.editorKeyboard = new EditorKeyboardController(this, this.imageStore);
     this.editorKeyboard.install();
     this.buildLayout();
@@ -662,8 +665,35 @@ export class KimiTUI {
     void slashCommands.handlePlanCommand(this, next ? 'on' : 'off');
   }
 
+  startUndoPreview(count: number): void {
+    this.undoPreviewController.start(count);
+  }
+
+  isUndoPreviewActive(): boolean {
+    return this.undoPreviewController.isActive();
+  }
+
+  moveUndoPreviewUp(): boolean {
+    return this.undoPreviewController.moveUp();
+  }
+
+  moveUndoPreviewDown(): boolean {
+    return this.undoPreviewController.moveDown();
+  }
+
+  commitUndoPreview(): void {
+    void this.undoPreviewController.commit();
+  }
+
+  cancelUndoPreview(): boolean {
+    return this.undoPreviewController.cancel();
+  }
+
   handleUserInput(text: string): void {
     if (text.trim().length === 0) return;
+    if (this.undoPreviewController.isActive()) {
+      this.undoPreviewController.cancel();
+    }
     if (this.state.appState.isReplaying) {
       this.showError('Cannot send input while session history is replaying.');
       return;
@@ -900,6 +930,7 @@ export class KimiTUI {
   }
 
   pushTranscriptEntry(entry: TranscriptEntry): void {
+    this.undoPreviewController.cancel();
     this.state.transcriptEntries.push(entry);
   }
 
@@ -1270,6 +1301,7 @@ export class KimiTUI {
   }
 
   appendTranscriptEntry(entry: TranscriptEntry): void {
+    this.undoPreviewController.cancel();
     this.state.transcriptEntries.push(entry);
     const component = this.createTranscriptComponent(entry);
     if (component) {
@@ -1324,6 +1356,7 @@ export class KimiTUI {
   }
 
   private clearTranscriptAndRedraw(): void {
+    this.undoPreviewController.cancel();
     this.streamingUI.discardPending();
     this.state.transcriptEntries = [];
     this.streamingUI.disposeActiveCompactionBlock();
@@ -1339,6 +1372,7 @@ export class KimiTUI {
   }
 
   showStatus(message: string, color?: string): void {
+    this.undoPreviewController.cancel();
     this.state.transcriptContainer.addChild(
       new StatusMessageComponent(message, this.state.theme.colors, color),
     );
@@ -1346,6 +1380,7 @@ export class KimiTUI {
   }
 
   showNotice(title: string, detail?: string): void {
+    this.undoPreviewController.cancel();
     this.state.transcriptContainer.addChild(
       new NoticeMessageComponent(title, detail, this.state.theme.colors),
     );
@@ -1361,6 +1396,7 @@ export class KimiTUI {
   }
 
   showProgressSpinner(label: string): LoginProgressSpinnerHandle {
+    this.undoPreviewController.cancel();
     const tint = (s: string): string => chalk.hex(this.state.theme.colors.primary)(s);
     const spinner = new MoonLoader(this.state.ui, 'braille', tint, label);
     this.state.transcriptContainer.addChild(new Spacer(1));
@@ -1378,6 +1414,7 @@ export class KimiTUI {
   }
 
   showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle {
+    this.undoPreviewController.cancel();
     openUrl(auth.verificationUriComplete);
     this.state.transcriptContainer.addChild(
       new DeviceCodeBoxComponent({

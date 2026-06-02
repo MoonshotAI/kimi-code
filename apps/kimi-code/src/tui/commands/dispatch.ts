@@ -125,6 +125,7 @@ export interface SlashCommandHost {
   showSessionPicker(): Promise<void>;
   sendNormalUserInput(text: string): void;
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void;
+  startUndoPreview(count: number): void;
   readonly skillCommandMap: Map<string, string>;
 
   // Controller refs

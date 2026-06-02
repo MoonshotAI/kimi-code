@@ -24,6 +24,7 @@ const dark = {
   green300: '#7AD99B',
   red400: '#E85454',
   red300: '#F08585',
+  red700: '#B91C1C',
   amber400: '#E8A838',
   orange300: '#FFCB6B',
 } as const;
@@ -77,6 +78,9 @@ export interface ColorPalette {
 
   // Status
   status: string;
+
+  // Undo preview
+  undoHighlight: string;
 }
 
 export const darkColors: ColorPalette = {
@@ -108,6 +112,7 @@ export const darkColors: ColorPalette = {
   roleTool: dark.amber400,
 
   status: dark.gray500,
+  undoHighlight: dark.red700,
 };
 
 export const lightColors: ColorPalette = {
@@ -139,6 +144,7 @@ export const lightColors: ColorPalette = {
   roleTool: light.amber800,
 
   status: light.gray700,
+  undoHighlight: light.red700,
 };
 
 export type ResolvedTheme = 'dark' | 'light';

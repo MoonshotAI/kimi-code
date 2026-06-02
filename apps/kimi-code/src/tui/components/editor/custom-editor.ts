@@ -111,6 +111,7 @@ export class CustomEditor extends Editor {
    * through so pi-tui's built-in history navigation runs.
    */
   public onUpArrowEmpty?: () => boolean;
+  public onDownArrowEmpty?: () => boolean;
   public onShiftTab?: () => void;
   /**
    * Called when the user triggers "paste image" (Ctrl-V on Unix,
@@ -317,6 +318,12 @@ export class CustomEditor extends Editor {
       if (this.getText().length === 0 && this.onUpArrowEmpty) {
         if (this.onUpArrowEmpty()) return;
         // fall through to super so Editor's built-in history navigation runs
+      }
+    }
+
+    if (matchesKey(normalized, Key.down)) {
+      if (this.getText().length === 0 && this.onDownArrowEmpty) {
+        if (this.onDownArrowEmpty()) return;
       }
     }
 

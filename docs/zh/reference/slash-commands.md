@@ -31,6 +31,7 @@
 | `/fork` | — | 基于当前会话 fork 一份新会话，保留完整对话历史。 | 否 |
 | `/title [<text>]` | `/rename` | 不带参数时显示当前会话标题；带参数时将其设置为新标题（最长 200 个字符）。 | 是 |
 | `/compact [<instruction>]` | — | 压缩当前对话上下文，释放 token 占用；可选附带一段自定义指令，提示模型在压缩时保留哪些信息。 | 否 |
+| `/undo [<count>]` | — | 预览撤回最近一次提示词，或最近 `<count>` 次提示词，按 `Enter` 确认。可用 `↑` 和 `↓` 调整范围，或按 `Esc` 取消。 | 否 |
 | `/init` | — | 分析当前代码库并生成 `AGENTS.md`。 | 否 |
 | `/export-md [<path>]` | `/export` | 将当前会话导出为 Markdown 文件。不带参数时写入工作目录下的 `kimi-export-<short-id>-<timestamp>.md`，传入路径可指定输出位置。 | 否 |
 | `/export-debug-zip` | — | 将当前会话导出为调试用的 ZIP 压缩包（与 [`kimi export`](./kimi-command.md#kimi-export) 行为一致）。压缩包始终包含当前活动的全局诊断日志。 | 否 |

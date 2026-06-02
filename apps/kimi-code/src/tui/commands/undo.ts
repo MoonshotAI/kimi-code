@@ -5,6 +5,7 @@ import { AgentGroupComponent } from '../components/messages/agent-group';
 import { AssistantMessageComponent } from '../components/messages/assistant-message';
 import { BackgroundAgentStatusComponent } from '../components/messages/background-agent-status';
 import { CronMessageComponent } from '../components/messages/cron-message';
+import { CompactionComponent } from '../components/dialogs/compaction';
 import { ReadGroupComponent } from '../components/messages/read-group';
 import { SkillActivationComponent } from '../components/messages/skill-activation';
 import { ThinkingComponent } from '../components/messages/thinking';
@@ -24,28 +25,35 @@ export async function handleUndoCommand(
   host: SlashCommandHost,
   args: string = '',
 ): Promise<void> {
-  if (host.state.appState.streamingPhase !== 'idle') {
-    host.showError('Cannot undo while streaming — press Esc or Ctrl-C first.');
-    return;
-  }
-
   const count = parseUndoCount(args);
   if (count === undefined) {
     host.showError('Usage: /undo [count], where count is a positive integer.');
     return;
   }
 
+  host.startUndoPreview(count);
+}
+
+export async function commitUndoCommand(
+  host: SlashCommandHost,
+  count: number,
+): Promise<boolean> {
+  if (host.state.appState.streamingPhase !== 'idle') {
+    host.showError('Cannot undo while streaming — press Esc or Ctrl-C first.');
+    return false;
+  }
+
   const session = host.session;
   if (session === undefined) {
     host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
+    return false;
   }
 
   const entries = host.state.transcriptEntries;
   const lastUserIndex = findUndoAnchorEntryIndex(entries, count);
   if (lastUserIndex === undefined) {
     host.showError('Nothing to undo.');
-    return;
+    return false;
   }
 
   try {
@@ -53,7 +61,7 @@ export async function handleUndoCommand(
   } catch (error) {
     const message = formatErrorMessage(error);
     host.showError(`Failed to undo: ${message}`);
-    return;
+    return false;
   }
 
   const children = host.state.transcriptContainer.children;
@@ -73,6 +81,7 @@ export async function handleUndoCommand(
   }
 
   host.state.ui.requestRender();
+  return true;
 }
 
 function parseUndoCount(args: string): number | undefined {
@@ -83,7 +92,7 @@ function parseUndoCount(args: string): number | undefined {
   return Number.isSafeInteger(count) ? count : undefined;
 }
 
-function isUndoAnchorEntry(entry: TranscriptEntry): boolean {
+export function isUndoAnchorEntry(entry: TranscriptEntry): boolean {
   return (
     entry.kind === 'user' ||
     (entry.kind === 'skill_activation' && entry.skillTrigger === 'user-slash')
@@ -105,7 +114,7 @@ function findUndoAnchorEntryIndex(
   return undefined;
 }
 
-function isUndoContextEntry(entry: TranscriptEntry): boolean {
+export function isUndoContextEntry(entry: TranscriptEntry): boolean {
   switch (entry.kind) {
     case 'user':
     case 'assistant':
@@ -148,14 +157,19 @@ function removeUndoContextComponents(
   }
 }
 
-function isUndoAnchorComponent(child: Component): boolean {
+export function isUndoAnchorComponent(child: Component): boolean {
   return (
     child instanceof UserMessageComponent ||
     (child instanceof SkillActivationComponent && child.trigger === 'user-slash')
   );
 }
 
-function isUndoContextComponent(child: Component): boolean {
+export function isUndoBoundaryComponent(child: Component): boolean {
+  const entry = getTranscriptComponentEntry(child);
+  return entry?.compactionData !== undefined || child instanceof CompactionComponent;
+}
+
+export function isUndoContextComponent(child: Component): boolean {
   const entry = getTranscriptComponentEntry(child);
   if (entry !== undefined) {
     return isUndoContextEntry(entry);
