@@ -1,6 +1,8 @@
 import type { Message, Tool as LLMTool } from '@moonshot-ai/kosong';
 import { expect } from 'vitest';
 
+import { AGENT_WIRE_PROTOCOL_VERSION } from '../../../src/agent/records';
+
 const IS_EVENT_ARRAY = Symbol('isEventArray');
 const IS_GENERATE_INPUT_SNAPSHOT = Symbol('isGenerateInputSnapshot');
 const IS_GENERATE_INPUTS_SNAPSHOT = Symbol('isGenerateInputsSnapshot');
@@ -284,6 +286,9 @@ function normalizeObjectField(
   uuidLabels: Map<string, string>,
 ): unknown {
   if ((key === 'time' || key === 'created_at') && typeof value === 'number') return '<time>';
+  if (key === 'protocol_version' && value === AGENT_WIRE_PROTOCOL_VERSION) {
+    return '<protocol-version>';
+  }
   if (key === 'cwd' && typeof value === 'string') return '<cwd>';
   return normalizeValue(value, uuidLabels);
 }

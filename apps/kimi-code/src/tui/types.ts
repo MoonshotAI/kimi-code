@@ -32,6 +32,7 @@ export interface AppState {
   availableModels: Record<string, ModelAlias>;
   availableProviders: Record<string, ProviderConfig>;
   sessionTitle: string | null;
+  mcpServersSummary: string | null;
 }
 
 export interface ToolCallBlockData {
@@ -95,6 +96,15 @@ export interface CompactionTranscriptData {
   readonly instruction?: string;
 }
 
+export interface CronTranscriptData {
+  readonly jobId?: string;
+  readonly cron?: string;
+  readonly recurring?: boolean;
+  readonly coalescedCount?: number;
+  readonly stale?: boolean;
+  readonly missedCount?: number;
+}
+
 export type TranscriptEntryKind =
   | 'welcome'
   | 'user'
@@ -102,7 +112,8 @@ export type TranscriptEntryKind =
   | 'tool_call'
   | 'thinking'
   | 'status'
-  | 'skill_activation';
+  | 'skill_activation'
+  | 'cron';
 
 export interface TranscriptEntry {
   id: string;
@@ -115,6 +126,7 @@ export interface TranscriptEntry {
   toolCallData?: ToolCallBlockData;
   backgroundAgentStatus?: BackgroundAgentStatusData;
   compactionData?: CompactionTranscriptData;
+  cronData?: CronTranscriptData;
   imageAttachmentIds?: readonly number[];
   skillActivationId?: string;
   skillName?: string;

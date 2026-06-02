@@ -101,8 +101,8 @@ kimi -C
 
 `/login` 会弹出平台选择器，支持：
 
-- **Kimi Code** — OAuth 验证码流程，在任意设备打开链接、登录并输入验证码即可授权
-- **Moonshot AI Open Platform** — 直接输入 API key 登录
+- **Kimi Code（OAuth）** — 验证码流程，在任意设备打开链接、登录并输入验证码即可授权
+- **Kimi Platform API 密钥** — 输入来自 `platform.kimi.com` 或 `platform.kimi.ai` 的 API 密钥
 
 需要退出登录时，输入 `/logout` 即可清除当前凭证。
 

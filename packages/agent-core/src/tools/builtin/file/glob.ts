@@ -8,24 +8,26 @@
  * search base to save tokens; `output.paths` keeps absolute paths so
  * downstream Read/Edit can consume them directly.
  *
- * Safety rails:
- *   - Pure-wildcard patterns (nothing but `*` / `?` / `/`) are rejected
- *     because they have no literal anchor — they would enumerate every
- *     file under the search root and exhaust the caller's context on
- *     large trees. Examples: `**`, `** / *`, `** / **`, `* / *`.
- *     Constrained patterns (with any literal anchor such as an extension
- *     or subdirectory) are allowed — the literal bounds the result set.
- *   - Patterns using brace expansion (`{a,b,c}`) are rejected up-front
- *     because the underlying `_globWalk` treats `{` / `}` as literals,
- *     so such patterns would silently match zero files.
+ * Behaviour:
+ *   - Brace expansion (`*.{ts,tsx}`, `{src,test}/**`) is expanded at
+ *     this layer into a list of sub-patterns before handing each to
+ *     `kaos.glob`. The kaos walker treats `{` / `}` as literals, so the
+ *     fan-out has to happen here for any results to come back. Cartesian
+ *     and one level of nesting are supported; unbalanced or comma-less
+ *     braces fall through as literals.
  *   - `path` is validated by `resolvePathAccess` in strict mode. Explicit
  *     paths must be absolute and within the workspace roots.
- *   - match count is capped at `MAX_MATCHES`; a separate `YIELD_SAFETY_CAP`
- *     (MAX_MATCHES × 2) on the raw yield stream is a secondary belt that
+ *   - Match count is capped at `MAX_MATCHES` (unique paths). A separate
+ *     `YIELD_SAFETY_CAP` on the raw yield stream is a secondary belt that
  *     still terminates the stream if the kaos layer's own symlink-cycle
  *     detection were ever absent or bypassed. Primary cycle defense lives
  *     in `packages/kaos/src/local.ts:_globWalk` via a path-local visited
- *     inode set.
+ *     inode set. With brace expansion the legitimate yield volume scales
+ *     with the number of sub-patterns, so the safety cap scales too.
+ *   - Pre-rejection of pure-wildcard / `**`-leading patterns has been
+ *     removed; the 100-match cap is the only safety against runaway
+ *     enumeration. Callers are expected to add an anchor (extension,
+ *     subdirectory) when 100 results would not be enough.
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';
@@ -38,7 +40,6 @@ import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { resolvePathAccessPath } from '../../policies/path-access';
 import type { PathClass } from '../../policies/path-access';
 import { toInputJsonSchema } from '../../support/input-schema';
-import { listDirectory } from '../../support/list-directory';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
 import GLOB_DESCRIPTION from './glob.md';
@@ -62,7 +63,19 @@ export const GlobInputSchema = z.object({
 
 export type GlobInput = z.Infer<typeof GlobInputSchema>;
 
-export const MAX_MATCHES = 1000;
+export const MAX_MATCHES = 100;
+
+/**
+ * Hard upper bound on the number of sub-patterns a single brace expansion
+ * is allowed to produce. Generous enough for the common LLM patterns
+ * (`*.{ts,tsx,js,jsx,mjs,cjs}` etc.) while still keeping pathological
+ * cartesian inputs like `{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}` (= 64) from
+ * fanning out unboundedly. Beyond this we fall through with the original
+ * pattern unexpanded — kaos would then treat the braces as literals and
+ * match zero, which is the right "obvious failure" signal for a pattern
+ * the model probably did not mean.
+ */
+const MAX_BRACE_EXPANSIONS = 64;
 
 /**
  * Path-shape hint appended to the tool description only on a Windows
@@ -84,12 +97,10 @@ const S_IFDIR = 0o040000;
 
 /**
  * Tool-level description shown to the LLM at tool declaration time.
- * Tells the model — before any round-trip — which patterns are
- * accepted, which are rejected, and which directories are too large to
- * recurse into. Patterns with a literal anchor before a double-star are
- * allowed; pure-wildcard patterns (a bare double-star or a double-star
- * followed by `/<wildcard>`) are rejected outright. On a Windows backend
- * the description also carries `WINDOWS_PATH_HINT` (path-shape guidance).
+ * Tells the model — before any round-trip — which patterns are accepted,
+ * how brace expansion is handled, and which directories are too large to
+ * recurse into. On a Windows backend the description also carries
+ * `WINDOWS_PATH_HINT` (path-shape guidance).
  */
 export class GlobTool implements BuiltinTool<GlobInput> {
   readonly name = 'Glob' as const;
@@ -116,10 +127,25 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       });
     }
     const searchRoots = [path ?? this.workspace.workspaceDir];
+
+    const detailParts: string[] = [];
+    detailParts.push(`pattern: ${args.pattern}`);
+    if (args.path !== undefined) {
+      detailParts.push(`path: ${args.path}`);
+    }
+    if (args.include_dirs === false) {
+      detailParts.push('include_dirs: false');
+    }
+
     return {
       accesses: ToolAccesses.searchTree(searchRoots[0]!),
       description: `Searching ${args.pattern}`,
-      display: { kind: 'file_io', operation: 'glob', path: searchRoots[0]! },
+      display: {
+        kind: 'file_io',
+        operation: 'glob',
+        path: searchRoots[0]!,
+        detail: detailParts.join(', '),
+      },
       approvalRule: literalRulePattern(this.name, args.pattern),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
       execute: () => this.execution(args, searchRoots),
@@ -127,58 +153,14 @@ export class GlobTool implements BuiltinTool<GlobInput> {
   }
 
   private async execution(args: GlobInput, searchRoots: string[]): Promise<ExecutableToolResult> {
-    if (startsWithDoubleStarPrefix(args.pattern)) {
-      let tree: string;
-      try {
-        tree = await listDirectory(this.kaos, this.workspace.workspaceDir);
-      } catch {
-        tree = '(listing unavailable)';
-      }
-      return {
-        isError: true,
-        output:
-          `Pattern "${args.pattern}" starts with '**' which is not allowed — ` +
-          `the leading '**/' has no literal anchor in front of it and would ` +
-          `enumerate every file under the search root, typically exhausting ` +
-          `the caller's context on large trees. Use more specific patterns ` +
-          `instead, such as "src/**/*.py" or "test/**/*.py".\n\n` +
-          `Top of ${this.workspace.workspaceDir}:\n${tree}`,
-      };
-    }
-
-    if (isPureWildcard(args.pattern)) {
-      const allowedRoots = [this.workspace.workspaceDir, ...this.workspace.additionalDirs];
-      const rootList = allowedRoots.map((d) => `  - ${d}`).join('\n');
-      let tree: string;
-      try {
-        tree = await listDirectory(this.kaos, this.workspace.workspaceDir);
-      } catch {
-        tree = '(listing unavailable)';
-      }
-      return {
-        isError: true,
-        output:
-          `Pattern "${args.pattern}" is a pure wildcard (only \`*\`, \`?\`, \`**\`, \`/\`) ` +
-          `and would enumerate every file under the search root — with no literal ` +
-          `anchor to bound the result set, this typically exhausts your context on ` +
-          `large trees. Add an extension ` +
-          `("${args.pattern === '**' || args.pattern === '**/*' ? '**/*.ts' : '**/*.md'}") ` +
-          `or a subdirectory ("src/**/*.ts") to constrain the walk.\n\n` +
-          `Allowed roots for explicit path searches:\n${rootList}\n\n` +
-          `Top of ${this.workspace.workspaceDir}:\n${tree}`,
-      };
-    }
-
-    if (containsBraceExpansion(args.pattern)) {
-      return {
-        isError: true,
-        output:
-          `Pattern "${args.pattern}" uses brace expansion (\`{a,b,...}\`), which ` +
-          `is not supported by this Glob tool. Split it into separate calls, ` +
-          `one pattern per alternative. For example, instead of "*.{ts,tsx}" ` +
-          `issue two calls: "*.ts" and "*.tsx".`,
-      };
-    }
+    // Expand brace alternations into a list of sub-patterns the kaos
+    // walker can actually understand. `*.{ts,tsx}` → ["*.ts", "*.tsx"];
+    // unbalanced or comma-less braces (`{abc}`, `{a,b`) fall through as
+    // a single-element list with the original pattern. When the fan-out
+    // would exceed MAX_BRACE_EXPANSIONS we also return the original so
+    // the caller sees an obvious zero-match outcome rather than a silent
+    // partial walk.
+    const subPatterns = expandBraces(args.pattern);
 
     // Default true. When false, directories yielded by kaos are
     // filtered out using the same stat that fuels the mtime sort
@@ -229,41 +211,46 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       //     file. `yielded` still terminates the stream if that primary
       //     defense were ever absent or bypassed (e.g. a future kaos
       //     backend without inode tracking), so the tool layer doesn't
-      //     depend on the kaos implementation for cycle safety.
+      //     depend on the kaos implementation for cycle safety. With
+      //     brace expansion the legitimate yield volume scales with the
+      //     number of sub-patterns (each is its own walk), so the cap
+      //     scales too.
       const seen = new Set<string>();
       const entries: Array<{ path: string; mtime: number }> = [];
-      const YIELD_SAFETY_CAP = MAX_MATCHES * 2;
+      const YIELD_SAFETY_CAP = MAX_MATCHES * 2 * subPatterns.length;
       let yielded = 0;
       let truncated = false;
 
       outer: for (const root of searchRoots) {
-        for await (const filePath of this.kaos.glob(root, args.pattern)) {
-          yielded++;
-          if (yielded >= YIELD_SAFETY_CAP) {
-            truncated = true;
-            break outer;
+        for (const subPattern of subPatterns) {
+          for await (const filePath of this.kaos.glob(root, subPattern)) {
+            yielded++;
+            if (yielded >= YIELD_SAFETY_CAP) {
+              truncated = true;
+              break outer;
+            }
+            if (seen.has(filePath)) continue;
+            if (entries.length >= MAX_MATCHES) {
+              truncated = true;
+              break outer;
+            }
+            seen.add(filePath);
+            let mtime = 0;
+            let isDir = false;
+            try {
+              const st = await this.kaos.stat(filePath);
+              mtime = st.stMtime ?? 0;
+              isDir = (st.stMode & S_IFMT) === S_IFDIR;
+            } catch {
+              // stat failure — use 0 mtime / assume file so it still surfaces
+            }
+            // Apply include_dirs *after* marking seen so a filtered dir
+            // doesn't re-enter via a later duplicate yield, and *before*
+            // pushing to entries so MAX_MATCHES continues to cap output
+            // (not pre-filter) size.
+            if (!includeDirs && isDir) continue;
+            entries.push({ path: filePath, mtime });
           }
-          if (seen.has(filePath)) continue;
-          if (entries.length >= MAX_MATCHES) {
-            truncated = true;
-            break outer;
-          }
-          seen.add(filePath);
-          let mtime = 0;
-          let isDir = false;
-          try {
-            const st = await this.kaos.stat(filePath);
-            mtime = st.stMtime ?? 0;
-            isDir = (st.stMode & S_IFMT) === S_IFDIR;
-          } catch {
-            // stat failure — use 0 mtime / assume file so it still surfaces
-          }
-          // Apply include_dirs *after* marking seen so a filtered dir
-          // doesn't re-enter via a later duplicate yield, and *before*
-          // pushing to entries so MAX_MATCHES continues to cap output
-          // (not pre-filter) size.
-          if (!includeDirs && isDir) continue;
-          entries.push({ path: filePath, mtime });
         }
       }
 
@@ -282,7 +269,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       }
       const lines: string[] = [];
       if (truncated) {
-        lines.push(`[Truncated at ${String(MAX_MATCHES)} matches — use a more specific pattern]`);
+        lines.push(`[Truncated at ${String(MAX_MATCHES)} matches — ${String(seen.size)} matched so far, use a more specific pattern]`);
         lines.push(`Only the first ${String(MAX_MATCHES)} matches are returned.`);
       }
       lines.push(...displayLines);
@@ -325,41 +312,38 @@ function relativizeIfUnder(candidate: string, base: string, pathClass: PathClass
   return normCandidate;
 }
 
-// Return true iff `pattern` begins with the literal sequence `**` followed
-// by a `/`. Such patterns have no literal anchor in front of the recursive
-// wildcard, so the walk has nothing to bound it on the left and would
-// descend into every top-level directory of the search root before any
-// suffix constraint can filter. Rejected up-front to match the Python Glob
-// behavior — callers must anchor with a top-level subdirectory.
-function startsWithDoubleStarPrefix(pattern: string): boolean {
-  return pattern.startsWith('**/');
-}
-
 /**
- * Return true if `pattern` is pure wildcards — only `*`, `?`, `**`, `/`.
- * Such patterns have no literal anchor and would enumerate every file
- * under the search root. Backslash-escaped characters (`\X`) count as
- * literals so `\*` or `\?` still means "pattern has an anchor".
+ * Expand brace alternations (`{a,b,c}`, `{src,test}/**`) into a flat list
+ * of sub-patterns. Recursive — handles cartesian products (`{a,b}/{c,d}.ts`
+ * → 4 patterns) and one or more levels of nesting (`{a,{b,c}}.ts`).
+ *
+ * Falls through with the original pattern as a single-element list when:
+ *   - the pattern contains no `{...}` group at all;
+ *   - the pattern contains `{...}` groups but none have a top-level comma
+ *     (e.g. `{abc}` — bash treats those as literal);
+ *   - braces are unbalanced (a stray `{` with no matching `}`, etc.);
+ *   - expansion would produce more than `MAX_BRACE_EXPANSIONS` patterns —
+ *     pathological cartesian inputs (`{a,b}{c,d}{e,f}{g,h}{i,j}{k,l,m}`
+ *     ≥ 192) bail out rather than fan out unboundedly.
+ *
+ * Backslash-escaped braces (`\{`, `\}`) are treated as literals and skip
+ * the structural recognition so a user can opt out of expansion.
  */
-function isPureWildcard(pattern: string): boolean {
-  if (pattern === '') return false;
-  for (let i = 0; i < pattern.length; i++) {
-    const ch = pattern[i];
-    if (ch === '\\' && i + 1 < pattern.length) {
-      // escaped literal — pattern has an anchor
-      return false;
-    }
-    if (ch !== '*' && ch !== '?' && ch !== '/') {
-      return false;
-    }
+export function expandBraces(pattern: string): string[] {
+  const out: string[] = [];
+  if (!expandInto(pattern, out, MAX_BRACE_EXPANSIONS)) {
+    // Cap exceeded somewhere down the recursion — discard partial
+    // fan-out and report the original. Letting half the alternatives
+    // through would be a silent footgun.
+    return [pattern];
   }
-  return true;
+  return out;
 }
 
-/** Return true iff `pattern` looks like it uses `{a,b,c}` brace expansion. */
-function containsBraceExpansion(pattern: string): boolean {
-  let inBrace = false;
-  let sawCommaInsideBrace = false;
+function expandInto(pattern: string, out: string[], cap: number): boolean {
+  // Find the first balanced `{...}` group containing a top-level comma.
+  let depth = 0;
+  let start = -1;
   for (let i = 0; i < pattern.length; i++) {
     const ch = pattern[i];
     if (ch === '\\' && i + 1 < pattern.length) {
@@ -367,16 +351,72 @@ function containsBraceExpansion(pattern: string): boolean {
       continue;
     }
     if (ch === '{') {
-      inBrace = true;
-      sawCommaInsideBrace = false;
+      if (depth === 0) start = i;
+      depth++;
       continue;
     }
     if (ch === '}') {
-      if (inBrace && sawCommaInsideBrace) return true;
-      inBrace = false;
+      if (depth === 0) {
+        // Stray `}` — treat the whole pattern as literal.
+        return pushLiteral(pattern, out, cap);
+      }
+      depth--;
+      if (depth === 0 && start !== -1) {
+        const inner = pattern.slice(start + 1, i);
+        const parts = splitTopLevelCommas(inner);
+        if (parts.length < 2) {
+          // No commas at the top level → literal group; skip past it
+          // and keep scanning for a real alternation further right.
+          start = -1;
+          continue;
+        }
+        const prefix = pattern.slice(0, start);
+        const suffix = pattern.slice(i + 1);
+        for (const part of parts) {
+          if (out.length >= cap) return false;
+          if (!expandInto(prefix + part + suffix, out, cap)) return false;
+        }
+        return true;
+      }
+    }
+  }
+
+  if (depth !== 0) {
+    // Unbalanced `{` — treat the whole pattern as literal.
+    return pushLiteral(pattern, out, cap);
+  }
+
+  return pushLiteral(pattern, out, cap);
+}
+
+function pushLiteral(pattern: string, out: string[], cap: number): boolean {
+  if (out.length >= cap) return false;
+  out.push(pattern);
+  return true;
+}
+
+/**
+ * Split on commas that sit at brace depth zero. Used by `expandBraces`
+ * to slice a `{a,{b,c},d}` group into `["a", "{b,c}", "d"]` rather than
+ * `["a", "{b", "c}", "d"]`.
+ */
+function splitTopLevelCommas(s: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let last = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '\\' && i + 1 < s.length) {
+      i++;
       continue;
     }
-    if (ch === ',' && inBrace) sawCommaInsideBrace = true;
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+    else if (ch === ',' && depth === 0) {
+      parts.push(s.slice(last, i));
+      last = i + 1;
+    }
   }
-  return false;
+  parts.push(s.slice(last));
+  return parts;
 }

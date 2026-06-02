@@ -12,13 +12,14 @@ import {
 } from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentOptions } from '../../src/agent';
-import { DefaultCompactionStrategy, type CompactionStrategy } from '../../src/agent/compaction';
-import { HookEngine, type HookEngineTriggerArgs } from '../../src/session/hooks';
-import { estimateTokensForMessages } from '../../src/utils/tokens';
-import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
-import type { TestAgentContext, TestAgentOptions } from './harness/agent';
-import { testAgent } from './harness/agent';
+import type { AgentOptions } from '../../../src/agent';
+import { DefaultCompactionStrategy, type CompactionStrategy } from '../../../src/agent/compaction';
+import { FLAG_DEFINITIONS, MASTER_ENV } from '../../../src/flags';
+import { HookEngine, type HookEngineTriggerArgs } from '../../../src/session/hooks';
+import { estimateTokensForMessages } from '../../../src/utils/tokens';
+import { recordingTelemetry, type TelemetryRecord } from '../../fixtures/telemetry';
+import type { TestAgentContext, TestAgentOptions } from '../harness/agent';
+import { testAgent } from '../harness/agent';
 
 type GenerateFn = NonNullable<AgentOptions['generate']>;
 
@@ -35,8 +36,9 @@ const CATALOGUED_MODEL_CAPABILITIES = {
   tool_use: true,
   max_context_tokens: 256_000,
 } as const;
+const MICRO_COMPACTION_FLAG_ENV = getMicroCompactionFlagEnv();
 
-describe('Agent compaction', () => {
+describe('FullCompaction', () => {
   it('keeps an oversized trailing user message as recent', () => {
     const strategy = testCompactionStrategy();
     const messages = [
@@ -307,6 +309,40 @@ describe('Agent compaction', () => {
           message.toolCalls.length === 0,
       ),
     ).toBe(false);
+  });
+
+  it('micro-compacts old tool results before sending the summary request', async () => {
+    vi.useFakeTimers();
+    enableMicroCompactionFlag();
+    const ctx = testAgent({
+      compactionStrategy: alwaysCompactOnce,
+      microCompaction: {
+        keepRecentMessages: 2,
+        minContentTokens: 1,
+        cacheMissedThresholdMs: 60 * 60 * 1000,
+        minContextUsageRatio: 0,
+      },
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+
+    vi.setSystemTime(0);
+    ctx.appendToolExchange();
+    ctx.appendToolExchange();
+
+    vi.setSystemTime(61 * 60 * 1000);
+
+    ctx.agent.microCompaction.detect();
+    const compacted = ctx.once('context.apply_compaction');
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    await ctx.rpc.beginCompaction({ instruction: 'Summarize tool exchanges.' });
+    await compacted;
+
+    const [compactionCall] = ctx.llmCalls;
+    expect(messageText(compactionCall?.history[2])).toBe('[Old tool result content cleared]');
+    expect(messageText(compactionCall?.history[5])).toBe('lookup result');
   });
 
   it('force-refreshes OAuth credentials on compaction 401 and falls back to login_required when replay 401', async () => {
@@ -692,6 +728,42 @@ describe('Agent compaction', () => {
         message: 'APIStatusError: Bad request',
       }),
     });
+    await ctx.expectResumeMatches();
+  });
+
+  it('names truncated compaction responses when retries are exhausted', async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const generate: GenerateFn = async () => {
+      attempts += 1;
+      return {
+        ...textResult('Partial summary.'),
+        finishReason: 'truncated',
+        rawFinishReason: 'length',
+      };
+    };
+    const ctx = testAgent({ generate, compactionStrategy: alwaysCompactOnce });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Trigger truncated auto compaction' }] });
+    await vi.advanceTimersByTimeAsync(60_000);
+    const events = await ctx.untilTurnEnd();
+
+    expect(attempts).toBe(5);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: {
+          turnId: 0,
+          reason: 'failed',
+          error: expect.objectContaining({
+            code: 'compaction.failed',
+            message:
+              'CompactionTruncatedError: Compaction response was truncated before producing a complete summary.',
+          }),
+        },
+      }),
+    );
     await ctx.expectResumeMatches();
   });
 
@@ -1346,12 +1418,14 @@ describe('Agent compaction', () => {
 
   it('compacts provider overflow when model context size is unknown', async () => {
     let callCount = 0;
-    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {
+    const compactionMaxCompletionTokens: unknown[] = [];
+    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-unknown-context');
       }
       if (callCount === 2) {
+        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
         return textResult('Unknown window compacted summary.');
       }
       if (callCount === 3) {
@@ -1383,6 +1457,7 @@ describe('Agent compaction', () => {
     const events = await ctx.untilTurnEnd();
 
     expect(callCount).toBe(3);
+    expect(compactionMaxCompletionTokens).toEqual([32000]);
     expect(events).toContainEqual(
       expect.objectContaining({
         event: 'compaction.started',
@@ -1404,6 +1479,74 @@ describe('Agent compaction', () => {
         args: { turnId: 0, reason: 'completed' },
       }),
     );
+  });
+
+  it('honors completion budget env hard caps during compaction', async () => {
+    vi.stubEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS', '8192');
+    let callCount = 0;
+    const compactionMaxCompletionTokens: unknown[] = [];
+    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-hard-cap');
+      }
+      if (callCount === 2) {
+        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+        return textResult('Hard cap compacted summary.');
+      }
+      await callbacks?.onMessagePart?.({
+        type: 'text',
+        text: 'Recovered with hard cap.',
+      });
+      return textResult('Recovered with hard cap.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry with hard cap' }] });
+    await ctx.untilTurnEnd();
+
+    expect(callCount).toBe(3);
+    expect(compactionMaxCompletionTokens).toEqual([8192]);
+  });
+
+  it('honors completion budget env opt-out during compaction', async () => {
+    vi.stubEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS', '0');
+    let callCount = 0;
+    const compactionMaxCompletionTokens: unknown[] = [];
+    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-opt-out');
+      }
+      if (callCount === 2) {
+        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+        return textResult('Opt-out compacted summary.');
+      }
+      await callbacks?.onMessagePart?.({
+        type: 'text',
+        text: 'Recovered with opt-out.',
+      });
+      return textResult('Recovered with opt-out.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry with opt-out' }] });
+    await ctx.untilTurnEnd();
+
+    expect(callCount).toBe(3);
+    expect(compactionMaxCompletionTokens).toEqual([undefined]);
   });
 
   it('ignores filtered assistant placeholders when checking the retained overflow suffix', async () => {
@@ -1529,7 +1672,21 @@ describe('Agent compaction', () => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
 });
+
+function enableMicroCompactionFlag(): void {
+  vi.stubEnv(MASTER_ENV, '0');
+  vi.stubEnv(MICRO_COMPACTION_FLAG_ENV, '1');
+}
+
+function getMicroCompactionFlagEnv(): string {
+  const flag = FLAG_DEFINITIONS.find((definition) => definition.id === 'micro-compaction');
+  if (flag === undefined) {
+    throw new Error('Missing micro-compaction flag definition.');
+  }
+  return flag.env;
+}
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -1573,6 +1730,14 @@ function oauthTestAgentOptions(
       resolveOAuthTokenProvider: () => ({ getAccessToken }),
     },
   };
+}
+
+function providerMaxCompletionTokens(provider: Parameters<GenerateFn>[0]): unknown {
+  return (
+    provider as {
+      readonly modelParameters?: Record<string, unknown>;
+    }
+  ).modelParameters?.['max_completion_tokens'];
 }
 
 function textResult(text: string): Awaited<ReturnType<GenerateFn>> {

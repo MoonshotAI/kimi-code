@@ -3,6 +3,10 @@ import { migrateV1_1ToV1_2 } from './v1.2';
 import { migrateV1_2ToV1_3 } from './v1.3';
 
 // Wire protocol versions currently support only the `number.number` format.
+// Bump this only for changes that require migration of existing records or
+// change how existing records must be interpreted. Do not bump it only because
+// a new feature adds a new wire record type: older versions do not implement
+// that feature and do not need to understand the new record type.
 export const AGENT_WIRE_PROTOCOL_VERSION = '1.3';
 
 export interface WireMigrationRecord {
