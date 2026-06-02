@@ -122,6 +122,17 @@ export class ToolManager {
     this.enabledTools.delete(name);
   }
 
+  inheritUserTools(parent: ToolManager): void {
+    for (const tool of parent.userTools.values()) {
+      if (!parent.enabledTools.has(tool.name)) continue;
+      this.registerUserTool({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      });
+    }
+  }
+
   registerMcpServer(
     serverName: string,
     client: MCPClient,
@@ -400,10 +411,9 @@ export class ToolManager {
         this.agent.subagentHost &&
           new b.AgentTool(
             this.agent.subagentHost,
-            background,
+            allowBackground ? background : undefined,
             DEFAULT_AGENT_PROFILES['agent']?.subagents,
             {
-              allowBackground,
               log: this.agent.log,
             },
           ),

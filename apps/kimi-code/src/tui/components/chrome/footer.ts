@@ -65,6 +65,7 @@ const TOOLBAR_TIPS: readonly ToolbarTip[] = [
   { text: '/auto: auto permission mode' },
   { text: '/yolo: toggle yolo' },
   { text: '/help: show commands' },
+  { text: '/dance: rainbow mode, because why not' },
   { text: '/plugins: manage plugins — try the "superpowers" plugin', solo: true, priority: 3 },
   { text: 'ask Kimi to schedule tasks, e.g. "remind me at 5pm"', solo: true, priority: 3 },
 ];
@@ -162,12 +163,6 @@ function formatBadgeElapsed(ms: number): string {
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   return `${hours}h${minutes % 60}m`;
-}
-
-function shortenModel(model: string): string {
-  if (!model) return model;
-  const slash = model.lastIndexOf('/');
-  return slash >= 0 ? model.slice(slash + 1) : model;
 }
 
 function modelDisplayName(state: AppState): string {
@@ -299,7 +294,7 @@ export class FooterComponent implements Component {
     const goalBadge = formatGoalBadge(state.goal, colors, this.goalWallClockMs(state.goal));
     if (goalBadge !== null) left.push(goalBadge);
 
-    const model = shortenModel(modelDisplayName(state));
+    const model = modelDisplayName(state);
     if (model) {
       const thinkingLabel = state.thinking ? ' thinking' : '';
       const modelLabel = `${model}${thinkingLabel}`;

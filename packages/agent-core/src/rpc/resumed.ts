@@ -1,4 +1,5 @@
 import type { AgentType } from '#/agent';
+import type { BackgroundTaskInfo } from '#/agent/background';
 import type { AgentConfigData, AgentConfigUpdateData } from '#/agent/config';
 import type { AgentContextData, ContextMessage } from '#/agent/context';
 import type {
@@ -11,7 +12,6 @@ import type { ToolInfo } from '#/agent/tool';
 import type { SessionSummary } from '#/rpc/core-api';
 import type { UsageStatus } from '#/rpc/events';
 import type { SessionMeta } from '#/session';
-import type { BackgroundTaskInfo } from '#/tools/builtin';
 
 export type AgentReplayRecord =
   | { type: 'message'; message: ContextMessage }

@@ -116,12 +116,13 @@ export class SessionReplayRenderer {
    */
   private applyTerminalBackgroundAgentStatuses(agent: ResumedAgentState): void {
     for (const info of agent.background) {
-      if (!info.taskId.startsWith('agent-')) continue;
+      if (info.kind !== 'agent') continue;
       if (!isTerminalBackgroundTask(info)) continue;
       const status = info.status;
       if (
         status !== 'completed' &&
         status !== 'failed' &&
+        status !== 'timed_out' &&
         status !== 'killed' &&
         status !== 'lost'
       ) {
@@ -353,6 +354,7 @@ export class SessionReplayRenderer {
       skillActivationId: skill.activationId,
       skillName: skill.skillName,
       skillArgs: skill.skillArgs,
+      skillTrigger: skill.trigger,
     });
   }
 
@@ -504,7 +506,7 @@ export class SessionReplayRenderer {
   ): void {
     const { sessionEventHandler } = this.host;
     const task = sessionEventHandler.backgroundTasks.get(origin.taskId);
-    if (task !== undefined && task.taskId.startsWith('bash-')) {
+    if (task !== undefined && task.kind === 'process') {
       const status = formatBackgroundTaskTranscript({ ...task, status: origin.status });
       this.host.appendTranscriptEntry({
         ...replayEntry(context, 'status', status.headline, 'plain'),
@@ -533,6 +535,11 @@ export class SessionReplayRenderer {
       status = {
         ...status,
         headline: status.headline.replace(' failed in background', ' stopped'),
+      };
+    } else if (origin.status === 'timed_out') {
+      status = {
+        ...status,
+        headline: status.headline.replace(' failed in background', ' timed out'),
       };
     }
     this.host.appendTranscriptEntry({

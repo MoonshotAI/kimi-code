@@ -45,13 +45,13 @@ import {
   handleInitCommand,
   handleTitleCommand,
 } from './session';
+import { handleUndoCommand } from './undo';
 
 // ---------------------------------------------------------------------------
 // Re-exports — keep existing consumers working
 // ---------------------------------------------------------------------------
 
 export {
-  handleConnectCommand,
   handleLoginCommand,
   handleLogoutCommand,
 } from './auth';
@@ -82,6 +82,7 @@ export {
   handleInitCommand,
   handleTitleCommand,
 } from './session';
+export { handleUndoCommand } from './undo';
 
 // ---------------------------------------------------------------------------
 // Host interface
@@ -292,6 +293,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'logout':
       await handleLogoutCommand(host);
+      return;
+    case 'undo':
+      await handleUndoCommand(host, args);
       return;
     default:
       host.showError(`Unknown slash command: /${String(name)}`);

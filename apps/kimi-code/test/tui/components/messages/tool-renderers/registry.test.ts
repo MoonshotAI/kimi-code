@@ -162,4 +162,13 @@ describe('tool-result registry', () => {
     );
     expect(out).toContain('ENOENT: foo.ts not found');
   });
+
+  it('truncates unknown tool output by wrapped visual lines, not raw newlines', () => {
+    const renderer = pickResultRenderer('SomethingUnknown');
+    const longLine = 'x'.repeat(500);
+    const out = strip(joinRender(renderer(call('SomethingUnknown'), result(longLine), ctx), 20));
+    expect(out).toContain('x');
+    expect(out).not.toContain(longLine);
+    expect(out).toContain('... (');
+  });
 });

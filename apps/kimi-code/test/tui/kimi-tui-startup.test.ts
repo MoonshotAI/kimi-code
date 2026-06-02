@@ -12,11 +12,6 @@ import {
   promptPlatformSelection,
   promptLogoutProviderSelection,
 } from "#/tui/commands/prompts";
-
-vi.mock("#/tui/commands/prompts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("#/tui/commands/prompts")>();
-  return { ...actual, promptPlatformSelection: vi.fn(), promptLogoutProviderSelection: vi.fn() };
-});
 import {
   DISABLE_TERMINAL_THEME_REPORTING,
   ENABLE_TERMINAL_THEME_REPORTING,
@@ -24,6 +19,11 @@ import {
   QUERY_TERMINAL_THEME,
   TERMINAL_THEME_LIGHT,
 } from "#/tui/utils/terminal-theme";
+
+vi.mock("#/tui/commands/prompts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("#/tui/commands/prompts")>();
+  return { ...actual, promptPlatformSelection: vi.fn(), promptLogoutProviderSelection: vi.fn() };
+});
 
 interface StartupDriver {
   state: TUIState;
@@ -82,6 +82,7 @@ function makeStartupInput(
       theme: "dark",
       editorCommand: null,
       notifications: { enabled: true, condition: "unfocused" },
+      upgrade: { autoInstall: true },
       ...tuiConfig,
     },
     version: "0.0.0-test",

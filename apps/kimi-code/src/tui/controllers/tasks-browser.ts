@@ -188,15 +188,12 @@ export class TasksBrowserController {
             (t) =>
               t.status !== 'completed' &&
               t.status !== 'failed' &&
+              t.status !== 'timed_out' &&
               t.status !== 'killed' &&
               t.status !== 'lost',
           );
     if (candidates.length === 0) return undefined;
-    return (
-      candidates.find(
-        (t) => t.status === 'running' || t.status === 'awaiting_approval',
-      )?.taskId ?? candidates[0]!.taskId
-    );
+    return candidates.find((t) => t.status === 'running')?.taskId ?? candidates[0]!.taskId;
   }
 
   private async refresh(opts: { silent?: boolean } = {}): Promise<void> {

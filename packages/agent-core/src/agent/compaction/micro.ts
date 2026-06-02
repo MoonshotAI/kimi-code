@@ -32,8 +32,8 @@ export class MicroCompaction {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
-  reset(): void {
-    this.cutoff = 0;
+  reset(maxCutoff = 0): void {
+    this.cutoff = Math.min(this.cutoff, maxCutoff);
   }
 
   apply(cutoff: number): void {

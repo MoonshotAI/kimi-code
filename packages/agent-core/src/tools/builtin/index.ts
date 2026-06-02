@@ -1,4 +1,3 @@
-export * from '../background/manager';
 export * from '../background/task-list';
 export * from '../background/task-output';
 export * from '../background/task-stop';

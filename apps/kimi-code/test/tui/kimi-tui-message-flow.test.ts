@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
 import {
@@ -96,6 +97,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       theme: 'dark',
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
     },
     version: '0.0.0-test',
     workDir: '/tmp/proj-a',
@@ -111,6 +113,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     prompt: vi.fn(async () => {}),
     steer: vi.fn(async () => {}),
     init: vi.fn(async () => {}),
+    undoHistory: vi.fn(async () => {}),
     cancel: vi.fn(async () => {}),
     cancelCompaction: vi.fn(async () => {}),
     getStatus: vi.fn(async () => ({
@@ -685,6 +688,289 @@ describe('KimiTUI message flow', () => {
         content: 'hello',
       }),
     ]);
+  });
+
+  it('keeps the transcript intact when undo RPC fails', async () => {
+    const session = makeSession({
+      undoHistory: vi.fn(async () => {
+        throw new Error('core rpc unavailable');
+      }),
+    });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Error: Failed to undo: core rpc unavailable',
+      );
+    });
+
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        content: 'hello',
+      }),
+    ]);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('hello');
+  });
+
+  it('does not duplicate welcome after undoing the only turn', async () => {
+    const { driver } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptEntries).toEqual([]);
+    });
+
+    expect(
+      driver.state.transcriptContainer.children.filter(
+        (child) => child instanceof WelcomeComponent,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('keeps command notices that are not part of the undone context', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.handleUserInput('/auto on');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Auto mode: ON');
+    });
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).not.toContain('hello');
+    expect(transcript).toContain('Auto mode: ON');
+    expect(driver.state.appState.permissionMode).toBe('auto');
+  });
+
+  it('removes turn-scoped background status entries and restores welcome', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'background.task.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        info: {
+          kind: 'process',
+          taskId: 'bash-bg123456',
+          command: 'npm test',
+          description: 'Run tests in background',
+          status: 'running',
+          pid: 1234,
+          exitCode: null,
+          startedAt: Date.now(),
+          endedAt: null,
+        },
+      } as Event,
+      () => {},
+    );
+
+    await vi.waitFor(() => {
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(transcript).toContain('bash task started in background');
+      expect(transcript).toContain('Run tests in background');
+    });
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(driver.state.transcriptEntries).toEqual([]);
+    expect(transcript).not.toContain('hello');
+    expect(transcript).not.toContain('bash task started in background');
+    expect(transcript).not.toContain('Run tests in background');
+    expect(
+      driver.state.transcriptContainer.children.filter(
+        (child) => child instanceof WelcomeComponent,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('removes approval notices from undone turns', async () => {
+    const { driver, session } = await makeDriver();
+    const approvalHandler = vi.mocked(session.setApprovalHandler).mock.calls[0]?.[0] as
+      | ((request: ApprovalRequest) => Promise<ApprovalResponse>)
+      | undefined;
+    if (approvalHandler === undefined) throw new Error('expected approval handler');
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+    const response = approvalHandler({
+      turnId: 1,
+      toolCallId: 'call_bash',
+      toolName: 'Bash',
+      action: 'Run shell command',
+      display: {
+        kind: 'generic',
+        summary: 'Run shell command',
+        detail: { command: 'echo ok', description: 'Run a shell command' },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ApprovalPanelComponent);
+    });
+    (driver.state.editorContainer.children[0] as ApprovalPanelComponent).handleInput('1');
+    await expect(response).resolves.toMatchObject({ decision: 'approved' });
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Approved: Run shell command');
+    });
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).not.toContain('hello');
+    expect(transcript).not.toContain('Approved: Run shell command');
+  });
+
+  it('undoes multiple turns when a count is provided', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('first');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.handleUserInput('second');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.handleUserInput('third');
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/undo 2');
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(2);
+    });
+
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        content: 'first',
+      }),
+    ]);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('first');
+    expect(transcript).not.toContain('second');
+    expect(transcript).not.toContain('third');
+  });
+
+  it('rejects invalid undo counts without changing context', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/undo 0');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Error: Usage: /undo [count], where count is a positive integer.',
+      );
+    });
+
+    expect(session.undoHistory).not.toHaveBeenCalled();
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        content: 'hello',
+      }),
+    ]);
+  });
+
+  it('undoes from the real user turn when the last skill activation came from the model', async () => {
+    const { driver } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'skill.activated',
+        agentId: 'main',
+        activationId: 'act-model',
+        skillName: 'review',
+        trigger: 'model-tool',
+      } as Event,
+      () => {},
+    );
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptEntries).toEqual([]);
+    });
+
+    expect(driver.state.transcriptEntries).toEqual([]);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).not.toContain('hello');
+    expect(transcript).not.toContain('review');
+  });
+
+  it('keeps user-slash skill activations as undo anchors', async () => {
+    const { driver } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'skill.activated',
+        agentId: 'main',
+        activationId: 'act-user',
+        skillName: 'review',
+        trigger: 'user-slash',
+      } as Event,
+      () => {},
+    );
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptEntries).toEqual([
+        expect.objectContaining({
+          kind: 'user',
+          content: 'hello',
+        }),
+      ]);
+    });
+
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        content: 'hello',
+      }),
+    ]);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('hello');
+    expect(transcript).not.toContain('review');
   });
 
   it('sends pasted image placeholders as image content parts', async () => {

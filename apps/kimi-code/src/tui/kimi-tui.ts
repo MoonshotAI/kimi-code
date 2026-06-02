@@ -122,6 +122,7 @@ import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
 import { installTerminalThemeTracking } from './utils/terminal-theme';
 import { detectTmuxKeyboardWarning } from './utils/tmux-keyboard';
+import { markTranscriptComponent } from './utils/transcript-component-metadata';
 import { nextTranscriptId } from './utils/transcript-id';
 
 export type { TUIState } from './tui-state';
@@ -171,6 +172,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     version: input.version,
     editorCommand: input.tuiConfig.editorCommand,
     notifications: input.tuiConfig.notifications,
+    upgrade: input.tuiConfig.upgrade,
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
@@ -504,7 +506,7 @@ export class KimiTUI {
           if (target.workDir !== workDir) {
             this.state.ui.stop();
             process.stderr.write(
-              `${chalk.yellow(
+              `${chalk.hex(this.state.theme.colors.warning)(
                 `Session "${startup.sessionFlag}" was created under a different directory.\n` +
                   `  cd "${target.workDir}" && kimi -r ${startup.sessionFlag}`,
               )}\n\n`,
@@ -566,6 +568,7 @@ export class KimiTUI {
     await this.harness.close();
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
     this.uninstallRainbowDance();
+    await this.state.terminal.drainInput();
     this.state.ui.stop();
     if (this.onExit) {
       await this.onExit(exitCode);
@@ -1217,6 +1220,7 @@ export class KimiTUI {
           entry.skillName ?? entry.content,
           entry.skillArgs,
           this.state.theme.colors,
+          entry.skillTrigger,
         );
       case 'cron':
         return new CronMessageComponent(
@@ -1284,6 +1288,7 @@ export class KimiTUI {
     this.state.transcriptEntries.push(entry);
     const component = this.createTranscriptComponent(entry);
     if (component) {
+      markTranscriptComponent(component, entry);
       this.state.transcriptContainer.addChild(component);
       this.state.ui.requestRender();
     }
@@ -1310,12 +1315,20 @@ export class KimiTUI {
     this.appendTranscriptEntry({
       id: nextTranscriptId(),
       kind: 'status',
+      turnId: request.turnId === undefined ? undefined : String(request.turnId),
       renderMode: 'notice',
       content: parts.join(''),
     });
   }
 
   private renderWelcome(): void {
+    if (
+      this.state.transcriptContainer.children.some(
+        (child) => child instanceof WelcomeComponent,
+      )
+    ) {
+      return;
+    }
     const welcome = new WelcomeComponent(this.state.appState, this.state.theme.colors);
     this.state.transcriptContainer.addChild(welcome);
   }

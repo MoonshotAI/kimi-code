@@ -6,6 +6,7 @@ import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector'
 import { PermissionSelectorComponent } from '#/tui/components/dialogs/permission-selector';
 import { SettingsSelectorComponent } from '#/tui/components/dialogs/settings-selector';
 import { ThemeSelectorComponent } from '#/tui/components/dialogs/theme-selector';
+import { UpdatePreferenceSelectorComponent } from '#/tui/components/dialogs/update-preference-selector';
 import { darkColors } from '#/tui/theme/colors';
 
 const ANSI_SGR = /\u001B\[[0-9;]*m/g;
@@ -100,6 +101,17 @@ describe('ChoicePickerComponent', () => {
     const settingsOutput = settings.render(120).map(strip);
     expect(settingsOutput).toContain('  ❯ Model');
     expect(settingsOutput).toContain('    Switch the active model and thinking mode.');
+    expect(settingsOutput).toContain('    Turn automatic CLI updates on or off.');
+
+    const upgradePreference = new UpdatePreferenceSelectorComponent({
+      currentValue: true,
+      colors: darkColors,
+      onSelect,
+      onCancel,
+    });
+    const upgradePreferenceOutput = upgradePreference.render(120).map(strip);
+    expect(upgradePreferenceOutput).toContain('  ❯ On ← current');
+    expect(upgradePreferenceOutput).toContain('    Install new versions in the background.');
   });
 
   it('submits the selected model and inline thinking state', () => {

@@ -58,6 +58,7 @@ export interface SessionOptions {
   readonly mcpConfig?: SessionMcpConfig;
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
+  readonly appVersion?: string;
 }
 
 export interface SessionSkillConfig {
@@ -455,6 +456,7 @@ export class Session {
       telemetry: this.telemetry,
       log: this.log.createChild({ agentId: id }),
       pluginSessionStarts: type === 'main' ? this.options.pluginSessionStarts : undefined,
+      appVersion: this.options.appVersion,
     });
   }
 

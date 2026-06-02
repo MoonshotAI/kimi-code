@@ -5,6 +5,7 @@ import type { DynamicInjector } from './injector';
 import { PermissionModeInjector } from './permission-mode';
 import { PluginSessionStartInjector } from './plugin-session-start';
 import { PlanModeInjector } from './plan-mode';
+import { TodoListReminderInjector } from './todo-list';
 
 export class InjectionManager {
   private readonly injectors: DynamicInjector[];
@@ -16,13 +17,12 @@ export class InjectionManager {
   private readonly goalInjector: GoalInjector | null;
 
   constructor(protected readonly agent: Agent) {
-    // Explicit push order keeps the injector sequence obvious. Plan mode and
-    // permission mode are operational constraints applied per step.
-    const injectors: DynamicInjector[] = [];
-    injectors.push(new PluginSessionStartInjector(agent));
-    injectors.push(new PlanModeInjector(agent));
-    injectors.push(new PermissionModeInjector(agent));
-    this.injectors = injectors;
+    this.injectors = [
+      new PluginSessionStartInjector(agent),
+      new TodoListReminderInjector(agent),
+      new PlanModeInjector(agent),
+      new PermissionModeInjector(agent),
+    ];
     this.goalInjector =
       flags.enabled('goal-command') && agent.type === 'main' ? new GoalInjector(agent) : null;
   }
@@ -55,6 +55,12 @@ export class InjectionManager {
       } catch {
         continue;
       }
+    }
+  }
+
+  onContextMessageRemoved(index: number): void {
+    for (const injector of this.lifecycleInjectors()) {
+      injector.onContextMessageRemoved(index);
     }
   }
 

@@ -99,7 +99,6 @@ export type {
 // bash (`bash-*`) and agent (`agent-*`) tasks under one wire format.
 export type {
   BackgroundTaskStartedEvent,
-  BackgroundTaskUpdatedEvent,
   BackgroundTaskTerminatedEvent,
 } from '@moonshot-ai/agent-core';
 

@@ -46,6 +46,8 @@ When you add a provider or switch models, the **tabbed model selector** splits t
 The Kimi Code OAuth provider (the account you sign into with `/login`) is intentionally hidden from `/provider`; manage that account with `/login` and `/logout` instead.
 :::
 
+For scripted or non-interactive setups, the same custom-registry import is available from the shell via the [`kimi provider`](../reference/kimi-command.md#kimi-provider) subcommand.
+
 ## `kimi`
 
 `kimi` connects to the Moonshot AI API using the OpenAI-compatible protocol.

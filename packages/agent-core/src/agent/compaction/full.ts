@@ -31,6 +31,7 @@ import {
 } from '../../utils/completion-budget';
 import compactionInstructionTemplate from './compaction-instruction.md';
 import { renderMessagesToText } from './render-messages';
+import { renderTodoList, type TodoItem } from '../../tools/builtin/state/todo-list';
 import type { CompactionBeginData, CompactionResult } from './types';
 import {
   DEFAULT_COMPACTION_CONFIG,
@@ -309,6 +310,8 @@ export class FullCompaction {
         }
       }
 
+      summary = this.postProcessSummary(summary);
+
       const recent = originalHistory.slice(compactedCount);
       const tokensAfter = estimateTokens(summary) + estimateTokensForMessages(recent);
 
@@ -399,6 +402,16 @@ export class FullCompaction {
         estimatedTokenCount: result.tokensAfter,
       },
     });
+  }
+
+  private postProcessSummary(summary: string): string {
+    const storeData = this.agent.tools.storeData();
+    const todos = (storeData['todo'] as readonly TodoItem[] | undefined) ?? [];
+    if (todos.length === 0) {
+      return summary;
+    }
+    const todoMarkdown = renderTodoList(todos, '## TODO List');
+    return `${summary.trim()}\n\n${todoMarkdown}`;
   }
 }
 

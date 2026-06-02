@@ -42,7 +42,7 @@ export class WelcomeComponent implements Component {
     const dim = chalk.hex(this.colors.textDim);
     const labelStyle = chalk.bold.hex(this.colors.textDim);
     const rightRow1 = truncateToWidth(
-      dim(isLoggedOut ? 'Run /login or /connect to get started.' : 'Send /help for help information.'),
+      dim(isLoggedOut ? 'Run /login or /provider to get started.' : 'Send /help for help information.'),
       textWidth,
       '…',
     );
@@ -57,7 +57,7 @@ export class WelcomeComponent implements Component {
 
     const activeModel = this.state.availableModels[this.state.model];
     const modelValue = isLoggedOut
-      ? chalk.hex(this.colors.warning)('not set, run /login or /connect')
+      ? chalk.hex(this.colors.warning)('not set, run /login or /provider')
       : (activeModel?.displayName ?? activeModel?.model ?? this.state.model);
 
     const infoLines = [

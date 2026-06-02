@@ -5,8 +5,8 @@
  * time (most recent first). Uses `kaos.glob`.
  *
  * Output convention: `content` shown to the LLM is relativized to the
- * search base to save tokens; `output.paths` keeps absolute paths so
- * downstream Read/Edit can consume them directly.
+ * search base only when the base is inside the primary workspace. External
+ * roots stay absolute so downstream Read/Edit target the same file.
  *
  * Behaviour:
  *   - Brace expansion (`*.{ts,tsx}`, `{src,test}/**`) is expanded at
@@ -15,8 +15,9 @@
  *     fan-out has to happen here for any results to come back. Cartesian
  *     and one level of nesting are supported; unbalanced or comma-less
  *     braces fall through as literals.
- *   - `path` is validated by `resolvePathAccess` in strict mode. Explicit
- *     paths must be absolute and within the workspace roots.
+ *   - `path` is validated by `resolvePathAccess` in `absolute-outside-allowed`
+ *     mode. Explicit absolute paths outside the workspace are allowed; relative
+ *     paths that escape the workspace stay rejected.
  *   - Match count is capped at `MAX_MATCHES` (unique paths). A separate
  *     `YIELD_SAFETY_CAP` on the raw yield stream is a secondary belt that
  *     still terminates the stream if the kaos layer's own symlink-cycle
@@ -37,7 +38,7 @@ import { z } from 'zod';
 import type { BuiltinTool } from '../../../agent/tool';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
-import { resolvePathAccessPath } from '../../policies/path-access';
+import { isWithinDirectory, resolvePathAccessPath } from '../../policies/path-access';
 import type { PathClass } from '../../policies/path-access';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
@@ -123,7 +124,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
         kaos: this.kaos,
         workspace: this.workspace,
         operation: 'search',
-        policy: { guardMode: 'strict', checkSensitive: false },
+        policy: { guardMode: 'absolute-outside-allowed', checkSensitive: false },
       });
     }
     const searchRoots = [path ?? this.workspace.workspaceDir];
@@ -258,11 +259,15 @@ export class GlobTool implements BuiltinTool<GlobInput> {
 
       const paths = entries.map((e) => e.path);
       // Content shown to the LLM uses paths relative to the search base
-      // to save tokens; `output.paths` keeps the absolute form so callers
-      // can feed them into Read/Edit without further resolution.
+      // to save tokens, but only for the primary workspace. Relative paths
+      // are later resolved against workspaceDir, so additionalDir matches
+      // must stay absolute to keep follow-up Read/Edit calls on the same file.
       const pathClass = this.kaos.pathClass();
       const relBase = searchRoots[0] ?? this.workspace.workspaceDir;
-      const displayLines = paths.map((p) => relativizeIfUnder(p, relBase, pathClass));
+      const shouldRelativize = isWithinDirectory(relBase, this.workspace.workspaceDir, pathClass);
+      const displayLines = paths.map((p) =>
+        shouldRelativize ? relativizeIfUnder(p, relBase, pathClass) : p,
+      );
 
       if (entries.length === 0 && !truncated) {
         return { output: 'No matches found' };
