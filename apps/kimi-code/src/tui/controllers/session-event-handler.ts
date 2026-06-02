@@ -104,6 +104,7 @@ export class SessionEventHandler {
   renderedSkillActivationIds: Set<string> = new Set();
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
+  mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
 
   resetRuntimeState(): void {
     this.backgroundAgentMetadata.clear();
@@ -112,6 +113,7 @@ export class SessionEventHandler {
     this.subagentInfo.clear();
     this.renderedSkillActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
+    this.mcpServers.clear();
     this.stopAllMcpServerStatusSpinners();
   }
 
@@ -155,6 +157,10 @@ export class SessionEventHandler {
       this.renderMcpServerStatus(server);
     }
 
+    this.mcpServers.clear();
+    for (const server of servers) {
+      this.mcpServers.set(server.name, server);
+    }
     const hidden: McpServerStatusSnapshot[] = [];
     for (const server of servers) {
       if (visibleNames.has(server.name)) continue;
@@ -162,12 +168,8 @@ export class SessionEventHandler {
       this.renderedMcpServerStatusKeys.set(server.name, mcpServerStatusKey(server));
       hidden.push(server);
     }
-    if (hidden.length > 0) {
-      host.showStatus(
-        formatMcpStartupStatusSummary(hidden, visible.length),
-        host.state.theme.colors.textMuted,
-      );
-    }
+    const summary = formatMcpStartupStatusSummary(servers);
+    host.setAppState({ mcpServersSummary: summary || null });
   }
 
   handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
@@ -582,6 +584,9 @@ export class SessionEventHandler {
     const key = mcpServerStatusKey(server);
     if (this.renderedMcpServerStatusKeys.get(server.name) === key) return;
     this.renderedMcpServerStatusKeys.set(server.name, key);
+    this.mcpServers.set(server.name, server);
+    const summary = formatMcpStartupStatusSummary([...this.mcpServers.values()]);
+    this.host.setAppState({ mcpServersSummary: summary || null });
 
     const colors = state.theme.colors;
     switch (server.status) {

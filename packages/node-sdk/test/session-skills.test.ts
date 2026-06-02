@@ -178,7 +178,7 @@ describe('Session skills', () => {
         input: [
           {
             type: 'text',
-            text: 'Review the requested file.\n\nARGUMENTS: src/app.ts',
+            text: '<system-reminder>\n<kimi-skill-loaded name="review" args="src/app.ts">\nReview the requested file.\n\nARGUMENTS: src/app.ts\n</kimi-skill-loaded>\n</system-reminder>',
           },
         ],
         origin: {

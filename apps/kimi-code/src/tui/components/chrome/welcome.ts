@@ -67,6 +67,10 @@ export class WelcomeComponent implements Component {
       labelStyle('Version:   ') + this.state.version,
     ];
 
+    if (this.state.mcpServersSummary) {
+      infoLines.push(labelStyle('MCP:       ') + this.state.mcpServersSummary);
+    }
+
     const contentLines: string[] = [...renderedHeaderLines, '', ...infoLines];
 
     const lines: string[] = [

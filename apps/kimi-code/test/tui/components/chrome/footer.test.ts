@@ -52,6 +52,7 @@ const appState: AppState = {
   notifications: { enabled: true, condition: 'unfocused' },
   availableModels: {},
   availableProviders: {},
+  mcpServersSummary: null,
 };
 
 describe('FooterComponent', () => {

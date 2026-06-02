@@ -2,6 +2,7 @@ import { expandSkillParameters, skillArgumentNames } from './parser';
 import { discoverSkills, type DiscoverSkillsOptions } from './scanner';
 import type { SkillDefinition, SkillRoot, SkillSource, SkippedSkill } from './types';
 import { isInlineSkillType, normalizeSkillName } from './types';
+import { escapeXmlAttr } from '../utils/xml-escape';
 
 const LISTING_DESC_MAX = 250;
 
@@ -98,7 +99,7 @@ export class SkillRegistry {
     const instructions = plugin.instructions;
     if (instructions === undefined || instructions.trim().length === 0) return content;
     return (
-      `<kimi-plugin-instructions plugin="${escapeAttr(plugin.id)}">\n` +
+      `<kimi-plugin-instructions plugin="${escapeXmlAttr(plugin.id)}">\n` +
       `${instructions}\n` +
       `</kimi-plugin-instructions>\n\n${content}`
     );
@@ -180,8 +181,4 @@ function formatModelSkill(skill: SkillDefinition): readonly string[] {
 
 function truncate(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
-}
-
-function escapeAttr(value: string): string {
-  return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
 }
