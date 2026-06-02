@@ -88,6 +88,7 @@ describe('resolveRuntimeProvider model metadata', () => {
             provider: 'openai',
             model: 'gpt-runtime',
             maxContextSize: 200000,
+            maxOutputSize: 24000,
             capabilities: ['tool_use'],
           },
         },
@@ -106,6 +107,7 @@ describe('resolveRuntimeProvider model metadata', () => {
       tool_use: true,
       max_context_tokens: 200000,
     });
+    expect(resolved.maxOutputSize).toBe(24000);
   });
 
   it('uses config Kimi capabilities without requiring an api key during OAuth setup', () => {

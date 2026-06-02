@@ -172,6 +172,24 @@ describe('resolveCompletionBudget', () => {
     expect(budget?.hardCap).toBe(2048);
   });
 
+  it('uses maxOutputSize as the hard cap when env vars are unset', () => {
+    const budget = resolveCompletionBudget({
+      maxOutputSize: 2048,
+      reservedContextSize: 1000,
+      env: {},
+    });
+    expect(budget?.hardCap).toBe(2048);
+    expect(budget?.fallback).toBeUndefined();
+  });
+
+  it('lets env vars override maxOutputSize', () => {
+    const budget = resolveCompletionBudget({
+      maxOutputSize: 2048,
+      env: { KIMI_MODEL_MAX_COMPLETION_TOKENS: '4096' },
+    });
+    expect(budget?.hardCap).toBe(4096);
+  });
+
   it('uses reservedContextSize as the unknown-context fallback when no env var is set', () => {
     const budget = resolveCompletionBudget({
       reservedContextSize: 12345,
