@@ -494,6 +494,19 @@ export class KimiChatProvider implements ChatProvider {
       )) as unknown as OpenAI.Chat.ChatCompletion | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
       return new KimiStreamedMessage(response, this._stream);
     } catch (error: unknown) {
+      const apiError = error as { status?: number; message?: string };
+      if (apiError.status === 400 && typeof apiError.message === 'string') {
+        if (
+          apiError.message.includes('tools.function.parameters') ||
+          apiError.message.includes('json schema')
+        ) {
+          // eslint-disable-next-line no-console
+          console.error(
+            '[KimiChatProvider] 400 error with tools schema. createParams.tools:\n' +
+              JSON.stringify(createParams['tools'], null, 2),
+          );
+        }
+      }
       throw convertOpenAIError(error);
     }
   }
