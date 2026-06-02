@@ -171,6 +171,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     version: input.version,
     editorCommand: input.tuiConfig.editorCommand,
     notifications: input.tuiConfig.notifications,
+    upgrade: input.tuiConfig.upgrade,
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,

@@ -161,3 +161,13 @@ kimi migrate
 ```
 
 If you previously used an older version of kimi-cli, run this command to migrate historical sessions, configuration, and other data to kimi-code to avoid data loss. For the full migration flow, what gets migrated, and things to watch out for, see [Migrating from kimi-cli](../guides/migration.md).
+
+### `kimi upgrade`
+
+Check the latest Kimi Code CLI version immediately and show the update prompt. This command has no flags and exits after the selected action.
+
+```sh
+kimi upgrade
+```
+
+For global npm, pnpm, yarn, bun, and macOS / Linux native installs, `kimi upgrade` uses the same prompt as startup update checks. Choose `Install update now` to run the corresponding foreground install command, or continue with the current version. If no newer version is available, it prints the current up-to-date status. If the current installation cannot be upgraded automatically, such as Windows native installs or an unsupported layout, it prints the manual update command instead.
