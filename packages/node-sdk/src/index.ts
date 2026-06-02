@@ -1,6 +1,13 @@
 export { KimiHarness } from '#/kimi-harness';
+export type { KimiHarnessRuntimeOptions } from '#/kimi-harness';
 export { Session } from '#/session';
 export { KimiAuthFacade } from '#/auth';
+export {
+  createLocalKimiHarness,
+  LocalSDKRpcClient,
+  type LocalSDKRpcClientOptions,
+} from '#/local-rpc';
+export { SDKRpcClient } from '#/rpc';
 
 export {
   applyCatalogProvider,

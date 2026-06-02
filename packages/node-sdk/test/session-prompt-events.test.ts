@@ -8,7 +8,7 @@ import { KIMI_CODE_PLATFORM } from '@moonshot-ai/kimi-code-oauth';
 import type * as KosongModule from '@moonshot-ai/kosong';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Event } from '#/index';
+import { createLocalKimiHarness, type Event, type KimiHarness } from '#/index';
 
 import { TEST_IDENTITY } from './test-identity';
 
@@ -56,8 +56,6 @@ vi.mock('@moonshot-ai/kosong', async (importOriginal) => {
   };
 });
 
-const { KimiHarness } = await import('#/index');
-
 const tempDirs: string[] = [];
 
 beforeEach(() => {
@@ -99,7 +97,7 @@ describe('Session.prompt events', () => {
   it('persists sanitized prompt metadata without marking the title custom', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createLocalKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -175,7 +173,7 @@ describe('Session.prompt events', () => {
   it('emits mapped turn events through Session.onEvent', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createLocalKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -228,7 +226,7 @@ describe('Session.prompt events', () => {
   it('supports onEvent unsubscribe without touching runtime wire directly', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createLocalKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -255,7 +253,7 @@ describe('Session.prompt events', () => {
   it('runs init through generateAgentsMd RPC as a system trigger without prompt metadata updates', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createLocalKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -314,7 +312,7 @@ describe('Session.prompt events', () => {
   it('rejects empty prompt input', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createLocalKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -331,7 +329,7 @@ describe('Session.prompt events', () => {
   });
 });
 
-async function configureFakeProvider(harness: InstanceType<typeof KimiHarness>): Promise<void> {
+async function configureFakeProvider(harness: KimiHarness): Promise<void> {
   await harness.setConfig({
     providers: {
       local: {

@@ -1,4 +1,10 @@
-import { ErrorCodes, KimiError, type AgentContextData, type KimiErrorCode } from '@moonshot-ai/agent-core';
+import {
+  ErrorCodes,
+  KimiError,
+  type AgentContextData,
+  type KimiErrorCode,
+} from '@moonshot-ai/agent-core';
+
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
 import type { SDKRpcClient } from '#/rpc';
 import type {

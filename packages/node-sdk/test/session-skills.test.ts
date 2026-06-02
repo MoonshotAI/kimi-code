@@ -4,7 +4,13 @@ import { join } from 'node:path';
 import type * as KosongModule from '@moonshot-ai/kosong';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
-import type { Event, KimiError, SkillActivatedEvent, SkillSummary } from '#/index';
+import {
+  createLocalKimiHarness,
+  type Event,
+  type KimiError,
+  type SkillActivatedEvent,
+  type SkillSummary,
+} from '#/index';
 import type { SDKRpcClient } from '#/rpc';
 
 import {
@@ -52,7 +58,7 @@ vi.mock('@moonshot-ai/kosong', async (importOriginal) => {
   };
 });
 
-const { KimiHarness, Session } = await import('#/index');
+const { Session } = await import('#/index');
 
 const tempDirs: string[] = [];
 
@@ -79,7 +85,7 @@ describe('Session skills', () => {
       '',
       'Review the requested file.',
     ]);
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createLocalKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_sdk_skill_list', workDir });
@@ -111,7 +117,7 @@ describe('Session skills', () => {
       '',
       'Review the requested file.',
     ]);
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createLocalKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_sdk_skill_activate', workDir });
@@ -200,7 +206,7 @@ describe('Session skills', () => {
     vi.stubEnv('KIMI_CODE_HOME', homeDir);
     await writeUserSkill(processHome, 'sdk-real-home-only', 'SDK real home skill');
     await writeUserSkill(homeDir, 'sdk-sandbox-only', 'SDK sandbox skill');
-    const harness = new KimiHarness({ identity: TEST_IDENTITY });
+    const harness = createLocalKimiHarness({ identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_sdk_skill_env_home', workDir });
