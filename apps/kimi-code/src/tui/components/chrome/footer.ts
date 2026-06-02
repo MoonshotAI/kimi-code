@@ -120,12 +120,6 @@ function tipsForIndex(index: number): { primary: string; pair: string | null } {
   return { primary: current.text, pair: current.text + TIP_SEPARATOR + next.text };
 }
 
-function shortenModel(model: string): string {
-  if (!model) return model;
-  const slash = model.lastIndexOf('/');
-  return slash >= 0 ? model.slice(slash + 1) : model;
-}
-
 function modelDisplayName(state: AppState): string {
   const model = state.availableModels[state.model];
   return model?.displayName ?? model?.model ?? state.model;
@@ -245,7 +239,7 @@ export class FooterComponent implements Component {
     if (state.permissionMode === 'yolo') left.push(chalk.hex(colors.warning).bold('yolo'));
     if (state.planMode) left.push(chalk.hex(colors.primary).bold('plan'));
 
-    const model = shortenModel(modelDisplayName(state));
+    const model = modelDisplayName(state);
     if (model) {
       const thinkingLabel = state.thinking ? ' thinking' : '';
       const modelLabel = `${model}${thinkingLabel}`;
