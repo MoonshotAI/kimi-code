@@ -70,6 +70,37 @@ describe('ShellExecutionComponent', () => {
     expect(output).toContain('step20');
   });
 
+  it('末尾空行不计入 preview 配额，避免间距过大', () => {
+    const component = new ShellExecutionComponent({
+      result: {
+        tool_call_id: 'call_shell',
+        output: 'hello\n\n\n', // 1 行内容 + 2 行末尾空行
+        is_error: false,
+      },
+      colors: darkColors,
+    });
+
+    const output = component.render(100).map(strip).join('\n');
+    expect(output).toContain('hello');
+    expect(output).not.toContain('... (2 more lines');
+  });
+
+  it('中间空行保留，仅 trim 末尾空行', () => {
+    const component = new ShellExecutionComponent({
+      result: {
+        tool_call_id: 'call_shell',
+        output: 'a\n\nb\n\n\n', // 中间 1 空行 + 末尾 2 空行
+        is_error: false,
+      },
+      colors: darkColors,
+    });
+
+    const output = component.render(100).map(strip).join('\n');
+    expect(output).toContain('a');
+    expect(output).toContain('b');
+    expect(output).not.toContain('... (2 more lines');
+  });
+
   describe('shellExecutionResultRenderer', () => {
     const longCmd = `echo ${'a'.repeat(200)}\necho done`;
 

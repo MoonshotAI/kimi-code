@@ -7,6 +7,7 @@ import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
 import type { ResultRenderer } from './tool-renderers/types';
 import { PREVIEW_LINES } from './tool-renderers/types';
+import { trimTrailingEmptyLines } from './tool-renderers/truncated';
 
 export interface ShellExecutionOptions {
   readonly command?: string;
@@ -64,7 +65,7 @@ export class ShellExecutionComponent extends Container {
       return;
     }
 
-    const lines = result.output.split('\n');
+    const lines = trimTrailingEmptyLines(result.output.split('\n'));
     const shown = lines.slice(0, previewLines);
     const remaining = lines.length - shown.length;
     this.addChild(new Text(tint(shown.join('\n')), 2, 0));
