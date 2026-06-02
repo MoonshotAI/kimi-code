@@ -95,6 +95,21 @@ export class Session {
     await this.rpc.generateAgentsMd({ sessionId: this.id });
   }
 
+  async startBtw(prompt: string): Promise<void> {
+    this.ensureOpen();
+    const normalized = normalizeRequiredString(
+      prompt,
+      'BTW prompt cannot be empty',
+      ErrorCodes.REQUEST_PROMPT_INPUT_EMPTY,
+    );
+    await this.rpc.startBtw({ sessionId: this.id, prompt: normalized });
+  }
+
+  async cancelBtw(): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.cancelBtw({ sessionId: this.id });
+  }
+
   async cancel(): Promise<void> {
     this.ensureOpen();
     await this.rpc.cancel({ sessionId: this.id });

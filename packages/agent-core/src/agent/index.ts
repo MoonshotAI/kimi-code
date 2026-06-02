@@ -379,6 +379,8 @@ export class Agent {
         }
         this.skills.activate(payload);
       },
+      startBtw: (payload) => this.subagentHost!.startBtw(payload.prompt),
+      cancelBtw: () => this.subagentHost!.cancelBtw(),
       getBackgroundOutput: (payload) => this.background.readOutput(payload.taskId, payload.tail),
       getContext: () => this.context.data(),
       getConfig: () => this.config.data(),

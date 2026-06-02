@@ -32,6 +32,7 @@ describe('built-in slash command registry', () => {
     expect(findBuiltInSlashCommand('quit')?.name).toBe('exit');
     expect(findBuiltInSlashCommand('q')?.name).toBe('exit');
     expect(findBuiltInSlashCommand('clear')?.name).toBe('new');
+    expect(findBuiltInSlashCommand('btw')?.name).toBe('btw');
     expect(findBuiltInSlashCommand('mcp')?.name).toBe('mcp');
     expect(findBuiltInSlashCommand('status')?.name).toBe('status');
     expect(findBuiltInSlashCommand('usage')?.aliases).not.toContain('status');
@@ -79,6 +80,7 @@ describe('built-in slash command registry', () => {
     expect(names).toEqual(
       expect.arrayContaining([
         'compact',
+        'btw',
         'editor',
         'exit',
         'export-debug-zip',

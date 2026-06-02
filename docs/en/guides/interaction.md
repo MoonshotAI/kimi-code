@@ -14,7 +14,7 @@ Anything starting with `/` is recognized as a slash command, covering session ma
 
 Type `/` to open the command completion menu, which also includes commands from [Agent Skills](../customization/skills.md). If a skill name collides with a built-in command, use the full `/skill:<name>` form. Press `Esc` to dismiss.
 
-Some commands are only available while the agent is idle; interrupt the current turn first if the agent is streaming. Mode-switch and query commands such as `/yolo`, `/plan`, and `/help` are always available.
+Some commands are only available while the agent is idle; interrupt the current turn first if the agent is streaming. Mode-switch and query commands such as `/yolo`, `/plan`, `/help`, and `/btw` are always available.
 
 Type `@` to trigger file-path completion. Selecting an entry inserts the relative path, and the agent can read the file directly. Dot-prefixed directories are hidden by default; write `@.github/` to include them explicitly.
 

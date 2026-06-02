@@ -33,6 +33,7 @@ export class ToolManager {
   protected builtinTools: Map<string, BuiltinTool> = new Map();
   protected readonly userTools: Map<string, ExecutableTool> = new Map();
   protected readonly mcpTools: Map<string, McpToolEntry> = new Map();
+  private loopToolsOverride: readonly ExecutableTool[] | undefined;
   /** server name → list of qualified tool names registered for that server. */
   protected readonly mcpToolsByServer: Map<string, string[]> = new Map();
   protected enabledTools: Set<string> = new Set();
@@ -301,6 +302,10 @@ export class ToolManager {
     this.mcpAccessPatterns = names.filter((name) => isMcpToolName(name));
   }
 
+  copyLoopToolsFrom(source: ToolManager): void {
+    this.loopToolsOverride = source.loopTools;
+  }
+
   private isMcpToolEnabled(name: string): boolean {
     return this.mcpAccessPatterns.some((pattern) => picomatch.isMatch(name, pattern));
   }
@@ -413,6 +418,7 @@ export class ToolManager {
   }
 
   get loopTools(): readonly ExecutableTool[] {
+    if (this.loopToolsOverride !== undefined) return this.loopToolsOverride;
     const mcpNames = [...this.mcpTools.keys()].filter((name) => this.isMcpToolEnabled(name));
     return uniq([...this.enabledTools, ...mcpNames])
       .toSorted((a, b) => a.localeCompare(b))

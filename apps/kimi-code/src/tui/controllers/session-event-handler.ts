@@ -40,6 +40,7 @@ import {
 } from '../constant/kimi-tui';
 import {
   argsRecord,
+  formatErrorMessage,
   isTodoItemShape,
   serializeToolResultOutput,
   stringValue,
@@ -57,6 +58,7 @@ import {
 import { openUrl } from '../utils/open-url';
 import { setProcessTitle } from '../utils/proctitle';
 import { errorReportHintLine } from '../constant/feedback';
+import { BtwPanelComponent } from '../commands/btw';
 import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { StreamingUIController } from './streaming-ui';
@@ -87,10 +89,20 @@ export interface SessionEventHost {
   showStatus(msg: string, color?: string): void;
   showNotice(title: string, detail?: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
+  showBtwPanel(panel: BtwPanelComponent): void;
+  closeBtwPanel(panel: BtwPanelComponent): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
   readonly tasksBrowserController: TasksBrowserController;
 }
+
+type BtwTurnStartedEvent = Event &
+  TurnStartedEvent & {
+    readonly origin: {
+      readonly kind: 'system_trigger';
+      readonly name: 'btw';
+    };
+  };
 
 export class SessionEventHandler {
   constructor(private readonly host: SessionEventHost) {}
@@ -99,7 +111,10 @@ export class SessionEventHandler {
   backgroundAgentMetadata: Map<string, BackgroundAgentMetadata> = new Map();
   backgroundTasks: Map<string, BackgroundTaskInfo> = new Map();
   backgroundTaskTranscriptedTerminal: Set<string> = new Set();
-  subagentInfo: Map<string, { parentToolCallId: string; name: string }> = new Map();
+  subagentInfo: Map<
+    string,
+    { parentToolCallId: string; name: string; btwPanel?: BtwPanelComponent | undefined }
+  > = new Map();
   renderedSkillActivationIds: Set<string> = new Set();
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
@@ -231,7 +246,15 @@ export class SessionEventHandler {
 
     const { streamingUI } = this.host;
     const info = this.subagentInfo.get(subagentId);
-    if (info === undefined || info.parentToolCallId.length === 0) return true;
+    if (info === undefined && isBtwTurnStarted(event)) {
+      this.handleBtwTurnStarted(event);
+      return true;
+    }
+    if (info === undefined) return true;
+    if (info.btwPanel !== undefined) {
+      return this.routeBtwEvent(info.btwPanel, event);
+    }
+    if (info.parentToolCallId.length === 0) return true;
     const { parentToolCallId } = info;
     const sourceName = info.name;
     const toolCall = streamingUI.getToolComponent(parentToolCallId);
@@ -305,6 +328,84 @@ export class SessionEventHandler {
       default:
         return true;
     }
+  }
+
+  private routeBtwEvent(panel: BtwPanelComponent, event: Event): boolean {
+    switch (event.type) {
+      case 'assistant.delta':
+        panel.appendAnswer(event.delta);
+        this.host.state.ui.requestRender();
+        return true;
+      case 'thinking.delta':
+        panel.appendThinking(event.delta);
+        this.host.state.ui.requestRender();
+        return true;
+      case 'hook.result':
+        panel.appendAnswer(formatHookResultPlain(event));
+        this.host.state.ui.requestRender();
+        return true;
+      case 'turn.ended':
+        if (event.reason === 'completed') {
+          panel.markDone();
+        } else {
+          panel.markFailed(formatBtwTurnEnd(event));
+        }
+        this.subagentInfo.delete(event.agentId);
+        this.host.state.ui.requestRender();
+        return true;
+      case 'agent.status.updated':
+      case 'background.task.started':
+      case 'background.task.terminated':
+      case 'compaction.blocked':
+      case 'compaction.cancelled':
+      case 'compaction.completed':
+      case 'compaction.started':
+      case 'cron.fired':
+      case 'error':
+      case 'mcp.server.status':
+      case 'session.meta.updated':
+      case 'skill.activated':
+      case 'subagent.completed':
+      case 'subagent.failed':
+      case 'subagent.spawned':
+      case 'tool.call.delta':
+      case 'tool.call.started':
+      case 'tool.list.updated':
+      case 'tool.progress':
+      case 'tool.result':
+      case 'turn.started':
+      case 'turn.step.completed':
+      case 'turn.step.interrupted':
+      case 'turn.step.retrying':
+      case 'turn.step.started':
+      case 'warning':
+        return true;
+      default:
+        return true;
+    }
+  }
+
+  private handleBtwTurnStarted(event: BtwTurnStartedEvent): void {
+    let panel: BtwPanelComponent;
+    panel = new BtwPanelComponent({
+      colors: this.host.state.theme.colors,
+      markdownTheme: this.host.state.theme.markdownTheme,
+      onClose: () => {
+        this.host.closeBtwPanel(panel);
+      },
+      onCancel: () => {
+        this.host.closeBtwPanel(panel);
+        void this.host.session?.cancelBtw().catch((error: unknown) => {
+          this.host.showError(`Failed to cancel /btw: ${formatErrorMessage(error)}`);
+        });
+      },
+    });
+    this.subagentInfo.set(event.agentId, {
+      parentToolCallId: '',
+      name: 'btw',
+      btwPanel: panel,
+    });
+    this.host.showBtwPanel(panel);
   }
 
   private handleTurnBegin(_event: TurnStartedEvent): void {
@@ -986,4 +1087,19 @@ export class SessionEventHandler {
     state.footer.setBackgroundCounts({ bashTasks, agentTasks });
     state.ui.requestRender();
   }
+}
+
+function isBtwTurnStarted(event: Event): event is BtwTurnStartedEvent {
+  return (
+    event.type === 'turn.started' &&
+    event.origin.kind === 'system_trigger' &&
+    event.origin.name === 'btw'
+  );
+}
+
+function formatBtwTurnEnd(event: TurnEndedEvent): string {
+  if (event.error !== undefined) {
+    return `[${event.error.code}] ${event.error.message}`;
+  }
+  return `BTW turn ended with reason: ${event.reason}`;
 }

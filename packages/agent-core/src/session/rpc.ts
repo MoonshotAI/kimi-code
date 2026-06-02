@@ -20,6 +20,7 @@ import type {
   SetPermissionPayload,
   SetThinkingPayload,
   SkillSummary,
+  StartBtwPayload,
   SteerPayload,
   StopBackgroundPayload,
   UndoHistoryPayload,
@@ -86,6 +87,14 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   generateAgentsMd(_payload: EmptyPayload): Promise<void> {
     return this.session.generateAgentsMd();
+  }
+
+  async startBtw({ agentId, ...payload }: AgentScopedPayload<StartBtwPayload>): Promise<void> {
+    await this.getAgent(agentId).startBtw(payload);
+  }
+
+  async cancelBtw({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>): Promise<void> {
+    await this.getAgent(agentId).cancelBtw(payload);
   }
 
   async prompt({ agentId, ...payload }: AgentScopedPayload<PromptPayload>) {

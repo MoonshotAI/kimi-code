@@ -24,4 +24,40 @@ describe('Session.prompt input normalization', () => {
       input,
     });
   });
+
+  it('normalizes btw prompt text before calling the core RPC client', async () => {
+    const startBtw = vi.fn(async () => {});
+    const session = new Session({
+      id: 'ses_btw_prompt',
+      workDir: '/tmp/work',
+      rpc: { startBtw } as unknown as SDKRpcClient,
+    });
+
+    await expect(session.startBtw('  side question  ')).resolves.toBeUndefined();
+    expect(startBtw).toHaveBeenCalledWith({
+      sessionId: 'ses_btw_prompt',
+      prompt: 'side question',
+    });
+
+    await expect(session.startBtw('   ')).rejects.toMatchObject({
+      name: 'KimiError',
+      code: 'request.prompt_input_empty',
+    });
+    expect(startBtw).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls the core RPC client to cancel btw', async () => {
+    const cancelBtw = vi.fn(async () => {});
+    const session = new Session({
+      id: 'ses_btw_cancel',
+      workDir: '/tmp/work',
+      rpc: { cancelBtw } as unknown as SDKRpcClient,
+    });
+
+    await session.cancelBtw();
+
+    expect(cancelBtw).toHaveBeenCalledWith({
+      sessionId: 'ses_btw_cancel',
+    });
+  });
 });

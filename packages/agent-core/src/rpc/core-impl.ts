@@ -81,6 +81,7 @@ import type {
   SetPluginMcpServerEnabledPayload,
   SetThinkingPayload,
   SkillSummary,
+  StartBtwPayload,
   SteerPayload,
   StopBackgroundPayload,
   UndoHistoryPayload,
@@ -571,6 +572,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   generateAgentsMd({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>): Promise<void> {
     return this.sessionApi(sessionId).generateAgentsMd(payload);
+  }
+
+  startBtw({ sessionId, ...payload }: SessionAgentPayload<StartBtwPayload>): Promise<void> {
+    return this.sessionApi(sessionId).startBtw(payload);
+  }
+
+  cancelBtw({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>): Promise<void> {
+    return this.sessionApi(sessionId).cancelBtw(payload);
   }
 
   async installPlugin(payload: InstallPluginPayload): Promise<PluginSummary> {

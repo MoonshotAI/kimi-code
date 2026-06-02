@@ -51,6 +51,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'btw',
+    aliases: [],
+    description: 'Ask a forked side agent a question',
+    priority: 90,
+    availability: 'always',
+  },
+  {
     name: 'help',
     aliases: ['h', '?'],
     description: 'Show available commands and shortcuts',

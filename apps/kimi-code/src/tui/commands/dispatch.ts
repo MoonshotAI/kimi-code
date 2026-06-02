@@ -21,6 +21,7 @@ import type { AppState, LoginProgressSpinnerHandle, QueuedMessage } from '../typ
 import type { TUIState } from '../tui-state';
 
 import { handleLoginCommand, handleLogoutCommand } from './auth';
+import { handleBtwCommand } from './btw';
 import { tryHandleDanceCommand } from '../easter-eggs/dance';
 import {
   handleAutoCommand,
@@ -54,6 +55,7 @@ export {
   handleLoginCommand,
   handleLogoutCommand,
 } from './auth';
+export { handleBtwCommand } from './btw';
 export {
   handleAutoCommand,
   handleCompactCommand,
@@ -161,6 +163,13 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
       host.track('input_command_invalid', { reason: 'blocked', command: intent.commandName });
       host.showError(slashBusyMessage(intent.commandName, intent.reason));
       return;
+    case 'invalid':
+      host.track('input_command_invalid', { reason: intent.reason, command: intent.commandName });
+      if (parsedCommand !== null && tryHandleDanceCommand(host, parsedCommand)) {
+        return;
+      }
+      host.sendNormalUserInput(input);
+      return;
     case 'skill': {
       const session = host.session;
       if (host.state.appState.model.trim().length === 0 || session === undefined) {
@@ -254,6 +263,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'feedback':
       await handleFeedbackCommand(host);
+      return;
+    case 'btw':
+      await handleBtwCommand(host, args);
       return;
     case 'title':
       await handleTitleCommand(host, args);

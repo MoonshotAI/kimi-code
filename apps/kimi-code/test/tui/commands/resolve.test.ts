@@ -35,6 +35,11 @@ describe('resolveSlashCommandInput', () => {
       args: 'New title',
     });
     expect(resolve('/init')).toMatchObject({ kind: 'builtin', name: 'init', args: '' });
+    expect(resolve('/btw what are you doing?')).toMatchObject({
+      kind: 'builtin',
+      name: 'btw',
+      args: 'what are you doing?',
+    });
   });
 
   it('blocks idle-only built-ins while streaming', () => {
@@ -93,6 +98,11 @@ describe('resolveSlashCommandInput', () => {
       kind: 'builtin',
       name: 'mcp',
       args: '',
+    });
+    expect(resolve('/btw side question', { isStreaming: true })).toMatchObject({
+      kind: 'builtin',
+      name: 'btw',
+      args: 'side question',
     });
   });
 

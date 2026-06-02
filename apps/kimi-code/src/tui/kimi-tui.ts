@@ -40,6 +40,7 @@ import {
   type KimiSlashCommand,
   type SkillListSession,
 } from './commands';
+import type { BtwPanelComponent } from './commands/btw';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
 import { GutterContainer } from './components/chrome/gutter-container';
 import { CHROME_GUTTER } from './constant/rendering';
@@ -639,6 +640,7 @@ export class KimiTUI {
     ui.addChild(this.state.activityContainer);
     ui.addChild(this.state.todoPanelContainer);
     ui.addChild(this.state.queueContainer);
+    ui.addChild(this.state.btwPanelContainer);
     ui.addChild(this.state.editorContainer);
     // Footer is mounted later (mountFooter), not here.
   }
@@ -1081,6 +1083,7 @@ export class KimiTUI {
     this.streamingUI.resetToolUi();
     this.sessionEventHandler.resetRuntimeState();
     this.tasksBrowserController.close();
+    this.state.btwPanelContainer.clear();
     this.state.footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 0 });
     this.streamingUI.setTodoList([]);
     this.streamingUI.setTurnId(undefined);
@@ -1331,6 +1334,7 @@ export class KimiTUI {
     this.streamingUI.resetToolUi();
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
     this.state.transcriptContainer.clear();
+    this.state.btwPanelContainer.clear();
     this.clearTerminalInlineImages();
     this.state.todoPanel.clear();
     this.state.todoPanelContainer.clear();
@@ -1617,6 +1621,21 @@ export class KimiTUI {
   restoreEditor(): void {
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
+    this.state.ui.setFocus(this.state.editor);
+    this.state.ui.requestRender();
+  }
+
+  showBtwPanel(panel: BtwPanelComponent): void {
+    this.state.btwPanelContainer.clear();
+    this.state.btwPanelContainer.addChild(new Spacer(1));
+    this.state.btwPanelContainer.addChild(panel);
+    this.state.ui.setFocus(panel);
+    this.state.ui.requestRender();
+  }
+
+  closeBtwPanel(panel: BtwPanelComponent): void {
+    if (!this.state.btwPanelContainer.children.includes(panel)) return;
+    this.state.btwPanelContainer.clear();
     this.state.ui.setFocus(this.state.editor);
     this.state.ui.requestRender();
   }

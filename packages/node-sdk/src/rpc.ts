@@ -98,6 +98,10 @@ export interface ActivateSkillRpcInput extends SessionIdRpcInput {
   readonly args?: string | undefined;
 }
 
+export interface StartBtwRpcInput extends SessionIdRpcInput {
+  readonly prompt: string;
+}
+
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
   readonly name: string;
 }
@@ -234,6 +238,23 @@ export class SDKRpcClient {
   async generateAgentsMd(input: SessionIdRpcInput): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.generateAgentsMd({ sessionId: input.sessionId });
+  }
+
+  async startBtw(input: StartBtwRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.startBtw({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      prompt: input.prompt,
+    });
+  }
+
+  async cancelBtw(input: SessionIdRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.cancelBtw({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
   }
 
   async cancel(input: SessionIdRpcInput): Promise<void> {

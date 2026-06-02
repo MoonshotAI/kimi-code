@@ -311,6 +311,75 @@ describe('Session.prompt events', () => {
     }
   });
 
+  it('starts btw through RPC as a forked subagent without prompt metadata updates', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = new KimiHarness({
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
+
+    try {
+      await configureFakeProvider(harness);
+      const session = await harness.createSession({ id: 'ses_btw_rpc', workDir });
+      const events: Event[] = [];
+      const unsubscribe = session.onEvent((event) => {
+        events.push(event);
+      });
+
+      let done = waitForEvent(session, (event) => event.type === 'turn.ended');
+      await session.prompt('main task context');
+      await done;
+
+      fakeProviderState.responseText = 'The main agent is working from the existing context.';
+      events.length = 0;
+      done = waitForEvent(
+        session,
+        (event) => event.type === 'turn.ended' && event.agentId !== 'main',
+      );
+
+      await session.startBtw('你现在在做啥？');
+      await done;
+      unsubscribe();
+
+      const started = events.find(
+        (event) =>
+          event.type === 'turn.started' &&
+          event.origin.kind === 'system_trigger' &&
+          event.origin.name === 'btw',
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'turn.started',
+          sessionId: session.id,
+          agentId: started?.agentId,
+          origin: { kind: 'system_trigger', name: 'btw' },
+        }),
+      );
+      expect(started?.agentId).not.toBe('main');
+      expect(events).not.toContainEqual(expect.objectContaining({ type: 'subagent.spawned' }));
+      expect(events).not.toContainEqual(expect.objectContaining({ type: 'subagent.completed' }));
+      expect(events).not.toContainEqual(expect.objectContaining({ type: 'subagent.failed' }));
+      expect(events).not.toContainEqual(
+        expect.objectContaining({
+          type: 'session.meta.updated',
+        }),
+      );
+      expect(fakeProviderState.calls[1]?.systemPrompt).toBe(
+        fakeProviderState.calls[0]?.systemPrompt,
+      );
+      const btwHistoryText = JSON.stringify(fakeProviderState.calls[1]?.history);
+      expect(btwHistoryText).toContain('main task context');
+      expect(btwHistoryText).toContain('你现在在做啥？');
+
+      const statePath = join(session.summary!.sessionDir, 'state.json');
+      const state = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;
+      expect(state['lastPrompt']).toBe('main task context');
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('rejects empty prompt input', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();

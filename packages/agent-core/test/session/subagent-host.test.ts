@@ -140,13 +140,11 @@ describe('SessionSubagentHost', () => {
     const parent = testAgent({ telemetry: { track: telemetryTrack } });
     parent.configure();
     await parent.rpc.setPermission({ mode: 'yolo' });
-    parent.agent.permission.rules = [
-      {
-        decision: 'allow',
-        scope: 'session-runtime',
-        pattern: 'Read',
-      },
-    ];
+    parent.agent.permission.rules.splice(0, parent.agent.permission.rules.length, {
+      decision: 'allow',
+      scope: 'session-runtime',
+      pattern: 'Read',
+    });
     parent.newEvents();
 
     const child = testAgent({
@@ -284,6 +282,30 @@ describe('SessionSubagentHost', () => {
         signal,
       }),
     ).rejects.toThrow('Subagent profile "missing" was not found');
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('rejects unavailable subagent profiles even when a same-named fork label exists', async () => {
+    const parent = testAgent();
+    parent.configure();
+    const createAgent = vi.fn();
+    const host = new SessionSubagentHost(
+      {
+        agents: new Map([['main', parent.agent]]),
+        createAgent,
+      } as never,
+      'main',
+    );
+
+    await expect(
+      host.spawn('btw', {
+        parentToolCallId: 'call_agent',
+        prompt: 'Answer a side question',
+        description: 'Side question',
+        runInBackground: false,
+        signal,
+      }),
+    ).rejects.toThrow('Subagent profile "btw" was not found');
     expect(createAgent).not.toHaveBeenCalled();
   });
 

@@ -5,7 +5,7 @@ import { ErrorCodes, KimiError } from '../../errors';
 import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
 import { estimateTokensForMessages } from '../../utils/tokens';
 import type { CompactionResult } from '../compaction';
-import { project } from './projector';
+import { project, trimTrailingOpenToolExchange } from './projector';
 import {
   USER_PROMPT_ORIGIN,
   type AgentContextData,
@@ -173,6 +173,10 @@ export class ContextMemory {
 
   get messages(): Message[] {
     return this.project(this.history);
+  }
+
+  appendProjectedHistoryFrom(source: ContextMemory): void {
+    this._history.push(...trimTrailingOpenToolExchange(source.project(source.history)));
   }
 
   appendLoopEvent(event: LoopRecordedEvent): void {
