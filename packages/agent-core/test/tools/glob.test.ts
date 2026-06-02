@@ -472,11 +472,28 @@ describe('GlobTool', () => {
     expect(result.output).toContain('.github/workflows/ci.yml');
   });
 
-  it('allows an explicit absolute search root outside registered workspace roots', async () => {
-    // Explicit absolute paths outside the workspace are allowed. Registering
-    // the same directory later must not change that behavior.
-    const additionalDirs: string[] = [];
-    const mutable: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs };
+  it('shows absolute paths when explicit search root is outside all workspace roots', async () => {
+    // When the search root is not inside workspaceDir or any additionalDir,
+    // matches must stay absolute in the output. Otherwise the model would
+    // resolve a relativized path against the workspace cwd and hit the
+    // wrong file.
+    const glob = vi.fn((root: string) =>
+      asyncPaths(root === '/extra' ? ['/extra/test.py'] : []),
+    );
+    const tool = new GlobTool(
+      createFakeKaos({ glob, stat: vi.fn().mockResolvedValue(stat(1)) }),
+      { workspaceDir: '/workspace', additionalDirs: [] },
+    );
+
+    const result = await executeTool(tool, context({ pattern: '*.py', path: '/extra' }));
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toBe('/extra/test.py');
+  });
+
+  it('relativizes matches once the outside root is registered as an additionalDir', async () => {
+    // After the same directory is added to additionalDirs the search root
+    // becomes "inside the workspace", so paths should relativize again.
+    const mutable: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: ['/extra'] };
     const glob = vi.fn((root: string) =>
       asyncPaths(root === '/extra' ? ['/extra/test.py'] : []),
     );
@@ -485,15 +502,9 @@ describe('GlobTool', () => {
       mutable,
     );
 
-    const before = await executeTool(tool, context({ pattern: '*.py', path: '/extra' }));
-    expect(before.isError).toBeFalsy();
-    expect(before.output).toContain('test.py');
-
-    additionalDirs.push('/extra');
-
-    const after = await executeTool(tool, context({ pattern: '*.py', path: '/extra' }));
-    expect(after.isError).toBeFalsy();
-    expect(after.output).toContain('test.py');
+    const result = await executeTool(tool, context({ pattern: '*.py', path: '/extra' }));
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toBe('test.py');
   });
 
   it('allows a relative path argument that resolves inside the workspace', async () => {

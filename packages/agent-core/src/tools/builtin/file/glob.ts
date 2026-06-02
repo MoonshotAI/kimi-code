@@ -38,7 +38,7 @@ import { z } from 'zod';
 import type { BuiltinTool } from '../../../agent/tool';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
-import { resolvePathAccessPath } from '../../policies/path-access';
+import { isWithinWorkspace, resolvePathAccessPath } from '../../policies/path-access';
 import type { PathClass } from '../../policies/path-access';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
@@ -261,9 +261,15 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       // Content shown to the LLM uses paths relative to the search base
       // to save tokens; `output.paths` keeps the absolute form so callers
       // can feed them into Read/Edit without further resolution.
+      // Only relativize when the search root is inside the workspace or
+      // additionalDirs — otherwise the model would resolve the stripped
+      // relative path against the workspace cwd and hit the wrong file.
       const pathClass = this.kaos.pathClass();
       const relBase = searchRoots[0] ?? this.workspace.workspaceDir;
-      const displayLines = paths.map((p) => relativizeIfUnder(p, relBase, pathClass));
+      const shouldRelativize = isWithinWorkspace(relBase, this.workspace, pathClass);
+      const displayLines = paths.map((p) =>
+        shouldRelativize ? relativizeIfUnder(p, relBase, pathClass) : p,
+      );
 
       if (entries.length === 0 && !truncated) {
         return { output: 'No matches found' };
