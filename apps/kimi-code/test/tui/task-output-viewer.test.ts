@@ -39,6 +39,7 @@ function fakeTerminal(rows: number, columns = 120): Terminal {
 function info(overrides: Partial<BackgroundTaskInfo> = {}): BackgroundTaskInfo {
   return {
     taskId: 'bash-aaaaaaaa',
+    kind: 'process',
     command: 'npm run dev',
     description: 'dev server',
     status: 'running',
@@ -47,7 +48,7 @@ function info(overrides: Partial<BackgroundTaskInfo> = {}): BackgroundTaskInfo {
     startedAt: Date.now() - 60_000,
     endedAt: null,
     ...overrides,
-  };
+  } as BackgroundTaskInfo;
 }
 
 function makeViewer(opts: {

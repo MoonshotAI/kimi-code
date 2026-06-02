@@ -166,6 +166,11 @@ export class Session {
     await this.rpc.cancelCompaction({ sessionId: this.id });
   }
 
+  async undoHistory(count: number = 1): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.undoHistory({ sessionId: this.id, count });
+  }
+
   async getContext(): Promise<AgentContextData> {
     this.ensureOpen();
     return this.rpc.getContext({ sessionId: this.id });
@@ -247,24 +252,6 @@ export class Session {
       sessionId: this.id,
       taskId: trimmedTaskId,
       reason: options.reason,
-    });
-  }
-
-  /**
-   * Return the absolute path to the task's `output.log` on disk, or
-   * `undefined` when the task is unknown or has no persisted output.
-   * Callers can hand the path to an external pager.
-   */
-  async getBackgroundTaskOutputPath(taskId: string): Promise<string | undefined> {
-    this.ensureOpen();
-    const trimmedTaskId = normalizeRequiredString(
-      taskId,
-      'Task id cannot be empty',
-      ErrorCodes.BACKGROUND_TASK_ID_EMPTY,
-    );
-    return this.rpc.getBackgroundTaskOutputPath({
-      sessionId: this.id,
-      taskId: trimmedTaskId,
     });
   }
 

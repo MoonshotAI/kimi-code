@@ -194,6 +194,34 @@ describe('harness config TOML loader', () => {
     expect(config.raw?.['notifications']).toEqual({ claim_stale_after_ms: 15000 });
   });
 
+  it('round-trips a custom registry source field on a provider', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'round-trip.toml');
+    const toml = `
+[providers.custom]
+type = "openai"
+base_url = "https://custom.example/v1"
+api_key = "sk-test"
+source = { kind = "apiJson", url = "https://registry.example/api.json", apiKey = "sk-registry" }
+`;
+    const config = parseConfigString(toml, configPath);
+    expect(config.providers['custom']).toMatchObject({
+      type: 'openai',
+      baseUrl: 'https://custom.example/v1',
+      apiKey: 'sk-test',
+      source: { kind: 'apiJson', url: 'https://registry.example/api.json', apiKey: 'sk-registry' },
+    });
+
+    await writeConfigFile(configPath, config);
+    const text = await readFile(configPath, 'utf-8');
+    const roundTripped = parseConfigString(text, configPath);
+    expect(roundTripped.providers['custom']?.source).toEqual({
+      kind: 'apiJson',
+      url: 'https://registry.example/api.json',
+      apiKey: 'sk-registry',
+    });
+  });
+
   it('loads defaults for absent files and writes typed fields without dropping raw sections', async () => {
     const dir = makeTempDir();
     const configPath = join(dir, 'config.toml');

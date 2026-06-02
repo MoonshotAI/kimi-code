@@ -29,15 +29,14 @@ export function selectMcpStartupStatusRows(
 }
 
 export function formatMcpStartupStatusSummary(
-  hidden: readonly McpServerStatusSnapshot[],
-  visibleCount: number,
+  servers: readonly McpServerStatusSnapshot[],
 ): string {
   let failed = 0;
   let needsAuth = 0;
   let connecting = 0;
   let connected = 0;
   let disabled = 0;
-  for (const server of hidden) {
+  for (const server of servers) {
     switch (server.status) {
       case 'failed':
         failed++;
@@ -63,9 +62,7 @@ export function formatMcpStartupStatusSummary(
   if (connecting > 0) parts.push(`${connecting} connecting`);
   if (connected > 0) parts.push(`${connected} connected`);
   if (disabled > 0) parts.push(`${disabled} disabled`);
-  const detail = parts.join(', ');
-  if (visibleCount === 0) return `MCP servers: ${detail}`;
-  return `MCP servers: ${hidden.length} more (${detail})`;
+  return parts.join(', ');
 }
 
 export function mcpServerStatusKey(server: McpServerStatusSnapshot): string {

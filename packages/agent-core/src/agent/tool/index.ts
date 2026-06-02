@@ -386,10 +386,9 @@ export class ToolManager {
         this.agent.subagentHost &&
           new b.AgentTool(
             this.agent.subagentHost,
-            background,
+            allowBackground ? background : undefined,
             DEFAULT_AGENT_PROFILES['agent']?.subagents,
             {
-              allowBackground,
               log: this.agent.log,
             },
           ),

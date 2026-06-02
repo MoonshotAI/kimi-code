@@ -1,7 +1,7 @@
 import type { PermissionMode, Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
-import { ModelSelectorComponent } from '../components/dialogs/model-selector';
+import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
@@ -251,18 +251,17 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
   if (entries.length === 0) {
     host.showNotice(
       'No models configured',
-      'Run /login to sign in to Kimi, or /connect to add another provider from a model catalog.',
+      'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
     );
     return;
   }
   host.mountEditorReplacement(
-    new ModelSelectorComponent({
+    new TabbedModelSelectorComponent({
       models: host.state.appState.availableModels,
       currentValue: host.state.appState.model,
       selectedValue,
       currentThinking: host.state.appState.thinking,
       colors: host.state.theme.colors,
-      searchable: true,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
         void performModelSwitch(host, alias, thinking);
