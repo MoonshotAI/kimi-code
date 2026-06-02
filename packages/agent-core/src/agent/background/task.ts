@@ -32,6 +32,8 @@ export interface BackgroundTaskInfoBase {
   readonly endedAt: number | null;
   /** Human-readable reason for the terminal status, when available. */
   readonly stopReason?: string;
+  /** Suppress automatic terminal notifications/reminders for this task. */
+  readonly terminalNotificationSuppressed?: boolean;
   /** Deadline supplied at registration; surfaced via task info. */
   readonly timeoutMs?: number;
 }

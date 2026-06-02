@@ -69,6 +69,7 @@ export class TaskStopTool implements BuiltinTool<TaskStopInput> {
           };
         }
 
+        await this.manager.suppressTerminalNotification(args.task_id);
         const result = await this.manager.stop(args.task_id, reason);
         if (!result) {
           return { isError: true, output: `Failed to stop task: ${args.task_id}` };

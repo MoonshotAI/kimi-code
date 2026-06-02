@@ -450,6 +450,25 @@ describe('TaskStopTool', () => {
     expect(manager.getTask(taskId)?.stopReason).toBe('custom stop reason');
   });
 
+  it('does not steer a terminal notification for model-requested stops', async () => {
+    const { agent, manager } = createBackgroundManager();
+    const taskId = registerProcess(manager, pendingProcess(), 'sleep 60', 'stop test');
+
+    const result = await executeTool(
+      new TaskStopTool(manager),
+      context('c_stop_silent', { task_id: taskId }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(result.isError).toBe(false);
+    expect(toolContentString(result)).toContain('status: killed');
+    expect(agent.turn.steer).not.toHaveBeenCalled();
+    expect(manager.getTask(taskId)).toMatchObject({
+      status: 'killed',
+      terminalNotificationSuppressed: true,
+    });
+  });
+
   it('persists stop reason when the manager has persistence', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-stop-reason-'));
     try {
@@ -462,9 +481,14 @@ describe('TaskStopTool', () => {
       );
       expect(result.isError).toBe(false);
 
-      const reader = createBackgroundManager({ sessionDir }).manager;
+      const { agent, manager: reader } = createBackgroundManager({ sessionDir });
       await reader.loadFromDisk();
-      expect(reader.getTask(taskId)?.stopReason).toBe('operator cancelled');
+      expect(reader.getTask(taskId)).toMatchObject({
+        stopReason: 'operator cancelled',
+        terminalNotificationSuppressed: true,
+      });
+      await reader.reconcile();
+      expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
     } finally {
       await rm(sessionDir, { recursive: true, force: true });
     }
@@ -504,6 +528,7 @@ describe('TaskStopTool', () => {
       'status: completed',
       'reason: Task already in terminal state',
     ]);
+    expect(manager.getTask(taskId)?.terminalNotificationSuppressed).not.toBe(true);
   });
 
   it('falls back to the placeholder when a terminal task has a blank stored reason', async () => {

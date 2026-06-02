@@ -64,6 +64,8 @@ interface ManagedTask {
   terminalFired: boolean;
   /** Human-readable reason for the terminal status, when available. */
   stopReason?: string | undefined;
+  /** Suppress automatic terminal notifications/reminders for this task. */
+  terminalNotificationSuppressed?: boolean | undefined;
   /** Cancellation signal owned by the manager and observed by the concrete task. */
   readonly abortController: AbortController;
   lifecyclePromise: Promise<void>;
@@ -346,6 +348,13 @@ export class BackgroundManager {
     return output;
   }
 
+  async suppressTerminalNotification(taskId: string): Promise<void> {
+    const entry = this.tasks.get(taskId);
+    if (entry === undefined || entry.terminalNotificationSuppressed === true) return;
+    entry.terminalNotificationSuppressed = true;
+    await this.persistLive(entry);
+  }
+
   /** Stop a running task. SIGTERM → 5s grace → SIGKILL. */
   async stop(taskId: string, reason?: string): Promise<BackgroundTaskInfo | undefined> {
     const entry = this.tasks.get(taskId);
@@ -560,6 +569,7 @@ export class BackgroundManager {
   private async buildBackgroundTaskNotificationContext(
     info: BackgroundTaskInfo,
   ): Promise<BackgroundTaskNotificationContext | undefined> {
+    if (this.isTerminalNotificationSuppressed(info.taskId)) return undefined;
     const origin: BackgroundTaskOrigin = {
       kind: 'background_task',
       taskId: info.taskId,
@@ -573,6 +583,7 @@ export class BackgroundManager {
     this.scheduledNotificationKeys.add(key);
     const tailOutput = (await this.getOutputSnapshot(info.taskId, NOTIFICATION_TAIL_BYTES))
       .preview;
+    if (this.isTerminalNotificationSuppressed(info.taskId)) return undefined;
     const notification: BackgroundTaskNotification = {
       id: origin.notificationId,
       category: 'task',
@@ -613,6 +624,13 @@ export class BackgroundManager {
     this.deliveredNotificationKeys.add(notificationKey(origin));
   }
 
+  private isTerminalNotificationSuppressed(taskId: string): boolean {
+    return (
+      this.tasks.get(taskId)?.terminalNotificationSuppressed === true ||
+      this.ghosts.get(taskId)?.terminalNotificationSuppressed === true
+    );
+  }
+
   private async settleTask(
     entry: ManagedTask,
     settlement: BackgroundTaskSettlement,
@@ -644,6 +662,7 @@ export class BackgroundManager {
       startedAt: entry.startedAt,
       endedAt: entry.endedAt,
       stopReason: entry.stopReason,
+      terminalNotificationSuppressed: entry.terminalNotificationSuppressed,
       timeoutMs: entry.task.timeoutMs,
     };
     return entry.task.toInfo(base);
