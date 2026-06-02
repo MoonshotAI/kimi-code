@@ -45,6 +45,14 @@ const GEMINI_CATALOGUED_PREFIXES = [
   'gemini-2.5-flash',
 ] as const;
 
+const MIMO_THINKING_TOOL_MODELS = [
+  'mimo-v2.5-pro',
+  'mimo-v2-pro',
+  'mimo-v2-flash',
+] as const;
+
+const MIMO_THINKING_VISION_TOOL_MODELS = ['mimo-v2.5', 'mimo-v2-omni'] as const;
+
 const OPENAI_REASONING_CAPABILITY: ModelCapability = Object.freeze({
   image_in: false,
   video_in: false,
@@ -82,6 +90,24 @@ const ANTHROPIC_VISION_TOOL_CAPABILITY: ModelCapability = Object.freeze({
 });
 
 const ANTHROPIC_THINKING_VISION_TOOL_CAPABILITY: ModelCapability = Object.freeze({
+  image_in: true,
+  video_in: false,
+  audio_in: false,
+  thinking: true,
+  tool_use: true,
+  max_context_tokens: 0,
+});
+
+const MIMO_THINKING_TOOL_CAPABILITY: ModelCapability = Object.freeze({
+  image_in: false,
+  video_in: false,
+  audio_in: false,
+  thinking: true,
+  tool_use: true,
+  max_context_tokens: 0,
+});
+
+const MIMO_THINKING_VISION_TOOL_CAPABILITY: ModelCapability = Object.freeze({
   image_in: true,
   video_in: false,
   audio_in: false,
@@ -136,6 +162,14 @@ const OPENAI_RESPONSES_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
 
 const ANTHROPIC_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
   {
+    matches: (name) => hasExactModel(name, MIMO_THINKING_TOOL_MODELS),
+    capability: MIMO_THINKING_TOOL_CAPABILITY,
+  },
+  {
+    matches: (name) => hasExactModel(name, MIMO_THINKING_VISION_TOOL_MODELS),
+    capability: MIMO_THINKING_VISION_TOOL_CAPABILITY,
+  },
+  {
     matches: (name) => hasPrefix(name, CLAUDE_3_PREFIXES),
     capability: ANTHROPIC_VISION_TOOL_CAPABILITY,
   },
@@ -151,6 +185,10 @@ function normalizeModelName(modelName: string): string {
 
 function hasPrefix(modelName: string, prefixes: readonly string[]): boolean {
   return prefixes.some((prefix) => modelName.startsWith(prefix));
+}
+
+function hasExactModel(modelName: string, models: readonly string[]): boolean {
+  return models.some((model) => modelName === model);
 }
 
 function isOpenAIReasoningModel(modelName: string): boolean {

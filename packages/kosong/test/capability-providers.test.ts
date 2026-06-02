@@ -114,6 +114,57 @@ describe('AnthropicChatProvider.getCapability', () => {
     expect(cap.tool_use).toBe(true);
   });
 
+  it('mimo-v2.5-pro → thinking + tool_use, image_in=false', () => {
+    const cap = make('mimo-v2.5-pro').getCapability();
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+    expect(cap.image_in).toBe(false);
+  });
+
+  it('mimo-v2-pro → thinking + tool_use, image_in=false', () => {
+    const cap = make('mimo-v2-pro').getCapability();
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+    expect(cap.image_in).toBe(false);
+  });
+
+  it('mimo-v2.5 → image_in + thinking + tool_use', () => {
+    const cap = make('mimo-v2.5').getCapability();
+    expect(cap.image_in).toBe(true);
+    expect(cap.video_in).toBe(false);
+    expect(cap.audio_in).toBe(false);
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+  });
+
+  it('mimo-v2-omni → image_in + thinking + tool_use', () => {
+    const cap = make('mimo-v2-omni').getCapability();
+    expect(cap.image_in).toBe(true);
+    expect(cap.video_in).toBe(false);
+    expect(cap.audio_in).toBe(false);
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+  });
+
+  it('mimo-v2-flash → thinking + tool_use, image_in=false', () => {
+    const cap = make('mimo-v2-flash').getCapability();
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+    expect(cap.image_in).toBe(false);
+  });
+
+  it('MiMo speech models are not inferred as Anthropic chat models', () => {
+    for (const m of [
+      'mimo-v2.5-asr',
+      'mimo-v2.5-tts',
+      'mimo-v2.5-tts-voiceclone',
+      'mimo-v2.5-tts-voicedesign',
+      'mimo-v2-tts',
+    ]) {
+      expect(make(m).getCapability()).toEqual(UNKNOWN_CAPABILITY);
+    }
+  });
+
   it('no Anthropic model supports audio_in', () => {
     // Sanity: Anthropic has no audio-input models today. If one ships later
     // and this fails, update the table — but make it a conscious decision.
