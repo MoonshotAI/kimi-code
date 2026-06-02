@@ -89,17 +89,17 @@ export type StreamedMessagePart = ContentPart | ToolCall | ToolCallPart;
  */
 export interface Message {
   /** The role of the message sender. */
-  role: Role;
+  readonly role: Role;
   /** Optional display name for the sender (used by some providers). */
-  name?: string;
+  readonly name?: string;
   /** Ordered content parts (text, images, thinking, etc.). */
-  content: ContentPart[];
+  readonly content: ContentPart[];
   /** Tool calls requested by the assistant in this message. */
-  toolCalls: ToolCall[];
+  readonly toolCalls: ToolCall[];
   /** For `tool` role messages, the ID of the tool call this result answers. */
-  toolCallId?: string;
+  readonly toolCallId?: string;
   /** When `true`, indicates the message was not fully received (e.g. stream interrupted). */
-  partial?: boolean;
+  readonly partial?: boolean;
 }
 
 /** Check if a streamed part is a ContentPart (text, think, image_url, audio_url, video_url). */

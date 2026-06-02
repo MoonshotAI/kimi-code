@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.5.0
+
+### Minor Changes
+
+- [#204](https://github.com/MoonshotAI/kimi-code/pull/204) [`ee69d0a`](https://github.com/MoonshotAI/kimi-code/commit/ee69d0ac29f56bde4957c14767d7ca436697d9cf) - Render scheduled reminders distinctly in the TUI, expose cron fired events to SDK clients, and report cron fire times with local timezone offsets.
+
 ## 0.4.0
 
 ### Minor Changes

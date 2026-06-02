@@ -476,6 +476,10 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     return clone;
   }
 
+  withMaxCompletionTokens(maxCompletionTokens: number): OpenAILegacyChatProvider {
+    return this.withGenerationKwargs({ max_tokens: maxCompletionTokens });
+  }
+
   private _clone(): OpenAILegacyChatProvider {
     const clone = Object.assign(
       Object.create(Object.getPrototypeOf(this) as object) as OpenAILegacyChatProvider,

@@ -116,7 +116,13 @@ async function handleOpenPlatformLogin(
   host: SlashCommandHost,
   platform: OpenPlatformDefinition,
 ): Promise<void> {
-  const apiKey = await promptApiKey(host, platform.name);
+  const consoleHost = platform.consoleUrl?.replace(/^https?:\/\//, '') ?? '';
+  const platformName = consoleHost.length > 0 ? `Kimi Platform (${consoleHost})` : 'Kimi Platform';
+  const subtitleLines = [
+    `${'base_url'.padEnd(12)}${platform.baseUrl}`,
+    `${'saved to'.padEnd(12)}~/.kimi-code/config.toml`,
+  ];
+  const apiKey = await promptApiKey(host, platformName, subtitleLines);
   if (apiKey === undefined) return;
 
   const controller = new AbortController();

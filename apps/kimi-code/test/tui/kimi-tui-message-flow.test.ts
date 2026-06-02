@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
+import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
 import {
   PluginMcpSelectorComponent,
   PluginMarketplaceSelectorComponent,
@@ -423,7 +424,7 @@ describe('KimiTUI message flow', () => {
     const { driver, harness } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
 
-    for (const command of ['/new', '/model', '/sessions']) {
+    for (const command of ['/new', '/sessions']) {
       harness.track.mockClear();
 
       driver.handleUserInput(command);
@@ -1743,18 +1744,18 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput('/model turbo');
 
     const picker = driver.state.editorContainer.children[0];
-    expect(picker).toBeInstanceOf(ModelSelectorComponent);
-    const pickerOutput = stripSgr((picker as ModelSelectorComponent).render(120).join('\n'));
+    expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
+    const pickerOutput = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
     expect(pickerOutput).toContain('Kimi K2 (Kimi Code) ← current');
     expect(pickerOutput).toContain('❯ Kimi Turbo (Kimi Code)');
-    (picker as ModelSelectorComponent).handleInput('t');
-    (picker as ModelSelectorComponent).handleInput('u');
-    const filteredOutput = stripSgr((picker as ModelSelectorComponent).render(120).join('\n'));
+    (picker as TabbedModelSelectorComponent).handleInput('t');
+    (picker as TabbedModelSelectorComponent).handleInput('u');
+    const filteredOutput = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
     expect(filteredOutput).toContain('Search: tu');
     expect(filteredOutput).toContain('Kimi Turbo (Kimi Code)');
     expect(filteredOutput).not.toContain('Kimi K2 (Kimi Code)');
-    (picker as ModelSelectorComponent).handleInput('\u001B[D');
-    (picker as ModelSelectorComponent).handleInput('\r');
+    (picker as TabbedModelSelectorComponent).handleInput('/');
+    (picker as TabbedModelSelectorComponent).handleInput('\r');
 
     await vi.waitFor(() => {
       expect(session.setModel).toHaveBeenCalledWith('turbo');
@@ -1791,8 +1792,8 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput('/model k2');
 
     const picker = driver.state.editorContainer.children[0];
-    expect(picker).toBeInstanceOf(ModelSelectorComponent);
-    (picker as ModelSelectorComponent).handleInput('\r');
+    expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
+    (picker as TabbedModelSelectorComponent).handleInput('\r');
 
     await vi.waitFor(() => {
       expect(setConfig).toHaveBeenCalledWith({

@@ -8,7 +8,7 @@ The `type` field of each entry in the `providers` table determines which impleme
 
 | Type | Protocol | Typical platforms |
 | --- | --- | --- |
-| `kimi` | OpenAI-compatible (chat completions style) | Kimi Code, Moonshot AI Open Platform |
+| `kimi` | OpenAI-compatible (chat completions style) | Kimi Code, Kimi Platform API key |
 | `anthropic` | Anthropic Messages | Claude API |
 | `openai` | OpenAI Chat Completions | OpenAI and compatible services |
 | `openai_responses` | OpenAI Responses API | OpenAI's newer Responses endpoint |
@@ -29,18 +29,22 @@ ANTHROPIC_BASE_URL = "https://my-proxy.example.com"
 
 The most common ways to switch providers are: use the `/model` slash command inside the TUI to pick from already-configured models, or edit `config.toml` directly to adjust the `[providers.*]` and `[models.*]` tables. See [Config files](./config-files.md) for the full field reference.
 
-## `/connect` and the model catalog
+## `/provider` and provider management
 
-Instead of writing `[providers.*]` and `[models.*]` tables by hand, run the `/connect` slash command inside the TUI to add a provider from a **model catalog**. The catalog lists known providers and models together with their context window, output limit, and capabilities. `/connect` prompts you to pick a provider and a model, asks for an API key, and writes the resulting `[providers.<name>]` and `[models.<alias>]` entries to `config.toml`.
+Run the `/provider` slash command inside the TUI to open the **provider manager**, an interactive view of every configured provider grouped by source. From this screen you can add new providers or delete existing ones without editing `config.toml` by hand.
 
-The default catalog is bundled with the CLI, so `/connect` works offline. Two flags change the catalog source:
+The manager lists each platform source — open platform logins, custom registry imports, and standalone providers — as a single row. Navigate with ↑/↓ and page with ←/→. Press `d` on a row to delete that source; a `[y/N]` confirmation appears before anything is removed. Press `Enter` on the `[ Add New Platform ]` row to add a provider.
 
-- `/connect --refresh` fetches the latest catalog from [models.dev](https://models.dev/) before showing the picker.
-- `/connect --url=<catalog-url>` reads the catalog from a custom URL that follows the same format. Only `http://` and `https://` URLs are accepted.
+Adding a provider offers two paths:
 
-`/connect` only configures the provider types listed in the table above. For other provider types, configure them by hand in `config.toml` as described in the per-type sections below.
+- **Known third-party provider** — fetches the latest catalog from [models.dev](https://models.dev/), lets you pick a provider and enter its API key, then opens the model selector so you can choose the default model.
+- **Custom registry (api.json)** — imports one or more providers from a custom registry URL. Paste the registry address and its Bearer token; the CLI fetches the registry, creates the corresponding `[providers.<name>]` and `[models.<alias>]` entries, and refreshes the available model list automatically.
 
-`/logout` works on `/connect`-configured providers too: it removes the corresponding `[providers.<name>]` entry from `config.toml`.
+When you add a provider or switch models, the **tabbed model selector** splits the available models into per-provider tabs. Press `Tab` / `Shift-Tab` to cycle between tabs, then use the usual ↑/↓ and `Enter` to pick the model you want.
+
+::: warning Note
+The Kimi Code OAuth provider (the account you sign into with `/login`) is intentionally hidden from `/provider`; manage that account with `/login` and `/logout` instead.
+:::
 
 ## `kimi`
 
