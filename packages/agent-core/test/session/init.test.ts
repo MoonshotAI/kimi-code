@@ -376,12 +376,18 @@ describe('AgentAPI.startBtw', () => {
         if (signal === undefined) {
           throw new Error('Expected generate signal');
         }
-        return await new Promise<never>((_resolve, reject) => {
+        return new Promise<never>((_resolve, reject) => {
           if (signal.aborted) {
             reject(signal.reason);
             return;
           }
-          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+          signal.addEventListener(
+            'abort',
+            () => {
+              reject(signal.reason);
+            },
+            { once: true },
+          );
         });
       },
     );

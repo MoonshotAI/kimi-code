@@ -27,7 +27,7 @@ export class ConfigState {
     this._modelAlias = agent.modelProvider?.defaultModel;
   }
 
-  update(changed: AgentConfigUpdateData | ConfigState): void {
+  update(changed: AgentConfigUpdateData): void {
     if (Object.keys(changed).length === 0) return;
 
     this.agent.records.logRecord({

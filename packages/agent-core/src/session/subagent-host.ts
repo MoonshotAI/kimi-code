@@ -197,7 +197,13 @@ export class SessionSubagentHost {
       this.ownerAgentId,
     );
 
-    child.config.update(parent.config);
+    child.config.update({
+      cwd: parent.config.cwd,
+      modelAlias: parent.config.modelAlias,
+      profileName: parent.config.profileName,
+      thinkingLevel: parent.config.thinkingLevel,
+      systemPrompt: parent.config.systemPrompt,
+    });
     child.tools.copyLoopToolsFrom(parent.tools);
     child.context.appendProjectedHistoryFrom(parent.context);
     child.context.appendSystemReminder(SIDE_QUESTION_SYSTEM_REMINDER.trim(), {
