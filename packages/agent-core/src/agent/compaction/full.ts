@@ -25,10 +25,18 @@ import {
   estimateTokens,
   estimateTokensForMessages,
 } from '../../utils/tokens';
+import {
+  applyCompletionBudget,
+  resolveCompletionBudget,
+} from '../../utils/completion-budget';
 import compactionInstructionTemplate from './compaction-instruction.md';
 import { renderMessagesToText } from './render-messages';
 import type { CompactionBeginData, CompactionResult } from './types';
-import { DEFAULT_COMPACTION_CONFIG, DefaultCompactionStrategy, type CompactionStrategy } from './strategy';
+import {
+  DEFAULT_COMPACTION_CONFIG,
+  DefaultCompactionStrategy,
+  type CompactionStrategy,
+} from './strategy';
 
 type CompactionTelemetryTrigger = CompactionBeginData['source'] | 'manual-with-prompt' | 'unknown';
 
@@ -37,6 +45,13 @@ export interface CompactedHistory {
 }
 
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
+
+class CompactionTruncatedError extends Error {
+  constructor() {
+    super('Compaction response was truncated before producing a complete summary.');
+    this.name = 'CompactionTruncatedError';
+  }
+}
 
 export class FullCompaction {
   protected compactionCountInTurn = 0;
@@ -225,6 +240,13 @@ export class FullCompaction {
       await this.triggerPreCompactHook(data, tokensBefore, signal);
 
       const model = this.agent.config.model;
+      const provider = applyCompletionBudget({
+        provider: this.agent.config.provider,
+        budget: resolveCompletionBudget({
+          reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
+        }),
+        capability: this.agent.config.modelCapabilities,
+      });
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
       let usage: TokenUsage | null;
@@ -244,10 +266,9 @@ export class FullCompaction {
             toolCalls: [],
           } satisfies Message,
         ];
-        class TruncatedError extends Error {}
         try {
           const response = await this.agent.generate(
-            this.agent.config.provider,
+            provider,
             this.agent.config.systemPrompt,
             [...this.agent.tools.loopTools],
             messages,
@@ -255,13 +276,13 @@ export class FullCompaction {
             { signal },
           );
           if (response.finishReason === 'truncated') {
-            throw new TruncatedError();
+            throw new CompactionTruncatedError();
           }
           usage = response.usage;
           summary = extractCompactionSummary(response);
           break;
         } catch (error) {
-          if (error instanceof APIContextOverflowError || error instanceof TruncatedError) {
+          if (error instanceof APIContextOverflowError || error instanceof CompactionTruncatedError) {
             compactedCount = this.strategy.reduceCompactOnOverflow(messagesToCompact);
           }
           else if (!isRetryableGenerateError(error)) {

@@ -36,4 +36,10 @@ export class InjectionManager {
       }
     }
   }
+
+  onContextMessageRemoved(index: number): void {
+    for (const injector of this.injectors) {
+      injector.onContextMessageRemoved(index);
+    }
+  }
 }

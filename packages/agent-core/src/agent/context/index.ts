@@ -1,6 +1,7 @@
 import { createToolMessage, type ContentPart, type Message } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
+import { ErrorCodes, KimiError } from '../../errors';
 import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
 import { estimateTokensForMessages } from '../../utils/tokens';
 import type { CompactionResult } from '../compaction';
@@ -69,6 +70,58 @@ export class ContextMemory {
     this.agent.microCompaction.reset();
     this.agent.injection.onContextClear();
     this.agent.emitStatusUpdated();
+  }
+
+  undo(count: number): void {
+    if (count <= 0) return;
+    if (this._history.length === 0) return;
+
+    this.agent.records.logRecord({ type: 'context.undo', count });
+
+    let removedUserCount = 0;
+    const removedMessages = new Set<ContextMessage>();
+    let stoppedAtBoundary = false;
+    for (let i = this._history.length - 1; i >= 0; i--) {
+      const message = this._history[i];
+      if (message === undefined) continue;
+      if (message.origin?.kind === 'injection') continue;
+      if (message.origin?.kind === 'compaction_summary') {
+        stoppedAtBoundary = true;
+        break;
+      }
+
+      removedMessages.add(message);
+      this._history.splice(i, 1);
+      this.agent.injection.onContextMessageRemoved(i);
+
+      if (i < this.tokenCountCoveredMessageCount) {
+        this.tokenCountCoveredMessageCount--;
+        this._tokenCount -= estimateTokensForMessages([message]);
+      }
+
+      if (isRealUserPrompt(message)) {
+        removedUserCount++;
+        if (removedUserCount >= count) break;
+      }
+    }
+
+    this.agent.replayBuilder.removeLastMessages(removedMessages);
+
+    this.openSteps.clear();
+    this.pendingToolResultIds.clear();
+    this.deferredMessages = [];
+    this.agent.microCompaction.reset(this._history.length);
+    this.agent.emitStatusUpdated();
+
+    if (
+      !this.agent.records.restoring &&
+      (stoppedAtBoundary || removedUserCount < count)
+    ) {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'Nothing to undo in the active context.',
+      );
+    }
   }
 
   applyCompaction(summary: CompactionResult): void {
@@ -262,4 +315,14 @@ function toolResultOutputForModel(result: ExecutableToolResult): string | Conten
 
 function isEmptyOutputText(output: string): boolean {
   return output.length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT;
+}
+
+function isRealUserPrompt(message: ContextMessage): boolean {
+  if (message.role !== 'user') return false;
+  const origin = message.origin;
+  if (origin === undefined || origin.kind === 'user') return true;
+  if (origin.kind === 'skill_activation') {
+    return origin.trigger === 'user-slash';
+  }
+  return false;
 }

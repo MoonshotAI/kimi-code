@@ -2138,4 +2138,80 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
   it('clamps defaultMaxTokens above the documented ceiling for known models', async () => {
     expect(await maxTokensFor('claude-opus-4-7', { defaultMaxTokens: 999999 })).toBe(128000);
   });
+
+  it('withMaxCompletionTokens sets max_tokens when no existing cap is present', async () => {
+    const original = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+    });
+    const provider = original
+      .withGenerationKwargs({ max_tokens: undefined })
+      .withMaxCompletionTokens(2048);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(provider).not.toBe(original);
+    expect(body['max_tokens']).toBe(2048);
+  });
+
+  it('withMaxCompletionTokens lowers the inferred model default cap', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+    }).withMaxCompletionTokens(8192);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['max_tokens']).toBe(8192);
+  });
+
+  it('withMaxCompletionTokens preserves an existing lower max_tokens cap', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+      defaultMaxTokens: 1024,
+    }).withMaxCompletionTokens(128000);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['max_tokens']).toBe(1024);
+  });
+
+  it('withMaxCompletionTokens preserves an existing higher max_tokens cap', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'unknown-model',
+      apiKey: 'test-key',
+      stream: false,
+      defaultMaxTokens: 128000,
+    }).withMaxCompletionTokens(1024);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['max_tokens']).toBe(128000);
+  });
+
+  it('withMaxCompletionTokens clamps above the documented ceiling for known models', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+    }).withMaxCompletionTokens(999999);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['max_tokens']).toBe(128000);
+  });
 });

@@ -731,6 +731,42 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('names truncated compaction responses when retries are exhausted', async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const generate: GenerateFn = async () => {
+      attempts += 1;
+      return {
+        ...textResult('Partial summary.'),
+        finishReason: 'truncated',
+        rawFinishReason: 'length',
+      };
+    };
+    const ctx = testAgent({ generate, compactionStrategy: alwaysCompactOnce });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Trigger truncated auto compaction' }] });
+    await vi.advanceTimersByTimeAsync(60_000);
+    const events = await ctx.untilTurnEnd();
+
+    expect(attempts).toBe(5);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: {
+          turnId: 0,
+          reason: 'failed',
+          error: expect.objectContaining({
+            code: 'compaction.failed',
+            message:
+              'CompactionTruncatedError: Compaction response was truncated before producing a complete summary.',
+          }),
+        },
+      }),
+    );
+    await ctx.expectResumeMatches();
+  });
+
   it('reports compaction retry_count when retryable generation failures are exhausted', async () => {
     vi.useFakeTimers();
     const records: TelemetryRecord[] = [];
@@ -1382,12 +1418,14 @@ describe('FullCompaction', () => {
 
   it('compacts provider overflow when model context size is unknown', async () => {
     let callCount = 0;
-    const generate: GenerateFn = async (_provider, _system, _tools, _history, callbacks) => {
+    const compactionMaxCompletionTokens: unknown[] = [];
+    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
       callCount += 1;
       if (callCount === 1) {
         throw new APIContextOverflowError(400, 'Context length exceeded', 'req-unknown-context');
       }
       if (callCount === 2) {
+        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
         return textResult('Unknown window compacted summary.');
       }
       if (callCount === 3) {
@@ -1419,6 +1457,7 @@ describe('FullCompaction', () => {
     const events = await ctx.untilTurnEnd();
 
     expect(callCount).toBe(3);
+    expect(compactionMaxCompletionTokens).toEqual([32000]);
     expect(events).toContainEqual(
       expect.objectContaining({
         event: 'compaction.started',
@@ -1440,6 +1479,74 @@ describe('FullCompaction', () => {
         args: { turnId: 0, reason: 'completed' },
       }),
     );
+  });
+
+  it('honors completion budget env hard caps during compaction', async () => {
+    vi.stubEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS', '8192');
+    let callCount = 0;
+    const compactionMaxCompletionTokens: unknown[] = [];
+    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-hard-cap');
+      }
+      if (callCount === 2) {
+        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+        return textResult('Hard cap compacted summary.');
+      }
+      await callbacks?.onMessagePart?.({
+        type: 'text',
+        text: 'Recovered with hard cap.',
+      });
+      return textResult('Recovered with hard cap.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry with hard cap' }] });
+    await ctx.untilTurnEnd();
+
+    expect(callCount).toBe(3);
+    expect(compactionMaxCompletionTokens).toEqual([8192]);
+  });
+
+  it('honors completion budget env opt-out during compaction', async () => {
+    vi.stubEnv('KIMI_MODEL_MAX_COMPLETION_TOKENS', '0');
+    let callCount = 0;
+    const compactionMaxCompletionTokens: unknown[] = [];
+    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-opt-out');
+      }
+      if (callCount === 2) {
+        compactionMaxCompletionTokens.push(providerMaxCompletionTokens(provider));
+        return textResult('Opt-out compacted summary.');
+      }
+      await callbacks?.onMessagePart?.({
+        type: 'text',
+        text: 'Recovered with opt-out.',
+      });
+      return textResult('Recovered with opt-out.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry with opt-out' }] });
+    await ctx.untilTurnEnd();
+
+    expect(callCount).toBe(3);
+    expect(compactionMaxCompletionTokens).toEqual([undefined]);
   });
 
   it('ignores filtered assistant placeholders when checking the retained overflow suffix', async () => {
@@ -1623,6 +1730,14 @@ function oauthTestAgentOptions(
       resolveOAuthTokenProvider: () => ({ getAccessToken }),
     },
   };
+}
+
+function providerMaxCompletionTokens(provider: Parameters<GenerateFn>[0]): unknown {
+  return (
+    provider as {
+      readonly modelParameters?: Record<string, unknown>;
+    }
+  ).modelParameters?.['max_completion_tokens'];
 }
 
 function textResult(text: string): Awaited<ReturnType<GenerateFn>> {

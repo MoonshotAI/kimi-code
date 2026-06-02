@@ -10,6 +10,7 @@ import type { Component } from '@earendil-works/pi-tui';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
+import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
 import {
@@ -117,12 +118,6 @@ function tipsForIndex(index: number): { primary: string; pair: string | null } {
   const next = ROTATION[(offset + 1) % n]!;
   if (next.solo || next.text === current.text) return { primary: current.text, pair: null };
   return { primary: current.text, pair: current.text + TIP_SEPARATOR + next.text };
-}
-
-function shortenModel(model: string): string {
-  if (!model) return model;
-  const slash = model.lastIndexOf('/');
-  return slash >= 0 ? model.slice(slash + 1) : model;
 }
 
 function modelDisplayName(state: AppState): string {
@@ -244,10 +239,15 @@ export class FooterComponent implements Component {
     if (state.permissionMode === 'yolo') left.push(chalk.hex(colors.warning).bold('yolo'));
     if (state.planMode) left.push(chalk.hex(colors.primary).bold('plan'));
 
-    const model = shortenModel(modelDisplayName(state));
+    const model = modelDisplayName(state);
     if (model) {
       const thinkingLabel = state.thinking ? ' thinking' : '';
-      left.push(chalk.hex(colors.text)(`${model}${thinkingLabel}`));
+      const modelLabel = `${model}${thinkingLabel}`;
+      let renderedModelLabel = chalk.hex(colors.text)(modelLabel);
+      if (isRainbowDancing()) {
+        renderedModelLabel = renderDanceFooterModel(modelLabel, colors);
+      }
+      left.push(renderedModelLabel);
     }
 
     // Background-task badges sit immediately before cwd. `bash-*` tasks

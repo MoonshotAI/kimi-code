@@ -11,7 +11,7 @@ The following keys are always available in the input box:
 | Shortcut | Action |
 | --- | --- |
 | `Enter` | Submit the current input |
-| `Shift-Enter` | Insert a newline in the input |
+| `Shift-Enter` / `Ctrl-J` | Insert a newline in the input |
 | `↑` / `↓` | Browse input history |
 | `Esc` | Close popup / cancel completion / interrupt streaming output or an in-progress context compaction |
 | `Ctrl-C` | Interrupt the current streaming output, or clear the input box |

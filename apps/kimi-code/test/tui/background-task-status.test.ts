@@ -4,17 +4,34 @@ import { describe, expect, it } from 'vitest';
 import { formatBackgroundTaskTranscript } from '@/tui/utils/background-task-status';
 
 function task(overrides: Partial<BackgroundTaskInfo> = {}): BackgroundTaskInfo {
-  return {
-    taskId: 'bash-abcd1234',
-    command: 'npm run dev',
+  const taskId = overrides.taskId ?? 'bash-abcd1234';
+  const kind = overrides.kind ?? (taskId.startsWith('agent-') ? 'agent' : 'process');
+  const base = {
+    taskId,
+    kind,
     description: 'dev server',
     status: 'running',
-    pid: 1234,
-    exitCode: null,
     startedAt: Date.now() - 1000,
     endedAt: null,
     ...overrides,
   };
+  if (kind === 'agent') {
+    return {
+      ...base,
+      kind: 'agent',
+      agentId: 'agent-child',
+      subagentType: 'coder',
+      ...overrides,
+    } as BackgroundTaskInfo;
+  }
+  return {
+    ...base,
+    kind: 'process',
+    command: 'npm run dev',
+    pid: 1234,
+    exitCode: null,
+    ...overrides,
+  } as BackgroundTaskInfo;
 }
 
 describe('formatBackgroundTaskTranscript', () => {
@@ -66,22 +83,11 @@ describe('formatBackgroundTaskTranscript', () => {
     expect(data.detail).toContain('session restarted');
   });
 
-  it('surfaces awaiting_approval reason', () => {
-    const data = formatBackgroundTaskTranscript(
-      task({ status: 'awaiting_approval', approvalReason: 'needs network' }),
-    );
-    expect(data.phase).toBe('started');
-    expect(data.headline).toContain('awaiting');
-    expect(data.detail).toContain('needs network');
-  });
-
-  it('surfaces timedOut for agent deadlines', () => {
+  it('surfaces timeout stop reason for agent deadlines', () => {
     const data = formatBackgroundTaskTranscript(
       task({
         taskId: 'agent-aaaaaaaa',
-        status: 'failed',
-        exitCode: 1,
-        timedOut: true,
+        status: 'timed_out',
         endedAt: Date.now(),
       }),
     );
@@ -91,9 +97,9 @@ describe('formatBackgroundTaskTranscript', () => {
   it('handles every BackgroundTaskStatus without throwing', () => {
     const statuses: BackgroundTaskStatus[] = [
       'running',
-      'awaiting_approval',
       'completed',
       'failed',
+      'timed_out',
       'killed',
       'lost',
     ];

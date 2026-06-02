@@ -203,15 +203,28 @@ function backgroundTask(
   description: string,
   status: BackgroundTaskInfo['status'] = 'running',
 ): BackgroundTaskInfo {
+  if (taskId.startsWith('agent-')) {
+    return {
+      taskId,
+      kind: 'agent',
+      agentId: taskId,
+      subagentType: 'coder',
+      description,
+      status,
+      startedAt: 1,
+      endedAt: status === 'running' ? null : 2,
+    };
+  }
   return {
     taskId,
+    kind: 'process',
     command: `[agent] ${description}`,
     description,
     status,
     pid: 0,
     exitCode: status === 'completed' ? 0 : null,
     startedAt: 1,
-    endedAt: status === 'running' || status === 'awaiting_approval' ? null : 2,
+    endedAt: status === 'running' ? null : 2,
   };
 }
 
@@ -302,6 +315,95 @@ describe('KimiTUI resume message replay', () => {
     expect(driver.sessionEventHandler.backgroundTasks.has('agent-bg1')).toBe(true);
     expect(driver.sessionEventHandler.backgroundTasks.has('bash-bg1')).toBe(true);
     expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('bash-bg1')).toBe(true);
+  });
+
+  it('matches completed resumed background agents by agent id when task id differs', async () => {
+    const driver = await replayIntoDriver([], {
+      background: [
+        {
+          taskId: 'task-bg1',
+          kind: 'agent',
+          agentId: 'agent-bg1',
+          subagentType: 'coder',
+          description: 'Review long-running work',
+          status: 'running',
+          startedAt: 1,
+          endedAt: null,
+        },
+      ],
+    });
+
+    expect(driver.sessionEventHandler.backgroundAgentMetadata.has('agent-bg1')).toBe(true);
+    expect(driver.sessionEventHandler.backgroundAgentMetadata.has('task-bg1')).toBe(false);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.completed',
+        agentId: 'main',
+        sessionId: 'ses-replay',
+        subagentId: 'agent-bg1',
+        parentToolCallId: 'task-bg1',
+        resultSummary: 'Reviewed the long-running work.',
+      },
+      () => {},
+    );
+
+    const status = driver.state.transcriptEntries.find(
+      (entry) => entry.backgroundAgentStatus?.phase === 'completed',
+    );
+
+    expect(driver.sessionEventHandler.backgroundAgentMetadata.has('agent-bg1')).toBe(false);
+    expect(status?.backgroundAgentStatus?.headline).toBe('agent completed in background');
+    expect(status?.backgroundAgentStatus?.detail).toContain('Review long-running work');
+  });
+
+  it('keeps timed-out status when an aborted resumed background agent later fails', async () => {
+    const info: BackgroundTaskInfo = {
+      taskId: 'task-bg-timeout',
+      kind: 'agent',
+      agentId: 'agent-bg-timeout',
+      subagentType: 'coder',
+      description: 'Review timeout handling',
+      status: 'running',
+      startedAt: 1,
+      endedAt: null,
+      timeoutMs: 1000,
+    };
+    const driver = await replayIntoDriver([], { background: [info] });
+    const applyTerminalStatus = vi
+      .spyOn(driver.streamingUI, 'applyBackgroundTaskTerminalStatus')
+      .mockReturnValue(true);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'background.task.terminated',
+        agentId: 'main',
+        sessionId: 'ses-replay',
+        info: { ...info, status: 'timed_out', endedAt: 2 },
+      },
+      () => {},
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.failed',
+        agentId: 'main',
+        sessionId: 'ses-replay',
+        subagentId: 'agent-bg-timeout',
+        parentToolCallId: 'task-bg-timeout',
+        error: 'The subagent was aborted.',
+      },
+      () => {},
+    );
+
+    expect(applyTerminalStatus.mock.calls.map(([args]) => args.status)).toEqual(['timed_out']);
+    expect(driver.sessionEventHandler.backgroundAgentMetadata.has('agent-bg-timeout')).toBe(false);
+    expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('task-bg-timeout'))
+      .toBe(true);
+    expect(
+      driver.state.transcriptEntries.some(
+        (entry) => entry.backgroundAgentStatus?.phase === 'failed',
+      ),
+    ).toBe(false);
   });
 
   it('renders replayed bash background notifications as bash tasks', async () => {
