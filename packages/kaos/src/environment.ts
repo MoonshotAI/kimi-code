@@ -95,20 +95,25 @@ async function locateWindowsGitBash(deps: EnvironmentDeps): Promise<string> {
   if (gitExe !== undefined) {
     const inferred = inferGitBashFromGitExe(gitExe);
     if (inferred !== undefined) {
-      checked.push(inferred);
-      if (await deps.isFile(inferred)) {
-        return inferred;
+      for (const path of inferred) {
+        checked.push(path);
+        if (await deps.isFile(path)) {
+          return path;
+        }
       }
     }
   }
 
   const candidates: string[] = [
     'C:\\Program Files\\Git\\bin\\bash.exe',
+    'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
     'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+    'C:\\Program Files (x86)\\Git\\usr\\bin\\bash.exe',
   ];
   const localAppData = deps.env['LOCALAPPDATA']?.trim();
   if (localAppData !== undefined && localAppData.length > 0) {
     candidates.push(`${localAppData}\\Programs\\Git\\bin\\bash.exe`);
+    candidates.push(`${localAppData}\\Programs\\Git\\usr\\bin\\bash.exe`);
   }
   for (const candidate of candidates) {
     checked.push(candidate);
@@ -123,17 +128,18 @@ async function locateWindowsGitBash(deps: EnvironmentDeps): Promise<string> {
 }
 
 // Most Git for Windows installs put `git.exe` in `<root>\cmd\git.exe`,
-// with bash at `<root>\bin\bash.exe`. Portable installs sometimes put
-// both in `<root>\bin\`. Walk back to the parent of `cmd` / `bin` and
-// re-anchor under `bin\bash.exe`.
-function inferGitBashFromGitExe(gitExe: string): string | undefined {
+// with bash at `<root>\bin\bash.exe` (a wrapper) or `<root>\usr\bin\bash.exe`
+// (the real MSYS2 shell). Walk back to the parent of `cmd` / `bin` and
+// return both candidates so the caller can try them in preference order.
+function inferGitBashFromGitExe(gitExe: string): string[] | undefined {
   const sep = gitExe.includes('\\') ? '\\' : '/';
   const parts = gitExe.split(sep);
   for (let i = parts.length - 2; i >= 0; i -= 1) {
     const segment = parts[i];
     if (segment === 'cmd' || segment === 'bin') {
       const root = parts.slice(0, i).join(sep);
-      return root.length === 0 ? `bin${sep}bash.exe` : `${root}${sep}bin${sep}bash.exe`;
+      const prefix = root.length === 0 ? '' : `${root}${sep}`;
+      return [`${prefix}bin${sep}bash.exe`, `${prefix}usr${sep}bin${sep}bash.exe`];
     }
   }
   return undefined;
