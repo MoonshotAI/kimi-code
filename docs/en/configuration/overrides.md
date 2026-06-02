@@ -20,7 +20,7 @@ For other runtime parameters (model alias, Plan / yolo mode, Skills directories,
 A few environment variables explicitly override related config fields. For example, `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` has higher priority than `[background].keep_alive_on_exit`. These exceptions are called out in [Environment variables](./env-vars.md) and in the corresponding [Config files](./config-files.md) field reference.
 
 ::: warning Note
-Ordinary runtime parameters **do not** fall back to shell environment variables. For example, provider `api_key` / `base_url` are read only from fields in `config.toml` (including the `[providers.<name>.env]` subtable); they do not fall back to shell exports like `export KIMI_API_KEY`. See [Provider credentials](#provider-credentials) below.
+Ordinary runtime parameters **do not** fall back to shell environment variables. For example, provider `api_key` / `base_url` are read only from fields in `config.toml` (including the `[providers.<name>.env]` subtable); they do not fall back to shell exports like `export KIMI_API_KEY`. See [Provider credentials](#provider-credentials) below. The one exception is the explicit `KIMI_MODEL_*` channel, which synthesizes a model (and its credentials) from the shell; see [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi-model).
 :::
 
 Kimi Code CLI currently reads only one user-level config file. There is no project-level (in-repo) config file mechanism. To isolate configuration between projects, point `KIMI_CODE_HOME` at a different data directory (see [Typical scenarios](#typical-scenarios) below) or temporarily override specific fields with CLI flags at launch.
@@ -31,7 +31,7 @@ The config file location is controlled by the `KIMI_CODE_HOME` environment varia
 
 ## Provider credentials
 
-Provider credentials (`api_key`, `base_url`) have their own resolution rules: Kimi Code CLI reads provider fields only from `config.toml` and **does not** fall back to shell environment variables. Running `export KIMI_API_KEY` in your terminal alone will not give a `[providers.<name>]` entry credentials — you have to write them into the config file explicitly.
+Provider credentials (`api_key`, `base_url`) have their own resolution rules: Kimi Code CLI reads provider fields only from `config.toml` and **does not** fall back to shell environment variables. Running `export KIMI_API_KEY` in your terminal alone will not give a `[providers.<name>]` entry credentials — you have to write them into the config file explicitly. The one exception is the explicit `KIMI_MODEL_*` channel, which synthesizes a model (and its credentials) from the shell; see [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi-model).
 
 For a single provider, credentials are resolved in this order:
 

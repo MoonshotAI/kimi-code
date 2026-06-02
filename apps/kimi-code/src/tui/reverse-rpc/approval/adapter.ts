@@ -251,15 +251,32 @@ function adaptDisplay(display: ToolInputDisplay): DisplayBlock[] {
           new_text: display.after ?? '',
         },
       ];
-    case 'file_io':
+    case 'file_io': {
+      const path = display.path ?? '';
+      // Write attaches the full file content — render it as a syntax-
+      // highlighted code block so the approval panel can preview (and
+      // ctrl+e expand) what is about to land on disk.
+      if (display.operation === 'write' && typeof display.content === 'string') {
+        return [{ type: 'file_content', path, content: display.content }];
+      }
+      // Edit attaches the old_string/new_string hunk as before/after — render
+      // it as a diff block so ctrl+e expansion works on the change.
+      if (
+        display.operation === 'edit' &&
+        typeof display.before === 'string' &&
+        typeof display.after === 'string'
+      ) {
+        return [{ type: 'diff', path, old_text: display.before, new_text: display.after }];
+      }
       return [
         {
           type: 'file_op',
           operation: display.operation,
-          path: display.path ?? '',
+          path,
           detail: display.detail,
         },
       ];
+    }
     case 'url_fetch':
       return [
         {

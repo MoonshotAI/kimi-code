@@ -11,6 +11,7 @@ import type {
 import type {
   AppState,
   BackgroundAgentMetadata,
+  SkillActivationTrigger,
   ToolCallBlockData,
   TranscriptEntry,
 } from '#/tui/types';
@@ -38,10 +39,10 @@ export interface SkillActivationProjection {
   readonly activationId: string;
   readonly skillName: string;
   readonly skillArgs?: string;
+  readonly trigger: SkillActivationTrigger;
 }
 
 export interface ReplayBackgroundProjection {
-  readonly backgroundAgents: ReadonlySet<string>;
   readonly backgroundAgentMetadata: ReadonlyMap<string, BackgroundAgentMetadata>;
 }
 
@@ -55,7 +56,6 @@ export function appStateFromResumeAgent(agent: ResumedAgentState): Partial<AppSt
     maxContextTokens,
     contextUsage,
     planMode: agent.plan !== null,
-    yolo: agent.permission.mode === 'yolo',
     permissionMode: agent.permission.mode,
   };
 }
@@ -64,6 +64,7 @@ export function isTerminalBackgroundTask(info: BackgroundTaskInfo): boolean {
   return (
     info.status === 'completed' ||
     info.status === 'failed' ||
+    info.status === 'timed_out' ||
     info.status === 'killed' ||
     info.status === 'lost'
   );
@@ -77,7 +78,7 @@ export function countActiveBackgroundTasks(tasks: ReadonlyMap<string, Background
   let agentTasks = 0;
   for (const info of tasks.values()) {
     if (isTerminalBackgroundTask(info)) continue;
-    if (info.taskId.startsWith('agent-')) {
+    if (info.kind === 'agent') {
       agentTasks += 1;
     } else {
       bashTasks += 1;
@@ -89,19 +90,18 @@ export function countActiveBackgroundTasks(tasks: ReadonlyMap<string, Background
 export function replayBackgroundProjection(
   background: readonly BackgroundTaskInfo[],
 ): ReplayBackgroundProjection {
-  const backgroundAgents = new Set<string>();
   const backgroundAgentMetadata = new Map<string, BackgroundAgentMetadata>();
   for (const info of background) {
-    if (!info.taskId.startsWith('agent-')) continue;
+    if (info.kind !== 'agent') continue;
     if (isTerminalBackgroundTask(info)) continue;
-    backgroundAgents.add(info.taskId);
-    backgroundAgentMetadata.set(info.taskId, {
-      agentId: info.taskId,
+    const agentId = info.agentId ?? info.taskId;
+    backgroundAgentMetadata.set(agentId, {
+      agentId,
       parentToolCallId: info.taskId,
       description: info.description,
     });
   }
-  return { backgroundAgents, backgroundAgentMetadata };
+  return { backgroundAgentMetadata };
 }
 
 export function createReplayRenderContext(): ReplayRenderContext {
@@ -207,6 +207,7 @@ export function skillActivationFromOrigin(
     activationId: origin.activationId,
     skillName: origin.skillName,
     skillArgs: origin.skillArgs,
+    trigger: origin.trigger,
   };
 }
 
@@ -250,6 +251,8 @@ function isReplayUserTurnRecord(record: AgentReplayRecord): boolean {
       return message.origin.trigger === 'user-slash';
     case 'background_task':
     case 'compaction_summary':
+    case 'cron_job':
+    case 'cron_missed':
     case 'hook_result':
     case 'injection':
     case 'system_trigger':

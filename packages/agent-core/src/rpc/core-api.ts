@@ -1,12 +1,13 @@
 import type { AgentConfigData } from '#/agent/config';
 import type { AgentContextData } from '#/agent/context';
+import type { BackgroundTaskInfo } from '#/agent/background';
 import type { PermissionData, PermissionMode } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
 import type { ToolInfo } from '#/agent/tool';
 import type { KimiConfig, KimiConfigPatch } from '#/config';
+import type { ExperimentalFlagMap } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
-import type { BackgroundTaskInfo } from '#/tools/builtin';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { PluginInfo, PluginSummary, ReloadSummary } from '#/plugin';
@@ -105,7 +106,8 @@ export interface ExportSessionResult {
 }
 
 export interface ListSessionsPayload {
-  readonly workDir: string;
+  readonly workDir?: string;
+  readonly sessionId?: string;
 }
 
 export interface CoreInfo {
@@ -152,6 +154,9 @@ export interface CancelPlanPayload {
 export interface BeginCompactionPayload {
   readonly instruction?: string;
 }
+export interface UndoHistoryPayload {
+  readonly count: number;
+}
 export interface RegisterToolPayload {
   readonly name: string;
   readonly description: string;
@@ -171,9 +176,6 @@ export interface StopBackgroundPayload {
 export interface GetBackgroundOutputPayload {
   readonly taskId: string;
   readonly tail?: number;
-}
-export interface GetBackgroundOutputPathPayload {
-  readonly taskId: string;
 }
 export interface GetBackgroundPayload {
   /**
@@ -249,6 +251,10 @@ export interface UpdateSessionMetadataPayload {
   readonly metadata: SessionMetadataPatch;
 }
 
+export interface GetKimiConfigPayload {
+  readonly reload?: boolean;
+}
+
 export type SetKimiConfigPayload = KimiConfigPatch;
 
 export interface RemoveKimiProviderPayload {
@@ -259,6 +265,7 @@ export interface AgentAPI {
   prompt: (payload: PromptPayload) => void;
   steer: (payload: SteerPayload) => void;
   cancel: (payload: CancelPayload) => void;
+  undoHistory: (payload: UndoHistoryPayload) => void;
   setThinking: (payload: SetThinkingPayload) => void;
   setPermission: (payload: SetPermissionPayload) => void;
   setModel: (payload: SetModelPayload) => SetModelResult;
@@ -275,7 +282,6 @@ export interface AgentAPI {
   clearContext: (payload: EmptyPayload) => void;
   activateSkill: (payload: ActivateSkillPayload) => void;
   getBackgroundOutput: (payload: GetBackgroundOutputPayload) => string;
-  getBackgroundOutputPath: (payload: GetBackgroundOutputPathPayload) => string | undefined;
   getContext: (payload: EmptyPayload) => AgentContextData;
   getConfig: (payload: EmptyPayload) => AgentConfigData;
   getPermission: (payload: EmptyPayload) => PermissionData;
@@ -302,7 +308,8 @@ type SessionAPIWithId = WithSessionId<SessionAPI>;
 
 export interface CoreAPI extends SessionAPIWithId {
   getCoreInfo: (payload: EmptyPayload) => CoreInfo;
-  getKimiConfig: (payload: EmptyPayload) => KimiConfig;
+  getExperimentalFlags: (payload: EmptyPayload) => ExperimentalFlagMap;
+  getKimiConfig: (payload: GetKimiConfigPayload) => KimiConfig;
   setKimiConfig: (payload: SetKimiConfigPayload) => KimiConfig;
   removeKimiProvider: (payload: RemoveKimiProviderPayload) => KimiConfig;
   createSession: (payload: CreateSessionPayload) => SessionSummary;

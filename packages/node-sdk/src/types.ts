@@ -17,9 +17,9 @@ export type Unsubscribe = () => void;
 
 export type {
   AgentReplayRecord,
+  AgentBackgroundTaskInfo,
   BackgroundConfig,
   BackgroundTaskInfo,
-  BackgroundTaskKind,
   BackgroundTaskStatus,
   ContextMessage,
   ExportSessionManifest,
@@ -31,9 +31,13 @@ export type {
   ModelAlias,
   MoonshotServiceConfig,
   OAuthRef,
+  PluginGithubMetadata,
+  PluginGithubRef,
   PluginInfo,
   PluginMcpServerInfo,
+  PluginSource,
   PluginSummary,
+  ProcessBackgroundTaskInfo,
   PromptOrigin,
   ProviderConfig,
   ProviderType,
@@ -113,7 +117,8 @@ export interface ExportSessionResult {
 }
 
 export interface ListSessionsOptions {
-  readonly workDir: string;
+  readonly workDir?: string;
+  readonly sessionId?: string;
 }
 
 export interface GetConfigOptions {

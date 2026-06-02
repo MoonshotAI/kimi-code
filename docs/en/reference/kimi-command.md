@@ -21,6 +21,7 @@ The table below lists all options supported by the `kimi` main command. All flag
 | `--prompt <prompt>` | `-p` | Run one prompt non-interactively and stream assistant output to stdout. This mode uses `auto` permission for tool calls and does not open the TUI. |
 | `--output-format <format>` | | Set the non-interactive output format. Supported values are `text` and `stream-json`. Only valid with `--prompt`; defaults to `text`. |
 | `--yolo` | `-y` | Auto-approve ordinary tool calls, skipping approval requests; Plan mode `Bash` approval and Plan mode exit approval are not skipped. |
+| `--auto` | | Start in auto permission mode. Tool approvals are handled automatically and the agent will not ask questions. |
 | `--plan` | | Start a new session in Plan mode, where the AI favors read-only tools for exploration and planning and can write the current plan file; Plan mode `Bash` is handled separately according to the permission mode. |
 | `--skills-dir <dir>` | | Load Skills from the specified directory, replacing the auto-discovered user and project directories. Can be passed multiple times to stack several directories. See [Custom Skills directories](#custom-skills-directories) below. |
 
@@ -36,8 +37,10 @@ The following combinations are rejected at startup:
 
 - `--continue` and `--session` are mutually exclusive: both mean "resume a previous session" and overlap in meaning.
 - `--yolo` cannot be combined with `--continue` or `--session`: when resuming a session, the original session's approval settings are preserved. This rule only applies to interactive mode; in `--prompt` mode, `--yolo` is rejected earlier because it is mutually exclusive with `--prompt`.
+- `--auto` cannot be combined with `--continue` or `--session`: same rationale as `--yolo`.
+- `--auto` cannot be combined with `--yolo`: the two permission modes are mutually exclusive.
 - `--plan` cannot be combined with `--continue` or `--session`: Plan mode only applies to new sessions.
-- `--prompt` cannot be combined with `--yolo` or `--plan`: non-interactive mode always uses `auto` permission and does not enter Plan mode.
+- `--prompt` cannot be combined with `--yolo`, `--auto`, or `--plan`: non-interactive mode always uses `auto` permission and does not enter Plan mode.
 - `--prompt` can be combined with `--continue` or `--session <id>` with an ID; bare `--session` without an ID would open the interactive picker and therefore cannot be used in non-interactive mode.
 - `--output-format` can only be used with `--prompt`; the interactive TUI does not support writing the full event stream as stdout JSONL.
 
@@ -67,6 +70,12 @@ When the task is trivial and you don't want to be interrupted by frequent approv
 
 ```sh
 kimi --yolo
+```
+
+If you want the agent to handle approvals on its own and not ask questions, use `--auto`:
+
+```sh
+kimi --auto
 ```
 
 If you want the AI to read the code and produce an implementation plan first, rather than immediately editing files, use `--plan` to enter Plan mode:
@@ -152,3 +161,90 @@ kimi migrate
 ```
 
 If you previously used an older version of kimi-cli, run this command to migrate historical sessions, configuration, and other data to kimi-code to avoid data loss. For the full migration flow, what gets migrated, and things to watch out for, see [Migrating from kimi-cli](../guides/migration.md).
+
+### `kimi provider`
+
+Manage LLM providers from the shell — the non-interactive equivalent of the TUI `/provider` command. Useful for scripting, CI bootstrap, and provisioning a fresh machine.
+
+```sh
+kimi provider <action> [options]
+```
+
+Three actions are available:
+
+#### `kimi provider add <url>`
+
+Import every provider listed in a custom registry (an `api.json` document). The command fetches the registry, creates one `[providers.<id>]` table per top-level entry, populates `[models.<alias>]` for each model in the document, and persists the `source = { kind = "apiJson", url, api_key }` block on every provider so the next TUI launch refreshes the model list automatically.
+
+| Argument / Option | Description |
+| --- | --- |
+| `<url>` | Registry URL, e.g. `https://free-tokens.msh.team/v1/models/api.json`. |
+| `--api-key <key>` | Bearer token sent with the registry fetch. Falls back to the `KIMI_REGISTRY_API_KEY` environment variable when omitted. Required. |
+
+```sh
+# One-line import — every provider and model in the registry lands in ~/.kimi-code/config.toml
+kimi provider add https://free-tokens.msh.team/v1/models/api.json --api-key YOUR_KEY
+
+# Or via environment variable, for CI / .envrc-style workflows
+KIMI_REGISTRY_API_KEY=YOUR_KEY kimi provider add https://free-tokens.msh.team/v1/models/api.json
+```
+
+If a provider id already exists, it is replaced (its stale model aliases are removed first, mirroring the TUI flow). No default model is selected — pick one later via `-m` or `/model` inside the TUI.
+
+#### `kimi provider remove <providerId>`
+
+Delete a provider and every model alias that referenced it. If the removed provider was the source of `default_model`, that field is cleared.
+
+```sh
+kimi provider remove kohub
+```
+
+#### `kimi provider list`
+
+Print one row per configured provider with its type, model count, and source (`apiJson(...)`, `oauth`, or `inline`). Add `--json` to emit the raw `providers` and `models` tables as JSON for further processing.
+
+```sh
+kimi provider list
+kimi provider list --json | jq '.providers | keys'
+```
+
+#### `kimi provider catalog list [providerId]`
+
+Discover providers known to the public [models.dev](https://models.dev/) catalog without writing anything. With no argument, prints one row per provider showing its inferred wire type and model count. With a `providerId`, drills into that provider and lists each model with its context window and capabilities.
+
+| Argument / Option | Description |
+| --- | --- |
+| `[providerId]` | Optional. Catalog provider id to drill into. |
+| `--filter <substring>` | Case-insensitive id/name substring filter (top-level only). |
+| `--url <url>` | Override catalog URL. Defaults to `https://models.dev/api.json`. |
+| `--json` | Emit the matching catalog slice as JSON. |
+
+```sh
+# Browse providers
+kimi provider catalog list
+kimi provider catalog list --filter anthropic
+
+# Inspect one provider's models
+kimi provider catalog list anthropic
+```
+
+#### `kimi provider catalog add <providerId>`
+
+Import a known provider directly from the catalog. The catalog supplies the wire type, base URL, model identifiers, context limits, and capabilities — you only have to supply the API key.
+
+| Argument / Option | Description |
+| --- | --- |
+| `<providerId>` | Catalog provider id, e.g. `anthropic`, `openai`, `google`. |
+| `--api-key <key>` | API key for the provider. Falls back to `KIMI_REGISTRY_API_KEY`. Required. |
+| `--default-model <modelId>` | Optional. Set `default_model` to `<providerId>/<modelId>` after import. The model must be one listed by `catalog list <providerId>`. |
+| `--url <url>` | Override catalog URL. Defaults to `https://models.dev/api.json`. |
+
+When `--default-model` is omitted, the existing `default_model` is preserved (you can still pick a model later via `-m` or the TUI `/model` command).
+
+```sh
+# Look up what's available
+kimi provider catalog list anthropic
+
+# Import and set the default in one go
+kimi provider catalog add anthropic --api-key sk-ant-... --default-model claude-opus-4-7
+```

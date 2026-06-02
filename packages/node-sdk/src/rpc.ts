@@ -9,6 +9,7 @@ import {
   type ApprovalResponse,
   type CoreAPI,
   type Event,
+  type ExperimentalFlagMap,
   type OAuthTokenProviderResolver,
   type QuestionRequest,
   type QuestionResult,
@@ -126,6 +127,7 @@ export class SDKRpcClient {
       resolveOAuthTokenProvider: options.resolveOAuthTokenProvider,
       skillDirs: options.skillDirs,
       telemetry: options.telemetry,
+      appVersion: options.identity?.version,
     });
     this.ready = sdkRpc(new ClientAPI(this)).then((rpc) => {
       this.rpc = rpc;
@@ -167,7 +169,7 @@ export class SDKRpcClient {
     return rpc.closeSession({ sessionId: input.sessionId });
   }
 
-  async listSessions(input: ListSessionsOptions): Promise<readonly SessionSummary[]> {
+  async listSessions(input: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
     const rpc = await this.getRpc();
     return rpc.listSessions(input);
   }
@@ -195,6 +197,11 @@ export class SDKRpcClient {
   async getConfig(input?: GetConfigOptions): Promise<KimiConfig> {
     const rpc = await this.getRpc();
     return rpc.getKimiConfig(input ?? {});
+  }
+
+  async getExperimentalFlags(): Promise<ExperimentalFlagMap> {
+    const rpc = await this.getRpc();
+    return rpc.getExperimentalFlags({});
   }
 
   async setConfig(input: KimiConfigPatch): Promise<KimiConfig> {
@@ -312,6 +319,15 @@ export class SDKRpcClient {
     });
   }
 
+  async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.undoHistory({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      count: input.count,
+    });
+  }
+
   async getContext(input: SessionIdRpcInput): Promise<AgentContextData> {
     const rpc = await this.getRpc();
     return rpc.getContext({
@@ -394,17 +410,6 @@ export class SDKRpcClient {
       agentId: this.interactiveAgentId,
       taskId: input.taskId,
       tail: input.tail,
-    });
-  }
-
-  async getBackgroundTaskOutputPath(
-    input: SessionIdRpcInput & { taskId: string },
-  ): Promise<string | undefined> {
-    const rpc = await this.getRpc();
-    return rpc.getBackgroundOutputPath({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      taskId: input.taskId,
     });
   }
 

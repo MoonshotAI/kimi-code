@@ -18,7 +18,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      id-token: write  # Required for NPM Trusted Publishing (OIDC)
+      id-token: write # Required for NPM Trusted Publishing (OIDC)
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -32,8 +32,8 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
-          cache: 'pnpm'
-          registry-url: 'https://registry.npmjs.org'
+          cache: "pnpm"
+          registry-url: "https://registry.npmjs.org"
 
       - name: Upgrade npm for Trusted Publishing
         run: npm install -g npm@latest
@@ -56,9 +56,9 @@ jobs:
         uses: changesets/action@v1
         with:
           publish: pnpm changeset publish
-          version: pnpm changeset version
-          commit: 'ci: release packages'
-          title: 'ci: release packages'
+          version: pnpm run version:release
+          commit: "ci: release packages"
+          title: "ci: release packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # NPM_TOKEN is not needed with Trusted Publishing (OIDC)

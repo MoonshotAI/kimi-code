@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import chalk from 'chalk';
 
-import { FooterComponent, formatFooterGitBadge } from '#/tui/components/chrome/footer';
+import { FooterComponent, formatFooterGitBadge, buildWeightedTips } from '#/tui/components/chrome/footer';
 import { darkColors } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
 
@@ -23,14 +23,12 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
     model: 'k2',
     workDir: '/tmp',
     sessionId: 'sess_1',
-    yolo: false,
     permissionMode: 'manual',
     planMode: false,
     thinking: false,
     contextUsage: 0,
     contextTokens: 0,
     maxContextTokens: 0,
-    isStreaming: false,
     isCompacting: false,
     isReplaying: false,
     streamingPhase: 'idle',
@@ -146,5 +144,49 @@ describe('FooterComponent — context NaN resilience', () => {
     } finally {
       chalk.level = previousLevel;
     }
+  });
+});
+
+describe('buildWeightedTips — weighted rotation', () => {
+  it('repeats higher-priority tips more often (length = sum of weights)', () => {
+    const seq = buildWeightedTips([
+      { text: 'a' }, // weight 1 (default)
+      { text: 'b', priority: 3 },
+      { text: 'c', priority: 2 },
+    ]);
+
+    const count = (t: string) => seq.filter((x) => x.text === t).length;
+    expect(seq).toHaveLength(6);
+    expect(count('a')).toBe(1);
+    expect(count('b')).toBe(3);
+    expect(count('c')).toBe(2);
+    expect(count('b')).toBeGreaterThan(count('a'));
+  });
+
+  it('keeps duplicates spread out — no tip sits next to itself', () => {
+    const seq = buildWeightedTips([
+      { text: 'a' },
+      { text: 'b', priority: 3 },
+      { text: 'c', priority: 2 },
+    ]);
+
+    for (let i = 1; i < seq.length; i++) {
+      expect(seq[i]!.text).not.toBe(seq[i - 1]!.text);
+    }
+  });
+
+  it('preserves array order when all weights are the default (1)', () => {
+    const seq = buildWeightedTips([{ text: 'x' }, { text: 'y' }, { text: 'z' }]);
+    expect(seq.map((t) => t.text)).toEqual(['x', 'y', 'z']);
+  });
+
+  it('clamps non-positive / fractional priorities to a weight of at least 1', () => {
+    const seq = buildWeightedTips([
+      { text: 'a', priority: 0 },
+      { text: 'b', priority: -5 },
+      { text: 'c', priority: 1.9 },
+    ]);
+    expect(seq).toHaveLength(3);
+    expect(seq.map((t) => t.text).toSorted()).toEqual(['a', 'b', 'c']);
   });
 });

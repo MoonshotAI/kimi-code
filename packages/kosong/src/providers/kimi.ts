@@ -36,6 +36,11 @@ import {
   requireProviderApiKey,
   resolveAuthBackedClient,
 } from './request-auth';
+import {
+  normalizeToolCallIdsForProvider,
+  sanitizeToolCallId,
+  type ToolCallIdPolicy,
+} from './tool-call-id';
 export interface KimiOptions {
   apiKey?: string | undefined;
   baseUrl?: string | undefined;
@@ -78,6 +83,10 @@ export interface ExtraBody {
   thinking?: ThinkingConfig;
   [key: string]: unknown;
 }
+const KIMI_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
+  normalize: (id) => sanitizeToolCallId(id, 64),
+  maxLength: 64,
+};
 interface OpenAIMessage {
   role: string;
   content?: string | OpenAIContentPart[] | undefined;
@@ -428,7 +437,8 @@ export class KimiChatProvider implements ChatProvider {
     if (systemPrompt) {
       messages.push({ role: 'system', content: systemPrompt });
     }
-    for (const msg of history) {
+    const normalizedHistory = normalizeToolCallIdsForProvider(history, KIMI_TOOL_CALL_ID_POLICY);
+    for (const msg of normalizedHistory) {
       messages.push(convertMessage(msg));
     }
 

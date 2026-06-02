@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ErrorCodes, KimiError, type KimiConfig, type Logger } from '#/index';
 
-import { resolveRuntimeProviderWithOAuth } from '../../agent-core/src/providers/runtime-provider';
+import { ProviderManager } from '../../agent-core/src/session/provider-manager';
 
 function managedConfig(): KimiConfig {
   return {
@@ -22,6 +22,87 @@ function managedConfig(): KimiConfig {
       },
     },
     defaultModel: 'kimi-code/kimi-for-coding',
+  };
+}
+
+async function resolveRuntimeProviderWithOAuth(options: {
+  readonly config: KimiConfig;
+  readonly resolveOAuthTokenProvider?: import('../../agent-core/src/session/provider-manager').OAuthTokenProviderResolver;
+  readonly log?: Logger;
+}) {
+  const manager = new ProviderManager({
+    config: options.config,
+    resolveOAuthTokenProvider: options.resolveOAuthTokenProvider,
+  });
+  const model = options.config.defaultModel;
+  if (model === undefined) {
+    throw new KimiError(ErrorCodes.CONFIG_INVALID, 'No model is selected.');
+  }
+  const { providerName, provider } = manager.resolveProviderConfig(model);
+
+  const providerConfig = options.config.providers[providerName];
+  if (providerConfig?.oauth !== undefined && (providerConfig.apiKey ?? '').length > 0) {
+    throw new KimiError(
+      ErrorCodes.CONFIG_INVALID,
+      `Provider "${providerName}" has both apiKey and oauth set in config.toml — they are mutually exclusive. Remove one.`,
+    );
+  }
+
+  const oauthRef = providerConfig?.oauth;
+  const tokenProvider = options.resolveOAuthTokenProvider?.(providerName, oauthRef);
+
+  if (tokenProvider === undefined) {
+    throw new KimiError(
+      ErrorCodes.AUTH_LOGIN_REQUIRED,
+      `OAuth provider "${providerName}" requires login before it can be used.`,
+    );
+  }
+
+  // Replicate the old API's eager token fetch during resolution so
+  // test mocks see the expected call sequence.
+  try {
+    await tokenProvider.getAccessToken(undefined);
+  } catch (error) {
+    if (
+      !(error instanceof KimiError && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED)
+    ) {
+      options.log?.warn('oauth token fetch failed', { providerName, error });
+    }
+    throw new KimiError(
+      ErrorCodes.AUTH_LOGIN_REQUIRED,
+      `OAuth provider "${providerName}" requires login before it can be used.`,
+      { cause: error },
+    );
+  }
+
+  return {
+    providerName,
+    provider,
+    resolveAuth: async (opts?: { forceRefresh?: boolean }) => {
+      try {
+        const apiKey = await tokenProvider.getAccessToken(
+          opts?.forceRefresh ? { force: true } : undefined,
+        );
+        if (apiKey.trim().length === 0) {
+          throw new KimiError(
+            ErrorCodes.AUTH_LOGIN_REQUIRED,
+            `OAuth provider "${providerName}" requires login before it can be used.`,
+          );
+        }
+        return { apiKey };
+      } catch (error) {
+        if (
+          !(error instanceof KimiError && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED)
+        ) {
+          options.log?.warn('oauth token fetch failed', { providerName, error });
+        }
+        throw new KimiError(
+          ErrorCodes.AUTH_LOGIN_REQUIRED,
+          `OAuth provider "${providerName}" requires login before it can be used.`,
+          { cause: error },
+        );
+      }
+    },
   };
 }
 

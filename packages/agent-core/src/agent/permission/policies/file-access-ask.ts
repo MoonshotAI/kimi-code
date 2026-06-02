@@ -36,7 +36,7 @@ export class GitControlPathAccessAskPermissionPolicy implements PermissionPolicy
   async evaluate(context: PermissionPolicyContext): Promise<PermissionPolicyResult | undefined> {
     const cwd = this.agent.config.cwd;
     if (cwd.length === 0) return;
-    const pathClass = this.agent.runtime.kaos.pathClass();
+    const pathClass = this.agent.kaos.pathClass();
     const accesses = fileAccesses(context);
     if (accesses.length === 0) return;
 
@@ -50,7 +50,7 @@ export class GitControlPathAccessAskPermissionPolicy implements PermissionPolicy
       };
     }
 
-    const marker = await findGitWorkTreeMarker(this.agent.runtime.kaos, cwd);
+    const marker = await findGitWorkTreeMarker(this.agent.kaos, cwd);
     if (marker === null) return;
     const access = accesses.find((fileAccess) => {
       return isGitControlPath(fileAccess.path, marker, pathClass);
@@ -71,7 +71,7 @@ export class CwdOutsideFileWriteAskPermissionPolicy implements PermissionPolicy 
   evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
     const cwd = this.agent.config.cwd;
     if (cwd.length === 0) return;
-    const pathClass = this.agent.runtime.kaos.pathClass();
+    const pathClass = this.agent.kaos.pathClass();
     const access = writeFileAccesses(context).find((fileAccess) => {
       return !isWithinDirectory(fileAccess.path, cwd, pathClass);
     });

@@ -49,7 +49,7 @@ function makeAgent(input: {
     permission: { mode: input.mode },
     type: 'main',
     config: { cwd: '/workspace' },
-    runtime: { kaos: createFakeKaos() },
+    kaos: createFakeKaos(),
     emitStatusUpdated: vi.fn(),
     records: { logRecord: vi.fn() },
     replayBuilder: { push: vi.fn() },

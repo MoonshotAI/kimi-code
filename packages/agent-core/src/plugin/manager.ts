@@ -3,14 +3,16 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import type { McpServerConfig } from '../config/schema';
-import type { SkillRoot } from '../skill';
+import { discoverSkills, type SkillRoot } from '../skill';
 import { downloadZip, extractZip } from './archive';
+import { resolveGithubSource } from './github-resolver';
 import { parseManifest, type ParsedManifestResult } from './manifest';
 import { readInstalled, writeInstalled, type InstalledRecord } from './store';
 import { resolveInstallSource } from './source';
 import {
   type EnabledPluginSessionStart,
   type PluginCapabilityState,
+  type PluginGithubMetadata,
   type PluginInfo,
   type PluginMcpServerInfo,
   type PluginRecord,
@@ -62,6 +64,7 @@ export class PluginManager {
     let sourceType: PluginSource;
     let parsed: ParsedManifestResult;
     let id: string;
+    let github: PluginGithubMetadata | undefined;
 
     if (resolved.kind === 'local-path') {
       const sourceRoot = await normalizeInstallRoot(resolved.path);
@@ -76,15 +79,30 @@ export class PluginManager {
       normalizedRoot = await copyPluginToManagedRoot(this.kimiHomeDir, id, sourceRoot);
       parsed = await parseManifest(normalizedRoot);
     } else {
-      // zip-url
-      const buffer = await downloadZip(resolved.path);
+      let zipUrl: string;
+      if (resolved.kind === 'github') {
+        const githubResolution = await resolveGithubSource(resolved);
+        zipUrl = githubResolution.tarballUrl;
+        originalSource = source.trim();
+        sourceType = 'github';
+        github = {
+          owner: resolved.owner,
+          repo: resolved.repo,
+          ref: githubResolution.ref,
+        };
+      } else {
+        zipUrl = resolved.path;
+        originalSource = resolved.path;
+        sourceType = 'zip-url';
+      }
+      const buffer = await downloadZip(zipUrl);
       const tmpDir = await mkdtemp(path.join(tmpdir(), 'kimi-plugin-zip-'));
       try {
         const detectedRoot = await extractZip(buffer, tmpDir);
         parsed = await parseManifest(detectedRoot);
         if (parsed.manifest === undefined) {
           const msg = parsed.diagnostics.find((d) => d.severity === 'error')?.message ?? 'no manifest';
-          throw new Error(`Cannot install plugin from ${resolved.path}: ${msg}`);
+          throw new Error(`Cannot install plugin from ${originalSource}: ${msg}`);
         }
         id = normalizePluginId(parsed.manifest.name);
         normalizedRoot = await copyPluginToManagedRoot(this.kimiHomeDir, id, detectedRoot);
@@ -92,8 +110,6 @@ export class PluginManager {
       } finally {
         await rm(tmpDir, { recursive: true, force: true });
       }
-      originalSource = resolved.path;
-      sourceType = 'zip-url';
     }
 
     if (parsed.manifest === undefined) {
@@ -103,7 +119,7 @@ export class PluginManager {
     id = normalizePluginId(parsed.manifest.name);
     const existing = this.records.get(id);
     const now = new Date().toISOString();
-    const record = recordFrom({
+    const record = await recordFrom({
       id,
       root: normalizedRoot,
       enabled: existing?.enabled ?? true,
@@ -112,6 +128,7 @@ export class PluginManager {
       originalSource,
       source: sourceType,
       capabilities: existing?.capabilities,
+      github,
       parsed,
     });
     this.records.set(id, record);
@@ -241,6 +258,7 @@ export class PluginManager {
       updatedAt: record.updatedAt,
       originalSource: record.originalSource,
       capabilities: record.capabilities,
+      github: record.github,
     }));
     await writeInstalled(this.kimiHomeDir, { version: 1, plugins: installed });
   }
@@ -255,6 +273,7 @@ export class PluginManager {
       updatedAt: entry.updatedAt,
       originalSource: entry.originalSource,
       capabilities: entry.capabilities,
+      github: entry.github,
       source: entry.source,
       parsed,
     });
@@ -298,7 +317,7 @@ async function copyPluginToManagedRoot(
   return realpath(managedRoot);
 }
 
-function recordFrom(input: {
+async function recordFrom(input: {
   id: string;
   root: string;
   enabled: boolean;
@@ -306,9 +325,10 @@ function recordFrom(input: {
   updatedAt?: string;
   originalSource?: string;
   capabilities?: PluginCapabilityState;
+  github?: PluginGithubMetadata;
   source?: PluginSource;
   parsed: ParsedManifestResult;
-}): PluginRecord {
+}): Promise<PluginRecord> {
   const { parsed } = input;
   const hasError = parsed.diagnostics.some((d) => d.severity === 'error');
   return {
@@ -321,6 +341,8 @@ function recordFrom(input: {
     updatedAt: input.updatedAt,
     originalSource: input.originalSource,
     capabilities: input.capabilities,
+    github: input.github,
+    skillCount: await countDiscoveredPluginSkills(input.id, parsed.manifest),
     manifest: parsed.manifest,
     manifestKind: parsed.manifestKind,
     manifestPath: parsed.manifestPath,
@@ -337,19 +359,36 @@ function recordToSummary(record: PluginRecord): PluginSummary {
     version: record.manifest?.version,
     enabled: record.enabled,
     state: record.state,
-    skillCount: record.manifest?.skills?.length ?? 0,
+    skillCount: record.skillCount,
     mcpServerCount: Object.keys(record.manifest?.mcpServers ?? {}).length,
     enabledMcpServerCount: pluginMcpServersInfo(record).filter((server) => server.enabled).length,
     hasErrors: record.diagnostics.some((d) => d.severity === 'error'),
+    source: record.source,
+    originalSource: record.originalSource,
+    github: record.github,
   };
+}
+
+async function countDiscoveredPluginSkills(
+  pluginId: string,
+  manifest: PluginRecord['manifest'],
+): Promise<number> {
+  const roots = (manifest?.skills ?? []).map((dir) => ({
+    path: dir,
+    source: 'extra',
+    plugin: { id: pluginId, instructions: manifest?.skillInstructions },
+  }) satisfies SkillRoot);
+  if (roots.length === 0) return 0;
+  const skills = await discoverSkills({ roots });
+  return skills.length;
 }
 
 function recordToInfo(record: PluginRecord): PluginInfo {
   return {
     ...recordToSummary(record),
-    source: record.source,
     root: record.root,
-    originalSource: record.originalSource,
+    installedAt: record.installedAt,
+    updatedAt: record.updatedAt,
     manifestKind: record.manifestKind,
     manifestPath: record.manifestPath,
     manifest: record.manifest,

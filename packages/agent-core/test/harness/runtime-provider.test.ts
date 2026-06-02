@@ -1,9 +1,33 @@
 import { describe, expect, it } from 'vitest';
 
 import type { KimiConfig } from '../../src/config';
-import { KimiError } from '../../src/errors';
-import { resolveRuntimeProvider } from '../../src/providers/runtime-provider';
-import { ProviderManager } from '../../src/providers/provider-manager';
+import { ErrorCodes, KimiError } from '../../src/errors';
+import { ProviderManager } from '../../src/session/provider-manager';
+import { resolveThinkingLevel } from '../../src/agent/config/thinking';
+
+// Thin wrapper that adapts the legacy `resolveRuntimeProvider(input)` shape to
+// the current ProviderManager API. Kept local so the existing test bodies do
+// not need to change.
+function resolveRuntimeProvider(input: {
+  readonly config: KimiConfig;
+  readonly model?: string;
+  readonly kimiRequestHeaders?: Record<string, string>;
+  readonly promptCacheKey?: string;
+}): ReturnType<ProviderManager['resolveProviderConfig']> {
+  const manager = new ProviderManager({
+    config: input.config,
+    kimiRequestHeaders: input.kimiRequestHeaders,
+    promptCacheKey: input.promptCacheKey,
+  });
+  const model = input.model ?? input.config.defaultModel;
+  if (model === undefined) {
+    throw new KimiError(
+      ErrorCodes.CONFIG_INVALID,
+      'No model is selected. Set default_model in config.toml or pass a configured model alias.',
+    );
+  }
+  return manager.resolveProviderConfig(model);
+}
 
 const BASE_CONFIG: KimiConfig = {
   defaultModel: 'kimi-code/kimi-for-coding',
@@ -43,7 +67,6 @@ describe('resolveRuntimeProvider model metadata', () => {
       tool_use: true,
       max_context_tokens: 1_000_000,
     });
-    expect(resolved.modelName).toBe('kimi-code/kimi-for-coding');
     expect(resolved.provider.model).toBe('kimi-for-coding');
   });
 
@@ -73,7 +96,6 @@ describe('resolveRuntimeProvider model metadata', () => {
     });
 
     expect(resolved.providerName).toBe('openai');
-    expect(resolved.modelName).toBe('gpt-alias');
     expect(resolved.provider).toMatchObject({
       type: 'openai',
       model: 'gpt-runtime',
@@ -159,39 +181,6 @@ describe('resolveRuntimeProvider model metadata', () => {
         model: 'kimi-code',
       }),
     ).toThrow(KimiError);
-  });
-
-  it('throws when the selected provider has neither apiKey nor oauth configured', () => {
-    expect(() =>
-      resolveRuntimeProvider({
-        config: {
-          ...BASE_CONFIG,
-          providers: {
-            'managed:kimi-code': {
-              type: 'kimi',
-              baseUrl: 'https://api.example/v1',
-            },
-          },
-        },
-      }),
-    ).toThrow(/no credentials configured/i);
-  });
-
-  it('throws when apiKey is an empty string and no oauth is configured', () => {
-    expect(() =>
-      resolveRuntimeProvider({
-        config: {
-          ...BASE_CONFIG,
-          providers: {
-            'managed:kimi-code': {
-              type: 'kimi',
-              apiKey: '',
-              baseUrl: 'https://api.example/v1',
-            },
-          },
-        },
-      }),
-    ).toThrow(/no credentials configured/i);
   });
 
   it('allows vertexai providers without an apiKey', () => {
@@ -291,6 +280,57 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
       model: 'claude-opus-4-7',
     });
     expect('defaultMaxTokens' in resolved.provider).toBe(false);
+  });
+
+  it('forwards alias.adaptiveThinking to the anthropic provider config', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          anthropic: { type: 'anthropic', apiKey: 'sk-anthropic' },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'okapi-alias': {
+            provider: 'anthropic',
+            model: 'coding-model-okapi-0527-vibe',
+            maxContextSize: 200000,
+            adaptiveThinking: true,
+          },
+        },
+      },
+      model: 'okapi-alias',
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'anthropic',
+      model: 'coding-model-okapi-0527-vibe',
+      adaptiveThinking: true,
+    });
+  });
+
+  it('omits adaptiveThinking when alias.adaptiveThinking is unset', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          anthropic: { type: 'anthropic', apiKey: 'sk-anthropic' },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'opus-alias': {
+            provider: 'anthropic',
+            model: 'claude-opus-4-7',
+            maxContextSize: 200000,
+          },
+        },
+      },
+      model: 'opus-alias',
+    });
+
+    expect('adaptiveThinking' in resolved.provider).toBe(false);
   });
 });
 
@@ -523,12 +563,13 @@ describe('resolveRuntimeProvider customHeaders propagation', () => {
 
 describe('ProviderManager prompt cache key', () => {
   it('applies a prompt cache key to Kimi providers', () => {
-    const manager = new ProviderManager({ config: BASE_CONFIG }).withPromptCacheKey(
-      'session-test',
-    );
-    const resolved = manager.resolveProviderConfigForModel('kimi-code/kimi-for-coding');
+    const manager = new ProviderManager({
+      config: BASE_CONFIG,
+      promptCacheKey: 'session-test',
+    });
+    const resolved = manager.resolveProviderConfig('kimi-code/kimi-for-coding');
 
-    expect(resolved?.provider).toMatchObject({
+    expect(resolved.provider).toMatchObject({
       type: 'kimi',
       generationKwargs: {
         prompt_cache_key: 'session-test',
@@ -538,6 +579,7 @@ describe('ProviderManager prompt cache key', () => {
 
   it('does not add generation kwargs to non-Kimi providers', () => {
     const manager = new ProviderManager({
+      promptCacheKey: 'session-test',
       config: {
         defaultModel: 'gpt-alias',
         providers: {
@@ -554,24 +596,27 @@ describe('ProviderManager prompt cache key', () => {
           },
         },
       },
-    }).withPromptCacheKey('session-test');
-    const resolved = manager.resolveProviderConfigForModel('gpt-alias');
+    });
+    const resolved = manager.resolveProviderConfig('gpt-alias');
 
-    expect(resolved?.provider).toMatchObject({
+    expect(resolved.provider).toMatchObject({
       type: 'openai',
       model: 'gpt-runtime',
     });
-    expect('generationKwargs' in resolved!.provider).toBe(false);
+    expect('generationKwargs' in resolved.provider).toBe(false);
   });
 
-  it('keeps derived managers on the latest shared config', () => {
-    const manager = new ProviderManager({ config: { providers: {} } });
-    const derived = manager.withPromptCacheKey('session-test');
+  it('reads the current config when constructed with a function', () => {
+    let sharedConfig: KimiConfig = { providers: {} };
+    const manager = new ProviderManager({
+      config: () => sharedConfig,
+      promptCacheKey: 'session-test',
+    });
 
-    manager.updateConfig(BASE_CONFIG);
+    sharedConfig = BASE_CONFIG;
 
-    const resolved = derived.resolveProviderConfigForModel(undefined);
-    expect(resolved?.provider).toMatchObject({
+    const resolved = manager.resolveProviderConfig('kimi-code/kimi-for-coding');
+    expect(resolved.provider).toMatchObject({
       type: 'kimi',
       generationKwargs: {
         prompt_cache_key: 'session-test',
@@ -580,54 +625,90 @@ describe('ProviderManager prompt cache key', () => {
   });
 });
 
-describe('ProviderManager thinking level', () => {
+describe('resolveThinkingLevel', () => {
   it('normalizes requested thinking into a concrete effort', () => {
-    const manager = new ProviderManager({
-      config: {
-        providers: {},
+    expect(
+      resolveThinkingLevel('on', {
         defaultThinking: false,
         thinking: { effort: 'medium', mode: 'auto' },
-      },
-    });
-    expect(manager.resolveThinkingLevel('on')).toBe('medium');
-    expect(manager.resolveThinkingLevel('off')).toBe('off');
-    expect(manager.resolveThinkingLevel('low')).toBe('low');
-    expect(manager.resolveThinkingLevel()).toBe('off');
-    expect(manager.resolveThinkingLevel('')).toBe('off');
-    expect(manager.resolveThinkingLevel('   ')).toBe('off');
+      }),
+    ).toBe('medium');
+    expect(
+      resolveThinkingLevel('off', {
+        defaultThinking: false,
+        thinking: { effort: 'medium', mode: 'auto' },
+      }),
+    ).toBe('off');
+    expect(
+      resolveThinkingLevel('low', {
+        defaultThinking: false,
+        thinking: { effort: 'medium', mode: 'auto' },
+      }),
+    ).toBe('low');
+    expect(
+      resolveThinkingLevel(undefined, {
+        defaultThinking: false,
+        thinking: { effort: 'medium', mode: 'auto' },
+      }),
+    ).toBe('off');
+    expect(
+      resolveThinkingLevel('', {
+        defaultThinking: false,
+        thinking: { effort: 'medium', mode: 'auto' },
+      }),
+    ).toBe('off');
+    expect(
+      resolveThinkingLevel('   ', {
+        defaultThinking: false,
+        thinking: { effort: 'medium', mode: 'auto' },
+      }),
+    ).toBe('off');
 
-    const managerOnByDefault = new ProviderManager({
-      config: {
-        providers: {},
+    expect(
+      resolveThinkingLevel(undefined, {
         defaultThinking: true,
         thinking: { effort: 'medium', mode: 'auto' },
-      },
-    });
-    expect(managerOnByDefault.resolveThinkingLevel()).toBe('medium');
-    expect(managerOnByDefault.resolveThinkingLevel('   ')).toBe('medium');
+      }),
+    ).toBe('medium');
+    expect(
+      resolveThinkingLevel('   ', {
+        defaultThinking: true,
+        thinking: { effort: 'medium', mode: 'auto' },
+      }),
+    ).toBe('medium');
 
-    const managerWithoutEffort = new ProviderManager({
-      config: { providers: {}, defaultThinking: true, thinking: { mode: 'auto' } },
-    });
-    expect(managerWithoutEffort.resolveThinkingLevel('on')).toBe('high');
-    expect(managerWithoutEffort.resolveThinkingLevel()).toBe('high');
+    expect(
+      resolveThinkingLevel('on', {
+        defaultThinking: true,
+        thinking: { mode: 'auto' },
+      }),
+    ).toBe('high');
+    expect(
+      resolveThinkingLevel(undefined, {
+        defaultThinking: true,
+        thinking: { mode: 'auto' },
+      }),
+    ).toBe('high');
 
-    const managerOffByDefault = new ProviderManager({
-      config: { providers: {}, thinking: { mode: 'off' } },
-    });
-    expect(managerOffByDefault.resolveThinkingLevel()).toBe('off');
+    expect(
+      resolveThinkingLevel(undefined, {
+        thinking: { mode: 'off' },
+      }),
+    ).toBe('off');
 
-    const managerWithModeOffAndDefaultThinking = new ProviderManager({
-      config: {
-        providers: {},
+    expect(
+      resolveThinkingLevel(undefined, {
         defaultThinking: true,
         thinking: { effort: 'medium', mode: 'off' },
-      },
-    });
-    expect(managerWithModeOffAndDefaultThinking.resolveThinkingLevel()).toBe('off');
-    expect(managerWithModeOffAndDefaultThinking.resolveThinkingLevel('   ')).toBe('off');
+      }),
+    ).toBe('off');
+    expect(
+      resolveThinkingLevel('   ', {
+        defaultThinking: true,
+        thinking: { effort: 'medium', mode: 'off' },
+      }),
+    ).toBe('off');
 
-    const managerWithoutThinking = new ProviderManager({ config: { providers: {} } });
-    expect(managerWithoutThinking.resolveThinkingLevel()).toBe('high');
+    expect(resolveThinkingLevel(undefined, {})).toBe('high');
   });
 });

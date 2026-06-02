@@ -2,7 +2,11 @@ import { CURSOR_MARKER } from '@earendil-works/pi-tui';
 import { describe, expect, it } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
-import type { PendingApproval } from '#/tui/reverse-rpc/types';
+import type {
+  DiffDisplayBlock,
+  FileContentDisplayBlock,
+  PendingApproval,
+} from '#/tui/reverse-rpc/types';
 import { getColorPalette } from '#/tui/theme/colors';
 
 import { captureProcessWrite } from '../../../helpers/process';
@@ -192,7 +196,13 @@ describe('ApprovalPanelComponent', () => {
     expect(out).not.toContain('Investigate');
   });
 
-  it('renders an Edit diff collapsed by default and expands on ctrl+e', () => {
+  // Inline expand-in-place used to inflate the panel past the viewport on
+  // any non-trivial Edit, which then collided with pi-tui's inline scroll
+  // and made the terminal flicker / refuse to scroll. The panel now always
+  // renders the diff in its compact cluster form; ctrl+e instead asks the
+  // host to open a dedicated full-screen preview that can manage its own
+  // scrolling.
+  it('renders an Edit diff in compact form and asks the host to open a preview on ctrl+e', () => {
     const responses: Array<{ response: string }> = [];
     const oldLines: string[] = [];
     const newLines: string[] = [];
@@ -200,6 +210,12 @@ describe('ApprovalPanelComponent', () => {
       oldLines.push(`old${String(i)}`);
       newLines.push(`new${String(i)}`);
     }
+    const diffBlock: DiffDisplayBlock = {
+      type: 'diff',
+      path: 'src/foo.ts',
+      old_text: oldLines.join('\n'),
+      new_text: newLines.join('\n'),
+    };
     const pending: PendingApproval = {
       data: {
         id: 'approval_diff',
@@ -207,45 +223,42 @@ describe('ApprovalPanelComponent', () => {
         tool_name: 'Edit',
         action: 'edit',
         description: '',
-        display: [
-          {
-            type: 'diff',
-            path: 'src/foo.ts',
-            old_text: oldLines.join('\n'),
-            new_text: newLines.join('\n'),
-          },
-        ],
+        display: [diffBlock],
         choices: [{ label: 'Approve once', response: 'approved' }],
       },
     };
-    let globalToggleCalls = 0;
+    let toolOutputToggles = 0;
+    let planToggles = 0;
+    const previewCalls: Array<DiffDisplayBlock | FileContentDisplayBlock> = [];
     const dialog = new ApprovalPanelComponent(
       pending,
       (r) => responses.push(r),
       COLORS,
-      () => globalToggleCalls++,
+      () => toolOutputToggles++,
+      () => planToggles++,
+      (block) => previewCalls.push(block),
     );
 
-    const collapsed = strip(dialog.render(120).join('\n'));
-    expect(collapsed).not.toMatch(/\bedit\s+src\/foo\.ts\b/);
-    expect(collapsed).toContain('+30');
-    expect(collapsed).toContain('-30');
-    expect(collapsed).toContain('ctrl+e expand');
-    expect(collapsed).toContain('ctrl+e to expand');
-    expect(collapsed).toMatch(/old\d+|new\d+/);
-    expect(collapsed).not.toContain('new30');
+    const before = strip(dialog.render(120).join('\n'));
+    expect(before).toContain('+30');
+    expect(before).toContain('-30');
+    expect(before).toContain('ctrl+e preview');
+    expect(before).not.toContain('new30'); // compact view stays compact
 
-    dialog.handleInput('\u0005'); // Ctrl+E — local toggle, no global callback.
+    dialog.handleInput('\u0005'); // Ctrl+E
 
-    const expanded = strip(dialog.render(120).join('\n'));
-    expect(expanded).toContain('new30');
-    expect(expanded).toContain('ctrl+e collapse');
-    expect(expanded).not.toContain('more changes hidden');
-    expect(globalToggleCalls).toBe(0);
+    // The panel itself does not expand; it delegates to the host.
+    const after = strip(dialog.render(120).join('\n'));
+    expect(after).not.toContain('new30');
+    expect(after).toContain('ctrl+e preview');
+    expect(previewCalls).toEqual([diffBlock]);
+    // The unrelated forward-only callbacks must not fire for ctrl+e.
+    expect(planToggles).toBe(0);
+    expect(toolOutputToggles).toBe(0);
     expect(responses).toEqual([]);
   });
 
-  it('forwards ctrl+o to the global tool-output toggle without changing local expansion', () => {
+  it('forwards ctrl+o to the global tool-output toggle without affecting the panel', () => {
     const pending: PendingApproval = {
       data: {
         id: 'approval_forward',
@@ -267,53 +280,54 @@ describe('ApprovalPanelComponent', () => {
     let globalToggleCalls = 0;
     const dialog = new ApprovalPanelComponent(pending, () => {}, COLORS, () => globalToggleCalls++);
 
-    dialog.handleInput('\u000F'); // Ctrl+O — forwarded; local stays collapsed.
+    dialog.handleInput('\u000F'); // Ctrl+O
 
     const after = strip(dialog.render(120).join('\n'));
     expect(globalToggleCalls).toBe(1);
-    expect(after).toContain('ctrl+e expand');
+    expect(after).toContain('ctrl+e preview');
     expect(after).not.toContain('new30');
   });
 
-  it('also forwards ctrl+e to the global plan-expand toggle while toggling local content', () => {
+  // When there is no diff / file_content block to preview (e.g. plan_review
+  // with an empty display), ctrl+e falls through to the legacy global plan
+  // expand toggle so plan mode keeps working.
+  it('falls through to onTogglePlanExpand when there is nothing to preview', () => {
     const pending: PendingApproval = {
       data: {
-        id: 'approval_plan_forward',
-        tool_call_id: 'tool_plan_forward',
-        tool_name: 'Edit',
-        action: 'edit',
+        id: 'approval_plan_only',
+        tool_call_id: 'tool_plan_only',
+        tool_name: 'ExitPlanMode',
+        action: 'review plan',
         description: '',
-        display: [
-          {
-            type: 'diff',
-            path: 'src/foo.ts',
-            old_text: Array.from({ length: 30 }, (_, i) => `old${String(i + 1)}`).join('\n'),
-            new_text: Array.from({ length: 30 }, (_, i) => `new${String(i + 1)}`).join('\n'),
-          },
-        ],
-        choices: [{ label: 'Approve once', response: 'approved' }],
+        display: [],
+        choices: [{ label: 'Approve', response: 'approved' }],
       },
     };
     let planToggles = 0;
+    const previewCalls: Array<DiffDisplayBlock | FileContentDisplayBlock> = [];
     const dialog = new ApprovalPanelComponent(
       pending,
       () => {},
       COLORS,
       undefined,
       () => planToggles++,
+      (block) => previewCalls.push(block),
     );
 
     dialog.handleInput('\u0005'); // Ctrl+E
-    const out = strip(dialog.render(120).join('\n'));
     expect(planToggles).toBe(1);
-    expect(out).toContain('ctrl+e collapse'); // local also expanded
-    expect(out).toContain('new30');
+    expect(previewCalls).toEqual([]);
   });
 
   it('renders Write as a syntax-highlighted code block (file_content), not a diff', () => {
     const responses: Array<{ response: string }> = [];
     const lines: string[] = [];
     for (let i = 1; i <= 30; i++) lines.push(`const x${String(i)} = ${String(i)};`);
+    const contentBlock: FileContentDisplayBlock = {
+      type: 'file_content',
+      path: 'src/new.ts',
+      content: lines.join('\n'),
+    };
     const pending: PendingApproval = {
       data: {
         id: 'approval_write',
@@ -321,11 +335,19 @@ describe('ApprovalPanelComponent', () => {
         tool_name: 'Write',
         action: 'write',
         description: '',
-        display: [{ type: 'file_content', path: 'src/new.ts', content: lines.join('\n') }],
+        display: [contentBlock],
         choices: [{ label: 'Approve once', response: 'approved' }],
       },
     };
-    const dialog = new ApprovalPanelComponent(pending, (r) => responses.push(r), COLORS);
+    const previewCalls: Array<DiffDisplayBlock | FileContentDisplayBlock> = [];
+    const dialog = new ApprovalPanelComponent(
+      pending,
+      (r) => responses.push(r),
+      COLORS,
+      undefined,
+      undefined,
+      (block) => previewCalls.push(block),
+    );
 
     const collapsed = strip(dialog.render(120).join('\n'));
     // No diff markers, no +N -M header.
@@ -335,13 +357,14 @@ describe('ApprovalPanelComponent', () => {
     expect(collapsed).toContain('const x1 = 1;');
     expect(collapsed).toContain('const x10 = 10;');
     expect(collapsed).not.toContain('const x25 = 25;');
-    expect(collapsed).toContain('20 more lines hidden (ctrl+e to expand)');
-    expect(collapsed).toContain('ctrl+e expand');
+    expect(collapsed).toContain('20 more lines hidden (ctrl+e to preview)');
+    expect(collapsed).toContain('ctrl+e preview');
 
-    dialog.handleInput('\u0005'); // Ctrl+E
-    const expanded = strip(dialog.render(120).join('\n'));
-    expect(expanded).toContain('const x30 = 30;');
-    expect(expanded).not.toContain('more lines hidden');
+    dialog.handleInput('\u0005'); // Ctrl+E hands off to the host preview.
+    const after = strip(dialog.render(120).join('\n'));
+    // The panel itself stays compact; the full content is opened elsewhere.
+    expect(after).not.toContain('const x30 = 30;');
+    expect(previewCalls).toEqual([contentBlock]);
     expect(responses).toEqual([]);
   });
 
@@ -359,13 +382,20 @@ describe('ApprovalPanelComponent', () => {
     };
     const stderr = captureProcessWrite('stderr');
     try {
-      const dialog = new ApprovalPanelComponent(pending, () => {}, COLORS);
+      const previewCalls: Array<DiffDisplayBlock | FileContentDisplayBlock> = [];
+      const dialog = new ApprovalPanelComponent(
+        pending,
+        () => {},
+        COLORS,
+        undefined,
+        undefined,
+        (block) => previewCalls.push(block),
+      );
       const collapsed = strip(dialog.render(120).join('\n'));
       expect(collapsed).toContain('hello');
 
       dialog.handleInput('\u0005'); // Ctrl+E
-      const expanded = strip(dialog.render(120).join('\n'));
-      expect(expanded).toContain('world');
+      expect(previewCalls).toHaveLength(1);
       expect(stderr.text()).not.toContain('Could not find the language');
     } finally {
       stderr.restore();

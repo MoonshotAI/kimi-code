@@ -23,7 +23,7 @@ describe('e2e: process lifecycle', () => {
   let originalCwd: string;
 
   beforeEach(async () => {
-    kaos = new LocalKaos();
+    kaos = await LocalKaos.create();
     originalCwd = process.cwd();
     tempDir = await realpath(await mkdtemp(join(tmpdir(), 'kaos-proc-')));
     process.chdir(tempDir);

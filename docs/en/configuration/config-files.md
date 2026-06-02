@@ -62,7 +62,6 @@ max_context_size = 262144
 mode = "auto"
 
 [loop_control]
-max_steps_per_turn = 1000
 max_retries_per_step = 3
 reserved_context_size = 50000
 
@@ -127,6 +126,7 @@ Each entry in the `models` table defines a model alias, keyed by a unique name.
 | `capabilities` | `array<string>` | No | Capability tags to add explicitly, for example `thinking`, `image_in`, `video_in`, `audio_in`, `tool_use` |
 | `display_name` | `string` | No | Name shown in the UI; falls back to `model` when unset |
 | `reasoning_key` | `string` | No | `openai` provider only. Override the field name used for reasoning content. By default the provider auto-detects `reasoning_content`, `reasoning_details`, and `reasoning` on incoming responses and serializes thinking back as `reasoning_content` — set this only if your gateway uses a non-standard field name |
+| `adaptive_thinking` | `boolean` | No | `anthropic` provider only. Force adaptive thinking (`thinking: { type: 'adaptive' }`) on or off, overriding the model-name version inference. Set `true` for a custom-named endpoint that backs an adaptive-capable model whose name does not encode a parseable Claude version; forcing it on for an endpoint that does not support adaptive thinking makes the API reject the request. Omit to infer from the model name (Claude ≥ 4.6 uses adaptive) |
 
 `capabilities` is unioned with the capabilities that the provider capability registry matches by model-name prefix — entries can only be added, never removed. You usually do not need to set this by hand; reach for it only when the model is not covered by the registry, or when you want to force-enable a particular capability.
 
@@ -138,6 +138,8 @@ provider = "openai"
 model = "gpt-4.1"
 max_context_size = 1047576
 ```
+
+For testing, you can also synthesize a model entirely from `KIMI_MODEL_*` environment variables without editing this file — see [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi-model).
 
 ## `thinking`
 
@@ -154,7 +156,7 @@ max_context_size = 1047576
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `max_steps_per_turn` | `integer` | `1000` | Maximum number of steps per turn |
+| `max_steps_per_turn` | `integer` | — | Maximum number of steps per turn; set to `0` or leave unset for unlimited. Setting `0` is useful for overriding a previously configured limit. |
 | `max_retries_per_step` | `integer` | `3` | Maximum retries per step |
 | `reserved_context_size` | `integer` | — | Number of tokens reserved for response generation; compaction is triggered when the context approaches this threshold |
 

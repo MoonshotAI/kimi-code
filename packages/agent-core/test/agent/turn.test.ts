@@ -15,11 +15,9 @@ import {
 } from '@moonshot-ai/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
-import { HookEngine } from '../../src/agent/hooks';
-import type { AgentConfig } from '../../src/agent';
-import type { KimiConfig } from '../../src/config';
+import { HookEngine } from '../../src/session/hooks';
+import type { AgentOptions } from '../../src/agent';
 import type { Logger, LogPayload } from '../../src/logging';
-import { ProviderManager } from '../../src/providers/provider-manager';
 import {
   estimateTokens,
   estimateTokensForMessages,
@@ -27,10 +25,10 @@ import {
 } from '../../src/utils/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
-import { createCommandKaos, testAgent } from './harness/agent';
+import { createCommandKaos, testAgent, type TestAgentOptions } from './harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
 
-type GenerateFn = NonNullable<AgentConfig['generate']>;
+type GenerateFn = NonNullable<AgentOptions['generate']>;
 
 interface CapturedLogEntry {
   readonly level: 'error' | 'warn' | 'info' | 'debug';
@@ -255,18 +253,18 @@ describe('Agent turn flow', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello without login' }] });
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
-      [wire] metadata                 { "protocol_version": "1.2", "created_at": "<time>" }
+      [wire] metadata                 { "protocol_version": "<protocol-version>", "created_at": "<time>" }
       [wire] turn.prompt              { "input": [ { "type": "text", "text": "Hello without login" } ], "origin": { "kind": "user" }, "time": "<time>" }
       [emit] turn.started             { "turnId": 0, "origin": { "kind": "user" } }
       [wire] context.append_message   { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello without login" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
-      [emit] turn.ended               { "turnId": 0, "reason": "failed", "error": { "code": "model.not_configured", "message": "LLM not set, send \\"/login\\" to login", "name": "Error", "retryable": false, "details": { "turnId": 0 } } }
+      [emit] turn.ended               { "turnId": 0, "reason": "failed", "error": { "code": "model.not_configured", "message": "LLM not set, send \\"/login\\" to login", "name": "KimiError", "details": { "turnId": 0 }, "retryable": false } }
     `);
     expect(ctx.newEvents()).toMatchInlineSnapshot(
-      `[emit] error   { "code": "model.not_configured", "message": "LLM not set, send \\"/login\\" to login", "name": "Error", "retryable": false, "details": { "turnId": 0 } }`,
+      `[emit] error   { "code": "model.not_configured", "message": "LLM not set, send \\"/login\\" to login", "name": "KimiError", "details": { "turnId": 0 }, "retryable": false }`,
     );
   });
 
-  it('continues the turn after showing UserPromptSubmit hook output without injecting it', async () => {
+  it('continues the turn after projecting UserPromptSubmit hook output', async () => {
     const hookEngine = new HookEngine([
       {
         event: 'UserPromptSubmit',
@@ -295,6 +293,7 @@ describe('Agent turn flow', () => {
       tools: []
       messages:
         user: text "hooked input"
+        user: text "<hook_result hook_event=\\"UserPromptSubmit\\">\\nhook response 1\\n</hook_result>\\n<hook_result hook_event=\\"UserPromptSubmit\\">\\nhook response 2\\n</hook_result>"
     `);
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -332,7 +331,7 @@ describe('Agent turn flow', () => {
     ]);
   });
 
-  it('shows structured UserPromptSubmit stdout without injecting it', async () => {
+  it('projects structured UserPromptSubmit stdout', async () => {
     const hookEngine = new HookEngine([
       {
         event: 'UserPromptSubmit',
@@ -358,6 +357,7 @@ describe('Agent turn flow', () => {
       tools: []
       messages:
         user: text "hooked input"
+        user: text "<hook_result hook_event=\\"UserPromptSubmit\\">\\n{}\\n</hook_result>\\n<hook_result hook_event=\\"UserPromptSubmit\\">\\n{\\"hookSpecificOutput\\":{}}\\n</hook_result>"
     `);
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -425,7 +425,7 @@ describe('Agent turn flow', () => {
         role: 'user',
         content: [{ type: 'text', text: 'bad words here' }],
         toolCalls: [],
-        origin: { kind: 'user', blockedByHook: 'UserPromptSubmit' },
+        origin: { kind: 'user' },
       },
       {
         role: 'assistant',
@@ -444,6 +444,8 @@ describe('Agent turn flow', () => {
       system: <system-prompt>
       tools: []
       messages:
+        user: text "bad words here"
+        assistant: text "<hook_result hook_event=\\"UserPromptSubmit\\">\\nno profanity\\n</hook_result>"
         user: text "safe followup"
     `);
   });
@@ -633,8 +635,8 @@ describe('Agent turn flow', () => {
   it('resolves the latest request-scoped OAuth auth before each generation', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
-    const tokens = ['initial-oauth-token', 'first-turn-token', 'second-turn-token'];
-    const providerManager = createOAuthProviderManager(async (options) => {
+    const tokens = ['first-turn-token', 'second-turn-token'];
+    const oauthOptions = oauthAgentOptions(async (options) => {
       tokenCalls.push(options?.force);
       const token = tokens.shift();
       if (token === undefined) throw new Error('unexpected token request');
@@ -654,7 +656,7 @@ describe('Agent turn flow', () => {
       await callbacks?.onMessagePart?.({ type: 'text', text });
       return textResult(text);
     };
-    const ctx = testAgent({ providerManager, generate });
+    const ctx = testAgent({ ...oauthOptions, generate });
     ctx.configure();
     await ctx.rpc.setModel({ model: 'kimi-code' });
     ctx.newEvents();
@@ -667,7 +669,7 @@ describe('Agent turn flow', () => {
     const secondEvents = await ctx.untilTurnEnd();
 
     expect(authKeys).toEqual(['first-turn-token', 'second-turn-token']);
-    expect(tokenCalls).toEqual([undefined, undefined, undefined]);
+    expect(tokenCalls).toEqual([undefined, undefined]);
     expect(firstEvents).toContainEqual(
       expect.objectContaining({
         event: 'assistant.delta',
@@ -720,8 +722,7 @@ describe('Agent turn flow', () => {
     expect(configLogs).toHaveLength(1);
     const configPayload = configLogs[0]?.payload as Record<string, unknown>;
     expect(configPayload).toMatchObject({
-      turnId: '0',
-      step: 1,
+      turnStep: '0.1',
       provider: 'kimi',
       model: 'mock-model',
       modelAlias: 'mock-model',
@@ -733,12 +734,11 @@ describe('Agent turn flow', () => {
     expect(requestLogs).toHaveLength(1);
     const payload = requestLogs[0]?.payload as Record<string, unknown>;
     expect(payload).toMatchObject({
-      turnId: '0',
-      step: 1,
-      messageCount: 1,
-      toolCallCount: 0,
+      turnStep: '0.1',
     });
     expect(payload['estimatedInputTokens']).toEqual(expect.any(Number));
+    expect(payload).not.toHaveProperty('turnId');
+    expect(payload).not.toHaveProperty('step');
     expect(payload).not.toHaveProperty('attempt');
     expect(payload).not.toHaveProperty('maxAttempts');
     expect(payload).not.toHaveProperty('stepUuid');
@@ -748,6 +748,8 @@ describe('Agent turn flow', () => {
     expect(payload).not.toHaveProperty('thinkingEffort');
     expect(payload).not.toHaveProperty('systemPromptChars');
     expect(payload).not.toHaveProperty('partialMessageCount');
+    expect(payload).not.toHaveProperty('messageCount');
+    expect(payload).not.toHaveProperty('toolCallCount');
     expect(payload).not.toHaveProperty('toolCount');
     expect(payload).not.toHaveProperty('systemPromptHash');
     expect(payload).not.toHaveProperty('toolsHash');
@@ -826,15 +828,12 @@ describe('Agent turn flow', () => {
 
   it('classifies OAuth resolver failures as auth errors', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
-    const tokens = ['initial-oauth-token'];
-    const providerManager = createOAuthProviderManager(async (options) => {
+    const oauthOptions = oauthAgentOptions(async (options) => {
       tokenCalls.push(options?.force);
-      const token = tokens.shift();
-      if (token === undefined) throw new Error('refresh token expired');
-      return token;
+      throw new Error('refresh token expired');
     });
     const generate = vi.fn<GenerateFn>();
-    const ctx = testAgent({ providerManager, generate });
+    const ctx = testAgent({ ...oauthOptions, generate });
     ctx.configure();
     await ctx.rpc.setModel({ model: 'kimi-code' });
     ctx.newEvents();
@@ -842,7 +841,7 @@ describe('Agent turn flow', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello after token expiry' }] });
     const events = await ctx.untilTurnEnd();
 
-    expect(tokenCalls).toEqual([undefined, undefined]);
+    expect(tokenCalls).toEqual([undefined]);
     expect(generate).not.toHaveBeenCalled();
     expect(events).not.toContainEqual(expect.objectContaining({ event: 'assistant.delta' }));
     expect(events).toContainEqual(
@@ -859,16 +858,11 @@ describe('Agent turn flow', () => {
   });
 
   it('honors configured maxStepsPerTurn in agent turns', async () => {
-    const providerManager = new ProviderManager({
-      config: {
-        providers: {},
-        loopControl: {
-          maxStepsPerTurn: 1,
-        },
-      },
-    });
     const ctx = testAgent({
-      providerManager,
+      initialConfig: {
+        providers: {},
+        loopControl: { maxStepsPerTurn: 1 },
+      },
       kaos: createCommandKaos('loop-output'),
     });
     ctx.configure({ tools: ['Bash'] });
@@ -906,7 +900,7 @@ describe('Agent turn flow', () => {
   it('force-refreshes OAuth credentials and replays the request on 401', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
-    const providerManager = createOAuthProviderManager(async (options) => {
+    const oauthOptions = oauthAgentOptions(async (options) => {
       tokenCalls.push(options?.force);
       return options?.force === true ? 'forced-refresh-token' : 'fresh-token';
     });
@@ -925,7 +919,7 @@ describe('Agent turn flow', () => {
       await callbacks?.onMessagePart?.({ type: 'text', text });
       return textResult(text);
     };
-    const ctx = testAgent({ providerManager, generate });
+    const ctx = testAgent({ ...oauthOptions, generate });
     ctx.configure();
     await ctx.rpc.setModel({ model: 'kimi-code' });
     ctx.newEvents();
@@ -934,7 +928,7 @@ describe('Agent turn flow', () => {
     const events = await ctx.untilTurnEnd();
 
     expect(authKeys).toEqual(['fresh-token', 'forced-refresh-token']);
-    expect(tokenCalls).toEqual([undefined, undefined, true]);
+    expect(tokenCalls).toEqual([undefined, true]);
     expect(events).toContainEqual(
       expect.objectContaining({
         event: 'assistant.delta',
@@ -952,7 +946,7 @@ describe('Agent turn flow', () => {
   it('falls back to login_required when force-refresh and replay both 401', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
-    const providerManager = createOAuthProviderManager(
+    const oauthOptions = oauthAgentOptions(
       async (options) => {
         tokenCalls.push(options?.force);
         return options?.force === true ? 'forced-refresh-token' : 'fresh-token';
@@ -970,7 +964,7 @@ describe('Agent turn flow', () => {
       authKeys.push(options?.auth?.apiKey ?? '<missing>');
       throw new APIStatusError(401, 'Unauthorized', 'req-401');
     };
-    const ctx = testAgent({ providerManager, generate });
+    const ctx = testAgent({ ...oauthOptions, generate });
     ctx.configure();
     await ctx.rpc.setModel({ model: 'kimi-code' });
     ctx.newEvents();
@@ -979,7 +973,7 @@ describe('Agent turn flow', () => {
     const events = await ctx.untilTurnEnd();
 
     expect(authKeys).toEqual(['fresh-token', 'forced-refresh-token']);
-    expect(tokenCalls).toEqual([undefined, undefined, true]);
+    expect(tokenCalls).toEqual([undefined, true]);
     expect(events).not.toContainEqual(expect.objectContaining({ event: 'assistant.delta' }));
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -1063,6 +1057,17 @@ describe('Agent turn flow', () => {
       statusCode: 422,
     },
     {
+      name: 'context overflow token count status',
+      createError: () =>
+        new APIStatusError(
+          400,
+          'input token count 131072 exceeds the maximum number of tokens allowed',
+          'req-token-count',
+        ),
+      errorType: 'context_overflow',
+      statusCode: 400,
+    },
+    {
       name: 'connection error',
       createError: () => new APIConnectionError('socket hang up'),
       errorType: 'network',
@@ -1089,7 +1094,7 @@ describe('Agent turn flow', () => {
     };
     const ctx = testAgent({
       generate,
-      providerManager: createSingleAttemptProviderManager(),
+      ...singleAttemptAgentOptions(),
       telemetry: recordingTelemetry(records),
     });
     ctx.configure();
@@ -1120,7 +1125,7 @@ describe('Agent turn flow', () => {
   it('keeps transient retry handling with request-scoped OAuth auth', async () => {
     const { logger, entries } = captureLogs();
     const authKeys: string[] = [];
-    const providerManager = createOAuthProviderManager(async () => 'fresh-token');
+    const oauthOptions = oauthAgentOptions(async () => 'fresh-token');
     const generate: GenerateFn = async (
       _provider,
       _system,
@@ -1136,7 +1141,7 @@ describe('Agent turn flow', () => {
       await callbacks?.onMessagePart?.({ type: 'text', text: 'Recovered after retry' });
       return textResult('Recovered after retry');
     };
-    const ctx = testAgent({ providerManager, generate, log: logger });
+    const ctx = testAgent({ ...oauthOptions, generate, log: logger });
     ctx.configure();
     await ctx.rpc.setModel({ model: 'kimi-code' });
     ctx.newEvents();
@@ -1162,16 +1167,16 @@ describe('Agent turn flow', () => {
       }),
     );
     const requestLogs = entries.filter((entry) => entry.message === 'llm request');
-    expect(requestLogs.map((entry) => entry.payload)).toEqual([
-      expect.not.objectContaining({ attempt: expect.any(Number), maxAttempts: expect.any(Number) }),
-      expect.objectContaining({ attempt: 2, maxAttempts: 3 }),
-    ]);
+    const payloads = requestLogs.map((entry) => entry.payload as Record<string, unknown>);
+    expect(payloads[0]).toMatchObject({ turnStep: '0.1' });
+    expect(payloads[0]).not.toHaveProperty('attempt');
+    expect(payloads[1]).toMatchObject({ turnStep: '0.1', attempt: '2/3' });
   });
 
   it('force-refreshes OAuth credentials on video upload 401 and falls back to login_required when replay 401', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
-    const providerManager = createOAuthProviderManager(
+    const oauthOptions = oauthAgentOptions(
       async (options) => {
         tokenCalls.push(options?.force);
         return options?.force === true ? 'forced-refresh-token' : 'fresh-token';
@@ -1185,8 +1190,8 @@ describe('Agent turn flow', () => {
       }),
     } as unknown as ChatProvider;
     const ctx = testAgent({
+      ...oauthOptions,
       kaos: createVideoKaos(),
-      providerManager,
     });
     ctx.agent.config.update({
       cwd: process.cwd(),
@@ -1256,8 +1261,8 @@ describe('Agent turn flow', () => {
       [wire] turn.cancel                 { "turnId": 0, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "tool.call", "uuid": "call_bash", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf should-not-run", "timeout": 60 }, "description": "Running: printf should-not-run", "display": { "kind": "command", "command": "printf should-not-run", "cwd": "<cwd>", "language": "bash" } }, "time": "<time>" }
       [emit] tool.call.started           { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf should-not-run", "timeout": 60 }, "description": "Running: printf should-not-run", "display": { "kind": "command", "command": "printf should-not-run", "cwd": "<cwd>", "language": "bash" } }
-      [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "Tool \\"Bash\\" was aborted", "isError": true } }, "time": "<time>" }
-      [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "Tool \\"Bash\\" was aborted", "isError": true }
+      [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true } }, "time": "<time>" }
+      [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true }
       [emit] turn.step.interrupted       { "turnId": 0, "step": 1, "reason": "aborted" }
       [emit] turn.ended                  { "turnId": 0, "reason": "cancelled" }
     `);
@@ -1385,8 +1390,8 @@ describe('Agent turn flow', () => {
       [wire] turn.cancel                 { "turnId": 0, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "tool.call", "uuid": "call_bash", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf should-not-run", "timeout": 60 }, "description": "Running: printf should-not-run", "display": { "kind": "command", "command": "printf should-not-run", "cwd": "<cwd>", "language": "bash" } }, "time": "<time>" }
       [emit] tool.call.started           { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf should-not-run", "timeout": 60 }, "description": "Running: printf should-not-run", "display": { "kind": "command", "command": "printf should-not-run", "cwd": "<cwd>", "language": "bash" } }
-      [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "Tool \\"Bash\\" was aborted", "isError": true } }, "time": "<time>" }
-      [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "Tool \\"Bash\\" was aborted", "isError": true }
+      [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true } }, "time": "<time>" }
+      [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true }
       [emit] turn.step.interrupted       { "turnId": 0, "step": 1, "reason": "aborted" }
       [emit] turn.ended                  { "turnId": 0, "reason": "cancelled" }
     `);
@@ -1414,15 +1419,13 @@ interface ApiErrorTelemetryCase {
   readonly statusCode?: number;
 }
 
-function createSingleAttemptProviderManager(): ProviderManager {
-  return new ProviderManager({
-    config: {
+function singleAttemptAgentOptions(): Pick<TestAgentOptions, 'initialConfig'> {
+  return {
+    initialConfig: {
       providers: {},
-      loopControl: {
-        maxRetriesPerStep: 1,
-      },
+      loopControl: { maxRetriesPerStep: 1 },
     },
-  });
+  };
 }
 
 const MP4_HEADER = Buffer.concat([
@@ -1472,32 +1475,33 @@ function mediaCapabilities(): ModelCapability {
   };
 }
 
-function createOAuthProviderManager(
+function oauthAgentOptions(
   getAccessToken: (options?: { readonly force?: boolean }) => Promise<string>,
   capabilities?: readonly string[] | undefined,
-): ProviderManager {
-  const oauthConfig: KimiConfig = {
-    defaultModel: 'kimi-code',
-    providers: {
-      'managed:kimi-code': {
-        type: 'vertexai',
-        baseUrl: 'https://api.example/v1',
-        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+): Pick<TestAgentOptions, 'initialConfig' | 'providerManagerOverrides'> {
+  return {
+    initialConfig: {
+      defaultModel: 'kimi-code',
+      providers: {
+        'managed:kimi-code': {
+          type: 'vertexai',
+          baseUrl: 'https://api.example/v1',
+          oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        },
+      },
+      models: {
+        'kimi-code': {
+          provider: 'managed:kimi-code',
+          model: 'kimi-for-coding',
+          maxContextSize: 1_000_000,
+          capabilities: capabilities === undefined ? undefined : [...capabilities],
+        },
       },
     },
-    models: {
-      'kimi-code': {
-        provider: 'managed:kimi-code',
-        model: 'kimi-for-coding',
-        maxContextSize: 1_000_000,
-        capabilities: capabilities === undefined ? undefined : [...capabilities],
-      },
+    providerManagerOverrides: {
+      resolveOAuthTokenProvider: vi.fn(() => ({ getAccessToken })),
     },
   };
-  return new ProviderManager({
-    config: oauthConfig,
-    resolveOAuthTokenProvider: vi.fn(() => ({ getAccessToken })),
-  });
 }
 
 function textResult(text: string): Awaited<ReturnType<GenerateFn>> {

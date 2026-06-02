@@ -244,6 +244,14 @@ describe('KimiHarness.createSession transport link', () => {
       expect(summary?.sessionDir).toContain(join(homeDir, 'sessions'));
       expect(existsSync(join(summary!.sessionDir, 'state.json'))).toBe(true);
       expect(await readFile(join(homeDir, 'session_index.jsonl'), 'utf-8')).toContain(session.id);
+
+      const summariesById = await harness.listSessions({ sessionId: session.id });
+      expect(summariesById).toHaveLength(1);
+      expect(summariesById[0]).toMatchObject({
+        id: session.id,
+        workDir,
+      });
+      await expect(harness.listSessions({ sessionId: 'ses_missing' })).resolves.toEqual([]);
     } finally {
       await harness.close();
     }
@@ -395,26 +403,6 @@ effort = "medium"
     await harness.close();
     expect(harness.sessions.size).toBe(0);
     expect(coreSessionIds(harness)).toEqual([]);
-  });
-
-  it('rejects explicitly empty model names', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const harness = new KimiHarness({
-      identity: TEST_IDENTITY,
-      homeDir,
-    });
-
-    try {
-      await expect(
-        harness.createSession({ id: 'ses_empty_model', workDir, model: '   ' }),
-      ).rejects.toMatchObject({
-        name: 'KimiError',
-        code: 'model.config_invalid',
-      } satisfies Partial<KimiError>);
-    } finally {
-      await harness.close();
-    }
   });
 
   it('applies initial thinking and permission runtime options', async () => {

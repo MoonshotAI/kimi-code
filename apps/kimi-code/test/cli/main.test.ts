@@ -68,6 +68,7 @@ function defaultOpts(): CLIOptions {
     session: undefined,
     continue: false,
     yolo: false,
+    auto: false,
     plan: false,
     model: undefined,
     outputFormat: undefined,

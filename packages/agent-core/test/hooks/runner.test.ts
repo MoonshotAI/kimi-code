@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-const RUNNER_MODULE = '../../src/agent/hooks/runner' as string;
+const RUNNER_MODULE = '../../src/session/hooks/runner' as string;
 
 interface HookResult {
   action: 'allow' | 'block';

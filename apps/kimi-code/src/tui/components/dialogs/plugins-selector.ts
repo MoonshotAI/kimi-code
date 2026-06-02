@@ -10,6 +10,7 @@ import type { PluginInfo, PluginMcpServerInfo, PluginSummary } from '@moonshot-a
 import chalk from 'chalk';
 
 import type { ColorPalette } from '#/tui/theme/colors';
+import { formatPluginSourceLabel, pluginTrustLabel } from '#/tui/utils/plugin-source-label';
 import { printableChar } from '#/tui/utils/printable-key';
 import type { PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
 
@@ -121,13 +122,13 @@ export class PluginsOverviewSelectorComponent extends Container implements Focus
   override render(width: number): string[] {
     const { colors, plugins } = this.opts;
     const hint =
-      '↑↓ navigate · Space enable/disable · M MCP · D remove · Enter/→ info · ←/Esc close';
+      '↑↓ navigate · Space toggle · M MCP servers · D remove · Enter details · Esc close';
     const pluginItems = this.items.filter((item) => item.kind === 'plugin');
     const actionItems = this.items.filter((item) => item.kind === 'action');
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(' Plugins'),
-      chalk.hex(colors.textMuted)(` ${hint}`),
+      pluginShortcutHint(` ${hint}`, colors),
       '',
       sectionLabel(`Installed plugins (${plugins.length})`, colors),
     ];
@@ -171,7 +172,7 @@ export class PluginsOverviewSelectorComponent extends Container implements Focus
     const descriptionWidth = Math.max(1, width - 4);
     const lines = [line];
     for (const descLine of wrapOverviewDescription(item.description, descriptionWidth)) {
-      lines.push(chalk.hex(colors.textMuted)(`    ${descLine}`));
+      lines.push(pluginShortcutHint(`    ${descLine}`, colors));
     }
     return lines;
   }
@@ -236,7 +237,7 @@ export class PluginMarketplaceSelectorComponent extends Container implements Foc
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(' Official plugins'),
-      chalk.hex(colors.textMuted)(' ↑↓ navigate · Enter/Space install/update · ←/Esc back'),
+      pluginShortcutHint(' ↑↓ navigate · Enter/Space install/update · ←/Esc back', colors),
       chalk.hex(colors.textMuted)(` Source: ${this.opts.source}`),
       '',
       sectionLabel(`Marketplace (${entries.length})`, colors),
@@ -274,7 +275,7 @@ export class PluginMarketplaceSelectorComponent extends Container implements Foc
     const descriptionWidth = Math.max(1, width - 4);
     const lines = [line];
     for (const descLine of wrapOverviewDescription(item.description, descriptionWidth)) {
-      lines.push(chalk.hex(colors.textMuted)(`    ${descLine}`));
+      lines.push(pluginShortcutHint(`    ${descLine}`, colors));
     }
     return lines;
   }
@@ -286,6 +287,11 @@ export type PluginMcpSelection =
 
 export interface PluginMcpSelectorOptions {
   readonly info: PluginInfo;
+  readonly selectedServer?: string;
+  readonly serverHint?: {
+    readonly server: string;
+    readonly text: string;
+  };
   readonly colors: ColorPalette;
   readonly onSelect: (selection: PluginMcpSelection) => void;
   readonly onCancel: () => void;
@@ -302,6 +308,10 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
     super();
     this.opts = opts;
     this.items = buildMcpItems(opts.info);
+    const selectedIndex = this.items.findIndex(
+      (item) => item.value === `${MCP_SERVER_PREFIX}${opts.selectedServer}`,
+    );
+    this.selectedIndex = Math.max(0, selectedIndex);
   }
 
   handleInput(data: string): void {
@@ -344,7 +354,7 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(` MCP servers · ${info.displayName}`),
-      chalk.hex(colors.textMuted)(' ↑↓ navigate · Enter/Space enable/disable · ←/Esc back'),
+      pluginShortcutHint(' ↑↓ navigate · Enter/Space enable/disable · ←/Esc back', colors),
       '',
       sectionLabel(`MCP servers (${info.enabledMcpServerCount}/${info.mcpServerCount} enabled)`, colors),
     ];
@@ -378,10 +388,14 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
     if (item.status !== undefined) {
       line += '  ' + statusStyle(item, colors)(item.status);
     }
+    const serverName = mcpItemServerName(item);
+    if (serverName !== undefined && this.opts.serverHint?.server === serverName) {
+      line += '  ' + chalk.hex(colors.warning)(this.opts.serverHint.text);
+    }
     const descriptionWidth = Math.max(1, width - 4);
     const lines = [line];
     for (const descLine of wrapOverviewDescription(item.description, descriptionWidth)) {
-      lines.push(chalk.hex(colors.textMuted)(`    ${descLine}`));
+      lines.push(pluginShortcutHint(`    ${descLine}`, colors));
     }
     return lines;
   }
@@ -403,6 +417,7 @@ export class PluginRemoveConfirmComponent extends ChoicePickerComponent {
     super({
       title: `Remove ${opts.displayName} (${opts.id})?`,
       hint: '↑↓ navigate · Enter/Space select · ←/Esc cancel',
+      formatHint: pluginShortcutHint,
       options: [
         {
           value: REMOVE_CONFIRM_CANCEL,
@@ -412,6 +427,7 @@ export class PluginRemoveConfirmComponent extends ChoicePickerComponent {
         {
           value: REMOVE_CONFIRM_REMOVE,
           label: 'Remove plugin',
+          tone: 'danger',
           description: 'Remove only the install record; plugin files are left in place.',
         },
       ],
@@ -438,19 +454,19 @@ function buildOverviewItems(plugins: readonly PluginSummary[]): PluginsOverviewI
     {
       value: OVERVIEW_MARKETPLACE,
       kind: 'action',
-      label: 'Browse official marketplace',
-      description: 'Install official plugins from marketplace.json.',
+      label: 'Marketplace',
+      description: 'Browse official plugins.',
     },
     {
       value: OVERVIEW_RELOAD,
       kind: 'action',
-      label: 'Reload plugins',
-      description: 'Re-read installed.json and plugin manifests.',
+      label: 'Reload',
+      description: 'Re-read installed plugins and manifests.',
     },
     {
       value: OVERVIEW_SHOW_LIST,
       kind: 'action',
-      label: 'Show plugin summary',
+      label: 'Summary',
       description: 'Append the current plugin summary to the transcript.',
     },
   );
@@ -458,8 +474,6 @@ function buildOverviewItems(plugins: readonly PluginSummary[]): PluginsOverviewI
 }
 
 function overviewPluginDescription(plugin: PluginSummary): string {
-  const mcpShortcut = plugin.mcpServerCount > 0 ? ' · M MCP' : '';
-  const shortcut = `Space ${plugin.enabled ? 'disable' : 'enable'}${mcpShortcut} · D remove · Enter info`;
   const state = plugin.state === 'ok' ? '' : ` · state ${plugin.state}`;
   const skills = `${plugin.skillCount} skill${plugin.skillCount === 1 ? '' : 's'}`;
   const mcp =
@@ -467,7 +481,9 @@ function overviewPluginDescription(plugin: PluginSummary): string {
       ? ` · MCP ${plugin.enabledMcpServerCount}/${plugin.mcpServerCount}`
       : '';
   const diagnostics = plugin.hasErrors ? ' · diagnostics available' : '';
-  return `${shortcut} · id ${plugin.id} · ${skills}${mcp}${state}${diagnostics}`;
+  const source = ` · ${formatPluginSourceLabel(plugin)}`;
+  const trust = ` · ${pluginTrustLabel(plugin)}`;
+  return `id ${plugin.id} · ${skills}${mcp}${source}${trust}${state}${diagnostics}`;
 }
 
 function pluginStatus(plugin: PluginSummary): string {
@@ -496,7 +512,7 @@ function buildMarketplaceItems(
     kind: 'plugin',
     label: entry.displayName,
     status: installedIds.has(entry.id) ? 'installed' : installStatus(entry),
-    description: marketplaceEntryDescription(entry, installedIds.has(entry.id)),
+    description: marketplaceEntryDescription(entry),
   }));
   items.push({
     value: 'back',
@@ -540,8 +556,7 @@ function mcpItemServerName(item: PluginsOverviewItem): string | undefined {
   return item.value.slice(MCP_SERVER_PREFIX.length);
 }
 
-function marketplaceEntryDescription(entry: PluginMarketplaceEntry, installed: boolean): string {
-  const action = installed ? 'Enter/Space update' : 'Enter/Space install';
+function marketplaceEntryDescription(entry: PluginMarketplaceEntry): string {
   const tier = marketplaceTierLabel(entry.tier);
   const description = entry.description ?? tier;
   const version = entry.version !== undefined ? ` · v${entry.version}` : '';
@@ -550,7 +565,7 @@ function marketplaceEntryDescription(entry: PluginMarketplaceEntry, installed: b
       ? ` · ${entry.keywords.join(', ')}`
       : '';
   const tierSuffix = entry.description !== undefined ? ` · ${tier}` : '';
-  return `${action} · ${description} · id ${entry.id}${version}${tierSuffix}${keywords}`;
+  return `${description} · id ${entry.id}${version}${tierSuffix}${keywords}`;
 }
 
 function marketplaceTierLabel(tier: PluginMarketplaceEntry['tier']): string {
@@ -577,6 +592,29 @@ function statusStyle(
   if (item.status === 'disabled') return chalk.hex(colors.textDim);
   if (item.status !== undefined && /^\d/.test(item.status)) return chalk.hex(colors.textDim);
   return chalk.hex(colors.warning);
+}
+
+function pluginShortcutHint(text: string, colors: ColorPalette): string {
+  const shortcutPattern = /D(?= remove)|M(?= MCP)|Space|Enter|Esc|[←→↑↓]/gu;
+  let output = '';
+  let offset = 0;
+
+  for (const match of text.matchAll(shortcutPattern)) {
+    const index = match.index;
+    if (index === undefined) continue;
+    const token = match[0];
+    output += chalk.hex(colors.textMuted)(text.slice(offset, index));
+    output += shortcutTokenStyle(token, colors)(token);
+    offset = index + token.length;
+  }
+
+  output += chalk.hex(colors.textMuted)(text.slice(offset));
+  return output;
+}
+
+function shortcutTokenStyle(token: string, colors: ColorPalette): (text: string) => string {
+  if (token === 'D') return chalk.hex(colors.error).bold;
+  return chalk.hex(colors.primary).bold;
 }
 
 function wrapOverviewDescription(text: string, width: number): string[] {

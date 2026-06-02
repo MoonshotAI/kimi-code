@@ -8,7 +8,7 @@
  *   - `Kaos`        — shell execution abstraction (exec / execWithEnv)
  *   - `cwd`         — default working directory for commands
  *   - `Environment` — cross-platform probe (shellName / shellPath)
- *   - `BackgroundProcessManager?` — optional: required iff run_in_background=true
+ *   - `BackgroundManager?` — optional: required iff run_in_background=true
  *
  * Execution goes through Kaos, never directly via node:child_process.
  *
@@ -29,11 +29,10 @@ import { StringDecoder } from 'node:string_decoder';
 import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
 import { z } from 'zod';
 
+import { ProcessBackgroundTask, type BackgroundManager } from '../../../agent/background';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
-import type { Environment } from '../../../utils/environment';
 import { renderPrompt } from '../../../utils/render-prompt';
-import type { BackgroundProcessManager } from '../../background/manager';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';
@@ -156,15 +155,14 @@ export class BashTool implements BuiltinTool<BashInput> {
   constructor(
     private readonly kaos: Kaos,
     private readonly cwd: string,
-    private readonly environment: Environment,
-    private readonly backgroundManager?: BackgroundProcessManager,
+    private readonly backgroundManager?: BackgroundManager,
     options?: {
       allowBackground?: boolean | undefined;
     },
   ) {
-    this.isWindowsBash = this.environment.osKind === 'Windows';
+    this.isWindowsBash = this.kaos.osEnv.osKind === 'Windows';
     this.allowBackground = options?.allowBackground ?? this.backgroundManager !== undefined;
-    const rendered = renderBashDescription(this.environment.shellName);
+    const rendered = renderBashDescription(this.kaos.osEnv.shellName);
     this.description = this.allowBackground ? rendered : withoutBackgroundDescription(rendered);
   }
 
@@ -190,7 +188,7 @@ export class BashTool implements BuiltinTool<BashInput> {
   private spawn(effectiveCwd: string, command: string): Promise<KaosProcess> {
     const shellCwd = this.isWindowsBash ? windowsPathToPosixPath(effectiveCwd) : effectiveCwd;
     const shellArgs = [
-      this.environment.shellPath,
+      this.kaos.osEnv.shellPath,
       '-c',
       `cd ${shellQuote(shellCwd)} && ${command}`,
     ];
@@ -202,7 +200,7 @@ export class BashTool implements BuiltinTool<BashInput> {
       // to be inherited; honour an explicit ambient value when the user has
       // set one.
       GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
-      SHELL: this.environment.shellPath,
+      SHELL: this.kaos.osEnv.shellPath,
     };
 
     // Merge ambient env + noninteractive knobs so tools like git / node
@@ -356,7 +354,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     if (!this.backgroundManager) {
       return {
         isError: true,
-        output: 'Background execution is not available (no BackgroundProcessManager configured).',
+        output: 'Background execution is not available (no BackgroundManager configured).',
       };
     }
     const backgroundManager = this.backgroundManager;
@@ -368,16 +366,6 @@ export class BashTool implements BuiltinTool<BashInput> {
       };
     }
 
-    let reservation: ReturnType<BackgroundProcessManager['reserveSlot']>;
-    try {
-      reservation = backgroundManager.reserveSlot();
-    } catch (error) {
-      return {
-        isError: true,
-        output: error instanceof Error ? error.message : String(error),
-      };
-    }
-
     const timeoutMs = args.disable_timeout ? undefined : normalizeTimeoutMs(args.timeout, true);
 
     let proc: KaosProcess;
@@ -386,7 +374,6 @@ export class BashTool implements BuiltinTool<BashInput> {
       const effectiveCwd = args.cwd ?? this.cwd;
       proc = await this.spawn(effectiveCwd, command);
     } catch (error) {
-      reservation.release();
       return {
         isError: true,
         output: error instanceof Error ? error.message : String(error),
@@ -401,16 +388,10 @@ export class BashTool implements BuiltinTool<BashInput> {
 
     let taskId: string;
     try {
-      taskId = backgroundManager.register(proc, command, args.description.trim(), {
-        reservation,
-        shellInfo: {
-          shellName: this.environment.shellName,
-          shellPath: this.environment.shellPath,
-          cwd: args.cwd ?? this.cwd,
-        },
-      });
+      taskId = backgroundManager.registerTask(
+        new ProcessBackgroundTask(proc, command, args.description.trim()),
+      );
     } catch (error) {
-      reservation.release();
       try {
         await proc.kill('SIGTERM');
       } catch {
@@ -425,19 +406,16 @@ export class BashTool implements BuiltinTool<BashInput> {
     if (timeoutMs !== undefined) {
       setTimeout(() => {
         void (async (): Promise<void> => {
-          if (proc.exitCode !== null) {
-            await backgroundManager.settlePendingExits();
-            return;
-          }
+          if (proc.exitCode !== null) return;
           const info = backgroundManager.getTask(taskId);
           if (info && info.status === 'running') {
-            void backgroundManager.stop(taskId);
+            void backgroundManager.stop(taskId, 'Timed out');
           }
         })();
       }, timeoutMs);
     }
 
-    // register() synchronously inserts taskId into the manager's Map, so
+    // registerTask() synchronously inserts taskId into the manager's Map, so
     // this lookup in the same tick cannot return undefined.
     const status = backgroundManager.getTask(taskId)!.status;
     const builder = new ToolResultBuilder();

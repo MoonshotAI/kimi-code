@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import chalk from 'chalk';
 
 import {
   PluginMcpSelectorComponent,
@@ -9,15 +10,91 @@ import {
   type PluginRemoveConfirmResult,
 } from '#/tui/components/dialogs/plugins-selector';
 import { darkColors } from '#/tui/theme/colors';
+import { pluginTrustLabel } from '#/tui/utils/plugin-source-label';
 
 const ANSI_SGR = /\[[0-9;]*m/g;
+const SGR_SEQUENCE = String.raw`\[[0-9;]*m`;
+const HIGHLIGHTED_D_REMOVE = new RegExp(`${SGR_SEQUENCE}(?:${SGR_SEQUENCE})*D(?:${SGR_SEQUENCE})+ remove`, 'g');
 const MID = '\u00B7';
 
 function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '').replaceAll('\u276F', '?');
 }
 
+function withAnsiColors<T>(fn: () => T): T {
+  const previousChalkLevel = chalk.level;
+  chalk.level = 3;
+  try {
+    return fn();
+  } finally {
+    chalk.level = previousChalkLevel;
+  }
+}
+
+function renderRaw(component: { render(width: number): string[] }, width = 120): string {
+  return withAnsiColors(() => component.render(width).join('\n'));
+}
+
+function primaryShortcut(text: string): string {
+  return withAnsiColors(() => chalk.hex(darkColors.primary).bold(text));
+}
+
+function dangerShortcut(text: string): string {
+  return withAnsiColors(() => chalk.hex(darkColors.error).bold(text));
+}
+
 describe('plugins selector dialogs', () => {
+  it('trusts only built-in Kimi CDN plugin paths', () => {
+    expect(pluginTrustLabel({
+      id: 'kimi-datasource',
+      displayName: 'Kimi Datasource',
+      enabled: true,
+      state: 'ok',
+      skillCount: 0,
+      mcpServerCount: 0,
+      enabledMcpServerCount: 0,
+      hasErrors: false,
+      source: 'zip-url',
+      originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+    })).toBe('official');
+    expect(pluginTrustLabel({
+      id: 'superpowers',
+      displayName: 'Superpowers',
+      enabled: true,
+      state: 'ok',
+      skillCount: 0,
+      mcpServerCount: 0,
+      enabledMcpServerCount: 0,
+      hasErrors: false,
+      source: 'zip-url',
+      originalSource: 'https://code.kimi.com/kimi-code/plugins/curated/superpowers.zip',
+    })).toBe('curated');
+    expect(pluginTrustLabel({
+      id: 'demo',
+      displayName: 'Demo',
+      enabled: true,
+      state: 'ok',
+      skillCount: 0,
+      mcpServerCount: 0,
+      enabledMcpServerCount: 0,
+      hasErrors: false,
+      source: 'zip-url',
+      originalSource: 'https://code.kimi.com/demo.zip',
+    })).toBe('third-party');
+    expect(pluginTrustLabel({
+      id: 'local',
+      displayName: 'Local',
+      enabled: true,
+      state: 'ok',
+      skillCount: 0,
+      mcpServerCount: 0,
+      enabledMcpServerCount: 0,
+      hasErrors: false,
+      source: 'local-path',
+      originalSource: 'https://code.kimi.com/kimi-code/plugins/official/local',
+    })).toBe('third-party');
+  });
+
   it('renders installed plugins as selectable overview entries', () => {
     const onSelect = vi.fn();
     const picker = new PluginsOverviewSelectorComponent({
@@ -32,6 +109,7 @@ describe('plugins selector dialogs', () => {
           mcpServerCount: 1,
           enabledMcpServerCount: 1,
           hasErrors: false,
+          source: 'local-path',
         },
       ],
       colors: darkColors,
@@ -39,15 +117,21 @@ describe('plugins selector dialogs', () => {
       onCancel: vi.fn(),
     });
 
-    const out = picker.render(120).map(strip).join('\n');
+    const raw = renderRaw(picker);
+    const out = strip(raw);
     expect(out).toContain('Installed plugins (1)');
     expect(out).toContain('Actions');
     expect(out).toContain('? Kimi Datasource  enabled');
-    expect(out).toContain(
-      `Space disable ${MID} M MCP ${MID} D remove ${MID} Enter info ${MID} id kimi-datasource ${MID} 2 skills ${MID} MCP 1/1`,
-    );
-    expect(out).toContain('Browse official marketplace');
-    expect(out).toContain('Show plugin summary');
+    expect(out).toContain(`id kimi-datasource ${MID} 2 skills ${MID} MCP 1/1`);
+    expect(out).not.toContain('Space disable');
+    expect(out).not.toContain('Enter info');
+    expect(raw.match(HIGHLIGHTED_D_REMOVE)).toHaveLength(1);
+    expect(raw).toContain(primaryShortcut('Space'));
+    expect(raw).toContain(primaryShortcut('M'));
+    expect(raw).toContain(dangerShortcut('D'));
+    expect(raw).toContain(primaryShortcut('Enter'));
+    expect(out).toContain('Marketplace');
+    expect(out).toContain('Summary');
 
     picker.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({ kind: 'info', id: 'kimi-datasource' });
@@ -74,12 +158,15 @@ describe('plugins selector dialogs', () => {
       onCancel: vi.fn(),
     });
 
-    const out = picker.render(120).map(strip).join('\n');
+    const raw = renderRaw(picker);
+    const out = strip(raw);
     expect(out).toContain('Marketplace (1)');
     expect(out).toContain('? Superpowers  install v5.1.0');
     expect(out).toContain(
-      `Enter/Space install ${MID} Workflow skills ${MID} id superpowers ${MID} v5.1.0 ${MID} Curated plugin ${MID} workflow`,
+      `Workflow skills ${MID} id superpowers ${MID} v5.1.0 ${MID} Curated plugin ${MID} workflow`,
     );
+    expect(raw).toContain(primaryShortcut('Enter'));
+    expect(raw).toContain(primaryShortcut('Space'));
     expect(out).toContain('Actions');
     expect(out).toContain('Back to installed plugins');
 
@@ -109,7 +196,7 @@ describe('plugins selector dialogs', () => {
 
     const out = picker.render(120).map(strip).join('\n');
     expect(out).toContain('? Superpowers  installed');
-    expect(out).toContain(`Enter/Space update ${MID} Plugin ${MID} id superpowers`);
+    expect(out).toContain(`Plugin ${MID} id superpowers`);
 
     picker.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith({
@@ -132,6 +219,7 @@ describe('plugins selector dialogs', () => {
           mcpServerCount: 0,
           enabledMcpServerCount: 0,
           hasErrors: false,
+          source: 'local-path',
         },
       ],
       colors: darkColors,
@@ -162,6 +250,7 @@ describe('plugins selector dialogs', () => {
           mcpServerCount: 0,
           enabledMcpServerCount: 0,
           hasErrors: false,
+          source: 'local-path',
         },
       ],
       colors: darkColors,
@@ -188,6 +277,7 @@ describe('plugins selector dialogs', () => {
           mcpServerCount: 1,
           enabledMcpServerCount: 1,
           hasErrors: false,
+          source: 'local-path',
         },
       ],
       colors: darkColors,
@@ -214,6 +304,7 @@ describe('plugins selector dialogs', () => {
         enabledMcpServerCount: 1,
         hasErrors: false,
         source: 'local-path',
+        installedAt: '2026-05-29T00:00:00.000Z',
         root: '/plugins/kimi-datasource',
         manifest: undefined,
         mcpServers: [
@@ -236,9 +327,12 @@ describe('plugins selector dialogs', () => {
       onCancel: vi.fn(),
     });
 
-    const out = picker.render(120).map(strip).join('\n');
+    const raw = renderRaw(picker);
+    const out = strip(raw);
     expect(out).toContain('MCP servers (1/1 enabled)');
     expect(out).toContain('? data  enabled');
+    expect(raw).toContain(primaryShortcut('Enter'));
+    expect(raw).toContain(primaryShortcut('Space'));
 
     picker.handleInput(' ');
 
@@ -260,10 +354,11 @@ describe('plugins selector dialogs', () => {
           mcpServerCount: 0,
           enabledMcpServerCount: 0,
           hasErrors: false,
+          source: 'local-path',
         },
       ],
       selectedId: 'kimi-datasource',
-      pluginHint: { id: 'kimi-datasource', text: `saved ${MID} /new to apply` },
+      pluginHint: { id: 'kimi-datasource', text: 'pending /new' },
       colors: darkColors,
       onSelect: vi.fn(),
       onCancel: vi.fn(),
@@ -271,7 +366,7 @@ describe('plugins selector dialogs', () => {
 
     const out = picker.render(120).map(strip).join('\n');
 
-    expect(out).toContain(`? Kimi Datasource  enabled  saved ${MID} /new to apply`);
+    expect(out).toContain('? Kimi Datasource  enabled  pending /new');
   });
 
   it('defaults plugin removal confirmation to cancel', () => {
@@ -307,6 +402,11 @@ describe('plugins selector dialogs', () => {
     });
 
     picker.handleInput('[B');
+    const raw = renderRaw(picker);
+    expect(raw).toContain(primaryShortcut('Enter'));
+    expect(raw).toContain(primaryShortcut('Space'));
+    expect(raw).toContain(dangerShortcut('Remove plugin'));
+
     picker.handleInput('\r');
 
     expect(results).toEqual([{ kind: 'confirm' }]);

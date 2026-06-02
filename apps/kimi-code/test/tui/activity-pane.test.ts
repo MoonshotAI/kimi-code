@@ -13,6 +13,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       session: undefined,
       continue: false,
       yolo: false,
+      auto: false,
       plan: false,
       model: undefined,
       outputFormat: undefined,
@@ -96,7 +97,7 @@ describe('updateActivityPane terminal progress', () => {
 
       expect(setProgress).toHaveBeenCalledTimes(1);
       expect(setProgress).toHaveBeenLastCalledWith(true);
-      expect(state.activitySpinner).toBeUndefined();
+      expect(state.activitySpinner).toBeNull();
       expect(state.activityContainer.children).toHaveLength(0);
 
       state.appState.streamingPhase = 'idle';
@@ -104,7 +105,7 @@ describe('updateActivityPane terminal progress', () => {
 
       expect(setProgress).toHaveBeenCalledTimes(2);
       expect(setProgress).toHaveBeenLastCalledWith(false);
-      expect(state.activitySpinner).toBeUndefined();
+      expect(state.activitySpinner).toBeNull();
     } finally {
       vi.useRealTimers();
     }

@@ -6,6 +6,7 @@ import { registerMigrateCommand } from '#/migration/index';
 
 import type { CLIOptions } from './options';
 import { registerExportCommand } from './sub/export';
+import { registerProviderCommand } from './sub/provider';
 
 export type MainCommandHandler = (opts: CLIOptions) => void;
 export type MigrateCommandHandler = () => void;
@@ -42,6 +43,7 @@ export function createProgram(
     )
     .option('-C, --continue', 'Continue the previous session for the working directory.', false)
     .option('-y, --yolo', 'Automatically approve all actions.', false)
+    .option('--auto', 'Start in auto permission mode.', false)
     .addOption(
       new Option(
         '-m, --model <model>',
@@ -73,6 +75,7 @@ export function createProgram(
     .option('--plan', 'Start in plan mode.', false);
 
   registerExportCommand(program);
+  registerProviderCommand(program);
   registerMigrateCommand(program, onMigrate);
 
   program
@@ -90,11 +93,13 @@ export function createProgram(
     const rawSession = raw['session'] ?? raw['resume'];
     const sessionValue = rawSession === true ? '' : (rawSession as string | undefined);
     const yoloValue = raw['yolo'] === true || raw['yes'] === true || raw['autoApprove'] === true;
+    const autoValue = raw['auto'] === true;
 
     const opts: CLIOptions = {
       session: sessionValue,
       continue: raw['continue'] as boolean,
       yolo: yoloValue,
+      auto: autoValue,
       plan: raw['plan'] as boolean,
       model: raw['model'] as string | undefined,
       outputFormat: raw['outputFormat'] as CLIOptions['outputFormat'],

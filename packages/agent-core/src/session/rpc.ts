@@ -6,7 +6,6 @@ import type {
   CancelPayload,
   CancelPlanPayload,
   EmptyPayload,
-  GetBackgroundOutputPathPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
   McpServerInfo,
@@ -23,6 +22,7 @@ import type {
   SkillSummary,
   SteerPayload,
   StopBackgroundPayload,
+  UndoHistoryPayload,
   UnregisterToolPayload,
   UpdateSessionMetadataPayload,
 } from '#/rpc';
@@ -103,6 +103,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return this.getAgent(agentId).cancel(payload);
   }
 
+  undoHistory({ agentId, ...payload }: AgentScopedPayload<UndoHistoryPayload>) {
+    return this.getAgent(agentId).undoHistory(payload);
+  }
+
   setModel({ agentId, ...payload }: AgentScopedPayload<SetModelPayload>) {
     return this.getAgent(agentId).setModel(payload);
   }
@@ -168,13 +172,6 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   getBackgroundOutput({ agentId, ...payload }: AgentScopedPayload<GetBackgroundOutputPayload>) {
     return this.getAgent(agentId).getBackgroundOutput(payload);
-  }
-
-  getBackgroundOutputPath({
-    agentId,
-    ...payload
-  }: AgentScopedPayload<GetBackgroundOutputPathPayload>) {
-    return this.getAgent(agentId).getBackgroundOutputPath(payload);
   }
 
   getContext({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {

@@ -11,6 +11,7 @@ import { inputTotal } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
 import type { LLMChatResponse, LoopHooks } from '../../src/loop/index';
+import { userCancellationReason } from '../../src/utils/abort';
 import { makeEndTurnResponse, makeToolCall, makeToolUseResponse } from './fixtures/fake-llm';
 import { runTurn } from './fixtures/helpers';
 import { EchoTool, GatedTool, markReadFileAccesses, SlowTool } from './fixtures/tools';
@@ -209,6 +210,36 @@ describe('runTurn — abort handling', () => {
       output: 'Tool "echo" was aborted',
       isError: true,
     });
+  });
+
+  it('tells the model a running tool was interrupted by the user, not by a system fault', async () => {
+    // When the user presses stop, the tool_result fed back to the model must
+    // convey "the user deliberately interrupted this" — not the neutral
+    // `Tool "X" was aborted`, which the model mistakes for a system problem
+    // (e.g. "too many parallel agents") and then theorises about / retries.
+    const slow = new SlowTool();
+    const controller = new AbortController();
+
+    const turnPromise = runTurn({
+      tools: [slow],
+      responses: [
+        makeToolUseResponse([makeToolCall('slow', {}, 'tc-1')]),
+        makeEndTurnResponse('unreachable'),
+      ],
+      signal: controller.signal,
+    });
+
+    await slow.started.promise;
+    controller.abort(userCancellationReason());
+    const { result, sink } = await turnPromise;
+
+    expect(result.stopReason).toBe('aborted');
+    const toolResult = sink.byType('tool.result').find((e) => e.toolCallId === 'tc-1');
+    const output = toolResult?.result.output;
+    expect(typeof output).toBe('string');
+    expect(output).not.toBe('Tool "slow" was aborted');
+    expect(output).toContain('not a system error');
+    expect(output).toContain("wait for the user");
   });
 
   it('every tool.call still has a matching tool.result when aborted mid-batch', async () => {

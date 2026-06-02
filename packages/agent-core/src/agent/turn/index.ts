@@ -7,6 +7,7 @@ import {
   APIStatusError,
   APITimeoutError,
   inputTotal,
+  isContextOverflowStatusError,
   type ContentPart,
   type TokenUsage,
 } from '@moonshot-ai/kosong';
@@ -31,9 +32,9 @@ import {
 } from '../../loop/index';
 import type { AgentEvent, TurnEndedEvent } from '../../rpc';
 import type { TelemetryPropertyValue } from '../../telemetry';
-import { abortable } from '../../utils/abort';
+import { abortable, userCancellationReason } from '../../utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
-import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../hooks';
+import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
 import { ToolCallDeduplicator } from './tool-dedup';
 
@@ -146,13 +147,18 @@ export class TurnFlow {
     this.activeTurn = 'resuming';
   }
 
-  cancel(turnId?: number): void {
+  cancel(turnId?: number, reason?: unknown): void {
     this.agent.records.logRecord({ type: 'turn.cancel', turnId });
     if (turnId !== undefined && turnId !== this.currentId) {
       return; // Ignore cancel for non-active turn
     }
-    this.abortTurn();
-    this.agent.subagentHost?.cancelAll();
+    // A direct cancel (RPC / replay) is the user pressing stop. When the cancel
+    // is propagated from an aborting signal (e.g. a subagent's deadline via
+    // waitForCurrentTurn), carry that original reason instead so a timeout is
+    // not mislabeled to the model as a deliberate user interruption.
+    const cancelReason = reason ?? userCancellationReason();
+    this.abortTurn(cancelReason);
+    this.agent.subagentHost?.cancelAll(cancelReason);
   }
 
   get currentId() {
@@ -173,7 +179,7 @@ export class TurnFlow {
 
     const turnId = this.currentId;
     const onAbort = (): void => {
-      this.agent.turn.cancel(turnId);
+      this.agent.turn.cancel(turnId, signal.reason);
     };
     signal.addEventListener('abort', onAbort, { once: true });
 
@@ -182,9 +188,13 @@ export class TurnFlow {
     });
   }
 
-  private abortTurn() {
+  private abortTurn(reason: unknown) {
     if (this.activeTurn !== 'resuming') {
-      this.activeTurn?.controller.abort();
+      // The reason (a user cancellation by default, or the originating signal's
+      // reason when propagated) travels as signal.reason so tools settling on
+      // this signal can report a deliberate user interruption distinctly from a
+      // timeout/system abort. linkAbortSignal forwards it to linked subagents.
+      this.activeTurn?.controller.abort(reason);
     }
     this.activeTurn = null;
   }
@@ -316,7 +326,6 @@ export class TurnFlow {
     signal.throwIfAborted();
     const blockResult = renderUserPromptHookBlockResult(promptHookResults);
     if (blockResult !== undefined) {
-      this.agent.context.markLastUserPromptBlocked('UserPromptSubmit');
       this.agent.context.appendMessage({
         role: 'assistant',
         content: [{ type: 'text', text: blockResult.text }],
@@ -362,7 +371,7 @@ export class TurnFlow {
     while (true) {
       signal.throwIfAborted();
       const model = this.agent.config.model;
-      const loopControl = this.agent.providerManager?.config.loopControl;
+      const loopControl = this.agent.kimiConfig?.loopControl;
       try {
         const result = await runTurn({
           turnId: String(turnId),
@@ -377,6 +386,7 @@ export class TurnFlow {
           hooks: {
             beforeStep: async ({ signal: stepSignal }) => {
               this.flushSteerBuffer();
+              this.agent.microCompaction.detect();
               await this.agent.fullCompaction.beforeStep(stepSignal);
               await this.agent.injection.inject();
               deduper.beginStep();
@@ -701,8 +711,8 @@ function summarizeTurnError(error: unknown, turnId: number): KimiErrorPayload {
   const details = { ...payload.details, turnId };
 
   // Substitute a friendlier TUI-aware message for model-not-configured.
-  // Raw kosong text ("Model not set" / "Provider not set") is not
-  // actionable; this string points the user at the login flow.
+  // The raw "Model not set" / "Provider not set" text is not actionable;
+  // this string points the user at the login flow.
   if (payload.code === 'model.not_configured') {
     return { ...payload, message: LLM_NOT_SET_MESSAGE, details };
   }
@@ -739,7 +749,7 @@ function classifyApiError(error: unknown, summary: KimiErrorPayload): ApiErrorCl
     if (statusCode === 429) return { errorType: 'rate_limit', statusCode };
     if (statusCode === 401 || statusCode === 403) return { errorType: 'auth', statusCode };
     if (statusCode >= 500) return { errorType: '5xx_server', statusCode };
-    if (isContextOverflowMessage(summary.message)) {
+    if (isContextOverflowStatusError(statusCode, summary.message)) {
       return { errorType: 'context_overflow', statusCode };
     }
     if (statusCode >= 400) return { errorType: '4xx_client', statusCode };
@@ -788,17 +798,6 @@ function isApiEmptyResponseError(error: unknown, summary: KimiErrorPayload): boo
   return error instanceof APIEmptyResponseError || summary.name === 'APIEmptyResponseError';
 }
 
-function isContextOverflowMessage(message: string): boolean {
-  const lower = message.toLowerCase();
-  return (
-    lower.includes('context length') ||
-    lower.includes('context_length') ||
-    lower.includes('max tokens') ||
-    lower.includes('maximum context') ||
-    lower.includes('too many tokens')
-  );
-}
-
 function currentTurnInputTokens(usage: TokenUsage | undefined): number | undefined {
   if (usage === undefined) return undefined;
   return inputTotal(usage);
@@ -809,7 +808,11 @@ type ToolTelemetryResult = Extract<LoopEvent, { type: 'tool.result' }>['result']
 function telemetryToolOutcome(result: ToolTelemetryResult): 'success' | 'error' | 'cancelled' {
   if (result.isError !== true) return 'success';
   const text = toolResultText(result).toLowerCase();
-  return text.includes('aborted') || text.includes('cancelled') ? 'cancelled' : 'error';
+  return text.includes('aborted') ||
+    text.includes('cancelled') ||
+    text.includes('manually interrupted')
+    ? 'cancelled'
+    : 'error';
 }
 
 function telemetryToolErrorType(result: ToolTelemetryResult): string {

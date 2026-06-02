@@ -98,9 +98,10 @@ export type {
 // bash (`bash-*`) and agent (`agent-*`) tasks under one wire format.
 export type {
   BackgroundTaskStartedEvent,
-  BackgroundTaskUpdatedEvent,
   BackgroundTaskTerminatedEvent,
 } from '@moonshot-ai/agent-core';
+
+export type { CronFiredEvent } from '@moonshot-ai/agent-core';
 
 export type MaybePromise<T> = T | Promise<T>;
 

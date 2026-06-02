@@ -2,6 +2,95 @@
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.7.0
+
+### Features
+
+- Add `/provider` command for managing AI providers, support custom registry imports, and introduce a tabbed model selector. It replaces the deprecated `/connect` command — use `/provider` instead.
+- Render scheduled reminders distinctly in the TUI, expose cron fired events to SDK clients, and report cron fire times with local timezone offsets.
+- Add `KIMI_MODEL_ADAPTIVE_THINKING` (and a matching `adaptive_thinking` model-alias field) to force adaptive thinking (`thinking: { type: 'adaptive' }`) on or off, overriding the Anthropic model-name version inference. This lets custom-named staff endpoints that back an adaptive-capable model opt in even when the model name does not encode a parseable Claude version.
+
+### Bug Fixes
+
+- Report truncated compaction summaries clearly and apply valid completion token budgets across supported providers.
+- Fix glob pattern backslash escaping and include match count in truncation messages.
+
+### Polish
+
+- Clarify Kimi Platform API key login labels and prompt details.
+- Polish a small TUI visual interaction.
+
+## 0.6.0
+
+### Features
+
+- Add a `KIMI_MODEL_*` environment-variable channel that lets you run Kimi Code against a specific model (provider type, base URL, API key, context size, capabilities, and thinking settings) without editing `config.toml`.
+- Install plugins directly from GitHub repository URLs, and surface each install's origin and trust level (kimi-official, curated, third-party) in the plugin manager.
+
+### Bug Fixes
+
+- Show the real terminal status of background agents in the transcript so lost, failed, and killed ones no longer appear as completed, and include the resume agent id and recovery instructions in the failure notification so the model can resume reliably.
+- Recover from provider model token limit errors during long conversations.
+- Automatically retry when a model response stream is dropped mid-flight (a `terminated` error) instead of failing the turn.
+- Handle context overflow errors consistently across provider responses.
+- Back off failed compaction retries by a fixed slice of the model context window.
+- Fix the native self-updater reporting a successful update when the install command actually failed.
+- Project persisted hook and blocked prompt messages into model context.
+- Keep blocked prompt hook conversations available to subsequent model turns.
+- Fix footer leaking onto the terminal when resuming a non-existent session.
+- Fix automatic ripgrep installation when temporary files are on another filesystem.
+
+### Polish
+
+- Remove the default per-turn step limit of 1000. Users can still set `max_steps_per_turn` in config to enforce a custom limit.
+- Support querying sessions by sessionId or workDir in listSessions, and show a helpful cd command when resuming a session from a different working directory.
+- Expand the footer's rotating tips to surface more commands and shortcuts, featuring newer and important ones more prominently.
+- Improve the usage information display in the TUI.
+- Restrict plugin trust badges to Kimi-hosted plugin CDN URL patterns.
+- Clarify subagent and background task stop messages as user-initiated.
+- Align the datasource plugin with the generic two-tool workflow.
+
+### Refactors
+
+- Introduce `ModelProvider` interface and `SingleModelProvider` to decouple `Agent` from `ProviderManager`.
+- Split `RuntimeConfig` into `Kaos` and `ToolServices` and update all references accordingly.
+- Slim the LLM diagnostic logs with fewer, more compact fields.
+- Relocate shared tool service typing to the tool support layer.
+
+## 0.5.0
+
+### Features
+
+- Add scheduled tasks:
+
+  You can now ask the agent to remind you at a specific time, run a task on a recurring cron schedule (for example, check a deploy every 5 minutes or run a daily report every weekday at 9am), or come back on its own in a few minutes to continue what it was doing.
+
+  Schedules use the standard 5-field cron syntax.
+
+- Add `/auto` slash command and `--auto` CLI flag for auto permission mode.
+- Show file content and diff in Write and Edit approval prompts, and open them in a dedicated full-screen viewer on ctrl+e instead of expanding inline.
+
+### Bug Fixes
+
+- Fix compaction to handle edge cases where no messages are compactable and improve retry logic.
+- Fix official datasource tools to preserve complete responses and write returned result files.
+- Fix migration mapping the legacy `default_yolo` key to the dead `yolo` field instead of `default_permission_mode`.
+
+### Polish
+
+- Add a clickable changelog link to the update prompt.
+- Show the full Bash command when expanding a Bash tool card with `ctrl+o`. The header still truncates long commands at 60 chars, but the expanded view now reveals the complete multi-line command above the output.
+- Shorten the session title written to the terminal window/tab from 80 to 32 characters so long first messages and pasted content no longer stretch the tab bar past readable width.
+- Cap the inline todo panel at five rows and show a `+N more` indicator so long task lists no longer fill the screen.
+- Clarify plugin manager keyboard shortcuts and show plugin state changes inline.
+- Report discovered plugin skills in plugin manager summaries.
+- Offload large base64 media payloads from `wire.jsonl` into external blob files to reduce wire size and memory pressure during session replay. Includes an in-memory read-through cache on `BlobStore` so repeated rehydration avoids redundant disk reads.
+- Wrap long question, body, and option text in the AskUserQuestion dialog instead of truncating with an ellipsis. The question prompt, body description, option label, option description, and submit-tab review entries now flow onto multiple lines with a hanging indent.
+
+### Refactors
+
+- Refactor TUI code structure.
+
 ## 0.4.0
 
 ### Features

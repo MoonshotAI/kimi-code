@@ -21,6 +21,7 @@ kimi <subcommand> [options]
 | `--prompt <prompt>` | `-p` | 非交互执行单次 prompt，并把 Assistant 输出流式写到 stdout。该模式会使用 `auto` 权限处理工具调用，不会打开 TUI。 |
 | `--output-format <format>` | | 设置非交互输出格式，支持 `text` 与 `stream-json`。仅可与 `--prompt` 一起使用，默认 `text`。 |
 | `--yolo` | `-y` | 自动批准普通工具调用，跳过审批请求；Plan 模式中的 `Bash` 审批和退出审批不会被跳过。 |
+| `--auto` | | 以 auto 权限模式启动。工具审批自动处理，Agent 不会向用户提问。 |
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划，可以写入当前计划文件；Plan 模式中的 `Bash` 按权限模式单独处理。 |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入以叠加多个目录。详见下文 [自定义 Skills 目录](#自定义-skills-目录)。 |
 
@@ -36,8 +37,10 @@ kimi <subcommand> [options]
 
 - `--continue` 与 `--session` 互斥：两者都表示"恢复历史会话"，含义重叠。
 - `--yolo` 不能与 `--continue` 或 `--session` 同时使用：恢复会话时会沿用原会话的审批设置。此规则仅适用于交互式模式；在 `--prompt` 模式下，`--yolo` 已因与 `--prompt` 互斥而被更早拦截。
+- `--auto` 不能与 `--continue` 或 `--session` 同时使用：与 `--yolo` 同理。
+- `--auto` 不能与 `--yolo` 同时使用：两种权限模式互斥。
 - `--plan` 不能与 `--continue` 或 `--session` 同时使用：Plan 模式只对新会话生效。
-- `--prompt` 不能与 `--yolo` 或 `--plan` 同时使用：非交互模式固定使用 `auto` 权限，并且不进入 Plan 模式。
+- `--prompt` 不能与 `--yolo`、`--auto` 或 `--plan` 同时使用：非交互模式固定使用 `auto` 权限，并且不进入 Plan 模式。
 - `--prompt` 可以与 `--continue` 或带 ID 的 `--session <id>` 一起使用；不带 ID 的 `--session` 会尝试打开选择器，因此不能用于非交互模式。
 - `--output-format` 只能与 `--prompt` 一起使用；交互式 TUI 不支持把完整事件流写成 stdout JSONL。
 
@@ -67,6 +70,12 @@ kimi --session 01HZ...XYZ
 
 ```sh
 kimi --yolo
+```
+
+希望 Agent 自行处理审批且不再向用户提问时，使用 `--auto`：
+
+```sh
+kimi --auto
 ```
 
 需要先让 AI 阅读代码、产出实现计划，而不是立刻动手修改文件时，使用 `--plan` 进入 Plan 模式：
@@ -152,3 +161,90 @@ kimi migrate
 ```
 
 如果你之前使用过旧版 kimi-cli，可以运行此命令将历史会话、配置等数据迁移到 kimi-code 中，避免数据丢失。完整的迁移流程、迁移内容与注意事项见 [从 kimi-cli 迁移](../guides/migration.md)。
+
+### `kimi provider`
+
+在 shell 中管理供应商，相当于 TUI 中 `/provider` 的非交互版本。适合脚本化部署、CI 初始化、以及在新机器上一行完成配置。
+
+```sh
+kimi provider <action> [options]
+```
+
+包含三个动作：
+
+#### `kimi provider add <url>`
+
+从自定义 registry（一份 `api.json` 文档）批量导入所有供应商。命令会拉取 registry，为每个顶层条目创建 `[providers.<id>]`，为每个模型创建 `[models.<alias>]`，并在每个供应商上写入 `source = { kind = "apiJson", url, api_key }`，使下次 TUI 启动时自动刷新模型列表。
+
+| 参数 / 选项 | 说明 |
+| --- | --- |
+| `<url>` | Registry 地址，例如 `https://free-tokens.msh.team/v1/models/api.json`。 |
+| `--api-key <key>` | 访问 registry 时携带的 Bearer token。未传时回退到环境变量 `KIMI_REGISTRY_API_KEY`。必填。 |
+
+```sh
+# 一行导入：registry 中的所有 provider 与 model 全部写入 ~/.kimi-code/config.toml
+kimi provider add https://free-tokens.msh.team/v1/models/api.json --api-key YOUR_KEY
+
+# 或通过环境变量，便于 CI / .envrc 等场景
+KIMI_REGISTRY_API_KEY=YOUR_KEY kimi provider add https://free-tokens.msh.team/v1/models/api.json
+```
+
+如果某个 provider id 已存在，会先删除（包括其残留的模型 alias），再按 registry 重新写入，与 TUI 的行为一致。不会自动设置默认模型 —— 后续可以用 `-m` 或 TUI 内的 `/model` 选择。
+
+#### `kimi provider remove <providerId>`
+
+删除指定供应商及其所有模型 alias。如果被删除的供应商正好是 `default_model` 所属，则同时清空 `default_model`。
+
+```sh
+kimi provider remove kohub
+```
+
+#### `kimi provider list`
+
+按行打印每个已配置的供应商，包含类型、模型数量、来源（`apiJson(...)`、`oauth` 或 `inline`）。加 `--json` 可输出原始的 `providers` 和 `models` 表，便于程序化处理。
+
+```sh
+kimi provider list
+kimi provider list --json | jq '.providers | keys'
+```
+
+#### `kimi provider catalog list [providerId]`
+
+在不写入任何配置的情况下浏览公开的 [models.dev](https://models.dev/) 模型目录。不传参数时按行打印每个供应商及其推断出的协议类型和模型数量；传 `providerId` 时进入该供应商详情，逐个列出模型，附上下文窗口和能力。
+
+| 参数 / 选项 | 说明 |
+| --- | --- |
+| `[providerId]` | 可选。要查看的供应商 id。 |
+| `--filter <substring>` | 顶层视图下，按 id 或 name 大小写不敏感子串过滤。 |
+| `--url <url>` | 覆盖 catalog 地址，默认 `https://models.dev/api.json`。 |
+| `--json` | 以 JSON 形式输出匹配片段。 |
+
+```sh
+# 浏览供应商
+kimi provider catalog list
+kimi provider catalog list --filter anthropic
+
+# 查看某个供应商的所有模型
+kimi provider catalog list anthropic
+```
+
+#### `kimi provider catalog add <providerId>`
+
+按 id 从 catalog 直接导入一个已知供应商。协议类型、base URL、模型标识、上下文限制、能力都由 catalog 提供，你只需要提供 API key。
+
+| 参数 / 选项 | 说明 |
+| --- | --- |
+| `<providerId>` | catalog 中的供应商 id，例如 `anthropic`、`openai`、`google`。 |
+| `--api-key <key>` | 供应商 API key。未传时回退到环境变量 `KIMI_REGISTRY_API_KEY`。必填。 |
+| `--default-model <modelId>` | 可选。导入后把 `default_model` 设置为 `<providerId>/<modelId>`。`<modelId>` 必须在 `catalog list <providerId>` 中存在。 |
+| `--url <url>` | 覆盖 catalog 地址，默认 `https://models.dev/api.json`。 |
+
+不传 `--default-model` 时保留现有的 `default_model`，后续可以用 `-m` 或 TUI 内的 `/model` 选择。
+
+```sh
+# 看可选项
+kimi provider catalog list anthropic
+
+# 一行导入并设默认
+kimi provider catalog add anthropic --api-key sk-ant-... --default-model claude-opus-4-7
+```

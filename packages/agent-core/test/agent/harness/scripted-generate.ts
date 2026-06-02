@@ -6,7 +6,7 @@ import {
   type StreamedMessagePart,
 } from '@moonshot-ai/kosong';
 
-import type { AgentConfig } from '../../../src/agent';
+import type { AgentOptions } from '../../../src/agent';
 import { estimateTokensForMessages } from '../../../src/utils/tokens';
 import {
   generateInputSnapshot,
@@ -15,7 +15,7 @@ import {
   type GenerateCall,
 } from './snapshots';
 
-type GenerateFn = NonNullable<AgentConfig['generate']>;
+type GenerateFn = NonNullable<AgentOptions['generate']>;
 
 interface ScriptedResponse {
   readonly parts: readonly StreamedMessagePart[];

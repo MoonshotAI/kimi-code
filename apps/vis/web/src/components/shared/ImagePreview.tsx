@@ -16,7 +16,8 @@ interface ImagePreviewProps {
 export function ImagePreview({ url, label = 'image_url' }: ImagePreviewProps) {
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState(false);
-  const supported = url.startsWith('data:image/') || /^https?:\/\//.test(url);
+  const supported =
+    url.startsWith('data:image/') || /^https?:\/\//.test(url) || url.startsWith('/');
   const sizeLabel = url.startsWith('data:image/')
     ? `${url.length.toLocaleString()} chars`
     : new URL(url, window.location.href).hostname;

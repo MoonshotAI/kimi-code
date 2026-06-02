@@ -61,8 +61,20 @@ export interface PluginMcpServerInfo {
 }
 
 export type PluginManifestKind = 'kimi-plugin-root' | 'kimi-plugin-dir';
-export type PluginSource = 'local-path' | 'zip-url';
+export type PluginSource = 'local-path' | 'zip-url' | 'github';
 export type PluginState = 'ok' | 'error';
+
+export interface PluginGithubRef {
+  readonly kind: 'branch' | 'tag' | 'sha';
+  readonly value: string;
+}
+
+export interface PluginGithubMetadata {
+  readonly owner: string;
+  readonly repo: string;
+  readonly ref: PluginGithubRef;
+  readonly installedSha?: string;
+}
 
 export interface PluginRecord {
   readonly id: string;
@@ -74,7 +86,9 @@ export interface PluginRecord {
   readonly updatedAt?: string;
   readonly originalSource?: string;
   readonly capabilities?: PluginCapabilityState;
+  readonly github?: PluginGithubMetadata;
   readonly skillInstructions?: string;
+  readonly skillCount: number;
   readonly manifest?: PluginManifest;
   readonly manifestKind?: PluginManifestKind;
   readonly manifestPath?: string;
@@ -92,12 +106,15 @@ export interface PluginSummary {
   readonly mcpServerCount: number;
   readonly enabledMcpServerCount: number;
   readonly hasErrors: boolean;
+  readonly source: PluginSource;
+  readonly originalSource?: string;
+  readonly github?: PluginGithubMetadata;
 }
 
 export interface PluginInfo extends PluginSummary {
-  readonly source: PluginSource;
   readonly root: string;
-  readonly originalSource?: string;
+  readonly installedAt: string;
+  readonly updatedAt?: string;
   readonly manifestKind?: PluginManifestKind;
   readonly manifestPath?: string;
   readonly manifest?: PluginManifest;

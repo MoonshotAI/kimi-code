@@ -22,15 +22,11 @@ All other `@moonshot-ai/*` packages are treated as internal packages, including 
 
 ## Workflow
 
-1. If the change includes `pnpm-lock.yaml`, `pnpm-workspace.yaml`, root or workspace `package.json`, `.npmrc`, `flake.nix`, or `flake.lock`:
-   - First check `command -v nix >/dev/null 2>&1`.
-   - If `nix` exists, run `nix run .#update-pnpm-deps`.
-   - If `nix` is unavailable, skip this step and do not block the changeset; mention in the final response that the command was not run.
-2. List the packages that were actually changed.
-3. Choose a bump level for each package.
-4. If an internal package change enters the CLI bundle, add `@moonshot-ai/kimi-code`.
-5. Create a short kebab-case file under `.changeset/`.
-6. Split unrelated changes into separate changesets; keep one logical change in one file.
+1. List the packages that were actually changed.
+2. Choose a bump level for each package.
+3. If an internal package change enters the CLI bundle, add `@moonshot-ai/kimi-code`.
+4. Create a short kebab-case file under `.changeset/`.
+5. Split unrelated changes into separate changesets; keep one logical change in one file.
 
 Format:
 

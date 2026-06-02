@@ -1,7 +1,6 @@
-import { UNKNOWN_CAPABILITY } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
-import { ProviderManager } from '../../src/providers/provider-manager';
+import { ProviderManager } from '../../src/session/provider-manager';
 import { testAgent } from './harness';
 
 describe('ConfigState model capabilities', () => {
@@ -74,22 +73,10 @@ describe('ConfigState model capabilities', () => {
     });
   });
 
-  it('clears the selected model when modelAlias is cleared', () => {
-    const ctx = testAgent();
-    ctx.configure();
-    const config = ctx.agent.config;
-
-    config.update({ modelAlias: undefined });
-
-    expect(() => config.model).toThrow('Model not set');
-    expect(config.data().provider).toBeUndefined();
-    expect(config.modelCapabilities).toEqual(UNKNOWN_CAPABILITY);
-  });
-
-  it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
+it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
     const ctx = testAgent({
-      sessionId: 'session-test',
       providerManager: new ProviderManager({
+        promptCacheKey: 'session-test',
         config: {
           providers: {
             kimi: {

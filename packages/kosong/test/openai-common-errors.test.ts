@@ -4,6 +4,7 @@ import {
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
+  isRetryableGenerateError,
 } from '#/errors';
 import type { ContentPart } from '#/message';
 import {
@@ -184,6 +185,58 @@ describe('OpenAI streaming error propagation', () => {
         void _;
       }
     }).rejects.toThrow(/Network connection lost/);
+  });
+});
+describe('convertOpenAIError: raw transport-layer stream errors', () => {
+  it('classifies undici TypeError("terminated") as a retryable APIConnectionError', () => {
+    // Node v24 + undici raises a raw `TypeError: terminated` when an SSE
+    // response stream is dropped mid-flight. It is NOT an OpenAI SDK error,
+    // so it falls into the generic Error branch — but it is a transport-layer
+    // connection failure and must be retryable like any dropped connection.
+    const err = new TypeError('terminated');
+    (err as { cause?: unknown }).cause = new Error('other side closed');
+
+    const result = convertOpenAIError(err);
+
+    expect(result).toBeInstanceOf(APIConnectionError);
+    expect(isRetryableGenerateError(result)).toBe(true);
+  });
+
+  it('still wraps an unrelated raw Error as a non-retryable ChatProviderError', () => {
+    const result = convertOpenAIError(new Error('something completely unrelated'));
+
+    expect(result.constructor).toBe(ChatProviderError);
+    expect(isRetryableGenerateError(result)).toBe(false);
+  });
+});
+describe('OpenAI streaming: undici terminated mid-stream', () => {
+  it('a stream that throws TypeError("terminated") rejects with retryable APIConnectionError', async () => {
+    // Simulates the real-world failure: the SSE stream drops mid-flight and
+    // undici raises a raw `TypeError: terminated` from inside the for-await
+    // loop. The provider must surface a retryable APIConnectionError so the
+    // loop retries instead of failing the turn outright.
+    async function* terminatedStream(): AsyncGenerator<never> {
+      throw new TypeError('terminated');
+      yield undefined as never;
+    }
+
+    const msg = new OpenAILegacyStreamedMessage(
+      terminatedStream() as AsyncIterable<never>,
+      true,
+      undefined,
+    );
+
+    let caught: unknown;
+    try {
+      for await (const _ of msg) {
+        void _;
+      }
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(APIConnectionError);
+    expect(isRetryableGenerateError(caught)).toBe(true);
   });
 });
 describe('convertContentPart', () => {

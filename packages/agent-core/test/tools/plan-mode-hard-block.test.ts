@@ -20,10 +20,8 @@ async function activePlanAgent(): Promise<{ agent: Agent; planMode: PlanMode }> 
     emitStatusUpdated: vi.fn(),
     records: { logRecord: vi.fn() },
     replayBuilder: { push: vi.fn() },
-    runtime: {
-      kaos: {
-        mkdir: vi.fn().mockResolvedValue(undefined),
-      },
+    kaos: {
+      mkdir: vi.fn().mockResolvedValue(undefined),
     },
   } as unknown as Agent;
   const planMode = new PlanMode(agent);
@@ -236,6 +234,35 @@ describe('Plan mode permission policy', () => {
       expect(deny.message ?? '').toContain('ExitPlanMode');
     },
   );
+
+  it('denies CronCreate when plan mode is active', async () => {
+    const { agent } = await activePlanAgent();
+
+    const result = evaluatePlanPolicy(agent, 'CronCreate', {
+      cron: '*/5 * * * *',
+      prompt: 'ping',
+    });
+
+    const deny = expectDeny(result);
+    expect(deny.message ?? '').toContain('CronCreate');
+    expect(deny.message ?? '').toContain('plan mode');
+  });
+
+  it('denies CronDelete when plan mode is active', async () => {
+    const { agent } = await activePlanAgent();
+
+    const result = evaluatePlanPolicy(agent, 'CronDelete', { id: 'job_1' });
+
+    const deny = expectDeny(result);
+    expect(deny.message ?? '').toContain('CronDelete');
+    expect(deny.message ?? '').toContain('plan mode');
+  });
+
+  it('allows CronList when plan mode is active', async () => {
+    const { agent } = await activePlanAgent();
+
+    expect(evaluatePlanPolicy(agent, 'CronList', {})).toBeUndefined();
+  });
 
   it('does not block anything once plan mode has exited', async () => {
     const { agent, planMode } = await activePlanAgent();

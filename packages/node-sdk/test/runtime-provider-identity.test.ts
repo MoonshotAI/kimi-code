@@ -7,10 +7,26 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { KimiConfig } from '@moonshot-ai/agent-core';
 import { createKimiDefaultHeaders, KIMI_CODE_PLATFORM } from '@moonshot-ai/kimi-code-oauth';
 
-import { resolveRuntimeProvider } from '../../agent-core/src/providers/runtime-provider';
+import { ProviderManager } from '../../agent-core/src/session/provider-manager';
 import { TEST_IDENTITY } from './test-identity';
 
 const tempDirs: string[] = [];
+
+function resolveRuntimeProvider(options: {
+  readonly config: KimiConfig;
+  readonly model?: string;
+  readonly kimiRequestHeaders?: Record<string, string>;
+}) {
+  const manager = new ProviderManager({
+    config: options.config,
+    kimiRequestHeaders: options.kimiRequestHeaders,
+  });
+  const model = options.model ?? options.config.defaultModel;
+  if (model === undefined) {
+    throw new Error('No model selected');
+  }
+  return manager.resolveProviderConfig(model);
+}
 
 async function makeTempDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-provider-identity-'));

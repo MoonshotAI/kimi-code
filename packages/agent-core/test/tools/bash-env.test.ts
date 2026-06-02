@@ -1,10 +1,9 @@
 import { Readable, type Writable } from 'node:stream';
 
-import type { KaosProcess } from '@moonshot-ai/kaos';
+import type { Environment, KaosProcess } from '@moonshot-ai/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
 import { BashTool } from '../../src/tools/builtin/shell/bash';
-import type { Environment } from '../../src/utils/environment';
 import { executeTool } from './fixtures/execute-tool';
 import { createFakeKaos } from './fixtures/fake-kaos';
 
@@ -32,7 +31,7 @@ const signal = new AbortController().signal;
 
 async function captureSpawnEnv(): Promise<Record<string, string>> {
   const execWithEnv = vi.fn().mockResolvedValue(fakeProcess());
-  const tool = new BashTool(createFakeKaos({ execWithEnv }), '/workspace', posixEnv);
+  const tool = new BashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace');
   await executeTool(tool, {
     turnId: '0',
     toolCallId: 'tc_env',

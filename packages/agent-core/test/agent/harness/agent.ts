@@ -2,13 +2,13 @@ import { EventEmitter } from 'node:events';
 import { Readable, type Writable } from 'node:stream';
 
 import { createControlledPromise } from '@antfu/utils';
-import { localKaos, type Kaos, type KaosProcess } from '@moonshot-ai/kaos';
+import { type Environment, type Kaos, type KaosProcess } from '@moonshot-ai/kaos';
 import type { ModelCapability, ProviderConfig } from '@moonshot-ai/kosong';
-import { expect, vi } from 'vitest';
+import { expect, onTestFinished, vi } from 'vitest';
 
 import {
   Agent,
-  type AgentConfig,
+  type AgentOptions,
   type AgentRecord,
   type AgentRecordPersistence,
 } from '../../../src/agent';
@@ -21,14 +21,15 @@ import {
 import type { KimiConfig } from '../../../src/config';
 import type { ExecutableToolResult } from '../../../src/loop';
 import type { Logger } from '../../../src/logging';
-import { ProviderManager } from '../../../src/providers/provider-manager';
+import { ProviderManager } from '../../../src/session/provider-manager';
 import type { QuestionResult, RPCCallOptions, SDKAgentRPC } from '../../../src/rpc';
 import type { AgentAPI } from '../../../src/rpc/core-api';
-import type { RuntimeConfig } from '../../../src/runtime-types';
+import type { ToolServices } from '../../../src/tools/support/services';
 import type { TelemetryClient } from '../../../src/telemetry';
-import type { Environment } from '../../../src/utils/environment';
 import type { PromisifyMethods } from '../../../src/utils/types';
 import { createFakeKaos } from '../../tools/fixtures/fake-kaos';
+import { testKaos } from '../../fixtures/test-kaos';
+
 import { createScriptedGenerate } from './scripted-generate';
 import {
   DEFAULT_TEST_SYSTEM_PROMPT,
@@ -64,7 +65,7 @@ type RpcLogEntry = RpcSnapshotEntry & {
 };
 
 type PromiseAgentAPI = PromisifyMethods<AgentAPI>;
-type GenerateFn = NonNullable<AgentConfig['generate']>;
+type GenerateFn = NonNullable<AgentOptions['generate']>;
 
 type TestToolResult = ExecutableToolResult & {
   readonly content?: unknown;
@@ -87,19 +88,23 @@ interface ResumeStateSnapshot {
   readonly usage: ReturnType<Agent['usage']['data']>;
 }
 
-interface TestAgentOptions {
+export interface TestAgentOptions {
   readonly kaos?: Kaos | undefined;
-  readonly runtime?: RuntimeConfig | undefined;
+  readonly runtime?: ToolServices | undefined;
   readonly compactionStrategy?: CompactionStrategy | undefined;
+  readonly microCompaction?: AgentOptions['microCompaction'];
   readonly generate?: GenerateFn | undefined;
-  readonly hookEngine?: AgentConfig['hookEngine'];
-  readonly type?: AgentConfig['type'];
-  readonly permission?: AgentConfig['permission'];
+  readonly hookEngine?: AgentOptions['hookEngine'];
+  readonly type?: AgentOptions['type'];
+  readonly permission?: AgentOptions['permission'];
   readonly providerManager?: ProviderManager;
+  readonly initialConfig?: KimiConfig;
+  readonly providerManagerOverrides?: Omit<ConstructorParameters<typeof ProviderManager>[0], 'config'>;
   readonly sessionId?: string;
-  readonly subagentHost?: AgentConfig['subagentHost'];
+  readonly subagentHost?: AgentOptions['subagentHost'];
   readonly onEvent?: ((event: AgentRecord) => AgentRecord | undefined) | undefined;
   readonly persistence?: AgentRecordPersistence | undefined;
+  readonly homedir?: AgentOptions['homedir'];
   readonly telemetry?: TelemetryClient | undefined;
   readonly log?: Logger;
 }
@@ -154,26 +159,34 @@ export class AgentTestContext {
   readonly mockNextResponse = this.scriptedGenerate.mockNextResponse;
   readonly mockNextProviderResponse = this.scriptedGenerate.mockNextProviderResponse;
 
+  private kimiConfig: KimiConfig;
+
   constructor(options: TestAgentOptions = {}) {
     this.options = options;
     this.emitter.on('error', () => {});
-    const providerManager = options.providerManager ?? new ProviderManager({ config: emptyConfig() });
+    this.kimiConfig = options.initialConfig ?? emptyConfig();
+    const providerManager = options.providerManager ?? new ProviderManager({
+      config: () => this.kimiConfig,
+      ...(options.sessionId !== undefined ? { promptCacheKey: options.sessionId } : {}),
+      ...options.providerManagerOverrides,
+    });
 
-    const runtime = options.runtime ?? {
-      kaos: options.kaos ?? localKaos,
-      osEnv: TEST_OS_ENV,
-    };
+    const kaos = options.kaos ?? testKaos;
+    const toolServices = options.runtime;
     const persistence = this.wrapPersistence(
       options.persistence ?? new InMemoryAgentRecordPersistence(),
     );
     this.agent = new Agent({
-      runtime,
+      kaos,
+      toolServices,
+      config: this.kimiConfig,
       rpc: this.createRpcProxy(),
+      homedir: options.homedir,
       persistence,
       generate: options.generate ?? this.scriptedGenerate.generate,
       compactionStrategy: options.compactionStrategy,
-      providerManager,
-      sessionId: options.sessionId,
+      microCompaction: options.microCompaction,
+      modelProvider: providerManager,
       subagentHost: options.subagentHost,
       type: options.type,
       permission: options.permission,
@@ -182,6 +195,16 @@ export class AgentTestContext {
       log: options.log,
     });
     this.rpc = this.createPromiseAgentApi(this.agent);
+    // The Agent constructor now eagerly binds a SIGUSR1 listener via
+    // CronManager.start(). Without per-test cleanup, every Agent built
+    // by this harness leaks one listener — Node prints a
+    // MaxListenersExceededWarning once the suite crosses 10 agents.
+    // onTestFinished is a vitest API callable from non-hook scopes, so
+    // we register cleanup transparently without forcing every test to
+    // remember an afterEach.
+    onTestFinished(async () => {
+      await this.agent.cron?.stop();
+    });
   }
 
   configure({
@@ -208,9 +231,9 @@ export class AgentTestContext {
     provider: ProviderConfig,
     modelCapabilities?: ModelCapability | undefined,
   ): void {
-    this.agent.providerManager?.updateConfig(
-      configWithProvider(this.agent.providerManager.config, provider, modelCapabilities),
-    );
+    if (this.options.providerManager === undefined) {
+      this.kimiConfig = configWithProvider(this.kimiConfig, provider, modelCapabilities);
+    }
     this.agent.config.update({ modelAlias: provider.model });
   }
 
@@ -707,15 +730,17 @@ export class AgentTestContext {
 
   async expectResumeMatches(): Promise<void> {
     const resumed = testAgent({
+      kaos: createResumeNoSideEffectKaos(this.agent.config.cwd),
       runtime: {
-        kaos: createResumeNoSideEffectKaos(),
-        osEnv: this.agent.runtime.osEnv,
-        urlFetcher: this.agent.runtime.urlFetcher,
-        webSearcher: this.agent.runtime.webSearcher,
+        urlFetcher: this.agent.toolServices?.urlFetcher,
+        webSearcher: this.agent.toolServices?.webSearcher,
       },
-      providerManager: this.agent.providerManager,
+      providerManager: this.options.providerManager,
+      initialConfig: this.kimiConfig,
+      providerManagerOverrides: this.options.providerManagerOverrides,
       generate: failOnResumeGenerate,
       compactionStrategy: this.options.compactionStrategy,
+      microCompaction: this.options.microCompaction,
       persistence: new InMemoryAgentRecordPersistence(
         withMetadata(this.recordHistory.map(cloneRecord)),
       ),
@@ -928,18 +953,26 @@ const failOnResumeGenerate: GenerateFn = async () => {
   throw new Error('Resume replay unexpectedly called the LLM');
 };
 
-function createResumeNoSideEffectKaos(): Kaos {
+function createResumeNoSideEffectKaos(initialCwd: string): Kaos {
   const fail = (method: string): never => {
     throw new Error(`Resume replay unexpectedly called kaos.${method}`);
   };
 
+  // Replay may carry `config.update({cwd})` events that route through
+  // `kaos.chdir(...)`; let those mutate an internal cwd field so replay
+  // succeeds. Actual fs I/O methods remain forbidden.
+  let cwd = initialCwd;
   return {
     name: 'resume-no-side-effects',
+    osEnv: TEST_OS_ENV,
     pathClass: () => 'posix',
     normpath: (p: string) => p,
     gethome: () => '/home/test',
-    getcwd: () => '/workspace',
-    chdir: () => fail('chdir'),
+    getcwd: () => cwd,
+    withCwd: (next: string) => createResumeNoSideEffectKaos(next),
+    chdir: async (next: string) => {
+      cwd = next;
+    },
     stat: () => fail('stat'),
     iterdir: () => fail('iterdir'),
     glob: () => fail('glob'),
@@ -967,7 +1000,7 @@ function resumeStateSnapshot(agent: Agent): ResumeStateSnapshot {
   };
 }
 
-function resumeContextSnapshot(agent: Agent): ReturnType<Agent['context']['data']> {
+function resumeContextSnapshot(agent: Agent) {
   const context = agent.context.data();
   return {
     ...context,

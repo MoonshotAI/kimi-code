@@ -12,10 +12,10 @@
 
 | 命令 | 别名 | 说明 | 随时可用 |
 | --- | --- | --- | --- |
-| `/login` | — | 选择账号或平台并登录：Kimi Code 走 OAuth device code 流程，Moonshot AI 开放平台通过 API 密钥登录。 | 否 |
+| `/login` | — | 选择账号或平台并登录：Kimi Code 走 OAuth 验证码流程，Kimi Platform 通过 API 密钥登录。 | 否 |
 | `/logout` | — | 清除当前所选账号的凭据（Kimi Code OAuth 凭据，或对应开放平台的供应商配置）。 | 否 |
-| `/connect [--refresh] [--url=<catalog-url>]` | — | 从模型目录中选择并配置供应商与模型。CLI 已内置默认目录；传入 `--refresh` 可从 models.dev 拉取最新目录，传入 `--url` 可指向自定义目录地址。详见 [平台与模型 — `/connect` 与模型目录](../configuration/providers.md#connect-与模型目录)。 | 否 |
-| `/model` | — | 切换当前会话使用的 LLM 模型。 | 否 |
+| `/provider` | — | 打开交互式供应商管理器，查看、添加和删除已配置的供应商。详见 [平台与模型 — `/provider` 与供应商管理](../configuration/providers.md#provider-与供应商管理)。 | 是 |
+| `/model` | — | 切换当前会话使用的 LLM 模型。 | 是 |
 | `/settings` | `/config` | 打开 TUI 内的设置面板。 | 是 |
 | `/permission` | — | 选择权限模式（permission mode）。 | 是 |
 | `/editor` | — | 配置 `Ctrl-G` 调起的外部编辑器。 | 是 |
@@ -39,7 +39,8 @@
 
 | 命令 | 别名 | 说明 | 随时可用 |
 | --- | --- | --- | --- |
-| `/yolo [on\|off]` | `/yes` | 切换自动批准模式（auto-approve）。不带参数时按当前状态翻转；显式传 `on`/`off` 时强制设为对应状态。开启后跳过普通工具调用审批；Plan 模式的退出审批不会被跳过。 | 是 |
+| `/yolo [on\|off]` | `/yes` | 切换 YOLO 模式。不带参数时按当前状态翻转；显式传 `on`/`off` 时强制设为对应状态。开启后跳过普通工具调用审批；Plan 模式的退出审批不会被跳过。 | 是 |
+| `/auto [on\|off]` | — | 切换 auto 权限模式。不带参数时按当前状态翻转；显式传 `on`/`off` 时强制设为对应状态。开启后工具审批自动处理，Agent 不会向用户提问。 | 是 |
 | `/plan [on\|off]` | — | 切换 Plan 模式。不带参数时按当前状态翻转；显式传 `on`/`off` 时强制设为对应状态。单纯切换不会创建空计划文件。 | 是 |
 | `/plan clear` | — | 清除当前 plan 方案。 | 否 |
 
