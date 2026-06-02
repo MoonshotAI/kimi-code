@@ -321,6 +321,85 @@ describe('AnthropicChatProvider', () => {
       ]);
     });
 
+    it('normalizes invalid historical tool call ids and matching tool results', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Run tools' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'Write:6',
+              name: 'Write',
+              arguments: '{"path":"/tmp/b","content":"ok"}',
+            },
+            {
+              type: 'function',
+              id: 'Write_6',
+              name: 'Write',
+              arguments: '{"path":"/tmp/a","content":"ok"}',
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'wrote b' }],
+          toolCallId: 'Write:6',
+          toolCalls: [],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'wrote a' }],
+          toolCallId: 'Write_6',
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['messages']).toEqual([
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Run tools' }],
+        },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'Write_6_2',
+              name: 'Write',
+              input: { path: '/tmp/b', content: 'ok' },
+            },
+            {
+              type: 'tool_use',
+              id: 'Write_6',
+              name: 'Write',
+              input: { path: '/tmp/a', content: 'ok' },
+            },
+          ],
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'Write_6_2',
+              content: [{ type: 'text', text: 'wrote b' }],
+            },
+            {
+              type: 'tool_result',
+              tool_use_id: 'Write_6',
+              content: [{ type: 'text', text: 'wrote a' }],
+              cache_control: { type: 'ephemeral' },
+            },
+          ],
+        },
+      ]);
+    });
+
     it('tool call with image result wraps image source inside tool_result', async () => {
       const provider = createProvider();
       const toolCall: ToolCall = {

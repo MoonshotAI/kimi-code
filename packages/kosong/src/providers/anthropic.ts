@@ -44,6 +44,11 @@ import {
   requireProviderApiKey,
   resolveAuthBackedClient,
 } from './request-auth';
+import {
+  normalizeToolCallIdsForProvider,
+  sanitizeToolCallId,
+  type ToolCallIdPolicy,
+} from './tool-call-id';
 
 /**
  * Normalize an Anthropic `stop_reason` string to the unified
@@ -109,6 +114,10 @@ const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
 const FAMILY_VERSION_RE = /(?:opus|sonnet|haiku)[.-](\d+)[.-](\d{1,2})(?!\d)/;
 const OPUS_VERSION_RE = /opus[.-](\d+)[.-](\d{1,2})(?!\d)/;
 const ADAPTIVE_MIN_VERSION = { major: 4, minor: 6 } as const;
+const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
+  normalize: (id) => sanitizeToolCallId(id, 64),
+  maxLength: 64,
+};
 
 /**
  * Per-version default output ceilings sourced from Anthropic's Messages
@@ -903,7 +912,11 @@ export class AnthropicChatProvider implements ChatProvider {
     // Convert messages, merging consecutive tool-result-only user messages
     // into a single user message (Anthropic parallel-tool-use spec).
     const messages: MessageParam[] = [];
-    for (const msg of history) {
+    const normalizedHistory = normalizeToolCallIdsForProvider(
+      history,
+      ANTHROPIC_TOOL_CALL_ID_POLICY,
+    );
+    for (const msg of normalizedHistory) {
       const converted = convertMessage(msg);
       const last = messages.at(-1);
       if (last !== undefined && isToolResultOnly(last) && isToolResultOnly(converted)) {

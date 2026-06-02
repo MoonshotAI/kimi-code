@@ -358,6 +358,48 @@ describe('KimiChatProvider', () => {
       ]);
     });
 
+    it('normalizes invalid historical tool call ids and matching tool results', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Read a file' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'Read:9',
+              name: 'Read',
+              arguments: '{"path":"/tmp/file"}',
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'content' }],
+          toolCallId: 'Read:9',
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['messages']).toEqual([
+        { role: 'user', content: 'Read a file' },
+        {
+          role: 'assistant',
+          tool_calls: [
+            {
+              type: 'function',
+              id: 'Read_9',
+              function: { name: 'Read', arguments: '{"path":"/tmp/file"}' },
+            },
+          ],
+        },
+        { role: 'tool', content: 'content', tool_call_id: 'Read_9' },
+      ]);
+    });
+
     it('tool call with image result', async () => {
       const provider = createProvider();
       const toolCall: ToolCall = {
