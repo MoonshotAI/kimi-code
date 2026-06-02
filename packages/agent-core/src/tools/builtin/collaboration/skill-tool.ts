@@ -163,4 +163,3 @@ function skillOrigin(
     skillSource: skill.source,
   };
 }
-

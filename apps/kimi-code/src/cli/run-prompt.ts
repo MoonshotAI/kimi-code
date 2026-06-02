@@ -10,6 +10,7 @@ import {
   KimiHarness,
   log,
   type Event,
+  type GoalSnapshot,
   type HookResultEvent,
   type Session,
   type SessionStatus,
@@ -19,6 +20,13 @@ import {
 import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
 
 import type { CLIOptions, PromptOutputFormat } from './options';
+import {
+  formatGoalSummaryText,
+  goalExitCode,
+  goalSummaryJson,
+  parseHeadlessGoalCreate,
+  type HeadlessGoalCreate,
+} from './goal-prompt';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
 
@@ -102,16 +110,17 @@ export async function runPrompt(
   try {
     await harness.ensureConfigFile();
     const config = await harness.getConfig();
-    const { session, resumed, restorePermission, telemetryModel } = await resolvePromptSession(
-      harness,
-      opts,
-      workDir,
-      config.defaultModel,
-      stderr,
-      (restorePermission) => {
-        restorePromptSessionPermission = restorePermission;
-      },
-    );
+    const { session, resumed, restorePermission, telemetryModel, goalModel } =
+      await resolvePromptSession(
+        harness,
+        opts,
+        workDir,
+        config.defaultModel,
+        stderr,
+        (restorePermission) => {
+          restorePromptSessionPermission = restorePermission;
+        },
+      );
     restorePromptSessionPermission = restorePermission;
 
     initializeCliTelemetry({
@@ -132,7 +141,17 @@ export async function runPrompt(
     });
 
     const outputFormat = opts.outputFormat ?? 'text';
-    await runPromptTurn(session, opts.prompt!, outputFormat, stdout, stderr);
+    // Headless goal mode: `kimi -p "/goal <objective>"`. The goal driver keeps
+    // the turn-run alive across continuation turns, so the normal prompt-turn
+    // waiter blocks until the goal is terminal; we then emit a summary and set a
+    // distinct exit code.
+    const flagMap = await harness.getExperimentalFlags();
+    const goalCreate = parseHeadlessGoalCreate(opts.prompt!, flagMap['goal-command'] === true);
+    if (goalCreate !== undefined) {
+      await runHeadlessGoal(session, goalCreate, goalModel, outputFormat, stdout, stderr);
+    } else {
+      await runPromptTurn(session, opts.prompt!, outputFormat, stdout, stderr);
+    }
     writeResumeHint(session.id, outputFormat, stdout, stderr);
 
     withTelemetryContext({ sessionId: session.id }).track('exit', {
@@ -143,11 +162,55 @@ export async function runPrompt(
   }
 }
 
+async function runHeadlessGoal(
+  session: Session,
+  goal: HeadlessGoalCreate,
+  model: string | undefined,
+  outputFormat: PromptOutputFormat,
+  stdout: PromptOutput,
+  stderr: PromptOutput,
+): Promise<void> {
+  requireConfiguredModel(model);
+  await session.createGoal({
+    objective: goal.objective,
+    replace: goal.replace,
+  });
+  let completedSnapshot: GoalSnapshot | null = null;
+  const unsubscribeGoalEvents = session.onEvent((event) => {
+    if (
+      event.type === 'goal.updated' &&
+      event.change?.kind === 'completion' &&
+      event.snapshot !== null
+    ) {
+      completedSnapshot = event.snapshot;
+    }
+  });
+  try {
+    // The objective is sent as the normal prompt; goal continuation keeps the
+    // turn alive until a terminal state is reached.
+    await runPromptTurn(session, goal.objective, outputFormat, stdout, stderr);
+  } finally {
+    unsubscribeGoalEvents();
+    const snapshot = completedSnapshot ?? (await session.getGoal()).goal;
+    if (outputFormat === 'stream-json') {
+      stdout.write(`${JSON.stringify(goalSummaryJson(snapshot))}\n`);
+    } else {
+      stderr.write(`${formatGoalSummaryText(snapshot)}\n`);
+    }
+    // Map the terminal goal status to a distinct, non-fatal exit code. A turn
+    // that threw (error / cancellation) already propagates its own exit path.
+    if (snapshot !== null && snapshot.status !== 'complete') {
+      process.exitCode = goalExitCode(snapshot.status);
+    }
+  }
+}
+
 interface ResolvedPromptSession {
   readonly session: Session;
   readonly resumed: boolean;
   readonly restorePermission: () => Promise<void>;
   readonly telemetryModel?: string;
+  readonly goalModel?: string;
 }
 
 async function resolvePromptSession(
@@ -191,6 +254,7 @@ async function resolvePromptSession(
       resumed: true,
       restorePermission,
       telemetryModel: configuredModel(opts.model, status.model, defaultModel),
+      goalModel: configuredModel(opts.model, status.model),
     };
   }
 
@@ -214,6 +278,7 @@ async function resolvePromptSession(
         resumed: true,
         restorePermission,
         telemetryModel: configuredModel(opts.model, status.model, defaultModel),
+        goalModel: configuredModel(opts.model, status.model),
       };
     }
     stderr.write(`No sessions to continue under "${workDir}"; starting a fresh session.\n`);
@@ -222,7 +287,13 @@ async function resolvePromptSession(
   const model = requireConfiguredModel(opts.model, defaultModel);
   const session = await harness.createSession({ workDir, model, permission: 'auto' });
   installHeadlessHandlers(session);
-  return { session, resumed: false, restorePermission: async () => {}, telemetryModel: model };
+  return {
+    session,
+    resumed: false,
+    restorePermission: async () => {},
+    telemetryModel: model,
+    goalModel: model,
+  };
 }
 
 async function forcePromptPermission(

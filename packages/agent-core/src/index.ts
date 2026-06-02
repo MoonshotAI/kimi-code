@@ -39,6 +39,7 @@ export type {
   BackgroundTaskInfo,
   BackgroundTaskStatus,
   ProcessBackgroundTaskInfo,
+  QuestionBackgroundTaskInfo,
 } from './agent/background';
 export type { ToolServices } from './tools/support/services';
 export { SingleModelProvider } from './session/provider-manager';

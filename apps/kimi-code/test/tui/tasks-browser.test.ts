@@ -153,6 +153,30 @@ describe('TasksBrowserApp — full-screen rendering', () => {
     expect(out).toContain('long running task');
   });
 
+  it('shows question task details in the Detail pane', () => {
+    const out = strip(
+      makeApp({
+        tasks: [
+          task({
+            taskId: 'question-aaaaaaaa',
+            kind: 'question',
+            description: 'Which database?',
+            questionCount: 1,
+            toolCallId: 'call_question',
+          }),
+        ],
+        selectedTaskId: 'question-aaaaaaaa',
+      })
+        .render(120)
+        .join('\n'),
+    );
+    expect(out).toContain('question-aaaaaaaa');
+    expect(out).toContain('Questions:');
+    expect(out).toContain('1');
+    expect(out).toContain('Tool call:');
+    expect(out).toContain('call_question');
+  });
+
   it('renders tail output in the Preview Output pane', () => {
     const out = strip(
       makeApp({

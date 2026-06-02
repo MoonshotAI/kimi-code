@@ -188,15 +188,15 @@ Import every provider listed in a custom registry (an `api.json` document). The 
 
 | Argument / Option | Description |
 | --- | --- |
-| `<url>` | Registry URL, e.g. `https://free-tokens.msh.team/v1/models/api.json`. |
+| `<url>` | Registry URL, e.g. `https://registry.example.com/v1/models/api.json`. |
 | `--api-key <key>` | Bearer token sent with the registry fetch. Falls back to the `KIMI_REGISTRY_API_KEY` environment variable when omitted. Required. |
 
 ```sh
 # One-line import — every provider and model in the registry lands in ~/.kimi-code/config.toml
-kimi provider add https://free-tokens.msh.team/v1/models/api.json --api-key YOUR_KEY
+kimi provider add https://registry.example.com/v1/models/api.json --api-key YOUR_KEY
 
 # Or via environment variable, for CI / .envrc-style workflows
-KIMI_REGISTRY_API_KEY=YOUR_KEY kimi provider add https://free-tokens.msh.team/v1/models/api.json
+KIMI_REGISTRY_API_KEY=YOUR_KEY kimi provider add https://registry.example.com/v1/models/api.json
 ```
 
 If a provider id already exists, it is replaced (its stale model aliases are removed first, mirroring the TUI flow). No default model is selected — pick one later via `-m` or `/model` inside the TUI.

@@ -1,10 +1,72 @@
 # @moonshot-ai/kimi-code
 
+## 0.8.0
+
+### Minor Changes
+
+- [#319](https://github.com/MoonshotAI/kimi-code/pull/319) [`fe7db4a`](https://github.com/MoonshotAI/kimi-code/commit/fe7db4a7e361b83194eb1ebb52d27daed53be532) - Append the current todo list as markdown to compaction summaries before writing them to history.
+
+- [#334](https://github.com/MoonshotAI/kimi-code/pull/334) [`eeefa98`](https://github.com/MoonshotAI/kimi-code/commit/eeefa98083e9d037d2ba7c59de9e5eb51b19fdd7) - Add background automatic upgrades, which can be disabled in tui.toml.
+
+- [#270](https://github.com/MoonshotAI/kimi-code/pull/270) [`ac37d74`](https://github.com/MoonshotAI/kimi-code/commit/ac37d7448458fdb73fbe00e35856dcf44a13f734) - Add experimental goal mode for longer tasks that need more than one turn. Turn it on with `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1` before you start Kimi.
+
+  Use `/goal <objective>` in the TUI when you want Kimi to keep working on one task across turns. For example:
+
+  ```text
+  /goal Fix the failing checkout test
+  ```
+
+  Kimi shows the goal in the TUI and keeps progress visible while it works. Use `/goal status`, `/goal pause`, `/goal resume`, `/goal cancel`, and `/goal replace <objective>` to manage the goal. This feature is still experimental. Try it and tell us what would make it more useful.
+
+- [#315](https://github.com/MoonshotAI/kimi-code/pull/315) [`191059d`](https://github.com/MoonshotAI/kimi-code/commit/191059d40049d3bfd07661ac03bb961eac1407f7) - Add background structured questions so agents can continue while waiting for user answers.
+
+- [#313](https://github.com/MoonshotAI/kimi-code/pull/313) [`3c5dee8`](https://github.com/MoonshotAI/kimi-code/commit/3c5dee8836ac823fce01707f60b9c095a963060e) - Add `kimi provider` CLI subcommand with `add`, `remove`, `list`, and `catalog list` / `catalog add` actions, so providers from a custom registry (api.json) or the public models.dev catalog can be imported and managed without launching the TUI.
+
+- [#277](https://github.com/MoonshotAI/kimi-code/pull/277) [`a217ff0`](https://github.com/MoonshotAI/kimi-code/commit/a217ff09aad0665b1501b156c2cc1f186b876087) - Add `/undo` slash command to withdraw the last prompt from conversation history, and keep replay records in sync when a prompt is undone.
+
+- [#334](https://github.com/MoonshotAI/kimi-code/pull/334) [`eeefa98`](https://github.com/MoonshotAI/kimi-code/commit/eeefa98083e9d037d2ba7c59de9e5eb51b19fdd7) - Add a `kimi upgrade` command for manually checking and upgrade Kimi Code CLI.
+
+- [#336](https://github.com/MoonshotAI/kimi-code/pull/336) [`7cda9c3`](https://github.com/MoonshotAI/kimi-code/commit/7cda9c3866bad6b3ce8f95c383a111e1ee5e9325) - Add approval lifecycle hook events for observing pending and completed permission prompts.
+
+### Patch Changes
+
+- [#285](https://github.com/MoonshotAI/kimi-code/pull/285) [`573c56e`](https://github.com/MoonshotAI/kimi-code/commit/573c56e829a10e8a45738a37250d8c15f4ab8d8d) - Consolidate background task management under the agent background runtime.
+
+- [#314](https://github.com/MoonshotAI/kimi-code/pull/314) [`6de3d97`](https://github.com/MoonshotAI/kimi-code/commit/6de3d97d82e2c585035d1d7f969a3504f712df21) - Prevent modified keyboard release sequences from appearing after exiting the CLI.
+
+- [#335](https://github.com/MoonshotAI/kimi-code/pull/335) [`7284f30`](https://github.com/MoonshotAI/kimi-code/commit/7284f30479142fd66b1e8a731fd00198b1e8684f) - Fix custom registry provider handling during re-import. Prevent loss of multi-provider entries and remove stale providers along with their model aliases and default model references.
+
+- [#311](https://github.com/MoonshotAI/kimi-code/pull/311) [`80164c2`](https://github.com/MoonshotAI/kimi-code/commit/80164c2e975ba82f7c915dc3fce6cb00b9d29f6e) - Normalize glob patterns before brace expansion to prevent incorrect path matching.
+
+- [#247](https://github.com/MoonshotAI/kimi-code/pull/247) [`58e2915`](https://github.com/MoonshotAI/kimi-code/commit/58e2915c0f726747a94a8dc5a9eda001ef0d4009) - Fix a crash in the `/sessions` picker on very narrow terminals by clamping every rendered line to the terminal width.
+
+- [#317](https://github.com/MoonshotAI/kimi-code/pull/317) [`1f8c36a`](https://github.com/MoonshotAI/kimi-code/commit/1f8c36af288ca6120d620f3944c921bc4f0f77ce) - Fix tool output preview rendering: trim trailing empty lines, append ellipsis to multi-line Bash command headers, and truncate long single-line output by visual wrapped lines instead of raw newline count.
+
+- [#145](https://github.com/MoonshotAI/kimi-code/pull/145) [`d912053`](https://github.com/MoonshotAI/kimi-code/commit/d912053b0d3983f4e67450c347616086cfbd1fe7) - Fix Git Bash path detection on Windows by also searching `usr\bin\bash.exe` locations, which is where bash lives in many Git for Windows installations where `bin\bash.exe` does not exist.
+
+- [#310](https://github.com/MoonshotAI/kimi-code/pull/310) [`a4511ff`](https://github.com/MoonshotAI/kimi-code/commit/a4511ffc87a1414cb8a5295eeef1103b9ed59645) - Show the full model name in the footer status bar instead of truncating the provider prefix.
+
+- [#283](https://github.com/MoonshotAI/kimi-code/pull/283) [`91b292e`](https://github.com/MoonshotAI/kimi-code/commit/91b292e898e9d97b0501cf787919d7f1a90c89d8) - Allow glob searches to target explicit absolute paths outside the workspace.
+
+- [#223](https://github.com/MoonshotAI/kimi-code/pull/223) [`811f252`](https://github.com/MoonshotAI/kimi-code/commit/811f252625bc20a27687b11754b18cc68c7d50dc) - Show MCP server summary in the welcome panel and add configuration hints in the /mcp command output.
+
+- [#229](https://github.com/MoonshotAI/kimi-code/pull/229) [`fb35bca`](https://github.com/MoonshotAI/kimi-code/commit/fb35bca032486eaefb7b9d7b612d353033e0922c) - Replace chalk named color with theme-aware hex in session-directory warning.
+
+- [#303](https://github.com/MoonshotAI/kimi-code/pull/303) [`3d7e20e`](https://github.com/MoonshotAI/kimi-code/commit/3d7e20e6978cb35787738e12f6f352fbc2733582) - Point users to `/provider` instead of the removed `/connect` command in the welcome screen and the no-models-configured hint.
+
+- [#135](https://github.com/MoonshotAI/kimi-code/pull/135) [`0071b63`](https://github.com/MoonshotAI/kimi-code/commit/0071b63fc83821430472e11db3c6aa613c0bdf7e) - Fix slash-activated skills not being recognized by the model due to missing system reminder wrapper.
+
+- [#330](https://github.com/MoonshotAI/kimi-code/pull/330) [`7a47045`](https://github.com/MoonshotAI/kimi-code/commit/7a47045af2790eba0e68d5406c670ac759b21755) - Allow subagents to use custom tools registered on their parent agent.
+
+- [#333](https://github.com/MoonshotAI/kimi-code/pull/333) [`1178c5c`](https://github.com/MoonshotAI/kimi-code/commit/1178c5cd148d9d5851574afaafb986be1dfe9b63) - Remind the model to refresh TodoList during long-running tasks and strengthen TodoList progress-tracking guidance.
+
+- [#327](https://github.com/MoonshotAI/kimi-code/pull/327) [`8809f3e`](https://github.com/MoonshotAI/kimi-code/commit/8809f3eb114172ac64cefe43bbf9b9257c5245c0) - Fix cross-provider replay failures from incompatible tool call IDs and unsigned Claude thinking history.
+
 ## 0.7.0
 
 ### Minor Changes
 
-- [#232](https://github.com/MoonshotAI/kimi-code/pull/232) [`a24bfb1`](https://github.com/MoonshotAI/kimi-code/commit/a24bfb1df38e58120827a1d8ed881724af2e7b23) - Add `KIMI_MODEL_ADAPTIVE_THINKING` (and a matching `adaptive_thinking` model-alias field) to force adaptive thinking (`thinking: { type: 'adaptive' }`) on or off, overriding the Anthropic model-name version inference. This lets custom-named staff endpoints that back an adaptive-capable model opt in even when the model name does not encode a parseable Claude version.
+- [#232](https://github.com/MoonshotAI/kimi-code/pull/232) [`a24bfb1`](https://github.com/MoonshotAI/kimi-code/commit/a24bfb1df38e58120827a1d8ed881724af2e7b23) - Add `KIMI_MODEL_ADAPTIVE_THINKING` (and a matching `adaptive_thinking` model-alias field) to force adaptive thinking (`thinking: { type: 'adaptive' }`) on or off, overriding the Anthropic model-name version inference. This lets custom-named compatible endpoints that back an adaptive-capable model opt in even when the model name does not encode a parseable Claude version.
 
 - [#264](https://github.com/MoonshotAI/kimi-code/pull/264) [`42bb914`](https://github.com/MoonshotAI/kimi-code/commit/42bb9141d8ee7023639f943dd4c6a0f6c8fa8945) - Add `/provider` command for managing AI providers, support custom registry imports, and introduce a tabbed model selector.
 

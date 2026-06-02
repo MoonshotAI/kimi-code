@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { MigrationPlan } from "@moonshot-ai/migration-legacy";
-import { log } from "@moonshot-ai/kimi-code-sdk";
+import { log, type GoalSnapshot } from "@moonshot-ai/kimi-code-sdk";
 
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from "#/tui/kimi-tui";
 import {
@@ -30,6 +30,10 @@ interface StartupDriver {
   init(): Promise<boolean>;
   handleLoginCommand(): Promise<void>;
   handleLogoutCommand(): Promise<void>;
+}
+
+interface RuntimeStateDriver extends StartupDriver {
+  closeSession(reason: string): Promise<void>;
 }
 
 interface ThemeTrackingDriver extends StartupDriver {
@@ -107,9 +111,38 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     setThinking: vi.fn(async () => {}),
     setPermission: vi.fn(async () => {}),
     setPlanMode: vi.fn(async () => {}),
+    getGoal: vi.fn(async () => ({ goal: null })),
     onEvent: vi.fn(() => () => {}),
     listSkills: vi.fn(async () => []),
     close: vi.fn(async () => {}),
+    ...overrides,
+  };
+}
+
+function goalSnapshot(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
+  return {
+    goalId: "goal-1",
+    objective: "Ship feature X",
+    status: "paused",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    startedBy: "user",
+    updatedBy: "user",
+    turnsUsed: 2,
+    tokensUsed: 100,
+    wallClockMs: 1000,
+    budget: {
+      tokenBudget: null,
+      turnBudget: null,
+      wallClockBudgetMs: null,
+      remainingTokens: null,
+      remainingTurns: null,
+      remainingWallClockMs: null,
+      tokenBudgetReached: false,
+      turnBudgetReached: false,
+      wallClockBudgetReached: false,
+      overBudget: false,
+    },
     ...overrides,
   };
 }
@@ -222,6 +255,55 @@ describe("KimiTUI startup", () => {
     expect(harness.createSession).not.toHaveBeenCalled();
     expect(driver.state.startupState).toBe("ready");
     expect(driver.state.appState.sessionId).toBe("ses-latest");
+  });
+
+  it("syncs a persisted goal when resuming a session", async () => {
+    const goal = goalSnapshot({ status: "blocked", terminalReason: "needs input" });
+    const session = makeSession({
+      id: "ses-latest",
+      getGoal: vi.fn(async () => ({ goal })),
+    });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [{ id: "ses-latest" }]),
+      getExperimentalFlags: vi.fn(async () => ({ "goal-command": true })),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ continue: true }));
+
+    await expect(driver.init()).resolves.toBe(true);
+
+    expect(session.getGoal).toHaveBeenCalledOnce();
+    expect(driver.state.appState.goal).toEqual(goal);
+  });
+
+  it("does not sync goal state while the goal flag is disabled", async () => {
+    const session = makeSession({
+      getGoal: vi.fn(async () => ({ goal: goalSnapshot() })),
+    });
+    const harness = makeHarness(session);
+    const driver = makeDriver(harness, makeStartupInput());
+
+    await expect(driver.init()).resolves.toBe(false);
+
+    expect(session.getGoal).not.toHaveBeenCalled();
+    expect(driver.state.appState.goal).toBeNull();
+  });
+
+  it("clears goal state when closing the current session", async () => {
+    const goal = goalSnapshot();
+    const session = makeSession({
+      getGoal: vi.fn(async () => ({ goal })),
+    });
+    const harness = makeHarness(session, {
+      getExperimentalFlags: vi.fn(async () => ({ "goal-command": true })),
+    });
+    const driver = makeDriver(harness, makeStartupInput()) as unknown as RuntimeStateDriver;
+
+    await expect(driver.init()).resolves.toBe(false);
+    expect(driver.state.appState.goal).toEqual(goal);
+
+    await driver.closeSession("test close");
+
+    expect(driver.state.appState.goal).toBeNull();
   });
 
   it("passes the CLI model override when creating a fresh startup session", async () => {

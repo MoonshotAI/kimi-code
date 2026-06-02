@@ -43,10 +43,65 @@ Some commands are only available in the idle state. Running them while the sessi
 | `/auto [on\|off]` | — | Toggle auto permission mode. Without arguments, flip the current state; pass `on`/`off` explicitly to force the corresponding state. When enabled, tool approvals are handled automatically and the agent will not ask questions. | Yes |
 | `/plan [on\|off]` | — | Toggle Plan mode. Without arguments, flip the current state; pass `on`/`off` explicitly to force the corresponding state. Toggling alone does not create an empty plan file. | Yes |
 | `/plan clear` | — | Clear the current plan. | No |
+| `/goal [status\|pause\|resume\|cancel\|replace <objective>\|<objective>]` | — | Start or manage an autonomous goal. This command is experimental. Enable it with `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1`. | See below |
 
 ::: warning Note
 `/yolo` skips approval confirmation for ordinary tool calls. Make sure you understand the potential risks before enabling it. It does not skip the approval required to leave Plan mode; in Plan mode, `Bash` follows the same ordinary allow rules as `/yolo`.
 :::
+
+## Autonomous goals
+
+`/goal` is an experimental command for tasks where you want Kimi Code to keep working through automatic continuation turns. Enable it when starting `kimi`:
+
+```sh
+KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
+```
+
+Experimental flags are read from environment variables. `config.toml` does not currently have an `experimental` option for `/goal`.
+
+Start a goal by writing the objective after the command:
+
+```sh
+/goal Update the checkout docs, run the docs build, and stop after 20 turns if this is still blocked
+```
+
+Kimi Code saves the objective, sends it as the next user message, and keeps running turns until the goal stops. A goal can stop in three ways:
+
+- `complete`: the objective is done. Kimi Code posts a completion message and clears the goal.
+- `paused`: you paused it, interrupted it, or resumed a session that had an active goal. You can resume it later.
+- `blocked`: Kimi Code stopped because it needs input, cannot complete the objective as written, hit a configured turn, token, or time budget, or ran into a runtime failure. You can resume it later.
+
+Write stop conditions in the objective itself. `/goal` does not have separate flags for stop limits.
+
+In the TUI, starting or replacing a goal in `manual` permission mode opens a confirmation prompt first. You can switch to `auto`, switch to `yolo`, or start in `manual`. You can also return to the input box with your `/goal` command still there.
+
+`manual` mode is not suitable for unattended goal work. Kimi Code may stop and wait for your approval.
+
+Use these forms to manage the current goal:
+
+| Command | What it does | Availability |
+| --- | --- | --- |
+| `/goal` or `/goal status` | Show the current goal, status, elapsed time, turn count, token count, and any configured turn, token, or time budget. | Always available |
+| `/goal pause` | Pause the active goal and keep it saved. If a response is streaming, the current turn is interrupted. | Always available |
+| `/goal resume` | Resume a paused or blocked goal and start a new turn. | Idle only |
+| `/goal cancel` | Remove the current goal. If a response is streaming, the current turn is interrupted. | Always available |
+| `/goal replace <objective>` | Replace the saved goal with a new objective. | Idle only |
+
+Only one goal can be saved in a session. If you already have one, start a different one with `/goal replace <objective>`.
+
+The words `status`, `pause`, `resume`, `cancel`, and `replace` act as subcommands only when they are the first word after `/goal`. If your objective needs to start with one of those words, put `--` before it:
+
+```sh
+/goal -- cancel the old rollout note after the new docs are published
+```
+
+In non-interactive prompt mode, only the create forms start goal mode:
+
+```sh
+KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi -p "/goal Fix the failing checkout test"
+```
+
+Prompt mode exits with code `0` when the goal completes, `3` when it blocks, and `6` when it pauses. Other `/goal` subcommands are TUI controls and are not handled by `kimi -p`.
 
 ## Information and status
 

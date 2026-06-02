@@ -243,6 +243,14 @@ export class SessionReplayRenderer {
       this.renderCronMissed(context, message);
       return;
     }
+    const goalCompletion = goalCompletionFromSystemReminder(message);
+    if (goalCompletion !== null) {
+      this.flushAssistant(context);
+      this.host.appendTranscriptEntry(
+        replayEntry(context, 'assistant', goalCompletion, 'markdown'),
+      );
+      return;
+    }
 
     this.flushAssistant(context);
     const skill = skillActivationFromOrigin(message.origin);
@@ -498,7 +506,7 @@ export class SessionReplayRenderer {
   ): void {
     const { sessionEventHandler } = this.host;
     const task = sessionEventHandler.backgroundTasks.get(origin.taskId);
-    if (task !== undefined && task.kind === 'process') {
+    if (task !== undefined && task.kind !== 'agent') {
       const status = formatBackgroundTaskTranscript({ ...task, status: origin.status });
       this.host.appendTranscriptEntry({
         ...replayEntry(context, 'status', status.headline, 'plain'),
@@ -541,6 +549,15 @@ export class SessionReplayRenderer {
     });
     sessionEventHandler.backgroundAgentMetadata.delete(meta.agentId);
   }
+}
+
+function goalCompletionFromSystemReminder(message: ContextMessage): string | null {
+  if (message.origin?.kind !== 'system_trigger' || message.origin.name !== 'goal_completion') {
+    return null;
+  }
+  const text = contentPartsToText(message.content);
+  const match = /^<system-reminder>\n([\s\S]*)\n<\/system-reminder>$/.exec(text);
+  return match?.[1] ?? text;
 }
 
 function extractCronPrompt(text: string): string {

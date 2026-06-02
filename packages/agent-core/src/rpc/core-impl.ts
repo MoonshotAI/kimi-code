@@ -48,8 +48,12 @@ import type {
   CloseSessionPayload,
   CoreAPI,
   CoreInfo,
+  CreateGoalPayload,
   CreateSessionPayload,
   EmptyPayload,
+  GoalControlPayload,
+  GoalSnapshot,
+  GoalToolResult,
   ExportSessionPayload,
   ExportSessionResult,
   ForkSessionPayload,
@@ -576,6 +580,38 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   generateAgentsMd({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>): Promise<void> {
     return this.sessionApi(sessionId).generateAgentsMd(payload);
+  }
+
+  createGoal({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<CreateGoalPayload>): Promise<GoalSnapshot> {
+    return Promise.resolve(this.sessionApi(sessionId).createGoal(payload));
+  }
+
+  getGoal({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>): GoalToolResult {
+    return this.sessionApi(sessionId).getGoal(payload);
+  }
+
+  pauseGoal({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<GoalControlPayload>): Promise<GoalSnapshot> {
+    return Promise.resolve(this.sessionApi(sessionId).pauseGoal(payload));
+  }
+
+  resumeGoal({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<GoalControlPayload>): Promise<GoalSnapshot> {
+    return Promise.resolve(this.sessionApi(sessionId).resumeGoal(payload));
+  }
+
+  cancelGoal({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<GoalControlPayload>): Promise<GoalSnapshot> {
+    return Promise.resolve(this.sessionApi(sessionId).cancelGoal(payload));
   }
 
   async installPlugin(payload: InstallPluginPayload): Promise<PluginSummary> {
