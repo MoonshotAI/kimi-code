@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  applyCustomRegistryEntries,
   applyCustomRegistryProvider,
   CUSTOM_REGISTRY_DEFAULT_CAPABILITIES,
   CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT,
@@ -379,6 +380,187 @@ describe('removeCustomRegistryProvider', () => {
     removeCustomRegistryProvider(config, 'registry_chat-completions');
 
     expect(config.defaultModel).toBe('other/keepme');
+  });
+});
+
+describe('applyCustomRegistryEntries', () => {
+  // Regression: re-importing the same multi-provider api.json used to lose all
+  // but the last provider because the caller mixed in-memory mutations with the
+  // `harness.removeProvider` RPC (which read/wrote disk inside the loop and
+  // returned a fresh config object, discarding prior iterations' additions).
+  // The pure in-memory helper must keep every entry across repeated imports.
+  it('keeps every provider when the same multi-provider source is applied twice', () => {
+    const source: CustomRegistrySource = {
+      kind: 'apiJson',
+      url: 'https://registry.example.test/v1/models/api.json',
+      apiKey: 'sk-token',
+    };
+    const entries: Record<string, CustomRegistryProviderEntry> = {
+      a: { id: 'a', name: 'A', api: 'https://a.test/v1', type: 'openai', models: { 'm1': { id: 'm1' } } },
+      b: { id: 'b', name: 'B', api: 'https://b.test/v1', type: 'openai', models: { 'm1': { id: 'm1' } } },
+      c: { id: 'c', name: 'C', api: 'https://c.test/v1', type: 'openai', models: { 'm1': { id: 'm1' } } },
+    };
+
+    const config: ManagedKimiConfigShape = { providers: {} };
+    applyCustomRegistryEntries(config, entries, source);
+    applyCustomRegistryEntries(config, entries, source);
+
+    expect(Object.keys(config.providers).sort()).toEqual(['a', 'b', 'c']);
+    expect(config.models?.['a/m1']).toBeDefined();
+    expect(config.models?.['b/m1']).toBeDefined();
+    expect(config.models?.['c/m1']).toBeDefined();
+  });
+
+  it('refreshes provider fields, drops stale aliases, and clears defaultModel that no longer exists', () => {
+    const source: CustomRegistrySource = {
+      kind: 'apiJson',
+      url: 'https://registry.example.test/api.json',
+      apiKey: 'sk-new',
+    };
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        x: { type: 'openai', baseUrl: 'https://x-old.test/v1', apiKey: 'sk-old' },
+      },
+      models: {
+        'x/old-model': { provider: 'x', model: 'old-model', maxContextSize: 1000 },
+        'other/keep': { provider: 'other', model: 'keep', maxContextSize: 1000 },
+      },
+      defaultModel: 'x/old-model',
+    };
+
+    applyCustomRegistryEntries(
+      config,
+      {
+        x: {
+          id: 'x',
+          name: 'X',
+          api: 'https://x-new.test/v1',
+          type: 'openai',
+          models: { 'new-model': { id: 'new-model' } },
+        },
+      },
+      source,
+    );
+
+    expect(config.providers['x']).toMatchObject({
+      type: 'openai',
+      baseUrl: 'https://x-new.test/v1',
+      apiKey: 'sk-new',
+    });
+    expect(config.models?.['x/old-model']).toBeUndefined();
+    expect(config.models?.['x/new-model']).toBeDefined();
+    expect(config.models?.['other/keep']).toBeDefined();
+    // defaultModel pointed at the now-removed alias, so it must be cleared
+    // (matches the old harness.removeProvider semantics that the caller relied
+    // on before the refactor).
+    expect(config.defaultModel).toBeUndefined();
+  });
+
+  // Re-import semantics: when a provider that existed in a previous import is
+  // gone from the new fetch (same source URL), it must be removed along with
+  // its aliases and any `defaultModel` pointing at it. Without this, deleting a
+  // provider upstream silently leaves orphan records and a dangling default.
+  it('removes providers from the same source URL that disappeared on re-import', () => {
+    const source: CustomRegistrySource = {
+      kind: 'apiJson',
+      url: 'https://registry.example.test/api.json',
+      apiKey: 'sk-token',
+    };
+    const firstEntries: Record<string, CustomRegistryProviderEntry> = {
+      a: { id: 'a', name: 'A', api: 'https://a.test/v1', type: 'openai', models: { m1: { id: 'm1' } } },
+      b: { id: 'b', name: 'B', api: 'https://b.test/v1', type: 'openai', models: { m1: { id: 'm1' } } },
+    };
+
+    const config: ManagedKimiConfigShape = {
+      providers: {
+        // Provider from an unrelated source — must not be touched.
+        keepme: {
+          type: 'openai',
+          baseUrl: 'https://keepme.test/v1',
+          apiKey: 'sk-keepme',
+          source: {
+            kind: 'apiJson',
+            url: 'https://other.example.test/api.json',
+            apiKey: 'sk-other',
+          },
+        },
+      },
+      models: {
+        'keepme/m1': { provider: 'keepme', model: 'm1', maxContextSize: 1000 },
+      },
+    };
+
+    applyCustomRegistryEntries(config, firstEntries, source);
+    // After first import, default points at one of the now-orphaned aliases.
+    config.defaultModel = 'b/m1';
+
+    // Second import drops provider `b`.
+    applyCustomRegistryEntries(
+      config,
+      {
+        a: firstEntries['a'] as CustomRegistryProviderEntry,
+      },
+      source,
+    );
+
+    expect(config.providers['a']).toBeDefined();
+    expect(config.providers['b']).toBeUndefined();
+    expect(config.models?.['a/m1']).toBeDefined();
+    expect(config.models?.['b/m1']).toBeUndefined();
+    expect(config.defaultModel).toBeUndefined();
+
+    // Unrelated provider from a different source URL is preserved.
+    expect(config.providers['keepme']).toBeDefined();
+    expect(config.models?.['keepme/m1']).toBeDefined();
+  });
+
+  it('does not remove providers from a different source URL even when ids overlap', () => {
+    const sourceA: CustomRegistrySource = {
+      kind: 'apiJson',
+      url: 'https://registry-a.example.test/api.json',
+      apiKey: 'sk-a',
+    };
+    const sourceB: CustomRegistrySource = {
+      kind: 'apiJson',
+      url: 'https://registry-b.example.test/api.json',
+      apiKey: 'sk-b',
+    };
+
+    const config: ManagedKimiConfigShape = { providers: {} };
+    applyCustomRegistryEntries(
+      config,
+      {
+        shared: {
+          id: 'shared',
+          name: 'Shared',
+          api: 'https://shared.test/v1',
+          type: 'openai',
+          models: { m1: { id: 'm1' } },
+        },
+      },
+      sourceB,
+    );
+
+    // Importing source A with no overlapping ids must not delete the provider
+    // sitting under source B.
+    applyCustomRegistryEntries(
+      config,
+      {
+        onlyA: {
+          id: 'onlyA',
+          name: 'Only A',
+          api: 'https://onlya.test/v1',
+          type: 'openai',
+          models: { m1: { id: 'm1' } },
+        },
+      },
+      sourceA,
+    );
+
+    expect(config.providers['shared']).toBeDefined();
+    expect(config.providers['onlyA']).toBeDefined();
+    expect(config.models?.['shared/m1']).toBeDefined();
+    expect(config.models?.['onlyA/m1']).toBeDefined();
   });
 });
 
