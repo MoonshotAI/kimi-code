@@ -198,9 +198,7 @@ export class SessionSubagentHost {
     );
 
     child.config.update({
-      cwd: parent.config.cwd,
       modelAlias: parent.config.modelAlias,
-      profileName: parent.config.profileName,
       thinkingLevel: parent.config.thinkingLevel,
       systemPrompt: parent.config.systemPrompt,
     });
