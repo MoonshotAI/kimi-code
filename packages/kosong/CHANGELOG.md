@@ -1,5 +1,11 @@
 # @moonshot-ai/kosong
 
+## 0.3.1
+
+### Patch Changes
+
+- [#327](https://github.com/MoonshotAI/kimi-code/pull/327) [`8809f3e`](https://github.com/MoonshotAI/kimi-code/commit/8809f3eb114172ac64cefe43bbf9b9257c5245c0) - Fix cross-provider replay failures from incompatible tool call IDs and unsigned Claude thinking history.
+
 ## 0.3.0
 
 ### Minor Changes
