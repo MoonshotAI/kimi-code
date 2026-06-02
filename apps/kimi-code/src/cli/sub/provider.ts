@@ -173,7 +173,7 @@ export async function handleProviderList(
     modelsByProvider.set(model.provider, list);
   }
 
-  const providerIds = Object.keys(config.providers).sort();
+  const providerIds = Object.keys(config.providers).toSorted();
   if (providerIds.length === 0) {
     deps.stdout.write('No providers configured.\n');
     return;
@@ -225,9 +225,9 @@ export async function handleCatalogList(
     deps.stdout.write(`${entry.name ?? providerId} (${providerId})\n`);
     for (const model of models) {
       const cap: string[] = [];
-      if (model.capability.tool_use === true) cap.push('tool_use');
-      if (model.capability.thinking === true) cap.push('thinking');
-      if (model.capability.image_in === true) cap.push('image_in');
+      if (model.capability.tool_use) cap.push('tool_use');
+      if (model.capability.thinking) cap.push('thinking');
+      if (model.capability.image_in) cap.push('image_in');
       const ctx =
         typeof model.capability.max_context_tokens === 'number'
           ? String(model.capability.max_context_tokens)
@@ -245,7 +245,7 @@ export async function handleCatalogList(
       const haystack = `${id} ${entry.name ?? ''}`.toLowerCase();
       return haystack.includes(filter);
     })
-    .sort(([a], [b]) => a.localeCompare(b));
+    .toSorted(([a], [b]) => a.localeCompare(b));
 
   if (opts.json) {
     const out: Record<string, CatalogProviderEntry> = {};
@@ -480,10 +480,9 @@ function asManaged(config: KimiConfig): ManagedKimiConfigShape {
 
 function providerSourceLabel(provider: KimiConfig['providers'][string]): string {
   const source = provider.source;
-  if (typeof source === 'object' && source !== null) {
-    const candidate = source as Record<string, unknown>;
-    if (candidate['kind'] === 'apiJson' && typeof candidate['url'] === 'string') {
-      return `apiJson(${candidate['url']})`;
+  if (source !== undefined) {
+    if (source['kind'] === 'apiJson' && typeof source['url'] === 'string') {
+      return `apiJson(${source['url']})`;
     }
   }
   if (provider.oauth !== undefined) return 'oauth';

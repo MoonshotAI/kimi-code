@@ -52,7 +52,7 @@ function makeHarness(initial: KimiConfig): {
       removeCalls.push(providerId);
       const nextProviders = { ...config.providers };
       delete nextProviders[providerId];
-      const nextModels = { ...(config.models ?? {}) };
+      const nextModels = { ...config.models };
       for (const [alias, model] of Object.entries(nextModels)) {
         if (model.provider === providerId) delete nextModels[alias];
       }
@@ -224,7 +224,7 @@ describe('kimi provider add', () => {
     );
 
     const finalConfig = current();
-    expect(Object.keys(finalConfig.providers).sort()).toEqual(['kohub', 'kohub-responses']);
+    expect(Object.keys(finalConfig.providers).toSorted()).toEqual(['kohub', 'kohub-responses']);
     const kohub = finalConfig.providers['kohub']!;
     expect(kohub.type).toBe('anthropic');
     expect(kohub.baseUrl).toBe('https://free-tokens.example.test');
@@ -246,7 +246,7 @@ describe('kimi provider add', () => {
 
     // The single setConfig patch should carry both providers and models.
     expect(setConfigCalls).toHaveLength(1);
-    expect(Object.keys(setConfigCalls[0]?.providers ?? {}).sort()).toEqual([
+    expect(Object.keys(setConfigCalls[0]?.providers ?? {}).toSorted()).toEqual([
       'kohub',
       'kohub-responses',
     ]);
@@ -442,7 +442,7 @@ describe('kimi provider list', () => {
       providers: Record<string, unknown>;
       models: Record<string, unknown>;
     };
-    expect(Object.keys(parsed.providers).sort()).toEqual([
+    expect(Object.keys(parsed.providers).toSorted()).toEqual([
       'kohub',
       'managed:kimi-code',
       'manual',
@@ -477,7 +477,7 @@ describe('registerProviderCommand', () => {
         headers: expect.objectContaining({ Authorization: 'Bearer sk-cli' }),
       }),
     );
-    expect(Object.keys(current().providers).sort()).toEqual(['kohub', 'kohub-responses']);
+    expect(Object.keys(current().providers).toSorted()).toEqual(['kohub', 'kohub-responses']);
     expect(stdout.join('')).toContain('Imported 2 providers');
   });
 });
