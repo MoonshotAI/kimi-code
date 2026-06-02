@@ -7,7 +7,7 @@ import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
 import type { ResultRenderer } from './tool-renderers/types';
 import { PREVIEW_LINES } from './tool-renderers/types';
-import { trimTrailingEmptyLines } from './tool-renderers/truncated';
+import { TruncatedOutputComponent } from './tool-renderers/truncated';
 
 export interface ShellExecutionOptions {
   readonly command?: string;
@@ -56,24 +56,16 @@ export class ShellExecutionComponent extends Container {
     result: ToolResultBlockData,
     colors: ColorPalette,
     expanded: boolean,
-    previewLines: number,
+    _previewLines: number,
   ): void {
     if (!result.output) return;
-    const tint = result.is_error ? chalk.hex(colors.error) : chalk.dim;
-    if (expanded) {
-      this.addChild(new Text(tint(result.output), 2, 0));
-      return;
-    }
-
-    const lines = trimTrailingEmptyLines(result.output.split('\n'));
-    const shown = lines.slice(0, previewLines);
-    const remaining = lines.length - shown.length;
-    this.addChild(new Text(tint(shown.join('\n')), 2, 0));
-    if (remaining > 0) {
-      this.addChild(
-        new Text(chalk.dim(`... (${String(remaining)} more lines, ctrl+o to expand)`), 2, 0),
-      );
-    }
+    this.addChild(
+      new TruncatedOutputComponent(result.output, {
+        expanded,
+        isError: result.is_error,
+        colors,
+      }),
+    );
   }
 }
 

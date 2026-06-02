@@ -101,6 +101,22 @@ describe('ShellExecutionComponent', () => {
     expect(output).not.toContain('... (2 more lines');
   });
 
+  it('truncates long single-line output by wrapped visual lines', () => {
+    const component = new ShellExecutionComponent({
+      result: {
+        tool_call_id: 'call_shell',
+        output: 'x'.repeat(500),
+        is_error: false,
+      },
+      colors: darkColors,
+    });
+
+    const out = strip(component.render(20).join('\n'));
+    expect(out).toContain('x');
+    expect(out).not.toContain('x'.repeat(500));
+    expect(out).toContain('... (');
+  });
+
   describe('shellExecutionResultRenderer', () => {
     const longCmd = `echo ${'a'.repeat(200)}\necho done`;
 
