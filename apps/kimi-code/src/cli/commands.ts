@@ -6,6 +6,7 @@ import { registerMigrateCommand } from '#/migration/index';
 
 import type { CLIOptions } from './options';
 import { registerExportCommand } from './sub/export';
+import { registerProviderCommand } from './sub/provider';
 
 export type MainCommandHandler = (opts: CLIOptions) => void;
 export type MigrateCommandHandler = () => void;
@@ -76,6 +77,7 @@ export function createProgram(
     .option('--plan', 'Start in plan mode.', false);
 
   registerExportCommand(program);
+  registerProviderCommand(program);
   registerMigrateCommand(program, onMigrate);
   program
     .command('upgrade')

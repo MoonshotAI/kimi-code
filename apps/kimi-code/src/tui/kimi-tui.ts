@@ -559,6 +559,7 @@ export class KimiTUI {
     await this.harness.close();
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
     this.uninstallRainbowDance();
+    await this.state.terminal.drainInput();
     this.state.ui.stop();
     if (this.onExit) {
       await this.onExit(exitCode);

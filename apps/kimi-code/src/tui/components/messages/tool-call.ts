@@ -417,7 +417,9 @@ function extractKeyArgument(
     const val = args[key];
     if (typeof val === 'string' && val.length > 0) {
       const firstLine = val.split('\n')[0] ?? val;
-      return formatKeyArgument(toolName, key, firstLine, workspaceDir);
+      const displayValue =
+        toolName === 'Bash' && val.includes('\n') ? `${firstLine}…` : firstLine;
+      return formatKeyArgument(toolName, key, displayValue, workspaceDir);
     }
   }
   return null;

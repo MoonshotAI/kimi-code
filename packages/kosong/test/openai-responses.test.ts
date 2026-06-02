@@ -604,6 +604,46 @@ describe('OpenAIResponsesChatProvider', () => {
       });
     });
 
+    it('normalizes invalid historical tool call ids and matching function outputs', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Run bash' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'Bash:21',
+              name: 'Bash',
+              arguments: '{"command":"pwd"}',
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: '/tmp' }],
+          toolCallId: 'Bash:21',
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+      const input = body['input'] as unknown[];
+
+      expect(input[1]).toEqual({
+        arguments: '{"command":"pwd"}',
+        call_id: 'Bash_21',
+        name: 'Bash',
+        type: 'function_call',
+      });
+      expect(input[2]).toEqual({
+        call_id: 'Bash_21',
+        output: [{ type: 'input_text', text: '/tmp' }],
+        type: 'function_call_output',
+      });
+    });
+
     it('assistant with reasoning (ThinkPart with encrypted)', async () => {
       const provider = createProvider();
       const history: Message[] = [
