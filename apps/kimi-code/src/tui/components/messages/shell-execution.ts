@@ -56,14 +56,15 @@ export class ShellExecutionComponent extends Container {
     result: ToolResultBlockData,
     colors: ColorPalette,
     expanded: boolean,
-    _previewLines: number,
+    previewLines: number,
   ): void {
     if (!result.output) return;
     this.addChild(
       new TruncatedOutputComponent(result.output, {
         expanded,
-        isError: result.is_error,
+        isError: result.is_error ?? false,
         colors,
+        maxLines: previewLines,
       }),
     );
   }

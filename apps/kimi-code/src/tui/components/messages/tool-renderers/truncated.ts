@@ -9,7 +9,9 @@ import { PREVIEW_LINES } from './types';
 
 export function trimTrailingEmptyLines(lines: string[]): string[] {
   let end = lines.length;
-  while (end > 0 && lines[end - 1].length === 0) {
+  while (end > 0) {
+    const line = lines[end - 1];
+    if (line === undefined || line.length > 0) break;
     end--;
   }
   return lines.slice(0, end);
@@ -24,16 +26,19 @@ export function trimTrailingEmptyLines(lines: string[]): string[] {
 export class TruncatedOutputComponent implements Component {
   private readonly textComponent: Text;
   private readonly expanded: boolean;
+  private readonly maxLines: number;
 
   constructor(
     output: string,
     options: {
       expanded: boolean;
-      isError: boolean;
+      isError: boolean | undefined;
       colors: ColorPalette;
+      maxLines?: number;
     },
   ) {
     this.expanded = options.expanded;
+    this.maxLines = options.maxLines ?? PREVIEW_LINES;
     const tint = options.isError ? chalk.hex(options.colors.error) : chalk.dim;
     const cleaned = trimTrailingEmptyLines(output.split('\n')).join('\n');
     this.textComponent = new Text(tint(cleaned), 2, 0);
@@ -46,12 +51,12 @@ export class TruncatedOutputComponent implements Component {
   render(width: number): string[] {
     const contentLines = this.textComponent.render(width);
 
-    if (this.expanded || contentLines.length <= PREVIEW_LINES) {
+    if (this.expanded || contentLines.length <= this.maxLines) {
       return contentLines;
     }
 
-    const shown = contentLines.slice(0, PREVIEW_LINES);
-    const remaining = contentLines.length - PREVIEW_LINES;
+    const shown = contentLines.slice(0, this.maxLines);
+    const remaining = contentLines.length - this.maxLines;
     return [
       ...shown,
       chalk.dim(`... (${String(remaining)} more lines, ctrl+o to expand)`),
@@ -64,7 +69,7 @@ export const renderTruncated: ResultRenderer = (_toolCall, result, ctx) => {
   return [
     new TruncatedOutputComponent(result.output, {
       expanded: ctx.expanded,
-      isError: result.is_error,
+      isError: result.is_error ?? false,
       colors: ctx.colors,
     }),
   ];

@@ -70,11 +70,11 @@ describe('ShellExecutionComponent', () => {
     expect(output).toContain('step20');
   });
 
-  it('末尾空行不计入 preview 配额，避免间距过大', () => {
+  it('does not count trailing empty lines toward the preview cap', () => {
     const component = new ShellExecutionComponent({
       result: {
         tool_call_id: 'call_shell',
-        output: 'hello\n\n\n', // 1 行内容 + 2 行末尾空行
+        output: 'hello\n\n\n', // 1 content line + 2 trailing empty lines
         is_error: false,
       },
       colors: darkColors,
@@ -85,11 +85,11 @@ describe('ShellExecutionComponent', () => {
     expect(output).not.toContain('... (2 more lines');
   });
 
-  it('中间空行保留，仅 trim 末尾空行', () => {
+  it('preserves internal empty lines while trimming only trailing ones', () => {
     const component = new ShellExecutionComponent({
       result: {
         tool_call_id: 'call_shell',
-        output: 'a\n\nb\n\n\n', // 中间 1 空行 + 末尾 2 空行
+        output: 'a\n\nb\n\n\n', // 1 internal empty line + 2 trailing empty lines
         is_error: false,
       },
       colors: darkColors,
