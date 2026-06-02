@@ -1,3 +1,5 @@
+import type { Component } from '@earendil-works/pi-tui';
+
 import { WelcomeComponent } from '../components/chrome/welcome';
 import { AgentGroupComponent } from '../components/messages/agent-group';
 import { AssistantMessageComponent } from '../components/messages/assistant-message';
@@ -17,9 +19,18 @@ import type { SlashCommandHost } from './dispatch';
 // Undo command
 // ---------------------------------------------------------------------------
 
-export async function handleUndoCommand(host: SlashCommandHost): Promise<void> {
+export async function handleUndoCommand(
+  host: SlashCommandHost,
+  args: string = '',
+): Promise<void> {
   if (host.state.appState.streamingPhase !== 'idle') {
     host.showError('Cannot undo while streaming — press Esc or Ctrl-C first.');
+    return;
+  }
+
+  const count = parseUndoCount(args);
+  if (count === undefined) {
+    host.showError('Usage: /undo [count], where count is a positive integer.');
     return;
   }
 
@@ -30,14 +41,14 @@ export async function handleUndoCommand(host: SlashCommandHost): Promise<void> {
   }
 
   const entries = host.state.transcriptEntries;
-  const lastUserIndex = entries.findLastIndex(isUndoAnchorEntry);
-  if (lastUserIndex < 0) {
+  const lastUserIndex = findUndoAnchorEntryIndex(entries, count);
+  if (lastUserIndex === undefined) {
     host.showError('Nothing to undo.');
     return;
   }
 
   try {
-    await session.undoHistory(1);
+    await session.undoHistory(count);
   } catch (error) {
     const message = formatErrorMessage(error);
     host.showError(`Failed to undo: ${message}`);
@@ -45,19 +56,8 @@ export async function handleUndoCommand(host: SlashCommandHost): Promise<void> {
   }
 
   const children = host.state.transcriptContainer.children;
-  let lastUserComponentIndex = -1;
-  for (let i = children.length - 1; i >= 0; i--) {
-    const child = children[i];
-    if (
-      child instanceof UserMessageComponent ||
-      (child instanceof SkillActivationComponent && child.trigger === 'user-slash')
-    ) {
-      lastUserComponentIndex = i;
-      break;
-    }
-  }
-
-  if (lastUserComponentIndex >= 0) {
+  const lastUserComponentIndex = findUndoAnchorComponentIndex(children, count);
+  if (lastUserComponentIndex !== undefined) {
     removeUndoContextComponents(children, lastUserComponentIndex);
     host.state.transcriptContainer.invalidate();
   }
@@ -74,11 +74,34 @@ export async function handleUndoCommand(host: SlashCommandHost): Promise<void> {
   host.state.ui.requestRender();
 }
 
+function parseUndoCount(args: string): number | undefined {
+  const value = args.trim();
+  if (value.length === 0) return 1;
+  if (!/^[1-9]\d*$/.test(value)) return undefined;
+  const count = Number(value);
+  return Number.isSafeInteger(count) ? count : undefined;
+}
+
 function isUndoAnchorEntry(entry: TranscriptEntry): boolean {
   return (
     entry.kind === 'user' ||
     (entry.kind === 'skill_activation' && entry.skillTrigger === 'user-slash')
   );
+}
+
+function findUndoAnchorEntryIndex(
+  entries: readonly TranscriptEntry[],
+  count: number,
+): number | undefined {
+  let found = 0;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry !== undefined && isUndoAnchorEntry(entry)) {
+      found++;
+      if (found === count) return i;
+    }
+  }
+  return undefined;
 }
 
 function isUndoContextEntry(entry: TranscriptEntry): boolean {
@@ -96,8 +119,23 @@ function isUndoContextEntry(entry: TranscriptEntry): boolean {
   }
 }
 
+function findUndoAnchorComponentIndex(
+  children: readonly Component[],
+  count: number,
+): number | undefined {
+  let found = 0;
+  for (let i = children.length - 1; i >= 0; i--) {
+    const child = children[i];
+    if (child !== undefined && isUndoAnchorComponent(child)) {
+      found++;
+      if (found === count) return i;
+    }
+  }
+  return undefined;
+}
+
 function removeUndoContextComponents(
-  children: SlashCommandHost['state']['transcriptContainer']['children'],
+  children: Component[],
   startIndex: number,
 ): void {
   for (let i = children.length - 1; i >= startIndex; i--) {
@@ -108,9 +146,14 @@ function removeUndoContextComponents(
   }
 }
 
-function isUndoContextComponent(
-  child: SlashCommandHost['state']['transcriptContainer']['children'][number],
-): boolean {
+function isUndoAnchorComponent(child: Component): boolean {
+  return (
+    child instanceof UserMessageComponent ||
+    (child instanceof SkillActivationComponent && child.trigger === 'user-slash')
+  );
+}
+
+function isUndoContextComponent(child: Component): boolean {
   return (
     child instanceof UserMessageComponent ||
     child instanceof AssistantMessageComponent ||

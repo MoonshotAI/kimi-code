@@ -282,7 +282,7 @@ async function handleBuiltInSlashCommand(
       await handleLogoutCommand(host);
       return;
     case 'undo':
-      await handleUndoCommand(host);
+      await handleUndoCommand(host, args);
       return;
     default:
       host.showError(`Unknown slash command: /${String(name)}`);

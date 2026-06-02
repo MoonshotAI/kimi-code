@@ -761,6 +761,57 @@ describe('KimiTUI message flow', () => {
     expect(driver.state.appState.permissionMode).toBe('auto');
   });
 
+  it('undoes multiple turns when a count is provided', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('first');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.handleUserInput('second');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.handleUserInput('third');
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/undo 2');
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(2);
+    });
+
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        content: 'first',
+      }),
+    ]);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('first');
+    expect(transcript).not.toContain('second');
+    expect(transcript).not.toContain('third');
+  });
+
+  it('rejects invalid undo counts without changing context', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/undo 0');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Error: Usage: /undo [count], where count is a positive integer.',
+      );
+    });
+
+    expect(session.undoHistory).not.toHaveBeenCalled();
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        content: 'hello',
+      }),
+    ]);
+  });
+
   it('undoes from the real user turn when the last skill activation came from the model', async () => {
     const { driver } = await makeDriver();
 
