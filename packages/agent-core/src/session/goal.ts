@@ -90,13 +90,6 @@ export interface GoalBudgetLimits {
   readonly wallClockBudgetMs?: number;
 }
 
-/** A small piece of evidence attached to a model report or terminal outcome. */
-export interface GoalEvidence {
-  readonly summary: string;
-  readonly detail?: string;
-  readonly source?: string;
-}
-
 /** The durable goal record persisted in `metadata.custom.goal`. */
 export interface SessionGoalState {
   goalId: string;
@@ -119,9 +112,7 @@ export interface SessionGoalState {
    */
   wallClockResumedAt?: number;
   budgetLimits: GoalBudgetLimits;
-  lastEvidence?: readonly GoalEvidence[];
   terminalReason?: string;
-  terminalEvidence?: readonly GoalEvidence[];
 }
 
 /** Computed budget view exposed through snapshots and tools. */
@@ -152,9 +143,7 @@ export interface GoalSnapshot {
   readonly tokensUsed: number;
   readonly wallClockMs: number;
   readonly budget: GoalBudgetReport;
-  readonly lastEvidence?: readonly GoalEvidence[];
   readonly terminalReason?: string;
-  readonly terminalEvidence?: readonly GoalEvidence[];
 }
 
 /** Wrapper returned by goal read operations and tools. */
@@ -187,7 +176,6 @@ export interface GoalChange {
   readonly kind: GoalChangeKind;
   readonly status?: GoalStatus;
   readonly reason?: string;
-  readonly evidence?: readonly GoalEvidence[];
   readonly stats?: GoalChangeStats;
 }
 
@@ -478,21 +466,17 @@ export class SessionGoalStore {
    * user pause / clear is never overwritten.
    */
   async markBlocked(
-    input: { actor?: GoalActor; reason?: string; evidence?: readonly GoalEvidence[] } = {},
+    input: { actor?: GoalActor; reason?: string } = {},
   ): Promise<GoalSnapshot | null> {
     const state = this.options.readState();
     if (state === undefined || state.status !== 'active') return null;
     const actor = input.actor ?? 'runtime';
     this.applyStatus(state, 'blocked', actor, input.reason);
     state.terminalReason = input.reason;
-    if (input.evidence !== undefined) {
-      state.terminalEvidence = input.evidence;
-      state.lastEvidence = input.evidence;
-    }
     await this.persistState(state, {
-      change: { kind: 'lifecycle', status: 'blocked', reason: input.reason, evidence: input.evidence },
+      change: { kind: 'lifecycle', status: 'blocked', reason: input.reason },
     });
-    this.appendStatusUpdate(state, actor, input.reason, input.evidence);
+    this.appendStatusUpdate(state, actor, input.reason);
     return this.toSnapshot(state);
   }
 
@@ -506,26 +490,21 @@ export class SessionGoalStore {
    * a goal that is missing or not active.
    */
   async markComplete(
-    input: { actor?: GoalActor; reason?: string; evidence?: readonly GoalEvidence[] } = {},
+    input: { actor?: GoalActor; reason?: string } = {},
   ): Promise<GoalSnapshot | null> {
     const state = this.options.readState();
     if (state === undefined || state.status !== 'active') return null;
     const actor = input.actor ?? 'model';
     this.applyStatus(state, 'complete', actor, input.reason);
     state.terminalReason = input.reason;
-    if (input.evidence !== undefined) {
-      state.terminalEvidence = input.evidence;
-      state.lastEvidence = input.evidence;
-    }
     const snapshot = this.toSnapshot(state);
     // Audit + notify the UI of completion (with final stats) directly, without
     // persisting `complete` to disk...
-    this.appendStatusUpdate(state, actor, input.reason, input.evidence);
+    this.appendStatusUpdate(state, actor, input.reason);
     this.options.onGoalUpdated?.(snapshot, {
       kind: 'completion',
       status: 'complete',
       reason: input.reason,
-      evidence: input.evidence,
       stats: this.statsOf(state),
     });
     // ...then clear the durable record (emits onGoalUpdated(null) → box clears).
@@ -583,12 +562,11 @@ export class SessionGoalStore {
   }
 
 
-  async incrementTurn(input: { evidence?: readonly GoalEvidence[] } = {}): Promise<GoalSnapshot | null> {
+  async incrementTurn(): Promise<GoalSnapshot | null> {
     const state = this.options.readState();
     if (state === undefined || state.status !== 'active') return null;
     state.turnsUsed += 1;
     state.updatedAt = new Date().toISOString();
-    if (input.evidence !== undefined) state.lastEvidence = input.evidence;
     await this.persistState(state);
     this.appendAudit({
       type: 'goal.continuation',
@@ -608,19 +586,13 @@ export class SessionGoalStore {
     this.appendAudit({ type: 'goal.clear', goalId, actor, reason });
   }
 
-  private appendStatusUpdate(
-    state: SessionGoalState,
-    actor: GoalActor,
-    reason?: string,
-    evidence?: readonly GoalEvidence[],
-  ): void {
+  private appendStatusUpdate(state: SessionGoalState, actor: GoalActor, reason?: string): void {
     this.appendAudit({
       type: 'goal.update',
       goalId: state.goalId,
       status: state.status,
       actor,
       reason,
-      evidence,
       turnsUsed: state.turnsUsed,
       tokensUsed: state.tokensUsed,
       wallClockMs: state.wallClockMs,
@@ -699,9 +671,7 @@ export class SessionGoalStore {
       tokensUsed: state.tokensUsed,
       wallClockMs: liveWallClockMs(state, this.nowMs()),
       budget: computeBudgetReport(state, this.nowMs()),
-      lastEvidence: state.lastEvidence,
       terminalReason: state.terminalReason,
-      terminalEvidence: state.terminalEvidence,
     };
   }
 }

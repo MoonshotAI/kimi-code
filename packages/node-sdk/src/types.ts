@@ -28,7 +28,6 @@ export type {
   GoalBudgetReport,
   GoalChange,
   GoalChangeStats,
-  GoalEvidence,
   GoalSnapshot,
   GoalStatus,
   GoalToolResult,

@@ -188,7 +188,7 @@ describe('goal session end-to-end', () => {
     await resumed.flushMetadata();
   });
 
-  it('retains terminal blocked reason and evidence across resume', async () => {
+  it('retains terminal blocked reason across resume', async () => {
     const sessionDir = await makeTempDir();
     const events: Array<Record<string, unknown>> = [];
     const { session } = await setupSession(sessionDir, events, ['GetGoal']);
@@ -196,7 +196,6 @@ describe('goal session end-to-end', () => {
     await session.goals.markBlocked({
       actor: 'runtime',
       reason: 'needs credentials',
-      evidence: [{ summary: 'auth step failed' }],
     });
     await session.flushMetadata();
 
@@ -212,7 +211,6 @@ describe('goal session end-to-end', () => {
     const goal = new SessionAPIImpl(resumed).getGoal({}).goal;
     expect(goal?.status).toBe('blocked');
     expect(goal?.terminalReason).toBe('needs credentials');
-    expect(goal?.terminalEvidence).toEqual([{ summary: 'auth step failed' }]);
     await resumed.flushMetadata();
   });
 

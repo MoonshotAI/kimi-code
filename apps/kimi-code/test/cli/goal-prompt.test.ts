@@ -57,12 +57,11 @@ describe('parseHeadlessGoalCreate', () => {
 });
 
 describe('goal summary', () => {
-  it('includes id, status, reason, usage, and evidence', () => {
+  it('includes id, status, reason, and usage', () => {
     const summary = goalSummaryJson(
       snapshot({
         status: 'blocked',
         terminalReason: 'need creds',
-        terminalEvidence: [{ summary: 'auth failed' }],
       }) as never,
     );
     expect(summary).toMatchObject({
@@ -72,7 +71,6 @@ describe('goal summary', () => {
       reason: 'need creds',
       turnsUsed: 2,
       tokensUsed: 120,
-      evidence: [{ summary: 'auth failed' }],
     });
   });
 

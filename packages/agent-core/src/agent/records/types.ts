@@ -1,12 +1,7 @@
 import type { ContentPart, TokenUsage } from '@moonshot-ai/kosong';
 
 import type { LoopRecordedEvent } from '../../loop';
-import type {
-  GoalActor,
-  GoalBudgetLimits,
-  GoalEvidence,
-  GoalStatus,
-} from '../../session/goal';
+import type { GoalActor, GoalBudgetLimits, GoalStatus } from '../../session/goal';
 import type { ToolStoreUpdate } from '../../tools/store';
 import type { CompactionBeginData, CompactionResult } from '../compaction';
 import type { AgentConfigUpdateData } from '../config';
@@ -94,7 +89,6 @@ export interface AgentRecordEvents {
     status: GoalStatus;
     actor: GoalActor;
     reason?: string;
-    evidence?: readonly GoalEvidence[];
     /** Usage counters at the transition, so resume can rebuild the completion card. */
     turnsUsed?: number;
     tokensUsed?: number;

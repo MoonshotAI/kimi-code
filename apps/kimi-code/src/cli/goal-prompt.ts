@@ -69,7 +69,6 @@ export interface GoalSummary {
   readonly turnsUsed: number | null;
   readonly tokensUsed: number | null;
   readonly wallClockMs: number | null;
-  readonly evidence: readonly { summary: string }[] | null;
 }
 
 export function goalSummaryJson(goal: GoalSnapshot | null): GoalSummary {
@@ -82,7 +81,6 @@ export function goalSummaryJson(goal: GoalSnapshot | null): GoalSummary {
       turnsUsed: null,
       tokensUsed: null,
       wallClockMs: null,
-      evidence: null,
     };
   }
   return {
@@ -93,10 +91,6 @@ export function goalSummaryJson(goal: GoalSnapshot | null): GoalSummary {
     turnsUsed: goal.turnsUsed,
     tokensUsed: goal.tokensUsed,
     wallClockMs: goal.wallClockMs,
-    evidence:
-      goal.terminalEvidence?.map((e) => ({ summary: e.summary })) ??
-      goal.lastEvidence?.map((e) => ({ summary: e.summary })) ??
-      null,
   };
 }
 

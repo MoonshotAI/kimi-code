@@ -378,24 +378,20 @@ describe('SessionGoalStore lifecycle', () => {
     expect((await store.resumeGoal()).status).toBe('active');
   });
 
-  it('markComplete returns a complete snapshot with reason and evidence, then clears', async () => {
+  it('markComplete returns a complete snapshot with reason, then clears', async () => {
     const { store } = makeStore();
     await store.createGoal({ objective: 'work' });
-    const snap = await store.markComplete({
-      reason: 'all tests pass',
-      evidence: [{ summary: 'tests green' }],
-    });
+    const snap = await store.markComplete({ reason: 'all tests pass' });
     expect(snap?.status).toBe('complete');
     expect(snap?.terminalReason).toBe('all tests pass');
-    expect(snap?.terminalEvidence).toEqual([{ summary: 'tests green' }]);
     // Transient: the durable record is gone.
     expect(store.getGoal().goal).toBeNull();
   });
 
-  it('markBlocked stores reason and evidence and persists (resumable)', async () => {
+  it('markBlocked stores reason and persists (resumable)', async () => {
     const { store } = makeStore();
     await store.createGoal({ objective: 'work' });
-    const snap = await store.markBlocked({ reason: 'need creds', evidence: [{ summary: 'no token' }] });
+    const snap = await store.markBlocked({ reason: 'need creds' });
     expect(snap?.status).toBe('blocked');
     expect(snap?.terminalReason).toBe('need creds');
     expect(store.getGoal().goal?.status).toBe('blocked');
