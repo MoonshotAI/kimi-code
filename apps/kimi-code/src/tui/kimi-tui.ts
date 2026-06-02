@@ -120,6 +120,7 @@ import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
 import { installTerminalThemeTracking } from './utils/terminal-theme';
 import { detectTmuxKeyboardWarning } from './utils/tmux-keyboard';
+import { markTranscriptComponent } from './utils/transcript-component-metadata';
 import { nextTranscriptId } from './utils/transcript-id';
 
 export type { TUIState } from './tui-state';
@@ -1242,6 +1243,7 @@ export class KimiTUI {
     this.state.transcriptEntries.push(entry);
     const component = this.createTranscriptComponent(entry);
     if (component) {
+      markTranscriptComponent(component, entry);
       this.state.transcriptContainer.addChild(component);
       this.state.ui.requestRender();
     }
@@ -1268,6 +1270,7 @@ export class KimiTUI {
     this.appendTranscriptEntry({
       id: nextTranscriptId(),
       kind: 'status',
+      turnId: request.turnId === undefined ? undefined : String(request.turnId),
       renderMode: 'notice',
       content: parts.join(''),
     });

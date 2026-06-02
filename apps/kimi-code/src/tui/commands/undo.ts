@@ -13,6 +13,7 @@ import { UserMessageComponent } from '../components/messages/user-message';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import type { TranscriptEntry } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
+import { getTranscriptComponentEntry } from '../utils/transcript-component-metadata';
 import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
@@ -114,6 +115,7 @@ function isUndoContextEntry(entry: TranscriptEntry): boolean {
     case 'cron':
       return true;
     case 'status':
+      return entry.turnId !== undefined;
     case 'welcome':
       return false;
   }
@@ -154,6 +156,11 @@ function isUndoAnchorComponent(child: Component): boolean {
 }
 
 function isUndoContextComponent(child: Component): boolean {
+  const entry = getTranscriptComponentEntry(child);
+  if (entry !== undefined) {
+    return isUndoContextEntry(entry);
+  }
+
   return (
     child instanceof UserMessageComponent ||
     child instanceof AssistantMessageComponent ||

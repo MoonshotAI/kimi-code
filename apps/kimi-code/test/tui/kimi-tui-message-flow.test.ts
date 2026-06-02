@@ -761,6 +761,97 @@ describe('KimiTUI message flow', () => {
     expect(driver.state.appState.permissionMode).toBe('auto');
   });
 
+  it('removes turn-scoped background status entries and restores welcome', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'background.task.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        info: {
+          taskId: 'bash-bg123456',
+          command: 'npm test',
+          description: 'Run tests in background',
+          status: 'running',
+          pid: 1234,
+          exitCode: null,
+          startedAt: Date.now(),
+          endedAt: null,
+        },
+      } as Event,
+      () => {},
+    );
+
+    await vi.waitFor(() => {
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(transcript).toContain('bash task started in background');
+      expect(transcript).toContain('Run tests in background');
+    });
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(driver.state.transcriptEntries).toEqual([]);
+    expect(transcript).not.toContain('hello');
+    expect(transcript).not.toContain('bash task started in background');
+    expect(transcript).not.toContain('Run tests in background');
+    expect(
+      driver.state.transcriptContainer.children.filter(
+        (child) => child instanceof WelcomeComponent,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('removes approval notices from undone turns', async () => {
+    const { driver, session } = await makeDriver();
+    const approvalHandler = vi.mocked(session.setApprovalHandler).mock.calls[0]?.[0] as
+      | ((request: ApprovalRequest) => Promise<ApprovalResponse>)
+      | undefined;
+    if (approvalHandler === undefined) throw new Error('expected approval handler');
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+    const response = approvalHandler({
+      turnId: 1,
+      toolCallId: 'call_bash',
+      toolName: 'Bash',
+      action: 'Run shell command',
+      display: {
+        kind: 'generic',
+        summary: 'Run shell command',
+        detail: { command: 'echo ok', description: 'Run a shell command' },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ApprovalPanelComponent);
+    });
+    (driver.state.editorContainer.children[0] as ApprovalPanelComponent).handleInput('1');
+    await expect(response).resolves.toMatchObject({ decision: 'approved' });
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Approved: Run shell command');
+    });
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).not.toContain('hello');
+    expect(transcript).not.toContain('Approved: Run shell command');
+  });
+
   it('undoes multiple turns when a count is provided', async () => {
     const { driver, session } = await makeDriver();
 
