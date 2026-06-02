@@ -53,7 +53,6 @@ import type {
   ExportSessionPayload,
   ExportSessionResult,
   ForkSessionPayload,
-  GetBackgroundOutputPathPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
   GetKimiConfigPayload,
@@ -84,6 +83,7 @@ import type {
   SkillSummary,
   SteerPayload,
   StopBackgroundPayload,
+  UndoHistoryPayload,
   UnregisterToolPayload,
   UpdateSessionMetadataPayload,
 } from './core-api';
@@ -435,6 +435,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).cancel(payload);
   }
 
+  undoHistory({ sessionId, ...payload }: SessionAgentPayload<UndoHistoryPayload>) {
+    return this.sessionApi(sessionId).undoHistory(payload);
+  }
+
   async setModel({
     sessionId,
     ...payload
@@ -504,13 +508,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   getBackgroundOutput({ sessionId, ...payload }: SessionAgentPayload<GetBackgroundOutputPayload>) {
     return this.sessionApi(sessionId).getBackgroundOutput(payload);
-  }
-
-  getBackgroundOutputPath({
-    sessionId,
-    ...payload
-  }: SessionAgentPayload<GetBackgroundOutputPathPayload>) {
-    return this.sessionApi(sessionId).getBackgroundOutputPath(payload);
   }
 
   getContext({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {

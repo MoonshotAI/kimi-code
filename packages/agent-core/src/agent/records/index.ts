@@ -35,8 +35,6 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'turn.cancel':
       agent.turn.cancel(input.turnId);
       return;
-    case 'background.stop':
-      return;
     case 'config.update':
       agent.config.update(input);
       return;
@@ -81,6 +79,9 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
       return;
     case 'context.apply_compaction':
       agent.context.applyCompaction(input);
+      return;
+    case 'context.undo':
+      agent.context.undo(input.count);
       return;
     case 'tools.register_user_tool':
       agent.tools.registerUserTool(input);

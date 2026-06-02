@@ -115,6 +115,8 @@ export type TranscriptEntryKind =
   | 'skill_activation'
   | 'cron';
 
+export type SkillActivationTrigger = 'user-slash' | 'model-tool' | 'nested-skill';
+
 export interface TranscriptEntry {
   id: string;
   kind: TranscriptEntryKind;
@@ -131,6 +133,7 @@ export interface TranscriptEntry {
   skillActivationId?: string;
   skillName?: string;
   skillArgs?: string;
+  skillTrigger?: SkillActivationTrigger;
 }
 
 export type LivePaneMode =

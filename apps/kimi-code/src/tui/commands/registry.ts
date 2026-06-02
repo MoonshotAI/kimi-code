@@ -136,6 +136,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'undo',
+    aliases: [],
+    description: 'Withdraw the last prompt from the transcript',
+    priority: 80,
+    availability: 'idle-only',
+  },
+  {
     name: 'editor',
     aliases: [],
     description: 'Set the external editor for Ctrl-G',

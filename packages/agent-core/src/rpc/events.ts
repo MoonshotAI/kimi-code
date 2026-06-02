@@ -4,7 +4,7 @@ import type { CronJobOrigin, PromptOrigin } from '../agent/context';
 import type { KimiErrorPayload } from '../errors';
 import type { PermissionMode } from '../agent/permission';
 import type { SkillSource } from '../skill';
-import type { BackgroundTaskInfo } from '../tools/background/manager';
+import type { BackgroundTaskInfo } from '../agent/background';
 import type { ToolInputDisplay } from '../tools/display';
 
 export type { ToolInputDisplay } from '../tools/display';
@@ -239,11 +239,6 @@ export interface BackgroundTaskStartedEvent {
   readonly info: BackgroundTaskInfo;
 }
 
-export interface BackgroundTaskUpdatedEvent {
-  readonly type: 'background.task.updated';
-  readonly info: BackgroundTaskInfo;
-}
-
 export interface BackgroundTaskTerminatedEvent {
   readonly type: 'background.task.terminated';
   readonly info: BackgroundTaskInfo;
@@ -305,7 +300,6 @@ export type AgentEvent =
   | CompactionCancelledEvent
   | CompactionCompletedEvent
   | BackgroundTaskStartedEvent
-  | BackgroundTaskUpdatedEvent
   | BackgroundTaskTerminatedEvent
   | CronFiredEvent;
 

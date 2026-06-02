@@ -53,10 +53,6 @@ export interface AgentRecordEvents {
     names: readonly string[];
   };
 
-  'background.stop': {
-    taskId: string;
-  };
-
   'usage.record': {
     model: string;
     usage: TokenUsage;
@@ -71,6 +67,7 @@ export interface AgentRecordEvents {
   'context.append_loop_event': { event: LoopRecordedEvent };
   'context.clear': {};
   'context.apply_compaction': CompactionResult;
+  'context.undo': { count: number };
 
   'tools.update_store': ToolStoreUpdate;
 }
