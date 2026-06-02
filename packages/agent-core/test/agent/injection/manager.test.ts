@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { DynamicInjector } from '../../../src/agent/injection/injector';
 import { InjectionManager } from '../../../src/agent/injection/manager';
+import { TodoListReminderInjector } from '../../../src/agent/injection/todo-list';
 import { testAgent } from '../harness/agent';
 
 class RecordingInjector extends DynamicInjector {
@@ -98,5 +99,16 @@ describe('InjectionManager.onContextCompacted', () => {
 
     expect(recorder.clearCalls).toBe(1);
     expect(recorder.compactionCalls).toBe(1);
+  });
+});
+
+describe('InjectionManager registration', () => {
+  it('registers TodoListReminderInjector in the default injector chain', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    const injectors = (ctx.agent.injection as unknown as { injectors: DynamicInjector[] }).injectors;
+
+    expect(injectors.some((injector) => injector instanceof TodoListReminderInjector)).toBe(true);
   });
 });

@@ -19,6 +19,8 @@ export const KIMI_CODE_DATA_DIR_NAME = '.kimi-code';
 export const KIMI_CODE_LOG_DIR_NAME = 'logs';
 export const KIMI_CODE_UPDATE_DIR_NAME = 'updates';
 export const KIMI_CODE_UPDATE_STATE_FILE_NAME = 'latest.json';
+export const KIMI_CODE_UPDATE_INSTALL_STATE_FILE_NAME = 'install.json';
+export const KIMI_CODE_UPDATE_INSTALL_LOCK_FILE_NAME = 'install.lock';
 export const KIMI_CODE_INPUT_HISTORY_DIR_NAME = 'user-history';
 
 // Managed Kimi auth provider key shared with OAuth/SDK config.

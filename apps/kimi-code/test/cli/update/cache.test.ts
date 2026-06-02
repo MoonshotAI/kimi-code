@@ -4,9 +4,14 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import {
+  emptyUpdateInstallState,
+  readUpdateInstallState,
+  writeUpdateInstallState,
+} from '#/cli/update/install-state';
 import { readUpdateCache, writeUpdateCache } from '#/cli/update/cache';
-import { emptyUpdateCache } from '#/cli/update/types';
-import { getUpdateStateFile } from '#/utils/paths';
+import { emptyUpdateCache, type UpdateInstallState } from '#/cli/update/types';
+import { getUpdateInstallStateFile, getUpdateStateFile } from '#/utils/paths';
 
 const originalEnv = { ...process.env };
 
@@ -58,5 +63,42 @@ describe('update cache', () => {
 
     expect(getUpdateStateFile()).toBe(join(dir, 'updates', 'latest.json'));
     await expect(readUpdateCache()).resolves.toEqual(cache);
+  });
+});
+
+describe('update install state', () => {
+  it('returns an empty install state when the file is missing', async () => {
+    await expect(readUpdateInstallState()).resolves.toEqual(emptyUpdateInstallState());
+  });
+
+  it('falls back to an empty install state when the file is corrupt', async () => {
+    mkdirSync(join(dir, 'updates'), { recursive: true });
+    writeFileSync(getUpdateInstallStateFile(), '{"broken"', 'utf-8');
+    await expect(readUpdateInstallState()).resolves.toEqual(emptyUpdateInstallState());
+  });
+
+  it('writes and reads back the install state from updates/install.json', async () => {
+    const state: UpdateInstallState = {
+      active: {
+        version: '0.5.0',
+        source: 'npm-global',
+        startedAt: '2026-04-23T08:00:00.000Z',
+      },
+      lastFailure: {
+        version: '0.4.0',
+        failedAt: '2026-04-22T08:00:00.000Z',
+        attempts: 1,
+      },
+      lastSuccess: {
+        version: '0.3.0',
+        installedAt: '2026-04-21T08:00:00.000Z',
+        notifiedAt: null,
+      },
+    };
+
+    await writeUpdateInstallState(state);
+
+    expect(getUpdateInstallStateFile()).toBe(join(dir, 'updates', 'install.json'));
+    await expect(readUpdateInstallState()).resolves.toEqual(state);
   });
 });

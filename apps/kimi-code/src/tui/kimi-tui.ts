@@ -171,6 +171,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     version: input.version,
     editorCommand: input.tuiConfig.editorCommand,
     notifications: input.tuiConfig.notifications,
+    upgrade: input.tuiConfig.upgrade,
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
@@ -558,6 +559,7 @@ export class KimiTUI {
     await this.harness.close();
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
     this.uninstallRainbowDance();
+    await this.state.terminal.drainInput();
     this.state.ui.stop();
     if (this.onExit) {
       await this.onExit(exitCode);

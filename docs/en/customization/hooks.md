@@ -74,7 +74,7 @@ If stdout is JSON and `hookSpecificOutput.permissionDecision` is `deny`, the res
 }
 ```
 
-Blocking only applies to events that participate in control flow. For example, `PreToolUse` can block a tool call, and `Stop` can append one continuation message to the current turn. Observer events (such as `PostToolUse`, `PostToolUseFailure`, `PostCompact`, `SubagentStop`, `StopFailure`, and `Notification`) are dispatched asynchronously in a fire-and-forget fashion; their return values are ignored and do not change the main flow. `PreCompact` is invoked with `trigger` (not `triggerBlock`); its return value is likewise completely ignored, and it is not a blockable event.
+Blocking only applies to events that participate in control flow. For example, `PreToolUse` can block a tool call, and `Stop` can append one continuation message to the current turn. Observer events (such as `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `PermissionResult`, `PostCompact`, `SubagentStop`, `StopFailure`, and `Notification`) are dispatched asynchronously in a fire-and-forget fashion; their return values are ignored and do not change the main flow. `PreCompact` is invoked with `trigger` (not `triggerBlock`); its return value is likewise completely ignored, and it is not a blockable event.
 
 When a block takes effect, if the script does not provide a reason through stderr or JSON output, the CLI falls back to `Blocked by <event> hook` as a placeholder reason. A `PreToolUse` block is written back into context as a failed tool result, so the model can choose an alternative based on the reason.
 
@@ -88,6 +88,8 @@ The following events are triggered automatically today:
 | `PreToolUse` | Tool name | `tool_name`, `tool_input`, `tool_call_id` | Fires before permission checks. If blocked, the tool does not run |
 | `PostToolUse` | Tool name | `tool_name`, `tool_input`, `tool_call_id`, `tool_output` | Fires after a successful tool call. `tool_output` is truncated to the first 2000 characters |
 | `PostToolUseFailure` | Tool name | `tool_name`, `tool_input`, `tool_call_id`, `error` | Fires after a tool call fails or is blocked by a hook |
+| `PermissionRequest` | Tool name | `turn_id`, `tool_call_id`, `tool_name`, `action`, `tool_input`, `display` | Fires asynchronously immediately before the CLI waits for user approval |
+| `PermissionResult` | Tool name | `turn_id`, `tool_call_id`, `tool_name`, `action`, `decision`, `scope`, `feedback`, `selected_label`, `error` | Fires asynchronously after the approval request resolves or fails |
 | `Stop` | Empty string | `stop_hook_active` | Fires when the model is about to stop. If blocked, the reason is appended directly to context as a system-triggered user message, and the turn may continue once |
 | `StopFailure` | Error type | `error_type`, `error_message` | Fires after the current turn fails with a non-cancellation error |
 | `SessionStart` | `startup` or `resume` | `source` | Fires after the main agent is created for a new session, or after a historical session is resumed |

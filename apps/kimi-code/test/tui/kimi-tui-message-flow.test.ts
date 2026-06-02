@@ -97,6 +97,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       theme: 'dark',
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
     },
     version: '0.0.0-test',
     workDir: '/tmp/proj-a',
@@ -774,6 +775,7 @@ describe('KimiTUI message flow', () => {
         sessionId: 'ses-1',
         turnId: 1,
         info: {
+          kind: 'process',
           taskId: 'bash-bg123456',
           kind: 'process',
           command: 'npm test',

@@ -14,6 +14,8 @@ import {
   KIMI_CODE_HOME_ENV,
   KIMI_CODE_INPUT_HISTORY_DIR_NAME,
   KIMI_CODE_LOG_DIR_NAME,
+  KIMI_CODE_UPDATE_INSTALL_LOCK_FILE_NAME,
+  KIMI_CODE_UPDATE_INSTALL_STATE_FILE_NAME,
   KIMI_CODE_UPDATE_DIR_NAME,
   KIMI_CODE_UPDATE_STATE_FILE_NAME,
 } from '#/constant/app';
@@ -43,6 +45,20 @@ export function getLogDir(): string {
  */
 export function getUpdateStateFile(): string {
   return join(getDataDir(), KIMI_CODE_UPDATE_DIR_NAME, KIMI_CODE_UPDATE_STATE_FILE_NAME);
+}
+
+/**
+ * Return the update install state file: `<dataDir>/updates/install.json`.
+ */
+export function getUpdateInstallStateFile(): string {
+  return join(getDataDir(), KIMI_CODE_UPDATE_DIR_NAME, KIMI_CODE_UPDATE_INSTALL_STATE_FILE_NAME);
+}
+
+/**
+ * Return the update install lock file: `<dataDir>/updates/install.lock`.
+ */
+export function getUpdateInstallLockFile(): string {
+  return join(getDataDir(), KIMI_CODE_UPDATE_DIR_NAME, KIMI_CODE_UPDATE_INSTALL_LOCK_FILE_NAME);
 }
 
 /**

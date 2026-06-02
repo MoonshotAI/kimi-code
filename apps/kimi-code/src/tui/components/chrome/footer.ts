@@ -64,6 +64,7 @@ const TOOLBAR_TIPS: readonly ToolbarTip[] = [
   { text: '/auto: auto permission mode' },
   { text: '/yolo: toggle yolo' },
   { text: '/help: show commands' },
+  { text: '/dance: rainbow mode, because why not' },
   { text: '/plugins: manage plugins — try the "superpowers" plugin', solo: true, priority: 3 },
   { text: 'ask Kimi to schedule tasks, e.g. "remind me at 5pm"', solo: true, priority: 3 },
 ];
@@ -118,12 +119,6 @@ function tipsForIndex(index: number): { primary: string; pair: string | null } {
   const next = ROTATION[(offset + 1) % n]!;
   if (next.solo || next.text === current.text) return { primary: current.text, pair: null };
   return { primary: current.text, pair: current.text + TIP_SEPARATOR + next.text };
-}
-
-function shortenModel(model: string): string {
-  if (!model) return model;
-  const slash = model.lastIndexOf('/');
-  return slash >= 0 ? model.slice(slash + 1) : model;
 }
 
 function modelDisplayName(state: AppState): string {
@@ -245,7 +240,7 @@ export class FooterComponent implements Component {
     if (state.permissionMode === 'yolo') left.push(chalk.hex(colors.warning).bold('yolo'));
     if (state.planMode) left.push(chalk.hex(colors.primary).bold('plan'));
 
-    const model = shortenModel(modelDisplayName(state));
+    const model = modelDisplayName(state);
     if (model) {
       const thinkingLabel = state.thinking ? ' thinking' : '';
       const modelLabel = `${model}${thinkingLabel}`;

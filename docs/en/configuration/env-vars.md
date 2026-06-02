@@ -93,8 +93,8 @@ Set `KIMI_MODEL_ADAPTIVE_THINKING=true` when a custom-named Anthropic-compatible
 
 ```sh
 export KIMI_MODEL_NAME="kimi-for-coding"
-export KIMI_MODEL_BASE_URL="https://api-staff.msh.team/v1"
-export KIMI_MODEL_API_KEY="$MOONSHOT_STAFF_KEY"
+export KIMI_MODEL_BASE_URL="https://api.example.com/v1"
+export KIMI_MODEL_API_KEY="YOUR_API_KEY"
 export KIMI_MODEL_MAX_CONTEXT_SIZE="262144"
 export KIMI_MODEL_CAPABILITIES="image_in,thinking"
 kimi

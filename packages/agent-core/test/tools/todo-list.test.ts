@@ -9,6 +9,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  TODO_LIST_TOOL_NAME,
+  TODO_STORE_KEY,
   TodoListInputSchema,
   TodoListTool,
   type TodoItem,
@@ -25,9 +27,9 @@ function makeStore(initial: readonly TodoItem[] = []): {
   let todos = [...initial];
   return {
     store: {
-      get: (key) => (key === 'todo' ? todos : undefined),
+      get: (key) => (key === TODO_STORE_KEY ? todos : undefined),
       set: (key, value) => {
-        if (key === 'todo') {
+        if (key === TODO_STORE_KEY) {
           todos = [...(value as readonly TodoItem[])];
         }
       },
@@ -48,7 +50,9 @@ describe('TodoListTool', () => {
   it('has name, description, and parameters from the current schema', () => {
     const { tool } = makeTool();
 
-    expect(tool.name).toBe('TodoList');
+    expect(TODO_LIST_TOOL_NAME).toBe('TodoList');
+    expect(TODO_STORE_KEY).toBe('todo');
+    expect(tool.name).toBe(TODO_LIST_TOOL_NAME);
     expect(tool.description.length).toBeGreaterThan(0);
     expect(TodoListInputSchema.safeParse({}).success).toBe(true);
     expect(
@@ -74,6 +78,18 @@ describe('TodoListTool', () => {
     expect(description).toMatch(/query mode/i);
     // (3) when stuck, tell the user instead of repeatedly re-ordering todos.
     expect(description).toMatch(/tell the user/i);
+  });
+
+  it('description encourages proactive progress updates without allowing churn', () => {
+    const { tool } = makeTool();
+    const { description } = tool;
+
+    expect(description).toMatch(/proactively and often/i);
+    expect(description).toMatch(/immediately after finishing/i);
+    expect(description).toMatch(/exactly one/i);
+    expect(description).toMatch(/in_progress/i);
+    expect(description).toMatch(/tests are failing/i);
+    expect(description).toContain('**Avoid churn:**');
   });
 
   it('query mode renders the current list without mutating it', async () => {
@@ -111,6 +127,10 @@ describe('TodoListTool', () => {
     expect(result.output).toContain('Todo list updated');
     expect(result.output).toContain('[pending] first');
     expect(result.output).toContain('[in_progress] second');
+    expect(result.output).toContain(
+      'Ensure that you continue to use the todo list to track progress.',
+    );
+    expect(result.output).toContain('exactly one task in_progress');
     expect(getTodos()).toEqual([
       { title: 'first', status: 'pending' },
       { title: 'second', status: 'in_progress' },
@@ -144,6 +164,19 @@ describe('TodoListTool', () => {
 
     expect(result).toMatchObject({ isError: false, output: 'Todo list cleared.' });
     expect(getTodos()).toEqual([]);
+  });
+
+  it('clear mode does not add the progress-tracking reminder', async () => {
+    const { tool } = makeTool([{ title: 'x', status: 'pending' }]);
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'call_1',
+      args: { todos: [] },
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: false, output: 'Todo list cleared.' });
   });
 
   it('resolveExecution description reflects the mode', () => {

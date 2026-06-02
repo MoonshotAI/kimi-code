@@ -230,15 +230,20 @@ export function tryHandleDanceCommand(host: SlashCommandHost, parsed: ParsedSlas
   if (parsed.name !== 'dance') return false;
   if (currentDanceController === undefined) return false;
 
+  // The status line dims the whole message, which buried the command in the
+  // hint. Paint just the command in the brand color (bold) so it reads as a
+  // command; chalk nesting resumes the dim run right after it.
+  const cmd = (text: string): string => chalk.hex(host.state.theme.colors.primary).bold(text);
+
   const sub = parsed.args.trim().toLowerCase();
   if (sub === 'off') {
     currentDanceController.stop();
   } else if (sub === 'on') {
     currentDanceController.start({ hold: true });
-    host.showStatus('Dancing — use /dance off to turn it off.');
+    host.showStatus(`Dancing — use ${cmd('/dance off')} to turn it off.`);
   } else {
     currentDanceController.start({ hold: false });
-    host.showStatus('Use /dance on to keep the rainbow on.');
+    host.showStatus(`Use ${cmd('/dance on')} to keep the rainbow on.`);
   }
   return true;
 }

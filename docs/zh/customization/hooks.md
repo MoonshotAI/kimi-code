@@ -74,7 +74,7 @@ Hook 命令的退出码和 stdout 会被解释为以下结果：
 }
 ```
 
-阻断只对支持控制流的事件生效。例如 `PreToolUse` 可以阻断工具调用，`Stop` 可以让当前轮次追加一次继续消息。观察型事件（例如 `PostToolUse`、`PostToolUseFailure`、`PostCompact`、`SubagentStop`、`StopFailure`、`Notification`）以「即发即忘（fire-and-forget）」方式异步触发，返回值被忽略，不会改变主流程。`PreCompact` 使用 `trigger`（而非 `triggerBlock`）调用，返回值同样被完全忽略，不属于可阻断事件。
+阻断只对支持控制流的事件生效。例如 `PreToolUse` 可以阻断工具调用，`Stop` 可以让当前轮次追加一次继续消息。观察型事件（例如 `PostToolUse`、`PostToolUseFailure`、`PermissionRequest`、`PermissionResult`、`PostCompact`、`SubagentStop`、`StopFailure`、`Notification`）以「即发即忘（fire-and-forget）」方式异步触发，返回值被忽略，不会改变主流程。`PreCompact` 使用 `trigger`（而非 `triggerBlock`）调用，返回值同样被完全忽略，不属于可阻断事件。
 
 阻断生效时，如果脚本未通过 stderr 或 JSON 输出提供原因，CLI 会回退到 `Blocked by <event> hook` 作为占位原因。`PreToolUse` 阻断会作为工具失败结果写回上下文，模型可以根据原因选择替代方案。
 
@@ -88,6 +88,8 @@ Hook 命令的退出码和 stdout 会被解释为以下结果：
 | `PreToolUse` | 工具名 | `tool_name`、`tool_input`、`tool_call_id` | 在权限检查前触发；阻断后工具不会执行 |
 | `PostToolUse` | 工具名 | `tool_name`、`tool_input`、`tool_call_id`、`tool_output` | 工具成功后触发；`tool_output` 被截断至前 2000 个字符 |
 | `PostToolUseFailure` | 工具名 | `tool_name`、`tool_input`、`tool_call_id`、`error` | 工具失败或被 hook 阻断后触发 |
+| `PermissionRequest` | 工具名 | `turn_id`、`tool_call_id`、`tool_name`、`action`、`tool_input`、`display` | CLI 即将等待用户审批前异步触发 |
+| `PermissionResult` | 工具名 | `turn_id`、`tool_call_id`、`tool_name`、`action`、`decision`、`scope`、`feedback`、`selected_label`、`error` | 审批请求结束或失败后异步触发 |
 | `Stop` | 空字符串 | `stop_hook_active` | 模型准备停止时触发；阻断后会把原因直接作为系统触发的 User 消息追加进上下文，并最多继续一次 |
 | `StopFailure` | 错误类型 | `error_type`、`error_message` | 当前轮次因非取消错误失败后触发 |
 | `SessionStart` | `startup` 或 `resume` | `source` | 新会话主 Agent 创建后，或历史会话恢复完成后触发 |

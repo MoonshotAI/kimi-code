@@ -46,6 +46,8 @@ ANTHROPIC_BASE_URL = "https://my-proxy.example.com"
 通过 `/login` 登录的 Kimi Code OAuth 供应商（托管账号）在 `/provider` 中会被故意隐藏；该账号请通过 `/login` 与 `/logout` 管理。
 :::
 
+如果需要脚本化或在非交互环境下完成相同操作，可以通过 shell 中的 [`kimi provider`](../reference/kimi-command.md#kimi-provider) 子命令导入同样的自定义 registry。
+
 ## `kimi`
 
 `kimi` 通过 OpenAI 兼容协议对接 Moonshot AI。
