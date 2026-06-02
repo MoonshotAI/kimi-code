@@ -549,12 +549,8 @@ function goalCompletionFromSystemReminder(message: ContextMessage): string | nul
     return null;
   }
   const text = contentPartsToText(message.content);
-  const open = '<system-reminder>\n';
-  const close = '\n</system-reminder>';
-  if (text.startsWith(open) && text.endsWith(close)) {
-    return text.slice(open.length, -close.length);
-  }
-  return text;
+  const match = /^<system-reminder>\n([\s\S]*)\n<\/system-reminder>$/.exec(text);
+  return match?.[1] ?? text;
 }
 
 function extractCronPrompt(text: string): string {
