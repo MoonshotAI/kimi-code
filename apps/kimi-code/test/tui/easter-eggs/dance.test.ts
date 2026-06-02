@@ -12,6 +12,7 @@ import {
   tryHandleDanceCommand,
 } from '#/tui/easter-eggs/dance';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
+import { darkColors } from '#/tui/theme/colors';
 
 const TRUECOLOR_PATTERN = /\[38;2;(\d+);(\d+);(\d+)m/g;
 
@@ -167,6 +168,7 @@ describe('installRainbowDance', () => {
     const dispose = installRainbowDance(requestRender);
     const host = {
       showStatus: vi.fn(),
+      state: { theme: { colors: darkColors } },
     } as unknown as SlashCommandHost;
 
     tryHandleDanceCommand(host, { name: 'dance', args: 'on' });
@@ -200,6 +202,7 @@ function makeHost(): { host: SlashCommandHost; calls: DanceCall[]; status: strin
   setRainbowDance(rainbowDance);
   const host = {
     showStatus: (msg: string) => status.push(msg),
+    state: { theme: { colors: darkColors } },
   } as unknown as SlashCommandHost;
   return { host, calls, status };
 }
