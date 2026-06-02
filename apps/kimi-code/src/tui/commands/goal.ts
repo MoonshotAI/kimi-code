@@ -197,8 +197,10 @@ async function startGoal(
 }
 
 async function pauseGoal(host: SlashCommandHost): Promise<void> {
+  const session = host.requireSession();
   try {
-    await host.requireSession().pauseGoal();
+    await session.pauseGoal();
+    if (isStreaming(host)) await session.cancel();
   } catch (error) {
     if (isKimiError(error) && error.code === ErrorCodes.GOAL_NOT_FOUND) {
       host.showStatus('No goal to pause.');
@@ -207,11 +209,16 @@ async function pauseGoal(host: SlashCommandHost): Promise<void> {
     host.showError(formatErrorMessage(error));
     return;
   }
-  if (isStreaming(host)) host.cancelInFlight?.();
+  host.track('goal_pause');
   host.showStatus('Goal paused. Use `/goal resume` to continue.');
 }
 
 async function resumeGoal(host: SlashCommandHost): Promise<void> {
+  if (host.state.appState.model.trim().length === 0 || host.session === undefined) {
+    host.showError(LLM_NOT_SET_MESSAGE);
+    return;
+  }
+
   try {
     await host.requireSession().resumeGoal();
   } catch (error) {
@@ -222,13 +229,16 @@ async function resumeGoal(host: SlashCommandHost): Promise<void> {
     host.showError(formatErrorMessage(error));
     return;
   }
+  host.track('goal_resume');
   host.showStatus('Goal resumed.');
   host.sendNormalUserInput(RESUME_GOAL_INPUT);
 }
 
 async function cancelGoal(host: SlashCommandHost): Promise<void> {
+  const session = host.requireSession();
   try {
-    await host.requireSession().cancelGoal();
+    await session.cancelGoal();
+    if (isStreaming(host)) await session.cancel();
   } catch (error) {
     if (isKimiError(error) && error.code === ErrorCodes.GOAL_NOT_FOUND) {
       host.showStatus('No goal to cancel.');
@@ -237,12 +247,13 @@ async function cancelGoal(host: SlashCommandHost): Promise<void> {
     host.showError(formatErrorMessage(error));
     return;
   }
-  if (isStreaming(host)) host.cancelInFlight?.();
+  host.track('goal_cancel');
   host.showStatus('Goal cancelled.');
 }
 
 async function showGoalStatus(host: SlashCommandHost): Promise<void> {
   const { goal } = await host.requireSession().getGoal();
+  host.track('goal_status', { status: goal?.status ?? 'none' });
   if (goal === null) {
     host.showStatus('No goal set. Start one with `/goal <objective>`.');
     return;

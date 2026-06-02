@@ -178,13 +178,17 @@ export interface BeforeStepResult {
   readonly reason?: string | undefined;
 }
 
+export interface AfterStepResult {
+  readonly stopTurn?: boolean | undefined;
+}
+
 export interface ShouldContinueAfterStopResult {
   readonly continue: boolean;
 }
 
 export type BeforeStepHook = (ctx: LoopStepHookContext) => Promise<BeforeStepResult | undefined>;
 
-export type AfterStepHook = (ctx: LoopAfterStepContext) => Promise<void>;
+export type AfterStepHook = (ctx: LoopAfterStepContext) => Promise<AfterStepResult | void>;
 
 export type PrepareToolExecutionHook = (
   ctx: ToolExecutionHookContext,

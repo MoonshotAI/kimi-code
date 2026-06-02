@@ -34,7 +34,7 @@ export interface ExecuteLoopStepDeps {
   readonly log?: Logger | undefined;
   readonly currentStep: number;
   readonly maxRetryAttempts?: number;
-  readonly recordUsage: (usage: TokenUsage) => void;
+  readonly recordUsage: (usage: TokenUsage) => void | Promise<void>;
 }
 
 export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
@@ -115,7 +115,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     log,
   });
   const usage = response.usage;
-  recordUsage(usage);
+  await recordUsage(usage);
   const stopReason = deriveStepStopReason(response);
 
   // Execute tools only when the normalized response shape represents a tool
@@ -144,9 +144,10 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     ...stepEndProviderDiagnostics(response, effectiveStopReason),
   });
 
+  let stopTurnAfterStep = false;
   if (hooks?.afterStep !== undefined) {
     try {
-      await hooks.afterStep({
+      const afterStep = await hooks.afterStep({
         turnId,
         stepNumber: currentStep,
         usage,
@@ -154,12 +155,17 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
         signal,
         llm,
       });
+      stopTurnAfterStep = afterStep?.stopTurn === true;
     } catch {
       // The step is already sealed; observer hooks cannot change the result.
     }
   }
 
-  return { usage, stopReason: effectiveStopReason };
+  return {
+    usage,
+    stopReason:
+      stopTurnAfterStep && effectiveStopReason === 'tool_use' ? 'end_turn' : effectiveStopReason,
+  };
 }
 
 function deriveStepStopReason(response: LLMChatResponse): LoopStepStopReason {

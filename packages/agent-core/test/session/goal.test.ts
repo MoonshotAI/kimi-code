@@ -18,6 +18,8 @@ import type { AgentRecord } from '../../src/agent/records';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { testKaos } from '../fixtures/test-kaos';
 
+const GOAL_FLAG = 'KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND';
+
 /** An in-memory store backing plus a controllable lazy audit sink. */
 function makeAuditStore(opts: { sinkReady?: boolean } = {}) {
   let state: SessionGoalState | undefined;
@@ -638,6 +640,16 @@ describe('SessionAPIImpl.updateSessionMetadata goal reservation', () => {
     expect(session.metadata.custom['theme']).toBe('dark');
   });
 
+  it('creates missing custom metadata before writing a goal', async () => {
+    const sessionDir = await makeTempDir();
+    const session = makeSession(sessionDir);
+    (session.metadata as { custom?: Record<string, unknown> }).custom = undefined;
+
+    await session.goals.createGoal({ objective: 'works on old metadata' });
+
+    expect(session.metadata.custom['goal']?.objective).toBe('works on old metadata');
+  });
+
   it('rejects a patch that writes custom.goal directly', async () => {
     const sessionDir = await makeTempDir();
     const session = makeSession(sessionDir);
@@ -646,6 +658,53 @@ describe('SessionAPIImpl.updateSessionMetadata goal reservation', () => {
     await expect(
       api.updateSessionMetadata({ metadata: { custom: { goal: { objective: 'hax' } } } } as never),
     ).rejects.toMatchObject({ code: ErrorCodes.GOAL_METADATA_RESERVED });
+  });
+});
+
+describe('SessionAPIImpl goal flag gating', () => {
+  const originalGoalFlag = process.env[GOAL_FLAG];
+
+  afterEach(() => {
+    if (originalGoalFlag === undefined) delete process.env[GOAL_FLAG];
+    else process.env[GOAL_FLAG] = originalGoalFlag;
+  });
+
+  function makeSession(sessionDir: string): Session {
+    return new Session({
+      id: 'goal-rpc-flag',
+      kaos: testKaos.withCwd(sessionDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(sessionDir, 'missing')] },
+    });
+  }
+
+  it('rejects SDK goal creation when the flag is disabled', async () => {
+    delete process.env[GOAL_FLAG];
+    const sessionDir = await makeTempDir();
+    const session = makeSession(sessionDir);
+    const api = new SessionAPIImpl(session);
+
+    let error: unknown;
+    try {
+      api.createGoal({ objective: 'work' });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({ code: ErrorCodes.NOT_IMPLEMENTED });
+    expect(session.goals.getGoal().goal).toBeNull();
+  });
+
+  it('allows SDK goal creation when the flag is enabled', async () => {
+    process.env[GOAL_FLAG] = 'true';
+    const sessionDir = await makeTempDir();
+    const session = makeSession(sessionDir);
+    const api = new SessionAPIImpl(session);
+
+    const snapshot = await api.createGoal({ objective: 'work' });
+
+    expect(snapshot.objective).toBe('work');
+    expect(api.getGoal({}).goal?.status).toBe('active');
   });
 });
 

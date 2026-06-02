@@ -134,6 +134,7 @@ export class Session {
       sessionId: options.id,
       readState: () => this.metadata.custom?.['goal'] as SessionGoalState | undefined,
       writeState: (state) => {
+        this.metadata.custom ??= {};
         if (state === undefined) {
           delete this.metadata.custom['goal'];
         } else {

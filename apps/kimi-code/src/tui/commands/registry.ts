@@ -127,8 +127,8 @@ export const BUILTIN_SLASH_COMMANDS = [
     // status / pause / cancel are always available; creation, replacement, and
     // resume start (or restart) a turn and so are idle-only.
     availability: (args) => {
-      const first = args.trim().split(/\s+/)[0] ?? '';
-      return first === '' || first === 'status' || first === 'pause' || first === 'cancel'
+      const trimmed = args.trim();
+      return trimmed === '' || trimmed === 'status' || trimmed === 'pause' || trimmed === 'cancel'
         ? 'always'
         : 'idle-only';
     },

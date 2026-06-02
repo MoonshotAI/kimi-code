@@ -7,6 +7,7 @@
 
 export type {
   AfterStepHook,
+  AfterStepResult,
   BeforeStepResult,
   BeforeStepHook,
   LoopHooks,

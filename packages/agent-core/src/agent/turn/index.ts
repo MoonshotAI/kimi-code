@@ -54,6 +54,12 @@ interface BufferedSteer {
 export interface TurnEndResult {
   readonly event: TurnEndedEvent;
   readonly stopReason?: LoopTurnStopReason;
+  readonly blockedByUserPromptHook?: boolean;
+}
+
+interface PromptHookEndResult {
+  readonly event: TurnEndedEvent;
+  readonly blocked: boolean;
 }
 
 const LLM_NOT_SET_MESSAGE = 'LLM not set, send "/login" to login';
@@ -69,14 +75,17 @@ const GOAL_RATE_LIMIT_PAUSE_REASON = 'Paused after provider rate limit';
  */
 const GOAL_CONTINUATION_PROMPT = [
   'Continue working toward the active goal.',
-  'First, briefly self-audit: weigh the objective and any completion criteria against the work',
-  'done so far. Goal mode is iterative: do one coherent slice of work, then reassess. Call',
-  'UpdateGoal with `complete` only when all required work is done, any stated validation has',
-  'passed, and there is no useful next action. Do not mark complete after only producing a plan,',
-  'summary, first pass, or partial result. If an external condition or required user input prevents',
-  'progress, or the objective cannot be completed as stated, call UpdateGoal with `blocked`.',
-  'Otherwise keep going — use the existing conversation context and your tools, and do not ask the',
-  'user for input unless a real blocker prevents progress.',
+  'Keep the self-audit brief. Do not explore unrelated interpretations once the goal can be',
+  'decided. If the objective is simple, already answered, impossible, unsafe, or contradictory,',
+  'do not run another goal turn. Explain briefly if useful, then call UpdateGoal with `complete`',
+  'or `blocked` in the same turn. Otherwise, weigh the objective and any completion criteria',
+  'against the work done so far. Goal mode is iterative: do one coherent slice of work, then',
+  'reassess. Call UpdateGoal with `complete` only when all required work is done, any stated',
+  'validation has passed, and there is no useful next action. Do not mark complete after only',
+  'producing a plan, summary, first pass, or partial result. If an external condition or required',
+  'user input prevents progress, or the objective cannot be completed as stated, call UpdateGoal',
+  'with `blocked`. Otherwise keep going — use the existing conversation context and your tools,',
+  'and do not ask the user for input unless a real blocker prevents progress.',
 ].join(' ');
 
 export class TurnFlow {
@@ -311,6 +320,13 @@ export class TurnFlow {
     let turnInput = input;
     let turnOrigin = origin;
     while (true) {
+      const goalBeforeTurn = this.agent.goals?.getGoal().goal ?? null;
+      if (goalBeforeTurn?.status === 'active' && goalBeforeTurn.budget.overBudget) {
+        await this.agent.goals?.markBlocked({ reason: 'A configured budget was reached' });
+        const ended = await this.endGoalTurnWithoutModel(turnId, turnInput, turnOrigin);
+        return { event: ended };
+      }
+
       // Count the turn about to run (no-op if the goal isn't active), so the
       // completion stats include the turn in which the model reports `complete`.
       // Wall-clock is tracked live by the store (anchored while `active`), so the
@@ -333,6 +349,10 @@ export class TurnFlow {
         });
         return end;
       }
+      if (end.blockedByUserPromptHook === true) {
+        await this.agent.goals?.markBlocked({ reason: 'Blocked by UserPromptSubmit hook' });
+        return end;
+      }
 
       // The model decides via UpdateGoal: a cleared record means `complete`;
       // anything non-active means it stopped (blocked / paused). Only a still
@@ -352,6 +372,20 @@ export class TurnFlow {
       turnInput = [{ type: 'text', text: GOAL_CONTINUATION_PROMPT }];
       turnOrigin = GOAL_CONTINUATION_ORIGIN;
     }
+  }
+
+  private async endGoalTurnWithoutModel(
+    turnId: number,
+    input: readonly ContentPart[],
+    origin: PromptOrigin,
+  ): Promise<TurnEndedEvent> {
+    this.agent.usage.beginTurn();
+    this.agent.emitEvent({ type: 'turn.started', turnId, origin });
+    this.agent.context.appendUserMessage(input, origin);
+    const ended: TurnEndedEvent = { type: 'turn.ended', turnId, reason: 'completed' };
+    this.agent.usage.endTurn();
+    this.agent.emitEvent(ended);
+    return ended;
   }
 
   /**
@@ -381,6 +415,7 @@ export class TurnFlow {
 
     const startedAt = Date.now();
     let ended: TurnEndedEvent;
+    let blockedByUserPromptHook = false;
     let completedStopReason: LoopTurnStopReason | undefined;
     // Emitted after turn.ended (preserving prior ordering), so the error event
     // sits just past the turn.ended boundary that consumers watch for.
@@ -388,7 +423,8 @@ export class TurnFlow {
     try {
       const promptHookEnded = await this.applyUserPromptHook(turnId, input, origin, signal);
       if (promptHookEnded !== undefined) {
-        ended = promptHookEnded;
+        ended = promptHookEnded.event;
+        blockedByUserPromptHook = promptHookEnded.blocked;
       } else {
         const stopReason = await this.runStepLoop(turnId, signal);
         completedStopReason = stopReason;
@@ -450,7 +486,7 @@ export class TurnFlow {
     this.currentStepByTurn.delete(turnId);
     this.interruptedTelemetryTurnIds.delete(turnId);
     this.stepFailureByTurn.delete(turnId);
-    return { event: ended, stopReason: completedStopReason };
+    return { event: ended, stopReason: completedStopReason, blockedByUserPromptHook };
   }
 
   private async applyUserPromptHook(
@@ -458,7 +494,7 @@ export class TurnFlow {
     input: readonly ContentPart[],
     origin: PromptOrigin,
     signal: AbortSignal,
-  ): Promise<TurnEndedEvent | undefined> {
+  ): Promise<PromptHookEndResult | undefined> {
     if (origin.kind !== 'user') return undefined;
     signal.throwIfAborted();
     const promptHookResults = await this.agent.hooks?.trigger('UserPromptSubmit', {
@@ -484,7 +520,7 @@ export class TurnFlow {
       });
       // The terminal turn.ended is emitted by runOneTurn (synchronously with the
       // activeTurn clear), not here, so the session is idle the moment it fires.
-      return { type: 'turn.ended', turnId, reason: 'completed' };
+      return { event: { type: 'turn.ended', turnId, reason: 'completed' }, blocked: true };
     }
 
     const hookResult = renderUserPromptHookResult(promptHookResults);
@@ -515,6 +551,7 @@ export class TurnFlow {
       signal.throwIfAborted();
       const model = this.agent.config.model;
       const loopControl = this.agent.kimiConfig?.loopControl;
+      let stopForGoalBudget = false;
       try {
         const result = await runTurn({
           turnId: String(turnId),
@@ -526,6 +563,21 @@ export class TurnFlow {
           log: this.agent.log,
           maxSteps: loopControl?.maxStepsPerTurn,
           maxRetryAttempts: loopControl?.maxRetriesPerStep,
+          recordStepUsage: async (usage) => {
+            const activeGoal = this.agent.goals?.getActiveGoal();
+            if (activeGoal === undefined || activeGoal === null) return;
+            try {
+              const snapshot = await this.agent.goals?.recordTokenUsage({
+                tokenDelta: grandTotal(usage),
+                agentId: this.agentId,
+                agentType: this.agent.type,
+                source: 'agent_step',
+              });
+              stopForGoalBudget = snapshot?.budget.overBudget === true;
+            } catch (error) {
+              this.agent.log.warn('goal token accounting failed', { error });
+            }
+          },
           hooks: {
             beforeStep: async ({ signal: stepSignal }) => {
               this.flushSteerBuffer();
@@ -537,17 +589,9 @@ export class TurnFlow {
             },
             afterStep: async ({ usage }) => {
               this.agent.usage.record(model, usage, 'turn');
-              // Goal token budgets count every session agent step.
-              if (this.agent.goals !== undefined && this.agent.goals.getActiveGoal() !== null) {
-                await this.agent.goals.recordTokenUsage({
-                  tokenDelta: grandTotal(usage),
-                  agentId: this.agentId,
-                  agentType: this.agent.type,
-                  source: 'agent_step',
-                });
-              }
               await this.agent.fullCompaction.afterStep();
               deduper.endStep();
+              return stopForGoalBudget ? { stopTurn: true } : undefined;
             },
             // oxlint-disable-next-line no-loop-func -- stop hook continuation state is scoped to this turn.
             shouldContinueAfterStop: async (ctx) => {

@@ -61,6 +61,7 @@ function makeHost(
     pauseGoal: vi.fn(async () => fakeSnapshot()),
     resumeGoal: vi.fn(async () => fakeSnapshot()),
     cancelGoal: vi.fn(async () => fakeSnapshot()),
+    cancel: vi.fn(async () => {}),
   };
   const hasSession = overrides.hasSession ?? true;
   const transcriptContainer = { addChild: vi.fn() };
@@ -170,6 +171,7 @@ describe('handleGoalCommand', () => {
   it('/goal calls getGoal and does not send input', async () => {
     await handleGoalCommand(host, '');
     expect(session.getGoal).toHaveBeenCalledOnce();
+    expect(host.track).toHaveBeenCalledWith('goal_status', { status: 'none' });
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
@@ -184,6 +186,7 @@ describe('handleGoalCommand', () => {
     expect(session.createGoal).toHaveBeenCalledWith(
       expect.objectContaining({ objective: 'Ship feature X', replace: false }),
     );
+    expect(host.track).toHaveBeenCalledWith('goal_create', { replace: false });
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
     expect(host.sendNormalUserInput).not.toHaveBeenCalledWith('/goal Ship feature X');
   });
@@ -311,19 +314,36 @@ describe('handleGoalCommand', () => {
   it('/goal pause calls pauseGoal and does not send input', async () => {
     await handleGoalCommand(host, 'pause');
     expect(session.pauseGoal).toHaveBeenCalledOnce();
+    expect(host.track).toHaveBeenCalledWith('goal_pause');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+  });
+
+  it('/goal pause cancels an active stream', async () => {
+    const { host: streamingHost, session: s } = makeHost({ streaming: true });
+    await handleGoalCommand(streamingHost, 'pause');
+    expect(s.pauseGoal).toHaveBeenCalledOnce();
+    expect(s.cancel).toHaveBeenCalledOnce();
   });
 
   it('/goal resume calls resumeGoal and sends a resume input', async () => {
     await handleGoalCommand(host, 'resume');
     expect(session.resumeGoal).toHaveBeenCalledOnce();
+    expect(host.track).toHaveBeenCalledWith('goal_resume');
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('Resume the active goal.');
   });
 
   it('/goal cancel calls cancelGoal and does not send input', async () => {
     await handleGoalCommand(host, 'cancel');
     expect(session.cancelGoal).toHaveBeenCalledOnce();
+    expect(host.track).toHaveBeenCalledWith('goal_cancel');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+  });
+
+  it('/goal cancel cancels an active stream', async () => {
+    const { host: streamingHost, session: s } = makeHost({ streaming: true });
+    await handleGoalCommand(streamingHost, 'cancel');
+    expect(s.cancelGoal).toHaveBeenCalledOnce();
+    expect(s.cancel).toHaveBeenCalledOnce();
   });
 
   // No-goal control commands all read as calm status messages, never red errors.
@@ -356,6 +376,14 @@ describe('handleGoalCommand', () => {
     expect(s.pauseGoal).toHaveBeenCalled();
     expect(s.cancelGoal).toHaveBeenCalled();
     expect(noModelHost.showError).not.toHaveBeenCalled();
+  });
+
+  it('resume without a configured model does not activate the goal', async () => {
+    const { host: noModelHost, session: s } = makeHost({ model: '' });
+    await handleGoalCommand(noModelHost, 'resume');
+    expect(noModelHost.showError).toHaveBeenCalled();
+    expect(s.resumeGoal).not.toHaveBeenCalled();
+    expect(noModelHost.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
   it('creation without a configured model shows LLM_NOT_SET_MESSAGE', async () => {

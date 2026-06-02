@@ -31,6 +31,7 @@ import type {
 import type { PromisableMethods } from '#/utils/types';
 
 import type { Session, SessionMeta } from '.';
+import { flags } from '../flags';
 import {
   promptMetadataTextFromPayload,
   promptMetadataTextFromSkill,
@@ -110,23 +111,33 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
   // --- Goal lifecycle (delegates to the session goal store) -------------
 
   createGoal(payload: CreateGoalPayload) {
+    this.assertGoalCommandEnabled();
     return this.session.goals.createGoal({ ...payload, actor: 'user' });
   }
 
   getGoal(_payload: EmptyPayload) {
+    this.assertGoalCommandEnabled();
     return this.session.goals.getGoal();
   }
 
   pauseGoal(payload: GoalControlPayload) {
+    this.assertGoalCommandEnabled();
     return this.session.goals.pauseGoal({ actor: 'user', reason: payload.reason });
   }
 
   resumeGoal(payload: GoalControlPayload) {
+    this.assertGoalCommandEnabled();
     return this.session.goals.resumeGoal({ actor: 'user', reason: payload.reason });
   }
 
   cancelGoal(payload: GoalControlPayload) {
+    this.assertGoalCommandEnabled();
     return this.session.goals.cancelGoal({ actor: 'user', reason: payload.reason });
+  }
+
+  private assertGoalCommandEnabled(): void {
+    if (flags.enabled('goal-command')) return;
+    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'Goal command is disabled');
   }
 
   async prompt({ agentId, ...payload }: AgentScopedPayload<PromptPayload>) {

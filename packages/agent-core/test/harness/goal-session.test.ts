@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { AgentOptions } from '../../src/agent';
+import type { HookDef } from '../../src/session/hooks';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
@@ -69,11 +70,20 @@ function createSessionRpc(events: Array<Record<string, unknown>>): SDKSessionRPC
   } as unknown as SDKSessionRPC;
 }
 
+async function readWireRecords(sessionDir: string): Promise<Array<Record<string, unknown>>> {
+  const wire = await readFile(join(sessionDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
+  return wire
+    .split('\n')
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
 async function setupSession(
   sessionDir: string,
   events: Array<Record<string, unknown>>,
   tools: readonly string[],
   generate?: NonNullable<AgentOptions['generate']>,
+  hooks?: readonly HookDef[],
 ) {
   const scripted = createScriptedGenerate();
   const session = track(
@@ -84,6 +94,7 @@ async function setupSession(
       rpc: createSessionRpc(events),
       skills: { explicitDirs: [join(sessionDir, 'missing')] },
       providerManager: testProviderManager(),
+      hooks,
     }),
   );
   const { agent } = await session.createAgent({ type: 'main', generate: generate ?? scripted.generate }, goalProfile(tools));
@@ -126,6 +137,12 @@ describe('goal session end-to-end', () => {
     const firstHistory = JSON.stringify(scripted.calls[0]?.history ?? []);
     expect(firstHistory).toContain('<untrusted_objective>');
 
+    // Continuation turns should nudge the model to decide obvious terminal cases
+    // instead of spending another round over-interpreting the goal.
+    const continuationHistory = JSON.stringify(scripted.calls[1]?.history ?? []);
+    expect(continuationHistory).toContain('Keep the self-audit brief');
+    expect(continuationHistory).toContain('do not run another goal turn');
+
     // After UpdateGoal runs, Anthropic-compatible providers require the next
     // request to end with a user message, not an assistant prefill.
     const afterUpdateGoalHistory = scripted.calls[2]?.history ?? [];
@@ -142,17 +159,20 @@ describe('goal session end-to-end', () => {
     expect(api.getGoal({}).goal).toBeNull();
 
     // Audit trail records the whole run incl. completion — and no evaluator record.
-    const wire = await readFile(join(sessionDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
-    const types = new Set(
-      wire
-        .split('\n')
-        .filter((l) => l.trim().length > 0)
-        .map((l) => (JSON.parse(l) as { type: string }).type),
-    );
+    const records = await readWireRecords(sessionDir);
+    const types = new Set(records.map((record) => record['type']));
     for (const t of ['goal.create', 'goal.account_usage', 'goal.continuation', 'goal.update', 'goal.clear']) {
       expect(types.has(t)).toBe(true);
     }
     expect(types.has('goal.evaluate')).toBe(false);
+    const usageRecords = records.filter((record) => record['type'] === 'goal.account_usage');
+    expect(usageRecords).toHaveLength(2);
+    const finalUsage = usageRecords.at(-1)?.['tokensUsed'];
+    expect(typeof finalUsage).toBe('number');
+    const completion = records.find(
+      (record) => record['type'] === 'goal.update' && record['status'] === 'complete',
+    );
+    expect(completion?.['tokensUsed']).toBe(finalUsage);
   });
 
   it('blocks at a turn budget (no wrap-up segment)', async () => {
@@ -220,6 +240,78 @@ describe('goal session end-to-end', () => {
     const goal = api.getGoal({}).goal;
     expect(goal?.status).toBe('paused');
     expect(goal?.terminalReason).toBe('Paused after provider rate limit');
+  });
+
+  it('blocks the goal when the initial prompt hook blocks the objective', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent, scripted } = await setupSession(
+      sessionDir,
+      events,
+      ['GetGoal', 'UpdateGoal'],
+      undefined,
+      [
+        {
+          event: 'UserPromptSubmit',
+          matcher: 'blocked objective',
+          command: "echo 'blocked by policy' >&2; exit 2",
+        },
+      ],
+    );
+    const api = new SessionAPIImpl(session);
+    await api.createGoal({ objective: 'blocked objective' });
+
+    agent.turn.prompt([{ type: 'text', text: 'blocked objective' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    const goal = api.getGoal({}).goal;
+    expect(scripted.calls).toHaveLength(0);
+    expect(goal?.status).toBe('blocked');
+    expect(goal?.terminalReason).toBe('Blocked by UserPromptSubmit hook');
+  });
+
+  it('blocks immediately when a resumed goal is already over budget', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent, scripted } = await setupSession(sessionDir, events, ['GetGoal']);
+    const api = new SessionAPIImpl(session);
+    await api.createGoal({ objective: 'work', budgetLimits: { turnBudget: 1 } });
+    await session.goals.incrementTurn();
+    await session.goals.markBlocked({ reason: 'A configured budget was reached' });
+    await api.resumeGoal({});
+
+    scripted.mockNextResponse({ type: 'text', text: 'should not run' });
+    agent.turn.prompt([{ type: 'text', text: 'continue' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    const goal = api.getGoal({}).goal;
+    expect(scripted.calls).toHaveLength(0);
+    expect(goal?.status).toBe('blocked');
+    expect(goal?.turnsUsed).toBe(1);
+  });
+
+  it('stops before another model step when a token budget is reached mid-turn', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent, scripted } = await setupSession(sessionDir, events, ['GetGoal']);
+    const api = new SessionAPIImpl(session);
+    await api.createGoal({ objective: 'work', budgetLimits: { tokenBudget: 1 } });
+
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'g1',
+      name: 'GetGoal',
+      arguments: JSON.stringify({}),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'should not run' });
+
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    const goal = api.getGoal({}).goal;
+    expect(scripted.calls).toHaveLength(1);
+    expect(goal?.status).toBe('blocked');
+    expect(goal?.tokensUsed).toBeGreaterThan(1);
   });
 
   it('preserves terminal status and demotes active goals across resume', async () => {
