@@ -13,7 +13,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../../src/agent';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
 import { SkillRegistry } from '../../src/skill';
-import { BackgroundProcessManager } from '../../src/tools/background/manager';
 import { TaskListInputSchema } from '../../src/tools/background/task-list';
 import { TaskOutputInputSchema } from '../../src/tools/background/task-output';
 import { TaskStopInputSchema } from '../../src/tools/background/task-stop';
@@ -32,6 +31,7 @@ import { BashInputSchema, BashTool } from '../../src/tools/builtin/shell/bash';
 import type { WorkspaceConfig } from '../../src/tools/support/workspace';
 import { createFakeKaos } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
+import { createBackgroundManager } from '../agent/background/helpers';
 
 const signal = new AbortController().signal;
 const workspace: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
@@ -153,8 +153,21 @@ describe('current builtin file and shell tools', () => {
     expect(result.output).toContain('old_string not found');
   });
 
-  it('Glob exposes parameters and rejects pure wildcard patterns', async () => {
-    const tool = new GlobTool(createFakeKaos(), workspace);
+  it('Glob exposes parameters and walks pure-wildcard patterns capped at MAX_MATCHES', async () => {
+    // Pure wildcards used to be rejected up-front; now they walk like
+    // any other pattern and the 100-match cap is the only safety.
+    const glob = vi.fn().mockReturnValue(
+      (async function* () {
+        yield '/workspace/a.ts';
+      })(),
+    );
+    const tool = new GlobTool(
+      createFakeKaos({
+        glob,
+        stat: vi.fn().mockResolvedValue({ stMtime: 1, stMode: 0o100000 }),
+      }),
+      workspace,
+    );
 
     expect(GlobInputSchema.safeParse({ pattern: '*.ts' }).success).toBe(true);
     expect(tool.parameters).toMatchObject({
@@ -163,8 +176,9 @@ describe('current builtin file and shell tools', () => {
     });
 
     const result = await executeTool(tool, context({ pattern: '**' }));
-    expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('pure wildcard');
+    expect(result.isError).toBeFalsy();
+    expect(glob).toHaveBeenCalledWith('/workspace', '**');
+    expect(result.output).toContain('a.ts');
   });
 
   it('Grep exposes parameters and rejects relative workspace escapes before spawning rg', async () => {
@@ -296,7 +310,7 @@ describe('current builtin collaboration tools', () => {
 
 describe('current builtin background tool schemas', () => {
   it('background task schemas and manager-backed tools are covered', () => {
-    const manager = new BackgroundProcessManager();
+    const manager = createBackgroundManager().manager;
 
     expect(TaskListInputSchema.safeParse({ active_only: true }).success).toBe(true);
     expect(TaskOutputInputSchema.safeParse({ task_id: 'bash-1' }).success).toBe(true);

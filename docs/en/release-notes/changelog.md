@@ -2,6 +2,24 @@
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.7.0
+
+### Features
+
+- Add `/provider` command for managing AI providers, support custom registry imports, and introduce a tabbed model selector. It replaces the deprecated `/connect` command — use `/provider` instead.
+- Render scheduled reminders distinctly in the TUI, expose cron fired events to SDK clients, and report cron fire times with local timezone offsets.
+- Add `KIMI_MODEL_ADAPTIVE_THINKING` (and a matching `adaptive_thinking` model-alias field) to force adaptive thinking (`thinking: { type: 'adaptive' }`) on or off, overriding the Anthropic model-name version inference. This lets custom-named staff endpoints that back an adaptive-capable model opt in even when the model name does not encode a parseable Claude version.
+
+### Bug Fixes
+
+- Report truncated compaction summaries clearly and apply valid completion token budgets across supported providers.
+- Fix glob pattern backslash escaping and include match count in truncation messages.
+
+### Polish
+
+- Clarify Kimi Platform API key login labels and prompt details.
+- Polish a small TUI visual interaction.
+
 ## 0.6.0
 
 ### Features

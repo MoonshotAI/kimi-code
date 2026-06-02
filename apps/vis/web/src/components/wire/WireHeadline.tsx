@@ -328,16 +328,6 @@ export function renderHeadline(r: AgentRecord): HeadlineRender {
           </span>
         ),
       };
-
-    case 'background.stop':
-      return {
-        main: (
-          <span className="flex items-center gap-2">
-            <Mono>task</Mono>
-            <Mono>{r.taskId}</Mono>
-          </span>
-        ),
-      };
   }
   // `r` is `never` here under TypeScript exhaustiveness, but at runtime
   // best-effort parsing of unknown/future protocols can deliver records

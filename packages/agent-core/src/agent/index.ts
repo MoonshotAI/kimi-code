@@ -26,8 +26,13 @@ import {
   estimateTokensForTools,
 } from '../utils/tokens';
 import type { PromisableMethods } from '../utils/types';
-import { BackgroundManager } from './background';
-import { FullCompaction, type CompactionStrategy } from './compaction';
+import { BackgroundManager, BackgroundTaskPersistence } from './background';
+import {
+  FullCompaction,
+  MicroCompaction,
+  type CompactionStrategy,
+  type MicroCompactionConfig,
+} from './compaction';
 import { CronManager } from './cron';
 import { ConfigState } from './config';
 import { ContextMemory } from './context';
@@ -71,6 +76,7 @@ export interface AgentOptions {
   readonly generate?: typeof generate;
   readonly toolServices?: ToolServices;
   readonly compactionStrategy?: CompactionStrategy;
+  readonly microCompaction?: Partial<MicroCompactionConfig>;
   readonly modelProvider?: ModelProvider | undefined;
   readonly subagentHost?: SessionSubagentHost | undefined;
   readonly skills?: SkillRegistry;
@@ -80,6 +86,7 @@ export interface AgentOptions {
   readonly log?: Logger;
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
+  readonly appVersion?: string;
 }
 
 export class Agent {
@@ -97,10 +104,12 @@ export class Agent {
   readonly hooks?: HookEngine;
   readonly log: Logger;
   readonly telemetry: TelemetryClient;
+  readonly appVersion?: string;
 
   readonly blobStore: BlobStore | undefined;
   readonly records: AgentRecords;
   readonly fullCompaction: FullCompaction;
+  readonly microCompaction: MicroCompaction;
   readonly context: ContextMemory;
   readonly config: ConfigState;
   readonly turn: TurnFlow;
@@ -129,6 +138,7 @@ export class Agent {
     this.subagentHost = options.subagentHost;
     this.mcp = options.mcp;
     this.hooks = options.hookEngine;
+    this.appVersion = options.appVersion;
     this.log = options.log ?? log;
     this.telemetry = options.telemetry ?? noopTelemetryClient;
 
@@ -148,6 +158,7 @@ export class Agent {
           : undefined),
     );
     this.fullCompaction = new FullCompaction(this, options.compactionStrategy);
+    this.microCompaction = new MicroCompaction(this, options.microCompaction);
     this.context = new ContextMemory(this);
     this.config = new ConfigState(this);
     this.turn = new TurnFlow(this);
@@ -157,7 +168,10 @@ export class Agent {
     this.usage = new UsageRecorder(this);
     this.skills = options.skills ? new SkillManager(this, options.skills) : null;
     this.tools = new ToolManager(this);
-    this.background = new BackgroundManager(this);
+    this.background = new BackgroundManager(
+      this,
+      this.homedir === undefined ? undefined : new BackgroundTaskPersistence(this.homedir),
+    );
     this.cron = this.type === 'sub' ? null : new CronManager(this);
     this.replayBuilder = new ReplayBuilder(this);
   }
@@ -290,6 +304,9 @@ export class Agent {
         }
         this.turn.cancel(payload.turnId);
       },
+      undoHistory: (payload) => {
+        this.context.undo(payload.count);
+      },
       setThinking: (payload) => {
         const wasEnabled = this.config.thinkingLevel !== 'off';
         this.config.update({ thinkingLevel: payload.level });
@@ -366,7 +383,6 @@ export class Agent {
         this.skills.activate(payload);
       },
       getBackgroundOutput: (payload) => this.background.readOutput(payload.taskId, payload.tail),
-      getBackgroundOutputPath: (payload) => this.background.getOutputPath(payload.taskId),
       getContext: () => this.context.data(),
       getConfig: () => this.config.data(),
       getPermission: () => this.permission.data(),

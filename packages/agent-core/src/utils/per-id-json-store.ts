@@ -5,14 +5,15 @@
  * future "session-scoped, per-id, small-JSON" persistence can share the
  * same atomic-write + path-traversal-guarded readdir loop. The store has
  * no opinion on `T` — callers supply an id regex (also the basename
- * validator) and a cheap shape guard for ignoring corrupt files on
- * `list()`.
+ * validator) and may optionally supply a cheap shape guard for ignoring
+ * incompatible files on `list()`.
  *
  * Crash safety: writes go through `atomicWrite` (write-tmp, fsync,
  * rename) so a kill mid-write never leaves a torn file. `list()`
  * silently drops basenames that don't match `idRegex`, files that fail
- * to read, JSON parse errors, and values that fail `isValid` — the
- * caller wants "everything that's safely loadable", not a partial throw.
+ * to read, JSON parse errors, and values that fail `isValid` when a
+ * validator is supplied — the caller wants "everything that's safely
+ * loadable", not a partial throw.
  *
  * Not concurrent-process-safe by itself: two CLI processes writing to
  * the same id will race on the rename. We accept this because the
@@ -35,14 +36,16 @@ export interface PerIdJsonStore<T> {
   write(id: string, value: T): Promise<void>;
   /**
    * Read a single record. Returns `undefined` for missing files,
-   * unreadable files, parse errors, or values that fail `isValid`.
-   * Throws only for an invalid id (path-traversal guard).
+   * unreadable files, parse errors, or values that fail `isValid` when
+   * a validator is supplied. Throws only for an invalid id
+   * (path-traversal guard).
    */
   read(id: string): Promise<T | undefined>;
   /**
    * Enumerate every record in the subdir whose basename matches
-   * `idRegex` AND whose parsed content satisfies `isValid`. Silently
-   * drops everything else (corrupt JSON, stray files, partial writes).
+   * `idRegex` and, when a validator is supplied, whose parsed content
+   * satisfies `isValid`. Silently drops everything else (corrupt JSON,
+   * stray files, partial writes).
    */
   list(): Promise<readonly T[]>;
   /**
@@ -64,12 +67,12 @@ export interface PerIdJsonStoreOptions<T> {
    */
   readonly idRegex: RegExp;
   /**
-   * Cheap structural validator. Run on every parsed JSON value; failing
-   * values are silently dropped from `list()` (and `read()` returns
-   * `undefined`). Should be inexpensive — it runs once per file per
-   * `list()`.
+   * Optional cheap structural validator. Run on every parsed JSON value;
+   * failing values are silently dropped from `list()` (and `read()`
+   * returns `undefined`). Should be inexpensive — it runs once per file
+   * per `list()`.
    */
-  readonly isValid: (obj: unknown) => obj is T;
+  readonly isValid?: (obj: unknown) => obj is T;
   /**
    * Human-readable name used in path-traversal rejection errors —
    * `Invalid <entityName>: "<id>"`. Lets each caller preserve its own
@@ -112,7 +115,8 @@ export function createPerIdJsonStore<T>(
     } catch {
       return undefined;
     }
-    return isValid(parsed) ? parsed : undefined;
+    if (isValid !== undefined && !isValid(parsed)) return undefined;
+    return parsed as T;
   }
 
   async function list(): Promise<readonly T[]> {

@@ -6,7 +6,7 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import type { NotificationsConfig } from './config';
+import type { NotificationsConfig, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { Theme } from './theme';
 import type { ResolvedTheme } from './theme/colors';
@@ -29,9 +29,11 @@ export interface AppState {
   version: string;
   editorCommand: string | null;
   notifications: NotificationsConfig;
+  upgrade: UpgradePreferences;
   availableModels: Record<string, ModelAlias>;
   availableProviders: Record<string, ProviderConfig>;
   sessionTitle: string | null;
+  mcpServersSummary: string | null;
 }
 
 export interface ToolCallBlockData {
@@ -114,6 +116,8 @@ export type TranscriptEntryKind =
   | 'skill_activation'
   | 'cron';
 
+export type SkillActivationTrigger = 'user-slash' | 'model-tool' | 'nested-skill';
+
 export interface TranscriptEntry {
   id: string;
   kind: TranscriptEntryKind;
@@ -130,6 +134,7 @@ export interface TranscriptEntry {
   skillActivationId?: string;
   skillName?: string;
   skillArgs?: string;
+  skillTrigger?: SkillActivationTrigger;
 }
 
 export type LivePaneMode =

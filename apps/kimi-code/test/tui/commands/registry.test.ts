@@ -97,6 +97,7 @@ describe('built-in slash command registry', () => {
         'status',
         'theme',
         'title',
+        'undo',
         'usage',
         'version',
         'yolo',

@@ -22,17 +22,12 @@ import { isSensitiveFile } from './sensitive';
 export type PathClass = 'posix' | 'win32';
 export type PathSecurityCode = 'PATH_OUTSIDE_WORKSPACE' | 'PATH_SENSITIVE' | 'PATH_INVALID';
 export type PathAccessOperation = 'read' | 'write' | 'search';
-export type WorkspaceGuardMode = 'strict' | 'absolute-outside-allowed' | 'disabled';
+export type WorkspaceGuardMode = 'absolute-outside-allowed' | 'disabled';
 
 export interface WorkspaceAccessPolicy {
   readonly guardMode: WorkspaceGuardMode;
   readonly checkSensitive: boolean;
 }
-
-export const STRICT_WORKSPACE_ACCESS_POLICY: WorkspaceAccessPolicy = {
-  guardMode: 'strict',
-  checkSensitive: true,
-};
 
 export const DEFAULT_WORKSPACE_ACCESS_POLICY: WorkspaceAccessPolicy = {
   guardMode: 'absolute-outside-allowed',
@@ -190,21 +185,6 @@ export interface ResolvePathAccessPathOptions {
   readonly expandHome?: boolean;
 }
 
-function outsideWorkspaceMessage(
-  path: string,
-  canonical: string,
-  config: WorkspaceConfig,
-  operation: PathAccessOperation,
-): string {
-  const allowed = [config.workspaceDir, ...config.additionalDirs].join(', ');
-  const verb = operation === 'write' ? 'written' : operation === 'search' ? 'searched' : 'read';
-  return (
-    `"${path}" (canonical: "${canonical}") is outside the workspace ` +
-    `and outside the working directory "${config.workspaceDir}". ` +
-    `Cannot be ${verb}. Allowed roots: ${allowed}`
-  );
-}
-
 function relativeOutsideMessage(path: string, operation: PathAccessOperation): string {
   const verb =
     operation === 'write'
@@ -242,29 +222,8 @@ export function resolvePathAccess(
     );
   }
 
-  // Strict mode requires the input itself to be absolute, even if it
-  // would canonicalize to a path inside the workspace. The python Glob
-  // contract is "directory must be an absolute path"; resolving a
-  // relative argument against the workspace cwd silently re-targets the
-  // search and is rejected outright in that contract.
-  if (policy.guardMode === 'strict' && !rawIsAbsolute) {
-    throw new PathSecurityError(
-      'PATH_OUTSIDE_WORKSPACE',
-      path,
-      canonical,
-      relativeOutsideMessage(path, options.operation),
-    );
-  }
-
   if (outsideWorkspace) {
     switch (policy.guardMode) {
-      case 'strict':
-        throw new PathSecurityError(
-          'PATH_OUTSIDE_WORKSPACE',
-          path,
-          canonical,
-          outsideWorkspaceMessage(path, canonical, config, options.operation),
-        );
       case 'absolute-outside-allowed':
         if (!rawIsAbsolute) {
           throw new PathSecurityError(
@@ -297,9 +256,9 @@ export function resolvePathAccessPath(
 }
 
 /**
- * Throw `PathSecurityError` if `path` is outside the workspace, a known
- * sensitive file, or an empty string. Returns the canonical absolute path
- * when the check passes.
+ * Throw `PathSecurityError` if `path` escapes the workspace through a relative
+ * path, matches a known sensitive file, or is empty. Returns the canonical
+ * absolute path when the check passes.
  *
  * Note: this is purely lexical. It does NOT protect against symlink
  * targets that point outside the workspace — that would require kaos-layer
@@ -315,8 +274,8 @@ export function assertPathAllowed(
     operation: options.mode,
     pathClass: options.pathClass,
     policy: {
-      guardMode: 'strict',
-      checkSensitive: options.checkSensitive ?? STRICT_WORKSPACE_ACCESS_POLICY.checkSensitive,
+      guardMode: 'absolute-outside-allowed',
+      checkSensitive: options.checkSensitive ?? DEFAULT_WORKSPACE_ACCESS_POLICY.checkSensitive,
     },
   }).path;
 }

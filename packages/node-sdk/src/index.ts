@@ -8,6 +8,8 @@ export {
   type LocalSDKRpcClientOptions,
 } from '#/local-rpc';
 export { SDKRpcClient } from '#/rpc';
+export { KimiForCodingProvider } from '#/kimi-code-model-provider';
+export type { KimiForCodingProviderOptions } from '#/kimi-code-model-provider';
 
 export {
   applyCatalogProvider,

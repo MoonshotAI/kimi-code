@@ -16,11 +16,17 @@ import { Container, Text, Spacer } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
 import type { ColorPalette } from '#/tui/theme/colors';
+import type { SkillActivationTrigger } from '#/tui/types';
 
 const ARGS_PREVIEW_MAX = 200;
 
 export class SkillActivationComponent extends Container {
-  constructor(name: string, args: string | undefined, colors: ColorPalette) {
+  constructor(
+    name: string,
+    args: string | undefined,
+    colors: ColorPalette,
+    readonly trigger?: SkillActivationTrigger,
+  ) {
     super();
     this.addChild(new Spacer(1));
     const head =

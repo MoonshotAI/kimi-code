@@ -68,6 +68,7 @@ export class LocalSDKRpcClient extends SDKRpcClient {
         options.resolveOAuthTokenProvider ?? this.auth.resolveOAuthTokenProvider,
       skillDirs: options.skillDirs,
       telemetry: this.telemetry,
+      appVersion: this.identity?.version,
     });
     this.ready = sdkRpc(new ClientAPI(this));
   }

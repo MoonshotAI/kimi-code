@@ -24,6 +24,8 @@
  * look alike (`agent-...`) but live in different namespaces.
  */
 
+import { escapeXmlAttr } from '#/utils/xml-escape';
+
 export function renderNotificationXml(data: Record<string, unknown>): string {
   const id = stringAttr(data['id'], 'unknown');
   const category = stringAttr(data['category'], 'unknown');
@@ -74,10 +76,7 @@ function truncateTailOutput(raw: string, maxLines: number, maxChars: number): st
 
 function stringAttr(value: unknown, fallback: string): string {
   if (typeof value !== 'string' || value.length === 0) return fallback;
-  // Attribute boundary safety: escape `&` and `"`. Body-text `<` / `>`
-  // stay untouched — the injection target is an LLM-visible transcript
-  // where double-escaping would be noisier than literal punctuation.
-  return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
+  return escapeXmlAttr(value);
 }
 
 /** Like `stringAttr` but returns `undefined` instead of a fallback so the
