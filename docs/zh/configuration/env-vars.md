@@ -156,8 +156,8 @@ Kimi Code CLI 也会读取一些标准的系统环境变量，用于检测运行
 - `WSL_DISTRO_NAME`、`WSLENV`：检测是否运行在 WSL 内，用于剪贴板的 PowerShell 桥接回退。
 - `TERMUX_VERSION`：检测是否运行在 Termux 中。
 - `LOCALAPPDATA`：Windows 上探测 Git Bash 安装路径时使用。
-- `HTTP_PROXY` / `http_proxy`：用于 LLM 供应商和 OAuth 对外请求的 HTTP 代理服务器 URL。
-- `HTTPS_PROXY` / `https_proxy`：用于 LLM 供应商和 OAuth 对外请求的 HTTPS 代理服务器 URL。
+- `HTTP_PROXY` / `http_proxy`：用于 OpenAI 兼容、Anthropic、Kimi 及 OAuth 对外请求的 HTTP 代理服务器 URL。Google GenAI 与 Vertex AI 供应商目前不走此代理配置。
+- `HTTPS_PROXY` / `https_proxy`：用于 OpenAI 兼容、Anthropic、Kimi 及 OAuth 对外请求的 HTTPS 代理服务器 URL。Google GenAI 与 Vertex AI 供应商目前不走此代理配置。
 - `NO_PROXY` / `no_proxy`：逗号分隔的不走代理的主机名或 IP 列表。当设置了任意代理变量时，默认值为 `localhost,127.0.0.1`。
 
 这些变量遵循各操作系统的常规约定，`kimi` 仅读取不修改。
