@@ -317,6 +317,46 @@ describe('KimiTUI resume message replay', () => {
     expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('bash-bg1')).toBe(true);
   });
 
+  it('matches completed resumed background agents by agent id when task id differs', async () => {
+    const driver = await replayIntoDriver([], {
+      background: [
+        {
+          taskId: 'task-bg1',
+          kind: 'agent',
+          agentId: 'agent-bg1',
+          subagentType: 'coder',
+          description: 'Review long-running work',
+          status: 'running',
+          startedAt: 1,
+          endedAt: null,
+        },
+      ],
+    });
+
+    expect(driver.sessionEventHandler.backgroundAgentMetadata.has('agent-bg1')).toBe(true);
+    expect(driver.sessionEventHandler.backgroundAgentMetadata.has('task-bg1')).toBe(false);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.completed',
+        agentId: 'main',
+        sessionId: 'ses-replay',
+        subagentId: 'agent-bg1',
+        parentToolCallId: 'task-bg1',
+        resultSummary: 'Reviewed the long-running work.',
+      },
+      () => {},
+    );
+
+    const status = driver.state.transcriptEntries.find(
+      (entry) => entry.backgroundAgentStatus?.phase === 'completed',
+    );
+
+    expect(driver.sessionEventHandler.backgroundAgentMetadata.has('agent-bg1')).toBe(false);
+    expect(status?.backgroundAgentStatus?.headline).toBe('agent completed in background');
+    expect(status?.backgroundAgentStatus?.detail).toContain('Review long-running work');
+  });
+
   it('renders replayed bash background notifications as bash tasks', async () => {
     const driver = await replayIntoDriver(
       [

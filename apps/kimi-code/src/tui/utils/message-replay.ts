@@ -92,8 +92,9 @@ export function replayBackgroundProjection(
   for (const info of background) {
     if (info.kind !== 'agent') continue;
     if (isTerminalBackgroundTask(info)) continue;
-    backgroundAgentMetadata.set(info.taskId, {
-      agentId: info.agentId ?? info.taskId,
+    const agentId = info.agentId ?? info.taskId;
+    backgroundAgentMetadata.set(agentId, {
+      agentId,
       parentToolCallId: info.taskId,
       description: info.description,
     });
