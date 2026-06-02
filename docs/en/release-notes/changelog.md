@@ -2,6 +2,52 @@
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.8.0
+
+### Features
+
+- Add experimental goal mode for longer tasks that need more than one turn. Turn it on with `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1` before you start Kimi.
+
+  Use `/goal <objective>` in the TUI when you want Kimi to keep working on one task across turns. For example:
+
+  ```text
+  /goal Fix the failing checkout test
+  ```
+
+  Kimi shows the goal in the TUI and keeps progress visible while it works. Use `/goal status`, `/goal pause`, `/goal resume`, `/goal cancel`, and `/goal replace <objective>` to manage the goal. This feature is still experimental. Try it and tell us what would make it more useful.
+- Add `kimi provider` CLI subcommand with `add`, `remove`, `list`, and `catalog list` / `catalog add` actions, so providers from a custom registry (api.json) or the public models.dev catalog can be imported and managed without launching the TUI.
+- Add background structured questions so agents can continue while waiting for user answers.
+- Add background automatic upgrades, which can be disabled in tui.toml.
+- Add `/undo` slash command to withdraw the last prompt from conversation history, and keep replay records in sync when a prompt is undone.
+- Add a `kimi upgrade` command for manually checking and upgrade Kimi Code CLI.
+- Add approval lifecycle hook events for observing pending and completed permission prompts.
+- Allow subagents to use custom tools registered on their parent agent.
+- Allow glob searches to target explicit absolute paths outside the workspace.
+
+### Bug Fixes
+
+- Fix cross-provider replay failures from incompatible tool call IDs and unsigned Claude thinking history.
+- Fix custom registry provider handling during re-import. Prevent loss of multi-provider entries and remove stale providers along with their model aliases and default model references.
+- Fix tool output preview rendering: trim trailing empty lines, append ellipsis to multi-line Bash command headers, and truncate long single-line output by visual wrapped lines instead of raw newline count.
+- Fix slash-activated skills not being recognized by the model due to missing system reminder wrapper.
+- Fix a crash in the `/sessions` picker on very narrow terminals by clamping every rendered line to the terminal width.
+- Normalize glob patterns before brace expansion to prevent incorrect path matching.
+- Prevent modified keyboard release sequences from appearing after exiting the CLI.
+- Fix Git Bash path detection on Windows by also searching `usr\bin\bash.exe` locations, which is where bash lives in many Git for Windows installations where `bin\bash.exe` does not exist.
+
+### Polish
+
+- Show MCP server summary in the welcome panel and add configuration hints in the /mcp command output.
+- Point users to `/provider` instead of the removed `/connect` command in the welcome screen and the no-models-configured hint.
+- Append the current todo list as markdown to compaction summaries before writing them to history.
+- Show the full model name in the footer status bar instead of truncating the provider prefix.
+- Remind the model to refresh TodoList during long-running tasks and strengthen TodoList progress-tracking guidance.
+- Replace chalk named color with theme-aware hex in session-directory warning.
+
+### Refactors
+
+- Consolidate background task management under the agent background runtime.
+
 ## 0.7.0
 
 ### Features
