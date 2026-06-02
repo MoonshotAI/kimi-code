@@ -777,7 +777,6 @@ describe('KimiTUI message flow', () => {
         info: {
           kind: 'process',
           taskId: 'bash-bg123456',
-          kind: 'process',
           command: 'npm test',
           description: 'Run tests in background',
           status: 'running',
