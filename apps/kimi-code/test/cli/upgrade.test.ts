@@ -35,6 +35,7 @@ function captureOutput(): {
 function createDeps(overrides: {
   readonly latest?: string | null;
   readonly source?: InstallSource;
+  readonly isInteractive?: boolean;
   readonly promptForInstallChoice?: () => Promise<InstallPromptChoiceValue>;
   readonly installUpdate?: (source: InstallSource, version: string, platform: NodeJS.Platform) => Promise<void>;
 } = {}) {
@@ -60,6 +61,7 @@ function createDeps(overrides: {
       debug: vi.fn(),
     },
     platform: 'darwin' as NodeJS.Platform,
+    isInteractive: overrides.isInteractive ?? true,
   };
 }
 
@@ -144,6 +146,21 @@ describe('handleUpgrade', () => {
     expect(deps.track).toHaveBeenCalledWith('upgrade_command_manual_command', expect.objectContaining({
       target_version: '0.5.0',
       source: 'unsupported',
+    }));
+    expect(stdout.join('')).toContain('To update manually, run: npm install -g @moonshot-ai/kimi-code@0.5.0');
+  });
+
+  it('prints the manual update command without prompting when not interactive', async () => {
+    const { stdout, writable } = captureOutput();
+    const deps = createDeps({ latest: '0.5.0', source: 'npm-global', isInteractive: false });
+
+    await expect(handleUpgrade('0.4.0', { ...deps, ...writable })).resolves.toBe(0);
+
+    expect(deps.promptForInstallChoice).not.toHaveBeenCalled();
+    expect(deps.installUpdate).not.toHaveBeenCalled();
+    expect(deps.track).toHaveBeenCalledWith('upgrade_command_manual_command', expect.objectContaining({
+      target_version: '0.5.0',
+      source: 'npm-global',
     }));
     expect(stdout.join('')).toContain('To update manually, run: npm install -g @moonshot-ai/kimi-code@0.5.0');
   });

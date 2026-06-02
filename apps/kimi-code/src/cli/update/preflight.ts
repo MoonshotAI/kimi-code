@@ -129,10 +129,21 @@ export function renderManualUpdateMessage(
   source: InstallSource,
   installCommand: string,
 ): string {
-  const sourceDesc =
-    source === 'native'
-      ? 'native (windows). Auto-update is not supported on this platform.'
-      : 'unsupported package manager or layout.';
+  let sourceDesc: string;
+  switch (source) {
+    case 'npm-global':
+    case 'pnpm-global':
+    case 'yarn-global':
+    case 'bun-global':
+      sourceDesc = source;
+      break;
+    case 'native':
+      sourceDesc = 'native (windows). Auto-update is not supported on this platform.';
+      break;
+    case 'unsupported':
+      sourceDesc = 'unsupported package manager or layout.';
+      break;
+  }
   return (
     `A newer version of ${NPM_PACKAGE_NAME} is available ` +
     `(${currentVersion} -> ${target.version}).\n` +

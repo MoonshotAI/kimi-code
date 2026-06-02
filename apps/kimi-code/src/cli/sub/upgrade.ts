@@ -43,6 +43,7 @@ export interface UpgradeDeps {
   readonly platform: NodeJS.Platform;
   readonly stdout: WritableLike;
   readonly stderr: WritableLike;
+  readonly isInteractive: boolean;
   readonly track: UpgradeTrack;
   readonly logger: UpgradeLogger;
 }
@@ -85,7 +86,7 @@ export async function handleUpgrade(
 
   const source = await deps.detectInstallSource().catch(() => 'unsupported' as const);
   const installCommand = installCommandFor(source, target.version, deps.platform);
-  if (!canAutoInstall(source, deps.platform)) {
+  if (!canAutoInstall(source, deps.platform) || !deps.isInteractive) {
     trackUpgradeEvent(deps.track, 'upgrade_command_manual_command', {
       current_version: currentVersion,
       target_version: target.version,
@@ -180,6 +181,7 @@ function createDefaultUpgradeDeps(overrides: Partial<UpgradeDeps>): UpgradeDeps 
     platform: overrides.platform ?? process.platform,
     stdout: overrides.stdout ?? process.stdout,
     stderr: overrides.stderr ?? process.stderr,
+    isInteractive: overrides.isInteractive ?? (process.stdin.isTTY && process.stdout.isTTY),
     track: overrides.track ?? trackTelemetry,
     logger: overrides.logger ?? log,
   };
