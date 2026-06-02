@@ -50,7 +50,6 @@ import {
 // ---------------------------------------------------------------------------
 
 export {
-  handleConnectCommand,
   handleLoginCommand,
   handleLogoutCommand,
 } from './auth';
