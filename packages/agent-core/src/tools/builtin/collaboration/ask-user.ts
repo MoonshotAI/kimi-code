@@ -14,9 +14,10 @@
 import { z } from 'zod';
 
 import type { Agent } from '../../../agent';
+import { QuestionBackgroundTask } from '../../../agent/background';
 import type { BuiltinTool } from '../../../agent/tool';
 import { ErrorCodes, KimiError } from '../../../errors';
-import { isAbortError } from '../../../loop/errors';
+import { errorMessage, isAbortError } from '../../../loop/errors';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import type {
   QuestionAnswers,
@@ -57,6 +58,7 @@ const QuestionItemSchema = z.object({
 });
 
 export interface AskUserQuestionInput {
+  background?: boolean;
   questions: Array<{
     question: string;
     header: string;
@@ -66,6 +68,12 @@ export interface AskUserQuestionInput {
 }
 
 export const AskUserQuestionInputSchema: z.ZodType<AskUserQuestionInput> = z.object({
+  background: z
+    .boolean()
+    .default(false)
+    .describe(
+      'Set true to ask in the background and return immediately with a background task_id. Use TaskOutput to read the answer later.',
+    ),
   questions: z
     .array(QuestionItemSchema)
     .min(1)
@@ -89,7 +97,10 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
 
   resolveExecution(args: AskUserQuestionInput): ToolExecution {
     return {
-      description: 'Asking user questions',
+      description:
+        args.background === true
+          ? `Starting background question: ${questionDescription(args.questions)}`
+          : 'Asking user questions',
       approvalRule: this.name,
       execute: (ctx) => this.execution(args, ctx),
     };
@@ -102,6 +113,21 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       signal,
       turnId,
     }: ExecutableToolContext,
+  ): Promise<ExecutableToolResult> {
+    if (args.background === true) {
+      return this.executeInBackground(args, { toolCallId, turnId, signal });
+    }
+
+    return this.executeQuestion(args, { toolCallId, turnId, signal });
+  }
+
+  private async executeQuestion(
+    args: AskUserQuestionInput,
+    {
+      toolCallId,
+      signal,
+      turnId,
+    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId'>,
   ): Promise<ExecutableToolResult> {
     try {
       const result = await this.agent.rpc!.requestQuestion!(
@@ -149,6 +175,55 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       return dismissedQuestionResult();
     }
   }
+
+  private executeInBackground(
+    args: AskUserQuestionInput,
+    {
+      toolCallId,
+      signal,
+      turnId,
+    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId'>,
+  ): ExecutableToolResult {
+    if (signal.aborted) {
+      signal.throwIfAborted();
+    }
+    const backgroundManager = this.agent.background;
+
+    const description = questionDescription(args.questions);
+    let taskId: string;
+    try {
+      taskId = backgroundManager.registerTask(
+        new QuestionBackgroundTask(
+          (taskSignal) => this.executeQuestion(args, { toolCallId, turnId, signal: taskSignal }),
+          description,
+          {
+            questionCount: args.questions.length,
+            toolCallId,
+          },
+        ),
+      );
+    } catch (error) {
+      return {
+        isError: true,
+        output: errorMessage(error),
+      };
+    }
+
+    const status = backgroundManager.getTask(taskId)?.status ?? 'running';
+    return {
+      isError: false,
+      output:
+        `task_id: ${taskId}\n` +
+        `description: ${description}\n` +
+        `status: ${status}\n` +
+        `automatic_notification: true\n` +
+        'next_step: Continue your current work; the answer will arrive automatically when the user responds.\n' +
+        'next_step: Use TaskOutput with this task_id for a non-blocking status/answer snapshot.\n' +
+        'next_step: Use TaskStop only if the question should be cancelled.\n' +
+        'human_shell_hint: The pending question is also visible in /tasks.',
+      message: `Started ${taskId}`,
+    };
+  }
 }
 
 function dismissedQuestionResult(): ExecutableToolResult {
@@ -165,6 +240,13 @@ function numericTurnId(turnId: string): number | undefined {
   if (turnId.trim().length === 0) return undefined;
   const parsed = Number(turnId);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function questionDescription(questions: AskUserQuestionInput['questions']): string {
+  const first = questions[0]?.question.trim();
+  const label = first === undefined || first.length === 0 ? 'Ask user question' : first;
+  if (questions.length <= 1) return label;
+  return `${label} (+${String(questions.length - 1)} more)`;
 }
 
 function normalizeQuestionResult(

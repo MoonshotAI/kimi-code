@@ -43,6 +43,8 @@ export { AgentBackgroundTask } from './agent-task';
 export type { AgentBackgroundTaskInfo } from './agent-task';
 export { ProcessBackgroundTask } from './process-task';
 export type { ProcessBackgroundTaskInfo } from './process-task';
+export { QuestionBackgroundTask } from './question-task';
+export type { QuestionBackgroundTaskInfo } from './question-task';
 export { BackgroundTaskPersistence } from './persist';
 export type {
   BackgroundTaskInfo,
@@ -183,7 +185,7 @@ export class BackgroundManager {
   private emitTaskStarted(info: BackgroundTaskInfo): void {
     this.agent.emitEvent({ type: 'background.task.started', info });
     this.agent.telemetry.track('background_task_created', {
-      kind: info.kind === 'agent' ? 'agent' : 'bash',
+      kind: info.kind === 'process' ? 'bash' : info.kind,
     });
   }
 

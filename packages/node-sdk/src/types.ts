@@ -41,6 +41,7 @@ export type {
   PromptOrigin,
   ProviderConfig,
   ProviderType,
+  QuestionBackgroundTaskInfo,
   ReloadSummary,
   ResumedAgentState,
   ServicesConfig,

@@ -1,5 +1,6 @@
 import type { AgentBackgroundTaskInfo } from './agent-task';
 import type { ProcessBackgroundTaskInfo } from './process-task';
+import type { QuestionBackgroundTaskInfo } from './question-task';
 
 export type BackgroundTaskStatus =
   | 'running'
@@ -38,7 +39,10 @@ export interface BackgroundTaskInfoBase {
   readonly timeoutMs?: number;
 }
 
-export type BackgroundTaskInfo = ProcessBackgroundTaskInfo | AgentBackgroundTaskInfo;
+export type BackgroundTaskInfo =
+  | ProcessBackgroundTaskInfo
+  | AgentBackgroundTaskInfo
+  | QuestionBackgroundTaskInfo;
 
 export interface BackgroundTaskSink {
   readonly signal: AbortSignal;

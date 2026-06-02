@@ -17,3 +17,4 @@ Overusing this tool interrupts the user's flow. Only use it when the user's inpu
 - Each question should have 2-4 meaningful, distinct options
 - You can ask 1-4 questions at a time; group related questions to minimize interruptions
 - If you recommend a specific option, list it first and append "(Recommended)" to its label
+- Set background=true when you can keep working without the answer. This starts a background question task and returns a task_id immediately; use TaskOutput only when you need to inspect the answer before the automatic notification arrives.

@@ -49,6 +49,18 @@ describe('formatBackgroundTaskTranscript', () => {
     expect(data.headline).toContain('agent task started');
   });
 
+  it('renders a question started entry', () => {
+    const data = formatBackgroundTaskTranscript(
+      task({
+        taskId: 'question-deadbeef',
+        kind: 'question',
+        questionCount: 1,
+        status: 'running',
+      }),
+    );
+    expect(data.headline).toContain('question task started');
+  });
+
   it('renders a completed entry with exit code in detail', () => {
     const data = formatBackgroundTaskTranscript(
       task({ status: 'completed', exitCode: 0, endedAt: Date.now() }),

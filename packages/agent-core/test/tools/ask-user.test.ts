@@ -10,6 +10,7 @@ import {
   type AskUserQuestionInput,
 } from '../../src/tools/builtin/collaboration/ask-user';
 import { executeTool } from './fixtures/execute-tool';
+import { createBackgroundManager } from '../agent/background/helpers';
 
 const signal = new AbortController().signal;
 
@@ -164,6 +165,54 @@ describe('AskUserQuestionTool', () => {
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
       method: 'number_key',
+    });
+  });
+
+  it('starts a background question task and stores the eventual answer in task output', async () => {
+    let resolveQuestion!: (result: QuestionResult) => void;
+    const questionResult = new Promise<QuestionResult>((resolve) => {
+      resolveQuestion = resolve;
+    });
+    const { manager } = createBackgroundManager();
+    const requestQuestion = vi.fn(async () => questionResult);
+    const telemetryTrack = vi.fn();
+    const agent = {
+      rpc: { requestQuestion },
+      telemetry: { track: telemetryTrack },
+      background: manager,
+    } as unknown as Agent;
+    const tool = new AskUserQuestionTool(agent);
+
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_background_question',
+      args: { ...input(), background: true },
+      signal,
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain('task_id: question-');
+    const taskId = /task_id: (?<taskId>question-[0-9a-z]{8})/.exec(String(result.output))?.groups?.[
+      'taskId'
+    ];
+    expect(taskId).toBeDefined();
+    expect(manager.getTask(taskId!)).toMatchObject({
+      kind: 'question',
+      status: 'running',
+      questionCount: 1,
+      toolCallId: 'call_background_question',
+    });
+
+    resolveQuestion({ answers: { 'Which database?': 'SQLite' }, method: 'enter' });
+    await manager.wait(taskId!);
+
+    expect(manager.getTask(taskId!)).toMatchObject({ status: 'completed' });
+    expect(await manager.readOutput(taskId!)).toBe(
+      JSON.stringify({ answers: { 'Which database?': 'SQLite' } }),
+    );
+    expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
+      answered: 1,
+      method: 'enter',
     });
   });
 

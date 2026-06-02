@@ -498,7 +498,7 @@ export class SessionReplayRenderer {
   ): void {
     const { sessionEventHandler } = this.host;
     const task = sessionEventHandler.backgroundTasks.get(origin.taskId);
-    if (task !== undefined && task.kind === 'process') {
+    if (task !== undefined && task.kind !== 'agent') {
       const status = formatBackgroundTaskTranscript({ ...task, status: origin.status });
       this.host.appendTranscriptEntry({
         ...replayEntry(context, 'status', status.headline, 'plain'),
