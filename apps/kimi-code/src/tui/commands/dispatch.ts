@@ -2,6 +2,8 @@ import type { Component, Focusable } from '@earendil-works/pi-tui';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
+import type { DependencyStatus } from '#/cli/system-deps/check';
+
 import type { Theme } from '../theme';
 import type { ResolvedTheme } from '../theme/colors';
 import {
@@ -104,6 +106,9 @@ export interface SlashCommandHost {
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
   restoreInputText(text: string): void;
+
+  // System dependencies (ripgrep / fd / shell) — unified status for `/status`.
+  collectSystemDependencyStatuses(): Promise<DependencyStatus[]>;
 
   // Session
   requireSession(): Session;

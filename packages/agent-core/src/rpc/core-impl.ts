@@ -94,7 +94,7 @@ import type {
 import type { ResumedAgentState, ResumeSessionResult } from './resumed';
 import type { SDKRPC } from './sdk-api';
 import { proxyWithExtraPayload } from './types';
-import { KaosShellNotFoundError, LocalKaos, type Kaos } from '@moonshot-ai/kaos';
+import { LocalKaos, type Environment, type Kaos } from '@moonshot-ai/kaos';
 import type { ToolServices } from '../tools/support/services';
 
 const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
@@ -146,12 +146,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       homeDir: this.homeDir,
       configPath: options.configPath,
     });
-    this.kaos = LocalKaos.create().catch((error: unknown) => {
-      if (error instanceof KaosShellNotFoundError) {
-        throw new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, error.message);
-      }
-      throw error;
-    });
+    // Shell (Git Bash on Windows) availability is now metadata on the
+    // resolved environment, not a hard failure: when it is missing the CLI
+    // still starts and the Bash tool is simply omitted (see ToolManager).
+    this.kaos = LocalKaos.create();
     this.runtime = options.runtime;
     this.kimiRequestHeaders = options.kimiRequestHeaders;
     this.resolveOAuthTokenProvider = options.resolveOAuthTokenProvider;
@@ -256,6 +254,15 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   getCoreInfo(): CoreInfo {
     return { version: getCoreVersion() };
+  }
+
+  /**
+   * Resolved OS / shell environment for this process. Surfaced so the UI
+   * layer can run a unified system-dependency check (shell availability,
+   * etc.) without re-probing — single source of truth is the core's kaos.
+   */
+  async getEnvironment(): Promise<Environment> {
+    return (await this.kaos).osEnv;
   }
 
   getExperimentalFlags(): ExperimentalFlagMap {

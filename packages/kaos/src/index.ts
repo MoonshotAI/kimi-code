@@ -8,12 +8,7 @@ export type {
   ShellName,
 } from './environment';
 export { detectEnvironment, detectEnvironmentFromNode } from './environment';
-export {
-  KaosError,
-  KaosValueError,
-  KaosFileExistsError,
-  KaosShellNotFoundError,
-} from './errors';
+export { KaosError, KaosValueError, KaosFileExistsError } from './errors';
 export { LocalKaos } from './local';
 export {
   chdir,

@@ -52,6 +52,16 @@ npm install -g @moonshot-ai/kimi-code
 pnpm add -g @moonshot-ai/kimi-code
 ```
 
+## 系统依赖
+
+除 Node.js 外，Kimi Code CLI 还会用到几个外部命令行工具。它们都不会阻塞启动——缺失时 CLI 会优雅降级并明确提示。你可以随时用 `/status` 查看它们的状态。
+
+| 工具 | 用途 | 缺失时 |
+| --- | --- | --- |
+| `ripgrep`（`rg`） | `Grep` 工具与文件内容搜索 | 首次使用时自动下载。如果 `PATH` 中已有 `rg`，则优先使用系统版本。 |
+| `fd` | `@` 提及的跨目录模糊文件搜索 | 可选。在 git 仓库内，`git ls-files` 仍可支撑 `@` 补全；在 git 仓库外则会给出启动警告。可通过 `brew install fd`（macOS）或 `sudo apt-get install fd-find`（Ubuntu）安装。 |
+| Shell（Windows 上为 Git Bash） | `Bash` 工具，用于执行 shell 命令 | Windows 上 `Bash` 工具通过 Git Bash 运行。如果未安装且 `KIMI_SHELL_PATH` 未指向 `bash.exe`，CLI 仍会启动，但在 shell 可用前会省略 `Bash` 工具。安装 [Git for Windows](https://gitforwindows.org/) 即可启用。 |
+
 ## 升级与卸载
 
 安装完成后，验证可执行文件是否就绪：

@@ -378,9 +378,10 @@ export class ToolManager {
         new b.EditTool(kaos, workspace),
         new b.GrepTool(kaos, workspace),
         new b.GlobTool(kaos, workspace),
-        new b.BashTool(kaos, cwd, background, {
-          allowBackground,
-        }),
+        kaos.osEnv.shellAvailable !== false &&
+          new b.BashTool(kaos, cwd, background, {
+            allowBackground,
+          }),
         (modelCapabilities.image_in || modelCapabilities.video_in) &&
           new b.ReadMediaFileTool(kaos, workspace, modelCapabilities, videoUploader),
         new b.EnterPlanModeTool(this.agent),

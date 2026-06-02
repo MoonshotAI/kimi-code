@@ -79,3 +79,4 @@ export type {
   ExecutableToolSuccessResult,
   ExecutableToolErrorResult,
 } from './loop/types';
+export type { Environment } from '@moonshot-ai/kaos';

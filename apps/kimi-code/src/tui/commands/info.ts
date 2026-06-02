@@ -2,6 +2,7 @@ import { release as osRelease, type as osType } from 'node:os';
 
 import type { McpServerInfo, SessionStatus, SessionUsage } from '@moonshot-ai/kimi-code-sdk';
 
+import { buildDependencyReportLines } from '#/cli/system-deps/report';
 import { buildMcpStatusReportLines } from '../components/messages/mcp-status-panel';
 import { buildStatusReportLines } from '../components/messages/status-panel';
 import { buildUsageReportLines, UsagePanelComponent, type ManagedUsageReport } from '../components/messages/usage-panel';
@@ -103,9 +104,10 @@ export async function showUsage(host: SlashCommandHost): Promise<void> {
 }
 
 export async function showStatusReport(host: SlashCommandHost): Promise<void> {
-  const [runtimeStatus, managedUsage] = await Promise.all([
+  const [runtimeStatus, managedUsage, dependencyStatuses] = await Promise.all([
     loadRuntimeStatusReport(host),
     loadManagedUsageReport(host),
+    host.collectSystemDependencyStatuses().catch(() => []),
   ]);
   const appState = host.state.appState;
   const lines = buildStatusReportLines({
@@ -127,6 +129,15 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     managedUsage: managedUsage?.usage,
     managedUsageError: managedUsage?.error,
   });
+  if (dependencyStatuses.length > 0) {
+    lines.push('');
+    lines.push(
+      ...buildDependencyReportLines({
+        colors: host.state.theme.colors,
+        statuses: dependencyStatuses,
+      }),
+    );
+  }
   const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary, ' Status ');
   host.state.transcriptContainer.addChild(panel);
   host.state.ui.requestRender();

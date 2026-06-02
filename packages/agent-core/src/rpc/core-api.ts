@@ -19,6 +19,7 @@ import type {
   GoalToolResult,
 } from '#/session/goal';
 import type { ContentPart } from '@moonshot-ai/kosong';
+import type { Environment } from '@moonshot-ai/kaos';
 
 import type { PluginInfo, PluginSummary, ReloadSummary } from '#/plugin';
 import type { UsageStatus } from './events';
@@ -350,6 +351,7 @@ type SessionAPIWithId = WithSessionId<SessionAPI>;
 
 export interface CoreAPI extends SessionAPIWithId {
   getCoreInfo: (payload: EmptyPayload) => CoreInfo;
+  getEnvironment: (payload: EmptyPayload) => Environment;
   getExperimentalFlags: (payload: EmptyPayload) => ExperimentalFlagMap;
   getKimiConfig: (payload: GetKimiConfigPayload) => KimiConfig;
   setKimiConfig: (payload: SetKimiConfigPayload) => KimiConfig;

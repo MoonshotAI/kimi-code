@@ -8,6 +8,7 @@ import {
   type ApprovalRequest,
   type ApprovalResponse,
   type CoreAPI,
+  type Environment,
   type Event,
   type ExperimentalFlagMap,
   type OAuthTokenProviderResolver,
@@ -345,6 +346,12 @@ export class SDKRpcClient {
       sessionId: input.sessionId,
       agentId: this.interactiveAgentId,
     });
+  }
+
+  /** Resolved OS / shell environment for this process (no session required). */
+  async getEnvironment(): Promise<Environment> {
+    const rpc = await this.getRpc();
+    return rpc.getEnvironment({});
   }
 
   async getStatus(input: SessionIdRpcInput): Promise<SessionStatus> {

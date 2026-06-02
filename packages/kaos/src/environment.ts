@@ -6,17 +6,15 @@
  * identically on any host OS. `detectEnvironmentFromNode()` bundles the
  * Node defaults for production callers.
  *
- * On Windows the probe expects Git Bash (the canonical POSIX shell that
- * ships with Git for Windows). If it cannot be located the function
- * throws `KaosShellNotFoundError`; the SDK layer can wrap that into a
- * user-facing install hint. Set `KIMI_SHELL_PATH` to override.
+ * On Windows the probe prefers Git Bash (the canonical POSIX shell that
+ * ships with Git for Windows). If it cannot be located the function still
+ * returns the OS metadata with `shellAvailable=false` so the CLI can start
+ * and register the non-shell tools. Set `KIMI_SHELL_PATH` to override.
  */
 
 import { constants as fsConstants } from 'node:fs';
 import { access } from 'node:fs/promises';
 import * as nodeOs from 'node:os';
-
-import { KaosShellNotFoundError } from './errors';
 
 // `OsKind` carries 'macOS' / 'Linux' / 'Windows' for known platforms and
 // falls back to the raw `process.platform` string for unknown ones (e.g.
@@ -30,6 +28,8 @@ export interface Environment {
   readonly osVersion: string;
   readonly shellName: ShellName;
   readonly shellPath: string;
+  readonly shellAvailable?: boolean;
+  readonly shellUnavailableReason?: string;
 }
 
 export interface EnvironmentDeps {
@@ -62,8 +62,16 @@ export async function detectEnvironment(deps: EnvironmentDeps): Promise<Environm
   const osVersion = deps.release;
 
   if (deps.platform === 'win32') {
-    const shellPath = await locateWindowsGitBash(deps);
-    return { osKind, osArch, osVersion, shellName: 'bash', shellPath };
+    const shell = await locateWindowsGitBash(deps);
+    return {
+      osKind,
+      osArch,
+      osVersion,
+      shellName: 'bash',
+      shellPath: shell.path,
+      shellAvailable: shell.available,
+      shellUnavailableReason: shell.unavailableReason,
+    };
   }
 
   const candidates: readonly string[] = ['/bin/bash', '/usr/bin/bash', '/usr/local/bin/bash'];
@@ -80,14 +88,20 @@ export async function detectEnvironment(deps: EnvironmentDeps): Promise<Environm
   return { osKind, osArch, osVersion, shellName: 'sh', shellPath: '/bin/sh' };
 }
 
-async function locateWindowsGitBash(deps: EnvironmentDeps): Promise<string> {
+interface WindowsShellProbe {
+  readonly path: string;
+  readonly available: boolean;
+  readonly unavailableReason?: string;
+}
+
+async function locateWindowsGitBash(deps: EnvironmentDeps): Promise<WindowsShellProbe> {
   const checked: string[] = [];
 
   const override = deps.env['KIMI_SHELL_PATH']?.trim();
   if (override !== undefined && override.length > 0) {
     checked.push(override);
     if (await deps.isFile(override)) {
-      return override;
+      return { path: override, available: true };
     }
   }
 
@@ -98,7 +112,7 @@ async function locateWindowsGitBash(deps: EnvironmentDeps): Promise<string> {
       for (const path of inferred) {
         checked.push(path);
         if (await deps.isFile(path)) {
-          return path;
+          return { path, available: true };
         }
       }
     }
@@ -118,13 +132,16 @@ async function locateWindowsGitBash(deps: EnvironmentDeps): Promise<string> {
   for (const candidate of candidates) {
     checked.push(candidate);
     if (await deps.isFile(candidate)) {
-      return candidate;
+      return { path: candidate, available: true };
     }
   }
 
-  throw new KaosShellNotFoundError(
-    `Git Bash was not found on this Windows host. Install Git for Windows from https://gitforwindows.org/ or set KIMI_SHELL_PATH to a bash.exe. Checked: ${checked.join(', ')}.`,
-  );
+  const fallbackPath = override !== undefined && override.length > 0 ? override : candidates[0]!;
+  return {
+    path: fallbackPath,
+    available: false,
+    unavailableReason: `Git Bash was not found on this Windows host. Install Git for Windows from https://gitforwindows.org/ or set KIMI_SHELL_PATH to a bash.exe. Checked: ${checked.join(', ')}.`,
+  };
 }
 
 // Most Git for Windows installs put `git.exe` in `<root>\cmd\git.exe`,

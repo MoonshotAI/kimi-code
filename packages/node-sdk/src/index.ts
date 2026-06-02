@@ -50,6 +50,9 @@ export type { LogContext, LogLevel, LogPayload, Logger } from '@moonshot-ai/agen
 // "Goal complete · turns · tokens · time" text (live render + persisted message).
 export { buildGoalCompletionMessage } from '@moonshot-ai/agent-core';
 
+// OS / shell environment — resolved value comes from `KimiHarness.getEnvironment()`.
+export type { Environment } from '@moonshot-ai/agent-core';
+
 // Experimental feature flags — types only. Resolved values come from
 // `KimiHarness.getExperimentalFlags()` over RPC, not from a re-exported runtime value.
 export type {

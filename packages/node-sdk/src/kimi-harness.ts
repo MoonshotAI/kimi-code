@@ -8,6 +8,7 @@ import {
   resolveKimiHome,
   resolveLoggingConfig,
   withTelemetryContext,
+  type Environment,
   type ExperimentalFlagMap,
   type TelemetryClient,
   type TelemetryContextPatch,
@@ -195,6 +196,15 @@ export class KimiHarness {
   /** Resolved enabled-state of every experimental flag (flag id → enabled). */
   async getExperimentalFlags(): Promise<ExperimentalFlagMap> {
     return this.rpc.getExperimentalFlags();
+  }
+
+  /**
+   * Resolved OS / shell environment for this process. Lets the UI run a
+   * unified system-dependency check (e.g. shell availability) against the
+   * core's single source of truth instead of re-probing.
+   */
+  async getEnvironment(): Promise<Environment> {
+    return this.rpc.getEnvironment();
   }
 
   async ensureConfigFile(): Promise<void> {

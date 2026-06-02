@@ -74,8 +74,6 @@ export const ErrorCodes = {
   REQUEST_WORK_DIR_REQUIRED: 'request.work_dir_required',
   REQUEST_PROMPT_INPUT_EMPTY: 'request.prompt_input_empty',
 
-  SHELL_GIT_BASH_NOT_FOUND: 'shell.git_bash_not_found',
-
   NOT_IMPLEMENTED: 'not_implemented',
   INTERNAL: 'internal',
 } as const;
@@ -427,13 +425,6 @@ export const KIMI_ERROR_INFO = {
     retryable: false,
     public: true,
     action: 'Provide non-empty prompt input.',
-  },
-
-  'shell.git_bash_not_found': {
-    title: 'Git Bash not found',
-    retryable: false,
-    public: true,
-    action: 'Install Git for Windows from https://gitforwindows.org/ or set KIMI_SHELL_PATH to a bash.exe.',
   },
 
   not_implemented: {

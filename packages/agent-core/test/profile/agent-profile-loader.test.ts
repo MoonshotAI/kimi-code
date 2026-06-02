@@ -220,6 +220,29 @@ describe('default agent profiles', () => {
     expect(second).toContain('/workspace/two');
     expect(second).not.toContain('/workspace/one');
   });
+
+  it('renders unavailable shell guidance without Windows Git Bash command advice', () => {
+    const prompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt({
+      ...promptContext,
+      osEnv: {
+        osKind: 'Windows',
+        osArch: 'x64',
+        osVersion: '10.0.22631.0',
+        shellName: 'bash',
+        shellPath: 'C:\\Program Files\\Git\\bin\\bash.exe',
+        shellAvailable: false,
+        shellUnavailableReason: 'Git Bash was not found.',
+      },
+    });
+
+    expect(prompt).toContain('The Bash tool is unavailable: Git Bash was not found.');
+    expect(prompt).not.toContain('The Bash tool runs through Git Bash, so use Unix shell syntax');
+    // The scattered Bash-only guidance must drop out too, so the model is not
+    // told to use a tool it cannot call (see #291 review).
+    expect(prompt).not.toContain('Use `Bash` to run and test your code');
+    expect(prompt).not.toContain('use Bash tool with proper command');
+    expect(prompt).toContain('cannot run or test code through a shell');
+  });
 });
 
 async function write(fileName: string, content: string): Promise<string> {

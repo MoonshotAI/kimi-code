@@ -52,6 +52,16 @@ Or with pnpm:
 pnpm add -g @moonshot-ai/kimi-code
 ```
 
+## System dependencies
+
+Beyond Node.js, Kimi Code CLI uses a few external command-line tools. None of them block startup — the CLI degrades gracefully and tells you when one is missing. You can review their status any time with `/status`.
+
+| Tool | Used for | If missing |
+| --- | --- | --- |
+| `ripgrep` (`rg`) | The `Grep` tool and file-content search | Auto-downloaded on first use. If `rg` is already on your `PATH`, that copy is used instead. |
+| `fd` | Cross-directory fuzzy file search for `@` mentions | Optional. Inside a git repository, `git ls-files` still powers `@` completion; outside one, you get a startup warning. Install with `brew install fd` (macOS) or `sudo apt-get install fd-find` (Ubuntu). |
+| Shell (Git Bash on Windows) | The `Bash` tool, which runs shell commands | On Windows the `Bash` tool runs through Git Bash. If it is not installed and `KIMI_SHELL_PATH` does not point to a `bash.exe`, the CLI still starts, but the `Bash` tool is omitted until a shell is available. Install [Git for Windows](https://gitforwindows.org/) to enable it. |
+
 ## Upgrade and uninstall
 
 After installation, verify that the executable is ready:

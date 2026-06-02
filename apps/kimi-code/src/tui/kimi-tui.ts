@@ -30,6 +30,13 @@ import { createGitLsFilesCache } from '#/utils/git/git-ls-files';
 import { appendInputHistory, loadInputHistory } from '#/utils/history/input-history';
 import { getInputHistoryFile } from '#/utils/paths';
 import { detectFdPath } from '#/utils/process/fd-detect';
+import {
+  evaluateDependencies,
+  isRipgrepBootstrapSupported,
+  isRipgrepOnSystemPath,
+  type DependencyStatus,
+} from '#/cli/system-deps/check';
+import { startupDependencyWarnings } from '#/cli/system-deps/report';
 
 import {
   BUILTIN_SLASH_COMMANDS,
@@ -404,11 +411,40 @@ export class KimiTUI {
     this.mountFooter();
     this.renderWelcome();
     this.setupAutocomplete();
+    await this.showSystemDependencyWarnings();
     void this.loadPersistedInputHistory();
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
     return shouldReplayHistory;
+  }
+
+  /**
+   * Unified system-dependency check (ripgrep / fd / shell). Reads the resolved
+   * shell state from the core's single source of truth via the harness, reuses
+   * the already-probed `fdPath`, and reports against the declarative registry —
+   * so `/status` and the startup warnings stay consistent.
+   */
+  async collectSystemDependencyStatuses(): Promise<DependencyStatus[]> {
+    const environment = await this.harness.getEnvironment();
+    return evaluateDependencies({
+      environment,
+      fdAvailable: this.fdPath !== null,
+      rgOnSystemPath: isRipgrepOnSystemPath(),
+      rgBootstrappable: isRipgrepBootstrapSupported(),
+      isGitRepo: this.gitLsFilesCache.isGitRepo(),
+    });
+  }
+
+  private async showSystemDependencyWarnings(): Promise<void> {
+    try {
+      const statuses = await this.collectSystemDependencyStatuses();
+      for (const message of startupDependencyWarnings(statuses)) {
+        this.showStatus(message, this.state.theme.colors.warning);
+      }
+    } catch {
+      // A dependency check must never block or crash startup.
+    }
   }
 
   private startEventLoop(): void {

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MigrationPlan } from "@moonshot-ai/migration-legacy";
 import { log, type GoalSnapshot } from "@moonshot-ai/kimi-code-sdk";
@@ -24,6 +24,31 @@ vi.mock("#/tui/commands/prompts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("#/tui/commands/prompts")>();
   return { ...actual, promptPlatformSelection: vi.fn(), promptLogoutProviderSelection: vi.fn() };
 });
+
+// Make the system-dependency probe deterministic across machines: fd presence
+// and git-repo detection are mocked so tests don't depend on the host having
+// (or not having) fd installed, or running inside a git checkout.
+const moduleMocks = vi.hoisted(() => ({
+  detectFdPath: vi.fn(() => "fd" as string | null),
+  createGitLsFilesCache: vi.fn(),
+}));
+
+function makeGitCache(isGitRepo: boolean) {
+  return { isGitRepo: () => isGitRepo, getSnapshot: () => null, list: () => null };
+}
+
+vi.mock("#/utils/process/fd-detect", () => ({ detectFdPath: moduleMocks.detectFdPath }));
+vi.mock("#/utils/git/git-ls-files", () => ({
+  createGitLsFilesCache: moduleMocks.createGitLsFilesCache,
+}));
+
+const POSIX_ENVIRONMENT = {
+  osKind: "macOS",
+  osArch: "arm64",
+  osVersion: "test",
+  shellName: "bash",
+  shellPath: "/bin/bash",
+};
 
 interface StartupDriver {
   state: TUIState;
@@ -167,6 +192,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
     getExperimentalFlags: vi.fn(async () => ({})),
+    getEnvironment: vi.fn(async () => POSIX_ENVIRONMENT),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),
       login: vi.fn(async () => {}),
@@ -203,6 +229,13 @@ function captureInputListeners(driver: StartupDriver) {
 }
 
 describe("KimiTUI startup", () => {
+  beforeEach(() => {
+    // Healthy defaults: fd present + inside a git repo → no dependency warnings,
+    // so the pre-existing startup tests are undisturbed.
+    moduleMocks.detectFdPath.mockReturnValue("fd");
+    moduleMocks.createGitLsFilesCache.mockReturnValue(makeGitCache(true));
+  });
+
   it("creates a fresh session from startup flags and syncs runtime state", async () => {
     const session = makeSession({
       getStatus: vi.fn(async () => ({
@@ -896,6 +929,59 @@ describe("KimiTUI startup", () => {
     await driver.initMainTui();
 
     expect(uiContainsFooter(driver)).toBe(true);
+  });
+
+  it("warns at startup when fd is missing outside a git repository", async () => {
+    moduleMocks.detectFdPath.mockReturnValue(null);
+    moduleMocks.createGitLsFilesCache.mockReturnValue(makeGitCache(false));
+    const driver = makeDriver(makeHarness(), makeStartupInput()) as unknown as MigrateExitDriver;
+    const showStatus = vi
+      .spyOn(driver as unknown as KimiTUI, "showStatus")
+      .mockImplementation(() => {});
+
+    await driver.initMainTui();
+
+    const fdWarning = showStatus.mock.calls.find(([message]) => message.includes("fd"));
+    expect(fdWarning).toBeDefined();
+    expect(fdWarning?.[1]).toBe(driver.state.theme.colors.warning);
+  });
+
+  it("does not warn about fd when missing inside a git repository", async () => {
+    moduleMocks.detectFdPath.mockReturnValue(null);
+    moduleMocks.createGitLsFilesCache.mockReturnValue(makeGitCache(true));
+    const driver = makeDriver(makeHarness(), makeStartupInput()) as unknown as MigrateExitDriver;
+    const showStatus = vi
+      .spyOn(driver as unknown as KimiTUI, "showStatus")
+      .mockImplementation(() => {});
+
+    await driver.initMainTui();
+
+    expect(showStatus.mock.calls.filter(([message]) => message.includes("fd"))).toEqual([]);
+  });
+
+  it("warns at startup when the shell is unavailable", async () => {
+    const harness = makeHarness(makeSession(), {
+      getEnvironment: vi.fn(async () => ({
+        osKind: "Windows",
+        osArch: "x64",
+        osVersion: "10.0.22631.0",
+        shellName: "bash",
+        shellPath: "C:\\Program Files\\Git\\bin\\bash.exe",
+        shellAvailable: false,
+        shellUnavailableReason: "Git Bash was not found on this Windows host.",
+      })),
+    });
+    const driver = makeDriver(harness, makeStartupInput()) as unknown as MigrateExitDriver;
+    const showStatus = vi
+      .spyOn(driver as unknown as KimiTUI, "showStatus")
+      .mockImplementation(() => {});
+
+    await driver.initMainTui();
+
+    const shellWarning = showStatus.mock.calls.find(([message]) => message.includes("shell"));
+    expect(shellWarning).toBeDefined();
+    expect(shellWarning?.[0]).toContain("Git Bash was not found");
+    expect(shellWarning?.[1]).toBe(driver.state.theme.colors.warning);
   });
 });
 
