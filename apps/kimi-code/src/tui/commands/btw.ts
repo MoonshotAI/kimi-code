@@ -1,5 +1,6 @@
 import type { Component, Focusable, MarkdownTheme } from '@earendil-works/pi-tui';
 import {
+  Input,
   Key,
   Markdown,
   Text,
@@ -17,9 +18,18 @@ import type { SlashCommandHost } from './dispatch';
 
 type BtwPanelPhase = 'running' | 'done' | 'failed';
 
+interface BtwTurn {
+  readonly prompt: string;
+  answer: string;
+  thinking: string;
+  error?: string | undefined;
+  phase: BtwPanelPhase;
+}
+
 export interface BtwPanelOptions {
   readonly colors: ColorPalette;
   readonly markdownTheme: MarkdownTheme;
+  readonly onPrompt: (prompt: string) => void;
   readonly onClose: () => void;
   readonly onCancel: () => void;
 }
@@ -38,39 +48,85 @@ export async function handleBtwCommand(host: SlashCommandHost, args: string): Pr
   }
 
   try {
-    await session.startBtw(prompt);
+    const agentId = await session.startBtw();
+    host.openBtwPanel(agentId, prompt);
   } catch (error) {
     host.showError(`Failed to start /btw: ${formatErrorMessage(error)}`);
   }
 }
 
 export class BtwPanelComponent implements Component, Focusable {
-  private answer = '';
-  private thinking = '';
-  private error: string | undefined;
-  private phase: BtwPanelPhase = 'running';
+  private readonly turns: BtwTurn[] = [];
+  private readonly input = new Input();
   focused = false;
 
-  constructor(private readonly options: BtwPanelOptions) {}
+  constructor(private readonly options: BtwPanelOptions) {
+    this.input.onSubmit = (value) => {
+      if (this.isRunning()) return;
+      const prompt = value.trim();
+      if (prompt.length === 0) {
+        this.options.onClose();
+        return;
+      }
+      this.input.setValue('');
+      this.submit(prompt);
+    };
+    this.input.onEscape = () => {
+      if (this.isRunning()) {
+        this.options.onCancel();
+      } else {
+        this.options.onClose();
+      }
+    };
+  }
+
+  submit(prompt: string): void {
+    const normalized = prompt.trim();
+    if (normalized.length === 0 || this.isRunning()) return;
+    this.turns.push({
+      prompt: normalized,
+      answer: '',
+      thinking: '',
+      phase: 'running',
+    });
+    this.options.onPrompt(normalized);
+  }
 
   appendAnswer(delta: string): void {
-    this.answer += delta;
+    const turn = this.currentTurn();
+    if (turn === undefined) return;
+    turn.answer += delta;
   }
 
   appendThinking(delta: string): void {
-    this.thinking += delta;
+    const turn = this.currentTurn();
+    if (turn === undefined) return;
+    turn.thinking += delta;
   }
 
   markDone(resultSummary?: string | undefined): void {
-    if (this.answer.trim().length === 0 && resultSummary !== undefined) {
-      this.answer = resultSummary;
+    const turn = this.currentTurn();
+    if (turn === undefined) return;
+    if (turn.answer.trim().length === 0 && resultSummary !== undefined) {
+      turn.answer = resultSummary;
     }
-    this.phase = 'done';
+    turn.phase = 'done';
   }
 
   markFailed(error: string): void {
-    this.error = error;
-    this.phase = 'failed';
+    const turn = this.currentTurn();
+    if (turn === undefined || turn.phase !== 'running') {
+      this.turns.push({
+        prompt: '',
+        answer: '',
+        thinking: '',
+        error,
+        phase: 'failed',
+      });
+      return;
+    }
+    turn.error = error;
+    turn.phase = 'failed';
   }
 
   invalidate(): void {}
@@ -86,17 +142,13 @@ export class BtwPanelComponent implements Component, Focusable {
   }
 
   handleInput(data: string): void {
-    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl('c'))) {
-      if (this.phase === 'running') {
+    if (this.isRunning()) {
+      if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl('c'))) {
         this.options.onCancel();
-      } else {
-        this.options.onClose();
       }
       return;
     }
-    if (matchesKey(data, Key.enter) && this.phase !== 'running') {
-      this.options.onClose();
-    }
+    this.input.handleInput(data);
   }
 
   private renderTopBorder(width: number): string {
@@ -110,7 +162,8 @@ export class BtwPanelComponent implements Component, Focusable {
   }
 
   private renderPhase(): string {
-    switch (this.phase) {
+    const phase = this.currentTurn()?.phase ?? 'done';
+    switch (phase) {
       case 'done':
         return chalk.hex(this.options.colors.success)('done');
       case 'failed':
@@ -121,29 +174,60 @@ export class BtwPanelComponent implements Component, Focusable {
   }
 
   private renderBody(width: number): string[] {
-    if (this.error !== undefined) {
+    const lines: string[] = [];
+    for (const [index, turn] of this.turns.entries()) {
+      if (index > 0) lines.push('');
+      lines.push(...this.renderTurn(turn, width));
+    }
+    if (this.turns.length === 0) {
+      lines.push(chalk.hex(this.options.colors.textDim)('Ready for a side question...'));
+    }
+    if (!this.isRunning()) {
+      this.input.focused = this.focused;
+      lines.push('');
+      lines.push(this.renderInput(width));
+    }
+    lines.push(this.renderHint());
+    return lines;
+  }
+
+  private renderTurn(turn: BtwTurn, width: number): string[] {
+    const prompt = chalk.hex(this.options.colors.accent)(`Q: ${turn.prompt}`);
+    if (turn.error !== undefined) {
       return [
-        ...new Text(chalk.hex(this.options.colors.error)(this.error), 0, 0).render(width),
-        this.renderHint(),
+        ...new Text(prompt, 0, 0).render(width),
+        ...new Text(chalk.hex(this.options.colors.error)(turn.error), 0, 0).render(width),
       ];
     }
-    const text = this.answer.trim();
-    if (text.length > 0) {
+    const answer = turn.answer.trim();
+    if (answer.length > 0) {
       return [
-        ...new Markdown(text, 0, 0, this.options.markdownTheme).render(width),
-        this.renderHint(),
+        ...new Text(prompt, 0, 0).render(width),
+        ...new Markdown(answer, 0, 0, this.options.markdownTheme).render(width),
       ];
     }
-    const thinking = this.thinking.trim();
+    const thinking = turn.thinking.trim();
     if (thinking.length > 0) {
-      const lines = new Text(chalk.hex(this.options.colors.textDim)(thinking), 0, 0).render(width);
-      const visibleLines =
-        lines.length > THINKING_PREVIEW_LINES
-          ? lines.slice(lines.length - THINKING_PREVIEW_LINES)
-          : lines;
-      return [...visibleLines, this.renderHint()];
+      const thinkingLines = new Text(chalk.hex(this.options.colors.textDim)(thinking), 0, 0).render(
+        width,
+      );
+      const visibleThinking =
+        thinkingLines.length > THINKING_PREVIEW_LINES
+          ? thinkingLines.slice(thinkingLines.length - THINKING_PREVIEW_LINES)
+          : thinkingLines;
+      return [...new Text(prompt, 0, 0).render(width), ...visibleThinking];
     }
-    return [chalk.hex(this.options.colors.textDim)('Waiting for answer...'), this.renderHint()];
+    return [
+      ...new Text(prompt, 0, 0).render(width),
+      chalk.hex(this.options.colors.textDim)('Waiting for answer...'),
+    ];
+  }
+
+  private renderInput(width: number): string {
+    const label = chalk.hex(this.options.colors.textMuted)('Ask: ');
+    const inputWidth = Math.max(1, width - visibleWidth(label));
+    const [line = ''] = this.input.render(inputWidth);
+    return label + line;
   }
 
   private renderBodyLine(line: string, width: number): string {
@@ -156,7 +240,17 @@ export class BtwPanelComponent implements Component, Focusable {
   }
 
   private renderHint(): string {
-    const text = this.phase === 'running' ? 'Esc/Ctrl-C cancel' : 'Enter/Esc/Ctrl-C close';
+    const text = this.isRunning()
+      ? 'Esc/Ctrl-C cancel'
+      : 'Type follow-up, Enter send, empty Enter/Esc/Ctrl-C close';
     return chalk.hex(this.options.colors.textMuted)(text);
+  }
+
+  private currentTurn(): BtwTurn | undefined {
+    return this.turns.at(-1);
+  }
+
+  private isRunning(): boolean {
+    return this.currentTurn()?.phase === 'running';
   }
 }

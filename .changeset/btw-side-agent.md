@@ -4,4 +4,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Add `/btw` for asking side-channel questions without steering the active main turn.
+Add `/btw` for side-channel conversations without steering the active main turn.

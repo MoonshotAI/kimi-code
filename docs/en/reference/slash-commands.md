@@ -53,7 +53,7 @@ Some commands are only available in the idle state. Running them while the sessi
 | Command | Alias | Description | Always available |
 | --- | --- | --- | --- |
 | `/help` | `/h`, `/?` | Show keyboard shortcuts and all available commands. | Yes |
-| `/btw <question>` | — | Ask a side-channel question in a forked subagent without steering the current main agent turn. | Yes |
+| `/btw <question>` | — | Open a side-channel conversation in a forked subagent without steering the current main agent turn. | Yes |
 | `/usage` | — | Show token usage, context consumption, and quota information. | Yes |
 | `/status` | — | Show the current session runtime status, including version, model, working directory, and permission mode. | Yes |
 | `/mcp` | — | List the MCP servers in the current session and their connection status. | Yes |

@@ -338,22 +338,24 @@ describe('Session.prompt events', () => {
         (event) => event.type === 'turn.ended' && event.agentId !== 'main',
       );
 
-      await session.startBtw('你现在在做啥？');
+      const agentId = await session.startBtw();
+      harness.interactiveAgentId = agentId;
+      await session.prompt('What are you working on right now?');
       await done;
       unsubscribe();
 
       const started = events.find(
         (event) =>
           event.type === 'turn.started' &&
-          event.origin.kind === 'system_trigger' &&
-          event.origin.name === 'btw',
+          event.agentId === agentId &&
+          event.origin.kind === 'user',
       );
       expect(events).toContainEqual(
         expect.objectContaining({
           type: 'turn.started',
           sessionId: session.id,
-          agentId: started?.agentId,
-          origin: { kind: 'system_trigger', name: 'btw' },
+          agentId,
+          origin: { kind: 'user' },
         }),
       );
       expect(started?.agentId).not.toBe('main');
@@ -370,7 +372,7 @@ describe('Session.prompt events', () => {
       );
       const btwHistoryText = JSON.stringify(fakeProviderState.calls[1]?.history);
       expect(btwHistoryText).toContain('main task context');
-      expect(btwHistoryText).toContain('你现在在做啥？');
+      expect(btwHistoryText).toContain('What are you working on right now?');
 
       const statePath = join(session.summary!.sessionDir, 'state.json');
       const state = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;

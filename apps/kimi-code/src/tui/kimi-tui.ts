@@ -40,7 +40,7 @@ import {
   type KimiSlashCommand,
   type SkillListSession,
 } from './commands';
-import type { BtwPanelComponent } from './commands/btw';
+import { BtwPanelComponent } from './commands/btw';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
 import { GutterContainer } from './components/chrome/gutter-container';
 import { CHROME_GUTTER } from './constant/rendering';
@@ -1635,9 +1635,62 @@ export class KimiTUI {
 
   closeBtwPanel(panel: BtwPanelComponent): void {
     if (!this.state.btwPanelContainer.children.includes(panel)) return;
+    this.sessionEventHandler.unregisterBtwPanel(panel);
     this.state.btwPanelContainer.clear();
     this.state.ui.setFocus(this.state.editor);
     this.state.ui.requestRender();
+  }
+
+  openBtwPanel(agentId: string, initialPrompt: string): void {
+    let panel: BtwPanelComponent;
+    panel = new BtwPanelComponent({
+      colors: this.state.theme.colors,
+      markdownTheme: this.state.theme.markdownTheme,
+      onPrompt: (prompt) => {
+        this.promptBtwAgent(agentId, prompt, panel);
+      },
+      onClose: () => {
+        this.closeBtwPanel(panel);
+      },
+      onCancel: () => {
+        this.closeBtwPanel(panel);
+        void this.cancelSideAgent(agentId);
+      },
+    });
+    this.sessionEventHandler.registerBtwPanel(agentId, panel);
+    this.showBtwPanel(panel);
+    panel.submit(initialPrompt);
+  }
+
+  private promptBtwAgent(agentId: string, prompt: string, panel: BtwPanelComponent): void {
+    const session = this.session;
+    if (session === undefined) {
+      panel.markFailed(NO_ACTIVE_SESSION_MESSAGE);
+      this.state.ui.requestRender();
+      return;
+    }
+    void this.withInteractiveAgent(agentId, () => session.prompt(prompt)).catch((error: unknown) => {
+      panel.markFailed(`Failed to send /btw prompt: ${formatErrorMessage(error)}`);
+      this.state.ui.requestRender();
+    });
+  }
+
+  private async cancelSideAgent(agentId: string): Promise<void> {
+    const session = this.session;
+    if (session === undefined) return;
+    await this.withInteractiveAgent(agentId, () => session.cancel()).catch((error: unknown) => {
+      this.showError(`Failed to cancel /btw: ${formatErrorMessage(error)}`);
+    });
+  }
+
+  private async withInteractiveAgent<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
+    const previousAgentId = this.harness.interactiveAgentId;
+    this.harness.interactiveAgentId = agentId;
+    try {
+      return await fn();
+    } finally {
+      this.harness.interactiveAgentId = previousAgentId;
+    }
   }
 
   private async runMigrationScreen(plan: MigrationPlan): Promise<MigrationScreenResult> {

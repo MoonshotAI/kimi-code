@@ -220,9 +220,14 @@ describe('AgentAPI.startBtw', () => {
     scripted.mockNextResponse({ type: 'text', text: summary });
 
     try {
-      await new SessionAPIImpl(session).startBtw({
-        agentId: 'main',
-        prompt: 'What are you working on right now?',
+      const api = new SessionAPIImpl(session);
+      const agentId = await api.startBtw({ agentId: 'main' });
+      expect(agentId).toBe('agent-0');
+      expect(scripted.calls).toHaveLength(0);
+
+      await api.prompt({
+        agentId,
+        input: [{ type: 'text', text: 'What are you working on right now?' }],
       });
 
       await vi.waitFor(() => {
@@ -236,12 +241,12 @@ describe('AgentAPI.startBtw', () => {
       });
       expect(events.filter((event) => String(event['type']).startsWith('subagent.'))).toEqual([]);
       expect(events).toContainEqual(
-        expect.objectContaining({
-          type: 'turn.started',
-          agentId: 'agent-0',
-          origin: { kind: 'system_trigger', name: 'btw' },
-        }),
-      );
+          expect.objectContaining({
+            type: 'turn.started',
+            agentId: 'agent-0',
+            origin: { kind: 'user' },
+          }),
+        );
       expect(scripted.calls).toHaveLength(1);
       expect(scripted.calls[0]?.systemPrompt).toBe('<system-prompt>');
       expect(scripted.calls[0]?.tools.map((tool) => tool.name)).toEqual([
@@ -250,7 +255,7 @@ describe('AgentAPI.startBtw', () => {
       ]);
       const historyText = JSON.stringify(scripted.calls[0]?.history);
       expect(historyText).toContain('Main task: implement /btw.');
-      expect(historyText).toContain('This is a side question from the user.');
+      expect(historyText).toContain('This is a side-channel conversation with the user.');
       expect(historyText).toContain('All tool calls are disabled and will be rejected.');
       expect(historyText).toContain('What are you working on right now?');
       expect(historyText).not.toContain('call-open');
@@ -260,6 +265,17 @@ describe('AgentAPI.startBtw', () => {
       expect(JSON.stringify(session.agents.get('agent-0')?.context.history)).toContain(
         'What are you working on right now?',
       );
+      scripted.mockNextResponse({ type: 'text', text: 'Follow-up answer from the same side agent.' });
+      await api.prompt({
+        agentId,
+        input: [{ type: 'text', text: 'Can you say that another way?' }],
+      });
+      await vi.waitFor(() => {
+        expect(scripted.calls).toHaveLength(2);
+      });
+      const followUpHistoryText = JSON.stringify(scripted.calls[1]?.history);
+      expect(followUpHistoryText).toContain('What are you working on right now?');
+      expect(followUpHistoryText).toContain('Can you say that another way?');
       await expect(access(join(sessionDir, 'agents', 'agent-0', 'wire.jsonl'))).rejects.toThrow();
     } finally {
       await session.close();
@@ -300,9 +316,12 @@ describe('AgentAPI.startBtw', () => {
     });
 
     try {
-      await new SessionAPIImpl(session).startBtw({
-        agentId: 'main',
-        prompt: 'What are you working on right now?',
+      const api = new SessionAPIImpl(session);
+      const agentId = await api.startBtw({ agentId: 'main' });
+      expect(agentId).toBe('agent-0');
+      await api.prompt({
+        agentId,
+        input: [{ type: 'text', text: 'What are you working on right now?' }],
       });
 
       await vi.waitFor(() => {
@@ -346,7 +365,7 @@ describe('AgentAPI.startBtw', () => {
     }
   });
 
-  it('rejects concurrent side subagents and cancels the current one', async () => {
+  it('cancels a btw turn through the returned agent id', async () => {
     const workDir = await makeTempDir();
     const sessionDir = await makeTempDir();
 
@@ -386,16 +405,11 @@ describe('AgentAPI.startBtw', () => {
 
     try {
       const api = new SessionAPIImpl(session);
-      const start = api.startBtw({
-        agentId: 'main',
-        prompt: 'Where are things right now?',
-      });
-      await expect(
-        api.startBtw({ agentId: 'main', prompt: 'Ask another question' }),
-      ).rejects.toMatchObject({
-        name: 'KimiError',
-        code: 'request.invalid',
-        message: 'BTW is already running',
+      const agentId = await api.startBtw({ agentId: 'main' });
+      expect(agentId).toBe('agent-0');
+      await api.prompt({
+        agentId,
+        input: [{ type: 'text', text: 'Where are things right now?' }],
       });
 
       await vi.waitFor(() => {
@@ -403,13 +417,12 @@ describe('AgentAPI.startBtw', () => {
           expect.objectContaining({
             type: 'turn.started',
             agentId: 'agent-0',
-            origin: { kind: 'system_trigger', name: 'btw' },
+            origin: { kind: 'user' },
           }),
         );
       });
 
-      await api.cancelBtw({ agentId: 'main' });
-      await expect(start).resolves.toBeUndefined();
+      await api.cancel({ agentId });
 
       await vi.waitFor(() => {
         expect(events).toContainEqual(

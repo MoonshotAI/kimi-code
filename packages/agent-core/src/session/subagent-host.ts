@@ -4,7 +4,6 @@ import type { Agent } from '../agent';
 import type { PromptOrigin } from '../agent/context';
 import { DenyAllPermissionPolicy } from '../agent/permission/policies/deny-all';
 import { InMemoryAgentRecordPersistence } from '../agent/records';
-import { ErrorCodes, KimiError } from '../errors';
 import type { LoopTurnStopReason } from '../loop';
 import {
   DEFAULT_AGENT_PROFILES,
@@ -29,16 +28,17 @@ const SUBAGENT_MAX_TOKENS_ERROR =
 const TOOL_CALL_DISABLED_MESSAGE =
   'Tool calls are disabled for side questions. Answer with text only.';
 const SIDE_QUESTION_SYSTEM_REMINDER = `
-This is a side question from the user. Answer directly in a single response.
+This is a side-channel conversation with the user.
 
 IMPORTANT:
-- You are a separate, lightweight instance answering one question.
+- You are a separate, lightweight instance.
 - The main agent continues independently; do not reference being interrupted.
 - Do not call any tools. All tool calls are disabled and will be rejected.
   Even though tool definitions are visible in this request, they exist only
   for technical reasons (prompt cache). You must not use them.
-- Respond only with text based on what you already know from the conversation.
-- This is a one-off response; there are no follow-up turns.
+- Respond only with text based on what you already know from the conversation
+  and this side-channel conversation.
+- Follow-up turns may happen in this side-channel conversation.
 - If you do not know the answer, say so directly.
 `;
 
@@ -71,7 +71,6 @@ export type SubagentHandle = {
 
 export class SessionSubagentHost {
   private readonly activeChildren = new Map<string, ActiveChild>();
-  private currentBtwController: AbortController | undefined;
 
   constructor(
     private readonly session: Session,
@@ -186,59 +185,27 @@ export class SessionSubagentHost {
     };
   }
 
-  async startBtw(prompt: string): Promise<void> {
-    if (this.currentBtwController !== undefined) {
-      throw new KimiError(ErrorCodes.REQUEST_INVALID, 'BTW is already running');
-    }
-    const controller = new AbortController();
-    this.currentBtwController = controller;
+  async startBtw(): Promise<string> {
+    const parent = this.session.agents.get(this.ownerAgentId)!;
+    const { id, agent: child } = await this.session.createAgent(
+      {
+        type: 'sub',
+        generate: parent.rawGenerate,
+        persistence: new InMemoryAgentRecordPersistence(),
+      },
+      undefined,
+      this.ownerAgentId,
+    );
 
-    try {
-      const parent = this.session.agents.get(this.ownerAgentId)!;
-      const { agent: child } = await this.session.createAgent(
-        {
-          type: 'sub',
-          generate: parent.rawGenerate,
-          persistence: new InMemoryAgentRecordPersistence(),
-        },
-        undefined,
-        this.ownerAgentId,
-      );
-
-      child.config.update(parent.config);
-      child.tools.copyLoopToolsFrom(parent.tools);
-      child.context.appendProjectedHistoryFrom(parent.context);
-      child.permission.policies.unshift(new DenyAllPermissionPolicy(TOOL_CALL_DISABLED_MESSAGE));
-
-      child.turn.prompt(
-        [
-          {
-            type: 'text',
-            text: `<system-reminder>\n${SIDE_QUESTION_SYSTEM_REMINDER.trim()}\n</system-reminder>\n\n${prompt}`,
-          },
-        ],
-        {
-          kind: 'system_trigger',
-          name: 'btw',
-        },
-      );
-      await child.turn.waitForCurrentTurn(controller.signal);
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        throw error;
-      }
-    } finally {
-      if (this.currentBtwController === controller) {
-        this.currentBtwController = undefined;
-      }
-    }
-  }
-
-  cancelBtw(reason: unknown = userCancellationReason()): void {
-    const controller = this.currentBtwController;
-    if (controller === undefined) return;
-    this.currentBtwController = undefined;
-    controller.abort(reason);
+    child.config.update(parent.config);
+    child.tools.copyLoopToolsFrom(parent.tools);
+    child.context.appendProjectedHistoryFrom(parent.context);
+    child.context.appendSystemReminder(SIDE_QUESTION_SYSTEM_REMINDER.trim(), {
+      kind: 'system_trigger',
+      name: 'btw',
+    });
+    child.permission.policies.unshift(new DenyAllPermissionPolicy(TOOL_CALL_DISABLED_MESSAGE));
+    return id;
   }
 
   cancelAll(reason: unknown = userCancellationReason()): void {

@@ -101,6 +101,7 @@ export interface SlashCommandHost {
   showStatus(msg: string, color?: string): void;
   showNotice(title: string, detail?: string): void;
   track(event: string, props?: Record<string, unknown>): void;
+  openBtwPanel(agentId: string, initialPrompt: string): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
 

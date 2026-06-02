@@ -201,10 +201,6 @@ export interface ActivateSkillPayload {
   readonly args?: string | undefined;
 }
 
-export interface StartBtwPayload {
-  readonly prompt: string;
-}
-
 export interface McpServerInfo {
   readonly name: string;
   readonly transport: 'stdio' | 'http';
@@ -285,8 +281,7 @@ export interface AgentAPI {
   stopBackground: (payload: StopBackgroundPayload) => void;
   clearContext: (payload: EmptyPayload) => void;
   activateSkill: (payload: ActivateSkillPayload) => void;
-  startBtw: (payload: StartBtwPayload) => void;
-  cancelBtw: (payload: EmptyPayload) => void;
+  startBtw: (payload: EmptyPayload) => string;
   getBackgroundOutput: (payload: GetBackgroundOutputPayload) => string;
   getContext: (payload: EmptyPayload) => AgentContextData;
   getConfig: (payload: EmptyPayload) => AgentConfigData;
