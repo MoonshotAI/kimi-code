@@ -199,9 +199,8 @@ describe('AskUserQuestionTool', () => {
 
     expect(result.isError).toBe(false);
     expect(result.output).toContain('task_id: question-');
-    const taskId = /task_id: (?<taskId>question-[0-9a-z]{8})/.exec(String(result.output))?.groups?.[
-      'taskId'
-    ];
+    const outputText = typeof result.output === 'string' ? result.output : '';
+    const taskId = /task_id: (?<taskId>question-[0-9a-z]{8})/.exec(outputText)?.groups?.['taskId'];
     expect(taskId).toBeDefined();
     expect(manager.getTask(taskId!)).toMatchObject({
       kind: 'question',
