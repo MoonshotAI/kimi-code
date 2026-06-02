@@ -64,6 +64,7 @@ const TOOLBAR_TIPS: readonly ToolbarTip[] = [
   { text: '/auto: auto permission mode' },
   { text: '/yolo: toggle yolo' },
   { text: '/help: show commands' },
+  { text: '/dance: rainbow mode, because why not' },
   { text: '/plugins: manage plugins — try the "superpowers" plugin', solo: true, priority: 3 },
   { text: 'ask Kimi to schedule tasks, e.g. "remind me at 5pm"', solo: true, priority: 3 },
 ];
