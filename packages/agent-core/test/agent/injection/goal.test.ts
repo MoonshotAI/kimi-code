@@ -148,6 +148,15 @@ describe('GoalInjector content', () => {
     expect(text).toContain('one coherent slice of work');
     expect(text).toContain('Do not mark complete after only producing a plan');
   });
+
+  it('tells the model to set explicit hard budgets but ignore unreasonable ones', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work for up to 20 turns' });
+    const text = (await injectOnce(store))!;
+    expect(text).toContain('SetGoalBudget');
+    expect(text).toContain('Do not invent budgets');
+    expect(text).toContain('not reasonable');
+  });
 });
 
 describe('InjectionManager goal integration', () => {

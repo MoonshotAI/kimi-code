@@ -6,6 +6,8 @@ import {
   CreateGoalTool,
   CreateGoalToolInputSchema,
   GetGoalTool,
+  SetGoalBudgetTool,
+  SetGoalBudgetToolInputSchema,
   UpdateGoalTool,
   UpdateGoalToolInputSchema,
 } from '../../src/tools/builtin';
@@ -45,7 +47,7 @@ describe('CreateGoalTool', () => {
     expect(store.getGoal().goal?.objective).toBe('Ship feature X');
   });
 
-  it('passes completionCriterion, budgets, and replace', async () => {
+  it('passes completionCriterion and replace', async () => {
     const store = makeStore();
     const tool = new CreateGoalTool(fakeAgent({ goals: store }));
     await executeTool(tool, ctx({ objective: 'first' }));
@@ -54,14 +56,13 @@ describe('CreateGoalTool', () => {
       ctx({
         objective: 'second',
         completionCriterion: 'tests pass',
-        budgetLimits: { tokenBudget: 100 },
         replace: true,
       }),
     );
     const goal = store.getGoal().goal!;
     expect(goal.objective).toBe('second');
     expect(goal.completionCriterion).toBe('tests pass');
-    expect(goal.budget.tokenBudget).toBe(100);
+    expect(goal.budget.tokenBudget).toBeNull();
   });
 
   it('rejects empty and too-long objectives via the store', async () => {
@@ -84,6 +85,7 @@ describe('CreateGoalTool', () => {
   it('uses the imported markdown description', () => {
     const tool = new CreateGoalTool(fakeAgent());
     expect(tool.description).toContain('Create a durable, structured goal');
+    expect(tool.description).not.toContain('SetGoalBudget');
   });
 });
 
@@ -123,6 +125,55 @@ describe('GetGoalTool', () => {
     await store.markBlocked({ reason: 'stuck' });
     parsed = JSON.parse((await executeTool(tool, ctx({}))).output as string);
     expect(parsed.goal.status).toBe('blocked');
+  });
+});
+
+describe('SetGoalBudgetTool', () => {
+  it('accepts a value with a supported budget unit', () => {
+    for (const unit of ['turns', 'tokens', 'milliseconds', 'seconds', 'minutes', 'hours']) {
+      expect(SetGoalBudgetToolInputSchema.safeParse({ value: 20, unit }).success).toBe(true);
+    }
+    expect(SetGoalBudgetToolInputSchema.safeParse({ value: 0, unit: 'turns' }).success).toBe(false);
+    expect(SetGoalBudgetToolInputSchema.safeParse({ value: 1, unit: 'years' }).success).toBe(false);
+    expect(SetGoalBudgetToolInputSchema.safeParse({ value: 1.5, unit: 'turns' }).success).toBe(false);
+    expect(SetGoalBudgetToolInputSchema.safeParse({ value: 1.5, unit: 'hours' }).success).toBe(true);
+  });
+
+  it('sets turn, token, and time budgets on the current goal', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    const tool = new SetGoalBudgetTool(fakeAgent({ goals: store }));
+
+    expect((await executeTool(tool, ctx({ value: 20, unit: 'turns' }))).output).toBe(
+      'Goal budget set: 20 turns.',
+    );
+    expect(store.getGoal().goal?.budget.turnBudget).toBe(20);
+
+    expect((await executeTool(tool, ctx({ value: 500_000, unit: 'tokens' }))).output).toBe(
+      'Goal budget set: 500000 tokens.',
+    );
+    expect(store.getGoal().goal?.budget.tokenBudget).toBe(500_000);
+
+    expect((await executeTool(tool, ctx({ value: 30, unit: 'minutes' }))).output).toBe(
+      'Goal budget set: 30 minutes.',
+    );
+    expect(store.getGoal().goal?.budget.wallClockBudgetMs).toBe(30 * 60 * 1000);
+  });
+
+  it('ignores unreasonable time budgets and tells the model why', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    const tool = new SetGoalBudgetTool(fakeAgent({ goals: store }));
+
+    const tiny = await executeTool(tool, ctx({ value: 1, unit: 'milliseconds' }));
+    expect(tiny.isError).toBeFalsy();
+    expect(tiny.output).toContain('not a reasonable goal budget');
+    expect(store.getGoal().goal?.budget.wallClockBudgetMs).toBeNull();
+
+    const huge = await executeTool(tool, ctx({ value: 8760, unit: 'hours' }));
+    expect(huge.isError).toBeFalsy();
+    expect(huge.output).toContain('not a reasonable goal budget');
+    expect(store.getGoal().goal?.budget.wallClockBudgetMs).toBeNull();
   });
 });
 
@@ -187,6 +238,9 @@ describe('goal tools are main-agent-only', () => {
       isError: true,
     });
     expect(await executeTool(new GetGoalTool(agent), ctx({}))).toMatchObject({ isError: true });
+    expect(await executeTool(new SetGoalBudgetTool(agent), ctx({ value: 1, unit: 'turns' }))).toMatchObject({
+      isError: true,
+    });
   });
 });
 
@@ -200,7 +254,7 @@ describe('ToolManager goal tool registration', () => {
   function loopToolNames(type: 'main' | 'sub'): readonly string[] {
     const ctxAgent = testAgent({ type });
     // configure() gives the agent a provider so builtin tools can initialize.
-    ctxAgent.configure({ tools: ['Read', 'CreateGoal', 'GetGoal'] });
+    ctxAgent.configure({ tools: ['Read', 'CreateGoal', 'GetGoal', 'SetGoalBudget'] });
     // Re-run registration so the gate reads the current flag state.
     ctxAgent.agent.tools.initializeBuiltinTools();
     return ctxAgent.agent.tools.loopTools.map((tool) => tool.name);
@@ -211,12 +265,14 @@ describe('ToolManager goal tool registration', () => {
     const names = loopToolNames('main');
     expect(names).not.toContain('CreateGoal');
     expect(names).not.toContain('GetGoal');
+    expect(names).not.toContain('SetGoalBudget');
   });
 
   it('exposes goal tools to the main agent when the flag is enabled', () => {
     process.env[GOAL_FLAG] = 'true';
     const names = loopToolNames('main');
     expect(names).toEqual(expect.arrayContaining(['CreateGoal', 'GetGoal']));
+    expect(names).not.toContain('SetGoalBudget');
   });
 
   it('does not expose goal tools to subagents even when enabled', () => {
@@ -224,19 +280,26 @@ describe('ToolManager goal tool registration', () => {
     const names = loopToolNames('sub');
     expect(names).not.toContain('CreateGoal');
     expect(names).not.toContain('GetGoal');
+    expect(names).not.toContain('SetGoalBudget');
   });
 
-  it('hides UpdateGoal until a goal exists, then exposes it', async () => {
+  it('hides goal mutation tools until a goal exists, then exposes them', async () => {
     process.env[GOAL_FLAG] = 'true';
     const store = makeStore();
     const ctxAgent = testAgent({ type: 'main', goals: store });
-    ctxAgent.configure({ tools: ['Read', 'CreateGoal', 'GetGoal', 'UpdateGoal'] });
+    ctxAgent.configure({ tools: ['Read', 'CreateGoal', 'GetGoal', 'SetGoalBudget', 'UpdateGoal'] });
     ctxAgent.agent.tools.initializeBuiltinTools();
-    // No goal yet -> UpdateGoal is filtered out of the model's tool list.
+    // No goal yet -> mutation tools are filtered out of the model's tool list.
     expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).not.toContain('UpdateGoal');
+    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).not.toContain('SetGoalBudget');
     // Once a goal exists, it appears.
     await store.createGoal({ objective: 'work' });
     expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).toContain('UpdateGoal');
+    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).toContain('SetGoalBudget');
+
+    await store.markComplete({ actor: 'model' });
+    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).not.toContain('UpdateGoal');
+    expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).not.toContain('SetGoalBudget');
   });
 });
 
@@ -247,9 +310,14 @@ describe('CreateGoalToolInputSchema', () => {
       CreateGoalToolInputSchema.safeParse({
         objective: 'x',
         completionCriterion: 'done',
-        budgetLimits: { tokenBudget: 1, turnBudget: 2, wallClockBudgetMs: 3 },
         replace: true,
       }).success,
     ).toBe(true);
+    expect(
+      CreateGoalToolInputSchema.safeParse({
+        objective: 'x',
+        budgetLimits: { tokenBudget: 1 },
+      }).success,
+    ).toBe(false);
   });
 });

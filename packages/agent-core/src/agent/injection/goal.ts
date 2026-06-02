@@ -128,6 +128,12 @@ function buildGoalReminder(goal: GoalSnapshot): string {
 
   lines.push('');
   lines.push(
+    'If the user clearly states a hard budget limit in the objective or latest request and the ' +
+      'current goal does not already record that limit, call SetGoalBudget. Do not invent budgets. ' +
+      'If a requested budget is not reasonable, do not set it; tell the user it is not reasonable.',
+  );
+  lines.push('');
+  lines.push(
     'Goal mode is iterative. Each turn, first self-audit against the objective and any completion ' +
       'criteria above, then do one coherent slice of work toward the objective. Use multiple turns ' +
       'when the task naturally has multiple phases. Call UpdateGoal with `complete` only when all ' +

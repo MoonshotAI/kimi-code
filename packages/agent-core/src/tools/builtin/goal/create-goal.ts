@@ -13,14 +13,6 @@ import { toInputJsonSchema } from '../../support/input-schema';
 import { goalErrorResult, isGoalToolError, requireGoalStore } from './shared';
 import DESCRIPTION from './create-goal.md';
 
-const BudgetLimitsSchema = z
-  .object({
-    tokenBudget: z.number().int().positive().optional(),
-    turnBudget: z.number().int().positive().optional(),
-    wallClockBudgetMs: z.number().int().positive().optional(),
-  })
-  .strict();
-
 export const CreateGoalToolInputSchema = z
   .object({
     objective: z.string().min(1).describe('The objective to pursue. Must have a verifiable end state.'),
@@ -28,7 +20,6 @@ export const CreateGoalToolInputSchema = z
       .string()
       .optional()
       .describe('How to verify the goal is complete. Include when the user provides one.'),
-    budgetLimits: BudgetLimitsSchema.optional().describe('Optional hard budgets for the goal.'),
     replace: z
       .boolean()
       .optional()
@@ -57,7 +48,6 @@ export class CreateGoalTool implements BuiltinTool<CreateGoalToolInput> {
           const snapshot = await store.createGoal({
             objective: args.objective,
             completionCriterion: args.completionCriterion,
-            budgetLimits: args.budgetLimits,
             replace: args.replace,
             actor: 'model',
           });

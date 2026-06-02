@@ -16,6 +16,7 @@ export * from './file/read-media';
 export * from './file/write';
 export * from './goal/create-goal';
 export * from './goal/get-goal';
+export * from './goal/set-goal-budget';
 export * from './goal/update-goal';
 export * from './planning/enter-plan-mode';
 export * from './planning/exit-plan-mode';

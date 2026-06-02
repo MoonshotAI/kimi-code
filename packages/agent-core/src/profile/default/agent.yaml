@@ -29,6 +29,7 @@ tools:
   - ExitPlanMode
   - CreateGoal
   - GetGoal
+  - SetGoalBudget
   - UpdateGoal
   - mcp__*
 

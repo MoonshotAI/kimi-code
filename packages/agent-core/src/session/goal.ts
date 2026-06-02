@@ -439,6 +439,18 @@ export class SessionGoalStore {
     return this.toSnapshot(state);
   }
 
+  async setBudgetLimits(input: {
+    budgetLimits: GoalBudgetLimits;
+    actor?: GoalActor;
+  }): Promise<GoalSnapshot> {
+    const state = this.requireState();
+    state.budgetLimits = { ...state.budgetLimits, ...input.budgetLimits };
+    state.updatedBy = input.actor ?? 'user';
+    state.updatedAt = new Date().toISOString();
+    await this.persistState(state);
+    return this.toSnapshot(state);
+  }
+
   /**
    * Discards the current goal — the single user-facing "remove" action
    * (`/goal cancel`). There is no `cancelled` status: cancel clears the durable

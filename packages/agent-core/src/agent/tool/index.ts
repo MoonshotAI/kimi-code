@@ -383,6 +383,9 @@ export class ToolManager {
           new b.GetGoalTool(this.agent),
         flags.enabled('goal-command') &&
           this.agent.type === 'main' &&
+          new b.SetGoalBudgetTool(this.agent),
+        flags.enabled('goal-command') &&
+          this.agent.type === 'main' &&
           new b.UpdateGoalTool(this.agent),
         this.agent.rpc?.requestQuestion && new b.AskUserQuestionTool(this.agent),
         new b.TodoListTool(this.toolStore),
@@ -426,12 +429,14 @@ export class ToolManager {
 
   get loopTools(): readonly ExecutableTool[] {
     const mcpNames = [...this.mcpTools.keys()].filter((name) => this.isMcpToolEnabled(name));
-    // UpdateGoal is only offered to the model while a goal exists — it's the
-    // model's lever over the goal lifecycle, meaningless without one.
-    const hideUpdateGoal = (this.agent.goals?.getGoal().goal ?? null) === null;
+    // Mutation goal tools are only offered to the model while a goal exists.
+    const hideGoalMutationTools = (this.agent.goals?.getGoal().goal ?? null) === null;
     return uniq([...this.enabledTools, ...mcpNames])
       .toSorted((a, b) => a.localeCompare(b))
-      .filter((name) => !(hideUpdateGoal && name === 'UpdateGoal'))
+      .filter(
+        (name) =>
+          !(hideGoalMutationTools && (name === 'SetGoalBudget' || name === 'UpdateGoal')),
+      )
       .map(
         (name) =>
           this.userTools.get(name) ??

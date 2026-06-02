@@ -16,9 +16,9 @@ const DEFAULT_APPROVE_TOOLS = new Set([
   'AskUserQuestion',
   'Skill',
   // Goal control tools have no side effects on the world: GetGoal reads, and
-  // UpdateGoal only records the goal's own status (it's the model's only way to
-  // stop the goal, so prompting for it would be friction with no safety value).
+  // mutation tools only record the goal's own runtime state.
   'GetGoal',
+  'SetGoalBudget',
   'UpdateGoal',
 ]);
 
