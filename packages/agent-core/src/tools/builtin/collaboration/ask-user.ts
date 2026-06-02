@@ -19,6 +19,7 @@ import type { BuiltinTool } from '../../../agent/tool';
 import { ErrorCodes, KimiError } from '../../../errors';
 import { errorMessage, isAbortError } from '../../../loop/errors';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
+import { flags } from '../../../flags';
 import type {
   QuestionAnswers,
   QuestionAnswerMethod,
@@ -67,19 +68,27 @@ export interface AskUserQuestionInput {
   }>;
 }
 
-export const AskUserQuestionInputSchema: z.ZodType<AskUserQuestionInput> = z.object({
-  background: z
-    .boolean()
-    .default(false)
-    .describe(
-      'Set true to ask in the background and return immediately with a background task_id. Use TaskOutput to read the answer later.',
-    ),
+const AskUserQuestionInputBaseSchema = z.object({
   questions: z
     .array(QuestionItemSchema)
     .min(1)
     .max(4)
     .describe('The questions to ask the user (1-4 questions).'),
 });
+
+const AskUserQuestionInputSchemaWithBackground = AskUserQuestionInputBaseSchema.extend({
+  background: z
+    .boolean()
+    .default(false)
+    .describe(
+      'Set true to ask in the background and return immediately with a background task_id. Use TaskOutput to read the answer later.',
+    ),
+});
+
+export const AskUserQuestionInputSchema: z.ZodType<AskUserQuestionInput> =
+  flags.enabled('background-ask')
+    ? AskUserQuestionInputSchemaWithBackground
+    : AskUserQuestionInputBaseSchema;
 
 const QUESTION_DISMISSED_MESSAGE = 'User dismissed the question without answering.';
 
@@ -90,17 +99,19 @@ const QUESTION_UNSUPPORTED_FAILURE_MESSAGE =
 
 export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
   readonly name = 'AskUserQuestion' as const;
-  readonly description: string = DESCRIPTION;
+  readonly description: string = flags.enabled('background-ask')
+    ? `${DESCRIPTION}- Set background=true when you can keep working without the answer. This starts a background question task and returns a task_id immediately. The answer arrives automatically in a later turn — you do not need to poll, sleep, or check on it. Continue with other work; never fabricate or predict the answer.`
+    : DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(AskUserQuestionInputSchema);
 
   constructor(private readonly agent: Agent) {}
 
   resolveExecution(args: AskUserQuestionInput): ToolExecution {
+    const isBackground = args.background === true && flags.enabled('background-ask');
     return {
-      description:
-        args.background === true
-          ? `Starting background question: ${questionDescription(args.questions)}`
-          : 'Asking user questions',
+      description: isBackground
+        ? `Starting background question: ${questionDescription(args.questions)}`
+        : 'Asking user questions',
       approvalRule: this.name,
       execute: (ctx) => this.execution(args, ctx),
     };
@@ -114,7 +125,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       turnId,
     }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
-    if (args.background === true) {
+    if (args.background === true && flags.enabled('background-ask')) {
       return this.executeInBackground(args, { toolCallId, turnId, signal });
     }
 

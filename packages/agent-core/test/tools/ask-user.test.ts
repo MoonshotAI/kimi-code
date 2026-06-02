@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent } from '../../src/agent';
 import type { PermissionMode } from '../../src/agent/permission';
@@ -62,6 +62,10 @@ function makeTool(
 }
 
 describe('AskUserQuestionTool', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('exposes current metadata and schema', () => {
     const { tool } = makeTool();
 
@@ -169,6 +173,8 @@ describe('AskUserQuestionTool', () => {
   });
 
   it('starts a background question task and stores the eventual answer in task output', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+
     let resolveQuestion!: (result: QuestionResult) => void;
     const questionResult = new Promise<QuestionResult>((resolve) => {
       resolveQuestion = resolve;
@@ -182,6 +188,7 @@ describe('AskUserQuestionTool', () => {
       background: manager,
     } as unknown as Agent;
     const tool = new AskUserQuestionTool(agent);
+    expect(tool.description).toContain('Set background=true');
 
     const result = await executeTool(tool, {
       turnId: '0',
@@ -214,6 +221,33 @@ describe('AskUserQuestionTool', () => {
       answered: 1,
       method: 'enter',
     });
+  });
+
+  it('downgrades background=true to an inline question when the experimental flag is off', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK', '0');
+
+    const { manager } = createBackgroundManager();
+    const requestQuestion = vi.fn(async () => ({ Postgres: true }));
+    const agent = {
+      rpc: { requestQuestion },
+      telemetry: { track: vi.fn() },
+      background: manager,
+    } as unknown as Agent;
+    const tool = new AskUserQuestionTool(agent);
+    expect(tool.description).not.toContain('Set background=true');
+
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_bg_disabled',
+      args: { ...input(), background: true },
+      signal,
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.output).toBe(JSON.stringify({ answers: { Postgres: true } }));
+    expect(requestQuestion).toHaveBeenCalled();
+    expect(manager.list()).toHaveLength(0);
   });
 
   it('returns a dismissed message when every question is dismissed', async () => {

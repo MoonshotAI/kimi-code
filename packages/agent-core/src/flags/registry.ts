@@ -17,6 +17,12 @@ export const FLAG_DEFINITIONS = [
     default: false,
     surface: 'core',
   },
+  {
+    id: 'background-ask',
+    env: 'KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK',
+    default: false,
+    surface: 'core',
+  },
 ] as const satisfies readonly FlagDefinitionInput[];
 
 /** Literal union of registered flag ids. */
