@@ -1,5 +1,5 @@
 import type { ModelCapability } from '#/capability';
-import { ChatProviderError } from '#/errors';
+import { APIContextOverflowError, ChatProviderError, isContextOverflowErrorCode } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import { extractText } from '#/message';
 import type {
@@ -217,12 +217,39 @@ function formatResponsesErrorEvent(
   return `${codeText}: ${message}${paramText}`;
 }
 
-function formatResponsesFailedResponse(response: RawObject): string {
+function errorFromOpenAIResponsesEvent(
+  prefix: string,
+  code: string | null,
+  message: string,
+  param: string | null,
+): ChatProviderError {
+  const formatted = formatResponsesErrorEvent(code, message, param);
+  const fullMessage = `${prefix}: ${formatted}`;
+  if (isContextOverflowErrorCode(code)) {
+    return new APIContextOverflowError(400, fullMessage);
+  }
+  return new ChatProviderError(fullMessage);
+}
+
+function readResponsesFailedResponseError(response: RawObject):
+  | {
+      code: string | null;
+      message: string;
+    }
+  | undefined {
   const error = readObjectField(response, 'error');
   if (error !== undefined) {
     const code = readNullableStringField(error, 'code') ?? 'unknown';
     const message = readStringField(error, 'message') ?? 'no message';
-    return `${code}: ${message}`;
+    return { code, message };
+  }
+  return undefined;
+}
+
+function formatResponsesFailedResponse(response: RawObject): string {
+  const error = readResponsesFailedResponseError(response);
+  if (error !== undefined) {
+    return formatResponsesErrorEvent(error.code, error.message, null);
   }
 
   const incompleteDetails = readObjectField(response, 'incomplete_details');
@@ -777,16 +804,24 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
           }
           case 'error': {
             const message = requireStringField(chunk, 'message', type);
-            throw new ChatProviderError(
-              `OpenAI Responses stream error: ${formatResponsesErrorEvent(
-                readNullableStringField(chunk, 'code') ?? null,
-                message,
-                readNullableStringField(chunk, 'param') ?? null,
-              )}`,
+            throw errorFromOpenAIResponsesEvent(
+              'OpenAI Responses stream error',
+              readNullableStringField(chunk, 'code') ?? null,
+              message,
+              readNullableStringField(chunk, 'param') ?? null,
             );
           }
           case 'response.failed': {
             const responseObject = requireObjectField(chunk, 'response', type);
+            const error = readResponsesFailedResponseError(responseObject);
+            if (error !== undefined) {
+              throw errorFromOpenAIResponsesEvent(
+                'OpenAI Responses response.failed',
+                error.code,
+                error.message,
+                null,
+              );
+            }
             throw new ChatProviderError(
               `OpenAI Responses response.failed: ${formatResponsesFailedResponse(responseObject)}`,
             );
@@ -938,6 +973,10 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     const clone = this._clone();
     clone._generationKwargs = { ...clone._generationKwargs, ...kwargs };
     return clone;
+  }
+
+  withMaxCompletionTokens(maxCompletionTokens: number): OpenAIResponsesChatProvider {
+    return this.withGenerationKwargs({ max_output_tokens: maxCompletionTokens });
   }
 
   private _clone(): OpenAIResponsesChatProvider {

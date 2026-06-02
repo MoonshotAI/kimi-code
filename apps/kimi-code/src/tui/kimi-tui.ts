@@ -34,6 +34,8 @@ import { detectFdPath } from '#/utils/process/fd-detect';
 import {
   BUILTIN_SLASH_COMMANDS,
   buildSkillSlashCommands,
+  isExperimentalFlagEnabled,
+  setExperimentalFlags,
   sortSlashCommands,
   type KimiSlashCommand,
   type SkillListSession,
@@ -62,9 +64,11 @@ import * as slashCommands from './commands/dispatch';
 import { SessionReplayRenderer } from './controllers/session-replay';
 import { StreamingUIController } from './controllers/streaming-ui';
 import { TasksBrowserController } from './controllers/tasks-browser';
+import { installRainbowDance } from './easter-eggs/dance';
 import { FileMentionProvider } from './components/editor/file-mention-provider';
 import { AssistantMessageComponent } from './components/messages/assistant-message';
 import { BackgroundAgentStatusComponent } from './components/messages/background-agent-status';
+import { CronMessageComponent } from './components/messages/cron-message';
 import { SkillActivationComponent } from './components/messages/skill-activation';
 import {
   NoticeMessageComponent,
@@ -117,6 +121,7 @@ import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
 import { installTerminalThemeTracking } from './utils/terminal-theme';
 import { detectTmuxKeyboardWarning } from './utils/tmux-keyboard';
+import { markTranscriptComponent } from './utils/transcript-component-metadata';
 import { nextTranscriptId } from './utils/transcript-id';
 
 export type { TUIState } from './tui-state';
@@ -169,6 +174,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
+    mcpServersSummary: null,
   };
 }
 
@@ -197,6 +203,7 @@ export class KimiTUI {
   aborted = false;
   private terminalFocusTrackingDispose: (() => void) | undefined;
   private terminalThemeTrackingDispose: (() => void) | undefined;
+  private uninstallRainbowDance: () => void;
   private signalCleanupHandlers: Array<() => void> = [];
   private isShuttingDown = false;
   private readonly migrationPlan: MigrationPlan | null;
@@ -254,6 +261,9 @@ export class KimiTUI {
     this.migrateOnly = startupInput.migrateOnly ?? false;
     this.startupNotice = startupInput.startupNotice;
     this.state = createTUIState(tuiOptions);
+    this.uninstallRainbowDance = installRainbowDance(() => {
+      this.state.ui.requestRender();
+    });
     this.gitLsFilesCache = createGitLsFilesCache(tuiOptions.initialAppState.workDir);
 
     this.reverseRpcDisposers.push(
@@ -287,7 +297,10 @@ export class KimiTUI {
   // =========================================================================
 
   private getSlashCommands(): readonly KimiSlashCommand[] {
-    return [...sortSlashCommands(BUILTIN_SLASH_COMMANDS), ...this.skillCommands];
+    const builtins = sortSlashCommands(BUILTIN_SLASH_COMMANDS).filter((command) =>
+      isExperimentalFlagEnabled(command.experimentalFlag),
+    );
+    return [...builtins, ...this.skillCommands];
   }
 
   private setupAutocomplete(): void {
@@ -377,7 +390,10 @@ export class KimiTUI {
   private async initMainTui(): Promise<boolean> {
     const shouldReplayHistory = await this.init();
 
+    // Mount only after init() succeeds; see mountFooter().
+    this.mountFooter();
     this.renderWelcome();
+    setExperimentalFlags(await this.harness.getExperimentalFlags());
     this.setupAutocomplete();
     void this.loadPersistedInputHistory();
     this.state.editorContainer.clear();
@@ -390,6 +406,26 @@ export class KimiTUI {
     this.state.ui.start();
     this.terminalFocusTrackingDispose = installTerminalFocusTracking(this.state);
     this.refreshTerminalThemeTracking();
+  }
+
+  private async refreshProviderModelsInBackground(): Promise<void> {
+    try {
+      const result = await this.authFlow.refreshProviderModels();
+      for (const c of result.changed) {
+        const parts: string[] = [c.providerName];
+        if (c.added > 0) parts.push(`+${String(c.added)} model${c.added > 1 ? 's' : ''}`);
+        if (c.removed > 0) parts.push(`-${String(c.removed)} model${c.removed > 1 ? 's' : ''}`);
+        this.showStatus(parts.join(' · ') + '.');
+      }
+      for (const f of result.failed) {
+        this.showStatus(
+          `Skipped refreshing ${f.provider}: ${f.reason}`,
+          this.state.theme.colors.warning,
+        );
+      }
+    } catch {
+      // Best-effort: startup must not crash on background refresh failures.
+    }
   }
 
   private async finishStartup(shouldReplayHistory: boolean): Promise<void> {
@@ -427,6 +463,7 @@ export class KimiTUI {
 
   private async init(): Promise<boolean> {
     await this.authFlow.refreshAvailableModels();
+    void this.refreshProviderModelsInBackground();
 
     const { startup } = this.options;
     const { workDir } = this.state.appState;
@@ -448,10 +485,25 @@ export class KimiTUI {
         }
 
         if (startup.sessionFlag !== undefined) {
-          const sessions = await this.harness.listSessions({ workDir });
-          const target = sessions.find((candidate) => candidate.id === startup.sessionFlag);
+          const sessions = await this.harness.listSessions({
+            sessionId: startup.sessionFlag,
+            workDir,
+          });
+          const target = sessions[0];
           if (target === undefined) {
             throw new Error(`Session "${startup.sessionFlag}" not found.`);
+          }
+          if (target.workDir !== workDir) {
+            this.state.ui.stop();
+            process.stderr.write(
+              `${chalk.hex(this.state.theme.colors.warning)(
+                `Session "${startup.sessionFlag}" was created under a different directory.\n` +
+                  `  cd "${target.workDir}" && kimi -r ${startup.sessionFlag}`,
+              )}\n\n`,
+            );
+            throw new Error(
+              `Session "${startup.sessionFlag}" was created under a different directory.`,
+            );
           }
           session = await this.harness.resumeSession({ id: startup.sessionFlag });
           shouldReplayHistory = true;
@@ -505,6 +557,8 @@ export class KimiTUI {
     await this.closeSession('shutting down');
     await this.harness.close();
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
+    this.uninstallRainbowDance();
+    await this.state.terminal.drainInput();
     this.state.ui.stop();
     if (this.onExit) {
       await this.onExit(exitCode);
@@ -586,11 +640,18 @@ export class KimiTUI {
     ui.addChild(this.state.todoPanelContainer);
     ui.addChild(this.state.queueContainer);
     ui.addChild(this.state.editorContainer);
-    // FooterComponent isn't a Container; wrap it so it picks up the same
-    // outer gutter as the transcript/panels above.
+    // Footer is mounted later (mountFooter), not here.
+  }
+
+  // Footer is the only chrome with content before a session is ready, so
+  // mounting it at construction lets a stray pre-start render leak it to the
+  // terminal — e.g. above the error when resuming a missing session. Mount it
+  // only once init() succeeds. FooterComponent isn't a Container, so wrap it to
+  // pick up the same outer gutter as the panels above.
+  private mountFooter(): void {
     const footerWrap = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
     footerWrap.addChild(this.state.footer);
-    ui.addChild(footerWrap);
+    this.state.ui.addChild(footerWrap);
   }
 
   // =========================================================================
@@ -1023,6 +1084,7 @@ export class KimiTUI {
     this.state.footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 0 });
     this.streamingUI.setTodoList([]);
     this.streamingUI.setTurnId(undefined);
+    this.setAppState({ mcpServersSummary: null });
     this.streamingUI.setStep(0);
     this.streamingUI.resetLiveText();
     this.updateQueueDisplay();
@@ -1146,6 +1208,13 @@ export class KimiTUI {
           entry.skillName ?? entry.content,
           entry.skillArgs,
           this.state.theme.colors,
+          entry.skillTrigger,
+        );
+      case 'cron':
+        return new CronMessageComponent(
+          entry.content,
+          entry.cronData ?? {},
+          this.state.theme.colors,
         );
       case 'assistant': {
         const component = new AssistantMessageComponent(
@@ -1204,6 +1273,7 @@ export class KimiTUI {
     this.state.transcriptEntries.push(entry);
     const component = this.createTranscriptComponent(entry);
     if (component) {
+      markTranscriptComponent(component, entry);
       this.state.transcriptContainer.addChild(component);
       this.state.ui.requestRender();
     }
@@ -1230,12 +1300,20 @@ export class KimiTUI {
     this.appendTranscriptEntry({
       id: nextTranscriptId(),
       kind: 'status',
+      turnId: request.turnId === undefined ? undefined : String(request.turnId),
       renderMode: 'notice',
       content: parts.join(''),
     });
   }
 
   private renderWelcome(): void {
+    if (
+      this.state.transcriptContainer.children.some(
+        (child) => child instanceof WelcomeComponent,
+      )
+    ) {
+      return;
+    }
     const welcome = new WelcomeComponent(this.state.appState, this.state.theme.colors);
     this.state.transcriptContainer.addChild(welcome);
   }
@@ -1279,6 +1357,10 @@ export class KimiTUI {
   }
 
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle {
+    return this.showProgressSpinner(label);
+  }
+
+  showProgressSpinner(label: string): LoginProgressSpinnerHandle {
     const tint = (s: string): string => chalk.hex(this.state.theme.colors.primary)(s);
     const spinner = new MoonLoader(this.state.ui, 'braille', tint, label);
     this.state.transcriptContainer.addChild(new Spacer(1));

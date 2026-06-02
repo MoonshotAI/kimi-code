@@ -166,37 +166,47 @@ describe('runTurn — turn lifecycle', () => {
     expect(interruptedTypes).toContain('max_steps');
   });
 
-  it('throws immediately when maxSteps=0 (boundary)', async () => {
-    const { error, sink, llm, context } = await runTurnExpectingThrow({
+  it('does not enforce a max step limit when maxSteps is 0', async () => {
+    const echo = new EchoTool();
+    const { result } = await runTurn({
       maxSteps: 0,
-      responses: [makeEndTurnResponse('never reached')],
+      tools: [echo],
+      responses: [
+        makeToolUseResponse([makeToolCall('echo', { text: '1' }, 'a')]),
+        makeToolUseResponse([makeToolCall('echo', { text: '2' }, 'b')]),
+        makeEndTurnResponse('done'),
+      ],
     });
 
-    expect(error).toBeInstanceOf(KimiError);
-    expect((error as KimiError).code).toBe(ErrorCodes.LOOP_MAX_STEPS_EXCEEDED);
-    expect(llm.callCount).toBe(0);
-    // No step envelope was opened
-    expect(context.stepBegins().length).toBe(0);
-    expect(context.stepEnds().length).toBe(0);
-    expect(sink.count('step.begin')).toBe(0);
-    // turn.interrupted is still emitted without pretending a step started.
-    const interrupted = sink.byType('turn.interrupted');
-    expect(interrupted.length).toBe(1);
-    expect(interrupted[0]?.reason).toBe('max_steps');
-    expect(interrupted[0]?.attemptedSteps).toBe(0);
-    expect(interrupted[0]?.activeStep).toBeUndefined();
+    expect(result.stopReason).toBe('end_turn');
+    expect(result.steps).toBe(3);
+    expect(echo.calls).toEqual([
+      { id: 'a', turnId: 'turn-1', args: { text: '1' } },
+      { id: 'b', turnId: 'turn-1', args: { text: '2' } },
+    ]);
   });
 
-  it('uses a generous default maxSteps when omitted', async () => {
-    // We don't want to actually exhaust the default; just prove that a
-    // single end_turn step under no explicit limit succeeds. The exact
-    // numeric default is an implementation detail, but it must allow at
-    // least one step.
+  it('does not enforce a max step limit when maxSteps is omitted', async () => {
+    const echo = new EchoTool();
     const { result } = await runTurn({
-      responses: [makeEndTurnResponse('ok')],
+      tools: [echo],
+      responses: [
+        makeToolUseResponse([makeToolCall('echo', { text: '1' }, 'a')]),
+        makeToolUseResponse([makeToolCall('echo', { text: '2' }, 'b')]),
+        makeToolUseResponse([makeToolCall('echo', { text: '3' }, 'c')]),
+        makeToolUseResponse([makeToolCall('echo', { text: '4' }, 'd')]),
+        makeEndTurnResponse('done'),
+      ],
     });
+
     expect(result.stopReason).toBe('end_turn');
-    expect(result.steps).toBe(1);
+    expect(result.steps).toBe(5);
+    expect(echo.calls).toEqual([
+      { id: 'a', turnId: 'turn-1', args: { text: '1' } },
+      { id: 'b', turnId: 'turn-1', args: { text: '2' } },
+      { id: expect.any(String), turnId: 'turn-1', args: { text: '3' } },
+      { id: expect.any(String), turnId: 'turn-1', args: { text: '4' } },
+    ]);
   });
 
   it('aggregates usage across steps including cache fields', async () => {

@@ -75,10 +75,8 @@ function logRequestFailure(
 ): void {
   if (isAbortError(error) || input.params.signal.aborted) return;
   input.log?.warn('llm request failed', {
-    turnId: input.turnId,
-    step: input.currentStep,
-    attempt,
-    maxAttempts,
+    turnStep: `${input.turnId}.${String(input.currentStep)}`,
+    attempt: `${String(attempt)}/${String(maxAttempts)}`,
     model: input.llm.modelName,
     ...retryErrorFields(error),
   });

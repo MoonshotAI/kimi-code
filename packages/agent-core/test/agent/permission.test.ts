@@ -3576,7 +3576,7 @@ function makePermissionManager(
   const agent = {
     type: options.agentType ?? 'main',
     config: { cwd: options.cwd ?? '/workspace' },
-    runtime: { kaos: options.kaos ?? createFakeKaos() },
+    kaos: options.kaos ?? createFakeKaos(),
     emitStatusUpdated: vi.fn(),
     records: { logRecord: record },
     replayBuilder: { push: vi.fn() },
@@ -3623,7 +3623,7 @@ function makePlanPermissionManager(input: {
   const agent = {
     type: 'main',
     config: { cwd: '/workspace' },
-    runtime: { kaos: createFakeKaos() },
+    kaos: createFakeKaos(),
     emitStatusUpdated: vi.fn(),
     records: { logRecord: record },
     replayBuilder: { push: vi.fn() },

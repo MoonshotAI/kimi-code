@@ -1,11 +1,10 @@
 import type { ContentPart, Message } from '@moonshot-ai/kosong';
 
 import type { SkillSource } from '../../skill';
-import type { BackgroundTaskStatus } from '../../tools/background';
+import type { BackgroundTaskStatus } from '../background';
 
 export interface UserPromptOrigin {
   readonly kind: 'user';
-  readonly blockedByHook?: string | undefined;
 }
 
 export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };

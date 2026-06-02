@@ -11,7 +11,10 @@ import type { ApprovalRequest, ApprovalResponse, Event } from '@moonshot-ai/kimi
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
+import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
+import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
 import {
   PluginMcpSelectorComponent,
   PluginMarketplaceSelectorComponent,
@@ -26,12 +29,12 @@ import {
   runModelSelector,
 } from '#/tui/commands/prompts';
 import type { QueuedMessage } from '#/tui/types';
+import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
 vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/tui/commands/prompts')>();
   return { ...actual, promptFeedbackInput: vi.fn() };
 });
-import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 
 vi.mock('#/tui/utils/open-url', () => ({ openUrl: vi.fn() }));
 
@@ -109,6 +112,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     prompt: vi.fn(async () => {}),
     steer: vi.fn(async () => {}),
     init: vi.fn(async () => {}),
+    undoHistory: vi.fn(async () => {}),
     cancel: vi.fn(async () => {}),
     cancelCompaction: vi.fn(async () => {}),
     getStatus: vi.fn(async () => ({
@@ -200,6 +204,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
     interactiveAgentId: 'main',
+    getExperimentalFlags: vi.fn(async () => ({})),
     auth: {
       status: vi.fn(),
       login: vi.fn(),
@@ -421,7 +426,7 @@ describe('KimiTUI message flow', () => {
     const { driver, harness } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
 
-    for (const command of ['/new', '/model', '/sessions']) {
+    for (const command of ['/new', '/sessions']) {
       harness.track.mockClear();
 
       driver.handleUserInput(command);
@@ -683,6 +688,289 @@ describe('KimiTUI message flow', () => {
     ]);
   });
 
+  it('keeps the transcript intact when undo RPC fails', async () => {
+    const session = makeSession({
+      undoHistory: vi.fn(async () => {
+        throw new Error('core rpc unavailable');
+      }),
+    });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Error: Failed to undo: core rpc unavailable',
+      );
+    });
+
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        content: 'hello',
+      }),
+    ]);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('hello');
+  });
+
+  it('does not duplicate welcome after undoing the only turn', async () => {
+    const { driver } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptEntries).toEqual([]);
+    });
+
+    expect(
+      driver.state.transcriptContainer.children.filter(
+        (child) => child instanceof WelcomeComponent,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('keeps command notices that are not part of the undone context', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.handleUserInput('/auto on');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Auto mode: ON');
+    });
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).not.toContain('hello');
+    expect(transcript).toContain('Auto mode: ON');
+    expect(driver.state.appState.permissionMode).toBe('auto');
+  });
+
+  it('removes turn-scoped background status entries and restores welcome', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'background.task.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        info: {
+          kind: 'process',
+          taskId: 'bash-bg123456',
+          command: 'npm test',
+          description: 'Run tests in background',
+          status: 'running',
+          pid: 1234,
+          exitCode: null,
+          startedAt: Date.now(),
+          endedAt: null,
+        },
+      } as Event,
+      () => {},
+    );
+
+    await vi.waitFor(() => {
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(transcript).toContain('bash task started in background');
+      expect(transcript).toContain('Run tests in background');
+    });
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(driver.state.transcriptEntries).toEqual([]);
+    expect(transcript).not.toContain('hello');
+    expect(transcript).not.toContain('bash task started in background');
+    expect(transcript).not.toContain('Run tests in background');
+    expect(
+      driver.state.transcriptContainer.children.filter(
+        (child) => child instanceof WelcomeComponent,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('removes approval notices from undone turns', async () => {
+    const { driver, session } = await makeDriver();
+    const approvalHandler = vi.mocked(session.setApprovalHandler).mock.calls[0]?.[0] as
+      | ((request: ApprovalRequest) => Promise<ApprovalResponse>)
+      | undefined;
+    if (approvalHandler === undefined) throw new Error('expected approval handler');
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+    const response = approvalHandler({
+      turnId: 1,
+      toolCallId: 'call_bash',
+      toolName: 'Bash',
+      action: 'Run shell command',
+      display: {
+        kind: 'generic',
+        summary: 'Run shell command',
+        detail: { command: 'echo ok', description: 'Run a shell command' },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ApprovalPanelComponent);
+    });
+    (driver.state.editorContainer.children[0] as ApprovalPanelComponent).handleInput('1');
+    await expect(response).resolves.toMatchObject({ decision: 'approved' });
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Approved: Run shell command');
+    });
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).not.toContain('hello');
+    expect(transcript).not.toContain('Approved: Run shell command');
+  });
+
+  it('undoes multiple turns when a count is provided', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('first');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.handleUserInput('second');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.handleUserInput('third');
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/undo 2');
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(2);
+    });
+
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        content: 'first',
+      }),
+    ]);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('first');
+    expect(transcript).not.toContain('second');
+    expect(transcript).not.toContain('third');
+  });
+
+  it('rejects invalid undo counts without changing context', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/undo 0');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Error: Usage: /undo [count], where count is a positive integer.',
+      );
+    });
+
+    expect(session.undoHistory).not.toHaveBeenCalled();
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        content: 'hello',
+      }),
+    ]);
+  });
+
+  it('undoes from the real user turn when the last skill activation came from the model', async () => {
+    const { driver } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'skill.activated',
+        agentId: 'main',
+        activationId: 'act-model',
+        skillName: 'review',
+        trigger: 'model-tool',
+      } as Event,
+      () => {},
+    );
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptEntries).toEqual([]);
+    });
+
+    expect(driver.state.transcriptEntries).toEqual([]);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).not.toContain('hello');
+    expect(transcript).not.toContain('review');
+  });
+
+  it('keeps user-slash skill activations as undo anchors', async () => {
+    const { driver } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'skill.activated',
+        agentId: 'main',
+        activationId: 'act-user',
+        skillName: 'review',
+        trigger: 'user-slash',
+      } as Event,
+      () => {},
+    );
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.transcriptEntries).toEqual([
+        expect.objectContaining({
+          kind: 'user',
+          content: 'hello',
+        }),
+      ]);
+    });
+
+    expect(driver.state.transcriptEntries).toEqual([
+      expect.objectContaining({
+        kind: 'user',
+        content: 'hello',
+      }),
+    ]);
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('hello');
+    expect(transcript).not.toContain('review');
+  });
+
   it('sends pasted image placeholders as image content parts', async () => {
     const { driver, session } = await makeDriver();
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
@@ -759,6 +1047,46 @@ describe('KimiTUI message flow', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('renders cron fired events as distinct transcript entries', async () => {
+    const { driver } = await makeDriver();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'cron.fired',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        origin: {
+          kind: 'cron_job',
+          jobId: 'deadbeef',
+          cron: '* * * * *',
+          recurring: true,
+          coalescedCount: 1,
+          stale: false,
+        },
+        prompt: '提醒用户：这是每分钟提醒',
+      } as Event,
+      vi.fn(),
+    );
+
+    const entry = driver.state.transcriptEntries.at(-1);
+    expect(entry).toMatchObject({
+      kind: 'cron',
+      content: '提醒用户：这是每分钟提醒',
+      cronData: {
+        jobId: 'deadbeef',
+        cron: '* * * * *',
+        coalescedCount: 1,
+        stale: false,
+      },
+    });
+
+    const transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(transcript).toContain('Scheduled reminder fired');
+    expect(transcript).toContain('* * * * *');
+    expect(transcript).toContain('提醒用户：这是每分钟提醒');
+    expect(transcript).not.toContain('<cron-fire');
   });
 
   it('coalesces assistant delta component updates', async () => {
@@ -1445,6 +1773,44 @@ describe('KimiTUI message flow', () => {
     });
   });
 
+  it('installs default marketplace entries through plain install', async () => {
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      plugins: [
+        {
+          id: 'kimi-datasource',
+          tier: 'official',
+          displayName: 'Kimi Datasource',
+          description: 'Datasource plugin',
+          source: './official/kimi-datasource.zip',
+        },
+      ],
+    }))));
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    try {
+      driver.handleUserInput('/plugins marketplace');
+
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+          PluginMarketplaceSelectorComponent,
+        );
+      });
+      const picker = driver.state.editorContainer.children[0] as PluginMarketplaceSelectorComponent;
+      picker.handleInput(' ');
+
+      await vi.waitFor(() => {
+        expect(session.installPlugin).toHaveBeenCalledWith(
+          'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+        );
+      });
+      expect(globalThis.fetch).toHaveBeenCalledWith(KIMI_CODE_PLUGIN_MARKETPLACE_URL);
+    } finally {
+      vi.stubGlobal('fetch', originalFetch);
+    }
+  });
+
   it('toggles plugins from the overview with space', async () => {
     let enabled = true;
     const session = makeSession({
@@ -1663,18 +2029,18 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput('/model turbo');
 
     const picker = driver.state.editorContainer.children[0];
-    expect(picker).toBeInstanceOf(ModelSelectorComponent);
-    const pickerOutput = stripSgr((picker as ModelSelectorComponent).render(120).join('\n'));
+    expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
+    const pickerOutput = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
     expect(pickerOutput).toContain('Kimi K2 (Kimi Code) ← current');
     expect(pickerOutput).toContain('❯ Kimi Turbo (Kimi Code)');
-    (picker as ModelSelectorComponent).handleInput('t');
-    (picker as ModelSelectorComponent).handleInput('u');
-    const filteredOutput = stripSgr((picker as ModelSelectorComponent).render(120).join('\n'));
+    (picker as TabbedModelSelectorComponent).handleInput('t');
+    (picker as TabbedModelSelectorComponent).handleInput('u');
+    const filteredOutput = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
     expect(filteredOutput).toContain('Search: tu');
     expect(filteredOutput).toContain('Kimi Turbo (Kimi Code)');
     expect(filteredOutput).not.toContain('Kimi K2 (Kimi Code)');
-    (picker as ModelSelectorComponent).handleInput('\u001B[D');
-    (picker as ModelSelectorComponent).handleInput('\r');
+    (picker as TabbedModelSelectorComponent).handleInput('/');
+    (picker as TabbedModelSelectorComponent).handleInput('\r');
 
     await vi.waitFor(() => {
       expect(session.setModel).toHaveBeenCalledWith('turbo');
@@ -1711,8 +2077,8 @@ describe('KimiTUI message flow', () => {
     driver.handleUserInput('/model k2');
 
     const picker = driver.state.editorContainer.children[0];
-    expect(picker).toBeInstanceOf(ModelSelectorComponent);
-    (picker as ModelSelectorComponent).handleInput('\r');
+    expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
+    (picker as TabbedModelSelectorComponent).handleInput('\r');
 
     await vi.waitFor(() => {
       expect(setConfig).toHaveBeenCalledWith({

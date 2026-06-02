@@ -157,6 +157,18 @@ describe('detectEnvironment', () => {
     expect(env.shellPath).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
   });
 
+  it('infers Git Bash from usr/bin when bin/bash.exe is missing', async () => {
+    const env = await detectEnvironment(
+      stubDeps({
+        platform: 'win32',
+        executables: { 'git.exe': 'D:\\Program Files\\Git\\cmd\\git.exe' },
+        existingPaths: ['D:\\Program Files\\Git\\usr\\bin\\bash.exe'],
+      }),
+    );
+    expect(env.shellName).toBe('bash');
+    expect(env.shellPath).toBe('D:\\Program Files\\Git\\usr\\bin\\bash.exe');
+  });
+
   it('falls back to the well-known Program Files install location', async () => {
     const env = await detectEnvironment(
       stubDeps({
@@ -165,6 +177,16 @@ describe('detectEnvironment', () => {
       }),
     );
     expect(env.shellPath).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
+  });
+
+  it('falls back to usr/bin under Program Files when bin/bash.exe is missing', async () => {
+    const env = await detectEnvironment(
+      stubDeps({
+        platform: 'win32',
+        existingPaths: ['C:\\Program Files\\Git\\usr\\bin\\bash.exe'],
+      }),
+    );
+    expect(env.shellPath).toBe('C:\\Program Files\\Git\\usr\\bin\\bash.exe');
   });
 
   it('falls back to LOCALAPPDATA install when present', async () => {
@@ -176,6 +198,17 @@ describe('detectEnvironment', () => {
       }),
     );
     expect(env.shellPath).toBe('C:\\Users\\me\\AppData\\Local\\Programs\\Git\\bin\\bash.exe');
+  });
+
+it('falls back to usr/bin under LOCALAPPDATA when bin/bash.exe is missing', async () => {
+    const env = await detectEnvironment(
+      stubDeps({
+        platform: 'win32',
+        env: { LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local' },
+        existingPaths: ['C:\\Users\\me\\AppData\\Local\\Programs\\Git\\usr\\bin\\bash.exe'],
+      }),
+    );
+    expect(env.shellPath).toBe('C:\\Users\\me\\AppData\\Local\\Programs\\Git\\usr\\bin\\bash.exe');
   });
 
   it('throws KaosShellNotFoundError when no Git Bash candidate is found', async () => {
@@ -209,6 +242,7 @@ describe('detectEnvironment', () => {
     );
     expect(error.message).toContain('D:\\custom\\bash.exe');
     expect(error.message).toContain('C:\\Program Files\\Git\\bin\\bash.exe');
+    expect(error.message).toContain('C:\\Program Files\\Git\\usr\\bin\\bash.exe');
   });
 
   // ── arch / version passthrough ─────────────────────────────────────

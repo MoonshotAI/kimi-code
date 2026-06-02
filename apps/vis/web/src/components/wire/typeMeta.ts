@@ -12,7 +12,6 @@ export const TYPE_TONE: Record<RecordType, PillTone> = {
   'turn.cancel':                           'warning',
   'context.append_message':                'assistant',
   'context.append_loop_event':             'meta',
-  'context.mark_last_user_prompt_blocked': 'warning',
   'context.clear':                         'warning',
   'context.apply_compaction':              'compaction',
   'tools.register_user_tool':              'tools',
@@ -28,7 +27,6 @@ export const TYPE_TONE: Record<RecordType, PillTone> = {
   'plan_mode.enter':                       'lifecycle',
   'plan_mode.cancel':                      'warning',
   'plan_mode.exit':                        'success',
-  'background.stop':                       'warning',
 };
 
 /** Compact human label for each record type (used in the type badge). */
@@ -40,7 +38,6 @@ export const TYPE_LABEL: Record<RecordType, string> = {
   'turn.cancel': 'cancel',
   'context.append_message': 'message',
   'context.append_loop_event': 'loop',
-  'context.mark_last_user_prompt_blocked': 'blocked',
   'context.clear': 'clear',
   'context.apply_compaction': 'compacted',
   'tools.register_user_tool': 'tool+',
@@ -56,5 +53,4 @@ export const TYPE_LABEL: Record<RecordType, string> = {
   'plan_mode.enter': 'plan↻',
   'plan_mode.cancel': 'plan×',
   'plan_mode.exit': 'plan✓',
-  'background.stop': 'bg-stop',
 };

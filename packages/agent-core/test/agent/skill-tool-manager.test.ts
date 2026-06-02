@@ -45,9 +45,7 @@ function makeAgent(
     toolCall: vi.fn(),
   } as unknown as SDKAgentRPC;
   const agent = new Agent({
-    runtime: {
-      kaos: testKaos,
-    },
+    kaos: testKaos,
     rpc,
     skills,
     persistence,
@@ -189,7 +187,7 @@ describe('ToolManager SkillTool registration', () => {
 
       const session = new Session({
         id: 'test-skill-tool',
-        runtime: runtime(workDir),
+        kaos: testKaos.withCwd(workDir),
         homedir: homeDir,
         rpc: sessionRpc(),
         providerManager: testProviderManager(),

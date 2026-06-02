@@ -25,11 +25,18 @@ import {
   estimateTokens,
   estimateTokensForMessages,
 } from '../../utils/tokens';
-import { project } from '../context/projector';
+import {
+  applyCompletionBudget,
+  resolveCompletionBudget,
+} from '../../utils/completion-budget';
 import compactionInstructionTemplate from './compaction-instruction.md';
 import { renderMessagesToText } from './render-messages';
 import type { CompactionBeginData, CompactionResult } from './types';
-import { DEFAULT_COMPACTION_CONFIG, DefaultCompactionStrategy, type CompactionStrategy } from './strategy';
+import {
+  DEFAULT_COMPACTION_CONFIG,
+  DefaultCompactionStrategy,
+  type CompactionStrategy,
+} from './strategy';
 
 type CompactionTelemetryTrigger = CompactionBeginData['source'] | 'manual-with-prompt' | 'unknown';
 
@@ -39,6 +46,13 @@ export interface CompactedHistory {
 
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
 
+class CompactionTruncatedError extends Error {
+  constructor() {
+    super('Compaction response was truncated before producing a complete summary.');
+    this.name = 'CompactionTruncatedError';
+  }
+}
+
 export class FullCompaction {
   protected compactionCountInTurn = 0;
   protected compacting: {
@@ -46,6 +60,7 @@ export class FullCompaction {
     startedAt: number;
     telemetryTrigger: CompactionTelemetryTrigger;
     promise: Promise<void>;
+    blockedByTurn: boolean;
   } | null = null;
   protected _compactedHistory: CompactedHistory[] = [];
   protected readonly strategy: CompactionStrategy;
@@ -112,6 +127,7 @@ export class FullCompaction {
       startedAt: Date.now(),
       telemetryTrigger: compactionTelemetryTrigger(data.source, data.instruction),
       promise: Promise.resolve(),
+      blockedByTurn: false,
     };
     this.compacting = active;
     active.promise = this.compactionWorker(abortController.signal, data, compactedCount);
@@ -195,6 +211,7 @@ export class FullCompaction {
   private async block(signal: AbortSignal): Promise<void> {
     const active = this.compacting;
     if (active) {
+      active.blockedByTurn = true;
       signal.addEventListener('abort', () => {
         if (this.compacting === active) {
           this.cancel();
@@ -223,6 +240,13 @@ export class FullCompaction {
       await this.triggerPreCompactHook(data, tokensBefore, signal);
 
       const model = this.agent.config.model;
+      const provider = applyCompletionBudget({
+        provider: this.agent.config.provider,
+        budget: resolveCompletionBudget({
+          reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
+        }),
+        capability: this.agent.config.modelCapabilities,
+      });
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
       let usage: TokenUsage | null;
@@ -230,7 +254,7 @@ export class FullCompaction {
       while (true) {
         const messagesToCompact = originalHistory.slice(0, compactedCount);
         const messages = [
-          ...project(messagesToCompact),
+          ...this.agent.context.project(messagesToCompact),
           {
             role: 'user',
             content: [
@@ -242,10 +266,9 @@ export class FullCompaction {
             toolCalls: [],
           } satisfies Message,
         ];
-        class TruncatedError extends Error {}
         try {
           const response = await this.agent.generate(
-            this.agent.config.provider,
+            provider,
             this.agent.config.systemPrompt,
             [...this.agent.tools.loopTools],
             messages,
@@ -253,13 +276,13 @@ export class FullCompaction {
             { signal },
           );
           if (response.finishReason === 'truncated') {
-            throw new TruncatedError();
+            throw new CompactionTruncatedError();
           }
           usage = response.usage;
           summary = extractCompactionSummary(response);
           break;
         } catch (error) {
-          if (error instanceof APIContextOverflowError || error instanceof TruncatedError) {
+          if (error instanceof APIContextOverflowError || error instanceof CompactionTruncatedError) {
             compactedCount = this.strategy.reduceCompactOnOverflow(messagesToCompact);
           }
           else if (!isRetryableGenerateError(error)) {
@@ -312,19 +335,23 @@ export class FullCompaction {
       this.triggerPostCompactHook(data, result);
     } catch (error) {
       if (!isAbortError(error)) {
+        const active = this.compacting;
+        const blockedByTurn = active?.blockedByTurn === true;
         this.agent.log.error('compaction failed', {
           code: isKimiError(error) ? error.code : undefined,
           error,
         });
         this.markCanceled();
-        const payload =
-          isKimiError(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED
-            ? toKimiErrorPayload(error)
-            : makeErrorPayload(ErrorCodes.COMPACTION_FAILED, String(error));
-        this.agent.emitEvent({
-          type: 'error',
-          ...payload,
-        });
+        if (!blockedByTurn) {
+          const payload =
+            isKimiError(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED
+              ? toKimiErrorPayload(error)
+              : makeErrorPayload(ErrorCodes.COMPACTION_FAILED, String(error));
+          this.agent.emitEvent({
+            type: 'error',
+            ...payload,
+          });
+        }
         this.agent.telemetry.track('compaction_failed', {
           trigger_type: compactionTelemetryTrigger(data.source, data.instruction),
           before_tokens: tokensBefore,
@@ -332,6 +359,10 @@ export class FullCompaction {
           retry_count: retryCount,
           error_type: error instanceof Error ? error.name : 'Unknown',
         });
+        if (blockedByTurn) {
+          if (isKimiError(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED) throw error;
+          throw new KimiError(ErrorCodes.COMPACTION_FAILED, String(error), { cause: error });
+        }
       }
     }
   }

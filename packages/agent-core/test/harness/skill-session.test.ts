@@ -184,7 +184,9 @@ describe('HarnessAPI session skills', () => {
     const records = await readMainWire(created.sessionDir);
     const prompt = records.find((record) => record['type'] === 'turn.prompt');
     const userMessage = records.find((record) => record['type'] === 'context.append_message');
-    const expectedPrompt = 'Review the requested file.\n\nARGUMENTS: src/app.ts';
+    const expectedPrompt =
+      '<system-reminder>\n<kimi-skill-loaded name="phase-one-review" args="src/app.ts">\n' +
+      'Review the requested file.\n\nARGUMENTS: src/app.ts\n</kimi-skill-loaded>\n</system-reminder>';
     expect(prompt).toMatchObject({
       type: 'turn.prompt',
       input: [{ type: 'text', text: expectedPrompt }],
@@ -264,11 +266,15 @@ describe('HarnessAPI session skills', () => {
     const prompt = records.find((record) => record['type'] === 'turn.prompt');
     const skillDir = await realpath(join(workDir, '.kimi-code', 'skills', 'templated-review'));
     const expectedPrompt = [
+      '<system-reminder>',
+      '<kimi-skill-loaded name="templated-review" args="&quot;src/app.ts&quot; careful">',
       'Target: src/app.ts',
       'Mode: careful',
       'Raw: "src/app.ts" careful',
       `Dir: ${skillDir}`,
       'Session: ses_skill_template',
+      '</kimi-skill-loaded>',
+      '</system-reminder>',
     ].join('\n');
     expect(prompt).toMatchObject({
       type: 'turn.prompt',
@@ -354,7 +360,7 @@ describe('HarnessAPI session skills', () => {
         content: [
           {
             type: 'text',
-            text: 'Review the requested file.\n\nARGUMENTS: src/app.ts',
+            text: '<system-reminder>\n<kimi-skill-loaded name="phase-one-review" args="src/app.ts">\nReview the requested file.\n\nARGUMENTS: src/app.ts\n</kimi-skill-loaded>\n</system-reminder>',
           },
         ],
         origin: {

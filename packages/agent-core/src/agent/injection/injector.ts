@@ -16,6 +16,15 @@ export abstract class DynamicInjector {
     }
   }
 
+  onContextMessageRemoved(index: number): void {
+    if (this.injectedAt === null) return;
+    if (index < this.injectedAt) {
+      this.injectedAt--;
+    } else if (index === this.injectedAt) {
+      this.injectedAt = null;
+    }
+  }
+
   async inject(): Promise<void> {
     const injection = await this.getInjection();
     if (injection) {

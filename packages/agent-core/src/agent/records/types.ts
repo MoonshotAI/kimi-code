@@ -13,6 +13,8 @@ export interface AgentRecordEvents {
   metadata: {
     protocol_version: string;
     created_at: number;
+    app_version?: string;
+    resumed?: boolean;
   };
 
   'turn.prompt': {
@@ -52,10 +54,6 @@ export interface AgentRecordEvents {
     names: readonly string[];
   };
 
-  'background.stop': {
-    taskId: string;
-  };
-
   'usage.record': {
     model: string;
     usage: TokenUsage;
@@ -64,12 +62,13 @@ export interface AgentRecordEvents {
 
   'full_compaction.cancel': {};
   'full_compaction.complete': {};
+  'micro_compaction.apply': { cutoff: number };
 
   'context.append_message': { message: ContextMessage };
-  'context.mark_last_user_prompt_blocked': { hookEvent: string };
   'context.append_loop_event': { event: LoopRecordedEvent };
   'context.clear': {};
   'context.apply_compaction': CompactionResult;
+  'context.undo': { count: number };
 
   'tools.update_store': ToolStoreUpdate;
 }

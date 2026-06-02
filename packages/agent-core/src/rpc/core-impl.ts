@@ -9,10 +9,10 @@ import { MoonshotFetchURLProvider } from '#/tools/providers/moonshot-fetch-url';
 import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search';
 import type { PromisableMethods } from '#/utils/types';
 import { getCoreVersion } from '#/version';
-import { KaosShellNotFoundError, LocalKaos } from '@moonshot-ai/kaos';
 import { resolveThinkingLevel } from '../agent/config/thinking';
 import {
   ensureKimiHome,
+  loadRuntimeConfig,
   mergeConfigPatch,
   readConfigFile,
   resolveConfigPath,
@@ -21,9 +21,15 @@ import {
   type KimiConfig,
   type MoonshotServiceConfig,
 } from '../config';
+import {
+  FLAG_DEFINITIONS,
+  flags,
+  type ExperimentalFlagMap,
+  type FlagDefinitionInput,
+  type FlagId,
+} from '../flags';
 import type { Logger } from '../logging/types';
 import { resolveSessionMcpConfig, type SessionMcpConfig } from '../mcp';
-import type { RuntimeConfig } from '../runtime-types';
 import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
 import { exportSessionDirectory } from '../session/export';
 import {
@@ -47,7 +53,6 @@ import type {
   ExportSessionPayload,
   ExportSessionResult,
   ForkSessionPayload,
-  GetBackgroundOutputPathPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
   GetKimiConfigPayload,
@@ -78,12 +83,15 @@ import type {
   SkillSummary,
   SteerPayload,
   StopBackgroundPayload,
+  UndoHistoryPayload,
   UnregisterToolPayload,
   UpdateSessionMetadataPayload,
 } from './core-api';
 import type { ResumedAgentState, ResumeSessionResult } from './resumed';
 import type { SDKRPC } from './sdk-api';
 import { proxyWithExtraPayload } from './types';
+import { KaosShellNotFoundError, LocalKaos, type Kaos } from '@moonshot-ai/kaos';
+import type { ToolServices } from '../tools/support/services';
 
 const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
 
@@ -96,11 +104,12 @@ type UpdateSessionMetadataRequest = SessionScopedPayload<UpdateSessionMetadataPa
 export interface KimiCoreOptions {
   readonly homeDir?: string | undefined;
   readonly configPath?: string | undefined;
-  readonly runtime?: RuntimeConfig | undefined;
+  readonly runtime?: ToolServices | undefined;
   readonly kimiRequestHeaders?: Record<string, string> | undefined;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
   readonly skillDirs?: readonly string[];
   readonly telemetry?: TelemetryClient | undefined;
+  readonly appVersion?: string;
 }
 
 export class KimiCore implements PromisableMethods<CoreAPI> {
@@ -110,7 +119,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   readonly sessions = new Map<string, Session>();
   readonly telemetry: TelemetryClient;
 
-  private runtime: RuntimeConfig | undefined;
+  private kaos: Promise<Kaos>;
+  private runtime: ToolServices | undefined;
   private config: KimiConfig;
   private readonly userHomeDir: string;
   private readonly kimiRequestHeaders: Record<string, string> | undefined;
@@ -120,6 +130,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   readonly plugins: PluginManager;
   private pluginsReady: Promise<void>;
   private pluginsLoadError: Error | undefined;
+  private readonly appVersion: string | undefined;
 
   constructor(
     protected readonly rpcClient: CoreRPCClient,
@@ -131,13 +142,20 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       homeDir: this.homeDir,
       configPath: options.configPath,
     });
+    this.kaos = LocalKaos.create().catch((error: unknown) => {
+      if (error instanceof KaosShellNotFoundError) {
+        throw new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, error.message);
+      }
+      throw error;
+    });
     this.runtime = options.runtime;
     this.kimiRequestHeaders = options.kimiRequestHeaders;
     this.resolveOAuthTokenProvider = options.resolveOAuthTokenProvider;
     this.skillDirs = options.skillDirs ?? [];
     this.telemetry = options.telemetry ?? noopTelemetryClient;
+    this.appVersion = options.appVersion;
     ensureKimiHome(this.homeDir);
-    this.config = readConfigFile(this.configPath);
+    this.config = loadRuntimeConfig(this.configPath);
     this.sessionStore = new SessionStore(this.homeDir);
     this.plugins = new PluginManager({ kimiHomeDir: this.homeDir });
     // Capture the error rather than swallow it: mutators and explicit /plugins
@@ -179,7 +197,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     // ctor block throws, `session.close()` releases the sink (and mcp).
     const runtime = await this.resolveRuntime(config);
     const session = new Session({
-      runtime: { ...runtime, kaos: runtime.kaos.withCwd(workDir) },
+      kaos: (await this.kaos).withCwd(workDir),
+      toolServices: runtime,
       config,
       id,
       homedir: summary.sessionDir,
@@ -193,6 +212,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       mcpConfig,
       telemetry: withTelemetryContext(this.telemetry, { sessionId: summary.id }),
       pluginSessionStarts,
+      appVersion: this.appVersion,
     });
     try {
       session.metadata = {
@@ -234,6 +254,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return { version: getCoreVersion() };
   }
 
+  getExperimentalFlags(): ExperimentalFlagMap {
+    const defs: readonly FlagDefinitionInput[] = FLAG_DEFINITIONS;
+    return Object.fromEntries(defs.map((def) => [def.id, flags.enabled(def.id as FlagId)]));
+  }
+
   async closeSession({ sessionId }: CloseSessionPayload): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session) {
@@ -259,7 +284,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const mcpConfig = this.mergePluginMcpConfig(baseMcpConfig);
     const runtime = await this.resolveRuntime(config);
     const session = new Session({
-      runtime: { ...runtime, kaos: runtime.kaos.withCwd(summary.workDir) },
+      kaos: (await this.kaos).withCwd(summary.workDir),
+      toolServices: runtime,
       config,
       id: summary.id,
       homedir: summary.sessionDir,
@@ -274,6 +300,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       telemetry: withTelemetryContext(this.telemetry, { sessionId: summary.id }),
       initializeMainAgent: false,
       pluginSessionStarts,
+      appVersion: this.appVersion,
     });
     let warning: string | undefined;
     try {
@@ -308,12 +335,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.resumeSession({ sessionId: id });
   }
 
-  async listSessions(input: ListSessionsPayload): Promise<readonly SessionSummary[]> {
-    const options = input;
-    return this.sessionStore.list({
-      ...options,
-      workDir: requiredWorkDir('listSessions', options.workDir),
-    });
+  async listSessions(input: ListSessionsPayload = {}): Promise<readonly SessionSummary[]> {
+    return this.sessionStore.list(input);
   }
 
   async renameSession({ sessionId, ...payload }: RenameSessionRequest): Promise<void> {
@@ -358,7 +381,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   async getKimiConfig(input?: GetKimiConfigPayload): Promise<KimiConfig> {
     if (input?.reload) {
-      this.config = readConfigFile(this.configPath);
+      this.config = loadRuntimeConfig(this.configPath);
     }
     return this.config;
   }
@@ -366,7 +389,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   async setKimiConfig(input: SetKimiConfigPayload): Promise<KimiConfig> {
     const config = mergeConfigPatch(readConfigFile(this.configPath), input);
     await writeConfigFile(this.configPath, config);
-    return this.config = readConfigFile(this.configPath);
+    return this.config = loadRuntimeConfig(this.configPath);
   }
 
   async removeKimiProvider(input: RemoveKimiProviderPayload): Promise<KimiConfig> {
@@ -397,7 +420,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     }
 
     await writeConfigFile(this.configPath, config);
-    return this.config = readConfigFile(this.configPath);
+    return this.config = loadRuntimeConfig(this.configPath);
   }
 
   prompt({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {
@@ -410,6 +433,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   cancel({ sessionId, ...payload }: SessionAgentPayload<CancelPayload>) {
     return this.sessionApi(sessionId).cancel(payload);
+  }
+
+  undoHistory({ sessionId, ...payload }: SessionAgentPayload<UndoHistoryPayload>) {
+    return this.sessionApi(sessionId).undoHistory(payload);
   }
 
   async setModel({
@@ -481,13 +508,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   getBackgroundOutput({ sessionId, ...payload }: SessionAgentPayload<GetBackgroundOutputPayload>) {
     return this.sessionApi(sessionId).getBackgroundOutput(payload);
-  }
-
-  getBackgroundOutputPath({
-    sessionId,
-    ...payload
-  }: SessionAgentPayload<GetBackgroundOutputPathPayload>) {
-    return this.sessionApi(sessionId).getBackgroundOutputPath(payload);
   }
 
   getContext({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
@@ -632,7 +652,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     );
   }
 
-  private async resolveRuntime(config: KimiConfig): Promise<RuntimeConfig> {
+  private async resolveRuntime(config: KimiConfig): Promise<ToolServices> {
     if (this.runtime !== undefined) return this.runtime;
     const runtime = await createRuntimeConfig({
       config,
@@ -685,7 +705,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   private reloadProviderManager(): KimiConfig {
-    return this.config = readConfigFile(this.configPath);
+    return this.config = loadRuntimeConfig(this.configPath);
   }
 
   private async refreshSessionRuntimeConfig(
@@ -729,20 +749,12 @@ async function createRuntimeConfig(input: {
   readonly config: KimiConfig;
   readonly kimiRequestHeaders?: Record<string, string> | undefined;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
-}): Promise<RuntimeConfig> {
+}): Promise<ToolServices> {
   const localFetcher = new LocalFetchURLProvider();
   const searchService = input.config.services?.moonshotSearch;
   const fetchService = input.config.services?.moonshotFetch;
 
-  const kaos = await LocalKaos.create().catch((error: unknown) => {
-    if (error instanceof KaosShellNotFoundError) {
-      throw new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, error.message);
-    }
-    throw error;
-  });
-
   return {
-    kaos,
     urlFetcher:
       fetchService?.baseUrl === undefined
         ? localFetcher

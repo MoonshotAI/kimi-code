@@ -1,6 +1,7 @@
 import { createToolMessage, type ContentPart, type Message } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
+import { ErrorCodes, KimiError } from '../../errors';
 import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
 import { estimateTokensForMessages } from '../../utils/tokens';
 import type { CompactionResult } from '../compaction';
@@ -27,8 +28,13 @@ export class ContextMemory {
   private openSteps: Map<string, ContextMessage> = new Map();
   private pendingToolResultIds = new Set<string>();
   private deferredMessages: ContextMessage[] = [];
+  private _lastAssistantAt: number | null = null;
 
   constructor(protected readonly agent: Agent) {}
+
+  get lastAssistantAt(): number | null {
+    return this._lastAssistantAt;
+  }
 
   appendUserMessage(
     content: readonly ContentPart[],
@@ -52,22 +58,6 @@ export class ContextMemory {
     });
   }
 
-  markLastUserPromptBlocked(hookEvent: string): void {
-    this.agent.records.logRecord({
-      type: 'context.mark_last_user_prompt_blocked',
-      hookEvent,
-    });
-    for (let i = this._history.length - 1; i >= 0; i--) {
-      const message = this._history[i];
-      if (message?.role !== 'user' || message.origin?.kind !== 'user') continue;
-      this._history[i] = {
-        ...message,
-        origin: { ...message.origin, blockedByHook: hookEvent },
-      };
-      return;
-    }
-  }
-
   clear(): void {
     this.agent.records.logRecord({ type: 'context.clear' });
     this._history = [];
@@ -76,8 +66,62 @@ export class ContextMemory {
     this.openSteps.clear();
     this.pendingToolResultIds.clear();
     this.deferredMessages = [];
+    this._lastAssistantAt = null;
+    this.agent.microCompaction.reset();
     this.agent.injection.onContextClear();
     this.agent.emitStatusUpdated();
+  }
+
+  undo(count: number): void {
+    if (count <= 0) return;
+    if (this._history.length === 0) return;
+
+    this.agent.records.logRecord({ type: 'context.undo', count });
+
+    let removedUserCount = 0;
+    const removedMessages = new Set<ContextMessage>();
+    let stoppedAtBoundary = false;
+    for (let i = this._history.length - 1; i >= 0; i--) {
+      const message = this._history[i];
+      if (message === undefined) continue;
+      if (message.origin?.kind === 'injection') continue;
+      if (message.origin?.kind === 'compaction_summary') {
+        stoppedAtBoundary = true;
+        break;
+      }
+
+      removedMessages.add(message);
+      this._history.splice(i, 1);
+      this.agent.injection.onContextMessageRemoved(i);
+
+      if (i < this.tokenCountCoveredMessageCount) {
+        this.tokenCountCoveredMessageCount--;
+        this._tokenCount -= estimateTokensForMessages([message]);
+      }
+
+      if (isRealUserPrompt(message)) {
+        removedUserCount++;
+        if (removedUserCount >= count) break;
+      }
+    }
+
+    this.agent.replayBuilder.removeLastMessages(removedMessages);
+
+    this.openSteps.clear();
+    this.pendingToolResultIds.clear();
+    this.deferredMessages = [];
+    this.agent.microCompaction.reset(this._history.length);
+    this.agent.emitStatusUpdated();
+
+    if (
+      !this.agent.records.restoring &&
+      (stoppedAtBoundary || removedUserCount < count)
+    ) {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'Nothing to undo in the active context.',
+      );
+    }
   }
 
   applyCompaction(summary: CompactionResult): void {
@@ -98,6 +142,7 @@ export class ContextMemory {
     this.flushDeferredMessagesIfToolExchangeClosed();
     this._tokenCount = summary.tokensAfter;
     this.tokenCountCoveredMessageCount = this._history.length;
+    this.agent.microCompaction.reset();
     this.agent.injection.onContextCompacted(summary.compactedCount);
     this.agent.emitStatusUpdated();
   }
@@ -115,15 +160,19 @@ export class ContextMemory {
 
   get tokenCountWithPending(): number {
     const pendingMessages = this._history.slice(this.tokenCountCoveredMessageCount);
-    return this._tokenCount + estimateTokensForMessages(project(pendingMessages));
+    return this._tokenCount + estimateTokensForMessages(pendingMessages);
   }
 
   get history(): readonly ContextMessage[] {
     return this._history;
   }
 
+  project(messages: readonly ContextMessage[]): Message[] {
+    return project(this.agent.microCompaction.compact(messages));
+  }
+
   get messages(): Message[] {
-    return project(this.history);
+    return this.project(this.history);
   }
 
   appendLoopEvent(event: LoopRecordedEvent): void {
@@ -225,6 +274,9 @@ export class ContextMemory {
   private pushHistory(...messages: ContextMessage[]): void {
     this._history.push(...messages);
     for (const message of messages) {
+      if (message.role === 'assistant') {
+        this._lastAssistantAt = this.agent.records.restoring?.time ?? Date.now();
+      }
       if (message.origin?.kind === 'background_task') {
         this.agent.background.markDeliveredNotification(message.origin);
       }
@@ -263,4 +315,14 @@ function toolResultOutputForModel(result: ExecutableToolResult): string | Conten
 
 function isEmptyOutputText(output: string): boolean {
   return output.length === 0 || output.trim() === TOOL_OUTPUT_EMPTY_TEXT;
+}
+
+function isRealUserPrompt(message: ContextMessage): boolean {
+  if (message.role !== 'user') return false;
+  const origin = message.origin;
+  if (origin === undefined || origin.kind === 'user') return true;
+  if (origin.kind === 'skill_activation') {
+    return origin.trigger === 'user-slash';
+  }
+  return false;
 }

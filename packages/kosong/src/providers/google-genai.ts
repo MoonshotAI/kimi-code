@@ -888,6 +888,10 @@ export class GoogleGenAIChatProvider implements ChatProvider {
     return clone;
   }
 
+  withMaxCompletionTokens(maxCompletionTokens: number): GoogleGenAIChatProvider {
+    return this.withGenerationKwargs({ max_output_tokens: maxCompletionTokens });
+  }
+
   private _clone(): GoogleGenAIChatProvider {
     const clone = Object.assign(
       Object.create(Object.getPrototypeOf(this) as object) as GoogleGenAIChatProvider,

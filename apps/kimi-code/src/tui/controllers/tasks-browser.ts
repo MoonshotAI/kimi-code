@@ -188,15 +188,12 @@ export class TasksBrowserController {
             (t) =>
               t.status !== 'completed' &&
               t.status !== 'failed' &&
+              t.status !== 'timed_out' &&
               t.status !== 'killed' &&
               t.status !== 'lost',
           );
     if (candidates.length === 0) return undefined;
-    return (
-      candidates.find(
-        (t) => t.status === 'running' || t.status === 'awaiting_approval',
-      )?.taskId ?? candidates[0]!.taskId
-    );
+    return candidates.find((t) => t.status === 'running')?.taskId ?? candidates[0]!.taskId;
   }
 
   private async refresh(opts: { silent?: boolean } = {}): Promise<void> {
@@ -309,7 +306,7 @@ export class TasksBrowserController {
 
     this.flash(`Stopping ${taskId}…`, 1500);
     try {
-      await session.stopBackgroundTask(taskId, { reason: 'stopped from /tasks' });
+      await session.stopBackgroundTask(taskId, { reason: 'User initiated stop' });
       await this.refresh({ silent: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
