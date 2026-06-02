@@ -5,6 +5,7 @@ import {
   buildGoalReportLines,
   GoalCompletionMessageComponent,
   GoalSetMessageComponent,
+  GoalStatusMessageComponent,
   goalPanelTitle,
 } from '#/tui/components/messages/goal-panel';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
@@ -106,6 +107,15 @@ describe('GoalSetMessageComponent', () => {
       chalk.hex(darkColors.primary).bold(STATUS_BULLET) +
         chalk.hex(darkColors.primary).bold('Goal set'),
     );
+  });
+});
+
+describe('GoalStatusMessageComponent', () => {
+  it('adds a blank line before the status box', () => {
+    const rendered = new GoalStatusMessageComponent(goal(), darkColors).render(80);
+
+    expect(rendered[0]).toBe('');
+    expect(strip([rendered[1]!])).toContain('╭ Goal · active ');
   });
 });
 

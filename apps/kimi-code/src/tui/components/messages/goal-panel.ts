@@ -22,6 +22,7 @@ import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import type { ColorPalette } from '#/tui/theme/colors';
 import { formatTokenCount } from '#/utils/usage/usage-format';
+import { UsagePanelComponent } from './usage-panel';
 
 const WRAP_WIDTH = 72;
 const MAX_OBJECTIVE_LINES = 6;
@@ -79,6 +80,21 @@ export class GoalCompletionMessageComponent implements Component {
     }
 
     return lines;
+  }
+}
+
+export class GoalStatusMessageComponent implements Component {
+  constructor(
+    private readonly goal: GoalSnapshot,
+    private readonly colors: ColorPalette,
+  ) {}
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    const lines = buildGoalReportLines({ colors: this.colors, goal: this.goal });
+    const panel = new UsagePanelComponent(lines, this.colors.primary, goalPanelTitle(this.goal));
+    return ['', ...panel.render(width)];
   }
 }
 

@@ -4,8 +4,10 @@ import {
   GoalStartPermissionPromptComponent,
   type GoalStartPermissionChoice,
 } from '../components/dialogs/goal-start-permission-prompt';
-import { buildGoalReportLines, GoalSetMessageComponent, goalPanelTitle } from '../components/messages/goal-panel';
-import { UsagePanelComponent } from '../components/messages/usage-panel';
+import {
+  GoalSetMessageComponent,
+  GoalStatusMessageComponent,
+} from '../components/messages/goal-panel';
 import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';
@@ -245,9 +247,9 @@ async function showGoalStatus(host: SlashCommandHost): Promise<void> {
     host.showStatus('No goal set. Start one with `/goal <objective>`.');
     return;
   }
-  const lines = buildGoalReportLines({ colors: host.state.theme.colors, goal });
-  const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary, goalPanelTitle(goal));
-  host.state.transcriptContainer.addChild(panel);
+  host.state.transcriptContainer.addChild(
+    new GoalStatusMessageComponent(goal, host.state.theme.colors),
+  );
   host.state.ui.requestRender();
 }
 
