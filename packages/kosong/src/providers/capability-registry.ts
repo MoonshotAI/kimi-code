@@ -65,6 +65,8 @@ const MINIMAX_TEXT_TOOL_MODELS = [
   'minimax-m2',
 ] as const;
 
+const DEEPSEEK_THINKING_TOOL_MODELS = ['deepseek-v4-pro', 'deepseek-v4-flash'] as const;
+
 const OPENAI_REASONING_CAPABILITY: ModelCapability = Object.freeze({
   image_in: false,
   video_in: false,
@@ -146,6 +148,15 @@ const MINIMAX_TEXT_TOOL_CAPABILITY: ModelCapability = Object.freeze({
   max_context_tokens: 0,
 });
 
+const DEEPSEEK_THINKING_TOOL_CAPABILITY: ModelCapability = Object.freeze({
+  image_in: false,
+  video_in: false,
+  audio_in: false,
+  thinking: true,
+  tool_use: true,
+  max_context_tokens: 0,
+});
+
 const GEMINI_MULTIMODAL_TOOL_CAPABILITY: ModelCapability = Object.freeze({
   image_in: true,
   video_in: true,
@@ -206,6 +217,10 @@ const ANTHROPIC_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
   {
     matches: (name) => hasExactModel(name, MINIMAX_TEXT_TOOL_MODELS),
     capability: MINIMAX_TEXT_TOOL_CAPABILITY,
+  },
+  {
+    matches: (name) => hasExactModel(name, DEEPSEEK_THINKING_TOOL_MODELS),
+    capability: DEEPSEEK_THINKING_TOOL_CAPABILITY,
   },
   {
     matches: (name) => hasPrefix(name, CLAUDE_3_PREFIXES),

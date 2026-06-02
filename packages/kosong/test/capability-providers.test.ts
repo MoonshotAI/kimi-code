@@ -193,10 +193,27 @@ describe('AnthropicChatProvider.getCapability', () => {
     }
   });
 
+  it('DeepSeek v4 Anthropic models → thinking + tool_use, no media', () => {
+    for (const m of ['deepseek-v4-pro', 'deepseek-v4-flash']) {
+      const cap = make(m).getCapability();
+      expect(cap.thinking).toBe(true);
+      expect(cap.tool_use).toBe(true);
+      expect(cap.image_in).toBe(false);
+      expect(cap.video_in).toBe(false);
+      expect(cap.audio_in).toBe(false);
+    }
+  });
+
   it('no Anthropic model supports audio_in', () => {
     // Sanity: Anthropic has no audio-input models today. If one ships later
     // and this fails, update the table — but make it a conscious decision.
-    for (const m of ['claude-3-5-sonnet', 'claude-3-haiku', 'claude-opus-4', 'MiniMax-M3']) {
+    for (const m of [
+      'claude-3-5-sonnet',
+      'claude-3-haiku',
+      'claude-opus-4',
+      'MiniMax-M3',
+      'deepseek-v4-pro',
+    ]) {
       expect(make(m).getCapability().audio_in).toBe(false);
     }
   });
