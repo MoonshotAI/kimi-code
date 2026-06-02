@@ -87,10 +87,11 @@ export class OpenPlatformApiError extends Error {
 export async function fetchOpenPlatformModels(
   platform: OpenPlatformDefinition,
   apiKey: string,
-  fetchImpl: typeof fetch = getProxyFetch(),
+  fetchImpl?: typeof fetch,
   signal?: AbortSignal,
 ): Promise<ManagedKimiCodeModelInfo[]> {
-  const res = await fetchImpl(`${platform.baseUrl.replace(/\/+$/, '')}/models`, {
+  const fetchFn = fetchImpl ?? getProxyFetch();
+  const res = await fetchFn(`${platform.baseUrl.replace(/\/+$/, '')}/models`, {
     headers: {
       Authorization: `Bearer ${apiKey}`,
       Accept: 'application/json',
