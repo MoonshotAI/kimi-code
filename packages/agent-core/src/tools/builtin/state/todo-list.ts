@@ -60,7 +60,7 @@ const TODO_STORE_KEY = 'todo';
 
 // ── Implementation ───────────────────────────────────────────────────
 
-function renderTodoList(todos: readonly TodoItem[]): string {
+export function renderTodoList(todos: readonly TodoItem[], title = 'Current todo list:'): string {
   if (todos.length === 0) {
     return 'Todo list is empty.';
   }
@@ -68,7 +68,7 @@ function renderTodoList(todos: readonly TodoItem[]): string {
     const marker = statusMarker(t.status);
     return `  ${marker} ${t.title}`;
   });
-  return ['Current todo list:', ...lines].join('\n');
+  return [title, ...lines].join('\n');
 }
 
 function statusMarker(status: TodoStatus): string {
