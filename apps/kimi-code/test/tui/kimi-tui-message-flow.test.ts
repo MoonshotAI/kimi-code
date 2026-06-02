@@ -1560,6 +1560,34 @@ describe('KimiTUI message flow', () => {
     expect(driver.state.editor.focused).toBe(false);
   });
 
+  it('restores the main interactive agent immediately after starting a /btw prompt', async () => {
+    let resolveBtwPrompt: (() => void) | undefined;
+    const session = makeSession({
+      prompt: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveBtwPrompt = resolve;
+          }),
+      ),
+    });
+    const { driver, harness } = await makeDriver(session);
+
+    await openBtwPanel(driver, session, 'slow side question');
+
+    expect(harness.interactiveAgentId).toBe('main');
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('main follow-up while btw prompt is pending');
+
+    expect(driver.state.queuedMessages).toEqual([
+      expect.objectContaining({
+        text: 'main follow-up while btw prompt is pending',
+        agentId: 'main',
+      }),
+    ]);
+
+    resolveBtwPrompt?.();
+  });
+
   it('does not run /btw without a question or selected model', async () => {
     const { driver, session } = await makeDriver();
 

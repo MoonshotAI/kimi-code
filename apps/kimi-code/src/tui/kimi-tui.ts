@@ -1683,11 +1683,11 @@ export class KimiTUI {
     });
   }
 
-  private async withInteractiveAgent<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
+  private withInteractiveAgent<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
     const previousAgentId = this.harness.interactiveAgentId;
     this.harness.interactiveAgentId = agentId;
     try {
-      return await fn();
+      return fn();
     } finally {
       this.harness.interactiveAgentId = previousAgentId;
     }

@@ -214,19 +214,21 @@ export class SDKRpcClient {
   }
 
   async prompt(input: SessionPromptRpcInput): Promise<void> {
+    const agentId = this.interactiveAgentId;
     const rpc = await this.getRpc();
     return rpc.prompt({
       sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
+      agentId,
       input: input.input,
     });
   }
 
   async steer(input: SessionPromptRpcInput): Promise<void> {
+    const agentId = this.interactiveAgentId;
     const rpc = await this.getRpc();
     return rpc.steer({
       sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
+      agentId,
       input: input.input,
     });
   }
@@ -237,18 +239,20 @@ export class SDKRpcClient {
   }
 
   async startBtw(input: SessionIdRpcInput): Promise<string> {
+    const agentId = this.interactiveAgentId;
     const rpc = await this.getRpc();
     return rpc.startBtw({
       sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
+      agentId,
     });
   }
 
   async cancel(input: SessionIdRpcInput): Promise<void> {
+    const agentId = this.interactiveAgentId;
     const rpc = await this.getRpc();
     return rpc.cancel({
       sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
+      agentId,
     });
   }
 
