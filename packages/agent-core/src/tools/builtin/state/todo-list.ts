@@ -23,6 +23,11 @@ import DESCRIPTION from './todo-list.md';
 
 // ── TODO state shape ─────────────────────────────────────────────────
 
+export const TODO_LIST_TOOL_NAME = 'TodoList' as const;
+export const TODO_STORE_KEY = 'todo';
+const TODO_LIST_WRITE_REMINDER =
+  'Ensure that you continue to use the todo list to track progress. Mark tasks done immediately after finishing them, and keep exactly one task in_progress when work is underway.';
+
 export type TodoStatus = 'pending' | 'in_progress' | 'done';
 
 export interface TodoItem {
@@ -56,8 +61,6 @@ export const TodoListInputSchema: z.ZodType<TodoListInput> = z.object({
     ),
 });
 
-const TODO_STORE_KEY = 'todo';
-
 // ── Implementation ───────────────────────────────────────────────────
 
 export function renderTodoList(todos: readonly TodoItem[], title = 'Current todo list:'): string {
@@ -87,7 +90,7 @@ function statusMarker(status: TodoStatus): string {
 }
 
 export class TodoListTool implements BuiltinTool<TodoListInput> {
-  readonly name = 'TodoList' as const;
+  readonly name = TODO_LIST_TOOL_NAME;
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TodoListInputSchema);
 
@@ -114,7 +117,9 @@ export class TodoListTool implements BuiltinTool<TodoListInput> {
         this.setTodos(args.todos);
         const stored = this.getTodos();
         const output =
-          stored.length === 0 ? 'Todo list cleared.' : `Todo list updated.\n${renderTodoList(stored)}`;
+          stored.length === 0
+            ? 'Todo list cleared.'
+            : `Todo list updated.\n${renderTodoList(stored)}\n\n${TODO_LIST_WRITE_REMINDER}`;
         return { isError: false, output };
       },
     };

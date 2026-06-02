@@ -111,7 +111,6 @@ interface AnthropicGenerationKwargs {
 }
 
 const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
-const FAMILY_VERSION_RE = /(?:opus|sonnet|haiku)[.-](\d+)[.-](\d{1,2})(?!\d)/;
 const OPUS_VERSION_RE = /opus[.-](\d+)[.-](\d{1,2})(?!\d)/;
 const ADAPTIVE_MIN_VERSION = { major: 4, minor: 6 } as const;
 const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
@@ -197,13 +196,21 @@ const BARE_FAMILY_RE = /(\d{1,2})[-._](opus|sonnet|haiku)/;
  * back to the override or {@link FALLBACK_MAX_TOKENS}.
  */
 function parseClaudeVersion(model: string): ClaudeVersion | null {
+  return parseClaudeFamilyVersion(model, true);
+}
+
+function parseClaudeAliasVersion(model: string): ClaudeVersion | null {
+  return parseClaudeFamilyVersion(model, false);
+}
+
+function parseClaudeFamilyVersion(model: string, requireClaudeMarker: boolean): ClaudeVersion | null {
   const normalized = model.toLowerCase();
   // Guard against false positives on non-Claude models that happen to
   // contain an `opus-4-7`-like substring (e.g. fine-tunes named after a
   // checkpoint). The Anthropic provider might still be configured for
   // non-Claude endpoints, so without this guard we'd quietly apply
   // Claude ceilings to unrelated models.
-  if (!normalized.includes('claude')) return null;
+  if (requireClaudeMarker && !normalized.includes('claude')) return null;
 
   const familyFirst = FAMILY_FIRST_RE.exec(normalized);
   if (familyFirst !== null) {
@@ -284,12 +291,14 @@ function versionAtLeast(
 }
 
 function supportsAdaptiveThinking(model: string): boolean {
-  const normalized = model.toLowerCase();
-  const match = FAMILY_VERSION_RE.exec(normalized);
-  if (match === null) {
+  const version = parseClaudeAliasVersion(model);
+  if (version === null || version.minor === null) {
     return false;
   }
-  return versionAtLeast(parseVersion(match), ADAPTIVE_MIN_VERSION);
+  return versionAtLeast(
+    { major: version.major, minor: version.minor },
+    ADAPTIVE_MIN_VERSION,
+  );
 }
 
 function isOpus47(model: string): boolean {
@@ -340,6 +349,10 @@ function budgetTokensForEffort(effort: ThinkingEffort): number {
 const CACHE_CONTROL = { type: 'ephemeral' as const };
 
 type CacheableBlock = ContentBlockParam & { cache_control?: { type: 'ephemeral' } };
+
+function shouldPreserveUnsignedThinking(model: string): boolean {
+  return parseClaudeAliasVersion(model) === null;
+}
 
 /**
  * Content block types that support cache_control injection.
@@ -445,7 +458,7 @@ function toolResultToBlock(toolCallId: string, content: ContentPart[]): ToolResu
     content: blocks,
   } as ToolResultBlockParam;
 }
-function convertMessage(message: Message): MessageParam {
+function convertMessage(message: Message, model: string): MessageParam {
   const role = message.role;
 
   // system role -> <system>...</system> wrapped user message
@@ -487,15 +500,17 @@ function convertMessage(message: Message): MessageParam {
       // field. Anthropic-compatible backends (e.g. Kimi) stream thinking with
       // no signature_delta, yet reject a tool-call turn whose thinking is gone
       // ("thinking is enabled but reasoning_content is missing"). Dropping it
-      // here is what broke multi-step tool use on those backends. An unsigned
-      // part with no text carries nothing, so it is skipped.
+      // here is what broke multi-step tool use on those backends. Claude
+      // models reject unsigned thinking blocks, so those are only preserved
+      // for non-Claude Anthropic-compatible models. An unsigned part with no
+      // text carries nothing, so it is skipped.
       if (part.encrypted !== undefined) {
         blocks.push({
           type: 'thinking',
           thinking: part.think,
           signature: part.encrypted,
         } satisfies ThinkingBlockParam);
-      } else if (part.think !== '') {
+      } else if (part.think !== '' && shouldPreserveUnsignedThinking(model)) {
         blocks.push({ type: 'thinking', thinking: part.think } as unknown as ThinkingBlockParam);
       }
     }
@@ -917,7 +932,7 @@ export class AnthropicChatProvider implements ChatProvider {
       ANTHROPIC_TOOL_CALL_ID_POLICY,
     );
     for (const msg of normalizedHistory) {
-      const converted = convertMessage(msg);
+      const converted = convertMessage(msg, this._model);
       const last = messages.at(-1);
       if (last !== undefined && isToolResultOnly(last) && isToolResultOnly(converted)) {
         last.content = [
