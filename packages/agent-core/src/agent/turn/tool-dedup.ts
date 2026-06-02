@@ -1,5 +1,6 @@
 import type { ContentPart } from '@moonshot-ai/kosong';
 
+import type { TelemetryClient } from '../../telemetry';
 import type { ExecutableToolResult } from '../../loop/types';
 
 import { canonicalTelemetryArgs } from './canonical-args';
@@ -25,6 +26,17 @@ function makeReminderText2(toolName: string, repeatCount: number, args: unknown)
     '\n</system-reminder>'
   );
 }
+
+const REMINDER_TEXT_3 =
+  '\n\n<system-reminder>\n' +
+  'You are stuck in a dead end and have repeatedly made the same function call without progress.\n' +
+  'Stop all function calls immediately. Do not call any tool in your next response.\n' +
+  'In analysis, review the current execution state and identify why progress is blocked.\n' +
+  'Then return a text-only summary to the user that reports the current problem, what has already been tried, and what information or decision is needed next.' +
+  '\n</system-reminder>';
+
+const REPEAT_REMINDER_MIN_STREAK = 10;
+const REPEAT_FORCE_STOP_STREAK = 15;
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -63,6 +75,14 @@ function appendReminder(result: ExecutableToolResult, reminderText: string): Exe
     : { ...result, output: newOutput };
 }
 
+function forceStopResult(
+  result: ExecutableToolResult,
+  reminderText: string,
+): ExecutableToolResult {
+  const withReminder = appendReminder(result, reminderText);
+  return { ...withReminder, isError: true, stopTurn: true };
+}
+
 /**
  * Placeholder result returned from `checkSameStep` for a duplicate call. Never
  * reaches the model — it is replaced in `finalizeResult` by awaiting the
@@ -82,8 +102,16 @@ const DEDUP_PLACEHOLDER_RESULT: ExecutableToolResult = { output: '' };
  *   reuses the original call's result instead of executing the tool twice.
  * - Cross-step dedup: when the exact same call is repeated consecutively
  *   across steps, the result returned to the model is suffixed with a system
- *   reminder at specific streak thresholds (3, 5, and 8) to nudge the model
- *   to try a different approach.
+ *   reminder at escalating streak thresholds (3, 5, 8) to nudge the model to
+ *   try a different approach. From streak 10 through 14 a stronger
+ *   dead-end reminder is appended that instructs the model to stop calling
+ *   tools entirely. At streak 15 the turn is force-stopped via
+ *   `{ isError: true, stopTurn: true }` so the loop cannot keep spinning on
+ *   the same call.
+ *
+ * Telemetry: every finalized original call with streak >= 2 emits a
+ * `tool_call_repeat` event carrying the current streak count as `repeat_count`
+ * along with the tool name and which action was taken (none/reminder/stop).
  */
 export class ToolCallDeduplicator {
   private stepDeferreds = new Map<string, Deferred<ExecutableToolResult>>();
@@ -101,6 +129,11 @@ export class ToolCallDeduplicator {
   private callKeyByCallId = new Map<string, string>();
   private consecutiveKey: string | null = null;
   private consecutiveCount = 0;
+  private readonly telemetry: TelemetryClient | undefined;
+
+  constructor(options?: { readonly telemetry?: TelemetryClient | undefined }) {
+    this.telemetry = options?.telemetry;
+  }
 
   beginStep(): void {
     for (const deferred of this.stepDeferreds.values()) {
@@ -195,10 +228,27 @@ export class ToolCallDeduplicator {
     }
 
     let finalResult = result;
-    if (streak === 3) {
+    let action: 'none' | 'reminder' | 'stop' = 'none';
+    if (streak >= REPEAT_FORCE_STOP_STREAK) {
+      finalResult = forceStopResult(result, REMINDER_TEXT_3);
+      action = 'stop';
+    } else if (streak >= REPEAT_REMINDER_MIN_STREAK) {
+      finalResult = appendReminder(result, REMINDER_TEXT_3);
+      action = 'reminder';
+    } else if (streak === 3) {
       finalResult = appendReminder(result, REMINDER_TEXT_1);
+      action = 'reminder';
     } else if (streak === 5 || streak === 8) {
       finalResult = appendReminder(result, makeReminderText2(toolName, streak, args));
+      action = 'reminder';
+    }
+
+    if (streak >= 2) {
+      this.telemetry?.track('tool_call_repeat', {
+        tool_name: toolName,
+        repeat_count: streak,
+        action,
+      });
     }
 
     this.stepDeferreds.get(key)?.resolve(finalResult);
@@ -208,5 +258,8 @@ export class ToolCallDeduplicator {
 
 export const __testing = {
   REMINDER_TEXT_1,
+  REMINDER_TEXT_3,
   makeReminderText2,
+  REPEAT_REMINDER_MIN_STREAK,
+  REPEAT_FORCE_STOP_STREAK,
 };
