@@ -14,6 +14,7 @@ export interface AgentRecordEvents {
     protocol_version: string;
     created_at: number;
     app_version?: string;
+    resumed?: boolean;
   };
 
   'turn.prompt': {
