@@ -1,6 +1,6 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -35,5 +35,16 @@ describe('update install lock', () => {
     const third = await tryAcquireUpdateInstallLock({ version: '0.5.0' });
     expect(third).not.toBeNull();
     await third?.release();
+  });
+
+  it('recovers from a corrupt lock file', async () => {
+    const filePath = getUpdateInstallLockFile();
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, '{', 'utf-8');
+
+    const lock = await tryAcquireUpdateInstallLock({ version: '0.5.0' });
+
+    expect(lock).not.toBeNull();
+    await lock?.release();
   });
 });
