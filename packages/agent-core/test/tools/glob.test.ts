@@ -170,7 +170,7 @@ describe('GlobTool', () => {
 
     const result = await executeTool(tool, context({ pattern: 'pkg/**/*.ts', path: '/extra' }));
 
-    expect(result.output).toBe('pkg/a.ts');
+    expect(result.output).toBe('/extra/pkg/a.ts');
     expect(glob).toHaveBeenCalledTimes(1);
     expect(glob).toHaveBeenCalledWith('/extra', 'pkg/**/*.ts');
   });
@@ -229,8 +229,8 @@ describe('GlobTool', () => {
 
       const result = await executeTool(tool, context({ pattern: '*.py', path: '/skills' }));
 
-      expect(result.output).toContain('read_content.py');
-      expect(result.output).toContain('utils.py');
+      expect(result.output).toContain('/skills/read_content.py');
+      expect(result.output).toContain('/skills/utils.py');
       expect(glob).toHaveBeenCalledWith('/skills', '*.py');
     });
 
@@ -247,7 +247,7 @@ describe('GlobTool', () => {
         context({ pattern: '*.py', path: '/skills/feishu/scripts' }),
       );
 
-      expect(result.output).toContain('read_content.py');
+      expect(result.output).toContain('/skills/feishu/scripts/read_content.py');
     });
 
     it('rejects a relative path that escapes both workspace and additionalDirs', async () => {
@@ -277,7 +277,7 @@ describe('GlobTool', () => {
         context({ pattern: '*.py', path: '/skills/my-skill/scripts' }),
       );
 
-      expect(result.output).toContain('helper.py');
+      expect(result.output).toContain('/skills/my-skill/scripts/helper.py');
     });
   });
 
@@ -490,21 +490,21 @@ describe('GlobTool', () => {
     expect(result.output).toBe('/extra/test.py');
   });
 
-  it('relativizes matches once the outside root is registered as an additionalDir', async () => {
-    // After the same directory is added to additionalDirs the search root
-    // becomes "inside the workspace", so paths should relativize again.
-    const mutable: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: ['/extra'] };
+  it('keeps absolute paths when explicit search root is an additionalDir', async () => {
+    // AdditionalDirs are searchable, but model-visible relative paths still
+    // resolve against workspaceDir in follow-up Read/Edit calls.
+    const registered: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: ['/extra'] };
     const glob = vi.fn((root: string) =>
       asyncPaths(root === '/extra' ? ['/extra/test.py'] : []),
     );
     const tool = new GlobTool(
       createFakeKaos({ glob, stat: vi.fn().mockResolvedValue(stat(1)) }),
-      mutable,
+      registered,
     );
 
     const result = await executeTool(tool, context({ pattern: '*.py', path: '/extra' }));
     expect(result.isError).toBeFalsy();
-    expect(result.output).toBe('test.py');
+    expect(result.output).toBe('/extra/test.py');
   });
 
   it('allows a relative path argument that resolves inside the workspace', async () => {
@@ -618,4 +618,3 @@ describe('expandBraces', () => {
     expect(expandBraces(pathological)).toEqual([pathological]);
   });
 });
-
