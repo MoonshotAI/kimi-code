@@ -29,6 +29,7 @@ const appState: AppState = {
   notifications: { enabled: true, condition: 'unfocused' },
   availableModels: {},
   availableProviders: {},
+  mcpServersSummary: null,
 };
 
 function truecolorCodes(text: string): Set<string> {
