@@ -105,7 +105,7 @@ Complete variable list:
 | `KIMI_MODEL_PROVIDER_TYPE` | No | Provider type: `kimi`, `anthropic`, `openai` | `kimi` |
 | `KIMI_MODEL_BASE_URL` | No | API base URL | Each type has its own default |
 | `KIMI_MODEL_MAX_CONTEXT_SIZE` | No | Maximum context length (tokens) | `262144` (256 K) |
-| `KIMI_MODEL_CAPABILITIES` | No | Comma-separated capability tags, unioned with auto-detected capabilities | `image_in,thinking` |
+| `KIMI_MODEL_CAPABILITIES` | No | Comma-separated capability tags, unioned with auto-detected capabilities | `kimi` → `image_in,thinking`; `openai` / `anthropic` → unset |
 | `KIMI_MODEL_DISPLAY_NAME` | No | Name shown in `/model` | Falls back to `KIMI_MODEL_NAME` |
 | `KIMI_MODEL_MAX_OUTPUT_SIZE` | No | Per-request output cap (`anthropic` only) | Model default |
 | `KIMI_MODEL_REASONING_KEY` | No | Reasoning field name override (`openai` only) | Auto-detected |
