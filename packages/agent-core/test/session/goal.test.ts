@@ -685,13 +685,13 @@ describe('SessionAPIImpl goal flag gating', () => {
     const session = makeSession(sessionDir);
     const api = new SessionAPIImpl(session);
 
-    let error: unknown;
+    let thrown: unknown;
     try {
-      api.createGoal({ objective: 'work' });
-    } catch (caught) {
-      error = caught;
+      void api.createGoal({ objective: 'work' });
+    } catch (error) {
+      thrown = error;
     }
-    expect(error).toMatchObject({ code: ErrorCodes.NOT_IMPLEMENTED });
+    expect(thrown).toMatchObject({ code: ErrorCodes.NOT_IMPLEMENTED });
     expect(session.goals.getGoal().goal).toBeNull();
   });
 
