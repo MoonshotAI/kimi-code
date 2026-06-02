@@ -30,7 +30,7 @@ export function getProxyFetch(): typeof fetch {
     return proxyFetch;
   }
 
-  const noProxyEnv = process.env['NO_PROXY'] ?? process.env['no_proxy'];
+  const noProxyEnv = process.env['no_proxy'] ?? process.env['NO_PROXY'];
   const noProxy = noProxyEnv === undefined ? 'localhost,127.0.0.1' : noProxyEnv;
 
   proxyAgent = new EnvHttpProxyAgent({ noProxy });

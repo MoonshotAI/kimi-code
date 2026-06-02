@@ -103,6 +103,19 @@ describe('getProxyFetch', () => {
     });
   });
 
+  it('prefers lowercase no_proxy over uppercase NO_PROXY when both are set', async () => {
+    process.env['HTTP_PROXY'] = 'http://proxy.example.com:8080';
+    process.env['NO_PROXY'] = 'uppercase.example.com';
+    process.env['no_proxy'] = 'lowercase.example.com';
+    vi.resetModules();
+    const { getProxyFetch } = await import('#/proxy');
+    getProxyFetch();
+
+    expect(MockEnvHttpProxyAgent).toHaveBeenCalledWith({
+      noProxy: 'lowercase.example.com',
+    });
+  });
+
   it('caches the fetch implementation across calls', async () => {
     process.env['HTTP_PROXY'] = 'http://proxy.example.com:8080';
     vi.resetModules();
