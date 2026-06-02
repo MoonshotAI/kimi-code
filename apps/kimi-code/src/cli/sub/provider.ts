@@ -345,11 +345,9 @@ export async function handleCatalogAdd(
   }
 
   const baseUrl = catalogBaseUrl(entry, wire);
-  // `applyCatalogProvider` always assigns both `defaultModel` and
-  // `defaultThinking`; we restore the prior values when the caller did not
-  // request a new default. `thinking: false` here is just a placeholder —
-  // it is either honored (defaultModel requested) or immediately overwritten
-  // by `previousDefaultThinking` below.
+  // `applyCatalogProvider` always overwrites both `defaultModel` and
+  // `defaultThinking`. The values we pass here are temporary; we restore
+  // a consistent state in the post-apply block below.
   applyCatalogProvider(config, {
     providerId,
     wire,
@@ -357,13 +355,28 @@ export async function handleCatalogAdd(
     apiKey,
     models,
     selectedModelId: opts.defaultModel ?? '',
-    thinking: previousDefaultThinking ?? false,
+    thinking: false,
   });
 
+  // Resolve the final `defaultModel`:
+  //   - If the caller asked for one, `applyCatalogProvider` already set it.
+  //   - Else, restore the previous default ONLY when its alias still resolves
+  //     after the catalog refresh; the catalog may have dropped the old
+  //     model, in which case restoring would point default_model at a
+  //     non-existent alias and break the next session.
   if (opts.defaultModel === undefined) {
-    config.defaultModel = previousDefaultModel;
-    config.defaultThinking = previousDefaultThinking;
+    const stillResolves =
+      previousDefaultModel !== undefined &&
+      config.models?.[previousDefaultModel] !== undefined;
+    config.defaultModel = stillResolves ? previousDefaultModel : undefined;
   }
+
+  // Always restore `defaultThinking` from what was there before — including
+  // `undefined`. Persisting `false` when the user never set it would make
+  // `resolveThinkingLevel` (agent-core/src/agent/config/thinking.ts) treat
+  // it as an explicit "off" request and silently disable thinking, even
+  // for thinking-capable models.
+  config.defaultThinking = previousDefaultThinking;
 
   await harness.setConfig({
     providers: config.providers,

@@ -51,7 +51,17 @@ function makeHarness(initial: KimiConfig): {
     getConfig: async () => structuredClone(persisted),
     setConfig: async (patch) => {
       setConfigCalls.push(structuredClone(patch));
-      persisted = { ...persisted, ...patch } as KimiConfig;
+      // Mirror the real `setKimiConfig`: deep-merge with undefined keys
+      // skipped (see `agent-core/src/config/merge.ts deepMerge`). This is
+      // load-bearing for tests that assert `setConfig({defaultModel:
+      // undefined})` does NOT wipe a key from disk — only `removeProvider`
+      // can.
+      const next: Record<string, unknown> = { ...persisted };
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined) continue;
+        next[key] = value;
+      }
+      persisted = next as KimiConfig;
       return structuredClone(persisted);
     },
     removeProvider: async (providerId) => {
@@ -622,8 +632,18 @@ describe('kimi provider catalog add', () => {
   it('imports a provider from the catalog without changing the default model', async () => {
     mockRegistryFetch(CATALOG_BODY);
     const initial: KimiConfig = {
-      providers: {},
-      defaultModel: 'previous-default',
+      providers: {
+        other: { type: 'kimi', baseUrl: 'https://x', apiKey: 'k' },
+      },
+      models: {
+        'other/main': {
+          provider: 'other',
+          model: 'main',
+          maxContextSize: 1024,
+          capabilities: [],
+        },
+      },
+      defaultModel: 'other/main',
       defaultThinking: true,
     } as unknown as KimiConfig;
     const { harness, current, setConfigCalls } = makeHarness(initial);
@@ -645,11 +665,12 @@ describe('kimi provider catalog add', () => {
       model: 'claude-opus-4-7',
     });
     expect(finalConfig.models?.['anthropic/claude-haiku-4-5']).toBeDefined();
-    // Default model must be left exactly as it was.
-    expect(finalConfig.defaultModel).toBe('previous-default');
+    // The unrelated provider's model survives, and remains the default.
+    expect(finalConfig.models?.['other/main']).toBeDefined();
+    expect(finalConfig.defaultModel).toBe('other/main');
     expect(finalConfig.defaultThinking).toBe(true);
     // The patch sent over `setConfig` must explicitly carry the preserved default.
-    expect(setConfigCalls[0]?.defaultModel).toBe('previous-default');
+    expect(setConfigCalls[0]?.defaultModel).toBe('other/main');
     expect(stdout.join('')).toContain('Imported Anthropic (anthropic)');
   });
 
@@ -756,6 +777,78 @@ describe('kimi provider catalog add', () => {
     expect(current().defaultModel).toBe('anthropic/claude-opus-4-7');
     expect(current().defaultThinking).toBe(true);
     expect(setConfigCalls[0]?.defaultThinking).toBe(true);
+  });
+
+  it('does not persist default_thinking=false for first-time setup with --default-model', async () => {
+    // Regression test for codex P2 follow-up: previously the handler fell
+    // back to `false` when `defaultThinking` was unset, but
+    // `resolveThinkingLevel` treats `defaultThinking === false` as an
+    // explicit "off" request. A fresh `kimi provider catalog add
+    // anthropic --default-model claude-opus-4-7` must NOT silently disable
+    // thinking — it should leave `defaultThinking` unset so the runtime
+    // uses the per-model default.
+    mockRegistryFetch(CATALOG_BODY);
+    // Note: `defaultThinking` is omitted on purpose to model a fresh user.
+    const { harness, current, setConfigCalls } = makeHarness({
+      providers: {},
+    } as KimiConfig);
+    const { deps, exitCodes } = makeDeps(harness);
+
+    await tryRun(() =>
+      handleCatalogAdd(deps, 'anthropic', {
+        apiKey: 'sk-ant',
+        defaultModel: 'claude-opus-4-7',
+      }),
+    );
+
+    expect(exitCodes).toEqual([]);
+    expect(current().defaultModel).toBe('anthropic/claude-opus-4-7');
+    // Must NOT be `false`. `undefined` lets the runtime resolver pick the
+    // per-model default; `false` would force `'off'`.
+    expect(current().defaultThinking).toBeUndefined();
+    expect(setConfigCalls[0]?.defaultThinking).toBeUndefined();
+  });
+
+  it('drops a stale default_model when the catalog refresh no longer contains it', async () => {
+    // Regression test for codex P2: when the user previously chose
+    // `anthropic/legacy` as default and a refresh of the same provider no
+    // longer ships that model, restoring the previous default would point
+    // `default_model` at a non-existent alias and break the next session.
+    // The handler now checks whether the alias still resolves and clears
+    // it otherwise.
+    mockRegistryFetch(CATALOG_BODY);
+    const initial: KimiConfig = {
+      providers: {
+        anthropic: {
+          type: 'anthropic',
+          baseUrl: 'https://api.anthropic.com',
+          apiKey: 'sk-old',
+        },
+      },
+      models: {
+        'anthropic/legacy-claude': {
+          provider: 'anthropic',
+          model: 'legacy-claude',
+          maxContextSize: 200_000,
+          capabilities: [],
+        },
+      },
+      defaultModel: 'anthropic/legacy-claude',
+    } as unknown as KimiConfig;
+    const { harness, current } = makeHarness(initial);
+    const { deps, exitCodes } = makeDeps(harness);
+
+    await tryRun(() =>
+      handleCatalogAdd(deps, 'anthropic', { apiKey: 'sk-rotated' }),
+    );
+
+    expect(exitCodes).toEqual([]);
+    // The legacy alias must have been replaced by the catalog's models.
+    expect(current().models?.['anthropic/legacy-claude']).toBeUndefined();
+    expect(current().models?.['anthropic/claude-opus-4-7']).toBeDefined();
+    // The dangling default must NOT have been restored — it would point at
+    // a non-existent alias. The handler clears it instead.
+    expect(current().defaultModel).toBeUndefined();
   });
 
   it('falls back to KIMI_REGISTRY_API_KEY when --api-key is omitted', async () => {
