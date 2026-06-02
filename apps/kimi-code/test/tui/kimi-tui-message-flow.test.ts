@@ -738,6 +738,29 @@ describe('KimiTUI message flow', () => {
     ).toHaveLength(1);
   });
 
+  it('keeps command notices that are not part of the undone context', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.handleUserInput('/auto on');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Auto mode: ON');
+    });
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(session.undoHistory).toHaveBeenCalledWith(1);
+    });
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).not.toContain('hello');
+    expect(transcript).toContain('Auto mode: ON');
+    expect(driver.state.appState.permissionMode).toBe('auto');
+  });
+
   it('undoes from the real user turn when the last skill activation came from the model', async () => {
     const { driver } = await makeDriver();
 
