@@ -275,7 +275,7 @@ describe('SessionPickerComponent', () => {
       sessions: [
         {
           id,
-          title: '现在要重构一下 sessions 列表，让 UI 更好看一些',
+          title: 'refactor the sessions list so the UI looks much nicer than before',
           last_prompt: 'please redesign the picker UI to be much nicer than before',
           work_dir: '/Users/getlong/Development/cesiumdb',
           updated_at: now - 5 * 60 * 1000,
