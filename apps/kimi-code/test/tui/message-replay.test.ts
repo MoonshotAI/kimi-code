@@ -357,6 +357,55 @@ describe('KimiTUI resume message replay', () => {
     expect(status?.backgroundAgentStatus?.detail).toContain('Review long-running work');
   });
 
+  it('keeps timed-out status when an aborted resumed background agent later fails', async () => {
+    const info: BackgroundTaskInfo = {
+      taskId: 'task-bg-timeout',
+      kind: 'agent',
+      agentId: 'agent-bg-timeout',
+      subagentType: 'coder',
+      description: 'Review timeout handling',
+      status: 'running',
+      startedAt: 1,
+      endedAt: null,
+      timeoutMs: 1000,
+    };
+    const driver = await replayIntoDriver([], { background: [info] });
+    const applyTerminalStatus = vi
+      .spyOn(driver.streamingUI, 'applyBackgroundTaskTerminalStatus')
+      .mockReturnValue(true);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'background.task.terminated',
+        agentId: 'main',
+        sessionId: 'ses-replay',
+        info: { ...info, status: 'timed_out', endedAt: 2 },
+      },
+      () => {},
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.failed',
+        agentId: 'main',
+        sessionId: 'ses-replay',
+        subagentId: 'agent-bg-timeout',
+        parentToolCallId: 'task-bg-timeout',
+        error: 'The subagent was aborted.',
+      },
+      () => {},
+    );
+
+    expect(applyTerminalStatus.mock.calls.map(([args]) => args.status)).toEqual(['timed_out']);
+    expect(driver.sessionEventHandler.backgroundAgentMetadata.has('agent-bg-timeout')).toBe(false);
+    expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('task-bg-timeout'))
+      .toBe(true);
+    expect(
+      driver.state.transcriptEntries.some(
+        (entry) => entry.backgroundAgentStatus?.phase === 'failed',
+      ),
+    ).toBe(false);
+  });
+
   it('renders replayed bash background notifications as bash tasks', async () => {
     const driver = await replayIntoDriver(
       [

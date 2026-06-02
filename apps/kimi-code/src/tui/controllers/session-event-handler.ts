@@ -743,9 +743,9 @@ export class SessionEventHandler {
     const { streamingUI } = this.host;
     const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
+      const taskId = this.findAgentTaskId(event.subagentId, backgroundMeta);
       this.backgroundAgentMetadata.delete(event.subagentId);
       this.syncBackgroundAgentBadge();
-      const taskId = this.findAgentTaskId(event.subagentId);
       if (taskId !== undefined && this.backgroundTaskTranscriptedTerminal.has(taskId)) {
         return;
       }
@@ -771,8 +771,15 @@ export class SessionEventHandler {
     const { streamingUI } = this.host;
     const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
+      const taskId = this.findAgentTaskId(event.subagentId, backgroundMeta);
+      const task = taskId === undefined ? undefined : this.backgroundTasks.get(taskId);
       this.backgroundAgentMetadata.delete(event.subagentId);
       this.syncBackgroundAgentBadge();
+      if (task?.kind === 'agent' && task.status === 'timed_out') {
+        // The deadline path already stamped the Agent card as timed out; the
+        // abort-triggered child failure should not downgrade it to failed.
+        return;
+      }
       // Push the real subagent error onto the parent Agent card too —
       // `background.task.terminated` arrives separately (possibly later)
       // with no error string and would only stamp the generic
@@ -784,7 +791,6 @@ export class SessionEventHandler {
         status: 'failed',
         errorText: event.error,
       });
-      const taskId = this.findAgentTaskId(event.subagentId);
       if (taskId !== undefined && this.backgroundTaskTranscriptedTerminal.has(taskId)) {
         return;
       }
@@ -819,9 +825,15 @@ export class SessionEventHandler {
     return streamingUI.getToolComponent(event.parentToolCallId);
   }
 
-  private findAgentTaskId(subagentId: string): string | undefined {
-    const meta = this.backgroundAgentMetadata.get(subagentId);
-    const description = meta?.description ?? meta?.agentName;
+  private findAgentTaskId(
+    subagentId: string,
+    meta: BackgroundAgentMetadata,
+  ): string | undefined {
+    for (const info of this.backgroundTasks.values()) {
+      if (info.kind !== 'agent') continue;
+      if (info.agentId === subagentId) return info.taskId;
+    }
+    const description = meta.description ?? meta.agentName;
     if (description === undefined) return undefined;
     let match: string | undefined;
     for (const info of this.backgroundTasks.values()) {
