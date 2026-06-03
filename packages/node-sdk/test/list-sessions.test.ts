@@ -5,7 +5,7 @@ import { basename, dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createLocalKimiHarness } from '#/index';
+import { createKimiHarness } from '#/index';
 import type { KimiError } from '#/index';
 
 import {
@@ -273,7 +273,7 @@ describe('SessionStore.list', () => {
 describe('KimiHarness.listSessions', () => {
   it('rejects whitespace-only workDir with request.work_dir_required', async () => {
     const homeDir = await makeTempDir();
-    const harness = createLocalKimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -292,7 +292,7 @@ describe('KimiHarness.listSessions', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const otherWorkDir = await makeTempDir();
-    const harness = createLocalKimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -314,7 +314,7 @@ describe('KimiHarness.listSessions', () => {
   it('resolves relative workDir inputs before filtering', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createLocalKimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -335,7 +335,7 @@ describe('KimiHarness.listSessions', () => {
   it('lists persisted sessions after the active Session has been closed', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = createLocalKimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });

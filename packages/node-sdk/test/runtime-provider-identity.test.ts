@@ -8,7 +8,7 @@ import type { KimiConfig } from '@moonshot-ai/agent-core';
 import { createKimiDefaultHeaders, KIMI_CODE_PLATFORM } from '@moonshot-ai/kimi-code-oauth';
 
 import { ProviderManager } from '../../agent-core/src/session/provider-manager';
-import { LocalSDKRpcClient } from '#/index';
+import { SDKRpcClient } from '#/index';
 import { TEST_IDENTITY } from './test-identity';
 
 const tempDirs: string[] = [];
@@ -42,9 +42,9 @@ afterEach(async () => {
 });
 
 describe('runtime provider identity headers', () => {
-  it('preserves the host user agent suffix in local RPC headers', async () => {
+  it('preserves the host user agent suffix in SDK RPC headers', async () => {
     const homeDir = await makeTempDir();
-    const client = new LocalSDKRpcClient({
+    const client = new SDKRpcClient({
       homeDir,
       identity: {
         ...TEST_IDENTITY,

@@ -6,7 +6,7 @@ import {
 } from '@moonshot-ai/agent-core';
 
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
-import type { SDKRpcClient } from '#/rpc';
+import type { SDKRpcClientBase } from '#/rpc';
 import type {
   BackgroundTaskInfo,
   CompactOptions,
@@ -33,7 +33,7 @@ export interface SessionOptions {
   readonly workDir: string;
   readonly summary?: SessionSummary | undefined;
   readonly resumeState?: ResumedSessionState | undefined;
-  readonly rpc: SDKRpcClient;
+  readonly rpc: SDKRpcClientBase;
   readonly onClose?: (() => void | Promise<void>) | undefined;
 }
 
@@ -43,7 +43,7 @@ export class Session {
   readonly summary?: SessionSummary | undefined;
   private readonly resumeState: ResumedSessionState | undefined;
 
-  private readonly rpc: SDKRpcClient;
+  private readonly rpc: SDKRpcClientBase;
   private readonly onClose?: (() => void | Promise<void>) | undefined;
   private closed = false;
 

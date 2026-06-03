@@ -23,7 +23,7 @@ import {
   catalogBaseUrl,
   catalogProviderModels,
   CatalogFetchError,
-  createLocalKimiHarness,
+  createKimiHarness,
   DEFAULT_CATALOG_URL,
   fetchCatalog,
   inferWireType,
@@ -488,7 +488,7 @@ function resolveDeps(overrides: Partial<ProviderDeps> = {}): ProviderDeps {
     getHarness:
       overrides.getHarness ??
       (() => {
-        harness ??= createLocalKimiHarness({ identity });
+        harness ??= createKimiHarness({ identity });
         return harness;
       }),
     stdout: overrides.stdout ?? process.stdout,

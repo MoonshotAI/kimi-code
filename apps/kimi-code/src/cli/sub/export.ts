@@ -14,7 +14,7 @@ import {
   withTelemetryContext,
 } from '@moonshot-ai/kimi-telemetry';
 import {
-  createLocalKimiHarness,
+  createKimiHarness,
   type ExportSessionInput,
   type ExportSessionResult,
   type KimiHarness,
@@ -145,7 +145,7 @@ function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDep
   };
   const getHarness = (): KimiHarness => {
     const currentTelemetryBootstrap = getTelemetryBootstrap();
-    harness ??= createLocalKimiHarness({
+    harness ??= createKimiHarness({
       homeDir: currentTelemetryBootstrap.homeDir,
       identity,
       telemetry: telemetryClient,

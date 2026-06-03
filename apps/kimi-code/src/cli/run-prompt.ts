@@ -7,7 +7,7 @@ import {
 } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import {
-  createLocalKimiHarness,
+  createKimiHarness,
   log,
   type Event,
   type HookResultEvent,
@@ -61,7 +61,7 @@ export async function runPrompt(
     withContext: withTelemetryContext,
     setContext: setTelemetryContext,
   };
-  const harness = createLocalKimiHarness({
+  const harness = createKimiHarness({
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
     uiMode: PROMPT_UI_MODE,

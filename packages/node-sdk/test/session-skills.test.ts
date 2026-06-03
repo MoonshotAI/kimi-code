@@ -5,13 +5,13 @@ import type * as KosongModule from '@moonshot-ai/kosong';
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import {
-  createLocalKimiHarness,
+  createKimiHarness,
   type Event,
   type KimiError,
   type SkillActivatedEvent,
   type SkillSummary,
 } from '#/index';
-import type { SDKRpcClient } from '#/rpc';
+import type { SDKRpcClientBase } from '#/rpc';
 
 import {
   makeTempDir,
@@ -85,7 +85,7 @@ describe('Session skills', () => {
       '',
       'Review the requested file.',
     ]);
-    const harness = createLocalKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_sdk_skill_list', workDir });
@@ -117,7 +117,7 @@ describe('Session skills', () => {
       '',
       'Review the requested file.',
     ]);
-    const harness = createLocalKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_sdk_skill_activate', workDir });
@@ -206,7 +206,7 @@ describe('Session skills', () => {
     vi.stubEnv('KIMI_CODE_HOME', homeDir);
     await writeUserSkill(processHome, 'sdk-real-home-only', 'SDK real home skill');
     await writeUserSkill(homeDir, 'sdk-sandbox-only', 'SDK sandbox skill');
-    const harness = createLocalKimiHarness({ identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_sdk_skill_env_home', workDir });
@@ -232,7 +232,7 @@ describe('Session skills', () => {
         closeSession,
         clearSessionHandlers,
         listSkills,
-      } as unknown as SDKRpcClient,
+      } as unknown as SDKRpcClientBase,
     });
 
     await expect(session.activateSkill('   ')).rejects.toMatchObject({
@@ -269,7 +269,7 @@ describe('Session skills', () => {
         closeSession,
         clearSessionHandlers,
         listSkills,
-      } as unknown as SDKRpcClient,
+      } as unknown as SDKRpcClientBase,
     });
 
     await expect(session.close()).rejects.toThrow('flush failed');

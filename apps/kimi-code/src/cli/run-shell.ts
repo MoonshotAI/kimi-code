@@ -10,7 +10,7 @@ import {
   withTelemetryContext,
 } from '@moonshot-ai/kimi-telemetry';
 import {
-  createLocalKimiHarness,
+  createKimiHarness,
   log,
   type KimiHarness,
   type TelemetryClient,
@@ -56,7 +56,7 @@ export async function runShell(
     withContext: withTelemetryContext,
     setContext: setTelemetryContext,
   };
-  const harness = createLocalKimiHarness({
+  const harness = createKimiHarness({
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
     telemetry: telemetryClient,

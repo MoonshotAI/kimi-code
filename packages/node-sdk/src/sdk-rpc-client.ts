@@ -17,10 +17,10 @@ import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/k
 
 import { KimiAuthFacade } from '#/auth';
 import { KimiHarness } from '#/kimi-harness';
-import { ClientAPI, SDKRpcClient } from '#/rpc';
+import { ClientAPI, SDKRpcClientBase } from '#/rpc';
 import type { KimiHarnessOptions, KimiHostIdentity, OAuthRefreshOutcome } from '#/types';
 
-export interface LocalSDKRpcClientOptions {
+export interface SDKRpcClientOptions {
   readonly homeDir?: string;
   readonly configPath?: string;
   readonly identity?: KimiHostIdentity;
@@ -30,7 +30,7 @@ export interface LocalSDKRpcClientOptions {
   readonly onOAuthRefresh?: (outcome: OAuthRefreshOutcome) => void;
 }
 
-export class LocalSDKRpcClient extends SDKRpcClient {
+export class SDKRpcClient extends SDKRpcClientBase {
   readonly homeDir: string;
   readonly configPath: string;
   readonly identity: KimiHostIdentity | undefined;
@@ -40,7 +40,7 @@ export class LocalSDKRpcClient extends SDKRpcClient {
 
   private readonly ready: Promise<RPCMethods<CoreAPI>>;
 
-  constructor(options: LocalSDKRpcClientOptions = {}) {
+  constructor(options: SDKRpcClientOptions = {}) {
     super();
     this.identity =
       options.identity === undefined ? undefined : assertKimiHostIdentity(options.identity);
@@ -98,8 +98,8 @@ export class LocalSDKRpcClient extends SDKRpcClient {
   }
 }
 
-export function createLocalKimiHarness(options: KimiHarnessOptions): KimiHarness {
-  const rpc = new LocalSDKRpcClient(options);
+export function createKimiHarness(options: KimiHarnessOptions): KimiHarness {
+  const rpc = new SDKRpcClient(options);
   return new KimiHarness(rpc, {
     identity: rpc.identity,
     uiMode: options.uiMode,

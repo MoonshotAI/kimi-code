@@ -88,7 +88,7 @@ export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
 
 type ResolvedCoreAPI = RPCMethods<CoreAPI>;
 
-export abstract class SDKRpcClient {
+export abstract class SDKRpcClientBase {
   interactiveAgentId = MAIN_AGENT_ID;
   private readonly eventListeners = new Set<(event: Event) => void>();
   private readonly approvalHandlers = new Map<string, ApprovalHandler>();
@@ -533,7 +533,7 @@ export abstract class SDKRpcClient {
 }
 
 export class ClientAPI implements SDKAPI {
-  constructor(readonly client: SDKRpcClient) {}
+  constructor(readonly client: SDKRpcClientBase) {}
 
   emitEvent(event: Event): void {
     this.client.receiveEvent(event);

@@ -7,7 +7,7 @@ import {
 
 import { Session } from '#/session';
 import type { KimiAuthFacade } from '#/auth';
-import type { SDKRpcClient } from '#/rpc';
+import type { SDKRpcClientBase } from '#/rpc';
 import type {
   CreateSessionOptions,
   ExportSessionInput,
@@ -50,7 +50,7 @@ export class KimiHarness {
   private readonly closeImpl: () => void | Promise<void>;
 
   constructor(
-    private readonly rpc: SDKRpcClient,
+    private readonly rpc: SDKRpcClientBase,
     options: KimiHarnessRuntimeOptions,
   ) {
     this.identity = options.identity;

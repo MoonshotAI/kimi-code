@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { SDKRpcClient } from '../src/rpc';
+import type { SDKRpcClientBase } from '../src/rpc';
 import { Session } from '../src/session';
 
 describe('Session.prompt input normalization', () => {
@@ -9,7 +9,7 @@ describe('Session.prompt input normalization', () => {
     const session = new Session({
       id: 'ses_multimodal_prompt',
       workDir: '/tmp/work',
-      rpc: { prompt } as unknown as SDKRpcClient,
+      rpc: { prompt } as unknown as SDKRpcClientBase,
     });
     const input = [
       { type: 'text', text: 'describe these' },

@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { registerExportCommand } from '#/cli/sub/export';
 import { createKimiCodeHostIdentity } from '#/cli/version';
-import { createLocalKimiHarness, log } from '@moonshot-ai/kimi-code-sdk';
+import { createKimiHarness, log } from '@moonshot-ai/kimi-code-sdk';
 import { __resetRootLoggerForTest } from '../../../../packages/agent-core/src/logging/logger';
 
 const SESSION_LOG = 'logs/kimi-code.log';
@@ -41,7 +41,7 @@ afterEach(async () => {
 
 describe.skipIf(!ENABLED)('local logging export e2e', () => {
   it('exports session log and global log by default, and allows skipping global log', async () => {
-    const harness = createLocalKimiHarness({
+    const harness = createKimiHarness({
       homeDir,
       identity: createKimiCodeHostIdentity('0.1.1'),
     });
