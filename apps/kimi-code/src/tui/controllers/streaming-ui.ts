@@ -299,6 +299,19 @@ export class StreamingUIController {
     this.pendingToolCallFlushIds.add(id);
   }
 
+  getStreamingToolCallPreview(
+    id: string,
+  ): { name: string; args: Record<string, unknown>; argumentsText: string; startedAtMs: number } | undefined {
+    const streaming = this._streamingToolCallArguments.get(id);
+    if (streaming === undefined) return undefined;
+    return {
+      name: streaming.name ?? this._activeToolCalls.get(id)?.name ?? 'Tool',
+      args: parseStreamingArgs(streaming.argumentsText),
+      argumentsText: streaming.argumentsText,
+      startedAtMs: streaming.startedAtMs,
+    };
+  }
+
   /** Completes a tool call: delivers the result and removes tracking state.
    *  Returns the matched ToolCallBlockData, or undefined if no call was tracked. */
   completeToolResult(toolCallId: string, result: ToolResultBlockData): ToolCallBlockData | undefined {

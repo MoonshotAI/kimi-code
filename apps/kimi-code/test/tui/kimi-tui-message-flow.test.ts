@@ -1538,6 +1538,20 @@ describe('KimiTUI message flow', () => {
       sendQueued,
     );
 
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_swarm',
+        subagentId: 'agent-2',
+        subagentName: 'coder',
+        description: 'Review changed files #2 (coder)',
+        runInBackground: false,
+      } as Event,
+      sendQueued,
+    );
+
     vi.mocked(driver.state.ui.requestRender).mockClear();
     driver.sessionEventHandler.handleEvent(
       {
@@ -1553,6 +1567,20 @@ describe('KimiTUI message flow', () => {
     );
     expect(driver.state.ui.requestRender).toHaveBeenCalled();
 
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'agent-1',
+        sessionId: 'ses-1',
+        turnId: 2,
+        delta: 'Reviewing src/a.ts and checking imports for regressions in detail',
+      } as Event,
+      sendQueued,
+    );
+    let activity = stripSgr(renderActivity(driver));
+    expect(activity).toContain('01 [');
+    expect(activity).toContain('Reviewing src/a.ts');
+
     vi.mocked(driver.state.ui.requestRender).mockClear();
     driver.sessionEventHandler.handleEvent(
       {
@@ -1566,14 +1594,99 @@ describe('KimiTUI message flow', () => {
     );
     expect(driver.state.ui.requestRender).toHaveBeenCalled();
 
-    const activity = stripSgr(renderActivity(driver));
+    activity = stripSgr(renderActivity(driver));
     expect(activity).toContain('Agent swarm: Review changed files');
-    expect(activity).toContain('swarm-001: Completed');
-    expect(activity).toContain('swarm-002:  Spawning');
+    expect(activity).toContain('01 [');
+    expect(activity).toContain('Completed');
+    expect(activity).toContain('02 [');
+    expect(activity).toContain('Spawning');
 
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('Using AgentSwarm');
-    expect(transcript).not.toContain('swarm-001');
+    expect(transcript).not.toContain('01');
+  });
+
+  it('renders AgentSwarm progress while tool args are still streaming', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        name: 'AgentSwarm',
+        argumentsPart: '{"description":"Review changed files',
+      } as Event,
+      sendQueued,
+    );
+
+    let activity = stripSgr(renderActivity(driver));
+    expect(activity).toContain('Agent swarm');
+    expect(activity).toContain('Orchestrating...');
+    expect(activity).not.toContain('01');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        argumentsPart: '","items":["src/a.ts","src/b',
+      } as Event,
+      sendQueued,
+    );
+
+    activity = stripSgr(renderActivity(driver));
+    expect(activity).toContain('Agent swarm: Review changed files');
+    expect(activity).toContain('agents=2');
+    expect(activity).toContain('01 src/a.ts');
+    expect(activity).toContain('02 src/b');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_swarm',
+        subagentId: 'agent-1',
+        subagentName: 'coder',
+        description: 'Review changed files #1 (coder)',
+        runInBackground: false,
+      } as Event,
+      sendQueued,
+    );
+
+    activity = stripSgr(renderActivity(driver));
+    expect(activity).toContain('agents=2');
+    expect(activity).toContain('01 src/a.ts');
+    expect(activity).toContain('02 src/b');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        name: 'AgentSwarm',
+        args: {
+          description: 'Review changed files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts', 'src/b.ts'],
+        },
+      } as Event,
+      sendQueued,
+    );
+
+    activity = stripSgr(renderActivity(driver));
+    expect(activity).toContain('agents=2');
+    expect(activity).toContain('01 [');
+    expect(activity).toContain('02 [');
+    expect(activity).toContain('Spawning');
   });
 
   it('shows plan review reject on the plan card without an approval notice', async () => {

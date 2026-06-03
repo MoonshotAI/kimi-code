@@ -110,7 +110,7 @@ import {
   type TUIStartupState,
 } from './types';
 import { createTUIState, type TUIState } from './tui-state';
-import { isExpandable, isPlanExpandable } from './utils/component-capabilities';
+import { hasDispose, isExpandable, isPlanExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
@@ -1002,6 +1002,9 @@ export class KimiTUI {
     if (this.state.agentSwarmProgress === component) {
       if (component !== null) this.state.ui.requestRender();
       return;
+    }
+    if (hasDispose(this.state.agentSwarmProgress)) {
+      this.state.agentSwarmProgress.dispose();
     }
     this.state.agentSwarmProgress = component;
     this.updateActivityPane();

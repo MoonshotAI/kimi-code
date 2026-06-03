@@ -37,7 +37,6 @@ import { MoonLoader } from '../components/chrome/moon-loader';
 import {
   AgentSwarmProgressComponent,
   agentSwarmDescriptionFromArgs,
-  agentSwarmItemsFromArgs,
 } from '../components/messages/agent-swarm-progress';
 import { buildGoalMarker } from '../components/messages/goal-markers';
 import { SwarmModeMarkerComponent } from '../components/messages/swarm-markers';
@@ -251,7 +250,12 @@ export class SessionEventHandler {
     const toolCall = streamingUI.getToolComponent(parentToolCallId);
     const swarmProgress = this.agentSwarmProgress.get(parentToolCallId);
     if (swarmProgress !== undefined) {
-      if (event.type === 'tool.call.started') {
+      if (event.type === 'assistant.delta') {
+        swarmProgress.appendAssistantDelta({
+          agentId: subagentId,
+          delta: event.delta,
+        });
+      } else if (event.type === 'tool.call.started') {
         swarmProgress.recordToolCall({
           agentId: subagentId,
           toolCallId: event.toolCallId,
@@ -513,12 +517,8 @@ export class SessionEventHandler {
     };
     streamingUI.registerToolCall(toolCall);
     if (event.name === 'AgentSwarm') {
-      const progress = new AgentSwarmProgressComponent({
-        description: agentSwarmDescriptionFromArgs(toolCall.args),
-        items: agentSwarmItemsFromArgs(toolCall.args),
-        colors: this.host.state.theme.colors,
-      });
-      this.agentSwarmProgress.set(event.toolCallId, progress);
+      const progress = this.ensureAgentSwarmProgress(event.toolCallId, toolCall.args);
+      progress.markInputComplete();
       this.host.setAgentSwarmProgress(progress);
     } else if (this.agentSwarmProgress.size > 0) {
       this.host.setAgentSwarmProgress(null);
@@ -534,6 +534,16 @@ export class SessionEventHandler {
     if (event.toolCallId.length === 0) return;
     const { state, streamingUI } = this.host;
     streamingUI.accumulateToolCallDelta(event.toolCallId, event.name, event.argumentsPart);
+    const preview = streamingUI.getStreamingToolCallPreview(event.toolCallId);
+    if (
+      preview !== undefined &&
+      (preview.name === 'AgentSwarm' || this.agentSwarmProgress.has(event.toolCallId))
+    ) {
+      const progress = this.ensureAgentSwarmProgress(event.toolCallId, preview.args, {
+        streamingArguments: preview.argumentsText,
+      });
+      this.host.setAgentSwarmProgress(progress);
+    }
 
     this.host.patchLivePane({
       mode: 'tool',
@@ -544,6 +554,29 @@ export class SessionEventHandler {
       this.host.setAppState({ streamingPhase: 'composing', streamingStartTime: Date.now() });
     }
     streamingUI.scheduleFlush();
+  }
+
+  private ensureAgentSwarmProgress(
+    toolCallId: string,
+    args: Record<string, unknown>,
+    options: { readonly streamingArguments?: string | undefined } = {},
+  ): AgentSwarmProgressComponent {
+    const existing = this.agentSwarmProgress.get(toolCallId);
+    if (existing !== undefined) {
+      existing.updateArgs(args, options);
+      return existing;
+    }
+
+    const progress = new AgentSwarmProgressComponent({
+      description: agentSwarmDescriptionFromArgs(args),
+      colors: this.host.state.theme.colors,
+      requestRender: () => {
+        this.host.state.ui.requestRender();
+      },
+    });
+    progress.updateArgs(args, options);
+    this.agentSwarmProgress.set(toolCallId, progress);
+    return progress;
   }
 
   private handleToolProgress(event: ToolProgressEvent): void {
