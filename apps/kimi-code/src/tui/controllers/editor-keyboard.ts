@@ -29,6 +29,8 @@ export interface EditorKeyboardHost {
   track(event: string, props?: Record<string, unknown>): void;
   updateEditorBorderHighlight(text?: string): void;
   updateQueueDisplay(): void;
+  scrollBtwPanel(direction: 'up' | 'down'): boolean;
+  toggleBtwPanelExpansion(): boolean;
   toggleToolOutputExpansion(): void;
   togglePlanExpansion(): boolean;
   hideSessionPicker(): void;
@@ -142,6 +144,7 @@ export class EditorKeyboardController {
 
     editor.onToggleToolExpand = () => {
       host.track('shortcut_expand');
+      if (host.toggleBtwPanelExpansion()) return;
       host.toggleToolOutputExpansion();
     };
 
@@ -186,6 +189,7 @@ export class EditorKeyboardController {
     };
 
     editor.onUpArrowEmpty = () => {
+      if (host.scrollBtwPanel('up')) return true;
       if (host.state.appState.streamingPhase === 'idle' && !host.state.appState.isCompacting) return false;
       const recalled = host.recallLastQueued();
       if (recalled !== undefined) {
@@ -196,6 +200,8 @@ export class EditorKeyboardController {
       }
       return false;
     };
+
+    editor.onDownArrowEmpty = () => host.scrollBtwPanel('down');
 
     editor.onPasteImage = async () => this.handleClipboardImagePaste();
   }

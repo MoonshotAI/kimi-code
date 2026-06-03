@@ -267,6 +267,13 @@ async function openBtwPanel(
   });
 }
 
+function setTerminalRows(driver: MessageDriver, rows: number): void {
+  Object.defineProperty(driver.state.terminal, 'rows', {
+    configurable: true,
+    get: () => rows,
+  });
+}
+
 function countOccurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
@@ -1390,7 +1397,16 @@ describe('KimiTUI message flow', () => {
 
     const transcript = stripSgr(renderTranscript(driver));
     const panel = stripSgr(renderBtwPanel(driver));
-    expect(panel).toContain('BTW ── Esc to close');
+    const editorTopBorder = stripSgr(driver.state.editor.render(80)[0] ?? '');
+    expect(panel).toContain('BTW ─ Esc close');
+    expect(panel).not.toContain('ctrl+o expand');
+    expect(editorTopBorder.startsWith('├')).toBe(true);
+    expect(editorTopBorder.endsWith('┤')).toBe(true);
+
+    driver.state.editor.handleInput('/');
+    const highlightedEditorTopBorder = stripSgr(driver.state.editor.render(80)[0] ?? '');
+    expect(highlightedEditorTopBorder.startsWith('╭')).toBe(true);
+    expect(highlightedEditorTopBorder.endsWith('╮')).toBe(true);
     expect(panel).not.toContain('BTW done');
     expect(panel).not.toContain('BTW running');
     expect(panel).not.toContain('BTW failed');
@@ -1400,7 +1416,7 @@ describe('KimiTUI message flow', () => {
     expect(panel).toContain('正在实现 /btw 的独立面板。');
     expect(panel).not.toContain('Agent');
     expect(transcript).not.toContain('BTW');
-    expect(transcript).not.toContain('Esc to close');
+    expect(transcript).not.toContain('Esc close');
     expect(transcript).not.toContain('正在实现 /btw 的独立面板。');
   });
 
@@ -1493,6 +1509,17 @@ describe('KimiTUI message flow', () => {
     expect(panel).toContain('line7');
   });
 
+  it('renders /btw body at its actual content height when under the cap', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session);
+
+    const lines = getMountedBtwPanel(driver).render(80).map(stripSgr);
+    expect(lines).toHaveLength(3);
+    expect(lines.join('\n')).toContain('Q: side question');
+    expect(lines.join('\n')).toContain('Waiting for answer...');
+  });
+
   it('keeps /btw panel height stable when final output is shorter than thinking', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
@@ -1539,6 +1566,74 @@ describe('KimiTUI message flow', () => {
     expect(finalLines.at(-1)).toMatch(/^│\s+│$/);
   });
 
+  it('caps collapsed /btw height to half the terminal and Ctrl-O toggles expansion', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    setTerminalRows(driver, 12);
+    await openBtwPanel(driver, session, 'question 1');
+
+    const panel = getMountedBtwPanel(driver);
+    panel.appendAnswer('answer 1');
+    panel.markDone();
+    for (let i = 2; i <= 8; i++) {
+      panel.submit(`question ${String(i)}`);
+      panel.appendAnswer(`answer ${String(i)}`);
+      panel.markDone();
+    }
+
+    const collapsed = panel.render(80).map(stripSgr);
+    expect(collapsed).toHaveLength(6);
+    expect(collapsed.join('\n')).toContain('BTW ─ Esc close · ↑↓ scroll · ctrl+o expand');
+    expect(collapsed.join('\n')).toContain('question 8');
+    expect(collapsed.join('\n')).toContain('answer 8');
+    expect(collapsed.join('\n')).not.toContain('question 1');
+
+    const requestRender = vi.mocked(driver.state.ui.requestRender);
+    requestRender.mockClear();
+    for (let i = 0; i < 20; i++) {
+      driver.state.editor.handleInput('\u001B[A');
+    }
+    const scrolledUp = panel.render(80).map(stripSgr);
+    expect(requestRender).toHaveBeenCalled();
+    expect(scrolledUp.join('\n')).toContain('question 1');
+    expect(scrolledUp.join('\n')).not.toContain('answer 8');
+
+    panel.appendAnswer('\nstreamed tail while scrolled');
+    expect(panel.render(80).map(stripSgr)).toEqual(scrolledUp);
+
+    requestRender.mockClear();
+    for (let i = 0; i < 20; i++) {
+      driver.state.editor.handleInput('\u001B[B');
+    }
+    const scrolledDown = panel.render(80).map(stripSgr);
+    expect(requestRender).toHaveBeenCalled();
+    expect(scrolledDown.join('\n')).toContain('question 8');
+    expect(scrolledDown.join('\n')).toContain('answer 8');
+    expect(scrolledDown.join('\n')).toContain('streamed tail while scrolled');
+
+    setTerminalRows(driver, 4);
+    const tiny = panel.render(80).map(stripSgr);
+    expect(tiny).toHaveLength(3);
+    expect(tiny.join('\n')).toContain('ctrl+o expand');
+    expect(tiny.join('\n')).toContain('answer 8');
+
+    requestRender.mockClear();
+    driver.state.editor.onToggleToolExpand?.();
+
+    const expanded = panel.render(80).map(stripSgr);
+    expect(requestRender.mock.calls.at(-1)).toEqual([]);
+    expect(expanded.length).toBeGreaterThan(6);
+    expect(expanded.join('\n')).not.toContain('ctrl+o expand');
+    expect(expanded.join('\n')).toContain('question 1');
+    expect(expanded.join('\n')).toContain('answer 8');
+
+    setTerminalRows(driver, 12);
+    requestRender.mockClear();
+    driver.state.editor.onToggleToolExpand?.();
+    expect(requestRender.mock.calls.at(-1)).toEqual([true]);
+    expect(panel.render(80).map(stripSgr)).toHaveLength(6);
+  });
+
   it('cancels and closes a running /btw panel on Escape', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
@@ -1548,10 +1643,16 @@ describe('KimiTUI message flow', () => {
     expect(panel.isRunning()).toBe(true);
     expect(driver.state.editor.focused).toBe(true);
 
+    const requestRender = vi.mocked(driver.state.ui.requestRender);
+    requestRender.mockClear();
     driver.state.editor.onEscape?.();
 
     expect(session.cancel).toHaveBeenCalledOnce();
     expect(driver.state.btwPanelContainer.children).toHaveLength(0);
+    expect(requestRender.mock.calls.at(-1)).toEqual([true]);
+    const editorTopBorder = stripSgr(driver.state.editor.render(80)[0] ?? '');
+    expect(editorTopBorder.startsWith('╭')).toBe(true);
+    expect(editorTopBorder.endsWith('╮')).toBe(true);
     expect(driver.state.editor.focused).toBe(true);
   });
 
@@ -2612,7 +2713,7 @@ describe('KimiTUI message flow', () => {
 
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('t7');
-    expect(transcript).not.toContain('ctrl+o to expand');
+    expect(transcript).not.toContain('ctrl+o expand');
   });
 
   it('renders hook results without XML tags', async () => {

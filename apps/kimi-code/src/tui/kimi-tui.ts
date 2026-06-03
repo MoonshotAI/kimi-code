@@ -1544,10 +1544,9 @@ export class KimiTUI {
 
   updateEditorBorderHighlight(text?: string): void {
     const trimmed = (text ?? this.state.editor.getText()).trimStart();
-    const colorToken =
-      this.state.appState.planMode || trimmed.startsWith('/')
-        ? this.state.theme.colors.primary
-        : this.state.theme.colors.border;
+    const highlighted = this.state.appState.planMode || trimmed.startsWith('/');
+    const colorToken = highlighted ? this.state.theme.colors.primary : this.state.theme.colors.border;
+    this.state.editor.borderHighlighted = highlighted;
     this.state.editor.borderColor = (s: string) => chalk.hex(colorToken)(s);
     this.state.ui.requestRender();
   }
@@ -1650,6 +1649,7 @@ export class KimiTUI {
     this.state.btwPanelContainer.clear();
     this.state.btwPanelContainer.addChild(new Spacer(1));
     this.state.btwPanelContainer.addChild(panel);
+    this.state.editor.connectedAbove = true;
     this.state.ui.setFocus(this.state.editor);
     this.state.ui.requestRender();
   }
@@ -1659,8 +1659,9 @@ export class KimiTUI {
     this.sessionEventHandler.unregisterBtwPanel(panel);
     if (this.activeBtw?.panel === panel) this.activeBtw = undefined;
     this.state.btwPanelContainer.clear();
+    this.state.editor.connectedAbove = false;
     this.state.ui.setFocus(this.state.editor);
-    this.state.ui.requestRender();
+    this.state.ui.requestRender(true);
   }
 
   private clearBtwPanel(): void {
@@ -1668,6 +1669,7 @@ export class KimiTUI {
     if (panel !== undefined) this.sessionEventHandler.unregisterBtwPanel(panel);
     this.activeBtw = undefined;
     this.state.btwPanelContainer.clear();
+    this.state.editor.connectedAbove = false;
   }
 
   openBtwPanel(agentId: string, initialPrompt: string): void {
@@ -1675,6 +1677,7 @@ export class KimiTUI {
     panel = new BtwPanelComponent({
       colors: this.state.theme.colors,
       markdownTheme: this.state.theme.markdownTheme,
+      terminalRows: () => this.state.terminal.rows,
       onPrompt: (prompt) => {
         this.promptBtwAgent(agentId, prompt, panel);
       },
@@ -1692,6 +1695,25 @@ export class KimiTUI {
     if (active.panel.isRunning()) {
       void this.cancelSideAgent(active.agentId);
     }
+    return true;
+  }
+
+  toggleBtwPanelExpansion(): boolean {
+    const panel = this.activeBtw?.panel;
+    if (panel === undefined) return false;
+    const expanded = panel.toggleExpanded();
+    if (expanded) {
+      this.state.ui.requestRender();
+    } else {
+      this.state.ui.requestRender(true);
+    }
+    return true;
+  }
+
+  scrollBtwPanel(direction: 'up' | 'down'): boolean {
+    const panel = this.activeBtw?.panel;
+    if (panel === undefined || !panel.scroll(direction)) return false;
+    this.state.ui.requestRender();
     return true;
   }
 
