@@ -19,13 +19,16 @@ const ENABLED = process.env['KIMI_E2E'] === '1';
 let homeDir: string;
 let workDir: string;
 let oldHome: string | undefined;
+let oldLogLevel: string | undefined;
 
 beforeEach(async () => {
   await __resetRootLoggerForTest();
   homeDir = await mkdtemp(join(tmpdir(), 'kimi-cli-log-home-'));
   workDir = await mkdtemp(join(tmpdir(), 'kimi-cli-log-work-'));
   oldHome = process.env['KIMI_CODE_HOME'];
+  oldLogLevel = process.env['KIMI_LOG_LEVEL'];
   process.env['KIMI_CODE_HOME'] = homeDir;
+  process.env['KIMI_LOG_LEVEL'] = 'info';
 });
 
 afterEach(async () => {
@@ -34,6 +37,11 @@ afterEach(async () => {
     delete process.env['KIMI_CODE_HOME'];
   } else {
     process.env['KIMI_CODE_HOME'] = oldHome;
+  }
+  if (oldLogLevel === undefined) {
+    delete process.env['KIMI_LOG_LEVEL'];
+  } else {
+    process.env['KIMI_LOG_LEVEL'] = oldLogLevel;
   }
   await rm(homeDir, { recursive: true, force: true });
   await rm(workDir, { recursive: true, force: true });
