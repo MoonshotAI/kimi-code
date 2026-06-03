@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { KimiError, KimiHarness } from '#/index';
+import { createKimiHarness, KimiError } from '#/index';
 
 import {
   parseConfigString,
@@ -223,7 +223,7 @@ describe('KimiHarness config API', () => {
     const configPath = join(homeDir, 'config.toml');
     await writeFile(configPath, COMPLETE_TOML, 'utf-8');
 
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     await harness.setConfig({
       providers: {
@@ -260,7 +260,7 @@ describe('KimiHarness config API', () => {
     await writeFile(configPath, COMPLETE_TOML, 'utf-8');
     const before = await readFile(configPath, 'utf-8');
 
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     const setInvalidConfig = harness.setConfig({
       providers: {
@@ -280,7 +280,7 @@ describe('KimiHarness config API', () => {
 
   it('uses default config when the config file is absent', async () => {
     const homeDir = await makeTempDir();
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     await expect(harness.getConfig()).resolves.toEqual({ providers: {} });
   });
@@ -288,7 +288,7 @@ describe('KimiHarness config API', () => {
   it('can create the default config scaffold without selecting a model', async () => {
     const homeDir = await makeTempDir();
     const configPath = join(homeDir, 'config.toml');
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     await harness.ensureConfigFile();
 

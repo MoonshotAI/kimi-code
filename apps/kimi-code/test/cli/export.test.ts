@@ -52,24 +52,23 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   return {
     ...actual,
     resolveKimiHome: mocks.resolveKimiHome,
-    KimiHarness: class {
-      homeDir: string;
-      auth = {
-        getCachedAccessToken: mocks.harnessGetCachedAccessToken,
-      };
-      ensureConfigFile = mocks.harnessEnsureConfigFile;
-      getConfig = mocks.harnessGetConfig;
-      track = mocks.harnessTrack;
-      constructor(...args: unknown[]) {
-        const options = args[0] as { readonly homeDir?: string } | undefined;
-        this.homeDir = options?.homeDir ?? '/tmp/kimi-export-home';
-        if (mocks.harnessCreatesDeviceIdOnConstruction) {
-          mocks.createKimiDeviceId(this.homeDir);
-        }
-        mocks.kimiHarnessConstructor(...args);
+    createKimiHarness: (...args: unknown[]) => {
+      const options = args[0] as { readonly homeDir?: string } | undefined;
+      const homeDir = options?.homeDir ?? '/tmp/kimi-export-home';
+      if (mocks.harnessCreatesDeviceIdOnConstruction) {
+        mocks.createKimiDeviceId(homeDir);
       }
-
-      exportSession = mocks.harnessExportSession;
+      mocks.kimiHarnessConstructor(...args);
+      return {
+        homeDir,
+        auth: {
+          getCachedAccessToken: mocks.harnessGetCachedAccessToken,
+        },
+        ensureConfigFile: mocks.harnessEnsureConfigFile,
+        getConfig: mocks.harnessGetConfig,
+        track: mocks.harnessTrack,
+        exportSession: mocks.harnessExportSession,
+      };
     },
   };
 });

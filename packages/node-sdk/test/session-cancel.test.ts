@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type * as KosongModule from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { KimiError, Event } from '#/index';
+import { createKimiHarness, type KimiError, type Event } from '#/index';
 
 import { makeTempDir, removeTempDirs, waitForSDKEvent } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
@@ -33,8 +33,6 @@ vi.mock('@moonshot-ai/kosong', async (importOriginal) => {
   };
 });
 
-const { KimiHarness } = await import('#/index');
-
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -46,7 +44,7 @@ describe('Session.cancel', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-cancel-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-cancel-work-');
     await writeFakeModelConfig(homeDir);
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_cancel_active_turn', workDir });
@@ -84,7 +82,7 @@ describe('Session.cancel', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-cancel-compact-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-cancel-compact-work-');
     await writeFakeModelConfig(homeDir);
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_cancel_compaction', workDir });
@@ -101,7 +99,7 @@ describe('Session.cancel', () => {
   it('rejects after the session is closed', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-cancel-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-cancel-work-');
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_cancel_closed', workDir });
