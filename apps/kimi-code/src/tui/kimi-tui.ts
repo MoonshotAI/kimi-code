@@ -40,7 +40,6 @@ import {
   type KimiSlashCommand,
   type SkillListSession,
 } from './commands';
-import { BtwPanelComponent } from './commands/btw';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
 import { GutterContainer } from './components/chrome/gutter-container';
 import { CHROME_GUTTER } from './constant/rendering';
@@ -59,6 +58,7 @@ import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent } from './components/dialogs/session-picker';
 import { AuthFlowController } from './controllers/auth-flow';
+import { BtwPanelController } from './controllers/btw-panel';
 import { EditorKeyboardController } from './controllers/editor-keyboard';
 import { SessionEventHandler } from './controllers/session-event-handler';
 import * as slashCommands from './commands/dispatch';
@@ -212,14 +212,9 @@ export class KimiTUI {
   private startupNotice: string | undefined;
   private lastActivityMode: string | undefined;
   private lastHistoryContent: string | undefined;
-  private activeBtw:
-    | {
-        readonly agentId: string;
-        readonly panel: BtwPanelComponent;
-      }
-    | undefined;
   readonly streamingUI: StreamingUIController;
   readonly authFlow: AuthFlowController;
+  readonly btwPanelController: BtwPanelController;
   readonly sessionEventHandler: SessionEventHandler;
   readonly sessionReplay: SessionReplayRenderer;
   readonly tasksBrowserController: TasksBrowserController;
@@ -291,6 +286,7 @@ export class KimiTUI {
     );
     this.streamingUI = new StreamingUIController(this);
     this.authFlow = new AuthFlowController(this);
+    this.btwPanelController = new BtwPanelController(this);
     this.sessionEventHandler = new SessionEventHandler(this);
     this.sessionReplay = new SessionReplayRenderer(this);
     this.tasksBrowserController = new TasksBrowserController(this);
@@ -681,7 +677,7 @@ export class KimiTUI {
   }
 
   sendNormalUserInput(text: string): void {
-    if (this.sendBtwUserInput(text)) return;
+    if (this.btwPanelController.sendUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
@@ -704,20 +700,6 @@ export class KimiTUI {
     }
     this.updateQueueDisplay();
     this.state.ui.requestRender();
-  }
-
-  private sendBtwUserInput(text: string): boolean {
-    const active = this.activeBtw;
-    if (active === undefined) return false;
-    if (active.panel.isRunning()) {
-      this.state.editor.setText(text);
-      this.showStatus('Wait for /btw to finish before sending another question.');
-      return true;
-    }
-    active.panel.submit(text);
-    this.state.ui.setFocus(this.state.editor);
-    this.state.ui.requestRender();
-    return true;
   }
 
   private validateMediaCapabilities(
@@ -1104,7 +1086,7 @@ export class KimiTUI {
     this.streamingUI.resetToolUi();
     this.sessionEventHandler.resetRuntimeState();
     this.tasksBrowserController.close();
-    this.clearBtwPanel();
+    this.btwPanelController.clear();
     this.state.footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 0 });
     this.streamingUI.setTodoList([]);
     this.streamingUI.setTurnId(undefined);
@@ -1355,7 +1337,7 @@ export class KimiTUI {
     this.streamingUI.resetToolUi();
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
     this.state.transcriptContainer.clear();
-    this.clearBtwPanel();
+    this.btwPanelController.clear();
     this.clearTerminalInlineImages();
     this.state.todoPanel.clear();
     this.state.todoPanelContainer.clear();
@@ -1643,109 +1625,6 @@ export class KimiTUI {
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
     this.state.ui.requestRender();
-  }
-
-  showBtwPanel(panel: BtwPanelComponent): void {
-    this.state.btwPanelContainer.clear();
-    this.state.btwPanelContainer.addChild(new Spacer(1));
-    this.state.btwPanelContainer.addChild(panel);
-    this.state.editor.connectedAbove = true;
-    this.state.ui.setFocus(this.state.editor);
-    this.state.ui.requestRender();
-  }
-
-  closeBtwPanel(panel: BtwPanelComponent): void {
-    if (!this.state.btwPanelContainer.children.includes(panel)) return;
-    this.sessionEventHandler.unregisterBtwPanel(panel);
-    if (this.activeBtw?.panel === panel) this.activeBtw = undefined;
-    this.state.btwPanelContainer.clear();
-    this.state.editor.connectedAbove = false;
-    this.state.ui.setFocus(this.state.editor);
-    this.state.ui.requestRender(true);
-  }
-
-  private clearBtwPanel(): void {
-    const panel = this.activeBtw?.panel;
-    if (panel !== undefined) this.sessionEventHandler.unregisterBtwPanel(panel);
-    this.activeBtw = undefined;
-    this.state.btwPanelContainer.clear();
-    this.state.editor.connectedAbove = false;
-  }
-
-  openBtwPanel(agentId: string, initialPrompt: string): void {
-    let panel: BtwPanelComponent;
-    panel = new BtwPanelComponent({
-      colors: this.state.theme.colors,
-      markdownTheme: this.state.theme.markdownTheme,
-      terminalRows: () => this.state.terminal.rows,
-      onPrompt: (prompt) => {
-        this.promptBtwAgent(agentId, prompt, panel);
-      },
-    });
-    this.activeBtw = { agentId, panel };
-    this.sessionEventHandler.registerBtwPanel(agentId, panel);
-    this.showBtwPanel(panel);
-    panel.submit(initialPrompt);
-  }
-
-  closeOrCancelBtwPanel(): boolean {
-    const active = this.activeBtw;
-    if (active === undefined) return false;
-    this.closeBtwPanel(active.panel);
-    if (active.panel.isRunning()) {
-      void this.cancelSideAgent(active.agentId);
-    }
-    return true;
-  }
-
-  toggleBtwPanelExpansion(): boolean {
-    const panel = this.activeBtw?.panel;
-    if (panel === undefined) return false;
-    const expanded = panel.toggleExpanded();
-    if (expanded) {
-      this.state.ui.requestRender();
-    } else {
-      this.state.ui.requestRender(true);
-    }
-    return true;
-  }
-
-  scrollBtwPanel(direction: 'up' | 'down'): boolean {
-    const panel = this.activeBtw?.panel;
-    if (panel === undefined || !panel.scroll(direction)) return false;
-    this.state.ui.requestRender();
-    return true;
-  }
-
-  private promptBtwAgent(agentId: string, prompt: string, panel: BtwPanelComponent): void {
-    const session = this.session;
-    if (session === undefined) {
-      panel.markFailed(NO_ACTIVE_SESSION_MESSAGE);
-      this.state.ui.requestRender();
-      return;
-    }
-    void this.withInteractiveAgent(agentId, () => session.prompt(prompt)).catch((error: unknown) => {
-      panel.markFailed(`Failed to send /btw prompt: ${formatErrorMessage(error)}`);
-      this.state.ui.requestRender();
-    });
-  }
-
-  private async cancelSideAgent(agentId: string): Promise<void> {
-    const session = this.session;
-    if (session === undefined) return;
-    await this.withInteractiveAgent(agentId, () => session.cancel()).catch((error: unknown) => {
-      this.showError(`Failed to cancel /btw: ${formatErrorMessage(error)}`);
-    });
-  }
-
-  private withInteractiveAgent<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
-    const previousAgentId = this.harness.interactiveAgentId;
-    this.harness.interactiveAgentId = agentId;
-    try {
-      return fn();
-    } finally {
-      this.harness.interactiveAgentId = previousAgentId;
-    }
   }
 
   private async runMigrationScreen(plan: MigrationPlan): Promise<MigrationScreenResult> {

@@ -57,9 +57,9 @@ import {
 import { openUrl } from '../utils/open-url';
 import { setProcessTitle } from '../utils/proctitle';
 import { errorReportHintLine } from '../constant/feedback';
-import { BtwPanelComponent } from '../commands/btw';
 import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
 import { nextTranscriptId } from '../utils/transcript-id';
+import type { BtwPanelController } from './btw-panel';
 import type { StreamingUIController } from './streaming-ui';
 import type { TasksBrowserController } from './tasks-browser';
 import type {
@@ -88,10 +88,9 @@ export interface SessionEventHost {
   showStatus(msg: string, color?: string): void;
   showNotice(title: string, detail?: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
-  showBtwPanel(panel: BtwPanelComponent): void;
-  closeBtwPanel(panel: BtwPanelComponent): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
+  readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
 }
 
@@ -102,10 +101,7 @@ export class SessionEventHandler {
   backgroundAgentMetadata: Map<string, BackgroundAgentMetadata> = new Map();
   backgroundTasks: Map<string, BackgroundTaskInfo> = new Map();
   backgroundTaskTranscriptedTerminal: Set<string> = new Set();
-  subagentInfo: Map<
-    string,
-    { parentToolCallId: string; name: string; btwPanel?: BtwPanelComponent | undefined }
-  > = new Map();
+  subagentInfo: Map<string, { parentToolCallId: string; name: string }> = new Map();
   renderedSkillActivationIds: Set<string> = new Set();
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
@@ -227,22 +223,6 @@ export class SessionEventHandler {
     this.mcpServerStatusSpinners.clear();
   }
 
-  registerBtwPanel(agentId: string, panel: BtwPanelComponent): void {
-    this.subagentInfo.set(agentId, {
-      parentToolCallId: '',
-      name: 'btw',
-      btwPanel: panel,
-    });
-  }
-
-  unregisterBtwPanel(panel: BtwPanelComponent): void {
-    for (const [agentId, info] of this.subagentInfo) {
-      if (info.btwPanel === panel) {
-        this.subagentInfo.delete(agentId);
-      }
-    }
-  }
-
   // ---------------------------------------------------------------------------
   // Private handlers
   // ---------------------------------------------------------------------------
@@ -252,11 +232,10 @@ export class SessionEventHandler {
     if (subagentId === MAIN_AGENT_ID) return false;
 
     const { streamingUI } = this.host;
+    if (this.host.btwPanelController.routeEvent(event)) return true;
+
     const info = this.subagentInfo.get(subagentId);
     if (info === undefined) return true;
-    if (info.btwPanel !== undefined) {
-      return this.routeBtwEvent(info.btwPanel, event);
-    }
     if (info.parentToolCallId.length === 0) return true;
     const { parentToolCallId } = info;
     const sourceName = info.name;
@@ -327,60 +306,6 @@ export class SessionEventHandler {
       case 'turn.step.interrupted':
       case 'turn.step.retrying':
       case 'turn.step.started':
-        return true;
-      default:
-        return true;
-    }
-  }
-
-  private routeBtwEvent(panel: BtwPanelComponent, event: Event): boolean {
-    switch (event.type) {
-      case 'assistant.delta':
-        panel.appendAnswer(event.delta);
-        this.host.state.ui.requestRender();
-        return true;
-      case 'thinking.delta':
-        panel.appendThinking(event.delta);
-        this.host.state.ui.requestRender();
-        return true;
-      case 'hook.result':
-        panel.appendAnswer(formatHookResultPlain(event));
-        this.host.state.ui.requestRender();
-        return true;
-      case 'turn.ended':
-        if (event.reason === 'completed') {
-          panel.markDone();
-        } else {
-          panel.markFailed(formatBtwTurnEnd(event));
-        }
-        this.host.state.ui.requestRender();
-        return true;
-      case 'agent.status.updated':
-      case 'background.task.started':
-      case 'background.task.terminated':
-      case 'compaction.blocked':
-      case 'compaction.cancelled':
-      case 'compaction.completed':
-      case 'compaction.started':
-      case 'cron.fired':
-      case 'error':
-      case 'mcp.server.status':
-      case 'session.meta.updated':
-      case 'skill.activated':
-      case 'subagent.completed':
-      case 'subagent.failed':
-      case 'subagent.spawned':
-      case 'tool.call.delta':
-      case 'tool.call.started':
-      case 'tool.list.updated':
-      case 'tool.progress':
-      case 'tool.result':
-      case 'turn.started':
-      case 'turn.step.completed':
-      case 'turn.step.interrupted':
-      case 'turn.step.retrying':
-      case 'turn.step.started':
-      case 'warning':
         return true;
       default:
         return true;
@@ -1066,11 +991,4 @@ export class SessionEventHandler {
     state.footer.setBackgroundCounts({ bashTasks, agentTasks });
     state.ui.requestRender();
   }
-}
-
-function formatBtwTurnEnd(event: TurnEndedEvent): string {
-  if (event.error !== undefined) {
-    return `[${event.error.code}] ${event.error.message}`;
-  }
-  return `BTW turn ended with reason: ${event.reason}`;
 }

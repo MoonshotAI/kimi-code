@@ -15,6 +15,7 @@ import { formatErrorMessage } from '../utils/event-payload';
 import type { ImageAttachmentStore } from '../utils/image-attachment-store';
 import type { PendingExit } from '../types';
 import type { TUIState } from '../tui-state';
+import type { BtwPanelController } from './btw-panel';
 
 export interface EditorKeyboardHost {
   state: TUIState;
@@ -22,15 +23,13 @@ export interface EditorKeyboardHost {
   cancelInFlight: (() => void) | undefined;
 
   handleUserInput(text: string): void;
-  closeOrCancelBtwPanel(): boolean;
+  readonly btwPanelController: BtwPanelController;
   steerMessage(session: Session, input: string[]): void;
   recallLastQueued(): string | undefined;
   showError(msg: string): void;
   track(event: string, props?: Record<string, unknown>): void;
   updateEditorBorderHighlight(text?: string): void;
   updateQueueDisplay(): void;
-  scrollBtwPanel(direction: 'up' | 'down'): boolean;
-  toggleBtwPanelExpansion(): boolean;
   toggleToolOutputExpansion(): void;
   togglePlanExpansion(): boolean;
   hideSessionPicker(): void;
@@ -76,7 +75,7 @@ export class EditorKeyboardController {
         return;
       }
 
-      if (editor.getText().length === 0 && host.closeOrCancelBtwPanel()) {
+      if (editor.getText().length === 0 && host.btwPanelController.closeOrCancel()) {
         this.clearPendingExit();
         return;
       }
@@ -118,7 +117,7 @@ export class EditorKeyboardController {
         this.cancelCurrentCompaction();
         return;
       }
-      if (host.closeOrCancelBtwPanel()) {
+      if (host.btwPanelController.closeOrCancel()) {
         return;
       }
       if (host.state.appState.streamingPhase !== 'idle') {
@@ -144,7 +143,7 @@ export class EditorKeyboardController {
 
     editor.onToggleToolExpand = () => {
       host.track('shortcut_expand');
-      if (host.toggleBtwPanelExpansion()) return;
+      if (host.btwPanelController.toggleExpansion()) return;
       host.toggleToolOutputExpansion();
     };
 
@@ -189,7 +188,7 @@ export class EditorKeyboardController {
     };
 
     editor.onUpArrowEmpty = () => {
-      if (host.scrollBtwPanel('up')) return true;
+      if (host.btwPanelController.scroll('up')) return true;
       if (host.state.appState.streamingPhase === 'idle' && !host.state.appState.isCompacting) return false;
       const recalled = host.recallLastQueued();
       if (recalled !== undefined) {
@@ -201,7 +200,7 @@ export class EditorKeyboardController {
       return false;
     };
 
-    editor.onDownArrowEmpty = () => host.scrollBtwPanel('down');
+    editor.onDownArrowEmpty = () => host.btwPanelController.scroll('down');
 
     editor.onPasteImage = async () => this.handleClipboardImagePaste();
   }

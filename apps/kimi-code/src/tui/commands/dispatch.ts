@@ -15,6 +15,7 @@ import {
 } from './resolve';
 import type { BuiltinSlashCommandName } from './registry';
 import type { AuthFlowController } from '../controllers/auth-flow';
+import type { BtwPanelController } from '../controllers/btw-panel';
 import type { StreamingUIController } from '../controllers/streaming-ui';
 import type { TasksBrowserController } from '../controllers/tasks-browser';
 import type { AppState, LoginProgressSpinnerHandle, QueuedMessage } from '../types';
@@ -101,7 +102,6 @@ export interface SlashCommandHost {
   showStatus(msg: string, color?: string): void;
   showNotice(title: string, detail?: string): void;
   track(event: string, props?: Record<string, unknown>): void;
-  openBtwPanel(agentId: string, initialPrompt: string): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
 
@@ -132,6 +132,7 @@ export interface SlashCommandHost {
 
   // Controller refs
   readonly streamingUI: StreamingUIController;
+  readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
   readonly authFlow: AuthFlowController;
 }
@@ -163,13 +164,6 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
     case 'blocked':
       host.track('input_command_invalid', { reason: 'blocked', command: intent.commandName });
       host.showError(slashBusyMessage(intent.commandName, intent.reason));
-      return;
-    case 'invalid':
-      host.track('input_command_invalid', { reason: intent.reason, command: intent.commandName });
-      if (parsedCommand !== null && tryHandleDanceCommand(host, parsedCommand)) {
-        return;
-      }
-      host.sendNormalUserInput(input);
       return;
     case 'skill': {
       const session = host.session;
