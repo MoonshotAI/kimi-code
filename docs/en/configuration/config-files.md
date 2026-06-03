@@ -1,12 +1,12 @@
-# Config files
+# Configuration files
 
-Kimi Code CLI stores its global configuration in a single TOML file that covers API providers, model aliases, agent loop parameters, background tasks, external services, and more. This page describes the location of the config file, its top-level fields, each nested structure, and a complete example.
+Kimi Code CLI writes all long-term preferences — which model to use, which API key to fill in, how many steps an Agent can run per turn — into a single TOML (a plain-text configuration format with a clear structure) file. Change it once and it takes effect on every startup.
+
+Default location: `~/.kimi-code/config.toml`, created automatically on first run.
 
 ## Config file location
 
-The default config file is located at `~/.kimi-code/config.toml`. The directory and file are created automatically on first run with restrictive permissions.
-
-If you want to place the data directory elsewhere, set the `KIMI_CODE_HOME` environment variable:
+The CLI reads configuration from `~/.kimi-code/config.toml`. To relocate the data directory, override it with the `KIMI_CODE_HOME` environment variable:
 
 ```sh
 export KIMI_CODE_HOME=/path/to/kimi-home
@@ -15,30 +15,12 @@ export KIMI_CODE_HOME=/path/to/kimi-home
 The config file path then becomes `$KIMI_CODE_HOME/config.toml`. Regardless of where the directory lives, the file name is always `config.toml`.
 
 ::: tip
-TOML field names always use snake_case (for example, `default_model`, `max_context_size`). If a key contains `.`, you must use a quoted TOML key; otherwise TOML will treat `.` as a nested table separator.
+TOML field names always use snake_case, for example `default_model` and `max_context_size`. If a key contains `.`, you must quote it — for example `[models."gpt-4.1"]` — otherwise TOML treats `.` as a nested table separator.
 :::
 
-## Top-level fields
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `default_model` | `string` | — | Default model alias; must be defined in `models` |
-| `default_thinking` | `boolean` | `false` | Initial value of the Thinking toggle for new sessions; can be flipped from the model menu inside a session. Even when this is `true`, setting `[thinking].mode = "off"` will still force Thinking off. See [`thinking`](#thinking) below |
-| `default_permission_mode` | `string` | `manual` | Default permission mode for new sessions; one of `manual`, `auto`, `yolo` |
-| `default_plan_mode` | `boolean` | `false` | Whether new sessions start in Plan mode by default; omitting it is equivalent to `false` |
-| `merge_all_available_skills` | `boolean` | `true` | Whether to merge Agent Skills from all available directories |
-| `extra_skill_dirs` | `array<string>` | — | Extra skill search directories, layered on top of the default directories |
-| `telemetry` | `boolean` | `true` | Whether anonymous telemetry is enabled; only disabled when explicitly set to `false` |
-| `providers` | `table` | `{}` | API provider table; see below |
-| `models` | `table` | — | Model alias table; see below |
-| `thinking` | `table` | — | Default parameters for Thinking mode |
-| `loop_control` | `table` | — | Agent loop control parameters |
-| `background` | `table` | — | Background task runtime parameters |
-| `services` | `table` | — | Built-in external service configuration |
-| `permission` | `table` | — | Permission rule configuration; see below |
-| `hooks` | `array<table>` | — | Lifecycle hook configuration. See [Hooks](../customization/hooks.md) |
-
 ## Complete example
+
+The following example covers the most commonly used configuration fields. You can copy it and adjust as needed:
 
 ```toml
 default_model = "kimi-code/kimi-for-coding"
@@ -85,52 +67,69 @@ command = "node ~/.kimi-code/hooks/check-bash.mjs"
 timeout = 5
 ```
 
+## Top-level fields
+
+Fields in the config file fall into two categories: **top-level scalars** that directly control default behavior, and **nested tables** (`providers`, `models`, `thinking`, etc.) that each have their own structure, described individually in the sections below.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `default_model` | `string` | — | Default model alias; must be defined in `models` |
+| `default_thinking` | `boolean` | `false` | Whether new sessions enable Thinking (deep reasoning) mode by default; can be toggled from the model menu inside a session. Even when set to `true`, `[thinking].mode = "off"` will still force Thinking off |
+| `default_permission_mode` | `string` | `manual` | Default permission mode for new sessions; one of `manual` (prompt each time), `auto` (auto-approve read operations), or `yolo` (auto-approve everything) |
+| `default_plan_mode` | `boolean` | `false` | Whether new sessions start in Plan mode (produce a plan before executing) by default |
+| `merge_all_available_skills` | `boolean` | `true` | Whether to merge Agent Skills from all available directories |
+| `extra_skill_dirs` | `array<string>` | — | Extra skill search directories, layered on top of the default directories |
+| `telemetry` | `boolean` | `true` | Whether anonymous telemetry is enabled; disabled only when explicitly set to `false` |
+| `providers` | `table` | `{}` | API provider table → [`providers`](#providers) |
+| `models` | `table` | — | Model alias table → [`models`](#models) |
+| `thinking` | `table` | — | Default parameters for Thinking mode → [`thinking`](#thinking) |
+| `loop_control` | `table` | — | Agent loop control parameters → [`loop_control`](#loop_control) |
+| `background` | `table` | — | Background task runtime parameters → [`background`](#background) |
+| `services` | `table` | — | Built-in external service configuration → [`services`](#services) |
+| `permission` | `table` | — | Initial permission rules → [`permission`](#permission) |
+| `hooks` | `array<table>` | — | Lifecycle hooks; see [Hooks](../customization/hooks.md) |
+
+The following sections cover each of the seven nested tables in turn: `providers`, `models`, `thinking`, `loop_control`, `background`, `services`, and `permission`.
+
 ## `providers`
 
-Each entry in the `providers` table defines the connection info for one API provider, keyed by a unique name.
+Each entry in the `providers` table defines an API provider, keyed by a unique name. The CLI reads credentials only from here — it does **not** fall back to shell environment variables automatically. Running `export KIMI_API_KEY` in the terminal does not give any provider its key; you must write it explicitly in the config file (see [Config overrides](./overrides-and-precedence.md#provider-credentials)).
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `type` | `string` | Yes | Provider type; one of `anthropic`, `openai`, `kimi`, `google-genai`, `openai_responses`, `vertexai` |
-| `api_key` | `string` | No | API key |
+| `type` | `string` | Yes | Provider type: `kimi`, `anthropic`, `openai`, `openai_responses`, `google-genai`, `vertexai` |
+| `api_key` | `string` | No | API key, written in plain text in the config file |
 | `base_url` | `string` | No | API base URL |
-| `oauth` | `table` | No | OAuth credential reference; see below |
-| `env` | `table<string, string>` | No | A configuration sub-table keyed by provider-specific names (such as `KIMI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_CLOUD_PROJECT`), used as fallback values for `api_key` / `base_url` and related fields. This is just a sub-table inside the config file — **it is not written into your shell environment** — and is consulted only when the corresponding field on `[providers.<name>]` is unset |
+| `oauth` | `table` | No | OAuth credential reference (`storage` and `key` fields); injected automatically by the login flow — normally no need to write this by hand |
+| `env` | `table<string, string>` | No | Fallback source for provider credentials; see below |
 | `custom_headers` | `table<string, string>` | No | Custom HTTP headers attached to each request |
 
-OAuth credential reference structure:
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `storage` | `string` | Yes | Credential storage location; currently only `file` is supported |
-| `key` | `string` | Yes | Unique identifier of the credential entry |
+**`env` sub-table**: You can write provider-conventional key names (such as `KIMI_API_KEY`) inside `[providers.<name>.env]` as a fallback source for `api_key` / `base_url`. This sub-table is **read only from the config file** and does not modify the shell environment:
 
 ```toml
-[providers.openai]
-type = "openai"
-base_url = "https://api.openai.com/v1"
-api_key = "sk-xxx"
-custom_headers = { "X-Custom-Header" = "value" }
+[providers.kimi.env]
+KIMI_API_KEY = "sk-xxx"
+KIMI_BASE_URL = "https://api.moonshot.ai/v1"
 ```
+
+Priority: `api_key` field > `env` sub-table key > if both are absent, startup fails with an error.
 
 ## `models`
 
-Each entry in the `models` table defines a model alias, keyed by a unique name.
+Each entry in the `models` table defines a model alias (the name used in `default_model` or the `-m` flag), keyed by a unique name.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `provider` | `string` | Yes | Name of the provider to use; must be defined in `providers` |
-| `model` | `string` | Yes | Model identifier used when calling the API |
+| `model` | `string` | Yes | Model identifier sent to the server when calling the API |
 | `max_context_size` | `integer` | Yes | Maximum context length in tokens; must be at least 1 |
-| `max_output_size` | `integer` | No | Per-request output budget cap (`max_tokens` on the wire). Only the `anthropic` provider currently honors it. When the alias resolves to a known Claude family, the value is clamped to that model's documented ceiling to avoid exceeding the server-side limit. Omit to use the per-model default — see [`providers.md`](./providers.md#anthropic). |
-| `capabilities` | `array<string>` | No | Capability tags to add explicitly, for example `thinking`, `image_in`, `video_in`, `audio_in`, `tool_use` |
+| `max_output_size` | `integer` | No | Per-request output token cap (maps to `max_tokens`). Currently only the `anthropic` provider honors it; recognized Claude models are automatically clamped to the server-side maximum |
+| `capabilities` | `array<string>` | No | Capability tags to add explicitly: `thinking`, `image_in`, `video_in`, `audio_in`, `tool_use`. Unioned with the capabilities auto-detected by the provider — entries can only be added, never removed |
 | `display_name` | `string` | No | Name shown in the UI; falls back to `model` when unset |
-| `reasoning_key` | `string` | No | `openai` provider only. Override the field name used for reasoning content. By default the provider auto-detects `reasoning_content`, `reasoning_details`, and `reasoning` on incoming responses and serializes thinking back as `reasoning_content` — set this only if your gateway uses a non-standard field name |
-| `adaptive_thinking` | `boolean` | No | `anthropic` provider only. Force adaptive thinking (`thinking: { type: 'adaptive' }`) on or off, overriding the model-name version inference. Set `true` for a custom-named endpoint that backs an adaptive-capable model whose name does not encode a parseable Claude version; forcing it on for an endpoint that does not support adaptive thinking makes the API reject the request. Omit to infer from the model name (Claude ≥ 4.6 uses adaptive) |
+| `reasoning_key` | `string` | No | `openai` provider only. Override the field name used for reasoning content when the gateway returns it under a non-standard name; by default `reasoning_content`, `reasoning_details`, and `reasoning` are auto-detected |
+| `adaptive_thinking` | `boolean` | No | `anthropic` provider only. Force adaptive thinking on or off, overriding the version inference based on the model name. Omit to infer automatically (Claude ≥ 4.6 uses adaptive) |
 
-`capabilities` is unioned with the capabilities that the provider capability registry matches by model-name prefix — entries can only be added, never removed. You usually do not need to set this by hand; reach for it only when the model is not covered by the registry, or when you want to force-enable a particular capability.
-
-If a model alias contains `.`, use a quoted key:
+When an alias contains `.`, use a quoted key:
 
 ```toml
 [models."gpt-4.1"]
@@ -139,44 +138,42 @@ model = "gpt-4.1"
 max_context_size = 1047576
 ```
 
-For testing, you can also synthesize a model entirely from `KIMI_MODEL_*` environment variables without editing this file — see [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi-model).
+You can also switch models temporarily without touching the config file — by setting `KIMI_MODEL_*` environment variables, the CLI synthesizes a temporary provider in memory that does not persist after restart. See [Define a model from environment variables](./environment-variables.md#define-a-model-from-environment-variables-kimi_model).
 
 ## `thinking`
 
-`thinking` controls the default behavior of Thinking mode. Even when the top-level `default_thinking = true`, setting `mode` to `"off"` will still force Thinking off.
+`thinking` sets the global default behavior for Thinking mode. `mode = "off"` forces Thinking off even when the top-level `default_thinking = true`.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `mode` | `string` | — | Trigger policy; one of `auto`, `on`, `off`. `"off"` forces Thinking off; any other value or omission does not disable it, and the effective behavior is decided together by the per-session Thinking toggle and `effort` |
-| `effort` | `string` | `high` | Default effort level used when Thinking is on; one of `low`, `medium`, `high`, `xhigh`, `max`. The levels actually available depend on the provider |
+| `mode` | `string` | — | Trigger policy: `auto` (decided by the model), `on` (always on), `off` (force off) |
+| `effort` | `string` | `high` | Thinking effort level: `low`, `medium`, `high`, `xhigh`, `max`; the levels actually available depend on the provider |
 
 ## `loop_control`
 
-`loop_control` governs the step count, retries, and context compaction threshold of the agent execution loop.
+`loop_control` governs the step count limit, per-step retry count, and the threshold that triggers automatic context compaction in the Agent execution loop.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `max_steps_per_turn` | `integer` | — | Maximum number of steps per turn; set to `0` or leave unset for unlimited. Setting `0` is useful for overriding a previously configured limit. |
-| `max_retries_per_step` | `integer` | `3` | Maximum retries per step |
-| `reserved_context_size` | `integer` | — | Number of tokens reserved for response generation; compaction is triggered when the context approaches this threshold |
-
-
+| `max_steps_per_turn` | `integer` | — | Maximum steps per turn; unset or `0` means unlimited |
+| `max_retries_per_step` | `integer` | `3` | Maximum retries after a step failure |
+| `reserved_context_size` | `integer` | — | Number of tokens reserved for model output; automatic compaction is triggered when the remaining context window falls below this value |
 
 ## `background`
 
-`background` controls the runtime limits for background tasks. Background tasks are launched through the `Bash` tool or the `Agent` tool's `run_in_background=true` parameter.
+`background` controls the concurrency and timeout behavior of background tasks (launched via the `Bash` tool or the `Agent` tool's `run_in_background=true` parameter).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `max_running_tasks` | `integer` | — | Maximum number of background tasks running concurrently |
-| `keep_alive_on_exit` | `boolean` | `true` | Whether to keep still-running background tasks when the session closes. Set to `false` to request stopping background tasks when `kimi -p` finishes and exits, when an SDK session closes, or when a harness closes |
-| `agent_task_timeout_s` | `integer` | — | Maximum runtime in seconds for background agent tasks |
+| `keep_alive_on_exit` | `boolean` | `true` | Whether to keep still-running background tasks when the session closes. Set to `false` to request that all background tasks stop before the process exits |
+| `agent_task_timeout_s` | `integer` | — | Maximum runtime in seconds for background Agent tasks |
 
-`keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable; the environment variable has higher priority than `config.toml`. The schema also reserves `kill_grace_period_ms` and `print_wait_ceiling_s`; these fields currently pass schema validation only and are not read by the CLI runtime.
+`keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, which takes higher priority than `config.toml`.
 
 ## `services`
 
-`services` configures the built-in external services Kimi Code CLI calls. Only the two fixed keys `moonshot_search` (web search) and `moonshot_fetch` (web fetch) are recognized; other keys are ignored. Both entries share the same fields:
+`services` configures two built-in services: web search (`moonshot_search`) and web fetch (`moonshot_fetch`). Only these two fixed keys are recognized; other keys are ignored. Both entries share the same fields:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -197,18 +194,16 @@ api_key = "sk-xxx"
 
 ## `permission`
 
-`permission` configures the initial permission rules loaded when a session starts, controlling the default approval behavior for tool calls. The default permission mode for new sessions is controlled by the top-level `default_permission_mode` field; an explicit startup permission mode, such as the CLI's `--yolo` flag, overrides that default.
-
-Rules are written as a `[[permission.rules]]` array of tables, where each rule contains the following fields:
+`permission` sets permission rules that are automatically loaded when a session starts, controlling whether the Agent needs user confirmation before calling a tool. Rules are written as a `[[permission.rules]]` array of tables, matched in order — the first matching rule takes effect.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `decision` | `string` | Yes | Decision result; one of `allow`, `deny`, `ask` |
-| `scope` | `string` | No | Rule scope; one of `turn-override`, `session-runtime`, `project`, `user`; defaults to `user` |
-| `pattern` | `string` | Yes | Match pattern in the form `ToolName` or `ToolName(arg-pattern)`. `ToolName` must match the runtime tool name exactly — built-in tools are `Read`, `Write`, `Edit`, `Bash`, `Grep`, and so on (see [Built-in tools](../reference/tools.md)). Argument patterns are interpreted only by tools with built-in argument matchers, such as `Bash`, file tools, and search tools; MCP tools and custom tools match by tool name only |
-| `reason` | `string` | No | Rule description for debugging or auditing |
+| `decision` | `string` | Yes | Action on match: `allow` (permit immediately), `deny` (reject immediately), `ask` (prompt each time) |
+| `scope` | `string` | No | Rule scope: `turn-override`, `session-runtime`, `project`, `user`; defaults to `user` |
+| `pattern` | `string` | Yes | Match pattern in the form `ToolName` or `ToolName(arg-pattern)`, e.g. `Read` or `Bash(rm -rf*)` |
+| `reason` | `string` | No | Rule description for debugging and auditing |
 
-Example:
+Built-in tool names are listed in [Built-in tools](../reference/tools.md); MCP tools and custom tools can only be matched by tool name — argument patterns are not supported for them.
 
 ```toml
 [[permission.rules]]
@@ -231,3 +226,9 @@ pattern = "Bash"
 ::: tip
 MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project-local `.kimi-code/mcp.json`, not in `config.toml`. The interactive configuration entry point is `/mcp-config`; see [Model Context Protocol](../customization/mcp.md).
 :::
+
+## Next steps
+
+- [Providers and models](./providers-and-models.md) — connection examples for each provider type (Kimi, Claude, OpenAI, Gemini)
+- [Config overrides](./overrides-and-precedence.md) — priority rules for CLI options, config file, and environment variables
+- [Environment variables](./environment-variables.md) — complete list of runtime variables like `KIMI_CODE_HOME`

@@ -1,22 +1,22 @@
-# Using in IDEs
+# Using Kimi Code CLI in IDEs
 
-Kimi Code CLI integrates with IDEs through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/), so you can use AI-assisted coding directly inside your editor.
+Kimi Code CLI supports integration into IDEs via the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/), letting you use AI-assisted coding directly inside your editor.
 
 ## Prerequisites
 
-Before configuring your IDE, make sure Kimi Code CLI is installed and signed in.
+Before configuring your IDE, make sure Kimi Code CLI is installed and you have completed the login setup.
 
-The ACP adapter exposes a `kimi acp` subcommand. The IDE launches it as a child process and speaks JSON-RPC on its stdio. Every session reuses the CLI's existing auth state — no separate login is required from inside the IDE.
+The ACP adapter is exposed as the `kimi acp` subcommand. The IDE launches it as a child process and communicates over stdin/stdout using JSON-RPC. Each time the IDE creates a session, the CLI reuses its existing authentication state — no need to log in again.
 
 ::: tip Path note
-On macOS, child processes spawned by an IDE's GUI typically do **not** inherit the `PATH` from your terminal shell. If `kimi` lives anywhere other than the usual `/usr/local/bin`-style directories, configure the IDE with an **absolute path**. Run `which kimi` in a terminal to find the current location.
+Child processes launched from an IDE GUI on macOS typically do **not** inherit the terminal shell's `PATH`. If `kimi` is not in a system directory like `/usr/local/bin`, use the absolute path in your IDE configuration. Run `which kimi` in a terminal to find the active path.
 :::
 
-## Using in Zed
+## Using Kimi Code CLI in Zed
 
 [Zed](https://zed.dev/) is a modern editor with native ACP support.
 
-Add the following to Zed's configuration file `~/.config/zed/settings.json`:
+Add the following to Zed's config file at `~/.config/zed/settings.json`:
 
 ```json
 {
@@ -31,22 +31,22 @@ Add the following to Zed's configuration file `~/.config/zed/settings.json`:
 }
 ```
 
-Field reference:
+Configuration fields:
 
-- `type`: fixed value `"custom"`.
-- `command`: path to the Kimi Code CLI executable. If `kimi` is not on `PATH`, use a full absolute path (e.g. `/Users/you/.local/bin/kimi`).
-- `args`: startup arguments. The `acp` subcommand switches Kimi Code into ACP mode.
-- `env`: extra environment variables. Usually empty — Zed injects a sensible default environment.
+- `type`: fixed value `"custom"`
+- `command`: path to the Kimi Code CLI executable. If `kimi` is not on `PATH`, use the full path (e.g. `/Users/you/.local/bin/kimi`).
+- `args`: startup arguments. The `acp` subcommand switches the CLI into ACP mode.
+- `env`: additional environment variables; usually leave this empty. Zed injects a default environment automatically.
 
-After saving, opening a new chat in Zed's Agent panel will spawn an ACP-mode `kimi` subprocess using your configuration. Any MCP servers declared inside Zed's `agent_servers` block are forwarded to Kimi Code via the ACP protocol.
+After saving, open a new conversation in Zed's Agent panel and it will launch a `Kimi Code CLI` ACP subprocess using the configuration above. MCP servers declared in Zed's `agent_servers` section are also forwarded to the kimi side via the ACP protocol.
 
-## Using in JetBrains IDEs
+## Using Kimi Code CLI in JetBrains IDEs
 
-JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, …) support ACP through the AI Chat plugin.
+JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, etc.) support ACP through the AI chat plugin.
 
-If you do not have a JetBrains AI subscription, enable `llm.enable.mock.response` in the Registry so you can still reach the AI Chat panel when only ACP is needed. Press Shift twice to search for "Registry" and open it.
+If you do not have a JetBrains AI subscription, you can enable `llm.enable.mock.response` in the Registry to access the AI chat panel in ACP-only scenarios. Press Shift twice and search for "Registry" to open it.
 
-From the AI Chat panel menu, click "Configure ACP agents" and add the following:
+In the AI chat panel menu, click **Configure ACP agents** and add the following configuration:
 
 ```json
 {
@@ -60,10 +60,15 @@ From the AI Chat panel menu, click "Configure ACP agents" and add the following:
 }
 ```
 
-JetBrains is strict about the `command` field — always use an **absolute path**. `which kimi` in a terminal will print the right value. After saving, `Kimi Code CLI` will appear in the AI Chat Agent selector.
+JetBrains is strict about the `command` field — always use an **absolute path**, which you can get by running `which kimi` in a terminal. After saving, `Kimi Code CLI` will appear in the AI chat's agent selector.
 
 ## Troubleshooting
 
-- **The session terminates immediately / the IDE shows "agent exited"**: usually a bad `command` path or the CLI is not signed in. Run `kimi acp` in a terminal: if it blocks waiting for stdin, the CLI itself is healthy and the issue is the IDE config; if it errors immediately, follow the message (most commonly `/login` is missing).
-- **The IDE shows "auth required"**: there's no usable auth token. Quit the IDE, run `kimi` in a terminal to sign in, then relaunch the IDE.
-- **MCP tools don't show up**: see the capability matrix in [`kimi acp`](../reference/kimi-acp.md) and confirm the MCP transport you configured is supported. The current ACP adapter forwards `http` and `stdio` transports; `sse` and `acp` MCP entries are silently dropped and a warn line is written to the diagnostic log.
+- **Session disconnects immediately / IDE shows "agent exited"**: usually a wrong `command` path or a missing login. Run `kimi acp` in a terminal first to verify — if it blocks waiting for stdin, the CLI itself is fine and the problem is in the IDE configuration; if it exits immediately with an error, follow the error message (most commonly you need to run `/login`).
+- **IDE shows "auth required"**: the CLI has no usable authentication token. Exit the IDE, run `kimi` in a terminal to complete login, then restart the IDE.
+- **MCP tools not visible**: check the [`kimi acp` reference](./reference/kimi-acp.md) capability table to confirm that the MCP transport type configured in your IDE is supported. The Kimi Code CLI ACP adapter currently supports `http` and `stdio` transports; `sse` and `acp` types are silently dropped and a warning is written to the log.
+
+## Next steps
+
+- [kimi acp reference](./reference/kimi-acp.md) — ACP capability matrix and method coverage details
+- [kimi command reference](./reference/kimi-command.md) — full subcommand list
