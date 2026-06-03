@@ -312,7 +312,7 @@ describe('Session.prompt events', () => {
   it('starts btw through RPC as a forked subagent without prompt metadata updates', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });

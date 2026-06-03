@@ -30,7 +30,7 @@ describe('Session.prompt input normalization', () => {
     const session = new Session({
       id: 'ses_btw_start',
       workDir: '/tmp/work',
-      rpc: { startBtw } as unknown as SDKRpcClient,
+      rpc: { startBtw } as unknown as SDKRpcClientBase,
     });
 
     await expect(session.startBtw()).resolves.toBe('agent-btw');
