@@ -119,19 +119,18 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();
   return {
     ...actual,
-    KimiHarness: class {
-      homeDir = '/tmp/kimi-goal-home';
-      auth = { getCachedAccessToken: vi.fn() };
-      ensureConfigFile = vi.fn();
-      getConfig = vi.fn(async () => ({ providers: {}, defaultModel: 'k2', telemetry: true }));
-      getExperimentalFlags = vi.fn(async () => mocks.experimentalFlags);
-      createSession = vi.fn(async () => mocks.session);
-      resumeSession = vi.fn(async () => mocks.session);
-      listSessions = vi.fn(async () => mocks.sessions);
-      close = vi.fn();
-      track = vi.fn();
-      constructor() {}
-    },
+    createKimiHarness: () => ({
+      homeDir: '/tmp/kimi-goal-home',
+      auth: { getCachedAccessToken: vi.fn() },
+      ensureConfigFile: vi.fn(),
+      getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'k2', telemetry: true })),
+      getExperimentalFlags: vi.fn(async () => mocks.experimentalFlags),
+      createSession: vi.fn(async () => mocks.session),
+      resumeSession: vi.fn(async () => mocks.session),
+      listSessions: vi.fn(async () => mocks.sessions),
+      close: vi.fn(),
+      track: vi.fn(),
+    }),
   };
 });
 
