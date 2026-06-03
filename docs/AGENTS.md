@@ -10,7 +10,6 @@ This repository uses VitePress for the documentation site. Most user-facing page
   - Customization: mcp, skills, plugins, agents, hooks
   - Configuration: config-files, providers, overrides, env-vars, data-locations
   - Reference: kimi-command, tools, slash-commands, keyboard
-  - FAQ
   - Release notes: changelog
 - Navigation and sidebar are defined in `docs/.vitepress/config.ts`. Any new or renamed page must be wired there for both locales.
 
@@ -23,7 +22,7 @@ Keep both locales in sync before release. Machine-assisted translation is fine; 
 
 ## Authoring workflow
 
-- Each page should keep the section ordering established by surrounding pages. Changelog and FAQ are exceptions until their placeholder content is replaced.
+- Each page should keep the section ordering established by surrounding pages. Changelog is the exception because it is generated from release history.
 - For other pages: edit either locale, then update its mirror in the same change.
 
 ## Naming conventions

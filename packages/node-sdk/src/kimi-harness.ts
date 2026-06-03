@@ -109,7 +109,7 @@ export class KimiHarness {
     const active = this.activeSessions.get(id);
     if (active !== undefined) return active;
 
-    const summary = await this.rpc.resumeSession({ id });
+    const summary = await this.rpc.resumeSession({ ...input, id });
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,

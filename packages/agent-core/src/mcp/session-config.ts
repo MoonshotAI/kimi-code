@@ -21,3 +21,18 @@ export async function resolveSessionMcpConfig(
   if (Object.keys(servers).length === 0) return undefined;
   return { servers };
 }
+
+export function mergeCallerMcpServers(
+  base: SessionMcpConfig | undefined,
+  callerServers: Readonly<Record<string, McpServerConfig>> | undefined,
+): SessionMcpConfig | undefined {
+  if (callerServers === undefined || Object.keys(callerServers).length === 0) {
+    return base;
+  }
+  return {
+    servers: {
+      ...base?.servers,
+      ...callerServers,
+    },
+  };
+}

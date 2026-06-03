@@ -116,7 +116,7 @@ import { formatErrorMessage } from './utils/event-payload';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments } from './utils/image-placeholder';
 import { hasPatchChanges } from './utils/object-patch';
-import { openUrl } from './utils/open-url';
+import { openUrl } from '#/utils/open-url';
 import { setProcessTitle } from './utils/proctitle';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
