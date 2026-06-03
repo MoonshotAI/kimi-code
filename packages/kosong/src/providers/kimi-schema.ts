@@ -324,7 +324,7 @@ function normalizeProperty(node: unknown): void {
         if (node['type'] !== inferred) {
           // eslint-disable-next-line no-console
           console.warn(
-            `[kimi-schema] repaired mismatched type: changed "${String(node['type'])}" to "${inferred}" for enum ${JSON.stringify(enumValues.slice(0, 3))}${enumValues.length > 3 ? '...' : ''}`,
+            `[kimi-schema] repaired mismatched type: changed "${String(node['type'])}" to "${inferred}" for enum (${enumValues.length} values)`,
           );
           node['type'] = inferred;
           removeIrrelevantStructureKeys(node, inferred);
@@ -339,7 +339,7 @@ function normalizeProperty(node: unknown): void {
         if (node['type'] !== inferred) {
           // eslint-disable-next-line no-console
           console.warn(
-            `[kimi-schema] repaired mismatched type: changed "${String(node['type'])}" to "${inferred}" for const ${JSON.stringify(node['const'])}`,
+            `[kimi-schema] repaired mismatched type: changed "${String(node['type'])}" to "${inferred}" for const value`,
           );
           node['type'] = inferred;
           removeIrrelevantStructureKeys(node, inferred);
