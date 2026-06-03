@@ -3,15 +3,16 @@ import { spawn } from 'node:child_process';
 import { log, type Logger } from '@moonshot-ai/kimi-code-sdk';
 import type { TelemetryProperties } from '@moonshot-ai/kimi-telemetry';
 
-import {
-  NATIVE_INSTALL_COMMAND_UNIX,
-  NATIVE_INSTALL_COMMAND_WIN,
-} from '#/constant/app';
+import { NATIVE_INSTALL_COMMAND_UNIX, NATIVE_INSTALL_COMMAND_WIN } from '#/constant/app';
 import { loadTuiConfig } from '#/tui/config';
 
 import { readUpdateCache } from './cache';
 import { tryAcquireUpdateInstallLock } from './install-lock';
-import { emptyUpdateInstallState, readUpdateInstallState, writeUpdateInstallState } from './install-state';
+import {
+  emptyUpdateInstallState,
+  readUpdateInstallState,
+  writeUpdateInstallState,
+} from './install-state';
 import {
   CHANGELOG_URL,
   promptForInstallChoice,
@@ -100,11 +101,20 @@ export function spawnForSource(
 ): SpawnCommand {
   switch (source) {
     case 'npm-global':
-      return { cmd: withCmdSuffix('npm', platform), args: ['install', '-g', `${NPM_PACKAGE_NAME}@${version}`] };
+      return {
+        cmd: withCmdSuffix('npm', platform),
+        args: ['install', '-g', `${NPM_PACKAGE_NAME}@${version}`],
+      };
     case 'pnpm-global':
-      return { cmd: withCmdSuffix('pnpm', platform), args: ['add', '-g', `${NPM_PACKAGE_NAME}@${version}`] };
+      return {
+        cmd: withCmdSuffix('pnpm', platform),
+        args: ['add', '-g', `${NPM_PACKAGE_NAME}@${version}`],
+      };
     case 'yarn-global':
-      return { cmd: withCmdSuffix('yarn', platform), args: ['global', 'add', `${NPM_PACKAGE_NAME}@${version}`] };
+      return {
+        cmd: withCmdSuffix('yarn', platform),
+        args: ['global', 'add', `${NPM_PACKAGE_NAME}@${version}`],
+      };
     case 'bun-global':
       return { cmd: bunCommand(platform), args: ['add', '-g', `${NPM_PACKAGE_NAME}@${version}`] };
     case 'native':
@@ -280,7 +290,11 @@ function trackUpdateEvent(
   }
 }
 
-function logUpdateInfo(logger: UpdateLogger, message: string, payload: Record<string, unknown>): void {
+function logUpdateInfo(
+  logger: UpdateLogger,
+  message: string,
+  payload: Record<string, unknown>,
+): void {
   try {
     logger.info(message, payload);
   } catch {
@@ -288,7 +302,11 @@ function logUpdateInfo(logger: UpdateLogger, message: string, payload: Record<st
   }
 }
 
-function logUpdateWarn(logger: UpdateLogger, message: string, payload: Record<string, unknown>): void {
+function logUpdateWarn(
+  logger: UpdateLogger,
+  message: string,
+  payload: Record<string, unknown>,
+): void {
   try {
     logger.warn(message, payload);
   } catch {
@@ -382,24 +400,24 @@ async function startBackgroundInstall(
 
       const nextState: UpdateInstallState = succeeded
         ? {
-          ...startedState,
-          active: null,
-          lastFailure: null,
-          lastSuccess: {
-            version: target.version,
-            installedAt: nowIso(),
-            notifiedAt: null,
-          },
-        }
+            ...startedState,
+            active: null,
+            lastFailure: null,
+            lastSuccess: {
+              version: target.version,
+              installedAt: nowIso(),
+              notifiedAt: null,
+            },
+          }
         : {
-          ...startedState,
-          active: null,
-          lastFailure: {
-            version: target.version,
-            failedAt: nowIso(),
-            attempts,
-          },
-        };
+            ...startedState,
+            active: null,
+            lastFailure: {
+              version: target.version,
+              failedAt: nowIso(),
+              attempts,
+            },
+          };
       void writeUpdateInstallState(nextState).catch(() => {});
       if (succeeded) {
         trackUpdateEvent(track, 'update_background_install_succeeded', {
@@ -425,8 +443,12 @@ async function startBackgroundInstall(
     };
 
     const child = spawn(cmd, [...args], { detached: true, stdio: 'ignore' });
-    child.once('error', () => { finish(false); });
-    child.once('exit', (code) => { finish(code === 0); });
+    child.once('error', () => {
+      finish(false);
+    });
+    child.once('exit', (code) => {
+      finish(code === 0);
+    });
     child.unref();
   } finally {
     await lock.release().catch(() => {});
@@ -453,8 +475,7 @@ export async function runUpdatePreflight(
   const platform = process.platform;
 
   try {
-    const isInteractive =
-      options.isTTY ?? (process.stdin.isTTY && process.stdout.isTTY);
+    const isInteractive = options.isTTY ?? (process.stdin.isTTY && process.stdout.isTTY);
     let installState = await readUpdateInstallState().catch(() => emptyUpdateInstallState());
     if (isInteractive) {
       installState = await showPendingBackgroundInstallNotice(
@@ -476,7 +497,23 @@ export async function runUpdatePreflight(
         : await detectInstallSource().catch(() => 'unsupported' as const);
 
     const decision = decideUpdateAction(target, isInteractive, source, platform);
-    if (decision === 'none' || target === null) return 'continue';
+    if (decision === 'none' || target === null) {
+      // In non-interactive mode, still emit a one-line stderr notice so
+      // CI/print-mode users know they're behind.  Keep it terse and
+      // rate-limited by the same cache that drives interactive mode.
+      if (!isInteractive && target !== null) {
+        stderr.write(
+          `notice: ${NPM_PACKAGE_NAME} ${currentVersion} -> ${target.version} available. ` +
+            `Run \`kimi upgrade\` to update.\n`,
+        );
+        trackUpdateEvent(options.track, 'update_notified_non_interactive', {
+          current_version: currentVersion,
+          target_version: target.version,
+          source,
+        });
+      }
+      return 'continue';
+    }
 
     const installCommand = installCommandFor(source, target.version, platform);
     const sourceCanAutoInstall = canAutoInstall(source, platform);
