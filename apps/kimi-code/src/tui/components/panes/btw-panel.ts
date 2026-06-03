@@ -38,7 +38,6 @@ export class BtwPanelComponent implements Component {
   private readonly turns: BtwTurn[] = [];
   private readonly transientNotices: string[] = [];
   private minBodyLines = 0;
-  private expanded = false;
   private followTail = true;
   private scrollTop = 0;
   private maxScrollTop = 0;
@@ -120,9 +119,7 @@ export class BtwPanelComponent implements Component {
 
   private renderTopBorder(width: number, truncated: boolean): string {
     const paint = (s: string): string => chalk.hex(this.options.colors.border)(s);
-    const hint = truncated
-      ? 'Esc close · ↑↓ scroll · ctrl+o expand '
-      : 'Esc close ';
+    const hint = truncated ? 'Esc close · ↑↓ scroll ' : 'Esc close ';
     const title =
       chalk.hex(this.options.colors.accent).bold(' BTW ') +
       paint('─ ') +
@@ -156,7 +153,7 @@ export class BtwPanelComponent implements Component {
   }
 
   private fitBodyLines(lines: string[]): BtwBodyRender {
-    const bodyLimit = this.expanded ? undefined : this.collapsedBodyLimit();
+    const bodyLimit = this.collapsedBodyLimit();
     const targetUncapped = Math.max(this.minBodyLines, lines.length);
     const target =
       bodyLimit === undefined ? targetUncapped : Math.min(bodyLimit, targetUncapped);
@@ -237,13 +234,6 @@ export class BtwPanelComponent implements Component {
 
   isRunning(): boolean {
     return this.currentTurn()?.phase === 'running';
-  }
-
-  toggleExpanded(): boolean {
-    this.expanded = !this.expanded;
-    this.followTail = true;
-    this.scrollTop = 0;
-    return this.expanded;
   }
 
   scroll(direction: 'up' | 'down'): boolean {

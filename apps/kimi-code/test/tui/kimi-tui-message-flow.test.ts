@@ -1566,7 +1566,7 @@ describe('KimiTUI message flow', () => {
     expect(finalLines.at(-1)).toMatch(/^│\s+│$/);
   });
 
-  it('caps collapsed /btw height to half the terminal and Ctrl-O toggles expansion', async () => {
+  it('caps /btw height to half the terminal and supports scrolling', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
     setTerminalRows(driver, 12);
@@ -1583,7 +1583,8 @@ describe('KimiTUI message flow', () => {
 
     const collapsed = panel.render(80).map(stripSgr);
     expect(collapsed).toHaveLength(6);
-    expect(collapsed.join('\n')).toContain('BTW ─ Esc close · ↑↓ scroll · ctrl+o expand');
+    expect(collapsed.join('\n')).toContain('BTW ─ Esc close · ↑↓ scroll');
+    expect(collapsed.join('\n')).not.toContain('ctrl+o expand');
     expect(collapsed.join('\n')).toContain('question 8');
     expect(collapsed.join('\n')).toContain('answer 8');
     expect(collapsed.join('\n')).not.toContain('question 1');
@@ -1614,24 +1615,13 @@ describe('KimiTUI message flow', () => {
     setTerminalRows(driver, 4);
     const tiny = panel.render(80).map(stripSgr);
     expect(tiny).toHaveLength(3);
-    expect(tiny.join('\n')).toContain('ctrl+o expand');
+    expect(tiny.join('\n')).not.toContain('ctrl+o expand');
     expect(tiny.join('\n')).toContain('answer 8');
 
     requestRender.mockClear();
     driver.state.editor.onToggleToolExpand?.();
-
-    const expanded = panel.render(80).map(stripSgr);
-    expect(requestRender.mock.calls.at(-1)).toEqual([]);
-    expect(expanded.length).toBeGreaterThan(6);
-    expect(expanded.join('\n')).not.toContain('ctrl+o expand');
-    expect(expanded.join('\n')).toContain('question 1');
-    expect(expanded.join('\n')).toContain('answer 8');
-
-    setTerminalRows(driver, 12);
-    requestRender.mockClear();
-    driver.state.editor.onToggleToolExpand?.();
-    expect(requestRender.mock.calls.at(-1)).toEqual([true]);
-    expect(panel.render(80).map(stripSgr)).toHaveLength(6);
+    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(panel.render(80).map(stripSgr)).toEqual(tiny);
   });
 
   it('cancels and closes a running /btw panel on Escape', async () => {

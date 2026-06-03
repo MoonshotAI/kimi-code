@@ -143,7 +143,6 @@ export class EditorKeyboardController {
 
     editor.onToggleToolExpand = () => {
       host.track('shortcut_expand');
-      if (host.btwPanelController.toggleExpansion()) return;
       host.toggleToolOutputExpansion();
     };
 

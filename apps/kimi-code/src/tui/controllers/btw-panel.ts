@@ -82,18 +82,6 @@ export class BtwPanelController {
     return true;
   }
 
-  toggleExpansion(): boolean {
-    const panel = this.active?.panel;
-    if (panel === undefined) return false;
-    const expanded = panel.toggleExpanded();
-    if (expanded) {
-      this.host.state.ui.requestRender();
-    } else {
-      this.host.state.ui.requestRender(true);
-    }
-    return true;
-  }
-
   scroll(direction: 'up' | 'down'): boolean {
     const panel = this.active?.panel;
     if (panel === undefined || !panel.scroll(direction)) return false;
