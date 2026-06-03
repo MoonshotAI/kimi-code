@@ -81,6 +81,9 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(goal!, 'status')).toBe('always');
     expect(resolveSlashCommandAvailability(goal!, 'pause')).toBe('always');
     expect(resolveSlashCommandAvailability(goal!, 'cancel')).toBe('always');
+    expect(resolveSlashCommandAvailability(goal!, 'next')).toBe('always');
+    expect(resolveSlashCommandAvailability(goal!, 'next Ship feature Y')).toBe('always');
+    expect(resolveSlashCommandAvailability(goal!, 'next manage')).toBe('always');
     expect(resolveSlashCommandAvailability(goal!, 'status report')).toBe('idle-only');
     expect(resolveSlashCommandAvailability(goal!, 'pause the rollout')).toBe('idle-only');
     expect(resolveSlashCommandAvailability(goal!, 'cancel the migration')).toBe('idle-only');

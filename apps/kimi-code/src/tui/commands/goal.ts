@@ -5,10 +5,24 @@ import {
   type GoalStartPermissionChoice,
 } from '../components/dialogs/goal-start-permission-prompt';
 import {
+  GoalQueueEditDialogComponent,
+  GoalQueueManagerComponent,
+  type GoalQueueEditResult,
+  type GoalQueueManagerAction,
+} from '../components/dialogs/goal-queue-manager';
+import {
   GoalSetMessageComponent,
   GoalStatusMessageComponent,
 } from '../components/messages/goal-panel';
 import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
+import {
+  appendGoalQueueItem,
+  moveGoalQueueItem,
+  readGoalQueue,
+  removeGoalQueueItem,
+  updateGoalQueueItem,
+  type GoalQueueSnapshot,
+} from '../goal-queue-store';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';
 
@@ -25,6 +39,8 @@ export type ParsedGoalCommand =
       readonly objective: string;
       readonly replace: boolean;
     }
+  | { readonly kind: 'next-add'; readonly objective: string }
+  | { readonly kind: 'next-manage' }
   | { readonly kind: 'error'; readonly message: string; readonly severity?: 'error' | 'hint' };
 
 const CONTROL_SUBCOMMANDS = new Set(['pause', 'resume', 'cancel']);
@@ -44,6 +60,9 @@ export function parseGoalCommand(rawArgs: string): ParsedGoalCommand {
 
   const tokens = args.split(/\s+/);
   const first = tokens[0];
+  if (first === 'next') {
+    return parseNextGoalCommand(tokens);
+  }
   if (first !== undefined && CONTROL_SUBCOMMANDS.has(first) && tokens.length === 1) {
     return { kind: first as 'pause' | 'resume' | 'cancel' };
   }
@@ -98,10 +117,159 @@ export async function handleGoalCommand(host: SlashCommandHost, args: string): P
     case 'cancel':
       await cancelGoal(host);
       return;
+    case 'next-add':
+      await queueNextGoal(host, parsed);
+      return;
+    case 'next-manage':
+      await showGoalQueueManager(host);
+      return;
     case 'create':
       await createGoal(host, parsed, args);
       return;
   }
+}
+
+function parseNextGoalCommand(tokens: readonly string[]): ParsedGoalCommand {
+  if (tokens.length === 2 && tokens[1] === 'manage') return { kind: 'next-manage' };
+  let index = 1;
+  if (tokens[index] === '--') index += 1;
+  const objective = tokens.slice(index).join(' ').trim();
+  if (objective.length === 0) {
+    return {
+      kind: 'error',
+      severity: 'hint',
+      message:
+        'Provide an upcoming goal objective, e.g. `/goal next Ship feature X`, or use `/goal next manage`.',
+    };
+  }
+  if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
+    return {
+      kind: 'error',
+      message: `Goal objective is too long (max ${MAX_GOAL_OBJECTIVE_LENGTH} characters). Reference long details by file path.`,
+    };
+  }
+  return { kind: 'next-add', objective };
+}
+
+async function queueNextGoal(
+  host: SlashCommandHost,
+  parsed: Extract<ParsedGoalCommand, { kind: 'next-add' }>,
+): Promise<void> {
+  try {
+    await appendGoalQueueItem(host.requireSession(), { objective: parsed.objective });
+  } catch (error) {
+    host.showError(formatErrorMessage(error));
+    return;
+  }
+  host.track('goal_queue_append');
+  host.showStatus('Upcoming goal added. It will start after the current goal is complete.');
+}
+
+async function showGoalQueueManager(
+  host: SlashCommandHost,
+  selectedGoalId?: string,
+): Promise<void> {
+  let snapshot: GoalQueueSnapshot;
+  try {
+    snapshot = await readGoalQueue(host.requireSession());
+  } catch (error) {
+    host.showError(`Failed to load upcoming goals: ${formatErrorMessage(error)}`);
+    return;
+  }
+
+  host.track('goal_queue_manage');
+  host.mountEditorReplacement(
+    new GoalQueueManagerComponent({
+      goals: snapshot.goals,
+      selectedGoalId,
+      colors: host.state.theme.colors,
+      onAction: async (action) => {
+        try {
+          return await handleGoalQueueManagerAction(host, action);
+        } catch (error) {
+          host.showError(`Failed to update upcoming goals: ${formatErrorMessage(error)}`);
+          return undefined;
+        }
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+async function handleGoalQueueManagerAction(
+  host: SlashCommandHost,
+  action: GoalQueueManagerAction,
+): Promise<GoalQueueSnapshot | void> {
+  const session = host.requireSession();
+  switch (action.kind) {
+    case 'move': {
+      const snapshot = await moveGoalQueueItem(session, {
+        goalId: action.goalId,
+        direction: action.direction,
+      });
+      host.track('goal_queue_move', { direction: action.direction });
+      return snapshot;
+    }
+    case 'delete': {
+      const snapshot = await removeGoalQueueItem(session, { goalId: action.goalId });
+      host.track('goal_queue_remove');
+      return snapshot;
+    }
+    case 'edit':
+      await showGoalQueueEditDialog(host, action.goalId);
+      return;
+  }
+}
+
+async function showGoalQueueEditDialog(
+  host: SlashCommandHost,
+  goalId: string,
+): Promise<void> {
+  let snapshot: GoalQueueSnapshot;
+  try {
+    snapshot = await readGoalQueue(host.requireSession());
+  } catch (error) {
+    host.showError(`Failed to load upcoming goals: ${formatErrorMessage(error)}`);
+    return;
+  }
+
+  const goal = snapshot.goals.find((item) => item.id === goalId);
+  if (goal === undefined) {
+    host.showStatus('Queued goal no longer exists.');
+    await showGoalQueueManager(host);
+    return;
+  }
+
+  host.mountEditorReplacement(
+    new GoalQueueEditDialogComponent({
+      goal,
+      colors: host.state.theme.colors,
+      onDone: (result) => {
+        void handleGoalQueueEditResult(host, result).catch((error: unknown) => {
+          host.showError(`Failed to update upcoming goal: ${formatErrorMessage(error)}`);
+        });
+      },
+    }),
+  );
+}
+
+async function handleGoalQueueEditResult(
+  host: SlashCommandHost,
+  result: GoalQueueEditResult,
+): Promise<void> {
+  if (result.kind === 'cancel') {
+    await showGoalQueueManager(host, result.goalId);
+    return;
+  }
+
+  await updateGoalQueueItem(host.requireSession(), {
+    goalId: result.goalId,
+    objective: result.objective,
+  });
+  host.track('goal_queue_update');
+  await showGoalQueueManager(host, result.goalId);
 }
 
 async function createGoal(

@@ -43,7 +43,7 @@ Some commands are only available in the idle state. Running them while the sessi
 | `/auto [on\|off]` | — | Toggle auto permission mode. Without arguments, flip the current state; pass `on`/`off` explicitly to force the corresponding state. When enabled, tool approvals are handled automatically and the agent will not ask questions. | Yes |
 | `/plan [on\|off]` | — | Toggle Plan mode. Without arguments, flip the current state; pass `on`/`off` explicitly to force the corresponding state. Toggling alone does not create an empty plan file. | Yes |
 | `/plan clear` | — | Clear the current plan. | No |
-| `/goal [status\|pause\|resume\|cancel\|replace <objective>\|<objective>]` | — | Start or manage an autonomous goal. This command is experimental. Enable it with `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1`. | See below |
+| `/goal [status\|pause\|resume\|cancel\|replace <objective>\|next <objective>\|next manage\|<objective>]` | — | Start or manage an autonomous goal. This command is experimental. Enable it with `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1`. | See below |
 
 ::: warning Note
 `/yolo` skips approval confirmation for ordinary tool calls. Make sure you understand the potential risks before enabling it. It does not skip the approval required to leave Plan mode; in Plan mode, `Bash` follows the same ordinary allow rules as `/yolo`.
@@ -86,13 +86,23 @@ Use these forms to manage the current goal:
 | `/goal resume` | Resume a paused or blocked goal and start a new turn. | Idle only |
 | `/goal cancel` | Remove the current goal. If a response is streaming, the current turn is interrupted. | Always available |
 | `/goal replace <objective>` | Replace the saved goal with a new objective. | Idle only |
+| `/goal next <objective>` | Queue an upcoming goal for this session. The agent does not see it until the current goal completes. | Always available |
+| `/goal next manage` | Open the upcoming-goal manager. Use `↑`/`↓` to browse, `Space` to select a goal for moving, selected `↑`/`↓` to reorder it, `E` to edit, `D` to delete, and `Esc` to cancel. | Always available |
 
-Only one goal can be saved in a session. If you already have one, start a different one with `/goal replace <objective>`.
+Only one current goal can run in a session. If you already have one, start a different one with `/goal replace <objective>`. Use `/goal next <objective>` when you want to save more work without interrupting the current goal.
 
-The words `status`, `pause`, `resume`, `cancel`, and `replace` act as subcommands only when they are the first word after `/goal`. If your objective needs to start with one of those words, put `--` before it:
+Upcoming goals are saved with the session. They are not sent to the agent until the current goal completes. If the current goal is paused, canceled, or blocked, Kimi Code does not start the next queued goal. When a goal blocks and the queue is not empty, the TUI reminds you that queued goals wait for completion.
+
+The words `status`, `pause`, `resume`, `cancel`, `replace`, and `next` act as subcommands only when they are the first word after `/goal`. If your objective needs to start with one of those words, put `--` before it:
 
 ```sh
 /goal -- cancel the old rollout note after the new docs are published
+```
+
+If an upcoming goal needs to start with `manage`, put `--` after `next`:
+
+```sh
+/goal next -- manage the release checklist
 ```
 
 In non-interactive prompt mode, only the create forms start goal mode:
@@ -101,7 +111,7 @@ In non-interactive prompt mode, only the create forms start goal mode:
 KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi -p "/goal Fix the failing checkout test"
 ```
 
-Prompt mode exits with code `0` when the goal completes, `3` when it blocks, and `6` when it pauses. Other `/goal` subcommands are TUI controls and are not handled by `kimi -p`.
+Prompt mode exits with code `0` when the goal completes, `3` when it blocks, and `6` when it pauses. Other `/goal` subcommands, including `next`, are TUI controls and are not handled by `kimi -p`.
 
 ## Information and status
 

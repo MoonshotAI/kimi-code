@@ -34,6 +34,7 @@ import type {
 import { buildGoalCompletionMessage } from '@moonshot-ai/kimi-code-sdk';
 
 import { MoonLoader } from '../components/chrome/moon-loader';
+import { GoalSetMessageComponent } from '../components/messages/goal-panel';
 import { buildGoalMarker } from '../components/messages/goal-markers';
 import { StatusMessageComponent } from '../components/messages/status-message';
 import {
@@ -43,10 +44,12 @@ import {
 } from '../constant/kimi-tui';
 import {
   argsRecord,
+  formatErrorMessage,
   isTodoItemShape,
   serializeToolResultOutput,
   stringValue,
 } from '../utils/event-payload';
+import { readGoalQueue, removeGoalQueueItem } from '../goal-queue-store';
 import { formatBackgroundAgentTranscript } from '../utils/background-agent-status';
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
 import { formatHookResultMarkdown, formatHookResultPlain } from '../utils/hook-result-format';
@@ -91,6 +94,7 @@ export interface SessionEventHost {
   showStatus(msg: string, color?: string): void;
   showNotice(title: string, detail?: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
+  sendNormalUserInput(text: string): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
   readonly btwPanelController: BtwPanelController;
@@ -109,6 +113,7 @@ export class SessionEventHandler {
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
   mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
+  private goalCompletionAwaitingClear = false;
 
   resetRuntimeState(): void {
     this.backgroundAgentMetadata.clear();
@@ -118,6 +123,7 @@ export class SessionEventHandler {
     this.renderedSkillActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
     this.mcpServers.clear();
+    this.goalCompletionAwaitingClear = false;
     this.stopAllMcpServerStatusSpinners();
   }
 
@@ -560,6 +566,10 @@ export class SessionEventHandler {
 
   private handleGoalUpdated(event: GoalUpdatedEvent): void {
     this.host.setAppState({ goal: event.snapshot });
+    if (event.snapshot === null && this.goalCompletionAwaitingClear) {
+      this.goalCompletionAwaitingClear = false;
+      void this.promoteNextQueuedGoal();
+    }
     const change = event.change;
     if (change === undefined) return;
     const { state } = this.host;
@@ -569,6 +579,7 @@ export class SessionEventHandler {
     // The same text is appended to the conversation by the continuation
     // controller, so it persists and renders identically on resume.
     if (change.kind === 'completion' && event.snapshot !== null) {
+      this.goalCompletionAwaitingClear = true;
       this.host.appendTranscriptEntry({
         id: nextTranscriptId(),
         kind: 'assistant',
@@ -581,11 +592,73 @@ export class SessionEventHandler {
 
     // Lifecycle change (pause / resume / blocked) -> a low-profile,
     // ctrl+o-expandable marker.
+    if (change.kind === 'lifecycle' && change.status === 'blocked') {
+      void this.notifyQueuedGoalWaitingOnBlocked();
+    }
     const marker = buildGoalMarker(change, state.theme.colors, state.toolOutputExpanded);
     if (marker !== null) {
       state.transcriptContainer.addChild(marker);
       state.ui.requestRender();
     }
+  }
+
+  private async promoteNextQueuedGoal(): Promise<void> {
+    const { host } = this;
+    const session = host.session;
+    if (session === undefined || host.aborted) return;
+
+    let queue;
+    try {
+      queue = await readGoalQueue(session);
+    } catch (error) {
+      host.showError(`Failed to read upcoming goals: ${formatErrorMessage(error)}`);
+      return;
+    }
+    if (host.session !== session || host.aborted) return;
+
+    const next = queue.goals[0];
+    if (next === undefined) return;
+
+    try {
+      await session.createGoal({ objective: next.objective });
+    } catch (error) {
+      host.showError(`Failed to start queued goal: ${formatErrorMessage(error)}`);
+      return;
+    }
+    if (host.session !== session || host.aborted) return;
+
+    try {
+      await removeGoalQueueItem(session, { goalId: next.id });
+    } catch (error) {
+      host.showError(
+        `Queued goal started, but could not be removed from the queue: ${formatErrorMessage(error)}`,
+      );
+    }
+    if (host.session !== session || host.aborted) return;
+
+    host.state.transcriptContainer.addChild(new GoalSetMessageComponent(host.state.theme.colors));
+    host.state.ui.requestRender();
+    host.sendNormalUserInput(next.objective);
+  }
+
+  private async notifyQueuedGoalWaitingOnBlocked(): Promise<void> {
+    const { host } = this;
+    const session = host.session;
+    if (session === undefined || host.aborted) return;
+
+    let hasQueuedGoal = false;
+    try {
+      const queue = await readGoalQueue(session);
+      hasQueuedGoal = queue.goals.length > 0;
+    } catch {
+      return;
+    }
+    if (!hasQueuedGoal || host.session !== session || host.aborted) return;
+
+    host.showNotice(
+      'Goal blocked.',
+      'The next queued goal will start only after this goal is complete.',
+    );
   }
 
   private handleSessionMetaChanged(event: SessionMetaUpdatedEvent): void {

@@ -10,6 +10,7 @@ const GOAL_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'resume', description: 'Resume a paused goal' },
   { value: 'cancel', description: 'Cancel and remove the current goal' },
   { value: 'replace', description: 'Replace the current goal with a new objective' },
+  { value: 'next', description: 'Queue an upcoming goal' },
 ];
 
 /** Argument autocompletion for the `/goal` command (subcommands). */
@@ -135,6 +136,7 @@ export const BUILTIN_SLASH_COMMANDS = [
     // resume start (or restart) a turn and so are idle-only.
     availability: (args) => {
       const trimmed = args.trim();
+      if (trimmed === 'next' || trimmed.startsWith('next ')) return 'always';
       return trimmed === '' || trimmed === 'status' || trimmed === 'pause' || trimmed === 'cancel'
         ? 'always'
         : 'idle-only';
