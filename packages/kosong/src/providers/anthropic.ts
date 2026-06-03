@@ -38,6 +38,7 @@ import type {
   ToolUseBlockParam,
 } from '@anthropic-ai/sdk/resources/messages/messages.js';
 
+import { getProxyFetch } from '#/proxy';
 import { getAnthropicModelCapability } from './capability-registry';
 import {
   mergeRequestHeaders,
@@ -1055,6 +1056,7 @@ export class AnthropicChatProvider implements ChatProvider {
       apiKey,
       baseURL: this._baseUrl,
       defaultHeaders: this._defaultHeaders,
+      fetch: getProxyFetch(),
     });
   }
 

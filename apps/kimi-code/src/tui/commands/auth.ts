@@ -119,7 +119,7 @@ async function handleOpenPlatformLogin(
 
   let models: ManagedKimiCodeModelInfo[];
   try {
-    models = await fetchOpenPlatformModels(platform, apiKey, fetch, controller.signal);
+    models = await fetchOpenPlatformModels(platform, apiKey, undefined, controller.signal);
     models = filterModelsByPrefix(models, platform);
   } catch (error) {
     if (controller.signal.aborted) return;

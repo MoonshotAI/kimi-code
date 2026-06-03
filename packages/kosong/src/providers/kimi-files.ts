@@ -7,6 +7,7 @@ import type { ProviderRequestAuth, VideoUploadInput } from '#/provider';
 import type OpenAI from 'openai';
 import OpenAIClient from 'openai';
 
+import { getProxyFetch } from '#/proxy';
 import { convertOpenAIError } from './openai-common';
 import {
   mergeRequestHeaders,
@@ -55,6 +56,7 @@ export class KimiFiles {
             apiKey: options.apiKey,
             baseURL: options.baseUrl,
             defaultHeaders: options.defaultHeaders,
+            fetch: getProxyFetch(),
           });
   }
 
@@ -149,6 +151,7 @@ export class KimiFiles {
           apiKey: requireProviderApiKey('KimiFiles.uploadVideo', a, this._apiKey),
           baseURL: this._baseUrl,
           defaultHeaders,
+          fetch: getProxyFetch(),
         });
       },
     );

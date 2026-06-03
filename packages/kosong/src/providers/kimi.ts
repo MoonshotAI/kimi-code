@@ -14,6 +14,7 @@ import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import OpenAI from 'openai';
 
+import { getProxyFetch } from '#/proxy';
 import { KimiFiles } from './kimi-files';
 import {
   convertChatCompletionStreamToolCall,
@@ -385,6 +386,7 @@ export class KimiChatProvider implements ChatProvider {
             apiKey: this._apiKey,
             baseURL: this._baseUrl,
             defaultHeaders: this._defaultHeaders,
+            fetch: getProxyFetch(),
           });
   }
 
@@ -557,6 +559,7 @@ export class KimiChatProvider implements ChatProvider {
           apiKey: requireProviderApiKey('KimiChatProvider', a, this._apiKey),
           baseURL: this._baseUrl,
           defaultHeaders,
+          fetch: getProxyFetch(),
         });
       },
     );

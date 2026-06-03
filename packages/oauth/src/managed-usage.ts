@@ -18,6 +18,7 @@
  */
 
 import { readApiErrorMessage } from './api-error';
+import { getProxyFetch } from './proxy-fetch';
 import { isRecord } from './utils';
 
 const MANAGED_PREFIX = 'managed:';
@@ -205,7 +206,7 @@ export async function fetchManagedUsage(
     controller.abort();
   }, opts.timeoutMs ?? 8000);
   try {
-    const res = await fetch(url, {
+    const res = await getProxyFetch()(url, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         Accept: 'application/json',

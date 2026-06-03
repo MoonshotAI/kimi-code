@@ -14,6 +14,7 @@ import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import OpenAI from 'openai';
 
+import { getProxyFetch } from '#/proxy';
 import {
   getOpenAIResponsesModelCapability,
   usesOpenAIResponsesDeveloperRole,
@@ -1021,6 +1022,8 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     }
     if (this._httpClient !== undefined) {
       clientOpts['httpClient'] = this._httpClient;
+    } else {
+      clientOpts['fetch'] = getProxyFetch();
     }
     return new OpenAI(clientOpts as ConstructorParameters<typeof OpenAI>[0]);
   }

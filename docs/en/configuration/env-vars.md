@@ -170,5 +170,8 @@ Kimi Code CLI also reads a handful of standard system environment variables to d
 - `WSL_DISTRO_NAME`, `WSLENV`: detect whether the CLI is running inside WSL, used for the PowerShell-bridged clipboard fallback.
 - `TERMUX_VERSION`: detects whether the CLI is running inside Termux.
 - `LOCALAPPDATA`: used on Windows when probing for the Git Bash installation path.
+- `HTTP_PROXY` / `http_proxy`: URL of the HTTP proxy server used for outgoing OpenAI-compatible, Anthropic, Kimi, and OAuth requests. Google GenAI and Vertex AI providers are not currently proxied through this configuration.
+- `HTTPS_PROXY` / `https_proxy`: URL of the HTTPS proxy server used for outgoing OpenAI-compatible, Anthropic, Kimi, and OAuth requests. Google GenAI and Vertex AI providers are not currently proxied through this configuration.
+- `NO_PROXY` / `no_proxy`: comma-separated list of hostnames or IPs to exclude from proxying. Defaults to `localhost,127.0.0.1` when any proxy variable is set.
 
 These variables follow the usual conventions of each operating system; `kimi` only reads them and never modifies them.

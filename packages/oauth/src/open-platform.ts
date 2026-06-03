@@ -1,4 +1,5 @@
 import { readApiErrorMessage } from './api-error';
+import { getProxyFetch } from './proxy-fetch';
 import { isRecord } from './utils';
 import type {
   ManagedKimiCodeModelInfo,
@@ -86,10 +87,11 @@ export class OpenPlatformApiError extends Error {
 export async function fetchOpenPlatformModels(
   platform: OpenPlatformDefinition,
   apiKey: string,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl?: typeof fetch,
   signal?: AbortSignal,
 ): Promise<ManagedKimiCodeModelInfo[]> {
-  const res = await fetchImpl(`${platform.baseUrl.replace(/\/+$/, '')}/models`, {
+  const fetchFn = fetchImpl ?? getProxyFetch();
+  const res = await fetchFn(`${platform.baseUrl.replace(/\/+$/, '')}/models`, {
     headers: {
       Authorization: `Bearer ${apiKey}`,
       Accept: 'application/json',

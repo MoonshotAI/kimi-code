@@ -7,6 +7,7 @@
  */
 
 import { readApiErrorMessage } from './api-error';
+import { getProxyFetch } from './proxy-fetch';
 import { kimiCodeBaseUrl } from './managed-usage';
 
 export interface SubmitFeedbackBody {
@@ -44,7 +45,7 @@ export async function fetchSubmitFeedback(
     controller.abort();
   }, opts.timeoutMs ?? 8000);
   try {
-    const res = await fetch(url, {
+    const res = await getProxyFetch()(url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,

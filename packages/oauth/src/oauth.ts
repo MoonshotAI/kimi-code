@@ -12,6 +12,7 @@
 
 import { extractApiErrorMessage } from './api-error';
 import { OAuthError, OAuthUnauthorizedError, RetryableRefreshError } from './errors';
+import { getProxyFetch } from './proxy-fetch';
 import type { DeviceAuthorization, DeviceHeaders, OAuthFlowConfig, TokenInfo } from './types';
 import { isRecord } from './utils';
 
@@ -65,7 +66,7 @@ async function postForm(
   const signal = AbortSignal.any(signals);
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await getProxyFetch()(url, {
       method: 'POST',
       headers: {
         ...deviceHeaders,

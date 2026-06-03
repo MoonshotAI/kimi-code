@@ -1,4 +1,5 @@
 import { readApiErrorMessage } from './api-error';
+import { getProxyFetch } from './proxy-fetch';
 import { kimiCodeBaseUrl } from './managed-usage';
 import { isRecord } from './utils';
 
@@ -159,7 +160,7 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
 export async function fetchManagedKimiCodeModels(
   options: FetchManagedKimiCodeModelsOptions,
 ): Promise<ManagedKimiCodeModelInfo[]> {
-  const fetchImpl = options.fetchImpl ?? fetch;
+  const fetchImpl = options.fetchImpl ?? getProxyFetch();
   const baseUrl = defaultBaseUrl(options.baseUrl);
   const response = await fetchImpl(`${baseUrl}/models`, {
     headers: {
