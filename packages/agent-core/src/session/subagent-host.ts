@@ -28,7 +28,7 @@ const SUBAGENT_MAX_TOKENS_ERROR =
 const TOOL_CALL_DISABLED_MESSAGE =
   'Tool calls are disabled for side questions. Answer with text only.';
 const SIDE_QUESTION_SYSTEM_REMINDER = `
-This is a side-channel conversation with the user.
+This is a side-channel conversation with the user. You should answer user questions directly based on what you already know.
 
 IMPORTANT:
 - You are a separate, lightweight instance.
