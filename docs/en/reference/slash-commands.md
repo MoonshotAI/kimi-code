@@ -108,7 +108,7 @@ Prompt mode exits with code `0` when the goal completes, `3` when it blocks, and
 | Command | Alias | Description | Always available |
 | --- | --- | --- | --- |
 | `/help` | `/h`, `/?` | Show keyboard shortcuts and all available commands. | Yes |
-| `/btw <question>` | — | Open a side-channel conversation in a forked subagent without steering the current main agent turn. | Yes |
+| `/btw [question]` | — | Open a side-channel conversation in a forked subagent without steering the current main agent turn. Without a question, it opens the panel and waits for input. | Yes |
 | `/usage` | — | Show token usage, context consumption, and quota information. | Yes |
 | `/status` | — | Show the current session runtime status, including version, model, working directory, and permission mode. | Yes |
 | `/mcp` | — | List the MCP servers in the current session and their connection status. | Yes |

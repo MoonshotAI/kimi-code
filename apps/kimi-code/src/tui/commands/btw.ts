@@ -4,11 +4,6 @@ import type { SlashCommandHost } from './dispatch';
 
 export async function handleBtwCommand(host: SlashCommandHost, args: string): Promise<void> {
   const prompt = args.trim();
-  if (prompt.length === 0) {
-    host.showError('Usage: /btw <question>');
-    return;
-  }
-
   const session = host.session;
   if (host.state.appState.model.trim().length === 0 || session === undefined) {
     host.showError(LLM_NOT_SET_MESSAGE);

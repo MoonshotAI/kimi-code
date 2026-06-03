@@ -233,6 +233,10 @@ export class BtwPanelComponent implements Component {
     return this.currentTurn()?.phase === 'running';
   }
 
+  isEmpty(): boolean {
+    return this.turns.length === 0;
+  }
+
   scroll(direction: 'up' | 'down'): boolean {
     if (this.maxScrollTop <= 0) return false;
     const current = this.followTail ? this.maxScrollTop : this.scrollTop;

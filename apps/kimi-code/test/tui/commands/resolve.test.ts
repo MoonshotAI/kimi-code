@@ -36,6 +36,11 @@ describe('resolveSlashCommandInput', () => {
       args: 'New title',
     });
     expect(resolve('/init')).toMatchObject({ kind: 'builtin', name: 'init', args: '' });
+    expect(resolve('/btw')).toMatchObject({
+      kind: 'builtin',
+      name: 'btw',
+      args: '',
+    });
     expect(resolve('/btw what are you doing?')).toMatchObject({
       kind: 'builtin',
       name: 'btw',

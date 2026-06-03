@@ -52,7 +52,7 @@ export class BtwPanelController {
 
   clear(): void {
     const active = this.active;
-    if (active?.panel.isRunning()) {
+    if (active !== undefined && this.shouldCancelOnUnmount(active.panel)) {
       void this.cancelAgent(active.agentId);
     }
     this.active = undefined;
@@ -64,9 +64,9 @@ export class BtwPanelController {
   closeOrCancel(): boolean {
     const active = this.active;
     if (active === undefined) return false;
-    const wasRunning = active.panel.isRunning();
+    const shouldCancel = this.shouldCancelOnUnmount(active.panel);
     this.close(active.panel);
-    if (wasRunning) {
+    if (shouldCancel) {
       void this.cancelAgent(active.agentId);
     }
     return true;
@@ -211,6 +211,10 @@ export class BtwPanelController {
     await this.withInteractiveAgent(agentId, () => session.cancel()).catch((error: unknown) => {
       this.host.showError(`Failed to cancel /btw: ${formatErrorMessage(error)}`);
     });
+  }
+
+  private shouldCancelOnUnmount(panel: BtwPanelComponent): boolean {
+    return panel.isRunning() || panel.isEmpty();
   }
 
   private withInteractiveAgent<T>(agentId: string, fn: () => Promise<T>): Promise<T> {

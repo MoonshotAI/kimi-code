@@ -1366,6 +1366,42 @@ describe('KimiTUI message flow', () => {
     expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'btw' });
   });
 
+  it('opens /btw without a question and sends the first panel input to a side agent', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/btw');
+
+    await vi.waitFor(() => {
+      expect(session.startBtw).toHaveBeenCalledWith();
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(stripSgr(renderBtwPanel(driver))).toContain('Ready for a side question...');
+
+    driver.handleUserInput('你现在在做啥？');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('你现在在做啥？');
+    });
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(stripSgr(renderBtwPanel(driver))).toContain('Q: 你现在在做啥？');
+  });
+
+  it('cancels an unused /btw side agent when closing an empty panel', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/btw');
+
+    await vi.waitFor(() => {
+      expect(session.startBtw).toHaveBeenCalledWith();
+    });
+    driver.state.editor.onEscape?.();
+
+    expect(session.cancel).toHaveBeenCalledOnce();
+    expect(driver.state.btwPanelContainer.children).toHaveLength(0);
+  });
+
   it('renders /btw output in a dedicated panel instead of an Agent tool card', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
@@ -1921,14 +1957,15 @@ describe('KimiTUI message flow', () => {
     expect(renderedPanel).toContain('answer from new side agent');
   });
 
-  it('does not run /btw without a question or selected model', async () => {
+  it('does not run /btw without a selected model', async () => {
     const { driver, session } = await makeDriver();
 
+    driver.state.appState.model = '';
     driver.handleUserInput('/btw');
     expect(session.startBtw).not.toHaveBeenCalled();
-    expect(stripSgr(renderTranscript(driver))).toContain('Usage: /btw <question>');
+    expect(driver.state.btwPanelContainer.children).toHaveLength(0);
+    expect(stripSgr(renderTranscript(driver))).toContain('LLM not set');
 
-    driver.state.appState.model = '';
     driver.handleUserInput('/btw 现在在做什么？');
 
     expect(session.startBtw).not.toHaveBeenCalled();
