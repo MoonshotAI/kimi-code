@@ -1708,7 +1708,7 @@ describe('KimiTUI message flow', () => {
 
     const panel = stripSgr(renderBtwPanel(driver));
     expect(panel).toContain('partial side answer');
-    expect(panel).toContain('BTW turn ended with reason: cancelled');
+    expect(panel).toContain('Interrupted by user');
   });
 
   it('closes a completed /btw panel on Ctrl-C without cancelling main streaming', async () => {

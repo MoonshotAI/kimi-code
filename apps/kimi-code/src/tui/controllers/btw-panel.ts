@@ -225,5 +225,8 @@ function formatBtwTurnEnd(event: TurnEndedEvent): string {
   if (event.error !== undefined) {
     return `[${event.error.code}] ${event.error.message}`;
   }
+  if (event.reason === 'cancelled') {
+    return 'Interrupted by user';
+  }
   return `BTW turn ended with reason: ${event.reason}`;
 }
