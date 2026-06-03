@@ -2293,6 +2293,82 @@ describe('Agent-local approve for session', () => {
 });
 
 describe('Approval telemetry', () => {
+  it('fires observer hooks while waiting for user approval', async () => {
+    const triggerBlock = vi.fn(async () => undefined);
+    const fireAndForgetTrigger = vi.fn(async () => []);
+    const { manager, requestApproval } = makePermissionManager(
+      async () => {
+        expect(fireAndForgetTrigger).toHaveBeenCalledWith('PermissionRequest', {
+          matcherValue: 'Bash',
+          inputData: {
+            turnId: 0,
+            toolCallId: 'call_approval_hooks',
+            toolName: 'Bash',
+            action: 'run command',
+            toolInput: { command: 'printf first', timeout: 60 },
+            display: expect.objectContaining({ kind: 'command' }),
+          },
+        });
+        expect(fireAndForgetTrigger).not.toHaveBeenCalledWith(
+          'PermissionResult',
+          expect.anything(),
+        );
+        return {
+          decision: 'approved',
+          selectedLabel: 'Approve once',
+        };
+      },
+      {
+        hooks: { triggerBlock, fireAndForgetTrigger } as unknown as Agent['hooks'],
+      },
+    );
+
+    await expect(manager.beforeToolCall(hookContext({ id: 'call_approval_hooks' }))).resolves
+      .toBeUndefined();
+
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+    expect(fireAndForgetTrigger).toHaveBeenCalledWith('PermissionResult', {
+      matcherValue: 'Bash',
+      inputData: {
+        turnId: 0,
+        toolCallId: 'call_approval_hooks',
+        toolName: 'Bash',
+        action: 'run command',
+        decision: 'approved',
+        selectedLabel: 'Approve once',
+        scope: undefined,
+        feedback: undefined,
+      },
+    });
+  });
+
+  it('does not fire approval observer hooks without an approval request', async () => {
+    const triggerBlock = vi.fn(async () => undefined);
+    const fireAndForgetTrigger = vi.fn(async () => []);
+    const { manager, requestApproval } = makePermissionManager(
+      async () => ({
+        decision: 'approved',
+      }),
+      {
+        approvalRpc: false,
+        hooks: { triggerBlock, fireAndForgetTrigger } as unknown as Agent['hooks'],
+      },
+    );
+
+    await expect(manager.beforeToolCall(hookContext({ id: 'call_no_approval_rpc' }))).resolves
+      .toBeUndefined();
+
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(fireAndForgetTrigger).not.toHaveBeenCalledWith(
+      'PermissionRequest',
+      expect.anything(),
+    );
+    expect(fireAndForgetTrigger).not.toHaveBeenCalledWith(
+      'PermissionResult',
+      expect.anything(),
+    );
+  });
+
   it('tracks cancelled approval requests', async () => {
     const { manager, telemetryTrack } = makePermissionManager(async () => ({
       decision: 'cancelled',
@@ -3562,6 +3638,7 @@ function makePermissionManager(
     readonly cwd?: string;
     readonly agentType?: Agent['type'];
     readonly hooks?: Agent['hooks'];
+    readonly approvalRpc?: boolean;
   } = {},
 ): {
   manager: PermissionManager;
@@ -3580,7 +3657,7 @@ function makePermissionManager(
     emitStatusUpdated: vi.fn(),
     records: { logRecord: record },
     replayBuilder: { push: vi.fn() },
-    rpc: { requestApproval },
+    rpc: options.approvalRpc === false ? undefined : { requestApproval },
     hooks: options.hooks,
     telemetry: { track: telemetryTrack },
     planMode: {

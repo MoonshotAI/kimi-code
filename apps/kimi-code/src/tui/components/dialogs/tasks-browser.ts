@@ -466,9 +466,13 @@ export class TasksBrowserApp extends Container implements Focusable {
     const pointer = selected ? `${SELECT_POINTER} ` : '  ';
     const pointerStyled = chalk.hex(selected ? colors.primary : colors.textDim)(pointer);
 
-    const idColor = selected ? colors.primary : task.kind === 'agent'
-      ? colors.success
-      : colors.accent;
+    const idColor = selected
+      ? colors.primary
+      : task.kind === 'agent'
+        ? colors.success
+        : task.kind === 'question'
+          ? colors.warning
+          : colors.accent;
     const idText = selected
       ? chalk.hex(idColor).bold(task.taskId)
       : chalk.hex(idColor)(task.taskId);
@@ -545,6 +549,12 @@ export class TasksBrowserApp extends Container implements Focusable {
     }
     if (task.kind === 'agent' && task.subagentType !== undefined) {
       lines.push(`${label('Agent type:')}${value(task.subagentType)}`);
+    }
+    if (task.kind === 'question') {
+      lines.push(`${label('Questions:')}${chalk.hex(colors.textMuted)(String(task.questionCount))}`);
+      if (task.toolCallId !== undefined) {
+        lines.push(`${label('Tool call:')}${chalk.hex(colors.textMuted)(task.toolCallId)}`);
+      }
     }
     const timing =
       task.status === 'running'

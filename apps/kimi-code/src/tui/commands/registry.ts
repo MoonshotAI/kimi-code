@@ -1,4 +1,21 @@
+import type { AutocompleteItem } from '@earendil-works/pi-tui';
+
+import { completeLeadingArg, type ArgCompletionSpec } from './complete-args';
 import type { KimiSlashCommand, SlashCommandAvailability } from './types';
+
+/** Subcommands offered when autocompleting `/goal <…>`. */
+const GOAL_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'status', description: 'Show the current goal' },
+  { value: 'pause', description: 'Pause the active goal' },
+  { value: 'resume', description: 'Resume a paused goal' },
+  { value: 'cancel', description: 'Cancel and remove the current goal' },
+  { value: 'replace', description: 'Replace the current goal with a new objective' },
+];
+
+/** Argument autocompletion for the `/goal` command (subcommands). */
+export function goalArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+  return completeLeadingArg(GOAL_ARG_COMPLETIONS, argumentPrefix);
+}
 
 export const BUILTIN_SLASH_COMMANDS = [
   {
@@ -51,6 +68,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'btw',
+    aliases: [],
+    description: 'Ask a forked side agent a question',
+    priority: 90,
+    availability: 'always',
+  },
+  {
     name: 'help',
     aliases: ['h', '?'],
     description: 'Show available commands and shortcuts',
@@ -95,6 +119,26 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Compact the conversation context',
     priority: 80,
+  },
+  {
+    name: 'goal',
+    aliases: [],
+    description: 'Start or manage an autonomous goal',
+    priority: 80,
+    experimentalFlag: 'goal-command',
+    // No argumentHint: the menu description stays as short as every other
+    // command's. The subcommands (status/pause/resume/cancel/replace) surface in
+    // the argument autocomplete list once the user types `/goal ` (see
+    // completeArgs), so they don't need to be spelled out inline.
+    completeArgs: goalArgumentCompletions,
+    // status / pause / cancel are always available; creation, replacement, and
+    // resume start (or restart) a turn and so are idle-only.
+    availability: (args) => {
+      const trimmed = args.trim();
+      return trimmed === '' || trimmed === 'status' || trimmed === 'pause' || trimmed === 'cancel'
+        ? 'always'
+        : 'idle-only';
+    },
   },
   {
     name: 'init',

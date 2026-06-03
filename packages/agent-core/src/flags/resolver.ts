@@ -17,14 +17,12 @@ export const MASTER_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
  *   L3 registry default
  */
 export class FlagResolver {
-  private readonly env: Readonly<Record<string, string | undefined>>;
   private readonly byId: ReadonlyMap<string, FlagDefinitionInput>;
 
   constructor(
-    env: Readonly<Record<string, string | undefined>> = process.env,
-    definitions: readonly FlagDefinitionInput[] = FLAG_DEFINITIONS,
+    private readonly env: Readonly<Record<string, string | undefined>> = process.env,
+    private readonly definitions: readonly FlagDefinitionInput[] = FLAG_DEFINITIONS,
   ) {
-    this.env = env;
     this.byId = new Map(definitions.map((def) => [def.id, def]));
   }
 
@@ -35,6 +33,18 @@ export class FlagResolver {
     const override = parseBooleanEnv(this.env[def.env]); // L2 per-feature
     if (override !== undefined) return override;
     return def.default; // L3 default
+  }
+
+  snapshot(): Record<string, boolean> {
+    return Object.fromEntries(
+      this.definitions.map((def) => [def.id, this.enabled(def.id as FlagId)]),
+    );
+  }
+
+  enabledIds(): readonly FlagId[] {
+    return this.definitions
+      .filter((def) => this.enabled(def.id as FlagId))
+      .map((def) => def.id as FlagId);
   }
 }
 

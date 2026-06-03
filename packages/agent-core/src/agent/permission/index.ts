@@ -10,7 +10,7 @@ import type {
   PermissionPolicyContext,
   PermissionPolicyResolution,
   PermissionPolicyResult,
-  PermissionRule
+  PermissionRule,
 } from './types';
 
 export * from './types';
@@ -26,11 +26,11 @@ interface PolicyEvaluation {
 }
 
 export class PermissionManager {
-  rules: PermissionRule[] = [];
+  readonly policies: PermissionPolicy[];
+  readonly rules: PermissionRule[] = [];
   private modeOverride: PermissionMode | undefined;
   private readonly parent: PermissionManager | undefined;
   private readonly localSessionApprovalRulePatterns = new Set<string>();
-  private readonly policies: readonly PermissionPolicy[];
 
   constructor(
     protected readonly agent: Agent,
@@ -131,7 +131,20 @@ export class PermissionManager {
     const startedAt = Date.now();
 
     let response: ApprovalResponse;
+    let requestedApproval = false;
     if (this.agent.rpc?.requestApproval) {
+      requestedApproval = true;
+      void this.agent.hooks?.fireAndForgetTrigger?.('PermissionRequest', {
+        matcherValue: name,
+        inputData: {
+          turnId: Number(context.turnId),
+          toolCallId: id,
+          toolName: name,
+          action,
+          toolInput: context.args,
+          display,
+        },
+      });
       try {
         response = await this.agent.rpc.requestApproval(
           {
@@ -154,6 +167,17 @@ export class PermissionManager {
           session_cache_written: false,
           has_feedback: false,
         });
+        void this.agent.hooks?.fireAndForgetTrigger?.('PermissionResult', {
+          matcherValue: name,
+          inputData: {
+            turnId: Number(context.turnId),
+            toolCallId: id,
+            toolName: name,
+            action,
+            decision: 'error',
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
         const resolved = result.resolveError?.(error);
         return resolved === undefined
           ? Promise.reject(error)
@@ -169,6 +193,22 @@ export class PermissionManager {
       response.decision === 'approved' && response.scope === 'session'
         ? context.execution.approvalRule
         : undefined;
+
+    if (requestedApproval) {
+      void this.agent.hooks?.fireAndForgetTrigger?.('PermissionResult', {
+        matcherValue: name,
+        inputData: {
+          turnId: Number(context.turnId),
+          toolCallId: id,
+          toolName: name,
+          action,
+          decision: response.decision,
+          scope: response.scope,
+          feedback: response.feedback,
+          selectedLabel: response.selectedLabel,
+        },
+      });
+    }
 
     this.recordApprovalResult({
       turnId: Number(context.turnId),

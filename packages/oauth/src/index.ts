@@ -99,6 +99,7 @@ export type {
 } from './open-platform';
 
 export {
+  applyCustomRegistryEntries,
   applyCustomRegistryProvider,
   capabilitiesFromCustomEntry,
   CustomRegistryApiError,

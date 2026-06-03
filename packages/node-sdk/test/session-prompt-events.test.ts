@@ -8,7 +8,7 @@ import { KIMI_CODE_PLATFORM } from '@moonshot-ai/kimi-code-oauth';
 import type * as KosongModule from '@moonshot-ai/kosong';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { Event } from '#/index';
+import { createKimiHarness, type Event, type KimiHarness } from '#/index';
 
 import { TEST_IDENTITY } from './test-identity';
 
@@ -56,8 +56,6 @@ vi.mock('@moonshot-ai/kosong', async (importOriginal) => {
   };
 });
 
-const { KimiHarness } = await import('#/index');
-
 const tempDirs: string[] = [];
 
 beforeEach(() => {
@@ -99,7 +97,7 @@ describe('Session.prompt events', () => {
   it('persists sanitized prompt metadata without marking the title custom', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -175,7 +173,7 @@ describe('Session.prompt events', () => {
   it('emits mapped turn events through Session.onEvent', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -228,7 +226,7 @@ describe('Session.prompt events', () => {
   it('supports onEvent unsubscribe without touching runtime wire directly', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -255,7 +253,7 @@ describe('Session.prompt events', () => {
   it('runs init through generateAgentsMd RPC as a system trigger without prompt metadata updates', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -311,10 +309,90 @@ describe('Session.prompt events', () => {
     }
   });
 
+  it('starts btw through RPC as a forked subagent without prompt metadata updates', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
+
+    try {
+      await configureFakeProvider(harness);
+      const session = await harness.createSession({ id: 'ses_btw_rpc', workDir });
+      const events: Event[] = [];
+      const unsubscribe = session.onEvent((event) => {
+        events.push(event);
+      });
+
+      let done = waitForEvent(session, (event) => event.type === 'turn.ended');
+      await session.prompt('main task context');
+      await done;
+
+      fakeProviderState.responseText = 'The main agent is working from the existing context.';
+      events.length = 0;
+      done = waitForEvent(
+        session,
+        (event) => event.type === 'turn.ended' && event.agentId !== 'main',
+      );
+
+      const agentId = await session.startBtw();
+      harness.interactiveAgentId = agentId;
+      await session.prompt('What are you working on right now?');
+      await done;
+      unsubscribe();
+
+      const started = events.find(
+        (event) =>
+          event.type === 'turn.started' &&
+          event.agentId === agentId &&
+          event.origin.kind === 'user',
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'turn.started',
+          sessionId: session.id,
+          agentId,
+          origin: { kind: 'user' },
+        }),
+      );
+      expect(started?.agentId).not.toBe('main');
+      expect(events).not.toContainEqual(expect.objectContaining({ type: 'subagent.spawned' }));
+      expect(events).not.toContainEqual(expect.objectContaining({ type: 'subagent.completed' }));
+      expect(events).not.toContainEqual(expect.objectContaining({ type: 'subagent.failed' }));
+      expect(events).not.toContainEqual(
+        expect.objectContaining({
+          type: 'session.meta.updated',
+        }),
+      );
+      expect(fakeProviderState.calls[1]?.systemPrompt).toBe(
+        fakeProviderState.calls[0]?.systemPrompt,
+      );
+      const btwHistoryText = JSON.stringify(fakeProviderState.calls[1]?.history);
+      expect(btwHistoryText).toContain('main task context');
+      expect(btwHistoryText).toContain('What are you working on right now?');
+
+      const statePath = join(session.summary!.sessionDir, 'state.json');
+      const state = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;
+      expect(state['lastPrompt']).toBe('main task context');
+      expect(state['agents']).toMatchObject({ main: expect.any(Object) });
+      expect(state['agents']).not.toHaveProperty(agentId);
+
+      await harness.closeSession(session.id);
+      const resumed = await harness.resumeSession({ id: session.id });
+      const resumeState = resumed.getResumeState();
+      expect(resumeState?.agents).toMatchObject({ main: expect.any(Object) });
+      expect(resumeState?.agents).not.toHaveProperty(agentId);
+      expect(resumeState?.sessionMetadata.agents).not.toHaveProperty(agentId);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('rejects empty prompt input', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -331,7 +409,7 @@ describe('Session.prompt events', () => {
   });
 });
 
-async function configureFakeProvider(harness: InstanceType<typeof KimiHarness>): Promise<void> {
+async function configureFakeProvider(harness: KimiHarness): Promise<void> {
   await harness.setConfig({
     providers: {
       local: {

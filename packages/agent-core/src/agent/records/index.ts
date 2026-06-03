@@ -95,6 +95,14 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'tools.update_store':
       agent.tools.updateStore(input.key, input.value);
       return;
+    // Goal records are an audit trail only. Goal state is restored from
+    // `state.json` (metadata.custom.goal), never rebuilt from these records.
+    case 'goal.create':
+    case 'goal.update':
+    case 'goal.account_usage':
+    case 'goal.continuation':
+    case 'goal.clear':
+      return;
   }
 }
 

@@ -9,6 +9,7 @@ import type { KimiConfig, SDKSessionRPC } from '#/rpc';
 import { proxyWithExtraPayload } from '#/rpc/types';
 
 import { Agent, type AgentOptions, type AgentType } from '../agent';
+import { SessionGoalStore, type SessionGoalState } from './goal';
 import { HookEngine, type HookDef } from './hooks';
 import type { PermissionManagerOptions, PermissionRule } from '../agent/permission';
 import { parseBooleanEnv, resolveConfigValue, type BackgroundConfig } from '../config';
@@ -75,6 +76,12 @@ export interface AgentMeta {
   readonly parentAgentId: string | null;
 }
 
+export interface CreateAgentOptions {
+  readonly profile?: ResolvedAgentProfile;
+  readonly parentAgentId?: string;
+  readonly persistMetadata?: boolean;
+}
+
 export interface SessionMeta {
   createdAt: string;
   updatedAt: string;
@@ -97,6 +104,7 @@ export class Session {
   readonly log: Logger;
   private readonly logHandle: SessionLogHandle | undefined;
   readonly hookEngine: HookEngine;
+  readonly goals: SessionGoalStore;
   private agentIdCounter = 0;
   private readonly skillsReady: Promise<void>;
   metadata: SessionMeta = {
@@ -129,6 +137,24 @@ export class Session {
       sessionId: options.id,
     });
     this.telemetry = options.telemetry ?? noopTelemetryClient;
+    this.goals = new SessionGoalStore({
+      sessionId: options.id,
+      readState: () => this.metadata.custom?.['goal'] as SessionGoalState | undefined,
+      writeState: (state) => {
+        this.metadata.custom ??= {};
+        if (state === undefined) {
+          delete this.metadata.custom['goal'];
+        } else {
+          this.metadata.custom['goal'] = state;
+        }
+        return this.writeMetadata();
+      },
+      auditSink: () => this.agents.get('main')?.records,
+      onGoalUpdated: (snapshot, change) => {
+        void this.rpc.emitEvent({ type: 'goal.updated', agentId: 'main', snapshot, change });
+      },
+      telemetry: this.telemetry,
+    });
     this.skills = new SkillRegistry({ sessionId: options.id });
     this.mcp = new McpConnectionManager({
       oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
@@ -150,7 +176,11 @@ export class Session {
   }
 
   async createMain() {
-    const { agent } = await this.createAgent({ type: 'main' }, DEFAULT_AGENT_PROFILES['agent']);
+    const { agent } = await this.createAgent({ type: 'main' }, {
+      profile: DEFAULT_AGENT_PROFILES['agent'],
+    });
+    // The main-agent audit sink now exists; flush any goal records queued before it.
+    this.goals.flushPendingRecords();
     await this.triggerSessionStart('startup');
     return agent;
   }
@@ -158,6 +188,9 @@ export class Session {
   async resume(): Promise<{ warning?: string }> {
     await this.skillsReady;
     const { agents } = await this.readMetadata();
+    // Reconcile the persisted goal (active -> paused, drop malformed/stale) before
+    // agents are rebuilt. The audit record (if any) is queued and flushed below.
+    await this.goals.normalizeMetadata();
     this.agents.clear();
     let warning: string | undefined;
     const resumeTasks = Object.keys(agents).map(async (id) => {
@@ -168,6 +201,9 @@ export class Session {
       }
     });
     await Promise.all(resumeTasks);
+    // The main-agent audit sink now exists; flush any goal records queued during
+    // normalizeMetadata (e.g. the active -> paused resume transition).
+    this.goals.flushPendingRecords();
     const resumeWarning = warning;
     // A session migrated from an external tool ships a wire without the
     // `config.update` bootstrap events a natively-created agent writes, so the
@@ -218,25 +254,27 @@ export class Session {
 
   async createAgent(
     config: Partial<AgentOptions>,
-    profile?: ResolvedAgentProfile,
-    parentAgentId?: string | undefined,
+    options: CreateAgentOptions = {},
   ): Promise<{ readonly id: string; readonly agent: Agent }> {
     await this.skillsReady;
     const type = config.type ?? 'main';
     const id = type === 'main' ? 'main' : this.nextGeneratedAgentId();
     const homedir = config.homedir ?? join(this.options.homedir, 'agents', id);
-    const agent = this.instantiateAgent(id, homedir, type, config, parentAgentId ?? null);
-    if (profile) {
-      await this.bootstrapAgentProfile(agent, profile);
+    const parentAgentId = options.parentAgentId ?? null;
+    const agent = this.instantiateAgent(id, homedir, type, config, parentAgentId);
+    if (options.profile) {
+      await this.bootstrapAgentProfile(agent, options.profile);
     }
 
     this.agents.set(id, agent);
-    this.metadata.agents[id] = {
-      homedir,
-      type,
-      parentAgentId: parentAgentId ?? null,
-    };
-    void this.writeMetadata();
+    if (options.persistMetadata !== false) {
+      this.metadata.agents[id] = {
+        homedir,
+        type,
+        parentAgentId,
+      };
+      void this.writeMetadata();
+    }
 
     return { id, agent };
   }
@@ -424,6 +462,7 @@ export class Session {
       subagentHost:
         config.subagentHost ?? new SessionSubagentHost(this, id, this.backgroundTaskTimeoutMs()),
       mcp: this.mcp,
+      goals: this.goals,
       permission: this.permissionOptions(parentAgentId, config.permission),
       telemetry: this.telemetry,
       log: this.log.createChild({ agentId: id }),

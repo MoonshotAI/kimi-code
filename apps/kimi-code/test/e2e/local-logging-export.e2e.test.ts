@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { registerExportCommand } from '#/cli/sub/export';
 import { createKimiCodeHostIdentity } from '#/cli/version';
-import { KimiHarness, log } from '@moonshot-ai/kimi-code-sdk';
+import { createKimiHarness, log } from '@moonshot-ai/kimi-code-sdk';
 import { __resetRootLoggerForTest } from '../../../../packages/agent-core/src/logging/logger';
 
 const SESSION_LOG = 'logs/kimi-code.log';
@@ -19,13 +19,16 @@ const ENABLED = process.env['KIMI_E2E'] === '1';
 let homeDir: string;
 let workDir: string;
 let oldHome: string | undefined;
+let oldLogLevel: string | undefined;
 
 beforeEach(async () => {
   await __resetRootLoggerForTest();
   homeDir = await mkdtemp(join(tmpdir(), 'kimi-cli-log-home-'));
   workDir = await mkdtemp(join(tmpdir(), 'kimi-cli-log-work-'));
   oldHome = process.env['KIMI_CODE_HOME'];
+  oldLogLevel = process.env['KIMI_LOG_LEVEL'];
   process.env['KIMI_CODE_HOME'] = homeDir;
+  process.env['KIMI_LOG_LEVEL'] = 'info';
 });
 
 afterEach(async () => {
@@ -35,13 +38,18 @@ afterEach(async () => {
   } else {
     process.env['KIMI_CODE_HOME'] = oldHome;
   }
+  if (oldLogLevel === undefined) {
+    delete process.env['KIMI_LOG_LEVEL'];
+  } else {
+    process.env['KIMI_LOG_LEVEL'] = oldLogLevel;
+  }
   await rm(homeDir, { recursive: true, force: true });
   await rm(workDir, { recursive: true, force: true });
 });
 
 describe.skipIf(!ENABLED)('local logging export e2e', () => {
   it('exports session log and global log by default, and allows skipping global log', async () => {
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       homeDir,
       identity: createKimiCodeHostIdentity('0.1.1'),
     });

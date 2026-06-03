@@ -4,6 +4,8 @@ export const HOOK_EVENT_TYPES = [
   'PreToolUse',
   'PostToolUse',
   'PostToolUseFailure',
+  'PermissionRequest',
+  'PermissionResult',
   'UserPromptSubmit',
   'Stop',
   'StopFailure',

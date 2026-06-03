@@ -141,13 +141,11 @@ describe('SessionSubagentHost', () => {
     const parent = testAgent({ telemetry: { track: telemetryTrack } });
     parent.configure();
     await parent.rpc.setPermission({ mode: 'yolo' });
-    parent.agent.permission.rules = [
-      {
-        decision: 'allow',
-        scope: 'session-runtime',
-        pattern: 'Read',
-      },
-    ];
+    parent.agent.permission.rules.splice(0, parent.agent.permission.rules.length, {
+      decision: 'allow',
+      scope: 'session-runtime',
+      pattern: 'Read',
+    });
     parent.newEvents();
 
     const child = testAgent({
@@ -341,6 +339,30 @@ describe('SessionSubagentHost', () => {
         signal,
       }),
     ).rejects.toThrow('Subagent profile "missing" was not found');
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('rejects unavailable subagent profiles even when a same-named fork label exists', async () => {
+    const parent = testAgent();
+    parent.configure();
+    const createAgent = vi.fn();
+    const host = new SessionSubagentHost(
+      {
+        agents: new Map([['main', parent.agent]]),
+        createAgent,
+      } as never,
+      'main',
+    );
+
+    await expect(
+      host.spawn('btw', {
+        parentToolCallId: 'call_agent',
+        prompt: 'Answer a side question',
+        description: 'Side question',
+        runInBackground: false,
+        signal,
+      }),
+    ).rejects.toThrow('Subagent profile "btw" was not found');
     expect(createAgent).not.toHaveBeenCalled();
   });
 
@@ -705,6 +727,7 @@ describe('SessionSubagentHost', () => {
       type: 'text',
       text: 'Resumed the subagent from its earlier context and carried the task through to completion, then reported a full and detailed technical summary so the parent agent can continue without repeating prior work.',
     });
+    vi.mocked(collectGitContext).mockReset().mockResolvedValue('');
 
     const session = fakeSession(parent.agent, child.agent, {
       'agent-0': {
@@ -915,7 +938,7 @@ describe('Session.createAgent', () => {
       initializeMainAgent: false,
     });
 
-    const created = await session.createAgent({ type: 'main' }, contextProfile());
+    const created = await session.createAgent({ type: 'main' }, { profile: contextProfile() });
 
     expect(created.agent.config.systemPrompt).toContain('cwd=/remote/project');
     expect(created.agent.config.systemPrompt).toContain('listing=└── README.md');
@@ -980,7 +1003,7 @@ describe('Session.createAgent', () => {
       initializeMainAgent: false,
     });
 
-    const created = await session.createAgent({ type: 'main' }, contextProfile());
+    const created = await session.createAgent({ type: 'main' }, { profile: contextProfile() });
 
     expect(created.agent.config.systemPrompt).toContain('cwd=/repo/packages/app');
     expect(created.agent.config.systemPrompt).toContain('listing=├── src/');
@@ -1027,14 +1050,17 @@ describe('Session.createAgent', () => {
     });
 
     // Create a parent agent — it should start at the session workDir.
-    const parent = await session.createAgent({ type: 'main' }, contextProfile());
+    const parent = await session.createAgent({ type: 'main' }, { profile: contextProfile() });
     expect(parent.agent.config.systemPrompt).toContain(`cwd=${sessionWorkDir}`);
 
     // Move the parent agent to a different cwd (e.g. after a config.update replay).
     parent.agent.config.update({ cwd: parentWorkDir });
 
     // Create a subagent from the moved parent.
-    const child = await session.createAgent({ type: 'sub' }, contextProfile(), parent.id);
+    const child = await session.createAgent(
+      { type: 'sub' },
+      { profile: contextProfile(), parentAgentId: parent.id },
+    );
 
     // The subagent should inherit the parent's current cwd, not the session default.
     expect(child.agent.config.systemPrompt).toContain(`cwd=${parentWorkDir}`);
@@ -1082,7 +1108,7 @@ describe('Session.createAgent', () => {
     const main = await session.createAgent({ type: 'main' });
     expect(main.agent.mcp).toBe(session.mcp);
 
-    const sub = await session.createAgent({ type: 'sub' }, undefined, main.id);
+    const sub = await session.createAgent({ type: 'sub' }, { parentAgentId: main.id });
     expect(sub.agent.mcp).toBe(session.mcp);
   });
 });
@@ -1110,17 +1136,19 @@ function fakeSession(
     createAgent: vi.fn(
       async (
         config: Parameters<Session['createAgent']>[0],
-        profile?: ResolvedAgentProfile,
-        parentAgentId?: string,
+        options: Parameters<Session['createAgent']>[1] = {},
       ) => {
         agents.set('agent-0', child);
-        metadataAgents['agent-0'] = {
-          homedir: '/tmp/kimi-session/agents/agent-0',
-          type: config.type ?? 'main',
-          parentAgentId: parentAgentId ?? null,
-        };
-        if (profile !== undefined) {
-          child.useProfile(profile);
+        const parentAgentId = options.parentAgentId ?? null;
+        if (options.persistMetadata !== false) {
+          metadataAgents['agent-0'] = {
+            homedir: '/tmp/kimi-session/agents/agent-0',
+            type: config.type ?? 'main',
+            parentAgentId,
+          };
+        }
+        if (options.profile !== undefined) {
+          child.useProfile(options.profile);
         }
         return { id: 'agent-0', agent: child };
       },

@@ -478,6 +478,33 @@ describe('OpenAILegacyChatProvider', () => {
       expect(provider).not.toBe(original);
       expect(body['max_tokens']).toBe(1024);
     });
+
+    it.each(['gpt-5', 'gpt-5-codex', 'o3'])(
+      'withMaxCompletionTokens sets max_completion_tokens for %s',
+      async (model) => {
+        const provider = createProvider({ model }).withMaxCompletionTokens(1024);
+        const history: Message[] = [
+          { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+        ];
+        const body = await captureRequestBody(provider, '', [], history);
+
+        expect(body['max_completion_tokens']).toBe(1024);
+        expect(body['max_tokens']).toBeUndefined();
+      },
+    );
+
+    it('keeps max_tokens for OpenAI-compatible non-OpenAI reasoning models', async () => {
+      const provider = createProvider({ model: 'deepseek-reasoner' }).withMaxCompletionTokens(
+        1024,
+      );
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['max_tokens']).toBe(1024);
+      expect(body['max_completion_tokens']).toBeUndefined();
+    });
   });
 
   describe('maxTokens option', () => {

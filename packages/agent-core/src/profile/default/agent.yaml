@@ -27,6 +27,10 @@ tools:
   - AskUserQuestion
   - EnterPlanMode
   - ExitPlanMode
+  - CreateGoal
+  - GetGoal
+  - SetGoalBudget
+  - UpdateGoal
   - mcp__*
 
 subagents:

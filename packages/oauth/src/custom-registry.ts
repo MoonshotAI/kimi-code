@@ -349,3 +349,50 @@ export function removeCustomRegistryProvider(
     config['defaultProvider'] = undefined;
   }
 }
+
+/**
+ * Applies every entry from a single api.json import in memory. Mirrors the
+ * "remove if present, then apply" sequence the Add Platform flow used to do
+ * via the `removeProvider` RPC, but stays purely in-memory so callers can
+ * persist the whole batch with a single write at the end.
+ *
+ * Bug fixed: previously the caller interleaved in-memory `applyCustomRegistry-
+ * Provider` with the disk-writing `removeProvider` RPC inside a loop. Each
+ * RPC re-read disk and returned a fresh config object, discarding entries that
+ * had already been merged in-memory from earlier iterations. Re-importing a
+ * multi-provider api.json silently lost N-1 of N providers.
+ *
+ * Re-import semantics: providers previously imported from the same source URL
+ * but no longer present in `entries` are removed (along with their aliases and
+ * any `defaultModel` pointing at them). Without this, deleting a provider
+ * upstream and re-importing the registry leaves orphaned provider records and
+ * model aliases behind. Matching is by `source.url` only — the apiKey commonly
+ * rotates between imports, but the URL is the stable identity of "the same
+ * registry".
+ */
+export function applyCustomRegistryEntries(
+  config: ManagedKimiConfigShape,
+  entries: Record<string, CustomRegistryProviderEntry>,
+  source: CustomRegistrySource,
+): void {
+  const surviving = new Set(Object.values(entries).map((entry) => entry.id));
+  for (const [providerId, provider] of Object.entries(config.providers)) {
+    if (surviving.has(providerId)) continue;
+    if (!isRecord(provider)) continue;
+    const existingSource = provider['source'];
+    if (
+      isRecord(existingSource) &&
+      existingSource['kind'] === 'apiJson' &&
+      existingSource['url'] === source.url
+    ) {
+      removeCustomRegistryProvider(config, providerId);
+    }
+  }
+
+  for (const entry of Object.values(entries)) {
+    if (entry.id in config.providers) {
+      removeCustomRegistryProvider(config, entry.id);
+    }
+    applyCustomRegistryProvider(config, entry, source);
+  }
+}

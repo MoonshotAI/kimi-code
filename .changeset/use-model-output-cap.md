@@ -3,4 +3,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Allow subagents to use custom tools registered on their parent agent.
+Use configured model output limits for completion token caps.

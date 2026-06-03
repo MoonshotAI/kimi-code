@@ -127,6 +127,10 @@ export class ConfigState {
     return this.tryResolvedProviderConfig()?.modelCapabilities ?? UNKNOWN_CAPABILITY;
   }
 
+  get maxOutputSize(): number | undefined {
+    return this.tryResolvedProviderConfig()?.maxOutputSize;
+  }
+
   private get resolvedProviderConfig(): ResolvedRuntimeProvider | undefined {
     if (this._modelAlias === undefined) return undefined;
     return this.agent.modelProvider?.resolveProviderConfig(this._modelAlias);

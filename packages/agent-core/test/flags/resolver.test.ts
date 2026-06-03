@@ -63,7 +63,7 @@ describe('FlagResolver', () => {
     expect(enabled('b-off-default')).toBe(true);
   });
 
-  it('L1 master switch beats an L2 per-feature off (D2)', () => {
+  it('L1 master switch beats an L2 per-feature off', () => {
     const enabled = make({ [MASTER_ENV]: '1', KIMI_CODE_EXPERIMENTAL_A: '0' });
     expect(enabled('a-on-default')).toBe(true);
   });
@@ -71,6 +71,15 @@ describe('FlagResolver', () => {
   it('master switch is inactive for lenient falsy values', () => {
     const enabled = make({ [MASTER_ENV]: '0' });
     expect(enabled('b-off-default')).toBe(false);
+  });
+
+  it('returns a full snapshot and enabled ids in registry order', () => {
+    const resolver = new FlagResolver({ KIMI_CODE_EXPERIMENTAL_B: '1' }, DEFS);
+    expect(resolver.snapshot()).toEqual({
+      'a-on-default': true,
+      'b-off-default': true,
+    });
+    expect(resolver.enabledIds()).toEqual(['a-on-default', 'b-off-default']);
   });
 
   it('reads the env name declared in the registry (the declared name works, others do not)', () => {
