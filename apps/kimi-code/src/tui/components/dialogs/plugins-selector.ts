@@ -74,7 +74,7 @@ export class PluginsOverviewSelectorComponent extends Container implements Focus
   }
 
   handleInput(data: string): void {
-    if (matchesKey(data, Key.escape) || matchesKey(data, Key.left)) {
+    if (matchesKey(data, Key.escape)) {
       this.opts.onCancel();
       return;
     }
@@ -110,7 +110,7 @@ export class PluginsOverviewSelectorComponent extends Container implements Focus
       }
       return;
     }
-    if (matchesKey(data, Key.enter) || matchesKey(data, Key.right)) {
+    if (matchesKey(data, Key.enter)) {
       if (pluginId !== undefined) {
         this.opts.onSelect({ kind: 'info', id: pluginId });
         return;
@@ -206,7 +206,7 @@ export class PluginMarketplaceSelectorComponent extends Container implements Foc
   }
 
   handleInput(data: string): void {
-    if (matchesKey(data, Key.escape) || matchesKey(data, Key.left)) {
+    if (matchesKey(data, Key.escape)) {
       this.opts.onCancel();
       return;
     }
@@ -238,7 +238,7 @@ export class PluginMarketplaceSelectorComponent extends Container implements Foc
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(' Official plugins'),
-      mutedHintLine(' ↑↓ navigate · Enter/Space install/update · ←/Esc cancel', colors),
+      mutedHintLine(' ↑↓ navigate · Enter/Space install/update · Esc cancel', colors),
       chalk.hex(colors.textMuted)(` Source: ${this.opts.source}`),
       '',
       sectionLabel(`Marketplace (${entries.length})`, colors),
@@ -316,7 +316,7 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
   }
 
   handleInput(data: string): void {
-    if (matchesKey(data, Key.escape) || matchesKey(data, Key.left)) {
+    if (matchesKey(data, Key.escape)) {
       this.opts.onCancel();
       return;
     }
@@ -355,7 +355,7 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(` MCP servers · ${info.displayName}`),
-      mutedHintLine(' ↑↓ navigate · Enter/Space enable/disable · ←/Esc cancel', colors),
+      mutedHintLine(' ↑↓ navigate · Enter/Space enable/disable · Esc cancel', colors),
       '',
       sectionLabel(`MCP servers (${info.enabledMcpServerCount}/${info.mcpServerCount} enabled)`, colors),
     ];

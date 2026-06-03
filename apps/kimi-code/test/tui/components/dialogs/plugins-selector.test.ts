@@ -14,6 +14,9 @@ import { pluginTrustLabel } from '#/tui/utils/plugin-source-label';
 
 const ANSI_SGR = /\[[0-9;]*m/g;
 const MID = '\u00B7';
+const ESC = String.fromCodePoint(27);
+const RIGHT = `${ESC}[C`;
+const LEFT = `${ESC}[D`;
 
 function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '').replaceAll('\u276F', '?');
@@ -127,6 +130,35 @@ describe('plugins selector dialogs', () => {
     expect(onSelect).toHaveBeenCalledWith({ kind: 'info', id: 'kimi-datasource' });
   });
 
+  it('ignores Left/Right arrows in the overview (no enter/exit by arrow)', () => {
+    const onSelect = vi.fn();
+    const onCancel = vi.fn();
+    const picker = new PluginsOverviewSelectorComponent({
+      plugins: [
+        {
+          id: 'kimi-datasource',
+          displayName: 'Kimi Datasource',
+          version: '1.0.0',
+          enabled: true,
+          state: 'ok',
+          skillCount: 2,
+          mcpServerCount: 1,
+          enabledMcpServerCount: 1,
+          hasErrors: false,
+          source: 'local-path',
+        },
+      ],
+      colors: darkColors,
+      onSelect,
+      onCancel,
+    });
+
+    picker.handleInput(RIGHT); // must NOT open details
+    expect(onSelect).not.toHaveBeenCalled();
+    picker.handleInput(LEFT); // must NOT cancel/exit
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
   it('renders marketplace plugins separately from marketplace actions', () => {
     const onSelect = vi.fn();
     const picker = new PluginMarketplaceSelectorComponent({
@@ -164,6 +196,31 @@ describe('plugins selector dialogs', () => {
       kind: 'install',
       entry: expect.objectContaining({ id: 'superpowers' }),
     });
+  });
+
+  it('ignores the Left arrow in the marketplace view (Esc returns instead)', () => {
+    const onCancel = vi.fn();
+    const picker = new PluginMarketplaceSelectorComponent({
+      entries: [
+        {
+          id: 'superpowers',
+          tier: 'curated',
+          displayName: 'Superpowers',
+          version: '5.1.0',
+          description: 'Workflow skills',
+          source: 'https://example.com/superpowers.zip',
+          keywords: ['workflow'],
+        },
+      ],
+      installedIds: new Set(),
+      source: '/tmp/marketplace.json',
+      colors: darkColors,
+      onSelect: vi.fn(),
+      onCancel,
+    });
+
+    picker.handleInput(LEFT); // must NOT return to the overview
+    expect(onCancel).not.toHaveBeenCalled();
   });
 
   it('issues install for installed marketplace entries (update path)', () => {
