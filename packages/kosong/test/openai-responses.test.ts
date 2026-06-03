@@ -1,4 +1,4 @@
-import { ChatProviderError } from '#/errors';
+import { APIContextOverflowError, ChatProviderError } from '#/errors';
 import { generate } from '#/generate';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import {
@@ -604,6 +604,46 @@ describe('OpenAIResponsesChatProvider', () => {
       });
     });
 
+    it('normalizes invalid historical tool call ids and matching function outputs', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Run bash' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'Bash:21',
+              name: 'Bash',
+              arguments: '{"command":"pwd"}',
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: '/tmp' }],
+          toolCallId: 'Bash:21',
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+      const input = body['input'] as unknown[];
+
+      expect(input[1]).toEqual({
+        arguments: '{"command":"pwd"}',
+        call_id: 'Bash_21',
+        name: 'Bash',
+        type: 'function_call',
+      });
+      expect(input[2]).toEqual({
+        call_id: 'Bash_21',
+        output: [{ type: 'input_text', text: '/tmp' }],
+        type: 'function_call_output',
+      });
+    });
+
     it('assistant with reasoning (ThinkPart with encrypted)', async () => {
       const provider = createProvider();
       const history: Message[] = [
@@ -741,6 +781,18 @@ describe('OpenAIResponsesChatProvider', () => {
 
       expect(body['temperature']).toBe(0.7);
       expect(body['max_output_tokens']).toBe(2048);
+    });
+
+    it('withMaxCompletionTokens sets max_output_tokens on the cloned provider', async () => {
+      const original = createProvider();
+      const provider = original.withMaxCompletionTokens(1024);
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(provider).not.toBe(original);
+      expect(body['max_output_tokens']).toBe(1024);
     });
   });
 
@@ -1633,6 +1685,35 @@ describe('OpenAIResponsesChatProvider', () => {
       await expect(collectStreamParts(stream)).rejects.toThrow(
         /rate_limit_exceeded.*too many/,
       );
+    });
+
+    it('normalizes response.failed context overflow events', async () => {
+      const events = [
+        {
+          type: 'response.failed',
+          response: {
+            id: 'resp_context_overflow',
+            status: 'failed',
+            error: {
+              code: 'context_length_exceeded',
+              message:
+                'Your input exceeds the context window of this model. Please adjust your input and try again.',
+            },
+          },
+        },
+      ];
+      const stream = new OpenAIResponsesStreamedMessage(makeAsyncIterable(events), true);
+
+      let caughtError: unknown;
+      try {
+        await collectStreamParts(stream);
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError).toBeInstanceOf(APIContextOverflowError);
+      expect((caughtError as APIContextOverflowError).statusCode).toBe(400);
+      expect((caughtError as Error).message).toMatch(/context_length_exceeded/);
     });
 
     it('throws when a known stream event is missing a required field', async () => {

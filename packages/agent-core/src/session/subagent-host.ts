@@ -8,7 +8,7 @@ import {
   prepareSystemPromptContext,
   type ResolvedAgentProfile,
 } from '../profile';
-import { linkAbortSignal } from '../utils/abort';
+import { linkAbortSignal, userCancellationReason } from '../utils/abort';
 import { collectGitContext } from './git-context';
 import type { Session } from './index';
 import SUMMARY_CONTINUATION_PROMPT from './summary-continuation.md';
@@ -167,13 +167,15 @@ export class SessionSubagentHost {
     };
   }
 
-  cancelAll(): void {
+  cancelAll(reason: unknown = userCancellationReason()): void {
     const foregroundChildren = Array.from(this.activeChildren).filter(
       ([, child]) => !child.runInBackground,
     );
     for (const [childId, child] of foregroundChildren) {
-      this.session.agents.get(childId)?.subagentHost?.cancelAll();
-      child.controller.abort();
+      this.session.agents.get(childId)?.subagentHost?.cancelAll(reason);
+      // Abort with the cancel reason (a user interruption by default) so the
+      // subagent's in-flight tools report the cause accurately to the model.
+      child.controller.abort(reason);
     }
   }
 
@@ -285,6 +287,7 @@ export class SessionSubagentHost {
 
     const context = await prepareSystemPromptContext(child.kaos);
     child.useProfile(profile, context);
+    child.tools.inheritUserTools(parent.tools);
   }
 
   private async triggerSubagentStart(

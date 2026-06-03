@@ -161,3 +161,100 @@ kimi migrate
 ```
 
 If you previously used an older version of kimi-cli, run this command to migrate historical sessions, configuration, and other data to kimi-code to avoid data loss. For the full migration flow, what gets migrated, and things to watch out for, see [Migrating from kimi-cli](../guides/migration.md).
+
+### `kimi upgrade`
+
+Check the latest Kimi Code CLI version immediately and show the update prompt. This command has no flags and exits after the selected action.
+
+```sh
+kimi upgrade
+```
+
+For global npm, pnpm, yarn, bun, and macOS / Linux native installs, `kimi upgrade` uses the same prompt as startup update checks. Choose `Install update now` to run the corresponding foreground install command, or continue with the current version. If no newer version is available, it prints the current up-to-date status. If the current installation cannot be upgraded automatically, such as Windows native installs or an unsupported layout, it prints the manual update command instead.
+
+### `kimi provider`
+
+Manage LLM providers from the shell — the non-interactive equivalent of the TUI `/provider` command. Useful for scripting, CI bootstrap, and provisioning a fresh machine.
+
+```sh
+kimi provider <action> [options]
+```
+
+Three actions are available:
+
+#### `kimi provider add <url>`
+
+Import every provider listed in a custom registry (an `api.json` document). The command fetches the registry, creates one `[providers.<id>]` table per top-level entry, populates `[models.<alias>]` for each model in the document, and persists the `source = { kind = "apiJson", url, api_key }` block on every provider so the next TUI launch refreshes the model list automatically.
+
+| Argument / Option | Description |
+| --- | --- |
+| `<url>` | Registry URL, e.g. `https://registry.example.com/v1/models/api.json`. |
+| `--api-key <key>` | Bearer token sent with the registry fetch. Falls back to the `KIMI_REGISTRY_API_KEY` environment variable when omitted. Required. |
+
+```sh
+# One-line import — every provider and model in the registry lands in ~/.kimi-code/config.toml
+kimi provider add https://registry.example.com/v1/models/api.json --api-key YOUR_KEY
+
+# Or via environment variable, for CI / .envrc-style workflows
+KIMI_REGISTRY_API_KEY=YOUR_KEY kimi provider add https://registry.example.com/v1/models/api.json
+```
+
+If a provider id already exists, it is replaced (its stale model aliases are removed first, mirroring the TUI flow). No default model is selected — pick one later via `-m` or `/model` inside the TUI.
+
+#### `kimi provider remove <providerId>`
+
+Delete a provider and every model alias that referenced it. If the removed provider was the source of `default_model`, that field is cleared.
+
+```sh
+kimi provider remove kohub
+```
+
+#### `kimi provider list`
+
+Print one row per configured provider with its type, model count, and source (`apiJson(...)`, `oauth`, or `inline`). Add `--json` to emit the raw `providers` and `models` tables as JSON for further processing.
+
+```sh
+kimi provider list
+kimi provider list --json | jq '.providers | keys'
+```
+
+#### `kimi provider catalog list [providerId]`
+
+Discover providers known to the public [models.dev](https://models.dev/) catalog without writing anything. With no argument, prints one row per provider showing its inferred wire type and model count. With a `providerId`, drills into that provider and lists each model with its context window and capabilities.
+
+| Argument / Option | Description |
+| --- | --- |
+| `[providerId]` | Optional. Catalog provider id to drill into. |
+| `--filter <substring>` | Case-insensitive id/name substring filter (top-level only). |
+| `--url <url>` | Override catalog URL. Defaults to `https://models.dev/api.json`. |
+| `--json` | Emit the matching catalog slice as JSON. |
+
+```sh
+# Browse providers
+kimi provider catalog list
+kimi provider catalog list --filter anthropic
+
+# Inspect one provider's models
+kimi provider catalog list anthropic
+```
+
+#### `kimi provider catalog add <providerId>`
+
+Import a known provider directly from the catalog. The catalog supplies the wire type, base URL, model identifiers, context limits, and capabilities — you only have to supply the API key.
+
+| Argument / Option | Description |
+| --- | --- |
+| `<providerId>` | Catalog provider id, e.g. `anthropic`, `openai`, `google`. |
+| `--api-key <key>` | API key for the provider. Falls back to `KIMI_REGISTRY_API_KEY`. Required. |
+| `--default-model <modelId>` | Optional. Set `default_model` to `<providerId>/<modelId>` after import. The model must be one listed by `catalog list <providerId>`. |
+| `--url <url>` | Override catalog URL. Defaults to `https://models.dev/api.json`. |
+
+When `--default-model` is omitted, the existing `default_model` is preserved (you can still pick a model later via `-m` or the TUI `/model` command).
+
+```sh
+# Look up what's available
+kimi provider catalog list anthropic
+
+# Import and set the default in one go
+kimi provider catalog add anthropic --api-key sk-ant-... --default-model claude-opus-4-7
+```

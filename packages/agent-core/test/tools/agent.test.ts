@@ -4,8 +4,10 @@ import { ToolAccesses } from '../../src/loop';
 import type { Logger, LogPayload } from '../../src/logging';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
-import { BackgroundProcessManager } from '../../src/tools/background/manager';
+import { AgentBackgroundTask } from '../../src/agent/background';
 import { AgentTool, AgentToolInputSchema } from '../../src/tools/builtin/collaboration/agent';
+import { userCancellationReason } from '../../src/utils/abort';
+import { createBackgroundManager } from '../agent/background/helpers';
 import { executeTool } from './fixtures/execute-tool';
 
 const signal = new AbortController().signal;
@@ -108,7 +110,7 @@ describe('AgentTool', () => {
 
   it('explains background timeout fallback in the background-enabled description without claiming a 15min default', () => {
     const host = mockSubagentHost({ spawn: vi.fn() });
-    const tool = new AgentTool(host, new BackgroundProcessManager());
+    const tool = new AgentTool(host, createBackgroundManager().manager);
 
     // #5: the background-enabled variant describes the real timeout fallback —
     // an omitted timeout falls back to the operator-configured background
@@ -314,7 +316,7 @@ describe('AgentTool', () => {
 
   it('does not consume a background task slot when validation fails before launch', async () => {
     const completion = new Promise<{ result: string }>(() => {});
-    const background = new BackgroundProcessManager({ maxRunningTasks: 1 });
+    const background = createBackgroundManager({ maxRunningTasks: 1 }).manager;
     const host = mockSubagentHost({
       spawn: vi.fn().mockResolvedValue({
         agentId: 'agent-child',
@@ -424,7 +426,7 @@ describe('AgentTool', () => {
         completion,
       }),
     });
-    const background = new BackgroundProcessManager();
+    const background = createBackgroundManager().manager;
     const tool = new AgentTool(host, background);
 
     const result = await executeTool(tool,
@@ -455,7 +457,7 @@ describe('AgentTool', () => {
         completion: new Promise<{ result: string }>(() => {}),
       }),
     });
-    const background = new BackgroundProcessManager();
+    const background = createBackgroundManager().manager;
     const tool = new AgentTool(host, background);
 
     const result = await executeTool(tool,
@@ -515,9 +517,9 @@ describe('AgentTool', () => {
     expect(host.spawn).not.toHaveBeenCalled();
   });
 
-  it('does not spawn background subagents when the task limit is reached', async () => {
-    const background = new BackgroundProcessManager({ maxRunningTasks: 1 });
-    background.registerAgentTask(new Promise(() => {}), 'existing agent');
+  it('returns an error when background registration hits the task limit', async () => {
+    const background = createBackgroundManager({ maxRunningTasks: 1 }).manager;
+    background.registerTask(new AgentBackgroundTask(new Promise(() => {}), 'existing agent'));
     const host = mockSubagentHost({
       spawn: vi.fn().mockResolvedValue({
         agentId: 'agent-child',
@@ -540,11 +542,11 @@ describe('AgentTool', () => {
       isError: true,
       output: 'Too many background tasks are already running.',
     });
-    expect(host.spawn).not.toHaveBeenCalled();
+    expect(host.spawn).toHaveBeenCalledTimes(1);
   });
 
-  it('reserves a task slot before spawning concurrent background subagents', async () => {
-    const background = new BackgroundProcessManager({ maxRunningTasks: 1 });
+  it('rejects one of two concurrent background subagents when the task limit is reached', async () => {
+    const background = createBackgroundManager({ maxRunningTasks: 1 }).manager;
     const host = mockSubagentHost({
       spawn: vi
         .fn()
@@ -580,7 +582,7 @@ describe('AgentTool', () => {
 
     const results = await Promise.all([first, second]);
 
-    expect(host.spawn).toHaveBeenCalledTimes(1);
+    expect(host.spawn).toHaveBeenCalledTimes(2);
     expect(results).toContainEqual(
       expect.objectContaining({ output: expect.stringContaining('status: running') }),
     );
@@ -634,8 +636,8 @@ describe('AgentTool', () => {
         completion: new Promise<{ result: string }>(() => {}),
       }),
     });
-    const background = new BackgroundProcessManager();
-    vi.spyOn(background, 'registerAgentTask').mockImplementation(() => {
+    const background = createBackgroundManager().manager;
+    vi.spyOn(background, 'registerTask').mockImplementation(() => {
       throw error;
     });
     const tool = new AgentTool(host, background, undefined, { log: logger });
@@ -664,6 +666,47 @@ describe('AgentTool', () => {
         }),
       },
     ]);
+  });
+
+  it('reports a deliberate user interruption when a foreground subagent is cancelled by the user', async () => {
+    const controller = new AbortController();
+    const host = mockSubagentHost({
+      spawn: vi.fn((_profileName: string, options: { signal: AbortSignal }) =>
+        Promise.resolve({
+          agentId: 'agent-child',
+          profileName: 'coder',
+          resumed: false,
+          completion: new Promise<{ result: string }>((_resolve, reject) => {
+            const onAbort = (): void => {
+              reject(options.signal.reason);
+            };
+            if (options.signal.aborted) onAbort();
+            else options.signal.addEventListener('abort', onAbort, { once: true });
+          }),
+        }),
+      ),
+    });
+    const tool = new AgentTool(host);
+
+    const resultPromise = executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_agent',
+      args: { prompt: 'Investigate', description: 'Find cause' },
+      signal: controller.signal,
+    });
+    // Let spawn wire up and the tool reach `await handle.completion`.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort(userCancellationReason());
+    const result = await resultPromise;
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('status: failed');
+    // The old message ("The subagent was stopped by the user.") is too weak —
+    // the model still blamed a "system limit". The new message rules that out.
+    expect(result.output).not.toContain('was stopped by the user');
+    expect(result.output).toContain('not a system error');
+    expect(result.output).toContain('capacity');
+    expect(result.output).toContain('wait for the user');
   });
 
   it('returns the spawned agent id when a foreground subagent times out', async () => {

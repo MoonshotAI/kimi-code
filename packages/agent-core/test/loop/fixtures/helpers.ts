@@ -26,6 +26,7 @@ export interface RunTurnOptions {
   readonly systemPrompt?: string | undefined;
   readonly contextOptions?: RecordingContextOptions | undefined;
   readonly sinkErrorMode?: SinkErrorMode | undefined;
+  readonly recordStepUsage?: RunTurnInput['recordStepUsage'] | undefined;
 }
 
 export interface RunTurnResult {
@@ -63,6 +64,7 @@ export async function runTurn(opts: RunTurnOptions): Promise<RunTurnResult> {
     hooks: opts.hooks,
     log: opts.log,
     maxSteps: opts.maxSteps,
+    recordStepUsage: opts.recordStepUsage,
   };
   const result = await runTurnImpl(input);
   return { result, llm, context, sink };
@@ -101,6 +103,7 @@ export async function runTurnExpectingThrow(opts: RunTurnOptions): Promise<{
     hooks: opts.hooks,
     log: opts.log,
     maxSteps: opts.maxSteps,
+    recordStepUsage: opts.recordStepUsage,
   };
   try {
     await runTurnImpl(input);

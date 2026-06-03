@@ -321,6 +321,85 @@ describe('AnthropicChatProvider', () => {
       ]);
     });
 
+    it('normalizes invalid historical tool call ids and matching tool results', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Run tools' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'Write:6',
+              name: 'Write',
+              arguments: '{"path":"/tmp/b","content":"ok"}',
+            },
+            {
+              type: 'function',
+              id: 'Write_6',
+              name: 'Write',
+              arguments: '{"path":"/tmp/a","content":"ok"}',
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'wrote b' }],
+          toolCallId: 'Write:6',
+          toolCalls: [],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'wrote a' }],
+          toolCallId: 'Write_6',
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['messages']).toEqual([
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'Run tools' }],
+        },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'Write_6_2',
+              name: 'Write',
+              input: { path: '/tmp/b', content: 'ok' },
+            },
+            {
+              type: 'tool_use',
+              id: 'Write_6',
+              name: 'Write',
+              input: { path: '/tmp/a', content: 'ok' },
+            },
+          ],
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'Write_6_2',
+              content: [{ type: 'text', text: 'wrote b' }],
+            },
+            {
+              type: 'tool_result',
+              tool_use_id: 'Write_6',
+              content: [{ type: 'text', text: 'wrote a' }],
+              cache_control: { type: 'ephemeral' },
+            },
+          ],
+        },
+      ]);
+    });
+
     it('tool call with image result wraps image source inside tool_result', async () => {
       const provider = createProvider();
       const toolCall: ToolCall = {
@@ -689,7 +768,7 @@ describe('AnthropicChatProvider', () => {
       ]);
     });
 
-    it('thinking without signature is stripped', async () => {
+    it('thinking without signature is preserved (no signature field)', async () => {
       const provider = createProvider();
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
@@ -706,12 +785,48 @@ describe('AnthropicChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
       const messages = body['messages'] as unknown[];
 
-      // Assistant message should have thinking stripped (no encrypted)
+      // Unsigned thinking must still be PRESERVED for non-Claude models,
+      // emitted without a `signature` field. Anthropic-compatible backends
+      // (e.g. Kimi) reject a tool-call turn whose thinking is missing
+      // ("reasoning_content is missing").
       expect(messages[1]).toEqual({
         role: 'assistant',
-        content: [{ type: 'text', text: 'Hello!' }],
+        content: [
+          { type: 'thinking', thinking: 'Thinking...' },
+          { type: 'text', text: 'Hello!' },
+        ],
       });
     });
+
+    it.each(['claude-opus-4-6', 'opus-4-6'])(
+      'drops unsigned thinking for Claude model %s before tool_use blocks',
+      async (model) => {
+        const provider = createProvider(model);
+        const history: Message[] = [
+          { role: 'user', content: [{ type: 'text', text: 'Search for 429' }], toolCalls: [] },
+          {
+            role: 'assistant',
+            content: [{ type: 'think', think: 'Let me grep for 429.' }],
+            toolCalls: [
+              { type: 'function', id: 'toolu_1', name: 'Grep', arguments: '{"pattern":"429"}' },
+            ],
+          },
+          {
+            role: 'tool',
+            content: [{ type: 'text', text: 'found in chat.go' }],
+            toolCallId: 'toolu_1',
+            toolCalls: [],
+          },
+        ];
+        const body = await captureRequestBody(provider, '', [], history);
+        const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
+
+        expect(messages[1]!.role).toBe('assistant');
+        expect(messages[1]!.content).toEqual([
+          { type: 'tool_use', id: 'toolu_1', name: 'Grep', input: { pattern: '429' } },
+        ]);
+      },
+    );
 
     it('base64 image', async () => {
       const provider = createProvider();
@@ -769,6 +884,38 @@ describe('AnthropicChatProvider', () => {
           { type: 'text', text: '4.' },
         ],
       });
+    });
+
+    it('unsigned thinking is preserved before a tool_use block', async () => {
+      // Reproduces the real failure: a streamed assistant turn whose thinking
+      // arrived without a signature_delta, followed by a tool_use. Dropping the
+      // thinking made Kimi reject the *next* request with
+      // "thinking is enabled but reasoning_content is missing".
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Search for 429' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [{ type: 'think', think: 'Let me grep for 429.' }],
+          toolCalls: [
+            { type: 'function', id: 'toolu_1', name: 'Grep', arguments: '{"pattern":"429"}' },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'found in chat.go' }],
+          toolCallId: 'toolu_1',
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+      const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
+
+      expect(messages[1]!.role).toBe('assistant');
+      expect(messages[1]!.content).toEqual([
+        { type: 'thinking', thinking: 'Let me grep for 429.' },
+        { type: 'tool_use', id: 'toolu_1', name: 'Grep', input: { pattern: '429' } },
+      ]);
     });
   });
 
@@ -884,6 +1031,61 @@ describe('AnthropicChatProvider', () => {
 
       expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' });
       expect(body['output_config']).toEqual({ effort: 'max' });
+    });
+
+    it('adaptiveThinking=true forces adaptive on an unversioned model name', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'coding-model-okapi-0527-vibe',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        adaptiveThinking: true,
+      }).withThinking('high');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' });
+      expect(body['output_config']).toEqual({ effort: 'high' });
+    });
+
+    it('forced adaptive allows max effort without clamping to high', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'coding-model-okapi-0527-vibe',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        adaptiveThinking: true,
+      }).withThinking('max');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' });
+      expect(body['output_config']).toEqual({ effort: 'max' });
+    });
+
+    it('unversioned model name without adaptiveThinking stays budget-based', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'coding-model-okapi-0527-vibe',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+      }).withThinking('high');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: 32000 });
+      expect(body['output_config']).toBeUndefined();
+    });
+
+    it('adaptiveThinking=false forces budget on a 4.6 model name', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'claude-opus-4-6',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        adaptiveThinking: false,
+      }).withThinking('high');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: 32000 });
+      expect(body['output_config']).toBeUndefined();
     });
 
     it('pre-4.6 model clamps xhigh and max to high without output_config', async () => {
@@ -2043,5 +2245,81 @@ describe('AnthropicChatProvider constructor max_tokens', () => {
 
   it('clamps defaultMaxTokens above the documented ceiling for known models', async () => {
     expect(await maxTokensFor('claude-opus-4-7', { defaultMaxTokens: 999999 })).toBe(128000);
+  });
+
+  it('withMaxCompletionTokens sets max_tokens when no existing cap is present', async () => {
+    const original = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+    });
+    const provider = original
+      .withGenerationKwargs({ max_tokens: undefined })
+      .withMaxCompletionTokens(2048);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(provider).not.toBe(original);
+    expect(body['max_tokens']).toBe(2048);
+  });
+
+  it('withMaxCompletionTokens lowers the inferred model default cap', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+    }).withMaxCompletionTokens(8192);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['max_tokens']).toBe(8192);
+  });
+
+  it('withMaxCompletionTokens preserves an existing lower max_tokens cap', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+      defaultMaxTokens: 1024,
+    }).withMaxCompletionTokens(128000);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['max_tokens']).toBe(1024);
+  });
+
+  it('withMaxCompletionTokens preserves an existing higher max_tokens cap', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'unknown-model',
+      apiKey: 'test-key',
+      stream: false,
+      defaultMaxTokens: 128000,
+    }).withMaxCompletionTokens(1024);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['max_tokens']).toBe(128000);
+  });
+
+  it('withMaxCompletionTokens clamps above the documented ceiling for known models', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'claude-opus-4-7',
+      apiKey: 'test-key',
+      stream: false,
+    }).withMaxCompletionTokens(999999);
+    const history: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+    ];
+    const body = await captureRequestBody(provider, '', [], history);
+
+    expect(body['max_tokens']).toBe(128000);
   });
 });

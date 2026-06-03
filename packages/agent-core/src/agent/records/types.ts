@@ -1,6 +1,7 @@
 import type { ContentPart, TokenUsage } from '@moonshot-ai/kosong';
 
 import type { LoopRecordedEvent } from '../../loop';
+import type { GoalActor, GoalBudgetLimits, GoalStatus } from '../../session/goal';
 import type { ToolStoreUpdate } from '../../tools/store';
 import type { CompactionBeginData, CompactionResult } from '../compaction';
 import type { AgentConfigUpdateData } from '../config';
@@ -13,6 +14,8 @@ export interface AgentRecordEvents {
   metadata: {
     protocol_version: string;
     created_at: number;
+    app_version?: string;
+    resumed?: boolean;
   };
 
   'turn.prompt': {
@@ -52,10 +55,6 @@ export interface AgentRecordEvents {
     names: readonly string[];
   };
 
-  'background.stop': {
-    taskId: string;
-  };
-
   'usage.record': {
     model: string;
     usage: TokenUsage;
@@ -64,13 +63,56 @@ export interface AgentRecordEvents {
 
   'full_compaction.cancel': {};
   'full_compaction.complete': {};
+  'micro_compaction.apply': { cutoff: number };
 
   'context.append_message': { message: ContextMessage };
   'context.append_loop_event': { event: LoopRecordedEvent };
   'context.clear': {};
   'context.apply_compaction': CompactionResult;
+  'context.undo': { count: number };
 
   'tools.update_store': ToolStoreUpdate;
+
+  // Goal-mode audit records. These are an audit trail only: replay MUST NOT
+  // rebuild goal state from them — `state.json` (metadata.custom.goal) is the
+  // source of truth.
+  'goal.create': {
+    goalId: string;
+    objective: string;
+    status: GoalStatus;
+    actor: GoalActor;
+    budgetLimits: GoalBudgetLimits;
+  };
+  'goal.update': {
+    goalId: string;
+    status: GoalStatus;
+    actor: GoalActor;
+    reason?: string;
+    /** Usage counters at the transition, so resume can rebuild the completion card. */
+    turnsUsed?: number;
+    tokensUsed?: number;
+    wallClockMs?: number;
+  };
+  'goal.account_usage': {
+    goalId: string;
+    /** Whether the delta came from token accounting or wall-clock accounting. */
+    usageKind: 'token' | 'wall_clock';
+    delta: number;
+    agentId?: string;
+    agentType?: string;
+    source?: string;
+    tokensUsed: number;
+    wallClockMs: number;
+  };
+  'goal.continuation': {
+    goalId: string;
+    turnsUsed: number;
+  };
+  'goal.clear': {
+    goalId: string;
+    actor: GoalActor;
+    reason?: string;
+  };
 }
 
 export type AgentRecord = {

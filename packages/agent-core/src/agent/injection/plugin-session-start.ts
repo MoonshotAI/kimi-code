@@ -1,5 +1,6 @@
 import type { EnabledPluginSessionStart } from '../../plugin/types';
 import type { SkillDefinition } from '../../skill';
+import { escapeXmlAttr } from '../../utils/xml-escape';
 import { DynamicInjector } from './injector';
 
 export class PluginSessionStartInjector extends DynamicInjector {
@@ -43,11 +44,7 @@ function renderSessionStartBlock(
   skillContent: string,
 ): string {
   return (
-    `<plugin_session_start plugin="${escapeAttr(sessionStart.pluginId)}" ` +
-    `skill="${escapeAttr(skill.name)}">\n${skillContent}\n</plugin_session_start>`
+    `<plugin_session_start plugin="${escapeXmlAttr(sessionStart.pluginId)}" ` +
+    `skill="${escapeXmlAttr(skill.name)}">\n${skillContent}\n</plugin_session_start>`
   );
-}
-
-function escapeAttr(value: string): string {
-  return value.replaceAll('"', '&quot;');
 }

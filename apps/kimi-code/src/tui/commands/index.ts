@@ -1,3 +1,4 @@
+export * from './experimental-flags';
 export * from './parse';
 export * from './registry';
 export * from './resolve';
@@ -6,7 +7,6 @@ export * from './types';
 
 export { dispatchInput, type SlashCommandHost } from './dispatch';
 export {
-  handleConnectCommand,
   handleLoginCommand,
   handleLogoutCommand,
 } from './auth';
@@ -28,11 +28,14 @@ export {
   showUsage,
 } from './info';
 export { handlePluginsCommand } from './plugins';
+export { handleGoalCommand, parseGoalCommand } from './goal';
+export { goalArgumentCompletions } from './registry';
 export {
   handleForkCommand,
   handleInitCommand,
   handleTitleCommand,
 } from './session';
+export { handleUndoCommand } from './undo';
 export {
   promptApiKey,
   promptCatalogProviderSelection,

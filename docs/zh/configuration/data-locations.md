@@ -12,7 +12,7 @@ Kimi Code CLI 将运行时数据集中存储在用户主目录下的 `~/.kimi-co
 export KIMI_CODE_HOME="$HOME/.config/kimi-code"
 ```
 
-设置后，配置、会话、日志、输入历史、更新缓存、OAuth 凭据等运行时数据都会落到该路径下。`KIMI_CODE_HOME` 与其他环境变量的完整说明见 [环境变量](./env-vars.md)。
+设置后，配置、会话、日志、输入历史、更新状态、OAuth 凭据等运行时数据都会落到该路径下。`KIMI_CODE_HOME` 与其他环境变量的完整说明见 [环境变量](./env-vars.md)。
 
 ::: tip 例外
 **内置工具缓存**（例如自动下载的 ripgrep 二进制）不走 `KIMI_CODE_HOME`，而是走 `KIMI_CODE_CACHE_DIR`；未设置时使用平台缓存目录——macOS 上是 `~/Library/Caches/kimi-code`，Linux 上是 `$XDG_CACHE_HOME/kimi-code`（缺省 `~/.cache/kimi-code`），Windows 上是 `%LOCALAPPDATA%\kimi-code`。
@@ -27,6 +27,7 @@ export KIMI_CODE_HOME="$HOME/.config/kimi-code"
 ```
 $KIMI_CODE_HOME  (默认 ~/.kimi-code)
 ├── config.toml             # 用户配置
+├── tui.toml                # 客户端偏好，包含自动更新设置
 ├── mcp.json                # 用户级 MCP server 声明（可选）
 ├── plugins/
 │   ├── installed.json      # 已安装 plugin 记录与能力状态
@@ -59,7 +60,9 @@ $KIMI_CODE_HOME  (默认 ~/.kimi-code)
 ├── logs/                   # 全局诊断日志
 │   └── kimi-code.log
 ├── updates/
-│   └── latest.json         # 更新检查状态
+│   ├── latest.json         # 更新检查状态
+│   ├── install.json        # 自动更新安装状态
+│   └── install.lock        # 自动更新启动锁（临时）
 └── user-history/
     └── <md5(workDir)>.jsonl
 ```
@@ -70,7 +73,9 @@ $KIMI_CODE_HOME  (默认 ~/.kimi-code)
 
 ## 配置文件
 
-`config.toml` 是 Kimi Code CLI 的主配置文件，存放供应商、模型、循环控制等用户级设置。详见 [配置文件](./config-files.md)。
+`config.toml` 是 Kimi Code CLI 的主运行时配置文件，存放供应商、模型、循环控制等用户级设置。详见 [配置文件](./config-files.md)。
+
+`tui.toml` 保存 `kimi` CLI 的客户端偏好，包括终端界面偏好和 `[upgrade].auto_install`。自动更新默认开启；可以在 `/settings` 中关闭，或手动设置 `auto_install = false`。
 
 `mcp.json` 是用户级 MCP server 声明，会与项目内的 `.kimi-code/mcp.json` 合并加载。字段与项目级文件相同，详见 [MCP](../customization/mcp.md)。
 
@@ -111,7 +116,7 @@ Kimi Code CLI 在首次需要 ripgrep 时会自动下载并缓存。下载过程
 
 如需报告 bug，优先使用 `kimi export` 导出相关会话（详见 [kimi 命令](../reference/kimi-command.md)）；如果会话日志存在，它会默认包含在导出包里。全局诊断日志默认也会打包；因为它可能包含其它会话或其它项目的事件，不想分享时使用 `--no-include-global-log` 排除。
 
-`updates/latest.json` 记录通过 npm 检查到的版本更新状态，由 CLI 自动维护，通常无需手动编辑。
+`updates/latest.json` 记录 CLI 检测到的最新版本。`updates/install.json` 保存正在进行的后台安装、后台安装失败后的重试状态，以及后台更新生效后的一次性成功提示。`updates/install.lock` 是一个临时原子锁，用于避免多个并发 session 同时启动重复的后台安装。这些文件都由 CLI 自动维护，通常无需手动编辑。
 
 ## 输入历史
 
@@ -128,10 +133,13 @@ Kimi Code CLI 在首次需要 ripgrep 时会自动下载并缓存。下载过程
 | 需求 | 操作 |
 | --- | --- |
 | 重置配置 | 删除 `~/.kimi-code/config.toml` |
+| 重置客户端偏好 | 删除 `~/.kimi-code/tui.toml` |
 | 清理所有会话 | 删除 `~/.kimi-code/sessions/` 与 `~/.kimi-code/session_index.jsonl` |
 | 清理诊断日志 | 删除 `~/.kimi-code/logs/` 目录 |
 | 清理输入历史 | 删除 `~/.kimi-code/user-history/` 目录 |
 | 重置更新检查状态 | 删除 `~/.kimi-code/updates/latest.json` |
+| 重置自动更新安装状态 | 删除 `~/.kimi-code/updates/install.json` |
+| 清理过期的自动更新启动锁 | 删除 `~/.kimi-code/updates/install.lock` |
 | 强制重新下载 ripgrep | 删除 `~/.kimi-code/bin/` 目录 |
 | 清除托管 Kimi / Open Platform OAuth 登录态 | 运行 `/logout`（仅清理当前供应商的 OAuth），或删除对应 `~/.kimi-code/credentials/<name>.json` |
 | 清除 MCP server OAuth 登录态 | 删除 `~/.kimi-code/credentials/mcp/` 目录；`/logout` **不会**清理 MCP 的 OAuth 凭据 |

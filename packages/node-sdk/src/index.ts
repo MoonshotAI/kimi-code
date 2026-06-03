@@ -1,6 +1,8 @@
 export { KimiHarness } from '#/kimi-harness';
 export { Session } from '#/session';
 export { KimiAuthFacade } from '#/auth';
+export { KimiForCodingProvider } from '#/kimi-code-model-provider';
+export type { KimiForCodingProviderOptions } from '#/kimi-code-model-provider';
 
 export {
   applyCatalogProvider,
@@ -43,6 +45,20 @@ export {
   resolveKimiHome,
 } from '@moonshot-ai/agent-core';
 export type { LogContext, LogLevel, LogPayload, Logger } from '@moonshot-ai/agent-core';
+
+// Goal completion message builder — single source of truth for the deterministic
+// "Goal complete · turns · tokens · time" text (live render + persisted message).
+export { buildGoalCompletionMessage } from '@moonshot-ai/agent-core';
+
+// Experimental feature flags — types only. Resolved values come from
+// `KimiHarness.getExperimentalFlags()` over RPC, not from a re-exported runtime value.
+export type {
+  ExperimentalFlagMap,
+  FlagDefinition,
+  FlagDefinitionInput,
+  FlagId,
+  FlagSurface,
+} from '@moonshot-ai/agent-core';
 
 export type {
   KimiAuthLoginResult,

@@ -507,6 +507,149 @@ describe('Agent context', () => {
     );
   });
 
+  it('undo only counts real user prompts, skipping background notifications', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.appendAssistantText(1, 'first response');
+    ctx.appendAssistantText(2, 'second response');
+
+    // Append a background task notification (role: 'user' but not a real prompt)
+    ctx.agent.context.appendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: 'background task completed' }],
+      toolCalls: [],
+      origin: {
+        kind: 'background_task',
+        taskId: 'bash-001',
+        status: 'completed',
+        notificationId: 'task:bash-001:completed',
+      },
+    });
+
+    expect(ctx.agent.context.history.map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+      'user',
+    ]);
+
+    ctx.agent.context.undo(1);
+
+    // Should remove the background notification, the second assistant, and the second user prompt
+    expect(ctx.agent.context.history.map((m) => m.role)).toEqual(['user', 'assistant']);
+  });
+
+  it('stops at compaction summary and records the requested undo count', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'old user message' }]);
+    ctx.agent.context.applyCompaction({
+      summary: 'summary of compacted context',
+      compactedCount: 1,
+      tokensBefore: 100,
+      tokensAfter: 20,
+    });
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'recent user message' }]);
+    ctx.agent.context.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'recent answer' }],
+      toolCalls: [],
+    });
+    ctx.newEvents();
+
+    expect(() => {
+      ctx.agent.context.undo(2);
+    }).toThrow('Nothing to undo in the active context.');
+
+    expect(ctx.agent.context.history).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        origin: { kind: 'compaction_summary' },
+        content: [{ type: 'text', text: 'summary of compacted context' }],
+      }),
+    ]);
+    expect(ctx.newEvents()).toContainEqual(
+      expect.objectContaining({
+        type: '[wire]',
+        event: 'context.undo',
+        args: expect.objectContaining({ count: 2 }),
+      }),
+    );
+  });
+
+  it('does not throw while restoring an undo that stops at compaction summary', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'old user message' }]);
+    ctx.agent.context.applyCompaction({
+      summary: 'summary of compacted context',
+      compactedCount: 1,
+      tokensBefore: 100,
+      tokensAfter: 20,
+    });
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'recent user message' }]);
+    ctx.agent.context.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'recent answer' }],
+      toolCalls: [],
+    });
+
+    expect(() => {
+      ctx.agent.records.restore({ type: 'context.undo', count: 2 });
+    }).not.toThrow();
+    expect(ctx.agent.context.history).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        origin: { kind: 'compaction_summary' },
+        content: [{ type: 'text', text: 'summary of compacted context' }],
+      }),
+    ]);
+  });
+
+  it('preserves injection messages when undo removes the surrounding turn', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('do the work', { kind: 'user' }),
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('Plan mode is active', {
+        kind: 'injection',
+        variant: 'plan_mode',
+      }),
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'work done' }],
+        toolCalls: [],
+      },
+    });
+
+    ctx.agent.context.undo(1);
+
+    expect(ctx.agent.context.history).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        origin: { kind: 'injection', variant: 'plan_mode' },
+      }),
+    ]);
+    expect(ctx.agent.replayBuilder.buildResult()).toEqual([
+      expect.objectContaining({
+        type: 'message',
+        message: expect.objectContaining({
+          origin: { kind: 'injection', variant: 'plan_mode' },
+        }),
+      }),
+    ]);
+  });
+
 });
 
 describe('Agent context notification projection', () => {

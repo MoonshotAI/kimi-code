@@ -5,8 +5,9 @@ import type {
   BeginCompactionPayload,
   CancelPayload,
   CancelPlanPayload,
+  CreateGoalPayload,
   EmptyPayload,
-  GetBackgroundOutputPathPayload,
+  GoalControlPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
   McpServerInfo,
@@ -23,12 +24,14 @@ import type {
   SkillSummary,
   SteerPayload,
   StopBackgroundPayload,
+  UndoHistoryPayload,
   UnregisterToolPayload,
   UpdateSessionMetadataPayload,
 } from '#/rpc';
 import type { PromisableMethods } from '#/utils/types';
 
 import type { Session, SessionMeta } from '.';
+import { flags } from '../flags';
 import {
   promptMetadataTextFromPayload,
   promptMetadataTextFromSkill,
@@ -55,11 +58,28 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
   }
 
   async updateSessionMetadata(payload: UpdateSessionMetadataPayload): Promise<void> {
+    // `metadata.custom.goal` is reserved for the goal lifecycle store. Generic
+    // metadata updates must neither overwrite an active goal nor write the goal
+    // field directly.
+    const reservedGoal = this.session.metadata.custom?.['goal'];
+    const patchCustom = (payload.metadata as Partial<SessionMeta> | undefined)?.custom;
+    if (patchCustom !== undefined && 'goal' in patchCustom) {
+      throw new KimiError(
+        ErrorCodes.GOAL_METADATA_RESERVED,
+        'metadata.custom.goal is reserved; use the goal lifecycle methods',
+      );
+    }
     this.session.metadata = {
       ...this.session.metadata,
       ...payload.metadata,
       agents: this.session.metadata.agents,
     };
+    if (reservedGoal !== undefined) {
+      this.session.metadata.custom = {
+        ...this.session.metadata.custom,
+        goal: reservedGoal,
+      };
+    }
     await this.session.writeMetadata();
   }
 
@@ -88,6 +108,50 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return this.session.generateAgentsMd();
   }
 
+  // --- Goal lifecycle (delegates to the session goal store) -------------
+
+  createGoal(payload: CreateGoalPayload) {
+    this.assertGoalCommandEnabled();
+    return this.session.goals.createGoal({ ...payload, actor: 'user' });
+  }
+
+  getGoal(_payload: EmptyPayload) {
+    this.assertGoalCommandEnabled();
+    return this.session.goals.getGoal();
+  }
+
+  pauseGoal(payload: GoalControlPayload) {
+    this.assertGoalCommandEnabled();
+    return this.session.goals.pauseGoal({ actor: 'user', reason: payload.reason });
+  }
+
+  resumeGoal(payload: GoalControlPayload) {
+    this.assertGoalCommandEnabled();
+    return this.session.goals.resumeGoal({ actor: 'user', reason: payload.reason });
+  }
+
+  async cancelGoal(payload: GoalControlPayload) {
+    this.assertGoalCommandEnabled();
+    const snapshot = await this.session.goals.cancelGoal({
+      actor: 'user',
+      reason: payload.reason,
+    });
+    this.session.agents.get('main')?.context.appendSystemReminder(
+      [
+        'The user cancelled the current goal.',
+        'Ignore earlier active-goal reminders for that goal.',
+        'Handle the next user request normally unless the user starts or resumes a goal.',
+      ].join(' '),
+      { kind: 'system_trigger', name: 'goal_cancelled' },
+    );
+    return snapshot;
+  }
+
+  private assertGoalCommandEnabled(): void {
+    if (flags.enabled('goal-command')) return;
+    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'Goal command is disabled');
+  }
+
   async prompt({ agentId, ...payload }: AgentScopedPayload<PromptPayload>) {
     if (agentId === 'main') {
       await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
@@ -101,6 +165,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   cancel({ agentId, ...payload }: AgentScopedPayload<CancelPayload>) {
     return this.getAgent(agentId).cancel(payload);
+  }
+
+  undoHistory({ agentId, ...payload }: AgentScopedPayload<UndoHistoryPayload>) {
+    return this.getAgent(agentId).undoHistory(payload);
   }
 
   setModel({ agentId, ...payload }: AgentScopedPayload<SetModelPayload>) {
@@ -168,13 +236,6 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   getBackgroundOutput({ agentId, ...payload }: AgentScopedPayload<GetBackgroundOutputPayload>) {
     return this.getAgent(agentId).getBackgroundOutput(payload);
-  }
-
-  getBackgroundOutputPath({
-    agentId,
-    ...payload
-  }: AgentScopedPayload<GetBackgroundOutputPathPayload>) {
-    return this.getAgent(agentId).getBackgroundOutputPath(payload);
   }
 
   getContext({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {

@@ -90,6 +90,8 @@ After stripping, each entry should be only:
 
 Upstream language rule: `gen-changesets` requires changelog entries to be English. If the upstream CLI changelog contains a non-English entry, stop and report it to the user. Do not silently rewrite it while syncing docs.
 
+Public-text rule: do not copy real internal endpoints, key names, account names, or service names into docs changelogs. Replace examples with neutral placeholders such as `example.com`, `example.test`, or `YOUR_API_KEY` while preserving the user-visible meaning.
+
 ### 3. Classify Entries
 
 The docs changelog uses five section types:
@@ -126,7 +128,13 @@ Within each version, section order is:
 Features → Bug Fixes → Polish → Refactors → Other
 ```
 
-Omit empty sections. Preserve upstream entry order within each section.
+Omit empty sections. Within each section, order entries by reader value, not upstream order:
+
+1. Put the most valuable, obvious, and larger changes first.
+2. Prefer broad user-visible features, workflow-changing fixes, high-frequency bugs, and large cross-cutting improvements over small polish, narrow edge cases, and internal cleanup.
+3. If entries have similar value, preserve upstream order.
+
+Do not reword or exaggerate entries just to make them look more important; only reorder existing entries.
 
 ### 4. Write The English Page
 
@@ -178,8 +186,8 @@ Chinese page requirements:
   - `### Polish` → `### 优化`
   - `### Refactors` → `### 重构`
   - `### Other` → `### 其他`
-- The Chinese page must mirror the English page 1:1 for versions, sections, section order, and entry counts.
-- Keep the classification from the English page. Do not reclassify while translating.
+- The Chinese page must mirror the English page 1:1 for versions, sections, section order, entry order, and entry counts.
+- Keep the classification and entry order from the English page. Do not reclassify or reorder while translating.
 - Translate only entry body text. Do not add entries that are not present in English.
 - Follow `docs/AGENTS.md` for Chinese typography: full-width punctuation, spaces between Chinese and English, and the glossary.
 
@@ -196,7 +204,9 @@ Check:
 - Versions and version counts match between English and Chinese.
 - Each version has the same section set and order on both pages.
 - Each section has the same number of entries on both pages.
+- Within each section, the most valuable, obvious, and larger entries appear before smaller or narrower entries.
 - PR links and commit hashes were stripped.
+- Real internal identifiers were replaced with neutral placeholders.
 - There are no empty sections.
 - Markdown indentation and blank lines are intact.
 
@@ -237,6 +247,7 @@ Do **not** create a changeset for changelog docs sync. Docs sync does not enter 
 | Guessing unclear entries as Features | Inspect commit/PR; if still unclear, use Other |
 | Treating any `Add ...` line as Features | If the entry only adds a small element to an existing UI/surface, use Polish |
 | Filing UX or performance tweaks under Other | Use Polish for user-visible improvements to existing functionality |
+| Preserving upstream order when a small entry hides a larger change | Reorder within the section so the highest-value, most obvious items appear first |
 | Reclassifying entries while translating | Chinese classification must mirror English |
 | Leaving empty sections | Delete sections with no entries |
 | Putting everything under Other for convenience | Classify what can be classified first |

@@ -7,6 +7,7 @@
 
 export type {
   AfterStepHook,
+  AfterStepResult,
   BeforeStepResult,
   BeforeStepHook,
   LoopHooks,
@@ -17,6 +18,7 @@ export type {
   LoopTerminalStepStopReason,
   LoopTurnStopReason,
   StopReason,
+  RecordStepUsageResult,
   ShouldContinueAfterStopHook,
   ShouldContinueAfterStopResult,
   LoopMessageBuilder,

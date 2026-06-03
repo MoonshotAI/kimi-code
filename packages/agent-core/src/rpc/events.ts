@@ -1,10 +1,11 @@
 import type { FinishReason, TokenUsage } from '@moonshot-ai/kosong';
 
-import type { PromptOrigin } from '../agent/context';
+import type { GoalChange, GoalSnapshot } from '../session/goal';
+import type { CronJobOrigin, PromptOrigin } from '../agent/context';
 import type { KimiErrorPayload } from '../errors';
 import type { PermissionMode } from '../agent/permission';
 import type { SkillSource } from '../skill';
-import type { BackgroundTaskInfo } from '../tools/background/manager';
+import type { BackgroundTaskInfo } from '../agent/background';
 import type { ToolInputDisplay } from '../tools/display';
 
 export type { ToolInputDisplay } from '../tools/display';
@@ -55,6 +56,18 @@ export interface SessionMetaUpdatedEvent {
   readonly type: 'session.meta.updated';
   readonly title?: string | undefined;
   readonly patch?: Record<string, unknown> | undefined;
+}
+
+export interface GoalUpdatedEvent {
+  readonly type: 'goal.updated';
+  /** Current goal snapshot, or `null` when no goal is set (cleared/cancelled). */
+  readonly snapshot: GoalSnapshot | null;
+  /**
+   * What changed, when the update is a lifecycle / verdict / terminal transition.
+   * Absent for snapshot-only refreshes (e.g. a turn increment). Drives transcript
+   * markers and the completion card.
+   */
+  readonly change?: GoalChange;
 }
 
 export interface SkillActivatedEvent {
@@ -239,14 +252,15 @@ export interface BackgroundTaskStartedEvent {
   readonly info: BackgroundTaskInfo;
 }
 
-export interface BackgroundTaskUpdatedEvent {
-  readonly type: 'background.task.updated';
-  readonly info: BackgroundTaskInfo;
-}
-
 export interface BackgroundTaskTerminatedEvent {
   readonly type: 'background.task.terminated';
   readonly info: BackgroundTaskInfo;
+}
+
+export interface CronFiredEvent {
+  readonly type: 'cron.fired';
+  readonly origin: CronJobOrigin;
+  readonly prompt: string;
 }
 
 export type ToolListUpdatedReason = 'mcp.connected' | 'mcp.disconnected' | 'mcp.failed';
@@ -275,6 +289,7 @@ export type AgentEvent =
   | WarningEvent
   | AgentStatusUpdatedEvent
   | SessionMetaUpdatedEvent
+  | GoalUpdatedEvent
   | SkillActivatedEvent
   | TurnStartedEvent
   | TurnEndedEvent
@@ -299,7 +314,7 @@ export type AgentEvent =
   | CompactionCancelledEvent
   | CompactionCompletedEvent
   | BackgroundTaskStartedEvent
-  | BackgroundTaskUpdatedEvent
-  | BackgroundTaskTerminatedEvent;
+  | BackgroundTaskTerminatedEvent
+  | CronFiredEvent;
 
 export type Event = AgentEvent & { agentId: string; sessionId: string };

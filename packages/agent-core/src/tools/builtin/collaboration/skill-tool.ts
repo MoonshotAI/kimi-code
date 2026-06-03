@@ -21,6 +21,7 @@ import type { BuiltinTool } from '../../../agent/tool';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { isInlineSkillType, type SkillDefinition } from '../../../skill';
 import { renderPrompt } from '../../../utils/render-prompt';
+import { escapeXml } from '../../../utils/xml-escape';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { matchesGlobRuleSubject } from '../../support/rule-match';
 import skillDescriptionTemplate from './skill-tool.md';
@@ -161,12 +162,4 @@ function skillOrigin(
     skillPath: skill.path,
     skillSource: skill.source,
   };
-}
-
-function escapeXml(input: string): string {
-  return input
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
 }

@@ -92,10 +92,12 @@ export interface TestAgentOptions {
   readonly kaos?: Kaos | undefined;
   readonly runtime?: ToolServices | undefined;
   readonly compactionStrategy?: CompactionStrategy | undefined;
+  readonly microCompaction?: AgentOptions['microCompaction'];
   readonly generate?: GenerateFn | undefined;
   readonly hookEngine?: AgentOptions['hookEngine'];
   readonly type?: AgentOptions['type'];
   readonly permission?: AgentOptions['permission'];
+  readonly goals?: AgentOptions['goals'];
   readonly providerManager?: ProviderManager;
   readonly initialConfig?: KimiConfig;
   readonly providerManagerOverrides?: Omit<ConstructorParameters<typeof ProviderManager>[0], 'config'>;
@@ -103,6 +105,7 @@ export interface TestAgentOptions {
   readonly subagentHost?: AgentOptions['subagentHost'];
   readonly onEvent?: ((event: AgentRecord) => AgentRecord | undefined) | undefined;
   readonly persistence?: AgentRecordPersistence | undefined;
+  readonly homedir?: AgentOptions['homedir'];
   readonly telemetry?: TelemetryClient | undefined;
   readonly log?: Logger;
 }
@@ -179,11 +182,14 @@ export class AgentTestContext {
       toolServices,
       config: this.kimiConfig,
       rpc: this.createRpcProxy(),
+      homedir: options.homedir,
       persistence,
       generate: options.generate ?? this.scriptedGenerate.generate,
       compactionStrategy: options.compactionStrategy,
+      microCompaction: options.microCompaction,
       modelProvider: providerManager,
       subagentHost: options.subagentHost,
+      goals: options.goals,
       type: options.type,
       permission: options.permission,
       hookEngine: options.hookEngine,
@@ -736,6 +742,7 @@ export class AgentTestContext {
       providerManagerOverrides: this.options.providerManagerOverrides,
       generate: failOnResumeGenerate,
       compactionStrategy: this.options.compactionStrategy,
+      microCompaction: this.options.microCompaction,
       persistence: new InMemoryAgentRecordPersistence(
         withMetadata(this.recordHistory.map(cloneRecord)),
       ),
@@ -995,7 +1002,7 @@ function resumeStateSnapshot(agent: Agent): ResumeStateSnapshot {
   };
 }
 
-function resumeContextSnapshot(agent: Agent): ReturnType<Agent['context']['data']> {
+function resumeContextSnapshot(agent: Agent) {
   const context = agent.context.data();
   return {
     ...context,

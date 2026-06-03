@@ -1,8 +1,8 @@
 /**
- * TUI-owned configuration.
+ * Client-owned preferences.
  *
- * Agent/runtime settings live in core's `config.toml`; this file owns only
- * terminal UI preferences for the kimi-code client.
+ * Agent/runtime settings live in core's `config.toml`; this file owns
+ * kimi-code client preferences such as terminal UI and update behavior.
  */
 
 import { existsSync } from 'node:fs';
@@ -26,6 +26,10 @@ export const NotificationsConfigSchema = z.object({
   condition: NotificationConditionSchema,
 });
 
+export const UpgradePreferencesSchema = z.object({
+  autoInstall: z.boolean(),
+});
+
 export const TuiConfigFileSchema = z.object({
   theme: TuiThemeSchema.optional(),
   editor: z
@@ -39,27 +43,39 @@ export const TuiConfigFileSchema = z.object({
       notification_condition: NotificationConditionSchema.optional(),
     })
     .optional(),
+  upgrade: z
+    .object({
+      auto_install: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export const TuiConfigSchema = z.object({
   theme: TuiThemeSchema,
   editorCommand: z.string().nullable(),
   notifications: NotificationsConfigSchema,
+  upgrade: UpgradePreferencesSchema,
 });
 
 export type TuiConfigFileShape = z.infer<typeof TuiConfigFileSchema>;
 export type TuiConfig = z.infer<typeof TuiConfigSchema>;
 export type NotificationsConfig = z.infer<typeof NotificationsConfigSchema>;
+export type UpgradePreferences = z.infer<typeof UpgradePreferencesSchema>;
 
 export const DEFAULT_NOTIFICATIONS_CONFIG: NotificationsConfig = {
   enabled: true,
   condition: 'unfocused',
 };
 
+export const DEFAULT_UPGRADE_PREFERENCES: UpgradePreferences = {
+  autoInstall: true,
+};
+
 export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   theme: 'auto',
   editorCommand: null,
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
+  upgrade: DEFAULT_UPGRADE_PREFERENCES,
 });
 
 /**
@@ -122,12 +138,15 @@ export function normalizeTuiConfig(config: TuiConfigFileShape): TuiConfig {
       condition:
         config.notifications?.notification_condition ?? DEFAULT_NOTIFICATIONS_CONFIG.condition,
     },
+    upgrade: {
+      autoInstall: config.upgrade?.auto_install ?? DEFAULT_UPGRADE_PREFERENCES.autoInstall,
+    },
   });
 }
 
 export function renderTuiConfig(config: TuiConfig): string {
   return `# ~/.kimi-code/tui.toml
-# Terminal UI preferences for kimi-code.
+# Client preferences for kimi-code.
 # Agent/runtime settings stay in ~/.kimi-code/config.toml.
 
 theme = "${config.theme}" # "auto" | "dark" | "light"
@@ -138,6 +157,9 @@ command = "${escapeTomlBasicString(config.editorCommand ?? '')}" # Empty uses $V
 [notifications]
 enabled = ${String(config.notifications.enabled)} # true | false
 notification_condition = "${config.notifications.condition}" # "unfocused" | "always"
+
+[upgrade]
+auto_install = ${String(config.upgrade.autoInstall)} # true | false
 `;
 }
 

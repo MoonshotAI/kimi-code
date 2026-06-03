@@ -13,8 +13,10 @@ import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { collectGitContext } from '../../src/session/git-context';
 import { SessionSubagentHost } from '../../src/session/subagent-host';
-import { testAgent } from '../agent/harness/agent';
+import { abortError, userCancellationReason } from '../../src/utils/abort';
+import { testAgent, type AgentTestContext } from '../agent/harness/agent';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
+import { executeTool } from '../tools/fixtures/execute-tool';
 
 // Git context collection is exercised in git-context.test.ts; here it is
 // mocked so subagent-host tests stay deterministic and assert only the
@@ -222,6 +224,62 @@ describe('SessionSubagentHost', () => {
     ]);
   });
 
+  it('inherits active parent user tools when spawning a subagent', async () => {
+    const parent = testAgent();
+    parent.configure();
+    await parent.rpc.registerTool(lookupToolRegistration());
+    parent.newEvents();
+
+    const summary =
+      'Investigated the delegated task thoroughly, used the inherited custom lookup surface where appropriate, and returned a detailed summary that lets the parent agent continue without repeating the work. '.repeat(
+        2,
+      );
+    const child = testAgent();
+    child.mockNextResponse({
+      type: 'text',
+      text: summary,
+    });
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await host.spawn('coder', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Use the available lookup tool',
+      description: 'Use lookup',
+      runInBackground: false,
+      signal,
+    });
+
+    await expect(handle.completion).resolves.toMatchObject({
+      result: summary.trim(),
+    });
+    expect(child.llmCalls[0]?.tools.map((tool) => tool.name)).toContain('Lookup');
+    expect(child.agent.tools.data()).toContainEqual({
+      name: 'Lookup',
+      description: 'Look up a short test value.',
+      active: true,
+      source: 'user',
+    });
+
+    const lookupTool = child.agent.tools.loopTools.find((tool) => tool.name === 'Lookup');
+    expect(lookupTool).toBeDefined();
+
+    const execution = executeTool(lookupTool!, {
+      turnId: '0',
+      toolCallId: 'call_lookup',
+      args: { query: 'moon' },
+      signal,
+    });
+    const routedTo = await Promise.race([
+      child.untilToolCall({ output: 'moon-result' }).then(() => 'child'),
+      parent.untilToolCall({ output: 'moon-result' }).then(() => 'parent'),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 50)),
+    ]);
+
+    expect(routedTo).toBe('child');
+    await expect(execution).resolves.toMatchObject({ output: 'moon-result' });
+  });
+
   it('falls back to bundled subagent profiles when the parent profile is missing', async () => {
     const parent = testAgent();
     parent.configure();
@@ -358,6 +416,69 @@ describe('SessionSubagentHost', () => {
         args: expect.objectContaining({ turnId: 0 }),
       }),
     );
+  });
+
+  it("tells a cancelled subagent's in-flight tools the user interrupted them", async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.newEvents();
+
+    const controller = new AbortController();
+    const child = testAgent();
+    child.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await host.spawn('explore', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Keep working',
+      description: 'Long task',
+      runInBackground: false,
+      signal: controller.signal,
+    });
+
+    await child.untilApprovalRequest();
+    // The parent turn signal aborts with a user-cancellation reason; linkAbortSignal
+    // forwards it to the child exactly as Turn.cancel does on a real ESC.
+    controller.abort(userCancellationReason());
+    await expect(handle.completion).rejects.toThrow();
+    await child.untilTurnEnd();
+
+    const output = childBashToolResultOutput(child);
+    expect(output).toContain('manually interrupted');
+    expect(output).toContain('not a system error');
+  });
+
+  it('does not mislabel a non-user subagent abort (e.g. a deadline) as a user interruption', async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.newEvents();
+
+    const controller = new AbortController();
+    const child = testAgent();
+    child.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await host.spawn('explore', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Keep working',
+      description: 'Long task',
+      runInBackground: false,
+      signal: controller.signal,
+    });
+
+    await child.untilApprovalRequest();
+    // A generic (non-user) abort — e.g. a foreground subagent's deadline timeout
+    // propagating through waitForCurrentTurn — must NOT be reported to the
+    // child's tools as a deliberate user interruption.
+    controller.abort(abortError());
+    await expect(handle.completion).rejects.toThrow();
+    await child.untilTurnEnd();
+
+    const output = childBashToolResultOutput(child);
+    expect(output).toBe('Tool "Bash" was aborted');
+    expect(output).not.toContain('manually interrupted');
   });
 
   it('cancelAll leaves background children running until their task signal aborts', async () => {
@@ -1020,6 +1141,21 @@ function contextProfile(): ResolvedAgentProfile {
   };
 }
 
+function lookupToolRegistration() {
+  return {
+    name: 'Lookup',
+    description: 'Look up a short test value.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  };
+}
+
 function profile(input: {
   readonly name: string;
   readonly tools: readonly string[];
@@ -1066,6 +1202,22 @@ async function writeWire(homedir: string, records: readonly Record<string, unkno
         ];
   const text = wireRecords.map((record) => JSON.stringify(record)).join('\n');
   await writeFile(join(homedir, 'wire.jsonl'), text.length === 0 ? '' : `${text}\n`, 'utf-8');
+}
+
+function childBashToolResultOutput(child: AgentTestContext): string | undefined {
+  for (const entry of child.allEvents) {
+    if (entry.type !== '[wire]' || entry.event !== 'context.append_loop_event') continue;
+    const loopEvent = (
+      entry.args as {
+        event?: { type?: string; toolCallId?: string; result?: { output?: unknown } };
+      }
+    ).event;
+    if (loopEvent?.type === 'tool.result' && loopEvent.toolCallId === 'call_bash') {
+      const output = loopEvent.result?.output;
+      return typeof output === 'string' ? output : undefined;
+    }
+  }
+  return undefined;
 }
 
 function bashCall(): ToolCall {

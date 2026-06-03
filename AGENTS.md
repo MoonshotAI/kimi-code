@@ -29,6 +29,13 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 - **pnpm**: `10.33.0` (from the root `package.json` `packageManager`).
 - `pnpm install` will fail when the Node version is not satisfied, because `.npmrc` sets `engine-strict=true`.
 
+## Monorepo Workspace Maintenance
+
+- `pnpm-workspace.yaml` is the source of truth for workspace membership, but `flake.nix` also contains **hardcoded** `workspacePaths` and `workspaceNames` lists.
+- **Whenever you add or remove a workspace package, you MUST update both `pnpm-workspace.yaml` and `flake.nix`.**
+  - Missing a path in `flake.nix`'s `workspacePaths` will silently drop files from the Nix build's `src` fileset.
+  - Missing a name in `flake.nix`'s `workspaceNames` will break `pnpmConfigHook` because dependencies for that workspace will not be fetched.
+
 ## General Coding Rules
 
 - For optional object properties, pass `undefined` directly instead of using conditional spread.
@@ -44,6 +51,10 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 - When a test fails because of a user modification, default to fixing the test first; do not change the implementation to satisfy an old test unless the implementation truly has a bug.
 - Do not sacrifice code quality for external compatibility unless the user explicitly asks for it. Breaking changes go through changesets and a `major` bump, gated by the rule below.
 
+## Experimental Features
+
+- Gate a not-yet-public feature behind an experimental flag. Add the flag to the registry at `packages/agent-core/src/flags/registry.ts`, then check it with `flags.enabled('my-feature')`. Flags are env-driven and default off: `KIMI_CODE_EXPERIMENTAL_<NAME>` toggles one, `KIMI_CODE_EXPERIMENTAL_FLAG` enables all. Release by flipping the entry's `default` to `true`.
+
 ## Where to Update Instructions
 
 - Hard rules that affect almost every task: update the root `AGENTS.md`.
@@ -54,6 +65,7 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 
 - Prefer `rg` / `rg --files` when reading code.
 - When designing changes, follow existing boundaries and local patterns first.
+- In public text and test data, replace real internal identifiers with neutral placeholders such as `example.com`, `example.test`, and `YOUR_API_KEY`. Before opening a PR, ask a read-only agent to audit the diff for context-specific internal identifiers.
 - When creating a PR, the PR title must follow Conventional Commit style, e.g. `chore: remove legacy format commands`.
 - When an AI agent opens or updates a PR, fill in `.github/pull_request_template.md` — link the related issue or explain the problem, then describe what changed. Do not leave placeholder text or submit a generic summary of the diff.
 - Do not submit vague AI-generated PR text. The human author must understand the change well enough to explain the code, edge cases, and why the approach fits this repository.

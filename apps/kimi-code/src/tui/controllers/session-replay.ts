@@ -116,12 +116,13 @@ export class SessionReplayRenderer {
    */
   private applyTerminalBackgroundAgentStatuses(agent: ResumedAgentState): void {
     for (const info of agent.background) {
-      if (!info.taskId.startsWith('agent-')) continue;
+      if (info.kind !== 'agent') continue;
       if (!isTerminalBackgroundTask(info)) continue;
       const status = info.status;
       if (
         status !== 'completed' &&
         status !== 'failed' &&
+        status !== 'timed_out' &&
         status !== 'killed' &&
         status !== 'lost'
       ) {
@@ -234,10 +235,20 @@ export class SessionReplayRenderer {
     if (message.origin?.kind === 'injection') {
       return;
     }
-    // WHY: cron fires are not user turns (see isReplayUserTurnRecord); skip
-    // visual render and turn advance so the raw <cron-fire ...> envelope never
-    // surfaces in the resumed transcript.
-    if (message.origin?.kind === 'cron_job' || message.origin?.kind === 'cron_missed') {
+    if (message.origin?.kind === 'cron_job') {
+      this.renderCronJob(context, message);
+      return;
+    }
+    if (message.origin?.kind === 'cron_missed') {
+      this.renderCronMissed(context, message);
+      return;
+    }
+    const goalCompletion = goalCompletionFromSystemReminder(message);
+    if (goalCompletion !== null) {
+      this.flushAssistant(context);
+      this.host.appendTranscriptEntry(
+        replayEntry(context, 'assistant', goalCompletion, 'markdown'),
+      );
       return;
     }
 
@@ -343,6 +354,7 @@ export class SessionReplayRenderer {
       skillActivationId: skill.activationId,
       skillName: skill.skillName,
       skillArgs: skill.skillArgs,
+      skillTrigger: skill.trigger,
     });
   }
 
@@ -361,6 +373,37 @@ export class SessionReplayRenderer {
         'markdown',
       ),
     );
+  }
+
+  private renderCronJob(context: ReplayRenderContext, message: ContextMessage): void {
+    if (message.origin?.kind !== 'cron_job') return;
+    this.flushAssistant(context);
+    this.host.appendTranscriptEntry({
+      ...replayEntry(
+        context,
+        'cron',
+        extractCronPrompt(contentPartsToText(message.content)),
+        'plain',
+      ),
+      cronData: {
+        jobId: message.origin.jobId,
+        cron: message.origin.cron,
+        recurring: message.origin.recurring,
+        coalescedCount: message.origin.coalescedCount,
+        stale: message.origin.stale,
+      },
+    });
+  }
+
+  private renderCronMissed(context: ReplayRenderContext, message: ContextMessage): void {
+    if (message.origin?.kind !== 'cron_missed') return;
+    this.flushAssistant(context);
+    this.host.appendTranscriptEntry({
+      ...replayEntry(context, 'cron', stripCronEnvelope(contentPartsToText(message.content)), 'plain'),
+      cronData: {
+        missedCount: message.origin.count,
+      },
+    });
   }
 
   private renderPermissionUpdate(context: ReplayRenderContext, mode: PermissionMode): void {
@@ -463,7 +506,7 @@ export class SessionReplayRenderer {
   ): void {
     const { sessionEventHandler } = this.host;
     const task = sessionEventHandler.backgroundTasks.get(origin.taskId);
-    if (task !== undefined && task.taskId.startsWith('bash-')) {
+    if (task !== undefined && task.kind !== 'agent') {
       const status = formatBackgroundTaskTranscript({ ...task, status: origin.status });
       this.host.appendTranscriptEntry({
         ...replayEntry(context, 'status', status.headline, 'plain'),
@@ -493,6 +536,11 @@ export class SessionReplayRenderer {
         ...status,
         headline: status.headline.replace(' failed in background', ' stopped'),
       };
+    } else if (origin.status === 'timed_out') {
+      status = {
+        ...status,
+        headline: status.headline.replace(' failed in background', ' timed out'),
+      };
     }
     this.host.appendTranscriptEntry({
       ...replayEntry(context, 'status', status.headline, 'plain'),
@@ -501,4 +549,36 @@ export class SessionReplayRenderer {
     });
     sessionEventHandler.backgroundAgentMetadata.delete(meta.agentId);
   }
+}
+
+function goalCompletionFromSystemReminder(message: ContextMessage): string | null {
+  if (message.origin?.kind !== 'system_trigger' || message.origin.name !== 'goal_completion') {
+    return null;
+  }
+  const text = contentPartsToText(message.content);
+  const match = /^<system-reminder>\n([\s\S]*)\n<\/system-reminder>$/.exec(text);
+  return match?.[1] ?? text;
+}
+
+function extractCronPrompt(text: string): string {
+  const open = '<prompt>\n';
+  const close = '\n</prompt>';
+  const start = text.indexOf(open);
+  const end = text.lastIndexOf(close);
+  if (start >= 0 && end >= start + open.length) {
+    return text.slice(start + open.length, end);
+  }
+  return stripCronEnvelope(text);
+}
+
+function stripCronEnvelope(text: string): string {
+  const lines = text.split('\n');
+  if (
+    lines.length >= 2 &&
+    lines[0]?.startsWith('<cron-fire ') &&
+    lines.at(-1) === '</cron-fire>'
+  ) {
+    return lines.slice(1, -1).join('\n');
+  }
+  return text;
 }

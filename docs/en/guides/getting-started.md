@@ -60,7 +60,13 @@ After installation, verify that the executable is ready:
 kimi --version
 ```
 
-**Upgrade**: if you installed via the script, re-run it. If you installed via npm:
+**Upgrade**: run `kimi upgrade` to let the CLI check the latest version and show the update prompt:
+
+```sh
+kimi upgrade
+```
+
+Choose `Install update now` to upgrade through the detected installation source, or continue with the current version. If the current installation cannot be upgraded automatically, the command prints the manual command to run. You can also upgrade directly with your package manager. For npm:
 
 ```sh
 npm install -g @moonshot-ai/kimi-code@latest
@@ -101,8 +107,8 @@ On the first launch, Kimi Code CLI has no credentials yet, and you need to confi
 
 `/login` opens a platform selector supporting:
 
-- **Kimi Code** — OAuth device code flow; open the URL on any device, sign in, and enter the code to authorize
-- **Moonshot AI Open Platform** — log in directly with an API key
+- **Kimi Code (OAuth)** — device code flow; open the URL on any device, sign in, and enter the code to authorize
+- **Kimi Platform API key** — enter an API key from `platform.kimi.com` or `platform.kimi.ai`
 
 To sign out, enter `/logout` to clear the current credentials.
 

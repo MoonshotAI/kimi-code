@@ -3,7 +3,7 @@
 Kimi Code CLI uses environment variables to override default paths, switch OAuth endpoints, and adjust runtime behavior. Most variables are read when the `kimi` process starts up; a few (such as the telemetry switch, the OAuth lock, and diagnostic logging) are read when the relevant subsystem initializes. Kimi's own variables use the `KIMI_*` prefix; in addition, the CLI also reads a number of standard system variables.
 
 ::: warning Note
-**Provider credentials are not in this list**: key variables such as `KIMI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GOOGLE_API_KEY` are **not** read automatically from `process.env`. They must be written into the `[providers.<name>]` section of `config.toml` (as `api_key` / `base_url`) or into the `[providers.<name>.env]` subtable; merely `export`ing them in your shell will not give a provider credentials automatically. See [Configuration overrides](./overrides.md#provider-credentials) and [Providers](./providers.md) for details.
+**Provider credentials are not in this list**: key variables such as `KIMI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GOOGLE_API_KEY` are **not** read automatically from `process.env`. They must be written into the `[providers.<name>]` section of `config.toml` (as `api_key` / `base_url`) or into the `[providers.<name>.env]` subtable; merely `export`ing them in your shell will not give a provider credentials automatically. See [Configuration overrides](./overrides.md#provider-credentials) and [Providers](./providers.md) for details. **Exception:** the `KIMI_MODEL_*` variables are an explicit channel that *does* read a model and its credentials from the shell — see [Define a model from environment variables](#define-a-model-from-environment-variables-kimi-model).
 :::
 
 ## Core paths
@@ -67,6 +67,39 @@ When neither `KIMI_CODE_OAUTH_HOST` nor `KIMI_OAUTH_HOST` is set, the OAuth auth
 `KIMI_CODE_BASE_URL` and the `KIMI_BASE_URL` from the previous section are two different variables: the former targets the OAuth-logged-in hosted service and defaults to `kimi.com`; the latter targets providers that use a Kimi API key directly and defaults to `moonshot.ai`. Distinguish them by use case.
 :::
 
+## Define a model from environment variables (`KIMI_MODEL_*`)
+
+For testing you can make Kimi Code use a specific model **without editing `config.toml` at all**. When `KIMI_MODEL_NAME` is set, the CLI synthesizes one provider and one model alias from the `KIMI_MODEL_*` variables — in memory only, nothing is written back to `config.toml` — and selects it as the default model. These variables take priority over `default_model` in `config.toml`; a `-m <alias>` flag still wins for that launch.
+
+| Environment variable | Required | Purpose | Default |
+| --- | --- | --- | --- |
+| `KIMI_MODEL_NAME` | Yes (also the enable switch) | Model id sent to the API | — |
+| `KIMI_MODEL_API_KEY` | Yes | API key | — |
+| `KIMI_MODEL_PROVIDER_TYPE` | No | Provider type; one of `kimi`, `anthropic`, `openai` | `kimi` |
+| `KIMI_MODEL_BASE_URL` | No | API base URL | `kimi` → `https://api.moonshot.ai/v1`; `openai` → `https://api.openai.com/v1`; `anthropic` → SDK default |
+| `KIMI_MODEL_MAX_CONTEXT_SIZE` | No | Max context length in tokens (positive integer) | `262144` (256K) |
+| `KIMI_MODEL_CAPABILITIES` | No | Comma-separated capability tags (e.g. `image_in,thinking`); unioned with auto-detected capabilities | `image_in,thinking` |
+| `KIMI_MODEL_DISPLAY_NAME` | No | Name shown in `/model` | Falls back to `KIMI_MODEL_NAME` |
+| `KIMI_MODEL_MAX_OUTPUT_SIZE` | No | Per-request output cap (`anthropic` only) | Per-model default |
+| `KIMI_MODEL_REASONING_KEY` | No | Reasoning field-name override (`openai` only) | Auto-detected |
+| `KIMI_MODEL_DEFAULT_THINKING` | No | Default Thinking toggle for new sessions | Unset follows the global default (Thinking on) |
+| `KIMI_MODEL_THINKING_MODE` | No | Thinking trigger policy; `auto`/`on`/`off` | — |
+| `KIMI_MODEL_THINKING_EFFORT` | No | Thinking effort (e.g. `low`/`medium`/`high`/`xhigh`/`max`; available levels depend on the provider) | — |
+| `KIMI_MODEL_ADAPTIVE_THINKING` | No | Force adaptive thinking (`thinking: { type: 'adaptive' }`) on or off, overriding the model-name version inference (`anthropic` only) | Inferred from the model name (Claude ≥ 4.6 uses adaptive) |
+
+The synthesized entries use the reserved keys `__kimi_env__` (provider) and `__kimi_env_model__` (model alias). When `KIMI_MODEL_NAME` is set but a required variable is missing or invalid, startup fails with a clear error.
+
+Set `KIMI_MODEL_ADAPTIVE_THINKING=true` when a custom-named Anthropic-compatible endpoint backs a model that supports adaptive thinking but whose model name does not encode a parseable Claude version (so the automatic inference would otherwise fall back to budget-based thinking). Forcing it on for an endpoint that does **not** support adaptive thinking makes the API reject the request, so leave it unset unless you know the backing model supports it.
+
+```sh
+export KIMI_MODEL_NAME="kimi-for-coding"
+export KIMI_MODEL_BASE_URL="https://api.example.com/v1"
+export KIMI_MODEL_API_KEY="YOUR_API_KEY"
+export KIMI_MODEL_MAX_CONTEXT_SIZE="262144"
+export KIMI_MODEL_CAPABILITIES="image_in,thinking"
+kimi
+```
+
 ## Runtime switches
 
 | Environment variable | Purpose | Valid values / Default |
@@ -85,6 +118,21 @@ export KIMI_DISABLE_TELEMETRY="1"
 ```
 
 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` has higher priority than `config.toml`. For example, running `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT=0 kimi -p "..."` temporarily requests stopping background tasks before this process exits, even if the config file sets `keep_alive_on_exit = true`.
+
+## Experimental feature flags
+
+Experimental features are gated behind `KIMI_CODE_EXPERIMENTAL_*` environment variables and are **off by default**. Each flag accepts truthy values (`1`, `true`, `yes`, `on`); the master switch `KIMI_CODE_EXPERIMENTAL_FLAG` forces every experimental feature on. These flags are not read from `config.toml`.
+
+| Environment variable | Purpose | Default |
+| --- | --- | --- |
+| `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND` | Enable the `/goal` command and autonomous goal mode. Kimi Code works toward a stated objective across automatic continuation turns until the goal completes, pauses, or becomes blocked. Stop conditions should be written in the objective, for example "stop after 20 turns if still blocked". See [Slash commands: autonomous goals](../reference/slash-commands.md#autonomous-goals). | `false` (off) |
+| `KIMI_CODE_EXPERIMENTAL_FLAG` | Master switch: force every experimental flag on | `false` (off) |
+
+```sh
+# Try goal mode for a single launch
+KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
+```
+
 ## Diagnostic logging
 
 The variables below control `kimi`'s diagnostic logs. Logs are written to two locations: the global diagnostic log at `$KIMI_CODE_HOME/logs/kimi-code.log`, and each session's own diagnostic log at `<sessionDir>/logs/kimi-code.log` (see [Data locations](./data-locations.md#logs-and-update-state) for path details). All of these variables are read only once at process startup.

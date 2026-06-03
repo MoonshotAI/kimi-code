@@ -25,6 +25,7 @@ import {
 } from '../../src/utils/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
+import { SessionGoalStore, type SessionGoalState } from '../../src/session/goal';
 import { createCommandKaos, testAgent, type TestAgentOptions } from './harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
 
@@ -253,7 +254,7 @@ describe('Agent turn flow', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello without login' }] });
 
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
-      [wire] metadata                 { "protocol_version": "1.3", "created_at": "<time>" }
+      [wire] metadata                 { "protocol_version": "<protocol-version>", "created_at": "<time>" }
       [wire] turn.prompt              { "input": [ { "type": "text", "text": "Hello without login" } ], "origin": { "kind": "user" }, "time": "<time>" }
       [emit] turn.started             { "turnId": 0, "origin": { "kind": "user" } }
       [wire] context.append_message   { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello without login" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
@@ -1057,6 +1058,17 @@ describe('Agent turn flow', () => {
       statusCode: 422,
     },
     {
+      name: 'context overflow token count status',
+      createError: () =>
+        new APIStatusError(
+          400,
+          'input token count 131072 exceeds the maximum number of tokens allowed',
+          'req-token-count',
+        ),
+      errorType: 'context_overflow',
+      statusCode: 400,
+    },
+    {
       name: 'connection error',
       createError: () => new APIConnectionError('socket hang up'),
       errorType: 'network',
@@ -1250,8 +1262,8 @@ describe('Agent turn flow', () => {
       [wire] turn.cancel                 { "turnId": 0, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "tool.call", "uuid": "call_bash", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf should-not-run", "timeout": 60 }, "description": "Running: printf should-not-run", "display": { "kind": "command", "command": "printf should-not-run", "cwd": "<cwd>", "language": "bash" } }, "time": "<time>" }
       [emit] tool.call.started           { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf should-not-run", "timeout": 60 }, "description": "Running: printf should-not-run", "display": { "kind": "command", "command": "printf should-not-run", "cwd": "<cwd>", "language": "bash" } }
-      [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "Tool \\"Bash\\" was aborted", "isError": true } }, "time": "<time>" }
-      [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "Tool \\"Bash\\" was aborted", "isError": true }
+      [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true } }, "time": "<time>" }
+      [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true }
       [emit] turn.step.interrupted       { "turnId": 0, "step": 1, "reason": "aborted" }
       [emit] turn.ended                  { "turnId": 0, "reason": "cancelled" }
     `);
@@ -1379,8 +1391,8 @@ describe('Agent turn flow', () => {
       [wire] turn.cancel                 { "turnId": 0, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "tool.call", "uuid": "call_bash", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf should-not-run", "timeout": 60 }, "description": "Running: printf should-not-run", "display": { "kind": "command", "command": "printf should-not-run", "cwd": "<cwd>", "language": "bash" } }, "time": "<time>" }
       [emit] tool.call.started           { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf should-not-run", "timeout": 60 }, "description": "Running: printf should-not-run", "display": { "kind": "command", "command": "printf should-not-run", "cwd": "<cwd>", "language": "bash" } }
-      [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "Tool \\"Bash\\" was aborted", "isError": true } }, "time": "<time>" }
-      [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "Tool \\"Bash\\" was aborted", "isError": true }
+      [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true } }, "time": "<time>" }
+      [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true }
       [emit] turn.step.interrupted       { "turnId": 0, "step": 1, "reason": "aborted" }
       [emit] turn.ended                  { "turnId": 0, "reason": "cancelled" }
     `);

@@ -4,7 +4,7 @@ Kimi Code CLI runs as an interactive TUI with an input box, conversation view, a
 
 ## Input box basics
 
-The input box accepts free-form text; pressing `Enter` sends, and `Shift-Enter` inserts a line break. When the input box is empty, press `↑` / `↓` to browse history for the current directory.
+The input box accepts free-form text; pressing `Enter` sends, and `Shift-Enter` or `Ctrl-J` inserts a line break. When the input box is empty, press `↑` / `↓` to browse history for the current directory.
 
 Press `Ctrl-D` twice to exit the CLI. `Ctrl-C` interrupts the current turn while streaming; press it twice in the idle state to exit. `Esc` closes dialogs and also interrupts a turn while streaming.
 

@@ -18,44 +18,33 @@ import { arch, homedir, hostname, release, type } from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 
-const VERSION = '3.0.0';
+const VERSION = '3.1.1';
 const API_URL = process.env.KIMI_DATASOURCE_API_URL ?? 'https://api.kimi.com/coding/v1/tools';
 const REQUEST_TIMEOUT_MS = 30_000;
 const PROTOCOL_VERSION = '2025-06-18';
-const VALID_STOCK_QUERY_TYPES = new Set([
-  'realtime_price',
-  'realtime_tech',
-  'open_summary',
-  'close_summary',
-]);
 
 const TOOLS = [
   {
-    name: 'query_stock',
+    name: 'call_data_source_tool',
     description:
-      'Query realtime stock price, realtime technical indicators, open summaries, or close summaries for up to 3 tickers.',
+      "Dispatch a call to any registered data source's API via the Kimi Code gateway. Always call get_data_source_desc(name) first to learn that source's available APIs and required params, then construct this call with api_name and params taken from that description.",
     inputSchema: {
       type: 'object',
       properties: {
-        ticker: {
+        data_source_name: {
           type: 'string',
-          description: 'Ticker code list separated by commas, for example 600519.SH or 0700.HK.',
+          description: 'Data source name returned or documented by get_data_source_desc.',
         },
-        type: {
+        api_name: {
           type: 'string',
-          enum: ['realtime_price', 'realtime_tech', 'open_summary', 'close_summary'],
-          description: 'Realtime stock query type.',
+          description: 'API name from the data source description.',
         },
-        time: {
-          type: 'string',
-          description: 'Optional time parameter for supported realtime endpoints.',
-        },
-        file_path: {
-          type: 'string',
-          description: 'Optional CSV output path. When omitted, the tool chooses a temporary path.',
+        params: {
+          type: 'object',
+          description: 'API parameters that match the data source description.',
         },
       },
-      required: ['ticker'],
+      required: ['data_source_name', 'api_name', 'params'],
     },
   },
   {
@@ -81,70 +70,9 @@ const TOOLS = [
       required: ['name'],
     },
   },
-  {
-    name: 'call_data_source_tool',
-    description: 'Call one API from a Kimi data source after reading get_data_source_desc.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        data_source_name: {
-          type: 'string',
-          description: 'Data source name returned or documented by get_data_source_desc.',
-        },
-        api_name: {
-          type: 'string',
-          description: 'API name from the data source description.',
-        },
-        params: {
-          type: 'object',
-          description: 'API parameters that match the data source description.',
-        },
-      },
-      required: ['data_source_name', 'api_name', 'params'],
-    },
-  },
 ];
 
 const HANDLERS = {
-  query_stock: {
-    method: 'get_stock_realtime_price',
-    buildParams(args) {
-      const ticker = requiredString(args, 'ticker');
-      const tickerList = ticker
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
-      if (tickerList.length === 0) throw new Error('Missing required argument: ticker.');
-      if (tickerList.length > 3) {
-        throw new Error('ticker accepts at most 3 values separated by commas.');
-      }
-
-      const queryType = optionalString(args, 'type') ?? 'realtime_price';
-      if (!VALID_STOCK_QUERY_TYPES.has(queryType)) {
-        throw new Error(
-          `type must be one of ${JSON.stringify([...VALID_STOCK_QUERY_TYPES])}; received: ${queryType}`,
-        );
-      }
-
-      const params = {
-        ticker,
-        type: queryType,
-        file_path: optionalString(args, 'file_path') ?? defaultStockFilePath(ticker, queryType),
-      };
-      const time = optionalString(args, 'time');
-      if (time !== undefined) params.time = time;
-      return params;
-    },
-    format(text, params) {
-      return `${text}\n\nCSV data written to: ${params.file_path}`;
-    },
-  },
-  get_data_source_desc: {
-    method: 'get_data_source_desc',
-    buildParams(args) {
-      return { name: requiredString(args, 'name') };
-    },
-  },
   call_data_source_tool: {
     method: 'call_data_source_tool',
     buildParams(args) {
@@ -153,6 +81,12 @@ const HANDLERS = {
         api_name: requiredString(args, 'api_name'),
         params: requiredObject(args, 'params'),
       };
+    },
+  },
+  get_data_source_desc: {
+    method: 'get_data_source_desc',
+    buildParams(args) {
+      return { name: requiredString(args, 'name') };
     },
   },
 };
@@ -410,11 +344,6 @@ function extractChannelText(value) {
     if (text.length > 0) return text;
   }
   return undefined;
-}
-
-function defaultStockFilePath(ticker, queryType) {
-  const safeTicker = ticker.replaceAll(',', '_').replaceAll('.', '_');
-  return `/tmp/stock_${safeTicker}_${queryType}.csv`;
 }
 
 function requiredString(args, field) {

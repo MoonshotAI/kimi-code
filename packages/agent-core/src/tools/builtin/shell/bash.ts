@@ -8,7 +8,7 @@
  *   - `Kaos`        — shell execution abstraction (exec / execWithEnv)
  *   - `cwd`         — default working directory for commands
  *   - `Environment` — cross-platform probe (shellName / shellPath)
- *   - `BackgroundProcessManager?` — optional: required iff run_in_background=true
+ *   - `BackgroundManager?` — optional: required iff run_in_background=true
  *
  * Execution goes through Kaos, never directly via node:child_process.
  *
@@ -29,10 +29,10 @@ import { StringDecoder } from 'node:string_decoder';
 import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
 import { z } from 'zod';
 
+import { ProcessBackgroundTask, type BackgroundManager } from '../../../agent/background';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { renderPrompt } from '../../../utils/render-prompt';
-import type { BackgroundProcessManager } from '../../background/manager';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';
@@ -155,7 +155,7 @@ export class BashTool implements BuiltinTool<BashInput> {
   constructor(
     private readonly kaos: Kaos,
     private readonly cwd: string,
-    private readonly backgroundManager?: BackgroundProcessManager,
+    private readonly backgroundManager?: BackgroundManager,
     options?: {
       allowBackground?: boolean | undefined;
     },
@@ -354,7 +354,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     if (!this.backgroundManager) {
       return {
         isError: true,
-        output: 'Background execution is not available (no BackgroundProcessManager configured).',
+        output: 'Background execution is not available (no BackgroundManager configured).',
       };
     }
     const backgroundManager = this.backgroundManager;
@@ -366,16 +366,6 @@ export class BashTool implements BuiltinTool<BashInput> {
       };
     }
 
-    let reservation: ReturnType<BackgroundProcessManager['reserveSlot']>;
-    try {
-      reservation = backgroundManager.reserveSlot();
-    } catch (error) {
-      return {
-        isError: true,
-        output: error instanceof Error ? error.message : String(error),
-      };
-    }
-
     const timeoutMs = args.disable_timeout ? undefined : normalizeTimeoutMs(args.timeout, true);
 
     let proc: KaosProcess;
@@ -384,7 +374,6 @@ export class BashTool implements BuiltinTool<BashInput> {
       const effectiveCwd = args.cwd ?? this.cwd;
       proc = await this.spawn(effectiveCwd, command);
     } catch (error) {
-      reservation.release();
       return {
         isError: true,
         output: error instanceof Error ? error.message : String(error),
@@ -399,16 +388,10 @@ export class BashTool implements BuiltinTool<BashInput> {
 
     let taskId: string;
     try {
-      taskId = backgroundManager.register(proc, command, args.description.trim(), {
-        reservation,
-        shellInfo: {
-          shellName: this.kaos.osEnv.shellName,
-          shellPath: this.kaos.osEnv.shellPath,
-          cwd: args.cwd ?? this.cwd,
-        },
-      });
+      taskId = backgroundManager.registerTask(
+        new ProcessBackgroundTask(proc, command, args.description.trim()),
+      );
     } catch (error) {
-      reservation.release();
       try {
         await proc.kill('SIGTERM');
       } catch {
@@ -423,10 +406,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     if (timeoutMs !== undefined) {
       setTimeout(() => {
         void (async (): Promise<void> => {
-          if (proc.exitCode !== null) {
-            await backgroundManager.settlePendingExits();
-            return;
-          }
+          if (proc.exitCode !== null) return;
           const info = backgroundManager.getTask(taskId);
           if (info && info.status === 'running') {
             void backgroundManager.stop(taskId, 'Timed out');
@@ -435,7 +415,7 @@ export class BashTool implements BuiltinTool<BashInput> {
       }, timeoutMs);
     }
 
-    // register() synchronously inserts taskId into the manager's Map, so
+    // registerTask() synchronously inserts taskId into the manager's Map, so
     // this lookup in the same tick cannot return undefined.
     const status = backgroundManager.getTask(taskId)!.status;
     const builder = new ToolResultBuilder();

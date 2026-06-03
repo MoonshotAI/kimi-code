@@ -97,13 +97,15 @@ export interface ToolCallReadSnapshot {
 }
 
 function backgroundFailureMessage(
-  status: 'completed' | 'failed' | 'killed' | 'lost' | undefined,
+  status: 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost' | undefined,
 ): string | undefined {
   switch (status) {
     case 'lost':
       return 'Background agent lost (session restarted before completion)';
     case 'killed':
       return 'Background agent killed';
+    case 'timed_out':
+      return 'Background agent timed out';
     case 'failed':
       return 'Background agent failed';
     case 'completed':
@@ -394,12 +396,30 @@ function extractKeyArgument(
     Agent: ['description', 'prompt'],
   };
 
+  // Glob: concatenate multiple args into a single summary so the header
+  // shows pattern, optional explicit path, and include_dirs override.
+  if (toolName === 'Glob') {
+    const pattern = args['pattern'];
+    if (typeof pattern !== 'string' || pattern.length === 0) return null;
+    let summary = pattern;
+    const path = args['path'];
+    if (typeof path === 'string' && path.length > 0) {
+      summary += ` · ${makeWorkspaceRelativePath(path, workspaceDir)}`;
+    }
+    if (args['include_dirs'] === false) {
+      summary += ' · no dirs';
+    }
+    return truncateArgValue('pattern', summary);
+  }
+
   const candidates = keyMap[toolName] ?? Object.keys(args);
   for (const key of candidates) {
     const val = args[key];
     if (typeof val === 'string' && val.length > 0) {
       const firstLine = val.split('\n')[0] ?? val;
-      return formatKeyArgument(toolName, key, firstLine, workspaceDir);
+      const displayValue =
+        toolName === 'Bash' && val.includes('\n') ? `${firstLine}…` : firstLine;
+      return formatKeyArgument(toolName, key, displayValue, workspaceDir);
     }
   }
   return null;
@@ -975,7 +995,7 @@ export class ToolCallComponent extends Container {
    * reclassifies a previously-running task as `lost`).
    */
   setBackgroundTaskTerminalStatus(
-    status: 'completed' | 'failed' | 'killed' | 'lost',
+    status: 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost',
     options: { errorText?: string | undefined } = {},
   ): void {
     const phase: 'done' | 'failed' = status === 'completed' ? 'done' : 'failed';
@@ -1173,11 +1193,16 @@ export class ToolCallComponent extends Container {
     }
 
     if (toolCall.name === 'AskUserQuestion') {
+      const isBackgroundAsk = toolCall.args['background'] === true;
       const label = isFinished
         ? isError
           ? 'Could not collect your input'
+          : isBackgroundAsk
+            ? 'Started background question'
           : 'Collected your answers'
-        : 'Waiting for your input';
+        : isBackgroundAsk
+          ? 'Starting background question'
+          : 'Waiting for your input';
       const tone = isError ? chalk.hex(colors.error) : chalk.hex(colors.primary);
       return `${bullet}${tone.bold(label)}`;
     }
@@ -1770,6 +1795,7 @@ export class ToolCallComponent extends Container {
 
     if (
       this.toolCall.name === 'AskUserQuestion' &&
+      this.toolCall.args['background'] !== true &&
       !result.is_error &&
       this.renderAskUserQuestionResult(result.output)
     ) {

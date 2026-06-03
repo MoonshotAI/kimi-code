@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { KimiTUI, type KimiTUIStartupInput } from '#/tui/kimi-tui';
+import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 
 interface SignalDriver {
+  state: TUIState;
   registerSignalHandlers(): void;
   unregisterSignalHandlers(): void;
   emergencyTerminalExit(): never;
@@ -26,6 +27,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       theme: 'dark',
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
     },
     version: '0.0.0-test',
     workDir: '/tmp/proj-signals',
@@ -296,6 +298,27 @@ describe('KimiTUI signal handlers', () => {
 
     await tui.stop();
     expect(process.listenerCount('SIGTERM')).toBe(beforeSigterm);
+  });
+
+  it('stop() drains terminal input before stopping the UI and exiting', async () => {
+    const { driver, tui } = makeDriver();
+    const events: string[] = [];
+    const drainInput = vi.spyOn(driver.state.terminal, 'drainInput').mockImplementation(async () => {
+      events.push('drain');
+    });
+    const uiStop = vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {
+      events.push('ui.stop');
+    });
+    tui.onExit = vi.fn(async () => {
+      events.push('exit');
+    });
+
+    await tui.stop();
+
+    expect(drainInput).toHaveBeenCalledOnce();
+    expect(uiStop).toHaveBeenCalledOnce();
+    expect(tui.onExit).toHaveBeenCalledOnce();
+    expect(events).toEqual(['drain', 'ui.stop', 'exit']);
   });
 
   it('start() unregisters signal handlers when initialization throws', async () => {

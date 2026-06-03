@@ -9,6 +9,7 @@ import type { KimiConfig, SDKSessionRPC } from '#/rpc';
 import { proxyWithExtraPayload } from '#/rpc/types';
 
 import { Agent, type AgentOptions, type AgentType } from '../agent';
+import { SessionGoalStore, type SessionGoalState } from './goal';
 import { HookEngine, type HookDef } from './hooks';
 import type { PermissionManagerOptions, PermissionRule } from '../agent/permission';
 import { parseBooleanEnv, resolveConfigValue, type BackgroundConfig } from '../config';
@@ -57,6 +58,7 @@ export interface SessionOptions {
   readonly mcpConfig?: SessionMcpConfig;
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
+  readonly appVersion?: string;
 }
 
 export interface SessionSkillConfig {
@@ -96,6 +98,7 @@ export class Session {
   readonly log: Logger;
   private readonly logHandle: SessionLogHandle | undefined;
   readonly hookEngine: HookEngine;
+  readonly goals: SessionGoalStore;
   private agentIdCounter = 0;
   private readonly skillsReady: Promise<void>;
   metadata: SessionMeta = {
@@ -128,6 +131,24 @@ export class Session {
       sessionId: options.id,
     });
     this.telemetry = options.telemetry ?? noopTelemetryClient;
+    this.goals = new SessionGoalStore({
+      sessionId: options.id,
+      readState: () => this.metadata.custom?.['goal'] as SessionGoalState | undefined,
+      writeState: (state) => {
+        this.metadata.custom ??= {};
+        if (state === undefined) {
+          delete this.metadata.custom['goal'];
+        } else {
+          this.metadata.custom['goal'] = state;
+        }
+        return this.writeMetadata();
+      },
+      auditSink: () => this.agents.get('main')?.records,
+      onGoalUpdated: (snapshot, change) => {
+        void this.rpc.emitEvent({ type: 'goal.updated', agentId: 'main', snapshot, change });
+      },
+      telemetry: this.telemetry,
+    });
     this.skills = new SkillRegistry({ sessionId: options.id });
     this.mcp = new McpConnectionManager({
       oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
@@ -150,6 +171,8 @@ export class Session {
 
   async createMain() {
     const { agent } = await this.createAgent({ type: 'main' }, DEFAULT_AGENT_PROFILES['agent']);
+    // The main-agent audit sink now exists; flush any goal records queued before it.
+    this.goals.flushPendingRecords();
     await this.triggerSessionStart('startup');
     return agent;
   }
@@ -157,6 +180,9 @@ export class Session {
   async resume(): Promise<{ warning?: string }> {
     await this.skillsReady;
     const { agents } = await this.readMetadata();
+    // Reconcile the persisted goal (active -> paused, drop malformed/stale) before
+    // agents are rebuilt. The audit record (if any) is queued and flushed below.
+    await this.goals.normalizeMetadata();
     this.agents.clear();
     let warning: string | undefined;
     const resumeTasks = Object.keys(agents).map(async (id) => {
@@ -167,6 +193,9 @@ export class Session {
       }
     });
     await Promise.all(resumeTasks);
+    // The main-agent audit sink now exists; flush any goal records queued during
+    // normalizeMetadata (e.g. the active -> paused resume transition).
+    this.goals.flushPendingRecords();
     const resumeWarning = warning;
     // A session migrated from an external tool ships a wire without the
     // `config.update` bootstrap events a natively-created agent writes, so the
@@ -423,10 +452,12 @@ export class Session {
       subagentHost:
         config.subagentHost ?? new SessionSubagentHost(this, id, this.backgroundTaskTimeoutMs()),
       mcp: this.mcp,
+      goals: this.goals,
       permission: this.permissionOptions(parentAgentId, config.permission),
       telemetry: this.telemetry,
       log: this.log.createChild({ agentId: id }),
       pluginSessionStarts: type === 'main' ? this.options.pluginSessionStarts : undefined,
+      appVersion: this.options.appVersion,
     });
   }
 
