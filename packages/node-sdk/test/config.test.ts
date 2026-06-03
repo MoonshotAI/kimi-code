@@ -302,4 +302,26 @@ describe('KimiHarness config API', () => {
     expect(config.defaultModel).toBeUndefined();
     expect(config.defaultThinking).toBeUndefined();
   });
+
+  it('reloads an active session without closing the SDK session wrapper', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = join(homeDir, 'work');
+    const configPath = join(homeDir, 'config.toml');
+    await writeFile(configPath, COMPLETE_TOML, 'utf-8');
+    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const session = await harness.createSession({
+      id: 'session-sdk-reload',
+      workDir,
+      model: 'kimi-for-coding',
+    });
+
+    expect(session.getResumeState()).toBeUndefined();
+
+    const reloaded = await harness.reloadSession({ id: session.id });
+
+    expect(reloaded).toBe(session);
+    expect(harness.getSession(session.id)).toBe(session);
+    expect(session.getResumeState()?.agents['main']).toBeDefined();
+    await expect(session.getStatus()).resolves.toMatchObject({ model: 'kimi-for-coding' });
+  });
 });

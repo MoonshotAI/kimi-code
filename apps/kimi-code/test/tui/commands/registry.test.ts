@@ -92,6 +92,8 @@ describe('built-in slash command registry', () => {
         'new',
         'permission',
         'plan',
+        'reload',
+        'reload-tui',
         'sessions',
         'settings',
         'status',
@@ -103,5 +105,15 @@ describe('built-in slash command registry', () => {
         'yolo',
       ]),
     );
+  });
+
+  it('keeps TUI reload always available and full reload idle-only', () => {
+    const reload = findBuiltInSlashCommand('reload');
+    const reloadTui = findBuiltInSlashCommand('reload-tui');
+
+    expect(reload).toBeDefined();
+    expect(reloadTui).toBeDefined();
+    expect(resolveSlashCommandAvailability(reload!, '')).toBe('idle-only');
+    expect(resolveSlashCommandAvailability(reloadTui!, '')).toBe('always');
   });
 });

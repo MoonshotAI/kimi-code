@@ -37,6 +37,7 @@ import {
 import { handleProviderCommand } from './provider';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 import { handlePluginsCommand } from './plugins';
+import { handleReloadCommand, handleReloadTuiCommand } from './reload';
 import {
   handleExportDebugZipCommand,
   handleExportMdCommand,
@@ -73,6 +74,7 @@ export {
   showUsage,
 } from './info';
 export { handlePluginsCommand } from './plugins';
+export { handleReloadCommand, handleReloadTuiCommand } from './reload';
 export {
   handleExportDebugZipCommand,
   handleExportMdCommand,
@@ -105,6 +107,7 @@ export interface SlashCommandHost {
   // Session
   requireSession(): Session;
   switchToSession(session: Session, message: string): Promise<void>;
+  reloadCurrentSessionView(session: Session, message: string): Promise<void>;
   beginSessionRequest(): void;
   failSessionRequest(message: string): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
@@ -227,6 +230,12 @@ async function handleBuiltInSlashCommand(
       return;
     case 'plugins':
       void handlePluginsCommand(host, args);
+      return;
+    case 'reload':
+      await handleReloadCommand(host);
+      return;
+    case 'reload-tui':
+      await handleReloadTuiCommand(host);
       return;
     case 'editor':
       await handleEditorCommand(host, args);

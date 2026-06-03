@@ -91,6 +91,20 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'reload',
+    aliases: [],
+    description: 'Reload session and apply config.toml settings plus tui.toml UI preferences',
+    priority: 60,
+    availability: 'idle-only',
+  },
+  {
+    name: 'reload-tui',
+    aliases: [],
+    description: 'Reload only tui.toml UI preferences',
+    priority: 60,
+    availability: 'always',
+  },
+  {
     name: 'compact',
     aliases: [],
     description: 'Compact the conversation context',

@@ -47,6 +47,10 @@ export interface ResumeSessionPayload {
   readonly sessionId: string;
 }
 
+export interface ReloadSessionPayload {
+  readonly sessionId: string;
+}
+
 export interface ForkSessionPayload {
   readonly sessionId: string;
   readonly id?: string;
@@ -315,6 +319,7 @@ export interface CoreAPI extends SessionAPIWithId {
   createSession: (payload: CreateSessionPayload) => SessionSummary;
   closeSession: (payload: CloseSessionPayload) => void;
   resumeSession: (payload: ResumeSessionPayload) => ResumeSessionResult;
+  reloadSession: (payload: ReloadSessionPayload) => ResumeSessionResult;
   forkSession: (payload: ForkSessionPayload) => ResumeSessionResult;
   listSessions: (payload: ListSessionsPayload) => readonly SessionSummary[];
   exportSession: (payload: ExportSessionPayload) => ExportSessionResult;

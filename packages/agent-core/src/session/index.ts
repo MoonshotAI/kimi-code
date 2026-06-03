@@ -200,6 +200,21 @@ export class Session {
     }
   }
 
+  async closeForReload(): Promise<void> {
+    try {
+      await Promise.allSettled(
+        Array.from(this.agents.values(), async (agent) => agent.cron?.stop()),
+      );
+      await this.flushMetadata();
+    } finally {
+      try {
+        await this.mcp.shutdown();
+      } finally {
+        await this.logHandle?.close();
+      }
+    }
+  }
+
   private async stopBackgroundTasksOnExit(): Promise<void> {
     const keepAliveOnExit = resolveConfigValue({
       env: process.env,

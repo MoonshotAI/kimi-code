@@ -169,6 +169,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     setPluginMcpServerEnabled: vi.fn(async () => {}),
     removePlugin: vi.fn(async () => {}),
     reloadPlugins: vi.fn(async () => ({ added: [], removed: [], errors: [] })),
+    reloadSession: vi.fn(async () => ({})),
     getPluginInfo: vi.fn(async (id: string) => ({
       id,
       displayName: id,
@@ -332,6 +333,57 @@ describe('KimiTUI message flow', () => {
     });
     expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'theme' });
     expect(harness.track).toHaveBeenCalledWith('theme_switch', { theme: 'light' });
+  });
+
+  it('dispatches /reload-tui without reloading the active session', async () => {
+    const homeDir = await makeTempHome();
+    process.env['KIMI_CODE_HOME'] = homeDir;
+    await writeFile(
+      join(homeDir, 'tui.toml'),
+      `
+theme = "light"
+
+[editor]
+command = "vim"
+`,
+      'utf-8',
+    );
+    const { driver, session, harness } = await makeDriver();
+    harness.track.mockClear();
+    session.reloadSession.mockClear();
+
+    driver.handleUserInput('/reload-tui');
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.theme).toBe('light');
+    });
+    expect(driver.state.appState.editorCommand).toBe('vim');
+    expect(session.reloadSession).not.toHaveBeenCalled();
+    expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'reload-tui' });
+  });
+
+  it('dispatches /reload through session reload and applies tui.toml', async () => {
+    const homeDir = await makeTempHome();
+    process.env['KIMI_CODE_HOME'] = homeDir;
+    await writeFile(join(homeDir, 'tui.toml'), 'theme = "light"\n', 'utf-8');
+    const { driver, session, harness } = await makeDriver();
+    harness.track.mockClear();
+    session.reloadSession.mockClear();
+    driver.handleUserInput('hello before reload');
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/reload');
+
+    await vi.waitFor(() => {
+      expect(session.reloadSession).toHaveBeenCalledOnce();
+    });
+    await vi.waitFor(() => {
+      expect(driver.state.appState.theme).toBe('light');
+    });
+    expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'reload' });
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('hello before reload');
+    expect(transcript).toContain('Session reloaded.');
   });
 
   it('tracks successful feedback submissions only after the request succeeds', async () => {

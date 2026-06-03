@@ -28,6 +28,7 @@ export {
   showUsage,
 } from './info';
 export { handlePluginsCommand } from './plugins';
+export { handleReloadCommand, handleReloadTuiCommand } from './reload';
 export {
   handleForkCommand,
   handleInitCommand,
