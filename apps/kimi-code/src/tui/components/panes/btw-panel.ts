@@ -36,6 +36,7 @@ export interface BtwPanelOptions {
 
 export class BtwPanelComponent implements Component {
   private readonly turns: BtwTurn[] = [];
+  private readonly transientNotices: string[] = [];
   private minBodyLines = 0;
   private expanded = false;
   private followTail = true;
@@ -49,6 +50,7 @@ export class BtwPanelComponent implements Component {
     if (normalized.length === 0 || this.isRunning()) return;
     this.followTail = true;
     this.scrollTop = 0;
+    this.transientNotices.length = 0;
     this.turns.push({
       prompt: normalized,
       answer: '',
@@ -56,6 +58,11 @@ export class BtwPanelComponent implements Component {
       phase: 'running',
     });
     this.options.onPrompt(normalized);
+  }
+
+  addTransientNotice(message: string): void {
+    this.transientNotices.push(message);
+    this.followTail = true;
   }
 
   appendAnswer(delta: string): void {
@@ -76,6 +83,7 @@ export class BtwPanelComponent implements Component {
     if (turn.answer.trim().length === 0 && resultSummary !== undefined) {
       turn.answer = resultSummary;
     }
+    this.transientNotices.length = 0;
     turn.phase = 'done';
   }
 
@@ -89,9 +97,11 @@ export class BtwPanelComponent implements Component {
         error,
         phase: 'failed',
       });
+      this.transientNotices.length = 0;
       return;
     }
     turn.error = error;
+    this.transientNotices.length = 0;
     turn.phase = 'failed';
   }
 
@@ -133,7 +143,16 @@ export class BtwPanelComponent implements Component {
     if (this.turns.length === 0) {
       lines.push(chalk.hex(this.options.colors.textDim)('Ready for a side question...'));
     }
+    lines.push(...this.renderTransientNotices(width));
     return this.fitBodyLines(lines);
+  }
+
+  private renderTransientNotices(width: number): string[] {
+    const lines: string[] = [];
+    for (const notice of this.transientNotices) {
+      lines.push(...new Text(chalk.hex(this.options.colors.textDim)(notice), 0, 0).render(width));
+    }
+    return lines;
   }
 
   private fitBodyLines(lines: string[]): BtwBodyRender {

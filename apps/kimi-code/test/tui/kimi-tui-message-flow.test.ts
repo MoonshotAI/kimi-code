@@ -1727,11 +1727,33 @@ describe('KimiTUI message flow', () => {
 
     expect(harness.interactiveAgentId).toBe('main');
     driver.handleUserInput('follow-up while btw prompt is pending');
+    driver.handleUserInput('another follow-up while btw prompt is pending');
 
     expect(session.prompt).toHaveBeenCalledTimes(1);
     expect(driver.state.queuedMessages).toEqual([]);
-    expect(driver.state.editor.getText()).toBe('follow-up while btw prompt is pending');
-    expect(stripSgr(renderTranscript(driver))).toContain(
+    expect(driver.state.editor.getText()).toBe('another follow-up while btw prompt is pending');
+    expect(stripSgr(renderTranscript(driver))).not.toContain(
+      'Wait for /btw to finish before sending another question.',
+    );
+    expect(
+      countOccurrences(
+        stripSgr(renderBtwPanel(driver)),
+        'Wait for /btw to finish before sending another question.',
+      ),
+    ).toBe(2);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        reason: 'completed',
+      } as Event,
+      () => {},
+    );
+
+    expect(stripSgr(renderBtwPanel(driver))).not.toContain(
       'Wait for /btw to finish before sending another question.',
     );
 

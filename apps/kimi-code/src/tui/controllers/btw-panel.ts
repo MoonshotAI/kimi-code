@@ -12,13 +12,14 @@ import { formatErrorMessage } from '../utils/event-payload';
 import { formatHookResultPlain } from '../utils/hook-result-format';
 import type { TUIState } from '../tui-state';
 
+const BTW_BUSY_NOTICE = 'Wait for /btw to finish before sending another question.';
+
 export interface BtwPanelHost {
   state: TUIState;
   session: Session | undefined;
   readonly harness: KimiHarness;
 
   showError(msg: string): void;
-  showStatus(msg: string, color?: string): void;
 }
 
 export class BtwPanelController {
@@ -71,7 +72,8 @@ export class BtwPanelController {
     if (active === undefined) return false;
     if (active.panel.isRunning()) {
       this.host.state.editor.setText(text);
-      this.host.showStatus('Wait for /btw to finish before sending another question.');
+      active.panel.addTransientNotice(BTW_BUSY_NOTICE);
+      this.host.state.ui.requestRender();
       return true;
     }
     active.panel.submit(text);
