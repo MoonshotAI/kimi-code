@@ -71,9 +71,7 @@ export class BtwPanelController {
     const active = this.active;
     if (active === undefined) return false;
     if (active.panel.isRunning()) {
-      this.host.state.editor.setText(text);
-      active.panel.addTransientNotice(BTW_BUSY_NOTICE);
-      this.host.state.ui.requestRender();
+      this.showBusyNotice(active, text);
       return true;
     }
     active.panel.submit(text);
@@ -171,6 +169,15 @@ export class BtwPanelController {
       }
     }
     if (this.active?.panel === panel) this.active = undefined;
+  }
+
+  private showBusyNotice(
+    active: { readonly panel: BtwPanelComponent },
+    input: string,
+  ): void {
+    this.host.state.editor.setText(input);
+    active.panel.addTransientNotice(BTW_BUSY_NOTICE);
+    this.host.state.ui.requestRender();
   }
 
   private promptAgent(agentId: string, prompt: string, panel: BtwPanelComponent): void {

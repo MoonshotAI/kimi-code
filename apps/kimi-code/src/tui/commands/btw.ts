@@ -14,6 +14,7 @@ export async function handleBtwCommand(host: SlashCommandHost, args: string): Pr
     host.showError(LLM_NOT_SET_MESSAGE);
     return;
   }
+  host.btwPanelController.closeOrCancel();
 
   try {
     const agentId = await session.startBtw();

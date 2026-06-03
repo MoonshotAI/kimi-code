@@ -1752,6 +1752,58 @@ describe('KimiTUI message flow', () => {
     resolveBtwPrompt?.();
   });
 
+  it('replaces a running /btw panel when another /btw command is submitted', async () => {
+    const session = makeSession({
+      startBtw: vi.fn()
+        .mockResolvedValueOnce('agent-btw-1')
+        .mockResolvedValueOnce('agent-btw-2'),
+    });
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session, 'first question');
+
+    const firstPanel = getMountedBtwPanel(driver);
+    expect(firstPanel.isRunning()).toBe(true);
+
+    driver.handleUserInput('/btw second question');
+
+    await vi.waitFor(() => {
+      expect(session.startBtw).toHaveBeenCalledTimes(2);
+    });
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('second question');
+    });
+
+    const secondPanel = getMountedBtwPanel(driver);
+    expect(secondPanel).not.toBe(firstPanel);
+    expect(session.cancel).toHaveBeenCalledTimes(1);
+    expect(session.prompt).toHaveBeenCalledTimes(2);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'agent-btw-1',
+        sessionId: 'ses-1',
+        turnId: 0,
+        delta: 'answer from old side agent',
+      } as Event,
+      () => {},
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'agent-btw-2',
+        sessionId: 'ses-1',
+        turnId: 1,
+        delta: 'answer from new side agent',
+      } as Event,
+      () => {},
+    );
+
+    const renderedPanel = stripSgr(renderBtwPanel(driver));
+    expect(renderedPanel).not.toContain('answer from old side agent');
+    expect(renderedPanel).toContain('answer from new side agent');
+  });
+
   it('does not run /btw without a question or selected model', async () => {
     const { driver, session } = await makeDriver();
 
