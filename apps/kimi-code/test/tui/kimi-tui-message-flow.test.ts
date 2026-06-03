@@ -1844,16 +1844,22 @@ describe('KimiTUI message flow', () => {
     const overview = driver.state.editorContainer.children[0] as PluginsOverviewSelectorComponent;
     overview.handleInput(' ');
 
+    // Toggling refreshes the picker in place: it must not flash back to the
+    // editor between the keypress and the refreshed picker mounting.
+    expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+      PluginsOverviewSelectorComponent,
+    );
+
     await vi.waitFor(() => {
       expect(session.setPluginEnabled).toHaveBeenCalledWith('demo', false);
     });
+    // The picker stays mounted the whole time (no editor flash), so wait for the
+    // refreshed render rather than for an instance swap.
     await vi.waitFor(() => {
-      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
-        PluginsOverviewSelectorComponent,
-      );
+      const refreshed = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
+      expect(refreshed).toContain('❯ Demo  disabled  require run /new to apply');
     });
     const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-    expect(out).toContain('❯ Demo  disabled  require run /new to apply');
     expect(out).not.toContain('Space enable');
     expect(stripSgr(renderTranscript(driver))).not.toContain('Disabled demo. Run /new to apply.');
   });
