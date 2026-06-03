@@ -51,6 +51,10 @@ export class BtwPanelController {
   }
 
   clear(): void {
+    const active = this.active;
+    if (active?.panel.isRunning()) {
+      void this.cancelAgent(active.agentId);
+    }
     this.active = undefined;
     this.panelsByAgentId.clear();
     this.host.state.btwPanelContainer.clear();

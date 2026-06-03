@@ -1711,6 +1711,31 @@ describe('KimiTUI message flow', () => {
     expect(panel).toContain('Interrupted by user');
   });
 
+  it('cancels a running /btw panel when starting a new session clears it', async () => {
+    const initialSession = makeSession({ id: 'ses-initial' });
+    const nextSession = makeSession({ id: 'ses-next' });
+    const createSession = vi
+      .fn()
+      .mockResolvedValueOnce(initialSession)
+      .mockResolvedValueOnce(nextSession);
+    const { driver, harness } = await makeDriver(initialSession, { createSession });
+    const cancelledAgentIds: string[] = [];
+    initialSession.cancel.mockImplementation(async () => {
+      cancelledAgentIds.push(harness.interactiveAgentId);
+    });
+    await openBtwPanel(driver, initialSession);
+
+    driver.handleUserInput('/new');
+
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-next');
+    });
+    expect(initialSession.cancel).toHaveBeenCalledOnce();
+    expect(cancelledAgentIds).toEqual(['agent-btw']);
+    expect(nextSession.cancel).not.toHaveBeenCalled();
+    expect(driver.state.btwPanelContainer.children).toHaveLength(0);
+  });
+
   it('closes a completed /btw panel on Ctrl-C without cancelling main streaming', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
