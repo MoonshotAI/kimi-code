@@ -218,7 +218,7 @@ export class PluginMarketplaceSelectorComponent extends Container implements Foc
       this.selectedIndex = Math.min(this.items.length - 1, this.selectedIndex + 1);
       return;
     }
-    if (matchesKey(data, Key.enter) || matchesKey(data, Key.space) || printableChar(data) === ' ') {
+    if (matchesKey(data, Key.enter)) {
       const chosen = this.items[this.selectedIndex];
       if (chosen === undefined) return;
       if (chosen.value === 'back') {
@@ -238,7 +238,7 @@ export class PluginMarketplaceSelectorComponent extends Container implements Foc
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(' Official plugins'),
-      mutedHintLine(' ↑↓ navigate · Enter/Space install/update · Esc cancel', colors),
+      mutedHintLine(' ↑↓ navigate · Enter install/update · Esc cancel', colors),
       chalk.hex(colors.textMuted)(` Source: ${this.opts.source}`),
       '',
       sectionLabel(`Marketplace (${entries.length})`, colors),

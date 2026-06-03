@@ -187,11 +187,41 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain(
       `Workflow skills ${MID} id superpowers ${MID} v5.1.0 ${MID} Curated plugin ${MID} workflow`,
     );
-    expect(out).toContain('Enter/Space install/update');
+    expect(out).toContain('Enter install/update');
     expect(out).toContain('Actions');
     expect(out).toContain('Back to installed plugins');
 
-    picker.handleInput(' ');
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({
+      kind: 'install',
+      entry: expect.objectContaining({ id: 'superpowers' }),
+    });
+  });
+
+  it('installs only on Enter, not Space, in the marketplace', () => {
+    const onSelect = vi.fn();
+    const picker = new PluginMarketplaceSelectorComponent({
+      entries: [
+        {
+          id: 'superpowers',
+          tier: 'curated',
+          displayName: 'Superpowers',
+          version: '5.1.0',
+          description: 'Workflow skills',
+          source: 'https://example.com/superpowers.zip',
+          keywords: ['workflow'],
+        },
+      ],
+      installedIds: new Set(),
+      source: '/tmp/marketplace.json',
+      colors: darkColors,
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    picker.handleInput(' '); // Space must NOT install
+    expect(onSelect).not.toHaveBeenCalled();
+    picker.handleInput('\r'); // Enter installs
     expect(onSelect).toHaveBeenCalledWith({
       kind: 'install',
       entry: expect.objectContaining({ id: 'superpowers' }),
