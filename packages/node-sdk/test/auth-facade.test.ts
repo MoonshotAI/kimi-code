@@ -1,5 +1,4 @@
-import { mkdirSync, rmSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -29,14 +28,13 @@ function freshToken(): TokenInfo {
   };
 }
 
-beforeEach(() => {
-  homeDir = join(tmpdir(), `kimi-sdk-auth-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  mkdirSync(homeDir, { recursive: true });
+beforeEach(async () => {
+  homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-auth-'));
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllGlobals();
-  rmSync(homeDir, { recursive: true, force: true });
+  await rm(homeDir, { recursive: true, force: true });
 });
 
 describe('KimiHarness.auth', () => {
