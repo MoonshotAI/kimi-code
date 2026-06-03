@@ -2046,8 +2046,8 @@ describe('KimiTUI message flow', () => {
     expect(filteredOutput).toContain('Search: tu');
     expect(filteredOutput).toContain('Kimi Turbo');
     expect(filteredOutput).not.toContain('Kimi K2');
-    // Right arrow toggles thinking on (replaces the old "/" binding).
-    (picker as TabbedModelSelectorComponent).handleInput(String.fromCodePoint(27) + '[C');
+    // Turbo is a thinking-capable model that is not the active one, so it
+    // defaults to thinking on — selecting it applies thinking without a toggle.
     (picker as TabbedModelSelectorComponent).handleInput('\r');
 
     await vi.waitFor(() => {

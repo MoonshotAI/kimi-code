@@ -104,7 +104,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
   focused = false;
   private readonly opts: ModelSelectorOptions;
   private readonly list: SearchableList<ModelChoice>;
-  private thinkingDraft: boolean;
+  /** Per-model thinking override set by ←/→; absent → the capability default. */
+  private readonly thinkingOverrides = new Map<string, boolean>();
 
   constructor(opts: ModelSelectorOptions) {
     super();
@@ -119,7 +120,18 @@ export class ModelSelectorComponent extends Container implements Focusable {
       initialIndex: Math.max(selectedIdx, 0),
       searchable: opts.searchable === true,
     });
-    this.thinkingDraft = opts.currentThinking;
+  }
+
+  /**
+   * Thinking draft for a model: an explicit ←/→ override when set, otherwise
+   * the live thinking state for the active model, otherwise On for any other
+   * thinking-capable model (a capable model should default to thinking on).
+   */
+  private draftFor(choice: ModelChoice): boolean {
+    const override = this.thinkingOverrides.get(choice.alias);
+    if (override !== undefined) return override;
+    if (choice.alias === this.opts.currentValue) return this.opts.currentThinking;
+    return thinkingAvailability(choice.model) !== 'unsupported';
   }
 
   handleInput(data: string): void {
@@ -138,7 +150,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
     if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
       const selected = this.selectedChoice();
       if (selected !== undefined && thinkingAvailability(selected.model) === 'toggle') {
-        this.thinkingDraft = !this.thinkingDraft;
+        this.thinkingOverrides.set(selected.alias, !this.draftFor(selected));
       }
       return;
     }
@@ -148,7 +160,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
       if (selected === undefined) return;
       this.opts.onSelect({
         alias: selected.alias,
-        thinking: effectiveThinking(selected.model, this.thinkingDraft),
+        thinking: effectiveThinking(selected.model, this.draftFor(selected)),
       });
     }
   }
@@ -235,7 +247,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
       const availability = thinkingAvailability(selected.model);
       const thinkingHeader = availability === 'toggle' ? ' Thinking  (←→ to switch)' : ' Thinking';
       lines.push(chalk.hex(colors.textMuted)(thinkingHeader));
-      lines.push(this.renderThinkingControl(selected.model));
+      lines.push(this.renderThinkingControl(selected));
     }
     lines.push('');
     lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
@@ -246,20 +258,21 @@ export class ModelSelectorComponent extends Container implements Focusable {
     return this.list.selected();
   }
 
-  private renderThinkingControl(model: ModelAlias): string {
+  private renderThinkingControl(choice: ModelChoice): string {
     const { colors } = this.opts;
     const segment = (label: string, active: boolean): string =>
       active
         ? chalk.hex(colors.primary).bold(`[ ${label} ]`)
         : chalk.hex(colors.text)(`  ${label}  `);
 
-    const availability = thinkingAvailability(model);
+    const availability = thinkingAvailability(choice.model);
     if (availability === 'always-on') {
       return `  ${segment('Always on', true)}`;
     }
     if (availability === 'unsupported') {
       return `  ${segment('Off', true)} ${chalk.hex(colors.textMuted)('unsupported')}`;
     }
-    return `  ${segment('On', this.thinkingDraft)}  ${segment('Off', !this.thinkingDraft)}`;
+    const draft = this.draftFor(choice);
+    return `  ${segment('On', draft)}  ${segment('Off', !draft)}`;
   }
 }

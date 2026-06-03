@@ -122,13 +122,36 @@ describe('ModelSelectorComponent', () => {
       onCancel: vi.fn(),
     });
 
-    picker.handleInput(DOWN); // -> thinking model
-    picker.handleInput(RIGHT); // draft on
+    picker.handleInput(DOWN); // -> thinking model (defaults On)
+    picker.handleInput(RIGHT); // toggle -> Off
     picker.handleInput(UP); // -> plain
-    picker.handleInput(DOWN); // -> thinking
+    picker.handleInput(DOWN); // -> thinking (the Off override persists)
     picker.handleInput('\r');
 
-    expect(onSelect).toHaveBeenCalledWith({ alias: 'thinking', thinking: true });
+    expect(onSelect).toHaveBeenCalledWith({ alias: 'thinking', thinking: false });
+  });
+
+  it('defaults a thinking-capable model to On but keeps the current model state', () => {
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        current: model('Kimi Current', ['thinking']),
+        other: model('Kimi Other', ['thinking']),
+      },
+      currentValue: 'current',
+      currentThinking: false, // thinking deliberately off on the active model
+      colors: darkColors,
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    // The active model reflects its live (off) state.
+    expect(text(picker)).toContain('[ Off ]');
+    picker.handleInput(DOWN); // -> the other thinking-capable model
+    // A capable, non-active model defaults to On without any toggle.
+    expect(text(picker)).toContain('[ On ]');
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({ alias: 'other', thinking: true });
   });
 
   it('fuzzy-filters by typing and reports a match count', () => {
