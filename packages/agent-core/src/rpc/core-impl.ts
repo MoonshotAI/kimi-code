@@ -59,6 +59,7 @@ import type {
   GetKimiConfigPayload,
   GetPluginInfoPayload,
   InstallPluginPayload,
+  JsonObject,
   ListSessionsPayload,
   McpServerInfo,
   McpStartupMetrics,
@@ -95,6 +96,11 @@ import { KaosShellNotFoundError, LocalKaos, type Kaos } from '@moonshot-ai/kaos'
 import type { ToolServices } from '../tools/support/services';
 
 const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
+const GOAL_FORK_CLEARED_REMINDER = [
+  'This fork does not have a current goal.',
+  'Ignore earlier active-goal reminders from the source session.',
+  'Handle requests normally unless the user starts a new goal.',
+].join(' ');
 
 type AgentScopedPayload<T> = T & { readonly agentId: string };
 type SessionScopedPayload<T> = T & { readonly sessionId: string };
@@ -322,8 +328,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   async forkSession(input: ForkSessionPayload): Promise<ResumeSessionResult> {
     const source = await this.sessionStore.get(input.sessionId);
     const active = this.sessions.get(source.id);
+    let sourceHadGoal = hasGoalMetadata(source.metadata) || hasGoalMetadata(input.metadata);
     if (active !== undefined) {
       await active.flushMetadata();
+      sourceHadGoal = sourceHadGoal || active.goals.getGoal().goal !== null;
     }
 
     const id = input.id ?? createSessionId();
@@ -333,7 +341,16 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       title: input.title,
       metadata: input.metadata,
     });
-    return this.resumeSession({ sessionId: id });
+    const resumed = await this.resumeSession({ sessionId: id });
+    if (sourceHadGoal) {
+      const forked = this.sessions.get(id);
+      forked?.agents.get('main')?.context.appendSystemReminder(GOAL_FORK_CLEARED_REMINDER, {
+        kind: 'system_trigger',
+        name: 'goal_fork_cleared',
+      });
+      await forked?.flushMetadata();
+    }
+    return resumed;
   }
 
   async listSessions(input: ListSessionsPayload = {}): Promise<readonly SessionSummary[]> {
@@ -834,6 +851,10 @@ function serviceCredentials(
 function nonEmptyString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+}
+
+function hasGoalMetadata(metadata: JsonObject | undefined): boolean {
+  return metadata !== undefined && 'goal' in metadata;
 }
 
 function requiredWorkDir(operation: string, value: string): string {

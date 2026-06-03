@@ -261,7 +261,7 @@ export class SessionStore {
       isCustomTitle: input.title === undefined ? parsed['isCustomTitle'] === true : true,
       forkedFrom: input.sourceId,
       agents: rewriteAgentHomedirs(parsed['agents'], sourceDir, targetDir),
-      custom: Object.assign({}, isRecord(parsed['custom']) ? parsed['custom'] : {}, input.metadata),
+      custom: forkCustomMetadata(parsed['custom'], input.metadata),
     };
     await writeFile(statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf-8');
   }
@@ -299,6 +299,23 @@ export class SessionStore {
 function metadataFromState(state: SessionSummaryState | undefined): JsonObject | undefined {
   if (state === undefined || state.custom === undefined) return undefined;
   return state.custom as JsonObject;
+}
+
+function forkCustomMetadata(source: unknown, metadata: JsonObject | undefined): Record<string, unknown> {
+  return {
+    ...customMetadataWithoutGoal(source),
+    ...customMetadataWithoutGoal(metadata),
+  };
+}
+
+function customMetadataWithoutGoal(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) return {};
+  const custom: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === 'goal') continue;
+    custom[key] = entry;
+  }
+  return custom;
 }
 
 async function latestAgentWireMtime(sessionDir: string): Promise<number | undefined> {

@@ -87,7 +87,7 @@ To try a new line of thinking without disrupting the current conversation, use `
 /fork
 ```
 
-The forked session is fully independent; you can switch back to the original at any time.
+The forked session is fully independent; you can switch back to the original at any time. A saved `/goal` is not copied to the fork. Start a new goal there if you want autonomous goal work.
 
 ## Exporting sessions
 
