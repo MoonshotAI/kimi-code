@@ -89,8 +89,7 @@ export class SessionSubagentHost {
     const profile = this.resolveProfile(parent, profileName);
     const { id, agent } = await this.session.createAgent(
       { type: 'sub', generate: parent.rawGenerate },
-      undefined,
-      this.ownerAgentId,
+      { parentAgentId: this.ownerAgentId },
     );
     const controller = new AbortController();
     const unlinkAbortSignal = linkAbortSignal(options.signal, controller);
@@ -193,8 +192,7 @@ export class SessionSubagentHost {
         generate: parent.rawGenerate,
         persistence: new InMemoryAgentRecordPersistence(),
       },
-      undefined,
-      this.ownerAgentId,
+      { parentAgentId: this.ownerAgentId, persistMetadata: false },
     );
 
     child.config.update({

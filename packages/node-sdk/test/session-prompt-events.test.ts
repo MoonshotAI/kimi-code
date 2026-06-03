@@ -377,6 +377,15 @@ describe('Session.prompt events', () => {
       const statePath = join(session.summary!.sessionDir, 'state.json');
       const state = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;
       expect(state['lastPrompt']).toBe('main task context');
+      expect(state['agents']).toMatchObject({ main: expect.any(Object) });
+      expect(state['agents']).not.toHaveProperty(agentId);
+
+      await harness.closeSession(session.id);
+      const resumed = await harness.resumeSession({ id: session.id });
+      const resumeState = resumed.getResumeState();
+      expect(resumeState?.agents).toMatchObject({ main: expect.any(Object) });
+      expect(resumeState?.agents).not.toHaveProperty(agentId);
+      expect(resumeState?.sessionMetadata.agents).not.toHaveProperty(agentId);
     } finally {
       await harness.close();
     }

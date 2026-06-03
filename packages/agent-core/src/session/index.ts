@@ -76,6 +76,12 @@ export interface AgentMeta {
   readonly parentAgentId: string | null;
 }
 
+export interface CreateAgentOptions {
+  readonly profile?: ResolvedAgentProfile;
+  readonly parentAgentId?: string;
+  readonly persistMetadata?: boolean;
+}
+
 export interface SessionMeta {
   createdAt: string;
   updatedAt: string;
@@ -170,7 +176,9 @@ export class Session {
   }
 
   async createMain() {
-    const { agent } = await this.createAgent({ type: 'main' }, DEFAULT_AGENT_PROFILES['agent']);
+    const { agent } = await this.createAgent({ type: 'main' }, {
+      profile: DEFAULT_AGENT_PROFILES['agent'],
+    });
     // The main-agent audit sink now exists; flush any goal records queued before it.
     this.goals.flushPendingRecords();
     await this.triggerSessionStart('startup');
@@ -246,25 +254,27 @@ export class Session {
 
   async createAgent(
     config: Partial<AgentOptions>,
-    profile?: ResolvedAgentProfile,
-    parentAgentId?: string | undefined,
+    options: CreateAgentOptions = {},
   ): Promise<{ readonly id: string; readonly agent: Agent }> {
     await this.skillsReady;
     const type = config.type ?? 'main';
     const id = type === 'main' ? 'main' : this.nextGeneratedAgentId();
     const homedir = config.homedir ?? join(this.options.homedir, 'agents', id);
-    const agent = this.instantiateAgent(id, homedir, type, config, parentAgentId ?? null);
-    if (profile) {
-      await this.bootstrapAgentProfile(agent, profile);
+    const parentAgentId = options.parentAgentId ?? null;
+    const agent = this.instantiateAgent(id, homedir, type, config, parentAgentId);
+    if (options.profile) {
+      await this.bootstrapAgentProfile(agent, options.profile);
     }
 
     this.agents.set(id, agent);
-    this.metadata.agents[id] = {
-      homedir,
-      type,
-      parentAgentId: parentAgentId ?? null,
-    };
-    void this.writeMetadata();
+    if (options.persistMetadata !== false) {
+      this.metadata.agents[id] = {
+        homedir,
+        type,
+        parentAgentId,
+      };
+      void this.writeMetadata();
+    }
 
     return { id, agent };
   }

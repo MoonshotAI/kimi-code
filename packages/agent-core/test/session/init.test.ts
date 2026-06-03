@@ -54,7 +54,7 @@ describe('Session.init', () => {
     });
     const { agent: mainAgent } = await session.createAgent(
       { type: 'main', generate: scripted.generate },
-      testProfile(),
+      { profile: testProfile() },
     );
     mainAgent.config.update({
       modelAlias: 'mock-model',
@@ -191,7 +191,7 @@ describe('AgentAPI.startBtw', () => {
     });
     const { agent: mainAgent } = await session.createAgent(
       { type: 'main', generate: scripted.generate },
-      testProfile(),
+      { profile: testProfile() },
     );
     mainAgent.config.update({
       modelAlias: 'mock-model',
@@ -225,6 +225,7 @@ describe('AgentAPI.startBtw', () => {
       const agentId = await api.startBtw({ agentId: 'main' });
       expect(agentId).toBe('agent-0');
       expect(scripted.calls).toHaveLength(0);
+      expect(session.metadata.agents[agentId]).toBeUndefined();
       const childAgent = session.agents.get(agentId);
       if (childAgent === undefined) throw new Error('Expected /btw child agent');
       const inheritedHistory = trimTrailingOpenToolExchange(
@@ -309,7 +310,7 @@ describe('AgentAPI.startBtw', () => {
     });
     const { agent: mainAgent } = await session.createAgent(
       { type: 'main', generate: scripted.generate },
-      testProfile(),
+      { profile: testProfile() },
     );
     mainAgent.config.update({
       modelAlias: 'mock-model',
@@ -412,7 +413,7 @@ describe('AgentAPI.startBtw', () => {
     });
     const { agent: mainAgent } = await session.createAgent(
       { type: 'main', generate },
-      testProfile(),
+      { profile: testProfile() },
     );
     mainAgent.config.update({
       modelAlias: 'mock-model',
