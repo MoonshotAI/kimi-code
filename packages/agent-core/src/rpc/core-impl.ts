@@ -10,6 +10,7 @@ import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search
 import type { PromisableMethods } from '#/utils/types';
 import { getCoreVersion } from '#/version';
 import { resolveThinkingLevel } from '../agent/config/thinking';
+import { Agent } from '../agent';
 import {
   ensureKimiHome,
   loadRuntimeConfig,
@@ -860,7 +861,9 @@ async function resumeSessionResult(
 ): Promise<ResumeSessionResult> {
   const api = new SessionAPIImpl(session);
   const agents: Record<string, ResumedAgentState> = {};
-  for (const [agentId, agent] of session.agents) {
+  for (const [agentId, entry] of session.agents) {
+    if (!(entry instanceof Agent)) continue;
+    const agent = entry;
     const config = await api.getConfig({ agentId });
     const context = await api.getContext({ agentId });
     const permission = await api.getPermission({ agentId });

@@ -158,7 +158,7 @@ max_context_size = 100000
 
     const created = await rpc.createSession({ id: 'ses_runtime_default_model', workDir });
     const session = core.sessions.get(created.id);
-    const mainAgent = session?.agents.get('main');
+    const mainAgent = session?.getReadyAgent('main');
 
     expect(mainAgent?.config.modelAlias).toBe('default-mock');
   });
