@@ -212,6 +212,12 @@ export class KimiTUI {
   private startupNotice: string | undefined;
   private lastActivityMode: string | undefined;
   private lastHistoryContent: string | undefined;
+  private activeBtw:
+    | {
+        readonly agentId: string;
+        readonly panel: BtwPanelComponent;
+      }
+    | undefined;
   readonly streamingUI: StreamingUIController;
   readonly authFlow: AuthFlowController;
   readonly sessionEventHandler: SessionEventHandler;
@@ -675,6 +681,7 @@ export class KimiTUI {
   }
 
   sendNormalUserInput(text: string): void {
+    if (this.sendBtwUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
@@ -697,6 +704,20 @@ export class KimiTUI {
     }
     this.updateQueueDisplay();
     this.state.ui.requestRender();
+  }
+
+  private sendBtwUserInput(text: string): boolean {
+    const active = this.activeBtw;
+    if (active === undefined) return false;
+    if (active.panel.isRunning()) {
+      this.state.editor.setText(text);
+      this.showStatus('Wait for /btw to finish before sending another question.');
+      return true;
+    }
+    active.panel.submit(text);
+    this.state.ui.setFocus(this.state.editor);
+    this.state.ui.requestRender();
+    return true;
   }
 
   private validateMediaCapabilities(
@@ -1083,7 +1104,7 @@ export class KimiTUI {
     this.streamingUI.resetToolUi();
     this.sessionEventHandler.resetRuntimeState();
     this.tasksBrowserController.close();
-    this.state.btwPanelContainer.clear();
+    this.clearBtwPanel();
     this.state.footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 0 });
     this.streamingUI.setTodoList([]);
     this.streamingUI.setTurnId(undefined);
@@ -1334,7 +1355,7 @@ export class KimiTUI {
     this.streamingUI.resetToolUi();
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
     this.state.transcriptContainer.clear();
-    this.state.btwPanelContainer.clear();
+    this.clearBtwPanel();
     this.clearTerminalInlineImages();
     this.state.todoPanel.clear();
     this.state.todoPanelContainer.clear();
@@ -1629,16 +1650,24 @@ export class KimiTUI {
     this.state.btwPanelContainer.clear();
     this.state.btwPanelContainer.addChild(new Spacer(1));
     this.state.btwPanelContainer.addChild(panel);
-    this.state.ui.setFocus(panel);
+    this.state.ui.setFocus(this.state.editor);
     this.state.ui.requestRender();
   }
 
   closeBtwPanel(panel: BtwPanelComponent): void {
     if (!this.state.btwPanelContainer.children.includes(panel)) return;
     this.sessionEventHandler.unregisterBtwPanel(panel);
+    if (this.activeBtw?.panel === panel) this.activeBtw = undefined;
     this.state.btwPanelContainer.clear();
     this.state.ui.setFocus(this.state.editor);
     this.state.ui.requestRender();
+  }
+
+  private clearBtwPanel(): void {
+    const panel = this.activeBtw?.panel;
+    if (panel !== undefined) this.sessionEventHandler.unregisterBtwPanel(panel);
+    this.activeBtw = undefined;
+    this.state.btwPanelContainer.clear();
   }
 
   openBtwPanel(agentId: string, initialPrompt: string): void {
@@ -1649,17 +1678,21 @@ export class KimiTUI {
       onPrompt: (prompt) => {
         this.promptBtwAgent(agentId, prompt, panel);
       },
-      onClose: () => {
-        this.closeBtwPanel(panel);
-      },
-      onCancel: () => {
-        this.closeBtwPanel(panel);
-        void this.cancelSideAgent(agentId);
-      },
     });
+    this.activeBtw = { agentId, panel };
     this.sessionEventHandler.registerBtwPanel(agentId, panel);
     this.showBtwPanel(panel);
     panel.submit(initialPrompt);
+  }
+
+  closeOrCancelBtwPanel(): boolean {
+    const active = this.activeBtw;
+    if (active === undefined) return false;
+    this.closeBtwPanel(active.panel);
+    if (active.panel.isRunning()) {
+      void this.cancelSideAgent(active.agentId);
+    }
+    return true;
   }
 
   private promptBtwAgent(agentId: string, prompt: string, panel: BtwPanelComponent): void {

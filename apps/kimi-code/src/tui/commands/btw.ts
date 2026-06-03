@@ -1,10 +1,7 @@
-import type { Component, Focusable, MarkdownTheme } from '@earendil-works/pi-tui';
+import type { Component, MarkdownTheme } from '@earendil-works/pi-tui';
 import {
-  Input,
-  Key,
   Markdown,
   Text,
-  matchesKey,
   truncateToWidth,
   visibleWidth,
 } from '@earendil-works/pi-tui';
@@ -30,8 +27,6 @@ export interface BtwPanelOptions {
   readonly colors: ColorPalette;
   readonly markdownTheme: MarkdownTheme;
   readonly onPrompt: (prompt: string) => void;
-  readonly onClose: () => void;
-  readonly onCancel: () => void;
 }
 
 export async function handleBtwCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -55,30 +50,11 @@ export async function handleBtwCommand(host: SlashCommandHost, args: string): Pr
   }
 }
 
-export class BtwPanelComponent implements Component, Focusable {
+export class BtwPanelComponent implements Component {
   private readonly turns: BtwTurn[] = [];
-  private readonly input = new Input();
-  focused = false;
+  private minBodyLines = 0;
 
-  constructor(private readonly options: BtwPanelOptions) {
-    this.input.onSubmit = (value) => {
-      if (this.isRunning()) return;
-      const prompt = value.trim();
-      if (prompt.length === 0) {
-        this.options.onClose();
-        return;
-      }
-      this.input.setValue('');
-      this.submit(prompt);
-    };
-    this.input.onEscape = () => {
-      if (this.isRunning()) {
-        this.options.onCancel();
-      } else {
-        this.options.onClose();
-      }
-    };
-  }
+  constructor(private readonly options: BtwPanelOptions) {}
 
   submit(prompt: string): void {
     const normalized = prompt.trim();
@@ -141,36 +117,17 @@ export class BtwPanelComponent implements Component, Focusable {
     return lines;
   }
 
-  handleInput(data: string): void {
-    if (this.isRunning()) {
-      if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl('c'))) {
-        this.options.onCancel();
-      }
-      return;
-    }
-    this.input.handleInput(data);
-  }
-
   private renderTopBorder(width: number): string {
     const paint = (s: string): string => chalk.hex(this.options.colors.border)(s);
-    const title = `${chalk.hex(this.options.colors.accent).bold(' BTW ')}${this.renderPhase()} `;
-    const innerWidth = Math.max(1, width - 2);
+    const title =
+      chalk.hex(this.options.colors.accent).bold(' BTW ') +
+      paint('─ ') +
+      chalk.hex(this.options.colors.textMuted)('Esc to close ');
+    const innerWidth = Math.max(1, width - 1);
     const clippedTitle =
       visibleWidth(title) > innerWidth ? truncateToWidth(title, innerWidth, '') : title;
     const dashCount = Math.max(0, innerWidth - visibleWidth(clippedTitle));
     return paint('╭') + clippedTitle + paint('─'.repeat(dashCount)) + paint('╮');
-  }
-
-  private renderPhase(): string {
-    const phase = this.currentTurn()?.phase ?? 'done';
-    switch (phase) {
-      case 'done':
-        return chalk.hex(this.options.colors.success)('done');
-      case 'failed':
-        return chalk.hex(this.options.colors.error)('failed');
-      case 'running':
-        return chalk.hex(this.options.colors.textMuted)('running');
-    }
   }
 
   private renderBody(width: number): string[] {
@@ -182,12 +139,12 @@ export class BtwPanelComponent implements Component, Focusable {
     if (this.turns.length === 0) {
       lines.push(chalk.hex(this.options.colors.textDim)('Ready for a side question...'));
     }
-    if (!this.isRunning()) {
-      this.input.focused = this.focused;
-      lines.push('');
-      lines.push(this.renderInput(width));
+    if (lines.length > this.minBodyLines) {
+      this.minBodyLines = lines.length;
     }
-    lines.push(this.renderHint());
+    while (lines.length < this.minBodyLines) {
+      lines.push('');
+    }
     return lines;
   }
 
@@ -223,13 +180,6 @@ export class BtwPanelComponent implements Component, Focusable {
     ];
   }
 
-  private renderInput(width: number): string {
-    const label = chalk.hex(this.options.colors.textMuted)('Ask: ');
-    const inputWidth = Math.max(1, width - visibleWidth(label));
-    const [line = ''] = this.input.render(inputWidth);
-    return label + line;
-  }
-
   private renderBodyLine(line: string, width: number): string {
     const paint = (s: string): string => chalk.hex(this.options.colors.border)(s);
     const contentWidth = Math.max(1, width - 4);
@@ -239,18 +189,11 @@ export class BtwPanelComponent implements Component, Focusable {
     return paint('│') + ' ' + clipped + ' '.repeat(padding) + ' ' + paint('│');
   }
 
-  private renderHint(): string {
-    const text = this.isRunning()
-      ? 'Esc/Ctrl-C cancel'
-      : 'Type follow-up, Enter send, empty Enter/Esc/Ctrl-C close';
-    return chalk.hex(this.options.colors.textMuted)(text);
-  }
-
   private currentTurn(): BtwTurn | undefined {
     return this.turns.at(-1);
   }
 
-  private isRunning(): boolean {
+  isRunning(): boolean {
     return this.currentTurn()?.phase === 'running';
   }
 }

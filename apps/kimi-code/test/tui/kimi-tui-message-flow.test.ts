@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { BtwPanelComponent } from '#/tui/commands/btw';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
@@ -246,18 +247,12 @@ function renderBtwPanel(driver: MessageDriver): string {
   return driver.state.btwPanelContainer.render(120).join('\n');
 }
 
-interface MountedBtwPanel {
-  readonly focused: boolean;
-  handleInput(data: string): void;
-}
-
-function getMountedBtwPanel(driver: MessageDriver): MountedBtwPanel {
-  const panel = driver.state.btwPanelContainer.children.find((child) => {
-    if (typeof child !== 'object' || child === null) return false;
-    return 'focused' in child && typeof (child as { handleInput?: unknown }).handleInput === 'function';
-  });
+function getMountedBtwPanel(driver: MessageDriver): BtwPanelComponent {
+  const panel = driver.state.btwPanelContainer.children.find(
+    (child) => child instanceof BtwPanelComponent,
+  );
   if (panel === undefined) throw new Error('Expected a mounted /btw panel.');
-  return panel as unknown as MountedBtwPanel;
+  return panel;
 }
 
 async function openBtwPanel(
@@ -1390,16 +1385,22 @@ describe('KimiTUI message flow', () => {
 
     expect(driver.state.btwPanelContainer.children).toHaveLength(2);
     expect(driver.state.btwPanelContainer.render(120)[0]?.trim()).toBe('');
-    expect(getMountedBtwPanel(driver).focused).toBe(true);
-    expect(driver.state.editor.focused).toBe(false);
+    expect(getMountedBtwPanel(driver).isRunning()).toBe(false);
+    expect(driver.state.editor.focused).toBe(true);
 
     const transcript = stripSgr(renderTranscript(driver));
     const panel = stripSgr(renderBtwPanel(driver));
-    expect(panel).toContain('BTW done');
+    expect(panel).toContain('BTW ── Esc to close');
+    expect(panel).not.toContain('BTW done');
+    expect(panel).not.toContain('BTW running');
+    expect(panel).not.toContain('BTW failed');
+    expect(panel).not.toContain('Ask:');
+    expect(panel).not.toContain('Type follow-up');
     expect(panel).toContain('Q: 你现在在做啥？');
     expect(panel).toContain('正在实现 /btw 的独立面板。');
     expect(panel).not.toContain('Agent');
-    expect(transcript).not.toContain('BTW done');
+    expect(transcript).not.toContain('BTW');
+    expect(transcript).not.toContain('Esc to close');
     expect(transcript).not.toContain('正在实现 /btw 的独立面板。');
   });
 
@@ -1459,7 +1460,10 @@ describe('KimiTUI message flow', () => {
     );
     expect(transcript).toContain('main answer after btw');
     expect(transcript).not.toContain('side answer');
-    expect(panel).toContain('BTW done');
+    expect(panel).toContain('BTW');
+    expect(panel).not.toContain('BTW done');
+    expect(panel).not.toContain('BTW running');
+    expect(panel).not.toContain('BTW failed');
     expect(panel).toContain('side answer');
     expect(panel).not.toContain('main answer after btw');
   });
@@ -1489,22 +1493,69 @@ describe('KimiTUI message flow', () => {
     expect(panel).toContain('line7');
   });
 
+  it('keeps /btw panel height stable when final output is shorter than thinking', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        delta: 'thinking line 1\nthinking line 2',
+      } as Event,
+      () => {},
+    );
+
+    const mountedPanel = getMountedBtwPanel(driver);
+    const thinkingLines = mountedPanel.render(80).map(stripSgr);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        delta: 'final answer',
+      } as Event,
+      () => {},
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        reason: 'completed',
+      } as Event,
+      () => {},
+    );
+
+    const finalLines = mountedPanel.render(80).map(stripSgr);
+    expect(finalLines).toHaveLength(thinkingLines.length);
+    expect(finalLines.join('\n')).toContain('final answer');
+    expect(finalLines.at(-1)).toMatch(/^│\s+│$/);
+  });
+
   it('cancels and closes a running /btw panel on Escape', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
     await openBtwPanel(driver, session);
 
     const panel = getMountedBtwPanel(driver);
-    expect(panel.focused).toBe(true);
+    expect(panel.isRunning()).toBe(true);
+    expect(driver.state.editor.focused).toBe(true);
 
-    panel.handleInput('\x1b');
+    driver.state.editor.onEscape?.();
 
     expect(session.cancel).toHaveBeenCalledOnce();
     expect(driver.state.btwPanelContainer.children).toHaveLength(0);
     expect(driver.state.editor.focused).toBe(true);
   });
 
-  it('closes a completed /btw panel on Enter without cancelling it', async () => {
+  it('closes a completed /btw panel on Escape without cancelling it', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session);
     await openBtwPanel(driver, session);
@@ -1521,9 +1572,10 @@ describe('KimiTUI message flow', () => {
     );
 
     const panel = getMountedBtwPanel(driver);
-    expect(panel.focused).toBe(true);
+    expect(panel.isRunning()).toBe(false);
+    expect(driver.state.editor.focused).toBe(true);
 
-    panel.handleInput('\r');
+    driver.state.editor.onEscape?.();
 
     expect(session.cancel).not.toHaveBeenCalled();
     expect(driver.state.btwPanelContainer.children).toHaveLength(0);
@@ -1547,20 +1599,18 @@ describe('KimiTUI message flow', () => {
     );
 
     const panel = getMountedBtwPanel(driver);
-    for (const ch of 'follow up') {
-      panel.handleInput(ch);
-    }
-    panel.handleInput('\r');
+    expect(panel.isRunning()).toBe(false);
+    driver.handleUserInput('follow up');
 
     await vi.waitFor(() => {
       expect(session.prompt).toHaveBeenCalledWith('follow up');
     });
     expect(session.prompt).toHaveBeenCalledTimes(2);
     expect(driver.state.btwPanelContainer.children).toHaveLength(2);
-    expect(driver.state.editor.focused).toBe(false);
+    expect(driver.state.editor.focused).toBe(true);
   });
 
-  it('restores the main interactive agent immediately after starting a /btw prompt', async () => {
+  it('keeps main input pointed at /btw while the panel is open', async () => {
     let resolveBtwPrompt: (() => void) | undefined;
     const session = makeSession({
       prompt: vi.fn(
@@ -1575,15 +1625,14 @@ describe('KimiTUI message flow', () => {
     await openBtwPanel(driver, session, 'slow side question');
 
     expect(harness.interactiveAgentId).toBe('main');
-    driver.state.appState.streamingPhase = 'waiting';
-    driver.handleUserInput('main follow-up while btw prompt is pending');
+    driver.handleUserInput('follow-up while btw prompt is pending');
 
-    expect(driver.state.queuedMessages).toEqual([
-      expect.objectContaining({
-        text: 'main follow-up while btw prompt is pending',
-        agentId: 'main',
-      }),
-    ]);
+    expect(session.prompt).toHaveBeenCalledTimes(1);
+    expect(driver.state.queuedMessages).toEqual([]);
+    expect(driver.state.editor.getText()).toBe('follow-up while btw prompt is pending');
+    expect(stripSgr(renderTranscript(driver))).toContain(
+      'Wait for /btw to finish before sending another question.',
+    );
 
     resolveBtwPrompt?.();
   });

@@ -22,6 +22,7 @@ export interface EditorKeyboardHost {
   cancelInFlight: (() => void) | undefined;
 
   handleUserInput(text: string): void;
+  closeOrCancelBtwPanel(): boolean;
   steerMessage(session: Session, input: string[]): void;
   recallLastQueued(): string | undefined;
   showError(msg: string): void;
@@ -73,6 +74,11 @@ export class EditorKeyboardController {
         return;
       }
 
+      if (editor.getText().length === 0 && host.closeOrCancelBtwPanel()) {
+        this.clearPendingExit();
+        return;
+      }
+
       if (host.state.appState.streamingPhase !== 'idle') {
         this.clearPendingExit();
         this.cancelCurrentStream();
@@ -108,6 +114,9 @@ export class EditorKeyboardController {
       }
       if (host.state.appState.isCompacting) {
         this.cancelCurrentCompaction();
+        return;
+      }
+      if (host.closeOrCancelBtwPanel()) {
         return;
       }
       if (host.state.appState.streamingPhase !== 'idle') {
