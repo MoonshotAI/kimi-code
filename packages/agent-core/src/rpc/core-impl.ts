@@ -22,11 +22,8 @@ import {
   type MoonshotServiceConfig,
 } from '../config';
 import {
-  FLAG_DEFINITIONS,
   flags,
   type ExperimentalFlagMap,
-  type FlagDefinitionInput,
-  type FlagId,
 } from '../flags';
 import type { Logger } from '../logging/types';
 import { resolveSessionMcpConfig, type SessionMcpConfig } from '../mcp';
@@ -169,6 +166,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.pluginsReady = this.plugins.load().catch((error: unknown) => {
       this.pluginsLoadError = error instanceof Error ? error : new Error(String(error));
     });
+    log.info('experimental flags enabled', { flags: flags.enabledIds() });
 
     this.sdk = rpcClient(this);
   }
@@ -259,8 +257,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   getExperimentalFlags(): ExperimentalFlagMap {
-    const defs: readonly FlagDefinitionInput[] = FLAG_DEFINITIONS;
-    return Object.fromEntries(defs.map((def) => [def.id, flags.enabled(def.id as FlagId)]));
+    return flags.snapshot();
   }
 
   async closeSession({ sessionId }: CloseSessionPayload): Promise<void> {
