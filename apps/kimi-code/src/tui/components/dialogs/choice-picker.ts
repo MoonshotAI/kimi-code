@@ -18,6 +18,7 @@ import {
 } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
+import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import type { ColorPalette } from '#/tui/theme/colors';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
@@ -48,8 +49,6 @@ export interface ChoicePickerOptions {
   readonly onSelect: (value: string) => void;
   readonly onCancel: () => void;
 }
-
-const CURRENT_MARK = '← current';
 
 function wrapDescription(text: string, width: number): string[] {
   const maxWidth = Math.max(1, width);
@@ -107,11 +106,10 @@ export class ChoicePickerComponent extends Container implements Focusable {
       this.list.pageDown();
       return;
     }
-    if (
-      matchesKey(data, Key.enter) ||
-      matchesKey(data, Key.space) ||
-      printableChar(data) === ' '
-    ) {
+    // Enter always selects. Space selects too — but only when the list is not
+    // searchable; in a searchable list a space must reach the query instead.
+    const isSpace = matchesKey(data, Key.space) || printableChar(data) === ' ';
+    if (matchesKey(data, Key.enter) || (isSpace && this.opts.searchable !== true)) {
       const chosen = this.list.selected();
       if (chosen !== undefined) this.opts.onSelect(chosen.value);
       return;
@@ -125,6 +123,9 @@ export class ChoicePickerComponent extends Container implements Focusable {
     const view = this.list.view();
     const options = view.items;
 
+    // Header mirrors the model dialog (see model-selector.ts): border, title
+    // with a "(type to search)" suffix until you type, the hint, a blank, then
+    // the search line. Key vocabulary is lowercase to match every list dialog.
     const navParts = ['↑↓ navigate'];
     if (view.page.pageCount > 1) navParts.push('←→ page');
     navParts.push('Enter select', 'Esc cancel');
@@ -135,19 +136,17 @@ export class ChoicePickerComponent extends Container implements Focusable {
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(` ${this.opts.title}`) + titleSuffix,
-    ];
-    if (searchable && view.query.length > 0) {
-      lines.push(chalk.hex(colors.primary)(` Search: `) + chalk.hex(colors.text)(view.query));
-    }
-    lines.push(
       this.opts.formatHint === undefined
         ? chalk.hex(colors.textMuted)(` ${hint}`)
         : this.opts.formatHint(` ${hint}`, colors),
-    );
+    ];
     if (this.opts.notice !== undefined) {
       lines.push(chalk.hex(colors.success)(` ${this.opts.notice}`));
     }
     lines.push('');
+    if (searchable && view.query.length > 0) {
+      lines.push(chalk.hex(colors.primary)(` Search: `) + chalk.hex(colors.text)(view.query));
+    }
 
     if (options.length === 0) {
       lines.push(chalk.hex(colors.textMuted)('   No matches'));
@@ -156,7 +155,7 @@ export class ChoicePickerComponent extends Container implements Focusable {
       const opt = options[i]!;
       const isSelected = i === view.selectedIndex;
       const isCurrent = opt.value === this.opts.currentValue;
-      const pointer = isSelected ? '❯' : ' ';
+      const pointer = isSelected ? SELECT_POINTER : ' ';
       const labelStyle = optionLabelStyle(opt, isSelected, colors);
       let line = chalk.hex(isSelected ? colors.primary : colors.textDim)(`  ${pointer} `);
       line += labelStyle(opt.label);

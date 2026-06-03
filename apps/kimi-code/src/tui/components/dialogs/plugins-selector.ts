@@ -9,6 +9,7 @@ import {
 import type { PluginInfo, PluginMcpServerInfo, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 
+import { SELECT_POINTER } from '#/tui/constant/symbols';
 import type { ColorPalette } from '#/tui/theme/colors';
 import { formatPluginSourceLabel, pluginTrustLabel } from '#/tui/utils/plugin-source-label';
 import { printableChar } from '#/tui/utils/printable-key';
@@ -122,13 +123,13 @@ export class PluginsOverviewSelectorComponent extends Container implements Focus
   override render(width: number): string[] {
     const { colors, plugins } = this.opts;
     const hint =
-      '↑↓ navigate · Space toggle · M MCP servers · D remove · Enter details · Esc close';
+      '↑↓ navigate · Space toggle · M MCP servers · D remove · Enter details · Esc cancel';
     const pluginItems = this.items.filter((item) => item.kind === 'plugin');
     const actionItems = this.items.filter((item) => item.kind === 'action');
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(' Plugins'),
-      pluginShortcutHint(` ${hint}`, colors),
+      mutedHintLine(` ${hint}`, colors),
       '',
       sectionLabel(`Installed plugins (${plugins.length})`, colors),
     ];
@@ -157,7 +158,7 @@ export class PluginsOverviewSelectorComponent extends Container implements Focus
   private renderItem(item: PluginsOverviewItem, index: number, width: number): string[] {
     const { colors } = this.opts;
     const selected = index === this.selectedIndex;
-    const pointer = selected ? '❯' : ' ';
+    const pointer = selected ? SELECT_POINTER : ' ';
     const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
     const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
     let line = prefix + labelStyle(item.label);
@@ -172,7 +173,7 @@ export class PluginsOverviewSelectorComponent extends Container implements Focus
     const descriptionWidth = Math.max(1, width - 4);
     const lines = [line];
     for (const descLine of wrapOverviewDescription(item.description, descriptionWidth)) {
-      lines.push(pluginShortcutHint(`    ${descLine}`, colors));
+      lines.push(mutedHintLine(`    ${descLine}`, colors));
     }
     return lines;
   }
@@ -237,7 +238,7 @@ export class PluginMarketplaceSelectorComponent extends Container implements Foc
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(' Official plugins'),
-      pluginShortcutHint(' ↑↓ navigate · Enter/Space install/update · ←/Esc back', colors),
+      mutedHintLine(' ↑↓ navigate · Enter/Space install/update · ←/Esc cancel', colors),
       chalk.hex(colors.textMuted)(` Source: ${this.opts.source}`),
       '',
       sectionLabel(`Marketplace (${entries.length})`, colors),
@@ -265,7 +266,7 @@ export class PluginMarketplaceSelectorComponent extends Container implements Foc
   private renderItem(item: PluginsOverviewItem, index: number, width: number): string[] {
     const { colors } = this.opts;
     const selected = index === this.selectedIndex;
-    const pointer = selected ? '❯' : ' ';
+    const pointer = selected ? SELECT_POINTER : ' ';
     const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
     const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
     let line = prefix + labelStyle(item.label);
@@ -275,7 +276,7 @@ export class PluginMarketplaceSelectorComponent extends Container implements Foc
     const descriptionWidth = Math.max(1, width - 4);
     const lines = [line];
     for (const descLine of wrapOverviewDescription(item.description, descriptionWidth)) {
-      lines.push(pluginShortcutHint(`    ${descLine}`, colors));
+      lines.push(mutedHintLine(`    ${descLine}`, colors));
     }
     return lines;
   }
@@ -354,7 +355,7 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
       chalk.hex(colors.primary).bold(` MCP servers · ${info.displayName}`),
-      pluginShortcutHint(' ↑↓ navigate · Enter/Space enable/disable · ←/Esc back', colors),
+      mutedHintLine(' ↑↓ navigate · Enter/Space enable/disable · ←/Esc cancel', colors),
       '',
       sectionLabel(`MCP servers (${info.enabledMcpServerCount}/${info.mcpServerCount} enabled)`, colors),
     ];
@@ -381,7 +382,7 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
   private renderItem(item: PluginsOverviewItem, index: number, width: number): string[] {
     const { colors } = this.opts;
     const selected = index === this.selectedIndex;
-    const pointer = selected ? '❯' : ' ';
+    const pointer = selected ? SELECT_POINTER : ' ';
     const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
     const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
     let line = prefix + labelStyle(item.label);
@@ -395,7 +396,7 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
     const descriptionWidth = Math.max(1, width - 4);
     const lines = [line];
     for (const descLine of wrapOverviewDescription(item.description, descriptionWidth)) {
-      lines.push(pluginShortcutHint(`    ${descLine}`, colors));
+      lines.push(mutedHintLine(`    ${descLine}`, colors));
     }
     return lines;
   }
@@ -417,7 +418,7 @@ export class PluginRemoveConfirmComponent extends ChoicePickerComponent {
     super({
       title: `Remove ${opts.displayName} (${opts.id})?`,
       hint: '↑↓ navigate · Enter/Space select · ←/Esc cancel',
-      formatHint: pluginShortcutHint,
+      formatHint: mutedHintLine,
       options: [
         {
           value: REMOVE_CONFIRM_CANCEL,
@@ -594,27 +595,8 @@ function statusStyle(
   return chalk.hex(colors.warning);
 }
 
-function pluginShortcutHint(text: string, colors: ColorPalette): string {
-  const shortcutPattern = /D(?= remove)|M(?= MCP)|Space|Enter|Esc|[←→↑↓]/gu;
-  let output = '';
-  let offset = 0;
-
-  for (const match of text.matchAll(shortcutPattern)) {
-    const index = match.index;
-    if (index === undefined) continue;
-    const token = match[0];
-    output += chalk.hex(colors.textMuted)(text.slice(offset, index));
-    output += shortcutTokenStyle(token, colors)(token);
-    offset = index + token.length;
-  }
-
-  output += chalk.hex(colors.textMuted)(text.slice(offset));
-  return output;
-}
-
-function shortcutTokenStyle(token: string, colors: ColorPalette): (text: string) => string {
-  if (token === 'D') return chalk.hex(colors.error).bold;
-  return chalk.hex(colors.primary).bold;
+function mutedHintLine(text: string, colors: ColorPalette): string {
+  return chalk.hex(colors.textMuted)(text);
 }
 
 function wrapOverviewDescription(text: string, width: number): string[] {

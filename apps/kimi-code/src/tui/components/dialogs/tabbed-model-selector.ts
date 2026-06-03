@@ -6,12 +6,11 @@
  *   ['all', ...uniqueProviderIds]   (insertion order, deduplicated)
  *
  * Each tab owns its own inner ModelSelectorComponent built from the filtered
- * subset of models. Up/Down/Enter/Esc/Left/Right are forwarded to the active
- * inner selector; Tab / Shift-Tab cycle between tabs.
+ * subset of models. ↑/↓/Enter/Esc/←/→ (thinking) and typing (filter) are
+ * forwarded to the active inner selector; Tab / Shift-Tab cycle between tabs.
  *
- * Note: the flat ModelSelectorComponent is intentionally left untouched — the
- * OpenPlatform login flow (see promptModelSelectionForOpenPlatform) keeps
- * using it directly.
+ * The active tab is highlighted with a filled background (matching the
+ * AskUserQuestion dialog's tab strip) — see .agents/skills/write-tui/DESIGN.md.
  */
 
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
@@ -67,14 +66,13 @@ export class TabbedModelSelectorComponent extends Container implements Focusable
     this.opts = opts;
     this.tabs = buildTabs(opts);
 
-    const preferredProvider =
-      opts.initialTabId ??
-      opts.models[opts.selectedValue ?? '']?.provider ??
-      opts.models[opts.currentValue]?.provider;
-    const initialTabIdx = preferredProvider
-      ? this.tabs.findIndex((tab) => tab.id === preferredProvider)
+    // Default to the "All" tab. Only an explicit initialTabId (e.g. the
+    // provider just added via /provider) opens on a specific provider tab —
+    // the current model is still highlighted inside whichever tab is active.
+    const initialTabIdx = opts.initialTabId
+      ? this.tabs.findIndex((tab) => tab.id === opts.initialTabId)
       : -1;
-    this.activeIndex = initialTabIdx >= 0 ? initialTabIdx : 0;
+    this.activeIndex = Math.max(initialTabIdx, 0);
     this.syncFocusToActive();
   }
 
@@ -101,14 +99,19 @@ export class TabbedModelSelectorComponent extends Container implements Focusable
     if (this.tabs.length <= 1) {
       return inner.map((line) => truncateToWidth(line, width));
     }
-    // Inject the tab strip just after the inner selector's top divider so
-    // it sits inside the frame rather than above it.
+    // Layout: divider, title, hint, blank, tab strip, blank, then the model
+    // list. The inner selector's blank line (inner[3]) separates the hint from
+    // the tab strip; an extra blank separates the tabs from their list.
     const stripLine = this.renderTabStrip(width);
-    const out: string[] = [];
-    out.push(inner[0] ?? '');
-    out.push(stripLine);
-    out.push(chalk.hex(this.opts.colors.primary)('─'.repeat(width)));
-    for (let i = 1; i < inner.length; i++) out.push(inner[i]!);
+    const out: string[] = [
+      inner[0] ?? '',
+      inner[1] ?? '',
+      inner[2] ?? '',
+      inner[3] ?? '',
+      stripLine,
+      '',
+    ];
+    for (let i = 4; i < inner.length; i++) out.push(inner[i]!);
     return out.map((line) => truncateToWidth(line, width));
   }
 
@@ -126,30 +129,30 @@ export class TabbedModelSelectorComponent extends Container implements Focusable
     }
   }
 
+  /** Style a tab segment. The active tab is filled with the brand background
+   * (matching the AskUserQuestion dialog); inactive tabs are muted. Both have
+   * the same visible width so switching never shifts the layout. */
+  private styleTab(label: string, isActive: boolean): string {
+    const { colors } = this.opts;
+    const cell = ` ${label} `;
+    return isActive
+      ? chalk.bgHex(colors.primary).hex(colors.text).bold(cell)
+      : chalk.hex(colors.textMuted)(cell);
+  }
+
   private renderTabStrip(width: number): string {
     const { colors } = this.opts;
     const segments: string[] = [];
     for (let i = 0; i < this.tabs.length; i++) {
       const tab = this.tabs[i]!;
-      const isActive = i === this.activeIndex;
-      const label = ` ${tab.label} `;
-      const styled = isActive
-        ? chalk.hex(colors.primary).bold(`[${label}]`)
-        : chalk.hex(colors.textMuted)(` ${label} `);
-      segments.push(styled);
+      segments.push(this.styleTab(tab.label, i === this.activeIndex));
     }
 
-    // If everything fits with a leading space, show all.
+    // If everything fits with a leading space, show the whole strip. The
+    // provider-switch hint lives in the inner selector's hint line, not here.
     const totalSegmentWidth = segments.reduce((sum, s) => sum + visibleWidth(s), 0);
     if (1 + totalSegmentWidth <= width) {
-      const hint = chalk.hex(colors.textMuted)('Tab / Shift+Tab provider');
-      let strip = ' ' + segments.join('');
-      const available = width - visibleWidth(strip) - 1;
-      if (available >= visibleWidth(hint) + 1) {
-        const pad = ' '.repeat(available - visibleWidth(hint));
-        strip += pad + hint;
-      }
-      return strip;
+      return ' ' + segments.join(' ');
     }
 
     // Scrolling needed. Find the widest window that contains activeIndex.
@@ -196,18 +199,10 @@ export class TabbedModelSelectorComponent extends Container implements Focusable
     const hasLeft = start > 0;
     const hasRight = end < segments.length;
     let strip = hasLeft ? chalk.hex(colors.textMuted)('< ') : ' ';
-    strip += segments.slice(start, end).join('');
+    strip += segments.slice(start, end).join(' ');
     if (hasRight) {
       strip += chalk.hex(colors.textMuted)(' >');
     }
-
-    const hint = chalk.hex(colors.textMuted)('Tab / Shift+Tab provider');
-    const available = width - visibleWidth(strip) - 1;
-    if (available >= visibleWidth(hint) + 1) {
-      const pad = ' '.repeat(available - visibleWidth(hint));
-      strip += pad + hint;
-    }
-
     return strip;
   }
 }
@@ -224,12 +219,13 @@ function buildTabs(opts: TabbedModelSelectorOptions): readonly ModelTab[] {
     }
   }
 
-  const tabs: ModelTab[] = [];
-  tabs.push({
-    id: ALL_TAB_ID,
-    label: ALL_TAB_LABEL,
-    selector: makeSelector(opts, opts.models),
-  });
+  const tabs: ModelTab[] = [
+    {
+      id: ALL_TAB_ID,
+      label: ALL_TAB_LABEL,
+      selector: makeSelector(opts, opts.models),
+    },
+  ];
   for (const providerId of providerIds) {
     const subset: Record<string, ModelAlias> = {};
     for (const [alias, model] of entries) {

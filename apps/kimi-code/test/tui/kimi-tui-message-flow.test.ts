@@ -2032,15 +2032,16 @@ describe('KimiTUI message flow', () => {
     const picker = driver.state.editorContainer.children[0];
     expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
     const pickerOutput = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
-    expect(pickerOutput).toContain('Kimi K2 (Kimi Code) ← current');
-    expect(pickerOutput).toContain('❯ Kimi Turbo (Kimi Code)');
+    expect(pickerOutput).toMatch(/Kimi K2\s+Kimi Code ← current/);
+    expect(pickerOutput).toMatch(/❯ Kimi Turbo\s+Kimi Code/);
     (picker as TabbedModelSelectorComponent).handleInput('t');
     (picker as TabbedModelSelectorComponent).handleInput('u');
     const filteredOutput = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
     expect(filteredOutput).toContain('Search: tu');
-    expect(filteredOutput).toContain('Kimi Turbo (Kimi Code)');
-    expect(filteredOutput).not.toContain('Kimi K2 (Kimi Code)');
-    (picker as TabbedModelSelectorComponent).handleInput('/');
+    expect(filteredOutput).toContain('Kimi Turbo');
+    expect(filteredOutput).not.toContain('Kimi K2');
+    // Right arrow toggles thinking on (replaces the old "/" binding).
+    (picker as TabbedModelSelectorComponent).handleInput(String.fromCodePoint(27) + '[C');
     (picker as TabbedModelSelectorComponent).handleInput('\r');
 
     await vi.waitFor(() => {
@@ -2117,8 +2118,8 @@ describe('KimiTUI message flow', () => {
 
     const output = stripSgr((picker as ModelSelectorComponent).render(120).join('\n'));
     expect(output).toContain('Search: tu');
-    expect(output).toContain('Kimi Turbo (Kimi Code)');
-    expect(output).not.toContain('Kimi Alpha (Kimi Code)');
+    expect(output).toContain('Kimi Turbo');
+    expect(output).not.toContain('Kimi Alpha');
 
     (picker as ModelSelectorComponent).handleInput('\u001B');
     (picker as ModelSelectorComponent).handleInput('\u001B');

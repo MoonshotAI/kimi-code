@@ -13,6 +13,7 @@ import {
 import chalk from 'chalk';
 
 import { formatSessionLabel } from '#/migration/index';
+import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import type { ColorPalette } from '#/tui/theme/colors';
 
 export interface SessionRow {
@@ -25,7 +26,6 @@ export interface SessionRow {
 }
 
 const ELLIPSIS = '…';
-const CURRENT_BADGE = '(current)';
 
 function formatRelativeTime(ts: number): string {
   // SessionSummary timestamps come from filesystem stat `*timeMs`,
@@ -160,7 +160,7 @@ export class SessionPickerComponent extends Container implements Focusable {
     }
 
     const headerLabel = 'Sessions ';
-    const headerHint = '(↑↓ navigate, Enter select, Esc cancel)';
+    const headerHint = '↑↓ navigate · Enter select · Esc cancel';
     const labelWidth = visibleWidth(headerLabel);
     const hintBudget = Math.max(0, width - labelWidth);
     const shownHint = truncateToWidth(headerHint, hintBudget, ELLIPSIS);
@@ -207,18 +207,18 @@ export class SessionPickerComponent extends Container implements Focusable {
     isCurrent: boolean,
   ): string[] {
     const colors = this.colors;
-    const pointer = isSelected ? '❯' : ' ';
+    const pointer = isSelected ? SELECT_POINTER : ' ';
     const indent = '  ';
     const indentWidth = visibleWidth(indent);
     const titleColor = isSelected ? colors.primary : colors.text;
     const titleStyle = isSelected ? chalk.hex(titleColor).bold : chalk.hex(titleColor);
 
     const time = formatRelativeTime(session.updated_at);
-    const badge = isCurrent ? CURRENT_BADGE : '';
+    const badge = isCurrent ? CURRENT_MARK : '';
     const rawTitle = (session.title ?? session.id).trim() || session.id;
     const titleSource = formatSessionLabel({ title: rawTitle, metadata: session.metadata });
 
-    // Inline trailing parts after the title: "<title>  <time>  (current)".
+    // Inline trailing parts after the title: "<title>  <time>  ← current".
     const trailingParts = [time, badge].filter((p) => p.length > 0);
     const trailingText = trailingParts.length > 0 ? '  ' + trailingParts.join('  ') : '';
     const trailingWidth = visibleWidth(trailingText);

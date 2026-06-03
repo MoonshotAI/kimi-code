@@ -136,7 +136,7 @@ describe('SessionPickerComponent', () => {
     expect(promptLine).not.toContain(longPrompt);
   });
 
-  it('marks the current session with a (current) badge', () => {
+  it('marks the current session with a "← current" badge', () => {
     const now = new Date('2026-05-11T12:00:00.000Z').getTime();
     vi.spyOn(Date, 'now').mockReturnValue(now);
 
@@ -165,8 +165,8 @@ describe('SessionPickerComponent', () => {
     const lines = component.render(120).map((line) => stripAnsi(line));
     const currentLine = lines.find((line) => line.includes('this is current'));
     const otherLine = lines.find((line) => line.includes('not current'));
-    expect(currentLine).toContain('(current)');
-    expect(otherLine).not.toContain('(current)');
+    expect(currentLine).toContain('← current');
+    expect(otherLine).not.toContain('← current');
   });
 
   it('places the relative time on the same line as the title, not right-aligned', () => {

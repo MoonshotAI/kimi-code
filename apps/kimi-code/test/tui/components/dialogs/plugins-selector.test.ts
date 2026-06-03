@@ -13,8 +13,6 @@ import { darkColors } from '#/tui/theme/colors';
 import { pluginTrustLabel } from '#/tui/utils/plugin-source-label';
 
 const ANSI_SGR = /\[[0-9;]*m/g;
-const SGR_SEQUENCE = String.raw`\[[0-9;]*m`;
-const HIGHLIGHTED_D_REMOVE = new RegExp(`${SGR_SEQUENCE}(?:${SGR_SEQUENCE})*D(?:${SGR_SEQUENCE})+ remove`, 'g');
 const MID = '\u00B7';
 
 function strip(text: string): string {
@@ -33,10 +31,6 @@ function withAnsiColors<T>(fn: () => T): T {
 
 function renderRaw(component: { render(width: number): string[] }, width = 120): string {
   return withAnsiColors(() => component.render(width).join('\n'));
-}
-
-function primaryShortcut(text: string): string {
-  return withAnsiColors(() => chalk.hex(darkColors.primary).bold(text));
 }
 
 function dangerShortcut(text: string): string {
@@ -125,11 +119,7 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain(`id kimi-datasource ${MID} 2 skills ${MID} MCP 1/1`);
     expect(out).not.toContain('Space disable');
     expect(out).not.toContain('Enter info');
-    expect(raw.match(HIGHLIGHTED_D_REMOVE)).toHaveLength(1);
-    expect(raw).toContain(primaryShortcut('Space'));
-    expect(raw).toContain(primaryShortcut('M'));
-    expect(raw).toContain(dangerShortcut('D'));
-    expect(raw).toContain(primaryShortcut('Enter'));
+    expect(out).toContain('Space toggle · M MCP servers · D remove · Enter details');
     expect(out).toContain('Marketplace');
     expect(out).toContain('Summary');
 
@@ -165,8 +155,7 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain(
       `Workflow skills ${MID} id superpowers ${MID} v5.1.0 ${MID} Curated plugin ${MID} workflow`,
     );
-    expect(raw).toContain(primaryShortcut('Enter'));
-    expect(raw).toContain(primaryShortcut('Space'));
+    expect(out).toContain('Enter/Space install/update');
     expect(out).toContain('Actions');
     expect(out).toContain('Back to installed plugins');
 
@@ -331,8 +320,7 @@ describe('plugins selector dialogs', () => {
     const out = strip(raw);
     expect(out).toContain('MCP servers (1/1 enabled)');
     expect(out).toContain('? data  enabled');
-    expect(raw).toContain(primaryShortcut('Enter'));
-    expect(raw).toContain(primaryShortcut('Space'));
+    expect(out).toContain('Enter/Space enable/disable');
 
     picker.handleInput(' ');
 
@@ -403,8 +391,8 @@ describe('plugins selector dialogs', () => {
 
     picker.handleInput('[B');
     const raw = renderRaw(picker);
-    expect(raw).toContain(primaryShortcut('Enter'));
-    expect(raw).toContain(primaryShortcut('Space'));
+    expect(strip(raw)).toContain('Enter/Space select');
+    // The destructive option label keeps its danger styling (error + bold).
     expect(raw).toContain(dangerShortcut('Remove plugin'));
 
     picker.handleInput('\r');
