@@ -645,7 +645,7 @@ export class QuestionDialogComponent extends Container implements Focusable {
         'type answer',
         '↵ save',
         ...(this.totalTabs() > 1 ? ['tab switch'] : []),
-        'esc dismiss',
+        'esc cancel',
       ];
       return dim(`  ${parts.join('  ')}`);
     }
@@ -653,21 +653,21 @@ export class QuestionDialogComponent extends Container implements Focusable {
     const optionCount = Math.min(this.displayOptions(questionIdx).length, NUMBER_KEYS.length);
     const numberHint = optionCount <= 1 ? '1' : `1-${String(optionCount)}`;
     const question = this.request.data.questions[questionIdx];
-    if (question === undefined) return dim('  esc dismiss');
+    if (question === undefined) return dim('  esc cancel');
 
     const parts: string[] = [
-      '▲/▼ select',
+      '↑↓ select',
       `${numberHint} / ↵ ${question.multi_select ? 'toggle' : 'choose'}`,
     ];
     if (this.totalTabs() > 1) parts.push('←/→/tab switch');
-    parts.push('esc dismiss');
+    parts.push('esc cancel');
     return dim(`  ${parts.join('  ')}`);
   }
 
   private buildSubmitHint(dim: (s: string) => string): string {
-    const parts: string[] = ['▲/▼ select', '1/2 choose', '↵ confirm'];
+    const parts: string[] = ['↑↓ select', '1/2 choose', '↵ confirm'];
     if (this.totalTabs() > 1) parts.push('←/→/tab switch');
-    parts.push('esc dismiss');
+    parts.push('esc cancel');
     return dim(`  ${parts.join('  ')}`);
   }
 

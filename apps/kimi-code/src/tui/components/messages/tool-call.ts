@@ -1193,11 +1193,16 @@ export class ToolCallComponent extends Container {
     }
 
     if (toolCall.name === 'AskUserQuestion') {
+      const isBackgroundAsk = toolCall.args['background'] === true;
       const label = isFinished
         ? isError
           ? 'Could not collect your input'
+          : isBackgroundAsk
+            ? 'Started background question'
           : 'Collected your answers'
-        : 'Waiting for your input';
+        : isBackgroundAsk
+          ? 'Starting background question'
+          : 'Waiting for your input';
       const tone = isError ? chalk.hex(colors.error) : chalk.hex(colors.primary);
       return `${bullet}${tone.bold(label)}`;
     }
@@ -1790,6 +1795,7 @@ export class ToolCallComponent extends Container {
 
     if (
       this.toolCall.name === 'AskUserQuestion' &&
+      this.toolCall.args['background'] !== true &&
       !result.is_error &&
       this.renderAskUserQuestionResult(result.output)
     ) {

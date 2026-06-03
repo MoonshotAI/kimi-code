@@ -1,10 +1,12 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  FLAG_DEFINITIONS,
+  MASTER_ENV,
   createRPC,
   ErrorCodes,
   KimiCore,
@@ -12,7 +14,19 @@ import {
   type CoreAPI,
   type SDKAPI,
 } from '../../src';
+import {
+  __resetRootLoggerForTest,
+  getRootLogger,
+  resolveGlobalLogPath,
+} from '../../src/logging/logger';
+import { resolveLoggingConfig } from '../../src/logging/resolve-config';
 import type { OAuthTokenProviderResolver } from '../../src/session/provider-manager';
+
+function requiredFlagEnv(id: string): string {
+  const def = FLAG_DEFINITIONS.find((item) => item.id === id);
+  if (def === undefined) throw new Error(`Missing flag definition: ${id}`);
+  return def.env;
+}
 
 describe('KimiCore runtime config', () => {
   let tmp: string;
@@ -21,7 +35,32 @@ describe('KimiCore runtime config', () => {
     if (tmp !== undefined) {
       await rm(tmp, { recursive: true, force: true });
     }
+    await __resetRootLoggerForTest();
+    vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+  });
+
+  it('logs all enabled experimental flags once on core startup', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    await mkdir(homeDir, { recursive: true });
+    await getRootLogger().configure(resolveLoggingConfig({ homeDir }));
+
+    vi.stubEnv(MASTER_ENV, '0');
+    for (const def of FLAG_DEFINITIONS) {
+      vi.stubEnv(def.env, '0');
+    }
+    vi.stubEnv(requiredFlagEnv('goal-command'), '1');
+    vi.stubEnv(requiredFlagEnv('background-ask'), '1');
+
+    void new KimiCore(async () => ({}) as never, { homeDir });
+    await getRootLogger().flushGlobal();
+
+    const text = await readFile(resolveGlobalLogPath(homeDir), 'utf-8');
+    expect(text).toContain('experimental flags enabled');
+    expect(text).toContain('goal-command');
+    expect(text).toContain('background-ask');
+    expect(text.match(/experimental flags enabled/g)).toHaveLength(1);
   });
 
   it('uses the shared OAuth resolver for Moonshot service tokens', async () => {
@@ -120,7 +159,7 @@ max_context_size = 100000
 
     const created = await rpc.createSession({ id: 'ses_runtime_default_model', workDir });
     const session = core.sessions.get(created.id);
-    const mainAgent = session?.agents.get('main');
+    const mainAgent = session?.getReadyAgent('main');
 
     expect(mainAgent?.config.modelAlias).toBe('default-mock');
   });
@@ -191,7 +230,7 @@ base_url = "https://search.example.test/v1"
       model: 'default-mock',
     });
     const active = core.sessions.get(created.id);
-    const main = active?.agents.get('main');
+    const main = active?.getReadyAgent('main');
     vi.spyOn(main!.turn, 'hasActiveTurn', 'get').mockReturnValue(true);
 
     await expect(rpc.reloadSession({ sessionId: created.id })).rejects.toMatchObject({

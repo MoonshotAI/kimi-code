@@ -10,6 +10,7 @@ import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search
 import type { PromisableMethods } from '#/utils/types';
 import { getCoreVersion } from '#/version';
 import { resolveThinkingLevel } from '../agent/config/thinking';
+import { Agent } from '../agent';
 import {
   ensureKimiHome,
   loadRuntimeConfig,
@@ -22,11 +23,8 @@ import {
   type MoonshotServiceConfig,
 } from '../config';
 import {
-  FLAG_DEFINITIONS,
   flags,
   type ExperimentalFlagMap,
-  type FlagDefinitionInput,
-  type FlagId,
 } from '../flags';
 import type { Logger } from '../logging/types';
 import { resolveSessionMcpConfig, type SessionMcpConfig } from '../mcp';
@@ -48,8 +46,12 @@ import type {
   CloseSessionPayload,
   CoreAPI,
   CoreInfo,
+  CreateGoalPayload,
   CreateSessionPayload,
   EmptyPayload,
+  GoalControlPayload,
+  GoalSnapshot,
+  GoalToolResult,
   ExportSessionPayload,
   ExportSessionResult,
   ForkSessionPayload,
@@ -168,6 +170,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.pluginsReady = this.plugins.load().catch((error: unknown) => {
       this.pluginsLoadError = error instanceof Error ? error : new Error(String(error));
     });
+    log.info('experimental flags enabled', { flags: flags.enabledIds() });
 
     this.sdk = rpcClient(this);
   }
@@ -258,8 +261,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   getExperimentalFlags(): ExperimentalFlagMap {
-    const defs: readonly FlagDefinitionInput[] = FLAG_DEFINITIONS;
-    return Object.fromEntries(defs.map((def) => [def.id, flags.enabled(def.id as FlagId)]));
+    return flags.snapshot();
   }
 
   async closeSession({ sessionId }: CloseSessionPayload): Promise<void> {
@@ -603,6 +605,42 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).generateAgentsMd(payload);
   }
 
+  startBtw({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>): Promise<string> {
+    return this.sessionApi(sessionId).startBtw(payload);
+  }
+
+  createGoal({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<CreateGoalPayload>): Promise<GoalSnapshot> {
+    return Promise.resolve(this.sessionApi(sessionId).createGoal(payload));
+  }
+
+  getGoal({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>): GoalToolResult {
+    return this.sessionApi(sessionId).getGoal(payload);
+  }
+
+  pauseGoal({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<GoalControlPayload>): Promise<GoalSnapshot> {
+    return Promise.resolve(this.sessionApi(sessionId).pauseGoal(payload));
+  }
+
+  resumeGoal({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<GoalControlPayload>): Promise<GoalSnapshot> {
+    return Promise.resolve(this.sessionApi(sessionId).resumeGoal(payload));
+  }
+
+  cancelGoal({
+    sessionId,
+    ...payload
+  }: SessionScopedPayload<GoalControlPayload>): Promise<GoalSnapshot> {
+    return Promise.resolve(this.sessionApi(sessionId).cancelGoal(payload));
+  }
+
   async installPlugin(payload: InstallPluginPayload): Promise<PluginSummary> {
     await this.pluginsReady;
     this.assertPluginsLoaded();
@@ -853,7 +891,9 @@ async function resumeSessionResult(
 ): Promise<ResumeSessionResult> {
   const api = new SessionAPIImpl(session);
   const agents: Record<string, ResumedAgentState> = {};
-  for (const [agentId, agent] of session.agents) {
+  for (const [agentId, entry] of session.agents) {
+    if (!(entry instanceof Agent)) continue;
+    const agent = entry;
     const config = await api.getConfig({ agentId });
     const context = await api.getContext({ agentId });
     const permission = await api.getPermission({ agentId });

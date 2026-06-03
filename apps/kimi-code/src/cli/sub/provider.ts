@@ -23,13 +23,14 @@ import {
   catalogBaseUrl,
   catalogProviderModels,
   CatalogFetchError,
+  createKimiHarness,
   DEFAULT_CATALOG_URL,
   fetchCatalog,
   inferWireType,
-  KimiHarness,
   type Catalog,
   type CatalogProviderEntry,
   type KimiConfig,
+  type KimiHarness,
 } from '@moonshot-ai/kimi-code-sdk';
 import type { Command } from 'commander';
 
@@ -487,7 +488,7 @@ function resolveDeps(overrides: Partial<ProviderDeps> = {}): ProviderDeps {
     getHarness:
       overrides.getHarness ??
       (() => {
-        harness ??= new KimiHarness({ identity });
+        harness ??= createKimiHarness({ identity });
         return harness;
       }),
     stdout: overrides.stdout ?? process.stdout,

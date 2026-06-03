@@ -181,6 +181,16 @@ describe('resolveCompletionBudget', () => {
     expect(budget?.fallback).toBe(12345);
   });
 
+  it('uses model max output size as the default hard cap when no env var is set', () => {
+    const budget = resolveCompletionBudget({
+      maxOutputSize: 384000,
+      reservedContextSize: 12345,
+      env: {},
+    });
+    expect(budget?.hardCap).toBe(384000);
+    expect(budget?.fallback).toBeUndefined();
+  });
+
   it('falls back to 32000 only for unknown context when nothing is configured', () => {
     const budget = resolveCompletionBudget({ env: {} });
     expect(budget?.hardCap).toBeUndefined();

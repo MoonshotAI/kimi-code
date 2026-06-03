@@ -15,6 +15,7 @@ import { formatErrorMessage } from '../utils/event-payload';
 import type { ImageAttachmentStore } from '../utils/image-attachment-store';
 import type { PendingExit } from '../types';
 import type { TUIState } from '../tui-state';
+import type { BtwPanelController } from './btw-panel';
 
 export interface EditorKeyboardHost {
   state: TUIState;
@@ -22,6 +23,7 @@ export interface EditorKeyboardHost {
   cancelInFlight: (() => void) | undefined;
 
   handleUserInput(text: string): void;
+  readonly btwPanelController: BtwPanelController;
   steerMessage(session: Session, input: string[]): void;
   recallLastQueued(): string | undefined;
   showError(msg: string): void;
@@ -73,6 +75,15 @@ export class EditorKeyboardController {
         return;
       }
 
+      if (host.btwPanelController.cancelRunning()) {
+        this.clearPendingExit();
+        return;
+      }
+      if (host.btwPanelController.closeOrCancel()) {
+        this.clearPendingExit();
+        return;
+      }
+
       if (host.state.appState.streamingPhase !== 'idle') {
         this.clearPendingExit();
         this.cancelCurrentStream();
@@ -108,6 +119,9 @@ export class EditorKeyboardController {
       }
       if (host.state.appState.isCompacting) {
         this.cancelCurrentCompaction();
+        return;
+      }
+      if (host.btwPanelController.closeOrCancel()) {
         return;
       }
       if (host.state.appState.streamingPhase !== 'idle') {
@@ -177,6 +191,7 @@ export class EditorKeyboardController {
     };
 
     editor.onUpArrowEmpty = () => {
+      if (host.btwPanelController.scroll('up')) return true;
       if (host.state.appState.streamingPhase === 'idle' && !host.state.appState.isCompacting) return false;
       const recalled = host.recallLastQueued();
       if (recalled !== undefined) {
@@ -187,6 +202,8 @@ export class EditorKeyboardController {
       }
       return false;
     };
+
+    editor.onDownArrowEmpty = () => host.btwPanelController.scroll('down');
 
     editor.onPasteImage = async () => this.handleClipboardImagePaste();
   }

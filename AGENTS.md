@@ -14,7 +14,7 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 
 ## Project Map
 
-- `apps/kimi-code`: the CLI / TUI application. It consumes core capabilities through `@moonshot-ai/kimi-code-sdk` and must not depend directly on `@moonshot-ai/agent-core`.
+- `apps/kimi-code`: the CLI / TUI application. It consumes core capabilities through `@moonshot-ai/kimi-code-sdk` and must not depend directly on `@moonshot-ai/agent-core`. When writing or modifying its terminal UI, use the `write-tui` skill (`.agents/skills/write-tui/SKILL.md`).
 - `apps/vis`, `apps/vis/server`, `apps/vis/web`: visual debugging tools for sessions and replays.
 - `packages/agent-core`: the unified agent engine, including Agent, Session, profile, skills, tools, plan, permission, background, records, and other core capabilities.
 - `packages/node-sdk`: the public TypeScript SDK and harness.
@@ -65,6 +65,7 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 
 - Prefer `rg` / `rg --files` when reading code.
 - When designing changes, follow existing boundaries and local patterns first.
+- In public text and test data, replace real internal identifiers with neutral placeholders such as `example.com`, `example.test`, and `YOUR_API_KEY`. Before opening a PR, ask a read-only agent to audit the diff for context-specific internal identifiers.
 - When creating a PR, the PR title must follow Conventional Commit style, e.g. `chore: remove legacy format commands`.
 - When an AI agent opens or updates a PR, fill in `.github/pull_request_template.md` — link the related issue or explain the problem, then describe what changed. Do not leave placeholder text or submit a generic summary of the diff.
 - Do not submit vague AI-generated PR text. The human author must understand the change well enough to explain the code, edge cases, and why the approach fits this repository.

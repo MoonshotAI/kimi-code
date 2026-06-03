@@ -27,12 +27,6 @@ vi.mock('node:fs/promises', async () => {
 
 import { editInExternalEditor, resolveEditorCommand } from '#/utils/process/external-editor';
 
-function shellPath(cmd: string): string {
-  const match = cmd.match(/'([^']+)'$/);
-  if (!match) throw new Error(`Could not parse temp path from: ${cmd}`);
-  return match[1]!;
-}
-
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.clearAllMocks();
@@ -50,9 +44,12 @@ describe('external-editor helpers', () => {
   });
 
   it('returns the edited contents on success and cleans up the temp directory', async () => {
-    mocks.spawn.mockImplementation((_cmd: string, args: string[]) => {
+    mocks.spawn.mockImplementation((cmd: string, _opts: Record<string, unknown>) => {
       const child = new EventEmitter();
-      void writeFile(shellPath(args[1]!), 'edited text', 'utf8').then(() => {
+      // Extract the file path from the shell command (last argument after quoting).
+      const match = cmd.match(/'([^']+prompt\.md)'/) || cmd.match(/"([^"]+prompt\.md)"/);
+      const tmpFile = match![1]!;
+      void writeFile(tmpFile, 'edited text', 'utf8').then(() => {
         child.emit('exit', 0);
       });
       return child as never;
@@ -60,9 +57,8 @@ describe('external-editor helpers', () => {
 
     await expect(editInExternalEditor('seed', 'code --wait')).resolves.toBe('edited text');
     expect(mocks.spawn).toHaveBeenCalledWith(
-      '/bin/sh',
-      ['-c', expect.stringMatching(/^code --wait /)],
-      { stdio: 'inherit' },
+      expect.stringContaining('code --wait'),
+      { stdio: 'inherit', shell: true },
     );
     expect(mocks.rmCalls).toHaveBeenCalled();
   });

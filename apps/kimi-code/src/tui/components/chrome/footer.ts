@@ -23,6 +23,7 @@ import {
 import { safeUsageRatio } from '#/utils/usage/usage-format';
 
 const MAX_CWD_SEGMENTS = 3;
+const GOAL_TIMER_INTERVAL_MS = 1_000;
 
 // Toolbar tips — rotates every 10s. Most tips are short and pair up (two
 // joined by " | ") when space allows; tips flagged `solo` are long or
@@ -121,6 +122,49 @@ function tipsForIndex(index: number): { primary: string; pair: string | null } {
   return { primary: current.text, pair: current.text + TIP_SEPARATOR + next.text };
 }
 
+/**
+ * Footer goal badge, e.g. `[goal ● active · 4m · 7 turns]`. Only shown for a
+ * live (active/paused) goal; terminal/no goal -> no badge. Turn count is a raw
+ * count unless an explicit turn budget is set, in which case it shows used/limit.
+ */
+function formatGoalBadge(
+  goal: AppState['goal'],
+  colors: ColorPalette,
+  wallClockMs?: number,
+): string | null {
+  if (goal === null || goal === undefined) return null;
+  // Show the badge for every persisted, resumable status. `complete` clears the
+  // goal, so it never reaches here; only the unset case returns null.
+  if (goal.status !== 'active' && goal.status !== 'paused' && goal.status !== 'blocked') {
+    return null;
+  }
+  const dotColor =
+    goal.status === 'active'
+      ? colors.primary
+      : goal.status === 'blocked'
+        ? colors.warning
+        : colors.textMuted;
+  const turns =
+    goal.budget.turnBudget !== null
+      ? `${goal.turnsUsed}/${goal.budget.turnBudget} turns`
+      : `${goal.turnsUsed} ${goal.turnsUsed === 1 ? 'turn' : 'turns'}`;
+  const label = `${goal.status} · ${formatBadgeElapsed(wallClockMs ?? goal.wallClockMs)} · ${turns}`;
+  return (
+    chalk.hex(colors.textMuted)('[goal ') +
+    chalk.hex(dotColor)('●') +
+    chalk.hex(colors.textMuted)(` ${label}]`)
+  );
+}
+
+function formatBadgeElapsed(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h${minutes % 60}m`;
+}
+
 function modelDisplayName(state: AppState): string {
   const model = state.availableModels[state.model];
   return model?.displayName ?? model?.model ?? state.model;
@@ -174,10 +218,13 @@ export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): s
 export class FooterComponent implements Component {
   private state: AppState;
   private colors: ColorPalette;
-  private readonly onGitStatusChange: () => void;
+  private readonly onRefresh: () => void;
   private gitCache: GitStatusCache;
   private gitCacheWorkDir: string;
   private transientHint: string | null = null;
+  private goalSnapshotKey: string | null = null;
+  private goalObservedAtMs = Date.now();
+  private goalTimer: ReturnType<typeof setInterval> | null = null;
   /**
    * Non-terminal background-task counts split by kind so the footer can
    * render two distinct badges. `bashTasks` covers `bash-*` BPM tasks
@@ -188,19 +235,23 @@ export class FooterComponent implements Component {
   private backgroundBashTaskCount = 0;
   private backgroundAgentCount = 0;
 
-  constructor(state: AppState, colors: ColorPalette, onGitStatusChange: () => void = () => {}) {
+  constructor(state: AppState, colors: ColorPalette, onRefresh: () => void = () => {}) {
     this.state = state;
     this.colors = colors;
-    this.onGitStatusChange = onGitStatusChange;
+    this.onRefresh = onRefresh;
     this.gitCacheWorkDir = state.workDir;
-    this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onGitStatusChange });
+    this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onRefresh });
+    this.syncGoalClock(state.goal);
+    this.syncGoalTimer(state.goal);
   }
 
   setState(state: AppState): void {
     if (state.workDir !== this.gitCacheWorkDir) {
       this.gitCacheWorkDir = state.workDir;
-      this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onGitStatusChange });
+      this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onRefresh });
     }
+    this.syncGoalClock(state.goal);
+    this.syncGoalTimer(state.goal);
     this.state = state;
   }
 
@@ -239,6 +290,9 @@ export class FooterComponent implements Component {
     if (state.permissionMode === 'auto') left.push(chalk.hex(colors.warning).bold('auto'));
     if (state.permissionMode === 'yolo') left.push(chalk.hex(colors.warning).bold('yolo'));
     if (state.planMode) left.push(chalk.hex(colors.primary).bold('plan'));
+
+    const goalBadge = formatGoalBadge(state.goal, colors, this.goalWallClockMs(state.goal));
+    if (goalBadge !== null) left.push(goalBadge);
 
     const model = modelDisplayName(state);
     if (model) {
@@ -326,4 +380,45 @@ export class FooterComponent implements Component {
 
     return [truncateToWidth(line1, width), truncateToWidth(line2, width)];
   }
+
+  private syncGoalClock(goal: AppState['goal']): void {
+    const key = goalSnapshotKey(goal);
+    if (key === this.goalSnapshotKey) return;
+    this.goalSnapshotKey = key;
+    this.goalObservedAtMs = Date.now();
+  }
+
+  private syncGoalTimer(goal: AppState['goal']): void {
+    if (goal?.status === 'active') {
+      if (this.goalTimer !== null) return;
+      this.goalTimer = setInterval(() => {
+        this.onRefresh();
+      }, GOAL_TIMER_INTERVAL_MS);
+      this.goalTimer.unref?.();
+      return;
+    }
+
+    if (this.goalTimer !== null) {
+      clearInterval(this.goalTimer);
+      this.goalTimer = null;
+    }
+  }
+
+  private goalWallClockMs(goal: AppState['goal']): number | undefined {
+    if (goal === null || goal === undefined) return undefined;
+    if (goal.status !== 'active') return goal.wallClockMs;
+    return goal.wallClockMs + Math.max(0, Date.now() - this.goalObservedAtMs);
+  }
+}
+
+function goalSnapshotKey(goal: AppState['goal']): string | null {
+  if (goal === null || goal === undefined) return null;
+  return [
+    goal.goalId,
+    goal.status,
+    String(goal.turnsUsed),
+    String(goal.tokensUsed),
+    String(goal.wallClockMs),
+    goal.updatedAt,
+  ].join('\u0000');
 }

@@ -248,7 +248,7 @@ export class TaskOutputViewer extends Container implements Focusable {
       `${key('↑↓')} ${dim('line')}  ` +
       `${key('PgUp/PgDn')} ${dim('page')}  ` +
       `${key('g/G')} ${dim('top/bot')}  ` +
-      `${key('Q/Esc')} ${dim('back')}`;
+      `${key('Q/Esc')} ${dim('cancel')}`;
     const left = ` ${keys}`;
     const leftW = visibleWidth(left);
     const rightW = visibleWidth(position);

@@ -11,6 +11,7 @@ import type {
   CronFiredEvent,
   ErrorEvent,
   Event,
+  GoalUpdatedEvent,
   HookResultEvent,
   Session,
   SessionMetaUpdatedEvent,
@@ -30,8 +31,10 @@ import type {
   TurnStepStartedEvent,
   WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
+import { buildGoalCompletionMessage } from '@moonshot-ai/kimi-code-sdk';
 
 import { MoonLoader } from '../components/chrome/moon-loader';
+import { buildGoalMarker } from '../components/messages/goal-markers';
 import { StatusMessageComponent } from '../components/messages/status-message';
 import {
   MAIN_AGENT_ID,
@@ -59,6 +62,7 @@ import { setProcessTitle } from '../utils/proctitle';
 import { errorReportHintLine } from '../constant/feedback';
 import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
 import { nextTranscriptId } from '../utils/transcript-id';
+import type { BtwPanelController } from './btw-panel';
 import type { StreamingUIController } from './streaming-ui';
 import type { TasksBrowserController } from './tasks-browser';
 import type {
@@ -89,6 +93,7 @@ export interface SessionEventHost {
   appendTranscriptEntry(entry: TranscriptEntry): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
+  readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
 }
 
@@ -194,6 +199,7 @@ export class SessionEventHandler {
       case 'tool.result': this.handleToolResult(event); break;
       case 'agent.status.updated': this.handleStatusUpdate(event); break;
       case 'session.meta.updated': this.handleSessionMetaChanged(event); break;
+      case 'goal.updated': this.handleGoalUpdated(event); break;
       case 'skill.activated': this.handleSkillActivated(event); break;
       case 'error': this.handleSessionError(event); break;
       case 'warning': this.handleSessionWarning(event); break;
@@ -230,8 +236,11 @@ export class SessionEventHandler {
     if (subagentId === MAIN_AGENT_ID) return false;
 
     const { streamingUI } = this.host;
+    if (this.host.btwPanelController.routeEvent(event)) return true;
+
     const info = this.subagentInfo.get(subagentId);
-    if (info === undefined || info.parentToolCallId.length === 0) return true;
+    if (info === undefined) return true;
+    if (info.parentToolCallId.length === 0) return true;
     const { parentToolCallId } = info;
     const sourceName = info.name;
     const toolCall = streamingUI.getToolComponent(parentToolCallId);
@@ -547,6 +556,36 @@ export class SessionEventHandler {
     }
     if (event.model !== undefined) patch.model = event.model;
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
+  }
+
+  private handleGoalUpdated(event: GoalUpdatedEvent): void {
+    this.host.setAppState({ goal: event.snapshot });
+    const change = event.change;
+    if (change === undefined) return;
+    const { state } = this.host;
+
+    // Completion -> the box disappears (snapshot cleared on the follow-up null
+    // update) and a deterministic completion message lands in the transcript.
+    // The same text is appended to the conversation by the continuation
+    // controller, so it persists and renders identically on resume.
+    if (change.kind === 'completion' && event.snapshot !== null) {
+      this.host.appendTranscriptEntry({
+        id: nextTranscriptId(),
+        kind: 'assistant',
+        renderMode: 'markdown',
+        content: buildGoalCompletionMessage(event.snapshot),
+      });
+      state.ui.requestRender();
+      return;
+    }
+
+    // Lifecycle change (pause / resume / blocked) -> a low-profile,
+    // ctrl+o-expandable marker.
+    const marker = buildGoalMarker(change, state.theme.colors, state.toolOutputExpanded);
+    if (marker !== null) {
+      state.transcriptContainer.addChild(marker);
+      state.ui.requestRender();
+    }
   }
 
   private handleSessionMetaChanged(event: SessionMetaUpdatedEvent): void {
@@ -933,7 +972,7 @@ export class SessionEventHandler {
         });
       }
       if (!this.backgroundTaskTranscriptedTerminal.has(info.taskId)) {
-        if (info.kind === 'process') {
+        if (info.kind === 'process' || info.kind === 'question') {
           this.appendBackgroundTaskEntry(info);
         }
         this.backgroundTaskTranscriptedTerminal.add(info.taskId);

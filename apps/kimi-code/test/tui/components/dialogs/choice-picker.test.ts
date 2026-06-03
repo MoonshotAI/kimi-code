@@ -2,20 +2,49 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { EditorSelectorComponent } from '#/tui/components/dialogs/editor-selector';
-import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { PermissionSelectorComponent } from '#/tui/components/dialogs/permission-selector';
 import { SettingsSelectorComponent } from '#/tui/components/dialogs/settings-selector';
 import { ThemeSelectorComponent } from '#/tui/components/dialogs/theme-selector';
 import { UpdatePreferenceSelectorComponent } from '#/tui/components/dialogs/update-preference-selector';
 import { darkColors } from '#/tui/theme/colors';
 
-const ANSI_SGR = /\u001B\[[0-9;]*m/g;
+const ANSI_SGR = /\[[0-9;]*m/g;
 
 function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '');
 }
 
 describe('ChoicePickerComponent', () => {
+  it('uses the model-dialog header vocabulary (capitalized keys, "type to search")', () => {
+    const picker = new ChoicePickerComponent({
+      title: 'Add provider',
+      options: [
+        { value: 'a', label: 'Alpha' },
+        { value: 'b', label: 'Beta' },
+      ],
+      colors: darkColors,
+      searchable: true,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const lines = picker.render(120).map(strip);
+
+    const titleIdx = lines.findIndex((l) => l.includes('Add provider'));
+    expect(titleIdx).toBeGreaterThanOrEqual(0);
+    // Title carries the same "(type to search)" suffix as /model and /provider.
+    expect(lines[titleIdx]).toContain('(type to search)');
+    expect(lines[titleIdx]).not.toContain('type to filter');
+    // Hint sits directly under the title and uses lowercase key vocabulary.
+    const hint = lines[titleIdx + 1];
+    expect(hint).toContain('↑↓ navigate');
+    expect(hint).toContain('Enter select');
+    expect(hint).toContain('Esc cancel');
+    expect(hint).not.toContain('enter select');
+    expect(hint).not.toContain('esc cancel');
+    // Blank line separates the hint from the body, like the model dialog.
+    expect(lines[titleIdx + 2]).toBe('');
+  });
+
   it('renders optional descriptions below choice labels', () => {
     const picker = new ChoicePickerComponent({
       title: 'Select permission mode',
@@ -56,27 +85,6 @@ describe('ChoicePickerComponent', () => {
     });
     expect(editor.render(120).map(strip)).toContain('  ❯ Vim ← current');
 
-    const model = new ModelSelectorComponent({
-      models: {
-        kimi: {
-          provider: 'managed:kimi-code',
-          model: 'kimi-k2',
-          maxContextSize: 200_000,
-          displayName: 'Kimi K2',
-          capabilities: ['thinking'],
-        },
-      },
-      currentValue: 'kimi',
-      currentThinking: true,
-      colors: darkColors,
-      onSelect,
-      onCancel,
-    });
-    const modelOutput = model.render(120).map(strip);
-    expect(modelOutput).toContain('  ❯ Kimi K2 (Kimi Code) ← current');
-    expect(modelOutput).toContain(' Thinking  (/ to toggle)');
-    expect(modelOutput).toContain('  [ On ]    Off  ');
-
     const theme = new ThemeSelectorComponent({
       currentValue: 'light',
       colors: darkColors,
@@ -114,99 +122,35 @@ describe('ChoicePickerComponent', () => {
     expect(upgradePreferenceOutput).toContain('    Install new versions in the background.');
   });
 
-  it('submits the selected model and inline thinking state', () => {
+  it('routes Space into the query for searchable lists instead of selecting', () => {
     const onSelect = vi.fn();
-    const picker = new ModelSelectorComponent({
-      models: {
-        kimi: {
-          provider: 'managed:kimi-code',
-          model: 'kimi-k2',
-          maxContextSize: 200_000,
-          displayName: 'Kimi K2',
-          capabilities: ['thinking'],
-        },
-      },
-      currentValue: 'kimi',
-      currentThinking: true,
+    const picker = new ChoicePickerComponent({
+      title: 'Select a provider',
+      options: [
+        { value: 'openai', label: 'OpenAI' },
+        { value: 'azure', label: 'Azure OpenAI' },
+      ],
+      searchable: true,
       colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
 
-    picker.handleInput('/');
-    picker.handleInput('\r');
-
-    expect(onSelect).toHaveBeenCalledWith({ alias: 'kimi', thinking: false });
+    picker.handleInput(' ');
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it('forces always-thinking models on and unsupported models off', () => {
+  it('selects on Space when the list is not searchable', () => {
     const onSelect = vi.fn();
-    const picker = new ModelSelectorComponent({
-      models: {
-        always: {
-          provider: 'managed:kimi-code',
-          model: 'kimi-thinking',
-          maxContextSize: 200_000,
-          displayName: 'Kimi Thinking',
-          capabilities: ['always_thinking'],
-        },
-        plain: {
-          provider: 'managed:kimi-code',
-          model: 'kimi-plain',
-          maxContextSize: 200_000,
-          displayName: 'Kimi Plain',
-          capabilities: ['tool_use'],
-        },
-      },
-      currentValue: 'always',
-      currentThinking: false,
+    const picker = new ChoicePickerComponent({
+      title: 'Pick one',
+      options: [{ value: 'a', label: 'Alpha' }],
       colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
 
-    expect(picker.render(120).map(strip)).toContain('  [ Always on ]');
-    picker.handleInput('\r');
-    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'always', thinking: true });
-
-    picker.handleInput('\u001B[B');
-    expect(picker.render(120).map(strip)).toContain('  [ Off ] unsupported');
-    picker.handleInput('\r');
-    expect(onSelect).toHaveBeenLastCalledWith({ alias: 'plain', thinking: false });
-  });
-
-  it('keeps the thinking draft when moving across models', () => {
-    const onSelect = vi.fn();
-    const picker = new ModelSelectorComponent({
-      models: {
-        plain: {
-          provider: 'managed:kimi-code',
-          model: 'kimi-plain',
-          maxContextSize: 200_000,
-          displayName: 'Kimi Plain',
-          capabilities: ['tool_use'],
-        },
-        thinking: {
-          provider: 'managed:kimi-code',
-          model: 'kimi-thinking',
-          maxContextSize: 200_000,
-          displayName: 'Kimi Thinking',
-          capabilities: ['thinking'],
-        },
-      },
-      currentValue: 'plain',
-      currentThinking: false,
-      colors: darkColors,
-      onSelect,
-      onCancel: vi.fn(),
-    });
-
-    picker.handleInput('\u001B[B');
-    picker.handleInput('/');
-    picker.handleInput('\u001B[A');
-    picker.handleInput('\u001B[B');
-    picker.handleInput('\r');
-
-    expect(onSelect).toHaveBeenCalledWith({ alias: 'thinking', thinking: true });
+    picker.handleInput(' ');
+    expect(onSelect).toHaveBeenCalledWith('a');
   });
 });

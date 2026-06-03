@@ -656,7 +656,6 @@ describe('GlobTool', () => {
     expect(tool.description).toContain('/c/Users/foo');
   });
 });
-
 describe('expandBraces', () => {
   it('returns the original pattern unchanged when there is no brace group', () => {
     expect(expandBraces('src/**/*.ts')).toEqual(['src/**/*.ts']);

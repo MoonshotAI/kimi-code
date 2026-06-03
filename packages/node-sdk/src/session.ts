@@ -1,9 +1,18 @@
-import { ErrorCodes, KimiError, type AgentContextData, type KimiErrorCode } from '@moonshot-ai/agent-core';
+import {
+  ErrorCodes,
+  KimiError,
+  type AgentContextData,
+  type KimiErrorCode,
+} from '@moonshot-ai/agent-core';
+
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
-import type { SDKRpcClient } from '#/rpc';
+import type { SDKRpcClientBase } from '#/rpc';
 import type {
   BackgroundTaskInfo,
   CompactOptions,
+  CreateGoalInput,
+  GoalSnapshot,
+  GoalToolResult,
   McpServerInfo,
   McpStartupMetrics,
   PermissionMode,
@@ -28,7 +37,7 @@ export interface SessionOptions {
   readonly workDir: string;
   readonly summary?: SessionSummary | undefined;
   readonly resumeState?: ResumedSessionState | undefined;
-  readonly rpc: SDKRpcClient;
+  readonly rpc: SDKRpcClientBase;
   readonly onClose?: (() => void | Promise<void>) | undefined;
 }
 
@@ -38,7 +47,7 @@ export class Session {
   summary?: SessionSummary | undefined;
   private resumeState: ResumedSessionState | undefined;
 
-  private readonly rpc: SDKRpcClient;
+  private readonly rpc: SDKRpcClientBase;
   private readonly onClose?: (() => void | Promise<void>) | undefined;
   private closed = false;
 
@@ -102,6 +111,11 @@ export class Session {
   async init(): Promise<void> {
     this.ensureOpen();
     await this.rpc.generateAgentsMd({ sessionId: this.id });
+  }
+
+  async startBtw(): Promise<string> {
+    this.ensureOpen();
+    return this.rpc.startBtw({ sessionId: this.id });
   }
 
   async cancel(): Promise<void> {
@@ -262,6 +276,37 @@ export class Session {
       taskId: trimmedTaskId,
       reason: options.reason,
     });
+  }
+
+  // --- Goal lifecycle ---------------------------------------------------
+  // Deterministic user/host control surface. There is intentionally no
+  // `updateGoal`: the goal's terminal status is decided by the model via the
+  // in-conversation UpdateGoal tool (or the goal driver on budget/error), not
+  // by the host.
+
+  async createGoal(input: CreateGoalInput): Promise<GoalSnapshot> {
+    this.ensureOpen();
+    return this.rpc.createGoal({ sessionId: this.id, ...input });
+  }
+
+  async getGoal(): Promise<GoalToolResult> {
+    this.ensureOpen();
+    return this.rpc.getGoal({ sessionId: this.id });
+  }
+
+  async pauseGoal(input: { reason?: string } = {}): Promise<GoalSnapshot> {
+    this.ensureOpen();
+    return this.rpc.pauseGoal({ sessionId: this.id, reason: input.reason });
+  }
+
+  async resumeGoal(input: { reason?: string } = {}): Promise<GoalSnapshot> {
+    this.ensureOpen();
+    return this.rpc.resumeGoal({ sessionId: this.id, reason: input.reason });
+  }
+
+  async cancelGoal(input: { reason?: string } = {}): Promise<GoalSnapshot> {
+    this.ensureOpen();
+    return this.rpc.cancelGoal({ sessionId: this.id, reason: input.reason });
   }
 
   async listMcpServers(): Promise<readonly McpServerInfo[]> {

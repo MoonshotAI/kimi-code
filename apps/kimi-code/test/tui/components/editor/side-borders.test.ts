@@ -10,6 +10,14 @@ describe('wrapWithSideBorders', () => {
     expect(out[0]).toBe('╭────────╮');
   });
 
+  it('turns the top horizontal border into connectors when connected above', () => {
+    const out = wrapWithSideBorders(['──────────', '   hi     ', '──────────'], id, {
+      connectedAbove: true,
+    });
+    expect(out[0]).toBe('├────────┤');
+    expect(out[2]).toBe('╰────────╯');
+  });
+
   it('turns the bottom horizontal border into a ╰…╯ run', () => {
     const out = wrapWithSideBorders(['──────────', '   hi     ', '──────────'], id);
     expect(out[2]).toBe('╰────────╯');

@@ -111,7 +111,10 @@ export class CustomEditor extends Editor {
    * through so pi-tui's built-in history navigation runs.
    */
   public onUpArrowEmpty?: () => boolean;
+  public onDownArrowEmpty?: () => boolean;
   public onShiftTab?: () => void;
+  public connectedAbove = false;
+  public borderHighlighted = false;
   /**
    * Called when the user triggers "paste image" (Ctrl-V on Unix,
    * Alt-V on Windows — Ctrl-V is terminal-reserved there). Return
@@ -213,7 +216,9 @@ export class CustomEditor extends Editor {
     // overwrite it (e.g. plan-mode / slash-context highlight via
     // `editor.borderColor = chalk.hex(primary)`), so we route corners and
     // side bars through the same hook to stay in sync.
-    return wrapWithSideBorders(lines, (s) => this.borderColor(s));
+    return wrapWithSideBorders(lines, (s) => this.borderColor(s), {
+      connectedAbove: this.connectedAbove && !this.borderHighlighted,
+    });
   }
 
   override handleInput(data: string): void {
@@ -320,6 +325,12 @@ export class CustomEditor extends Editor {
       }
     }
 
+    if (matchesKey(normalized, Key.down)) {
+      if (this.getText().length === 0 && this.onDownArrowEmpty) {
+        if (this.onDownArrowEmpty()) return;
+      }
+    }
+
     if (matchesKey(normalized, Key.escape)) {
       if (this.hasAutocompleteActivity()) {
         this.cancelAutocompleteActivity();
@@ -398,13 +409,14 @@ export function injectPromptSymbol(line: string): string | undefined {
 export function wrapWithSideBorders(
   lines: string[],
   paint: (s: string) => string,
+  options: { readonly connectedAbove?: boolean } = {},
 ): string[] {
   let seenTop = false;
   return lines.map((line) => {
     const plain = stripSgr(line);
     if (plain.length > 0 && plain[0] === '─') {
-      const leftCorner = seenTop ? '╰' : '╭';
-      const rightCorner = seenTop ? '╯' : '╮';
+      const leftCorner = seenTop ? '╰' : options.connectedAbove === true ? '├' : '╭';
+      const rightCorner = seenTop ? '╯' : options.connectedAbove === true ? '┤' : '╮';
       seenTop = true;
       if (plain.length === 1) return paint(leftCorner);
       const middle = plain.slice(1, -1);

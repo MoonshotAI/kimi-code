@@ -10,6 +10,7 @@ export {
   handleLoginCommand,
   handleLogoutCommand,
 } from './auth';
+export { handleBtwCommand } from './btw';
 export {
   handleCompactCommand,
   handleEditorCommand,
@@ -29,6 +30,8 @@ export {
 } from './info';
 export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
+export { handleGoalCommand, parseGoalCommand } from './goal';
+export { goalArgumentCompletions } from './registry';
 export {
   handleForkCommand,
   handleInitCommand,

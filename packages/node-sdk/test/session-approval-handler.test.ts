@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ApprovalHandler, ApprovalRequest, ApprovalResponse } from '#/index';
 import { Session } from '#/index';
-import type { SDKRpcClient } from '#/rpc';
+import type { SDKRpcClientBase } from '#/rpc';
 
 describe('Session approval handler', () => {
   it('registers an approval handler and returns approved responses', async () => {
@@ -183,8 +183,8 @@ class FakeSDKRpcClient {
   private readonly approvalHandlers = new Map<string, ApprovalHandler>();
   readonly closeSession = vi.fn(async (_input: { readonly sessionId: string }) => {});
 
-  asRpc(): SDKRpcClient {
-    return this as unknown as SDKRpcClient;
+  asRpc(): SDKRpcClientBase {
+    return this as unknown as SDKRpcClientBase;
   }
 
   setApprovalHandler(sessionId: string, handler: ApprovalHandler | undefined): void {

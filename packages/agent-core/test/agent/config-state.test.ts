@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { emptyUsage } from '@moonshot-ai/kosong';
 
 import { ProviderManager } from '../../src/session/provider-manager';
 import { testAgent } from './harness';
@@ -73,7 +74,57 @@ describe('ConfigState model capabilities', () => {
     });
   });
 
-it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
+  it('uses model max output size as the LLM completion cap', async () => {
+    let requestMaxTokens: unknown;
+    const ctx = testAgent({
+      generate: async (provider) => {
+        requestMaxTokens = (
+          provider as unknown as { readonly modelParameters: Record<string, unknown> }
+        ).modelParameters['max_tokens'];
+        return {
+          id: 'response-1',
+          message: { role: 'assistant', content: [], toolCalls: [] },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      },
+      providerManager: new ProviderManager({
+        config: {
+          providers: {
+            deepseek: {
+              type: 'openai',
+              apiKey: 'test-key',
+              baseUrl: 'https://api.deepseek.example/v1',
+            },
+          },
+          models: {
+            'deepseek/deepseek-v4-flash': {
+              provider: 'deepseek',
+              model: 'deepseek-v4-flash',
+              maxContextSize: 1_000_000,
+              maxOutputSize: 384000,
+            },
+          },
+        },
+      }),
+    });
+
+    ctx.agent.config.update({
+      modelAlias: 'deepseek/deepseek-v4-flash',
+      systemPrompt: 'system',
+      thinkingLevel: 'off',
+    });
+    await ctx.agent.llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(requestMaxTokens).toBe(384000);
+  });
+
+  it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
     const ctx = testAgent({
       providerManager: new ProviderManager({
         promptCacheKey: 'session-test',
