@@ -34,7 +34,6 @@ export default withMermaid(defineConfig({
           { text: '定制化', link: '/zh/customization/mcp', activeMatch: '/zh/customization/' },
           { text: '配置', link: '/zh/configuration/config-files', activeMatch: '/zh/configuration/' },
           { text: '参考手册', link: '/zh/reference/kimi-command', activeMatch: '/zh/reference/' },
-          { text: '常见问题', link: '/zh/faq' },
           { text: '发布说明', link: '/zh/release-notes/changelog', activeMatch: '/zh/release-notes/' },
         ],
         sidebar: {
@@ -110,7 +109,6 @@ export default withMermaid(defineConfig({
           { text: 'Customization', link: '/en/customization/mcp', activeMatch: '/en/customization/' },
           { text: 'Configuration', link: '/en/configuration/config-files', activeMatch: '/en/configuration/' },
           { text: 'Reference', link: '/en/reference/kimi-command', activeMatch: '/en/reference/' },
-          { text: 'FAQ', link: '/en/faq' },
           { text: 'Release Notes', link: '/en/release-notes/changelog', activeMatch: '/en/release-notes/' },
         ],
         sidebar: {
