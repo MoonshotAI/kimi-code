@@ -475,5 +475,5 @@ function resolvePluginInstallSource(source: string, workDir: string): string {
 }
 
 function pluginInlineChangeHint(): string {
-  return 'pending /new';
+  return 'require run /new to apply';
 }

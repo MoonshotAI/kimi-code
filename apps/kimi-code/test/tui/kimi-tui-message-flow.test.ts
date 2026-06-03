@@ -1762,7 +1762,7 @@ describe('KimiTUI message flow', () => {
       );
     });
     const picker = driver.state.editorContainer.children[0] as PluginMarketplaceSelectorComponent;
-    picker.handleInput(' ');
+    picker.handleInput('\r');
 
     await vi.waitFor(() => {
       expect(session.installPlugin).toHaveBeenCalledWith(join(marketplaceDir, 'kimi-datasource'));
@@ -1799,7 +1799,7 @@ describe('KimiTUI message flow', () => {
         );
       });
       const picker = driver.state.editorContainer.children[0] as PluginMarketplaceSelectorComponent;
-      picker.handleInput(' ');
+      picker.handleInput('\r');
 
       await vi.waitFor(() => {
         expect(session.installPlugin).toHaveBeenCalledWith(
@@ -1853,7 +1853,7 @@ describe('KimiTUI message flow', () => {
       );
     });
     const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-    expect(out).toContain('❯ Demo  disabled  pending /new');
+    expect(out).toContain('❯ Demo  disabled  require run /new to apply');
     expect(out).not.toContain('Space enable');
     expect(stripSgr(renderTranscript(driver))).not.toContain('Disabled demo. Run /new to apply.');
   });
@@ -1946,7 +1946,7 @@ describe('KimiTUI message flow', () => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginMcpSelectorComponent);
     });
     const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-    expect(out).toContain('❯ data  disabled  pending /new');
+    expect(out).toContain('❯ data  disabled  require run /new to apply');
     expect(stripSgr(renderTranscript(driver))).not.toContain(
       'Disabled MCP server data for kimi-datasource. Run /new to apply.',
     );
