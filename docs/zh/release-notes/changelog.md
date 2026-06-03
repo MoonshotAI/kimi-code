@@ -2,13 +2,59 @@
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.8.0
+
+### 新功能
+
+- 新增实验性 goal 模式，用于需要多轮处理的较长任务。在启动 Kimi 前设置 `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1` 即可开启。
+
+  在终端界面中使用 `/goal <objective>` 让 Kimi 跨轮次持续专注于同一任务。例如：
+
+  ```text
+  /goal Fix the failing checkout test
+  ```
+
+  Kimi 会在终端界面中显示目标，并在工作过程中保持进度可见。使用 `/goal status`、`/goal pause`、`/goal resume`、`/goal cancel` 和 `/goal replace <objective>` 来管理该目标。该功能仍处于实验阶段，欢迎试用并反馈改进建议。
+- 新增 `kimi provider` CLI 子命令，支持 `add`、`remove`、`list` 以及 `catalog list` / `catalog add` 操作，可在不启动终端界面的情况下导入和管理来自自定义 registry（api.json）或公开 models.dev 目录的供应商。
+- 新增后台结构化提问，让 Agent 在等待用户回答时也能继续工作。
+- 新增后台自动更新，可在 tui.toml 中关闭。
+- 新增 `/undo` 斜杠命令，用于从对话历史中撤回上一条提示词，并在撤回时保持回放记录同步。
+- 新增 `kimi upgrade` 命令，用于手动检查并升级 Kimi Code CLI。
+- 新增审批生命周期 hook 事件，用于观察待处理和已完成的权限提示。
+- 允许子 Agent 使用在其父 Agent 上注册的自定义工具。
+- 支持用 glob 搜索显式的绝对路径（工作空间之外）。
+
+### 修复
+
+- 修复跨供应商回放时因不兼容的工具调用 ID 和未签名的 Claude thinking 历史导致失败的问题。
+- 修复自定义 registry 供应商在重新导入时的处理问题，防止多供应商条目丢失，并移除过时的供应商及其模型别名和默认模型引用。
+- 修复工具输出预览的渲染效果：去除尾部空行、为多行 Bash 命令标题附加省略号，并按视觉换行而非原始换行数裁切过长的单行输出。
+- 修复斜杠激活的 skill 因缺少系统提示词包装器而未被模型识别的问题。
+- 修复在过窄终端上 `/sessions` 选择器崩溃的问题，通过将每行渲染宽度限制在终端宽度内。
+- 在括号展开前规范化 glob 模式，防止不正确的路径匹配。
+- 防止退出 CLI 后仍出现修改过的键盘释放序列。
+- 修复 Windows 上的 Git Bash 路径检测，额外搜索 `usr\bin\bash.exe` 路径，这是许多 Git for Windows 安装中 bash 所在的位置（这些安装中 `bin\bash.exe` 不存在）。
+
+### 优化
+
+- 在欢迎面板中展示 MCP server 摘要，并在 /mcp 命令输出中增加配置提示。
+- 在欢迎界面及未配置模型时的提示中，将用户引导至 `/provider` 而非已移除的 `/connect` 命令。
+- 将当前 todo 列表以 markdown 形式附加到压缩摘要中，再写入历史记录。
+- 在页脚状态栏中显示完整模型名称，不再截断供应商前缀。
+- 在长任务中提醒模型刷新 TodoList，并加强 TodoList 进度追踪引导。
+- 将会话目录警告中的 chalk 具名颜色替换为主题感知的十六进制色值。
+
+### 重构
+
+- 将后台任务管理统一到 Agent 后台运行时中。
+
 ## 0.7.0
 
 ### 新功能
 
 - 新增用于管理 AI 供应商的 `/provider` 命令，支持自定义 registry 导入，并引入标签页式模型选择器。该命令替代了已废弃的 `/connect`，请改用 `/provider`。
 - 在终端界面中以独立样式渲染定时提醒，向 SDK 客户端暴露 cron 触发事件，并在报告 cron 触发时间时附带本地时区偏移。
-- 新增 `KIMI_MODEL_ADAPTIVE_THINKING`（以及对应的 `adaptive_thinking` 模型别名字段），用于强制开启或关闭自适应 thinking（`thinking: { type: 'adaptive' }`），覆盖基于 Anthropic 模型名的版本推断。这样一来，背后由支持自适应能力的模型驱动、且使用自定义名称的 staff 端点，即使模型名没有编码出可解析的 Claude 版本，也能选择启用该能力。
+- 新增 `KIMI_MODEL_ADAPTIVE_THINKING`（以及对应的 `adaptive_thinking` 模型别名字段），用于强制开启或关闭自适应 thinking（`thinking: { type: 'adaptive' }`），覆盖基于 Anthropic 模型名的版本推断。这样一来，背后由支持自适应能力的模型驱动、且使用自定义名称的兼容端点，即使模型名没有编码出可解析的 Claude 版本，也能选择启用该能力。
 
 ### 修复
 

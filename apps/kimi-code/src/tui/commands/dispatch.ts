@@ -34,6 +34,7 @@ import {
   showPermissionPicker,
   showSettingsSelector,
 } from './config';
+import { handleGoalCommand } from './goal';
 import { handleProviderCommand } from './provider';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 import { handlePluginsCommand } from './plugins';
@@ -73,6 +74,7 @@ export {
   showUsage,
 } from './info';
 export { handlePluginsCommand } from './plugins';
+export { handleGoalCommand } from './goal';
 export {
   handleExportDebugZipCommand,
   handleExportMdCommand,
@@ -101,6 +103,7 @@ export interface SlashCommandHost {
   track(event: string, props?: Record<string, unknown>): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
+  restoreInputText(text: string): void;
 
   // Session
   requireSession(): Session;
@@ -269,6 +272,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'compact':
       await handleCompactCommand(host, args);
+      return;
+    case 'goal':
+      await handleGoalCommand(host, args);
       return;
     case 'init':
       await handleInitCommand(host);

@@ -39,8 +39,9 @@ describe('builtin tool input JSON Schema', () => {
   it('keeps AskUserQuestion defaulted fields out of `required`', () => {
     const schema = new AskUserQuestionTool({} as never).parameters;
     const required = collectRequired(schema);
-    // `header`, `multi_select` and option `description` all carry `.default()`
+    // `background`, `header`, `multi_select` and option `description` all carry `.default()`
     // and must therefore stay optional in the model-facing schema.
+    expect(required).not.toContain('background');
     expect(required).not.toContain('header');
     expect(required).not.toContain('multi_select');
     expect(required).not.toContain('description');

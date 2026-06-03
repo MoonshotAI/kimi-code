@@ -28,6 +28,8 @@ export {
   showUsage,
 } from './info';
 export { handlePluginsCommand } from './plugins';
+export { handleGoalCommand, parseGoalCommand } from './goal';
+export { goalArgumentCompletions } from './registry';
 export {
   handleForkCommand,
   handleInitCommand,

@@ -69,6 +69,7 @@ import { FileMentionProvider } from './components/editor/file-mention-provider';
 import { AssistantMessageComponent } from './components/messages/assistant-message';
 import { BackgroundAgentStatusComponent } from './components/messages/background-agent-status';
 import { CronMessageComponent } from './components/messages/cron-message';
+import { GoalCompletionMessageComponent } from './components/messages/goal-panel';
 import { SkillActivationComponent } from './components/messages/skill-activation';
 import {
   NoticeMessageComponent,
@@ -175,6 +176,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
+    goal: null,
     mcpServersSummary: null,
   };
 }
@@ -305,10 +307,17 @@ export class KimiTUI {
   }
 
   private setupAutocomplete(): void {
-    const slashCommands: SlashCommand[] = this.getSlashCommands().map((cmd) => ({
-      name: cmd.name,
-      description: cmd.description,
-    }));
+    const slashCommands: SlashCommand[] = this.getSlashCommands().map((cmd) => {
+      const completer = cmd.completeArgs;
+      return {
+        name: cmd.name,
+        description: cmd.description,
+        ...(cmd.argumentHint !== undefined ? { argumentHint: cmd.argumentHint } : {}),
+        ...(completer !== undefined
+          ? { getArgumentCompletions: (prefix: string) => completer(prefix) }
+          : {}),
+      };
+    });
     const provider = new FileMentionProvider(
       slashCommands,
       this.state.appState.workDir,
@@ -394,7 +403,6 @@ export class KimiTUI {
     // Mount only after init() succeeds; see mountFooter().
     this.mountFooter();
     this.renderWelcome();
-    setExperimentalFlags(await this.harness.getExperimentalFlags());
     this.setupAutocomplete();
     void this.loadPersistedInputHistory();
     this.state.editorContainer.clear();
@@ -463,6 +471,7 @@ export class KimiTUI {
   }
 
   private async init(): Promise<boolean> {
+    setExperimentalFlags(await this.harness.getExperimentalFlags());
     await this.authFlow.refreshAvailableModels();
     void this.refreshProviderModelsInBackground();
 
@@ -998,7 +1007,12 @@ export class KimiTUI {
   }
 
   async syncRuntimeState(session: Session = this.requireSession()): Promise<void> {
-    const status = await session.getStatus();
+    const [status, goalResult] = await Promise.all([
+      session.getStatus(),
+      isExperimentalFlagEnabled('goal-command')
+        ? session.getGoal()
+        : Promise.resolve({ goal: null }),
+    ]);
     this.setAppState({
       sessionId: session.id,
       model: status.model ?? '',
@@ -1009,6 +1023,7 @@ export class KimiTUI {
       maxContextTokens: status.maxContextTokens,
       contextUsage: status.contextUsage,
       sessionTitle: session.summary?.title ?? null,
+      goal: goalResult.goal,
     });
   }
 
@@ -1035,6 +1050,7 @@ export class KimiTUI {
     this.questionController.cancelAll(reason);
     this.session = undefined;
     this.harness.setTelemetryContext({ sessionId: null });
+    this.setAppState({ goal: null });
     return previous;
   }
 
@@ -1218,6 +1234,9 @@ export class KimiTUI {
           this.state.theme.colors,
         );
       case 'assistant': {
+        if (entry.content.trimStart().startsWith('✓ Goal complete')) {
+          return new GoalCompletionMessageComponent(entry.content, this.state.theme.colors);
+        }
         const component = new AssistantMessageComponent(
           this.state.theme.markdownTheme,
           this.state.theme.colors,
@@ -1619,6 +1638,13 @@ export class KimiTUI {
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
+    this.state.ui.requestRender();
+  }
+
+  restoreInputText(text: string): void {
+    this.restoreEditor();
+    this.state.editor.setText(text);
+    this.updateEditorBorderHighlight(text);
     this.state.ui.requestRender();
   }
 

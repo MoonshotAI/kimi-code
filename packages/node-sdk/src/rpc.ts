@@ -21,8 +21,11 @@ import type {
   CreateSessionOptions,
   ExportSessionInput,
   ExportSessionResult,
+  CreateGoalInput,
   ForkSessionInput,
   GetConfigOptions,
+  GoalSnapshot,
+  GoalToolResult,
   KimiConfig,
   KimiConfigPatch,
   ListSessionsOptions,
@@ -377,6 +380,37 @@ export abstract class SDKRpcClientBase {
       taskId: input.taskId,
       reason: input.reason,
     });
+  }
+
+  async createGoal(input: SessionIdRpcInput & CreateGoalInput): Promise<GoalSnapshot> {
+    const rpc = await this.getRpc();
+    return rpc.createGoal({
+      sessionId: input.sessionId,
+      objective: input.objective,
+      completionCriterion: input.completionCriterion,
+      budgetLimits: input.budgetLimits,
+      replace: input.replace,
+    });
+  }
+
+  async getGoal(input: SessionIdRpcInput): Promise<GoalToolResult> {
+    const rpc = await this.getRpc();
+    return rpc.getGoal({ sessionId: input.sessionId });
+  }
+
+  async pauseGoal(input: SessionIdRpcInput & { reason?: string }): Promise<GoalSnapshot> {
+    const rpc = await this.getRpc();
+    return rpc.pauseGoal({ sessionId: input.sessionId, reason: input.reason });
+  }
+
+  async resumeGoal(input: SessionIdRpcInput & { reason?: string }): Promise<GoalSnapshot> {
+    const rpc = await this.getRpc();
+    return rpc.resumeGoal({ sessionId: input.sessionId, reason: input.reason });
+  }
+
+  async cancelGoal(input: SessionIdRpcInput & { reason?: string }): Promise<GoalSnapshot> {
+    const rpc = await this.getRpc();
+    return rpc.cancelGoal({ sessionId: input.sessionId, reason: input.reason });
   }
 
   async listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]> {

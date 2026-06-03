@@ -335,6 +335,10 @@ export class FullCompaction {
       this.markCompleted();
       this.agent.emitEvent({ type: 'compaction.completed', result });
       this.agent.context.applyCompaction(result);
+      // Compaction collapses the prefix into a summary, dropping any goal
+      // reminder that lived there. Re-inject it onto the fresh tail so an active
+      // goal does not silently fall out of context. Append-only; no-op off goal mode.
+      await this.agent.injection.injectGoal();
       this.triggerPostCompactHook(data, result);
     } catch (error) {
       if (!isAbortError(error)) {
