@@ -14,7 +14,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | --- | --- | --- | --- |
 | `/login` | — | Select an account or platform and log in: Kimi Code uses OAuth device-code flow; Kimi Platform uses API key login | No |
 | `/logout` | — | Clear credentials for the currently selected account | No |
-| `/provider` | — | Open the interactive provider manager to view, add, and remove configured providers. See [Platforms & Models — `/provider` and provider management](../configuration/providers-and-models.md#provider-与供应商管理) | Yes |
+| `/provider` | — | Open the interactive provider manager to view, add, and remove configured providers. See [Platforms & Models — `/provider` and provider management](../configuration/providers.md#provider-与供应商管理) | Yes |
 | `/model` | — | Switch the LLM model used in the current session | Yes |
 | `/settings` | `/config` | Open the settings panel inside the TUI | Yes |
 | `/permission` | — | Select a permission mode | Yes |
@@ -133,5 +133,5 @@ For installing and authoring Skills, see [Agent Skills](../customization/skills.
 
 ## Next steps
 
-- [Keyboard Shortcuts](./keyboard-shortcuts.md) — Quick reference for TUI keyboard operations
+- [Keyboard Shortcuts](./keyboard.md) — Quick reference for TUI keyboard operations
 - [Built-in Tools](./tools.md) — Complete reference for tools the Agent can call

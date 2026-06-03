@@ -66,9 +66,9 @@ JetBrains is strict about the `command` field — always use an **absolute path*
 
 - **Session disconnects immediately / IDE shows "agent exited"**: usually a wrong `command` path or a missing login. Run `kimi acp` in a terminal first to verify — if it blocks waiting for stdin, the CLI itself is fine and the problem is in the IDE configuration; if it exits immediately with an error, follow the error message (most commonly you need to run `/login`).
 - **IDE shows "auth required"**: the CLI has no usable authentication token. Exit the IDE, run `kimi` in a terminal to complete login, then restart the IDE.
-- **MCP tools not visible**: check the [`kimi acp` reference](./reference/kimi-acp.md) capability table to confirm that the MCP transport type configured in your IDE is supported. The Kimi Code CLI ACP adapter currently supports `http` and `stdio` transports; `sse` and `acp` types are silently dropped and a warning is written to the log.
+- **MCP tools not visible**: check the [`kimi acp` reference](../reference/kimi-acp.md) capability table to confirm that the MCP transport type configured in your IDE is supported. The Kimi Code CLI ACP adapter currently supports `http` and `stdio` transports; `sse` and `acp` types are silently dropped and a warning is written to the log.
 
 ## Next steps
 
-- [kimi acp reference](./reference/kimi-acp.md) — ACP capability matrix and method coverage details
-- [kimi command reference](./reference/kimi-command.md) — full subcommand list
+- [kimi acp reference](../reference/kimi-acp.md) — ACP capability matrix and method coverage details
+- [kimi command reference](../reference/kimi-command.md) — full subcommand list

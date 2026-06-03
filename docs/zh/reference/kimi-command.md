@@ -135,7 +135,7 @@ kimi login
 
 ### `kimi acp`
 
-把 Kimi Code CLI 切换到 ACP（Agent Client Protocol）模式，在标准输入/输出上以 JSON-RPC 形式与 IDE 对话，让编辑器直接驱动 kimi 的会话和工具调用。通常不需要手动运行——IDE 会把它作为子进程入口启动。配置方式见[在 IDE 中使用](../use-in-ides.md)，技术细节见 [kimi acp 参考](./kimi-acp.md)。
+把 Kimi Code CLI 切换到 ACP（Agent Client Protocol）模式，在标准输入/输出上以 JSON-RPC 形式与 IDE 对话，让编辑器直接驱动 kimi 的会话和工具调用。通常不需要手动运行——IDE 会把它作为子进程入口启动。配置方式见[在 IDE 中使用](../guides/ides.md)，技术细节见 [kimi acp 参考](./kimi-acp.md)。
 
 ```sh
 kimi acp
@@ -177,7 +177,7 @@ kimi export 01HZ...XYZ -o ./bug-report.zip --no-include-global-log
 kimi migrate
 ```
 
-完整迁移说明见[从 kimi-cli 迁移](../cli-migration.md)。
+完整迁移说明见[从 kimi-cli 迁移](../guides/migration.md)。
 
 ### `kimi upgrade`
 
@@ -270,5 +270,5 @@ kimi provider catalog add anthropic --api-key sk-ant-... --default-model claude-
 ## 下一步
 
 - [斜杠命令](./slash-commands.md) — 交互式 TUI 内的控制命令速查
-- [配置文件](../configuration/configuration-files.md) — `default_model`、权限模式等启动参数的持久化配置
+- [配置文件](../configuration/config-files.md) — `default_model`、权限模式等启动参数的持久化配置
 - [Agent Skills](../customization/skills.md) — `--skills-dir` 加载的 Skill 文件格式

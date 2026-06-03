@@ -88,7 +88,7 @@ Collaboration tools handle inter-Agent coordination, user interaction, and Skill
 | `AskUserQuestion` | Auto-allow | Ask the user a question to gather structured input |
 | `Skill` | Auto-allow | Invoke a registered inline Skill |
 
-**`Agent`** delegates a subtask to a sub-Agent. Required parameters: `prompt` (complete task description) and `description` (a 3–5 word short summary). Optional parameters: `subagent_type` (defaults to `coder`), `resume` (ID of an existing Agent to resume; mutually exclusive with `subagent_type`), `run_in_background` (defaults to false), and `timeout` (30–3600 seconds). In foreground mode the parent Agent waits for the sub-Agent to complete before continuing; in background mode a task ID is returned immediately and the result is automatically delivered back to the main Agent via a synthetic User message when done. See [Agent & Sub-Agents](../customization/sub-agents.md) for details.
+**`Agent`** delegates a subtask to a sub-Agent. Required parameters: `prompt` (complete task description) and `description` (a 3–5 word short summary). Optional parameters: `subagent_type` (defaults to `coder`), `resume` (ID of an existing Agent to resume; mutually exclusive with `subagent_type`), `run_in_background` (defaults to false), and `timeout` (30–3600 seconds). In foreground mode the parent Agent waits for the sub-Agent to complete before continuing; in background mode a task ID is returned immediately and the result is automatically delivered back to the main Agent via a synthetic User message when done. See [Agent & Sub-Agents](../customization/agents.md) for details.
 
 **`AskUserQuestion`** asks the user a structured multiple-choice question — useful for disambiguation or option selection. The `questions` parameter accepts 1–4 questions; each question requires `question` (ending with `?`), `options` (2–4 choices, each with a `label` and `description`), and optional `header` (max 12 characters) and `multi_select` (defaults to false). An "Other" option is appended automatically. Setting `background` to true starts a background question task and returns a task ID immediately. When the host does not support interactive questioning, a failure message is returned and the Agent should ask the user directly in a text reply instead.
 
@@ -112,7 +112,7 @@ Background task tools manage tasks started via `Bash`, `Agent`, or `AskUserQuest
 
 ## Scheduled Tasks
 
-Scheduled task tools allow the Agent to re-inject a prompt into the current session at a future time — either as a one-time reminder or as a recurring cron-triggered task (periodic checks, daily reports, deployment monitoring, etc.). Schedules are bound to the session and remain active after `kimi resume`, but are not carried into a brand-new session. A single session can hold at most 50 active scheduled tasks. Set `KIMI_DISABLE_CRON=1` to disable them entirely; see [Environment Variables](../configuration/environment-variables.md#运行时开关).
+Scheduled task tools allow the Agent to re-inject a prompt into the current session at a future time — either as a one-time reminder or as a recurring cron-triggered task (periodic checks, daily reports, deployment monitoring, etc.). Schedules are bound to the session and remain active after `kimi resume`, but are not carried into a brand-new session. A single session can hold at most 50 active scheduled tasks. Set `KIMI_DISABLE_CRON=1` to disable them entirely; see [Environment Variables](../configuration/env-vars.md#运行时开关).
 
 | Tool | Default Approval | Description |
 | --- | --- | --- |
@@ -130,6 +130,6 @@ To prevent all users from firing at the same time on the hour, the scheduler app
 
 ## Next steps
 
-- [Agent & Sub-Agents](../customization/sub-agents.md) — Scheduling mechanics and context isolation for the `Agent` tool
+- [Agent & Sub-Agents](../customization/agents.md) — Scheduling mechanics and context isolation for the `Agent` tool
 - [Hooks](../customization/hooks.md) — Trigger local scripts before and after tool calls
 - [Slash Commands](./slash-commands.md) — Quick reference for TUI built-in control commands

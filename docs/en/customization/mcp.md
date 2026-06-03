@@ -77,7 +77,7 @@ decision = "deny"
 pattern = "mcp__filesystem__write_file"
 ```
 
-For the full permission rule syntax, see [Configuration files](../configuration/configuration-files.md#permission).
+For the full permission rule syntax, see [Configuration files](../configuration/config-files.md#permission).
 
 ## Security
 
@@ -94,4 +94,4 @@ In YOLO mode, MCP tool calls are automatically approved. Only use this mode when
 ## Next steps
 
 - [Plugins](./plugins.md) — Declare MCP servers in a plugin manifest to package and distribute them together
-- [Configuration files](../configuration/configuration-files.md#permission) — Full field reference for permission rules
+- [Configuration files](../configuration/config-files.md#permission) — Full field reference for permission rules

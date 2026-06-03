@@ -102,7 +102,7 @@ kimi -C
 需要退出登录时，输入 `/logout` 清除当前凭证。
 
 ::: tip 使用其他 AI 供应商
-如果你想接入 Anthropic、OpenAI、Google 等其他供应商，需要直接编辑 `~/.kimi-code/config.toml` 配置 API 密钥，详见[平台与模型](./configuration/providers-and-models.md)。配置项完整说明见[配置文件](./configuration/configuration-files.md)、[环境变量](./configuration/environment-variables.md)和[配置覆盖](./configuration/overrides-and-precedence.md)。
+如果你想接入 Anthropic、OpenAI、Google 等其他供应商，需要直接编辑 `~/.kimi-code/config.toml` 配置 API 密钥，详见[平台与模型](../configuration/providers.md)。配置项完整说明见[配置文件](../configuration/config-files.md)、[环境变量](../configuration/env-vars.md)和[配置覆盖](../configuration/overrides.md)。
 :::
 
 ## 第一个对话
@@ -151,11 +151,11 @@ Kimi Code CLI 会规划步骤、修改代码、运行测试，并在每一步告
 | `Ctrl-S` | 输出中途插入消息，无需等待结束 |
 | `Ctrl-O` | 折叠 / 展开工具输出 |
 
-想看完整列表，输入 `/help` 或访问[斜杠命令参考](./reference/slash-commands.md)和[键盘快捷键](./reference/keyboard-shortcuts.md)。
+想看完整列表，输入 `/help` 或访问[斜杠命令参考](../reference/slash-commands.md)和[键盘快捷键](../reference/keyboard.md)。
 
 ## 数据存放在哪里
 
-Kimi Code CLI 的本地数据默认保存在 `~/.kimi-code/` 下，包含配置文件、会话记录、日志和更新缓存。如需迁移到别处，通过 `KIMI_CODE_HOME` 环境变量指定新路径。完整说明见[数据路径](./configuration/data-locations.md)和[环境变量](./configuration/environment-variables.md)。
+Kimi Code CLI 的本地数据默认保存在 `~/.kimi-code/` 下，包含配置文件、会话记录、日志和更新缓存。如需迁移到别处，通过 `KIMI_CODE_HOME` 环境变量指定新路径。完整说明见[数据路径](../configuration/data-locations.md)和[环境变量](../configuration/env-vars.md)。
 
 ## 下一步
 

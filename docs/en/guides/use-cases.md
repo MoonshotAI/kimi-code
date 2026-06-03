@@ -24,7 +24,7 @@ How does the event loop in src/runtime work? Where do events originate, and what
 How is "permission approval" implemented in this project? Which files are involved, and what are the key types?
 ```
 
-For large-scale investigations, you can have the main agent dispatch **sub-agents** to handle sub-tasks in parallel. See [Agents and sub-agents](./customization/sub-agents.md).
+For large-scale investigations, you can have the main agent dispatch **sub-agents** to handle sub-tasks in parallel. See [Agents and sub-agents](../customization/agents.md).
 
 ## Implementing a new feature
 
@@ -99,7 +99,7 @@ Analyze the access logs in logs/ from the past 7 days. For each API path, comput
 Research the main dependency injection options for TypeScript (tsyringe, inversify, awilix). Compare them across three dimensions: API style, decorator requirements, and runtime overhead. Give me a recommendation that fits on one page.
 ```
 
-For batch tasks you know are safe, use `--yolo` or `/yolo` to skip approval prompts, or add pre-approved allowlist rules for specific tools in [Configuration files](./configuration/configuration-files.md#permission).
+For batch tasks you know are safe, use `--yolo` or `/yolo` to skip approval prompts, or add pre-approved allowlist rules for specific tools in [Configuration files](../configuration/config-files.md#permission).
 
 ## Scheduled tasks and reminders
 
@@ -123,7 +123,7 @@ Come back in about 10 minutes and check whether the build has finished.
 
 Scheduled tasks are bound to their session — closing the terminal is fine, and they are reloaded and continue firing when you run `kimi resume` on the same session. They are not carried into brand-new sessions. Recurring tasks expire after 7 days — the agent receives a `stale` signal on the final trigger and decides whether to stop or renew based on your original instructions.
 
-To see what tasks are currently pending, just ask the agent (it calls the read-only `CronList` tool). To cancel a task, tell the agent to remove it or reference its 8-character ID. For the full tool reference, see [Scheduled tasks](./reference/tools.md#scheduled-tasks). The global kill switch is `KIMI_DISABLE_CRON=1`.
+To see what tasks are currently pending, just ask the agent (it calls the read-only `CronList` tool). To cancel a task, tell the agent to remove it or reference its 8-character ID. For the full tool reference, see [Scheduled tasks](../reference/tools.md#scheduled-tasks). The global kill switch is `KIMI_DISABLE_CRON=1`.
 
 ## Generating and maintaining documentation
 
@@ -143,6 +143,6 @@ When you need a record or a retrospective, use `kimi export <sessionId>` to pack
 
 ## Next steps
 
-- [Agents and sub-agents](./customization/sub-agents.md) — how to have the agent dispatch sub-tasks for parallel execution
-- [Hooks](./customization/hooks.md) — trigger local scripts at task-completion and other lifecycle points
-- [Built-in tools](./reference/tools.md) — full reference of all tools the agent can call
+- [Agents and sub-agents](../customization/agents.md) — how to have the agent dispatch sub-tasks for parallel execution
+- [Hooks](../customization/hooks.md) — trigger local scripts at task-completion and other lifecycle points
+- [Built-in tools](../reference/tools.md) — full reference of all tools the agent can call

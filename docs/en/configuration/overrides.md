@@ -14,7 +14,7 @@ Environment variables fall into three categories by function and cannot be colla
 
 1. **Locating the config file**: `KIMI_CODE_HOME` sets the data root directory, making the config file path `$KIMI_CODE_HOME/config.toml`. This step runs before all other resolution and is not a fallback for individual parameters.
 2. **Runtime switches**: A small set of variables like `KIMI_DISABLE_TELEMETRY` directly shut down the corresponding subsystem — even if `config.toml` has `telemetry = true`, setting this variable to a truthy value disables telemetry. The semantics are "additionally disable", not "ordinary override".
-3. **Runtime endpoints and diagnostics**: Variables like `KIMI_CODE_OAUTH_HOST`, `KIMI_CODE_BASE_URL`, and `KIMI_LOG_LEVEL` are read when the OAuth or logging subsystems initialize. For the full list, see [Environment variables](./environment-variables.md).
+3. **Runtime endpoints and diagnostics**: Variables like `KIMI_CODE_OAUTH_HOST`, `KIMI_CODE_BASE_URL`, and `KIMI_LOG_LEVEL` are read when the OAuth or logging subsystems initialize. For the full list, see [Environment variables](./env-vars.md).
 
 ## Priority for ordinary runtime parameters
 
@@ -23,10 +23,10 @@ For ordinary runtime parameters such as model alias, Plan mode, yolo mode, and S
 1. **Command-line options** (`-m`, `--plan`, `--yolo`, etc.): apply only to the current startup
 2. **User config file** (`~/.kimi-code/config.toml`): stores long-term preferences
 
-A small number of environment variables explicitly override specific config file fields — for example, `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` has higher priority than `[background].keep_alive_on_exit`. These exceptions are noted in [Environment variables](./environment-variables.md) and in the relevant field descriptions in [Configuration files](./configuration-files.md).
+A small number of environment variables explicitly override specific config file fields — for example, `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` has higher priority than `[background].keep_alive_on_exit`. These exceptions are noted in [Environment variables](./env-vars.md) and in the relevant field descriptions in [Configuration files](./config-files.md).
 
 ::: warning
-**Ordinary runtime parameters do not fall back to shell environment variables.** Provider `api_key` / `base_url` are read only from `config.toml` (including the `[providers.<name>.env]` sub-table) and do not fall back to `export`-ed shell variables. The only exception is the explicit `KIMI_MODEL_*` channel — see [Define a model from environment variables](./environment-variables.md#define-a-model-from-environment-variables-kimi-model).
+**Ordinary runtime parameters do not fall back to shell environment variables.** Provider `api_key` / `base_url` are read only from `config.toml` (including the `[providers.<name>.env]` sub-table) and do not fall back to `export`-ed shell variables. The only exception is the explicit `KIMI_MODEL_*` channel — see [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi-model).
 :::
 
 The CLI currently reads a single user-level config file and has no project-level config file mechanism. To isolate config between different projects, point `KIMI_CODE_HOME` at different data directories — see [Common scenarios](#common-scenarios) below.
@@ -45,7 +45,7 @@ For a single provider, credentials are resolved in this order:
 
 > The `[providers.<name>.env]` sub-table is just a TOML section in the config file — it does not write anything into the shell environment. It is only consulted when the corresponding direct field (`api_key` / `base_url`) is empty.
 
-For the full list of credential key names, see [Environment variables: provider credential key names](./environment-variables.md#provider-credential-key-names-written-in-configtoml).
+For the full list of credential key names, see [Environment variables: provider credential key names](./env-vars.md#provider-credential-key-names-written-in-configtoml).
 
 ## Command-line options
 
@@ -102,5 +102,5 @@ kimi --plan
 
 ## Next steps
 
-- [Configuration files](./configuration-files.md) — complete reference for all configurable fields
-- [Environment variables](./environment-variables.md) — full list and description of `KIMI_CODE_HOME` and related variables
+- [Configuration files](./config-files.md) — complete reference for all configurable fields
+- [Environment variables](./env-vars.md) — full list and description of `KIMI_CODE_HOME` and related variables

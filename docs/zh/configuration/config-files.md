@@ -93,7 +93,7 @@ timeout = 5
 
 ## `providers`
 
-`providers` 表的每一项定义一个 API 供应商，以唯一名称为 key。CLI 只从这里读取凭证，**不会**从 shell 环境变量自动取后备值——在终端里 `export KIMI_API_KEY` 不会让供应商自动获得密钥，必须显式写在配置文件里（详见[配置覆盖](./overrides-and-precedence.md#供应商凭证)）。
+`providers` 表的每一项定义一个 API 供应商，以唯一名称为 key。CLI 只从这里读取凭证，**不会**从 shell 环境变量自动取后备值——在终端里 `export KIMI_API_KEY` 不会让供应商自动获得密钥，必须显式写在配置文件里（详见[配置覆盖](./overrides.md#供应商凭证)）。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -138,7 +138,7 @@ model = "gpt-4.1"
 max_context_size = 1047576
 ```
 
-无需修改配置文件也可以临时切换模型——通过 `KIMI_MODEL_*` 环境变量在内存里合成一个临时供应商，详见[用环境变量定义模型](./environment-variables.md#用环境变量定义模型-kimi-model)。
+无需修改配置文件也可以临时切换模型——通过 `KIMI_MODEL_*` 环境变量在内存里合成一个临时供应商，详见[用环境变量定义模型](./env-vars.md#用环境变量定义模型-kimi-model)。
 
 ## `thinking`
 
@@ -229,6 +229,6 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 
 ## 下一步
 
-- [平台与模型](./providers-and-models.md) — 各供应商类型（Kimi、Claude、OpenAI、Gemini）的接入示例
-- [配置覆盖](./overrides-and-precedence.md) — CLI 选项、配置文件、环境变量的优先级规则
-- [环境变量](./environment-variables.md) — `KIMI_CODE_HOME` 等运行时变量的完整列表
+- [平台与模型](./providers.md) — 各供应商类型（Kimi、Claude、OpenAI、Gemini）的接入示例
+- [配置覆盖](./overrides.md) — CLI 选项、配置文件、环境变量的优先级规则
+- [环境变量](./env-vars.md) — `KIMI_CODE_HOME` 等运行时变量的完整列表

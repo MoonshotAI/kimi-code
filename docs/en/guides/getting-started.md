@@ -102,7 +102,7 @@ On first launch you need to configure an API source. In the interactive UI, ente
 To sign out, enter `/logout` to clear the current credentials.
 
 ::: tip Using other AI providers
-If you want to connect Anthropic, OpenAI, Google, or other providers, edit `~/.kimi-code/config.toml` directly to configure the API key. See [Providers and models](./configuration/providers-and-models.md) for details. For the full reference of all config options, see [Configuration files](./configuration/configuration-files.md), [Environment variables](./configuration/environment-variables.md), and [Configuration overrides](./configuration/overrides-and-precedence.md).
+If you want to connect Anthropic, OpenAI, Google, or other providers, edit `~/.kimi-code/config.toml` directly to configure the API key. See [Providers and models](../configuration/providers.md) for details. For the full reference of all config options, see [Configuration files](../configuration/config-files.md), [Environment variables](../configuration/env-vars.md), and [Configuration overrides](../configuration/overrides.md).
 :::
 
 ## Your first conversation
@@ -151,11 +151,11 @@ For a first-time user, the following is all you need to know:
 | `Ctrl-S` | Inject a message mid-stream without waiting for the current response to finish |
 | `Ctrl-O` | Collapse / expand tool output |
 
-For the full list, type `/help` or visit [Slash commands reference](./reference/slash-commands.md) and [Keyboard shortcuts](./reference/keyboard-shortcuts.md).
+For the full list, type `/help` or visit [Slash commands reference](../reference/slash-commands.md) and [Keyboard shortcuts](../reference/keyboard.md).
 
 ## Where data is stored
 
-Kimi Code CLI stores its local data under `~/.kimi-code/` by default — config files, session records, logs, and the update cache. To move it elsewhere, point to a new path via the `KIMI_CODE_HOME` environment variable. For the full directory layout, see [Data locations](./configuration/data-locations.md) and [Environment variables](./configuration/environment-variables.md).
+Kimi Code CLI stores its local data under `~/.kimi-code/` by default — config files, session records, logs, and the update cache. To move it elsewhere, point to a new path via the `KIMI_CODE_HOME` environment variable. For the full directory layout, see [Data locations](../configuration/data-locations.md) and [Environment variables](../configuration/env-vars.md).
 
 ## Next steps
 
