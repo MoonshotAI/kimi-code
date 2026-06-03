@@ -6,7 +6,7 @@ import {
   createInstallPromptChoices,
   getDefaultInstallPromptSelection,
   moveInstallPromptSelection,
-  promptForInstallConfirmation,
+  promptForInstallChoice,
 } from '#/cli/update/prompt';
 
 describe('install prompt helpers', () => {
@@ -32,7 +32,7 @@ describe('install prompt helpers', () => {
   });
 });
 
-describe('promptForInstallConfirmation', () => {
+describe('promptForInstallChoice', () => {
   it('renders changelog hyperlink in the prompt output', async () => {
     const CHANGELOG_URL = 'https://moonshotai.github.io/kimi-code/en/release-notes/changelog.html';
 
@@ -51,7 +51,7 @@ describe('promptForInstallConfirmation', () => {
       },
     } as NodeJS.WriteStream;
 
-    const promptPromise = promptForInstallConfirmation({
+    const promptPromise = promptForInstallChoice({
       currentVersion: '0.4.0',
       target: { version: '0.5.0' },
       installCommand: 'npm install -g @moonshot-ai/kimi-code@0.5.0',

@@ -1,4 +1,5 @@
 import type {
+  GoalSnapshot,
   ModelAlias,
   PermissionMode,
   ProviderConfig,
@@ -6,7 +7,7 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import type { NotificationsConfig } from './config';
+import type { NotificationsConfig, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { Theme } from './theme';
 import type { ResolvedTheme } from './theme/colors';
@@ -29,9 +30,12 @@ export interface AppState {
   version: string;
   editorCommand: string | null;
   notifications: NotificationsConfig;
+  upgrade: UpgradePreferences;
   availableModels: Record<string, ModelAlias>;
   availableProviders: Record<string, ProviderConfig>;
   sessionTitle: string | null;
+  /** Current goal snapshot for the footer badge; null/undefined when no active goal. */
+  goal?: GoalSnapshot | null;
   mcpServersSummary: string | null;
 }
 

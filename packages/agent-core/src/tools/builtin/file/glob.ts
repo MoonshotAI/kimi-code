@@ -154,14 +154,9 @@ export class GlobTool implements BuiltinTool<GlobInput> {
   }
 
   private async execution(args: GlobInput, searchRoots: string[]): Promise<ExecutableToolResult> {
-    // Expand brace alternations into a list of sub-patterns the kaos
-    // walker can actually understand. `*.{ts,tsx}` → ["*.ts", "*.tsx"];
-    // unbalanced or comma-less braces (`{abc}`, `{a,b`) fall through as
-    // a single-element list with the original pattern. When the fan-out
-    // would exceed MAX_BRACE_EXPANSIONS we also return the original so
-    // the caller sees an obvious zero-match outcome rather than a silent
-    // partial walk.
-    const subPatterns = expandBraces(args.pattern);
+    const subPatterns = expandBraces(args.pattern).map((p) =>
+      hasGlobEscape(p) ? p : normalize(p),
+    );
 
     // Default true. When false, directories yielded by kaos are
     // filtered out using the same stat that fuels the mtime sort
@@ -343,6 +338,10 @@ export function expandBraces(pattern: string): string[] {
     return [pattern];
   }
   return out;
+}
+
+function hasGlobEscape(pattern: string): boolean {
+  return /\\[{}[\]*?,]/.test(pattern);
 }
 
 function expandInto(pattern: string, out: string[], cap: number): boolean {

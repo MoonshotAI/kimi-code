@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-oauth
 
+## 0.2.1
+
+### Patch Changes
+
+- [#335](https://github.com/MoonshotAI/kimi-code/pull/335) [`7284f30`](https://github.com/MoonshotAI/kimi-code/commit/7284f30479142fd66b1e8a731fd00198b1e8684f) - Fix custom registry provider handling during re-import. Prevent loss of multi-provider entries and remove stale providers along with their model aliases and default model references.
+
 ## 0.2.0
 
 ### Minor Changes

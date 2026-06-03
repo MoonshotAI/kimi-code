@@ -1,9 +1,31 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ExecutableToolResult } from '../../../src/loop/types';
+import type {
+  TelemetryClient,
+  TelemetryProperties,
+} from '../../../src/telemetry';
 import { ToolCallDeduplicator, __testing } from '../../../src/agent/turn/tool-dedup';
 
-const { REMINDER_TEXT_1, makeReminderText2 } = __testing;
+const { REMINDER_TEXT_1, REMINDER_TEXT_3, makeReminderText2 } = __testing;
+
+interface RecordedTelemetryEvent {
+  readonly event: string;
+  readonly properties: TelemetryProperties | undefined;
+}
+
+function makeRecordingTelemetry(): {
+  readonly client: TelemetryClient;
+  readonly events: RecordedTelemetryEvent[];
+} {
+  const events: RecordedTelemetryEvent[] = [];
+  const client: TelemetryClient = {
+    track: (event, properties) => {
+      events.push({ event, properties });
+    },
+  };
+  return { client, events };
+}
 
 function okResult(text: string): ExecutableToolResult {
   return { output: text };
@@ -98,7 +120,7 @@ describe('ToolCallDeduplicator', () => {
       expect(last!.output as string).not.toContain('repeated_times');
     });
 
-    it('does not inject reminder at 4 consecutive', async () => {
+    it('keeps injecting reminder1 at 4 consecutive', async () => {
       const dedup = new ToolCallDeduplicator();
       let last: ExecutableToolResult | undefined;
       for (let i = 0; i < 4; i += 1) {
@@ -106,7 +128,8 @@ describe('ToolCallDeduplicator', () => {
         last = await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
         dedup.endStep();
       }
-      expect(last!.output as string).not.toContain('<system-reminder>');
+      expect(last!.output as string).toContain('<system-reminder>');
+      expect(last!.output as string).toContain('repeating the exact same tool call');
     });
 
     it('injects reminder2 at exactly 5 consecutive', async () => {
@@ -123,18 +146,20 @@ describe('ToolCallDeduplicator', () => {
       expect(last!.output as string).toContain('arguments:');
     });
 
-    it('does not inject reminder at 6 or 7 consecutive', async () => {
+    it.each([6, 7])('keeps injecting reminder2 at %i consecutive', async (streak) => {
       const dedup = new ToolCallDeduplicator();
       let last: ExecutableToolResult | undefined;
-      for (let i = 0; i < 7; i += 1) {
+      for (let i = 0; i < streak; i += 1) {
         dedup.beginStep();
         last = await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
         dedup.endStep();
       }
-      expect(last!.output as string).not.toContain('<system-reminder>');
+      expect(last!.output as string).toContain('<system-reminder>');
+      expect(last!.output as string).toContain(`repeated_times: ${String(streak)}`);
+      expect(last!.output as string).toContain('tool: Read');
     });
 
-    it('injects reminder2 at exactly 8 consecutive', async () => {
+    it('injects the dead-end reminder at exactly 8 consecutive', async () => {
       const dedup = new ToolCallDeduplicator();
       let last: ExecutableToolResult | undefined;
       for (let i = 0; i < 8; i += 1) {
@@ -143,8 +168,7 @@ describe('ToolCallDeduplicator', () => {
         dedup.endStep();
       }
       expect(last!.output as string).toContain('<system-reminder>');
-      expect(last!.output as string).toContain('repeated_times: 8');
-      expect(last!.output as string).toContain('tool: Read');
+      expect(last!.output as string).toContain('stuck in a dead end');
     });
 
     it('resets streak when a different call is interleaved', async () => {
@@ -359,6 +383,182 @@ describe('ToolCallDeduplicator', () => {
       // resolved with an error result but nothing is awaiting it now.
       const finalDup = await dedup.finalizeResult('dup', 'Read', { p: 1 }, dupCached!);
       expect(finalDup).toEqual(dupCached);
+    });
+  });
+
+  describe('dead-end stop reminder (streak >= 8)', () => {
+    function stopTurnOf(result: ExecutableToolResult): boolean | undefined {
+      return result.stopTurn;
+    }
+
+    async function runStreak(
+      dedup: ToolCallDeduplicator,
+      count: number,
+    ): Promise<ExecutableToolResult> {
+      let last: ExecutableToolResult | undefined;
+      for (let i = 0; i < count; i += 1) {
+        dedup.beginStep();
+        last = await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
+        dedup.endStep();
+      }
+      return last!;
+    }
+
+    it('injects the dead-end reminder at exactly 8 consecutive without force-stopping', async () => {
+      const dedup = new ToolCallDeduplicator();
+      const last = await runStreak(dedup, 8);
+      expect(last.output as string).toContain('<system-reminder>');
+      expect(last.output as string).toContain('stuck in a dead end');
+      expect(last.output as string).toContain('Stop all function calls immediately');
+      // 8 is the reminder threshold, not yet force-stop.
+      expect(last.isError).toBeUndefined();
+      expect(stopTurnOf(last)).toBeUndefined();
+    });
+
+    it.each([8, 9, 10, 11])(
+      'keeps injecting the dead-end reminder without stopping the turn at streak %i',
+      async (streak) => {
+        const dedup = new ToolCallDeduplicator();
+        const last = await runStreak(dedup, streak);
+        expect(last.output as string).toContain('stuck in a dead end');
+        expect(last.isError).toBeUndefined();
+        expect(stopTurnOf(last)).toBeUndefined();
+      },
+    );
+
+    it('force-stops the turn at exactly 12 consecutive without marking the tool failed', async () => {
+      const dedup = new ToolCallDeduplicator();
+      const last = await runStreak(dedup, 12);
+      expect(last.output as string).toContain('stuck in a dead end');
+      // The underlying tool succeeded — force-stop must not flip it to error.
+      expect(last.isError).toBeUndefined();
+      expect(stopTurnOf(last)).toBe(true);
+    });
+
+    it('continues force-stopping past 12 consecutive', async () => {
+      const dedup = new ToolCallDeduplicator();
+      const last = await runStreak(dedup, 14);
+      expect(last.isError).toBeUndefined();
+      expect(stopTurnOf(last)).toBe(true);
+    });
+
+    it('preserves the dead-end reminder text exactly', async () => {
+      const dedup = new ToolCallDeduplicator();
+      const last = await runStreak(dedup, 8);
+      expect(last.output as string).toContain(REMINDER_TEXT_3.trim());
+    });
+
+    it('keeps an error result error when force-stopping', async () => {
+      const dedup = new ToolCallDeduplicator();
+      let last: ExecutableToolResult | undefined;
+      for (let i = 0; i < 12; i += 1) {
+        dedup.beginStep();
+        last = await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, errResult('boom'));
+        dedup.endStep();
+      }
+      // The underlying tool was an error — that must survive force-stop.
+      expect(last!.isError).toBe(true);
+      expect(stopTurnOf(last!)).toBe(true);
+      expect(last!.output as string).toContain('stuck in a dead end');
+    });
+  });
+
+  describe('repeat telemetry', () => {
+    it('emits tool_call_repeat with the streak count starting at the second occurrence', async () => {
+      const { client, events } = makeRecordingTelemetry();
+      const dedup = new ToolCallDeduplicator({ telemetry: client });
+      for (let i = 0; i < 3; i += 1) {
+        dedup.beginStep();
+        await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
+        dedup.endStep();
+      }
+      const repeats = events.filter((e) => e.event === 'tool_call_repeat');
+      expect(repeats.map((e) => e.properties?.['repeat_count'])).toEqual([2, 3]);
+      expect(repeats.every((e) => e.properties?.['tool_name'] === 'Read')).toBe(true);
+    });
+
+    it('does not emit telemetry on the first call', async () => {
+      const { client, events } = makeRecordingTelemetry();
+      const dedup = new ToolCallDeduplicator({ telemetry: client });
+      dedup.beginStep();
+      await runOriginal(dedup, 'c0', 'Read', { p: 1 }, okResult('R'));
+      dedup.endStep();
+      expect(events.filter((e) => e.event === 'tool_call_repeat')).toHaveLength(0);
+    });
+
+    it('labels the action as r1/r2/r3 according to the reminder tier from streak 3 through 11', async () => {
+      const { client, events } = makeRecordingTelemetry();
+      const dedup = new ToolCallDeduplicator({ telemetry: client });
+      for (let i = 0; i < 11; i += 1) {
+        dedup.beginStep();
+        await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
+        dedup.endStep();
+      }
+      const byCount = new Map<number, string>();
+      for (const e of events) {
+        if (e.event !== 'tool_call_repeat') continue;
+        byCount.set(e.properties?.['repeat_count'] as number, e.properties?.['action'] as string);
+      }
+      expect(byCount.get(2)).toBe('none');
+      expect(byCount.get(3)).toBe('r1');
+      expect(byCount.get(4)).toBe('r1');
+      expect(byCount.get(5)).toBe('r2');
+      expect(byCount.get(6)).toBe('r2');
+      expect(byCount.get(7)).toBe('r2');
+      expect(byCount.get(8)).toBe('r3');
+      expect(byCount.get(9)).toBe('r3');
+      expect(byCount.get(10)).toBe('r3');
+      expect(byCount.get(11)).toBe('r3');
+    });
+
+    it('labels the action as "stop" at streak 12+', async () => {
+      const { client, events } = makeRecordingTelemetry();
+      const dedup = new ToolCallDeduplicator({ telemetry: client });
+      for (let i = 0; i < 13; i += 1) {
+        dedup.beginStep();
+        await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
+        dedup.endStep();
+      }
+      const at12 = events.find(
+        (e) => e.event === 'tool_call_repeat' && e.properties?.['repeat_count'] === 12,
+      );
+      const at13 = events.find(
+        (e) => e.event === 'tool_call_repeat' && e.properties?.['repeat_count'] === 13,
+      );
+      expect(at12?.properties?.['action']).toBe('stop');
+      expect(at13?.properties?.['action']).toBe('stop');
+    });
+
+    it('resets the count when a different call interleaves', async () => {
+      const { client, events } = makeRecordingTelemetry();
+      const dedup = new ToolCallDeduplicator({ telemetry: client });
+      for (let i = 0; i < 2; i += 1) {
+        dedup.beginStep();
+        await runOriginal(dedup, `a${String(i)}`, 'Read', { p: 1 }, okResult('R'));
+        dedup.endStep();
+      }
+      dedup.beginStep();
+      await runOriginal(dedup, 'b1', 'Read', { p: 2 }, okResult('R'));
+      dedup.endStep();
+      dedup.beginStep();
+      await runOriginal(dedup, 'c1', 'Read', { p: 1 }, okResult('R'));
+      dedup.endStep();
+      const counts = events
+        .filter((e) => e.event === 'tool_call_repeat')
+        .map((e) => e.properties?.['repeat_count']);
+      // Only the second Read({p:1}) is a repeat; the streak then breaks.
+      expect(counts).toEqual([2]);
+    });
+
+    it('does not emit telemetry when no client is provided', async () => {
+      const dedup = new ToolCallDeduplicator();
+      for (let i = 0; i < 3; i += 1) {
+        dedup.beginStep();
+        await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
+        dedup.endStep();
+      }
+      // Exercises the optional telemetry path; should complete silently.
+      expect(true).toBe(true);
     });
   });
 });

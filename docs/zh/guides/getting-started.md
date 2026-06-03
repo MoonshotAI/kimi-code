@@ -60,7 +60,13 @@ pnpm add -g @moonshot-ai/kimi-code
 kimi --version
 ```
 
-**升级**：脚本安装的用户重新运行脚本即可；npm 安装的用户执行：
+**升级**：运行 `kimi upgrade`，CLI 会检查最新版本并展示更新提示：
+
+```sh
+kimi upgrade
+```
+
+选择 `Install update now` 后，会根据当前检测到的安装来源执行升级；也可以继续使用当前版本。如果当前安装方式无法自动升级，该命令会打印需要手动执行的命令。你也可以直接使用包管理器升级。npm 安装的用户执行：
 
 ```sh
 npm install -g @moonshot-ai/kimi-code@latest

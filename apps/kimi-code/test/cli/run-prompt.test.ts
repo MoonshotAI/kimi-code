@@ -54,6 +54,7 @@ const mocks = vi.hoisted(() => {
         telemetry: true,
       }),
     ),
+    harnessGetExperimentalFlags: vi.fn(async (): Promise<Record<string, boolean>> => ({})),
     harnessCreateSession: vi.fn(async () => session),
     harnessResumeSession: vi.fn(async () => session),
     harnessListSessions: vi.fn(async () => [{ id: 'ses_previous', workDir: process.cwd() }]),
@@ -83,6 +84,7 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
       auth = { getCachedAccessToken: mocks.harnessGetCachedAccessToken };
       ensureConfigFile = mocks.harnessEnsureConfigFile;
       getConfig = mocks.harnessGetConfig;
+      getExperimentalFlags = mocks.harnessGetExperimentalFlags;
       createSession = mocks.harnessCreateSession;
       resumeSession = mocks.harnessResumeSession;
       listSessions = mocks.harnessListSessions;

@@ -432,6 +432,31 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain('AskUserQuestion');
   });
 
+  it('renders background AskUserQuestion as a started task', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_background_question',
+        name: 'AskUserQuestion',
+        args: { background: true },
+      },
+      {
+        tool_call_id: 'call_background_question',
+        output: [
+          'task_id: question-aaaaaaaa',
+          'description: Which database?',
+          'status: running',
+        ].join('\n'),
+        is_error: false,
+      },
+      darkColors,
+    );
+
+    const out = strip(component.render(100).join('\n'));
+    expect(out).toContain('Started background question');
+    expect(out).toContain('question-aaaaaaaa');
+    expect(out).not.toContain('Collected your answers');
+  });
+
   it('appends a chip to the header once a result arrives', () => {
     const component = new ToolCallComponent(
       {

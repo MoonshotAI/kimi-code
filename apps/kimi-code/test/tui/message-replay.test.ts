@@ -43,6 +43,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       theme: 'dark',
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
     },
     version: '0.0.0-test',
     workDir: '/tmp/proj-a',
@@ -133,6 +134,7 @@ function makeSession(
       maxContextTokens: 100,
       contextUsage: 0,
     })),
+    getGoal: vi.fn(async () => ({ goal: null })),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
     setModel: vi.fn(async () => {}),
@@ -165,6 +167,7 @@ function makeHarness(initialSession: Session) {
     close: vi.fn(async () => {}),
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
+    getExperimentalFlags: vi.fn(async () => ({})),
     interactiveAgentId: 'main',
     auth: {
       status: vi.fn(),
@@ -229,6 +232,30 @@ function backgroundTask(
 }
 
 describe('KimiTUI resume message replay', () => {
+  it('renders persisted goal completion reminders as assistant completion messages', async () => {
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          {
+            type: 'text',
+            text: '<system-reminder>\n✓ Goal complete.\nWorked 1 turn over 7m15s, using 4.3M tokens.\n</system-reminder>',
+          },
+        ],
+        { origin: { kind: 'system_trigger', name: 'goal_completion' } },
+      ),
+    ]);
+
+    const entry = driver.state.transcriptEntries.find((item) =>
+      item.content.includes('Goal complete'),
+    );
+    expect(entry).toMatchObject({
+      kind: 'assistant',
+      renderMode: 'markdown',
+      content: '✓ Goal complete.\nWorked 1 turn over 7m15s, using 4.3M tokens.',
+    });
+  });
+
   it('groups replayed Agent calls from one assistant message using live grouping', async () => {
     const replay: AgentReplayRecord[] = [
       message('user', [{ type: 'text', text: 'run two agents' }]),

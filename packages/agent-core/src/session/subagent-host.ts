@@ -332,6 +332,7 @@ export class SessionSubagentHost {
 
     const context = await prepareSystemPromptContext(child.kaos);
     child.useProfile(profile, context);
+    child.tools.inheritUserTools(parent.tools);
   }
 
   private async triggerSubagentStart(

@@ -5,6 +5,7 @@ import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
+import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
 import { saveTuiConfig } from '../config';
 import type { Theme } from '../theme';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
@@ -229,6 +230,7 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
       theme: host.state.appState.theme,
       editorCommand,
       notifications: host.state.appState.notifications,
+      upgrade: host.state.appState.upgrade,
     });
   } catch (error) {
     host.showStatus(
@@ -369,6 +371,7 @@ async function applyThemeChoice(host: SlashCommandHost, theme: Theme): Promise<v
       theme,
       editorCommand: host.state.appState.editorCommand,
       notifications: host.state.appState.notifications,
+      upgrade: host.state.appState.upgrade,
     });
   } catch (error) {
     host.showStatus(
@@ -400,6 +403,65 @@ export function showPermissionPicker(host: SlashCommandHost): void {
       },
     }),
   );
+}
+
+export function showUpdatePreferencePicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new UpdatePreferenceSelectorComponent({
+      currentValue: host.state.appState.upgrade.autoInstall,
+      colors: host.state.theme.colors,
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyUpdatePreferenceChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+type UpdatePreferenceHost = {
+  readonly state: {
+    readonly appState: Pick<
+      SlashCommandHost['state']['appState'],
+      'theme' | 'editorCommand' | 'notifications' | 'upgrade'
+    >;
+    readonly theme: Pick<SlashCommandHost['state']['theme'], 'colors'>;
+  };
+  setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'upgrade'>): void;
+  showStatus(msg: string, color?: string): void;
+  track: SlashCommandHost['track'];
+};
+
+export async function applyUpdatePreferenceChoice(
+  host: UpdatePreferenceHost,
+  autoInstall: boolean,
+): Promise<void> {
+  if (autoInstall === host.state.appState.upgrade.autoInstall) {
+    host.showStatus(`Automatic updates already ${autoInstall ? 'enabled' : 'disabled'}.`);
+    return;
+  }
+
+  const upgrade = { autoInstall };
+  try {
+    await saveTuiConfig({
+      theme: host.state.appState.theme,
+      editorCommand: host.state.appState.editorCommand,
+      notifications: host.state.appState.notifications,
+      upgrade,
+    });
+  } catch (error) {
+    host.showStatus(
+      `Failed to save automatic update setting: ${formatErrorMessage(error)}`,
+      host.state.theme.colors.error,
+    );
+    return;
+  }
+
+  host.setAppState({ upgrade });
+  host.track('upgrade_preference_changed', { auto_install: autoInstall });
+  host.showStatus(`Automatic updates ${autoInstall ? 'enabled' : 'disabled'}.`);
 }
 
 async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMode): Promise<void> {
@@ -441,6 +503,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'permission': showPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
     case 'editor': showEditorPicker(host); return;
+    case 'upgrade': showUpdatePreferencePicker(host); return;
     case 'usage': void showUsage(host); return;
   }
 }
