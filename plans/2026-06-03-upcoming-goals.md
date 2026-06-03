@@ -10,6 +10,8 @@ The user can queue autonomous tasks that should run after the current goal compl
 
 We found that agents sometimes complete a goal too quickly. Users can be disappointed that they can assign only one goal at a time.
 
+Many users already know the next independent tasks they want to run. Today they need to wait for the current goal to complete, return to the TUI, and submit the next goal manually.
+
 An upcoming-goals queue lets users prepare several autonomous tasks in one session. The agent still works on one goal at a time, but the TUI can start the next queued goal after the current goal is complete.
 
 This avoids giving the agent a broad combined goal. It also keeps the next tasks hidden until they become the active goal.

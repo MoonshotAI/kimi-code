@@ -587,6 +587,11 @@ describe('goalArgumentCompletions', () => {
     return items === null ? null : items.map((i) => i.value);
   }
 
+  function labels(prefix: string): string[] | null {
+    const items = goalArgumentCompletions(prefix);
+    return items === null ? null : items.map((i) => i.label);
+  }
+
   it('offers every subcommand for an empty prefix', () => {
     expect(values('')).toEqual(['status', 'pause', 'resume', 'cancel', 'replace', 'next']);
   });
@@ -616,9 +621,19 @@ describe('goalArgumentCompletions', () => {
   it('stops completing once past the first token (space typed)', () => {
     expect(values('pause ')).toBeNull();
     expect(values('replace Ship feature')).toBeNull();
+    expect(values('next Ship feature')).toBeNull();
+  });
+
+  it('completes /goal next manage as the second token', () => {
+    expect(values('next ')).toEqual(['next manage']);
+    expect(values('next m')).toEqual(['next manage']);
+    expect(values('next MA')).toEqual(['next manage']);
+    expect(labels('next m')).toEqual(['manage']);
+    expect(values('next manage')).toBeNull();
   });
 
   it('returns null when nothing matches', () => {
     expect(values('zzz')).toBeNull();
+    expect(values('next ship')).toBeNull();
   });
 });

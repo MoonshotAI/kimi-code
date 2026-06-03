@@ -13,8 +13,21 @@ const GOAL_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'next', description: 'Queue an upcoming goal' },
 ];
 
+const GOAL_NEXT_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'manage', description: 'Manage upcoming goals' },
+];
+
 /** Argument autocompletion for the `/goal` command (subcommands). */
 export function goalArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+  const nextMatch = argumentPrefix.match(/^next\s+(\S*)$/i);
+  if (nextMatch !== null) {
+    return (
+      completeLeadingArg(GOAL_NEXT_ARG_COMPLETIONS, nextMatch[1] ?? '')?.map((item) => ({
+        ...item,
+        value: `next ${item.value}`,
+      })) ?? null
+    );
+  }
   return completeLeadingArg(GOAL_ARG_COMPLETIONS, argumentPrefix);
 }
 

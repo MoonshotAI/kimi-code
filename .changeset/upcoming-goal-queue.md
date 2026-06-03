@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Add session-persisted upcoming goals for `/goal`, including queued promotion and an interactive TUI manager.
+Add an upcoming goals queue for `/goal` so users can prepare several autonomous tasks and run them sequentially. Use `/goal next <objective>` to queue a task and `/goal next manage` to review and change the queue interactively.
