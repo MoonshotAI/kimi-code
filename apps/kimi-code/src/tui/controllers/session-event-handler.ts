@@ -57,7 +57,7 @@ import {
   type McpServerStatusSnapshot,
   selectMcpStartupStatusRows,
 } from '../utils/mcp-server-status';
-import { openUrl } from '../utils/open-url';
+import { openUrl } from '#/utils/open-url';
 import { setProcessTitle } from '../utils/proctitle';
 import { errorReportHintLine } from '../constant/feedback';
 import { formatStepDebugTiming } from '#/utils/usage/debug-timing';

@@ -122,6 +122,16 @@ In `stream-json` mode, each stdout line is one JSON object. Ordinary replies are
 
 ## Subcommands
 
+### `kimi login`
+
+Authenticate Kimi Code CLI with the Kimi Code OAuth provider via the RFC 8628 device-code flow, without entering the TUI. The command opens a device authorization request, prints the verification URL and user code to stderr, then polls until the browser flow completes. The resulting token is written to the same on-disk location used by the in-TUI `/login` command, so the next `kimi` invocation picks it up automatically.
+
+```sh
+kimi login
+```
+
+This subcommand takes no flags. It is the entry point that ACP-compatible editors invoke via the `terminal-auth` authentication method advertised by `kimi acp`. Press Ctrl-C at any time to cancel the pending device-code poll; the command exits with status `1` on cancellation or failure, `0` on success.
+
 ### `kimi export`
 
 Bundle a session into a ZIP file for sharing, archival, or bug reports. The exported archive contains all files under the session directory, such as context records, state files, and the session diagnostic log if that session has already produced `logs/kimi-code.log`.

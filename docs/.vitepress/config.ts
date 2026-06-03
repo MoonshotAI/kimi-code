@@ -47,6 +47,7 @@ export default withMermaid(defineConfig({
                 { text: '常见使用案例', link: '/zh/guides/use-cases' },
                 { text: '交互与输入', link: '/zh/guides/interaction' },
                 { text: '会话与上下文', link: '/zh/guides/sessions' },
+                { text: '在 IDE 中使用', link: '/zh/guides/ides' },
               ],
             },
           ],
@@ -79,6 +80,7 @@ export default withMermaid(defineConfig({
               text: '参考手册',
               items: [
                 { text: 'kimi 命令', link: '/zh/reference/kimi-command' },
+                { text: 'kimi acp 子命令', link: '/zh/reference/kimi-acp' },
                 { text: '内置工具', link: '/zh/reference/tools' },
                 { text: '斜杠命令', link: '/zh/reference/slash-commands' },
                 { text: '键盘快捷键', link: '/zh/reference/keyboard' },
@@ -121,6 +123,7 @@ export default withMermaid(defineConfig({
                 { text: 'Common Use Cases', link: '/en/guides/use-cases' },
                 { text: 'Interaction and Input', link: '/en/guides/interaction' },
                 { text: 'Sessions and Context', link: '/en/guides/sessions' },
+                { text: 'Using in IDEs', link: '/en/guides/ides' },
               ],
             },
           ],
@@ -153,6 +156,7 @@ export default withMermaid(defineConfig({
               text: 'Reference',
               items: [
                 { text: 'kimi Command', link: '/en/reference/kimi-command' },
+                { text: 'kimi acp Subcommand', link: '/en/reference/kimi-acp' },
                 { text: 'Built-in Tools', link: '/en/reference/tools' },
                 { text: 'Slash Commands', link: '/en/reference/slash-commands' },
                 { text: 'Keyboard Shortcuts', link: '/en/reference/keyboard' },

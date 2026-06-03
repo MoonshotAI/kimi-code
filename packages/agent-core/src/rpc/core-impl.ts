@@ -26,7 +26,7 @@ import {
   type ExperimentalFlagMap,
 } from '../flags';
 import type { Logger } from '../logging/types';
-import { resolveSessionMcpConfig, type SessionMcpConfig } from '../mcp';
+import { resolveSessionMcpConfig, mergeCallerMcpServers, type SessionMcpConfig } from '../mcp';
 import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
 import { exportSessionDirectory } from '../session/export';
 import {
@@ -182,6 +182,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       cwd: workDir,
       homeDir: this.homeDir,
     });
+    const withCallerMcp = mergeCallerMcpServers(baseMcpConfig, options.mcpServers);
     const summary = await this.sessionStore.create({
       id,
       workDir,
@@ -193,7 +194,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
     await this.pluginsReady;
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
-    const mcpConfig = this.mergePluginMcpConfig(baseMcpConfig);
+    const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
 
     // Session ctor attaches its own log sink. If anything in the setup-after-
     // ctor block throws, `session.close()` releases the sink (and mcp).
@@ -280,9 +281,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       cwd: summary.workDir,
       homeDir: this.homeDir,
     });
+    const withCallerMcp = mergeCallerMcpServers(baseMcpConfig, input.mcpServers);
     await this.pluginsReady;
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
-    const mcpConfig = this.mergePluginMcpConfig(baseMcpConfig);
+    const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
     const runtime = await this.resolveRuntime(config);
     const session = new Session({
       kaos: (await this.kaos).withCwd(summary.workDir),
@@ -729,9 +731,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
         ...pluginServers,
       },
     };
-  }
-
-  private sessionApi(sessionId: string): SessionAPIImpl {
+  }  private sessionApi(sessionId: string): SessionAPIImpl {
     const session = this.sessions.get(sessionId);
     if (session === undefined) {
       throw new KimiError(ErrorCodes.SESSION_NOT_FOUND, `Session "${sessionId}" was not found`, {

@@ -122,6 +122,16 @@ kimi -p "List changed files" --output-format stream-json
 
 ## 子命令
 
+### `kimi login`
+
+通过 RFC 8628 device-code 流程登录 Kimi Code OAuth，无需进入 TUI。命令会发起一次 device authorization 请求，将验证地址和用户码打印到 stderr，然后轮询直到浏览器侧完成授权。生成的 token 写入 TUI `/login` 同款的本地位置，下次启动 `kimi` 时会自动加载。
+
+```sh
+kimi login
+```
+
+该子命令没有任何 flag。它就是 `kimi acp` 通过 `terminal-auth` 认证方式公告给 ACP 编辑器的入口点。在轮询期间随时按 Ctrl-C 可取消登录；取消或失败时退出码为 `1`，成功为 `0`。
+
 ### `kimi export`
 
 把一个会话打包成 ZIP 文件，便于分享、归档或者提交问题反馈。导出的压缩包包含会话目录下的所有文件，例如上下文记录、状态文件和会话诊断日志（如果该会话已经产生 `logs/kimi-code.log`）。

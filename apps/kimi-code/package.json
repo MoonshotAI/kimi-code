@@ -76,6 +76,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@moonshot-ai/acp-adapter": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/kimi-code-sdk": "workspace:^",
     "@moonshot-ai/kimi-telemetry": "workspace:^",
