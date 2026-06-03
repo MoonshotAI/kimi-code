@@ -3,6 +3,7 @@
  *
  * Pure-lookup pins (no real CDN download):
  *   - `findExistingRg` returns undefined when PATH + share-bin are both empty
+ *   - `KIMI_CODE_RG_PATH` wins over PATH/cache and fails fast when invalid
  *   - Resolves from `<shareDir>/bin/rg` when that binary exists
  *   - Prefers system PATH over share-dir cache when both are available
  *   - `rgUnavailableMessage` surfaces the underlying cause + install hints
@@ -35,22 +36,59 @@ vi.mock('tar', () => ({ extract: vi.fn() }));
 describe('findExistingRg', () => {
   let fakeShare: string;
   let savedPath: string | undefined;
+  let savedRgPath: string | undefined;
   beforeEach(() => {
     fakeShare = join(tmpdir(), `kimi-rg-${String(Date.now())}-${String(Math.random()).slice(2)}`);
     mkdirSync(join(fakeShare, 'bin'), { recursive: true });
     savedPath = process.env['PATH'];
+    savedRgPath = process.env['KIMI_CODE_RG_PATH'];
     // Empty PATH → rules out step 1 (system-path) for the default case.
     process.env['PATH'] = '';
+    delete process.env['KIMI_CODE_RG_PATH'];
   });
   afterEach(() => {
     rmSync(fakeShare, { recursive: true, force: true });
     if (savedPath === undefined) delete process.env['PATH'];
     else process.env['PATH'] = savedPath;
+    if (savedRgPath === undefined) delete process.env['KIMI_CODE_RG_PATH'];
+    else process.env['KIMI_CODE_RG_PATH'] = savedRgPath;
   });
 
   it('returns undefined when no rg anywhere', async () => {
     const result = await findExistingRg(fakeShare);
     expect(result).toBeUndefined();
+  });
+
+  it('prefers KIMI_CODE_RG_PATH over system PATH and share-dir cache', async () => {
+    const binName = process.platform === 'win32' ? 'rg.exe' : 'rg';
+    const envDir = join(fakeShare, 'env');
+    const pathDir = join(fakeShare, 'path');
+    mkdirSync(envDir, { recursive: true });
+    mkdirSync(pathDir, { recursive: true });
+    const fromEnv = join(envDir, binName);
+    const onPath = join(pathDir, binName);
+    const cached = join(fakeShare, 'bin', binName);
+    writeFileSync(fromEnv, '#!/bin/sh\n');
+    writeFileSync(onPath, '#!/bin/sh\n');
+    writeFileSync(cached, '#!/bin/sh\n');
+    chmodSync(fromEnv, 0o755);
+    chmodSync(onPath, 0o755);
+    chmodSync(cached, 0o755);
+    process.env['KIMI_CODE_RG_PATH'] = fromEnv;
+    process.env['PATH'] = pathDir;
+
+    const result = await findExistingRg(fakeShare);
+
+    expect(result).toEqual({ path: fromEnv, source: 'env-path' });
+  });
+
+  it('throws when KIMI_CODE_RG_PATH points at a missing binary', async () => {
+    const missing = join(fakeShare, 'missing-rg');
+    process.env['KIMI_CODE_RG_PATH'] = missing;
+
+    await expect(findExistingRg(fakeShare)).rejects.toThrow(
+      /KIMI_CODE_RG_PATH points to .*missing-rg.*not an executable file/,
+    );
   });
 
   it('resolves from share-dir when cached', async () => {

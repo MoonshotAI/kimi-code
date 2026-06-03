@@ -2,19 +2,30 @@
  * rg-locator — hybrid ripgrep binary resolution.
  *
  * Lookup order (first hit wins):
- *   1. System PATH (`which rg`) — fastest, respects developer setup
- *   2. Bundled vendor binary (hook; not wired yet — `getVendorRgPath` is a stub)
- *   3. `<KIMI_CODE_HOME>/bin/rg` — persistent cache for this app.
- *   4. CDN download to <KIMI_CODE_HOME>/bin/ — one-off bootstrap
+ *   1. `KIMI_CODE_RG_PATH` — deterministic runtime/vendor override
+ *   2. System PATH (`which rg`) — fastest, respects developer setup
+ *   3. Bundled vendor binary (hook; not wired yet — `getVendorRgPath` is a stub)
+ *   4. `<KIMI_CODE_HOME>/bin/rg` — persistent cache for this app.
+ *   5. CDN download to <KIMI_CODE_HOME>/bin/ — one-off bootstrap
  *
- * If steps 1-4 all fail, callers receive a structured error they can
+ * If steps 1-5 all fail, callers receive a structured error they can
  * turn into a user-facing "install ripgrep" hint instead of the naked
  * `spawn rg ENOENT`.
  */
 
 import { createHash } from 'node:crypto';
-import { createWriteStream, existsSync } from 'node:fs';
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises';
+import { constants as fsConstants, createWriteStream, existsSync } from 'node:fs';
+import {
+  access,
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat,
+} from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'pathe';
 import { Readable } from 'node:stream';
@@ -28,6 +39,7 @@ import { abortable } from '../../utils/abort';
 const RG_VERSION = '15.0.0';
 const RG_BASE_URL = 'https://code.kimi.com/kimi-code/rg';
 const DOWNLOAD_TIMEOUT_MS = 600_000;
+const RG_PATH_ENV = 'KIMI_CODE_RG_PATH';
 const RG_ARCHIVE_SHA256: Record<string, string> = {
   'ripgrep-15.0.0-aarch64-apple-darwin.tar.gz':
     '98bb2e61e7277ba0ea72d2ae2592497fd8d2940934a16b122448d302a6637e3b',
@@ -44,6 +56,7 @@ const RG_ARCHIVE_SHA256: Record<string, string> = {
 };
 
 export type RgResolutionSource =
+  | 'env-path'
   | 'system-path'
   | 'vendor'
   | 'share-bin-cached'
@@ -91,6 +104,11 @@ async function resolveRgPath(
  */
 export async function findExistingRg(shareDir: string): Promise<RgResolution | undefined> {
   const binName = rgBinaryName();
+  const envRg = getEnvRgPath();
+  if (envRg !== undefined) {
+    if (await isExecutableFile(envRg)) return { path: envRg, source: 'env-path' };
+    throw new Error(`${RG_PATH_ENV} points to ${envRg}, but it is not an executable file`);
+  }
   const systemRg = await whichRg();
   if (systemRg !== undefined) return { path: systemRg, source: 'system-path' };
   const vendorPath = getVendorRgPath(binName);
@@ -134,6 +152,12 @@ function getVendorRgPath(_binName: string): string | undefined {
   return undefined;
 }
 
+function getEnvRgPath(): string | undefined {
+  const override = process.env[RG_PATH_ENV];
+  if (override === undefined || override === '') return undefined;
+  return override;
+}
+
 async function whichRg(): Promise<string | undefined> {
   const pathEnv = process.env['PATH'] ?? '';
   const sep = process.platform === 'win32' ? ';' : ':';
@@ -141,12 +165,7 @@ async function whichRg(): Promise<string | undefined> {
   for (const dir of pathEnv.split(sep)) {
     if (dir === '') continue;
     const candidate = join(dir, binName);
-    try {
-      const st = await stat(candidate);
-      if (st.isFile()) return candidate;
-    } catch {
-      /* not here, try next */
-    }
+    if (await isExecutableFile(candidate)) return candidate;
   }
   return undefined;
 }
@@ -154,7 +173,10 @@ async function whichRg(): Promise<string | undefined> {
 async function isExecutableFile(p: string): Promise<boolean> {
   try {
     const st = await stat(p);
-    return st.isFile();
+    if (!st.isFile()) return false;
+    if (process.platform === 'win32') return true;
+    await access(p, fsConstants.X_OK);
+    return true;
   } catch {
     return false;
   }
@@ -364,6 +386,8 @@ export function rgUnavailableMessage(cause: unknown): string {
     `  macOS:   brew install ripgrep\n` +
     `  Ubuntu:  sudo apt-get install ripgrep\n` +
     `  Other:   https://github.com/BurntSushi/ripgrep#installation\n` +
+    `\n` +
+    `For packaged runtimes, set ${RG_PATH_ENV}=/absolute/path/to/rg.\n` +
     `\n` +
     `Alternatively, drop a static rg binary at ${shareBin}`
   );

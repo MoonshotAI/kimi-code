@@ -144,6 +144,7 @@
             nativeBuildInputs = [
               nodejs
               pnpm
+              pkgs.makeWrapper
               (pkgs.pnpmConfigHook.override { inherit pnpm; })
             ]
             # The SEA inject step (postject) invalidates the macOS code
@@ -183,7 +184,10 @@
 
               install -Dm755 \
                 "apps/kimi-code/dist-native/bin/${nativeTarget}/kimi" \
-                "$out/bin/kimi"
+                "$out/libexec/kimi-code/kimi"
+
+              makeWrapper "$out/libexec/kimi-code/kimi" "$out/bin/kimi" \
+                --set-default KIMI_CODE_RG_PATH "${pkgs.ripgrep}/bin/rg"
 
               runHook postInstall
             '';
@@ -221,6 +225,7 @@
             packages = [
               nodejs
               pnpm
+              pkgs.ripgrep
             ];
           };
       });
