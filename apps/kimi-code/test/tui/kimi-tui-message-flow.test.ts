@@ -243,6 +243,10 @@ function renderTranscript(driver: MessageDriver): string {
   return driver.state.transcriptContainer.render(120).join('\n');
 }
 
+function renderActivity(driver: MessageDriver): string {
+  return driver.state.activityContainer.render(120).join('\n');
+}
+
 function countOccurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
@@ -1497,6 +1501,75 @@ describe('KimiTUI message flow', () => {
       expect(approval).not.toContain('non-duplicated plan work');
       expect(approval).not.toContain('/tmp/no-duplicate-plan.md');
     });
+  });
+
+  it('renders AgentSwarm progress as the activity pane instead of tool-card body', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        name: 'AgentSwarm',
+        args: {
+          description: 'Review changed files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts', 'src/b.ts'],
+        },
+      } as Event,
+      sendQueued,
+    );
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_swarm',
+        subagentId: 'agent-1',
+        subagentName: 'coder',
+        description: 'Review changed files #1 (coder)',
+        runInBackground: false,
+      } as Event,
+      sendQueued,
+    );
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'agent-1',
+        sessionId: 'ses-1',
+        turnId: 2,
+        toolCallId: 'call_read',
+        name: 'Read',
+        args: { path: 'src/a.ts' },
+      } as Event,
+      sendQueued,
+    );
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'agent-1',
+        sessionId: 'ses-1',
+        turnId: 2,
+        reason: 'completed',
+      } as Event,
+      sendQueued,
+    );
+
+    const activity = stripSgr(renderActivity(driver));
+    expect(activity).toContain('Agent swarm: Review changed files');
+    expect(activity).toContain('swarm-001: Completed');
+    expect(activity).toContain('swarm-002:  Spawning');
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Using AgentSwarm');
+    expect(transcript).not.toContain('swarm-001');
   });
 
   it('shows plan review reject on the plan card without an approval notice', async () => {

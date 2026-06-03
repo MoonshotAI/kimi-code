@@ -12,6 +12,7 @@ export type MainCommandHandler = (opts: CLIOptions) => void;
 export type MigrateCommandHandler = () => void;
 export type PluginNodeRunnerHandler = (entry: string, args: readonly string[]) => void;
 export type UpgradeCommandHandler = () => void | Promise<void>;
+export type SwarmDemoCommandHandler = (count?: string) => void;
 
 export function createProgram(
   version: string,
@@ -19,6 +20,7 @@ export function createProgram(
   onMigrate: MigrateCommandHandler,
   onPluginNodeRunner: PluginNodeRunnerHandler = () => {},
   onUpgrade: UpgradeCommandHandler = () => {},
+  onSwarmDemo: SwarmDemoCommandHandler = () => {},
 ): Command {
   const program = new Command(CLI_COMMAND_NAME)
     .description('The Starting Point for Next-Gen Agents')
@@ -79,6 +81,13 @@ export function createProgram(
   registerExportCommand(program);
   registerProviderCommand(program);
   registerMigrateCommand(program, onMigrate);
+  program
+    .command('swarm-demo')
+    .description('Run an animated demo of the swarm progress UI.')
+    .argument('[count]', 'Number of swarms to render. Defaults to 32.')
+    .action((count: string | undefined) => {
+      onSwarmDemo(count);
+    });
   program
     .command('upgrade')
     .description('Upgrade Kimi Code to the latest version.')

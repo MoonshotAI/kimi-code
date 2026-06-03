@@ -48,6 +48,7 @@ export interface AgentStatusUpdatedEvent {
   readonly maxContextTokens?: number | undefined;
   readonly contextUsage?: number | undefined;
   readonly planMode?: boolean | undefined;
+  readonly swarmMode?: boolean | undefined;
   readonly permission?: PermissionMode | undefined;
   readonly usage?: UsageStatus | undefined;
 }

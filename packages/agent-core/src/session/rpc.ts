@@ -199,6 +199,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return this.getAgent(agentId).clearPlan(payload);
   }
 
+  runSwarm({ agentId, ...payload }: AgentScopedPayload<PromptPayload>) {
+    return this.getAgent(agentId).runSwarm(payload);
+  }
+
   beginCompaction({ agentId, ...payload }: AgentScopedPayload<BeginCompactionPayload>) {
     return this.getAgent(agentId).beginCompaction(payload);
   }

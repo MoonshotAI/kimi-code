@@ -43,6 +43,7 @@
 | `/auto [on\|off]` | — | 切换 auto 权限模式。不带参数时按当前状态翻转；显式传 `on`/`off` 时强制设为对应状态。开启后工具审批自动处理，Agent 不会向用户提问。 | 是 |
 | `/plan [on\|off]` | — | 切换 Plan 模式。不带参数时按当前状态翻转；显式传 `on`/`off` 时强制设为对应状态。单纯切换不会创建空计划文件。 | 是 |
 | `/plan clear` | — | 清除当前 plan 方案。 | 否 |
+| `/swarm <task>` | — | 以 swarm 模式运行一个任务。若当前是 `manual` 权限模式，启动前会提示是否切换到 `auto`。 | 否 |
 | `/goal [status\|pause\|resume\|cancel\|replace <objective>\|<objective>]` | — | 开始或管理一个自主 goal。该命令仍是实验功能，通过 `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1` 启用。 | 见下文 |
 
 ::: warning 注意

@@ -472,6 +472,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).clearPlan(payload);
   }
 
+  runSwarm({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {
+    return this.sessionApi(sessionId).runSwarm(payload);
+  }
+
   beginCompaction({ sessionId, ...payload }: SessionAgentPayload<BeginCompactionPayload>) {
     return this.sessionApi(sessionId).beginCompaction(payload);
   }

@@ -162,6 +162,16 @@ kimi migrate
 
 如果你之前使用过旧版 kimi-cli，可以运行此命令将历史会话、配置等数据迁移到 kimi-code 中，避免数据丢失。完整的迁移流程、迁移内容与注意事项见 [从 kimi-cli 迁移](../guides/migration.md)。
 
+### `kimi swarm-demo`
+
+运行一个终端 UI 动画演示，展示多个 swarm 的进度条。该命令不会启动 LLM 会话，也不会调用供应商，只用于预览 swarm UI。
+
+```sh
+kimi swarm-demo [count]
+```
+
+省略 `count` 时默认展示 32 个 swarm。传入正整数可以调整数量。演示会持续动画，直到按下 `q`、`Esc` 或 `Ctrl-C` 退出。
+
 ### `kimi upgrade`
 
 立即检查最新的 Kimi Code CLI 版本，并展示更新提示。该命令无任何 flag，所选操作结束后退出。

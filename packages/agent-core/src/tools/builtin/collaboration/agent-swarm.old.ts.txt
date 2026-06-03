@@ -1,0 +1,308 @@
+import type { Kaos } from '@moonshot-ai/kaos';
+import { z } from 'zod';
+
+import type { BuiltinTool } from '../../../agent/tool';
+import type { SessionSubagentHost, SubagentHandle } from '../../../session/subagent-host';
+import {
+  createDeadlineAbortSignal,
+  isUserCancellation,
+  type DeadlineAbortSignal,
+} from '../../../utils/abort';
+import { isAbortError } from '../../../loop/errors';
+import { ToolAccesses } from '../../../loop/tool-access';
+import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
+import { resolvePathAccessPath } from '../../policies/path-access';
+import { toInputJsonSchema } from '../../support/input-schema';
+import { literalRulePattern, matchesPathRuleSubject } from '../../support/rule-match';
+import type { WorkspaceConfig } from '../../support/workspace';
+import AGENT_SWARM_DESCRIPTION from './agent-swarm.md';
+
+const MAX_SWARM_AGENTS = 50;
+const DEFAULT_SUBAGENT_TYPE = 'coder';
+
+export const AgentSwarmToolInputSchema = z.object({
+  agents_file: z
+    .string()
+    .describe('Path to the JSONL agents file.'),
+  description: z
+    .string()
+    .trim()
+    .min(1)
+    .describe('Short description for the whole swarm.'),
+  timeout: z
+    .number()
+    .int()
+    .min(30)
+    .max(3600)
+    .optional()
+    .describe('Timeout in seconds for each subagent.'),
+});
+
+export type AgentSwarmToolInput = z.infer<typeof AgentSwarmToolInputSchema>;
+
+const AgentSwarmSpecSchema = z
+  .object({
+    prompt: z.string().trim().min(1),
+    subagent_type: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
+type AgentSwarmSpec = z.infer<typeof AgentSwarmSpecSchema>;
+
+interface ParsedAgentSwarmSpec extends AgentSwarmSpec {
+  readonly lineNo: number;
+}
+
+interface SwarmRunResult {
+  readonly spec: ParsedAgentSwarmSpec;
+  readonly agentId?: string;
+  readonly profileName: string;
+  readonly description: string;
+  readonly status: 'completed' | 'failed';
+  readonly result?: string;
+  readonly error?: string;
+}
+
+export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
+  readonly name = 'AgentSwarm' as const;
+  readonly description = AGENT_SWARM_DESCRIPTION;
+  readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentSwarmToolInputSchema);
+
+  constructor(
+    private readonly kaos: Kaos,
+    private readonly workspace: WorkspaceConfig,
+    private readonly subagentHost: SessionSubagentHost,
+  ) {}
+
+  resolveExecution(args: AgentSwarmToolInput): ToolExecution {
+    const path = resolvePathAccessPath(args.agents_file, {
+      kaos: this.kaos,
+      workspace: this.workspace,
+      operation: 'read',
+    });
+    return {
+      accesses: ToolAccesses.readFile(path),
+      description: `Launching agent swarm: ${args.description}`,
+      display: {
+        kind: 'agent_call',
+        agent_name: 'swarm',
+        prompt: args.agents_file,
+      },
+      approvalRule: literalRulePattern(this.name, path),
+      matchesRule: (ruleArgs) =>
+        matchesPathRuleSubject(ruleArgs, path, {
+          cwd: this.workspace.workspaceDir,
+          pathClass: this.kaos.pathClass(),
+          homeDir: this.kaos.gethome(),
+        }),
+      execute: (ctx) => this.execution(args, path, ctx),
+    };
+  }
+
+  private async execution(
+    args: AgentSwarmToolInput,
+    safePath: string,
+    context: ExecutableToolContext,
+  ): Promise<ExecutableToolResult> {
+    try {
+      const text = await this.kaos.readText(safePath, { errors: 'strict' });
+      const specs = parseAgentSwarmSpecs(text);
+
+      const result = await this.runSwarm(args, specs, context.signal, context.toolCallId);
+      return {
+        output: result,
+        isError: swarmResultHasFailures(result) ? true : undefined,
+      };
+    } catch (error) {
+      return {
+        output: error instanceof Error ? error.message : String(error),
+        isError: true,
+      };
+    }
+  }
+
+  private async runSwarm(
+    args: AgentSwarmToolInput,
+    specs: readonly ParsedAgentSwarmSpec[],
+    signal: AbortSignal,
+    toolCallId: string,
+  ): Promise<string> {
+    let foregroundDeadline: DeadlineAbortSignal | undefined;
+    try {
+      foregroundDeadline =
+        args.timeout !== undefined
+          ? createDeadlineAbortSignal(signal, args.timeout * 1000)
+          : undefined;
+      const runSignal = foregroundDeadline?.signal ?? signal;
+      const results = await Promise.all(
+        specs.map((spec) =>
+          this.runOne(
+            args,
+            spec,
+            runSignal,
+            toolCallId,
+            () => foregroundDeadline?.timedOut() === true,
+          ),
+        ),
+      );
+      return renderSwarmResults(args, results);
+    } finally {
+      foregroundDeadline?.clear();
+    }
+  }
+
+  private async runOne(
+    args: AgentSwarmToolInput,
+    spec: ParsedAgentSwarmSpec,
+    signal: AbortSignal,
+    toolCallId: string,
+    timedOut: () => boolean,
+  ): Promise<SwarmRunResult> {
+    const profileName = spec.subagent_type ?? DEFAULT_SUBAGENT_TYPE;
+    const description = childDescription(args.description, spec.lineNo, profileName);
+    let handle: SubagentHandle | undefined;
+    try {
+      signal.throwIfAborted();
+      handle = await this.subagentHost.spawn(profileName, {
+        parentToolCallId: toolCallId,
+        prompt: spec.prompt,
+        description,
+        runInBackground: false,
+        signal,
+      });
+      const completion = await handle.completion;
+      return {
+        spec,
+        agentId: handle.agentId,
+        profileName: handle.profileName,
+        description,
+        status: 'completed',
+        result: completion.result,
+      };
+    } catch (error) {
+      return {
+        spec,
+        agentId: handle?.agentId,
+        profileName: handle?.profileName ?? profileName,
+        description,
+        status: 'failed',
+        error: formatSubagentError(error, signal, timedOut, args.timeout),
+      };
+    }
+  }
+}
+
+function parseAgentSwarmSpecs(text: string): ParsedAgentSwarmSpec[] {
+  const specs: ParsedAgentSwarmSpec[] = [];
+  const seenAgents = new Map<string, number>();
+  const lines = text.split(/\r?\n/u);
+  for (const [index, rawLine] of lines.entries()) {
+    const lineNo = index + 1;
+    const line = rawLine.trim();
+    if (line.length === 0) continue;
+    if (specs.length >= MAX_SWARM_AGENTS) {
+      throw new Error(`AgentSwarm supports at most ${String(MAX_SWARM_AGENTS)} agents per file.`);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line) as unknown;
+    } catch (error) {
+      throw new Error(`Invalid JSON on line ${String(lineNo)}: ${errorMessage(error)}`, {
+        cause: error,
+      });
+    }
+    const result = AgentSwarmSpecSchema.safeParse(parsed);
+    if (!result.success) {
+      throw new Error(`Invalid subagent spec on line ${String(lineNo)}: ${result.error.message}`);
+    }
+    const duplicateKey = agentSpecDuplicateKey(result.data);
+    const duplicateLineNo = seenAgents.get(duplicateKey);
+    if (duplicateLineNo !== undefined) {
+      const subagentType = result.data.subagent_type ?? DEFAULT_SUBAGENT_TYPE;
+      throw new Error(
+        `Duplicate subagent spec on lines ${String(duplicateLineNo)} and ${String(lineNo)}: prompt and subagent_type "${subagentType}" are identical. AgentSwarm requires distinct subagents.`,
+      );
+    }
+    seenAgents.set(duplicateKey, lineNo);
+    specs.push({ ...result.data, lineNo });
+  }
+  if (specs.length < 2) {
+    throw new Error(
+      'AgentSwarm requires at least 2 subagent specs. Use Agent for a single subagent.',
+    );
+  }
+  return specs;
+}
+
+function agentSpecDuplicateKey(spec: AgentSwarmSpec): string {
+  return JSON.stringify({
+    prompt: spec.prompt,
+    subagent_type: spec.subagent_type ?? DEFAULT_SUBAGENT_TYPE,
+  });
+}
+
+function childDescription(swarmDescription: string, lineNo: number, profileName: string): string {
+  return `${swarmDescription} #${String(lineNo)} (${profileName})`;
+}
+
+function renderSwarmResults(
+  args: AgentSwarmToolInput,
+  results: readonly SwarmRunResult[],
+): string {
+  const completed = results.filter((result) => result.status === 'completed').length;
+  const failed = results.length - completed;
+  const lines = [
+    `agent_swarm: ${failed > 0 ? 'failed' : 'completed'}`,
+    `description: ${args.description}`,
+    `source: ${args.agents_file}`,
+    `agents: ${String(results.length)}`,
+    `completed: ${String(completed)}`,
+    `failed: ${String(failed)}`,
+  ];
+
+  for (const [index, result] of results.entries()) {
+    lines.push(
+      '',
+      `[agent ${String(index + 1)}]`,
+      `line: ${String(result.spec.lineNo)}`,
+      ...(result.agentId === undefined ? [] : [`agent_id: ${result.agentId}`]),
+      `actual_subagent_type: ${result.profileName}`,
+      `status: ${result.status}`,
+      `description: ${result.description}`,
+      '',
+    );
+    if (result.status === 'completed') {
+      lines.push('[summary]', result.result ?? '');
+    } else {
+      lines.push(`subagent error: ${result.error ?? 'unknown error'}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function swarmResultHasFailures(result: string): boolean {
+  return result.startsWith('agent_swarm: failed\n');
+}
+
+function formatSubagentError(
+  error: unknown,
+  signal: AbortSignal,
+  timedOut: () => boolean,
+  timeout: number | undefined,
+): string {
+  if (timedOut() && timeout !== undefined) {
+    return `AgentSwarm timed out after ${String(timeout)}s.`;
+  }
+  if (isUserCancellation(signal.reason)) {
+    return 'The user manually interrupted this subagent swarm.';
+  }
+  if (isAbortError(error)) {
+    return 'The subagent was stopped before it finished.';
+  }
+  return errorMessage(error);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

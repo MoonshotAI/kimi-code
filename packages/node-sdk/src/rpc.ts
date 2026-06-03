@@ -289,6 +289,15 @@ export class SDKRpcClient {
     });
   }
 
+  async swarm(input: SessionPromptRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.runSwarm({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      input: input.input,
+    });
+  }
+
   async getPlan(input: SessionIdRpcInput): Promise<SessionPlan> {
     const rpc = await this.getRpc();
     return rpc.getPlan({

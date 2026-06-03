@@ -36,6 +36,7 @@ import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from './constant/app';
 import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
 import { installNativeModuleHook } from './native/module-hook';
 import { runNativeAssetSmokeIfRequested } from './native/smoke';
+import { runSwarmDemo } from './tui/swarm-demo';
 import { initProcessName } from './utils/process/proctitle';
 
 export async function handleMainCommand(opts: CLIOptions, version: string): Promise<void> {
@@ -99,6 +100,11 @@ export async function handleUpgradeCommand(version: string): Promise<void> {
     await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {});
     await harness.close().catch(() => {});
   }
+  process.exit(exitCode);
+}
+
+export async function handleSwarmDemoCommand(count: string | undefined): Promise<void> {
+  const exitCode = await runSwarmDemo({ count });
   process.exit(exitCode);
 }
 
@@ -166,6 +172,14 @@ export function main(): void {
       void handleUpgradeCommand(version).catch(async (error: unknown) => {
         await logStartupFailure('upgrade', error);
         process.stderr.write(formatStartupError(error, { operation: 'upgrade' }));
+        process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
+        process.exit(1);
+      });
+    },
+    (count) => {
+      void handleSwarmDemoCommand(count).catch(async (error: unknown) => {
+        await logStartupFailure('run swarm demo', error);
+        process.stderr.write(formatStartupError(error, { operation: 'run swarm demo' }));
         process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
         process.exit(1);
       });

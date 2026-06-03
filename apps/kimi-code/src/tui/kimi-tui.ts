@@ -67,6 +67,7 @@ import { TasksBrowserController } from './controllers/tasks-browser';
 import { installRainbowDance } from './easter-eggs/dance';
 import { FileMentionProvider } from './components/editor/file-mention-provider';
 import { AssistantMessageComponent } from './components/messages/assistant-message';
+import type { AgentSwarmProgressComponent } from './components/messages/agent-swarm-progress';
 import { BackgroundAgentStatusComponent } from './components/messages/background-agent-status';
 import { CronMessageComponent } from './components/messages/cron-message';
 import { GoalCompletionMessageComponent } from './components/messages/goal-panel';
@@ -160,6 +161,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     sessionId: '',
     permissionMode: startupPermission,
     planMode: input.cliOptions.plan,
+    swarmMode: false,
     thinking: false,
     contextUsage: 0,
     contextTokens: 0,
@@ -707,6 +709,30 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
+  sendSwarmUserInput(text: string): void {
+    if (this.state.appState.model.trim().length === 0) {
+      this.showError(LLM_NOT_SET_MESSAGE);
+      return;
+    }
+    const session = this.session;
+    if (session === undefined) {
+      this.showError(LLM_NOT_SET_MESSAGE);
+      return;
+    }
+    this.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'user',
+      turnId: undefined,
+      renderMode: 'plain',
+      content: text,
+    });
+    this.beginSessionRequest();
+    void session.swarm(text).catch((error: unknown) => {
+      const message = formatErrorMessage(error);
+      this.failSessionRequest(`Failed to send swarm prompt: ${message}`);
+    });
+  }
+
   private validateMediaCapabilities(
     extraction: ReturnType<typeof extractMediaAttachments>,
   ): boolean {
@@ -968,6 +994,13 @@ export class KimiTUI {
 
   resetLivePane(): void {
     this.state.livePane = { ...INITIAL_LIVE_PANE };
+    this.updateActivityPane();
+    this.state.ui.requestRender();
+  }
+
+  setAgentSwarmProgress(component: AgentSwarmProgressComponent | null): void {
+    if (this.state.agentSwarmProgress === component) return;
+    this.state.agentSwarmProgress = component;
     this.updateActivityPane();
     this.state.ui.requestRender();
   }
@@ -1417,6 +1450,16 @@ export class KimiTUI {
   // =========================================================================
 
   updateActivityPane(): void {
+    if (this.state.agentSwarmProgress !== null) {
+      this.lastActivityMode = 'hidden';
+      this.stopActivitySpinner();
+      this.state.activityContainer.clear();
+      this.state.activityContainer.addChild(this.state.agentSwarmProgress);
+      this.syncTerminalProgress(true);
+      this.state.ui.requestRender();
+      return;
+    }
+
     const effectiveMode = this.resolveActivityPaneMode();
     this.syncTerminalProgress(this.shouldShowTerminalProgress(effectiveMode));
 

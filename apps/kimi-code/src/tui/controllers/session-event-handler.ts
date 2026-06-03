@@ -34,7 +34,13 @@ import type {
 import { buildGoalCompletionMessage } from '@moonshot-ai/kimi-code-sdk';
 
 import { MoonLoader } from '../components/chrome/moon-loader';
+import {
+  AgentSwarmProgressComponent,
+  agentSwarmDescriptionFromArgs,
+  agentSwarmItemsFromArgs,
+} from '../components/messages/agent-swarm-progress';
 import { buildGoalMarker } from '../components/messages/goal-markers';
+import { SwarmModeMarkerComponent } from '../components/messages/swarm-markers';
 import { StatusMessageComponent } from '../components/messages/status-message';
 import {
   MAIN_AGENT_ID,
@@ -89,6 +95,7 @@ export interface SessionEventHost {
   showError(msg: string): void;
   showStatus(msg: string, color?: string): void;
   showNotice(title: string, detail?: string): void;
+  setAgentSwarmProgress(component: AgentSwarmProgressComponent | null): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
@@ -107,6 +114,7 @@ export class SessionEventHandler {
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
   mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
+  agentSwarmProgress: Map<string, AgentSwarmProgressComponent> = new Map();
 
   resetRuntimeState(): void {
     this.backgroundAgentMetadata.clear();
@@ -116,6 +124,8 @@ export class SessionEventHandler {
     this.renderedSkillActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
     this.mcpServers.clear();
+    this.agentSwarmProgress.clear();
+    this.host.setAgentSwarmProgress(null);
     this.stopAllMcpServerStatusSpinners();
   }
 
@@ -239,6 +249,21 @@ export class SessionEventHandler {
     const { parentToolCallId } = info;
     const sourceName = info.name;
     const toolCall = streamingUI.getToolComponent(parentToolCallId);
+    const swarmProgress = this.agentSwarmProgress.get(parentToolCallId);
+    if (swarmProgress !== undefined) {
+      if (event.type === 'tool.call.started') {
+        swarmProgress.recordToolCall({
+          agentId: subagentId,
+          toolCallId: event.toolCallId,
+        });
+      } else if (event.type === 'turn.ended') {
+        swarmProgress.markCompleted(subagentId);
+      } else if (event.type === 'subagent.failed') {
+        swarmProgress.markFailed(event.subagentId);
+      }
+      this.host.setAgentSwarmProgress(swarmProgress);
+      return true;
+    }
     if (toolCall === undefined) return true;
     toolCall.setSubagentMeta(subagentId, sourceName);
 
@@ -293,6 +318,7 @@ export class SessionEventHandler {
       case 'warning':
       case 'session.meta.updated':
       case 'skill.activated':
+      case 'goal.updated':
       case 'subagent.completed':
       case 'subagent.failed':
       case 'subagent.spawned':
@@ -313,6 +339,8 @@ export class SessionEventHandler {
 
   private handleTurnBegin(_event: TurnStartedEvent): void {
     void _event;
+    this.agentSwarmProgress.clear();
+    this.host.setAgentSwarmProgress(null);
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.setStep(0);
     this.host.patchLivePane({
@@ -484,6 +512,17 @@ export class SessionEventHandler {
       turnId,
     };
     streamingUI.registerToolCall(toolCall);
+    if (event.name === 'AgentSwarm') {
+      const progress = new AgentSwarmProgressComponent({
+        description: agentSwarmDescriptionFromArgs(toolCall.args),
+        items: agentSwarmItemsFromArgs(toolCall.args),
+        colors: this.host.state.theme.colors,
+      });
+      this.agentSwarmProgress.set(event.toolCallId, progress);
+      this.host.setAgentSwarmProgress(progress);
+    } else if (this.agentSwarmProgress.size > 0) {
+      this.host.setAgentSwarmProgress(null);
+    }
     this.host.patchLivePane({
       mode: 'tool',
       pendingApproval: null,
@@ -526,6 +565,11 @@ export class SessionEventHandler {
       synthetic: event.synthetic,
     };
     const matchedCall = streamingUI.completeToolResult(event.toolCallId, resultData);
+    const progress = this.agentSwarmProgress.get(event.toolCallId);
+    if (progress !== undefined) {
+      progress.applyResult(resultData.output);
+      this.host.setAgentSwarmProgress(progress);
+    }
     if (matchedCall !== undefined && matchedCall.name === 'TodoList' && !event.isError) {
       const rawTodos = (matchedCall.args as { todos?: unknown }).todos;
       if (Array.isArray(rawTodos)) {
@@ -542,15 +586,20 @@ export class SessionEventHandler {
 
   private handleStatusUpdate(event: AgentStatusUpdatedEvent): void {
     const patch: Partial<AppState> = {};
+    const previousSwarmMode = this.host.state.appState.swarmMode;
     if (event.contextUsage !== undefined) patch.contextUsage = event.contextUsage;
     if (event.contextTokens !== undefined) patch.contextTokens = event.contextTokens;
     if (event.maxContextTokens !== undefined) patch.maxContextTokens = event.maxContextTokens;
     if (event.planMode !== undefined) patch.planMode = event.planMode;
+    if (event.swarmMode !== undefined) patch.swarmMode = event.swarmMode;
     if (event.permission !== undefined) {
       patch.permissionMode = event.permission;
     }
     if (event.model !== undefined) patch.model = event.model;
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
+    if (event.swarmMode !== undefined && event.swarmMode !== previousSwarmMode) {
+      this.renderSwarmModeMarker(event.swarmMode);
+    }
   }
 
   private handleGoalUpdated(event: GoalUpdatedEvent): void {
@@ -581,6 +630,14 @@ export class SessionEventHandler {
       state.transcriptContainer.addChild(marker);
       state.ui.requestRender();
     }
+  }
+
+  private renderSwarmModeMarker(active: boolean): void {
+    const { state } = this.host;
+    state.transcriptContainer.addChild(
+      new SwarmModeMarkerComponent(active, state.theme.colors),
+    );
+    state.ui.requestRender();
   }
 
   private handleSessionMetaChanged(event: SessionMetaUpdatedEvent): void {
@@ -762,6 +819,16 @@ export class SessionEventHandler {
       return;
     }
 
+    const swarmProgress = this.agentSwarmProgress.get(event.parentToolCallId);
+    if (swarmProgress !== undefined) {
+      swarmProgress.registerSubagent({
+        agentId: event.subagentId,
+        description: event.description,
+      });
+      this.host.setAgentSwarmProgress(swarmProgress);
+      return;
+    }
+
     let tc = streamingUI.getToolComponent(event.parentToolCallId);
     if (tc === undefined) {
       const toolCall = streamingUI.getActiveToolCall(event.parentToolCallId);
@@ -795,6 +862,13 @@ export class SessionEventHandler {
       const extras =
         event.resultSummary === undefined ? undefined : { resultSummary: event.resultSummary };
       this.appendBackgroundAgentEntry('completed', backgroundMeta, extras);
+      return;
+    }
+    const swarmProgress = this.agentSwarmProgress.get(event.parentToolCallId);
+    if (swarmProgress !== undefined) {
+      swarmProgress.markCompleted(event.subagentId);
+      this.host.setAgentSwarmProgress(swarmProgress);
+      streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
       return;
     }
     const tc = streamingUI.getToolComponent(event.parentToolCallId);
@@ -838,6 +912,13 @@ export class SessionEventHandler {
         this.backgroundTaskTranscriptedTerminal.add(taskId);
       }
       this.appendBackgroundAgentEntry('failed', backgroundMeta, { error: event.error });
+      return;
+    }
+    const swarmProgress = this.agentSwarmProgress.get(event.parentToolCallId);
+    if (swarmProgress !== undefined) {
+      swarmProgress.markFailed(event.subagentId);
+      this.host.setAgentSwarmProgress(swarmProgress);
+      streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
       return;
     }
     const tc = streamingUI.getToolComponent(event.parentToolCallId);

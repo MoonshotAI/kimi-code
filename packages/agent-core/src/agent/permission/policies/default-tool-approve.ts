@@ -13,6 +13,7 @@ const DEFAULT_APPROVE_TOOLS = new Set([
   'WebSearch',
   'FetchURL',
   'Agent',
+  'AgentSwarm',
   'AskUserQuestion',
   'Skill',
   // Goal control tools have no side effects on the world: GetGoal reads, and

@@ -38,6 +38,7 @@ import { handleGoalCommand } from './goal';
 import { handleProviderCommand } from './provider';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 import { handlePluginsCommand } from './plugins';
+import { handleSwarmCommand } from './swarm';
 import {
   handleExportDebugZipCommand,
   handleExportMdCommand,
@@ -67,6 +68,7 @@ export {
   showPermissionPicker,
   showSettingsSelector,
 } from './config';
+export { handleSwarmCommand } from './swarm';
 export {
   handleFeedbackCommand,
   showMcpServers,
@@ -127,6 +129,7 @@ export interface SlashCommandHost {
   createNewSession(): Promise<void>;
   showSessionPicker(): Promise<void>;
   sendNormalUserInput(text: string): void;
+  sendSwarmUserInput(text: string): void;
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void;
   readonly skillCommandMap: Map<string, string>;
 
@@ -269,6 +272,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'plan':
       await handlePlanCommand(host, args);
+      return;
+    case 'swarm':
+      handleSwarmCommand(host, args);
       return;
     case 'compact':
       await handleCompactCommand(host, args);

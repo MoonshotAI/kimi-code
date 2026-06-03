@@ -162,6 +162,16 @@ kimi migrate
 
 If you previously used an older version of kimi-cli, run this command to migrate historical sessions, configuration, and other data to kimi-code to avoid data loss. For the full migration flow, what gets migrated, and things to watch out for, see [Migrating from kimi-cli](../guides/migration.md).
 
+### `kimi swarm-demo`
+
+Run an animated terminal UI demo that shows progress bars for multiple swarms. It does not start an LLM session or call a provider; it is only for previewing the swarm UI.
+
+```sh
+kimi swarm-demo [count]
+```
+
+When `count` is omitted, the demo renders 32 swarms. Pass a positive integer to change the number shown. The demo keeps animating until you press `q`, `Esc`, or `Ctrl-C`.
+
 ### `kimi upgrade`
 
 Check the latest Kimi Code CLI version immediately and show the update prompt. This command has no flags and exits after the selected action.

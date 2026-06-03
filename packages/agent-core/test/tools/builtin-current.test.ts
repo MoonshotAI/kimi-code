@@ -32,6 +32,10 @@ import type { WorkspaceConfig } from '../../src/tools/support/workspace';
 import { createFakeKaos } from './fixtures/fake-kaos';
 import { executeTool } from './fixtures/execute-tool';
 import { createBackgroundManager } from '../agent/background/helpers';
+import {
+  AgentSwarmTool,
+  AgentSwarmToolInputSchema,
+} from '../../src/tools/builtin/collaboration/agent-swarm';
 
 const signal = new AbortController().signal;
 const workspace: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
@@ -283,6 +287,52 @@ describe('current builtin collaboration tools', () => {
       signal,
     });
     expect(result.output).toContain('child result');
+  });
+
+  it('AgentSwarm applies one subagent_type across templated subagents', async () => {
+    const host = mockSubagentHost({
+      spawn: vi.fn().mockImplementation((profileName: string) =>
+        Promise.resolve({
+          agentId: `agent-${profileName}`,
+          profileName,
+          resumed: false,
+          completion: Promise.resolve({ result: `${profileName} result` }),
+        }),
+      ),
+    });
+    const tool = new AgentSwarmTool(host);
+    const input = {
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+      subagent_type: 'explore',
+    };
+
+    expect(AgentSwarmToolInputSchema.safeParse(input).success).toBe(true);
+    expect(tool.parameters).toMatchObject({
+      type: 'object',
+      properties: { subagent_type: { type: 'string' } },
+    });
+
+    const result = await executeTool(tool, context(input, 'call_swarm'));
+
+    expect(host.spawn).toHaveBeenCalledTimes(2);
+    expect(host.spawn).toHaveBeenNthCalledWith(1, 'explore', {
+      parentToolCallId: 'call_swarm',
+      prompt: 'Review src/a.ts',
+      description: 'Review files #1 (explore)',
+      runInBackground: false,
+      signal,
+    });
+    expect(host.spawn).toHaveBeenNthCalledWith(2, 'explore', {
+      parentToolCallId: 'call_swarm',
+      prompt: 'Review src/b.ts',
+      description: 'Review files #2 (explore)',
+      runInBackground: false,
+      signal,
+    });
+    expect(result.output).toContain('subagent_type: explore');
+    expect(result.output).toContain('explore result');
   });
 
   it('Skill exposes parameters and reports unknown skills as tool errors', async () => {

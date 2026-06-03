@@ -473,6 +473,9 @@ export class TurnFlow {
       this.agent.usage.endTurn();
     }
     this.agent.emitEvent(ended);
+    if (this.agent.swarmMode.isActive) {
+      this.agent.swarmMode.exit();
+    }
     if (standalone && this.currentId === turnId) {
       this.activeTurn = null;
     }

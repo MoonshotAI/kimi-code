@@ -93,6 +93,14 @@ export class Session {
     });
   }
 
+  async swarm(input: string | PromptInput): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.swarm({
+      sessionId: this.id,
+      input: normalizePromptInput(input),
+    });
+  }
+
   async init(): Promise<void> {
     this.ensureOpen();
     await this.rpc.generateAgentsMd({ sessionId: this.id });

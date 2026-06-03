@@ -1753,6 +1753,10 @@ export class ToolCallComponent extends Container {
     const { result } = this;
     if (result === undefined || !result.output) return;
 
+    if (this.toolCall.name === 'AgentSwarm') {
+      return;
+    }
+
     if (this.isSingleSubagentView()) {
       return;
     }

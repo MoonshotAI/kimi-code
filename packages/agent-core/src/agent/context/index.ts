@@ -49,7 +49,7 @@ export class ContextMemory {
   }
 
   appendSystemReminder(content: string, origin: PromptOrigin): void {
-    const text = `<system-reminder>\n${content}\n</system-reminder>`;
+    const text = `<system-reminder>\n${content.trim()}\n</system-reminder>`;
     this.appendMessage({
       role: 'user',
       content: [{ type: 'text', text }],

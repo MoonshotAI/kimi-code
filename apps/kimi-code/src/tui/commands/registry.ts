@@ -54,6 +54,12 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: (args) => (args.trim().toLowerCase() === 'clear' ? 'idle-only' : 'always'),
   },
   {
+    name: 'swarm',
+    aliases: [],
+    description: 'Run one task in swarm mode',
+    priority: 100,
+  },
+  {
     name: 'model',
     aliases: [],
     description: 'Switch LLM model',
