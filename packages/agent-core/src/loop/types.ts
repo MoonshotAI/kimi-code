@@ -85,11 +85,7 @@ export interface ExecutableToolErrorResult {
   readonly isError: true;
   /** See {@link ExecutableToolSuccessResult.message}. */
   readonly message?: string | undefined;
-  /**
-   * Internal loop-control hint. Tool result events strip this field before
-   * persistence; it only tells the current turn whether another model step is
-   * allowed after this tool batch.
-   */
+  /** See {@link ExecutableToolSuccessResult.stopTurn}. */
   readonly stopTurn?: boolean | undefined;
 }
 
