@@ -35,8 +35,10 @@ const REMINDER_TEXT_3 =
   'Then return a text-only summary to the user that reports the current problem, what has already been tried, and what information or decision is needed next.' +
   '\n</system-reminder>';
 
-const REPEAT_REMINDER_MIN_STREAK = 10;
-const REPEAT_FORCE_STOP_STREAK = 15;
+const REPEAT_REMINDER_1_START = 3;
+const REPEAT_REMINDER_2_START = 5;
+const REPEAT_REMINDER_3_START = 8;
+const REPEAT_FORCE_STOP_STREAK = 12;
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -80,7 +82,7 @@ function forceStopResult(
   reminderText: string,
 ): ExecutableToolResult {
   const withReminder = appendReminder(result, reminderText);
-  return { ...withReminder, isError: true, stopTurn: true };
+  return { ...withReminder, stopTurn: true };
 }
 
 /**
@@ -102,16 +104,17 @@ const DEDUP_PLACEHOLDER_RESULT: ExecutableToolResult = { output: '' };
  *   reuses the original call's result instead of executing the tool twice.
  * - Cross-step dedup: when the exact same call is repeated consecutively
  *   across steps, the result returned to the model is suffixed with a system
- *   reminder at escalating streak thresholds (3, 5, 8) to nudge the model to
- *   try a different approach. From streak 10 through 14 a stronger
- *   dead-end reminder is appended that instructs the model to stop calling
- *   tools entirely. At streak 15 the turn is force-stopped via
- *   `{ isError: true, stopTurn: true }` so the loop cannot keep spinning on
- *   the same call.
+ *   reminder once the streak hits 3. The reminder escalates as the streak
+ *   grows: r1 (gentle nudge) from streak 3, r2 (concrete repeat report) from
+ *   streak 5, r3 (dead-end stop instruction) from streak 8. From streak 12
+ *   onward the turn is force-stopped via `{ stopTurn: true }` so the loop
+ *   cannot keep spinning on the same call. Force-stop does not flip a
+ *   successful tool result into an error — the underlying tool's `isError`
+ *   is preserved.
  *
  * Telemetry: every finalized original call with streak >= 2 emits a
  * `tool_call_repeat` event carrying the current streak count as `repeat_count`
- * along with the tool name and which action was taken (none/reminder/stop).
+ * along with the tool name and which action was taken (none/r1/r2/r3/stop).
  */
 export class ToolCallDeduplicator {
   private stepDeferreds = new Map<string, Deferred<ExecutableToolResult>>();
@@ -228,19 +231,19 @@ export class ToolCallDeduplicator {
     }
 
     let finalResult = result;
-    let action: 'none' | 'reminder' | 'stop' = 'none';
+    let action: 'none' | 'r1' | 'r2' | 'r3' | 'stop' = 'none';
     if (streak >= REPEAT_FORCE_STOP_STREAK) {
       finalResult = forceStopResult(result, REMINDER_TEXT_3);
       action = 'stop';
-    } else if (streak >= REPEAT_REMINDER_MIN_STREAK) {
+    } else if (streak >= REPEAT_REMINDER_3_START) {
       finalResult = appendReminder(result, REMINDER_TEXT_3);
-      action = 'reminder';
-    } else if (streak === 3) {
-      finalResult = appendReminder(result, REMINDER_TEXT_1);
-      action = 'reminder';
-    } else if (streak === 5 || streak === 8) {
+      action = 'r3';
+    } else if (streak >= REPEAT_REMINDER_2_START) {
       finalResult = appendReminder(result, makeReminderText2(toolName, streak, args));
-      action = 'reminder';
+      action = 'r2';
+    } else if (streak >= REPEAT_REMINDER_1_START) {
+      finalResult = appendReminder(result, REMINDER_TEXT_1);
+      action = 'r1';
     }
 
     if (streak >= 2) {
@@ -260,6 +263,8 @@ export const __testing = {
   REMINDER_TEXT_1,
   REMINDER_TEXT_3,
   makeReminderText2,
-  REPEAT_REMINDER_MIN_STREAK,
+  REPEAT_REMINDER_1_START,
+  REPEAT_REMINDER_2_START,
+  REPEAT_REMINDER_3_START,
   REPEAT_FORCE_STOP_STREAK,
 };
