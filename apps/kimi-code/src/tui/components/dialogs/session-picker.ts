@@ -126,6 +126,16 @@ export class SessionPickerComponent extends Container implements Focusable {
   }
 
   override render(width: number): string[] {
+    return this.renderLines(width).map((line) => truncateToWidth(line, width, ELLIPSIS));
+  }
+
+  // Builds the raw lines; `render()` applies a final width clamp so no line
+  // can ever exceed the terminal width. The per-line budgets below keep the
+  // layout tidy at normal widths, but on a very narrow terminal those budgets
+  // floor at a minimum and the trailing time/badge are appended in full, so
+  // the clamp in `render()` is what guarantees the renderer's invariant and
+  // prevents the "Rendered line exceeds terminal width" crash (issue #240).
+  private renderLines(width: number): string[] {
     const colors = this.colors;
     const lines: string[] = [chalk.hex(colors.primary)('─'.repeat(width))];
 
@@ -222,8 +232,9 @@ export class SessionPickerComponent extends Container implements Focusable {
     if (badge.length > 0) header += '  ' + chalk.hex(colors.success)(badge);
     const card: string[] = [header];
 
-    // Session id is rendered in full (no truncation). The directory wraps to
-    // its own line if it would push past the terminal edge.
+    // Session id is rendered in full at normal widths (the final clamp in
+    // `render()` truncates it only when the terminal is narrower than the id).
+    // The directory wraps to its own line if it would push past the edge.
     const fullId = session.id;
     const idWidth = visibleWidth(fullId);
     const metaGap = '   ';

@@ -11,7 +11,7 @@ afterEach(async () => {
   await removeTempDirs(tempDirs);
 });
 
-describe('Session.listBackgroundTasks / getBackgroundTaskOutput / getBackgroundTaskOutputPath', () => {
+describe('Session.listBackgroundTasks / getBackgroundTaskOutput', () => {
   it('lists an empty task set for a fresh session', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-bgtask-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-bgtask-work-');
@@ -29,7 +29,7 @@ describe('Session.listBackgroundTasks / getBackgroundTaskOutput / getBackgroundT
     }
   });
 
-  it('returns empty output and undefined path for an unknown task id', async () => {
+  it('returns empty output for an unknown task id', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-bgtask-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-bgtask-work-');
     const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
@@ -38,7 +38,6 @@ describe('Session.listBackgroundTasks / getBackgroundTaskOutput / getBackgroundT
       const session = await harness.createSession({ id: 'ses_bg_unknown', workDir });
       // Unknown task ids must not throw — UI fetches output speculatively.
       await expect(session.getBackgroundTaskOutput('bash-deadbeef')).resolves.toBe('');
-      await expect(session.getBackgroundTaskOutputPath('bash-deadbeef')).resolves.toBeUndefined();
     } finally {
       await harness.close();
     }
@@ -52,10 +51,6 @@ describe('Session.listBackgroundTasks / getBackgroundTaskOutput / getBackgroundT
     try {
       const session = await harness.createSession({ id: 'ses_bg_empty_id', workDir });
       await expect(session.getBackgroundTaskOutput('')).rejects.toMatchObject({
-        name: 'KimiError',
-        code: 'background.task_id_empty',
-      } satisfies Partial<KimiError>);
-      await expect(session.getBackgroundTaskOutputPath('   ')).rejects.toMatchObject({
         name: 'KimiError',
         code: 'background.task_id_empty',
       } satisfies Partial<KimiError>);
@@ -82,10 +77,6 @@ describe('Session.listBackgroundTasks / getBackgroundTaskOutput / getBackgroundT
         code: 'session.closed',
       } satisfies Partial<KimiError>);
       await expect(session.getBackgroundTaskOutput('bash-aaaaaaaa')).rejects.toMatchObject({
-        name: 'KimiError',
-        code: 'session.closed',
-      } satisfies Partial<KimiError>);
-      await expect(session.getBackgroundTaskOutputPath('bash-aaaaaaaa')).rejects.toMatchObject({
         name: 'KimiError',
         code: 'session.closed',
       } satisfies Partial<KimiError>);

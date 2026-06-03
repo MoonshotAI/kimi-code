@@ -10,7 +10,26 @@ import type { FlagDefinitionInput } from './types';
  * autocomplete and typo-checking. `env` must start with 'KIMI_CODE_EXPERIMENTAL_', be unique, and
  * not equal the master switch 'KIMI_CODE_EXPERIMENTAL_FLAG'; `id` must not be 'flag'.
  */
-export const FLAG_DEFINITIONS = [] as const satisfies readonly FlagDefinitionInput[];
+export const FLAG_DEFINITIONS = [
+  {
+    id: 'goal-command',
+    env: 'KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND',
+    default: false,
+    surface: 'both',
+  },
+  {
+    id: 'micro-compaction',
+    env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
+    default: false,
+    surface: 'core',
+  },
+  {
+    id: 'background-ask',
+    env: 'KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK',
+    default: false,
+    surface: 'core',
+  },
+] as const satisfies readonly FlagDefinitionInput[];
 
-/** Literal union of registered flag ids (currently none → `never`). */
+/** Literal union of registered flag ids. */
 export type FlagId = (typeof FLAG_DEFINITIONS)[number]['id'];

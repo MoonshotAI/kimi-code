@@ -2,9 +2,9 @@
  * Format a `BackgroundTaskInfo` snapshot into the transcript card data
  * consumed by `BackgroundAgentStatusComponent`.
  *
- * Background tasks have six statuses (running / awaiting_approval /
- * completed / failed / killed / lost) but the transcript card only
- * renders three visual phases (started / completed / failed). The
+ * Background tasks have several statuses (running / completed / failed /
+ * timed_out / killed / lost) but the transcript card only renders three
+ * visual phases (started / completed / failed). The
  * mapping packs the extra nuance — exit code, kill reason, lost-reason
  * — into the dim detail line so the user still sees it.
  */
@@ -28,32 +28,34 @@ export type BackgroundTaskTranscriptPhase = 'started' | 'updated' | 'terminal';
 function phaseFromStatus(status: BackgroundTaskStatus): BackgroundAgentStatusPhase {
   switch (status) {
     case 'running':
-    case 'awaiting_approval':
       return 'started';
     case 'completed':
       return 'completed';
     case 'failed':
+    case 'timed_out':
     case 'killed':
     case 'lost':
       return 'failed';
   }
 }
 
-function subjectFor(taskId: string): string {
-  return taskId.startsWith('agent-') ? 'agent task' : 'bash task';
+function subjectFor(info: BackgroundTaskInfo): string {
+  if (info.kind === 'agent') return 'agent task';
+  if (info.kind === 'question') return 'question task';
+  return 'bash task';
 }
 
 function headlineFor(info: BackgroundTaskInfo): string {
-  const subject = subjectFor(info.taskId);
+  const subject = subjectFor(info);
   switch (info.status) {
     case 'running':
       return `${subject} started in background`;
-    case 'awaiting_approval':
-      return `${subject} awaiting approval`;
     case 'completed':
       return `${subject} completed in background`;
     case 'failed':
       return `${subject} failed in background`;
+    case 'timed_out':
+      return `${subject} timed out`;
     case 'killed':
       return `${subject} stopped`;
     case 'lost':
@@ -67,7 +69,7 @@ function detailFor(info: BackgroundTaskInfo): string | undefined {
   if (description !== undefined) parts.push(description);
 
   if (info.status === 'completed' || info.status === 'failed') {
-    if (info.exitCode !== null && info.exitCode !== undefined) {
+    if (info.kind === 'process' && info.exitCode !== null) {
       parts.push(`exit ${info.exitCode}`);
     }
   }
@@ -75,14 +77,14 @@ function detailFor(info: BackgroundTaskInfo): string | undefined {
     const reason = truncate(info.stopReason);
     parts.push(reason !== undefined ? `stopped — ${reason}` : 'stopped');
   }
-  if (info.status === 'awaiting_approval') {
-    const reason = truncate(info.approvalReason);
-    if (reason !== undefined) parts.push(`awaiting: ${reason}`);
+  if (info.status === 'failed') {
+    const reason = truncate(info.stopReason);
+    if (reason !== undefined) parts.push(reason);
   }
+  if (info.status === 'timed_out') parts.push('timed out');
   if (info.status === 'lost') {
     parts.push('session restarted before completion');
   }
-  if (info.timedOut === true) parts.push('timed out');
 
   return parts.length > 0 ? parts.join(' · ') : undefined;
 }

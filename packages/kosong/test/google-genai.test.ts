@@ -605,6 +605,19 @@ describe('GoogleGenAIChatProvider', () => {
       expect(config['temperature']).toBe(0.7);
       expect(config['max_output_tokens']).toBe(2048);
     });
+
+    it('withMaxCompletionTokens sets max_output_tokens on the cloned provider', async () => {
+      const original = createProvider();
+      const provider = original.withMaxCompletionTokens(1024);
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const config = body['config'] as Record<string, unknown>;
+      expect(provider).not.toBe(original);
+      expect(config['max_output_tokens']).toBe(1024);
+    });
   });
 
   describe('tool name inference from tool_call_id (orphan tool messages)', () => {

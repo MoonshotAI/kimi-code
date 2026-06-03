@@ -12,7 +12,7 @@ You can override it to any path with the `KIMI_CODE_HOME` environment variable:
 export KIMI_CODE_HOME="$HOME/.config/kimi-code"
 ```
 
-Once set, runtime data such as the config, sessions, logs, input history, update cache, and OAuth credentials lands under that path. For the full reference on `KIMI_CODE_HOME` and other environment variables, see [Environment variables](./env-vars.md).
+Once set, runtime data such as the config, sessions, logs, input history, update state, and OAuth credentials lands under that path. For the full reference on `KIMI_CODE_HOME` and other environment variables, see [Environment variables](./env-vars.md).
 
 ::: tip Exceptions
 The **built-in tool cache** (such as the auto-downloaded ripgrep binary) does not follow `KIMI_CODE_HOME`. It uses `KIMI_CODE_CACHE_DIR`, falling back to a platform cache directory — `~/Library/Caches/kimi-code` on macOS, `$XDG_CACHE_HOME/kimi-code` (default `~/.cache/kimi-code`) on Linux, and `%LOCALAPPDATA%\kimi-code` on Windows.
@@ -27,6 +27,7 @@ A typical layout under the data root looks like:
 ```
 $KIMI_CODE_HOME  (default ~/.kimi-code)
 ├── config.toml             # User config
+├── tui.toml                # Client preferences, including automatic updates
 ├── mcp.json                # User-level MCP server declarations (optional)
 ├── plugins/
 │   ├── installed.json      # Installed plugin records and capability state
@@ -59,7 +60,9 @@ $KIMI_CODE_HOME  (default ~/.kimi-code)
 ├── logs/                   # Global diagnostic logs
 │   └── kimi-code.log
 ├── updates/
-│   └── latest.json         # Update check status
+│   ├── latest.json         # Update check status
+│   ├── install.json        # Automatic update install state
+│   └── install.lock        # Automatic update launch lock (transient)
 └── user-history/
     └── <md5(workDir)>.jsonl
 ```
@@ -70,7 +73,9 @@ The tree above shows a typical layout under the default data root (`~/.kimi-code
 
 ## Config files
 
-`config.toml` is Kimi Code CLI's main config file, holding user-level settings such as providers, models, and loop control. See [Config files](./config-files.md) for details.
+`config.toml` is Kimi Code CLI's main runtime config file, holding user-level settings such as providers, models, and loop control. See [Config files](./config-files.md) for details.
+
+`tui.toml` stores client preferences for the `kimi` CLI, including terminal UI preferences and `[upgrade].auto_install`. Automatic updates are enabled by default; turn them off from `/settings` or by setting `auto_install = false`.
 
 `mcp.json` holds user-level MCP server declarations and is merged with the project-local `.kimi-code/mcp.json` at load time. The fields are the same as the project-level file; see [MCP](../customization/mcp.md) for details.
 
@@ -111,7 +116,7 @@ The top-level `logs/kimi-code.log` is the global diagnostic log. It mainly recor
 
 When filing a bug report, prefer `kimi export` for the relevant session (see [The kimi command](../reference/kimi-command.md) for details). If a session log exists, it is included in the export by default. The global diagnostic log is also bundled by default; because it may contain events from other sessions or projects, use `--no-include-global-log` when you do not want to share it.
 
-`updates/latest.json` records the version update status detected via npm and is maintained automatically by the CLI — there is usually no need to edit it by hand.
+`updates/latest.json` records the latest version detected by the CLI. `updates/install.json` stores active background install state, retry state after failed background installs, and the one-shot success notice shown after a background update is applied. `updates/install.lock` is a transient atomic lock that prevents concurrent sessions from starting duplicate background installs. These files are maintained automatically by the CLI — there is usually no need to edit them by hand.
 
 ## Input history
 
@@ -128,10 +133,13 @@ To clean up only part of the data:
 | Goal | Action |
 | --- | --- |
 | Reset config | Delete `~/.kimi-code/config.toml` |
+| Reset client preferences | Delete `~/.kimi-code/tui.toml` |
 | Clear all sessions | Delete `~/.kimi-code/sessions/` and `~/.kimi-code/session_index.jsonl` |
 | Clear diagnostic logs | Delete the `~/.kimi-code/logs/` directory |
 | Clear input history | Delete the `~/.kimi-code/user-history/` directory |
 | Reset update check state | Delete `~/.kimi-code/updates/latest.json` |
+| Reset automatic update install state | Delete `~/.kimi-code/updates/install.json` |
+| Clear a stale automatic update launch lock | Delete `~/.kimi-code/updates/install.lock` |
 | Force a ripgrep redownload | Delete the `~/.kimi-code/bin/` directory |
 | Clear hosted Kimi / Open Platform OAuth login state | Run `/logout` (clears only the current provider's OAuth), or delete the corresponding `~/.kimi-code/credentials/<name>.json` |
 | Clear MCP server OAuth login state | Delete the `~/.kimi-code/credentials/mcp/` directory; `/logout` **does not** clear MCP OAuth credentials |

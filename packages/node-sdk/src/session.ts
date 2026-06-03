@@ -4,6 +4,9 @@ import type { SDKRpcClient } from '#/rpc';
 import type {
   BackgroundTaskInfo,
   CompactOptions,
+  CreateGoalInput,
+  GoalSnapshot,
+  GoalToolResult,
   McpServerInfo,
   McpStartupMetrics,
   PermissionMode,
@@ -166,6 +169,11 @@ export class Session {
     await this.rpc.cancelCompaction({ sessionId: this.id });
   }
 
+  async undoHistory(count: number = 1): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.undoHistory({ sessionId: this.id, count });
+  }
+
   async getContext(): Promise<AgentContextData> {
     this.ensureOpen();
     return this.rpc.getContext({ sessionId: this.id });
@@ -250,22 +258,35 @@ export class Session {
     });
   }
 
-  /**
-   * Return the absolute path to the task's `output.log` on disk, or
-   * `undefined` when the task is unknown or has no persisted output.
-   * Callers can hand the path to an external pager.
-   */
-  async getBackgroundTaskOutputPath(taskId: string): Promise<string | undefined> {
+  // --- Goal lifecycle ---------------------------------------------------
+  // Deterministic user/host control surface. There is intentionally no
+  // `updateGoal`: the goal's terminal status is decided by the model via the
+  // in-conversation UpdateGoal tool (or the goal driver on budget/error), not
+  // by the host.
+
+  async createGoal(input: CreateGoalInput): Promise<GoalSnapshot> {
     this.ensureOpen();
-    const trimmedTaskId = normalizeRequiredString(
-      taskId,
-      'Task id cannot be empty',
-      ErrorCodes.BACKGROUND_TASK_ID_EMPTY,
-    );
-    return this.rpc.getBackgroundTaskOutputPath({
-      sessionId: this.id,
-      taskId: trimmedTaskId,
-    });
+    return this.rpc.createGoal({ sessionId: this.id, ...input });
+  }
+
+  async getGoal(): Promise<GoalToolResult> {
+    this.ensureOpen();
+    return this.rpc.getGoal({ sessionId: this.id });
+  }
+
+  async pauseGoal(input: { reason?: string } = {}): Promise<GoalSnapshot> {
+    this.ensureOpen();
+    return this.rpc.pauseGoal({ sessionId: this.id, reason: input.reason });
+  }
+
+  async resumeGoal(input: { reason?: string } = {}): Promise<GoalSnapshot> {
+    this.ensureOpen();
+    return this.rpc.resumeGoal({ sessionId: this.id, reason: input.reason });
+  }
+
+  async cancelGoal(input: { reason?: string } = {}): Promise<GoalSnapshot> {
+    this.ensureOpen();
+    return this.rpc.cancelGoal({ sessionId: this.id, reason: input.reason });
   }
 
   async listMcpServers(): Promise<readonly McpServerInfo[]> {

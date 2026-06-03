@@ -5,12 +5,13 @@ import type {
   BackgroundTaskInfo,
   BackgroundTaskStartedEvent,
   BackgroundTaskTerminatedEvent,
-  BackgroundTaskUpdatedEvent,
   CompactionCancelledEvent,
   CompactionCompletedEvent,
   CompactionStartedEvent,
+  CronFiredEvent,
   ErrorEvent,
   Event,
+  GoalUpdatedEvent,
   HookResultEvent,
   Session,
   SessionMetaUpdatedEvent,
@@ -30,8 +31,10 @@ import type {
   TurnStepStartedEvent,
   WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
+import { buildGoalCompletionMessage } from '@moonshot-ai/kimi-code-sdk';
 
 import { MoonLoader } from '../components/chrome/moon-loader';
+import { buildGoalMarker } from '../components/messages/goal-markers';
 import { StatusMessageComponent } from '../components/messages/status-message';
 import {
   MAIN_AGENT_ID,
@@ -103,6 +106,7 @@ export class SessionEventHandler {
   renderedSkillActivationIds: Set<string> = new Set();
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
+  mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
 
   resetRuntimeState(): void {
     this.backgroundAgentMetadata.clear();
@@ -111,6 +115,7 @@ export class SessionEventHandler {
     this.subagentInfo.clear();
     this.renderedSkillActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
+    this.mcpServers.clear();
     this.stopAllMcpServerStatusSpinners();
   }
 
@@ -154,6 +159,10 @@ export class SessionEventHandler {
       this.renderMcpServerStatus(server);
     }
 
+    this.mcpServers.clear();
+    for (const server of servers) {
+      this.mcpServers.set(server.name, server);
+    }
     const hidden: McpServerStatusSnapshot[] = [];
     for (const server of servers) {
       if (visibleNames.has(server.name)) continue;
@@ -161,12 +170,8 @@ export class SessionEventHandler {
       this.renderedMcpServerStatusKeys.set(server.name, mcpServerStatusKey(server));
       hidden.push(server);
     }
-    if (hidden.length > 0) {
-      host.showStatus(
-        formatMcpStartupStatusSummary(hidden, visible.length),
-        host.state.theme.colors.textMuted,
-      );
-    }
+    const summary = formatMcpStartupStatusSummary(servers);
+    host.setAppState({ mcpServersSummary: summary || null });
   }
 
   handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
@@ -192,6 +197,7 @@ export class SessionEventHandler {
       case 'tool.result': this.handleToolResult(event); break;
       case 'agent.status.updated': this.handleStatusUpdate(event); break;
       case 'session.meta.updated': this.handleSessionMetaChanged(event); break;
+      case 'goal.updated': this.handleGoalUpdated(event); break;
       case 'skill.activated': this.handleSkillActivated(event); break;
       case 'error': this.handleSessionError(event); break;
       case 'warning': this.handleSessionWarning(event); break;
@@ -203,9 +209,9 @@ export class SessionEventHandler {
       case 'subagent.completed': this.handleSubagentCompleted(event); break;
       case 'subagent.failed': this.handleSubagentFailed(event); break;
       case 'background.task.started':
-      case 'background.task.updated':
       case 'background.task.terminated':
         this.handleBackgroundTaskEvent(event); break;
+      case 'cron.fired': this.handleCronFired(event); break;
       case 'mcp.server.status': this.renderMcpServerStatus(event.server); break;
       case 'tool.list.updated': break;
       default: break;
@@ -277,13 +283,14 @@ export class SessionEventHandler {
         return true;
       }
       case 'background.task.started':
-      case 'background.task.updated':
       case 'background.task.terminated':
       case 'compaction.blocked':
       case 'compaction.cancelled':
       case 'compaction.completed':
       case 'compaction.started':
+      case 'cron.fired':
       case 'error':
+      case 'warning':
       case 'session.meta.updated':
       case 'skill.activated':
       case 'subagent.completed':
@@ -316,6 +323,24 @@ export class SessionEventHandler {
     this.host.setAppState({
       streamingPhase: 'waiting',
       streamingStartTime: Date.now(),
+    });
+  }
+
+  private handleCronFired(event: CronFiredEvent): void {
+    this.host.streamingUI.flushNow();
+    this.host.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'cron',
+      turnId: this.host.streamingUI.getTurnContext().turnId,
+      renderMode: 'plain',
+      content: event.prompt,
+      cronData: {
+        jobId: event.origin.jobId,
+        cron: event.origin.cron,
+        recurring: event.origin.recurring,
+        coalescedCount: event.origin.coalescedCount,
+        stale: event.origin.stale,
+      },
     });
   }
 
@@ -528,6 +553,36 @@ export class SessionEventHandler {
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
   }
 
+  private handleGoalUpdated(event: GoalUpdatedEvent): void {
+    this.host.setAppState({ goal: event.snapshot });
+    const change = event.change;
+    if (change === undefined) return;
+    const { state } = this.host;
+
+    // Completion -> the box disappears (snapshot cleared on the follow-up null
+    // update) and a deterministic completion message lands in the transcript.
+    // The same text is appended to the conversation by the continuation
+    // controller, so it persists and renders identically on resume.
+    if (change.kind === 'completion' && event.snapshot !== null) {
+      this.host.appendTranscriptEntry({
+        id: nextTranscriptId(),
+        kind: 'assistant',
+        renderMode: 'markdown',
+        content: buildGoalCompletionMessage(event.snapshot),
+      });
+      state.ui.requestRender();
+      return;
+    }
+
+    // Lifecycle change (pause / resume / blocked) -> a low-profile,
+    // ctrl+o-expandable marker.
+    const marker = buildGoalMarker(change, state.theme.colors, state.toolOutputExpanded);
+    if (marker !== null) {
+      state.transcriptContainer.addChild(marker);
+      state.ui.requestRender();
+    }
+  }
+
   private handleSessionMetaChanged(event: SessionMetaUpdatedEvent): void {
     const title = event.title ?? stringValue(event.patch?.['title']);
     if (title !== undefined) {
@@ -560,6 +615,9 @@ export class SessionEventHandler {
     const key = mcpServerStatusKey(server);
     if (this.renderedMcpServerStatusKeys.get(server.name) === key) return;
     this.renderedMcpServerStatusKeys.set(server.name, key);
+    this.mcpServers.set(server.name, server);
+    const summary = formatMcpStartupStatusSummary([...this.mcpServers.values()]);
+    this.host.setAppState({ mcpServersSummary: summary || null });
 
     const colors = state.theme.colors;
     switch (server.status) {
@@ -640,6 +698,7 @@ export class SessionEventHandler {
       skillActivationId: event.activationId,
       skillName: event.skillName,
       skillArgs: event.skillArgs,
+      skillTrigger: event.trigger,
     });
   }
 
@@ -724,9 +783,9 @@ export class SessionEventHandler {
     const { streamingUI } = this.host;
     const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
+      const taskId = this.findAgentTaskId(event.subagentId, backgroundMeta);
       this.backgroundAgentMetadata.delete(event.subagentId);
       this.syncBackgroundAgentBadge();
-      const taskId = this.findAgentTaskId(event.subagentId);
       if (taskId !== undefined && this.backgroundTaskTranscriptedTerminal.has(taskId)) {
         return;
       }
@@ -752,8 +811,15 @@ export class SessionEventHandler {
     const { streamingUI } = this.host;
     const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
     if (backgroundMeta !== undefined) {
+      const taskId = this.findAgentTaskId(event.subagentId, backgroundMeta);
+      const task = taskId === undefined ? undefined : this.backgroundTasks.get(taskId);
       this.backgroundAgentMetadata.delete(event.subagentId);
       this.syncBackgroundAgentBadge();
+      if (task?.kind === 'agent' && task.status === 'timed_out') {
+        // The deadline path already stamped the Agent card as timed out; the
+        // abort-triggered child failure should not downgrade it to failed.
+        return;
+      }
       // Push the real subagent error onto the parent Agent card too —
       // `background.task.terminated` arrives separately (possibly later)
       // with no error string and would only stamp the generic
@@ -765,7 +831,6 @@ export class SessionEventHandler {
         status: 'failed',
         errorText: event.error,
       });
-      const taskId = this.findAgentTaskId(event.subagentId);
       if (taskId !== undefined && this.backgroundTaskTranscriptedTerminal.has(taskId)) {
         return;
       }
@@ -800,13 +865,19 @@ export class SessionEventHandler {
     return streamingUI.getToolComponent(event.parentToolCallId);
   }
 
-  private findAgentTaskId(subagentId: string): string | undefined {
-    const meta = this.backgroundAgentMetadata.get(subagentId);
-    const description = meta?.description ?? meta?.agentName;
+  private findAgentTaskId(
+    subagentId: string,
+    meta: BackgroundAgentMetadata,
+  ): string | undefined {
+    for (const info of this.backgroundTasks.values()) {
+      if (info.kind !== 'agent') continue;
+      if (info.agentId === subagentId) return info.taskId;
+    }
+    const description = meta.description ?? meta.agentName;
     if (description === undefined) return undefined;
     let match: string | undefined;
     for (const info of this.backgroundTasks.values()) {
-      if (!info.taskId.startsWith('agent-')) continue;
+      if (info.kind !== 'agent') continue;
       if (info.description !== description) continue;
       if (match !== undefined) return undefined;
       match = info.taskId;
@@ -852,7 +923,7 @@ export class SessionEventHandler {
   // ---------------------------------------------------------------------------
 
   private handleBackgroundTaskEvent(
-    event: BackgroundTaskStartedEvent | BackgroundTaskUpdatedEvent | BackgroundTaskTerminatedEvent,
+    event: BackgroundTaskStartedEvent | BackgroundTaskTerminatedEvent,
   ): void {
     const { state } = this.host;
     const { info } = event;
@@ -867,11 +938,12 @@ export class SessionEventHandler {
     const isTerminal =
       info.status === 'completed' ||
       info.status === 'failed' ||
+      info.status === 'timed_out' ||
       info.status === 'killed' ||
       info.status === 'lost';
 
     if (event.type === 'background.task.started') {
-      if (info.taskId.startsWith('agent-')) {
+      if (info.kind === 'agent') {
         this.syncBackgroundTaskBadge();
         this.host.tasksBrowserController.repaint();
         return;
@@ -883,7 +955,7 @@ export class SessionEventHandler {
     }
 
     if (event.type === 'background.task.terminated' && isTerminal) {
-      if (info.taskId.startsWith('agent-')) {
+      if (info.kind === 'agent') {
         // The Agent tool's spawn-success ToolResult is not an error, so the
         // parent toolCall card would otherwise render `✓ Completed` for any
         // terminated bg agent — including `lost` / `failed` / `killed`.
@@ -895,7 +967,7 @@ export class SessionEventHandler {
         });
       }
       if (!this.backgroundTaskTranscriptedTerminal.has(info.taskId)) {
-        if (info.taskId.startsWith('bash-')) {
+        if (info.kind === 'process' || info.kind === 'question') {
           this.appendBackgroundTaskEntry(info);
         }
         this.backgroundTaskTranscriptedTerminal.add(info.taskId);
@@ -933,12 +1005,13 @@ export class SessionEventHandler {
       if (
         info.status === 'completed' ||
         info.status === 'failed' ||
+        info.status === 'timed_out' ||
         info.status === 'killed' ||
         info.status === 'lost'
       ) {
         continue;
       }
-      if (info.taskId.startsWith('agent-')) {
+      if (info.kind === 'agent') {
         agentTasks += 1;
       } else {
         bashTasks += 1;

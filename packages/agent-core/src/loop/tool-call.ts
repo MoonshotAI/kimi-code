@@ -331,6 +331,7 @@ async function prepareToolCall(
         result: runRunnableToolCall(step, call, effectiveArgs, executionMetadata, execution),
       }),
     },
+    stopBatchAfterThis: execution.stopBatchAfterThis,
   };
 }
 
@@ -680,7 +681,7 @@ function makeToolResult(
 }
 
 function toolResultStopsTurn(result: ExecutableToolResult): boolean {
-  return result.isError === true && result.stopTurn === true;
+  return result.stopTurn === true;
 }
 
 function makeErrorToolResult(

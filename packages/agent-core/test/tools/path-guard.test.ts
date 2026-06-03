@@ -7,7 +7,6 @@ import {
   isWithinWorkspace,
   normalizeUserPath,
   PathSecurityError,
-  STRICT_WORKSPACE_ACCESS_POLICY,
   assertPathAllowed,
   resolvePathAccess,
   resolvePathAccessPath,
@@ -31,15 +30,6 @@ const POSIX_KAOS = {
 };
 
 describe('path access policy', () => {
-  it('strict policy rejects absolute paths outside workspace roots', () => {
-    expect(() =>
-      resolvePathAccess('/etc/hosts', '/workspace', WORKSPACE, {
-        operation: 'read',
-        policy: STRICT_WORKSPACE_ACCESS_POLICY,
-      }),
-    ).toThrow(PathSecurityError);
-  });
-
   it('default policy allows absolute paths outside workspace roots', () => {
     const result = resolvePathAccess('/etc/hosts', '/workspace', WORKSPACE, {
       operation: 'read',
@@ -147,12 +137,18 @@ describe('path access policy', () => {
     ).toBe('/workspace/~/notes/today.txt');
   });
 
-  it('legacy assertPathAllowed keeps strict shared-prefix behavior', () => {
-    expect(() =>
+  it('legacy assertPathAllowed allows absolute outside paths but rejects relative escapes', () => {
+    expect(
       assertPathAllowed('/workspace-evil/secrets.txt', '/workspace', WORKSPACE, {
         mode: 'read',
       }),
-    ).toThrow(/outside the workspace/);
+    ).toBe('/workspace-evil/secrets.txt');
+
+    expect(() =>
+      assertPathAllowed('../../outside.txt', '/workspace/project', WORKSPACE, {
+        mode: 'read',
+      }),
+    ).toThrow(/absolute path/);
   });
 
   it('canonicalizes paths with an explicit posix path class', () => {
@@ -278,18 +274,18 @@ describe('path access policy', () => {
     expect(isWithinWorkspace('/elsewhere/file', multi)).toBe(false);
   });
 
-  it('rejects a shared-prefix attack against an additionalDir entry', () => {
+  it('does not classify shared-prefix paths as additionalDir entries', () => {
     const cfg: WorkspaceConfig = {
       workspaceDir: '/workspace',
       additionalDirs: ['/lib'],
     };
     expect(isWithinWorkspace('/lib-evil/hack.py', cfg)).toBe(false);
-    expect(() =>
-      resolvePathAccess('/lib-evil/hack.py', '/workspace', cfg, {
-        operation: 'read',
-        policy: STRICT_WORKSPACE_ACCESS_POLICY,
-      }),
-    ).toThrow(PathSecurityError);
+
+    const result = resolvePathAccess('/lib-evil/hack.py', '/workspace', cfg, {
+      operation: 'read',
+      policy: DEFAULT_WORKSPACE_ACCESS_POLICY,
+    });
+    expect(result).toEqual({ path: '/lib-evil/hack.py', outsideWorkspace: true });
   });
 
   it('uses path-segment containment rather than naive startsWith for additionalDir entries', () => {

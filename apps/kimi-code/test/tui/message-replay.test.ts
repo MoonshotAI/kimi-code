@@ -43,6 +43,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       theme: 'dark',
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
+      upgrade: { autoInstall: true },
     },
     version: '0.0.0-test',
     workDir: '/tmp/proj-a',
@@ -133,6 +134,7 @@ function makeSession(
       maxContextTokens: 100,
       contextUsage: 0,
     })),
+    getGoal: vi.fn(async () => ({ goal: null })),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
     setModel: vi.fn(async () => {}),
@@ -165,6 +167,7 @@ function makeHarness(initialSession: Session) {
     close: vi.fn(async () => {}),
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
+    getExperimentalFlags: vi.fn(async () => ({})),
     interactiveAgentId: 'main',
     auth: {
       status: vi.fn(),
@@ -203,19 +206,56 @@ function backgroundTask(
   description: string,
   status: BackgroundTaskInfo['status'] = 'running',
 ): BackgroundTaskInfo {
+  if (taskId.startsWith('agent-')) {
+    return {
+      taskId,
+      kind: 'agent',
+      agentId: taskId,
+      subagentType: 'coder',
+      description,
+      status,
+      startedAt: 1,
+      endedAt: status === 'running' ? null : 2,
+    };
+  }
   return {
     taskId,
+    kind: 'process',
     command: `[agent] ${description}`,
     description,
     status,
     pid: 0,
     exitCode: status === 'completed' ? 0 : null,
     startedAt: 1,
-    endedAt: status === 'running' || status === 'awaiting_approval' ? null : 2,
+    endedAt: status === 'running' ? null : 2,
   };
 }
 
 describe('KimiTUI resume message replay', () => {
+  it('renders persisted goal completion reminders as assistant completion messages', async () => {
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          {
+            type: 'text',
+            text: '<system-reminder>\n✓ Goal complete.\nWorked 1 turn over 7m15s, using 4.3M tokens.\n</system-reminder>',
+          },
+        ],
+        { origin: { kind: 'system_trigger', name: 'goal_completion' } },
+      ),
+    ]);
+
+    const entry = driver.state.transcriptEntries.find((item) =>
+      item.content.includes('Goal complete'),
+    );
+    expect(entry).toMatchObject({
+      kind: 'assistant',
+      renderMode: 'markdown',
+      content: '✓ Goal complete.\nWorked 1 turn over 7m15s, using 4.3M tokens.',
+    });
+  });
+
   it('groups replayed Agent calls from one assistant message using live grouping', async () => {
     const replay: AgentReplayRecord[] = [
       message('user', [{ type: 'text', text: 'run two agents' }]),
@@ -304,6 +344,95 @@ describe('KimiTUI resume message replay', () => {
     expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('bash-bg1')).toBe(true);
   });
 
+  it('matches completed resumed background agents by agent id when task id differs', async () => {
+    const driver = await replayIntoDriver([], {
+      background: [
+        {
+          taskId: 'task-bg1',
+          kind: 'agent',
+          agentId: 'agent-bg1',
+          subagentType: 'coder',
+          description: 'Review long-running work',
+          status: 'running',
+          startedAt: 1,
+          endedAt: null,
+        },
+      ],
+    });
+
+    expect(driver.sessionEventHandler.backgroundAgentMetadata.has('agent-bg1')).toBe(true);
+    expect(driver.sessionEventHandler.backgroundAgentMetadata.has('task-bg1')).toBe(false);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.completed',
+        agentId: 'main',
+        sessionId: 'ses-replay',
+        subagentId: 'agent-bg1',
+        parentToolCallId: 'task-bg1',
+        resultSummary: 'Reviewed the long-running work.',
+      },
+      () => {},
+    );
+
+    const status = driver.state.transcriptEntries.find(
+      (entry) => entry.backgroundAgentStatus?.phase === 'completed',
+    );
+
+    expect(driver.sessionEventHandler.backgroundAgentMetadata.has('agent-bg1')).toBe(false);
+    expect(status?.backgroundAgentStatus?.headline).toBe('agent completed in background');
+    expect(status?.backgroundAgentStatus?.detail).toContain('Review long-running work');
+  });
+
+  it('keeps timed-out status when an aborted resumed background agent later fails', async () => {
+    const info: BackgroundTaskInfo = {
+      taskId: 'task-bg-timeout',
+      kind: 'agent',
+      agentId: 'agent-bg-timeout',
+      subagentType: 'coder',
+      description: 'Review timeout handling',
+      status: 'running',
+      startedAt: 1,
+      endedAt: null,
+      timeoutMs: 1000,
+    };
+    const driver = await replayIntoDriver([], { background: [info] });
+    const applyTerminalStatus = vi
+      .spyOn(driver.streamingUI, 'applyBackgroundTaskTerminalStatus')
+      .mockReturnValue(true);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'background.task.terminated',
+        agentId: 'main',
+        sessionId: 'ses-replay',
+        info: { ...info, status: 'timed_out', endedAt: 2 },
+      },
+      () => {},
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.failed',
+        agentId: 'main',
+        sessionId: 'ses-replay',
+        subagentId: 'agent-bg-timeout',
+        parentToolCallId: 'task-bg-timeout',
+        error: 'The subagent was aborted.',
+      },
+      () => {},
+    );
+
+    expect(applyTerminalStatus.mock.calls.map(([args]) => args.status)).toEqual(['timed_out']);
+    expect(driver.sessionEventHandler.backgroundAgentMetadata.has('agent-bg-timeout')).toBe(false);
+    expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('task-bg-timeout'))
+      .toBe(true);
+    expect(
+      driver.state.transcriptEntries.some(
+        (entry) => entry.backgroundAgentStatus?.phase === 'failed',
+      ),
+    ).toBe(false);
+  });
+
   it('renders replayed bash background notifications as bash tasks', async () => {
     const driver = await replayIntoDriver(
       [
@@ -372,9 +501,9 @@ describe('KimiTUI resume message replay', () => {
     ]);
   });
 
-  it('skips cron_job origin records during replay', async () => {
+  it('renders cron_job origin records during replay without exposing raw XML', async () => {
     const cronFire =
-      '<cron-fire jobId="job-1" cron="*/5 * * * *" recurring="true" coalescedCount="1">\nrun nightly\n</cron-fire>';
+      '<cron-fire jobId="job-1" cron="*/5 * * * *" recurring="true" coalescedCount="1" stale="false">\n<prompt>\nrun nightly\n</prompt>\n</cron-fire>';
     const driver = await replayIntoDriver([
       message('user', [{ type: 'text', text: 'real prompt' }]),
       message('assistant', [{ type: 'text', text: 'real answer' }]),
@@ -392,14 +521,21 @@ describe('KimiTUI resume message replay', () => {
 
     const transcript = driver.state.transcriptContainer.render(120).join('\n');
     expect(transcript).not.toContain('<cron-fire');
+    expect(transcript).toContain('Scheduled reminder fired');
+    expect(transcript).toContain('run nightly');
     expect(
       driver.state.transcriptEntries
         .filter((entry) => entry.kind === 'user')
         .map((entry) => entry.content),
     ).toEqual(['real prompt']);
+    expect(
+      driver.state.transcriptEntries
+        .filter((entry) => entry.kind === 'cron')
+        .map((entry) => entry.content),
+    ).toEqual(['run nightly']);
   });
 
-  it('skips cron_missed origin records during replay', async () => {
+  it('renders cron_missed origin records during replay without exposing raw XML', async () => {
     const cronMissed =
       '<cron-fire jobId="job-2" missed="true" count="3">\n3 one-shot tasks missed while offline\n</cron-fire>';
     const driver = await replayIntoDriver([
@@ -412,12 +548,18 @@ describe('KimiTUI resume message replay', () => {
 
     const transcript = driver.state.transcriptContainer.render(120).join('\n');
     expect(transcript).not.toContain('<cron-fire');
-    expect(transcript).not.toContain('missed while offline');
+    expect(transcript).toContain('Missed scheduled reminders');
+    expect(transcript).toContain('3 one-shot tasks missed while offline');
     expect(
       driver.state.transcriptEntries
         .filter((entry) => entry.kind === 'user')
         .map((entry) => entry.content),
     ).toEqual(['real prompt']);
+    expect(
+      driver.state.transcriptEntries
+        .filter((entry) => entry.kind === 'cron')
+        .map((entry) => entry.content),
+    ).toEqual(['3 one-shot tasks missed while offline']);
   });
 
   it('renders user-slash skill activation once without exposing injected prompt text', async () => {

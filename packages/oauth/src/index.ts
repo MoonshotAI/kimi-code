@@ -98,6 +98,23 @@ export type {
   OpenPlatformDefinition,
 } from './open-platform';
 
+export {
+  applyCustomRegistryEntries,
+  applyCustomRegistryProvider,
+  capabilitiesFromCustomEntry,
+  CustomRegistryApiError,
+  CUSTOM_REGISTRY_DEFAULT_CAPABILITIES,
+  CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT,
+  fetchCustomRegistry,
+  removeCustomRegistryProvider,
+} from './custom-registry';
+export type {
+  CustomRegistryModelEntry,
+  CustomRegistryProviderEntry,
+  CustomRegistryProviderType,
+  CustomRegistrySource,
+} from './custom-registry';
+
 export { KimiOAuthToolkit, resolveKimiTokenStorageName } from './toolkit';
 export type {
   AuthManagedUsageResult,

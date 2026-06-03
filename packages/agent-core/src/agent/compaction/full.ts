@@ -25,11 +25,19 @@ import {
   estimateTokens,
   estimateTokensForMessages,
 } from '../../utils/tokens';
-import { project } from '../context/projector';
+import {
+  applyCompletionBudget,
+  resolveCompletionBudget,
+} from '../../utils/completion-budget';
 import compactionInstructionTemplate from './compaction-instruction.md';
 import { renderMessagesToText } from './render-messages';
+import { renderTodoList, type TodoItem } from '../../tools/builtin/state/todo-list';
 import type { CompactionBeginData, CompactionResult } from './types';
-import { DEFAULT_COMPACTION_CONFIG, DefaultCompactionStrategy, type CompactionStrategy } from './strategy';
+import {
+  DEFAULT_COMPACTION_CONFIG,
+  DefaultCompactionStrategy,
+  type CompactionStrategy,
+} from './strategy';
 
 type CompactionTelemetryTrigger = CompactionBeginData['source'] | 'manual-with-prompt' | 'unknown';
 
@@ -38,6 +46,13 @@ export interface CompactedHistory {
 }
 
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
+
+class CompactionTruncatedError extends Error {
+  constructor() {
+    super('Compaction response was truncated before producing a complete summary.');
+    this.name = 'CompactionTruncatedError';
+  }
+}
 
 export class FullCompaction {
   protected compactionCountInTurn = 0;
@@ -226,6 +241,13 @@ export class FullCompaction {
       await this.triggerPreCompactHook(data, tokensBefore, signal);
 
       const model = this.agent.config.model;
+      const provider = applyCompletionBudget({
+        provider: this.agent.config.provider,
+        budget: resolveCompletionBudget({
+          reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
+        }),
+        capability: this.agent.config.modelCapabilities,
+      });
 
       const delays = retryBackoffDelays(MAX_COMPACTION_RETRY_ATTEMPTS);
       let usage: TokenUsage | null;
@@ -233,7 +255,7 @@ export class FullCompaction {
       while (true) {
         const messagesToCompact = originalHistory.slice(0, compactedCount);
         const messages = [
-          ...project(messagesToCompact),
+          ...this.agent.context.project(messagesToCompact),
           {
             role: 'user',
             content: [
@@ -245,10 +267,9 @@ export class FullCompaction {
             toolCalls: [],
           } satisfies Message,
         ];
-        class TruncatedError extends Error {}
         try {
           const response = await this.agent.generate(
-            this.agent.config.provider,
+            provider,
             this.agent.config.systemPrompt,
             [...this.agent.tools.loopTools],
             messages,
@@ -256,13 +277,13 @@ export class FullCompaction {
             { signal },
           );
           if (response.finishReason === 'truncated') {
-            throw new TruncatedError();
+            throw new CompactionTruncatedError();
           }
           usage = response.usage;
           summary = extractCompactionSummary(response);
           break;
         } catch (error) {
-          if (error instanceof APIContextOverflowError || error instanceof TruncatedError) {
+          if (error instanceof APIContextOverflowError || error instanceof CompactionTruncatedError) {
             compactedCount = this.strategy.reduceCompactOnOverflow(messagesToCompact);
           }
           else if (!isRetryableGenerateError(error)) {
@@ -289,6 +310,8 @@ export class FullCompaction {
         }
       }
 
+      summary = this.postProcessSummary(summary);
+
       const recent = originalHistory.slice(compactedCount);
       const tokensAfter = estimateTokens(summary) + estimateTokensForMessages(recent);
 
@@ -312,6 +335,10 @@ export class FullCompaction {
       this.markCompleted();
       this.agent.emitEvent({ type: 'compaction.completed', result });
       this.agent.context.applyCompaction(result);
+      // Compaction collapses the prefix into a summary, dropping any goal
+      // reminder that lived there. Re-inject it onto the fresh tail so an active
+      // goal does not silently fall out of context. Append-only; no-op off goal mode.
+      await this.agent.injection.injectGoal();
       this.triggerPostCompactHook(data, result);
     } catch (error) {
       if (!isAbortError(error)) {
@@ -375,6 +402,16 @@ export class FullCompaction {
         estimatedTokenCount: result.tokensAfter,
       },
     });
+  }
+
+  private postProcessSummary(summary: string): string {
+    const storeData = this.agent.tools.storeData();
+    const todos = (storeData['todo'] as readonly TodoItem[] | undefined) ?? [];
+    if (todos.length === 0) {
+      return summary;
+    }
+    const todoMarkdown = renderTodoList(todos, '## TODO List');
+    return `${summary.trim()}\n\n${todoMarkdown}`;
   }
 }
 

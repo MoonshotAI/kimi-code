@@ -184,6 +184,28 @@ describe('AgentRecords persistence metadata', () => {
 
     await expect(records.replay()).rejects.toThrow('Missing wire migration for version 0.9');
   });
+
+  it('ignores goal.* records during replay, leaving agent state unchanged', async () => {
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'goal.create',
+        goalId: 'g1',
+        objective: 'do work',
+        status: 'active',
+        actor: 'user',
+        budgetLimits: { turnBudget: 20 },
+      },
+      { type: 'goal.account_usage', goalId: 'g1', usageKind: 'token', delta: 5, tokensUsed: 5, wallClockMs: 0 },
+      { type: 'goal.continuation', goalId: 'g1', turnsUsed: 1 },
+      { type: 'goal.update', goalId: 'g1', status: 'complete', actor: 'model' },
+      { type: 'goal.clear', goalId: 'g1', actor: 'user' },
+    ]);
+    const { agent } = testAgent({ persistence });
+
+    await expect(agent.records.replay()).resolves.toEqual({ warning: undefined });
+    expect(agent.context.history).toHaveLength(0);
+  });
 });
 
 class RecordingInMemoryAgentRecordPersistence extends InMemoryAgentRecordPersistence {

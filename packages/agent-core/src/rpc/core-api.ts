@@ -1,5 +1,6 @@
 import type { AgentConfigData } from '#/agent/config';
 import type { AgentContextData } from '#/agent/context';
+import type { BackgroundTaskInfo } from '#/agent/background';
 import type { PermissionData, PermissionMode } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
 import type { ToolInfo } from '#/agent/tool';
@@ -7,7 +8,16 @@ import type { KimiConfig, KimiConfigPatch } from '#/config';
 import type { ExperimentalFlagMap } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
-import type { BackgroundTaskInfo } from '#/tools/builtin';
+import type {
+  CreateGoalInput,
+  GoalBudgetLimits,
+  GoalBudgetReport,
+  GoalChange,
+  GoalChangeStats,
+  GoalSnapshot,
+  GoalStatus,
+  GoalToolResult,
+} from '#/session/goal';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { PluginInfo, PluginSummary, ReloadSummary } from '#/plugin';
@@ -154,6 +164,9 @@ export interface CancelPlanPayload {
 export interface BeginCompactionPayload {
   readonly instruction?: string;
 }
+export interface UndoHistoryPayload {
+  readonly count: number;
+}
 export interface RegisterToolPayload {
   readonly name: string;
   readonly description: string;
@@ -173,9 +186,6 @@ export interface StopBackgroundPayload {
 export interface GetBackgroundOutputPayload {
   readonly taskId: string;
   readonly tail?: number;
-}
-export interface GetBackgroundOutputPathPayload {
-  readonly taskId: string;
 }
 export interface GetBackgroundPayload {
   /**
@@ -251,6 +261,32 @@ export interface UpdateSessionMetadataPayload {
   readonly metadata: SessionMetadataPatch;
 }
 
+// Goal lifecycle payloads and re-exported goal value types. These describe the
+// deterministic user/SDK control surface; the goal's terminal status is decided
+// by the model via the UpdateGoal tool (or the goal driver on budget/error),
+// not set through this API.
+export type {
+  CreateGoalInput,
+  GoalBudgetLimits,
+  GoalBudgetReport,
+  GoalChange,
+  GoalChangeStats,
+  GoalSnapshot,
+  GoalStatus,
+  GoalToolResult,
+};
+
+export interface CreateGoalPayload {
+  readonly objective: string;
+  readonly completionCriterion?: string;
+  readonly budgetLimits?: GoalBudgetLimits;
+  readonly replace?: boolean;
+}
+
+export interface GoalControlPayload {
+  readonly reason?: string;
+}
+
 export interface GetKimiConfigPayload {
   readonly reload?: boolean;
 }
@@ -265,6 +301,7 @@ export interface AgentAPI {
   prompt: (payload: PromptPayload) => void;
   steer: (payload: SteerPayload) => void;
   cancel: (payload: CancelPayload) => void;
+  undoHistory: (payload: UndoHistoryPayload) => void;
   setThinking: (payload: SetThinkingPayload) => void;
   setPermission: (payload: SetPermissionPayload) => void;
   setModel: (payload: SetModelPayload) => SetModelResult;
@@ -281,7 +318,6 @@ export interface AgentAPI {
   clearContext: (payload: EmptyPayload) => void;
   activateSkill: (payload: ActivateSkillPayload) => void;
   getBackgroundOutput: (payload: GetBackgroundOutputPayload) => string;
-  getBackgroundOutputPath: (payload: GetBackgroundOutputPathPayload) => string | undefined;
   getContext: (payload: EmptyPayload) => AgentContextData;
   getConfig: (payload: EmptyPayload) => AgentConfigData;
   getPermission: (payload: EmptyPayload) => PermissionData;
@@ -302,6 +338,12 @@ export interface SessionAPI extends AgentAPIWithId {
   getMcpStartupMetrics: (payload: EmptyPayload) => McpStartupMetrics;
   reconnectMcpServer: (payload: ReconnectMcpServerPayload) => void;
   generateAgentsMd: (payload: EmptyPayload) => void;
+  // Goal lifecycle (session-scoped; no agentId required). CoreAPI adds sessionId.
+  createGoal: (payload: CreateGoalPayload) => GoalSnapshot;
+  getGoal: (payload: EmptyPayload) => GoalToolResult;
+  pauseGoal: (payload: GoalControlPayload) => GoalSnapshot;
+  resumeGoal: (payload: GoalControlPayload) => GoalSnapshot;
+  cancelGoal: (payload: GoalControlPayload) => GoalSnapshot;
 }
 
 type SessionAPIWithId = WithSessionId<SessionAPI>;

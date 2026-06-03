@@ -55,6 +55,7 @@ When non-changelog pages change in either locale, sync the mirror before release
 - **Do not one-sided fixes**: if the changed locale has an unclear or incorrect statement, fix it there first; do not patch only the mirror.
 - **Match style, not just words**: Chinese docs use a narrative tone (see `docs/AGENTS.md` writing-style examples); preserve that tone in Chinese; preserve sentence-case headings and concise English style in English.
 - **Code blocks and identifiers stay as-is**: do not translate code, command names, flag names, or file paths.
+- **Public examples**: Do not introduce real internal endpoints, key names, account names, or service names while translating. Keep or replace them with neutral placeholders such as `example.com`, `example.test`, and `YOUR_API_KEY` in both locales.
 
 ## Common mistakes
 
@@ -63,3 +64,4 @@ When non-changelog pages change in either locale, sync the mirror before release
 - Forgetting to add spaces between Chinese characters and inline code or English words.
 - Translating proper nouns listed in the term table (`Wire`, `MCP`, `ACP`, `JSON`, `OAuth`, `macOS`, `uv`, etc.).
 - Updating only one direction and leaving the other locale stale — always finish all pages flagged by the diff.
+- Copying real internal values into the mirror instead of using neutral `example` placeholders.

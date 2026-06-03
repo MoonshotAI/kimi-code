@@ -27,8 +27,11 @@ import type {
   CreateSessionOptions,
   ExportSessionInput,
   ExportSessionResult,
+  CreateGoalInput,
   ForkSessionInput,
   GetConfigOptions,
+  GoalSnapshot,
+  GoalToolResult,
   KimiConfig,
   KimiConfigPatch,
   ListSessionsOptions,
@@ -127,6 +130,7 @@ export class SDKRpcClient {
       resolveOAuthTokenProvider: options.resolveOAuthTokenProvider,
       skillDirs: options.skillDirs,
       telemetry: options.telemetry,
+      appVersion: options.identity?.version,
     });
     this.ready = sdkRpc(new ClientAPI(this)).then((rpc) => {
       this.rpc = rpc;
@@ -318,6 +322,15 @@ export class SDKRpcClient {
     });
   }
 
+  async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.undoHistory({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      count: input.count,
+    });
+  }
+
   async getContext(input: SessionIdRpcInput): Promise<AgentContextData> {
     const rpc = await this.getRpc();
     return rpc.getContext({
@@ -403,17 +416,6 @@ export class SDKRpcClient {
     });
   }
 
-  async getBackgroundTaskOutputPath(
-    input: SessionIdRpcInput & { taskId: string },
-  ): Promise<string | undefined> {
-    const rpc = await this.getRpc();
-    return rpc.getBackgroundOutputPath({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      taskId: input.taskId,
-    });
-  }
-
   async stopBackgroundTask(
     input: SessionIdRpcInput & { taskId: string; reason?: string },
   ): Promise<void> {
@@ -424,6 +426,37 @@ export class SDKRpcClient {
       taskId: input.taskId,
       reason: input.reason,
     });
+  }
+
+  async createGoal(input: SessionIdRpcInput & CreateGoalInput): Promise<GoalSnapshot> {
+    const rpc = await this.getRpc();
+    return rpc.createGoal({
+      sessionId: input.sessionId,
+      objective: input.objective,
+      completionCriterion: input.completionCriterion,
+      budgetLimits: input.budgetLimits,
+      replace: input.replace,
+    });
+  }
+
+  async getGoal(input: SessionIdRpcInput): Promise<GoalToolResult> {
+    const rpc = await this.getRpc();
+    return rpc.getGoal({ sessionId: input.sessionId });
+  }
+
+  async pauseGoal(input: SessionIdRpcInput & { reason?: string }): Promise<GoalSnapshot> {
+    const rpc = await this.getRpc();
+    return rpc.pauseGoal({ sessionId: input.sessionId, reason: input.reason });
+  }
+
+  async resumeGoal(input: SessionIdRpcInput & { reason?: string }): Promise<GoalSnapshot> {
+    const rpc = await this.getRpc();
+    return rpc.resumeGoal({ sessionId: input.sessionId, reason: input.reason });
+  }
+
+  async cancelGoal(input: SessionIdRpcInput & { reason?: string }): Promise<GoalSnapshot> {
+    const rpc = await this.getRpc();
+    return rpc.cancelGoal({ sessionId: input.sessionId, reason: input.reason });
   }
 
   async listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]> {

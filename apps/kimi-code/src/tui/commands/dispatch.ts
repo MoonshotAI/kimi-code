@@ -20,7 +20,8 @@ import type { TasksBrowserController } from '../controllers/tasks-browser';
 import type { AppState, LoginProgressSpinnerHandle, QueuedMessage } from '../types';
 import type { TUIState } from '../tui-state';
 
-import { handleConnectCommand, handleLoginCommand, handleLogoutCommand } from './auth';
+import { handleLoginCommand, handleLogoutCommand } from './auth';
+import { tryHandleDanceCommand } from '../easter-eggs/dance';
 import {
   handleAutoCommand,
   handleCompactCommand,
@@ -33,6 +34,8 @@ import {
   showPermissionPicker,
   showSettingsSelector,
 } from './config';
+import { handleGoalCommand } from './goal';
+import { handleProviderCommand } from './provider';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 import { handlePluginsCommand } from './plugins';
 import {
@@ -42,13 +45,13 @@ import {
   handleInitCommand,
   handleTitleCommand,
 } from './session';
+import { handleUndoCommand } from './undo';
 
 // ---------------------------------------------------------------------------
 // Re-exports — keep existing consumers working
 // ---------------------------------------------------------------------------
 
 export {
-  handleConnectCommand,
   handleLoginCommand,
   handleLogoutCommand,
 } from './auth';
@@ -71,6 +74,7 @@ export {
   showUsage,
 } from './info';
 export { handlePluginsCommand } from './plugins';
+export { handleGoalCommand } from './goal';
 export {
   handleExportDebugZipCommand,
   handleExportMdCommand,
@@ -78,6 +82,7 @@ export {
   handleInitCommand,
   handleTitleCommand,
 } from './session';
+export { handleUndoCommand } from './undo';
 
 // ---------------------------------------------------------------------------
 // Host interface
@@ -98,6 +103,7 @@ export interface SlashCommandHost {
   track(event: string, props?: Record<string, unknown>): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
+  restoreInputText(text: string): void;
 
   // Session
   requireSession(): Session;
@@ -172,6 +178,12 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
       return;
     }
     case 'message':
+      // Unknown slash command: let /dance claim it before it falls through to
+      // the model as a normal message. This runs *after* builtin and skill
+      // resolution, so a real command or a same-named skill always wins.
+      if (parsedCommand !== null && tryHandleDanceCommand(host, parsedCommand)) {
+        return;
+      }
       host.sendNormalUserInput(intent.input);
       return;
     case 'builtin':
@@ -228,6 +240,9 @@ async function handleBuiltInSlashCommand(
     case 'model':
       handleModelCommand(host, args);
       return;
+    case 'provider':
+      await handleProviderCommand(host);
+      return;
     case 'permission':
       showPermissionPicker(host);
       return;
@@ -258,6 +273,9 @@ async function handleBuiltInSlashCommand(
     case 'compact':
       await handleCompactCommand(host, args);
       return;
+    case 'goal':
+      await handleGoalCommand(host, args);
+      return;
     case 'init':
       await handleInitCommand(host);
       return;
@@ -273,11 +291,11 @@ async function handleBuiltInSlashCommand(
     case 'login':
       await handleLoginCommand(host);
       return;
-    case 'connect':
-      await handleConnectCommand(host, args);
-      return;
     case 'logout':
       await handleLogoutCommand(host);
+      return;
+    case 'undo':
+      await handleUndoCommand(host, args);
       return;
     default:
       host.showError(`Unknown slash command: /${String(name)}`);

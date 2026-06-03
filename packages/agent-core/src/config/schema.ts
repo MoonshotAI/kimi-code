@@ -31,6 +31,7 @@ export const ProviderConfigSchema = z.object({
   oauth: OAuthRefSchema.optional(),
   env: StringRecordSchema.optional(),
   customHeaders: StringRecordSchema.optional(),
+  source: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;

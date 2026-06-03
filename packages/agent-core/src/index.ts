@@ -35,17 +35,19 @@ export type {
   UserPromptOrigin,
 } from './agent/context';
 export type {
-  BackgroundLifecycleEvent,
+  AgentBackgroundTaskInfo,
   BackgroundTaskInfo,
-  BackgroundTaskKind,
   BackgroundTaskStatus,
-} from './tools/background/manager';
+  ProcessBackgroundTaskInfo,
+  QuestionBackgroundTaskInfo,
+} from './agent/background';
 export type { ToolServices } from './tools/support/services';
 export { SingleModelProvider } from './session/provider-manager';
 export type {
   BearerTokenProvider,
   ModelProvider,
   OAuthTokenProviderResolver,
+  ResolvedRuntimeProvider,
 } from './session/provider-manager';
 
 // ─── Wire records (for in-monorepo consumers like apps/vis) ────────────────
