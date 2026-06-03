@@ -2,6 +2,31 @@
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.9.0
+
+### 新功能
+
+- 新增 `@moonshot-ai/acp-adapter` 和 `kimi acp` 子命令：kimi-code 现在可通过 stdio 使用 [Agent Client Protocol 0.23](https://agentclientprotocol.com/)，因此 IDE（Zed、JetBrains AI Chat、自定义客户端）可以直接驱动会话；覆盖矩阵、Zed 配置和破坏性预发布说明见 [kimi acp 子命令页面](https://moonshotai.github.io/kimi-code/en/reference/kimi-acp.html)。
+- 新增 `/btw`，用于进行不会引导当前主轮次的侧通道对话。
+- 允许 `/btw` 在输入问题前打开侧通道面板。
+
+### 修复
+
+- 修复 Windows 上外部编辑器（Ctrl+G），移除对 `/bin/sh` 的依赖，并为临时文件路径使用平台感知的 shell 引号处理。
+- 使用新版 Chat Completions 模型所需的 OpenAI completion token 字段。
+- 使用已配置的模型输出上限作为 completion token 上限。
+- 修复适用于 OpenAI 兼容供应商的 goal budget 工具 schema。
+- 在访问已保存的子 Agent 时再惰性恢复它们。
+
+### 优化
+
+- 统一 TUI 对话框和选择器的交互与视觉效果。
+- 启动时记录已启用的实验性 flag。
+
+### 重构
+
+- 允许 SDK 运行时创建使用单独的 RPC client，同时保留本地 CLI 启动流程。
+
 ## 0.8.0
 
 ### 新功能

@@ -2,6 +2,31 @@
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.9.0
+
+### Features
+
+- Add `@moonshot-ai/acp-adapter` and the `kimi acp` subcommand: kimi-code now speaks [Agent Client Protocol 0.23](https://agentclientprotocol.com/) over stdio so IDEs (Zed, JetBrains AI Chat, custom clients) can drive sessions directly — coverage matrix, Zed configuration and breaking pre-release notes are in [kimi acp Subcommand Page](https://moonshotai.github.io/kimi-code/en/reference/kimi-acp.html).
+- Add `/btw` for side-channel conversations without steering the active main turn.
+- Allow `/btw` to open the side-channel panel before entering a question.
+
+### Bug Fixes
+
+- Fix external editor (Ctrl+G) on Windows by removing `/bin/sh` dependency and using platform-aware shell quoting for temp file paths.
+- Use the OpenAI completion token field required by newer Chat Completions models.
+- Use configured model output limits for completion token caps.
+- Fix goal budget tool schemas for OpenAI-compatible providers.
+- Resume saved subagents lazily when they are accessed.
+
+### Polish
+
+- Unify the interaction and visuals across TUI dialogs and selectors.
+- Log enabled experimental flags at startup.
+
+### Refactors
+
+- Allow SDK runtime creation to use a separate RPC client while preserving local CLI startup.
+
 ## 0.8.0
 
 ### Features
