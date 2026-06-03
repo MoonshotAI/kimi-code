@@ -13,12 +13,11 @@
  * Keyboard:
  *   - ↑ / ↓             move highlight
  *   - ← / → · PgUp/PgDn page
- *   - type              fuzzy-filter the provider list
  *   - Enter             on `[ Add New Platform ]` → `onAdd()`
- *   - Del (or Ctrl-D)   delete with inline `[y/N]` confirmation
+ *   - D                 delete with inline `[y/N]` confirmation
  *                         on a source row → `onDeleteSource(providerIds)`
  *                         on `[ Add New Platform ]` → ignored
- *   - Esc               clears the filter, else `onClose()` (outside confirm)
+ *   - Esc               `onClose()` (outside confirm)
  *
  * The `[y/N]` confirmation is a transient substate handled in-component:
  * while armed, only `y` / `Y` / `n` / `N` / `Esc` are honored and the
@@ -38,7 +37,6 @@ import {
 } from '@moonshot-ai/kimi-code-oauth';
 import {
   Container,
-  fuzzyFilter,
   Key,
   matchesKey,
   truncateToWidth,
@@ -50,7 +48,7 @@ import chalk from 'chalk';
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import type { ColorPalette } from '#/tui/theme/colors';
-import { isPrintableChar, printableChar } from '#/tui/utils/printable-key';
+import { printableChar } from '#/tui/utils/printable-key';
 import { pageView, type PageView } from '#/tui/utils/paging';
 
 interface ConfirmState {
@@ -95,8 +93,7 @@ type Row = SourceRow | AddRow;
 
 const ADD_ROW_LABEL = '[ Add New Platform ]';
 const PAGE_SIZE = 8;
-// "type to search" already appears as the title suffix, so it is omitted here.
-const HEADER_HINT = '↑↓ navigate · Del delete · Esc cancel';
+const HEADER_HINT = '↑↓ navigate · D delete · Esc cancel';
 
 // Narrows a `ProviderConfig` blob to a `CustomRegistrySource` payload.
 // Mirrors `readCustomRegistrySource` in `kimi-tui.ts`. We can't import
@@ -219,7 +216,6 @@ export class ProviderManagerComponent extends Container implements Focusable {
   private rows: readonly Row[];
   private selectedIndex: number;
   private confirm: ConfirmState | undefined;
-  private query = '';
 
   constructor(opts: ProviderManagerOptions) {
     super();
@@ -267,16 +263,8 @@ export class ProviderManagerComponent extends Container implements Focusable {
   }
 
   /** Rows after applying the active fuzzy filter; the add-row is always kept. */
-  private visibleRows(): readonly Row[] {
-    if (this.query.length === 0) return this.rows;
-    const sources = this.rows.filter((row): row is SourceRow => row.kind === 'source');
-    const matched = fuzzyFilter([...sources], this.query, (row) => row.label);
-    const addRow = this.rows.find((row) => row.kind === 'add');
-    return addRow === undefined ? matched : [...matched, addRow];
-  }
-
   private page(): PageView {
-    return pageView(this.visibleRows().length, this.selectedIndex, PAGE_SIZE);
+    return pageView(this.rows.length, this.selectedIndex, PAGE_SIZE);
   }
 
   handleInput(data: string): void {
@@ -286,17 +274,11 @@ export class ProviderManagerComponent extends Container implements Focusable {
     }
 
     if (matchesKey(data, Key.escape)) {
-      if (this.query.length > 0) {
-        this.query = '';
-        this.selectedIndex = 0;
-        this.invalidate();
-        return;
-      }
       this.opts.onClose();
       return;
     }
 
-    const rows = this.visibleRows();
+    const rows = this.rows;
 
     if (matchesKey(data, Key.up)) {
       if (rows.length === 0) return;
@@ -332,32 +314,15 @@ export class ProviderManagerComponent extends Container implements Focusable {
       return;
     }
 
-    // Delete the highlighted provider. The Del key (not a letter) is used so it
-    // never clashes with typing into the filter; Ctrl-D is accepted as an alias.
-    if (matchesKey(data, Key.delete) || matchesKey(data, Key.ctrl('d'))) {
-      this.armDeleteConfirm();
-      return;
-    }
-
-    // Backspace + printable characters edit the fuzzy filter.
-    if (matchesKey(data, Key.backspace)) {
-      if (this.query.length > 0) {
-        this.query = this.query.slice(0, -1);
-        this.selectedIndex = 0;
-        this.invalidate();
-      }
-      return;
-    }
+    // Delete the highlighted provider with the D key.
     const ch = printableChar(data);
-    if (isPrintableChar(ch)) {
-      this.query += ch;
-      this.selectedIndex = 0;
-      this.invalidate();
+    if (ch === 'd' || ch === 'D') {
+      this.armDeleteConfirm();
     }
   }
 
   private armDeleteConfirm(): void {
-    const selected = this.visibleRows()[this.selectedIndex];
+    const selected = this.rows[this.selectedIndex];
     if (selected === undefined || selected.kind === 'add') return;
     const ids = selected.providerIds;
     const prompt =
@@ -394,25 +359,17 @@ export class ProviderManagerComponent extends Container implements Focusable {
     const lines: string[] = [];
 
     // Header shape mirrors the model dialog (see model-selector.ts): a single
-    // top border, the title (with a "(type to search)" hint until you type),
-    // the keymap hint, then a blank line. No inner border under the title.
+    // top border, the title, the keymap hint, then a blank line. No inner
+    // border under the title.
     const border = chalk.hex(colors.primary)('─'.repeat(width));
-    const titleSuffix =
-      this.query.length === 0 ? chalk.hex(colors.textMuted)('  (type to search)') : '';
     lines.push(border);
-    lines.push(chalk.hex(colors.primary).bold(' Providers') + titleSuffix);
+    lines.push(chalk.hex(colors.primary).bold(' Providers'));
     lines.push(chalk.hex(colors.textMuted)(' ' + HEADER_HINT));
     lines.push('');
 
-    if (this.query.length > 0) {
-      lines.push(chalk.hex(colors.primary)(' Search: ') + chalk.hex(colors.text)(this.query));
-    }
-
-    const rows = this.visibleRows();
-    if (this.rows.length === 0) {
+    const rows = this.rows;
+    if (rows.length === 0) {
       lines.push(chalk.hex(colors.textMuted)('  No providers configured.'));
-    } else if (rows.length === 0) {
-      lines.push(chalk.hex(colors.textMuted)('  No matches'));
     } else {
       const view = this.page();
       for (let i = view.start; i < view.end; i++) {

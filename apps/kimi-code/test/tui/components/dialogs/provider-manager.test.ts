@@ -14,7 +14,6 @@ const PRIMARY = '38;2;79;168;255'; // colors.primary  #4FA8FF
 const MUTED = '38;2;107;107;107'; // colors.textMuted #6B6B6B
 const BOLD = '[1m';
 const ESC = String.fromCodePoint(27);
-const DEL = `${ESC}[3~`;
 
 const SGR = new RegExp(`${ESC}\\[[0-9;]*m`, 'g');
 
@@ -110,21 +109,7 @@ describe('ProviderManagerComponent', () => {
     expect(lines.filter(isBorder).length).toBe(2);
   });
 
-  it('fuzzy-filters the provider list as you type', () => {
-    const component = makeComponent({
-      providers: {
-        openai: { baseUrl: 'https://api.openai.com' },
-        anthropic: { baseUrl: 'https://api.anthropic.com' },
-      } as unknown as Record<string, ProviderConfig>,
-    });
-    for (const ch of 'anth') component.handleInput(ch);
-    const out = rendered(component);
-    expect(out).toContain('Search: anth');
-    expect(out).toContain('anthropic');
-    expect(out).not.toContain('openai');
-  });
-
-  it('deletes the highlighted provider via the Del key with a y/N confirm', () => {
+  it('deletes the highlighted provider via the D key with a y/N confirm', () => {
     const onDeleteSource = vi.fn();
     const component = makeComponent({
       providers: {
@@ -133,13 +118,13 @@ describe('ProviderManagerComponent', () => {
       activeProviderId: 'acme',
       onDeleteSource,
     });
-    component.handleInput(DEL);
+    component.handleInput('D');
     expect(rendered(component)).toContain('[y/N]');
     component.handleInput('y');
     expect(onDeleteSource).toHaveBeenCalledWith(['acme']);
   });
 
-  it('clears the filter on the first Esc and closes on the second', () => {
+  it('closes on Esc', () => {
     const onClose = vi.fn();
     const component = makeComponent({
       providers: {
@@ -147,9 +132,6 @@ describe('ProviderManagerComponent', () => {
       } as unknown as Record<string, ProviderConfig>,
       onClose,
     });
-    component.handleInput('a');
-    component.handleInput(ESC);
-    expect(onClose).not.toHaveBeenCalled();
     component.handleInput(ESC);
     expect(onClose).toHaveBeenCalledTimes(1);
   });

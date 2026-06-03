@@ -28,7 +28,7 @@
 - 一律使用**语义 token**：`chalk.hex(colors.<token>)`。仓库 `chalk-named-color-guard` 已强制此约定，**禁止** `chalk.red` / `chalk.gray` 等 named color。
 - `ThemeStyles`（`state.theme.styles.*()`）是可选的便捷封装；用与不用都可，但颜色必须来自 `ColorPalette` token。
 - 可用语义 token 见 `theme/colors.ts`：`primary` `accent` `text` `textStrong` `textDim` `textMuted` `border` `borderFocus` `success` `warning` `error` `status` …
-- **hint 行不做键位高亮**：整行 `textMuted`，不给 `Enter` / `Esc` / `Del` 等键位单独上色。
+- **hint 行不做键位高亮**：整行 `textMuted`，不给 `Enter` / `Esc` / `D` 等键位单独上色。
 
 ## 3. 列表 dialog 标准布局
 
@@ -65,12 +65,12 @@
 | 翻页 | `←→` 或 `PgUp/PgDn` | page | `←→ page` |
 | 确认 / 选中 | `Enter` | select | `Enter select` |
 | 取消 / 关闭 | `Esc` | cancel | `Esc cancel` |
-| 删除 | `Del` | delete | `Del delete` |
+| 删除 | `D` | delete | `D delete` |
 | 清空搜索 | `Backspace` | clear | `Backspace clear` |
 | 切 provider | `Tab` | toggle provider | `Tab toggle provider` |
 | 搜索（标题后缀） | 打字 | — | `(type to search)` |
 
-- **键位 token 首字母大写**（`Enter` / `Esc` / `Tab` / `Backspace` / `Del`），**描述词全小写**（navigate / select / cancel / page / delete / clear）；方向符 `↑↓` / `←→` 原样。
+- **键位 token 首字母大写**（`Enter` / `Esc` / `Tab` / `Backspace` / `D`），**描述词全小写**（navigate / select / cancel / page / delete / clear）；方向符 `↑↓` / `←→` 原样。
 - 方向符统一 `↑↓`（不用 `▲/▼`）。
 - 「离开对话框」统一只说 `cancel`（不混用 close / back / exit / dismiss）。业务语义（如审批的 reject）例外。
 - hint 随状态精简：可搜索列表无 query 时，「type to search」在标题后缀已出现，hint 不重复；有 query 时 hint 追加 `Backspace clear`。
@@ -102,13 +102,13 @@
 | 翻页 | `PgUp` / `PgDn` | `matchesKey(data, Key.pageUp/pageDown)` |
 | 确认 / 选中 | `Enter` | `matchesKey(data, Key.enter)` |
 | 取消 / 关闭 | `Esc` | `matchesKey(data, Key.escape)` |
-| 删除 | `Del` / `Ctrl+D` | `matchesKey(data, Key.delete) \|\| matchesKey(data, Key.ctrl('d'))` |
+| 删除 | `D` | `printableChar(data) === 'D'`（也接受 `'d'`） |
 | 搜索 | 打字 | `printableChar(data)` |
 
 - **字符比较必须经 `printableChar()`**（Kitty 协议），由 `printable-key-guard` 强制；功能键用 `matchesKey(data, Key.*)`。
 - **`Esc` 两段式**：有 query 时先清空 query（`list.clearQuery()`），无 query 时才 `onCancel()`。
 - `←` / `→` 不固定语义：无翻页结构的组件里承担「值切换」（如 `/model` 的 thinking on/off）；`choice-picker` 这类无横向值的列表里用作翻页。**不要**在有 thinking 切换的组件里又拿 `←→` 翻页。
-- **删除键避开字母键**：用 `Del` / `Ctrl+D`，不用 `d`（与搜索打字冲突）。
+- **删除键统一用字母 `D`**（`/provider`、`/plugins` 一致）。字母键要求该列表**不可 type-to-search**（否则会打进搜索框）——当前所有带删除动作的列表都不可搜索；若某列表既要搜索又要删除，删除须改用非打印键。
 
 ## 7. 开关列表与多选（toggle / multi-select）
 
@@ -130,7 +130,7 @@
 - **`Space` 切换当前行状态**（开 ↔ 关），即时生效、dialog 保持打开；hint 含 `Space toggle`。
 - **状态标签**紧跟名称、空 2 格：开 ` enabled`（`success`）、关 ` disabled`（`textDim`）。其它语义（如 `installed`=success、`install…`=primary）按 `statusStyle` 同源处理。
 - `Enter` 在开关列表里另作他用（如「查看详情」`Enter details`），不承担 toggle。
-- 多套独立动作时（toggle / 详情 / 删除 / 进子菜单），hint 逐项列全，键位首字母大写：`Space toggle · Enter details · Del remove`（参照第 4 节大小写规则）。
+- 多套独立动作时（toggle / 详情 / 删除 / 进子菜单），hint 逐项列全，键位首字母大写：`Space toggle · Enter details · D remove`（参照第 4 节大小写规则）。
 - 行下可附 1 行次要信息（id / 数量 / 来源 / 信任级），`textMuted`、` · ` 分隔。
 
 ## 8. Thinking 控件（`/model` 专属）
@@ -169,7 +169,7 @@
 - [ ] hint 整行 `textMuted`，**不**做键位高亮；键位首字母大写、描述词小写、` · ` 分隔。
 - [ ] 选中指针用 `SELECT_POINTER`，当前项用 `CURRENT_MARK`，未自造 `>` / `▶` / `→` / `● ` / `(current)`。
 - [ ] 颜色全部来自 `colors.<token>`，无 named color。
-- [ ] 键位：`↑↓` 移动、`PgUp/PgDn` 翻页、`Enter` 确认、`Esc` 两段式取消、`Del`/`Ctrl+D` 删除；字符比较经 `printableChar()`。
+- [ ] 键位：`↑↓` 移动、`PgUp/PgDn` 翻页、`Enter` 确认、`Esc` 取消（可搜索列表 `Esc` 两段式：先清 query 再关闭）、`D` 删除；字符比较经 `printableChar()`。
 - [ ] 「离开对话框」只说 `cancel`，不混用 close / back / exit / dismiss。
 - [ ] 开关列表用 `Space toggle` 就地切换、不关闭；状态标签 ` enabled`(`success`) / ` disabled`(`textDim`) 紧跟名称空 2 格（见第 7 节）。
 - [ ] 长列表有滚动 / 翻页指示（`▼ N more` 或 `x / y`），空态文案明确（`No matches` 等）。
