@@ -500,10 +500,12 @@ export class KimiChatProvider implements ChatProvider {
           apiError.message.includes('tools.function.parameters') ||
           apiError.message.includes('json schema')
         ) {
+          const toolNames = (createParams['tools'] as Array<{ function?: { name?: string } }>)
+            ?.map((t) => t.function?.name)
+            .filter((n): n is string => typeof n === 'string');
           // eslint-disable-next-line no-console
           console.error(
-            '[KimiChatProvider] 400 error with tools schema. createParams.tools:\n' +
-              JSON.stringify(createParams['tools'], null, 2),
+            `[KimiChatProvider] 400 error with tools schema. tools: [${toolNames?.join(', ') ?? 'unknown'}]`,
           );
         }
       }
