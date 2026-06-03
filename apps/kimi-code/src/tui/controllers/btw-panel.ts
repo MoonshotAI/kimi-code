@@ -38,6 +38,7 @@ export class BtwPanelController {
     panel = new BtwPanelComponent({
       colors: this.host.state.theme.colors,
       markdownTheme: this.host.state.theme.markdownTheme,
+      canUseScrollKeys: () => this.host.state.editor.getText().length === 0,
       terminalRows: () => this.host.state.terminal.rows,
       onPrompt: (prompt) => {
         this.promptAgent(agentId, prompt, panel);
@@ -64,6 +65,13 @@ export class BtwPanelController {
     if (wasRunning) {
       void this.cancelAgent(active.agentId);
     }
+    return true;
+  }
+
+  cancelRunning(): boolean {
+    const active = this.active;
+    if (active === undefined || !active.panel.isRunning()) return false;
+    void this.cancelAgent(active.agentId);
     return true;
   }
 

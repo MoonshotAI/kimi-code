@@ -75,7 +75,11 @@ export class EditorKeyboardController {
         return;
       }
 
-      if (editor.getText().length === 0 && host.btwPanelController.closeOrCancel()) {
+      if (host.btwPanelController.cancelRunning()) {
+        this.clearPendingExit();
+        return;
+      }
+      if (host.btwPanelController.closeOrCancel()) {
         this.clearPendingExit();
         return;
       }

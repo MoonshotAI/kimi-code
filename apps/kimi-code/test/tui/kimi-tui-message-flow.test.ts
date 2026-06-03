@@ -1591,6 +1591,12 @@ describe('KimiTUI message flow', () => {
     expect(collapsed.join('\n')).toContain('answer 8');
     expect(collapsed.join('\n')).not.toContain('question 1');
 
+    driver.state.editor.setText('draft main input');
+    const collapsedWithInput = panel.render(80).map(stripSgr);
+    expect(collapsedWithInput.join('\n')).toContain('BTW ─ Esc close');
+    expect(collapsedWithInput.join('\n')).not.toContain('↑↓ scroll');
+    driver.state.editor.setText('');
+
     const requestRender = vi.mocked(driver.state.ui.requestRender);
     requestRender.mockClear();
     for (let i = 0; i < 20; i++) {
@@ -1646,6 +1652,92 @@ describe('KimiTUI message flow', () => {
     expect(editorTopBorder.startsWith('╭')).toBe(true);
     expect(editorTopBorder.endsWith('╮')).toBe(true);
     expect(driver.state.editor.focused).toBe(true);
+  });
+
+  it('cancels a running /btw panel on Ctrl-C without closing it or cancelling main streaming', async () => {
+    const session = makeSession();
+    const { driver, harness } = await makeDriver(session);
+    const cancelledAgentIds: string[] = [];
+    session.cancel.mockImplementation(async () => {
+      cancelledAgentIds.push(harness.interactiveAgentId);
+    });
+    await openBtwPanel(driver, session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.editor.setText('draft main input');
+
+    const panel = getMountedBtwPanel(driver);
+    expect(panel.isRunning()).toBe(true);
+
+    driver.state.editor.onCtrlC?.();
+
+    expect(session.cancel).toHaveBeenCalledOnce();
+    expect(cancelledAgentIds).toEqual(['agent-btw']);
+    expect(getMountedBtwPanel(driver)).toBe(panel);
+    expect(driver.state.btwPanelContainer.children).toHaveLength(2);
+    expect(driver.state.editor.focused).toBe(true);
+    expect(driver.state.editor.getText()).toBe('draft main input');
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+  });
+
+  it('preserves rendered /btw output when a running panel is cancelled', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session);
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        delta: 'partial side answer',
+      } as Event,
+      () => {},
+    );
+
+    driver.state.editor.onCtrlC?.();
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        reason: 'cancelled',
+      } as Event,
+      () => {},
+    );
+
+    const panel = stripSgr(renderBtwPanel(driver));
+    expect(panel).toContain('partial side answer');
+    expect(panel).toContain('BTW turn ended with reason: cancelled');
+  });
+
+  it('closes a completed /btw panel on Ctrl-C without cancelling main streaming', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        reason: 'completed',
+      } as Event,
+      () => {},
+    );
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.editor.setText('draft main input');
+
+    expect(getMountedBtwPanel(driver).isRunning()).toBe(false);
+
+    driver.state.editor.onCtrlC?.();
+
+    expect(session.cancel).not.toHaveBeenCalled();
+    expect(driver.state.btwPanelContainer.children).toHaveLength(0);
+    expect(driver.state.editor.focused).toBe(true);
+    expect(driver.state.editor.getText()).toBe('draft main input');
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
   });
 
   it('closes a completed /btw panel on Escape without cancelling it', async () => {

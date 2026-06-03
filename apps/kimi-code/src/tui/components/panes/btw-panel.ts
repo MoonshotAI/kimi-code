@@ -30,6 +30,7 @@ interface BtwBodyRender {
 export interface BtwPanelOptions {
   readonly colors: ColorPalette;
   readonly markdownTheme: MarkdownTheme;
+  readonly canUseScrollKeys: () => boolean;
   readonly onPrompt: (prompt: string) => void;
   readonly terminalRows: () => number;
 }
@@ -119,7 +120,9 @@ export class BtwPanelComponent implements Component {
 
   private renderTopBorder(width: number, truncated: boolean): string {
     const paint = (s: string): string => chalk.hex(this.options.colors.border)(s);
-    const hint = truncated ? 'Esc close · ↑↓ scroll ' : 'Esc close ';
+    const hint = truncated && this.options.canUseScrollKeys()
+      ? 'Esc close · ↑↓ scroll '
+      : 'Esc close ';
     const title =
       chalk.hex(this.options.colors.accent).bold(' BTW ') +
       paint('─ ') +
@@ -189,21 +192,12 @@ export class BtwPanelComponent implements Component {
 
   private renderTurn(turn: BtwTurn, width: number): string[] {
     const prompt = chalk.hex(this.options.colors.accent)(`Q: ${turn.prompt}`);
-    if (turn.error !== undefined) {
-      return [
-        ...new Text(prompt, 0, 0).render(width),
-        ...new Text(chalk.hex(this.options.colors.error)(turn.error), 0, 0).render(width),
-      ];
-    }
+    const lines = [...new Text(prompt, 0, 0).render(width)];
     const answer = turn.answer.trim();
-    if (answer.length > 0) {
-      return [
-        ...new Text(prompt, 0, 0).render(width),
-        ...new Markdown(answer, 0, 0, this.options.markdownTheme).render(width),
-      ];
-    }
     const thinking = turn.thinking.trim();
-    if (thinking.length > 0) {
+    if (answer.length > 0) {
+      lines.push(...new Markdown(answer, 0, 0, this.options.markdownTheme).render(width));
+    } else if (thinking.length > 0) {
       const thinkingLines = new Text(chalk.hex(this.options.colors.textDim)(thinking), 0, 0).render(
         width,
       );
@@ -211,12 +205,15 @@ export class BtwPanelComponent implements Component {
         thinkingLines.length > THINKING_PREVIEW_LINES
           ? thinkingLines.slice(thinkingLines.length - THINKING_PREVIEW_LINES)
           : thinkingLines;
-      return [...new Text(prompt, 0, 0).render(width), ...visibleThinking];
+      lines.push(...visibleThinking);
+    } else if (turn.error === undefined) {
+      lines.push(chalk.hex(this.options.colors.textDim)('Waiting for answer...'));
     }
-    return [
-      ...new Text(prompt, 0, 0).render(width),
-      chalk.hex(this.options.colors.textDim)('Waiting for answer...'),
-    ];
+    if (turn.error !== undefined) {
+      const error = chalk.hex(this.options.colors.error)(turn.error);
+      lines.push(...new Text(error, 0, 0).render(width));
+    }
+    return lines;
   }
 
   private renderBodyLine(line: string, width: number): string {
