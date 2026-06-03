@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { FileTokenStorage, type TokenInfo } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { KimiHarness, type KimiError } from '#/index';
+import { createKimiHarness, type KimiError, type KimiHarness } from '#/index';
 import { makeTempDir, removeTempDirs, waitForAgentWireEvent } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
 
@@ -28,7 +28,7 @@ describe('Session.setModel', () => {
   it('updates the runtime model and sends config.update with the resolved model', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-model-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-model-work-');
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       await configureLocalProvider(harness);
@@ -61,7 +61,7 @@ describe('Session.setModel', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-model-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-model-work-');
     await new FileTokenStorage(join(homeDir, 'credentials')).save('kimi-code', freshToken());
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       await harness.setConfig({
@@ -117,7 +117,7 @@ describe('Session.setModel', () => {
   it('rejects empty model names', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-model-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-model-work-');
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       await configureLocalProvider(harness);
@@ -135,7 +135,7 @@ describe('Session.setModel', () => {
   it('rejects after the session is closed', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-model-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-model-work-');
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       await configureLocalProvider(harness);

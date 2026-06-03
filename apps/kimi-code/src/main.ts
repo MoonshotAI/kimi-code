@@ -6,7 +6,7 @@
  */
 
 import {
-  KimiHarness,
+  createKimiHarness,
   flushDiagnosticLogs,
   log,
   resolveGlobalLogPath,
@@ -78,7 +78,7 @@ export async function handleUpgradeCommand(version: string): Promise<void> {
     withContext: withTelemetryContext,
     setContext: setTelemetryContext,
   };
-  const harness = new KimiHarness({
+  const harness = createKimiHarness({
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
     telemetry: telemetryClient,
