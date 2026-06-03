@@ -1,18 +1,19 @@
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'pathe';
-import { fileURLToPath } from 'node:url';
+import { join } from 'pathe';
 
 import { testKaos } from '../fixtures/test-kaos';
 import type { ProviderConfig, ToolCall } from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent, AgentOptions } from '../../src/agent';
+import { trimTrailingOpenToolExchange } from '../../src/agent/context/projector';
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { SessionAPIImpl } from '../../src/session/rpc';
+import { estimateTokensForMessages } from '../../src/utils/tokens';
 import { createScriptedGenerate } from '../agent/harness/scripted-generate';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 
@@ -224,6 +225,16 @@ describe('AgentAPI.startBtw', () => {
       const agentId = await api.startBtw({ agentId: 'main' });
       expect(agentId).toBe('agent-0');
       expect(scripted.calls).toHaveLength(0);
+      const childAgent = session.agents.get(agentId);
+      if (childAgent === undefined) throw new Error('Expected /btw child agent');
+      const inheritedHistory = trimTrailingOpenToolExchange(
+        mainAgent.context.project(mainAgent.context.history),
+      );
+      expect(childAgent.context.history.slice(0, inheritedHistory.length)).toEqual(inheritedHistory);
+      expect(childAgent.context.tokenCount).toBe(0);
+      expect(childAgent.context.tokenCountWithPending).toBeGreaterThanOrEqual(
+        estimateTokensForMessages(inheritedHistory),
+      );
 
       await api.prompt({
         agentId,

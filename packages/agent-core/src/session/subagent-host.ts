@@ -203,7 +203,7 @@ export class SessionSubagentHost {
       systemPrompt: parent.config.systemPrompt,
     });
     child.tools.copyLoopToolsFrom(parent.tools);
-    child.context.appendProjectedHistoryFrom(parent.context);
+    child.context.useProjectedHistoryFrom(parent.context);
     child.context.appendSystemReminder(SIDE_QUESTION_SYSTEM_REMINDER.trim(), {
       kind: 'system_trigger',
       name: 'btw',

@@ -175,8 +175,9 @@ export class ContextMemory {
     return this.project(this.history);
   }
 
-  appendProjectedHistoryFrom(source: ContextMemory): void {
-    this._history.push(...trimTrailingOpenToolExchange(source.project(source.history)));
+  useProjectedHistoryFrom(source: ContextMemory): void {
+    this.clear();
+    this.pushHistory(...trimTrailingOpenToolExchange(source.project(source.history)));
   }
 
   appendLoopEvent(event: LoopRecordedEvent): void {
