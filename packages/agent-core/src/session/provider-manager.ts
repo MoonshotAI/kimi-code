@@ -236,6 +236,7 @@ function toKosongProviderConfig(
         baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
         reasoningKey,
+        ...(maxOutputSize !== undefined ? { maxTokens: maxOutputSize } : {}),
         ...defaultHeadersField(provider.customHeaders),
       };
     case 'kimi':
@@ -259,6 +260,7 @@ function toKosongProviderConfig(
         model,
         baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
+        ...(maxOutputSize !== undefined ? { maxOutputTokens: maxOutputSize } : {}),
         ...defaultHeadersField(provider.customHeaders),
       };
     case 'vertexai': {

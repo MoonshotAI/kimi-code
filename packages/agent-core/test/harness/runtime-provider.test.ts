@@ -338,6 +338,101 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
     });
   });
 
+  it('forwards alias.maxOutputSize to the openai provider config as maxTokens', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          openai: {
+            type: 'openai',
+            apiKey: 'sk-openai',
+            baseUrl: 'https://openai.example/v1',
+          },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'deepseek-alias': {
+            provider: 'openai',
+            model: 'deepseek-chat',
+            maxContextSize: 1_000_000,
+            maxOutputSize: 393216,
+          },
+        },
+      },
+      model: 'deepseek-alias',
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'openai',
+      model: 'deepseek-chat',
+      maxTokens: 393216,
+    });
+  });
+
+  it('omits maxTokens from the openai provider config when alias.maxOutputSize is unset', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          openai: {
+            type: 'openai',
+            apiKey: 'sk-openai',
+            baseUrl: 'https://openai.example/v1',
+          },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'gpt-alias': {
+            provider: 'openai',
+            model: 'gpt-4o',
+            maxContextSize: 128000,
+          },
+        },
+      },
+      model: 'gpt-alias',
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'openai',
+      model: 'gpt-4o',
+    });
+    expect('maxTokens' in resolved.provider).toBe(false);
+  });
+
+  it('forwards alias.maxOutputSize to the openai_responses provider config as maxOutputTokens', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          openai_resp: {
+            type: 'openai_responses',
+            apiKey: 'sk-openai',
+            baseUrl: 'https://openai.example/v1',
+          },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'o3-alias': {
+            provider: 'openai_resp',
+            model: 'o3',
+            maxContextSize: 200000,
+            maxOutputSize: 100000,
+          },
+        },
+      },
+      model: 'o3-alias',
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'openai_responses',
+      model: 'o3',
+      maxOutputTokens: 100000,
+    });
+  });
+
   it('omits adaptiveThinking when alias.adaptiveThinking is unset', () => {
     const resolved = resolveRuntimeProvider({
       config: {
