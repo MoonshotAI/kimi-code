@@ -1,12 +1,8 @@
 name: Deploy Docs to GitHub Pages
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'docs/**'
-      - '.github/workflows/docs-deploy.yml'
+  release:
+    types: [published]
 
   workflow_dispatch:
 
@@ -45,7 +41,6 @@ jobs:
           path: docs/.vitepress/dist
 
   deploy:
-    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     environment:
