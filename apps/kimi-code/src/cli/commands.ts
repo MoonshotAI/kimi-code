@@ -27,7 +27,6 @@ export function createProgram(
     .description('The Starting Point for Next-Gen Agents')
     .version(version, '-V, --version')
     .allowUnknownOption(false)
-    .allowExcessArguments(true)
     .showSuggestionAfterError()
     .configureHelp({ helpWidth: 100 })
     .helpOption('-h, --help', 'Show help.')
@@ -103,10 +102,11 @@ export function createProgram(
       onPluginNodeRunner(entry, args);
     });
 
-  program.action((...actionArgs: unknown[]) => {
-    const excess = program.args;
-    if (excess.length > 0) {
-      const unknown = excess[0]!;
+  program
+    .argument('[unknown...]')
+    .action((unknownArgs: string[]) => {
+    if (unknownArgs.length > 0) {
+      const unknown = unknownArgs[0]!;
       const available = program.commands
         .filter((cmd) => !cmd.name().startsWith('__'))
         .map((cmd) => cmd.name());
