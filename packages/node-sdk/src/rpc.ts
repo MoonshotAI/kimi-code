@@ -129,6 +129,11 @@ export abstract class SDKRpcClientBase {
     return rpc.resumeSession({ ...input, sessionId: input.id });
   }
 
+  async reloadSession(input: SessionIdRpcInput): Promise<ResumedSessionSummary> {
+    const rpc = await this.getRpc();
+    return rpc.reloadSession({ sessionId: input.sessionId });
+  }
+
   async forkSession(input: ForkSessionInput): Promise<SessionSummary> {
     const rpc = await this.getRpc();
     return rpc.forkSession({

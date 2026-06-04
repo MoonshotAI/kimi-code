@@ -1232,6 +1232,34 @@ export class KimiTUI {
     this.showStatus(statusMessage);
   }
 
+  async reloadCurrentSessionView(session: Session, statusMessage: string): Promise<void> {
+    this.sessionEventUnsubscribe?.();
+    this.sessionEventUnsubscribe = undefined;
+    this.clearReverseRpcPanels();
+    session.setApprovalHandler(undefined);
+    session.setQuestionHandler(undefined);
+    this.approvalController.cancelAll('reloading session');
+    this.questionController.cancelAll('reloading session');
+
+    this.resetSessionRuntime();
+    this.session = session;
+    this.harness.setTelemetryContext({ sessionId: session.id });
+    this.registerSessionHandlers(session);
+    await this.syncRuntimeState(session);
+    this.updateTerminalTitle();
+    try {
+      await this.refreshSkillCommands(session);
+    } catch {
+      /* keep the reloaded session usable even if dynamic skills fail */
+    }
+    this.sessionEventHandler.startSubscription();
+    const resumeState = session.getResumeState();
+    if (resumeState?.warning !== undefined) {
+      this.showStatus(`Warning: ${resumeState.warning}`, this.state.theme.colors.warning);
+    }
+    this.showStatus(statusMessage);
+  }
+
   async createNewSession(): Promise<void> {
     if (this.state.appState.isReplaying) {
       this.showError('Cannot start a new session while history is replaying.');

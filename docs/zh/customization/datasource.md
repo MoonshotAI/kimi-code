@@ -1,4 +1,4 @@
-# 官方插件
+# Kimi Datasource 官方插件
 
 Kimi Datasource 是 Kimi Code 官方数据插件，通过自然语言直接查询金融行情、宏观经济、企业工商和学术文献，无需手动调用接口或申请数据账号。
 
