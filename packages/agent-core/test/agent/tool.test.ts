@@ -284,7 +284,7 @@ describe('ToolManager setActiveTools filtering', () => {
     expect(warnings[0]).toContain('not available');
 
     // Step 3: tool becomes available — model now supports image_in
-    agent.config.modelCapabilities = { image_in: true } as import('@moonshot-ai/kosong').ModelCapability;
+    (agent.config as any).modelCapabilities = { image_in: true };
 
     // Step 4: second initializeBuiltinTools — ReadMediaFile now resolves
     tm.initializeBuiltinTools();
