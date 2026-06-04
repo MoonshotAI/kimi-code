@@ -244,6 +244,88 @@ enabled = "yes"
     expect(err).toContain('notifications.enabled:');
   });
 
+  it('emits a JSON report with ok=true when --json is set and config is valid', async () => {
+    await writeValidConfig();
+    await writeValidTuiConfig();
+    const { deps, stdout, stderr } = makeDeps();
+
+    const code = await handleDoctor(deps, { json: true });
+
+    expect(code).toBe(0);
+    expect(stderr.join('')).toBe('');
+    const report = JSON.parse(stdout.join('')) as Record<string, unknown>;
+    expect(report['report_version']).toBe(1);
+    expect(report['ok']).toBe(true);
+    expect(report['issue_count']).toBe(0);
+    const results = report['results'] as ReadonlyArray<Record<string, unknown>>;
+    expect(results).toHaveLength(2);
+    expect(results[0]).toMatchObject({ label: 'config.toml', status: 'OK' });
+    expect(results[1]).toMatchObject({ label: 'tui.toml', status: 'OK' });
+  });
+
+  it('emits a JSON report with ok=false when --json is set and a config is invalid', async () => {
+    await writeFile(
+      join(dir, 'config.toml'),
+      `
+[providers.kimi]
+type = "kimi"
+
+[models.kimi]
+provider = "kimi"
+model = "kimi"
+max_context_size = 0
+`,
+      'utf-8',
+    );
+    const { deps, stdout, stderr } = makeDeps();
+
+    const code = await handleDoctor(deps, { json: true });
+
+    expect(code).toBe(1);
+    expect(stderr.join('')).toBe('');
+    const report = JSON.parse(stdout.join('')) as Record<string, unknown>;
+    expect(report['ok']).toBe(false);
+    expect(report['issue_count']).toBe(1);
+    const results = report['results'] as ReadonlyArray<Record<string, unknown>>;
+    const configResult = results.find((r) => r['label'] === 'config.toml');
+    expect(configResult).toMatchObject({ status: 'ERROR' });
+    expect(typeof configResult?.['message']).toBe('string');
+  });
+
+  it('routes --json through the commander parser', async () => {
+    await writeValidConfig();
+    const { deps, stdout, stderr, exitCodes } = makeDeps();
+    const program = new Command('kimi');
+    registerDoctorCommand(program, deps);
+
+    await program.parseAsync(['node', 'kimi', 'doctor', 'config', '--json']);
+
+    expect(exitCodes).toEqual([]);
+    expect(stderr.join('')).toBe('');
+    const report = JSON.parse(stdout.join('')) as Record<string, unknown>;
+    expect(report['ok']).toBe(true);
+    const results = report['results'] as ReadonlyArray<Record<string, unknown>>;
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ label: 'config.toml', status: 'OK' });
+  });
+
+  it('accepts --json on the root doctor command (no subcommand)', async () => {
+    await writeValidConfig();
+    await writeValidTuiConfig();
+    const { deps, stdout, stderr, exitCodes } = makeDeps();
+    const program = new Command('kimi');
+    registerDoctorCommand(program, deps);
+
+    await program.parseAsync(['node', 'kimi', 'doctor', '--json']);
+
+    expect(exitCodes).toEqual([]);
+    expect(stderr.join('')).toBe('');
+    const report = JSON.parse(stdout.join('')) as Record<string, unknown>;
+    expect(report['ok']).toBe(true);
+    const results = report['results'] as ReadonlyArray<Record<string, unknown>>;
+    expect(results).toHaveLength(2);
+  });
+
   it('formats wrapped Zod validation issues with TOML-style field paths for config.toml', async () => {
     await writeFile(
       join(dir, 'config.toml'),

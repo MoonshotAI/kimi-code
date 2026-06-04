@@ -34,6 +34,19 @@ export interface DoctorDeps {
 export interface DoctorOptions {
   readonly target?: 'config' | 'tui';
   readonly path?: string;
+  readonly json?: boolean;
+}
+
+/**
+ * Stable JSON shape emitted when `--json` is set. Versioned via `report_version`
+ * so downstream tooling can pin against a schema. Bump when fields change
+ * shape (additive changes don't need a bump).
+ */
+interface DoctorJsonReport {
+  readonly report_version: 1;
+  readonly ok: boolean;
+  readonly issue_count: number;
+  readonly results: readonly CheckResult[];
 }
 
 interface CheckSpec {
@@ -69,6 +82,13 @@ export async function handleDoctor(deps: DoctorDeps, options: DoctorOptions): Pr
   const results = await Promise.all(specs.map((spec) => checkTomlFile(resolved, spec)));
 
   const issueCount = results.filter((result) => result.status === 'ERROR').length;
+  if (options.json === true) {
+    // JSON mode always writes to stdout regardless of exit code so callers can
+    // pipe through `jq` without juggling stderr — the exit code conveys failure.
+    resolved.stdout.write(formatJson(results, issueCount));
+    return issueCount === 0 ? 0 : 1;
+  }
+
   const text = issueCount === 0 ? formatSuccess(results) : formatFailure(results, issueCount);
   if (issueCount === 0) {
     resolved.stdout.write(text);
@@ -79,28 +99,39 @@ export async function handleDoctor(deps: DoctorDeps, options: DoctorOptions): Pr
 }
 
 export function registerDoctorCommand(parent: Command, deps?: Partial<DoctorDeps>): void {
+  // `--json` is declared once on the parent `doctor` command and consumed via
+  // `cmd.optsWithGlobals()` in every action so users can pass it after the root
+  // (`doctor --json`) or after a subcommand (`doctor config --json`). Declaring
+  // the same option on each subcommand would split the flag namespace and let
+  // the parent silently swallow the value when the user typed it on a child.
   const doctor = parent
     .command('doctor')
     .description('Validate Kimi Code configuration files.')
-    .action(async () => {
-      await runDoctorCommand(deps, {});
+    .option('--json', 'Output results as a machine-readable JSON report.', false)
+    .action(async (_opts: unknown, cmd: Command) => {
+      await runDoctorCommand(deps, { json: jsonOptionFrom(cmd) });
     });
 
   doctor
     .command('config')
     .description('Validate config.toml.')
     .argument('[path]', 'Validate this file as config.toml instead of the default path.')
-    .action(async (path: string | undefined) => {
-      await runDoctorCommand(deps, { target: 'config', path });
+    .action(async (path: string | undefined, _opts: unknown, cmd: Command) => {
+      await runDoctorCommand(deps, { target: 'config', path, json: jsonOptionFrom(cmd) });
     });
 
   doctor
     .command('tui')
     .description('Validate tui.toml.')
     .argument('[path]', 'Validate this file as tui.toml instead of the default path.')
-    .action(async (path: string | undefined) => {
-      await runDoctorCommand(deps, { target: 'tui', path });
+    .action(async (path: string | undefined, _opts: unknown, cmd: Command) => {
+      await runDoctorCommand(deps, { target: 'tui', path, json: jsonOptionFrom(cmd) });
     });
+}
+
+function jsonOptionFrom(cmd: Command): boolean {
+  const opts = cmd.optsWithGlobals() as { json?: unknown };
+  return opts.json === true;
 }
 
 async function runDoctorCommand(
@@ -234,6 +265,16 @@ function resolveTuiTargetPath(
 
 function resolveInputPath(input: string, cwd: string): string {
   return isAbsolute(input) ? input : resolve(cwd, input);
+}
+
+function formatJson(results: readonly CheckResult[], issueCount: number): string {
+  const report: DoctorJsonReport = {
+    report_version: 1,
+    ok: issueCount === 0,
+    issue_count: issueCount,
+    results,
+  };
+  return JSON.stringify(report, null, 2) + '\n';
 }
 
 function formatSuccess(results: readonly CheckResult[]): string {
