@@ -30,6 +30,8 @@ export type {
 } from '#/catalog';
 
 export {
+  parseConfigString,
+  resolveConfigPath,
   ErrorCodes,
   KimiError,
   type KimiErrorCode,
