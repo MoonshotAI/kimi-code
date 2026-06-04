@@ -259,6 +259,30 @@ describe('attachSelectedLabel', () => {
     expect(result).toEqual({ decision: 'rejected', selectedLabel: 'Reject' });
   });
 
+  it('attaches "Approve once" when the legacy "approve" optionId is selected', () => {
+    const approval: ApprovalResponse = { decision: 'approved' };
+    const result = attachSelectedLabel(
+      { outcome: { outcome: 'selected', optionId: 'approve' } },
+      approval,
+      options,
+    );
+    expect(result).toEqual({ decision: 'approved', selectedLabel: 'Approve once' });
+  });
+
+  it('attaches "Approve for this session" when the legacy "approve_for_session" optionId is selected', () => {
+    const approval: ApprovalResponse = { decision: 'approved', scope: 'session' };
+    const result = attachSelectedLabel(
+      { outcome: { outcome: 'selected', optionId: 'approve_for_session' } },
+      approval,
+      options,
+    );
+    expect(result).toEqual({
+      decision: 'approved',
+      scope: 'session',
+      selectedLabel: 'Approve for this session',
+    });
+  });
+
   it('returns the input unchanged when the optionId is unknown', () => {
     const approval: ApprovalResponse = { decision: 'rejected' };
     const result = attachSelectedLabel(

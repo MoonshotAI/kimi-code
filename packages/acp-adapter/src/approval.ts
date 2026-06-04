@@ -322,7 +322,14 @@ export function attachSelectedLabel(
   ) {
     return approval;
   }
-  const matched = options.find((o) => o.optionId === outcome.optionId);
+  // Normalize legacy ids (Python ACP SDK 0.8.x sends `approve` /
+  // `approve_for_session` / `reject`) to their canonical equivalents
+  // before the lookup. Without this, legacy approvals are correctly
+  // routed by `permissionResponseToApprovalResponse` but drop the
+  // human-readable `selectedLabel` (e.g. "Approve for this session"),
+  // so PermissionResult hooks and approval records lose context.
+  const normalizedOptionId = LEGACY_OPTION_ID_MAP[outcome.optionId] ?? outcome.optionId;
+  const matched = options.find((o) => o.optionId === normalizedOptionId);
   if (!matched) return approval;
   return { ...approval, selectedLabel: matched.name };
 }
