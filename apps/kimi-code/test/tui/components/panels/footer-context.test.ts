@@ -145,6 +145,58 @@ describe('FooterComponent — context NaN resilience', () => {
       chalk.level = previousLevel;
     }
   });
+
+  it('colorizes diff additions in success color and deletions in error color', () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      const out = formatFooterGitBadge(
+        {
+          branch: 'main',
+          dirty: true,
+          ahead: 0,
+          behind: 0,
+          diffAdded: 42,
+          diffDeleted: 7,
+          pullRequest: null,
+        },
+        darkColors,
+      );
+
+      const plain = strip(out);
+      expect(plain).toContain('+42');
+      expect(plain).toContain('-7');
+      expect(out).toContain(hexToSgr(darkColors.success));
+      expect(out).toContain(hexToSgr(darkColors.error));
+    } finally {
+      chalk.level = previousLevel;
+    }
+  });
+
+  it('renders dirty marker in warning color when no line stats are available', () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      const out = formatFooterGitBadge(
+        {
+          branch: 'main',
+          dirty: true,
+          ahead: 0,
+          behind: 0,
+          diffAdded: 0,
+          diffDeleted: 0,
+          pullRequest: null,
+        },
+        darkColors,
+      );
+
+      const plain = strip(out);
+      expect(plain).toContain('±');
+      expect(out).toContain(hexToSgr(darkColors.warning));
+    } finally {
+      chalk.level = previousLevel;
+    }
+  });
 });
 
 describe('buildWeightedTips — weighted rotation', () => {

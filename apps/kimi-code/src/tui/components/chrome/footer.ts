@@ -206,13 +206,26 @@ function formatContextStatus(usage: number, tokens?: number, maxTokens?: number)
 }
 
 export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): string {
-  const base = chalk.hex(colors.status)(formatGitBadgeBase(status));
+  const base = formatColorizedGitBadge(status, colors);
   if (status.pullRequest === null) return base;
 
   const pullRequest = chalk.hex(colors.primary)(
     formatPullRequestBadge(status.pullRequest, { linkPullRequest: true }),
   );
   return `${base} ${pullRequest}`;
+}
+
+function formatColorizedGitBadge(status: GitStatus, colors: ColorPalette): string {
+  const parts: string[] = [];
+  if (status.diffAdded > 0) parts.push(chalk.hex(colors.success)(`+${String(status.diffAdded)}`));
+  if (status.diffDeleted > 0) parts.push(chalk.hex(colors.error)(`-${String(status.diffDeleted)}`));
+  if (parts.length === 0 && status.dirty) parts.push(chalk.hex(colors.warning)('±'));
+  let sync = '';
+  if (status.ahead > 0) sync += `↑${status.ahead}`;
+  if (status.behind > 0) sync += `↓${status.behind}`;
+  if (sync) parts.push(chalk.hex(colors.status)(sync));
+  const branch = chalk.hex(colors.status)(status.branch);
+  return parts.length === 0 ? branch : `${branch} ${chalk.hex(colors.status)('[')}${parts.join(' ')}${chalk.hex(colors.status)(']')}`;
 }
 
 export class FooterComponent implements Component {
