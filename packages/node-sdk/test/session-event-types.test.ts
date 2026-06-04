@@ -33,6 +33,7 @@ describe('Event public types', () => {
   it('narrows subagent lifecycle events by type', () => {
     expectTypeOf<EventByType<'subagent.spawned'>['subagentId']>().toEqualTypeOf<string>();
     expectTypeOf<EventByType<'subagent.spawned'>['runInBackground']>().toEqualTypeOf<boolean>();
+    expectTypeOf<EventByType<'subagent.suspended'>['reason']>().toEqualTypeOf<string>();
   });
 
   it('narrows cron fired events by type', () => {
@@ -76,6 +77,7 @@ describe('Event public types', () => {
         case 'mcp.server.status':
         case 'subagent.spawned':
         case 'subagent.started':
+        case 'subagent.suspended':
         case 'subagent.completed':
         case 'subagent.failed':
         case 'compaction.started':

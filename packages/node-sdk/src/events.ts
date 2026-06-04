@@ -83,6 +83,7 @@ export type {
 export type {
   SubagentSpawnedEvent,
   SubagentStartedEvent,
+  SubagentSuspendedEvent,
   SubagentCompletedEvent,
   SubagentFailedEvent,
 } from '@moonshot-ai/agent-core';

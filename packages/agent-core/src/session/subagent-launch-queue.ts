@@ -10,6 +10,7 @@ const RATE_LIMIT_SLOT_REDUCTION_WINDOW_MS = 1000;
 const RATE_LIMIT_SLOT_REDUCTION_MAX_PER_WINDOW = 3;
 const RATE_LIMIT_RETRY_EXHAUSTED_MESSAGE =
   'Subagent failed after another 429 with only one retry slot remaining.';
+const RATE_LIMIT_SUSPENDED_REASON = 'Provider rate limit; subagent requeued for retry.';
 
 export type QueuedSubagentTask<T = unknown> = {
   readonly data: T;
@@ -42,6 +43,13 @@ export type QueuedSubagentRateLimitOutcome = {
   readonly agentId?: string;
 };
 
+export type QueuedSubagentSuspended = {
+  readonly task: QueuedSubagentTask;
+  readonly agentId: string;
+  readonly reason: string;
+  readonly retryAttempt: number;
+};
+
 export type QueuedSubagentAttemptOutcome<T> =
   | QueuedSubagentRateLimitOutcome
   | QueuedSubagentRunResult<T>;
@@ -49,6 +57,7 @@ export type QueuedSubagentAttemptOutcome<T> =
 type QueuedSubagentPending = {
   readonly index: number;
   readonly agentId?: string;
+  readonly rateLimitAttempts?: number;
 };
 
 type QueuedSubagentAttempt<T> = {
@@ -70,8 +79,21 @@ type RunQueuedSubagentAttempt = <T>(
   options: QueuedSubagentAttemptOptions,
 ) => Promise<QueuedSubagentAttemptOutcome<T>>;
 
+type SubagentLaunchQueueEvents = {
+  readonly onSuspended?: (event: QueuedSubagentSuspended) => void;
+};
+
+type SlotReductionResult = {
+  readonly canRetry: boolean;
+  readonly slotLimitBefore: number;
+  readonly slotLimitAfter: number;
+};
+
 export class SubagentLaunchQueue {
-  constructor(private readonly runAttempt: RunQueuedSubagentAttempt) {}
+  constructor(
+    private readonly runAttempt: RunQueuedSubagentAttempt,
+    private readonly events: SubagentLaunchQueueEvents = {},
+  ) {}
 
   async run<T>(
     tasks: readonly QueuedSubagentTask<T>[],
@@ -119,7 +141,7 @@ export class SubagentLaunchQueue {
     const unreadyActiveCount = (): number =>
       active.reduce((count, attempt) => count + (attempt.ready ? 0 : 1), 0);
 
-    const reduceSlotsAfterRateLimit = (): boolean => {
+    const reduceSlotsAfterRateLimit = (): SlotReductionResult => {
       const now = Date.now();
       if (
         rateLimitReductionWindowStartMs === undefined ||
@@ -132,18 +154,18 @@ export class SubagentLaunchQueue {
       const currentLimit = slotLimit ?? SUBAGENT_LAUNCH_BATCH_SIZE;
       if (currentLimit <= 1) {
         slotLimit = currentLimit;
-        return false;
+        return { canRetry: false, slotLimitBefore: currentLimit, slotLimitAfter: slotLimit };
       }
       if (
         rateLimitReductionsInWindow >= RATE_LIMIT_SLOT_REDUCTION_MAX_PER_WINDOW
       ) {
         slotLimit = currentLimit;
-        return true;
+        return { canRetry: true, slotLimitBefore: currentLimit, slotLimitAfter: slotLimit };
       }
 
       slotLimit = currentLimit - 1;
       rateLimitReductionsInWindow += 1;
-      return true;
+      return { canRetry: true, slotLimitBefore: currentLimit, slotLimitAfter: slotLimit };
     };
 
     const launch = (pending: QueuedSubagentPending): QueuedSubagentAttempt<T> => {
@@ -189,18 +211,30 @@ export class SubagentLaunchQueue {
       active.splice(active.indexOf(attempt), 1);
       const outcome = await attempt.outcome;
       if (isRateLimitedOutcome(outcome)) {
-        if (!reduceSlotsAfterRateLimit()) {
+        const reduction = reduceSlotsAfterRateLimit();
+        const agentId = outcome.agentId ?? attempt.pending.agentId;
+        if (!reduction.canRetry) {
           results[attempt.pending.index] = {
             task: tasks[attempt.pending.index]!,
-            agentId: outcome.agentId ?? attempt.pending.agentId,
+            agentId,
             status: 'failed',
             error: RATE_LIMIT_RETRY_EXHAUSTED_MESSAGE,
           };
           return true;
         }
+        const retryAttempt = (attempt.pending.rateLimitAttempts ?? 0) + 1;
+        if (agentId !== undefined) {
+          this.events.onSuspended?.({
+            task: tasks[attempt.pending.index]!,
+            agentId,
+            reason: RATE_LIMIT_SUSPENDED_REASON,
+            retryAttempt,
+          });
+        }
         requeueRateLimited({
           index: attempt.pending.index,
-          agentId: outcome.agentId ?? attempt.pending.agentId,
+          agentId,
+          rateLimitAttempts: retryAttempt,
         });
         return false;
       }

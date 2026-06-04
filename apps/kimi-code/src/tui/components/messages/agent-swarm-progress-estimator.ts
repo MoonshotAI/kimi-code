@@ -11,6 +11,7 @@ const HALF_TICK = 0.5;
 export type AgentSwarmProgressEstimatorPhase =
   | 'pending'
   | 'queued'
+  | 'suspended'
   | 'running'
   | 'completed'
   | 'failed'

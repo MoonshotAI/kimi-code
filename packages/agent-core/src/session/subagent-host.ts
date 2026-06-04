@@ -28,6 +28,7 @@ import {
   type QueuedSubagentAttemptOutcome,
   type QueuedSubagentRunOptions,
   type QueuedSubagentRunResult,
+  type QueuedSubagentSuspended,
   type QueuedSubagentTask,
 } from './subagent-launch-queue';
 import SUMMARY_CONTINUATION_PROMPT from './summary-continuation.md';
@@ -111,8 +112,13 @@ export class SessionSubagentHost {
     private readonly ownerAgentId: string,
     readonly backgroundTaskTimeoutMs?: number | undefined,
   ) {
-    this.launchQueue = new SubagentLaunchQueue((task, options) =>
-      this.runQueuedTaskAttempt(task, options),
+    this.launchQueue = new SubagentLaunchQueue(
+      (task, options) => this.runQueuedTaskAttempt(task, options),
+      {
+        onSuspended: (event) => {
+          this.emitSubagentSuspended(event);
+        },
+      },
     );
   }
 
@@ -590,6 +596,21 @@ export class SessionSubagentHost {
       parentAgentId: this.ownerAgentId,
       description: options.description,
       runInBackground: options.runInBackground,
+    });
+  }
+
+  private emitSubagentSuspended(event: QueuedSubagentSuspended): void {
+    const parent = this.session.getReadyAgent(this.ownerAgentId);
+    parent?.emitEvent({
+      type: 'subagent.suspended',
+      subagentId: event.agentId,
+      subagentName: event.task.profileName,
+      parentToolCallId: event.task.parentToolCallId,
+      parentToolCallUuid: event.task.parentToolCallUuid,
+      parentAgentId: this.ownerAgentId,
+      description: event.task.description,
+      runInBackground: event.task.runInBackground,
+      reason: event.reason,
     });
   }
 }

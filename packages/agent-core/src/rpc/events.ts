@@ -223,6 +223,18 @@ export interface SubagentStartedEvent {
   readonly runInBackground: boolean;
 }
 
+export interface SubagentSuspendedEvent {
+  readonly type: 'subagent.suspended';
+  readonly subagentId: string;
+  readonly subagentName: string;
+  readonly parentToolCallId: string;
+  readonly parentToolCallUuid?: string | undefined;
+  readonly parentAgentId?: string | undefined;
+  readonly description?: string | undefined;
+  readonly runInBackground: boolean;
+  readonly reason: string;
+}
+
 export interface SubagentCompletedEvent {
   readonly type: 'subagent.completed';
   readonly subagentId: string;
@@ -320,6 +332,7 @@ export type AgentEvent =
   | McpServerStatusEvent
   | SubagentSpawnedEvent
   | SubagentStartedEvent
+  | SubagentSuspendedEvent
   | SubagentCompletedEvent
   | SubagentFailedEvent
   | CompactionStartedEvent
