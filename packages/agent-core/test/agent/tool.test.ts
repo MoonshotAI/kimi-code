@@ -255,6 +255,7 @@ describe('ToolManager setActiveTools filtering', () => {
         modelCapabilities: {} as import('@moonshot-ai/kosong').ModelCapability,
       },
       log: { warn: (msg: string) => { warnings.push(msg); }, info: (msg: string) => { infos.push(msg); } },
+      experimentalFlags: { enabled: () => false },
       mcp: undefined,
       emitEvent: vi.fn(),
       background: {} as unknown as import('../../src/agent').Agent['background'],
