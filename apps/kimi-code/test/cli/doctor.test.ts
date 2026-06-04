@@ -27,10 +27,12 @@ function makeDeps(): {
   stdout: string[];
   stderr: string[];
   exitCodes: number[];
+  deferredExitCodes: number[];
 } {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const exitCodes: number[] = [];
+  const deferredExitCodes: number[] = [];
   return {
     deps: {
       cwd: () => dir,
@@ -42,10 +44,14 @@ function makeDeps(): {
         exitCodes.push(code);
         throw new Error(`exit ${String(code)}`);
       },
+      setExitCode: (code) => {
+        deferredExitCodes.push(code);
+      },
     },
     stdout,
     stderr,
     exitCodes,
+    deferredExitCodes,
   };
 }
 
@@ -307,6 +313,39 @@ max_context_size = 0
     const results = report['results'] as ReadonlyArray<Record<string, unknown>>;
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({ label: 'config.toml', status: 'OK' });
+  });
+
+  it('defers exit via setExitCode (not synchronous exit) when --json fails', async () => {
+    // Regression: process.exit() after stdout.write() to a pipe can truncate
+    // the JSON report on Linux/CI, so the command must use process.exitCode
+    // and let the event loop drain stdout before terminating.
+    await writeFile(
+      join(dir, 'config.toml'),
+      `
+[providers.kimi]
+type = "kimi"
+
+[models.kimi]
+provider = "kimi"
+model = "kimi"
+max_context_size = 0
+`,
+      'utf-8',
+    );
+    const { deps, stdout, stderr, exitCodes, deferredExitCodes } = makeDeps();
+    const program = new Command('kimi');
+    registerDoctorCommand(program, deps);
+
+    await program.parseAsync(['node', 'kimi', 'doctor', '--json']);
+
+    // The synchronous exit() must NOT have been called — otherwise stdout
+    // could be truncated mid-write when piped to jq.
+    expect(exitCodes).toEqual([]);
+    expect(deferredExitCodes).toEqual([1]);
+    expect(stderr.join('')).toBe('');
+    const report = JSON.parse(stdout.join('')) as Record<string, unknown>;
+    expect(report['ok']).toBe(false);
+    expect(report['issue_count']).toBe(1);
   });
 
   it('accepts --json on the root doctor command (no subcommand)', async () => {

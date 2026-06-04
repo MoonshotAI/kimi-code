@@ -25,6 +25,15 @@ export interface DoctorDeps {
   readonly stdout: WritableLike;
   readonly stderr: WritableLike;
   readonly exit: (code: number) => never;
+  /**
+   * Deferred-exit hook used by JSON mode: set the process exit code and let
+   * the event loop drain stdout naturally before termination. Calling the
+   * synchronous {@link exit} (default `process.exit`) right after writing a
+   * machine-readable report can truncate the pending pipe write on Linux/CI
+   * — exactly when the report describes a failure. Defaults to
+   * `(code) => { process.exitCode = code; }`.
+   */
+  readonly setExitCode?: (code: number) => void;
   readonly configRpc?: KimiConfigRpc;
   readonly fileExists?: (path: string) => boolean;
   readonly readTextFile?: (path: string) => Promise<string>;
@@ -70,6 +79,7 @@ interface ResolvedDoctorDeps {
   readonly stdout: WritableLike;
   readonly stderr: WritableLike;
   readonly exit: (code: number) => never;
+  readonly setExitCode: (code: number) => void;
   readonly fileExists: (path: string) => boolean;
   readonly readTextFile: (path: string) => Promise<string>;
   readonly validateConfigToml: (text: string, path: string) => MaybePromise<void>;
@@ -140,7 +150,15 @@ async function runDoctorCommand(
 ): Promise<void> {
   const resolved = resolveDeps(deps);
   const code = await handleDoctor(resolved, options);
-  if (code !== 0) resolved.exit(code);
+  if (code === 0) return;
+  if (options.json === true) {
+    // Avoid synchronous process.exit while a JSON write may still be queued
+    // on a pipe (e.g. `kimi doctor --json | jq`). Setting the exit code lets
+    // the event loop drain stdout naturally before the process terminates.
+    resolved.setExitCode(code);
+    return;
+  }
+  resolved.exit(code);
 }
 
 function resolveDeps(deps: Partial<DoctorDeps> | DoctorDeps | undefined): ResolvedDoctorDeps {
@@ -157,6 +175,11 @@ function resolveDeps(deps: Partial<DoctorDeps> | DoctorDeps | undefined): Resolv
     stdout: deps?.stdout ?? process.stdout,
     stderr: deps?.stderr ?? process.stderr,
     exit: deps?.exit ?? ((code) => process.exit(code)),
+    setExitCode:
+      deps?.setExitCode ??
+      ((code) => {
+        process.exitCode = code;
+      }),
     fileExists: deps?.fileExists ?? existsSync,
     readTextFile: deps?.readTextFile ?? ((path) => readFile(path, 'utf-8')),
     validateConfigToml:
