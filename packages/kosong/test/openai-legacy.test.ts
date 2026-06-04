@@ -90,6 +90,10 @@ const MUL_TOOL: Tool = {
 };
 
 describe('OpenAILegacyChatProvider', () => {
+  it('declares explicit-only completion budget strategy', () => {
+    expect(createProvider().completionBudgetStrategy).toBe('explicit-only');
+  });
+
   describe('message conversion (COMMON_CASES)', () => {
     it('simple user message with system prompt', async () => {
       const provider = createProvider();

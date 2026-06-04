@@ -847,6 +847,7 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
 }
 export class OpenAIResponsesChatProvider implements ChatProvider {
   readonly name: string = 'openai-responses';
+  readonly completionBudgetStrategy = 'explicit-only';
 
   private _model: string;
   private _stream: boolean;

@@ -90,6 +90,10 @@ const MUL_TOOL: Tool = {
 };
 
 describe('OpenAIResponsesChatProvider', () => {
+  it('declares explicit-only completion budget strategy', () => {
+    expect(createProvider().completionBudgetStrategy).toBe('explicit-only');
+  });
+
   describe('message conversion', () => {
     it('simple user message with system prompt', async () => {
       const provider = createProvider();
