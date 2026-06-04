@@ -206,6 +206,25 @@ describe('runUpdatePreflight', () => {
     expect(detectInstallSource).not.toHaveBeenCalled();
   });
 
+  it('emits a one-line stderr notice in non-interactive mode when an update is available', async () => {
+    mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    const { stderr, options } = captureOutput();
+    const track = vi.fn();
+    await expect(
+      runUpdatePreflight('0.4.0', { ...options, isTTY: false, track }),
+    ).resolves.toBe('continue');
+    expect(stderr.join('')).toBe(
+      'notice: @moonshot-ai/kimi-code 0.4.0 -> 0.5.0 available. Run `kimi upgrade` to update.\n',
+    );
+    expect(track).toHaveBeenCalledWith('update_notified_non_interactive', expect.objectContaining({
+      current_version: '0.4.0',
+      target_version: '0.5.0',
+      source: 'unsupported',
+    }));
+    expect(detectInstallSource).not.toHaveBeenCalled();
+  });
+
   it('npm-global: prompts and spawns npm install -g when automatic updates are disabled', async () => {
     disableAutoInstall();
     mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
