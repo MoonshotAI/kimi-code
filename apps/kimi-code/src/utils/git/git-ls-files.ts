@@ -5,7 +5,7 @@
  *
  * Tracks three things per snapshot, all refreshed atomically:
  *   - `files`            deduped (tracked + untracked-not-ignored), capped at 1000
- *   - `mtimeByPath`      absolute-path → fs mtime (ms), for recency ranking
+ *   - `mtimeByPath`      relative path → fs mtime (ms), for recency ranking
  *   - `recencyOrder`     file path → position in recent git history (0-indexed; smaller = more recent)
  *
  * Rebuild strategy: 2s TTL plus `.git/index` mtime invalidation so
@@ -27,10 +27,12 @@ const RECENT_COMMIT_DEPTH = 200;
 
 export interface GitSnapshot {
   readonly files: readonly string[];
-  /** Absolute path → mtime (ms). Missing entries = stat failed. */
+  /** Relative path → mtime (ms). Missing entries = stat failed. */
   readonly mtimeByPath: ReadonlyMap<string, number>;
   /** Path → 0-indexed recency rank (earlier = more recent). */
   readonly recencyOrder: ReadonlyMap<string, number>;
+  /** Derived parent directories, sorted and deduped. */
+  readonly dirs: readonly string[];
 }
 
 export interface GitLsFilesCache {
@@ -110,11 +112,12 @@ function fetchSnapshot(gitRoot: string): GitSnapshot | null {
   for (const path of untracked) seen.add(path);
   const merged = [...seen].toSorted();
   const files = merged.length > MAX_ENTRIES ? merged.slice(0, MAX_ENTRIES) : merged;
+  const dirs = collectDirs(files);
 
   const mtimeByPath = collectMtimes(gitRoot, files);
   const recencyOrder = collectRecencyOrder(gitRoot, new Set(files));
 
-  return { files, mtimeByPath, recencyOrder };
+  return { files, dirs, mtimeByPath, recencyOrder };
 }
 
 function runLsFiles(gitRoot: string, args: readonly string[]): string[] | null {
@@ -186,4 +189,21 @@ function collectRecencyOrder(gitRoot: string, trackedSet: Set<string>): Map<stri
     // recency map just means fewer entries get a hotness boost.
   }
   return result;
+}
+
+function collectDirs(files: readonly string[]): readonly string[] {
+  const seen = new Set<string>();
+  const dirs: string[] = [];
+  for (const file of files) {
+    const segments = file.split('/');
+    if (segments.length <= 1) continue;
+    let current = '';
+    for (const segment of segments.slice(0, -1)) {
+      current = current.length === 0 ? segment : `${current}/${segment}`;
+      if (seen.has(current)) continue;
+      seen.add(current);
+      dirs.push(current);
+    }
+  }
+  return dirs;
 }

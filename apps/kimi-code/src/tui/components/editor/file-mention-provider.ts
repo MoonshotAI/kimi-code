@@ -93,13 +93,13 @@ export class FileMentionProvider implements AutocompleteProvider {
     const query = atPrefix.slice(1); // strip leading '@'
     const includeDotDirs = query.startsWith('.');
     const candidates = includeDotDirs
-      ? snapshot.files
-      : snapshot.files.filter((p) => !containsDotSegment(p));
+      ? [...snapshot.files, ...snapshot.dirs]
+      : [...snapshot.files, ...snapshot.dirs].filter((p) => !containsDotSegment(p));
 
     const items =
       query.length === 0
-        ? rankForEmptyQuery(candidates, snapshot)
-        : rankForQuery(candidates, query, snapshot);
+        ? rankForEmptyQuery(candidates, snapshot, new Set(snapshot.dirs))
+        : rankForQuery(candidates, query, snapshot, new Set(snapshot.dirs));
 
     if (items.length === 0) {
       // Git cache had nothing useful — fall through to readdir (user
@@ -165,7 +165,11 @@ function containsDotSegment(path: string): boolean {
  * Cap at MAX_SUGGESTIONS_WHEN_EMPTY. Layers fill in order; dedup by
  * path so a recently-edited file isn't also listed in layer 2.
  */
-function rankForEmptyQuery(files: readonly string[], snapshot: GitSnapshot): AutocompleteItem[] {
+function rankForEmptyQuery(
+  files: readonly string[],
+  snapshot: GitSnapshot,
+  dirs: ReadonlySet<string>,
+): AutocompleteItem[] {
   const picked = new Set<string>();
   const result: string[] = [];
   const cap = MAX_SUGGESTIONS_WHEN_EMPTY;
@@ -205,7 +209,7 @@ function rankForEmptyQuery(files: readonly string[], snapshot: GitSnapshot): Aut
     }
   }
 
-  return result.map(toItem);
+  return result.map((path) => toItem(path, dirs));
 }
 
 /**
@@ -217,6 +221,7 @@ function rankForQuery(
   files: readonly string[],
   query: string,
   snapshot: GitSnapshot,
+  dirs: ReadonlySet<string>,
 ): AutocompleteItem[] {
   const lowerQuery = query.toLowerCase();
   const scored: Array<{ path: string; cat: number; fuzzyScore: number }> = [];
@@ -241,7 +246,7 @@ function rankForQuery(
     // try it as a last-resort safety net.
     return fuzzyFilter([...files], query, (p) => p)
       .slice(0, MAX_SUGGESTIONS_WHEN_QUERY)
-      .map(toItem);
+      .map((path) => toItem(path, dirs));
   }
 
   scored.sort((a, b) => {
@@ -260,13 +265,16 @@ function rankForQuery(
     return a.path.localeCompare(b.path);
   });
 
-  return scored.slice(0, MAX_SUGGESTIONS_WHEN_QUERY).map((entry) => toItem(entry.path));
+  return scored.slice(0, MAX_SUGGESTIONS_WHEN_QUERY).map((entry) =>
+    toItem(entry.path, dirs),
+  );
 }
 
-function toItem(path: string): AutocompleteItem {
+function toItem(path: string, dirs: ReadonlySet<string>): AutocompleteItem {
+  const isDir = dirs.has(path);
   return {
-    value: `@${path}`,
-    label: basename(path),
+    value: isDir ? `@${path}/` : `@${path}`,
+    label: isDir ? `${basename(path)}/` : basename(path),
     description: path,
   };
 }

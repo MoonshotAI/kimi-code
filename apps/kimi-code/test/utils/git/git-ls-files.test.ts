@@ -46,6 +46,7 @@ describe('createGitLsFilesCache', () => {
     expect(snap).not.toBeNull();
     expect(snap!.files).toContain('a.ts');
     expect(snap!.files).toContain('src/b.ts');
+    expect(snap!.dirs).toEqual(['src']);
     expect(snap!.mtimeByPath.has('a.ts')).toBe(true);
     expect(snap!.mtimeByPath.get('a.ts')!).toBeGreaterThan(0);
     expect(cache.getSnapshot()).toBe(snap);

@@ -5,13 +5,14 @@ import type { GitLsFilesCache, GitSnapshot } from '#/utils/git/git-ls-files';
 
 function stubGitCache(
   files: string[] | null,
-  opts: { mtimes?: Record<string, number>; recency?: string[] } = {},
+  opts: { mtimes?: Record<string, number>; recency?: string[]; dirs?: string[] } = {},
 ): GitLsFilesCache {
   const snapshot: GitSnapshot | null =
     files === null
       ? null
       : {
           files,
+          dirs: opts.dirs ?? [],
           mtimeByPath: new Map(Object.entries(opts.mtimes ?? {})),
           recencyOrder: new Map((opts.recency ?? []).map((p, i) => [p, i])),
         };
@@ -43,6 +44,25 @@ describe('FileMentionProvider — @ prefix detection + git-backed suggestions', 
     expect(result).not.toBeNull();
     expect(result!.prefix).toBe('@');
     expect(result!.items.map((i) => i.value)).toEqual(['@a.ts', '@b.ts', '@src/c.ts']);
+  });
+
+  it('bare @ includes folders derived from files', async () => {
+    const files = ['src/a.ts', 'src/components/Button.tsx', 'README.md'];
+    const provider = new FileMentionProvider(
+      [],
+      '/repo',
+      NO_FD,
+      stubGitCache(files, { dirs: ['src', 'src/components'] }),
+    );
+    const result = await provider.getSuggestions(['@'], 0, 1, { signal: ctrl() });
+    expect(result).not.toBeNull();
+    expect(result!.items.map((i) => i.value)).toEqual([
+      '@src/a.ts',
+      '@src/components/Button.tsx',
+      '@src/components/',
+      '@README.md',
+      '@src/',
+    ]);
   });
 
   it('ranks basename-prefix > substring > fuzzy', async () => {
@@ -203,6 +223,25 @@ describe('FileMentionProvider — @ prefix detection + git-backed suggestions', 
     // pi-tui appends a trailing space after a non-directory completion
     // so the user can type the next token immediately.
     expect(out.lines[0]).toBe('hey @src/a.ts ');
+  });
+
+  it('applyCompletion preserves trailing slash for directory completion', () => {
+    const provider = new FileMentionProvider(
+      [],
+      '/repo',
+      NO_FD,
+      stubGitCache(['src/a.ts'], { dirs: ['src'] }),
+    );
+    const out = provider.applyCompletion(
+      ['hey @src'],
+      0,
+      8,
+      { value: '@src/', label: 'src/' },
+      '@src',
+    );
+    // Directory completion should end with '/' so the user can continue
+    // completing paths inside that folder.
+    expect(out.lines[0]).toBe('hey @src/');
   });
 
   it('falls through to inner when the git cache is null (non-git dir)', async () => {
