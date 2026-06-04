@@ -8,11 +8,46 @@ import {
   parseGoalCommand,
   setExperimentalFeatures,
 } from '#/tui/commands/index';
+import {
+  appendGoalQueueItem,
+  moveGoalQueueItem,
+  readGoalQueue,
+  removeGoalQueueItem,
+  updateGoalQueueItem,
+} from '#/tui/goal-queue-store';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { getColorPalette } from '#/tui/theme/colors';
 
+vi.mock('#/tui/goal-queue-store', () => ({
+  appendGoalQueueItem: vi.fn(async () => ({
+    goals: [{ id: 'q1', objective: 'obj', createdAt: '', updatedAt: '' }],
+  })),
+  readGoalQueue: vi.fn(async () => ({
+    goals: [
+      { id: 'q1', objective: 'First queued goal', createdAt: '', updatedAt: '' },
+      { id: 'q2', objective: 'Second queued goal', createdAt: '', updatedAt: '' },
+    ],
+  })),
+  moveGoalQueueItem: vi.fn(async () => ({
+    goals: [
+      { id: 'q2', objective: 'Second queued goal', createdAt: '', updatedAt: '' },
+      { id: 'q1', objective: 'First queued goal', createdAt: '', updatedAt: '' },
+    ],
+  })),
+  removeGoalQueueItem: vi.fn(async () => ({
+    goals: [{ id: 'q2', objective: 'Second queued goal', createdAt: '', updatedAt: '' }],
+  })),
+  updateGoalQueueItem: vi.fn(async () => ({
+    goals: [
+      { id: 'q1', objective: 'First queued goal updated', createdAt: '', updatedAt: '' },
+      { id: 'q2', objective: 'Second queued goal', createdAt: '', updatedAt: '' },
+    ],
+  })),
+}));
+
 const ENTER = '\r';
 const ESCAPE = '\u001B';
+const UP = '\u001B[A';
 const DOWN = '\u001B[B';
 
 function fakeSnapshot() {
@@ -104,6 +139,11 @@ function mountedPicker(host: SlashCommandHost): TestPicker {
   return mock.mock.calls[0]?.[0] as TestPicker;
 }
 
+function latestMountedPicker(host: SlashCommandHost): TestPicker {
+  const mock = host.mountEditorReplacement as ReturnType<typeof vi.fn>;
+  return mock.mock.calls.at(-1)?.[0] as TestPicker;
+}
+
 describe('parseGoalCommand', () => {
   it('treats empty and status as status', () => {
     expect(parseGoalCommand('')).toEqual({ kind: 'status' });
@@ -153,6 +193,27 @@ describe('parseGoalCommand', () => {
     });
   });
 
+  it('parses next as an upcoming-goal command', () => {
+    expect(parseGoalCommand('next Ship release notes')).toEqual({
+      kind: 'next-add',
+      objective: 'Ship release notes',
+    });
+    expect(parseGoalCommand('next manage')).toEqual({ kind: 'next-manage' });
+    expect(parseGoalCommand('next -- manage release notes')).toEqual({
+      kind: 'next-add',
+      objective: 'manage release notes',
+    });
+  });
+
+  it('shows a hint for /goal next without an objective', () => {
+    expect(parseGoalCommand('next')).toEqual({
+      kind: 'error',
+      severity: 'hint',
+      message:
+        'Provide an upcoming goal objective, e.g. `/goal next Ship feature X`, or use `/goal next manage`.',
+    });
+  });
+
   it('rejects objectives longer than 4000 characters', () => {
     expect(parseGoalCommand('x'.repeat(4001))).toMatchObject({ kind: 'error' });
   });
@@ -166,6 +227,11 @@ describe('handleGoalCommand', () => {
     const made = makeHost();
     host = made.host;
     session = made.session;
+    vi.mocked(appendGoalQueueItem).mockClear();
+    vi.mocked(readGoalQueue).mockClear();
+    vi.mocked(moveGoalQueueItem).mockClear();
+    vi.mocked(removeGoalQueueItem).mockClear();
+    vi.mocked(updateGoalQueueItem).mockClear();
   });
 
   it('/goal calls getGoal and does not send input', async () => {
@@ -300,6 +366,87 @@ describe('handleGoalCommand', () => {
     expect(session.createGoal).toHaveBeenCalledWith(
       expect.objectContaining({ objective: 'Ship feature Y', replace: true }),
     );
+  });
+
+  it('/goal next queues an upcoming goal and does not send it to the agent', async () => {
+    await handleGoalCommand(host, 'next Ship release notes');
+    expect(appendGoalQueueItem).toHaveBeenCalledWith(session, {
+      objective: 'Ship release notes',
+    });
+    expect(host.track).toHaveBeenCalledWith('goal_queue_append');
+    expect(host.showStatus).toHaveBeenCalledWith(
+      'Upcoming goal added. It will start after the current goal is complete.',
+    );
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+    expect(session.createGoal).not.toHaveBeenCalled();
+  });
+
+  it('/goal next does not require a configured model', async () => {
+    const { host: noModelHost, session: s } = makeHost({ model: '' });
+    await handleGoalCommand(noModelHost, 'next Ship release notes');
+    expect(appendGoalQueueItem).toHaveBeenCalledWith(s, {
+      objective: 'Ship release notes',
+    });
+    expect(noModelHost.showError).not.toHaveBeenCalled();
+  });
+
+  it('/goal next manage opens the upcoming goal manager without sending input', async () => {
+    await handleGoalCommand(host, 'next manage');
+
+    expect(readGoalQueue).toHaveBeenCalledWith(session);
+    expect(host.track).toHaveBeenCalledWith('goal_queue_manage');
+    expect(host.mountEditorReplacement).toHaveBeenCalledOnce();
+    const text = stripAnsi(mountedPicker(host).render(100).join('\n'));
+    expect(text).toContain('Upcoming goals');
+    expect(text).toContain('First queued goal');
+    expect(text).toContain('Second queued goal');
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+    expect(session.createGoal).not.toHaveBeenCalled();
+  });
+
+  it('/goal next manage reorders goals through the queue store', async () => {
+    await handleGoalCommand(host, 'next manage');
+    const manager = mountedPicker(host);
+
+    manager.handleInput(DOWN);
+    manager.handleInput(' ');
+    manager.handleInput(UP);
+
+    await vi.waitFor(() => {
+      expect(moveGoalQueueItem).toHaveBeenCalledWith(session, {
+        goalId: 'q2',
+        direction: 'up',
+      });
+    });
+  });
+
+  it('/goal next manage removes goals through the queue store', async () => {
+    await handleGoalCommand(host, 'next manage');
+
+    mountedPicker(host).handleInput('d');
+
+    await vi.waitFor(() => {
+      expect(removeGoalQueueItem).toHaveBeenCalledWith(session, { goalId: 'q1' });
+    });
+  });
+
+  it('/goal next manage edits goals through the queue store', async () => {
+    await handleGoalCommand(host, 'next manage');
+
+    mountedPicker(host).handleInput('e');
+    await vi.waitFor(() => {
+      expect(host.mountEditorReplacement).toHaveBeenCalledTimes(2);
+    });
+    const editDialog = latestMountedPicker(host);
+    editDialog.handleInput(' updated');
+    editDialog.handleInput(ENTER);
+
+    await vi.waitFor(() => {
+      expect(updateGoalQueueItem).toHaveBeenCalledWith(session, {
+        goalId: 'q1',
+        objective: 'First queued goal updated',
+      });
+    });
   });
 
   it('surfaces duplicate-goal errors with replace guidance', async () => {
@@ -440,8 +587,13 @@ describe('goalArgumentCompletions', () => {
     return items === null ? null : items.map((i) => i.value);
   }
 
+  function labels(prefix: string): string[] | null {
+    const items = goalArgumentCompletions(prefix);
+    return items === null ? null : items.map((i) => i.label);
+  }
+
   it('offers every subcommand for an empty prefix', () => {
-    expect(values('')).toEqual(['status', 'pause', 'resume', 'cancel', 'replace']);
+    expect(values('')).toEqual(['status', 'pause', 'resume', 'cancel', 'replace', 'next']);
   });
 
   it('prefix-filters subcommands case-insensitively', () => {
@@ -469,9 +621,19 @@ describe('goalArgumentCompletions', () => {
   it('stops completing once past the first token (space typed)', () => {
     expect(values('pause ')).toBeNull();
     expect(values('replace Ship feature')).toBeNull();
+    expect(values('next Ship feature')).toBeNull();
+  });
+
+  it('completes /goal next manage as the second token', () => {
+    expect(values('next ')).toEqual(['next manage']);
+    expect(values('next m')).toEqual(['next manage']);
+    expect(values('next MA')).toEqual(['next manage']);
+    expect(labels('next m')).toEqual(['manage']);
+    expect(values('next manage')).toBeNull();
   });
 
   it('returns null when nothing matches', () => {
     expect(values('zzz')).toBeNull();
+    expect(values('next ship')).toBeNull();
   });
 });

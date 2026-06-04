@@ -61,6 +61,7 @@ import type {
   GetKimiConfigPayload,
   GetPluginInfoPayload,
   InstallPluginPayload,
+  JsonObject,
   ListSessionsPayload,
   McpServerInfo,
   McpStartupMetrics,
@@ -98,6 +99,11 @@ import { KaosShellNotFoundError, LocalKaos, type Kaos } from '@moonshot-ai/kaos'
 import type { ToolServices } from '../tools/support/services';
 
 const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
+const GOAL_FORK_CLEARED_REMINDER = [
+  'This fork does not have a current goal.',
+  'Ignore earlier active-goal reminders from the source session.',
+  'Handle requests normally unless the user starts a new goal.',
+].join(' ');
 
 type AgentScopedPayload<T> = T & { readonly agentId: string };
 type SessionScopedPayload<T> = T & { readonly sessionId: string };
@@ -123,7 +129,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   readonly sessions = new Map<string, Session>();
   readonly telemetry: TelemetryClient;
 
-  private kaos: Promise<Kaos>;
+  private kaos: Promise<Kaos> | undefined;
   private runtime: ToolServices | undefined;
   private config: KimiConfig;
   private readonly runtimeOverride: ToolServices | undefined;
@@ -147,12 +153,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.configPath = resolveConfigPath({
       homeDir: this.homeDir,
       configPath: options.configPath,
-    });
-    this.kaos = LocalKaos.create().catch((error: unknown) => {
-      if (error instanceof KaosShellNotFoundError) {
-        throw new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, error.message);
-      }
-      throw error;
     });
     this.runtimeOverride = options.runtime;
     this.runtime = options.runtime;
@@ -211,7 +211,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     // ctor block throws, `session.close()` releases the sink (and mcp).
     const runtime = await this.resolveRuntime(config);
     const session = new Session({
-      kaos: (await this.kaos).withCwd(workDir),
+      kaos: (await this.getKaos()).withCwd(workDir),
       toolServices: runtime,
       config,
       id,
@@ -299,7 +299,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
     const runtime = await this.resolveRuntime(config);
     const session = new Session({
-      kaos: (await this.kaos).withCwd(summary.workDir),
+      kaos: (await this.getKaos()).withCwd(summary.workDir),
       toolServices: runtime,
       config,
       id: summary.id,
@@ -359,8 +359,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   async forkSession(input: ForkSessionPayload): Promise<ResumeSessionResult> {
     const source = await this.sessionStore.get(input.sessionId);
     const active = this.sessions.get(source.id);
+    let sourceHadGoal = hasGoalMetadata(source.metadata) || hasGoalMetadata(input.metadata);
     if (active !== undefined) {
       await active.flushMetadata();
+      sourceHadGoal = sourceHadGoal || active.goals.getGoal().goal !== null;
     }
 
     const id = input.id ?? createSessionId();
@@ -370,7 +372,19 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       title: input.title,
       metadata: input.metadata,
     });
-    return this.resumeSession({ sessionId: id });
+    const resumed = await this.resumeSession({ sessionId: id });
+    if (sourceHadGoal) {
+      const forked = this.sessions.get(id);
+      if (forked !== undefined) {
+        const mainAgent = await forked.ensureAgentResumed('main');
+        mainAgent.context.appendSystemReminder(GOAL_FORK_CLEARED_REMINDER, {
+          kind: 'system_trigger',
+          name: 'goal_fork_cleared',
+        });
+        await forked.flushMetadata();
+      }
+    }
+    return resumed;
   }
 
   async listSessions(input: ListSessionsPayload = {}): Promise<readonly SessionSummary[]> {
@@ -737,6 +751,16 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return runtime;
   }
 
+  private getKaos(): Promise<Kaos> {
+    this.kaos ??= LocalKaos.create().catch((error: unknown) => {
+      if (error instanceof KaosShellNotFoundError) {
+        throw new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, error.message);
+      }
+      throw error;
+    });
+    return this.kaos;
+  }
+
   private resolveSessionSkillConfig(config: KimiConfig): SessionSkillConfig {
     const explicitDirs = this.skillDirs.length > 0 ? this.skillDirs : undefined;
     return {
@@ -882,6 +906,10 @@ function serviceCredentials(
 function nonEmptyString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+}
+
+function hasGoalMetadata(metadata: JsonObject | undefined): boolean {
+  return metadata !== undefined && 'goal' in metadata;
 }
 
 function requiredWorkDir(operation: string, value: string): string {

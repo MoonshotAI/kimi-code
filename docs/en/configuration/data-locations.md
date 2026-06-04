@@ -71,6 +71,7 @@ Each session's data is stored under `sessions/<workDirKey>/<sessionId>/`, and a 
 Inside each session directory:
 
 - **`state.json`**: session metadata including title, `lastPrompt`, creation/update timestamps, and `forkedFrom`.
+- **`upcoming-goals.json`**: the TUI-only queue created by `/goal next <objective>`. It is not part of the agent conversation until a queued goal is promoted after the current goal completes.
 - **`agents/main/wire.jsonl`**: the main Agent's complete communication record, used for session resumption and replay.
 - **`agents/main/plans/`**: plan files written in Plan mode, named by plan id (`<id>.md`).
 - **`agents/agent-0/` etc.**: sub-Agent instance directories, each containing their own `wire.jsonl`.

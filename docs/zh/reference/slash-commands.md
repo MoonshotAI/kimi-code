@@ -44,13 +44,13 @@
 | `/auto [on\|off]` | — | 切换 auto 权限模式。开启后工具审批自动处理，Agent 不会向用户提问 | 是 |
 | `/plan [on\|off]` | — | 切换 Plan 模式。不带参数时翻转；显式传 `on`/`off` 时强制设置。单纯切换不会创建空计划文件 | 是 |
 | `/plan clear` | — | 清除当前 plan 方案 | 否 |
-| `/goal [...]` | — | 开始或管理一个自主 goal（实验功能；可通过 `/experiments`、`[experimental].goal_command` 或 `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1` 启用） | 见下文 |
+| `/goal [...]` | — | 开始或管理目标模式（实验功能；可通过 `/experiments`、`[experimental].goal_command` 或 `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1` 启用） | 见下文 |
 
 ::: warning 注意
 `/yolo` 会跳过普通工具调用的审批确认，使用前请确保了解可能的风险。Plan 模式的退出审批不会被 `/yolo` 跳过；Plan 模式下的 `Bash` 也按 `/yolo` 的普通放行规则处理。
 :::
 
-## 自主 goal（实验功能）
+## 目标模式（实验功能）
 
 ::: info
 `/goal` 是实验命令。可以通过 `/experiments` 启用，也可以写入 `~/.kimi-code/config.toml`：
@@ -65,37 +65,41 @@ KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
 ```
 :::
 
-`/goal` 适用于你希望 Kimi Code 通过自动续跑的轮次持续处理的任务。在命令后写目标即可开始：
+`/goal` 用于开始或管理目标模式：Kimi Code 会在自动续跑的轮次中持续朝一个持久目标工作。使用指导和示例见[使用目标模式](../guides/goals.md)。
 
 ```
 /goal 更新 checkout 文档，运行 docs build，如果 20 轮后仍被阻塞就停止
 ```
 
-Kimi Code 会保存该目标，把它作为下一条 User 消息发送，然后持续运行后续轮次，直到 goal 停止。goal 有三种停止状态：
-
-- `complete`：目标已完成，Kimi Code 发送完成消息并清除该 goal
-- `paused`：你暂停了 goal、中断了当前轮次，或恢复了原本有 active goal 的会话
-- `blocked`：Kimi Code 因需要输入、无法完成目标、达到预算上限或遇到运行时失败而停止
-
-停止条件需要写在目标本身里，`/goal` 没有单独的停止限制 flag。
-
-管理当前 goal 的子命令：
-
 | 命令 | 作用 | 可用性 |
 | --- | --- | --- |
-| `/goal` 或 `/goal status` | 显示当前 goal 及其状态、已用时间、轮次数、token 数 | 随时可用 |
-| `/goal pause` | 暂停 active goal 并保留 | 随时可用 |
-| `/goal resume` | 恢复 paused 或 blocked goal | 仅空闲时 |
-| `/goal cancel` | 移除当前 goal | 随时可用 |
-| `/goal replace <objective>` | 用新目标替换已保存的 goal | 仅空闲时 |
+| `/goal` 或 `/goal status` | 显示当前目标及其状态、已用时间、轮次数、token 数 | 随时可用 |
+| `/goal pause` | 暂停当前的目标，但不删除 | 随时可用 |
+| `/goal resume` | 继续被暂停或被阻塞的目标 | 仅空闲时 |
+| `/goal cancel` | 移除当前目标 | 随时可用 |
+| `/goal replace <objective>` | 用新目标替换已保存的目标 | 仅空闲时 |
+| `/goal next <objective>` | 为当前会话安排一个后续目标。当前目标完成前，Agent 不会看到它 | 随时可用 |
+| `/goal next manage` | 打开后续目标管理器。用 `↑`/`↓` 浏览，`Space` 选择一个目标以便移动，选中后用 `↑`/`↓` 调整顺序，`E` 编辑，`D` 删除，`Esc` 取消 | 随时可用 |
 
-一个会话中只能保存一个 goal。如果目标需要以 `status`、`pause` 等子命令关键词开头，使用 `--` 分隔：
+`status`、`pause`、`resume`、`cancel`、`replace` 和 `next` 只有作为 `/goal` 后的第一个词时才是子命令。如果你的目标需要以这些词开头，请在目标前加 `--`：
 
-```
+```sh
 /goal -- cancel 函数需要在订单失败时返回可重试错误，并补充测试
 ```
 
-在 `manual` 权限模式下，goal 可能会停下来等待工具调用审批，不适合无人值守场景。
+如果后续目标需要以 `manage` 开头，请在 `next` 后加 `--`：
+
+```sh
+/goal next -- manage 发布检查清单
+```
+
+在非交互式 prompt 模式中，只有创建形式会启动目标模式：
+
+```sh
+KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi -p "/goal 修复 checkout 测试失败"
+```
+
+Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `3` 退出，在目标暂停时以 `6` 退出。其它 `/goal` 子命令，包括 `next`，都是 TUI 控制命令，不由 `kimi -p` 处理。
 
 ## 信息与状态
 

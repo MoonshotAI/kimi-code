@@ -85,7 +85,7 @@ To explore a new direction without disrupting the current conversation, use `/fo
 /fork
 ```
 
-The two resulting sessions are completely independent and do not affect each other. You can switch back to the original at any time using `/sessions`.
+The two resulting sessions are completely independent and do not affect each other. You can switch back to the original at any time using `/sessions`. A saved `/goal` is not copied to the fork. Start a new goal there if you want autonomous goal work.
 
 ## Exporting a session
 

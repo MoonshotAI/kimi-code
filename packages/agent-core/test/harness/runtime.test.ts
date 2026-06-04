@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
+import type { Kaos } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -10,6 +11,7 @@ import {
   createRPC,
   ErrorCodes,
   KimiCore,
+  KimiError,
   type ApprovalResponse,
   type CoreAPI,
   type SDKAPI,
@@ -21,6 +23,7 @@ import {
 } from '../../src/logging/logger';
 import { resolveLoggingConfig } from '../../src/logging/resolve-config';
 import type { OAuthTokenProviderResolver } from '../../src/session/provider-manager';
+import { testKaos } from '../fixtures/test-kaos';
 
 function requiredFlagEnv(id: string): string {
   const def = FLAG_DEFINITIONS.find((item) => item.id === id);
@@ -37,6 +40,16 @@ function clearExperimentalEnv(): void {
 
 function experimentalFeatureEnabled(core: KimiCore, id: string): boolean | undefined {
   return core.getExperimentalFeatures().find((feature) => feature.id === id)?.enabled;
+}
+
+function setCoreKaos(core: KimiCore, kaos: Promise<Kaos>): void {
+  (core as unknown as { kaos?: Promise<Kaos> }).kaos = kaos;
+}
+
+function rejectedKaos(error: Error): Promise<Kaos> {
+  const promise = Promise.reject(error) as Promise<Kaos>;
+  promise.catch(() => undefined);
+  return promise;
 }
 
 describe('KimiCore runtime config', () => {
@@ -282,6 +295,75 @@ max_context_size = 100000
     const mainAgent = session?.getReadyAgent('main');
 
     expect(mainAgent?.config.modelAlias).toBe('default-mock');
+  });
+
+  it('rejects createSession when shell runtime initialization fails', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+    setCoreKaos(
+      core,
+      rejectedKaos(
+        new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, 'Git Bash missing'),
+      ),
+    );
+
+    await expect(
+      rpc.createSession({
+        id: 'ses_runtime_shell_missing_create',
+        workDir,
+        model: 'default-mock',
+      }),
+    ).rejects.toMatchObject({ code: ErrorCodes.SHELL_GIT_BASH_NOT_FOUND });
+    expect(core.sessions.has('ses_runtime_shell_missing_create')).toBe(false);
+  });
+
+  it('rejects resumeSession when shell runtime initialization fails', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+    setCoreKaos(core, Promise.resolve(testKaos));
+    const created = await rpc.createSession({
+      id: 'ses_runtime_shell_missing_resume',
+      workDir,
+      model: 'default-mock',
+    });
+    await rpc.closeSession({ sessionId: created.id });
+    setCoreKaos(
+      core,
+      rejectedKaos(
+        new KimiError(ErrorCodes.SHELL_GIT_BASH_NOT_FOUND, 'Git Bash missing'),
+      ),
+    );
+
+    await expect(rpc.resumeSession({ sessionId: created.id })).rejects.toMatchObject({
+      code: ErrorCodes.SHELL_GIT_BASH_NOT_FOUND,
+    });
+    expect(core.sessions.has(created.id)).toBe(false);
   });
 
   it('reloads an active session with fresh runtime services from config.toml', async () => {

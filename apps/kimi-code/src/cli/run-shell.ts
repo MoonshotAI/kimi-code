@@ -78,6 +78,7 @@ export async function runShell(
     platform: `${process.platform}/${process.arch}`,
     workDir,
   });
+
   await harness.ensureConfigFile();
   const migrationPlan = await detectPendingMigration({
     sourceHome: join(homedir(), '.kimi'),

@@ -214,6 +214,22 @@ describe('runPrompt', () => {
     expect(mocks.harnessClose).toHaveBeenCalled();
   });
 
+  it('stops prompt startup when session creation fails', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    mocks.harnessCreateSession.mockRejectedValueOnce(new Error('Git Bash missing'));
+
+    await expect(runPrompt(opts(), '1.2.3-test', { stdout, stderr })).rejects.toThrow(
+      'Git Bash missing',
+    );
+
+    expect(mocks.harnessEnsureConfigFile).toHaveBeenCalledOnce();
+    expect(mocks.harnessGetConfig).toHaveBeenCalledOnce();
+    expect(mocks.harnessCreateSession).toHaveBeenCalledOnce();
+    expect(mocks.session.prompt).not.toHaveBeenCalled();
+    expect(mocks.harnessClose).toHaveBeenCalledOnce();
+  });
+
   it('uses the CLI model override when creating a fresh prompt session', async () => {
     await runPrompt(opts({ model: 'kimi-code/k2.5' }), '1.2.3-test', {
       stdout: { write: vi.fn(() => true) },
