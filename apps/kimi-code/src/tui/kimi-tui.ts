@@ -35,7 +35,7 @@ import {
   BUILTIN_SLASH_COMMANDS,
   buildSkillSlashCommands,
   isExperimentalFlagEnabled,
-  setExperimentalFlags,
+  setExperimentalFeatures,
   sortSlashCommands,
   type KimiSlashCommand,
   type SkillListSession,
@@ -479,7 +479,7 @@ export class KimiTUI {
   }
 
   private async init(): Promise<boolean> {
-    setExperimentalFlags(await this.harness.getExperimentalFlags());
+    setExperimentalFeatures(await this.harness.getExperimentalFeatures());
     await this.authFlow.refreshAvailableModels();
     void this.refreshProviderModelsInBackground();
 

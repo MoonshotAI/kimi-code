@@ -314,10 +314,12 @@ background_ask = false
       configValue: true,
       env: 'KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND',
     });
-    await expect(harness.getExperimentalFlags()).resolves.toMatchObject({
-      'goal_command': true,
-      'background_ask': false,
-    });
+    expect(features).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'goal_command', enabled: true }),
+        expect.objectContaining({ id: 'background_ask', enabled: false }),
+      ]),
+    );
   });
 
   it('can create the default config scaffold without selecting a model', async () => {

@@ -1,7 +1,7 @@
 import {
   resolveSkillCommand,
   resolveSlashCommandInput,
-  setExperimentalFlags,
+  setExperimentalFeatures,
   slashBusyMessage,
   slashCommandBusyReason,
 } from '#/tui/commands/index';
@@ -182,11 +182,11 @@ describe('resolveSlashCommandInput', () => {
 
 describe('goal command resolution', () => {
   afterEach(() => {
-    setExperimentalFlags({});
+    setExperimentalFeatures([]);
   });
 
   it('resolves /goal to the builtin command when goal_command is enabled', () => {
-    setExperimentalFlags({ 'goal_command': true });
+    setExperimentalFeatures([{ id: 'goal_command', enabled: true }]);
     expect(resolve('/goal Ship feature X')).toMatchObject({
       kind: 'builtin',
       name: 'goal',
@@ -195,7 +195,7 @@ describe('goal command resolution', () => {
   });
 
   it('treats /goal as a normal message when goal_command is disabled', () => {
-    setExperimentalFlags({});
+    setExperimentalFeatures([]);
     expect(resolve('/goal Ship feature X')).toEqual({
       kind: 'message',
       input: '/goal Ship feature X',
@@ -203,7 +203,7 @@ describe('goal command resolution', () => {
   });
 
   it('blocks goal creation while streaming', () => {
-    setExperimentalFlags({ 'goal_command': true });
+    setExperimentalFeatures([{ id: 'goal_command', enabled: true }]);
     expect(resolve('/goal Ship feature X', { isStreaming: true })).toEqual({
       kind: 'blocked',
       commandName: 'goal',
@@ -212,7 +212,7 @@ describe('goal command resolution', () => {
   });
 
   it('does not block status/pause/cancel/bare goal while streaming', () => {
-    setExperimentalFlags({ 'goal_command': true });
+    setExperimentalFeatures([{ id: 'goal_command', enabled: true }]);
     for (const sub of ['status', 'pause', 'cancel']) {
       expect(resolve(`/goal ${sub}`, { isStreaming: true })).toMatchObject({
         kind: 'builtin',

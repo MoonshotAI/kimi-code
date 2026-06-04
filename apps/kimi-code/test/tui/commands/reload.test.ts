@@ -11,14 +11,14 @@ import {
 import type { SlashCommandHost } from '#/tui/commands';
 import {
   isExperimentalFlagEnabled,
-  setExperimentalFlags,
+  setExperimentalFeatures,
 } from '#/tui/commands/experimental-flags';
 
 const tempDirs: string[] = [];
 const originalKimiCodeHome = process.env['KIMI_CODE_HOME'];
 
 afterEach(async () => {
-  setExperimentalFlags({});
+  setExperimentalFeatures([]);
   for (const dir of tempDirs.splice(0)) {
     await rm(dir, { recursive: true, force: true });
   }
@@ -50,7 +50,7 @@ auto_install = false
     await handleReloadTuiCommand(host);
 
     expect(host.harness.getConfig).not.toHaveBeenCalled();
-    expect(host.harness.getExperimentalFlags).not.toHaveBeenCalled();
+    expect(host.harness.getExperimentalFeatures).not.toHaveBeenCalled();
     expect(session.reloadSession).not.toHaveBeenCalled();
     expect(host.state.appState).toMatchObject({
       theme: 'light',
@@ -77,7 +77,7 @@ auto_install = false
       'Session reloaded.',
     );
     expect(host.harness.getConfig).toHaveBeenCalledWith({ reload: true });
-    expect(host.harness.getExperimentalFlags).toHaveBeenCalledOnce();
+    expect(host.harness.getExperimentalFeatures).toHaveBeenCalledOnce();
     expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalledOnce();
     expect(isExperimentalFlagEnabled('goal_command')).toBe(true);
     expect(host.state.appState.theme).toBe('light');
@@ -128,7 +128,7 @@ function makeHost({
           test: { type: 'kimi', apiKey: 'test-key' },
         },
       })),
-      getExperimentalFlags: vi.fn(async () => ({ goal_command: true })),
+      getExperimentalFeatures: vi.fn(async () => [{ id: 'goal_command', enabled: true }]),
     },
     setAppState: vi.fn((patch: Record<string, unknown>) => {
       Object.assign(state.appState, patch);
@@ -143,7 +143,7 @@ function makeHost({
   } as unknown as SlashCommandHost & {
     readonly harness: {
       readonly getConfig: ReturnType<typeof vi.fn>;
-      readonly getExperimentalFlags: ReturnType<typeof vi.fn>;
+      readonly getExperimentalFeatures: ReturnType<typeof vi.fn>;
     };
     readonly refreshSlashCommandAutocomplete: ReturnType<typeof vi.fn>;
     readonly reloadCurrentSessionView: ReturnType<typeof vi.fn>;

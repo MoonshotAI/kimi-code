@@ -2,7 +2,7 @@ import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 
 import { loadTuiConfig, type TuiConfig } from '../config';
 import type { SlashCommandHost } from './dispatch';
-import { setExperimentalFlags } from './experimental-flags';
+import { setExperimentalFeatures } from './experimental-flags';
 
 export async function handleReloadTuiCommand(host: SlashCommandHost): Promise<void> {
   const tuiConfig = await loadTuiConfig();
@@ -20,7 +20,7 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
   }
 
   const config = await host.harness.getConfig({ reload: true });
-  setExperimentalFlags(await host.harness.getExperimentalFlags());
+  setExperimentalFeatures(await host.harness.getExperimentalFeatures());
   host.refreshSlashCommandAutocomplete();
   applyRuntimeConfig(host, config);
   applyReloadedTuiConfig(host, tuiConfig);

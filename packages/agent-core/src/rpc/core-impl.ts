@@ -26,7 +26,6 @@ import {
   FLAG_DEFINITIONS,
   FlagResolver,
   type ExperimentalFeatureState,
-  type ExperimentalFlagMap,
 } from '../flags';
 import type { Logger } from '../logging/types';
 import { resolveSessionMcpConfig, mergeCallerMcpServers, type SessionMcpConfig } from '../mcp';
@@ -268,10 +267,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   getCoreInfo(): CoreInfo {
     return { version: getCoreVersion() };
-  }
-
-  getExperimentalFlags(): ExperimentalFlagMap {
-    return this.experimentalFlags.snapshot();
   }
 
   getExperimentalFeatures(): readonly ExperimentalFeatureState[] {

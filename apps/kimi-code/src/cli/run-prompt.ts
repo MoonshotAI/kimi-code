@@ -19,6 +19,7 @@ import {
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
+import { experimentalFeatureMap } from '#/utils/experimental-features';
 
 import type { CLIOptions, PromptOutputFormat } from './options';
 import {
@@ -146,7 +147,7 @@ export async function runPrompt(
     // the turn-run alive across continuation turns, so the normal prompt-turn
     // waiter blocks until the goal is terminal; we then emit a summary and set a
     // distinct exit code.
-    const flagMap = await harness.getExperimentalFlags();
+    const flagMap = experimentalFeatureMap(await harness.getExperimentalFeatures());
     const goalCreate = parseHeadlessGoalCreate(opts.prompt!, flagMap['goal_command'] === true);
     if (goalCreate !== undefined) {
       await runHeadlessGoal(session, goalCreate, goalModel, outputFormat, stdout, stderr);

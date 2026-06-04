@@ -6,7 +6,7 @@ import {
   goalArgumentCompletions,
   handleGoalCommand,
   parseGoalCommand,
-  setExperimentalFlags,
+  setExperimentalFeatures,
 } from '#/tui/commands/index';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { getColorPalette } from '#/tui/theme/colors';
@@ -403,11 +403,11 @@ describe('handleGoalCommand', () => {
 
 describe('dispatchInput /goal integration', () => {
   afterEach(() => {
-    setExperimentalFlags({});
+    setExperimentalFeatures([]);
   });
 
   it('routes /goal through the real resolver, creates the goal, and sends the objective', async () => {
-    setExperimentalFlags({ 'goal_command': true });
+    setExperimentalFeatures([{ id: 'goal_command', enabled: true }]);
     const { host, session } = makeHost();
 
     dispatchInput(host, '/goal Ship feature X');
@@ -422,7 +422,7 @@ describe('dispatchInput /goal integration', () => {
   });
 
   it('treats /goal as a normal message when the flag is disabled', async () => {
-    setExperimentalFlags({});
+    setExperimentalFeatures([]);
     const { host, session } = makeHost();
 
     dispatchInput(host, '/goal Ship feature X');

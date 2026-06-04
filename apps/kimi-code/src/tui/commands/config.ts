@@ -21,7 +21,7 @@ import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { isTheme } from '../theme/index';
 import { formatErrorMessage } from '../utils/event-payload';
 import { showUsage } from './info';
-import { setExperimentalFlags } from './experimental-flags';
+import { setExperimentalFeatures } from './experimental-flags';
 import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
@@ -461,8 +461,8 @@ export async function applyExperimentalFeatureChanges(
 
   try {
     await host.harness.setConfig({ experimental });
-    const flags = await host.harness.getExperimentalFlags();
-    setExperimentalFlags(flags);
+    const features = await host.harness.getExperimentalFeatures();
+    setExperimentalFeatures(features);
     host.refreshSlashCommandAutocomplete();
     host.restoreEditor();
     if (host.session !== undefined) {

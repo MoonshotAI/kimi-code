@@ -7,7 +7,7 @@ import {
 } from '#/tui/commands/config';
 import {
   isExperimentalFlagEnabled,
-  setExperimentalFlags,
+  setExperimentalFeatures,
 } from '#/tui/commands/experimental-flags';
 import { darkColors } from '#/tui/theme/colors';
 
@@ -39,7 +39,6 @@ function makeHost() {
     },
     harness: {
       setConfig: vi.fn(async () => ({ providers: {} })),
-      getExperimentalFlags: vi.fn(async () => ({ 'goal_command': true })),
       getExperimentalFeatures: vi.fn(async () => [
         feature({ enabled: true, source: 'config', configValue: true }),
       ]),
@@ -55,7 +54,6 @@ function makeHost() {
   } as unknown as SlashCommandHost & {
     harness: {
       setConfig: ReturnType<typeof vi.fn>;
-      getExperimentalFlags: ReturnType<typeof vi.fn>;
       getExperimentalFeatures: ReturnType<typeof vi.fn>;
     };
     refreshSlashCommandAutocomplete: ReturnType<typeof vi.fn>;
@@ -72,7 +70,7 @@ function makeHost() {
 
 describe('experimental feature command handlers', () => {
   afterEach(() => {
-    setExperimentalFlags({});
+    setExperimentalFeatures([]);
   });
 
   it('persists config overrides, refreshes command flags, closes the panel, and reloads', async () => {
@@ -85,8 +83,7 @@ describe('experimental feature command handlers', () => {
     expect(host.harness.setConfig).toHaveBeenCalledWith({
       experimental: { 'goal_command': true },
     });
-    expect(host.harness.getExperimentalFlags).toHaveBeenCalled();
-    expect(host.harness.getExperimentalFeatures).not.toHaveBeenCalled();
+    expect(host.harness.getExperimentalFeatures).toHaveBeenCalledOnce();
     expect(isExperimentalFlagEnabled('goal_command')).toBe(true);
     expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalled();
     expect(host.restoreEditor).toHaveBeenCalled();

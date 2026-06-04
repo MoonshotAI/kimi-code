@@ -35,6 +35,10 @@ function clearExperimentalEnv(): void {
   }
 }
 
+function experimentalFeatureEnabled(core: KimiCore, id: string): boolean | undefined {
+  return core.getExperimentalFeatures().find((feature) => feature.id === id)?.enabled;
+}
+
 describe('KimiCore runtime config', () => {
   let tmp: string;
 
@@ -97,14 +101,10 @@ background_ask = true
     const first = new KimiCore(async () => ({}) as never, { homeDir: firstHome });
     const second = new KimiCore(async () => ({}) as never, { homeDir: secondHome });
 
-    expect(first.getExperimentalFlags()).toMatchObject({
-      'goal_command': true,
-      'background_ask': false,
-    });
-    expect(second.getExperimentalFlags()).toMatchObject({
-      'goal_command': false,
-      'background_ask': true,
-    });
+    expect(experimentalFeatureEnabled(first, 'goal_command')).toBe(true);
+    expect(experimentalFeatureEnabled(first, 'background_ask')).toBe(false);
+    expect(experimentalFeatureEnabled(second, 'goal_command')).toBe(false);
+    expect(experimentalFeatureEnabled(second, 'background_ask')).toBe(true);
   });
 
   it('updates the scoped experimental resolver after setKimiConfig', async () => {
@@ -121,7 +121,7 @@ goal_command = false
     clearExperimentalEnv();
 
     const core = new KimiCore(async () => ({}) as never, { homeDir });
-    expect(core.getExperimentalFlags()['goal_command']).toBe(false);
+    expect(experimentalFeatureEnabled(core, 'goal_command')).toBe(false);
 
     await core.setKimiConfig({
       experimental: {
@@ -129,7 +129,7 @@ goal_command = false
       },
     });
 
-    expect(core.getExperimentalFlags()['goal_command']).toBe(true);
+    expect(experimentalFeatureEnabled(core, 'goal_command')).toBe(true);
   });
 
   it('updates the shared experimental resolver without hot-refreshing materialized tools', async () => {
