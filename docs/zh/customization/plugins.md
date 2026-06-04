@@ -153,9 +153,9 @@ Plugin MCP servers 只会在新会话中启动。启用或禁用某个 server：
 
 ## 官方插件
 
-Kimi Code 官方 marketplace 收录了经过审核的官方插件。目前可用：
+Kimi Code CLI 官方 marketplace 收录了经过审核的官方插件。目前可用：
 
-**[Kimi Datasource](./datasource.md)** — 通过自然语言查询金融行情、宏观经济、企业工商和学术文献，无需申请账号或调用 API。
+**[Kimi Datasource](./datasource.md)** — 通过自然语言查询金融行情、宏观经济、企业工商和学术文献。
 
 安装方式：
 
