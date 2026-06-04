@@ -46,6 +46,21 @@ describe('resolveSlashCommandInput', () => {
       name: 'btw',
       args: 'what are you doing?',
     });
+    expect(resolve('/add-dir ../other-repo')).toMatchObject({
+      kind: 'builtin',
+      name: 'add-dir',
+      args: '../other-repo',
+    });
+    expect(resolve('/dirs')).toMatchObject({
+      kind: 'builtin',
+      name: 'dirs',
+      args: '',
+    });
+    expect(resolve('/remove-dir ../other-repo')).toMatchObject({
+      kind: 'builtin',
+      name: 'remove-dir',
+      args: '../other-repo',
+    });
   });
 
   it('blocks idle-only built-ins while streaming', () => {

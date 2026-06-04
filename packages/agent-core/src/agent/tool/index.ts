@@ -1,9 +1,10 @@
 import { uniq } from '@antfu/utils';
 import type { ChatProvider, Tool } from '@moonshot-ai/kosong';
 import picomatch from 'picomatch';
+import { join } from 'pathe';
 
 import type { Agent } from '..';
-import { makeErrorPayload } from '../../errors';
+import { ErrorCodes, KimiError, makeErrorPayload } from '../../errors';
 import { flags } from '../../flags';
 import type { ExecutableTool } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
@@ -14,6 +15,10 @@ import type { MCPClient } from '../../mcp/types';
 import { DEFAULT_AGENT_PROFILES } from '../../profile';
 import { extendWorkspaceWithSkillRoots } from '../../skill';
 import * as b from '../../tools/builtin';
+import {
+  canonicalizePath,
+  normalizeUserPath,
+} from '../../tools/policies/path-access';
 import type { ToolStore, ToolStoreData, ToolStoreKey } from '../../tools/store';
 import type {
   BuiltinTool,
@@ -22,6 +27,9 @@ import type {
   ToolInfo,
   UserToolRegistration,
 } from './types';
+
+const S_IFMT = 0o170000;
+const S_IFDIR = 0o040000;
 
 export * from './types';
 
@@ -38,6 +46,7 @@ export class ToolManager {
   /** server name → list of qualified tool names registered for that server. */
   protected readonly mcpToolsByServer: Map<string, string[]> = new Map();
   protected enabledTools: Set<string> = new Set();
+  private additionalWorkspaceDirs: string[] = [];
   /** Glob patterns (e.g. `mcp__*`, `mcp__github__*`) gating which MCP tools the profile exposes. */
   private mcpAccessPatterns: string[] = [];
   protected readonly store: Partial<ToolStoreData> = {};
@@ -121,6 +130,120 @@ export class ToolManager {
     });
     this.userTools.delete(name);
     this.enabledTools.delete(name);
+  }
+
+  async addWorkspaceDirectory(
+    inputPath: string,
+  ): Promise<{ readonly path: string; readonly added: boolean }> {
+    const resolvedPath = this.resolveWorkspaceDirectory(inputPath);
+    await this.assertDirectory(resolvedPath, inputPath);
+    return this.registerWorkspaceDirectory(resolvedPath, true);
+  }
+
+  restoreWorkspaceDirectory(inputPath: string): void {
+    const resolvedPath = this.resolveWorkspaceDirectory(inputPath);
+    this.registerWorkspaceDirectory(resolvedPath, false);
+  }
+
+  removeWorkspaceDirectory(
+    inputPath: string,
+  ): { readonly path: string; readonly removed: boolean } {
+    const resolvedPath = this.resolveWorkspaceDirectory(inputPath);
+    return this.unregisterWorkspaceDirectory(resolvedPath, true);
+  }
+
+  restoreRemoveWorkspaceDirectory(inputPath: string): void {
+    const resolvedPath = this.resolveWorkspaceDirectory(inputPath);
+    this.unregisterWorkspaceDirectory(resolvedPath, false);
+  }
+
+  additionalWorkspaceDirectories(): readonly string[] {
+    return [...this.additionalWorkspaceDirs];
+  }
+
+  additionalWorkspaceDirsInfo(): string | undefined {
+    if (this.additionalWorkspaceDirs.length === 0) return undefined;
+    return this.additionalWorkspaceDirs.map((dir) => `- ${dir}`).join('\n');
+  }
+
+  inheritWorkspaceDirectories(parent: ToolManager): void {
+    for (const dir of parent.additionalWorkspaceDirectories()) {
+      this.registerWorkspaceDirectory(dir, false);
+    }
+  }
+
+  private registerWorkspaceDirectory(
+    resolvedPath: string,
+    persist: boolean,
+  ): { readonly path: string; readonly added: boolean } {
+    if (this.additionalWorkspaceDirs.includes(resolvedPath)) {
+      return { path: resolvedPath, added: false };
+    }
+
+    if (persist) {
+      this.agent.records.logRecord({
+        type: 'tools.add_workspace_directory',
+        path: resolvedPath,
+      });
+    }
+    this.additionalWorkspaceDirs.push(resolvedPath);
+    this.initializeBuiltinTools();
+    return { path: resolvedPath, added: true };
+  }
+
+  private unregisterWorkspaceDirectory(
+    resolvedPath: string,
+    persist: boolean,
+  ): { readonly path: string; readonly removed: boolean } {
+    const index = this.additionalWorkspaceDirs.indexOf(resolvedPath);
+    if (index === -1) {
+      return { path: resolvedPath, removed: false };
+    }
+
+    if (persist) {
+      this.agent.records.logRecord({
+        type: 'tools.remove_workspace_directory',
+        path: resolvedPath,
+      });
+    }
+    this.additionalWorkspaceDirs.splice(index, 1);
+    this.initializeBuiltinTools();
+    return { path: resolvedPath, removed: true };
+  }
+
+  private async assertDirectory(path: string, displayPath: string): Promise<void> {
+    let stat;
+    try {
+      stat = await this.agent.kaos.stat(path, { followSymlinks: true });
+    } catch (error) {
+      const code = typeof error === 'object' && error !== null
+        ? (error as { readonly code?: unknown }).code
+        : undefined;
+      if (code === 'ENOENT' || code === 'ENOTDIR') {
+        throw new KimiError(
+          ErrorCodes.REQUEST_INVALID,
+          `Directory does not exist: ${displayPath}`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+    if ((stat.stMode & S_IFMT) !== S_IFDIR) {
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, `Not a directory: ${displayPath}`);
+    }
+  }
+
+  private resolveWorkspaceDirectory(inputPath: string): string {
+    const pathClass = this.agent.kaos.pathClass();
+    const normalized = normalizeUserPath(inputPath, pathClass);
+    const home = this.agent.kaos.gethome();
+    const expanded =
+      normalized === '~'
+        ? home
+        : normalized.startsWith('~/') || (pathClass === 'win32' && normalized.startsWith('~\\'))
+          ? join(home, normalized.slice(2))
+          : normalized;
+    return canonicalizePath(expanded, this.agent.config.cwd, pathClass);
   }
 
   inheritUserTools(parent: ToolManager): void {
@@ -368,7 +491,7 @@ export class ToolManager {
     const workspace = extendWorkspaceWithSkillRoots(
       {
         workspaceDir: cwd,
-        additionalDirs: [],
+        additionalDirs: this.additionalWorkspaceDirs,
       },
       this.agent.skills?.registry.getSkillRoots() ?? [],
     );

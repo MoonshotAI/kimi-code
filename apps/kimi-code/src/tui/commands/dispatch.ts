@@ -45,6 +45,9 @@ import {
   handleExportMdCommand,
   handleForkCommand,
   handleInitCommand,
+  handleAddDirCommand,
+  handleDirsCommand,
+  handleRemoveDirCommand,
   handleTitleCommand,
 } from './session';
 import { handleUndoCommand } from './undo';
@@ -83,6 +86,9 @@ export {
   handleExportMdCommand,
   handleForkCommand,
   handleInitCommand,
+  handleAddDirCommand,
+  handleDirsCommand,
+  handleRemoveDirCommand,
   handleTitleCommand,
 } from './session';
 export { handleUndoCommand } from './undo';
@@ -103,6 +109,8 @@ export interface SlashCommandHost {
   showError(msg: string): void;
   showStatus(msg: string, color?: string): void;
   showNotice(title: string, detail?: string): void;
+  addWorkspaceDirectory?(dir: string): void;
+  removeWorkspaceDirectory?(dir: string): void;
   track(event: string, props?: Record<string, unknown>): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
@@ -228,6 +236,15 @@ async function handleBuiltInSlashCommand(
       return;
     case 'tasks':
       void host.tasksBrowserController.show();
+      return;
+    case 'add-dir':
+      await handleAddDirCommand(host, args);
+      return;
+    case 'dirs':
+      handleDirsCommand(host);
+      return;
+    case 'remove-dir':
+      await handleRemoveDirCommand(host, args);
       return;
     case 'mcp':
       void showMcpServers(host);

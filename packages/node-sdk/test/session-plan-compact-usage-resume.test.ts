@@ -152,6 +152,73 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     }
   });
 
+  it('resumes a persisted session and exposes additional workspace directories', async () => {
+    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-dirs-home-');
+    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-dirs-work-');
+    const extraDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-dirs-extra-');
+    await writeTestConfig(homeDir);
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const created = await harness.createSession({
+        id: 'ses_resume_workspace_dirs',
+        workDir,
+        model: 'test-model',
+      });
+      const expectedExtraDir = toDisplayPath(extraDir);
+      await expect(created.addDirectory(extraDir)).resolves.toEqual({
+        path: expectedExtraDir,
+        added: true,
+      });
+      await expect(created.getStatus()).resolves.toMatchObject({
+        additionalWorkspaceDirs: [expectedExtraDir],
+      });
+      await created.close();
+
+      const resumed = await harness.resumeSession({ id: created.id });
+
+      await expect(resumed.getStatus()).resolves.toMatchObject({
+        additionalWorkspaceDirs: [expectedExtraDir],
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('resumes a persisted session without removed workspace directories', async () => {
+    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-remove-dirs-home-');
+    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-remove-dirs-work-');
+    const extraDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-remove-dirs-extra-');
+    await writeTestConfig(homeDir);
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const created = await harness.createSession({
+        id: 'ses_resume_removed_workspace_dirs',
+        workDir,
+        model: 'test-model',
+      });
+      const expectedExtraDir = toDisplayPath(extraDir);
+      await created.addDirectory(extraDir);
+      await expect(created.removeDirectory(extraDir)).resolves.toEqual({
+        path: expectedExtraDir,
+        removed: true,
+      });
+      await expect(created.getStatus()).resolves.toMatchObject({
+        additionalWorkspaceDirs: [],
+      });
+      await created.close();
+
+      const resumed = await harness.resumeSession({ id: created.id });
+
+      await expect(resumed.getStatus()).resolves.toMatchObject({
+        additionalWorkspaceDirs: [],
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
   it.todo('marks resumed plan mode active when the restored plan has no plan data', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-legacy-plan-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-legacy-plan-work-');
@@ -333,4 +400,8 @@ max_context_size = 200000
 async function markdownFiles(dir: string): Promise<string[]> {
   const entries = await readdir(dir);
   return entries.filter((entry) => entry.endsWith('.md')).toSorted();
+}
+
+function toDisplayPath(path: string): string {
+  return path.replaceAll('\\', '/');
 }

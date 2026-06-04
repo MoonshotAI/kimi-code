@@ -30,6 +30,9 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/tasks` | `/task` | Browse the background task list | Yes |
 | `/fork` | — | Fork a new session from the current one, preserving the full conversation history | No |
 | `/title [<text>]` | `/rename` | Without arguments, display the current session title; with an argument, set a new title (max 200 characters) | Yes |
+| `/add-dir [<directory>]` | — | Add another directory to the current session's workspace so file tools can read, search, and edit it; without an argument, opens a searchable directory picker | Yes |
+| `/dirs` | `/directories` | Open a searchable list showing the primary workspace directory and any extra directories in the current session | Yes |
+| `/remove-dir [<directory>]` | `/rm-dir` | Remove an extra directory from the current session's workspace scope; without an argument, opens a searchable picker of added directories | Yes |
 | `/compact [<instruction>]` | — | Compact the current conversation context to free up token usage; an optional custom instruction can hint to the model what to preserve | No |
 | `/reload` | — | Reload the current session and apply the latest `config.toml` settings (providers, models, etc.) and `tui.toml` UI preferences, without restarting the CLI | No |
 | `/reload-tui` | — | Reload only the `tui.toml` UI preferences (theme, editor, notifications, etc.) without rebuilding the session | Yes |

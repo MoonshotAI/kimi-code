@@ -92,6 +92,12 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'tools.set_active_tools':
       agent.tools.setActiveTools(input.names);
       return;
+    case 'tools.add_workspace_directory':
+      agent.tools.restoreWorkspaceDirectory(input.path);
+      return;
+    case 'tools.remove_workspace_directory':
+      agent.tools.restoreRemoveWorkspaceDirectory(input.path);
+      return;
     case 'tools.update_store':
       agent.tools.updateStore(input.key, input.value);
       return;

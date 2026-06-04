@@ -317,6 +317,7 @@ export class SessionSubagentHost {
       modelAlias: parent.config.modelAlias,
       thinkingLevel: parent.config.thinkingLevel,
     });
+    child.tools.inheritWorkspaceDirectories(parent.tools);
 
     const context = await prepareSystemPromptContext(child.kaos);
     child.useProfile(profile, context);

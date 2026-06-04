@@ -323,6 +323,11 @@ export class FooterComponent implements Component {
 
     const cwd = shortenCwd(state.workDir);
     if (cwd) left.push(chalk.hex(colors.status)(cwd));
+    const additionalDirCount = state.additionalWorkspaceDirs?.length ?? 0;
+    if (additionalDirCount > 0) {
+      const noun = additionalDirCount === 1 ? 'dir' : 'dirs';
+      left.push(chalk.hex(colors.status)(`+${String(additionalDirCount)} ${noun}`));
+    }
 
     const git = this.gitCache.getStatus();
     if (git !== null) {

@@ -179,6 +179,7 @@ describe('runShell', () => {
       outputFormat: undefined,
       prompt: undefined,
       skillsDirs: [],
+      addDirs: ['/extra'],
     };
 
     await runShell(cliOptions, '1.2.3-test');
@@ -226,6 +227,7 @@ describe('runShell', () => {
       workDir: process.cwd(),
       resolvedTheme: 'dark',
     });
+    expect(startupInput.cliOptions.addDirs).toEqual(['/extra']);
     expect(mocks.tuiStart).toHaveBeenCalledOnce();
     expect(mocks.harnessTrack).not.toHaveBeenCalledWith('started', expect.anything());
     expect(mocks.withTelemetryContext).toHaveBeenCalledWith({ sessionId: 'ses-startup' });

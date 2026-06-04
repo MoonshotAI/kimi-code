@@ -369,6 +369,34 @@ export class Session {
     });
   }
 
+  async addDirectory(path: string): Promise<{ readonly path: string; readonly added: boolean }> {
+    this.ensureOpen();
+    const normalized = normalizeRequiredString(
+      path,
+      'Directory path cannot be empty',
+      ErrorCodes.REQUEST_WORK_DIR_REQUIRED,
+    );
+    return this.rpc.addDirectory({
+      sessionId: this.id,
+      path: normalized,
+    });
+  }
+
+  async removeDirectory(
+    path: string,
+  ): Promise<{ readonly path: string; readonly removed: boolean }> {
+    this.ensureOpen();
+    const normalized = normalizeRequiredString(
+      path,
+      'Directory path cannot be empty',
+      ErrorCodes.REQUEST_WORK_DIR_REQUIRED,
+    );
+    return this.rpc.removeDirectory({
+      sessionId: this.id,
+      path: normalized,
+    });
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;

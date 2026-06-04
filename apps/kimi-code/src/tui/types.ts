@@ -37,6 +37,7 @@ export interface AppState {
   /** Current goal snapshot for the footer badge; null/undefined when no active goal. */
   goal?: GoalSnapshot | null;
   mcpServersSummary: string | null;
+  additionalWorkspaceDirs?: readonly string[] | undefined;
 }
 
 export interface ToolCallBlockData {
@@ -177,6 +178,7 @@ export interface TUIStartupOptions {
   readonly auto: boolean;
   readonly plan: boolean;
   readonly model?: string;
+  readonly addDirs?: readonly string[] | undefined;
   readonly startupNotice?: string;
 }
 

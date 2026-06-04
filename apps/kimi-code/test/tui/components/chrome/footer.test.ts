@@ -88,4 +88,18 @@ describe('FooterComponent', () => {
     expect(codes.has(RAINBOW_CYAN)).toBe(false);
     expect(codes.has(RAINBOW_GREEN)).toBe(false);
   });
+
+  it('shows the number of additional workspace directories', () => {
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        additionalWorkspaceDirs: ['/tmp/extra'],
+      },
+      darkColors,
+    );
+
+    const output = footer.render(120).join('\n');
+
+    expect(output).toContain('+1 dir');
+  });
 });

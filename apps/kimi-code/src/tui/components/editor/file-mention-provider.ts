@@ -30,7 +30,8 @@
  * when `fd` is missing AND we're in a git repo.
  */
 
-import { basename } from 'node:path';
+import { readdir } from 'node:fs/promises';
+import { basename, join, resolve } from 'node:path';
 
 import {
   CombinedAutocompleteProvider,
@@ -46,21 +47,33 @@ import type { GitLsFilesCache, GitSnapshot } from '#/utils/git/git-ls-files';
 
 const MAX_SUGGESTIONS_WHEN_QUERY = 50;
 const MAX_SUGGESTIONS_WHEN_EMPTY = 15;
+const MAX_ADDITIONAL_SCAN_ENTRIES = 1000;
+const MAX_ADDITIONAL_SCAN_DEPTH = 6;
 
 // Mirrors pi-tui's PATH_DELIMITERS. Keeping a local copy so @-detection
 // stays aligned even if pi-tui extends its set.
 const PATH_DELIMITERS = new Set([' ', '\t', '"', "'", '=']);
 
+export interface AdditionalFileMentionRoot {
+  readonly dir: string;
+  readonly gitCache: GitLsFilesCache;
+}
+
 export class FileMentionProvider implements AutocompleteProvider {
   private readonly inner: CombinedAutocompleteProvider;
+  private readonly additionalInnerProviders: readonly CombinedAutocompleteProvider[];
 
   constructor(
     slashCommands: SlashCommand[],
     workDir: string,
     private readonly fdPath: string | null,
     private readonly gitCache: GitLsFilesCache,
+    private readonly additionalRoots: readonly AdditionalFileMentionRoot[] = [],
   ) {
     this.inner = new CombinedAutocompleteProvider(slashCommands, workDir, fdPath);
+    this.additionalInnerProviders = additionalRoots.map(
+      (root) => new CombinedAutocompleteProvider(slashCommands, root.dir, fdPath),
+    );
   }
 
   async getSuggestions(
@@ -78,16 +91,26 @@ export class FileMentionProvider implements AutocompleteProvider {
       return this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
     }
 
-    // `fd` available → inner's fuzzy search is strictly better than our
-    // git fallback (fd respects .gitignore AND covers unstaged paths
-    // without a second spawn). Accept its output as-is.
+    const additionalItems = await this.additionalRootItems(
+      atPrefix,
+      lines,
+      cursorLine,
+      cursorCol,
+      options,
+    );
+
+    // `fd` available → inner's fuzzy search is strictly better for the
+    // primary work dir. Merge extra roots because pi-tui only knows the
+    // original base path.
     if (this.fdPath !== null) {
-      return this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
+      const primary = await this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
+      return mergeSuggestions(primary, additionalItems, atPrefix);
     }
 
     const snapshot = this.gitCache.getSnapshot();
     if (snapshot === null || snapshot.files.length === 0) {
-      return this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
+      const primary = await this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
+      return mergeSuggestions(primary, additionalItems, atPrefix);
     }
 
     const query = atPrefix.slice(1); // strip leading '@'
@@ -105,9 +128,10 @@ export class FileMentionProvider implements AutocompleteProvider {
       // Git cache had nothing useful — fall through to readdir (user
       // may be typing a path that exists but isn't tracked, e.g. a
       // freshly created file not yet in the 2s cache).
-      return this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
+      const primary = await this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
+      return mergeSuggestions(primary, additionalItems, atPrefix);
     }
-    return { items, prefix: atPrefix };
+    return mergeSuggestions({ items, prefix: atPrefix }, additionalItems, atPrefix);
   }
 
   applyCompletion(
@@ -121,6 +145,49 @@ export class FileMentionProvider implements AutocompleteProvider {
     // paths, directory trailing slash. Our item shape matches what
     // pi-tui produces.
     return this.inner.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
+  }
+
+  private async additionalRootItems(
+    atPrefix: string,
+    lines: string[],
+    cursorLine: number,
+    cursorCol: number,
+    options: { signal: AbortSignal; force?: boolean },
+  ): Promise<AutocompleteItem[]> {
+    const query = atPrefix.slice(1);
+    const result: AutocompleteItem[] = [];
+    for (const [index, root] of this.additionalRoots.entries()) {
+      const snapshot = root.gitCache.getSnapshot();
+      if (snapshot !== null && snapshot.files.length > 0) {
+        const includeDotDirs = query.startsWith('.');
+        const candidates = includeDotDirs
+          ? snapshot.files
+          : snapshot.files.filter((p) => !containsDotSegment(p));
+        const items =
+          query.length === 0
+            ? rankForEmptyQuery(candidates, snapshot)
+            : rankForQuery(candidates, query, snapshot);
+        if (items.length > 0) {
+          result.push(...items.map((item) => absolutizeItem(root.dir, item)));
+          continue;
+        }
+      }
+
+      const fallback = await this.additionalInnerProviders[index]?.getSuggestions(
+        lines,
+        cursorLine,
+        cursorCol,
+        options,
+      );
+      if (fallback !== null && fallback !== undefined) {
+        result.push(...fallback.items.map((item) => absolutizeItem(root.dir, item)));
+        continue;
+      }
+
+      const scannedItems = await scanAdditionalRootItems(root.dir, query, options.signal);
+      result.push(...scannedItems.map((item) => absolutizeItem(root.dir, item)));
+    }
+    return result;
   }
 }
 
@@ -269,4 +336,138 @@ function toItem(path: string): AutocompleteItem {
     label: basename(path),
     description: path,
   };
+}
+
+interface ScannedEntry {
+  readonly path: string;
+  readonly isDirectory: boolean;
+}
+
+async function scanAdditionalRootItems(
+  rootDir: string,
+  query: string,
+  signal: AbortSignal,
+): Promise<AutocompleteItem[]> {
+  const includeDotDirs = query.startsWith('.');
+  const entries: ScannedEntry[] = [];
+  const queue: Array<{ abs: string; rel: string; depth: number }> = [
+    { abs: rootDir, rel: '', depth: 0 },
+  ];
+
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    if (signal.aborted || entries.length >= MAX_ADDITIONAL_SCAN_ENTRIES) break;
+    const current = queue[cursor];
+    if (current === undefined) break;
+
+    let dirents;
+    try {
+      dirents = await readdir(current.abs, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of dirents) {
+      if (signal.aborted || entries.length >= MAX_ADDITIONAL_SCAN_ENTRIES) break;
+      if (entry.name === '.git') continue;
+      if (!includeDotDirs && entry.name.startsWith('.')) continue;
+
+      const rel = current.rel.length === 0 ? entry.name : `${current.rel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        entries.push({ path: `${rel}/`, isDirectory: true });
+        if (current.depth < MAX_ADDITIONAL_SCAN_DEPTH) {
+          queue.push({ abs: join(current.abs, entry.name), rel, depth: current.depth + 1 });
+        }
+        continue;
+      }
+      if (entry.isFile() || entry.isSymbolicLink()) {
+        entries.push({ path: rel, isDirectory: false });
+      }
+    }
+  }
+
+  return rankScannedEntries(entries, query);
+}
+
+function rankScannedEntries(entries: readonly ScannedEntry[], query: string): AutocompleteItem[] {
+  const cap = query.length === 0 ? MAX_SUGGESTIONS_WHEN_EMPTY : MAX_SUGGESTIONS_WHEN_QUERY;
+  if (query.length === 0) {
+    return entries
+      .toSorted(
+        (a, b) =>
+          Number(b.isDirectory) - Number(a.isDirectory) ||
+          basename(a.path).localeCompare(basename(b.path)) ||
+          a.path.localeCompare(b.path),
+      )
+      .slice(0, cap)
+      .map(scannedToItem);
+  }
+
+  const lowerQuery = query.toLowerCase().replaceAll('\\', '/');
+  return entries
+    .map((entry) => ({ entry, score: scoreScannedEntry(entry, lowerQuery) }))
+    .filter(({ score }) => score > 0)
+    .toSorted(
+      (a, b) =>
+        b.score - a.score ||
+        Number(b.entry.isDirectory) - Number(a.entry.isDirectory) ||
+        basename(a.entry.path).length - basename(b.entry.path).length ||
+        a.entry.path.localeCompare(b.entry.path),
+    )
+    .slice(0, cap)
+    .map(({ entry }) => scannedToItem(entry));
+}
+
+function scoreScannedEntry(entry: ScannedEntry, lowerQuery: string): number {
+  const path = entry.path.replaceAll('\\', '/').replace(/\/$/, '');
+  const base = basename(path).toLowerCase();
+  const lowerPath = path.toLowerCase();
+  let score = 0;
+  if (lowerPath.startsWith(lowerQuery)) score = 100;
+  else if (base.startsWith(lowerQuery)) score = 80;
+  else if (base.includes(lowerQuery)) score = 50;
+  else if (lowerPath.includes(lowerQuery)) score = 30;
+  else {
+    const fuzzy = fuzzyMatch(lowerQuery, lowerPath);
+    if (fuzzy.matches) score = 10;
+  }
+  return entry.isDirectory && score > 0 ? score + 5 : score;
+}
+
+function scannedToItem(entry: ScannedEntry): AutocompleteItem {
+  const value = entry.isDirectory && !entry.path.endsWith('/') ? `${entry.path}/` : entry.path;
+  return {
+    value: `@${value}`,
+    label: `${basename(value)}${entry.isDirectory && !basename(value).endsWith('/') ? '/' : ''}`,
+    description: value,
+  };
+}
+
+function absolutizeItem(rootDir: string, item: AutocompleteItem): AutocompleteItem {
+  const value = typeof item.value === 'string' ? item.value : String(item.value);
+  const relativePath = value.startsWith('@') ? value.slice(1) : value;
+  const hasTrailingSeparator = relativePath.endsWith('/') || relativePath.endsWith('\\');
+  const absolutePath = resolve(rootDir, relativePath);
+  return {
+    ...item,
+    value: `@${hasTrailingSeparator ? `${absolutePath}/` : absolutePath}`,
+    description: hasTrailingSeparator ? `${absolutePath}/` : absolutePath,
+  };
+}
+
+function mergeSuggestions(
+  primary: AutocompleteSuggestions | null,
+  additionalItems: readonly AutocompleteItem[],
+  prefix: string,
+): AutocompleteSuggestions | null {
+  if (additionalItems.length === 0) return primary;
+  const merged: AutocompleteItem[] = [];
+  const seen = new Set<string>();
+  for (const item of [...(primary?.items ?? []), ...additionalItems]) {
+    const key = typeof item.value === 'string' ? item.value : String(item.value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(item);
+  }
+  if (merged.length === 0) return null;
+  return { items: merged, prefix: primary?.prefix ?? prefix };
 }

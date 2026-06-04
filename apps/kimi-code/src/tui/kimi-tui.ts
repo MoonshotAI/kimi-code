@@ -40,6 +40,10 @@ import {
   type KimiSlashCommand,
   type SkillListSession,
 } from './commands';
+import {
+  completeAddDirectoryArgument,
+  completeRemoveDirectoryArgument,
+} from './commands/directory-completions';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
 import { GutterContainer } from './components/chrome/gutter-container';
 import { CHROME_GUTTER } from './constant/rendering';
@@ -180,6 +184,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     sessionTitle: null,
     goal: null,
     mcpServersSummary: null,
+    additionalWorkspaceDirs: [],
   };
 }
 
@@ -202,6 +207,8 @@ export class KimiTUI {
   private readonly imageStore = new ImageAttachmentStore();
   private readonly fdPath: string | null = detectFdPath();
   private readonly gitLsFilesCache: GitLsFilesCache;
+  private readonly additionalWorkspaceDirs: string[] = [];
+  private readonly additionalGitLsFilesCaches = new Map<string, GitLsFilesCache>();
   sessionEventUnsubscribe: (() => void) | undefined;
   cancelInFlight: (() => void) | undefined;
   deferUserMessages = false;
@@ -258,6 +265,7 @@ export class KimiTUI {
         auto: startupInput.cliOptions.auto,
         plan: startupInput.cliOptions.plan,
         model: startupInput.cliOptions.model,
+        addDirs: startupInput.cliOptions.addDirs ?? [],
         startupNotice: startupInput.startupNotice,
       },
       resolvedTheme: startupInput.resolvedTheme,
@@ -313,12 +321,22 @@ export class KimiTUI {
   private setupAutocomplete(): void {
     const slashCommands: SlashCommand[] = this.getSlashCommands().map((cmd) => {
       const completer = cmd.completeArgs;
+      const dynamicCompleter =
+        cmd.name === 'add-dir'
+          ? (prefix: string) => completeAddDirectoryArgument(prefix, this.state.appState.workDir)
+          : cmd.name === 'remove-dir'
+            ? (prefix: string) =>
+                completeRemoveDirectoryArgument(prefix, this.additionalWorkspaceDirs)
+            : undefined;
       return {
         name: cmd.name,
         description: cmd.description,
         ...(cmd.argumentHint !== undefined ? { argumentHint: cmd.argumentHint } : {}),
-        ...(completer !== undefined
-          ? { getArgumentCompletions: (prefix: string) => completer(prefix) }
+        ...(dynamicCompleter !== undefined || completer !== undefined
+          ? {
+              getArgumentCompletions: (prefix: string) =>
+                dynamicCompleter !== undefined ? dynamicCompleter(prefix) : completer!(prefix),
+            }
           : {}),
       };
     });
@@ -327,6 +345,10 @@ export class KimiTUI {
       this.state.appState.workDir,
       this.fdPath,
       this.gitLsFilesCache,
+      this.additionalWorkspaceDirs.map((dir) => ({
+        dir,
+        gitCache: this.additionalGitLsFilesCaches.get(dir)!,
+      })),
     );
     this.state.editor.setAutocompleteProvider(provider);
   }
@@ -551,6 +573,7 @@ export class KimiTUI {
       throw new Error('Startup session was not initialized.');
     }
     await this.setSession(session);
+    await this.addStartupDirectories(session, startup.addDirs ?? []);
     await this.syncRuntimeState(session);
     this.state.startupState = 'ready';
     return shouldReplayHistory;
@@ -1012,6 +1035,42 @@ export class KimiTUI {
     this.registerSessionHandlers(session);
   }
 
+  addWorkspaceDirectory(dir: string): void {
+    this.setAdditionalWorkspaceDirectories([...this.additionalWorkspaceDirs, dir]);
+    this.state.ui.requestRender();
+  }
+
+  removeWorkspaceDirectory(dir: string): void {
+    this.setAdditionalWorkspaceDirectories(
+      this.additionalWorkspaceDirs.filter((existing) => existing !== dir),
+    );
+    this.state.ui.requestRender();
+  }
+
+  private setAdditionalWorkspaceDirectories(dirs: readonly string[]): void {
+    const uniqueDirs = [...new Set(dirs)];
+    if (sameStringList(this.additionalWorkspaceDirs, uniqueDirs)) return;
+
+    this.additionalWorkspaceDirs.length = 0;
+    this.additionalGitLsFilesCaches.clear();
+    for (const dir of uniqueDirs) {
+      this.additionalWorkspaceDirs.push(dir);
+      this.additionalGitLsFilesCaches.set(dir, createGitLsFilesCache(dir));
+    }
+    this.setAppState({ additionalWorkspaceDirs: [...this.additionalWorkspaceDirs] });
+    this.setupAutocomplete();
+  }
+
+  private async addStartupDirectories(
+    session: Session,
+    dirs: readonly string[],
+  ): Promise<void> {
+    for (const dir of new Set(dirs)) {
+      const result = await session.addDirectory(dir);
+      this.addWorkspaceDirectory(result.path);
+    }
+  }
+
   async syncRuntimeState(session: Session = this.requireSession()): Promise<void> {
     const [status, goalResult] = await Promise.all([
       session.getStatus(),
@@ -1019,6 +1078,7 @@ export class KimiTUI {
         ? session.getGoal()
         : Promise.resolve({ goal: null }),
     ]);
+    this.setAdditionalWorkspaceDirectories(status.additionalWorkspaceDirs ?? []);
     this.setAppState({
       sessionId: session.id,
       model: status.model ?? '',
@@ -1056,7 +1116,10 @@ export class KimiTUI {
     this.questionController.cancelAll(reason);
     this.session = undefined;
     this.harness.setTelemetryContext({ sessionId: null });
-    this.setAppState({ goal: null });
+    this.additionalWorkspaceDirs.length = 0;
+    this.additionalGitLsFilesCaches.clear();
+    this.setAppState({ goal: null, additionalWorkspaceDirs: [] });
+    this.setupAutocomplete();
     return previous;
   }
 
@@ -1849,4 +1912,9 @@ export class KimiTUI {
     this.restoreEditor();
   }
 
+}
+
+function sameStringList(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => value === b[index]);
 }

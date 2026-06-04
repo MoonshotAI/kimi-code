@@ -1,3 +1,7 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+
 import { describe, it, expect } from 'vitest';
 
 import { FileMentionProvider } from '#/tui/components/editor/file-mention-provider';
@@ -211,5 +215,50 @@ describe('FileMentionProvider — @ prefix detection + git-backed suggestions', 
     const result = await provider.getSuggestions(['@foo'], 0, 4, { signal: ctrl() });
     // pi-tui readdir on a nonexistent basePath returns [] → null.
     expect(result).toBeNull();
+  });
+
+  it('adds absolute-path suggestions from additional workspace roots', async () => {
+    const extraRoot = resolve('/extra-repo');
+    const provider = new FileMentionProvider(
+      [],
+      '/nonexistent',
+      'fd',
+      stubGitCache(null),
+      [
+        {
+          dir: extraRoot,
+          gitCache: stubGitCache(['src/shared.ts']),
+        },
+      ],
+    );
+
+    const result = await provider.getSuggestions(['@shared'], 0, 7, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    expect(result!.items.map((i) => i.value)).toContain(
+      `@${resolve(extraRoot, 'src/shared.ts')}`,
+    );
+  });
+
+  it('falls back to directory scanning for non-git additional workspace roots', async () => {
+    const extraRoot = await mkdtemp(join(tmpdir(), 'kimi-file-mention-'));
+    await writeFile(join(extraRoot, 'loose.txt'), 'content');
+    const provider = new FileMentionProvider(
+      [],
+      '/nonexistent',
+      NO_FD,
+      stubGitCache(null),
+      [
+        {
+          dir: extraRoot,
+          gitCache: stubGitCache(null),
+        },
+      ],
+    );
+
+    const result = await provider.getSuggestions(['@loose'], 0, 6, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    expect(result!.items.map((i) => i.value)).toContain(`@${resolve(extraRoot, 'loose.txt')}`);
   });
 });

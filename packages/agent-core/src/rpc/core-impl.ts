@@ -40,6 +40,8 @@ import { noopTelemetryClient, withTelemetryContext, type TelemetryClient } from 
 import type { CoreRPCClient } from './client';
 import type {
   ActivateSkillPayload,
+  AddWorkspaceDirectoryPayload,
+  AddWorkspaceDirectoryResult,
   BeginCompactionPayload,
   CancelPayload,
   CancelPlanPayload,
@@ -71,6 +73,8 @@ import type {
   ReloadPluginsResult,
   RemoveKimiProviderPayload,
   RemovePluginPayload,
+  RemoveWorkspaceDirectoryPayload,
+  RemoveWorkspaceDirectoryResult,
   RenameSessionPayload,
   ResumeSessionPayload,
   SessionSummary,
@@ -88,6 +92,7 @@ import type {
   UndoHistoryPayload,
   UnregisterToolPayload,
   UpdateSessionMetadataPayload,
+  WorkspaceDirectories,
 } from './core-api';
 import type { ResumedAgentState, ResumeSessionResult } from './resumed';
 import type { SDKRPC } from './sdk-api';
@@ -510,6 +515,20 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).activateSkill(payload);
   }
 
+  addWorkspaceDirectory({
+    sessionId,
+    ...payload
+  }: SessionAgentPayload<AddWorkspaceDirectoryPayload>): Promise<AddWorkspaceDirectoryResult> {
+    return this.sessionApi(sessionId).addWorkspaceDirectory(payload);
+  }
+
+  removeWorkspaceDirectory({
+    sessionId,
+    ...payload
+  }: SessionAgentPayload<RemoveWorkspaceDirectoryPayload>): Promise<RemoveWorkspaceDirectoryResult> {
+    return this.sessionApi(sessionId).removeWorkspaceDirectory(payload);
+  }
+
   getBackgroundOutput({ sessionId, ...payload }: SessionAgentPayload<GetBackgroundOutputPayload>) {
     return this.sessionApi(sessionId).getBackgroundOutput(payload);
   }
@@ -536,6 +555,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   getTools({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
     return this.sessionApi(sessionId).getTools(payload);
+  }
+
+  getWorkspaceDirectories({
+    sessionId,
+    ...payload
+  }: SessionAgentPayload<EmptyPayload>): Promise<WorkspaceDirectories> {
+    return this.sessionApi(sessionId).getWorkspaceDirectories(payload);
   }
 
   getBackground({ sessionId, ...payload }: SessionAgentPayload<GetBackgroundPayload>) {

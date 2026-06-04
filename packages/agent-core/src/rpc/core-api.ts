@@ -213,6 +213,24 @@ export interface ActivateSkillPayload {
   readonly args?: string | undefined;
 }
 
+export interface AddWorkspaceDirectoryPayload {
+  readonly path: string;
+}
+
+export interface AddWorkspaceDirectoryResult {
+  readonly path: string;
+  readonly added: boolean;
+}
+
+export interface RemoveWorkspaceDirectoryPayload {
+  readonly path: string;
+}
+
+export interface RemoveWorkspaceDirectoryResult {
+  readonly path: string;
+  readonly removed: boolean;
+}
+
 export interface McpServerInfo {
   readonly name: string;
   readonly transport: 'stdio' | 'http';
@@ -299,6 +317,11 @@ export interface RemoveKimiProviderPayload {
   readonly providerId: string;
 }
 
+export interface WorkspaceDirectories {
+  readonly primary: string;
+  readonly additional: readonly string[];
+}
+
 export interface AgentAPI {
   prompt: (payload: PromptPayload) => void;
   steer: (payload: SteerPayload) => void;
@@ -319,6 +342,10 @@ export interface AgentAPI {
   stopBackground: (payload: StopBackgroundPayload) => void;
   clearContext: (payload: EmptyPayload) => void;
   activateSkill: (payload: ActivateSkillPayload) => void;
+  addWorkspaceDirectory: (payload: AddWorkspaceDirectoryPayload) => AddWorkspaceDirectoryResult;
+  removeWorkspaceDirectory: (
+    payload: RemoveWorkspaceDirectoryPayload,
+  ) => RemoveWorkspaceDirectoryResult;
   startBtw: (payload: EmptyPayload) => string;
   getBackgroundOutput: (payload: GetBackgroundOutputPayload) => string;
   getContext: (payload: EmptyPayload) => AgentContextData;
@@ -327,6 +354,7 @@ export interface AgentAPI {
   getPlan: (payload: EmptyPayload) => PlanData;
   getUsage: (payload: EmptyPayload) => UsageStatus;
   getTools: (payload: EmptyPayload) => readonly ToolInfo[];
+  getWorkspaceDirectories: (payload: EmptyPayload) => WorkspaceDirectories;
   getBackground: (payload: GetBackgroundPayload) => readonly BackgroundTaskInfo[];
 }
 

@@ -8,6 +8,8 @@ import { createCommandKaos, testAgent } from './harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;
+const S_IFDIR = 0o040000;
+const S_IFREG = 0o100000;
 
 describe('Agent tools', () => {
   it('blocks tools through PreToolUse before permission and emits PostToolUseFailure', async () => {
@@ -221,6 +223,119 @@ describe('Agent tools', () => {
         user: text "Which tools are active?"
     `);
     await ctx.expectResumeMatches();
+  });
+
+  it('adds workspace directories to builtin file tools', async () => {
+    const ctx = testAgent({
+      kaos: createFakeKaos({
+        stat: vi.fn(async (path: string) => ({
+          stMode: path === '/extra' ? S_IFDIR : S_IFREG,
+          stIno: 1,
+          stDev: 1,
+          stNlink: 1,
+          stUid: 1,
+          stGid: 1,
+          stSize: 0,
+          stAtime: 0,
+          stMtime: 0,
+          stCtime: 0,
+        })),
+      }),
+    });
+    ctx.configure({ tools: ['Read'] });
+    ctx.agent.config.update({ cwd: '/workspace' });
+
+    let read = ctx.agent.tools.loopTools.find((tool) => tool.name === 'Read');
+    expect(() => read!.resolveExecution({ path: '../extra/file.txt' })).toThrow(
+      /absolute path/,
+    );
+
+    await expect(ctx.rpc.addWorkspaceDirectory({ path: '../extra' })).resolves.toEqual({
+      path: '/extra',
+      added: true,
+    });
+    await expect(ctx.rpc.addWorkspaceDirectory({ path: '/extra' })).resolves.toEqual({
+      path: '/extra',
+      added: false,
+    });
+    await expect(ctx.rpc.getWorkspaceDirectories({})).resolves.toEqual({
+      primary: '/workspace',
+      additional: ['/extra'],
+    });
+    expect(JSON.stringify(ctx.agent.context.data().history)).toContain('/extra');
+
+    read = ctx.agent.tools.loopTools.find((tool) => tool.name === 'Read');
+    const execution = await Promise.resolve(
+      read!.resolveExecution({ path: '../extra/file.txt' }),
+    );
+    if (!('display' in execution)) {
+      throw new Error('Expected Read execution to include display metadata');
+    }
+    expect(execution.display).toMatchObject({
+      path: '/extra/file.txt',
+    });
+
+    await expect(ctx.rpc.removeWorkspaceDirectory({ path: '/extra' })).resolves.toEqual({
+      path: '/extra',
+      removed: true,
+    });
+    await expect(ctx.rpc.removeWorkspaceDirectory({ path: '/extra' })).resolves.toEqual({
+      path: '/extra',
+      removed: false,
+    });
+    await expect(ctx.rpc.getWorkspaceDirectories({})).resolves.toEqual({
+      primary: '/workspace',
+      additional: [],
+    });
+    read = ctx.agent.tools.loopTools.find((tool) => tool.name === 'Read');
+    expect(() => read!.resolveExecution({ path: '../extra/file.txt' })).toThrow(
+      /absolute path/,
+    );
+    await ctx.expectResumeMatches();
+  });
+
+  it('inherits additional workspace directories into child tool managers', async () => {
+    const parent = testAgent({
+      kaos: createFakeKaos({
+        stat: vi.fn(async (path: string) => ({
+          stMode: path === '/extra' ? S_IFDIR : S_IFREG,
+          stIno: 1,
+          stDev: 1,
+          stNlink: 1,
+          stUid: 1,
+          stGid: 1,
+          stSize: 0,
+          stAtime: 0,
+          stMtime: 0,
+          stCtime: 0,
+        })),
+      }),
+    });
+    parent.configure({ tools: ['Read'] });
+    parent.agent.config.update({ cwd: '/workspace' });
+    await parent.rpc.addWorkspaceDirectory({ path: '../extra' });
+
+    const child = testAgent({ kaos: parent.agent.kaos, type: 'sub' });
+    child.configure({ tools: ['Read'] });
+    child.agent.config.update({ cwd: '/workspace' });
+
+    let childRead = child.agent.tools.loopTools.find((tool) => tool.name === 'Read');
+    expect(() => childRead!.resolveExecution({ path: '../extra/file.txt' })).toThrow(
+      /absolute path/,
+    );
+
+    child.agent.tools.inheritWorkspaceDirectories(parent.agent.tools);
+
+    childRead = child.agent.tools.loopTools.find((tool) => tool.name === 'Read');
+    const execution = await Promise.resolve(
+      childRead!.resolveExecution({ path: '../extra/file.txt' }),
+    );
+    if (!('display' in execution)) {
+      throw new Error('Expected Read execution to include display metadata');
+    }
+    expect(execution.display).toMatchObject({
+      path: '/extra/file.txt',
+    });
   });
 
   it('disables Bash background mode unless task management tools are active', async () => {

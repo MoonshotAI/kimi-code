@@ -34,6 +34,8 @@ describe('built-in slash command registry', () => {
     expect(findBuiltInSlashCommand('clear')?.name).toBe('new');
     expect(findBuiltInSlashCommand('btw')?.name).toBe('btw');
     expect(findBuiltInSlashCommand('mcp')?.name).toBe('mcp');
+    expect(findBuiltInSlashCommand('directories')?.name).toBe('dirs');
+    expect(findBuiltInSlashCommand('rm-dir')?.name).toBe('remove-dir');
     expect(findBuiltInSlashCommand('status')?.name).toBe('status');
     expect(findBuiltInSlashCommand('usage')?.aliases).not.toContain('status');
     expect(findBuiltInSlashCommand('unknown')).toBeUndefined();
@@ -91,14 +93,25 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(goal!, 'replace Ship feature Y')).toBe('idle-only');
   });
 
+  it('declares directory command argument hints', () => {
+    expect((findBuiltInSlashCommand('add-dir') as KimiSlashCommand | undefined)?.argumentHint).toBe(
+      '<directory>',
+    );
+    expect(
+      (findBuiltInSlashCommand('remove-dir') as KimiSlashCommand | undefined)?.argumentHint,
+    ).toBe('<directory>');
+  });
+
   it('contains the expected command names once', () => {
     const names = BUILTIN_SLASH_COMMANDS.map((command) => command.name);
 
     expect(new Set(names).size).toBe(names.length);
     expect(names).toEqual(
       expect.arrayContaining([
+        'add-dir',
         'compact',
         'btw',
+        'dirs',
         'editor',
         'exit',
         'export-debug-zip',
@@ -112,6 +125,7 @@ describe('built-in slash command registry', () => {
         'new',
         'permission',
         'plan',
+        'remove-dir',
         'sessions',
         'settings',
         'status',

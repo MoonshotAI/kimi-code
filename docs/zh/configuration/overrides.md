@@ -61,6 +61,7 @@ Kimi Code CLI 有三个地方可以影响运行参数：配置文件、命令行
 | `-p, --prompt <prompt>` | 非交互模式：执行单条提示词后退出 |
 | `--output-format <format>` | `-p` 模式的输出格式：`text` 或 `stream-json` |
 | `--skills-dir <dir>` | 替换自动发现的 Skills 目录（可重复，仅本次生效） |
+| `--add-dir <dir>` | 将另一个目录加入本次会话的 workspace 范围（可重复；启动目录仍是主工作目录） |
 
 互斥规则（违反时启动报错）：
 

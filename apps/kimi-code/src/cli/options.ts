@@ -11,6 +11,7 @@ export interface CLIOptions {
   outputFormat: PromptOutputFormat | undefined;
   prompt: string | undefined;
   skillsDirs: string[];
+  addDirs?: string[] | undefined;
 }
 
 export interface ValidatedOptions {
@@ -33,6 +34,9 @@ export function validateOptions(opts: CLIOptions): ValidatedOptions {
   }
   if (opts.model !== undefined && opts.model.trim().length === 0) {
     throw new OptionConflictError('Model cannot be empty.');
+  }
+  if (opts.addDirs?.some((dir) => dir.trim().length === 0)) {
+    throw new OptionConflictError('Directory cannot be empty.');
   }
   if (!promptMode && opts.outputFormat !== undefined) {
     throw new OptionConflictError('Output format is only supported in prompt mode.');

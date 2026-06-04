@@ -61,6 +61,7 @@ Options passed at startup have the highest priority and apply only to the curren
 | `-p, --prompt <prompt>` | Run in non-interactive mode: execute a single prompt and exit |
 | `--output-format <format>` | Output format for `-p` mode: `text` or `stream-json` |
 | `--skills-dir <dir>` | Replace auto-discovered Skills directories (repeatable; applies to this session only) |
+| `--add-dir <dir>` | Add another directory to the workspace scope for this session (repeatable; the startup directory remains the primary working directory) |
 
 Mutual exclusion rules (startup fails if violated):
 

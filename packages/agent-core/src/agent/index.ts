@@ -281,6 +281,7 @@ export class Agent {
       skills: this.skills?.registry,
       cwdListing: context?.cwdListing,
       agentsMd: context?.agentsMd,
+      additionalDirsInfo: context?.additionalDirsInfo ?? this.tools.additionalWorkspaceDirsInfo(),
     });
     this.config.update({ profileName: profile.name, systemPrompt });
     this.tools.setActiveTools(profile.tools);
@@ -388,6 +389,36 @@ export class Agent {
         }
         this.skills.activate(payload);
       },
+      addWorkspaceDirectory: async (payload) => {
+        const result = await this.tools.addWorkspaceDirectory(payload.path);
+        this.context.appendSystemReminder(
+          [
+            result.added
+              ? 'The user added an additional workspace directory for this session.'
+              : 'The user re-confirmed an additional workspace directory for this session.',
+            `Directory: ${result.path}`,
+            'File tools may read, write, search, and glob files in this directory.',
+          ].join('\n'),
+          { kind: 'system_trigger', name: 'add_workspace_directory' },
+        );
+        return result;
+      },
+      removeWorkspaceDirectory: (payload) => {
+        const result = this.tools.removeWorkspaceDirectory(payload.path);
+        this.context.appendSystemReminder(
+          [
+            result.removed
+              ? 'The user removed an additional workspace directory from this session.'
+              : 'The user tried to remove a directory that was not an additional workspace directory for this session.',
+            `Directory: ${result.path}`,
+            result.removed
+              ? 'File tools may no longer read, write, search, or glob files in this directory unless it is still inside another workspace root.'
+              : 'The session workspace scope is unchanged.',
+          ].join('\n'),
+          { kind: 'system_trigger', name: 'remove_workspace_directory' },
+        );
+        return result;
+      },
       startBtw: () => this.subagentHost!.startBtw(),
       getBackgroundOutput: (payload) => this.background.readOutput(payload.taskId, payload.tail),
       getContext: () => this.context.data(),
@@ -396,6 +427,10 @@ export class Agent {
       getPlan: () => this.planMode.data(),
       getUsage: () => this.usage.data(),
       getTools: () => this.tools.data(),
+      getWorkspaceDirectories: () => ({
+        primary: this.config.cwd,
+        additional: this.tools.additionalWorkspaceDirectories(),
+      }),
       getBackground: (payload) => this.background.list(payload.activeOnly ?? false, payload.limit),
     };
   }

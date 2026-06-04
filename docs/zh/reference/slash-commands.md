@@ -30,6 +30,9 @@
 | `/tasks` | `/task` | 浏览后台任务列表 | 是 |
 | `/fork` | — | 基于当前会话 fork 一份新会话，保留完整对话历史 | 否 |
 | `/title [<text>]` | `/rename` | 不带参数时显示当前会话标题；带参数时设置为新标题（最长 200 字符） | 是 |
+| `/add-dir [<directory>]` | — | 为当前会话的 workspace 添加另一个目录，使文件工具可以读取、搜索和编辑该目录；不带参数时打开可搜索的目录选择器 | 是 |
+| `/dirs` | `/directories` | 打开可搜索列表，显示当前会话的主 workspace 目录和已添加的额外目录 | 是 |
+| `/remove-dir [<directory>]` | `/rm-dir` | 从当前会话的 workspace 范围移除一个额外目录；不带参数时打开已添加目录的可搜索选择器 | 是 |
 | `/compact [<instruction>]` | — | 压缩当前对话上下文，释放 token 占用；可附带自定义指令，提示模型压缩时保留哪些信息 | 否 |
 | `/init` | — | 分析当前代码库并生成 `AGENTS.md` | 否 |
 | `/export-md [<path>]` | `/export` | 将当前会话导出为 Markdown 文件 | 否 |

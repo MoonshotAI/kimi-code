@@ -54,6 +54,12 @@ export interface AgentRecordEvents {
   'tools.set_active_tools': {
     names: readonly string[];
   };
+  'tools.add_workspace_directory': {
+    path: string;
+  };
+  'tools.remove_workspace_directory': {
+    path: string;
+  };
 
   'usage.record': {
     model: string;

@@ -85,6 +85,24 @@ export interface ActivateSkillRpcInput extends SessionIdRpcInput {
   readonly args?: string | undefined;
 }
 
+export interface AddDirectoryRpcInput extends SessionIdRpcInput {
+  readonly path: string;
+}
+
+export interface AddDirectoryRpcResult {
+  readonly path: string;
+  readonly added: boolean;
+}
+
+export interface RemoveDirectoryRpcInput extends SessionIdRpcInput {
+  readonly path: string;
+}
+
+export interface RemoveDirectoryRpcResult {
+  readonly path: string;
+  readonly removed: boolean;
+}
+
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
   readonly name: string;
 }
@@ -336,6 +354,10 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId,
     });
+    const workspace = await rpc.getWorkspaceDirectories({
+      sessionId: input.sessionId,
+      agentId,
+    });
     const maxContextTokens = config.modelCapabilities?.max_context_tokens ?? 0;
     const contextTokens = context.tokenCount;
     const contextUsage = maxContextTokens > 0 ? contextTokens / maxContextTokens : 0;
@@ -349,6 +371,7 @@ export abstract class SDKRpcClientBase {
       contextTokens,
       maxContextTokens,
       contextUsage,
+      additionalWorkspaceDirs: workspace.additional,
       usage: hasUsage ? usage : undefined,
     };
   }
@@ -486,6 +509,24 @@ export abstract class SDKRpcClientBase {
       agentId: this.interactiveAgentId,
       name: input.name,
       args: input.args,
+    });
+  }
+
+  async addDirectory(input: AddDirectoryRpcInput): Promise<AddDirectoryRpcResult> {
+    const rpc = await this.getRpc();
+    return rpc.addWorkspaceDirectory({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      path: input.path,
+    });
+  }
+
+  async removeDirectory(input: RemoveDirectoryRpcInput): Promise<RemoveDirectoryRpcResult> {
+    const rpc = await this.getRpc();
+    return rpc.removeWorkspaceDirectory({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      path: input.path,
     });
   }
 

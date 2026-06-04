@@ -167,6 +167,7 @@ export interface SessionStatus {
   readonly contextTokens: number;
   readonly maxContextTokens: number;
   readonly contextUsage: number;
+  readonly additionalWorkspaceDirs?: readonly string[];
   readonly usage?: SessionUsage;
 }
 

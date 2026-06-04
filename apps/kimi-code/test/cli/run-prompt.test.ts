@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => {
     setPermission: vi.fn(),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
+    addDirectory: vi.fn(),
     getStatus: vi.fn(
       async (): Promise<{ readonly permission: string; readonly model?: string }> => ({
         permission: 'manual',
@@ -183,6 +184,7 @@ describe('runPrompt', () => {
   afterEach(() => {
     vi.clearAllMocks();
     mocks.eventHandlers.clear();
+    mocks.session.addDirectory.mockResolvedValue({ path: '/extra', added: true });
     mocks.createKimiDeviceId.mockImplementation(() => 'device-1');
     mocks.resolveKimiHome.mockImplementation(
       (homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home',
@@ -680,6 +682,20 @@ describe('runPrompt', () => {
 
     expect(mocks.harnessCreateSession).toHaveBeenCalledWith(
       expect.objectContaining({ permission: 'auto' }),
+    );
+  });
+
+  it('adds startup directories before running the prompt', async () => {
+    await runPrompt(opts({ addDirs: ['/extra', '/extra', '../shared'] }), '1.2.3-test', {
+      stdout: { write: vi.fn(() => true) },
+      stderr: { write: vi.fn(() => true) },
+    });
+
+    expect(mocks.session.addDirectory).toHaveBeenCalledTimes(2);
+    expect(mocks.session.addDirectory).toHaveBeenNthCalledWith(1, '/extra');
+    expect(mocks.session.addDirectory).toHaveBeenNthCalledWith(2, '../shared');
+    expect(mocks.session.addDirectory.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      mocks.session.prompt.mock.invocationCallOrder[0]!,
     );
   });
 

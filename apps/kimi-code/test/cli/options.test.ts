@@ -41,6 +41,7 @@ describe('CLI options parsing', () => {
       expect(opts.outputFormat).toBeUndefined();
       expect(opts.prompt).toBeUndefined();
       expect(opts.skillsDirs).toEqual([]);
+      expect(opts.addDirs).toEqual([]);
     });
   });
 
@@ -255,6 +256,21 @@ describe('CLI options parsing', () => {
     });
   });
 
+  describe('--add-dir', () => {
+    it('collects repeated additional directories', () => {
+      expect(parse(['--add-dir', '../lib', '--add-dir=/tmp/shared']).addDirs).toEqual([
+        '../lib',
+        '/tmp/shared',
+      ]);
+    });
+
+    it('rejects blank directory values', () => {
+      const opts = parse(['--add-dir', '   ']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow('Directory cannot be empty.');
+    });
+  });
+
   describe('sub-commands', () => {
     it('routes upgrade without calling the main action', () => {
       let upgradeCalls = 0;
@@ -300,7 +316,6 @@ describe('CLI options parsing', () => {
         '--print',
         '--wire',
         '--agent=default',
-        '--add-dir=/',
         '--raw-model',
         '--config-file=x',
         '--quiet',

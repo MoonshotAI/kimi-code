@@ -24,6 +24,7 @@ kimi <subcommand> [options]
 | `--auto` | | 以 auto 权限模式启动；工具审批自动处理，Agent 不会向用户提问 |
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划 |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入 |
+| `--add-dir <dir>` | | 将另一个目录加入本次会话的 workspace 范围；当前目录仍是主工作目录。可重复传入 |
 
 `-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。
 
@@ -75,6 +76,12 @@ kimi --yolo
 
 ```sh
 kimi --auto
+```
+
+把另一个仓库或包目录加入本次会话的 workspace 范围：
+
+```sh
+kimi --add-dir ../shared-lib
 ```
 
 先阅读代码、产出实现计划，而不是立刻动手修改文件：

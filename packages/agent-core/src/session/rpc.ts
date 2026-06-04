@@ -1,6 +1,7 @@
 import { ErrorCodes, KimiError } from '#/errors';
 import type {
   ActivateSkillPayload,
+  AddWorkspaceDirectoryPayload,
   AgentAPI,
   BeginCompactionPayload,
   CancelPayload,
@@ -15,6 +16,7 @@ import type {
   PromptPayload,
   ReconnectMcpServerPayload,
   RenameSessionPayload,
+  RemoveWorkspaceDirectoryPayload,
   RegisterToolPayload,
   SessionAPI,
   SetActiveToolsPayload,
@@ -27,6 +29,7 @@ import type {
   UndoHistoryPayload,
   UnregisterToolPayload,
   UpdateSessionMetadataPayload,
+  WorkspaceDirectories,
 } from '#/rpc';
 import type { PromisableMethods } from '#/utils/types';
 
@@ -234,6 +237,20 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     }
   }
 
+  async addWorkspaceDirectory({
+    agentId,
+    ...payload
+  }: AgentScopedPayload<AddWorkspaceDirectoryPayload>) {
+    return (await this.getAgent(agentId)).addWorkspaceDirectory(payload);
+  }
+
+  async removeWorkspaceDirectory({
+    agentId,
+    ...payload
+  }: AgentScopedPayload<RemoveWorkspaceDirectoryPayload>) {
+    return (await this.getAgent(agentId)).removeWorkspaceDirectory(payload);
+  }
+
   async startBtw({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>): Promise<string> {
     return (await this.getAgent(agentId)).startBtw(payload);
   }
@@ -267,6 +284,13 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async getTools({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
     return (await this.getAgent(agentId)).getTools(payload);
+  }
+
+  async getWorkspaceDirectories({
+    agentId,
+    ...payload
+  }: AgentScopedPayload<EmptyPayload>): Promise<WorkspaceDirectories> {
+    return (await this.getAgent(agentId)).getWorkspaceDirectories(payload);
   }
 
   async getBackground({ agentId, ...payload }: AgentScopedPayload<GetBackgroundPayload>) {

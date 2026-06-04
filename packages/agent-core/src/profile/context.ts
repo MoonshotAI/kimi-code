@@ -9,7 +9,10 @@ const AGENTS_MD_MAX_BYTES = 32 * 1024;
 const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
 
-export type PreparedSystemPromptContext = Pick<SystemPromptContext, 'cwdListing' | 'agentsMd'>;
+export type PreparedSystemPromptContext = Pick<
+  SystemPromptContext,
+  'cwdListing' | 'agentsMd' | 'additionalDirsInfo'
+>;
 
 export async function prepareSystemPromptContext(
   kaos: Kaos,

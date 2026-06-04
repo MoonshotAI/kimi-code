@@ -112,6 +112,7 @@ const MIGRATE_CLI_OPTIONS: CLIOptions = {
   outputFormat: undefined,
   prompt: undefined,
   skillsDirs: [],
+  addDirs: [],
 };
 
 export function main(): void {

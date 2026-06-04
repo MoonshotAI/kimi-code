@@ -123,6 +123,7 @@ export async function runPrompt(
         },
       );
     restorePromptSessionPermission = restorePermission;
+    await addStartupDirectories(session, opts.addDirs ?? []);
 
     initializeCliTelemetry({
       harness,
@@ -334,6 +335,15 @@ function configuredModel(...models: readonly (string | undefined)[]): string | u
 function installHeadlessHandlers(session: Session): void {
   session.setApprovalHandler(() => ({ decision: 'approved' }));
   session.setQuestionHandler(() => null);
+}
+
+async function addStartupDirectories(
+  session: Session,
+  dirs: readonly string[],
+): Promise<void> {
+  for (const dir of new Set(dirs)) {
+    await session.addDirectory(dir);
+  }
 }
 
 function installPromptTerminationCleanup(
