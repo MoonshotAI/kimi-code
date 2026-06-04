@@ -110,7 +110,7 @@ const mocks = vi.hoisted(() => {
     session,
     eventHandlers,
     mainEvent,
-    experimentalFlags: { 'goal-command': true } as Record<string, boolean>,
+    experimentalFlags: { 'goal_command': true } as Record<string, boolean>,
     sessions: [] as Array<{ readonly id: string; readonly workDir: string }>,
   };
 });
@@ -168,7 +168,7 @@ describe('runPrompt headless goal mode', () => {
 
   beforeEach(() => {
     savedExitCode = process.exitCode;
-    mocks.experimentalFlags = { 'goal-command': true };
+    mocks.experimentalFlags = { 'goal_command': true };
     mocks.sessions = [];
     mocks.session.createGoal.mockClear();
     mocks.session.getStatus.mockResolvedValue({ permission: 'auto', model: 'k2' } as never);

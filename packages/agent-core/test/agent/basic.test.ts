@@ -1,7 +1,16 @@
 import type { ToolCall } from '@moonshot-ai/kosong';
 import { expect, it } from 'vitest';
 
+import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { createCommandKaos, testAgent } from './harness/agent';
+
+it('creates an independent agent with a scoped experimental flag resolver', () => {
+  const ctx = testAgent({
+    experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS),
+  });
+
+  expect(ctx.agent.experimentalFlags.enabled('goal_command')).toBe(false);
+});
 
 it('runs a text-only agent turn from prompt to completion', async () => {
   const ctx = testAgent();

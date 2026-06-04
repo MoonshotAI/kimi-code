@@ -108,6 +108,7 @@ export interface TestAgentOptions {
   readonly homedir?: AgentOptions['homedir'];
   readonly telemetry?: TelemetryClient | undefined;
   readonly log?: Logger;
+  readonly experimentalFlags?: AgentOptions['experimentalFlags'];
 }
 
 interface ConfigureOptions {
@@ -195,6 +196,7 @@ export class AgentTestContext {
       hookEngine: options.hookEngine,
       telemetry: options.telemetry,
       log: options.log,
+      experimentalFlags: options.experimentalFlags,
     });
     this.rpc = this.createPromiseAgentApi(this.agent);
     // The Agent constructor now eagerly binds a SIGUSR1 listener via

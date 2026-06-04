@@ -6,6 +6,7 @@ import {
   type ApprovalResponse,
   type CoreAPI,
   type Event,
+  type ExperimentalFeatureState,
   type ExperimentalFlagMap,
   type QuestionRequest,
   type QuestionResult,
@@ -164,6 +165,11 @@ export abstract class SDKRpcClientBase {
   async getExperimentalFlags(): Promise<ExperimentalFlagMap> {
     const rpc = await this.getRpc();
     return rpc.getExperimentalFlags({});
+  }
+
+  async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {
+    const rpc = await this.getRpc();
+    return rpc.getExperimentalFeatures({});
   }
 
   async setConfig(input: KimiConfigPatch): Promise<KimiConfig> {

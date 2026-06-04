@@ -60,7 +60,9 @@ export { buildGoalCompletionMessage } from '@moonshot-ai/agent-core';
 // Experimental feature flags — types only. Resolved values come from
 // `KimiHarness.getExperimentalFlags()` over RPC, not from a re-exported runtime value.
 export type {
+  ExperimentalFeatureState,
   ExperimentalFlagMap,
+  ExperimentalFlagSource,
   FlagDefinition,
   FlagDefinitionInput,
   FlagId,

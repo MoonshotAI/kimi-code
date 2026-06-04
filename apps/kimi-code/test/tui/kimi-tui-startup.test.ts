@@ -265,7 +265,7 @@ describe("KimiTUI startup", () => {
     });
     const harness = makeHarness(session, {
       listSessions: vi.fn(async () => [{ id: "ses-latest" }]),
-      getExperimentalFlags: vi.fn(async () => ({ "goal-command": true })),
+      getExperimentalFlags: vi.fn(async () => ({ "goal_command": true })),
     });
     const driver = makeDriver(harness, makeStartupInput({ continue: true }));
 
@@ -294,7 +294,7 @@ describe("KimiTUI startup", () => {
       getGoal: vi.fn(async () => ({ goal })),
     });
     const harness = makeHarness(session, {
-      getExperimentalFlags: vi.fn(async () => ({ "goal-command": true })),
+      getExperimentalFlags: vi.fn(async () => ({ "goal_command": true })),
     });
     const driver = makeDriver(harness, makeStartupInput()) as unknown as RuntimeStateDriver;
 

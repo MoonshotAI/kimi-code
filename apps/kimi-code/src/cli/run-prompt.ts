@@ -147,7 +147,7 @@ export async function runPrompt(
     // waiter blocks until the goal is terminal; we then emit a summary and set a
     // distinct exit code.
     const flagMap = await harness.getExperimentalFlags();
-    const goalCreate = parseHeadlessGoalCreate(opts.prompt!, flagMap['goal-command'] === true);
+    const goalCreate = parseHeadlessGoalCreate(opts.prompt!, flagMap['goal_command'] === true);
     if (goalCreate !== undefined) {
       await runHeadlessGoal(session, goalCreate, goalModel, outputFormat, stdout, stderr);
     } else {
@@ -466,6 +466,7 @@ function runPromptTurn(
         case 'compaction.completed':
         case 'compaction.started':
         case 'cron.fired':
+        case 'goal.updated':
         case 'mcp.server.status':
         case 'session.meta.updated':
         case 'skill.activated':

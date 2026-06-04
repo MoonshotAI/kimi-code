@@ -331,6 +331,10 @@ export class KimiTUI {
     this.state.editor.setAutocompleteProvider(provider);
   }
 
+  refreshSlashCommandAutocomplete(): void {
+    this.setupAutocomplete();
+  }
+
   async refreshSkillCommands(session?: SkillListSession): Promise<void> {
     if (session === undefined) {
       this.skillCommands = [];
@@ -1015,7 +1019,7 @@ export class KimiTUI {
   async syncRuntimeState(session: Session = this.requireSession()): Promise<void> {
     const [status, goalResult] = await Promise.all([
       session.getStatus(),
-      isExperimentalFlagEnabled('goal-command')
+      isExperimentalFlagEnabled('goal_command')
         ? session.getGoal()
         : Promise.resolve({ goal: null }),
     ]);

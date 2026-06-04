@@ -407,7 +407,7 @@ describe('dispatchInput /goal integration', () => {
   });
 
   it('routes /goal through the real resolver, creates the goal, and sends the objective', async () => {
-    setExperimentalFlags({ 'goal-command': true });
+    setExperimentalFlags({ 'goal_command': true });
     const { host, session } = makeHost();
 
     dispatchInput(host, '/goal Ship feature X');

@@ -46,6 +46,11 @@ describe('resolveSlashCommandInput', () => {
       name: 'btw',
       args: 'what are you doing?',
     });
+    expect(resolve('/experiments')).toMatchObject({
+      kind: 'builtin',
+      name: 'experiments',
+      args: '',
+    });
   });
 
   it('blocks idle-only built-ins while streaming', () => {
@@ -125,6 +130,11 @@ describe('resolveSlashCommandInput', () => {
       name: 'reload-tui',
       args: '',
     });
+    expect(resolve('/experiments', { isStreaming: true })).toMatchObject({
+      kind: 'builtin',
+      name: 'experiments',
+      args: '',
+    });
     expect(resolve('/btw side question', { isStreaming: true })).toMatchObject({
       kind: 'builtin',
       name: 'btw',
@@ -170,8 +180,8 @@ describe('goal command resolution', () => {
     setExperimentalFlags({});
   });
 
-  it('resolves /goal to the builtin command when goal-command is enabled', () => {
-    setExperimentalFlags({ 'goal-command': true });
+  it('resolves /goal to the builtin command when goal_command is enabled', () => {
+    setExperimentalFlags({ 'goal_command': true });
     expect(resolve('/goal Ship feature X')).toMatchObject({
       kind: 'builtin',
       name: 'goal',
@@ -179,7 +189,7 @@ describe('goal command resolution', () => {
     });
   });
 
-  it('treats /goal as a normal message when goal-command is disabled', () => {
+  it('treats /goal as a normal message when goal_command is disabled', () => {
     setExperimentalFlags({});
     expect(resolve('/goal Ship feature X')).toEqual({
       kind: 'message',
@@ -188,7 +198,7 @@ describe('goal command resolution', () => {
   });
 
   it('blocks goal creation while streaming', () => {
-    setExperimentalFlags({ 'goal-command': true });
+    setExperimentalFlags({ 'goal_command': true });
     expect(resolve('/goal Ship feature X', { isStreaming: true })).toEqual({
       kind: 'blocked',
       commandName: 'goal',
@@ -197,7 +207,7 @@ describe('goal command resolution', () => {
   });
 
   it('does not block status/pause/cancel/bare goal while streaming', () => {
-    setExperimentalFlags({ 'goal-command': true });
+    setExperimentalFlags({ 'goal_command': true });
     for (const sub of ['status', 'pause', 'cancel']) {
       expect(resolve(`/goal ${sub}`, { isStreaming: true })).toMatchObject({
         kind: 'builtin',

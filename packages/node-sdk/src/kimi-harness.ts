@@ -2,6 +2,7 @@ import {
   ErrorCodes,
   KimiError,
   withTelemetryContext,
+  type ExperimentalFeatureState,
   type ExperimentalFlagMap,
 } from '@moonshot-ai/agent-core';
 
@@ -205,6 +206,10 @@ export class KimiHarness {
   /** Resolved enabled-state of every experimental flag (flag id → enabled). */
   async getExperimentalFlags(): Promise<ExperimentalFlagMap> {
     return this.rpc.getExperimentalFlags();
+  }
+
+  async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {
+    return this.rpc.getExperimentalFeatures();
   }
 
   async ensureConfigFile(): Promise<void> {

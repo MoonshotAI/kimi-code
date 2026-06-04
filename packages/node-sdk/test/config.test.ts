@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createKimiHarness, KimiError } from '#/index';
 
@@ -16,6 +16,7 @@ import { TEST_IDENTITY } from './test-identity';
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const dir of tempDirs.splice(0)) {
     await rm(dir, { recursive: true, force: true });
   }
@@ -283,6 +284,40 @@ describe('KimiHarness config API', () => {
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     await expect(harness.getConfig()).resolves.toEqual({ providers: {} });
+  });
+
+  it('returns experimental feature metadata through the harness', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND', '');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION', '');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK', '');
+    const homeDir = await makeTempDir();
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+[experimental]
+goal_command = true
+background_ask = false
+`,
+      'utf-8',
+    );
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    const features = await harness.getExperimentalFeatures();
+    const goalCommand = features.find((feature) => feature.id === 'goal_command');
+
+    expect(goalCommand).toMatchObject({
+      id: 'goal_command',
+      title: 'Goal command',
+      enabled: true,
+      source: 'config',
+      configValue: true,
+      env: 'KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND',
+    });
+    await expect(harness.getExperimentalFlags()).resolves.toMatchObject({
+      'goal_command': true,
+      'background_ask': false,
+    });
   });
 
   it('can create the default config scaffold without selecting a model', async () => {
