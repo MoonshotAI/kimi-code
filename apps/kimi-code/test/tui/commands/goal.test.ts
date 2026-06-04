@@ -257,6 +257,17 @@ describe('handleGoalCommand', () => {
     expect(host.sendNormalUserInput).not.toHaveBeenCalledWith('/goal Ship feature X');
   });
 
+  it('/goal <objective> keeps the sendNormalUserInput host receiver', async () => {
+    const calls: Array<{ receiver: unknown; text: string }> = [];
+    host.sendNormalUserInput = function (this: unknown, text: string): void {
+      calls.push({ receiver: this, text });
+    };
+
+    await handleGoalCommand(host, 'Ship feature X');
+
+    expect(calls).toEqual([{ receiver: host, text: 'Ship feature X' }]);
+  });
+
   it('asks before starting a goal in Manual mode', async () => {
     const { host: manualHost, session: s } = makeHost({ permissionMode: 'manual' });
 
