@@ -15,7 +15,6 @@ import {
 import { basename } from 'pathe';
 
 import type { Agent } from '..';
-import { flags } from '../../flags';
 import {
   ErrorCodes,
   type KimiErrorPayload,
@@ -110,7 +109,7 @@ export class TurnFlow {
 
   /** Whether goal-mode runtime behavior (continuation, abnormal-end marking) applies. */
   private get goalRuntimeEnabled(): boolean {
-    return flags.enabled('goal-command') && this.agent.type === 'main';
+    return this.agent.experimentalFlags.enabled('goal_command') && this.agent.type === 'main';
   }
 
   // Returns the new turnId, or null if the turn was marked as resuming.

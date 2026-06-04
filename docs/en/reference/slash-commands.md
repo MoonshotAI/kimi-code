@@ -17,6 +17,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/provider` | — | Open the interactive provider manager to view, add, and remove configured providers. See [Platforms & Models — `/provider` and provider management](../configuration/providers.md#provider-与供应商管理) | Yes |
 | `/model` | — | Switch the LLM model used in the current session | Yes |
 | `/settings` | `/config` | Open the settings panel inside the TUI | Yes |
+| `/experiments` | `/experimental` | Open the experimental feature panel. Confirm changes to persist them to `config.toml` and reload the current session | Yes |
 | `/permission` | — | Select a permission mode | Yes |
 | `/editor` | — | Configure the external editor launched by `Ctrl-G` | Yes |
 | `/theme` | — | Switch the terminal UI color theme | Yes |
@@ -45,7 +46,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/auto [on\|off]` | — | Toggle auto permission mode. When enabled, tool approvals are handled automatically and the Agent will not ask the user questions | Yes |
 | `/plan [on\|off]` | — | Toggle Plan mode. Without arguments, flips the current state; explicitly passing `on`/`off` forces the setting. Simply toggling does not create an empty plan file | Yes |
 | `/plan clear` | — | Clear the current plan | No |
-| `/goal [...]` | — | Start or manage an autonomous goal (experimental feature, requires `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1`) | See below |
+| `/goal [...]` | — | Start or manage an autonomous goal (experimental feature; enable it from `/experiments`, `[experimental].goal_command`, or `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1`) | See below |
 
 ::: warning
 `/yolo` skips approval for regular tool calls. Please make sure you understand the potential risks before enabling it. Plan mode exit approval is not bypassed by `/yolo`; `Bash` inside Plan mode is still subject to the regular `/yolo` allow rules.
@@ -54,7 +55,13 @@ Some commands are only available in the idle state. Executing these commands whi
 ## Autonomous Goal (Experimental)
 
 ::: info
-`/goal` is an experimental command. Enable it by setting an environment variable when starting `kimi`:
+`/goal` is an experimental command. Enable it from `/experiments`, or write it in `~/.kimi-code/config.toml`:
+```toml
+[experimental]
+goal_command = true
+```
+
+You can also override the setting for one process with an environment variable:
 ```sh
 KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
 ```

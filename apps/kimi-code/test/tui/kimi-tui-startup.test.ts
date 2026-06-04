@@ -166,7 +166,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     close: vi.fn(async () => {}),
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
-    getExperimentalFlags: vi.fn(async () => ({})),
+    getExperimentalFeatures: vi.fn(async () => []),
     auth: {
       status: vi.fn(async () => ({ providers: [] })),
       login: vi.fn(async () => {}),
@@ -265,7 +265,7 @@ describe("KimiTUI startup", () => {
     });
     const harness = makeHarness(session, {
       listSessions: vi.fn(async () => [{ id: "ses-latest" }]),
-      getExperimentalFlags: vi.fn(async () => ({ "goal-command": true })),
+      getExperimentalFeatures: vi.fn(async () => [{ id: "goal_command", enabled: true }]),
     });
     const driver = makeDriver(harness, makeStartupInput({ continue: true }));
 
@@ -294,7 +294,7 @@ describe("KimiTUI startup", () => {
       getGoal: vi.fn(async () => ({ goal })),
     });
     const harness = makeHarness(session, {
-      getExperimentalFlags: vi.fn(async () => ({ "goal-command": true })),
+      getExperimentalFeatures: vi.fn(async () => [{ id: "goal_command", enabled: true }]),
     });
     const driver = makeDriver(harness, makeStartupInput()) as unknown as RuntimeStateDriver;
 
