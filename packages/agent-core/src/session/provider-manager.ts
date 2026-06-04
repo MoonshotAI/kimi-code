@@ -17,6 +17,7 @@ export interface ResolvedRuntimeProvider {
   readonly providerName: string;
   readonly provider: KosongProviderConfig;
   readonly modelCapabilities: ModelCapability;
+  readonly maxOutputSize?: number;
 }
 
 interface ProviderManagerOptions {
@@ -57,7 +58,7 @@ export class SingleModelProvider implements ModelProvider {
       modelCapabilities: this.modelCapabilities,
       providerName: 'single-model-provider',
       provider: this.providerConfig,
-    }
+    };
   }
 }
 
@@ -115,6 +116,7 @@ export class ProviderManager implements ModelProvider {
       providerName,
       provider,
       modelCapabilities: resolveModelCapabilities(alias, provider),
+      maxOutputSize: alias.maxOutputSize,
     };
   }
 

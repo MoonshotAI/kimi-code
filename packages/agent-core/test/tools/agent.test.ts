@@ -385,10 +385,10 @@ describe('AgentTool', () => {
     expect(result.output).toContain('actual_subagent_type: explore');
   });
 
-  it('declares no resource accesses so concurrent Agent calls can run in parallel', () => {
+  it('declares no resource accesses so concurrent Agent calls can run in parallel', async () => {
     const host = mockSubagentHost({ spawn: vi.fn() });
     const tool = new AgentTool(host);
-    const execution = tool.resolveExecution({
+    const execution = await tool.resolveExecution({
       prompt: 'Investigate',
       description: 'Find cause',
       subagent_type: 'explore',
@@ -398,13 +398,13 @@ describe('AgentTool', () => {
     expect(execution.accesses).toEqual(ToolAccesses.none());
   });
 
-  it('uses the resumed agent profile in the activity description', () => {
+  it('uses the resumed agent profile in the activity description', async () => {
     const host = mockSubagentHost({
       spawn: vi.fn(),
       getProfileName: vi.fn().mockReturnValue('explore'),
     });
     const tool = new AgentTool(host);
-    const execution = tool.resolveExecution({
+    const execution = await tool.resolveExecution({
       prompt: 'Continue',
       description: 'Continue work',
       resume: ' agent-existing ',

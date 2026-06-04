@@ -309,6 +309,86 @@ describe('Session.prompt events', () => {
     }
   });
 
+  it('starts btw through RPC as a forked subagent without prompt metadata updates', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const harness = createKimiHarness({
+      identity: TEST_IDENTITY,
+      homeDir,
+    });
+
+    try {
+      await configureFakeProvider(harness);
+      const session = await harness.createSession({ id: 'ses_btw_rpc', workDir });
+      const events: Event[] = [];
+      const unsubscribe = session.onEvent((event) => {
+        events.push(event);
+      });
+
+      let done = waitForEvent(session, (event) => event.type === 'turn.ended');
+      await session.prompt('main task context');
+      await done;
+
+      fakeProviderState.responseText = 'The main agent is working from the existing context.';
+      events.length = 0;
+      done = waitForEvent(
+        session,
+        (event) => event.type === 'turn.ended' && event.agentId !== 'main',
+      );
+
+      const agentId = await session.startBtw();
+      harness.interactiveAgentId = agentId;
+      await session.prompt('What are you working on right now?');
+      await done;
+      unsubscribe();
+
+      const started = events.find(
+        (event) =>
+          event.type === 'turn.started' &&
+          event.agentId === agentId &&
+          event.origin.kind === 'user',
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'turn.started',
+          sessionId: session.id,
+          agentId,
+          origin: { kind: 'user' },
+        }),
+      );
+      expect(started?.agentId).not.toBe('main');
+      expect(events).not.toContainEqual(expect.objectContaining({ type: 'subagent.spawned' }));
+      expect(events).not.toContainEqual(expect.objectContaining({ type: 'subagent.completed' }));
+      expect(events).not.toContainEqual(expect.objectContaining({ type: 'subagent.failed' }));
+      expect(events).not.toContainEqual(
+        expect.objectContaining({
+          type: 'session.meta.updated',
+        }),
+      );
+      expect(fakeProviderState.calls[1]?.systemPrompt).toBe(
+        fakeProviderState.calls[0]?.systemPrompt,
+      );
+      const btwHistoryText = JSON.stringify(fakeProviderState.calls[1]?.history);
+      expect(btwHistoryText).toContain('main task context');
+      expect(btwHistoryText).toContain('What are you working on right now?');
+
+      const statePath = join(session.summary!.sessionDir, 'state.json');
+      const state = JSON.parse(await readFile(statePath, 'utf-8')) as Record<string, unknown>;
+      expect(state['lastPrompt']).toBe('main task context');
+      expect(state['agents']).toMatchObject({ main: expect.any(Object) });
+      expect(state['agents']).not.toHaveProperty(agentId);
+
+      await harness.closeSession(session.id);
+      const resumed = await harness.resumeSession({ id: session.id });
+      const resumeState = resumed.getResumeState();
+      expect(resumeState?.agents).toMatchObject({ main: expect.any(Object) });
+      expect(resumeState?.agents).not.toHaveProperty(agentId);
+      expect(resumeState?.sessionMetadata.agents).not.toHaveProperty(agentId);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('rejects empty prompt input', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import type { Agent } from '../../src/agent';
 import { ErrorCodes } from '../../src/errors';
+import { compileToolArgsValidator, validateToolArgs } from '../../src/tools/args-validator';
 import {
   CreateGoalTool,
   CreateGoalToolInputSchema,
@@ -129,13 +130,36 @@ describe('GetGoalTool', () => {
 });
 
 describe('SetGoalBudgetTool', () => {
+  it('advertises an object parameter schema for OpenAI-compatible providers', () => {
+    const parameters = new SetGoalBudgetTool(fakeAgent()).parameters;
+
+    expect(parameters).toMatchObject({
+      type: 'object',
+      required: ['value', 'unit'],
+      additionalProperties: false,
+      properties: {
+        value: expect.objectContaining({ type: 'number', exclusiveMinimum: 0 }),
+        unit: expect.objectContaining({
+          type: 'string',
+          enum: ['turns', 'tokens', 'milliseconds', 'seconds', 'minutes', 'hours'],
+        }),
+      },
+    });
+    expect(parameters).not.toHaveProperty('oneOf');
+    expect(parameters).not.toHaveProperty('anyOf');
+
+    const validator = compileToolArgsValidator(parameters);
+    expect(validateToolArgs(validator, { value: 1.5, unit: 'turns' })).toBeNull();
+    expect(validateToolArgs(validator, { value: 1.5, unit: 'hours' })).toBeNull();
+  });
+
   it('accepts a value with a supported budget unit', () => {
     for (const unit of ['turns', 'tokens', 'milliseconds', 'seconds', 'minutes', 'hours']) {
       expect(SetGoalBudgetToolInputSchema.safeParse({ value: 20, unit }).success).toBe(true);
     }
     expect(SetGoalBudgetToolInputSchema.safeParse({ value: 0, unit: 'turns' }).success).toBe(false);
     expect(SetGoalBudgetToolInputSchema.safeParse({ value: 1, unit: 'years' }).success).toBe(false);
-    expect(SetGoalBudgetToolInputSchema.safeParse({ value: 1.5, unit: 'turns' }).success).toBe(false);
+    expect(SetGoalBudgetToolInputSchema.safeParse({ value: 1.5, unit: 'turns' }).success).toBe(true);
     expect(SetGoalBudgetToolInputSchema.safeParse({ value: 1.5, unit: 'hours' }).success).toBe(true);
   });
 
@@ -158,6 +182,22 @@ describe('SetGoalBudgetTool', () => {
       'Goal budget set: 30 minutes.',
     );
     expect(store.getGoal().goal?.budget.wallClockBudgetMs).toBe(30 * 60 * 1000);
+  });
+
+  it('rounds fractional turn and token budgets before setting them', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    const tool = new SetGoalBudgetTool(fakeAgent({ goals: store }));
+
+    expect((await executeTool(tool, ctx({ value: 1.5, unit: 'turns' }))).output).toBe(
+      'Goal budget set: 2 turns.',
+    );
+    expect(store.getGoal().goal?.budget.turnBudget).toBe(2);
+
+    expect((await executeTool(tool, ctx({ value: 0.4, unit: 'tokens' }))).output).toBe(
+      'Goal budget set: 1 token.',
+    );
+    expect(store.getGoal().goal?.budget.tokenBudget).toBe(1);
   });
 
   it('ignores unreasonable time budgets and tells the model why', async () => {

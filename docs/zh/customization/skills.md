@@ -1,19 +1,19 @@
 # Agent Skills
 
-Agent Skills 是 Kimi Code CLI 用来扩展模型能力的轻量机制。一个 Skill 就是一份带 YAML frontmatter 的 Markdown 文档，描述某项专业知识或工作流程。Kimi Code CLI 在启动时自动扫描已知目录，把发现的 Skill 注入到系统提示词中，让 Agent 知道当前会话里有哪些可用的 Skill。
+Agent Skills 是 Kimi Code CLI 扩展模型能力的轻量机制。一个 Skill 就是一份带 YAML frontmatter 的 Markdown 文档，描述某项专业知识或工作流程——例如项目的代码风格规范、PR review 流程、提交消息格式。
 
-相比把同样的指引每次都粘到提示词里，Skill 的好处在于：内容沉淀在文件里、可以跨项目和团队复用、可以通过斜杠命令一键加载，也可以让模型在需要时自动调用。常见用法是把代码风格、提交规范、审查流程等固化为 Skill。
+相比每次把同样的指引粘到提示词里，Skill 的优势在于：内容沉淀在文件里、可以跨项目和团队复用、可以通过斜杠命令一键加载，也可以让模型在需要时自动调用。
 
 ## 创建 Skill
 
-Skill 文件需要放在 [已知的扫描目录](#skill-存放位置) 中。一个 Skill 可以使用两种文件结构：
+Skill 文件需放在[已知的扫描目录](#skill-存放位置)中。支持两种文件结构：
 
-- **目录形式（推荐）**：在 Skills 目录下创建一个子目录，主文件命名为 `SKILL.md`，必要时可在同目录下放置脚本、参考资料等辅助文件。如果同一目录下同时存在 `<name>/SKILL.md` 和同名的 `<name>.md`，以子目录为准。
+- **目录形式（推荐）**：在 Skills 目录下创建一个子目录，主文件命名为 `SKILL.md`，可在同目录下放置脚本、参考资料等辅助文件。同目录下同时存在 `<name>/SKILL.md` 和同名 `<name>.md` 时，以子目录为准。
 - **扁平形式**：直接使用单个 `.md` 文件，Skill 名称取文件名（去掉 `.md`）。
 
 ### 文件格式
 
-`SKILL.md` 由 YAML frontmatter 和 Markdown 正文两部分组成。
+`SKILL.md` 由 YAML frontmatter 和 Markdown 正文两部分组成：
 
 ```markdown
 ---
@@ -39,12 +39,12 @@ arguments:
 
 | 字段 | 说明 |
 | --- | --- |
-| `name` | Skill 名称。目录型 `SKILL.md` 中为必填；扁平 `.md` 文件省略时使用文件名。名称大小写不敏感。 |
-| `description` | 一行总结。模型用它来判断何时使用这个 Skill。目录型 `SKILL.md` 中为必填；扁平 `.md` 文件省略时回退到正文第一行非空内容（截到 240 字符）。 |
-| `type` | Skill 类型。可选 `prompt`（默认）、`inline`（与 `prompt` 语义相同）、`flow`（仅支持手动调用，不支持模型自动调用）。其它值会被跳过。 |
-| `whenToUse` | 触发场景描述。也接受 `when-to-use`、`when_to_use` 写法。 |
-| `disableModelInvocation` | 设为 `true` 禁止模型自动调用此 Skill。也接受 `disable-model-invocation`、`disable_model_invocation` 写法。 |
-| `arguments` | 命名参数列表，可写成字符串数组或空白分隔的字符串（如 `arguments: target mode`）。声明后，正文可用 `$<name>` 读取参数；纯数字或空字符串会被忽略。 |
+| `name` | Skill 名称。目录型 `SKILL.md` 中为必填；扁平 `.md` 文件省略时使用文件名。名称大小写不敏感 |
+| `description` | 一行总结，模型用它来判断何时使用这个 Skill。目录型 `SKILL.md` 中为必填；扁平 `.md` 文件省略时回退到正文第一行非空内容（截至 240 字符） |
+| `type` | Skill 类型：`prompt`（默认）、`inline`（与 `prompt` 语义相同）、`flow`（只支持手动调用，不支持模型自动调用）。其他值会被跳过 |
+| `whenToUse` | 触发场景描述。也接受 `when-to-use`、`when_to_use` 写法 |
+| `disableModelInvocation` | 设为 `true` 时禁止模型自动调用此 Skill。也接受 `disable-model-invocation`、`disable_model_invocation` 写法 |
+| `arguments` | 命名参数列表，可写成字符串数组或空白分隔的字符串（如 `arguments: target mode`）。声明后，正文可用 `$<name>` 读取参数 |
 
 ::: warning 注意
 目录型 `SKILL.md` 中 `name` 和 `description` **必须**显式填写，省略任意一项均会导致解析失败。
@@ -63,38 +63,34 @@ arguments:
 
 ## Skill 存放位置
 
-Kimi Code CLI 按作用域分四档扫描，越具体的作用域优先级越高：
+Kimi Code CLI 按作用域分四档扫描，越具体的作用域优先级越高：**Project > User > Extra > Built-in**
 
-**Project > User > Extra > Built-in**
-
-用户级：
-
+**用户级**（对所有项目生效）：
 - `~/.kimi-code/skills/`
 - `~/.agents/skills/`
 
-项目级（项目根 = 工作目录向上最近的包含 `.git` 的目录）：
-
+**项目级**（项目根 = 工作目录向上最近的含 `.git` 的目录）：
 - `.kimi-code/skills/`
 - `.agents/skills/`
 
-额外目录通过 `config.toml` 顶层的 `extra_skill_dirs` 字段声明：
+**额外目录**：通过 `config.toml` 顶层的 `extra_skill_dirs` 声明：
 
 ```toml
 extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
 ```
 
-内置 Skills 随 CLI 一起分发，优先级最低。
+**内置 Skills** 随 CLI 一起分发，优先级最低。
 
 ## 调用 Skill
 
-用户可以通过斜杠命令主动调用：
+用户通过斜杠命令主动调用：
 
 ```
 /skill:code-style
 /skill:git-commits 修复登录接口的并发问题
 ```
 
-模型也可以根据 `description` 和 `whenToUse` 自动调用 Skill（除非 `disableModelInvocation` 设为 `true` 或 `type` 为 `flow`）。模型调用时，正文先展开占位符，再注入到系统提示中。Skill 调用时最多允许嵌套 3 层，超过后会被终止。
+模型也可以根据 `description` 和 `whenToUse` 自动调用 Skill（除非 `disableModelInvocation` 设为 `true` 或 `type` 为 `flow`）。Skill 调用时最多允许嵌套 3 层，超过后会被终止。
 
 ## 完整示例
 
@@ -124,4 +120,9 @@ arguments:
    - 值得肯定的地方
 ```
 
-保存为 `~/.kimi-code/skills/review-pr/SKILL.md`，检查清单放在同目录的 `references/checklist.md`，然后重开会话，即可通过 `/skill:review-pr #1234` 调用，其中 `#1234` 会展开到 `$pr_ref`。
+保存为 `~/.kimi-code/skills/review-pr/SKILL.md`，检查清单放在同目录的 `references/checklist.md`，重开会话后即可通过 `/skill:review-pr #1234` 调用，其中 `#1234` 会展开到 `$pr_ref`。
+
+## 下一步
+
+- [Plugins](./plugins.md) — 把 Skills 打包成可安装单元，与团队共享
+- [Agent 与子 Agent](./agents.md) — Skills 如何影响子 Agent 的行为

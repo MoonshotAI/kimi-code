@@ -36,6 +36,16 @@ describe('resolveSlashCommandInput', () => {
       args: 'New title',
     });
     expect(resolve('/init')).toMatchObject({ kind: 'builtin', name: 'init', args: '' });
+    expect(resolve('/btw')).toMatchObject({
+      kind: 'builtin',
+      name: 'btw',
+      args: '',
+    });
+    expect(resolve('/btw what are you doing?')).toMatchObject({
+      kind: 'builtin',
+      name: 'btw',
+      args: 'what are you doing?',
+    });
   });
 
   it('blocks idle-only built-ins while streaming', () => {
@@ -64,6 +74,11 @@ describe('resolveSlashCommandInput', () => {
       commandName: 'undo',
       reason: 'streaming',
     });
+    expect(resolve('/reload', { isStreaming: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'reload',
+      reason: 'streaming',
+    });
   });
 
   it('blocks model and session pickers while compacting', () => {
@@ -75,6 +90,11 @@ describe('resolveSlashCommandInput', () => {
     expect(resolve('/resume', { isCompacting: true })).toEqual({
       kind: 'blocked',
       commandName: 'resume',
+      reason: 'compacting',
+    });
+    expect(resolve('/reload', { isCompacting: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'reload',
       reason: 'compacting',
     });
   });
@@ -94,6 +114,21 @@ describe('resolveSlashCommandInput', () => {
       kind: 'builtin',
       name: 'mcp',
       args: '',
+    });
+    expect(resolve('/reload-tui', { isStreaming: true })).toMatchObject({
+      kind: 'builtin',
+      name: 'reload-tui',
+      args: '',
+    });
+    expect(resolve('/reload-tui', { isCompacting: true })).toMatchObject({
+      kind: 'builtin',
+      name: 'reload-tui',
+      args: '',
+    });
+    expect(resolve('/btw side question', { isStreaming: true })).toMatchObject({
+      kind: 'builtin',
+      name: 'btw',
+      args: 'side question',
     });
   });
 

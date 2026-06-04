@@ -1,14 +1,17 @@
 # Migrating from kimi-cli
 
-Kimi Code CLI is the next-generation terminal agent — and a fresh start. If you have been using the previous generation, kimi-cli, you don't need to start over: a single command brings your configuration, MCP servers, and session history across to the new version.
+::: info
+Kimi Code CLI has gone through a major version upgrade — moving from Python/uv to Node.js, bringing a simpler install experience, faster startup, and a redesigned terminal UI. The legacy version will gradually be phased out, so we recommend upgrading as soon as possible.
+:::
 
-## Why migrate
+If you are migrating from the legacy version, follow the steps below — a single command migrates your config, MCP servers, and session history to the new version.
 
-kimi-code is rebuilt on Node.js and no longer depends on Python or the `uv` toolchain, making installation and upgrades simpler. It also ships native binaries out of the box.
+## What's new
 
-The terminal UI has been redesigned for a faster and lighter experience.
-
-kimi-cli is transitioning to kimi-code, and migrating lets you keep your existing configuration and session history going forward.
+- **No more Python / uv**: Rebuilt on Node.js — no Python environment needed, simpler to install
+- **Native binary, works out of the box**: Faster startup, lighter footprint
+- **Redesigned terminal UI**: Smoother, more responsive experience
+- **Full data migration**: Config, MCP servers, and session history all carry over seamlessly
 
 ## How to migrate
 

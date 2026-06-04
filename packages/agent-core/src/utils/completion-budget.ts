@@ -16,6 +16,7 @@ const DEFAULT_UNKNOWN_CONTEXT_FALLBACK = 32000;
  * non-positive env values disable clamping.
  */
 export function resolveCompletionBudget(args: {
+  readonly maxOutputSize?: number;
   readonly reservedContextSize?: number;
   readonly env?: NodeJS.ProcessEnv;
 }): CompletionBudgetConfig | undefined {
@@ -27,6 +28,9 @@ export function resolveCompletionBudget(args: {
   const fromLegacy = parseEnvBudget(env['KIMI_MODEL_MAX_TOKENS']);
   if (fromLegacy !== 'absent') {
     return fromLegacy === 'disabled' ? undefined : { hardCap: fromLegacy };
+  }
+  if (args.maxOutputSize !== undefined && args.maxOutputSize > 0) {
+    return { hardCap: args.maxOutputSize };
   }
   if (args.reservedContextSize !== undefined && args.reservedContextSize > 0) {
     return { fallback: args.reservedContextSize };

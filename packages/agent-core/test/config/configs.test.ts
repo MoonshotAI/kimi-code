@@ -222,6 +222,38 @@ source = { kind = "apiJson", url = "https://registry.example/api.json", apiKey =
     });
   });
 
+  it('round-trips OAuth refs with scoped OAuth hosts', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'oauth-ref.toml');
+    const toml = `
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "https://coding.deva.msh.team/coding/v1"
+api_key = ""
+oauth = { storage = "file", key = "oauth/kimi-code-env-1234", oauth_host = "https://auth.dev.kimi.team" }
+
+[services.moonshot_search]
+base_url = "https://coding.deva.msh.team/coding/v1/search"
+api_key = ""
+oauth = { storage = "file", key = "oauth/kimi-code-env-1234", oauth_host = "https://auth.dev.kimi.team" }
+`;
+    const config = parseConfigString(toml, configPath);
+    expect(config.providers['managed:kimi-code']?.oauth).toEqual({
+      storage: 'file',
+      key: 'oauth/kimi-code-env-1234',
+      oauthHost: 'https://auth.dev.kimi.team',
+    });
+    expect(config.services?.moonshotSearch?.oauth?.oauthHost).toBe('https://auth.dev.kimi.team');
+
+    await writeConfigFile(configPath, config);
+    const text = await readFile(configPath, 'utf-8');
+    expect(text).toContain('oauth_host = "https://auth.dev.kimi.team"');
+    const roundTripped = parseConfigString(text, configPath);
+    expect(roundTripped.providers['managed:kimi-code']?.oauth?.oauthHost).toBe(
+      'https://auth.dev.kimi.team',
+    );
+  });
+
   it('loads defaults for absent files and writes typed fields without dropping raw sections', async () => {
     const dir = makeTempDir();
     const configPath = join(dir, 'config.toml');

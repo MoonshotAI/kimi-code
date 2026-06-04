@@ -285,7 +285,7 @@ describe('CLI options parsing', () => {
       const commandNames: string[] = program.commands
         .filter((command) => !command.name().startsWith('__'))
         .map((command) => command.name());
-      expect(commandNames).toEqual(['export', 'provider', 'migrate', 'upgrade']);
+      expect(commandNames).toEqual(['export', 'provider', 'acp', 'login', 'migrate', 'upgrade']);
     });
   });
 

@@ -37,22 +37,30 @@ tools exist and the user didn't name one, ask which.
 
 ## Config edit
 
-Config lives in two files; on key collision the project file overrides
-the user-global one:
+Config lives in three files; on key collision, later entries in this
+precedence order override earlier ones:
 
 - User-global: `~/.kimi-code/mcp.json` (or `$KIMI_CODE_HOME/mcp.json` if
   set). Use for servers you want everywhere.
-- Project-local: `<cwd>/.kimi-code/mcp.json`. Mention once that stdio
-  entries spawn commands at session start, so this should only live in
-  trusted repos.
+- Project-root: `<project root>/.mcp.json`, where project root is found
+  by walking up from `<cwd>` to the nearest `.git`. Use for
+  Claude-compatible, repo-shared, or cross-agent servers.
+- Project-local: `<cwd>/.kimi-code/mcp.json`. Use for Kimi-specific
+  overrides in the current working directory.
 
-Both files wrap their entries the same way:
+Mention once that project-root and project-local stdio entries spawn
+commands at session start, so they should only live in trusted repos.
+
+All three files wrap their entries the same way:
 
 ```json
 { "mcpServers": { "<name>": { /* entry */ } } }
 ```
 
 A minimal stdio entry needs `command` (+ optional `args`, `env`, `cwd`).
+For project-root `.mcp.json`, stdio entries run from the project root by
+default; relative `cwd` values are resolved against the directory that
+contains `.mcp.json`.
 A minimal http entry needs `url`; add `bearerTokenEnvVar: "ENV_NAME"` for
 servers that authenticate with a static bearer token from the
 environment. Servers that use OAuth take no token field — the login flow
@@ -62,16 +70,20 @@ omit it. For less common fields (`enabled`, `startupTimeoutMs`,
 truth is `McpServerStdioConfigSchema` / `McpServerHttpConfigSchema` in
 `packages/agent-core/src/config/schema.ts`.
 
-If the user only wants to **see** what's configured, read both files,
-show a merged view, and stop — no scope prompt, no write.
+If the user only wants to **see** what's configured, read all three files,
+show a merged view with enough source-path context to inspect or remove a
+server from the file that actually declared it, and stop — no scope
+prompt, no write.
 
 For changes, the flow is:
 
 1. **Pick a scope.** Infer it from the user's words when you can
-   (project / repo / this checkout / cwd → project; global / everywhere /
-   all projects → user-global). When the request is genuinely scope-less,
-   use one `AskUserQuestion` to ask user-global vs project-local, defaulting
-   to user-global. Use plain text for every other question — `AskUserQuestion`
+   (global / everywhere / all projects → user-global; root / repo /
+   shared / cross-agent / Claude / `.mcp.json` → project-root; cwd /
+   current directory / Kimi-specific / `.kimi-code` → project-local). When
+   the request is genuinely scope-less, use one `AskUserQuestion` to ask
+   user-global vs project-root vs project-local, defaulting to
+   user-global. Use plain text for every other question — `AskUserQuestion`
    is a poor fit for free-form input. If the user dismisses the scope
    question, stop; you can't safely guess where they wanted the change.
 2. **Read and announce.** Read the target file (a missing or empty file

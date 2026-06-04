@@ -222,8 +222,8 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   host.showStatus(`Provider added: ${entry.name ?? providerId}`);
 
   // Build a merged model dictionary that includes existing models plus the
-  // newly-persisted provider's models, so the TabbedModelSelectorComponent
-  // shows all tabs.
+  // newly-persisted provider's models, so the tabbed selector shows every
+  // provider's tab (the new provider's tab starts active via initialTabId).
   const stateModels = await host.harness.getConfig().then((c) => c.models ?? {});
   const mergedModels = { ...stateModels };
 
@@ -316,7 +316,6 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
   const firstNewProvider = firstNewAlias
     ? stateModels[firstNewAlias]?.provider
     : addedProviderIds[0];
-
   const selector = new TabbedModelSelectorComponent({
     models: stateModels,
     currentValue: host.state.appState.model,

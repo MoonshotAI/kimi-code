@@ -109,7 +109,7 @@ export class KimiHarness {
     const active = this.activeSessions.get(id);
     if (active !== undefined) return active;
 
-    const summary = await this.rpc.resumeSession({ id });
+    const summary = await this.rpc.resumeSession({ ...input, id });
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,
@@ -122,6 +122,31 @@ export class KimiHarness {
     this.activeSessions.set(session.id, session);
     this.trackSessionStarted(summary.id, true);
     this.trackSessionEvent(session.id, 'session_resume');
+    return session;
+  }
+
+  async reloadSession(input: ResumeSessionInput): Promise<Session> {
+    const id = normalizeSessionId(input.id);
+    const active = this.activeSessions.get(id);
+    if (active !== undefined) {
+      await active.reloadSession();
+      this.trackSessionEvent(active.id, 'session_reload');
+      return active;
+    }
+
+    const summary = await this.rpc.reloadSession({ sessionId: id });
+    const session = new Session({
+      id: summary.id,
+      workDir: summary.workDir,
+      summary,
+      rpc: this.rpc,
+      onClose: () => {
+        this.activeSessions.delete(summary.id);
+      },
+    });
+    this.activeSessions.set(session.id, session);
+    this.trackSessionStarted(summary.id, true);
+    this.trackSessionEvent(session.id, 'session_reload');
     return session;
   }
 

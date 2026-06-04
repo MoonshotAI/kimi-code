@@ -21,6 +21,7 @@ import type {
   PromptInput,
   ReloadSummary,
   ResumedSessionState,
+  ResumedSessionSummary,
   SessionPlan,
   SessionStatus,
   SessionSummary,
@@ -43,8 +44,8 @@ export interface SessionOptions {
 export class Session {
   readonly id: string;
   readonly workDir: string;
-  readonly summary?: SessionSummary | undefined;
-  private readonly resumeState: ResumedSessionState | undefined;
+  summary?: SessionSummary | undefined;
+  private resumeState: ResumedSessionState | undefined;
 
   private readonly rpc: SDKRpcClientBase;
   private readonly onClose?: (() => void | Promise<void>) | undefined;
@@ -62,6 +63,14 @@ export class Session {
   getResumeState(): ResumedSessionState | undefined {
     this.ensureOpen();
     return this.resumeState;
+  }
+
+  async reloadSession(): Promise<ResumedSessionSummary> {
+    this.ensureOpen();
+    const summary = await this.rpc.reloadSession({ sessionId: this.id });
+    this.summary = summary;
+    this.resumeState = resumeStateFromSummary(summary);
+    return summary;
   }
 
   onEvent(listener: (event: Event) => void): Unsubscribe {
@@ -102,6 +111,11 @@ export class Session {
   async init(): Promise<void> {
     this.ensureOpen();
     await this.rpc.generateAgentsMd({ sessionId: this.id });
+  }
+
+  async startBtw(): Promise<string> {
+    this.ensureOpen();
+    return this.rpc.startBtw({ sessionId: this.id });
   }
 
   async cancel(): Promise<void> {

@@ -209,6 +209,7 @@ export class Agent {
     const provider = this.config.provider.withThinking(this.config.thinkingLevel);
     const loopControl = this.kimiConfig?.loopControl;
     const completionBudgetConfig = resolveCompletionBudget({
+      maxOutputSize: this.config.maxOutputSize,
       reservedContextSize: loopControl?.reservedContextSize,
     });
     return new KosongLLM({
@@ -387,6 +388,7 @@ export class Agent {
         }
         this.skills.activate(payload);
       },
+      startBtw: () => this.subagentHost!.startBtw(),
       getBackgroundOutput: (payload) => this.background.readOutput(payload.taskId, payload.tail),
       getContext: () => this.context.data(),
       getConfig: () => this.config.data(),
