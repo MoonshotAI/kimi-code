@@ -2,7 +2,11 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 
-import { parseConfigString, resolveConfigPath } from '@moonshot-ai/kimi-code-sdk';
+import {
+  createKimiConfigRpc,
+  type KimiConfigRpc,
+  type KimiConfigValidationIssue,
+} from '@moonshot-ai/kimi-code-sdk';
 import type { Command } from 'commander';
 import { z } from 'zod';
 
@@ -12,15 +16,19 @@ interface WritableLike {
   write(chunk: string): boolean;
 }
 
+type MaybePromise<T> = T | Promise<T>;
+
 export interface DoctorDeps {
   readonly cwd: () => string;
-  readonly defaultConfigPath: () => string;
+  readonly defaultConfigPath: () => MaybePromise<string>;
   readonly defaultTuiConfigPath: () => string;
   readonly stdout: WritableLike;
   readonly stderr: WritableLike;
   readonly exit: (code: number) => never;
+  readonly configRpc?: KimiConfigRpc;
   readonly fileExists?: (path: string) => boolean;
   readonly readTextFile?: (path: string) => Promise<string>;
+  readonly validateConfigToml?: (text: string, path: string) => MaybePromise<void>;
 }
 
 export interface DoctorOptions {
@@ -32,7 +40,7 @@ interface CheckSpec {
   readonly label: 'config.toml' | 'tui.toml';
   readonly path: string;
   readonly explicit: boolean;
-  readonly parse: (text: string, path: string) => void;
+  readonly parse: (text: string, path: string) => MaybePromise<void>;
 }
 
 interface CheckResult {
@@ -44,19 +52,21 @@ interface CheckResult {
 
 interface ResolvedDoctorDeps {
   readonly cwd: () => string;
-  readonly defaultConfigPath: () => string;
+  readonly defaultConfigPath: () => MaybePromise<string>;
   readonly defaultTuiConfigPath: () => string;
   readonly stdout: WritableLike;
   readonly stderr: WritableLike;
   readonly exit: (code: number) => never;
   readonly fileExists: (path: string) => boolean;
   readonly readTextFile: (path: string) => Promise<string>;
+  readonly validateConfigToml: (text: string, path: string) => MaybePromise<void>;
 }
 
 export async function handleDoctor(deps: DoctorDeps, options: DoctorOptions): Promise<number> {
   const resolved = resolveDeps(deps);
   const cwd = resolved.cwd();
-  const results = await Promise.all(buildCheckSpecs(resolved, options, cwd).map((spec) => checkTomlFile(resolved, spec)));
+  const specs = await buildCheckSpecs(resolved, options, cwd);
+  const results = await Promise.all(specs.map((spec) => checkTomlFile(resolved, spec)));
 
   const issueCount = results.filter((result) => result.status === 'ERROR').length;
   const text = issueCount === 0 ? formatSuccess(results) : formatFailure(results, issueCount);
@@ -103,48 +113,68 @@ async function runDoctorCommand(
 }
 
 function resolveDeps(deps: Partial<DoctorDeps> | DoctorDeps | undefined): ResolvedDoctorDeps {
+  let configRpc = deps?.configRpc;
+  const getConfigRpc = (): KimiConfigRpc => {
+    configRpc ??= createKimiConfigRpc();
+    return configRpc;
+  };
+
   return {
     cwd: deps?.cwd ?? (() => process.cwd()),
-    defaultConfigPath: deps?.defaultConfigPath ?? (() => resolveConfigPath({})),
+    defaultConfigPath: deps?.defaultConfigPath ?? (() => getConfigRpc().resolveConfigPath()),
     defaultTuiConfigPath: deps?.defaultTuiConfigPath ?? getTuiConfigPath,
     stdout: deps?.stdout ?? process.stdout,
     stderr: deps?.stderr ?? process.stderr,
     exit: deps?.exit ?? ((code) => process.exit(code)),
     fileExists: deps?.fileExists ?? existsSync,
     readTextFile: deps?.readTextFile ?? ((path) => readFile(path, 'utf-8')),
+    validateConfigToml:
+      deps?.validateConfigToml ??
+      ((text, filePath) => getConfigRpc().validateConfigToml({ text, filePath })),
   };
 }
 
-function buildCheckSpecs(
+async function buildCheckSpecs(
   deps: ResolvedDoctorDeps,
   options: DoctorOptions,
   cwd: string,
-): CheckSpec[] {
+): Promise<CheckSpec[]> {
   if (options.target === 'config') {
     return [
-      makeConfigSpec(resolveInputPath(options.path, deps.defaultConfigPath(), cwd), options.path !== undefined),
+      makeConfigSpec(
+        await resolveConfigTargetPath(deps, options.path, cwd),
+        options.path !== undefined,
+        deps,
+      ),
     ];
   }
 
   if (options.target === 'tui') {
     return [
-      makeTuiSpec(resolveInputPath(options.path, deps.defaultTuiConfigPath(), cwd), options.path !== undefined),
+      makeTuiSpec(
+        resolveTuiTargetPath(deps, options.path, cwd),
+        options.path !== undefined,
+      ),
     ];
   }
 
   return [
-    makeConfigSpec(deps.defaultConfigPath(), false),
+    makeConfigSpec(await deps.defaultConfigPath(), false, deps),
     makeTuiSpec(deps.defaultTuiConfigPath(), false),
   ];
 }
 
-function makeConfigSpec(path: string, explicit: boolean): CheckSpec {
+function makeConfigSpec(
+  path: string,
+  explicit: boolean,
+  deps: ResolvedDoctorDeps,
+): CheckSpec {
   return {
     label: 'config.toml',
     path,
     explicit,
     parse: (text, filePath) => {
-      parseConfigString(text, filePath);
+      return deps.validateConfigToml(text, filePath);
     },
   };
 }
@@ -174,7 +204,7 @@ async function checkTomlFile(deps: ResolvedDoctorDeps, spec: CheckSpec): Promise
 
   try {
     const text = await deps.readTextFile(spec.path);
-    spec.parse(text, spec.path);
+    await spec.parse(text, spec.path);
     return { label: spec.label, path: spec.path, status: 'OK' };
   } catch (error) {
     return {
@@ -186,8 +216,23 @@ async function checkTomlFile(deps: ResolvedDoctorDeps, spec: CheckSpec): Promise
   }
 }
 
-function resolveInputPath(input: string | undefined, defaultPath: string, cwd: string): string {
-  if (input === undefined) return defaultPath;
+async function resolveConfigTargetPath(
+  deps: ResolvedDoctorDeps,
+  input: string | undefined,
+  cwd: string,
+): Promise<string> {
+  return input === undefined ? deps.defaultConfigPath() : resolveInputPath(input, cwd);
+}
+
+function resolveTuiTargetPath(
+  deps: ResolvedDoctorDeps,
+  input: string | undefined,
+  cwd: string,
+): string {
+  return input === undefined ? deps.defaultTuiConfigPath() : resolveInputPath(input, cwd);
+}
+
+function resolveInputPath(input: string, cwd: string): string {
   return isAbsolute(input) ? input : resolve(cwd, input);
 }
 
@@ -225,6 +270,15 @@ function formatResults(results: readonly CheckResult[]): string[] {
 }
 
 function formatErrorMessage(error: unknown, filePath: string): string {
+  const validationIssues = findValidationIssues(error);
+  if (validationIssues !== undefined) {
+    return [
+      `Invalid configuration in ${filePath}.`,
+      'Validation issues:',
+      ...validationIssues.map((issue) => `  ${formatIssuePath(issue.path)}: ${issue.message}`),
+    ].join('\n');
+  }
+
   const zodError = findZodError(error);
   if (zodError !== undefined) {
     return [
@@ -234,6 +288,31 @@ function formatErrorMessage(error: unknown, filePath: string): string {
     ].join('\n');
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+function findValidationIssues(error: unknown): readonly KimiConfigValidationIssue[] | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const details = 'details' in error ? error.details : undefined;
+  if (!isRecord(details)) return undefined;
+  const validationIssues = details['validationIssues'];
+  return isValidationIssueArray(validationIssues) ? validationIssues : undefined;
+}
+
+function isValidationIssueArray(value: unknown): value is readonly KimiConfigValidationIssue[] {
+  return Array.isArray(value) && value.every(isValidationIssue);
+}
+
+function isValidationIssue(value: unknown): value is KimiConfigValidationIssue {
+  if (!isRecord(value) || typeof value['message'] !== 'string') return false;
+  const path = value['path'];
+  return (
+    Array.isArray(path) &&
+    path.every((segment) => typeof segment === 'string' || typeof segment === 'number')
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function findZodError(error: unknown): z.ZodError | undefined {

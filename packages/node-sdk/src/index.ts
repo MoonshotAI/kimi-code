@@ -7,6 +7,15 @@ export {
   SDKRpcClient,
   type SDKRpcClientOptions,
 } from '#/sdk-rpc-client';
+export {
+  createKimiConfigRpc,
+  KimiConfigRpcClient,
+  type KimiConfigRpc,
+  type KimiConfigValidationIssue,
+  type KimiConfigValidationPathSegment,
+  type ResolveKimiConfigPathInput,
+  type ValidateKimiConfigTomlInput,
+} from '#/config-rpc';
 export { SDKRpcClientBase } from '#/rpc';
 export { KimiForCodingProvider } from '#/kimi-code-model-provider';
 export type { KimiForCodingProviderOptions } from '#/kimi-code-model-provider';
@@ -30,8 +39,6 @@ export type {
 } from '#/catalog';
 
 export {
-  parseConfigString,
-  resolveConfigPath,
   ErrorCodes,
   KimiError,
   type KimiErrorCode,

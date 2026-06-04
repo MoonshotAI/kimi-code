@@ -156,6 +156,26 @@ describe('kimi doctor', () => {
     expect(out).toContain('All checked config files are valid.');
   });
 
+  it('does not resolve the default config path when an explicit config path is provided', async () => {
+    const configPath = join(dir, 'candidate-config.toml');
+    await writeValidConfig(configPath);
+    const { deps, stdout, stderr } = makeDeps();
+
+    const code = await handleDoctor(
+      {
+        ...deps,
+        defaultConfigPath: () => {
+          throw new Error('default config path should not be resolved');
+        },
+      },
+      { target: 'config', path: './candidate-config.toml' },
+    );
+
+    expect(code).toBe(0);
+    expect(stderr.join('')).toBe('');
+    expect(stdout.join('')).toContain(`OK config.toml  ${configPath}`);
+  });
+
   it('checks a valid explicit tui path routed through commander', async () => {
     const tuiConfigPath = join(dir, 'candidate-tui.toml');
     await writeValidTuiConfig(tuiConfigPath);

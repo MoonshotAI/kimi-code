@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createKimiHarness, KimiError } from '#/index';
+import { createKimiConfigRpc, createKimiHarness, KimiError } from '#/index';
 
 import {
   parseConfigString,
@@ -83,6 +83,40 @@ claim_stale_after_ms = 15000
 `;
 
 describe('SDK config TOML', () => {
+  it('resolves config paths through the config RPC wrapper', async () => {
+    const dir = await makeTempDir();
+    const rpc = createKimiConfigRpc();
+
+    await expect(rpc.resolveConfigPath({ homeDir: dir })).resolves.toBe(join(dir, 'config.toml'));
+  });
+
+  it('returns structured validation issues through the config RPC wrapper', async () => {
+    const rpc = createKimiConfigRpc();
+
+    await expect(
+      rpc.validateConfigToml({
+        text: `
+[providers.kimi]
+type = "kimi"
+
+[models.kimi]
+provider = "kimi"
+model = "kimi"
+max_context_size = "large"
+`,
+        filePath: 'broken.toml',
+      }),
+    ).rejects.toMatchObject({
+      details: {
+        validationIssues: [
+          {
+            path: ['models', 'kimi', 'maxContextSize'],
+          },
+        ],
+      },
+    });
+  });
+
   it('parses the documented config shape and keeps TUI-only fields in raw', () => {
     const config = parseConfigString(COMPLETE_TOML, 'complete.toml');
 
