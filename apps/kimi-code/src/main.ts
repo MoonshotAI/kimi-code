@@ -37,7 +37,6 @@ import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
 import { installNativeModuleHook } from './native/module-hook';
 import { runNativeAssetSmokeIfRequested } from './native/smoke';
 import { runSwarmDemo } from './tui/swarm-demo';
-import { initProcessName } from './utils/process/proctitle';
 
 export async function handleMainCommand(opts: CLIOptions, version: string): Promise<void> {
   let validated: ReturnType<typeof validateOptions>;
