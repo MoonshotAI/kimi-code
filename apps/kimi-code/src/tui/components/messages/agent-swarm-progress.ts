@@ -29,12 +29,20 @@ const WORKING_LABEL = 'Working...';
 const FAILED_LABEL = 'Failed.';
 const CANCELLED_LABEL = 'Cancelled.';
 const QUEUED_LABEL = 'Queued...';
+const SUSPENDED_LABEL = 'Suspended...';
 
-const STATUS_BAR_ORDER = ['completed', 'working', 'queued', 'cancelled', 'failed'] as const;
+const STATUS_BAR_ORDER = [
+  'completed',
+  'working',
+  'suspended',
+  'queued',
+  'cancelled',
+  'failed',
+] as const;
 
 type AgentSwarmPhase = AgentSwarmProgressEstimatorPhase;
 type StatusBarPhase = typeof STATUS_BAR_ORDER[number];
-type TotalStatus = 'working' | 'failed' | 'cancelled';
+type TotalStatus = 'working' | 'suspended' | 'failed' | 'cancelled';
 
 interface AgentSwarmMember {
   readonly id: string;
@@ -45,6 +53,7 @@ interface AgentSwarmMember {
   latestModelText: string;
   completedText?: string;
   failureText?: string;
+  suspendedReason?: string;
   completedAtMs?: number;
   failedAtMs?: number;
 }
@@ -79,6 +88,7 @@ export interface AgentSwarmProgressOptions {
 const PHASE_LABELS: Record<AgentSwarmPhase, string> = {
   pending: QUEUED_LABEL,
   queued: QUEUED_LABEL,
+  suspended: SUSPENDED_LABEL,
   running: 'Running',
   completed: 'Completed',
   failed: 'Failed',
@@ -183,9 +193,10 @@ export class AgentSwarmProgressComponent implements Component {
     const nowMs = Date.now();
     this.progressEstimator.markStarted(member.id, nowMs);
     member.ticks = Math.max(member.ticks, 1);
-    if (member.phase === 'pending' || member.phase === 'queued') {
+    if (member.phase === 'pending' || member.phase === 'queued' || member.phase === 'suspended') {
       member.phase = 'running';
     }
+    delete member.suspendedReason;
     this.startAnimationIfNeeded();
   }
 
@@ -202,9 +213,10 @@ export class AgentSwarmProgressComponent implements Component {
     });
     if (!result.accepted) return;
     member.ticks = result.rawTicks;
-    if (member.phase === 'pending' || member.phase === 'queued') {
+    if (member.phase === 'pending' || member.phase === 'queued' || member.phase === 'suspended') {
       member.phase = 'running';
     }
+    delete member.suspendedReason;
     this.startAnimationIfNeeded();
   }
 
@@ -217,11 +229,12 @@ export class AgentSwarmProgressComponent implements Component {
     member.latestModelText = `${member.latestModelText}${input.delta}`.slice(
       -MAX_LATEST_MODEL_CHARS,
     );
-    if (member.phase === 'pending' || member.phase === 'queued') {
+    if (member.phase === 'pending' || member.phase === 'queued' || member.phase === 'suspended') {
       this.progressEstimator.markStarted(member.id, Date.now());
       member.ticks = Math.max(member.ticks, 1);
       member.phase = 'running';
     }
+    delete member.suspendedReason;
   }
 
   appendAssistantDelta(input: {
@@ -243,7 +256,27 @@ export class AgentSwarmProgressComponent implements Component {
     if (normalizedCompletedText !== undefined) member.completedText = normalizedCompletedText;
     delete member.failedAtMs;
     delete member.failureText;
+    delete member.suspendedReason;
     member.phase = 'completed';
+    this.startAnimationIfNeeded();
+  }
+
+  markSuspended(input: {
+    readonly agentId: string;
+    readonly reason: string;
+    readonly description?: string | undefined;
+  }): void {
+    const member = this.findMemberByAgentId(input.agentId) ??
+      this.findMemberForSubagent(input.agentId, input.description);
+    if (member === undefined || member.phase === 'completed' || member.phase === 'cancelled') return;
+    member.agentId = input.agentId;
+    member.phase = 'suspended';
+    const reason = normalizeStatusText(input.reason);
+    if (reason !== undefined) member.suspendedReason = reason;
+    delete member.completedAtMs;
+    delete member.completedText;
+    delete member.failedAtMs;
+    delete member.failureText;
     this.startAnimationIfNeeded();
   }
 
@@ -260,6 +293,7 @@ export class AgentSwarmProgressComponent implements Component {
     member.phase = 'failed';
     delete member.completedAtMs;
     delete member.completedText;
+    delete member.suspendedReason;
     this.startAnimationIfNeeded();
   }
 
@@ -282,6 +316,7 @@ export class AgentSwarmProgressComponent implements Component {
       member.phase = 'failed';
       delete member.completedAtMs;
       delete member.completedText;
+      delete member.suspendedReason;
     }
     this.startAnimationIfNeeded();
   }
@@ -296,6 +331,7 @@ export class AgentSwarmProgressComponent implements Component {
     delete member.completedText;
     delete member.failedAtMs;
     delete member.failureText;
+    delete member.suspendedReason;
   }
 
   markActiveCancelled(): void {
@@ -315,6 +351,7 @@ export class AgentSwarmProgressComponent implements Component {
       delete member.completedText;
       delete member.failedAtMs;
       delete member.failureText;
+      delete member.suspendedReason;
     }
     this.startAnimationIfNeeded();
   }
@@ -335,6 +372,7 @@ export class AgentSwarmProgressComponent implements Component {
       }
       if (entry.status === 'completed') delete member.failedAtMs;
       if (entry.status === 'completed') delete member.failureText;
+      if (entry.status === 'completed') delete member.suspendedReason;
       if (entry.status === 'failed' && member.phase !== 'failed') {
         this.progressEstimator.markFailed(member.id, nowMs);
         member.failedAtMs = nowMs;
@@ -345,6 +383,7 @@ export class AgentSwarmProgressComponent implements Component {
       }
       if (entry.status === 'failed') delete member.completedAtMs;
       if (entry.status === 'failed') delete member.completedText;
+      if (entry.status === 'failed') delete member.suspendedReason;
       member.phase = entry.status;
     }
     this.startAnimationIfNeeded();
@@ -737,6 +776,8 @@ function brailleBar(
       return '';
     case 'queued':
       return bracketBar(accumulatedBrailleBar(ticks, innerWidth, colors.textDim, colors), colors);
+    case 'suspended':
+      return bracketBar(accumulatedBrailleBar(ticks, innerWidth, colors.warning, colors), colors);
     case 'running':
       return bracketBar(accumulatedBrailleBar(ticks, innerWidth, colors.success, colors), colors);
     case 'completed':
@@ -766,6 +807,8 @@ function phaseColor(phase: AgentSwarmPhase, colors: ColorPalette): string {
     case 'pending':
     case 'queued':
       return colors.textDim;
+    case 'suspended':
+      return colors.warning;
     case 'running':
       return colors.textDim;
     case 'completed':
@@ -818,6 +861,8 @@ function statusBarPhase(phase: AgentSwarmPhase): StatusBarPhase {
     case 'pending':
     case 'queued':
       return 'queued';
+    case 'suspended':
+      return 'suspended';
     case 'running':
       return 'working';
     case 'completed':
@@ -835,6 +880,8 @@ function statusBarColor(phase: StatusBarPhase, colors: ColorPalette): string {
       return colors.textMuted;
     case 'working':
       return colors.primary;
+    case 'suspended':
+      return colors.warning;
     case 'completed':
       return colors.success;
     case 'failed':
@@ -851,9 +898,17 @@ function totalStatus(
   if (force.failed) return 'failed';
   if (force.cancelled && members.length === 0) return 'cancelled';
   const hasCancelled = members.some((member) => member.phase === 'cancelled');
+  const hasSuspended = members.some((member) => member.phase === 'suspended');
+  const hasRunning = members.some((member) => member.phase === 'running');
   const hasActive = members.some((member) =>
-    member.phase === 'pending' || member.phase === 'queued' || member.phase === 'running'
+    (
+      member.phase === 'pending' ||
+      member.phase === 'queued' ||
+      member.phase === 'suspended' ||
+      member.phase === 'running'
+    )
   );
+  if (hasSuspended && !hasRunning) return 'suspended';
   return (force.cancelled || hasCancelled) && !hasActive ? 'cancelled' : 'working';
 }
 
@@ -861,6 +916,8 @@ function totalStatusLabel(status: TotalStatus): string {
   switch (status) {
     case 'working':
       return WORKING_LABEL;
+    case 'suspended':
+      return SUSPENDED_LABEL;
     case 'failed':
       return FAILED_LABEL;
     case 'cancelled':
@@ -872,6 +929,8 @@ function totalStatusColor(status: TotalStatus, colors: ColorPalette): string {
   switch (status) {
     case 'working':
       return colors.success;
+    case 'suspended':
+      return colors.warning;
     case 'failed':
       return colors.error;
     case 'cancelled':
@@ -912,6 +971,9 @@ function renderCellLabel(
   }
   if (snapshot.phase === 'failed' && member.failureText !== undefined) {
     return truncateWithColor(`Failed: ${member.failureText}`, width, colors.error);
+  }
+  if (snapshot.phase === 'suspended' && member.suspendedReason !== undefined) {
+    return truncateWithColor(`Suspended: ${member.suspendedReason}`, width, colors.warning);
   }
   if (snapshot.phase === 'completed') {
     return renderCompletedCellLabel(member.completedText ?? latestLine, width, colors);
