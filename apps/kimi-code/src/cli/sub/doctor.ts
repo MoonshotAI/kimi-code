@@ -4,6 +4,7 @@ import { isAbsolute, resolve } from 'node:path';
 
 import { parseConfigString, resolveConfigPath } from '@moonshot-ai/kimi-code-sdk';
 import type { Command } from 'commander';
+import { z } from 'zod';
 
 import { getTuiConfigPath, parseTuiConfig } from '#/tui/config';
 
@@ -180,7 +181,7 @@ async function checkTomlFile(deps: ResolvedDoctorDeps, spec: CheckSpec): Promise
       label: spec.label,
       path: spec.path,
       status: 'ERROR',
-      message: formatErrorMessage(error),
+      message: formatErrorMessage(error, spec.path),
     };
   }
 }
@@ -215,12 +216,48 @@ function formatResults(results: readonly CheckResult[]): string[] {
   for (const result of results) {
     lines.push(`${result.status} ${result.label.padEnd(12)} ${result.path}`);
     if (result.message !== undefined) {
-      lines.push(`  ${result.message}`);
+      for (const line of result.message.split('\n')) {
+        lines.push(`  ${line}`);
+      }
     }
   }
   return lines;
 }
 
-function formatErrorMessage(error: unknown): string {
+function formatErrorMessage(error: unknown, filePath: string): string {
+  const zodError = findZodError(error);
+  if (zodError !== undefined) {
+    return [
+      `Invalid configuration in ${filePath}.`,
+      'Validation issues:',
+      ...zodError.issues.map((issue) => `  ${formatIssuePath(issue.path)}: ${issue.message}`),
+    ].join('\n');
+  }
   return error instanceof Error ? error.message : String(error);
+}
+
+function findZodError(error: unknown): z.ZodError | undefined {
+  if (error instanceof z.ZodError) return error;
+  if (error instanceof Error && error.cause instanceof z.ZodError) return error.cause;
+  return undefined;
+}
+
+function formatIssuePath(path: readonly PropertyKey[]): string {
+  if (path.length === 0) return '<root>';
+
+  let out = '';
+  for (const segment of path) {
+    if (typeof segment === 'number') {
+      out += `[${String(segment)}]`;
+    } else if (out.length === 0) {
+      out = camelToSnake(String(segment));
+    } else {
+      out += `.${camelToSnake(String(segment))}`;
+    }
+  }
+  return out;
+}
+
+function camelToSnake(value: string): string {
+  return value.replaceAll(/[A-Z]/g, (ch) => `_${ch.toLowerCase()}`);
 }

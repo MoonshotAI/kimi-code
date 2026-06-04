@@ -201,4 +201,50 @@ max_context_size = 0
     expect(err).toContain(`ERROR tui.toml     ${join(dir, 'tui.toml')}`);
     expect(err).toContain('theme');
   });
+
+  it('formats Zod validation issues with field paths for tui.toml', async () => {
+    await writeFile(
+      join(dir, 'tui.toml'),
+      `
+theme = "blue"
+
+[notifications]
+enabled = "yes"
+`,
+      'utf-8',
+    );
+    const { deps, stderr } = makeDeps();
+
+    const code = await handleDoctor(deps, { target: 'tui' });
+
+    expect(code).toBe(1);
+    const err = stderr.join('');
+    expect(err).toContain('Validation issues:');
+    expect(err).toContain('theme:');
+    expect(err).toContain('notifications.enabled:');
+  });
+
+  it('formats wrapped Zod validation issues with TOML-style field paths for config.toml', async () => {
+    await writeFile(
+      join(dir, 'config.toml'),
+      `
+[providers.kimi]
+type = "kimi"
+
+[models.kimi]
+provider = "kimi"
+model = "kimi"
+max_context_size = "large"
+`,
+      'utf-8',
+    );
+    const { deps, stderr } = makeDeps();
+
+    const code = await handleDoctor(deps, { target: 'config' });
+
+    expect(code).toBe(1);
+    const err = stderr.join('');
+    expect(err).toContain('Validation issues:');
+    expect(err).toContain('models.kimi.max_context_size:');
+  });
 });
