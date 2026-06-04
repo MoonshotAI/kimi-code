@@ -210,10 +210,6 @@ export class KimiHarness {
     await this.ensureConfigFileImpl();
   }
 
-  async checkRuntimeEnvironment(): Promise<void> {
-    await this.rpc.checkRuntimeEnvironment();
-  }
-
   async setConfig(patch: KimiConfigPatch): Promise<KimiConfig> {
     return this.rpc.setConfig(patch);
   }

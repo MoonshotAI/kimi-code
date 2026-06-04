@@ -357,7 +357,6 @@ type SessionAPIWithId = WithSessionId<SessionAPI>;
 
 export interface CoreAPI extends SessionAPIWithId {
   getCoreInfo: (payload: EmptyPayload) => CoreInfo;
-  checkRuntimeEnvironment: (payload: EmptyPayload) => void;
   getExperimentalFeatures: (payload: EmptyPayload) => readonly ExperimentalFeatureState[];
   getKimiConfig: (payload: GetKimiConfigPayload) => KimiConfig;
   setKimiConfig: (payload: SetKimiConfigPayload) => KimiConfig;

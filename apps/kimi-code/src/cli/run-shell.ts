@@ -34,6 +34,21 @@ export async function runShell(
   runOptions: { readonly migrateOnly?: boolean } = {},
 ): Promise<void> {
   const startedAt = Date.now();
+  const configStartedAt = startedAt;
+  let tuiConfig: TuiConfig;
+  let configWarning: string | undefined;
+  try {
+    tuiConfig = await loadTuiConfig();
+  } catch (error) {
+    if (!(error instanceof TuiConfigParseError)) throw error;
+    tuiConfig = error.fallback;
+    configWarning = error.message;
+  }
+
+  // Resolve `theme = "auto"` against the live terminal once, before pi-tui
+  // grabs stdin. Explicit `dark` / `light` skip detection.
+  const resolvedTheme = tuiConfig.theme === 'auto' ? await detectTerminalTheme() : tuiConfig.theme;
+
   const workDir = process.cwd();
   const telemetryBootstrap = createCliTelemetryBootstrap();
   const telemetryClient: TelemetryClient = {
@@ -63,22 +78,6 @@ export async function runShell(
     platform: `${process.platform}/${process.arch}`,
     workDir,
   });
-  await harness.checkRuntimeEnvironment();
-
-  const configStartedAt = Date.now();
-  let tuiConfig: TuiConfig;
-  let configWarning: string | undefined;
-  try {
-    tuiConfig = await loadTuiConfig();
-  } catch (error) {
-    if (!(error instanceof TuiConfigParseError)) throw error;
-    tuiConfig = error.fallback;
-    configWarning = error.message;
-  }
-
-  // Resolve `theme = "auto"` against the live terminal once, before pi-tui
-  // grabs stdin. Explicit `dark` / `light` skip detection.
-  const resolvedTheme = tuiConfig.theme === 'auto' ? await detectTerminalTheme() : tuiConfig.theme;
 
   await harness.ensureConfigFile();
   const migrationPlan = await detectPendingMigration({

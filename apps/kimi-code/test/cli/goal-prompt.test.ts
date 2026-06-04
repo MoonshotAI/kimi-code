@@ -112,7 +112,6 @@ const mocks = vi.hoisted(() => {
     mainEvent,
     experimentalFeatures: [{ id: 'goal_command', enabled: true }],
     sessions: [] as Array<{ readonly id: string; readonly workDir: string }>,
-    harnessCheckRuntimeEnvironment: vi.fn(async () => undefined),
   };
 });
 
@@ -123,7 +122,6 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
     createKimiHarness: () => ({
       homeDir: '/tmp/kimi-goal-home',
       auth: { getCachedAccessToken: vi.fn() },
-      checkRuntimeEnvironment: mocks.harnessCheckRuntimeEnvironment,
       ensureConfigFile: vi.fn(),
       getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'k2', telemetry: true })),
       getExperimentalFeatures: vi.fn(async () => mocks.experimentalFeatures),

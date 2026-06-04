@@ -31,7 +31,6 @@ const mocks = vi.hoisted(() => {
     loadTuiConfig: vi.fn(),
     detectTerminalTheme: vi.fn(),
     kimiHarnessConstructor: vi.fn(),
-    harnessCheckRuntimeEnvironment: vi.fn(async () => undefined),
     harnessEnsureConfigFile: vi.fn(),
     harnessGetConfig: vi.fn(async () => ({
       providers: {},
@@ -82,7 +81,6 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
           getCachedAccessToken: mocks.harnessGetCachedAccessToken,
         },
         ensureConfigFile: mocks.harnessEnsureConfigFile,
-        checkRuntimeEnvironment: mocks.harnessCheckRuntimeEnvironment,
         getConfig: mocks.harnessGetConfig,
         close: mocks.harnessClose,
         track: mocks.harnessTrack,
@@ -151,7 +149,6 @@ describe('runShell', () => {
       defaultModel: 'k2',
       telemetry: true,
     });
-    mocks.harnessCheckRuntimeEnvironment.mockResolvedValue(undefined);
     mocks.tuiGetStartupMcpMs.mockResolvedValue(0);
     mocks.tuiGetCurrentSessionId.mockReturnValue('');
     mocks.tuiHasSessionContent.mockReturnValue(false);
@@ -193,10 +190,6 @@ describe('runShell', () => {
           version: '1.2.3-test',
         }),
       }),
-    );
-    expect(mocks.harnessCheckRuntimeEnvironment).toHaveBeenCalledOnce();
-    expect(mocks.harnessCheckRuntimeEnvironment.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.harnessEnsureConfigFile.mock.invocationCallOrder[0]!,
     );
     expect(mocks.harnessEnsureConfigFile).toHaveBeenCalledOnce();
     expect(mocks.harnessEnsureConfigFile.mock.invocationCallOrder[0]).toBeLessThan(
@@ -249,38 +242,6 @@ describe('runShell', () => {
       init_ms: expect.any(Number),
       mcp_ms: 47,
     });
-  });
-
-  it('stops startup when runtime environment check fails', async () => {
-    mocks.loadTuiConfig.mockResolvedValue({
-      theme: 'dark',
-      editorCommand: null,
-      notifications: { enabled: true, condition: 'unfocused' },
-    });
-    mocks.harnessCheckRuntimeEnvironment.mockRejectedValueOnce(new Error('Git Bash missing'));
-
-    await expect(
-      runShell(
-        {
-          session: undefined,
-          continue: false,
-          yolo: false,
-          auto: false,
-          plan: false,
-          model: undefined,
-          outputFormat: undefined,
-          prompt: undefined,
-          skillsDirs: [],
-        },
-        '1.2.3-test',
-      ),
-    ).rejects.toThrow('Git Bash missing');
-
-    expect(mocks.harnessCheckRuntimeEnvironment).toHaveBeenCalledOnce();
-    expect(mocks.harnessEnsureConfigFile).not.toHaveBeenCalled();
-    expect(mocks.harnessGetConfig).not.toHaveBeenCalled();
-    expect(mocks.kimiTuiConstructor).not.toHaveBeenCalled();
-    expect(mocks.tuiStart).not.toHaveBeenCalled();
   });
 
   it('tracks first launch when device id creation reports first launch', async () => {

@@ -176,10 +176,6 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.sdk = rpcClient(this);
   }
 
-  async checkRuntimeEnvironment(_: EmptyPayload): Promise<void> {
-    await this.getKaos();
-  }
-
   async createSession(input: CreateSessionPayload): Promise<SessionSummary> {
     const options = input;
     const workDir = requiredWorkDir('createSession', options.workDir);
