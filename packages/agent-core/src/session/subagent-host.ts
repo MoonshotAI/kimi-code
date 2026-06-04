@@ -237,18 +237,15 @@ export class SessionSubagentHost {
       });
       const completion = await handle.completion;
       return {
-        kind: 'result',
-        result: {
-          task,
-          agentId: handle.agentId,
-          status: 'completed',
-          result: completion.result,
-          usage: completion.usage,
-        },
+        task,
+        agentId: handle.agentId,
+        status: 'completed',
+        result: completion.result,
+        usage: completion.usage,
       };
     } catch (error) {
       if (isRateLimit429Error(error)) {
-        return { kind: 'rate_limited', task };
+        return 'rate_limited';
       }
       if (handle === undefined) {
         throw error;
@@ -266,13 +263,10 @@ export class SessionSubagentHost {
         message = error instanceof Error ? error.message : String(error);
       }
       return {
-        kind: 'result',
-        result: {
-          task,
-          agentId: handle.agentId,
-          status: 'failed',
-          error: message,
-        },
+        task,
+        agentId: handle.agentId,
+        status: 'failed',
+        error: message,
       };
     } finally {
       subagentDeadline?.clear();
