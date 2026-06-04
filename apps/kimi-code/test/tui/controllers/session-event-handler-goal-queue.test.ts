@@ -47,16 +47,27 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
   };
   const host = {
     state: {
-      appState: { sessionId: 's1' },
+      appState: {
+        sessionId: 's1',
+        streamingPhase: 'waiting',
+        model: 'kimi-model',
+        permissionMode: 'auto',
+      },
       theme: { colors: getColorPalette('dark') },
       toolOutputExpanded: false,
+      todoPanel: { getTodos: vi.fn(() => []) },
       transcriptContainer: { addChild: vi.fn() },
       ui: { requestRender: vi.fn() },
     },
     session,
     aborted: false,
     sessionEventUnsubscribe: undefined,
-    streamingUI: { setTurnId: vi.fn() },
+    streamingUI: {
+      setTurnId: vi.fn(),
+      flushNow: vi.fn(),
+      resetToolUi: vi.fn(),
+      finalizeTurn: vi.fn(),
+    },
     requireSession: vi.fn(() => session),
     setAppState: vi.fn(),
     patchLivePane: vi.fn(),
@@ -64,6 +75,10 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
     showError: vi.fn(),
     showStatus: vi.fn(),
     showNotice: vi.fn(),
+    track: vi.fn(),
+    mountEditorReplacement: vi.fn(),
+    restoreEditor: vi.fn(),
+    restoreInputText: vi.fn(),
     appendTranscriptEntry: vi.fn(),
     sendNormalUserInput: vi.fn(),
     sendQueuedMessage: vi.fn(),
@@ -97,25 +112,47 @@ function clearedEvent() {
   } as const;
 }
 
+function turnEndedEvent() {
+  return {
+    type: 'turn.ended',
+    sessionId: 's1',
+    agentId: 'main',
+    turnId: 1,
+    reason: 'completed',
+  } as const;
+}
+
 describe('SessionEventHandler goal queue promotion', () => {
   beforeEach(() => {
     vi.mocked(readGoalQueue).mockClear();
     vi.mocked(removeGoalQueueItem).mockClear();
   });
 
-  it('starts the next queued goal after completion and the follow-up clear event', async () => {
+  it('starts the next queued goal after the completion turn ends', async () => {
     const { host, session } = makeHost();
     const handler = new SessionEventHandler(host);
 
     handler.handleEvent(completionEvent(), vi.fn());
     expect(session.createGoal).not.toHaveBeenCalled();
     handler.handleEvent(clearedEvent(), vi.fn());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(session.createGoal).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+
+    handler.handleEvent(turnEndedEvent(), vi.fn());
 
     await vi.waitFor(() => {
-      expect(session.createGoal).toHaveBeenCalledWith({ objective: 'Ship queued goal' });
+      expect(session.createGoal).toHaveBeenCalledWith({
+        objective: 'Ship queued goal',
+        replace: false,
+      });
     });
     expect(removeGoalQueueItem).toHaveBeenCalledWith(session, { goalId: 'q1' });
-    expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship queued goal');
+    expect(host.sendQueuedMessage).toHaveBeenCalledWith(session, {
+      text: 'Ship queued goal',
+    });
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+    expect(host.track).toHaveBeenCalledWith('goal_create', { replace: false });
   });
 
   it('leaves the queued goal in place when the next goal cannot start', async () => {
@@ -124,12 +161,14 @@ describe('SessionEventHandler goal queue promotion', () => {
 
     handler.handleEvent(completionEvent(), vi.fn());
     handler.handleEvent(clearedEvent(), vi.fn());
+    handler.handleEvent(turnEndedEvent(), vi.fn());
 
     await vi.waitFor(() => {
-      expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('Failed to start queued goal'));
+      expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('create failed'));
     });
     expect(removeGoalQueueItem).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+    expect(host.sendQueuedMessage).not.toHaveBeenCalled();
     expect(session.createGoal).toHaveBeenCalledOnce();
   });
 
@@ -140,12 +179,17 @@ describe('SessionEventHandler goal queue promotion', () => {
 
     handler.handleEvent(completionEvent(), vi.fn());
     handler.handleEvent(clearedEvent(), vi.fn());
+    handler.handleEvent(turnEndedEvent(), vi.fn());
 
     await vi.waitFor(() => {
       expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('could not be removed'));
     });
-    expect(session.createGoal).toHaveBeenCalledWith({ objective: 'Ship queued goal' });
+    expect(session.createGoal).toHaveBeenCalledWith({
+      objective: 'Ship queued goal',
+      replace: false,
+    });
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+    expect(host.sendQueuedMessage).not.toHaveBeenCalled();
   });
 
   it('shows a notice when a blocked goal has queued goals', async () => {
@@ -187,5 +231,6 @@ describe('SessionEventHandler goal queue promotion', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(session.createGoal).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+    expect(host.sendQueuedMessage).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import type { Component, Focusable } from '@earendil-works/pi-tui';
 import type {
   AgentStatusUpdatedEvent,
   AssistantDeltaEvent,
@@ -34,7 +35,6 @@ import type {
 import { buildGoalCompletionMessage } from '@moonshot-ai/kimi-code-sdk';
 
 import { MoonLoader } from '../components/chrome/moon-loader';
-import { GoalSetMessageComponent } from '../components/messages/goal-panel';
 import { buildGoalMarker } from '../components/messages/goal-markers';
 import { StatusMessageComponent } from '../components/messages/status-message';
 import {
@@ -77,6 +77,7 @@ import type {
   TranscriptEntry,
 } from '../types';
 import type { TUIState } from '../tui-state';
+import { createGoal as startGoalCommand } from '../commands/goal';
 
 export interface SessionEventHost {
   state: TUIState;
@@ -92,6 +93,10 @@ export interface SessionEventHost {
   showError(msg: string): void;
   showStatus(msg: string, color?: string): void;
   showNotice(title: string, detail?: string): void;
+  track(event: string, props?: Record<string, unknown>): void;
+  mountEditorReplacement(panel: Component & Focusable): void;
+  restoreEditor(): void;
+  restoreInputText(text: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   sendNormalUserInput(text: string): void;
   updateTerminalTitle(): void;
@@ -114,6 +119,9 @@ export class SessionEventHandler {
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
   mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
   private goalCompletionAwaitingClear = false;
+  private goalCompletionTurnEnded = false;
+  private queuedGoalPromotionPending = false;
+  private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
 
   resetRuntimeState(): void {
     this.backgroundAgentMetadata.clear();
@@ -124,6 +132,9 @@ export class SessionEventHandler {
     this.renderedMcpServerStatusKeys.clear();
     this.mcpServers.clear();
     this.goalCompletionAwaitingClear = false;
+    this.goalCompletionTurnEnded = false;
+    this.queuedGoalPromotionPending = false;
+    this.clearQueuedGoalPromotionTimer();
     this.stopAllMcpServerStatusSpinners();
   }
 
@@ -365,6 +376,8 @@ export class SessionEventHandler {
     }
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeTurn(sendQueued);
+    this.goalCompletionTurnEnded = true;
+    this.scheduleQueuedGoalPromotion();
   }
 
   private handleStepBegin(event: TurnStepStartedEvent): void {
@@ -569,7 +582,8 @@ export class SessionEventHandler {
     this.host.setAppState({ goal: event.snapshot });
     if (event.snapshot === null && this.goalCompletionAwaitingClear) {
       this.goalCompletionAwaitingClear = false;
-      void this.promoteNextQueuedGoal();
+      this.queuedGoalPromotionPending = true;
+      this.scheduleQueuedGoalPromotion();
     }
     const change = event.change;
     if (change === undefined) return;
@@ -581,6 +595,7 @@ export class SessionEventHandler {
     // controller, so it persists and renders identically on resume.
     if (change.kind === 'completion' && event.snapshot !== null) {
       this.goalCompletionAwaitingClear = true;
+      this.goalCompletionTurnEnded = false;
       this.host.appendTranscriptEntry({
         id: nextTranscriptId(),
         kind: 'assistant',
@@ -603,6 +618,24 @@ export class SessionEventHandler {
     }
   }
 
+  private scheduleQueuedGoalPromotion(): void {
+    if (!this.queuedGoalPromotionPending || !this.goalCompletionTurnEnded) return;
+    if (this.queuedGoalPromotionTimer !== undefined) return;
+    this.queuedGoalPromotionTimer = setTimeout(() => {
+      this.queuedGoalPromotionTimer = undefined;
+      if (!this.queuedGoalPromotionPending || !this.goalCompletionTurnEnded) return;
+      this.queuedGoalPromotionPending = false;
+      this.goalCompletionTurnEnded = false;
+      void this.promoteNextQueuedGoal();
+    }, 0);
+  }
+
+  private clearQueuedGoalPromotionTimer(): void {
+    if (this.queuedGoalPromotionTimer === undefined) return;
+    clearTimeout(this.queuedGoalPromotionTimer);
+    this.queuedGoalPromotionTimer = undefined;
+  }
+
   private async promoteNextQueuedGoal(): Promise<void> {
     const { host } = this;
     const session = host.session;
@@ -620,27 +653,28 @@ export class SessionEventHandler {
     const next = queue.goals[0];
     if (next === undefined) return;
 
-    try {
-      await session.createGoal({ objective: next.objective });
-    } catch (error) {
-      host.showError(`Failed to start queued goal: ${formatErrorMessage(error)}`);
-      return;
-    }
-    if (host.session !== session || host.aborted) return;
-
-    try {
-      await removeGoalQueueItem(session, { goalId: next.id });
-    } catch (error) {
-      host.showError(
-        `Queued goal started, but could not be removed from the queue: ${formatErrorMessage(error)}`,
-      );
-      return;
-    }
-    if (host.session !== session || host.aborted) return;
-
-    host.state.transcriptContainer.addChild(new GoalSetMessageComponent(host.state.theme.colors));
-    host.state.ui.requestRender();
-    host.sendNormalUserInput(next.objective);
+    await startGoalCommand(
+      host,
+      { kind: 'create', objective: next.objective, replace: false },
+      next.objective,
+      {
+        beforeSend: async () => {
+          if (host.session !== session || host.aborted) return false;
+          try {
+            await removeGoalQueueItem(session, { goalId: next.id });
+          } catch (error) {
+            host.showError(
+              `Queued goal started, but could not be removed from the queue: ${formatErrorMessage(error)}`,
+            );
+            return false;
+          }
+          return host.session === session && !host.aborted;
+        },
+        sendInput: (objective) => {
+          host.sendQueuedMessage(session, { text: objective });
+        },
+      },
+    );
   }
 
   private async notifyQueuedGoalWaitingOnBlocked(): Promise<void> {

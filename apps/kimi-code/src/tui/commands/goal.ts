@@ -29,6 +29,26 @@ import type { SlashCommandHost } from './dispatch';
 const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
 const RESUME_GOAL_INPUT = 'Resume the active goal.';
 
+type GoalCommandHost = Pick<
+  SlashCommandHost,
+  | 'state'
+  | 'session'
+  | 'requireSession'
+  | 'setAppState'
+  | 'showError'
+  | 'showStatus'
+  | 'track'
+  | 'mountEditorReplacement'
+  | 'restoreEditor'
+  | 'restoreInputText'
+  | 'sendNormalUserInput'
+>;
+
+export interface GoalStartOptions {
+  readonly beforeSend?: () => boolean | Promise<boolean>;
+  readonly sendInput?: (objective: string) => void;
+}
+
 export type ParsedGoalCommand =
   | { readonly kind: 'status' }
   | { readonly kind: 'pause' }
@@ -272,29 +292,31 @@ async function handleGoalQueueEditResult(
   await showGoalQueueManager(host, result.goalId);
 }
 
-async function createGoal(
-  host: SlashCommandHost,
+export async function createGoal(
+  host: GoalCommandHost,
   parsed: Extract<ParsedGoalCommand, { kind: 'create' }>,
   rawArgs?: string,
-): Promise<void> {
+  options: GoalStartOptions = {},
+): Promise<boolean> {
   // A goal must be able to start a model turn; refuse to create one otherwise.
   if (host.state.appState.model.trim().length === 0 || host.session === undefined) {
     host.showError(LLM_NOT_SET_MESSAGE);
-    return;
+    return false;
   }
 
   if (host.state.appState.permissionMode === 'manual') {
-    showGoalStartPermissionPrompt(host, parsed, rawArgs ?? parsed.objective);
-    return;
+    showGoalStartPermissionPrompt(host, parsed, rawArgs ?? parsed.objective, options);
+    return false;
   }
 
-  await startGoal(host, parsed);
+  return startGoal(host, parsed, options);
 }
 
 function showGoalStartPermissionPrompt(
-  host: SlashCommandHost,
+  host: GoalCommandHost,
   parsed: Extract<ParsedGoalCommand, { kind: 'create' }>,
   rawArgs: string,
+  options: GoalStartOptions,
 ): void {
   const commandText = `/goal ${rawArgs.trim()}`;
   const cancelStart = (): void => {
@@ -310,7 +332,7 @@ function showGoalStartPermissionPrompt(
           return;
         }
         host.restoreEditor();
-        void startGoalWithPermission(host, parsed, choice);
+        void startGoalWithPermission(host, parsed, choice, options);
       },
       onCancel: cancelStart,
     }),
@@ -318,17 +340,18 @@ function showGoalStartPermissionPrompt(
 }
 
 async function startGoalWithPermission(
-  host: SlashCommandHost,
+  host: GoalCommandHost,
   parsed: Extract<ParsedGoalCommand, { kind: 'create' }>,
   choice: GoalStartPermissionChoice,
+  options: GoalStartOptions,
 ): Promise<void> {
   if (choice === 'auto' || choice === 'yolo') {
     if (!(await setPermissionForGoal(host, choice))) return;
   }
-  await startGoal(host, parsed);
+  await startGoal(host, parsed, options);
 }
 
-async function setPermissionForGoal(host: SlashCommandHost, mode: PermissionMode): Promise<boolean> {
+async function setPermissionForGoal(host: GoalCommandHost, mode: PermissionMode): Promise<boolean> {
   try {
     await host.requireSession().setPermission(mode);
   } catch (error) {
@@ -340,9 +363,10 @@ async function setPermissionForGoal(host: SlashCommandHost, mode: PermissionMode
 }
 
 async function startGoal(
-  host: SlashCommandHost,
+  host: GoalCommandHost,
   parsed: Extract<ParsedGoalCommand, { kind: 'create' }>,
-): Promise<void> {
+  options: GoalStartOptions,
+): Promise<boolean> {
   try {
     await host.requireSession().createGoal({
       objective: parsed.objective,
@@ -353,15 +377,20 @@ async function startGoal(
       host.showError(
         'A goal is already active. Use `/goal replace <objective>` to replace it, or `/goal status` to inspect it.',
       );
-      return;
+      return false;
     }
     host.showError(formatErrorMessage(error));
-    return;
+    return false;
+  }
+  if (options.beforeSend !== undefined && !(await options.beforeSend())) {
+    return false;
   }
   host.track('goal_create', { replace: parsed.replace });
   host.state.transcriptContainer.addChild(new GoalSetMessageComponent(host.state.theme.colors));
   host.state.ui.requestRender();
-  host.sendNormalUserInput(parsed.objective);
+  const sendInput = options.sendInput ?? host.sendNormalUserInput;
+  sendInput(parsed.objective);
+  return true;
 }
 
 async function pauseGoal(host: SlashCommandHost): Promise<void> {
