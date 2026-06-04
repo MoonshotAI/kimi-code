@@ -165,6 +165,32 @@ function refreshInBackground(): void {
   void refreshUpdateCache().catch(() => {});
 }
 
+function refreshAndMaybeInstallInBackground(
+  currentVersion: string,
+  isInteractive: boolean,
+  installState: UpdateInstallState,
+  platform: NodeJS.Platform,
+  track: RunUpdatePreflightOptions['track'],
+  logger: UpdateLogger,
+): void {
+  void (async () => {
+    const refreshed = await refreshUpdateCache();
+    if (!isInteractive) return;
+    const target = selectUpdateTarget(currentVersion, refreshed.latest);
+    if (target === null) return;
+    const source = await detectInstallSource().catch(() => 'unsupported' as const);
+    await tryStartAutomaticBackgroundInstall(
+      installState,
+      currentVersion,
+      target,
+      source,
+      platform,
+      track,
+      logger,
+    );
+  })().catch(() => {});
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -433,6 +459,35 @@ async function startBackgroundInstall(
   }
 }
 
+async function tryStartAutomaticBackgroundInstall(
+  installState: UpdateInstallState,
+  currentVersion: string,
+  target: UpdateTarget,
+  source: InstallSource,
+  platform: NodeJS.Platform,
+  track: RunUpdatePreflightOptions['track'],
+  logger: UpdateLogger,
+): Promise<boolean> {
+  const sourceCanAutoInstall = canAutoInstall(source, platform);
+  const autoInstallUpdates = sourceCanAutoInstall ? await shouldAutoInstallUpdates() : false;
+  if (!autoInstallUpdates || !sourceCanAutoInstall) return false;
+  if (failureAttemptsFor(installState, target) >= AUTO_INSTALL_FAILURE_PROMPT_THRESHOLD) {
+    return false;
+  }
+  if (!hasFreshActiveInstall(installState, target)) {
+    await startBackgroundInstall(
+      installState,
+      currentVersion,
+      target,
+      source,
+      platform,
+      track,
+      logger,
+    ).catch(() => {});
+  }
+  return true;
+}
+
 export function decideUpdateAction(
   target: UpdateTarget | null,
   isInteractive: boolean,
@@ -469,33 +524,40 @@ export async function runUpdatePreflight(
     const cache = await readUpdateCache().catch(() => null);
     const latest = cache?.latest ?? null;
     const target = selectUpdateTarget(currentVersion, latest);
+    if (target === null) {
+      refreshAndMaybeInstallInBackground(
+        currentVersion,
+        isInteractive,
+        installState,
+        platform,
+        options.track,
+        logger,
+      );
+      return 'continue';
+    }
+
     refreshInBackground();
     const source: InstallSource =
-      target === null || !isInteractive
+      !isInteractive
         ? 'unsupported'
         : await detectInstallSource().catch(() => 'unsupported' as const);
 
     const decision = decideUpdateAction(target, isInteractive, source, platform);
-    if (decision === 'none' || target === null) return 'continue';
+    if (decision === 'none') return 'continue';
 
     const installCommand = installCommandFor(source, target.version, platform);
-    const sourceCanAutoInstall = canAutoInstall(source, platform);
-    const autoInstallUpdates = sourceCanAutoInstall ? await shouldAutoInstallUpdates() : false;
-    if (autoInstallUpdates && sourceCanAutoInstall) {
-      if (failureAttemptsFor(installState, target) < AUTO_INSTALL_FAILURE_PROMPT_THRESHOLD) {
-        if (!hasFreshActiveInstall(installState, target)) {
-          await startBackgroundInstall(
-            installState,
-            currentVersion,
-            target,
-            source,
-            platform,
-            options.track,
-            logger,
-          ).catch(() => {});
-        }
-        return 'continue';
-      }
+    if (
+      await tryStartAutomaticBackgroundInstall(
+        installState,
+        currentVersion,
+        target,
+        source,
+        platform,
+        options.track,
+        logger,
+      )
+    ) {
+      return 'continue';
     }
 
     trackUpdatePrompted(options.track, currentVersion, target, source, decision);

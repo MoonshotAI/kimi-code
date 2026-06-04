@@ -185,15 +185,42 @@ describe('runUpdatePreflight', () => {
 
   afterEach(() => { vi.clearAllMocks(); });
 
-  it('continues on first launch with empty cache, still refreshes in background', async () => {
+  it('starts an automatic update from the first fresh check when the cache is empty', async () => {
     mocks.readUpdateCache.mockResolvedValue(emptyUpdateCache());
-    mocks.refreshUpdateCache.mockResolvedValue(emptyUpdateCache());
+    mocks.readUpdateInstallState.mockResolvedValue(installState());
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.detectInstallSource.mockResolvedValue('npm-global');
+    mockSpawnExit(0);
     const { options } = captureOutput();
 
     await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+    await flushBackgroundInstall();
+
     expect(readUpdateCache).toHaveBeenCalledTimes(1);
     expect(refreshUpdateCache).toHaveBeenCalledTimes(1);
-    expect(detectInstallSource).not.toHaveBeenCalled();
+    expect(promptForInstallChoice).not.toHaveBeenCalled();
+    expect(detectInstallSource).toHaveBeenCalledTimes(1);
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      expect.stringMatching(/^npm(\.cmd)?$/),
+      ['install', '-g', '@moonshot-ai/kimi-code@0.5.0'],
+      { detached: true, stdio: 'ignore' },
+    );
+  });
+
+  it('does not start a fresh-check background install when automatic updates are disabled', async () => {
+    disableAutoInstall();
+    mocks.readUpdateCache.mockResolvedValue(emptyUpdateCache());
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.detectInstallSource.mockResolvedValue('npm-global');
+    const { options } = captureOutput();
+
+    await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+    await flushBackgroundInstall();
+
+    expect(refreshUpdateCache).toHaveBeenCalledTimes(1);
+    expect(detectInstallSource).toHaveBeenCalledTimes(1);
+    expect(promptForInstallChoice).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
   });
 
   it('skips when non-interactive', async () => {
@@ -204,6 +231,22 @@ describe('runUpdatePreflight', () => {
       runUpdatePreflight('0.4.0', { ...options, isTTY: false }),
     ).resolves.toBe('continue');
     expect(detectInstallSource).not.toHaveBeenCalled();
+  });
+
+  it('does not start a fresh-check background install when non-interactive', async () => {
+    mocks.readUpdateCache.mockResolvedValue(emptyUpdateCache());
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    const { options } = captureOutput();
+
+    await expect(
+      runUpdatePreflight('0.4.0', { ...options, isTTY: false }),
+    ).resolves.toBe('continue');
+    await flushBackgroundInstall();
+
+    expect(refreshUpdateCache).toHaveBeenCalledTimes(1);
+    expect(detectInstallSource).not.toHaveBeenCalled();
+    expect(promptForInstallChoice).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
   });
 
   it('npm-global: prompts and spawns npm install -g when automatic updates are disabled', async () => {
