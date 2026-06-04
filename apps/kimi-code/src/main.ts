@@ -36,7 +36,6 @@ import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from './constant/app';
 import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
 import { installNativeModuleHook } from './native/module-hook';
 import { runNativeAssetSmokeIfRequested } from './native/smoke';
-import { initProcessName } from './utils/process/proctitle';
 
 export async function handleMainCommand(opts: CLIOptions, version: string): Promise<void> {
   let validated: ReturnType<typeof validateOptions>;
@@ -116,7 +115,6 @@ const MIGRATE_CLI_OPTIONS: CLIOptions = {
 };
 
 export function main(): void {
-  initProcessName();
   installCrashHandlers();
   installNativeModuleHook();
   if (runNativeAssetSmokeIfRequested()) return;

@@ -60,8 +60,7 @@ import {
   type McpServerStatusSnapshot,
   selectMcpStartupStatusRows,
 } from '../utils/mcp-server-status';
-import { openUrl } from '../utils/open-url';
-import { setProcessTitle } from '../utils/proctitle';
+import { openUrl } from '#/utils/open-url';
 import { errorReportHintLine } from '../constant/feedback';
 import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
 import { nextTranscriptId } from '../utils/transcript-id';
@@ -95,6 +94,7 @@ export interface SessionEventHost {
   showNotice(title: string, detail?: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   sendNormalUserInput(text: string): void;
+  updateTerminalTitle(): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
   readonly btwPanelController: BtwPanelController;
@@ -302,6 +302,7 @@ export class SessionEventHandler {
       case 'cron.fired':
       case 'error':
       case 'warning':
+      case 'goal.updated':
       case 'session.meta.updated':
       case 'skill.activated':
       case 'subagent.completed':
@@ -666,7 +667,7 @@ export class SessionEventHandler {
     const title = event.title ?? stringValue(event.patch?.['title']);
     if (title !== undefined) {
       this.host.setAppState({ sessionTitle: title });
-      setProcessTitle(title, this.host.state.appState.sessionId);
+      this.host.updateTerminalTitle();
     }
   }
 

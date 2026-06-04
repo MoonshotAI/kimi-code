@@ -136,11 +136,11 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
 
   private readonly log?: Logger;
 
-  resolveExecution(args: AgentToolInput): ToolExecution {
+  async resolveExecution(args: AgentToolInput): Promise<ToolExecution> {
     let profileName = args.subagent_type?.length ? args.subagent_type : 'coder';
     const resumeAgentId = args.resume?.trim();
     if (resumeAgentId !== undefined && resumeAgentId.length > 0) {
-      profileName = this.subagentHost.getProfileName?.(resumeAgentId) ?? 'subagent';
+      profileName = (await this.subagentHost.getProfileName?.(resumeAgentId)) ?? 'subagent';
     }
     const prefix = args.run_in_background === true ? 'Launching background' : 'Launching';
     return {

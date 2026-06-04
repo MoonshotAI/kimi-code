@@ -260,6 +260,18 @@ describe('main entry command handling', () => {
     expect(mocks.parse).toHaveBeenCalledWith(process.argv);
   });
 
+  it('does not rewrite the process title during startup', () => {
+    const originalTitle = process.title;
+    try {
+      process.title = 'kimi-test-runner';
+      main();
+
+      expect(process.title).toBe('kimi-test-runner');
+    } finally {
+      process.title = originalTitle;
+    }
+  });
+
   it('exits early when update preflight requests process exit', async () => {
     const opts = defaultOpts();
     mocks.validateOptions.mockReturnValue({ options: opts, uiMode: 'shell' });

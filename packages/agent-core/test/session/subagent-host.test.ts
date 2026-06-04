@@ -325,6 +325,7 @@ describe('SessionSubagentHost', () => {
     const host = new SessionSubagentHost(
       {
         agents: new Map([['main', parent.agent]]),
+        ensureAgentResumed: vi.fn(async () => parent.agent),
         createAgent,
       } as never,
       'main',
@@ -349,6 +350,7 @@ describe('SessionSubagentHost', () => {
     const host = new SessionSubagentHost(
       {
         agents: new Map([['main', parent.agent]]),
+        ensureAgentResumed: vi.fn(async () => parent.agent),
         createAgent,
       } as never,
       'main',
@@ -891,7 +893,7 @@ describe('Session resume permission parent chain', () => {
     try {
       await session.resume();
 
-      const child = session.agents.get('agent-0');
+      const child = await session.ensureAgentResumed('agent-0');
       expect(child?.permission.mode).toBe('yolo');
       expect(child?.permission.rules).toEqual([]);
       expect(child?.permission.data().rules).toEqual([]);
@@ -1133,6 +1135,14 @@ function fakeSession(
       custom: {},
     },
     writeMetadata: vi.fn(async () => {}),
+    getReadyAgent: vi.fn((id: string) => agents.get(id)),
+    ensureAgentResumed: vi.fn(async (id: string) => {
+      const agent = agents.get(id);
+      if (agent === undefined) {
+        throw new Error(`Agent "${id}" was not found`);
+      }
+      return agent;
+    }),
     createAgent: vi.fn(
       async (
         config: Parameters<Session['createAgent']>[0],

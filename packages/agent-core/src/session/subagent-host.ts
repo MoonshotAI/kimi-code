@@ -81,10 +81,7 @@ export class SessionSubagentHost {
   async spawn(profileName: string, options: RunSubagentOptions): Promise<SubagentHandle> {
     options.signal.throwIfAborted();
 
-    const parent = this.session.agents.get(this.ownerAgentId);
-    if (parent === undefined) {
-      throw new Error(`Parent agent "${this.ownerAgentId}" was not found`);
-    }
+    const parent = await this.session.ensureAgentResumed(this.ownerAgentId);
 
     const profile = this.resolveProfile(parent, profileName);
     const { id, agent } = await this.session.createAgent(
@@ -124,15 +121,7 @@ export class SessionSubagentHost {
   async resume(agentId: string, options: RunSubagentOptions): Promise<SubagentHandle> {
     options.signal.throwIfAborted();
 
-    const parent = this.session.agents.get(this.ownerAgentId);
-    if (parent === undefined) {
-      throw new Error(`Parent agent "${this.ownerAgentId}" was not found`);
-    }
-
-    const child = this.session.agents.get(agentId);
-    if (child === undefined) {
-      throw new Error(`Agent instance "${agentId}" was not found`);
-    }
+    const parent = await this.session.ensureAgentResumed(this.ownerAgentId);
     const metadata = this.session.metadata.agents[agentId];
     if (metadata?.type !== 'sub') {
       throw new Error(`Agent instance "${agentId}" is not a subagent`);
@@ -140,6 +129,7 @@ export class SessionSubagentHost {
     if (metadata.parentAgentId !== this.ownerAgentId) {
       throw new Error(`Agent instance "${agentId}" does not belong to this parent agent`);
     }
+    const child = await this.session.ensureAgentResumed(agentId);
     if (this.activeChildren.has(agentId) || child.turn.hasActiveTurn) {
       throw new Error(
         `Agent instance "${agentId}" is already running and cannot be resumed concurrently`,
@@ -185,7 +175,7 @@ export class SessionSubagentHost {
   }
 
   async startBtw(): Promise<string> {
-    const parent = this.session.agents.get(this.ownerAgentId)!;
+    const parent = await this.session.ensureAgentResumed(this.ownerAgentId);
     const { id, agent: child } = await this.session.createAgent(
       {
         type: 'sub',
@@ -215,19 +205,19 @@ export class SessionSubagentHost {
       ([, child]) => !child.runInBackground,
     );
     for (const [childId, child] of foregroundChildren) {
-      this.session.agents.get(childId)?.subagentHost?.cancelAll(reason);
+      this.session.getReadyAgent(childId)?.subagentHost?.cancelAll(reason);
       // Abort with the cancel reason (a user interruption by default) so the
       // subagent's in-flight tools report the cause accurately to the model.
       child.controller.abort(reason);
     }
   }
 
-  getProfileName(agentId: string): string | undefined {
+  async getProfileName(agentId: string): Promise<string | undefined> {
     const metadata = this.session.metadata.agents[agentId];
     if (metadata?.type !== 'sub' || metadata.parentAgentId !== this.ownerAgentId) {
       return undefined;
     }
-    return this.session.agents.get(agentId)?.config.profileName;
+    return (await this.session.ensureAgentResumed(agentId)).config.profileName;
   }
 
   private resolveProfile(parent: Agent, profileName: string): ResolvedAgentProfile {

@@ -9,7 +9,15 @@ const base = rawBase
     : `/${rawBase}/`
   : '/'
 
-export default withMermaid(defineConfig({
+const mermaidOptimizeDeps = [
+  '@braintree/sanitize-url',
+  'dayjs',
+  'debug',
+  'cytoscape-cose-bilkent',
+  'cytoscape',
+]
+
+const config = withMermaid(defineConfig({
   base,
   title: 'Kimi Code CLI Docs',
   description: 'Kimi Code CLI Documentation',
@@ -34,7 +42,6 @@ export default withMermaid(defineConfig({
           { text: '定制化', link: '/zh/customization/mcp', activeMatch: '/zh/customization/' },
           { text: '配置', link: '/zh/configuration/config-files', activeMatch: '/zh/configuration/' },
           { text: '参考手册', link: '/zh/reference/kimi-command', activeMatch: '/zh/reference/' },
-          { text: '常见问题', link: '/zh/faq' },
           { text: '发布说明', link: '/zh/release-notes/changelog', activeMatch: '/zh/release-notes/' },
         ],
         sidebar: {
@@ -47,6 +54,7 @@ export default withMermaid(defineConfig({
                 { text: '常见使用案例', link: '/zh/guides/use-cases' },
                 { text: '交互与输入', link: '/zh/guides/interaction' },
                 { text: '会话与上下文', link: '/zh/guides/sessions' },
+                { text: '在 IDE 中使用', link: '/zh/guides/ides' },
               ],
             },
           ],
@@ -57,6 +65,7 @@ export default withMermaid(defineConfig({
                 { text: 'Model Context Protocol', link: '/zh/customization/mcp' },
                 { text: 'Agent Skills', link: '/zh/customization/skills' },
                 { text: 'Plugins', link: '/zh/customization/plugins' },
+                { text: 'Kimi Datasource', link: '/zh/customization/datasource' },
                 { text: 'Agent 与子 Agent', link: '/zh/customization/agents' },
                 { text: 'Hooks', link: '/zh/customization/hooks' },
               ],
@@ -79,6 +88,7 @@ export default withMermaid(defineConfig({
               text: '参考手册',
               items: [
                 { text: 'kimi 命令', link: '/zh/reference/kimi-command' },
+                { text: 'kimi acp 子命令', link: '/zh/reference/kimi-acp' },
                 { text: '内置工具', link: '/zh/reference/tools' },
                 { text: '斜杠命令', link: '/zh/reference/slash-commands' },
                 { text: '键盘快捷键', link: '/zh/reference/keyboard' },
@@ -108,7 +118,6 @@ export default withMermaid(defineConfig({
           { text: 'Customization', link: '/en/customization/mcp', activeMatch: '/en/customization/' },
           { text: 'Configuration', link: '/en/configuration/config-files', activeMatch: '/en/configuration/' },
           { text: 'Reference', link: '/en/reference/kimi-command', activeMatch: '/en/reference/' },
-          { text: 'FAQ', link: '/en/faq' },
           { text: 'Release Notes', link: '/en/release-notes/changelog', activeMatch: '/en/release-notes/' },
         ],
         sidebar: {
@@ -121,6 +130,7 @@ export default withMermaid(defineConfig({
                 { text: 'Common Use Cases', link: '/en/guides/use-cases' },
                 { text: 'Interaction and Input', link: '/en/guides/interaction' },
                 { text: 'Sessions and Context', link: '/en/guides/sessions' },
+                { text: 'Using in IDEs', link: '/en/guides/ides' },
               ],
             },
           ],
@@ -131,6 +141,7 @@ export default withMermaid(defineConfig({
                 { text: 'Model Context Protocol', link: '/en/customization/mcp' },
                 { text: 'Agent Skills', link: '/en/customization/skills' },
                 { text: 'Plugins', link: '/en/customization/plugins' },
+                { text: 'Kimi Datasource', link: '/en/customization/datasource' },
                 { text: 'Agents and Subagents', link: '/en/customization/agents' },
                 { text: 'Hooks', link: '/en/customization/hooks' },
               ],
@@ -153,6 +164,7 @@ export default withMermaid(defineConfig({
               text: 'Reference',
               items: [
                 { text: 'kimi Command', link: '/en/reference/kimi-command' },
+                { text: 'kimi acp Subcommand', link: '/en/reference/kimi-acp' },
                 { text: 'Built-in Tools', link: '/en/reference/tools' },
                 { text: 'Slash Commands', link: '/en/reference/slash-commands' },
                 { text: 'Keyboard Shortcuts', link: '/en/reference/keyboard' },
@@ -181,6 +193,17 @@ export default withMermaid(defineConfig({
   },
 
   vite: {
+    optimizeDeps: {
+      include: mermaidOptimizeDeps.map((dep) => `mermaid > ${dep}`),
+    },
     plugins: [llmstxt()],
   },
 }))
+
+if (config.vite?.optimizeDeps?.include) {
+  config.vite.optimizeDeps.include = config.vite.optimizeDeps.include.filter(
+    (dep) => !mermaidOptimizeDeps.includes(dep),
+  )
+}
+
+export default config

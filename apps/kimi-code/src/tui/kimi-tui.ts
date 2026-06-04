@@ -86,7 +86,9 @@ import {
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
   NO_ACTIVE_SESSION_MESSAGE,
+  PRODUCT_NAME,
 } from './constant/kimi-tui';
+import { MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
 import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
 import { ApprovalController } from './reverse-rpc/approval/controller';
@@ -116,8 +118,7 @@ import { formatErrorMessage } from './utils/event-payload';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments } from './utils/image-placeholder';
 import { hasPatchChanges } from './utils/object-patch';
-import { openUrl } from './utils/open-url';
-import { setProcessTitle } from './utils/proctitle';
+import { openUrl } from '#/utils/open-url';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
@@ -462,7 +463,7 @@ export class KimiTUI {
     }
     void this.fetchSessions();
     if (this.session !== undefined) {
-      this.refreshSessionTitle();
+      this.updateTerminalTitle();
     }
     void this.refreshSkillCommands(this.session);
   }
@@ -1090,8 +1091,10 @@ export class KimiTUI {
     }
   }
 
-  refreshSessionTitle(): void {
-    setProcessTitle(this.state.appState.sessionTitle, this.state.appState.sessionId);
+  updateTerminalTitle(): void {
+    const trimmed = this.state.appState.sessionTitle?.trim() ?? '';
+    const label = trimmed.length > 0 ? trimmed.slice(0, MAX_TERMINAL_TITLE_LENGTH) : PRODUCT_NAME;
+    this.state.terminal.setTitle(label);
   }
 
   resetSessionRuntime(): void {
@@ -1144,7 +1147,7 @@ export class KimiTUI {
     this.resetSessionRuntime();
     await this.setSession(session);
     await this.syncRuntimeState(session);
-    this.refreshSessionTitle();
+    this.updateTerminalTitle();
     try {
       await this.refreshSkillCommands(this.session);
     } catch {

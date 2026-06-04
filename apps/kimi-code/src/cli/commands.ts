@@ -5,7 +5,9 @@ import { CLI_COMMAND_NAME } from '#/constant/app';
 import { registerMigrateCommand } from '#/migration/index';
 
 import type { CLIOptions } from './options';
+import { registerAcpCommand } from './sub/acp';
 import { registerExportCommand } from './sub/export';
+import { registerLoginCommand } from './sub/login';
 import { registerProviderCommand } from './sub/provider';
 
 export type MainCommandHandler = (opts: CLIOptions) => void;
@@ -78,6 +80,8 @@ export function createProgram(
 
   registerExportCommand(program);
   registerProviderCommand(program);
+  registerAcpCommand(program);
+  registerLoginCommand(program);
   registerMigrateCommand(program, onMigrate);
   program
     .command('upgrade')

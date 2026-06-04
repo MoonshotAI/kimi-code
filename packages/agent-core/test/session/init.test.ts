@@ -226,7 +226,7 @@ describe('AgentAPI.startBtw', () => {
       expect(agentId).toBe('agent-0');
       expect(scripted.calls).toHaveLength(0);
       expect(session.metadata.agents[agentId]).toBeUndefined();
-      const childAgent = session.agents.get(agentId);
+      const childAgent = session.getReadyAgent(agentId);
       if (childAgent === undefined) throw new Error('Expected /btw child agent');
       const inheritedHistory = trimTrailingOpenToolExchange(
         mainAgent.context.project(mainAgent.context.history),
@@ -274,7 +274,7 @@ describe('AgentAPI.startBtw', () => {
       expect(JSON.stringify(mainAgent.context.history)).not.toContain(
         'What are you working on right now?',
       );
-      expect(JSON.stringify(session.agents.get('agent-0')?.context.history)).toContain(
+      expect(JSON.stringify(session.getReadyAgent('agent-0')?.context.history)).toContain(
         'What are you working on right now?',
       );
       scripted.mockNextResponse({ type: 'text', text: 'Follow-up answer from the same side agent.' });

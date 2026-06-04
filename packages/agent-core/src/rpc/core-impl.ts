@@ -10,6 +10,7 @@ import { MoonshotWebSearchProvider } from '#/tools/providers/moonshot-web-search
 import type { PromisableMethods } from '#/utils/types';
 import { getCoreVersion } from '#/version';
 import { resolveThinkingLevel } from '../agent/config/thinking';
+import { Agent } from '../agent';
 import {
   ensureKimiHome,
   loadRuntimeConfig,
@@ -26,7 +27,7 @@ import {
   type ExperimentalFlagMap,
 } from '../flags';
 import type { Logger } from '../logging/types';
-import { resolveSessionMcpConfig, type SessionMcpConfig } from '../mcp';
+import { resolveSessionMcpConfig, mergeCallerMcpServers, type SessionMcpConfig } from '../mcp';
 import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
 import { exportSessionDirectory } from '../session/export';
 import {
@@ -188,6 +189,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       cwd: workDir,
       homeDir: this.homeDir,
     });
+    const withCallerMcp = mergeCallerMcpServers(baseMcpConfig, options.mcpServers);
     const summary = await this.sessionStore.create({
       id,
       workDir,
@@ -199,7 +201,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
     await this.pluginsReady;
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
-    const mcpConfig = this.mergePluginMcpConfig(baseMcpConfig);
+    const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
 
     // Session ctor attaches its own log sink. If anything in the setup-after-
     // ctor block throws, `session.close()` releases the sink (and mcp).
@@ -286,9 +288,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       cwd: summary.workDir,
       homeDir: this.homeDir,
     });
+    const withCallerMcp = mergeCallerMcpServers(baseMcpConfig, input.mcpServers);
     await this.pluginsReady;
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
-    const mcpConfig = this.mergePluginMcpConfig(baseMcpConfig);
+    const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
     const runtime = await this.resolveRuntime(config);
     const session = new Session({
       kaos: (await this.kaos).withCwd(summary.workDir),
@@ -344,11 +347,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const resumed = await this.resumeSession({ sessionId: id });
     if (sourceHadGoal) {
       const forked = this.sessions.get(id);
-      forked?.agents.get('main')?.context.appendSystemReminder(GOAL_FORK_CLEARED_REMINDER, {
-        kind: 'system_trigger',
-        name: 'goal_fork_cleared',
-      });
-      await forked?.flushMetadata();
+      if (forked !== undefined) {
+        const mainAgent = await forked.ensureAgentResumed('main');
+        mainAgent.context.appendSystemReminder(GOAL_FORK_CLEARED_REMINDER, {
+          kind: 'system_trigger',
+          name: 'goal_fork_cleared',
+        });
+        await forked.flushMetadata();
+      }
     }
     return resumed;
   }
@@ -881,7 +887,9 @@ async function resumeSessionResult(
 ): Promise<ResumeSessionResult> {
   const api = new SessionAPIImpl(session);
   const agents: Record<string, ResumedAgentState> = {};
-  for (const [agentId, agent] of session.agents) {
+  for (const [agentId, entry] of session.agents) {
+    if (!(entry instanceof Agent)) continue;
+    const agent = entry;
     const config = await api.getConfig({ agentId });
     const context = await api.getContext({ agentId });
     const permission = await api.getPermission({ agentId });

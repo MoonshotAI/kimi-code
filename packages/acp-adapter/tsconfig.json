@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {},
+  "include": ["src", "test", "../agent-core/src/prompt-modules.d.ts"]
+}
