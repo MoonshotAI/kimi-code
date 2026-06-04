@@ -55,6 +55,20 @@ describe('goal queue store', () => {
     });
   });
 
+  it('preserves concurrent appends to the same session queue', async () => {
+    await Promise.all(
+      Array.from({ length: 10 }, (_, index) =>
+        appendGoalQueueItem(session(), { objective: `Queued goal ${index + 1}` }),
+      ),
+    );
+
+    const snapshot = await readGoalQueue(session());
+
+    expect(snapshot.goals.map((goal) => goal.objective).toSorted()).toEqual(
+      Array.from({ length: 10 }, (_, index) => `Queued goal ${index + 1}`).toSorted(),
+    );
+  });
+
   it('updates an upcoming goal objective', async () => {
     const first = await appendGoalQueueItem(session(), { objective: 'Draft docs' });
     const goal = first.goals[0]!;

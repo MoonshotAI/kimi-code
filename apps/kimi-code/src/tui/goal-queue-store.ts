@@ -35,6 +35,8 @@ interface GoalQueueSession {
   };
 }
 
+const queueMutationLocks = new Map<string, Promise<void>>();
+
 export async function readGoalQueue(session: GoalQueueSession): Promise<GoalQueueSnapshot> {
   const state = await readQueueFile(session);
   return toSnapshot(state);
@@ -45,17 +47,19 @@ export async function appendGoalQueueItem(
   input: { readonly objective: string },
 ): Promise<GoalQueueSnapshot> {
   const objective = normalizeObjective(input.objective);
-  const state = await readQueueFile(session);
-  const now = new Date().toISOString();
-  const goal: UpcomingGoal = {
-    id: randomUUID(),
-    objective,
-    createdAt: now,
-    updatedAt: now,
-  };
-  const next: GoalQueueFile = { version: GOAL_QUEUE_VERSION, goals: [...state.goals, goal] };
-  await writeQueueFile(session, next);
-  return toSnapshot(next);
+  return withQueueMutationLock(session, async () => {
+    const state = await readQueueFile(session);
+    const now = new Date().toISOString();
+    const goal: UpcomingGoal = {
+      id: randomUUID(),
+      objective,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const next: GoalQueueFile = { version: GOAL_QUEUE_VERSION, goals: [...state.goals, goal] };
+    await writeQueueFile(session, next);
+    return toSnapshot(next);
+  });
 }
 
 export async function updateGoalQueueItem(
@@ -63,46 +67,52 @@ export async function updateGoalQueueItem(
   input: { readonly goalId: string; readonly objective: string },
 ): Promise<GoalQueueSnapshot> {
   const objective = normalizeObjective(input.objective);
-  const state = await readQueueFile(session);
-  const index = findGoalIndex(state, input.goalId);
-  const current = state.goals[index]!;
-  const updatedAt = timestampAfter(current.updatedAt);
-  const goals = state.goals.map((goal, goalIndex) =>
-    goalIndex === index ? { ...goal, objective, updatedAt } : goal,
-  );
-  const next: GoalQueueFile = { version: GOAL_QUEUE_VERSION, goals };
-  await writeQueueFile(session, next);
-  return toSnapshot(next);
+  return withQueueMutationLock(session, async () => {
+    const state = await readQueueFile(session);
+    const index = findGoalIndex(state, input.goalId);
+    const current = state.goals[index]!;
+    const updatedAt = timestampAfter(current.updatedAt);
+    const goals = state.goals.map((goal, goalIndex) =>
+      goalIndex === index ? { ...goal, objective, updatedAt } : goal,
+    );
+    const next: GoalQueueFile = { version: GOAL_QUEUE_VERSION, goals };
+    await writeQueueFile(session, next);
+    return toSnapshot(next);
+  });
 }
 
 export async function removeGoalQueueItem(
   session: GoalQueueSession,
   input: { readonly goalId: string },
 ): Promise<GoalQueueSnapshot> {
-  const state = await readQueueFile(session);
-  const index = findGoalIndex(state, input.goalId);
-  const goals = state.goals.filter((_, goalIndex) => goalIndex !== index);
-  const next: GoalQueueFile = { version: GOAL_QUEUE_VERSION, goals };
-  await writeQueueFile(session, next);
-  return toSnapshot(next);
+  return withQueueMutationLock(session, async () => {
+    const state = await readQueueFile(session);
+    const index = findGoalIndex(state, input.goalId);
+    const goals = state.goals.filter((_, goalIndex) => goalIndex !== index);
+    const next: GoalQueueFile = { version: GOAL_QUEUE_VERSION, goals };
+    await writeQueueFile(session, next);
+    return toSnapshot(next);
+  });
 }
 
 export async function moveGoalQueueItem(
   session: GoalQueueSession,
   input: { readonly goalId: string; readonly direction: GoalQueueMoveDirection },
 ): Promise<GoalQueueSnapshot> {
-  const state = await readQueueFile(session);
-  const index = findGoalIndex(state, input.goalId);
-  const targetIndex = input.direction === 'up' ? index - 1 : index + 1;
-  if (targetIndex < 0 || targetIndex >= state.goals.length) {
-    return toSnapshot(state);
-  }
-  const goals = [...state.goals];
-  const [goal] = goals.splice(index, 1);
-  goals.splice(targetIndex, 0, goal!);
-  const next: GoalQueueFile = { version: GOAL_QUEUE_VERSION, goals };
-  await writeQueueFile(session, next);
-  return toSnapshot(next);
+  return withQueueMutationLock(session, async () => {
+    const state = await readQueueFile(session);
+    const index = findGoalIndex(state, input.goalId);
+    const targetIndex = input.direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= state.goals.length) {
+      return toSnapshot(state);
+    }
+    const goals = [...state.goals];
+    const [goal] = goals.splice(index, 1);
+    goals.splice(targetIndex, 0, goal!);
+    const next: GoalQueueFile = { version: GOAL_QUEUE_VERSION, goals };
+    await writeQueueFile(session, next);
+    return toSnapshot(next);
+  });
 }
 
 function goalQueuePath(session: GoalQueueSession): string {
@@ -145,6 +155,27 @@ async function writeQueueFile(session: GoalQueueSession, file: GoalQueueFile): P
   const filePath = goalQueuePath(session);
   await mkdir(dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(file, null, 2)}\n`, 'utf-8');
+}
+
+async function withQueueMutationLock<T>(
+  session: GoalQueueSession,
+  work: () => Promise<T>,
+): Promise<T> {
+  const filePath = goalQueuePath(session);
+  const previous = queueMutationLocks.get(filePath) ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(work);
+  const lock = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  queueMutationLocks.set(filePath, lock);
+  try {
+    return await run;
+  } finally {
+    if (queueMutationLocks.get(filePath) === lock) {
+      queueMutationLocks.delete(filePath);
+    }
+  }
 }
 
 function emptyQueueFile(): GoalQueueFile {
