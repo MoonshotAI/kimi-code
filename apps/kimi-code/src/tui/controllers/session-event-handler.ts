@@ -49,7 +49,7 @@ import {
   serializeToolResultOutput,
   stringValue,
 } from '../utils/event-payload';
-import { readGoalQueue, removeGoalQueueItem } from '../goal-queue-store';
+import { readGoalQueue, removeGoalQueueItem, restoreGoalQueueItem } from '../goal-queue-store';
 import { formatBackgroundAgentTranscript } from '../utils/background-agent-status';
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
 import { formatHookResultMarkdown, formatHookResultPlain } from '../utils/hook-result-format';
@@ -674,7 +674,18 @@ export class SessionEventHandler {
             );
             return false;
           }
-          return host.session === session && !host.aborted;
+          if (host.session === session && !host.aborted) return true;
+          try {
+            await restoreGoalQueueItem(session, next);
+          } catch (error) {
+            host.showError(`Queued goal could not be restored: ${formatErrorMessage(error)}`);
+          }
+          try {
+            await session.cancelGoal();
+          } catch (error) {
+            host.showError(`Queued goal could not be cancelled: ${formatErrorMessage(error)}`);
+          }
+          return false;
         },
         sendInput: (objective) => {
           host.sendQueuedMessage(session, { text: objective });

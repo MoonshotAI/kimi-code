@@ -9,6 +9,7 @@ import {
   moveGoalQueueItem,
   readGoalQueue,
   removeGoalQueueItem,
+  restoreGoalQueueItem,
   updateGoalQueueItem,
 } from '#/tui/goal-queue-store';
 
@@ -94,6 +95,19 @@ describe('goal queue store', () => {
     const snapshot = await removeGoalQueueItem(session(), { goalId: first.goals[0]!.id });
 
     expect(snapshot.goals).toEqual([second.goals[1]]);
+  });
+
+  it('restores a removed upcoming goal at the front without duplicating it', async () => {
+    const first = await appendGoalQueueItem(session(), { objective: 'First' });
+    await appendGoalQueueItem(session(), { objective: 'Second' });
+    const removed = first.goals[0]!;
+    await removeGoalQueueItem(session(), { goalId: removed.id });
+
+    const restored = await restoreGoalQueueItem(session(), removed);
+    expect(restored.goals.map((goal) => goal.objective)).toEqual(['First', 'Second']);
+
+    const deduped = await restoreGoalQueueItem(session(), removed);
+    expect(deduped.goals.map((goal) => goal.objective)).toEqual(['First', 'Second']);
   });
 
   it('moves an upcoming goal up and down', async () => {

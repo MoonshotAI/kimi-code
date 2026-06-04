@@ -95,6 +95,21 @@ export async function removeGoalQueueItem(
   });
 }
 
+export async function restoreGoalQueueItem(
+  session: GoalQueueSession,
+  goal: UpcomingGoal,
+): Promise<GoalQueueSnapshot> {
+  return withQueueMutationLock(session, async () => {
+    const state = await readQueueFile(session);
+    if (state.goals.some((item) => item.id === goal.id)) {
+      return toSnapshot(state);
+    }
+    const next: GoalQueueFile = { version: GOAL_QUEUE_VERSION, goals: [goal, ...state.goals] };
+    await writeQueueFile(session, next);
+    return toSnapshot(next);
+  });
+}
+
 export async function moveGoalQueueItem(
   session: GoalQueueSession,
   input: { readonly goalId: string; readonly direction: GoalQueueMoveDirection },
