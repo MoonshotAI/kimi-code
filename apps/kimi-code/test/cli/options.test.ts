@@ -322,4 +322,22 @@ describe('CLI options parsing', () => {
       }
     });
   });
+
+  describe('unknown subcommand', () => {
+    it('reports "unknown command" instead of "too many arguments"', () => {
+      let errorOutput = '';
+      const program = createProgram('0.0.0', () => {}, () => {});
+      program.exitOverride();
+      program.configureOutput({
+        writeOut: () => {},
+        writeErr: (s) => {
+          errorOutput += s;
+        },
+      });
+
+      expect(() => program.parse(['node', 'kimi', 'nonexistent'])).toThrow();
+      expect(errorOutput).toContain("unknown command 'nonexistent'");
+      expect(errorOutput).not.toContain('too many arguments');
+    });
+  });
 });

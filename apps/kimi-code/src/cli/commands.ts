@@ -27,6 +27,8 @@ export function createProgram(
     .description('The Starting Point for Next-Gen Agents')
     .version(version, '-V, --version')
     .allowUnknownOption(false)
+    .allowExcessArguments(true)
+    .showSuggestionAfterError()
     .configureHelp({ helpWidth: 100 })
     .helpOption('-h, --help', 'Show help.')
     .addHelpText(
@@ -101,7 +103,18 @@ export function createProgram(
       onPluginNodeRunner(entry, args);
     });
 
-  program.action(() => {
+  program.action((...actionArgs: unknown[]) => {
+    const excess = program.args;
+    if (excess.length > 0) {
+      const unknown = excess[0]!;
+      const available = program.commands
+        .filter((cmd) => !cmd.name().startsWith('__'))
+        .map((cmd) => cmd.name());
+      program.error(
+        `unknown command '${unknown}'. Available commands: ${available.join(', ')}.\nSee '${CLI_COMMAND_NAME} --help'.`,
+      );
+    }
+
     const raw = program.opts<Record<string, unknown>>();
 
     const rawSession = raw['session'] ?? raw['resume'];
