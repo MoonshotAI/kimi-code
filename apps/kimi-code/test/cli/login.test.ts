@@ -25,9 +25,12 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async () => {
   };
 });
 
+vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
+
 import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
 import { registerLoginCommand } from '#/cli/sub/login';
+import { openUrl } from '#/utils/open-url';
 
 class ExitCalled extends Error {
   constructor(public code: number | string | null | undefined) {
@@ -41,6 +44,7 @@ describe('kimi login', () => {
 
   beforeEach(() => {
     mockLogin.mockReset();
+    vi.mocked(openUrl).mockReset();
     vi.mocked(createKimiHarness).mockClear();
     exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number | string | null) => {
       throw new ExitCalled(code);
@@ -96,8 +100,8 @@ describe('kimi login', () => {
       ) => {
         await options.onDeviceCode?.({
           userCode: 'ABCD-EFGH',
-          verificationUri: 'https://kimi.com/v',
-          verificationUriComplete: 'https://kimi.com/v?code=ABCD-EFGH',
+          verificationUri: 'https://example.com/v',
+          verificationUriComplete: 'https://example.com/v?code=ABCD-EFGH',
           expiresIn: 600,
         });
         return { providerName: 'kimi-code', ok: true };
@@ -111,7 +115,10 @@ describe('kimi login', () => {
 
     const writtenChunks = stderrSpy.mock.calls.map((call: unknown[]) => String(call[0]));
     expect(writtenChunks.some((chunk: string) => chunk.includes('ABCD-EFGH'))).toBe(true);
-    expect(writtenChunks.some((chunk: string) => chunk.includes('https://kimi.com/v'))).toBe(true);
+    expect(writtenChunks.some((chunk: string) => chunk.includes('https://example.com/v'))).toBe(
+      true,
+    );
+    expect(openUrl).toHaveBeenCalledWith('https://example.com/v?code=ABCD-EFGH');
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
