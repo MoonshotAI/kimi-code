@@ -37,7 +37,7 @@ vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   return { ...actual, promptFeedbackInput: vi.fn() };
 });
 
-vi.mock('#/tui/utils/open-url', () => ({ openUrl: vi.fn() }));
+vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
 const ESC = String.fromCodePoint(0x1b);
 const BEL = String.fromCodePoint(0x07);
@@ -172,6 +172,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     setPluginMcpServerEnabled: vi.fn(async () => {}),
     removePlugin: vi.fn(async () => {}),
     reloadPlugins: vi.fn(async () => ({ added: [], removed: [], errors: [] })),
+    reloadSession: vi.fn(async () => ({})),
     getPluginInfo: vi.fn(async (id: string) => ({
       id,
       displayName: id,
@@ -208,7 +209,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
     interactiveAgentId: 'main',
-    getExperimentalFlags: vi.fn(async () => ({})),
+    getExperimentalFeatures: vi.fn(async () => []),
     auth: {
       status: vi.fn(),
       login: vi.fn(),
@@ -366,6 +367,57 @@ describe('KimiTUI message flow', () => {
     });
     expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'theme' });
     expect(harness.track).toHaveBeenCalledWith('theme_switch', { theme: 'light' });
+  });
+
+  it('dispatches /reload-tui without reloading the active session', async () => {
+    const homeDir = await makeTempHome();
+    process.env['KIMI_CODE_HOME'] = homeDir;
+    await writeFile(
+      join(homeDir, 'tui.toml'),
+      `
+theme = "light"
+
+[editor]
+command = "vim"
+`,
+      'utf-8',
+    );
+    const { driver, session, harness } = await makeDriver();
+    harness.track.mockClear();
+    session.reloadSession.mockClear();
+
+    driver.handleUserInput('/reload-tui');
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.theme).toBe('light');
+    });
+    expect(driver.state.appState.editorCommand).toBe('vim');
+    expect(session.reloadSession).not.toHaveBeenCalled();
+    expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'reload-tui' });
+  });
+
+  it('dispatches /reload through session reload and applies tui.toml', async () => {
+    const homeDir = await makeTempHome();
+    process.env['KIMI_CODE_HOME'] = homeDir;
+    await writeFile(join(homeDir, 'tui.toml'), 'theme = "light"\n', 'utf-8');
+    const { driver, session, harness } = await makeDriver();
+    harness.track.mockClear();
+    session.reloadSession.mockClear();
+    driver.handleUserInput('hello before reload');
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/reload');
+
+    await vi.waitFor(() => {
+      expect(session.reloadSession).toHaveBeenCalledOnce();
+    });
+    await vi.waitFor(() => {
+      expect(driver.state.appState.theme).toBe('light');
+    });
+    expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'reload' });
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('hello before reload');
+    expect(transcript).toContain('Session reloaded.');
   });
 
   it('tracks successful feedback submissions only after the request succeeds', async () => {
@@ -2060,10 +2112,10 @@ describe('KimiTUI message flow', () => {
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('OAuth login expired. Send /login to login.');
     expect(transcript).not.toContain('[auth.login_required]');
-    expect(transcript).not.toContain('kimi export');
+    expect(transcript).not.toContain('/export-debug-zip');
   });
 
-  it('appends the kimi export hint beneath session error messages', async () => {
+  it('appends the /export-debug-zip hint beneath session error messages', async () => {
     const { driver } = await makeDriver();
 
     driver.sessionEventHandler.handleEvent(
@@ -2080,11 +2132,12 @@ describe('KimiTUI message flow', () => {
 
     const transcript = stripSgr(driver.state.transcriptContainer.render(200).join('\n'));
     expect(transcript).toContain('Error: [compaction.failed]');
-    expect(transcript).toContain('If this persists, run `kimi export ses-1`');
+    expect(transcript).toContain('If this persists, run `/export-debug-zip`');
     expect(transcript).toContain("Please don't share it publicly");
+    expect(transcript).not.toContain('kimi export');
   });
 
-  it('skips the kimi export hint when no active session id is set', async () => {
+  it('skips the /export-debug-zip hint when no active session id is set', async () => {
     const { driver } = await makeDriver();
     driver.state.appState.sessionId = '';
 
@@ -2102,7 +2155,7 @@ describe('KimiTUI message flow', () => {
 
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('Error: [compaction.failed]');
-    expect(transcript).not.toContain('kimi export');
+    expect(transcript).not.toContain('/export-debug-zip');
   });
 
   it('shows ExitPlanMode plan only in the current-plan card during approval', async () => {
@@ -2809,6 +2862,30 @@ describe('KimiTUI message flow', () => {
     expect(write).toHaveBeenCalledWith(deleteAllKittyImages());
   });
 
+  it('updates terminal title through pi-tui without changing process title', async () => {
+    const originalTitle = process.title;
+    const { driver } = await makeDriver(makeSession({ id: 'ses-1' }));
+    const setTitle = vi.spyOn(driver.state.terminal, 'setTitle').mockImplementation(() => {});
+
+    try {
+      process.title = 'kimi-test-runner';
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'session.meta.updated',
+          sessionId: 'ses-1',
+          agentId: 'main',
+          title: 'Implement terminal title',
+        } as Event,
+        () => {},
+      );
+
+      expect(setTitle).toHaveBeenCalledWith('Implement terminal title');
+      expect(process.title).toBe('kimi-test-runner');
+    } finally {
+      process.title = originalTitle;
+    }
+  });
+
   it('forks the active session and switches to the returned session', async () => {
     const originalTitle = process.title;
     const source = makeSession({
@@ -2821,8 +2898,10 @@ describe('KimiTUI message flow', () => {
     });
     const forkSession = vi.fn(async () => forked);
     const { driver, harness } = await makeDriver(source, { forkSession });
+    const setTitle = vi.spyOn(driver.state.terminal, 'setTitle').mockImplementation(() => {});
 
     try {
+      process.title = 'kimi-test-runner';
       driver.handleUserInput('/fork ignored args');
 
       await vi.waitFor(() => {
@@ -2832,7 +2911,8 @@ describe('KimiTUI message flow', () => {
         });
         expect(driver.getCurrentSessionId()).toBe('ses-fork');
       });
-      expect(process.title).toBe('Fork: Source title');
+      expect(setTitle).toHaveBeenCalledWith('Fork: Source title');
+      expect(process.title).toBe('kimi-test-runner');
       expect(source.close).toHaveBeenCalledOnce();
       expect(forked.onEvent).toHaveBeenCalledOnce();
       expect(harness.resumeSession).not.toHaveBeenCalled();

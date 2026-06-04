@@ -8,10 +8,13 @@ import {
 } from '@moonshot-ai/agent-core';
 import {
   createKimiDefaultHeaders,
+  KIMI_CODE_FLOW_CONFIG,
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
   kimiCodeBaseUrl,
+  resolveKimiCodeOAuthRef,
   type KimiHostIdentity,
+  type ManagedKimiOAuthRef,
 } from '@moonshot-ai/kimi-code-oauth';
 import type {
   ProviderConfig as KosongProviderConfig,
@@ -35,6 +38,7 @@ export class KimiForCodingProvider implements ModelProvider {
   private readonly toolkit: KimiOAuthToolkit;
   private readonly homeDir: string;
   private readonly identity: KimiHostIdentity;
+  private readonly oauthRef: ManagedKimiOAuthRef;
 
   constructor(options: KimiForCodingProviderOptions) {
     this.model = options.model ?? 'kimi-for-coding';
@@ -47,6 +51,10 @@ export class KimiForCodingProvider implements ModelProvider {
       version: options.version,
       userAgentSuffix: options.userAgentSuffix,
     };
+    this.oauthRef = resolveKimiCodeOAuthRef({
+      oauthHost: KIMI_CODE_FLOW_CONFIG.oauthHost,
+      baseUrl: this.baseUrl,
+    });
     this.toolkit = new KimiOAuthToolkit({
       homeDir: this.homeDir,
       identity: this.identity,
@@ -111,7 +119,10 @@ export class KimiForCodingProvider implements ModelProvider {
   }
 
   private async buildAuth(force: boolean): Promise<ProviderRequestAuth> {
-    const apiKey = await this.toolkit.ensureFresh(KIMI_CODE_PROVIDER_NAME, { force });
+    const apiKey = await this.toolkit.ensureFresh(KIMI_CODE_PROVIDER_NAME, {
+      force,
+      oauthRef: this.oauthRef,
+    });
     return { apiKey };
   }
 }

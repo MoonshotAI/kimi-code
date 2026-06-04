@@ -35,7 +35,7 @@ import {
   BUILTIN_SLASH_COMMANDS,
   buildSkillSlashCommands,
   isExperimentalFlagEnabled,
-  setExperimentalFlags,
+  setExperimentalFeatures,
   sortSlashCommands,
   type KimiSlashCommand,
   type SkillListSession,
@@ -86,7 +86,9 @@ import {
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
   NO_ACTIVE_SESSION_MESSAGE,
+  PRODUCT_NAME,
 } from './constant/kimi-tui';
+import { MAX_TERMINAL_TITLE_LENGTH } from './constant/terminal';
 import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
 import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
 import { ApprovalController } from './reverse-rpc/approval/controller';
@@ -117,7 +119,6 @@ import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attach
 import { extractMediaAttachments } from './utils/image-placeholder';
 import { hasPatchChanges } from './utils/object-patch';
 import { openUrl } from '#/utils/open-url';
-import { setProcessTitle } from './utils/proctitle';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
@@ -330,6 +331,10 @@ export class KimiTUI {
     this.state.editor.setAutocompleteProvider(provider);
   }
 
+  refreshSlashCommandAutocomplete(): void {
+    this.setupAutocomplete();
+  }
+
   async refreshSkillCommands(session?: SkillListSession): Promise<void> {
     if (session === undefined) {
       this.skillCommands = [];
@@ -462,7 +467,7 @@ export class KimiTUI {
     }
     void this.fetchSessions();
     if (this.session !== undefined) {
-      this.refreshSessionTitle();
+      this.updateTerminalTitle();
     }
     void this.refreshSkillCommands(this.session);
   }
@@ -474,7 +479,7 @@ export class KimiTUI {
   }
 
   private async init(): Promise<boolean> {
-    setExperimentalFlags(await this.harness.getExperimentalFlags());
+    setExperimentalFeatures(await this.harness.getExperimentalFeatures());
     await this.authFlow.refreshAvailableModels();
     void this.refreshProviderModelsInBackground();
 
@@ -1014,7 +1019,7 @@ export class KimiTUI {
   async syncRuntimeState(session: Session = this.requireSession()): Promise<void> {
     const [status, goalResult] = await Promise.all([
       session.getStatus(),
-      isExperimentalFlagEnabled('goal-command')
+      isExperimentalFlagEnabled('goal_command')
         ? session.getGoal()
         : Promise.resolve({ goal: null }),
     ]);
@@ -1090,8 +1095,10 @@ export class KimiTUI {
     }
   }
 
-  refreshSessionTitle(): void {
-    setProcessTitle(this.state.appState.sessionTitle, this.state.appState.sessionId);
+  updateTerminalTitle(): void {
+    const trimmed = this.state.appState.sessionTitle?.trim() ?? '';
+    const label = trimmed.length > 0 ? trimmed.slice(0, MAX_TERMINAL_TITLE_LENGTH) : PRODUCT_NAME;
+    this.state.terminal.setTitle(label);
   }
 
   resetSessionRuntime(): void {
@@ -1144,7 +1151,7 @@ export class KimiTUI {
     this.resetSessionRuntime();
     await this.setSession(session);
     await this.syncRuntimeState(session);
-    this.refreshSessionTitle();
+    this.updateTerminalTitle();
     try {
       await this.refreshSkillCommands(this.session);
     } catch {
@@ -1159,6 +1166,34 @@ export class KimiTUI {
     } finally {
       this.sessionEventHandler.startSubscription();
     }
+    const resumeState = session.getResumeState();
+    if (resumeState?.warning !== undefined) {
+      this.showStatus(`Warning: ${resumeState.warning}`, this.state.theme.colors.warning);
+    }
+    this.showStatus(statusMessage);
+  }
+
+  async reloadCurrentSessionView(session: Session, statusMessage: string): Promise<void> {
+    this.sessionEventUnsubscribe?.();
+    this.sessionEventUnsubscribe = undefined;
+    this.clearReverseRpcPanels();
+    session.setApprovalHandler(undefined);
+    session.setQuestionHandler(undefined);
+    this.approvalController.cancelAll('reloading session');
+    this.questionController.cancelAll('reloading session');
+
+    this.resetSessionRuntime();
+    this.session = session;
+    this.harness.setTelemetryContext({ sessionId: session.id });
+    this.registerSessionHandlers(session);
+    await this.syncRuntimeState(session);
+    this.updateTerminalTitle();
+    try {
+      await this.refreshSkillCommands(session);
+    } catch {
+      /* keep the reloaded session usable even if dynamic skills fail */
+    }
+    this.sessionEventHandler.startSubscription();
     const resumeState = session.getResumeState();
     if (resumeState?.warning !== undefined) {
       this.showStatus(`Warning: ${resumeState.warning}`, this.state.theme.colors.warning);

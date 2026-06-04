@@ -18,6 +18,7 @@ export {
   handlePlanCommand,
   handleThemeCommand,
   handleYoloCommand,
+  showExperimentsPanel,
   showModelPicker,
   showPermissionPicker,
   showSettingsSelector,
@@ -29,6 +30,7 @@ export {
   showUsage,
 } from './info';
 export { handlePluginsCommand } from './plugins';
+export { handleReloadCommand, handleReloadTuiCommand } from './reload';
 export { handleGoalCommand, parseGoalCommand } from './goal';
 export { goalArgumentCompletions } from './registry';
 export {

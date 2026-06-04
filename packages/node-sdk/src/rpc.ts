@@ -6,7 +6,7 @@ import {
   type ApprovalResponse,
   type CoreAPI,
   type Event,
-  type ExperimentalFlagMap,
+  type ExperimentalFeatureState,
   type QuestionRequest,
   type QuestionResult,
   type RPCMethods,
@@ -111,6 +111,11 @@ export abstract class SDKRpcClientBase {
     return rpc.resumeSession({ ...input, sessionId: input.id });
   }
 
+  async reloadSession(input: SessionIdRpcInput): Promise<ResumedSessionSummary> {
+    const rpc = await this.getRpc();
+    return rpc.reloadSession({ sessionId: input.sessionId });
+  }
+
   async forkSession(input: ForkSessionInput): Promise<SessionSummary> {
     const rpc = await this.getRpc();
     return rpc.forkSession({
@@ -156,9 +161,9 @@ export abstract class SDKRpcClientBase {
     return rpc.getKimiConfig(input ?? {});
   }
 
-  async getExperimentalFlags(): Promise<ExperimentalFlagMap> {
+  async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {
     const rpc = await this.getRpc();
-    return rpc.getExperimentalFlags({});
+    return rpc.getExperimentalFeatures({});
   }
 
   async setConfig(input: KimiConfigPatch): Promise<KimiConfig> {

@@ -9,7 +9,15 @@ const base = rawBase
     : `/${rawBase}/`
   : '/'
 
-export default withMermaid(defineConfig({
+const mermaidOptimizeDeps = [
+  '@braintree/sanitize-url',
+  'dayjs',
+  'debug',
+  'cytoscape-cose-bilkent',
+  'cytoscape',
+]
+
+const config = withMermaid(defineConfig({
   base,
   title: 'Kimi Code CLI Docs',
   description: 'Kimi Code CLI Documentation',
@@ -57,6 +65,7 @@ export default withMermaid(defineConfig({
                 { text: 'Model Context Protocol', link: '/zh/customization/mcp' },
                 { text: 'Agent Skills', link: '/zh/customization/skills' },
                 { text: 'Plugins', link: '/zh/customization/plugins' },
+                { text: 'Kimi Datasource', link: '/zh/customization/datasource' },
                 { text: 'Agent 与子 Agent', link: '/zh/customization/agents' },
                 { text: 'Hooks', link: '/zh/customization/hooks' },
               ],
@@ -132,6 +141,7 @@ export default withMermaid(defineConfig({
                 { text: 'Model Context Protocol', link: '/en/customization/mcp' },
                 { text: 'Agent Skills', link: '/en/customization/skills' },
                 { text: 'Plugins', link: '/en/customization/plugins' },
+                { text: 'Kimi Datasource', link: '/en/customization/datasource' },
                 { text: 'Agents and Subagents', link: '/en/customization/agents' },
                 { text: 'Hooks', link: '/en/customization/hooks' },
               ],
@@ -183,6 +193,17 @@ export default withMermaid(defineConfig({
   },
 
   vite: {
+    optimizeDeps: {
+      include: mermaidOptimizeDeps.map((dep) => `mermaid > ${dep}`),
+    },
     plugins: [llmstxt()],
   },
 }))
+
+if (config.vite?.optimizeDeps?.include) {
+  config.vite.optimizeDeps.include = config.vite.optimizeDeps.include.filter(
+    (dep) => !mermaidOptimizeDeps.includes(dep),
+  )
+}
+
+export default config

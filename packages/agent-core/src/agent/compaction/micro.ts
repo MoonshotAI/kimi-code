@@ -3,7 +3,6 @@ import type { ContentPart } from '@moonshot-ai/kosong';
 import type { Agent } from '..';
 import type { ContextMessage } from '../context';
 import { estimateTokensForContentParts } from '../../utils/tokens';
-import { flags } from '../../flags';
 
 export interface MicroCompactionConfig {
   keepRecentMessages: number;
@@ -45,7 +44,7 @@ export class MicroCompaction {
   }
 
   detect(): void {
-    if (!flags.enabled('micro-compaction')) return;
+    if (!this.agent.experimentalFlags.enabled('micro_compaction')) return;
 
     const config = this.config;
     const { history, lastAssistantAt } = this.agent.context;
@@ -78,7 +77,7 @@ export class MicroCompaction {
   }
 
   compact(messages: readonly ContextMessage[]): readonly ContextMessage[] {
-    if (!flags.enabled('micro-compaction')) return messages;
+    if (!this.agent.experimentalFlags.enabled('micro_compaction')) return messages;
 
     const config = this.config;
     const result: ContextMessage[] = [];
