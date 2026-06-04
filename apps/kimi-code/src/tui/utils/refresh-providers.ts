@@ -12,6 +12,7 @@ import {
   isOpenPlatformId,
   removeCustomRegistryProvider,
   removeOpenPlatformConfig,
+  resolveKimiCodeRuntimeAuth,
   type CustomRegistrySource,
   type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
@@ -120,13 +121,14 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
     managedProvider.oauth !== undefined
   ) {
     try {
-      const accessToken = await host.resolveOAuthToken(
-        KIMI_CODE_PROVIDER_NAME,
-        managedProvider.oauth,
-      );
+      const auth = resolveKimiCodeRuntimeAuth({
+        configuredBaseUrl: managedProvider.baseUrl,
+        configuredOAuthRef: managedProvider.oauth,
+      });
+      const accessToken = await host.resolveOAuthToken(KIMI_CODE_PROVIDER_NAME, auth.oauthRef);
       const models = await fetchManagedKimiCodeModels({
         accessToken,
-        baseUrl: managedProvider.baseUrl,
+        baseUrl: auth.baseUrl,
       });
       if (models.length > 0) {
         const beforeIds = collectModelIdsForProvider(config, KIMI_CODE_PROVIDER_NAME);
@@ -140,7 +142,9 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
           clearManagedKimiCodeConfig(asManaged(config));
           applyManagedKimiCodeConfig(asManaged(config), {
             models,
-            baseUrl: managedProvider.baseUrl,
+            baseUrl: auth.baseUrl,
+            oauthKey: auth.oauthRef.key,
+            oauthHost: auth.oauthRef.oauthHost,
             preserveDefaultModel: true,
           });
           await host.setConfig({

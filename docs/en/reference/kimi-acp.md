@@ -9,7 +9,7 @@ kimi acp
 Once started, the command prints no banner and immediately waits for the ACP client to send an `initialize` request on stdin. Logs are written to stderr (as well as the diagnostic log under `~/.kimi-code/logs/`), so the ACP channel itself stays clean.
 
 ::: tip Who calls this?
-You typically do not need to run `kimi acp` manually — this command is the subprocess entry point for IDEs. For IDE-side configuration, see [Using in IDEs](../use-in-ides.md).
+You typically do not need to run `kimi acp` manually — this command is the subprocess entry point for IDEs. For IDE-side configuration, see [Using in IDEs](../guides/ides.md).
 :::
 
 ## Capability Matrix
@@ -78,5 +78,5 @@ When an ACP client provides `mcpServers` in `session/new` or `session/load`, the
 
 ## Next steps
 
-- [Using in IDEs](../use-in-ides.md) — Zed / JetBrains configuration steps and troubleshooting
+- [Using in IDEs](../guides/ides.md) — Zed / JetBrains configuration steps and troubleshooting
 - [`kimi` Command Reference](./kimi-command.md) — Complete subcommand list

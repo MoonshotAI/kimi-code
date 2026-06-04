@@ -125,4 +125,4 @@ arguments:
 ## 下一步
 
 - [Plugins](./plugins.md) — 把 Skills 打包成可安装单元，与团队共享
-- [Agent 与子 Agent](./sub-agents.md) — Skills 如何影响子 Agent 的行为
+- [Agent 与子 Agent](./agents.md) — Skills 如何影响子 Agent 的行为

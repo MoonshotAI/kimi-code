@@ -16,7 +16,7 @@ If you need to move the data directory elsewhere (for example, to isolate config
 export KIMI_CODE_HOME="$HOME/.config/kimi-code"
 ```
 
-Once set, **all** data — config, sessions, logs, OAuth credentials, and more — lands under the new path. For the full reference on `KIMI_CODE_HOME`, see [Environment variables](./environment-variables.md).
+Once set, **all** data — config, sessions, logs, OAuth credentials, and more — lands under the new path. For the full reference on `KIMI_CODE_HOME`, see [Environment variables](./env-vars.md).
 
 ::: tip Two types of data are not affected by `KIMI_CODE_HOME`
 
@@ -58,7 +58,7 @@ $KIMI_CODE_HOME  (default: ~/.kimi-code)
 
 Each top-level file under the data root serves a specific purpose; most are managed automatically by the CLI:
 
-- **`config.toml`**: the main runtime configuration file, storing user-level settings such as providers, models, and loop control. See [Configuration files](./configuration-files.md).
+- **`config.toml`**: the main runtime configuration file, storing user-level settings such as providers, models, and loop control. See [Configuration files](./config-files.md).
 - **`tui.toml`**: terminal UI client preferences, including `[upgrade].auto_install` (auto-update, on by default). You can disable it in `/settings` or by manually setting `auto_install = false`.
 - **`mcp.json`**: user-level MCP server declarations, merged with the project-local `.kimi-code/mcp.json` on startup. See [MCP](../customization/mcp.md).
 - **`plugins/installed.json`**: records installed plugins, each plugin's enabled state, and MCP server capability state changes made via `/plugins` or `/plugins mcp disable|enable`. Files installed from local paths or zip URLs are copied to `plugins/managed/<id>/`. See [Plugins](../customization/plugins.md).
@@ -116,5 +116,5 @@ Deleting the data root directory (`~/.kimi-code/` or the path set by `KIMI_CODE_
 
 ## Next steps
 
-- [Configuration files](./configuration-files.md) — full reference for `config.toml` fields
-- [Environment variables](./environment-variables.md) — detailed usage of `KIMI_CODE_HOME` and related path variables
+- [Configuration files](./config-files.md) — full reference for `config.toml` fields
+- [Environment variables](./env-vars.md) — detailed usage of `KIMI_CODE_HOME` and related path variables

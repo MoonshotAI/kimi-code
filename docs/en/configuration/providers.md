@@ -17,7 +17,7 @@ The `type` field in the `providers` table determines which protocol implementati
 
 All providers communicate with models in streaming mode by default. Capabilities such as thinking, vision, and tool use are matched automatically by model name prefix — you typically do not need to declare them manually.
 
-**Credential priority**: `api_key` direct field > `[providers.<name>.env]` sub-table key > if both are absent, startup fails with an error. The CLI does not fall back to shell environment variables for credentials — see [Config overrides: provider credentials](./overrides-and-precedence.md#provider-credentials).
+**Credential priority**: `api_key` direct field > `[providers.<name>.env]` sub-table key > if both are absent, startup fails with an error. The CLI does not fall back to shell environment variables for credentials — see [Config overrides: provider credentials](./overrides.md#provider-credentials).
 
 ## `/provider` — interactive provider management
 
@@ -145,6 +145,6 @@ The Kimi Code managed service uses OAuth rather than static API keys. After runn
 
 ## Next steps
 
-- [Configuration files](./configuration-files.md) — full field reference for the `providers` and `models` tables
-- [Config overrides](./overrides-and-precedence.md) — credential resolution priority rules for providers
-- [Environment variables](./environment-variables.md) — credential key names per provider type
+- [Configuration files](./config-files.md) — full field reference for the `providers` and `models` tables
+- [Config overrides](./overrides.md) — credential resolution priority rules for providers
+- [Environment variables](./env-vars.md) — credential key names per provider type

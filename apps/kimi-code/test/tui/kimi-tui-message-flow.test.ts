@@ -2861,6 +2861,30 @@ command = "vim"
     expect(write).toHaveBeenCalledWith(deleteAllKittyImages());
   });
 
+  it('updates terminal title through pi-tui without changing process title', async () => {
+    const originalTitle = process.title;
+    const { driver } = await makeDriver(makeSession({ id: 'ses-1' }));
+    const setTitle = vi.spyOn(driver.state.terminal, 'setTitle').mockImplementation(() => {});
+
+    try {
+      process.title = 'kimi-test-runner';
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'session.meta.updated',
+          sessionId: 'ses-1',
+          agentId: 'main',
+          title: 'Implement terminal title',
+        } as Event,
+        () => {},
+      );
+
+      expect(setTitle).toHaveBeenCalledWith('Implement terminal title');
+      expect(process.title).toBe('kimi-test-runner');
+    } finally {
+      process.title = originalTitle;
+    }
+  });
+
   it('forks the active session and switches to the returned session', async () => {
     const originalTitle = process.title;
     const source = makeSession({
@@ -2873,8 +2897,10 @@ command = "vim"
     });
     const forkSession = vi.fn(async () => forked);
     const { driver, harness } = await makeDriver(source, { forkSession });
+    const setTitle = vi.spyOn(driver.state.terminal, 'setTitle').mockImplementation(() => {});
 
     try {
+      process.title = 'kimi-test-runner';
       driver.handleUserInput('/fork ignored args');
 
       await vi.waitFor(() => {
@@ -2884,7 +2910,8 @@ command = "vim"
         });
         expect(driver.getCurrentSessionId()).toBe('ses-fork');
       });
-      expect(process.title).toBe('Fork: Source title');
+      expect(setTitle).toHaveBeenCalledWith('Fork: Source title');
+      expect(process.title).toBe('kimi-test-runner');
       expect(source.close).toHaveBeenCalledOnce();
       expect(forked.onEvent).toHaveBeenCalledOnce();
       expect(harness.resumeSession).not.toHaveBeenCalled();

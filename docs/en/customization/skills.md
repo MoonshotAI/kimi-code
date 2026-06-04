@@ -125,4 +125,4 @@ Save this as `~/.kimi-code/skills/review-pr/SKILL.md`, place the checklist at `r
 ## Next steps
 
 - [Plugins](./plugins.md) — Package Skills into installable units to share with your team
-- [Agents and sub-agents](./sub-agents.md) — How Skills influence sub-agent behavior
+- [Agents and sub-agents](./agents.md) — How Skills influence sub-agent behavior

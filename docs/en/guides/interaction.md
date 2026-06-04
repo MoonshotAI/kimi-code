@@ -25,9 +25,9 @@ After pasting, the input box shows a placeholder that you can edit like normal t
 
 Anything starting with `/` is treated as a slash command. Typing `/` opens a completion menu that filters in real time as you keep typing; press `Esc` to close the menu. If nothing matches, the input is sent to the agent as a regular message.
 
-Active [Agent Skills](./customization/skills.md) are automatically registered as slash commands and invoked with `/skill:<name>`. If a skill name does not conflict with a built-in command, you can also drop the `skill:` prefix and type `/<name>` directly.
+Active [Agent Skills](../customization/skills.md) are automatically registered as slash commands and invoked with `/skill:<name>`. If a skill name does not conflict with a built-in command, you can also drop the `skill:` prefix and type `/<name>` directly.
 
-Some commands are only available when the agent is idle — you need to press `Esc` to interrupt streaming output or context compression before using them. Mode-toggle and query commands like `/yolo`, `/plan`, `/help`, and `/btw` are always available. For the full list, see [Slash commands reference](./reference/slash-commands.md).
+Some commands are only available when the agent is idle — you need to press `Esc` to interrupt streaming output or context compression before using them. Mode-toggle and query commands like `/yolo`, `/plan`, `/help`, and `/btw` are always available. For the full list, see [Slash commands reference](../reference/slash-commands.md).
 
 ## File references
 
@@ -41,7 +41,7 @@ When the agent calls a tool that has side effects — modifying files, running c
 
 Use the arrow keys to select an option and press `Enter` to confirm, or press `1` / `2` / `3` to select by number directly. `Esc`, `Ctrl-C`, and `Ctrl-D` are all equivalent to rejecting.
 
-The panel typically includes an **Approve for this session** option; selecting it auto-approves the same kind of call for the rest of the session. For permanent rules, add allow / deny entries in [Configuration files](./configuration/configuration-files.md#permission).
+The panel typically includes an **Approve for this session** option; selecting it auto-approves the same kind of call for the rest of the session. For permanent rules, add allow / deny entries in [Configuration files](../configuration/config-files.md#permission).
 
 ## Mode switching
 
@@ -80,6 +80,6 @@ Editor priority: `/editor` config → `$VISUAL` environment variable → `$EDITO
 
 ## Next steps
 
-- [Keyboard shortcuts](./reference/keyboard-shortcuts.md) — full quick-reference table of all shortcuts
-- [Slash commands](./reference/slash-commands.md) — all built-in commands with descriptions and aliases
+- [Keyboard shortcuts](../reference/keyboard.md) — full quick-reference table of all shortcuts
+- [Slash commands](../reference/slash-commands.md) — all built-in commands with descriptions and aliases
 - [Sessions and context](./sessions.md) — how to resume sessions, compress context, and export conversations

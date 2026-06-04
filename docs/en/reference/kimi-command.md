@@ -135,7 +135,7 @@ This subcommand has no flags. Press `Ctrl-C` at any time during polling to cance
 
 ### `kimi acp`
 
-Switch Kimi Code CLI to ACP (Agent Client Protocol) mode, communicating with an IDE via JSON-RPC over stdin/stdout so the editor can directly drive kimi's sessions and tool calls. You typically do not need to run this manually — the IDE starts it as a subprocess entry point. For configuration, see [Using in IDEs](../use-in-ides.md); for technical details, see the [kimi acp reference](./kimi-acp.md).
+Switch Kimi Code CLI to ACP (Agent Client Protocol) mode, communicating with an IDE via JSON-RPC over stdin/stdout so the editor can directly drive kimi's sessions and tool calls. You typically do not need to run this manually — the IDE starts it as a subprocess entry point. For configuration, see [Using in IDEs](../guides/ides.md); for technical details, see the [kimi acp reference](./kimi-acp.md).
 
 ```sh
 kimi acp
@@ -177,7 +177,7 @@ Migrate local data from a legacy kimi-cli installation to kimi-code, including s
 kimi migrate
 ```
 
-For full migration instructions, see [Migrating from kimi-cli](../cli-migration.md).
+For full migration instructions, see [Migrating from kimi-cli](../guides/migration.md).
 
 ### `kimi upgrade`
 
@@ -270,5 +270,5 @@ kimi provider catalog add anthropic --api-key sk-ant-... --default-model claude-
 ## Next steps
 
 - [Slash Commands](./slash-commands.md) — Quick reference for control commands in the interactive TUI
-- [Configuration Files](../configuration/configuration-files.md) — Persistent configuration for `default_model`, permission mode, and other startup parameters
+- [Configuration Files](../configuration/config-files.md) — Persistent configuration for `default_model`, permission mode, and other startup parameters
 - [Agent Skills](../customization/skills.md) — Skill file format for directories loaded via `--skills-dir`

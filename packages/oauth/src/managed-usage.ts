@@ -22,6 +22,7 @@ import { isRecord } from './utils';
 
 const MANAGED_PREFIX = 'managed:';
 const KIMI_CODE_PLATFORM_ID = 'kimi-code';
+export const DEFAULT_KIMI_CODE_BASE_URL = 'https://api.kimi.com/coding/v1';
 
 export function isManagedKimiCode(providerKey?: string | null): boolean {
   if (!providerKey) return false;
@@ -30,7 +31,7 @@ export function isManagedKimiCode(providerKey?: string | null): boolean {
 }
 
 export function kimiCodeBaseUrl(): string {
-  return process.env['KIMI_CODE_BASE_URL'] ?? 'https://api.kimi.com/coding/v1';
+  return process.env['KIMI_CODE_BASE_URL'] ?? DEFAULT_KIMI_CODE_BASE_URL;
 }
 
 export function kimiCodeUsageUrl(): string {

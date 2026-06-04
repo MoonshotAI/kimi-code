@@ -93,7 +93,7 @@ The following sections cover each of the seven nested tables in turn: `providers
 
 ## `providers`
 
-Each entry in the `providers` table defines an API provider, keyed by a unique name. The CLI reads credentials only from here — it does **not** fall back to shell environment variables automatically. Running `export KIMI_API_KEY` in the terminal does not give any provider its key; you must write it explicitly in the config file (see [Config overrides](./overrides-and-precedence.md#provider-credentials)).
+Each entry in the `providers` table defines an API provider, keyed by a unique name. The CLI reads credentials only from here — it does **not** fall back to shell environment variables automatically. Running `export KIMI_API_KEY` in the terminal does not give any provider its key; you must write it explicitly in the config file (see [Config overrides](./overrides.md#provider-credentials)).
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -138,7 +138,7 @@ model = "gpt-4.1"
 max_context_size = 1047576
 ```
 
-You can also switch models temporarily without touching the config file — by setting `KIMI_MODEL_*` environment variables, the CLI synthesizes a temporary provider in memory that does not persist after restart. See [Define a model from environment variables](./environment-variables.md#define-a-model-from-environment-variables-kimi_model).
+You can also switch models temporarily without touching the config file — by setting `KIMI_MODEL_*` environment variables, the CLI synthesizes a temporary provider in memory that does not persist after restart. See [Define a model from environment variables](./env-vars.md#define-a-model-from-environment-variables-kimi_model).
 
 ## `thinking`
 
@@ -229,6 +229,6 @@ MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project
 
 ## Next steps
 
-- [Providers and models](./providers-and-models.md) — connection examples for each provider type (Kimi, Claude, OpenAI, Gemini)
-- [Config overrides](./overrides-and-precedence.md) — priority rules for CLI options, config file, and environment variables
-- [Environment variables](./environment-variables.md) — complete list of runtime variables like `KIMI_CODE_HOME`
+- [Providers and models](./providers.md) — connection examples for each provider type (Kimi, Claude, OpenAI, Gemini)
+- [Config overrides](./overrides.md) — priority rules for CLI options, config file, and environment variables
+- [Environment variables](./env-vars.md) — complete list of runtime variables like `KIMI_CODE_HOME`

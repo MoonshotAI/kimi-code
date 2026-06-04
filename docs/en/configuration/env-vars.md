@@ -7,7 +7,7 @@ Credential variables such as `KIMI_API_KEY`, `ANTHROPIC_API_KEY`, and `OPENAI_AP
 
 The only exception is the `KIMI_MODEL_*` family, which is an explicit channel that *does* read credentials from the shell — see [Define a model from environment variables](#define-a-model-from-environment-variables-kimi-model).
 
-For background, see [Config overrides: provider credentials](./overrides-and-precedence.md#provider-credentials).
+For background, see [Config overrides: provider credentials](./overrides.md#provider-credentials).
 :::
 
 ## Core paths
@@ -67,7 +67,7 @@ Key names per provider:
 `GOOGLE_APPLICATION_CREDENTIALS` (path to a service account JSON file) is the only exception that goes through the system environment variable mechanism — it is read by the Google SDK directly via the standard ADC flow, and the CLI does not participate. All other key names must be placed in the `[providers.<name>.env]` sub-table to take effect.
 :::
 
-For the full provider type and field reference, see [Providers and models](./providers-and-models.md).
+For the full provider type and field reference, see [Providers and models](./providers.md).
 
 ## OAuth and managed services
 
@@ -157,6 +157,6 @@ The CLI also reads several standard system variables to detect the runtime envir
 
 ## Next steps
 
-- [Config overrides](./overrides-and-precedence.md) — how environment variables, CLI options, and the config file interact by priority
+- [Config overrides](./overrides.md) — how environment variables, CLI options, and the config file interact by priority
 - [Data locations](./data-locations.md) — directory structure affected by `KIMI_CODE_HOME`
-- [Providers and models](./providers-and-models.md) — full connection examples per provider type
+- [Providers and models](./providers.md) — full connection examples per provider type

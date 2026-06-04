@@ -77,7 +77,7 @@ decision = "deny"
 pattern = "mcp__filesystem__write_file"
 ```
 
-权限规则的完整语法见[配置文件](../configuration/configuration-files.md#permission)。
+权限规则的完整语法见[配置文件](../configuration/config-files.md#permission)。
 
 ## 安全性
 
@@ -94,4 +94,4 @@ pattern = "mcp__filesystem__write_file"
 ## 下一步
 
 - [Plugins](./plugins.md) — 在 plugin manifest 中声明 MCP server，一键打包和分发
-- [配置文件](../configuration/configuration-files.md#permission) — 权限规则的完整字段参考
+- [配置文件](../configuration/config-files.md#permission) — 权限规则的完整字段参考

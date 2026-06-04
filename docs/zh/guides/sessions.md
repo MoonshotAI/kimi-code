@@ -114,5 +114,5 @@ kimi export <sessionId> -o ~/Desktop/my-session.zip
 
 ## 下一步
 
-- [数据路径](./configuration/data-locations.md) — 会话文件的完整目录结构说明
-- [kimi 命令](./reference/kimi-command.md) — `--continue`、`--session`、`export` 等命令的完整参数参考
+- [数据路径](../configuration/data-locations.md) — 会话文件的完整目录结构说明
+- [kimi 命令](../reference/kimi-command.md) — `--continue`、`--session`、`export` 等命令的完整参数参考
