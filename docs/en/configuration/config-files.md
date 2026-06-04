@@ -52,6 +52,11 @@ max_running_tasks = 4
 keep_alive_on_exit = false
 agent_task_timeout_s = 900
 
+[experimental]
+goal_command = false
+micro_compaction = false
+background_ask = false
+
 [[permission.rules]]
 decision = "allow"
 pattern = "Read"
@@ -85,11 +90,12 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `thinking` | `table` | — | Default parameters for Thinking mode → [`thinking`](#thinking) |
 | `loop_control` | `table` | — | Agent loop control parameters → [`loop_control`](#loop_control) |
 | `background` | `table` | — | Background task runtime parameters → [`background`](#background) |
+| `experimental` | `table` | — | Persistent experimental feature toggles → [`experimental`](#experimental) |
 | `services` | `table` | — | Built-in external service configuration → [`services`](#services) |
 | `permission` | `table` | — | Initial permission rules → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | Lifecycle hooks; see [Hooks](../customization/hooks.md) |
 
-The following sections cover each of the seven nested tables in turn: `providers`, `models`, `thinking`, `loop_control`, `background`, `services`, and `permission`.
+The following sections cover each of the nested tables in turn: `providers`, `models`, `thinking`, `loop_control`, `background`, `experimental`, `services`, and `permission`.
 
 ## `providers`
 
@@ -170,6 +176,18 @@ You can also switch models temporarily without touching the config file — by s
 | `agent_task_timeout_s` | `integer` | — | Maximum runtime in seconds for background Agent tasks |
 
 `keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, which takes higher priority than `config.toml`.
+
+## `experimental`
+
+`experimental` stores persistent opt-ins for features that are not public by default yet. You can edit this table directly or run `/experiments` in the TUI. The TUI panel stages changes locally until you confirm them, then writes `config.toml` and reloads the current session. Each TOML key is the experimental flag ID, for example `goal_command`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `goal_command` | `boolean` | `false` | Enable `/goal` and goal-management tools |
+| `micro_compaction` | `boolean` | `false` | Trim older large tool results from context while preserving recent conversation |
+| `background_ask` | `boolean` | `false` | Allow `AskUserQuestion` to start a background question task when the Agent can continue working |
+
+Environment variables take priority over this table. `KIMI_CODE_EXPERIMENTAL_<NAME>` overrides one feature, and `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables all experimental features for that process. When a feature is controlled by the environment, `/experiments` shows it as locked.
 
 ## `services`
 

@@ -1714,9 +1714,9 @@ function enableMicroCompactionFlag(): void {
 }
 
 function getMicroCompactionFlagEnv(): string {
-  const flag = FLAG_DEFINITIONS.find((definition) => definition.id === 'micro-compaction');
+  const flag = FLAG_DEFINITIONS.find((definition) => definition.id === 'micro_compaction');
   if (flag === undefined) {
-    throw new Error('Missing micro-compaction flag definition.');
+    throw new Error('Missing micro_compaction flag definition.');
   }
   return flag.env;
 }

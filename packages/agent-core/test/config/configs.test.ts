@@ -254,6 +254,47 @@ oauth = { storage = "file", key = "oauth/kimi-code-env-1234", oauth_host = "http
     );
   });
 
+  it('parses and round-trips experimental feature flags', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'experimental.toml');
+    const toml = `
+[experimental]
+goal_command = true
+micro_compaction = false
+background_ask = true
+`;
+    const config = parseConfigString(toml, configPath);
+
+    expect(config.experimental).toEqual({
+      'goal_command': true,
+      'micro_compaction': false,
+      'background_ask': true,
+    });
+
+    await writeConfigFile(configPath, config);
+    const text = await readFile(configPath, 'utf-8');
+
+    expect(text).toContain('[experimental]');
+    expect(text).toContain('goal_command = true');
+    expect(text).toContain('micro_compaction = false');
+    expect(text).toContain('background_ask = true');
+    expect(parseConfigString(text, configPath).experimental).toEqual(config.experimental);
+  });
+
+  it('rejects unknown experimental feature keys', () => {
+    expectKimiErrorCode(
+      () =>
+        parseConfigString(
+          `
+[experimental]
+not_registered = true
+`,
+          'unknown-experimental.toml',
+        ),
+      ErrorCodes.CONFIG_INVALID,
+    );
+  });
+
   it('loads defaults for absent files and writes typed fields without dropping raw sections', async () => {
     const dir = makeTempDir();
     const configPath = join(dir, 'config.toml');
@@ -453,6 +494,25 @@ describe('harness config schema and patch merge', () => {
     expect(merged.thinking).toEqual({ mode: 'auto', effort: 'high' });
     expect(merged.hooks).toEqual(base.hooks);
     expect(merged.raw?.['theme']).toBe('dark');
+  });
+
+  it('deep-merges experimental config patches', () => {
+    const base = parseConfigString(`
+[experimental]
+goal_command = true
+micro_compaction = false
+`);
+
+    const merged = mergeConfigPatch(base, {
+      experimental: {
+        'micro_compaction': true,
+      },
+    });
+
+    expect(merged.experimental).toEqual({
+      'goal_command': true,
+      'micro_compaction': true,
+    });
   });
 
   it('rejects unknown fields in config patches', () => {

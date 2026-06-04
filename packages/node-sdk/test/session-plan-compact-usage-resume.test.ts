@@ -190,7 +190,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     }
   });
 
-  it('forks a session and returns an active fork session', async () => {
+  it('forks a session, drops goal state, and returns an active fork session', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-fork-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-fork-work-');
     await writeTestConfig(homeDir);
@@ -201,7 +201,17 @@ describe('Session plan, compact, usage, and resume APIs', () => {
         id: 'ses_fork_runtime_source',
         workDir,
         model: 'test-model',
-        metadata: { source: true },
+        metadata: {
+          source: true,
+          goal: {
+            goalId: 'source-goal',
+            objective: 'source objective',
+            status: 'active',
+            turnsUsed: 0,
+            tokensUsed: 0,
+            budgetLimits: {},
+          },
+        },
       });
       await source.setPlanMode(true);
       const sourcePlan = await source.getPlan();
@@ -213,7 +223,17 @@ describe('Session plan, compact, usage, and resume APIs', () => {
         id: source.id,
         forkId: 'ses_fork_runtime_child',
         title: 'Forked runtime',
-        metadata: { child: true },
+        metadata: {
+          child: true,
+          goal: {
+            goalId: 'metadata-goal',
+            objective: 'metadata objective',
+            status: 'active',
+            turnsUsed: 0,
+            tokensUsed: 0,
+            budgetLimits: {},
+          },
+        },
       });
 
       expect(fork.id).toBe('ses_fork_runtime_child');
@@ -235,16 +255,22 @@ describe('Session plan, compact, usage, and resume APIs', () => {
         join(forkSummary!.sessionDir, 'agents', 'main', 'wire.jsonl'),
         'utf-8',
       );
-      const enterRecord = forkWire
+      const forkRecords = forkWire
         .trim()
         .split('\n')
-        .map((line) => JSON.parse(line) as Record<string, unknown>)
-        .find((record) => record['type'] === 'plan_mode.enter');
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const enterRecord = forkRecords.find((record) => record['type'] === 'plan_mode.enter');
       expect(enterRecord).toEqual({
         type: 'plan_mode.enter',
         id: sourcePlan.id,
         time: expect.any(Number),
       });
+      const goalReminder = forkRecords.find((record) => {
+        const message = record['message'] as { origin?: { name?: string } } | undefined;
+        return record['type'] === 'context.append_message' && message?.origin?.name === 'goal_fork_cleared';
+      });
+      expect(goalReminder).toBeDefined();
+      expect(JSON.stringify(goalReminder)).toContain('This fork does not have a current goal.');
       const forkState = JSON.parse(
         await readFile(join(forkSummary!.sessionDir, 'state.json'), 'utf-8'),
       ) as {
@@ -257,6 +283,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
       expect(forkState.forkedFrom).toBe(source.id);
       expect(forkState.agents?.main?.homedir).toBe(join(forkSummary!.sessionDir, 'agents', 'main'));
       expect(forkState.custom).toMatchObject({ source: true, child: true });
+      expect(forkState.custom).not.toHaveProperty('goal');
     } finally {
       await harness.close();
     }

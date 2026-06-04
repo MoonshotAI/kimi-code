@@ -32,6 +32,7 @@ import {
   handlePlanCommand,
   handleThemeCommand,
   handleYoloCommand,
+  showExperimentsPanel,
   showModelPicker,
   showPermissionPicker,
   showSettingsSelector,
@@ -68,6 +69,7 @@ export {
   handleThemeCommand,
   handleYoloCommand,
   showModelPicker,
+  showExperimentsPanel,
   showPermissionPicker,
   showSettingsSelector,
 } from './config';
@@ -109,6 +111,7 @@ export interface SlashCommandHost {
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
   restoreInputText(text: string): void;
+  refreshSlashCommandAutocomplete(): void;
 
   // Session
   requireSession(): Session;
@@ -170,6 +173,13 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
     case 'blocked':
       host.track('input_command_invalid', { reason: 'blocked', command: intent.commandName });
       host.showError(slashBusyMessage(intent.commandName, intent.reason));
+      return;
+    case 'invalid':
+      host.track('input_command_invalid', {
+        reason: intent.reason,
+        command: intent.commandName,
+      });
+      host.showError(`Invalid slash command: /${intent.commandName}`);
       return;
     case 'skill': {
       const session = host.session;
@@ -237,6 +247,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'plugins':
       void handlePluginsCommand(host, args);
+      return;
+    case 'experiments':
+      await showExperimentsPanel(host);
       return;
     case 'reload':
       await handleReloadCommand(host);
