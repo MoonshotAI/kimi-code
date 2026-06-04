@@ -9,7 +9,7 @@ Kimi Datasource is the official Kimi Code data plugin. It lets you query financi
 1. Run `/plugin` inside Kimi Code CLI
 2. Select **Marketplace** from the menu that appears
 3. Find **Kimi Datasource** and choose to install it
-4. After installation completes, run `/new` to start a new session, then run `/plugin` again to confirm the plugin status shows as installed
+4. After installation completes, run `/new` to start a new session — the plugin is ready to use
 
 ## Data Capabilities
 
@@ -67,20 +67,12 @@ Pull the GDP growth rate and CPI data for China, the US, and Japan over the past
 make an annual comparison table, and mark the impact of key policy events.
 ```
 
-## Case Study: Combining Data Queries with Local Analysis
-
-When Kimi Datasource is combined with Kimi Code CLI's toolchain, you can complete an entire "fetch data → local analysis → write file" workflow in a single session:
+**Academic paper writing**
 
 ```
-Analyze the financial performance of the three leading new-energy stocks
-(CATL 300750.SZ, BYD 002594.SZ, LONGi Green Energy 601012.SH) over the past three years:
-
-1. Fetch revenue, net profit, and ROE for each company for 2022–2024,
-   save each to /tmp/<company name>.csv
-2. Read the three files, use Python to calculate the three-year compound growth rate,
-   and generate a comparison table
-3. Plot a line chart with matplotlib and save it to /tmp/comparison.png
-4. Write a 200-word conclusion based on the data to /tmp/report.md and print the file path
+Help me outline a literature review on Transformer architectures in NLP,
+focusing on research developments since 2022. Reference highly cited papers
+and note the core contribution of each.
 ```
 
 ## Notes
