@@ -68,6 +68,7 @@ import type {
   PromptPayload,
   ReconnectMcpServerPayload,
   RegisterToolPayload,
+  ReloadSessionPayload,
   ReloadPluginsResult,
   RemoveKimiProviderPayload,
   RemovePluginPayload,
@@ -124,6 +125,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private kaos: Promise<Kaos>;
   private runtime: ToolServices | undefined;
   private config: KimiConfig;
+  private readonly runtimeOverride: ToolServices | undefined;
   private readonly userHomeDir: string;
   private readonly kimiRequestHeaders: Record<string, string> | undefined;
   private readonly resolveOAuthTokenProvider: OAuthTokenProviderResolver | undefined;
@@ -150,6 +152,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       }
       throw error;
     });
+    this.runtimeOverride = options.runtime;
     this.runtime = options.runtime;
     this.kimiRequestHeaders = options.kimiRequestHeaders;
     this.resolveOAuthTokenProvider = options.resolveOAuthTokenProvider;
@@ -320,6 +323,28 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     }
     this.sessions.set(summary.id, session);
     return resumeSessionResult(summary, session, warning);
+  }
+
+  async reloadSession(input: ReloadSessionPayload): Promise<ResumeSessionResult> {
+    const summary = await this.sessionStore.get(input.sessionId);
+    const active = this.sessions.get(summary.id);
+    if (active?.hasActiveTurn === true) {
+      throw new KimiError(
+        ErrorCodes.TURN_AGENT_BUSY,
+        `Session "${summary.id}" cannot be reloaded while a turn is running`,
+        { details: { sessionId: summary.id } },
+      );
+    }
+
+    this.reloadProviderManager();
+    this.clearRuntimeCache();
+    await this.reloadPlugins({});
+
+    if (active !== undefined) {
+      await active.closeForReload();
+      this.sessions.delete(summary.id);
+    }
+    return this.resumeSession({ sessionId: summary.id });
   }
 
   async forkSession(input: ForkSessionPayload): Promise<ResumeSessionResult> {
@@ -744,6 +769,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   private reloadProviderManager(): KimiConfig {
     return this.config = loadRuntimeConfig(this.configPath);
+  }
+
+  private clearRuntimeCache(): void {
+    if (this.runtimeOverride !== undefined) return;
+    this.runtime = undefined;
   }
 
   private async refreshSessionRuntimeConfig(

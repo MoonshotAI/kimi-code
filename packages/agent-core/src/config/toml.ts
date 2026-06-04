@@ -482,7 +482,7 @@ function hookToToml(hook: HookDefConfig): Record<string, unknown> {
 function oauthToToml(oauth: OAuthRef): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(oauth)) {
-    out[camelToSnake(key)] = value;
+    setDefined(out, camelToSnake(key), value);
   }
   return out;
 }

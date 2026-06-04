@@ -17,6 +17,7 @@ export type ProviderType = z.infer<typeof ProviderTypeSchema>;
 export const OAuthRefSchema = z.object({
   storage: z.enum(['file', 'keyring']),
   key: z.string().min(1),
+  oauthHost: z.string().min(1).optional(),
 });
 
 export type OAuthRef = z.infer<typeof OAuthRefSchema>;

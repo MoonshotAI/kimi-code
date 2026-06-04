@@ -8,6 +8,7 @@ import {
   FLAG_DEFINITIONS,
   MASTER_ENV,
   createRPC,
+  ErrorCodes,
   KimiCore,
   type ApprovalResponse,
   type CoreAPI,
@@ -162,4 +163,93 @@ max_context_size = 100000
 
     expect(mainAgent?.config.modelAlias).toBe('default-mock');
   });
+
+  it('reloads an active session with fresh runtime services from config.toml', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    const configPath = join(homeDir, 'config.toml');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(configPath, baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({
+      id: 'ses_runtime_reload',
+      workDir,
+      model: 'default-mock',
+    });
+    const before = core.sessions.get(created.id);
+    expect(before?.options.toolServices?.webSearcher).toBeUndefined();
+
+    await writeFile(
+      configPath,
+      `${baseModelConfig()}
+[services.moonshot_search]
+base_url = "https://search.example.test/v1"
+`,
+    );
+
+    const reloaded = await rpc.reloadSession({ sessionId: created.id });
+    const after = core.sessions.get(created.id);
+
+    expect(after).toBeDefined();
+    expect(after).not.toBe(before);
+    expect(after?.options.toolServices?.webSearcher).toBeDefined();
+    expect(reloaded.agents['main']).toBeDefined();
+  });
+
+  it('rejects reloadSession while the active session has a running turn', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({
+      id: 'ses_runtime_reload_busy',
+      workDir,
+      model: 'default-mock',
+    });
+    const active = core.sessions.get(created.id);
+    const main = active?.getReadyAgent('main');
+    vi.spyOn(main!.turn, 'hasActiveTurn', 'get').mockReturnValue(true);
+
+    await expect(rpc.reloadSession({ sessionId: created.id })).rejects.toMatchObject({
+      code: ErrorCodes.TURN_AGENT_BUSY,
+    });
+    expect(core.sessions.get(created.id)).toBe(active);
+  });
 });
+
+function baseModelConfig(): string {
+  return `default_model = "default-mock"
+
+[providers.test]
+type = "kimi"
+api_key = "test-key"
+
+[models."default-mock"]
+provider = "test"
+model = "default-mock"
+max_context_size = 100000
+`;
+}
