@@ -14,7 +14,7 @@
 | --- | --- | --- | --- |
 | `/login` | — | 选择账号或平台并登录：Kimi Code 走 OAuth 验证码流程，Kimi Platform 通过 API 密钥登录 | 否 |
 | `/logout` | — | 清除当前所选账号的凭据 | 否 |
-| `/provider` | — | 打开交互式供应商管理器，查看、添加和删除已配置的供应商。详见[平台与模型 — `/provider` 与供应商管理](../configuration/providers-and-models.md#provider-与供应商管理) | 是 |
+| `/provider` | — | 打开交互式供应商管理器，查看、添加和删除已配置的供应商。详见[平台与模型 — `/provider` 与供应商管理](../configuration/providers.md#provider-与供应商管理) | 是 |
 | `/model` | — | 切换当前会话使用的 LLM 模型 | 是 |
 | `/settings` | `/config` | 打开 TUI 内的设置面板 | 是 |
 | `/permission` | — | 选择权限模式 | 是 |
@@ -131,5 +131,5 @@ Skill 的安装与编写详见 [Agent Skills](../customization/skills.md)。
 
 ## 下一步
 
-- [键盘快捷键](./keyboard-shortcuts.md) — TUI 键盘操作速查
+- [键盘快捷键](./keyboard.md) — TUI 键盘操作速查
 - [内置工具](./tools.md) — Agent 可调用的工具完整参考

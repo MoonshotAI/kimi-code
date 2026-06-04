@@ -6,10 +6,10 @@ Kimi Datasource is the official Kimi Code data plugin. It lets you query financi
 
 ## Installation
 
-1. Run `/plugins` inside Kimi Code CLI
+1. Run `/plugin` inside Kimi Code CLI
 2. Select **Marketplace** from the menu that appears
 3. Find **Kimi Datasource** and choose to install it
-4. After installation completes, run `/new` to start a new session, then run `/plugins` again to confirm the plugin status shows as installed
+4. After installation completes, run `/new` to start a new session, then run `/plugin` again to confirm the plugin status shows as installed
 
 ## Data Capabilities
 
