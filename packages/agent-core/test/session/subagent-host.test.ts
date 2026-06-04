@@ -18,6 +18,7 @@ import {
   type QueuedSubagentTask,
   type SubagentHandle,
 } from '../../src/session/subagent-host';
+import { SubagentLaunchQueue } from '../../src/session/subagent-launch-queue';
 import { abortError, userCancellationReason } from '../../src/utils/abort';
 import { testAgent, type AgentTestContext } from '../agent/harness/agent';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
@@ -329,6 +330,36 @@ describe('SessionSubagentHost', () => {
         { signal },
       ),
     ).rejects.toThrow('Could not start any subagents');
+  });
+
+  it('runQueued fails a 429 retry when only one retry slot remains', async () => {
+    vi.useFakeTimers();
+    try {
+      let attempts = 0;
+      const queue = new SubagentLaunchQueue(async (_task, options) => {
+        attempts += 1;
+        options.markReady();
+        return { type: 'rate_limited', agentId: 'agent-1' };
+      });
+
+      const running = queue.run([queuedTask(1)], { signal });
+      void running.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await expect(running).resolves.toEqual([
+        {
+          task: queuedTask(1),
+          agentId: 'agent-1',
+          status: 'failed',
+          error: 'Subagent failed after another 429 with only one retry slot remaining.',
+        },
+      ]);
+      expect(attempts).toBe(10);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('fires subagent lifecycle hooks around the child turn', async () => {

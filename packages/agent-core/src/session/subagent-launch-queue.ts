@@ -8,6 +8,8 @@ const SUBAGENT_LAUNCH_BATCH_SIZE = 10;
 const SUBAGENT_QUEUE_LAUNCH_DELAY_MS = 500;
 const RATE_LIMIT_SLOT_REDUCTION_WINDOW_MS = 1000;
 const RATE_LIMIT_SLOT_REDUCTION_MAX_PER_WINDOW = 3;
+const RATE_LIMIT_RETRY_EXHAUSTED_MESSAGE =
+  'Subagent failed after another 429 with only one retry slot remaining.';
 
 export type QueuedSubagentTask<T = unknown> = {
   readonly data: T;
@@ -117,7 +119,7 @@ export class SubagentLaunchQueue {
     const unreadyActiveCount = (): number =>
       active.reduce((count, attempt) => count + (attempt.ready ? 0 : 1), 0);
 
-    const reduceSlotsAfterRateLimit = (): void => {
+    const reduceSlotsAfterRateLimit = (): boolean => {
       const now = Date.now();
       if (
         rateLimitReductionWindowStartMs === undefined ||
@@ -128,16 +130,20 @@ export class SubagentLaunchQueue {
       }
 
       const currentLimit = slotLimit ?? SUBAGENT_LAUNCH_BATCH_SIZE;
+      if (currentLimit <= 1) {
+        slotLimit = currentLimit;
+        return false;
+      }
       if (
-        currentLimit <= 1 ||
         rateLimitReductionsInWindow >= RATE_LIMIT_SLOT_REDUCTION_MAX_PER_WINDOW
       ) {
         slotLimit = currentLimit;
-        return;
+        return true;
       }
 
       slotLimit = currentLimit - 1;
       rateLimitReductionsInWindow += 1;
+      return true;
     };
 
     const launch = (pending: QueuedSubagentPending): QueuedSubagentAttempt<T> => {
@@ -183,7 +189,15 @@ export class SubagentLaunchQueue {
       active.splice(active.indexOf(attempt), 1);
       const outcome = await attempt.outcome;
       if (isRateLimitedOutcome(outcome)) {
-        reduceSlotsAfterRateLimit();
+        if (!reduceSlotsAfterRateLimit()) {
+          results[attempt.pending.index] = {
+            task: tasks[attempt.pending.index]!,
+            agentId: outcome.agentId ?? attempt.pending.agentId,
+            status: 'failed',
+            error: RATE_LIMIT_RETRY_EXHAUSTED_MESSAGE,
+          };
+          return true;
+        }
         requeueRateLimited({
           index: attempt.pending.index,
           agentId: outcome.agentId ?? attempt.pending.agentId,

@@ -2,7 +2,6 @@ import {
   Container,
   ProcessTerminal,
   TUI,
-  type Component,
 } from '@earendil-works/pi-tui';
 
 import { FooterComponent } from './components/chrome/footer';
@@ -41,7 +40,6 @@ export interface TUIState {
   appState: AppState;
   startupState: TUIStartupState;
   livePane: LivePaneState;
-  agentSwarmProgress: Component | null;
   transcriptEntries: TranscriptEntry[];
   terminalState: TerminalState;
   activitySpinner: { instance: MoonLoader; style: SpinnerStyle } | null;
@@ -90,7 +88,6 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     appState: { ...initialAppState },
     startupState: 'pending',
     livePane: { ...INITIAL_LIVE_PANE },
-    agentSwarmProgress: null,
     transcriptEntries: [],
     terminalState: createTerminalState(),
     activitySpinner: null,

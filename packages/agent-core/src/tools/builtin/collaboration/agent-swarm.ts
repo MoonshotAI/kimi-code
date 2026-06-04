@@ -29,15 +29,6 @@ export const AgentSwarmToolInputSchema = z
       .max(3600)
       .optional()
       .describe('Timeout in seconds for each subagent.'),
-    total_timeout: z
-      .number()
-      .int()
-      .min(30)
-      .max(3600)
-      .optional()
-      .describe(
-        'Timeout in seconds for the whole swarm, including queued and running subagents.',
-      ),
     subagent_type: z
       .string()
       .trim()
@@ -144,7 +135,6 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     const results = await this.subagentHost.runQueued(tasks, {
       signal,
       timeoutMs: args.timeout === undefined ? undefined : args.timeout * 1000,
-      totalTimeoutMs: args.total_timeout === undefined ? undefined : args.total_timeout * 1000,
     });
     return renderSwarmResults(args, results.map(toSwarmRunResult));
   }

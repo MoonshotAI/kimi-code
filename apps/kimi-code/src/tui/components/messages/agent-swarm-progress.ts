@@ -24,13 +24,17 @@ const FAILED_PLACEHOLDER_RED_FACTOR = 0.75;
 const FAILED_PLACEHOLDER_NON_RED_FACTOR = 0.25;
 const STATUS_BAR_CHAR = '━';
 const ORCHESTRATING_LABEL = 'Orchestrating...';
+const PROMPTING_LABEL = 'Prompting...';
 const WORKING_LABEL = 'Working...';
+const FAILED_LABEL = 'Failed.';
+const CANCELLED_LABEL = 'Cancelled.';
 const QUEUED_LABEL = 'Queued...';
 
 const STATUS_BAR_ORDER = ['completed', 'working', 'queued', 'cancelled', 'failed'] as const;
 
 type AgentSwarmPhase = AgentSwarmProgressEstimatorPhase;
 type StatusBarPhase = typeof STATUS_BAR_ORDER[number];
+type TotalStatus = 'working' | 'failed' | 'cancelled';
 
 interface AgentSwarmMember {
   readonly id: string;
@@ -78,7 +82,7 @@ const PHASE_LABELS: Record<AgentSwarmPhase, string> = {
   running: 'Running',
   completed: 'Completed',
   failed: 'Failed',
-  cancelled: 'Cancelled',
+  cancelled: 'Cancelled.',
 };
 
 export class AgentSwarmProgressComponent implements Component {
@@ -88,6 +92,9 @@ export class AgentSwarmProgressComponent implements Component {
   private readonly colors: ColorPalette;
   private readonly requestRender: (() => void) | undefined;
   private inputComplete = false;
+  private failed = false;
+  private cancelled = false;
+  private itemsStarted = false;
   private promptTemplateText = '';
   private timer: ReturnType<typeof setInterval> | undefined;
 
@@ -106,6 +113,10 @@ export class AgentSwarmProgressComponent implements Component {
 
   invalidate(): void {}
 
+  isRequestStreaming(): boolean {
+    return !this.inputComplete;
+  }
+
   updateArgs(
     args: Record<string, unknown>,
     options: { readonly streamingArguments?: string | undefined } = {},
@@ -119,6 +130,16 @@ export class AgentSwarmProgressComponent implements Component {
       options.streamingArguments === undefined
         ? []
         : agentSwarmPartialItemsFromArguments(options.streamingArguments);
+    if (
+      fullItems.length > 0 ||
+      partialItems.length > 0 ||
+      (
+        options.streamingArguments !== undefined &&
+        agentSwarmItemsStartedFromArguments(options.streamingArguments)
+      )
+    ) {
+      this.itemsStarted = true;
+    }
     const fullPromptTemplate = agentSwarmPromptTemplateFromArgs(args);
     const partialPromptTemplate =
       options.streamingArguments === undefined
@@ -242,9 +263,33 @@ export class AgentSwarmProgressComponent implements Component {
     this.startAnimationIfNeeded();
   }
 
+  markSwarmFailed(failureText?: string): void {
+    this.failed = true;
+    this.cancelled = false;
+    const normalizedFailureText = normalizeFailureText(failureText);
+    const nowMs = Date.now();
+    for (const member of this.members) {
+      if (
+        member.phase === 'completed' ||
+        member.phase === 'failed' ||
+        member.phase === 'cancelled'
+      ) {
+        continue;
+      }
+      this.progressEstimator.markFailed(member.id, nowMs);
+      member.failedAtMs = nowMs;
+      if (normalizedFailureText !== undefined) member.failureText = normalizedFailureText;
+      member.phase = 'failed';
+      delete member.completedAtMs;
+      delete member.completedText;
+    }
+    this.startAnimationIfNeeded();
+  }
+
   markCancelled(agentId: string): void {
     const member = this.findMemberByAgentId(agentId);
     if (member === undefined) return;
+    this.cancelled = true;
     this.progressEstimator.markCancelled(member.id, Date.now());
     member.phase = 'cancelled';
     delete member.completedAtMs;
@@ -254,6 +299,7 @@ export class AgentSwarmProgressComponent implements Component {
   }
 
   markActiveCancelled(): void {
+    this.cancelled = true;
     const nowMs = Date.now();
     for (const member of this.members) {
       if (
@@ -309,7 +355,6 @@ export class AgentSwarmProgressComponent implements Component {
     if (this.members.length === 0) {
       const lines = [
         this.renderHeader(innerWidth, undefined),
-        chalk.hex(this.colors.primary)('─'.repeat(innerWidth)),
         '',
         this.renderStatusLine(innerWidth),
         '',
@@ -328,7 +373,6 @@ export class AgentSwarmProgressComponent implements Component {
     const summary = summarizeSnapshots(snapshots);
     const lines = [
       this.renderHeader(innerWidth, summary),
-      chalk.hex(this.colors.primary)('─'.repeat(innerWidth)),
       '',
       ...this.renderGrid(innerWidth, snapshots, nowMs),
       '',
@@ -340,23 +384,40 @@ export class AgentSwarmProgressComponent implements Component {
     return lines.map((line) => truncateToWidth(line, innerWidth));
   }
 
-  private renderHeader(width: number, summary: AgentSwarmSummary | undefined): string {
-    const title = chalk.hex(this.colors.primary).bold(' Agent swarm');
+  private renderHeader(width: number, _summary: AgentSwarmSummary | undefined): string {
+    if (width <= 3) return chalk.hex(this.colors.primary)('─'.repeat(width));
+
+    const title = chalk.hex(this.colors.primary).bold('Agent swarm');
     const description =
       this.description.length > 0
-        ? chalk.hex(this.colors.text)(`: ${this.description}`)
+        ? chalk.hex(this.colors.primary)(' ─ ') + chalk.hex(this.colors.text)(this.description)
         : '';
-    void summary;
-    return truncateToWidth(title + description, width);
+    const prefixText = '─ ';
+    const labelWidth = Math.max(1, width - visibleWidth(prefixText) - 1);
+    const label = truncateToWidth(title + description, labelWidth);
+    const suffixWidth = Math.max(0, width - visibleWidth(prefixText) - visibleWidth(label));
+    const suffix = suffixWidth === 0 ? '' : ` ${'─'.repeat(Math.max(0, suffixWidth - 1))}`;
+    return chalk.hex(this.colors.primary)(prefixText) + label + chalk.hex(this.colors.primary)(suffix);
   }
 
   private renderStatusLine(width: number): string {
+    const status = totalStatus(this.members, {
+      failed: this.failed,
+      cancelled: this.cancelled,
+    });
+    if (status !== 'working') return this.renderProgressStatusLine(width, status);
+
     if (!this.inputComplete) {
       return this.renderOrchestratingStatusLine(width);
     }
 
-    const labelText = ` ${WORKING_LABEL}`;
-    const label = chalk.hex(this.colors.success)(labelText);
+    return this.renderProgressStatusLine(width, status);
+  }
+
+  private renderProgressStatusLine(width: number, status: TotalStatus): string {
+    const labelText = ` ${totalStatusLabel(status)}`;
+    const label = chalk.hex(totalStatusColor(status, this.colors))(labelText);
+    if (this.members.length === 0) return truncateToWidth(label, width);
     const barWidth = Math.max(0, width - visibleWidth(labelText) - 2);
     if (barWidth <= 0) return truncateToWidth(label, width);
     return truncateToWidth(
@@ -366,15 +427,21 @@ export class AgentSwarmProgressComponent implements Component {
   }
 
   private renderOrchestratingStatusLine(width: number): string {
-    const labelText = ` ${ORCHESTRATING_LABEL}`;
-    const label = chalk.hex(this.colors.textMuted)(labelText);
+    if (this.itemsStarted) {
+      return truncateToWidth(chalk.hex(this.colors.textMuted)(` ${ORCHESTRATING_LABEL}`), width);
+    }
+
     const promptTemplate = collapseWhitespace(this.promptTemplateText);
+    const labelText = ` ${promptTemplate.length > 0 ? PROMPTING_LABEL : ORCHESTRATING_LABEL}`;
+    const label = chalk.hex(this.colors.textMuted)(labelText);
     if (promptTemplate.length === 0) return truncateToWidth(label, width);
 
-    const promptWidth = Math.max(0, width - visibleWidth(labelText) - 1);
+    const availablePromptWidth = Math.max(0, width - visibleWidth(labelText));
+    const separator = visibleWidth(promptTemplate) <= availablePromptWidth - 1 ? ' ' : '  ';
+    const promptWidth = Math.max(0, availablePromptWidth - visibleWidth(separator));
     if (promptWidth <= 0) return truncateToWidth(label, width);
-    const prompt = truncateStartWithColor(promptTemplate, promptWidth, this.colors.textDim);
-    return truncateToWidth(`${label} ${prompt}`, width);
+    const prompt = chalk.hex(this.colors.textDim)(truncateStartToWidth(promptTemplate, promptWidth));
+    return truncateToWidth(`${label}${separator}${prompt}`, width);
   }
 
   private renderGrid(
@@ -553,6 +620,10 @@ export function agentSwarmItemsFromArgs(args: Record<string, unknown>): string[]
 
 export function agentSwarmPartialItemsCountFromArguments(argumentsText: string): number {
   return agentSwarmPartialItemsFromArguments(argumentsText).length;
+}
+
+function agentSwarmItemsStartedFromArguments(argumentsText: string): boolean {
+  return /"items"\s*:/.test(argumentsText);
 }
 
 export function agentSwarmPartialItemsFromArguments(argumentsText: string): string[] {
@@ -773,6 +844,41 @@ function statusBarColor(phase: StatusBarPhase, colors: ColorPalette): string {
   }
 }
 
+function totalStatus(
+  members: readonly AgentSwarmMember[],
+  force: { readonly failed: boolean; readonly cancelled: boolean },
+): TotalStatus {
+  if (force.failed) return 'failed';
+  if (force.cancelled && members.length === 0) return 'cancelled';
+  const hasCancelled = members.some((member) => member.phase === 'cancelled');
+  const hasActive = members.some((member) =>
+    member.phase === 'pending' || member.phase === 'queued' || member.phase === 'running'
+  );
+  return (force.cancelled || hasCancelled) && !hasActive ? 'cancelled' : 'working';
+}
+
+function totalStatusLabel(status: TotalStatus): string {
+  switch (status) {
+    case 'working':
+      return WORKING_LABEL;
+    case 'failed':
+      return FAILED_LABEL;
+    case 'cancelled':
+      return CANCELLED_LABEL;
+  }
+}
+
+function totalStatusColor(status: TotalStatus, colors: ColorPalette): string {
+  switch (status) {
+    case 'working':
+      return colors.success;
+    case 'failed':
+      return colors.error;
+    case 'cancelled':
+      return colors.warning;
+  }
+}
+
 function allocateSegmentWidths(counts: readonly number[], width: number): number[] {
   const total = counts.reduce((sum, count) => sum + count, 0);
   if (total <= 0 || width <= 0) return counts.map(() => 0);
@@ -850,10 +956,6 @@ function renderQueuedCell(
 function truncateWithColor(text: string, width: number, color: string): string {
   const colorize = chalk.hex(color);
   return truncateToWidth(colorize(text), width, colorize('…'));
-}
-
-function truncateStartWithColor(text: string, width: number, color: string): string {
-  return chalk.hex(color)(truncateStartToWidth(text, width));
 }
 
 function truncateStartToWidth(text: string, width: number): string {

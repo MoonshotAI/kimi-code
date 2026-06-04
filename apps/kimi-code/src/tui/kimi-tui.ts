@@ -68,7 +68,6 @@ import { TasksBrowserController } from './controllers/tasks-browser';
 import { installRainbowDance } from './easter-eggs/dance';
 import { FileMentionProvider } from './components/editor/file-mention-provider';
 import { AssistantMessageComponent } from './components/messages/assistant-message';
-import type { AgentSwarmProgressComponent } from './components/messages/agent-swarm-progress';
 import { BackgroundAgentStatusComponent } from './components/messages/background-agent-status';
 import { CronMessageComponent } from './components/messages/cron-message';
 import { GoalCompletionMessageComponent } from './components/messages/goal-panel';
@@ -113,7 +112,7 @@ import {
   type TUIStartupState,
 } from './types';
 import { createTUIState, type TUIState } from './tui-state';
-import { hasDispose, isExpandable, isPlanExpandable } from './utils/component-capabilities';
+import { isExpandable, isPlanExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
@@ -1004,19 +1003,6 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  setAgentSwarmProgress(component: AgentSwarmProgressComponent | null): void {
-    if (this.state.agentSwarmProgress === component) {
-      if (component !== null) this.state.ui.requestRender();
-      return;
-    }
-    if (hasDispose(this.state.agentSwarmProgress)) {
-      this.state.agentSwarmProgress.dispose();
-    }
-    this.state.agentSwarmProgress = component;
-    this.updateActivityPane();
-    this.state.ui.requestRender();
-  }
-
   clearAgentSwarmProgress(): void {
     this.sessionEventHandler.clearAgentSwarmProgress();
   }
@@ -1498,16 +1484,6 @@ export class KimiTUI {
   // =========================================================================
 
   updateActivityPane(): void {
-    if (this.state.agentSwarmProgress !== null) {
-      this.lastActivityMode = 'hidden';
-      this.stopActivitySpinner();
-      this.state.activityContainer.clear();
-      this.state.activityContainer.addChild(this.state.agentSwarmProgress);
-      this.syncTerminalProgress(true);
-      this.state.ui.requestRender();
-      return;
-    }
-
     const effectiveMode = this.resolveActivityPaneMode();
     this.syncTerminalProgress(this.shouldShowTerminalProgress(effectiveMode));
 

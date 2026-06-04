@@ -278,7 +278,7 @@ export class StreamingUIController {
       existingComponent.updateToolCall(toolCall);
     } else if (existing === undefined) {
       this.finalizeLiveTextBuffers('tool');
-      if (toolCall.name !== 'Agent') {
+      if (toolCall.name !== 'Agent' && toolCall.name !== 'AgentSwarm') {
         this.onToolCallStart(toolCall);
       }
     }
@@ -733,7 +733,7 @@ export class StreamingUIController {
     const existingComponent = this._pendingToolComponents.get(id);
     if (existingComponent !== undefined) {
       existingComponent.updateToolCall(toolCall);
-    } else if (toolCall.name !== 'Agent') {
+    } else if (toolCall.name !== 'Agent' && toolCall.name !== 'AgentSwarm') {
       this.onToolCallStart(toolCall);
     }
   }

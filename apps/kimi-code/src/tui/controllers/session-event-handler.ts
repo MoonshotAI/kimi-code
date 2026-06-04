@@ -95,7 +95,6 @@ export interface SessionEventHost {
   showError(msg: string): void;
   showStatus(msg: string, color?: string): void;
   showNotice(title: string, detail?: string): void;
-  setAgentSwarmProgress(component: AgentSwarmProgressComponent | null): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   updateTerminalTitle(): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
@@ -131,8 +130,10 @@ export class SessionEventHandler {
   }
 
   clearAgentSwarmProgress(): void {
+    for (const progress of this.agentSwarmProgress.values()) {
+      progress.dispose();
+    }
     this.agentSwarmProgress.clear();
-    this.host.setAgentSwarmProgress(null);
   }
 
   startSubscription(): void {
@@ -280,7 +281,7 @@ export class SessionEventHandler {
           swarmProgress.markFailed(event.subagentId, event.error);
         }
       }
-      this.host.setAgentSwarmProgress(swarmProgress);
+      this.host.state.ui.requestRender();
       return true;
     }
     if (toolCall === undefined) return true;
@@ -447,13 +448,30 @@ export class SessionEventHandler {
   }
 
   private markActiveAgentSwarmsCancelled(): void {
-    let visible: AgentSwarmProgressComponent | undefined;
-    for (const progress of this.agentSwarmProgress.values()) {
+    let updated = false;
+    for (const [toolCallId, progress] of this.agentSwarmProgress) {
+      if (progress.isRequestStreaming()) {
+        this.removeAgentSwarmProgress(toolCallId, progress);
+        updated = true;
+        continue;
+      }
       progress.markActiveCancelled();
-      visible = progress;
+      updated = true;
     }
-    if (visible !== undefined) {
-      this.host.setAgentSwarmProgress(visible);
+    if (updated) this.host.state.ui.requestRender();
+  }
+
+  private removeAgentSwarmProgress(
+    toolCallId: string,
+    progress: AgentSwarmProgressComponent,
+  ): void {
+    this.agentSwarmProgress.delete(toolCallId);
+    progress.dispose();
+    const children = this.host.state.transcriptContainer.children;
+    const index = children.indexOf(progress);
+    if (index >= 0) {
+      children.splice(index, 1);
+      this.host.state.transcriptContainer.invalidate();
     }
   }
 
@@ -548,9 +566,7 @@ export class SessionEventHandler {
     if (event.name === 'AgentSwarm') {
       const progress = this.ensureAgentSwarmProgress(event.toolCallId, toolCall.args);
       progress.markInputComplete();
-      this.host.setAgentSwarmProgress(progress);
-    } else if (this.agentSwarmProgress.size > 0) {
-      this.host.setAgentSwarmProgress(null);
+      this.host.state.ui.requestRender();
     }
     this.host.patchLivePane({
       mode: 'tool',
@@ -568,10 +584,10 @@ export class SessionEventHandler {
       preview !== undefined &&
       (preview.name === 'AgentSwarm' || this.agentSwarmProgress.has(event.toolCallId))
     ) {
-      const progress = this.ensureAgentSwarmProgress(event.toolCallId, preview.args, {
+      this.ensureAgentSwarmProgress(event.toolCallId, preview.args, {
         streamingArguments: preview.argumentsText,
       });
-      this.host.setAgentSwarmProgress(progress);
+      this.host.state.ui.requestRender();
     }
 
     this.host.patchLivePane({
@@ -605,6 +621,9 @@ export class SessionEventHandler {
     });
     progress.updateArgs(args, options);
     this.agentSwarmProgress.set(toolCallId, progress);
+    this.host.streamingUI.finalizeLiveTextBuffers('tool');
+    this.host.state.transcriptContainer.addChild(progress);
+    this.host.state.ui.requestRender();
     return progress;
   }
 
@@ -630,11 +649,17 @@ export class SessionEventHandler {
     const progress = this.agentSwarmProgress.get(event.toolCallId);
     if (progress !== undefined) {
       if (event.isError === true && isUserCancelledSubagentError(resultData.output)) {
-        progress.markActiveCancelled();
+        if (progress.isRequestStreaming()) {
+          this.removeAgentSwarmProgress(event.toolCallId, progress);
+        } else {
+          progress.markActiveCancelled();
+        }
+      } else if (event.isError === true) {
+        progress.markSwarmFailed(resultData.output);
       } else {
         progress.applyResult(resultData.output);
       }
-      this.host.setAgentSwarmProgress(progress);
+      this.host.state.ui.requestRender();
     }
     if (matchedCall !== undefined && matchedCall.name === 'TodoList' && !event.isError) {
       const rawTodos = (matchedCall.args as { todos?: unknown }).todos;
@@ -891,7 +916,7 @@ export class SessionEventHandler {
         agentId: event.subagentId,
         description: event.description,
       });
-      this.host.setAgentSwarmProgress(swarmProgress);
+      this.host.state.ui.requestRender();
       return;
     }
 
@@ -927,7 +952,7 @@ export class SessionEventHandler {
     const swarmProgress = this.agentSwarmProgress.get(event.parentToolCallId);
     if (swarmProgress !== undefined) {
       swarmProgress.markStarted(event.subagentId);
-      this.host.setAgentSwarmProgress(swarmProgress);
+      this.host.state.ui.requestRender();
       return;
     }
 
@@ -968,7 +993,7 @@ export class SessionEventHandler {
     const swarmProgress = this.agentSwarmProgress.get(event.parentToolCallId);
     if (swarmProgress !== undefined) {
       swarmProgress.markCompleted(event.subagentId, event.resultSummary);
-      this.host.setAgentSwarmProgress(swarmProgress);
+      this.host.state.ui.requestRender();
       streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
       return;
     }
@@ -1022,7 +1047,7 @@ export class SessionEventHandler {
       } else {
         swarmProgress.markFailed(event.subagentId, event.error);
       }
-      this.host.setAgentSwarmProgress(swarmProgress);
+      this.host.state.ui.requestRender();
       streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
       return;
     }
