@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.repository_owner == 'MoonshotAI'
     outputs:
+      packages_published: ${{ steps.changesets.outputs.published }}
       kimi_native_release: ${{ steps.kimi-release.outputs.should_publish }}
       kimi_release_tag: ${{ steps.kimi-release.outputs.tag }}
     permissions:
@@ -69,6 +70,16 @@ jobs:
         run: node apps/kimi-code/scripts/native/resolve-release.mjs
         env:
           CHANGESETS_PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
+
+  deploy-docs:
+    name: Deploy docs
+    needs: release
+    if: needs.release.outputs.packages_published == 'true'
+    uses: ./.github/workflows/docs-deploy.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
 
   native-artifacts:
     name: Native release artifact

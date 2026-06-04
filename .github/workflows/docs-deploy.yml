@@ -1,9 +1,7 @@
 name: Deploy Docs to GitHub Pages
 
 on:
-  release:
-    types: [published]
-
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -41,6 +39,7 @@ jobs:
           path: docs/.vitepress/dist
 
   deploy:
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     environment:
