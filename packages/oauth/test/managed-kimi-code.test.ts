@@ -7,9 +7,12 @@ import {
   fetchManagedKimiCodeModels,
   KIMI_CODE_OAUTH_KEY,
   KIMI_CODE_PROVIDER_NAME,
+  ManagedKimiCodeModelsAuthError,
   provisionManagedKimiCodeConfig,
+  resolveKimiCodeLoginAuth,
   resolveKimiCodeOAuthKey,
   resolveKimiCodeOAuthRef,
+  resolveKimiCodeRuntimeAuth,
   type ManagedKimiConfigShape,
 } from '../src/managed-kimi-code';
 import { OAuthUnauthorizedError } from '../src/errors';
@@ -101,6 +104,86 @@ describe('provisionManagedKimiCodeConfig', () => {
         baseUrl: 'https://coding.deva.msh.team/coding/v1',
       }),
       oauthHost: 'https://auth.dev.kimi.team',
+    });
+  });
+
+  it('resolves runtime auth from environment overrides over persisted config', () => {
+    const configuredBaseUrl = 'https://api.configured.example.test/coding/v1';
+    const envBaseUrl = 'https://api.env.example.test/coding/v1/';
+    const envOauthHost = 'https://auth.env.example.test/';
+    const configuredOAuthRef = resolveKimiCodeOAuthRef({
+      baseUrl: configuredBaseUrl,
+    });
+
+    const auth = resolveKimiCodeRuntimeAuth({
+      configuredBaseUrl,
+      configuredOAuthRef,
+      env: {
+        KIMI_CODE_BASE_URL: envBaseUrl,
+        KIMI_CODE_OAUTH_HOST: envOauthHost,
+      },
+    });
+
+    expect(auth.baseUrl).toBe('https://api.env.example.test/coding/v1');
+    expect(auth.oauthRef).toEqual({
+      storage: 'file',
+      key: resolveKimiCodeOAuthKey({
+        oauthHost: 'https://auth.env.example.test',
+        baseUrl: 'https://api.env.example.test/coding/v1',
+      }),
+      oauthHost: 'https://auth.env.example.test',
+    });
+  });
+
+  it('preserves a matching configured runtime OAuth ref when env is not overridden', () => {
+    const baseUrl = 'https://coding.deva.msh.team/coding/v1';
+    const configuredOAuthRef = {
+      storage: 'keyring' as const,
+      key: resolveKimiCodeOAuthKey({
+        oauthHost: 'https://auth.dev.kimi.team',
+        baseUrl,
+      }),
+      oauthHost: 'https://auth.dev.kimi.team',
+    };
+
+    expect(
+      resolveKimiCodeRuntimeAuth({
+        configuredBaseUrl: baseUrl,
+        configuredOAuthRef,
+        env: {},
+      }),
+    ).toEqual({
+      baseUrl,
+      oauthRef: configuredOAuthRef,
+    });
+  });
+
+  it('resolves login auth without reusing persisted refs under explicit or env overrides', () => {
+    const configuredBaseUrl = 'https://api.configured.example.test/coding/v1';
+    const configuredOAuthRef = resolveKimiCodeOAuthRef({ baseUrl: configuredBaseUrl });
+
+    expect(
+      resolveKimiCodeLoginAuth({
+        configuredBaseUrl,
+        configuredOAuthRef,
+        requestedBaseUrl: 'https://api.requested.example.test/coding/v1/',
+        env: {},
+      }),
+    ).toEqual({
+      baseUrl: 'https://api.requested.example.test/coding/v1',
+      oauthHost: undefined,
+    });
+
+    expect(
+      resolveKimiCodeLoginAuth({
+        configuredBaseUrl,
+        configuredOAuthRef,
+        env: {},
+      }),
+    ).toEqual({
+      baseUrl: configuredBaseUrl,
+      oauthHost: undefined,
+      oauthRef: configuredOAuthRef,
     });
   });
 
@@ -660,21 +743,37 @@ describe('provisionManagedKimiCodeConfig', () => {
         ),
     ) as unknown as typeof fetch;
 
+    const promise = fetchManagedKimiCodeModels({
+      accessToken: 'oauth-access-token',
+      baseUrl: 'https://coding.deva.msh.team/coding/v1',
+      fetchImpl,
+    });
+
+    await expect(promise).rejects.toThrow(
+      "Kimi Code models endpoint https://coding.deva.msh.team/coding/v1 rejected OAuth credentials: We're unable to verify your membership benefits at this time. Please ensure your membership is active.",
+    );
     await expect(
       fetchManagedKimiCodeModels({
         accessToken: 'oauth-access-token',
         baseUrl: 'https://coding.deva.msh.team/coding/v1',
         fetchImpl,
       }),
-    ).rejects.toThrow(
-      "Kimi Code models endpoint https://coding.deva.msh.team/coding/v1 rejected OAuth credentials: We're unable to verify your membership benefits at this time. Please ensure your membership is active.",
-    );
+    ).rejects.toMatchObject({
+      status: 402,
+      baseUrl: 'https://coding.deva.msh.team/coding/v1',
+    });
     await expect(
       fetchManagedKimiCodeModels({
         accessToken: 'oauth-access-token',
         fetchImpl,
       }),
     ).rejects.toBeInstanceOf(OAuthUnauthorizedError);
+    await expect(
+      fetchManagedKimiCodeModels({
+        accessToken: 'oauth-access-token',
+        fetchImpl,
+      }),
+    ).rejects.toBeInstanceOf(ManagedKimiCodeModelsAuthError);
   });
 
   it('clears managed provider, models, default model, and services on logout', () => {

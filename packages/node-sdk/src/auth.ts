@@ -4,8 +4,8 @@ import {
   applyManagedKimiCodeLogoutConfig,
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
-  resolveKimiCodeOAuthKey,
-  resolveKimiCodeOAuthRef,
+  resolveKimiCodeLoginAuth,
+  resolveKimiCodeRuntimeAuth,
   type AuthManagedUsageResult,
   type AuthStatus,
   type BearerTokenProvider,
@@ -78,13 +78,17 @@ export class KimiAuthFacade {
     options: KimiAuthLoginOptions = {},
   ): Promise<KimiAuthLoginResult> {
     const auth = this.resolveManagedAuth(providerName);
-    const baseUrl = options.baseUrl ?? this.configBaseUrlForLogin(auth.baseUrl);
-    const oauthHost = options.oauthHost ?? this.envOAuthHost();
+    const loginAuth = resolveKimiCodeLoginAuth({
+      configuredBaseUrl: auth.baseUrl,
+      configuredOAuthRef: auth.oauthRef,
+      requestedBaseUrl: options.baseUrl,
+      requestedOAuthHost: options.oauthHost,
+    });
     const result = await this.toolkit.login(providerName, {
       ...options,
-      baseUrl,
-      oauthHost,
-      oauthRef: options.oauthRef ?? this.configOAuthRefForLogin(auth.oauthRef, options, baseUrl),
+      baseUrl: loginAuth.baseUrl,
+      oauthHost: loginAuth.oauthHost,
+      oauthRef: options.oauthRef ?? loginAuth.oauthRef,
       provisionConfig: true,
     });
     if (result.provision === undefined) {
@@ -173,57 +177,15 @@ export class KimiAuthFacade {
     };
   }
 
-  private configBaseUrlForLogin(baseUrl?: string | undefined): string | undefined {
-    return process.env['KIMI_CODE_BASE_URL'] ?? baseUrl;
-  }
-
-  private configOAuthRefForLogin(
-    oauthRef: OAuthRef | undefined,
-    options: KimiAuthLoginOptions,
-    baseUrl?: string | undefined,
-  ): OAuthRef | undefined {
-    if (
-      options.baseUrl !== undefined ||
-      options.oauthHost !== undefined ||
-      process.env['KIMI_CODE_BASE_URL'] !== undefined ||
-      process.env['KIMI_CODE_OAUTH_HOST'] !== undefined ||
-      process.env['KIMI_OAUTH_HOST'] !== undefined
-    ) {
-      return undefined;
-    }
-    if (oauthRef !== undefined && oauthRef.key !== this.expectedOAuthKey(oauthRef, baseUrl)) {
-      return undefined;
-    }
-    return oauthRef;
-  }
-
-  private configBaseUrlForRuntime(baseUrl?: string | undefined): string | undefined {
-    return process.env['KIMI_CODE_BASE_URL'] ?? baseUrl;
-  }
-
-  private configOAuthRefForRuntime(
-    oauthRef: OAuthRef | undefined,
-    baseUrl?: string | undefined,
-  ): OAuthRef {
-    const expected = this.expectedOAuthRef(oauthRef, baseUrl);
-    if (oauthRef === undefined) return expected;
-    if (process.env['KIMI_CODE_BASE_URL'] !== undefined || this.envOAuthHost() !== undefined) {
-      return expected;
-    }
-    if (oauthRef.key !== expected.key) return expected;
-    return oauthRef;
-  }
-
   private resolveRuntimeManagedAuth(providerName?: string | undefined): {
     readonly oauthRef: OAuthRef;
     readonly baseUrl?: string | undefined;
   } {
     const auth = this.resolveManagedAuth(providerName);
-    const baseUrl = this.configBaseUrlForRuntime(auth.baseUrl);
-    return {
-      oauthRef: this.configOAuthRefForRuntime(auth.oauthRef, baseUrl),
-      baseUrl,
-    };
+    return resolveKimiCodeRuntimeAuth({
+      configuredBaseUrl: auth.baseUrl,
+      configuredOAuthRef: auth.oauthRef,
+    });
   }
 
   private runtimeOAuthRef(
@@ -232,28 +194,9 @@ export class KimiAuthFacade {
   ): OAuthRef | undefined {
     if ((providerName ?? KIMI_CODE_PROVIDER_NAME) !== KIMI_CODE_PROVIDER_NAME) return oauthRef;
     const auth = this.resolveManagedAuth(providerName);
-    const baseUrl = this.configBaseUrlForRuntime(auth.baseUrl);
-    return this.configOAuthRefForRuntime(oauthRef ?? auth.oauthRef, baseUrl);
-  }
-
-  private expectedOAuthKey(oauthRef: OAuthRef, baseUrl?: string | undefined): string {
-    return resolveKimiCodeOAuthKey({
-      oauthHost: oauthRef.oauthHost,
-      baseUrl,
-    });
-  }
-
-  private expectedOAuthRef(oauthRef: OAuthRef | undefined, baseUrl?: string | undefined): OAuthRef {
-    const envOAuthHost = this.envOAuthHost();
-    const hasEnvOverride =
-      process.env['KIMI_CODE_BASE_URL'] !== undefined || envOAuthHost !== undefined;
-    return resolveKimiCodeOAuthRef({
-      oauthHost: hasEnvOverride ? envOAuthHost : oauthRef?.oauthHost,
-      baseUrl,
-    });
-  }
-
-  private envOAuthHost(): string | undefined {
-    return process.env['KIMI_CODE_OAUTH_HOST'] ?? process.env['KIMI_OAUTH_HOST'];
+    return resolveKimiCodeRuntimeAuth({
+      configuredBaseUrl: auth.baseUrl,
+      configuredOAuthRef: oauthRef ?? auth.oauthRef,
+    }).oauthRef;
   }
 }

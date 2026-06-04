@@ -49,9 +49,50 @@ export interface ManagedKimiCodeCleanupResult {
 }
 
 export interface ManagedKimiOAuthRef {
-  readonly storage: 'file';
+  readonly storage: 'file' | 'keyring';
   readonly key: string;
   readonly oauthHost?: string | undefined;
+}
+
+export interface ManagedKimiOAuthRefInput {
+  readonly storage?: 'file' | 'keyring' | undefined;
+  readonly key?: string | undefined;
+  readonly oauthHost?: string | undefined;
+}
+
+export interface ManagedKimiRuntimeAuth {
+  readonly baseUrl?: string | undefined;
+  readonly oauthRef: ManagedKimiOAuthRef;
+}
+
+export interface ManagedKimiLoginAuth {
+  readonly baseUrl?: string | undefined;
+  readonly oauthHost?: string | undefined;
+  readonly oauthRef?: ManagedKimiOAuthRef | undefined;
+}
+
+export interface ManagedKimiEnv {
+  readonly KIMI_CODE_BASE_URL?: string | undefined;
+  readonly KIMI_CODE_OAUTH_HOST?: string | undefined;
+  readonly KIMI_OAUTH_HOST?: string | undefined;
+}
+
+export class ManagedKimiCodeModelsAuthError extends OAuthUnauthorizedError {
+  readonly status: number;
+  readonly baseUrl: string;
+
+  constructor(options: {
+    readonly status: number;
+    readonly baseUrl: string;
+    readonly message: string;
+  }) {
+    super(
+      `Kimi Code models endpoint ${options.baseUrl} rejected OAuth credentials: ${options.message}`,
+    );
+    this.name = 'ManagedKimiCodeModelsAuthError';
+    this.status = options.status;
+    this.baseUrl = options.baseUrl;
+  }
 }
 
 export interface ManagedKimiProviderConfig {
@@ -141,6 +182,10 @@ function defaultBaseUrl(baseUrl: string | undefined): string {
   return (baseUrl ?? kimiCodeBaseUrl()).replace(/\/+$/, '');
 }
 
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, '');
+}
+
 function normalizeEndpoint(value: string): string {
   return value.trim().replace(/\/+$/, '');
 }
@@ -163,13 +208,35 @@ function persistedOAuthHost(options: {
 function managedOAuthRef(options: {
   readonly key: string;
   readonly oauthHost?: string | undefined;
+  readonly storage?: 'file' | 'keyring' | undefined;
 }): ManagedKimiOAuthRef {
   const oauthHost = persistedOAuthHost(options);
   return {
-    storage: 'file',
+    storage: options.storage ?? 'file',
     key: options.key,
     oauthHost,
   };
+}
+
+function configuredOAuthRef(
+  oauthRef: ManagedKimiOAuthRefInput | undefined,
+): ManagedKimiOAuthRef | undefined {
+  if (oauthRef === undefined) return undefined;
+  const key = oauthRef.key;
+  if (key === undefined) return undefined;
+  return managedOAuthRef({
+    storage: oauthRef.storage,
+    key,
+    oauthHost: oauthRef.oauthHost,
+  });
+}
+
+export function kimiCodeEnvBaseUrl(env: ManagedKimiEnv = process.env): string | undefined {
+  return env.KIMI_CODE_BASE_URL;
+}
+
+export function kimiCodeEnvOAuthHost(env: ManagedKimiEnv = process.env): string | undefined {
+  return env.KIMI_CODE_OAUTH_HOST ?? env.KIMI_OAUTH_HOST;
 }
 
 export function resolveKimiCodeOAuthKey(options: {
@@ -210,6 +277,63 @@ export function resolveKimiCodeOAuthRef(options: {
     key: resolveKimiCodeOAuthKey(options),
     oauthHost: options.oauthHost,
   });
+}
+
+export function resolveKimiCodeRuntimeAuth(options: {
+  readonly configuredBaseUrl?: string | undefined;
+  readonly configuredOAuthRef?: ManagedKimiOAuthRefInput | undefined;
+  readonly env?: ManagedKimiEnv | undefined;
+}): ManagedKimiRuntimeAuth {
+  const env = options.env ?? process.env;
+  const envBaseUrl = kimiCodeEnvBaseUrl(env);
+  const envOAuthHost = kimiCodeEnvOAuthHost(env);
+  const hasEnvOverride = envBaseUrl !== undefined || envOAuthHost !== undefined;
+  const baseUrl =
+    envBaseUrl !== undefined ? normalizeBaseUrl(envBaseUrl) : options.configuredBaseUrl;
+  const expected = resolveKimiCodeOAuthRef({
+    oauthHost: hasEnvOverride ? envOAuthHost : options.configuredOAuthRef?.oauthHost,
+    baseUrl,
+  });
+  const configured = configuredOAuthRef(options.configuredOAuthRef);
+  if (configured === undefined) return { baseUrl, oauthRef: expected };
+  if (hasEnvOverride) return { baseUrl, oauthRef: expected };
+  if (configured.key !== expected.key) return { baseUrl, oauthRef: expected };
+  return { baseUrl, oauthRef: configured };
+}
+
+export function resolveKimiCodeLoginAuth(options: {
+  readonly configuredBaseUrl?: string | undefined;
+  readonly configuredOAuthRef?: ManagedKimiOAuthRefInput | undefined;
+  readonly requestedBaseUrl?: string | undefined;
+  readonly requestedOAuthHost?: string | undefined;
+  readonly env?: ManagedKimiEnv | undefined;
+}): ManagedKimiLoginAuth {
+  const env = options.env ?? process.env;
+  const envBaseUrl = kimiCodeEnvBaseUrl(env);
+  const envOAuthHost = kimiCodeEnvOAuthHost(env);
+  const hasOverride =
+    options.requestedBaseUrl !== undefined ||
+    options.requestedOAuthHost !== undefined ||
+    envBaseUrl !== undefined ||
+    envOAuthHost !== undefined;
+  const baseUrl =
+    options.requestedBaseUrl !== undefined
+      ? normalizeBaseUrl(options.requestedBaseUrl)
+      : envBaseUrl !== undefined
+        ? normalizeBaseUrl(envBaseUrl)
+        : options.configuredBaseUrl;
+  const oauthHost = options.requestedOAuthHost ?? envOAuthHost;
+  if (hasOverride) return { baseUrl, oauthHost };
+
+  const configured = configuredOAuthRef(options.configuredOAuthRef);
+  if (configured === undefined) return { baseUrl, oauthHost };
+  const expectedKey = resolveKimiCodeOAuthKey({
+    oauthHost: configured.oauthHost,
+    baseUrl,
+  });
+  return configured.key === expectedKey
+    ? { baseUrl, oauthHost, oauthRef: configured }
+    : { baseUrl, oauthHost };
 }
 
 function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
@@ -254,9 +378,11 @@ export async function fetchManagedKimiCodeModels(
       `Failed to list Kimi Code models (HTTP ${response.status}).`,
     );
     if (response.status === 401 || response.status === 402 || response.status === 403) {
-      throw new OAuthUnauthorizedError(
-        `Kimi Code models endpoint ${baseUrl} rejected OAuth credentials: ${message}`,
-      );
+      throw new ManagedKimiCodeModelsAuthError({
+        status: response.status,
+        baseUrl,
+        message,
+      });
     }
     throw new Error(message);
   }
