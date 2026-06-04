@@ -60,6 +60,7 @@ If you believe a change qualifies as major, stop first, explain why, and ask the
 - User-facing CLI wording should only be used when CLI users can perceive the change.
 - Internal changes that do not affect CLI users can still share a changeset with the CLI, but the wording must describe the real change honestly and must not present it as a user-facing feature.
 - Do not mention file names, class names, function names, PR numbers, or commit hashes.
+- Do not include real internal endpoints, key names, account names, or service names. If an example is needed, use neutral placeholders such as `example.com`, `example.test`, or `YOUR_API_KEY`.
 - Avoid vague words such as `refactor`, `optimize`, and `improve`. Describe the actual change, or use more specific wording.
 
 ## Common Examples
@@ -104,3 +105,4 @@ Clarify session status typing for internal SDK callers.
 - The changelog entry is in Chinese.
 - The wording claims more than the diff actually did.
 - The CLI wording mentions internal package names, class names, or PR numbers.
+- The entry includes real internal identifiers instead of neutral placeholders.

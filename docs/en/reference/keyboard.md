@@ -1,97 +1,98 @@
-# Keyboard shortcuts
+# Keyboard Shortcuts
 
-The TUI interactive mode of Kimi Code CLI supports the keyboard shortcuts listed below. These keys primarily take effect inside the input box; some have different behavior inside popups (such as the `/help` panel or the approval panel) or during streaming output.
+Kimi Code CLI's TUI interactive mode supports a set of keyboard shortcuts. The shortcuts are organized into five groups by usage context: general input, mode switching, during streaming, tool output control, the approval panel, and popup navigation. Type `/help` in the TUI at any time to open the built-in shortcut reference.
 
-Type `/help` at any time inside the TUI to open the built-in shortcut list.
-
-## General shortcuts
+## General Shortcuts
 
 The following keys are always available in the input box:
 
-| Shortcut | Action |
+| Shortcut | Function |
 | --- | --- |
 | `Enter` | Submit the current input |
 | `Shift-Enter` / `Ctrl-J` | Insert a newline in the input |
 | `↑` / `↓` | Browse input history |
-| `Esc` | Close popup / cancel completion / interrupt streaming output or an in-progress context compaction |
+| `Esc` | Close a popup / cancel completion / interrupt streaming output or context compaction |
 | `Ctrl-C` | Interrupt the current streaming output, or clear the input box |
 | `Ctrl-D` | Exit Kimi Code CLI when the input box is empty |
 
-Pressing `Ctrl-C` **during streaming output** cancels immediately with no second confirmation needed.
+Pressing `Ctrl-C` **during streaming** cancels immediately — no second confirmation needed.
 
-**Exiting the program** (pressing `Ctrl-C` when the input box is empty, or pressing `Ctrl-D`) uses a "double-press to confirm" mechanism: the first press shows a hint in the status bar (for example, `Press Ctrl+C again to exit`), and only a second press of the same key actually exits. Pressing any other key in between clears the confirmation state.
+**Exiting the program** (pressing `Ctrl-C` with an empty input box, or pressing `Ctrl-D`) uses a double-press confirmation mechanism: after the first press, a prompt appears in the status bar; a second press of the same key actually exits. Pressing any other key in between clears the confirmation state.
 
-## Mode switching
+## Mode Switching
 
-| Shortcut | Action |
+| Shortcut | Function |
 | --- | --- |
 | `Shift-Tab` | Toggle Plan mode |
 
-Press `Shift-Tab` to turn Plan mode on or off. While Plan mode is on, the agent favors read-only tools for research and planning and can write the current plan file; when needed, it can also call `Bash`, which follows the current permission mode and ordinary rules without triggering an extra independent approval just because Plan mode is active. Toggling the mode alone does not create an empty plan file. Press `Shift-Tab` again to leave Plan mode.
+Press `Shift-Tab` to enable or disable Plan mode. When enabled, the Agent prioritizes read-only tools for research and planning and can write to the current plan file; `Bash` is subject to the current permission mode and regular rules, without any additional separate approval triggered by Plan mode. Simply toggling does not create an empty plan file. Press `Shift-Tab` again to exit Plan mode.
 
-## Input and editing
+## Input & Editing
 
-| Shortcut | Action |
+| Shortcut | Function |
 | --- | --- |
 | `Ctrl-G` | Edit the current input in an external editor |
 | `Ctrl-V` | Paste an image or video from the clipboard (Unix / macOS) |
 | `Alt-V` | Paste an image or video from the clipboard (Windows) |
-| `Ctrl-E` | Expand or collapse the Plan card (when no Plan card is present, follows the system default behavior of moving the cursor to the end of the line) |
+| `Ctrl-E` | Expand or collapse the Plan card (moves the cursor to end-of-line when no Plan card is present) |
 | `Ctrl--` | Undo |
 
-Pressing `Ctrl-G` opens an external editor to edit the current input. The editor is chosen in the following order of priority:
+Pressing `Ctrl-G` opens an external editor, selected according to the following priority:
 
-1. The editor configured by the `/editor` command
+1. The editor configured via the `/editor` command
 2. The `$VISUAL` environment variable
 3. The `$EDITOR` environment variable
 
-After saving and exiting the editor, the edited content replaces the input box contents; exiting without saving leaves the input unchanged.
+After saving and exiting, the edited content replaces the input box; exiting without saving leaves the input unchanged.
 
-When pasting an image or video, it appears in the input box as a placeholder, and the actual media data is sent to the model together with the message on submit. The preferred source is an image or file path on the system clipboard; on Linux, both Wayland and X11 are tried, and on WSL the Windows clipboard is also read via PowerShell as a fallback.
+When pasting an image or video, a placeholder is shown in the input box — the actual media data is sent to the model when the message is submitted. The system clipboard is read first; on Linux, Wayland and X11 are tried; on WSL, PowerShell is also used as a fallback to read the Windows clipboard.
 
-## During streaming output
+## During Streaming
 
-While output is streaming, the input box still accepts input and supports the following extra actions:
+While streaming output is active, the input box can still receive input and supports the following additional operations:
 
-| Shortcut | Action |
+| Shortcut | Function |
 | --- | --- |
-| `Ctrl-S` | Steer: inject the current input into the running turn immediately |
+| `Ctrl-S` | Steer: inject the current input directly into the running turn |
 | `Esc` | Interrupt the current streaming output |
 | `Ctrl-C` | Interrupt the current streaming output |
 
-When you press `Ctrl-S`, the model sees your message at the next interruptible point, without waiting for the current turn to finish.
+Pressing `Ctrl-S` causes the model to see your message at the next interruptible point, without waiting for the current turn to finish.
 
-## Tool output
+## Tool Output
 
-| Shortcut | Action |
+| Shortcut | Function |
 | --- | --- |
 | `Ctrl-O` | Expand or collapse tool output |
 
-When collapsed tool call results are present in the history, press `Ctrl-O` to toggle between collapsed and expanded views to inspect the full tool output.
+When collapsed tool call results exist in the history, press `Ctrl-O` to toggle between collapsed and expanded views.
 
-## Approval panel
+## Approval Panel
 
-When the agent issues a tool call that requires confirmation, the TUI shows an approval panel. For the full approval flow, see [Interaction and Input](../guides/interaction.md#approval-flow); the table below lists the keys available inside the panel:
+When the Agent initiates a tool call that requires confirmation, the TUI displays an approval panel. For the full approval workflow, see [Interaction & Input](../guides/interaction.md#审批流程). The available keys inside the panel are:
 
-| Shortcut | Action |
+| Shortcut | Function |
 | --- | --- |
-| `↑` / `↓` | Move the cursor between options |
+| `↑` / `↓` | Move the cursor between candidate options |
 | `Enter` | Confirm the currently selected option |
-| `1` ~ `9` | Directly select the option with the matching number |
+| `1` ~ `9` | Directly select the option at the corresponding index |
 | `Esc` / `Ctrl-C` / `Ctrl-D` | Reject the current request |
-| `Ctrl-E` | Expand or collapse the full content when the panel includes a diff or file preview |
+| `Ctrl-E` | Expand or collapse the full content when the panel contains a diff or file preview |
 | `Ctrl-O` | Toggle the collapsed state of other tool output |
 
-Options that require additional feedback (such as "Reject" or "Revise") switch to a feedback input state after confirmation: type the feedback text directly and press `Enter` to submit, or press `Esc` to exit the feedback input and return to the option list.
+Options that require feedback (such as "Reject" or "Revise") switch to a feedback input state after confirmation: type the feedback text and press `Enter` to submit; press `Esc` to exit feedback input and return to the candidate list.
 
-## Popup mode
+## Popup Mode
 
-After typing `/help` to open the help panel, the following keys are available to navigate and close the panel:
+After opening the help panel with `/help`, use the following keys to navigate and close it:
 
-| Shortcut | Action |
+| Shortcut | Function |
 | --- | --- |
-| `↑` / `↓` | Scroll one line |
-| `PageUp` / `PageDown` | Scroll 10 lines |
-| `Esc` | Close the panel |
-| `Enter` | Close the panel |
-| `q` / `Q` | Close the panel |
+| `↑` / `↓` | Scroll one line at a time |
+| `PageUp` / `PageDown` | Scroll 10 lines at a time |
+| `Esc` / `Enter` / `q` / `Q` | Close the panel |
+
+## Next steps
+
+- [Slash Commands](./slash-commands.md) — Quick reference for built-in TUI control commands
+- [`kimi` Command](./kimi-command.md) — Complete reference for startup flags and subcommands

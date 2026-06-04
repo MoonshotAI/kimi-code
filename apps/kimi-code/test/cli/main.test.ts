@@ -8,7 +8,7 @@ import { runPrompt } from '#/cli/run-prompt';
 import { runShell } from '#/cli/run-shell';
 import { formatStartupError } from '#/cli/startup-error';
 import { runUpdatePreflight } from '#/cli/update/preflight';
-import { handleMainCommand, main } from '#/main';
+import { handleMainCommand, handleUpgradeCommand, main } from '#/main';
 
 const mocks = vi.hoisted(() => {
   const parse = vi.fn();
@@ -21,21 +21,91 @@ const mocks = vi.hoisted(() => {
     runShell: vi.fn(),
     runPrompt: vi.fn(),
     installCrashHandlers: vi.fn(),
+    track: vi.fn(),
+    setTelemetryContext: vi.fn(),
+    withTelemetryContext: vi.fn(),
+    shutdownTelemetry: vi.fn(),
+    createCliTelemetryBootstrap: vi.fn(() => ({
+      homeDir: '/tmp/kimi-home',
+      deviceId: 'device-id',
+      firstLaunch: false,
+    })),
+    initializeCliTelemetry: vi.fn(),
+    handleUpgrade: vi.fn(),
+    log: {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    },
+    harness: {
+      homeDir: '/tmp/kimi-home',
+      ensureConfigFile: vi.fn(),
+      getConfig: vi.fn(),
+      close: vi.fn(),
+      track: vi.fn(),
+    },
+    KimiHarness: vi.fn(),
+    createKimiHarness: vi.fn(),
   };
 });
 
 vi.mock('@moonshot-ai/kimi-telemetry', () => ({
   installCrashHandlers: mocks.installCrashHandlers,
-  track: vi.fn(),
+  track: mocks.track,
+  setTelemetryContext: mocks.setTelemetryContext,
+  withTelemetryContext: mocks.withTelemetryContext,
+  shutdownTelemetry: mocks.shutdownTelemetry,
+}));
+
+vi.mock('@moonshot-ai/kimi-code-sdk', async () => {
+  const actual = await vi.importActual<typeof import('@moonshot-ai/kimi-code-sdk')>(
+    '@moonshot-ai/kimi-code-sdk',
+  );
+  class MockKimiHarness {
+    readonly homeDir = mocks.harness.homeDir;
+    readonly ensureConfigFile = mocks.harness.ensureConfigFile;
+    readonly getConfig = mocks.harness.getConfig;
+    readonly close = mocks.harness.close;
+    readonly track = mocks.harness.track;
+
+    constructor(...args: unknown[]) {
+      mocks.KimiHarness(...args);
+    }
+  }
+  return {
+    ...actual,
+    createKimiHarness: (...args: unknown[]) => {
+      mocks.createKimiHarness(...args);
+      return mocks.harness;
+    },
+    KimiHarness: MockKimiHarness,
+    log: mocks.log,
+  };
+});
+
+vi.mock('../../src/cli/telemetry', () => ({
+  createCliTelemetryBootstrap: mocks.createCliTelemetryBootstrap,
+  initializeCliTelemetry: mocks.initializeCliTelemetry,
+}));
+
+vi.mock('../../src/cli/sub/upgrade', () => ({
+  handleUpgrade: mocks.handleUpgrade,
 }));
 
 vi.mock('../../src/cli/commands', () => ({
   createProgram: mocks.createProgram,
 }));
 
-vi.mock('../../src/cli/version', () => ({
-  getVersion: mocks.getVersion,
-}));
+vi.mock('../../src/cli/version', async () => {
+  const actual = await vi.importActual<typeof import('../../src/cli/version.js')>(
+    '../../src/cli/version.js',
+  );
+  return {
+    ...actual,
+    getVersion: mocks.getVersion,
+  };
+});
 
 vi.mock('../../src/cli/options', async () => {
   const actual = await vi.importActual<typeof OptionsModule>('../../src/cli/options.js');
@@ -94,6 +164,23 @@ async function runHandleMainCommand(opts: CLIOptions): Promise<number | null> {
   }
 }
 
+async function runHandleUpgradeCommand(): Promise<number> {
+  const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null) => {
+    throw new ExitCalled(Number(code ?? 0));
+  });
+  try {
+    await handleUpgradeCommand('0.0.1-alpha.2');
+    throw new Error('expected process.exit');
+  } catch (error) {
+    if (error instanceof ExitCalled) {
+      return error.code;
+    }
+    throw error;
+  } finally {
+    exitSpy.mockRestore();
+  }
+}
+
 describe('main entry command handling', () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -101,6 +188,14 @@ describe('main entry command handling', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.harness.ensureConfigFile.mockResolvedValue(undefined);
+    mocks.harness.getConfig.mockResolvedValue({
+      defaultModel: 'kimi-k2',
+      telemetry: true,
+    });
+    mocks.harness.close.mockResolvedValue(undefined);
+    mocks.shutdownTelemetry.mockResolvedValue(undefined);
+    mocks.handleUpgrade.mockResolvedValue(0);
   });
 
   it('runs update preflight before starting the shell', async () => {
@@ -175,6 +270,44 @@ describe('main entry command handling', () => {
 
     expect(exitCode).toBe(0);
     expect(runShell).not.toHaveBeenCalled();
+  });
+
+  it('initializes and flushes telemetry around the upgrade command', async () => {
+    const exitCode = await runHandleUpgradeCommand();
+
+    expect(exitCode).toBe(0);
+    expect(mocks.createCliTelemetryBootstrap).toHaveBeenCalledTimes(1);
+    expect(mocks.createKimiHarness).toHaveBeenCalledWith(expect.objectContaining({
+      homeDir: '/tmp/kimi-home',
+      telemetry: {
+        track: mocks.track,
+        withContext: mocks.withTelemetryContext,
+        setContext: mocks.setTelemetryContext,
+      },
+    }));
+    expect(mocks.harness.ensureConfigFile).toHaveBeenCalledTimes(1);
+    expect(mocks.initializeCliTelemetry).toHaveBeenCalledWith(expect.objectContaining({
+      harness: expect.objectContaining({
+        homeDir: '/tmp/kimi-home',
+      }),
+      bootstrap: {
+        homeDir: '/tmp/kimi-home',
+        deviceId: 'device-id',
+        firstLaunch: false,
+      },
+      config: {
+        defaultModel: 'kimi-k2',
+        telemetry: true,
+      },
+      version: '0.0.1-alpha.2',
+      uiMode: 'shell',
+    }));
+    expect(mocks.handleUpgrade).toHaveBeenCalledWith('0.0.1-alpha.2', {
+      track: mocks.track,
+      logger: mocks.log,
+    });
+    expect(mocks.shutdownTelemetry).toHaveBeenCalledWith({ timeoutMs: 3000 });
+    expect(mocks.harness.close).toHaveBeenCalledTimes(1);
   });
 
   it('formats Kimi startup errors with structured fields', () => {

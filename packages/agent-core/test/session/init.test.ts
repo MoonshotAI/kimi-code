@@ -1,17 +1,19 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'pathe';
-import { fileURLToPath } from 'node:url';
+import { join } from 'pathe';
 
 import { testKaos } from '../fixtures/test-kaos';
-import type { ProviderConfig } from '@moonshot-ai/kosong';
+import type { ProviderConfig, ToolCall } from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { Agent, AgentOptions } from '../../src/agent';
+import { trimTrailingOpenToolExchange } from '../../src/agent/context/projector';
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { SessionAPIImpl } from '../../src/session/rpc';
+import { estimateTokensForMessages } from '../../src/utils/tokens';
 import { createScriptedGenerate } from '../agent/harness/scripted-generate';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 
@@ -52,7 +54,7 @@ describe('Session.init', () => {
     });
     const { agent: mainAgent } = await session.createAgent(
       { type: 'main', generate: scripted.generate },
-      testProfile(),
+      { profile: testProfile() },
     );
     mainAgent.config.update({
       modelAlias: 'mock-model',
@@ -172,6 +174,290 @@ describe('Session.init', () => {
   }, 20000);
 });
 
+describe('AgentAPI.startBtw', () => {
+  it('runs a side subagent from a stable parent context snapshot without writing btw history', async () => {
+    const workDir = await makeTempDir();
+    const sessionDir = await makeTempDir();
+
+    const events: Array<Record<string, unknown>> = [];
+    const scripted = createScriptedGenerate();
+    const session = new Session({
+      id: 'test-btw',
+      kaos: testKaos.withCwd(workDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc(events),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      providerManager: testProviderManager(),
+    });
+    const { agent: mainAgent } = await session.createAgent(
+      { type: 'main', generate: scripted.generate },
+      { profile: testProfile() },
+    );
+    mainAgent.config.update({
+      modelAlias: 'mock-model',
+      thinkingLevel: 'off',
+    });
+    mainAgent.tools.setActiveTools(['Read']);
+    registerLookupNoteTool(mainAgent);
+    mainAgent.context.appendUserMessage([{ type: 'text', text: 'Main task: implement /btw.' }]);
+    mainAgent.context.appendLoopEvent({
+      type: 'step.begin',
+      uuid: 'open-step',
+      turnId: 'main-turn',
+      step: 1,
+    });
+    mainAgent.context.appendLoopEvent({
+      type: 'tool.call',
+      uuid: 'open-call',
+      turnId: 'main-turn',
+      step: 1,
+      stepUuid: 'open-step',
+      toolCallId: 'call-open',
+      name: 'Read',
+      args: { path: 'src/main.ts' },
+    });
+    events.length = 0;
+    const summary = 'Main agent is implementing /btw.';
+    scripted.mockNextResponse({ type: 'text', text: summary });
+
+    try {
+      const api = new SessionAPIImpl(session);
+      const agentId = await api.startBtw({ agentId: 'main' });
+      expect(agentId).toBe('agent-0');
+      expect(scripted.calls).toHaveLength(0);
+      expect(session.metadata.agents[agentId]).toBeUndefined();
+      const childAgent = session.getReadyAgent(agentId);
+      if (childAgent === undefined) throw new Error('Expected /btw child agent');
+      const inheritedHistory = trimTrailingOpenToolExchange(
+        mainAgent.context.project(mainAgent.context.history),
+      );
+      expect(childAgent.context.history.slice(0, inheritedHistory.length)).toEqual(inheritedHistory);
+      expect(childAgent.context.tokenCount).toBe(0);
+      expect(childAgent.context.tokenCountWithPending).toBeGreaterThanOrEqual(
+        estimateTokensForMessages(inheritedHistory),
+      );
+
+      await api.prompt({
+        agentId,
+        input: [{ type: 'text', text: 'What are you working on right now?' }],
+      });
+
+      await vi.waitFor(() => {
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: 'turn.ended',
+            agentId: 'agent-0',
+            reason: 'completed',
+          }),
+        );
+      });
+      expect(events.filter((event) => String(event['type']).startsWith('subagent.'))).toEqual([]);
+      expect(events).toContainEqual(
+          expect.objectContaining({
+            type: 'turn.started',
+            agentId: 'agent-0',
+            origin: { kind: 'user' },
+          }),
+        );
+      expect(scripted.calls).toHaveLength(1);
+      expect(scripted.calls[0]?.systemPrompt).toBe('<system-prompt>');
+      expect(scripted.calls[0]?.tools.map((tool) => tool.name)).toEqual([
+        'LookupNote',
+        'Read',
+      ]);
+      const historyText = JSON.stringify(scripted.calls[0]?.history);
+      expect(historyText).toContain('Main task: implement /btw.');
+      expect(historyText).toContain('This is a side-channel conversation with the user.');
+      expect(historyText).toContain('All tool calls are disabled and will be rejected.');
+      expect(historyText).toContain('What are you working on right now?');
+      expect(historyText).not.toContain('call-open');
+      expect(JSON.stringify(mainAgent.context.history)).not.toContain(
+        'What are you working on right now?',
+      );
+      expect(JSON.stringify(session.getReadyAgent('agent-0')?.context.history)).toContain(
+        'What are you working on right now?',
+      );
+      scripted.mockNextResponse({ type: 'text', text: 'Follow-up answer from the same side agent.' });
+      await api.prompt({
+        agentId,
+        input: [{ type: 'text', text: 'Can you say that another way?' }],
+      });
+      await vi.waitFor(() => {
+        expect(scripted.calls).toHaveLength(2);
+      });
+      const followUpHistoryText = JSON.stringify(scripted.calls[1]?.history);
+      expect(followUpHistoryText).toContain('What are you working on right now?');
+      expect(followUpHistoryText).toContain('Can you say that another way?');
+      await expect(access(join(sessionDir, 'agents', 'agent-0', 'wire.jsonl'))).rejects.toThrow();
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('declares parent tools but rejects side-question tool calls before a second text turn', async () => {
+    const workDir = await makeTempDir();
+    const sessionDir = await makeTempDir();
+
+    const events: Array<Record<string, unknown>> = [];
+    const scripted = createScriptedGenerate();
+    const session = new Session({
+      id: 'test-btw-deny-tools',
+      kaos: testKaos.withCwd(workDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc(events),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      providerManager: testProviderManager(),
+    });
+    const { agent: mainAgent } = await session.createAgent(
+      { type: 'main', generate: scripted.generate },
+      { profile: testProfile() },
+    );
+    mainAgent.config.update({
+      modelAlias: 'mock-model',
+      thinkingLevel: 'off',
+    });
+    mainAgent.tools.setActiveTools(['Read']);
+    registerLookupNoteTool(mainAgent);
+    mainAgent.context.appendUserMessage([{ type: 'text', text: 'Main task context.' }]);
+    events.length = 0;
+
+    scripted.mockNextResponse(lookupNoteCall());
+    scripted.mockNextResponse({
+      type: 'text',
+      text: 'Main agent is implementing /btw based on the existing context.',
+    });
+
+    try {
+      const api = new SessionAPIImpl(session);
+      const agentId = await api.startBtw({ agentId: 'main' });
+      expect(agentId).toBe('agent-0');
+      await api.prompt({
+        agentId,
+        input: [{ type: 'text', text: 'What are you working on right now?' }],
+      });
+
+      await vi.waitFor(() => {
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: 'turn.ended',
+            agentId: 'agent-0',
+            reason: 'completed',
+          }),
+        );
+      });
+      expect(events.filter((event) => String(event['type']).startsWith('subagent.'))).toEqual([]);
+      expect(scripted.calls).toHaveLength(2);
+      expect(scripted.calls[0]?.systemPrompt).toBe('<system-prompt>');
+      expect(scripted.calls[1]?.systemPrompt).toBe('<system-prompt>');
+      expect(scripted.calls[0]?.tools.map((tool) => tool.name)).toEqual([
+        'LookupNote',
+        'Read',
+      ]);
+      expect(scripted.calls[1]?.tools.map((tool) => tool.name)).toEqual([
+        'LookupNote',
+        'Read',
+      ]);
+      expect(JSON.stringify(scripted.calls[1]?.history)).toContain(
+        'Tool calls are disabled for side questions. Answer with text only.',
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'tool.result',
+          agentId: 'agent-0',
+          toolCallId: 'call_lookup_note',
+          isError: true,
+          output: 'Tool calls are disabled for side questions. Answer with text only.',
+        }),
+      );
+      expect(JSON.stringify(mainAgent.context.history)).not.toContain(
+        'What are you working on right now?',
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('cancels a btw turn through the returned agent id', async () => {
+    const workDir = await makeTempDir();
+    const sessionDir = await makeTempDir();
+
+    const events: Array<Record<string, unknown>> = [];
+    const generate: NonNullable<AgentOptions['generate']> = vi.fn(
+      async (_chat, _systemPrompt, _tools, _history, _callbacks, options) => {
+        const signal = options?.signal;
+        if (signal === undefined) {
+          throw new Error('Expected generate signal');
+        }
+        return new Promise<never>((_resolve, reject) => {
+          if (signal.aborted) {
+            reject(signal.reason);
+            return;
+          }
+          signal.addEventListener(
+            'abort',
+            () => {
+              reject(signal.reason);
+            },
+            { once: true },
+          );
+        });
+      },
+    );
+    const session = new Session({
+      id: 'test-btw-cancel',
+      kaos: testKaos.withCwd(workDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc(events),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      providerManager: testProviderManager(),
+    });
+    const { agent: mainAgent } = await session.createAgent(
+      { type: 'main', generate },
+      { profile: testProfile() },
+    );
+    mainAgent.config.update({
+      modelAlias: 'mock-model',
+      thinkingLevel: 'off',
+    });
+    events.length = 0;
+
+    try {
+      const api = new SessionAPIImpl(session);
+      const agentId = await api.startBtw({ agentId: 'main' });
+      expect(agentId).toBe('agent-0');
+      await api.prompt({
+        agentId,
+        input: [{ type: 'text', text: 'Where are things right now?' }],
+      });
+
+      await vi.waitFor(() => {
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: 'turn.started',
+            agentId: 'agent-0',
+            origin: { kind: 'user' },
+          }),
+        );
+      });
+
+      await api.cancel({ agentId });
+
+      await vi.waitFor(() => {
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: 'turn.ended',
+            agentId: 'agent-0',
+            reason: 'cancelled',
+          }),
+        );
+      });
+      expect(events.filter((event) => String(event['type']).startsWith('subagent.'))).toEqual([]);
+    } finally {
+      await session.close();
+    }
+  });
+});
+
 async function makeTempDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'kimi-core-init-'));
   tempDirs.push(dir);
@@ -203,6 +489,30 @@ function testProfile(): ResolvedAgentProfile {
     name: 'test',
     systemPrompt: () => '<system-prompt>',
     tools: [],
+  };
+}
+
+function registerLookupNoteTool(agent: Agent): void {
+  agent.tools.registerUserTool({
+    name: 'LookupNote',
+    description: 'Look up a note from the host application.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  });
+}
+
+function lookupNoteCall(): ToolCall {
+  return {
+    type: 'function',
+    id: 'call_lookup_note',
+    name: 'LookupNote',
+    arguments: JSON.stringify({ query: 'status' }),
   };
 }
 

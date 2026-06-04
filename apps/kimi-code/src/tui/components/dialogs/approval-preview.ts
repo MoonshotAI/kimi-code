@@ -193,7 +193,7 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
       `${key('↑↓')} ${dim('line')}  ` +
       `${key('PgUp/PgDn')} ${dim('page')}  ` +
       `${key('g/G')} ${dim('top/bot')}  ` +
-      `${key('Q/Esc/Ctrl+E')} ${dim('back')}`;
+      `${key('Q/Esc/Ctrl+E')} ${dim('cancel')}`;
     const left = ` ${keys}`;
     const leftW = visibleWidth(left);
     const rightW = visibleWidth(position);

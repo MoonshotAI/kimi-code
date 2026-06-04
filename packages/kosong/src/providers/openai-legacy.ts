@@ -35,12 +35,21 @@ import {
   requireProviderApiKey,
   resolveAuthBackedClient,
 } from './request-auth';
+import {
+  normalizeToolCallIdsForProvider,
+  sanitizeToolCallId,
+  type ToolCallIdPolicy,
+} from './tool-call-id';
 
 // Inbound: scan in priority order; first string value wins. Outbound: the first
 // entry doubles as the default field we serialize ThinkPart back into. Both
 // arms can be overridden by an explicit `reasoningKey` on the provider config.
 const KNOWN_REASONING_KEYS = ['reasoning_content', 'reasoning_details', 'reasoning'] as const;
 const DEFAULT_OUTBOUND_REASONING_KEY = KNOWN_REASONING_KEYS[0];
+const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
+  normalize: (id) => sanitizeToolCallId(id, 64),
+  maxLength: 64,
+};
 
 function extractReasoningContent(
   source: unknown,
@@ -71,6 +80,7 @@ export interface OpenAILegacyOptions {
 
 export interface OpenAILegacyGenerationKwargs {
   max_tokens?: number | undefined;
+  max_completion_tokens?: number | undefined;
   temperature?: number | undefined;
   top_p?: number | undefined;
   n?: number | undefined;
@@ -92,6 +102,34 @@ interface OpenAIToolCallOut {
   type: string;
   id: string;
   function: { name: string; arguments: string | null };
+}
+
+function usesMaxCompletionTokens(model: string): boolean {
+  const normalized = model.toLowerCase();
+  return /^o\d(?:$|[-.])/.test(normalized) || /^gpt-5(?:$|[-.])/.test(normalized);
+}
+
+function completionTokenKwargs(
+  model: string,
+  maxCompletionTokens: number,
+): OpenAILegacyGenerationKwargs {
+  return usesMaxCompletionTokens(model)
+    ? { max_completion_tokens: maxCompletionTokens }
+    : { max_tokens: maxCompletionTokens };
+}
+
+function normalizeGenerationKwargs(
+  model: string,
+  source: OpenAILegacyGenerationKwargs,
+): OpenAILegacyGenerationKwargs {
+  const kwargs = { ...source };
+  if (usesMaxCompletionTokens(model)) {
+    if (kwargs.max_completion_tokens === undefined && kwargs.max_tokens !== undefined) {
+      kwargs.max_completion_tokens = kwargs.max_tokens;
+    }
+    delete kwargs.max_tokens;
+  }
+  return kwargs;
 }
 
 function convertMessage(
@@ -356,10 +394,8 @@ export class OpenAILegacyChatProvider implements ChatProvider {
         ? normalizedReasoningKey
         : undefined;
     this._reasoningEffort = undefined;
-    this._generationKwargs = {};
-    if (options.maxTokens !== undefined) {
-      this._generationKwargs.max_tokens = options.maxTokens;
-    }
+    this._generationKwargs =
+      options.maxTokens !== undefined ? completionTokenKwargs(this._model, options.maxTokens) : {};
     this._toolMessageConversion = options.toolMessageConversion ?? null;
     this._httpClient = options.httpClient;
     this._clientFactory = options.clientFactory;
@@ -379,7 +415,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     return {
       model: this._model,
       baseUrl: this._baseUrl,
-      ...this._generationKwargs,
+      ...normalizeGenerationKwargs(this._model, this._generationKwargs),
     };
   }
 
@@ -397,13 +433,18 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     if (systemPrompt) {
       messages.push({ role: 'system', content: systemPrompt });
     }
-    for (const msg of history) {
+    const normalizedHistory = normalizeToolCallIdsForProvider(
+      history,
+      OPENAI_CHAT_TOOL_CALL_ID_POLICY,
+    );
+    for (const msg of normalizedHistory) {
       messages.push(convertMessage(msg, this._reasoningKey, this._toolMessageConversion));
     }
 
-    const kwargs: Record<string, unknown> = {
-      ...this._generationKwargs,
-    };
+    const kwargs: Record<string, unknown> = normalizeGenerationKwargs(
+      this._model,
+      this._generationKwargs,
+    );
 
     // Determine reasoning_effort
     let reasoningEffort: string | undefined = this._reasoningEffort;
@@ -477,7 +518,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   }
 
   withMaxCompletionTokens(maxCompletionTokens: number): OpenAILegacyChatProvider {
-    return this.withGenerationKwargs({ max_tokens: maxCompletionTokens });
+    return this.withGenerationKwargs(completionTokenKwargs(this._model, maxCompletionTokens));
   }
 
   private _clone(): OpenAILegacyChatProvider {

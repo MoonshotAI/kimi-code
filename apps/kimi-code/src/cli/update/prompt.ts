@@ -14,7 +14,7 @@ import {
 
 import { type InstallSource, type UpdateTarget } from './types';
 
-const CHANGELOG_URL = 'https://moonshotai.github.io/kimi-code/en/release-notes/changelog.html';
+export const CHANGELOG_URL = 'https://moonshotai.github.io/kimi-code/en/release-notes/changelog.html';
 
 export type InstallPromptChoiceValue = 'install' | 'skip';
 
@@ -120,15 +120,15 @@ function writePromptFrame(
   return lines.length;
 }
 
-export async function promptForInstallConfirmation(
+export async function promptForInstallChoice(
   options: InstallPromptOptions,
-): Promise<boolean> {
+): Promise<InstallPromptChoiceValue> {
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
   const choices = createInstallPromptChoices(options.target);
   let selectedIndex = getDefaultInstallPromptSelection(choices);
 
-  return new Promise<boolean>((resolve) => {
+  return new Promise<InstallPromptChoiceValue>((resolve) => {
     let lineCount = 0;
     const hadRawMode = 'isRaw' in input ? input.isRaw : false;
     const canSetRawMode = typeof input.setRawMode === 'function';
@@ -144,7 +144,7 @@ export async function promptForInstallConfirmation(
 
     const finish = (choice: InstallPromptChoiceValue): void => {
       cleanup();
-      resolve(choice === 'install');
+      resolve(choice);
     };
 
     const render = (): void => {

@@ -1668,6 +1668,39 @@ describe('FullCompaction', () => {
     `);
     await ctx.expectResumeMatches();
   });
+
+  it('appends the todo list to the compaction summary', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+
+    ctx.agent.tools.updateStore('todo', [
+      { title: 'Fix the auth bug', status: 'in_progress' },
+      { title: 'Add tests', status: 'pending' },
+    ]);
+
+    const compacted = new Promise<void>((resolve) => {
+      ctx.emitter.once('context.apply_compaction', () => {
+        resolve();
+      });
+    });
+
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    await ctx.rpc.beginCompaction({});
+    await compacted;
+
+    const history = ctx.compactHistory();
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({
+      role: 'assistant',
+      text: 'Compacted summary.\n\n## TODO List\n  [in_progress] Fix the auth bug\n  [pending] Add tests',
+    });
+    await ctx.expectResumeMatches();
+  });
 });
 
 afterEach(() => {

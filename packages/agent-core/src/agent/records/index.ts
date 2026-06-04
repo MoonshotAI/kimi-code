@@ -95,6 +95,14 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'tools.update_store':
       agent.tools.updateStore(input.key, input.value);
       return;
+    // Goal records are an audit trail only. Goal state is restored from
+    // `state.json` (metadata.custom.goal), never rebuilt from these records.
+    case 'goal.create':
+    case 'goal.update':
+    case 'goal.account_usage':
+    case 'goal.continuation':
+    case 'goal.clear':
+      return;
   }
 }
 
@@ -128,6 +136,7 @@ export class AgentRecords {
         type: 'metadata',
         protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
         created_at: Date.now(),
+        app_version: this.agent.appVersion,
       });
       this.metadataInitialized = true;
     }
@@ -190,6 +199,20 @@ export class AgentRecords {
       for (const msg of this.agent.context.history) {
         await this.agent.blobStore.rehydrateParts(msg.content);
       }
+    }
+    const firstRecord = replayedRecords[0];
+    if (
+      firstRecord?.type === 'metadata' &&
+      firstRecord.app_version !== this.agent.appVersion
+    ) {
+      this.persistence.append({
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: Date.now(),
+        app_version: this.agent.appVersion,
+        resumed: true,
+      });
+      await this.persistence.flush();
     }
     return { warning };
   }

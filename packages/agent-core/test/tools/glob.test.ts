@@ -144,6 +144,89 @@ describe('GlobTool', () => {
     expect(lines.filter((l) => l === 'shared.ts')).toHaveLength(1);
   });
 
+  it('normalizes the pattern before brace expansion so redundant separators are collapsed', async () => {
+    // `src//*.{ts,tsx}` should be normalized → `src/*.{ts,tsx}` before
+    // expandBraces splits it, so each sub-pattern is clean.
+    const glob = vi.fn((_root: string, pattern: string) => {
+      if (pattern === 'src/*.ts') return asyncPaths(['/workspace/src/a.ts']);
+      if (pattern === 'src/*.tsx') return asyncPaths(['/workspace/src/b.tsx']);
+      return asyncPaths([]);
+    });
+    const tool = new GlobTool(
+      createFakeKaos({ glob, stat: vi.fn().mockResolvedValue(stat(1)) }),
+      workspace,
+    );
+
+    const result = await executeTool(tool, context({ pattern: 'src//*.{ts,tsx}' }));
+
+    expect(result.isError).toBeFalsy();
+    expect(glob).toHaveBeenCalledWith('/workspace', 'src/*.ts');
+    expect(glob).toHaveBeenCalledWith('/workspace', 'src/*.tsx');
+  });
+
+  it('normalizes the pattern before brace expansion so a leading ./ is removed', async () => {
+    // `./src/*.{ts,tsx}` should be normalized → `src/*.{ts,tsx}` before
+    // expandBraces splits it, so each sub-pattern is clean.
+    const glob = vi.fn((_root: string, pattern: string) => {
+      if (pattern === 'src/*.ts') return asyncPaths(['/workspace/src/a.ts']);
+      if (pattern === 'src/*.tsx') return asyncPaths(['/workspace/src/b.tsx']);
+      return asyncPaths([]);
+    });
+    const tool = new GlobTool(
+      createFakeKaos({ glob, stat: vi.fn().mockResolvedValue(stat(1)) }),
+      workspace,
+    );
+
+    const result = await executeTool(tool, context({ pattern: './src/*.{ts,tsx}' }));
+
+    expect(result.isError).toBeFalsy();
+    expect(glob).toHaveBeenCalledWith('/workspace', 'src/*.ts');
+    expect(glob).toHaveBeenCalledWith('/workspace', 'src/*.tsx');
+  });
+
+  it('normalizes `..` inside a brace alternative without collapsing across the braces', async () => {
+    // `src/{foo/../bar,baz}/*.ts` must first split on the brace group,
+    // *then* normalize each alternative — otherwise pathe collapses
+    // `foo/../bar,baz}` together and the whole brace structure is lost.
+    const glob = vi.fn((_root: string, pattern: string) => {
+      if (pattern === 'src/bar/*.ts') return asyncPaths(['/workspace/src/bar/a.ts']);
+      if (pattern === 'src/baz/*.ts') return asyncPaths(['/workspace/src/baz/b.ts']);
+      return asyncPaths([]);
+    });
+    const tool = new GlobTool(
+      createFakeKaos({ glob, stat: vi.fn().mockResolvedValue(stat(1)) }),
+      workspace,
+    );
+
+    const result = await executeTool(tool, context({ pattern: 'src/{foo/../bar,baz}/*.ts' }));
+
+    expect(result.isError).toBeFalsy();
+    expect(glob).toHaveBeenCalledWith('/workspace', 'src/bar/*.ts');
+    expect(glob).toHaveBeenCalledWith('/workspace', 'src/baz/*.ts');
+  });
+
+  it('preserves backslash-escaped glob metacharacters end-to-end', async () => {
+    // `\{a,b\}.ts` opts out of brace expansion (the user wants to match
+    // a file literally named `{a,b}.ts`). kaos.glob must receive the
+    // pattern unchanged — running pathe.normalize over it would rewrite
+    // the escape backslashes into path separators and break the intent.
+    const glob = vi.fn((_root: string, pattern: string) => {
+      if (pattern === '\\{a,b\\}.ts') return asyncPaths(['/workspace/{a,b}.ts']);
+      return asyncPaths([]);
+    });
+    const tool = new GlobTool(
+      createFakeKaos({ glob, stat: vi.fn().mockResolvedValue(stat(1)) }),
+      workspace,
+    );
+
+    const result = await executeTool(tool, context({ pattern: '\\{a,b\\}.ts' }));
+
+    expect(result.isError).toBeFalsy();
+    expect(glob).toHaveBeenCalledWith('/workspace', '\\{a,b\\}.ts');
+    // And it must *not* have been called with any brace-expanded form.
+    expect(glob).not.toHaveBeenCalledWith('/workspace', expect.stringContaining('/'));
+  });
+
   it('searches only the current workspace when path is omitted', async () => {
     const glob = vi.fn().mockReturnValue(asyncPaths(['/workspace/a.ts', '/workspace/shared.ts']));
     const tool = new GlobTool(
@@ -573,7 +656,6 @@ describe('GlobTool', () => {
     expect(tool.description).toContain('/c/Users/foo');
   });
 });
-
 describe('expandBraces', () => {
   it('returns the original pattern unchanged when there is no brace group', () => {
     expect(expandBraces('src/**/*.ts')).toEqual(['src/**/*.ts']);

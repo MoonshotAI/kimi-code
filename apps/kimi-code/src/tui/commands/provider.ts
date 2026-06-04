@@ -1,7 +1,8 @@
 import {
-  applyCustomRegistryProvider,
+  applyCustomRegistryEntries,
   fetchCustomRegistry,
   type CustomRegistrySource,
+  type ManagedKimiConfigShape,
 } from '@moonshot-ai/kimi-code-oauth';
 import {
   applyCatalogProvider,
@@ -221,8 +222,8 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   host.showStatus(`Provider added: ${entry.name ?? providerId}`);
 
   // Build a merged model dictionary that includes existing models plus the
-  // newly-persisted provider's models, so the TabbedModelSelectorComponent
-  // shows all tabs.
+  // newly-persisted provider's models, so the tabbed selector shows every
+  // provider's tab (the new provider's tab starts active via initialTabId).
   const stateModels = await host.harness.getConfig().then((c) => c.models ?? {});
   const mergedModels = { ...stateModels };
 
@@ -268,7 +269,7 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
     apiKey: value.apiKey,
   };
 
-  let entries: Record<string, { id: string; name: string; api: string; type: string; models: Record<string, unknown> }>;
+  let entries: Awaited<ReturnType<typeof fetchCustomRegistry>>;
   try {
     entries = await fetchCustomRegistry(source);
   } catch (err) {
@@ -276,20 +277,14 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
     return false;
   }
 
-  const addedProviderIds: string[] = [];
+  const addedProviderIds = Object.values(entries).map((entry) => entry.id);
   try {
-    let config = await host.harness.getConfig();
-    for (const entry of Object.values(entries)) {
-      if (config.providers[entry.id] !== undefined) {
-        config = await host.harness.removeProvider(entry.id);
-      }
-      applyCustomRegistryProvider(
-        config as unknown as Parameters<typeof applyCustomRegistryProvider>[0],
-        entry as Parameters<typeof applyCustomRegistryProvider>[1],
-        source,
-      );
-      addedProviderIds.push(entry.id);
-    }
+    const config = await host.harness.getConfig();
+    applyCustomRegistryEntries(
+      config as unknown as ManagedKimiConfigShape,
+      entries,
+      source,
+    );
     await host.harness.setConfig({
       providers: config.providers,
       models: config.models,
@@ -321,7 +316,6 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
   const firstNewProvider = firstNewAlias
     ? stateModels[firstNewAlias]?.provider
     : addedProviderIds[0];
-
   const selector = new TabbedModelSelectorComponent({
     models: stateModels,
     currentValue: host.state.appState.model,

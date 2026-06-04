@@ -70,6 +70,53 @@ describe('ShellExecutionComponent', () => {
     expect(output).toContain('step20');
   });
 
+  it('does not count trailing empty lines toward the preview cap', () => {
+    const component = new ShellExecutionComponent({
+      result: {
+        tool_call_id: 'call_shell',
+        output: 'hello\n\n\n', // 1 content line + 2 trailing empty lines
+        is_error: false,
+      },
+      colors: darkColors,
+    });
+
+    const output = component.render(100).map(strip).join('\n');
+    expect(output).toContain('hello');
+    expect(output).not.toContain('... (2 more lines');
+  });
+
+  it('preserves internal empty lines while trimming only trailing ones', () => {
+    const component = new ShellExecutionComponent({
+      result: {
+        tool_call_id: 'call_shell',
+        output: 'a\n\nb\n\n\n', // 1 internal empty line + 2 trailing empty lines
+        is_error: false,
+      },
+      colors: darkColors,
+    });
+
+    const output = component.render(100).map(strip).join('\n');
+    expect(output).toContain('a');
+    expect(output).toContain('b');
+    expect(output).not.toContain('... (2 more lines');
+  });
+
+  it('truncates long single-line output by wrapped visual lines', () => {
+    const component = new ShellExecutionComponent({
+      result: {
+        tool_call_id: 'call_shell',
+        output: 'x'.repeat(500),
+        is_error: false,
+      },
+      colors: darkColors,
+    });
+
+    const out = strip(component.render(20).join('\n'));
+    expect(out).toContain('x');
+    expect(out).not.toContain('x'.repeat(500));
+    expect(out).toContain('... (');
+  });
+
   describe('shellExecutionResultRenderer', () => {
     const longCmd = `echo ${'a'.repeat(200)}\necho done`;
 

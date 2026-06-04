@@ -58,6 +58,7 @@ import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent } from './components/dialogs/session-picker';
 import { AuthFlowController } from './controllers/auth-flow';
+import { BtwPanelController } from './controllers/btw-panel';
 import { EditorKeyboardController } from './controllers/editor-keyboard';
 import { SessionEventHandler } from './controllers/session-event-handler';
 import * as slashCommands from './commands/dispatch';
@@ -69,6 +70,7 @@ import { FileMentionProvider } from './components/editor/file-mention-provider';
 import { AssistantMessageComponent } from './components/messages/assistant-message';
 import { BackgroundAgentStatusComponent } from './components/messages/background-agent-status';
 import { CronMessageComponent } from './components/messages/cron-message';
+import { GoalCompletionMessageComponent } from './components/messages/goal-panel';
 import { SkillActivationComponent } from './components/messages/skill-activation';
 import {
   NoticeMessageComponent,
@@ -114,7 +116,7 @@ import { formatErrorMessage } from './utils/event-payload';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments } from './utils/image-placeholder';
 import { hasPatchChanges } from './utils/object-patch';
-import { openUrl } from './utils/open-url';
+import { openUrl } from '#/utils/open-url';
 import { setProcessTitle } from './utils/proctitle';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
@@ -171,9 +173,11 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     version: input.version,
     editorCommand: input.tuiConfig.editorCommand,
     notifications: input.tuiConfig.notifications,
+    upgrade: input.tuiConfig.upgrade,
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
+    goal: null,
     mcpServersSummary: null,
   };
 }
@@ -213,6 +217,7 @@ export class KimiTUI {
   private lastHistoryContent: string | undefined;
   readonly streamingUI: StreamingUIController;
   readonly authFlow: AuthFlowController;
+  readonly btwPanelController: BtwPanelController;
   readonly sessionEventHandler: SessionEventHandler;
   readonly sessionReplay: SessionReplayRenderer;
   readonly tasksBrowserController: TasksBrowserController;
@@ -284,6 +289,7 @@ export class KimiTUI {
     );
     this.streamingUI = new StreamingUIController(this);
     this.authFlow = new AuthFlowController(this);
+    this.btwPanelController = new BtwPanelController(this);
     this.sessionEventHandler = new SessionEventHandler(this);
     this.sessionReplay = new SessionReplayRenderer(this);
     this.tasksBrowserController = new TasksBrowserController(this);
@@ -304,10 +310,17 @@ export class KimiTUI {
   }
 
   private setupAutocomplete(): void {
-    const slashCommands: SlashCommand[] = this.getSlashCommands().map((cmd) => ({
-      name: cmd.name,
-      description: cmd.description,
-    }));
+    const slashCommands: SlashCommand[] = this.getSlashCommands().map((cmd) => {
+      const completer = cmd.completeArgs;
+      return {
+        name: cmd.name,
+        description: cmd.description,
+        ...(cmd.argumentHint !== undefined ? { argumentHint: cmd.argumentHint } : {}),
+        ...(completer !== undefined
+          ? { getArgumentCompletions: (prefix: string) => completer(prefix) }
+          : {}),
+      };
+    });
     const provider = new FileMentionProvider(
       slashCommands,
       this.state.appState.workDir,
@@ -393,7 +406,6 @@ export class KimiTUI {
     // Mount only after init() succeeds; see mountFooter().
     this.mountFooter();
     this.renderWelcome();
-    setExperimentalFlags(await this.harness.getExperimentalFlags());
     this.setupAutocomplete();
     void this.loadPersistedInputHistory();
     this.state.editorContainer.clear();
@@ -462,6 +474,7 @@ export class KimiTUI {
   }
 
   private async init(): Promise<boolean> {
+    setExperimentalFlags(await this.harness.getExperimentalFlags());
     await this.authFlow.refreshAvailableModels();
     void this.refreshProviderModelsInBackground();
 
@@ -558,6 +571,7 @@ export class KimiTUI {
     await this.harness.close();
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
     this.uninstallRainbowDance();
+    await this.state.terminal.drainInput();
     this.state.ui.stop();
     if (this.onExit) {
       await this.onExit(exitCode);
@@ -638,6 +652,7 @@ export class KimiTUI {
     ui.addChild(this.state.activityContainer);
     ui.addChild(this.state.todoPanelContainer);
     ui.addChild(this.state.queueContainer);
+    ui.addChild(this.state.btwPanelContainer);
     ui.addChild(this.state.editorContainer);
     // Footer is mounted later (mountFooter), not here.
   }
@@ -672,6 +687,7 @@ export class KimiTUI {
   }
 
   sendNormalUserInput(text: string): void {
+    if (this.btwPanelController.sendUserInput(text)) return;
     if (this.state.appState.model.trim().length === 0) {
       this.showError(LLM_NOT_SET_MESSAGE);
       return;
@@ -996,7 +1012,12 @@ export class KimiTUI {
   }
 
   async syncRuntimeState(session: Session = this.requireSession()): Promise<void> {
-    const status = await session.getStatus();
+    const [status, goalResult] = await Promise.all([
+      session.getStatus(),
+      isExperimentalFlagEnabled('goal-command')
+        ? session.getGoal()
+        : Promise.resolve({ goal: null }),
+    ]);
     this.setAppState({
       sessionId: session.id,
       model: status.model ?? '',
@@ -1007,6 +1028,7 @@ export class KimiTUI {
       maxContextTokens: status.maxContextTokens,
       contextUsage: status.contextUsage,
       sessionTitle: session.summary?.title ?? null,
+      goal: goalResult.goal,
     });
   }
 
@@ -1033,6 +1055,7 @@ export class KimiTUI {
     this.questionController.cancelAll(reason);
     this.session = undefined;
     this.harness.setTelemetryContext({ sessionId: null });
+    this.setAppState({ goal: null });
     return previous;
   }
 
@@ -1080,6 +1103,7 @@ export class KimiTUI {
     this.streamingUI.resetToolUi();
     this.sessionEventHandler.resetRuntimeState();
     this.tasksBrowserController.close();
+    this.btwPanelController.clear();
     this.state.footer.setBackgroundCounts({ bashTasks: 0, agentTasks: 0 });
     this.streamingUI.setTodoList([]);
     this.streamingUI.setTurnId(undefined);
@@ -1216,6 +1240,9 @@ export class KimiTUI {
           this.state.theme.colors,
         );
       case 'assistant': {
+        if (entry.content.trimStart().startsWith('✓ Goal complete')) {
+          return new GoalCompletionMessageComponent(entry.content, this.state.theme.colors);
+        }
         const component = new AssistantMessageComponent(
           this.state.theme.markdownTheme,
           this.state.theme.colors,
@@ -1330,6 +1357,7 @@ export class KimiTUI {
     this.streamingUI.resetToolUi();
     this.sessionEventHandler.stopAllMcpServerStatusSpinners();
     this.state.transcriptContainer.clear();
+    this.btwPanelController.clear();
     this.clearTerminalInlineImages();
     this.state.todoPanel.clear();
     this.state.todoPanelContainer.clear();
@@ -1518,10 +1546,9 @@ export class KimiTUI {
 
   updateEditorBorderHighlight(text?: string): void {
     const trimmed = (text ?? this.state.editor.getText()).trimStart();
-    const colorToken =
-      this.state.appState.planMode || trimmed.startsWith('/')
-        ? this.state.theme.colors.primary
-        : this.state.theme.colors.border;
+    const highlighted = this.state.appState.planMode || trimmed.startsWith('/');
+    const colorToken = highlighted ? this.state.theme.colors.primary : this.state.theme.colors.border;
+    this.state.editor.borderHighlighted = highlighted;
     this.state.editor.borderColor = (s: string) => chalk.hex(colorToken)(s);
     this.state.ui.requestRender();
   }
@@ -1617,6 +1644,13 @@ export class KimiTUI {
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
+    this.state.ui.requestRender();
+  }
+
+  restoreInputText(text: string): void {
+    this.restoreEditor();
+    this.state.editor.setText(text);
+    this.updateEditorBorderHighlight(text);
     this.state.ui.requestRender();
   }
 

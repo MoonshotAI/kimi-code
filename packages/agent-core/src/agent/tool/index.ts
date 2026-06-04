@@ -4,6 +4,7 @@ import picomatch from 'picomatch';
 
 import type { Agent } from '..';
 import { makeErrorPayload } from '../../errors';
+import { flags } from '../../flags';
 import type { ExecutableTool } from '../../loop';
 import { createMcpAuthTool } from '../../mcp/auth-tool';
 import type { McpConnectionManager, McpServerEntry } from '../../mcp';
@@ -33,6 +34,7 @@ export class ToolManager {
   protected builtinTools: Map<string, BuiltinTool> = new Map();
   protected readonly userTools: Map<string, ExecutableTool> = new Map();
   protected readonly mcpTools: Map<string, McpToolEntry> = new Map();
+  private loopToolsOverride: readonly ExecutableTool[] | undefined;
   /** server name → list of qualified tool names registered for that server. */
   protected readonly mcpToolsByServer: Map<string, string[]> = new Map();
   protected enabledTools: Set<string> = new Set();
@@ -119,6 +121,17 @@ export class ToolManager {
     });
     this.userTools.delete(name);
     this.enabledTools.delete(name);
+  }
+
+  inheritUserTools(parent: ToolManager): void {
+    for (const tool of parent.userTools.values()) {
+      if (!parent.enabledTools.has(tool.name)) continue;
+      this.registerUserTool({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      });
+    }
   }
 
   registerMcpServer(
@@ -301,6 +314,10 @@ export class ToolManager {
     this.mcpAccessPatterns = names.filter((name) => isMcpToolName(name));
   }
 
+  copyLoopToolsFrom(source: ToolManager): void {
+    this.loopToolsOverride = source.loopTools;
+  }
+
   private isMcpToolEnabled(name: string): boolean {
     return this.mcpAccessPatterns.some((pattern) => picomatch.isMatch(name, pattern));
   }
@@ -373,6 +390,19 @@ export class ToolManager {
           new b.ReadMediaFileTool(kaos, workspace, modelCapabilities, videoUploader),
         new b.EnterPlanModeTool(this.agent),
         new b.ExitPlanModeTool(this.agent),
+        // Goal tools are main-agent-only and gated by the goal-command flag.
+        flags.enabled('goal-command') &&
+          this.agent.type === 'main' &&
+          new b.CreateGoalTool(this.agent),
+        flags.enabled('goal-command') &&
+          this.agent.type === 'main' &&
+          new b.GetGoalTool(this.agent),
+        flags.enabled('goal-command') &&
+          this.agent.type === 'main' &&
+          new b.SetGoalBudgetTool(this.agent),
+        flags.enabled('goal-command') &&
+          this.agent.type === 'main' &&
+          new b.UpdateGoalTool(this.agent),
         this.agent.rpc?.requestQuestion && new b.AskUserQuestionTool(this.agent),
         new b.TodoListTool(this.toolStore),
         new b.TaskListTool(background),
@@ -413,9 +443,16 @@ export class ToolManager {
   }
 
   get loopTools(): readonly ExecutableTool[] {
+    if (this.loopToolsOverride !== undefined) return this.loopToolsOverride;
     const mcpNames = [...this.mcpTools.keys()].filter((name) => this.isMcpToolEnabled(name));
+    // Mutation goal tools are only offered to the model while a goal exists.
+    const hideGoalMutationTools = (this.agent.goals?.getGoal().goal ?? null) === null;
     return uniq([...this.enabledTools, ...mcpNames])
       .toSorted((a, b) => a.localeCompare(b))
+      .filter(
+        (name) =>
+          !(hideGoalMutationTools && (name === 'SetGoalBudget' || name === 'UpdateGoal')),
+      )
       .map(
         (name) =>
           this.userTools.get(name) ??

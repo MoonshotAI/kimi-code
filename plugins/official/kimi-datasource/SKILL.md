@@ -1,8 +1,8 @@
 ---
 name: kimi-datasource
 description: |
-  通用数据源助手。当用户要查股票/财报/技术指标/全球宏观经济/中国企业工商/学术论文这类外部数据时，使用这个 skill。
-  本 plugin 通过 MCP server `plugin-kimi-datasource-data` 提供工具；按 `mcp__plugin-kimi-datasource-data__get_data_source_desc` → `mcp__plugin-kimi-datasource-data__call_data_source_tool` 的流程调用。
+  Universal data-source assistant. Use this skill when the user wants external structured data such as stocks, financial reports, technical indicators, A-share/HK/US markets, global macroeconomics, Chinese enterprise registry information, arXiv papers, or Google Scholar results.
+  This plugin exposes tools via MCP server `plugin-kimi-datasource-data`; call them in the flow `mcp__plugin-kimi-datasource-data__get_data_source_desc` → `mcp__plugin-kimi-datasource-data__call_data_source_tool`.
 ---
 
 # kimi-datasource — 通用数据源助手
@@ -45,7 +45,7 @@ description: |
      - 每个 API 的描述 / 必填参数 / 可选参数 / 默认值 / 取值范围
 4. 选最匹配的 API，按文档拼 params
 5. 执行 call_data_source_tool
-6. 读返回结果给用户
+6. 读返回结果，用用户提问时使用的语言回答
 ```
 
 ### 例 1：用户问"茅台最近一年走势"
@@ -128,6 +128,7 @@ A 股 `.SH/.SZ/.BJ`，港股 `.HK`，美股 `.US` 等。用户通常只说中文
 
 ## 6. 注意事项
 
+- **回答用户时，使用用户提问时使用的语言**。如果用户用中文问，就用中文答；如果用户用英文问，就用英文答；用其他语言问，就用其他语言答。
 - **不要凭记忆猜股票代码 / 企业全称**。错代码会让接口静默返回错数据，用户察觉不到
 - **不要在没读 desc 的情况下硬传 `api_name`**。后端会报 `API_NOT_FOUND`。除非这次会话里你已经读过该数据源的 desc 并记得参数
 - **不要给投资建议**。给完数据加一句"AI 生成，不构成投资建议"即可

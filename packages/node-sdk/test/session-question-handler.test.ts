@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { Session, type QuestionHandler, type QuestionRequest, type QuestionResult } from '#/index';
-import type { SDKRpcClient } from '#/rpc';
+import type { SDKRpcClientBase } from '#/rpc';
 
 describe('Session question handler', () => {
   it('registers a question handler and returns handler results', async () => {
@@ -116,8 +116,8 @@ class FakeSDKRpcClient {
   private readonly questionHandlers = new Map<string, QuestionHandler>();
   readonly closeSession = vi.fn(async (_input: { readonly sessionId: string }) => {});
 
-  asRpc(): SDKRpcClient {
-    return this as unknown as SDKRpcClient;
+  asRpc(): SDKRpcClientBase {
+    return this as unknown as SDKRpcClientBase;
   }
 
   setQuestionHandler(sessionId: string, handler: QuestionHandler | undefined): void {

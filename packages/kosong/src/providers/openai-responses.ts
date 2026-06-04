@@ -29,6 +29,11 @@ import {
   requireProviderApiKey,
   resolveAuthBackedClient,
 } from './request-auth';
+import {
+  normalizeToolCallIdsForProvider,
+  sanitizeOpenAIResponsesCallId,
+  type ToolCallIdPolicy,
+} from './tool-call-id';
 
 /**
  * Normalize the Responses API status / incomplete_details into the unified
@@ -68,6 +73,10 @@ function normalizeResponsesFinishReason(
 }
 
 type RawObject = Record<string, unknown>;
+const OPENAI_RESPONSES_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
+  normalize: (id) => sanitizeOpenAIResponsesCallId(id, 64),
+  maxLength: 64,
+};
 
 type ResponseOutputItemView =
   | {
@@ -904,7 +913,11 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
       input.push(sysItem);
     }
 
-    for (const msg of history) {
+    const normalizedHistory = normalizeToolCallIdsForProvider(
+      history,
+      OPENAI_RESPONSES_TOOL_CALL_ID_POLICY,
+    );
+    for (const msg of normalizedHistory) {
       input.push(...convertMessage(msg, this._model, this._toolMessageConversion));
     }
 

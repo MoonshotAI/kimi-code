@@ -245,6 +245,48 @@ describe('OpenAILegacyChatProvider', () => {
       ]);
     });
 
+    it('normalizes invalid historical tool call ids and matching tool results', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Run bash' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'Bash:7',
+              name: 'Bash',
+              arguments: '{"command":"pwd"}',
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: '/tmp' }],
+          toolCallId: 'Bash:7',
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['messages']).toEqual([
+        { role: 'user', content: 'Run bash' },
+        {
+          role: 'assistant',
+          tool_calls: [
+            {
+              type: 'function',
+              id: 'Bash_7',
+              function: { name: 'Bash', arguments: '{"command":"pwd"}' },
+            },
+          ],
+        },
+        { role: 'tool', content: '/tmp', tool_call_id: 'Bash_7' },
+      ]);
+    });
+
     it('tool call with image result flattens to text to satisfy API constraints', async () => {
       // OpenAI Chat Completions `tool` messages only accept text content.
       // Even when toolMessageConversion is unset, a tool result containing
@@ -435,6 +477,33 @@ describe('OpenAILegacyChatProvider', () => {
 
       expect(provider).not.toBe(original);
       expect(body['max_tokens']).toBe(1024);
+    });
+
+    it.each(['gpt-5', 'gpt-5-codex', 'o3'])(
+      'withMaxCompletionTokens sets max_completion_tokens for %s',
+      async (model) => {
+        const provider = createProvider({ model }).withMaxCompletionTokens(1024);
+        const history: Message[] = [
+          { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+        ];
+        const body = await captureRequestBody(provider, '', [], history);
+
+        expect(body['max_completion_tokens']).toBe(1024);
+        expect(body['max_tokens']).toBeUndefined();
+      },
+    );
+
+    it('keeps max_tokens for OpenAI-compatible non-OpenAI reasoning models', async () => {
+      const provider = createProvider({ model: 'deepseek-reasoner' }).withMaxCompletionTokens(
+        1024,
+      );
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['max_tokens']).toBe(1024);
+      expect(body['max_completion_tokens']).toBeUndefined();
     });
   });
 

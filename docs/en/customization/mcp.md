@@ -1,25 +1,26 @@
 # Model Context Protocol
 
-[Model Context Protocol (MCP)](https://modelcontextprotocol.io/) is an open protocol that lets models safely call tools exposed by external processes or services. Kimi Code CLI acts as an MCP client to integrate these external tools, exposing them to the agent alongside built-in tools (`Read`, `Bash`, `Grep`, etc.).
+[Model Context Protocol (MCP)](https://modelcontextprotocol.io/) is an open protocol that lets models safely call tools exposed by external processes or services — for example, reading GitHub issues, querying databases, or operating the local file system. Kimi Code CLI acts as an MCP client to connect these external tools and exposes them to the Agent alongside built-in tools (`Read`, `Bash`, `Grep`, etc.) with no behavioral difference.
 
-## Integration scope
+## Connection Methods
 
-Kimi Code CLI connects to MCP servers via stdio (local subprocess) or HTTP. Once connected, MCP tools behave the same as built-in tools: they are available to the agent, subject to permission rules, and go through the approval flow.
+Kimi Code CLI supports two MCP server connection methods:
 
-## Configuration and login
+- **stdio**: The CLI starts the local MCP server as a child process and communicates via standard input/output. Suitable for local command-line tools.
+- **HTTP**: The CLI connects to an already-running HTTP endpoint. Suitable for remote services or processes that need to run persistently.
 
-MCP server configurations live in `mcp.json` in two layers:
+## Configuration
 
-- User-level: `~/.kimi-code/mcp.json` (or `$KIMI_CODE_HOME/mcp.json`), shared across projects
-- Project-level: `.kimi-code/mcp.json` in the current workspace
+MCP server configuration is written in `mcp.json`, at two levels:
 
-Project entries override user-level entries with the same name.
+- **User level**: `~/.kimi-code/mcp.json` (or `$KIMI_CODE_HOME/mcp.json`), shared across projects
+- **Project level**: `.kimi-code/mcp.json` in the working directory, effective only for the current repository
 
-The easiest entry point is running `/mcp-config` in the TUI, which guides you through adding, editing, or removing servers. To check connection status, run `/mcp`.
+Entries with the same name: the project-level entry takes precedence and overrides the user-level entry.
 
-Plugins can also declare MCP servers in `kimi.plugin.json` or `.kimi-plugin/plugin.json`. Plugin-declared servers are enabled by default but only start in new sessions; disable or re-enable them from `/plugins` or with `/plugins mcp disable|enable <plugin-id> <server>`, then start a new session. See [Plugins](./plugins.md) for details.
+Run `/mcp-config` in the TUI to interactively add, edit, or delete servers without manually editing the JSON file. Run `/mcp` to view the connection status of all current servers.
 
-The top-level shape of `mcp.json` is:
+Structure of `mcp.json`:
 
 ```json
 {
@@ -35,32 +36,36 @@ The top-level shape of `mcp.json` is:
 }
 ```
 
-Entries with `command` are stdio servers; entries with `url` are HTTP servers, so you usually do not need to write a `transport` field. HTTP servers can provide static credentials through `headers` or `bearerTokenEnvVar`. When OAuth is required, run `/mcp-config login <server-name>` to complete browser authorization.
+Entries with a `command` field are stdio servers; entries with a `url` field are HTTP servers. The `transport` field generally does not need to be written manually.
 
 Optional fields:
 
 | Field | Type | Applies to | Description |
 | --- | --- | --- | --- |
-| `env` | `Record<string, string>` | stdio | Environment variables injected into the subprocess |
-| `cwd` | `string` | stdio | Working directory for the subprocess |
-| `headers` | `Record<string, string>` | HTTP | Static headers appended to every request |
-| `enabled` | `boolean` | both | Set to `false` to disable the server without removing the entry |
-| `startupTimeoutMs` | `number` | both | Connection timeout in milliseconds, default `30000` |
-| `toolTimeoutMs` | `number` | both | Per-tool-call timeout in milliseconds |
-| `enabledTools` | `string[]` | both | Allowlist: only expose the tools in this list |
-| `disabledTools` | `string[]` | both | Blocklist: exclude the tools in this list |
+| `env` | `Record<string, string>` | stdio | Environment variables injected into the child process |
+| `cwd` | `string` | stdio | Working directory for the child process |
+| `headers` | `Record<string, string>` | HTTP | Static request headers appended to every request |
+| `enabled` | `boolean` | Both | Set to `false` to disable this server |
+| `startupTimeoutMs` | `number` | Both | Connection timeout; default `30000` milliseconds |
+| `toolTimeoutMs` | `number` | Both | Timeout for a single tool call |
+| `enabledTools` | `string[]` | Both | Tool allowlist |
+| `disabledTools` | `string[]` | Both | Tool blocklist |
+
+HTTP servers support providing static credentials via `headers` or `bearerTokenEnvVar`. When OAuth is needed, run `/mcp-config login <server-name>` to complete browser-based authorization.
+
+Plugins can also declare MCP servers in their manifest. Servers declared by a plugin are enabled by default and can be disabled or re-enabled in `/plugins`, then a new session must be started. See [Plugins](./plugins.md) for details.
 
 ::: warning Note
-Stdio entries in a project-level `.kimi-code/mcp.json` execute local commands when the session starts. Only enable project-level MCP servers in repositories you trust.
+stdio entries in a project-level `.kimi-code/mcp.json` execute local commands when a session starts. Only enable these in repositories you trust.
 :::
 
-## Tool naming and permissions
+## Tool Naming and Permissions
 
-MCP tools are exposed using the naming convention `mcp__<server>__<tool>`. Permission matching supports `*` and `**` wildcards in tool names, so `mcp__github__*` covers every tool from the `github` server. MCP tool arguments are not part of permission matching; allow or deny the exact MCP tool name, or use a tool-name wildcard.
+MCP tools are named in the format `mcp__<server>__<tool>`, for example `mcp__github__create_issue`. Permission rules support `*` and `**` wildcards, for example `mcp__github__*` matches all tools under that server. MCP tool parameters are not included in permission matching.
 
-Calls that do not match any rule trigger an approval request. Choosing "Approve for this session" in the approval prompt auto-approves subsequent matching calls.
+Calls that do not match any permission rule trigger an approval request. Selecting "Approve for this session" in the approval dialog automatically allows subsequent calls of the same kind within the current session.
 
-You can also pre-load permanent rules in the `[[permission.rules]]` array of tables in `config.toml`:
+You can also pre-configure permanent rules in `[[permission.rules]]` in `config.toml`:
 
 ```toml
 [[permission.rules]]
@@ -72,14 +77,21 @@ decision = "deny"
 pattern = "mcp__filesystem__write_file"
 ```
 
-The full syntax of the `pattern` field and the accepted values of other fields such as `decision`, `scope`, and `reason` are documented in [Config files](../configuration/config-files.md#permission).
+For the full permission rule syntax, see [Configuration files](../configuration/config-files.md#permission).
 
 ## Security
 
-- Only integrate MCP servers from trusted sources
-- Check that the tool name and arguments are reasonable in approval requests
-- Keep manual approval for high-risk tools, and avoid broad `mcp__*` wildcard allowlisting
+When connecting to external MCP servers, be aware of:
+
+- Only connect to servers from trusted sources
+- Verify that tool names and parameters look reasonable in approval requests
+- Keep manual approval for high-risk tools (file writes, command execution, etc.); avoid using `mcp__*` wildcards to allow all tools at once
 
 ::: warning Note
-In YOLO mode, MCP tool calls are auto-approved like any other tool. Only use this mode when you fully trust the integrated MCP servers.
+In YOLO mode, MCP tool calls are automatically approved. Only use this mode when you fully trust the MCP servers you have connected.
 :::
+
+## Next steps
+
+- [Plugins](./plugins.md) — Declare MCP servers in a plugin manifest to package and distribute them together
+- [Configuration files](../configuration/config-files.md#permission) — Full field reference for permission rules

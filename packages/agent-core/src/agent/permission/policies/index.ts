@@ -23,7 +23,7 @@ import {
 import { YoloModeApprovePermissionPolicy } from './yolo-mode-approve';
 
 /** Permission policies run in order; the first non-undefined result wins. */
-export function createPermissionDecisionPolicies(agent: Agent): readonly PermissionPolicy[] {
+export function createPermissionDecisionPolicies(agent: Agent): PermissionPolicy[] {
   return [
     // PreToolUse hook returned a block → deny.
     new PreToolCallHookPermissionPolicy(agent),

@@ -40,7 +40,9 @@ function phaseFromStatus(status: BackgroundTaskStatus): BackgroundAgentStatusPha
 }
 
 function subjectFor(info: BackgroundTaskInfo): string {
-  return info.kind === 'agent' ? 'agent task' : 'bash task';
+  if (info.kind === 'agent') return 'agent task';
+  if (info.kind === 'question') return 'question task';
+  return 'bash task';
 }
 
 function headlineFor(info: BackgroundTaskInfo): string {

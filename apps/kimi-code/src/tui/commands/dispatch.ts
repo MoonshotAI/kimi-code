@@ -15,12 +15,14 @@ import {
 } from './resolve';
 import type { BuiltinSlashCommandName } from './registry';
 import type { AuthFlowController } from '../controllers/auth-flow';
+import type { BtwPanelController } from '../controllers/btw-panel';
 import type { StreamingUIController } from '../controllers/streaming-ui';
 import type { TasksBrowserController } from '../controllers/tasks-browser';
 import type { AppState, LoginProgressSpinnerHandle, QueuedMessage } from '../types';
 import type { TUIState } from '../tui-state';
 
 import { handleLoginCommand, handleLogoutCommand } from './auth';
+import { handleBtwCommand } from './btw';
 import { tryHandleDanceCommand } from '../easter-eggs/dance';
 import {
   handleAutoCommand,
@@ -34,6 +36,7 @@ import {
   showPermissionPicker,
   showSettingsSelector,
 } from './config';
+import { handleGoalCommand } from './goal';
 import { handleProviderCommand } from './provider';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 import { handlePluginsCommand } from './plugins';
@@ -54,6 +57,7 @@ export {
   handleLoginCommand,
   handleLogoutCommand,
 } from './auth';
+export { handleBtwCommand } from './btw';
 export {
   handleAutoCommand,
   handleCompactCommand,
@@ -73,6 +77,7 @@ export {
   showUsage,
 } from './info';
 export { handlePluginsCommand } from './plugins';
+export { handleGoalCommand } from './goal';
 export {
   handleExportDebugZipCommand,
   handleExportMdCommand,
@@ -101,6 +106,7 @@ export interface SlashCommandHost {
   track(event: string, props?: Record<string, unknown>): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
+  restoreInputText(text: string): void;
 
   // Session
   requireSession(): Session;
@@ -129,6 +135,7 @@ export interface SlashCommandHost {
 
   // Controller refs
   readonly streamingUI: StreamingUIController;
+  readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
   readonly authFlow: AuthFlowController;
 }
@@ -255,6 +262,9 @@ async function handleBuiltInSlashCommand(
     case 'feedback':
       await handleFeedbackCommand(host);
       return;
+    case 'btw':
+      await handleBtwCommand(host, args);
+      return;
     case 'title':
       await handleTitleCommand(host, args);
       return;
@@ -269,6 +279,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'compact':
       await handleCompactCommand(host, args);
+      return;
+    case 'goal':
+      await handleGoalCommand(host, args);
       return;
     case 'init':
       await handleInitCommand(host);
