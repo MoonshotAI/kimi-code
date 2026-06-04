@@ -119,7 +119,7 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: ['experimental'],
     description: 'Manage experimental features',
     priority: 60,
-    availability: 'always',
+    availability: 'idle-only',
   },
   {
     name: 'reload',

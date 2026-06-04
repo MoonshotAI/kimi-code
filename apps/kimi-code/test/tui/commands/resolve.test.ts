@@ -84,6 +84,11 @@ describe('resolveSlashCommandInput', () => {
       commandName: 'reload',
       reason: 'streaming',
     });
+    expect(resolve('/experiments', { isStreaming: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'experiments',
+      reason: 'streaming',
+    });
   });
 
   it('blocks model and session pickers while compacting', () => {
@@ -100,6 +105,11 @@ describe('resolveSlashCommandInput', () => {
     expect(resolve('/reload', { isCompacting: true })).toEqual({
       kind: 'blocked',
       commandName: 'reload',
+      reason: 'compacting',
+    });
+    expect(resolve('/experiments', { isCompacting: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'experiments',
       reason: 'compacting',
     });
   });
@@ -128,11 +138,6 @@ describe('resolveSlashCommandInput', () => {
     expect(resolve('/reload-tui', { isCompacting: true })).toMatchObject({
       kind: 'builtin',
       name: 'reload-tui',
-      args: '',
-    });
-    expect(resolve('/experiments', { isStreaming: true })).toMatchObject({
-      kind: 'builtin',
-      name: 'experiments',
       args: '',
     });
     expect(resolve('/btw side question', { isStreaming: true })).toMatchObject({
