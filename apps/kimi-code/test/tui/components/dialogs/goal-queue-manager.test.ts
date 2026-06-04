@@ -160,6 +160,20 @@ describe('GoalQueueEditDialogComponent', () => {
     });
   });
 
+  it('keeps accepting input after save returns control to the mounted dialog', () => {
+    const onDone = vi.fn();
+    const dialog = new GoalQueueEditDialogComponent({
+      goal: goal('g1', 'Ship queued goal'),
+      colors: darkColors,
+      onDone,
+    });
+
+    dialog.handleInput('\r');
+    dialog.handleInput(ESC);
+
+    expect(onDone).toHaveBeenLastCalledWith({ kind: 'cancel', goalId: 'g1' });
+  });
+
   it('shows an empty objective hint instead of submitting', () => {
     const onDone = vi.fn();
     const dialog = new GoalQueueEditDialogComponent({
