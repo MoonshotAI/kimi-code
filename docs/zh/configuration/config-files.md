@@ -52,6 +52,11 @@ max_running_tasks = 4
 keep_alive_on_exit = false
 agent_task_timeout_s = 900
 
+[experimental]
+goal_command = false
+micro_compaction = false
+background_ask = false
+
 [[permission.rules]]
 decision = "allow"
 pattern = "Read"
@@ -85,11 +90,12 @@ timeout = 5
 | `thinking` | `table` | — | Thinking 模式默认参数 → [`thinking`](#thinking) |
 | `loop_control` | `table` | — | Agent 循环控制参数 → [`loop_control`](#loop_control) |
 | `background` | `table` | — | 后台任务运行参数 → [`background`](#background) |
+| `experimental` | `table` | — | 持久化实验功能开关 → [`experimental`](#experimental) |
 | `services` | `table` | — | 内置外部服务配置 → [`services`](#services) |
 | `permission` | `table` | — | 初始权限规则 → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | 生命周期 hook，详见 [Hooks](../customization/hooks.md) |
 
-以下各节对 `providers`、`models`、`thinking`、`loop_control`、`background`、`services`、`permission` 七个嵌套表逐一展开。
+以下各节对 `providers`、`models`、`thinking`、`loop_control`、`background`、`experimental`、`services`、`permission` 等嵌套表逐一展开。
 
 ## `providers`
 
@@ -170,6 +176,18 @@ max_context_size = 1047576
 | `agent_task_timeout_s` | `integer` | — | 后台 Agent 任务的最长运行时间（秒） |
 
 `keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，优先级高于配置文件。
+
+## `experimental`
+
+`experimental` 存放尚未默认公开的功能开关。可以直接编辑这个表，也可以在 TUI 中运行 `/experiments`。TUI 面板会先暂存选择，确认后写入 `config.toml` 并重载当前会话。每个 TOML key 就是实验 flag ID，例如 `goal_command`。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `goal_command` | `boolean` | `false` | 启用 `/goal` 和 goal 管理工具 |
+| `micro_compaction` | `boolean` | `false` | 清理较旧的大型工具结果内容，同时保留最近对话 |
+| `background_ask` | `boolean` | `false` | 允许 `AskUserQuestion` 在 Agent 可以继续工作时启动后台提问任务 |
+
+环境变量优先级高于这个表。`KIMI_CODE_EXPERIMENTAL_<NAME>` 可以覆盖单个功能，`KIMI_CODE_EXPERIMENTAL_FLAG=1` 会在当前进程启用所有实验功能。某个功能被环境变量控制时，`/experiments` 会显示为 locked。
 
 ## `services`
 

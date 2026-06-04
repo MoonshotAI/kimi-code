@@ -11,6 +11,7 @@ import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Agent } from '../../src/agent';
+import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
 import { SkillRegistry } from '../../src/skill';
 import { TaskListInputSchema } from '../../src/tools/background/task-list';
@@ -226,6 +227,7 @@ describe('current builtin file and shell tools', () => {
 describe('current builtin collaboration tools', () => {
   it('AskUserQuestion exposes parameters and asks through rpc in yolo mode', async () => {
     const tool = new AskUserQuestionTool({
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS),
       permission: { mode: 'yolo' },
       rpc: {
         requestQuestion: vi.fn(async () => ({ 'Which path?': 'A' })),

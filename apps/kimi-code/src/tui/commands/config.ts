@@ -1,6 +1,15 @@
-import type { PermissionMode, Session } from '@moonshot-ai/kimi-code-sdk';
+import type {
+  ExperimentalFeatureState,
+  FlagId,
+  PermissionMode,
+  Session,
+} from '@moonshot-ai/kimi-code-sdk';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
+import {
+  ExperimentsSelectorComponent,
+  type ExperimentalFeatureDraftChange,
+} from '../components/dialogs/experiments-selector';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
@@ -12,6 +21,7 @@ import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { isTheme } from '../theme/index';
 import { formatErrorMessage } from '../utils/event-payload';
 import { showUsage } from './info';
+import { setExperimentalFeatures } from './experimental-flags';
 import type { SlashCommandHost } from './dispatch';
 
 // ---------------------------------------------------------------------------
@@ -421,6 +431,73 @@ export function showUpdatePreferencePicker(host: SlashCommandHost): void {
   );
 }
 
+export async function showExperimentsPanel(host: SlashCommandHost): Promise<void> {
+  let features: readonly ExperimentalFeatureState[];
+  try {
+    features = await host.harness.getExperimentalFeatures();
+  } catch (error) {
+    host.showError(`Failed to load experimental features: ${formatErrorMessage(error)}`);
+    return;
+  }
+  mountExperimentsPanel(host, features);
+}
+
+export async function applyExperimentalFeatureChanges(
+  host: SlashCommandHost,
+  changes: readonly ExperimentalFeatureDraftChange[],
+): Promise<void> {
+  if (changes.length === 0) {
+    host.showStatus(
+      'No experimental feature changes to apply.',
+      host.state.theme.colors.textMuted,
+    );
+    return;
+  }
+
+  const experimental: Partial<Record<FlagId, boolean>> = {};
+  for (const change of changes) {
+    experimental[change.id] = change.enabled;
+  }
+
+  try {
+    await host.harness.setConfig({ experimental });
+    const features = await host.harness.getExperimentalFeatures();
+    setExperimentalFeatures(features);
+    host.refreshSlashCommandAutocomplete();
+    host.restoreEditor();
+    if (host.session !== undefined) {
+      await host.session.reloadSession();
+      await host.reloadCurrentSessionView(
+        host.session,
+        'Experimental features updated. Session reloaded.',
+      );
+    } else {
+      host.showStatus('Experimental features updated.', host.state.theme.colors.success);
+    }
+    host.track('experimental_features_apply', { changed: changes.length });
+  } catch (error) {
+    host.showError(`Failed to update experimental features: ${formatErrorMessage(error)}`);
+  }
+}
+
+function mountExperimentsPanel(
+  host: SlashCommandHost,
+  features: readonly ExperimentalFeatureState[],
+): void {
+  host.mountEditorReplacement(
+    new ExperimentsSelectorComponent({
+      features,
+      colors: host.state.theme.colors,
+      onApply: (changes) => {
+        void applyExperimentalFeatureChanges(host, changes);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
 type UpdatePreferenceHost = {
   readonly state: {
     readonly appState: Pick<
@@ -503,6 +580,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'permission': showPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
     case 'editor': showEditorPicker(host); return;
+    case 'experiments': void showExperimentsPanel(host); return;
     case 'upgrade': showUpdatePreferencePicker(host); return;
     case 'usage': void showUsage(host); return;
   }

@@ -1,10 +1,11 @@
 import type { FlagDefinitionInput } from './types';
 
 /**
- * Experimental feature flags. Empty by default — there are no experimental features yet.
+ * Experimental feature flags.
  *
- * To add one, append an entry and gate the feature with `flags.enabled('my-feature')`:
- *   { id: 'my-feature', env: 'KIMI_CODE_EXPERIMENTAL_MY_FEATURE', default: false, surface: 'both' }
+ * To add one, append an entry and gate runtime behavior through the scoped
+ * resolver available on `KimiCore`, `Session`, or `Agent`:
+ *   { id: 'my_feature', title: 'My feature', description: '...', env: 'KIMI_CODE_EXPERIMENTAL_MY_FEATURE', default: false, surface: 'both' }
  *
  * Keep the `as const satisfies` — it derives the literal `FlagId` union that gives `enabled()`
  * autocomplete and typo-checking. `env` must start with 'KIMI_CODE_EXPERIMENTAL_', be unique, and
@@ -12,19 +13,25 @@ import type { FlagDefinitionInput } from './types';
  */
 export const FLAG_DEFINITIONS = [
   {
-    id: 'goal-command',
+    id: 'goal_command',
+    title: 'Goal command',
+    description: 'Enable /goal and goal-management tools for longer autonomous tasks.',
     env: 'KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND',
     default: false,
     surface: 'both',
   },
   {
-    id: 'micro-compaction',
+    id: 'micro_compaction',
+    title: 'Micro compaction',
+    description: 'Trim older large tool results from context while keeping recent conversation intact.',
     env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
     default: false,
     surface: 'core',
   },
   {
-    id: 'background-ask',
+    id: 'background_ask',
+    title: 'Background questions',
+    description: 'Allow AskUserQuestion to return a background task when the agent can continue working.',
     env: 'KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK',
     default: false,
     surface: 'core',
