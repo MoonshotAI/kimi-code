@@ -1183,7 +1183,7 @@ export class KimiTUI {
     this.harness.setTelemetryContext({ sessionId: session.id });
     this.registerSessionHandlers(session);
     await this.syncRuntimeState(session);
-    this.refreshSessionTitle();
+    this.updateTerminalTitle();
     try {
       await this.refreshSkillCommands(session);
     } catch {
