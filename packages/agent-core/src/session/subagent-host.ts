@@ -3,6 +3,7 @@ import type { TokenUsage } from '@moonshot-ai/kosong';
 import type { Agent } from '../agent';
 import type { PromptOrigin } from '../agent/context';
 import type { LoopTurnStopReason } from '../loop';
+import { isAbortError } from '../loop/errors';
 import {
   DEFAULT_AGENT_PROFILES,
   prepareSystemPromptContext,
@@ -11,6 +12,7 @@ import {
 import type { AgentEvent } from '../rpc';
 import {
   createDeadlineAbortSignal,
+  isUserCancellation,
   linkAbortSignal,
   userCancellationReason,
 } from '../utils/abort';
@@ -18,8 +20,9 @@ import { collectGitContext } from './git-context';
 import type { Session } from './index';
 import {
   SubagentLaunchQueue,
-  formatQueuedSubagentError,
+  formatTimeoutMs,
   isRateLimit429Error,
+  totalTimeoutMessage,
   type QueuedSubagentAttemptOutcome,
   type QueuedSubagentRunOptions,
   type QueuedSubagentRunResult,
@@ -46,13 +49,13 @@ const SUBAGENT_MAX_TOKENS_ERROR =
 
 type RunSubagentOptions = {
   readonly parentToolCallId: string;
-  readonly parentToolCallUuid?: string | undefined;
+  readonly parentToolCallUuid?: string;
   readonly prompt: string;
   readonly description: string;
   readonly runInBackground: boolean;
-  readonly origin?: PromptOrigin | undefined;
+  readonly origin?: PromptOrigin;
   readonly signal: AbortSignal;
-  readonly onFirstOutput?: (() => void) | undefined;
+  readonly onFirstOutput?: () => void;
 };
 
 type SpawnSubagentOptions = RunSubagentOptions & {
@@ -88,16 +91,7 @@ export class SessionSubagentHost {
     this.launchQueue = new SubagentLaunchQueue(this);
   }
 
-  async spawn(profileName: string, options: RunSubagentOptions): Promise<SubagentHandle>;
-  async spawn(options: SpawnSubagentOptions): Promise<SubagentHandle>;
-  async spawn(
-    profileNameOrOptions: string | SpawnSubagentOptions,
-    legacyOptions?: RunSubagentOptions,
-  ): Promise<SubagentHandle> {
-    const options =
-      typeof profileNameOrOptions === 'string'
-        ? { ...legacyOptions!, profileName: profileNameOrOptions }
-        : profileNameOrOptions;
+  async spawn(options: SpawnSubagentOptions): Promise<SubagentHandle> {
     options.signal.throwIfAborted();
     const parent = this.requireParentAgent();
     const profile = this.resolveProfile(parent, options.profileName);
@@ -247,7 +241,6 @@ export class SessionSubagentHost {
         result: {
           task,
           agentId: handle.agentId,
-          profileName: handle.profileName,
           status: 'completed',
           result: completion.result,
           usage: completion.usage,
@@ -260,19 +253,25 @@ export class SessionSubagentHost {
       if (handle === undefined) {
         throw error;
       }
+      let message: string;
+      if (subagentDeadline?.timedOut() === true && options.timeoutMs !== undefined) {
+        message = `Subagent timed out after ${formatTimeoutMs(options.timeoutMs)}.`;
+      } else if (totalTimedOut() && options.totalTimeoutMs !== undefined) {
+        message = totalTimeoutMessage(options.totalTimeoutMs);
+      } else if (isUserCancellation(runSignal.reason)) {
+        message = 'The user manually interrupted this subagent batch.';
+      } else if (isAbortError(error)) {
+        message = 'The subagent was stopped before it finished.';
+      } else {
+        message = error instanceof Error ? error.message : String(error);
+      }
       return {
         kind: 'result',
         result: {
           task,
           agentId: handle.agentId,
-          profileName: handle.profileName,
           status: 'failed',
-          error: formatQueuedSubagentError(error, runSignal, {
-            subagentTimedOut: () => subagentDeadline?.timedOut() === true,
-            subagentTimeoutMs: options.timeoutMs,
-            totalTimedOut,
-            totalTimeoutMs: options.totalTimeoutMs,
-          }),
+          error: message,
         },
       };
     } finally {

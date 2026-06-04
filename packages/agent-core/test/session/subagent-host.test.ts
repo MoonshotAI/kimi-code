@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
+import { createControlledPromise } from '@antfu/utils';
 import { testKaos } from '../fixtures/test-kaos';
 import type { ToolCall } from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -44,20 +45,18 @@ describe('SessionSubagentHost', () => {
   it('runQueued launches the next batch after every current batch member emits output', async () => {
     const host = new SessionSubagentHost({} as Session, 'main');
     const launches: Array<
-      ReturnType<typeof deferred<{ result: string }>> & { readonly ready: () => void }
+      ReturnType<typeof createControlledPromise<{ result: string }>> & { readonly ready: () => void }
     > = [];
     const spawn = vi.spyOn(host, 'spawn').mockImplementation((options) => {
-      const profileName = typeof options === 'string' ? options : options.profileName;
-      const completion = {
-        ...deferred<{ result: string }>(),
-        ready: typeof options === 'string' ? () => {} : options.onFirstOutput ?? (() => {}),
-      };
+      const completion = Object.assign(createControlledPromise<{ result: string }>(), {
+        ready: options.onFirstOutput ?? (() => {}),
+      });
       launches.push(completion);
       return Promise.resolve({
         agentId: `agent-${String(launches.length)}`,
-        profileName,
+        profileName: options.profileName,
         resumed: false,
-        completion: completion.promise,
+        completion,
       } satisfies SubagentHandle);
     });
 
@@ -116,30 +115,24 @@ describe('SessionSubagentHost', () => {
       const controller = new AbortController();
       const host = new SessionSubagentHost({} as Session, 'main');
       const launches: Array<
-        ReturnType<typeof deferred<{ result: string }>> & {
+        ReturnType<typeof createControlledPromise<{ result: string }>> & {
           readonly prompt: string;
           readonly ready: () => void;
         }
       > = [];
       const spawn = vi
         .spyOn(host, 'spawn')
-        .mockImplementation((options, legacyOptions?: { readonly prompt: string }) => {
-          const profileName = typeof options === 'string' ? options : options.profileName;
-          const prompt = typeof options === 'string' ? legacyOptions?.prompt : options.prompt;
-          if (prompt === undefined) {
-            throw new Error('mocked subagent prompt is required');
-          }
-          const completion = {
-            ...deferred<{ result: string }>(),
-            prompt,
-            ready: typeof options === 'string' ? () => {} : options.onFirstOutput ?? (() => {}),
-          };
+        .mockImplementation((options) => {
+          const completion = Object.assign(createControlledPromise<{ result: string }>(), {
+            prompt: options.prompt,
+            ready: options.onFirstOutput ?? (() => {}),
+          });
           launches.push(completion);
           return Promise.resolve({
             agentId: `agent-${String(launches.length)}`,
-            profileName,
+            profileName: options.profileName,
             resumed: false,
-            completion: completion.promise,
+            completion,
           } satisfies SubagentHandle);
         });
 
@@ -193,10 +186,9 @@ describe('SessionSubagentHost', () => {
   it('runQueued reports an error when every initial launch hits 429', async () => {
     const host = new SessionSubagentHost({} as Session, 'main');
     vi.spyOn(host, 'spawn').mockImplementation((options) => {
-      const profileName = typeof options === 'string' ? options : options.profileName;
       return Promise.resolve({
         agentId: 'agent-rate-limited',
-        profileName,
+        profileName: options.profileName,
         resumed: false,
         completion: Promise.resolve().then(() => {
           throw new Error(rateLimit429Message);
@@ -237,7 +229,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Implement the fix',
       description: 'Fix bug',
@@ -289,7 +282,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Implement the fix',
       description: 'Fix bug',
@@ -328,7 +322,8 @@ describe('SessionSubagentHost', () => {
     const host = new SessionSubagentHost(session, 'main');
     const onFirstOutput = vi.fn();
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Implement the fix',
       description: 'Fix bug',
@@ -366,7 +361,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('explore', {
+    const handle = await host.spawn({
+      profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Find the cause',
       description: 'Find cause',
@@ -450,7 +446,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Use the available lookup tool',
       description: 'Use lookup',
@@ -498,7 +495,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Implement the fix',
       description: 'Fix bug',
@@ -541,7 +539,8 @@ describe('SessionSubagentHost', () => {
     );
 
     await expect(
-      host.spawn('missing', {
+      host.spawn({
+        profileName: 'missing',
         parentToolCallId: 'call_agent',
         prompt: 'Find the cause',
         description: 'Find cause',
@@ -563,7 +562,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('explore', {
+    const handle = await host.spawn({
+      profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Keep working',
       description: 'Long task',
@@ -605,7 +605,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('explore', {
+    const handle = await host.spawn({
+      profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Keep working',
       description: 'Long task',
@@ -637,7 +638,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('explore', {
+    const handle = await host.spawn({
+      profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Keep working',
       description: 'Long task',
@@ -668,7 +670,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('explore', {
+    const handle = await host.spawn({
+      profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Keep working',
       description: 'Long task',
@@ -700,7 +703,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('explore', {
+    const handle = await host.spawn({
+      profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Keep working',
       description: 'Long task',
@@ -745,7 +749,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Investigate',
       description: 'Investigate',
@@ -777,7 +782,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Investigate',
       description: 'Investigate',
@@ -821,7 +827,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Investigate',
       description: 'Investigate',
@@ -848,7 +855,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('explore', {
+    const handle = await host.spawn({
+      profileName: 'explore',
       parentToolCallId: 'call_agent',
       prompt: 'Find the cause',
       description: 'Find cause',
@@ -880,7 +888,8 @@ describe('SessionSubagentHost', () => {
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
 
-    const handle = await host.spawn('coder', {
+    const handle = await host.spawn({
+      profileName: 'coder',
       parentToolCallId: 'call_agent',
       prompt: 'Implement the fix',
       description: 'Fix bug',
@@ -1393,16 +1402,6 @@ function stat(kind: 'dir' | 'file') {
     stMtime: 0,
     stCtime: 0,
   };
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((innerResolve, innerReject) => {
-    resolve = innerResolve;
-    reject = innerReject;
-  });
-  return { promise, resolve, reject };
 }
 
 async function flushPromises(count = 2): Promise<void> {

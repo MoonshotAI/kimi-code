@@ -45,6 +45,19 @@ export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<
   });
 }
 
+export function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(abortReason(signal));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      reject(abortReason(signal));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener('abort', onAbort);
+    });
+  });
+}
+
 export function linkAbortSignal(source: AbortSignal, target: AbortController): () => void {
   const onAbort = () => {
     target.abort(source.reason);
@@ -57,6 +70,10 @@ export function linkAbortSignal(source: AbortSignal, target: AbortController): (
   return () => {
     source.removeEventListener('abort', onAbort);
   };
+}
+
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : abortError();
 }
 
 export interface DeadlineAbortSignal {

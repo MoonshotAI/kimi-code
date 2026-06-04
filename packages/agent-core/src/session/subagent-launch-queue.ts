@@ -1,11 +1,10 @@
+import { createControlledPromise, sleep } from '@antfu/utils';
 import type { TokenUsage } from '@moonshot-ai/kosong';
 
 import type { PromptOrigin } from '../agent/context';
-import { isAbortError } from '../loop/errors';
 import {
-  abortError,
   createDeadlineAbortSignal,
-  isUserCancellation,
+  raceWithSignal,
 } from '../utils/abort';
 
 const SUBAGENT_LAUNCH_BATCH_SIZE = 10;
@@ -35,7 +34,6 @@ export type QueuedSubagentRunOptions = {
 export type QueuedSubagentRunResult<T = unknown> = {
   readonly task: QueuedSubagentTask<T>;
   readonly agentId?: string;
-  readonly profileName: string;
   readonly status: 'completed' | 'failed';
   readonly result?: string;
   readonly usage?: TokenUsage;
@@ -52,24 +50,14 @@ export type QueuedSubagentAttemptOutcome<T> =
       readonly result: QueuedSubagentRunResult<T>;
     };
 
-type QueuedSubagentReadinessOutcome<T> =
-  | {
-      readonly kind: 'ready';
-      readonly task: QueuedSubagentTask<T>;
-    }
-  | {
-      readonly kind: 'rate_limited';
-      readonly task: QueuedSubagentTask<T>;
-    };
-
 type QueuedSubagentAttempt<T> = {
   readonly task: QueuedSubagentTask<T>;
   readonly promise: Promise<QueuedSubagentAttemptOutcome<T>>;
-  readonly readiness: Promise<QueuedSubagentReadinessOutcome<T>>;
-  readonly rateLimit: Promise<QueuedSubagentAttempt<T>>;
-  settled: boolean;
-  ready: boolean;
-  readinessSettled: boolean;
+  readonly readiness: Promise<void>;
+  readonly state: {
+    settled: boolean;
+    ready: boolean;
+  };
 };
 
 type SubagentLaunchQueueHost = {
@@ -122,8 +110,7 @@ export class SubagentLaunchQueue {
     const taskIndexes = new Map(tasks.map((task, index) => [task, index]));
     let completedResults = 0;
     let launchedAttempts = 0;
-    let rateLimitSeen = false;
-    let lockedSlotCount: number | undefined;
+    let slotLimit: number | undefined;
 
     const resultIndex = (task: QueuedSubagentTask<T>): number => {
       const index = taskIndexes.get(task);
@@ -135,7 +122,8 @@ export class SubagentLaunchQueue {
 
     const enqueue = (task: QueuedSubagentTask<T>): void => {
       if (results[resultIndex(task)] !== undefined || queued.includes(task)) return;
-      const insertAt = queued.findIndex((queuedTask) => resultIndex(queuedTask) > resultIndex(task));
+      const index = resultIndex(task);
+      const insertAt = queued.findIndex((queuedTask) => resultIndex(queuedTask) > index);
       if (insertAt === -1) {
         queued.push(task);
       } else {
@@ -143,53 +131,33 @@ export class SubagentLaunchQueue {
       }
     };
 
-    const dequeue = (): QueuedSubagentTask<T> | undefined => {
-      return queued.shift();
-    };
-
-    const lockSlotCount = (): void => {
-      lockedSlotCount ??= Math.max(0, launchedAttempts - 2);
-    };
-
     const launch = (task: QueuedSubagentTask<T>): QueuedSubagentAttempt<T> => {
-      const readiness = deferred<QueuedSubagentReadinessOutcome<T>>();
-      let attempt!: QueuedSubagentAttempt<T>;
-      const promise = this.host.runQueuedTaskAttempt(task, options, totalTimedOut, () => {
-        readiness.resolve({ kind: 'ready', task });
-      });
-      attempt = {
-        task,
-        promise,
-        readiness: readiness.promise,
-        rateLimit: promise.then((outcome) => {
-          if (outcome.kind === 'rate_limited') return attempt;
-          return new Promise<never>(() => {});
-        }),
+      const readiness = createControlledPromise<void>();
+      const state = {
         settled: false,
         ready: false,
-        readinessSettled: false,
+      };
+      const markReady = (): void => {
+        if (state.ready) return;
+        state.ready = true;
+        readiness.resolve();
+      };
+      const promise = this.host.runQueuedTaskAttempt(task, options, totalTimedOut, markReady);
+      const attempt: QueuedSubagentAttempt<T> = {
+        task,
+        promise,
+        readiness,
+        state,
       };
       launchedAttempts += 1;
       void promise.then(
-        (outcome) => {
-          attempt.settled = true;
-          if (outcome.kind === 'rate_limited') {
-            readiness.resolve({ kind: 'rate_limited', task: outcome.task });
-          } else {
-            readiness.resolve({ kind: 'ready', task: outcome.result.task });
-          }
-        },
-        (error) => {
-          attempt.settled = true;
-          readiness.reject(error);
-        },
-      );
-      void attempt.readiness.then(
         () => {
-          attempt.readinessSettled = true;
+          state.settled = true;
+          markReady();
         },
         () => {
-          attempt.readinessSettled = true;
+          state.settled = true;
+          markReady();
         },
       );
       active.push(attempt);
@@ -201,8 +169,7 @@ export class SubagentLaunchQueue {
       if (activeIndex !== -1) active.splice(activeIndex, 1);
       const outcome = await attempt.promise;
       if (outcome.kind === 'rate_limited') {
-        rateLimitSeen = true;
-        lockSlotCount();
+        slotLimit ??= Math.max(0, launchedAttempts - 2);
         enqueue(outcome.task);
         return false;
       }
@@ -211,48 +178,42 @@ export class SubagentLaunchQueue {
       return true;
     };
 
-    const processSettledAttempts = async (): Promise<void> => {
+    const processSettledAttempts = async (): Promise<boolean> => {
       while (true) {
-        const settled = active.find((attempt) => attempt.settled);
-        if (settled === undefined) return;
-        await processAttempt(settled);
+        const settled = active.find((attempt) => attempt.state.settled);
+        if (settled === undefined) return true;
+        if (!(await processAttempt(settled))) return false;
       }
     };
 
     const waitForRampBatch = async (
       batch: readonly QueuedSubagentAttempt<T>[],
     ): Promise<boolean> => {
-      while (batch.some((attempt) => !attempt.ready)) {
-        const event = await nextRampEvent(batch, active, options.signal);
-        if (event.kind === 'rate_limited') {
-          await processAttempt(event.attempt);
-          return false;
-        }
-        if (event.outcome.kind === 'rate_limited') {
-          await processAttempt(event.attempt);
-          return false;
-        }
-        event.attempt.ready = true;
-        await processSettledAttempts();
-        if (rateLimitSeen) return false;
+      while (batch.some((attempt) => !attempt.state.ready)) {
+        const readiness = batch
+          .filter((attempt) => !attempt.state.ready)
+          .map((attempt) => attempt.readiness.then(() => undefined));
+        const settled = active.map((attempt) => attempt.promise.then(() => undefined));
+        options.signal.throwIfAborted();
+        await raceWithSignal(Promise.race([...readiness, ...settled]), options.signal);
+        if (!(await processSettledAttempts())) return false;
       }
-      return true;
+      return await processSettledAttempts();
     };
 
     const launchQueuedUpToSlotLimit = async (): Promise<void> => {
-      if (lockedSlotCount === undefined) return;
+      if (slotLimit === undefined) return;
       if (active.length === 0 && completedResults === 0) return;
-      while (queued.length > 0 && active.length < lockedSlotCount) {
-        await sleepWithSignal(SUBAGENT_QUEUE_LAUNCH_DELAY_MS, options.signal);
-        if (active.length >= lockedSlotCount) return;
-        const task = dequeue();
+      while (queued.length > 0 && active.length < slotLimit) {
+        await raceWithSignal(sleep(SUBAGENT_QUEUE_LAUNCH_DELAY_MS), options.signal);
+        if (active.length >= slotLimit) return;
+        const task = queued.shift();
         if (task !== undefined) launch(task);
       }
     };
 
     try {
-      while (pending.length > 0) {
-        if (rateLimitSeen) break;
+      while (pending.length > 0 && slotLimit === undefined) {
         const batch: Array<QueuedSubagentAttempt<T>> = [];
         const batchSize = Math.min(SUBAGENT_LAUNCH_BATCH_SIZE, pending.length);
         for (let i = 0; i < batchSize; i += 1) {
@@ -283,18 +244,25 @@ export class SubagentLaunchQueue {
             );
           }
           while (queued.length > 0) {
-            const task = dequeue();
+            const task = queued.shift();
             if (task === undefined) break;
-            results[resultIndex(task)] = failedQueuedResult(
+            results[resultIndex(task)] = {
               task,
-              'No running subagents remained to open queue slots after rate-limited launches.',
-            );
+              status: 'failed',
+              error: 'No running subagents remained to open queue slots after rate-limited launches.',
+            };
             completedResults += 1;
           }
           break;
         }
 
-        const attempt = await nextSettledAttempt(active, options.signal);
+        const settled = active.find((attempt) => attempt.state.settled);
+        const attempt =
+          settled ??
+          (await raceWithSignal(
+            Promise.race(active.map((candidate) => candidate.promise.then(() => candidate))),
+            options.signal,
+          ));
         await processAttempt(attempt);
         await launchQueuedUpToSlotLimit();
       }
@@ -304,160 +272,19 @@ export class SubagentLaunchQueue {
       for (const task of tasks) {
         const index = resultIndex(task);
         if (results[index] !== undefined) continue;
-        results[index] = failedQueuedResult(task, message);
+        results[index] = { task, status: 'failed', error: message };
       }
     }
 
     return results.map((result, index) => {
       if (result !== undefined) return result;
-      return failedQueuedResult(tasks[index]!, 'Subagent stopped before it could finish.');
+      return {
+        task: tasks[index]!,
+        status: 'failed',
+        error: 'Subagent stopped before it could finish.',
+      };
     });
   }
-}
-
-function failedQueuedResult<T>(
-  task: QueuedSubagentTask<T>,
-  error: string,
-): QueuedSubagentRunResult<T> {
-  return {
-    task,
-    profileName: task.profileName,
-    status: 'failed',
-    error,
-  };
-}
-
-type RampEvent<T> =
-  | {
-      readonly kind: 'readiness';
-      readonly attempt: QueuedSubagentAttempt<T>;
-      readonly outcome: QueuedSubagentReadinessOutcome<T>;
-    }
-  | {
-      readonly kind: 'rate_limited';
-      readonly attempt: QueuedSubagentAttempt<T>;
-    };
-
-async function nextRampEvent<T>(
-  batch: ReadonlyArray<QueuedSubagentAttempt<T>>,
-  active: ReadonlyArray<QueuedSubagentAttempt<T>>,
-  signal: AbortSignal,
-): Promise<RampEvent<T>> {
-  const ready = batch.find((attempt) => !attempt.ready && attempt.readinessSettled);
-  if (ready !== undefined) {
-    return { kind: 'readiness', attempt: ready, outcome: await ready.readiness };
-  }
-  signal.throwIfAborted();
-  const readiness = batch
-    .filter((attempt) => !attempt.ready)
-    .map((attempt) =>
-      attempt.readiness.then((outcome): RampEvent<T> => ({ kind: 'readiness', attempt, outcome })),
-    );
-  const rateLimited = active.map((attempt) =>
-    attempt.rateLimit.then((rateLimitedAttempt): RampEvent<T> => ({
-      kind: 'rate_limited',
-      attempt: rateLimitedAttempt,
-    })),
-  );
-  return await raceWithSignal([...readiness, ...rateLimited], signal);
-}
-
-async function nextSettledAttempt<T>(
-  active: ReadonlyArray<QueuedSubagentAttempt<T>>,
-  signal: AbortSignal,
-): Promise<QueuedSubagentAttempt<T>> {
-  const settled = active.find((attempt) => attempt.settled);
-  if (settled !== undefined) return settled;
-  signal.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    const cleanup = () => {
-      signal.removeEventListener('abort', onAbort);
-    };
-    const onAbort = () => {
-      cleanup();
-      reject(signal.reason instanceof Error ? signal.reason : abortError());
-    };
-    signal.addEventListener('abort', onAbort, { once: true });
-    for (const attempt of active) {
-      void attempt.promise.then(
-        () => {
-          cleanup();
-          resolve(attempt);
-        },
-        (error) => {
-          cleanup();
-          reject(error);
-        },
-      );
-    }
-  });
-}
-
-function raceWithSignal<T>(promises: Array<Promise<T>>, signal: AbortSignal): Promise<T> {
-  signal.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    const cleanup = () => {
-      signal.removeEventListener('abort', onAbort);
-    };
-    const onAbort = () => {
-      cleanup();
-      reject(signal.reason instanceof Error ? signal.reason : abortError());
-    };
-    signal.addEventListener('abort', onAbort, { once: true });
-    for (const promise of promises) {
-      void promise.then(
-        (value) => {
-          cleanup();
-          resolve(value);
-        },
-        (error) => {
-          cleanup();
-          reject(error);
-        },
-      );
-    }
-  });
-}
-
-function sleepWithSignal(ms: number, signal: AbortSignal): Promise<void> {
-  signal.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    let timeout: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
-      timeout = undefined;
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      if (timeout !== undefined) clearTimeout(timeout);
-      timeout = undefined;
-      signal.removeEventListener('abort', onAbort);
-      reject(signal.reason instanceof Error ? signal.reason : abortError());
-    };
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
-function deferred<T>(): {
-  readonly promise: Promise<T>;
-  readonly resolve: (value: T) => void;
-  readonly reject: (reason: unknown) => void;
-} {
-  let settled = false;
-  let resolve!: (value: T) => void;
-  let reject!: (reason: unknown) => void;
-  const promise = new Promise<T>((innerResolve, innerReject) => {
-    resolve = (value) => {
-      if (settled) return;
-      settled = true;
-      innerResolve(value);
-    };
-    reject = (reason) => {
-      if (settled) return;
-      settled = true;
-      innerReject(reason);
-    };
-  });
-  return { promise, resolve, reject };
 }
 
 export function totalTimeoutMessage(timeoutMs: number | undefined): string {
@@ -468,31 +295,6 @@ export function totalTimeoutMessage(timeoutMs: number | undefined): string {
 
 export function formatTimeoutMs(timeoutMs: number): string {
   return `${String(timeoutMs / 1000)}s`;
-}
-
-export function formatQueuedSubagentError(
-  error: unknown,
-  signal: AbortSignal,
-  timeouts: {
-    readonly subagentTimedOut: () => boolean;
-    readonly subagentTimeoutMs?: number;
-    readonly totalTimedOut: () => boolean;
-    readonly totalTimeoutMs?: number;
-  },
-): string {
-  if (timeouts.subagentTimedOut() && timeouts.subagentTimeoutMs !== undefined) {
-    return `Subagent timed out after ${formatTimeoutMs(timeouts.subagentTimeoutMs)}.`;
-  }
-  if (timeouts.totalTimedOut() && timeouts.totalTimeoutMs !== undefined) {
-    return totalTimeoutMessage(timeouts.totalTimeoutMs);
-  }
-  if (isUserCancellation(signal.reason)) {
-    return 'The user manually interrupted this subagent batch.';
-  }
-  if (isAbortError(error)) {
-    return 'The subagent was stopped before it finished.';
-  }
-  return errorMessage(error);
 }
 
 export function isRateLimit429Error(error: unknown): boolean {

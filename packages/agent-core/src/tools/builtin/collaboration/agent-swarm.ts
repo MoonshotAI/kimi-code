@@ -224,7 +224,7 @@ function toSwarmRunResult(
   return {
     spec: result.task.data,
     agentId: result.agentId,
-    profileName: result.profileName,
+    profileName: result.task.profileName,
     description: result.task.description,
     status: result.status,
     result: result.result,
