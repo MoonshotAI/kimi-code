@@ -110,6 +110,8 @@ export interface GenerateOptions {
   onStreamEnd?: () => void;
 }
 
+export type CompletionBudgetStrategy = 'inferred-and-explicit' | 'explicit-only';
+
 /**
  * In-memory video bytes for providers that require an uploaded file
  * reference instead of an inline data URL.
@@ -133,6 +135,12 @@ export interface ChatProvider {
   readonly name: string;
   /** Model name passed to the upstream API (e.g. `"moonshot-v1-auto"`). */
   readonly modelName: string;
+  /**
+   * Controls whether callers may derive a max-completion cap from catalog
+   * context windows. `explicit-only` providers should only receive configured
+   * hard caps because inferred context-sized caps can exceed their API limits.
+   */
+  readonly completionBudgetStrategy?: CompletionBudgetStrategy;
   /** Current thinking-effort level, or `null` if thinking is not configured. */
   readonly thinkingEffort: ThinkingEffort | null;
   /**

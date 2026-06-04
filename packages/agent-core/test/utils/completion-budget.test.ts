@@ -150,6 +150,35 @@ describe('applyCompletionBudget', () => {
     expect(withMaxCompletionTokens.mock.calls[0]?.[0]).toBe(8192);
     expect(result).not.toBe(original);
   });
+
+  it('does not infer max tokens from fallback for explicit-only providers', () => {
+    const explicitOnlyProvider = {
+      ...original,
+      completionBudgetStrategy: 'explicit-only' as const,
+    };
+    const result = applyCompletionBudget({
+      provider: explicitOnlyProvider,
+      budget: { fallback: 32000 },
+      capability: makeCapability(1048576),
+    });
+    expect(result).toBe(explicitOnlyProvider);
+    expect(withMaxCompletionTokens).not.toHaveBeenCalled();
+  });
+
+  it('still applies an explicit hard cap for explicit-only providers', () => {
+    const explicitOnlyProvider = {
+      ...original,
+      completionBudgetStrategy: 'explicit-only' as const,
+    };
+    const result = applyCompletionBudget({
+      provider: explicitOnlyProvider,
+      budget: { hardCap: 8192 },
+      capability: makeCapability(1048576),
+    });
+    expect(withMaxCompletionTokens).toHaveBeenCalledOnce();
+    expect(withMaxCompletionTokens.mock.calls[0]?.[0]).toBe(8192);
+    expect(result).not.toBe(explicitOnlyProvider);
+  });
 });
 
 describe('resolveCompletionBudget', () => {

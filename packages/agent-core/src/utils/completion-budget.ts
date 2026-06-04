@@ -78,6 +78,12 @@ export function applyCompletionBudget(args: {
 }): ChatProvider {
   if (args.budget === undefined) return args.provider;
   if (args.provider.withMaxCompletionTokens === undefined) return args.provider;
+  if (
+    args.budget.hardCap === undefined &&
+    args.provider.completionBudgetStrategy === 'explicit-only'
+  ) {
+    return args.provider;
+  }
   const cap = computeCompletionBudgetCap({
     budget: args.budget,
     capability: args.capability,

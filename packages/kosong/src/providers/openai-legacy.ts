@@ -334,6 +334,7 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 }
 export class OpenAILegacyChatProvider implements ChatProvider {
   readonly name: string = 'openai';
+  readonly completionBudgetStrategy = 'explicit-only';
 
   private _model: string;
   private _stream: boolean;
