@@ -23,6 +23,17 @@ export const APPROVE_ALWAYS_OPTION_ID = 'approve_always';
 export const REJECT_OPTION_ID = 'reject';
 
 /**
+ * Legacy option ids sent by older ACP clients (e.g. Python ACP SDK 0.8.x).
+ * Mapped to the canonical ids so that clients built against the older SDK
+ * continue to work without modification.
+ */
+const LEGACY_OPTION_ID_MAP: Record<string, string> = {
+  approve: APPROVE_ONCE_OPTION_ID,
+  approve_for_session: APPROVE_ALWAYS_OPTION_ID,
+  reject: REJECT_OPTION_ID,
+};
+
+/**
  * Phase 13.2 plan_review optionId namespace. Picked deliberately so the
  * `plan_*` prefix never collides with the canonical `approve_*` /
  * `reject` namespace nor with the question bridge's `q{n}_*` namespace.
@@ -151,7 +162,8 @@ export function permissionResponseToApprovalResponse(
   if (response.outcome.outcome === 'cancelled') {
     return { decision: 'cancelled' };
   }
-  const optionId = response.outcome.optionId;
+  const rawOptionId = response.outcome.optionId;
+  const optionId = LEGACY_OPTION_ID_MAP[rawOptionId] ?? rawOptionId;
   if (req?.display.kind === 'plan_review') {
     return mapPlanReviewOptionId(req.display, optionId);
   }
