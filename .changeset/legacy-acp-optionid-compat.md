@@ -1,4 +1,5 @@
 ---
+"@moonshot-ai/acp-adapter": patch
 "@moonshot-ai/kimi-code": patch
 ---
 
