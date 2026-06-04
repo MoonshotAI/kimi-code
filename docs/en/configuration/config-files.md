@@ -1,6 +1,6 @@
 # Configuration files
 
-Kimi Code CLI writes all long-term preferences — which model to use, which API key to fill in, how many steps an Agent can run per turn — into a single TOML (a plain-text configuration format with a clear structure) file. Change it once and it takes effect on every startup.
+Kimi Code CLI writes all long-term preferences — which model to use, which API key to fill in, how many steps an Agent can run per turn — into TOML (a plain-text configuration format with a clear structure) files. Change them once and they take effect on every startup. Agent and runtime settings live in `config.toml`; terminal-UI and client preferences (theme, editor, notifications, auto-update) live in a companion `tui.toml`.
 
 Default location: `~/.kimi-code/config.toml`, created automatically on first run.
 
@@ -226,6 +226,35 @@ pattern = "Bash"
 ::: tip
 MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project-local `.kimi-code/mcp.json`, not in `config.toml`. The interactive configuration entry point is `/mcp-config`; see [Model Context Protocol](../customization/mcp.md).
 :::
+
+## `tui.toml`
+
+Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a companion `tui.toml` in the same directory (`~/.kimi-code/tui.toml`, or `$KIMI_CODE_HOME/tui.toml` when overridden). It is created with defaults on first run, and the interactive commands `/config`, `/theme`, and `/editor` write to it for you — so you rarely need to edit it by hand. If the file is malformed, the CLI falls back to defaults and shows a notice instead of failing to start.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `theme` | `string` | `auto` | Color theme: `auto` (follow the terminal), `dark`, or `light` |
+| `[editor].command` | `string` | `""` | External editor command for composing long input; empty falls back to `$VISUAL` / `$EDITOR` |
+| `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
+| `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
+| `[upgrade].auto_install` | `boolean` | `true` | Whether new versions are installed automatically |
+
+```toml
+# ~/.kimi-code/tui.toml
+theme = "auto" # "auto" | "dark" | "light"
+
+[editor]
+command = "" # empty uses $VISUAL / $EDITOR
+
+[notifications]
+enabled = true
+notification_condition = "unfocused" # "unfocused" | "always"
+
+[upgrade]
+auto_install = true
+```
+
+Changes apply on the next start, or immediately with `/reload-tui` (which reloads only `tui.toml`); `/reload` reloads both `config.toml` and `tui.toml`.
 
 ## Next steps
 
