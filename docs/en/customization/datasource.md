@@ -1,4 +1,4 @@
-# Official Plugins
+# Kimi Datasource
 
 Kimi Datasource is the official Kimi Code data plugin. It lets you query financial market data, macroeconomic indicators, corporate registration records, and academic literature in natural language — no manual API calls or data account registration required.
 
