@@ -163,10 +163,10 @@ export function permissionResponseToApprovalResponse(
     return { decision: 'cancelled' };
   }
   const rawOptionId = response.outcome.optionId;
-  const optionId = LEGACY_OPTION_ID_MAP[rawOptionId] ?? rawOptionId;
   if (req?.display.kind === 'plan_review') {
-    return mapPlanReviewOptionId(req.display, optionId);
+    return mapPlanReviewOptionId(req.display, rawOptionId);
   }
+  const optionId = LEGACY_OPTION_ID_MAP[rawOptionId] ?? rawOptionId;
   switch (optionId) {
     case APPROVE_ONCE_OPTION_ID:
       return { decision: 'approved' };
