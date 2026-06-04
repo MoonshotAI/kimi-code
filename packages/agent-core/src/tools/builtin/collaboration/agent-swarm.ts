@@ -25,10 +25,12 @@ export const AgentSwarmToolInputSchema = z
     timeout: z
       .number()
       .int()
-      .min(30)
+      .min(60)
       .max(3600)
       .optional()
-      .describe('Timeout in seconds for each subagent.'),
+      .describe(
+        'Timeout in seconds for each subagent. Set a generous value so every child agent has enough time to complete its full assigned task.',
+      ),
     subagent_type: z
       .string()
       .trim()
@@ -67,8 +69,6 @@ interface AgentSwarmSpec {
 interface SwarmRunResult {
   readonly spec: AgentSwarmSpec;
   readonly agentId?: string;
-  readonly profileName: string;
-  readonly description: string;
   readonly status: 'completed' | 'failed';
   readonly result?: string;
   readonly error?: string;
@@ -105,7 +105,6 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
       const result = await this.runSwarm(args, specs, context.signal, context.toolCallId);
       return {
         output: result,
-        isError: swarmResultHasFailures(result) ? true : undefined,
       };
     } catch (error) {
       return {
@@ -136,7 +135,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
       signal,
       timeoutMs: args.timeout === undefined ? undefined : args.timeout * 1000,
     });
-    return renderSwarmResults(args, results.map(toSwarmRunResult));
+    return renderSwarmResults(results.map(toSwarmRunResult));
   }
 }
 
@@ -167,45 +166,31 @@ function childDescription(swarmDescription: string, index: number, profileName: 
   return `${swarmDescription} #${String(index)} (${profileName})`;
 }
 
-function renderSwarmResults(
-  args: AgentSwarmToolInput,
-  results: readonly SwarmRunResult[],
-): string {
+function renderSwarmResults(results: readonly SwarmRunResult[]): string {
   const completed = results.filter((result) => result.status === 'completed').length;
   const failed = results.length - completed;
   const lines = [
-    `agent_swarm: ${failed > 0 ? 'failed' : 'completed'}`,
-    `description: ${args.description}`,
-    `subagent_type: ${args.subagent_type ?? DEFAULT_SUBAGENT_TYPE}`,
-    `placeholder: ${PROMPT_TEMPLATE_PLACEHOLDER}`,
-    `items: ${String(results.length)}`,
-    `completed: ${String(completed)}`,
-    `failed: ${String(failed)}`,
+    '<agent_swarm_result>',
+    `<summary>${renderSwarmSummary(completed, failed)}</summary>`,
   ];
 
   for (const result of results) {
+    const agentId = result.agentId === undefined ? '' : ` agent_id="${result.agentId}"`;
+    const body = result.status === 'completed' ? (result.result ?? '') : (result.error ?? 'unknown error');
     lines.push(
-      '',
-      `[agent ${String(result.spec.index)}]`,
-      ...(result.agentId === undefined ? [] : [`agent_id: ${result.agentId}`]),
-      `item: ${JSON.stringify(result.spec.item)}`,
-      `actual_subagent_type: ${result.profileName}`,
-      `status: ${result.status}`,
-      `description: ${result.description}`,
-      '',
+      `<subagent index="${String(result.spec.index)}"${agentId} outcome="${result.status}">${body}</subagent>`,
     );
-    if (result.status === 'completed') {
-      lines.push('[summary]', result.result ?? '');
-    } else {
-      lines.push(`subagent error: ${result.error ?? 'unknown error'}`);
-    }
   }
 
+  lines.push('</agent_swarm_result>');
   return lines.join('\n');
 }
 
-function swarmResultHasFailures(result: string): boolean {
-  return result.startsWith('agent_swarm: failed\n');
+function renderSwarmSummary(completed: number, failed: number): string {
+  const parts: string[] = [];
+  if (completed > 0) parts.push(`completed: ${String(completed)}`);
+  if (failed > 0) parts.push(`failed: ${String(failed)}`);
+  return parts.join(', ');
 }
 
 function toSwarmRunResult(
@@ -214,8 +199,6 @@ function toSwarmRunResult(
   return {
     spec: result.task.data,
     agentId: result.agentId,
-    profileName: result.task.profileName,
-    description: result.task.description,
     status: result.status,
     result: result.result,
     error: result.error,

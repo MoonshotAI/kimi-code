@@ -1,10 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { AgentSwarmProgressComponent } from '#/tui/components/messages/agent-swarm-progress';
+import type { SessionEventHandler } from '#/tui/controllers/session-event-handler';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 
 interface ActivityDriver {
   state: TUIState;
+  sessionEventHandler: SessionEventHandler;
   updateActivityPane(): void;
+}
+
+function strip(text: string): string {
+  return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
 }
 
 function makeStartupInput(): KimiTUIStartupInput {
@@ -107,6 +114,67 @@ describe('updateActivityPane terminal progress', () => {
       expect(setProgress).toHaveBeenCalledTimes(2);
       expect(setProgress).toHaveBeenLastCalledWith(false);
       expect(state.activitySpinner).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('moves the moon spinner into the AgentSwarm progress row while active', () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, state, setProgress } = makeDriverWithTerminalProgress();
+      const progress = new AgentSwarmProgressComponent({
+        description: 'Review changed files',
+        colors: state.theme.colors,
+      });
+      progress.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
+      progress.markInputComplete();
+      progress.markStarted('agent-1');
+      driver.sessionEventHandler.agentSwarmProgress.set('call_swarm', progress);
+      state.livePane = { ...state.livePane, mode: 'tool' };
+
+      driver.updateActivityPane();
+
+      expect(setProgress).toHaveBeenCalledTimes(1);
+      expect(setProgress).toHaveBeenLastCalledWith(true);
+      expect(state.activitySpinner).not.toBeNull();
+      expect(state.activityContainer.children).toHaveLength(0);
+      expect(strip(progress.render(80).join('\n'))).toContain('🌑 Working...');
+
+      state.activitySpinner?.instance.stop();
+      progress.dispose();
+      driver.sessionEventHandler.agentSwarmProgress.clear();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps ended AgentSwarm progress on a placeholder instead of the moon spinner', () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, state } = makeDriverWithTerminalProgress();
+      const progress = new AgentSwarmProgressComponent({
+        description: 'Review changed files',
+        colors: state.theme.colors,
+      });
+      progress.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
+      progress.markInputComplete();
+      progress.markStarted('agent-1');
+      progress.markToolCallEnded();
+      driver.sessionEventHandler.agentSwarmProgress.set('call_swarm', progress);
+      state.livePane = { ...state.livePane, mode: 'tool' };
+
+      driver.updateActivityPane();
+
+      expect(state.activitySpinner).not.toBeNull();
+      expect(state.activityContainer.children).toHaveLength(1);
+      const output = strip(progress.render(80).join('\n'));
+      expect(output).toContain('  Working...');
+      expect(output).not.toContain('🌑 Working...');
+
+      state.activitySpinner?.instance.stop();
+      progress.dispose();
+      driver.sessionEventHandler.agentSwarmProgress.clear();
     } finally {
       vi.useRealTimers();
     }

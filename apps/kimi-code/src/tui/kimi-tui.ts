@@ -1486,24 +1486,32 @@ export class KimiTUI {
   updateActivityPane(): void {
     const effectiveMode = this.resolveActivityPaneMode();
     this.syncTerminalProgress(this.shouldShowTerminalProgress(effectiveMode));
+    const placeSpinnerInAgentSwarm = this.shouldPlaceActivitySpinnerInAgentSwarm(effectiveMode);
+    const activityModeKey = `${effectiveMode}:${placeSpinnerInAgentSwarm ? 'swarm' : 'pane'}`;
 
     if (
-      effectiveMode === this.lastActivityMode &&
+      activityModeKey === this.lastActivityMode &&
       (effectiveMode === 'waiting' || effectiveMode === 'thinking' || effectiveMode === 'tool')
     ) {
+      if (placeSpinnerInAgentSwarm) {
+        this.syncAgentSwarmActivitySpinner(this.state.activitySpinner?.instance);
+      }
       return;
     }
 
-    this.lastActivityMode = effectiveMode;
+    this.lastActivityMode = activityModeKey;
     this.state.activityContainer.clear();
 
     switch (effectiveMode) {
       case 'hidden':
         this.stopActivitySpinner();
+        this.syncAgentSwarmActivitySpinner(undefined);
         this.state.ui.requestRender();
         return;
       case 'waiting': {
         const spinner = this.ensureActivitySpinner('moon');
+        this.syncAgentSwarmActivitySpinner(placeSpinnerInAgentSwarm ? spinner : undefined);
+        if (placeSpinnerInAgentSwarm) break;
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({
             mode: 'waiting',
@@ -1514,12 +1522,14 @@ export class KimiTUI {
       }
       case 'thinking': {
         this.stopActivitySpinner();
+        this.syncAgentSwarmActivitySpinner(undefined);
         break;
       }
       case 'composing': {
         const spinner = this.ensureActivitySpinner('braille', 'working...', (s) =>
           chalk.hex(this.state.theme.colors.primary)(s),
         );
+        this.syncAgentSwarmActivitySpinner(undefined);
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({
             mode: 'composing',
@@ -1530,6 +1540,8 @@ export class KimiTUI {
       }
       case 'tool': {
         const spinner = this.ensureActivitySpinner('moon');
+        this.syncAgentSwarmActivitySpinner(placeSpinnerInAgentSwarm ? spinner : undefined);
+        if (placeSpinnerInAgentSwarm) break;
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({
             mode: 'tool',
@@ -1541,6 +1553,7 @@ export class KimiTUI {
       case 'idle':
       case 'session': {
         this.stopActivitySpinner();
+        this.syncAgentSwarmActivitySpinner(undefined);
         break;
       }
     }
@@ -1652,6 +1665,23 @@ export class KimiTUI {
       effectiveMode === 'composing' ||
       effectiveMode === 'tool'
     );
+  }
+
+  private shouldPlaceActivitySpinnerInAgentSwarm(effectiveMode: EffectiveActivityPaneMode): boolean {
+    return (
+      Array.from(this.sessionEventHandler.agentSwarmProgress.values()).some((progress) =>
+        progress.isToolCallActive()
+      ) &&
+      (effectiveMode === 'waiting' || effectiveMode === 'tool')
+    );
+  }
+
+  private syncAgentSwarmActivitySpinner(spinner: MoonLoader | undefined): void {
+    for (const progress of this.sessionEventHandler.agentSwarmProgress.values()) {
+      progress.setActivitySpinnerText(
+        spinner === undefined ? undefined : () => spinner.renderInline(),
+      );
+    }
   }
 
   private syncTerminalProgress(active: boolean): void {

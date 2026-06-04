@@ -2416,6 +2416,53 @@ command = "vim"
     expect(transcript).not.toContain('Completed');
   });
 
+  it('shows AgentSwarm as completed when only some subagents fail', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        name: 'AgentSwarm',
+        args: {
+          description: 'Review changed files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts', 'src/b.ts'],
+        },
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.result',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        output: [
+          '<agent_swarm_result>',
+          '<summary>completed: 1, failed: 1</summary>',
+          '<subagent index="1" agent_id="agent-1" outcome="completed">Imports are stable.</subagent>',
+          '<subagent index="2" agent_id="agent-2" outcome="failed">Agent timed out after 30s.</subagent>',
+          '</agent_swarm_result>',
+        ].join('\n'),
+        isError: undefined,
+      } as Event,
+      sendQueued,
+    );
+
+    const transcript = stripSgr(renderTranscript(driver));
+    const totalStatusLine = transcript.split('\n').find((line) => line.includes('Completed.'));
+    expect(totalStatusLine).toBeDefined();
+    expect(totalStatusLine).not.toContain('Failed.');
+    expect(transcript).toContain('✓ Imports are stable.');
+    expect(transcript).toContain('✗ Agent timed out after 30s.');
+  });
+
   it('renders AgentSwarm progress while tool args are still streaming', async () => {
     const { driver } = await makeDriver();
     const sendQueued = vi.fn();

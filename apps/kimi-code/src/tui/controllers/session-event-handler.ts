@@ -96,6 +96,7 @@ export interface SessionEventHost {
   showError(msg: string): void;
   showStatus(msg: string, color?: string): void;
   showNotice(title: string, detail?: string): void;
+  updateActivityPane(): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   updateTerminalTitle(): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
@@ -135,6 +136,7 @@ export class SessionEventHandler {
       progress.dispose();
     }
     this.agentSwarmProgress.clear();
+    this.host.updateActivityPane();
   }
 
   startSubscription(): void {
@@ -482,6 +484,7 @@ export class SessionEventHandler {
       children.splice(index, 1);
       this.host.state.transcriptContainer.invalidate();
     }
+    this.host.updateActivityPane();
   }
 
   private isAnthropicSessionActive(): boolean {
@@ -632,6 +635,7 @@ export class SessionEventHandler {
     this.agentSwarmProgress.set(toolCallId, progress);
     this.host.streamingUI.finalizeLiveTextBuffers('tool');
     this.host.state.transcriptContainer.addChild(progress);
+    this.host.updateActivityPane();
     this.host.state.ui.requestRender();
     return progress;
   }
@@ -661,13 +665,19 @@ export class SessionEventHandler {
         if (progress.isRequestStreaming()) {
           this.removeAgentSwarmProgress(event.toolCallId, progress);
         } else {
+          progress.markToolCallEnded();
           progress.markActiveCancelled();
         }
       } else if (event.isError === true) {
-        progress.markSwarmFailed(resultData.output);
+        progress.markToolCallEnded();
+        if (!progress.applyResult(resultData.output)) {
+          progress.markSwarmFailed(resultData.output);
+        }
       } else {
+        progress.markToolCallEnded();
         progress.applyResult(resultData.output);
       }
+      this.host.updateActivityPane();
       this.host.state.ui.requestRender();
     }
     if (matchedCall !== undefined && matchedCall.name === 'TodoList' && !event.isError) {

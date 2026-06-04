@@ -24,17 +24,18 @@ const FAILED_PLACEHOLDER_RED_FACTOR = 0.75;
 const FAILED_PLACEHOLDER_NON_RED_FACTOR = 0.25;
 const STATUS_BAR_CHAR = '━';
 const PROMPTING_TEXT_TRAILING_GAP = 1;
+const ACTIVITY_SPINNER_PLACEHOLDER = '  ';
 const ORCHESTRATING_LABEL = 'Orchestrating...';
 const PROMPTING_LABEL = 'Prompting...';
 const WORKING_LABEL = 'Working...';
+const COMPLETED_LABEL = 'Completed.';
 const FAILED_LABEL = 'Failed.';
 const CANCELLED_LABEL = 'Cancelled.';
 const QUEUED_LABEL = 'Queued...';
 const SUSPENDED_LABEL = 'Suspended...';
 const TOTAL_STATUS_LABEL_WIDTH = Math.max(
-  visibleWidth(ORCHESTRATING_LABEL),
-  visibleWidth(PROMPTING_LABEL),
   visibleWidth(WORKING_LABEL),
+  visibleWidth(COMPLETED_LABEL),
   visibleWidth(FAILED_LABEL),
   visibleWidth(CANCELLED_LABEL),
   visibleWidth(SUSPENDED_LABEL),
@@ -51,7 +52,7 @@ const STATUS_BAR_ORDER = [
 
 type AgentSwarmPhase = AgentSwarmProgressEstimatorPhase;
 type StatusBarPhase = typeof STATUS_BAR_ORDER[number];
-type TotalStatus = 'working' | 'suspended' | 'failed' | 'cancelled';
+type TotalStatus = 'working' | 'completed' | 'suspended' | 'failed' | 'cancelled';
 
 interface AgentSwarmMember {
   readonly id: string;
@@ -114,7 +115,9 @@ export class AgentSwarmProgressComponent implements Component {
   private failed = false;
   private cancelled = false;
   private itemsStarted = false;
+  private toolCallActive = true;
   private promptTemplateText = '';
+  private activitySpinnerText: (() => string) | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
 
   constructor(options: AgentSwarmProgressOptions) {
@@ -131,6 +134,23 @@ export class AgentSwarmProgressComponent implements Component {
   }
 
   invalidate(): void {}
+
+  setActivitySpinnerText(provider: (() => string) | undefined): void {
+    if (!this.toolCallActive) {
+      this.activitySpinnerText = () => ACTIVITY_SPINNER_PLACEHOLDER;
+      return;
+    }
+    this.activitySpinnerText = provider;
+  }
+
+  markToolCallEnded(): void {
+    this.toolCallActive = false;
+    this.activitySpinnerText = () => ACTIVITY_SPINNER_PLACEHOLDER;
+  }
+
+  isToolCallActive(): boolean {
+    return this.toolCallActive;
+  }
 
   isRequestStreaming(): boolean {
     return !this.inputComplete;
@@ -364,9 +384,11 @@ export class AgentSwarmProgressComponent implements Component {
     this.startAnimationIfNeeded();
   }
 
-  applyResult(output: string): void {
+  applyResult(output: string): boolean {
+    const statuses = parseAgentSwarmResultStatuses(output);
+    if (statuses.length === 0) return false;
     const nowMs = Date.now();
-    for (const entry of parseAgentSwarmResultStatuses(output)) {
+    for (const entry of statuses) {
       this.ensureMemberCount(entry.index);
       const member = this.members[entry.index - 1];
       if (member === undefined) continue;
@@ -395,12 +417,14 @@ export class AgentSwarmProgressComponent implements Component {
       member.phase = entry.status;
     }
     this.startAnimationIfNeeded();
+    return true;
   }
 
   render(width: number): string[] {
     const innerWidth = Math.max(1, width);
     if (this.members.length === 0) {
       const lines = [
+        '',
         this.renderHeader(innerWidth, undefined),
         '',
         this.renderStatusLine(innerWidth),
@@ -419,6 +443,7 @@ export class AgentSwarmProgressComponent implements Component {
     }));
     const summary = summarizeSnapshots(snapshots);
     const lines = [
+      '',
       this.renderHeader(innerWidth, summary),
       '',
       ...this.renderGrid(innerWidth, snapshots, nowMs),
@@ -448,6 +473,16 @@ export class AgentSwarmProgressComponent implements Component {
   }
 
   private renderStatusLine(width: number): string {
+    const spinner = this.activitySpinnerText?.() ?? '';
+    if (spinner.length > 0) {
+      const contentWidth = Math.max(0, width - visibleWidth(spinner));
+      if (contentWidth <= 0) return truncateToWidth(spinner, width);
+      return truncateToWidth(`${spinner}${this.renderStatusLineContent(contentWidth)}`, width);
+    }
+    return this.renderStatusLineContent(width);
+  }
+
+  private renderStatusLineContent(width: number): string {
     const status = totalStatus(this.members, {
       failed: this.failed,
       cancelled: this.cancelled,
@@ -728,6 +763,43 @@ function parseAgentSwarmDescriptionIndex(description: string | undefined): numbe
 }
 
 function parseAgentSwarmResultStatuses(output: string): AgentSwarmResultStatus[] {
+  const xmlStatuses = parseAgentSwarmXmlResultStatuses(output);
+  if (xmlStatuses.length > 0) return xmlStatuses;
+  return parseAgentSwarmLegacyResultStatuses(output);
+}
+
+function parseAgentSwarmXmlResultStatuses(output: string): AgentSwarmResultStatus[] {
+  const result: AgentSwarmResultStatus[] = [];
+  const tagPattern = /<subagent\b([^>]*)>/g;
+  let match: RegExpExecArray | null;
+  while ((match = tagPattern.exec(output)) !== null) {
+    const attrs = match[1] ?? '';
+    const closeIndex = output.indexOf('</subagent>', tagPattern.lastIndex);
+    if (closeIndex < 0) break;
+
+    const index = Number(xmlAttribute(attrs, 'index'));
+    const outcome = xmlAttribute(attrs, 'outcome');
+    if (Number.isInteger(index) && index > 0 && (outcome === 'completed' || outcome === 'failed')) {
+      const body = output.slice(tagPattern.lastIndex, closeIndex);
+      result.push({
+        index,
+        status: outcome,
+        completedText: outcome === 'completed' ? body : undefined,
+        failureText: outcome === 'failed' ? body : undefined,
+      });
+    }
+
+    tagPattern.lastIndex = closeIndex + '</subagent>'.length;
+  }
+  return result;
+}
+
+function xmlAttribute(attrs: string, name: string): string | undefined {
+  const match = new RegExp(`\\b${name}="([^"]*)"`).exec(attrs);
+  return match?.[1];
+}
+
+function parseAgentSwarmLegacyResultStatuses(output: string): AgentSwarmResultStatus[] {
   const result: AgentSwarmResultStatus[] = [];
   const blocks = output.split(/\n(?=\[agent \d+\]\n)/);
   for (const block of blocks) {
@@ -917,8 +989,10 @@ function totalStatus(
   members: readonly AgentSwarmMember[],
   force: { readonly failed: boolean; readonly cancelled: boolean },
 ): TotalStatus {
-  if (force.failed) return 'failed';
   if (force.cancelled && members.length === 0) return 'cancelled';
+  if (force.failed && members.length === 0) return 'failed';
+  const hasCompleted = members.some((member) => member.phase === 'completed');
+  const hasFailed = members.some((member) => member.phase === 'failed');
   const hasCancelled = members.some((member) => member.phase === 'cancelled');
   const hasSuspended = members.some((member) => member.phase === 'suspended');
   const hasRunning = members.some((member) => member.phase === 'running');
@@ -930,6 +1004,12 @@ function totalStatus(
       member.phase === 'running'
     )
   );
+  if (!hasActive && members.length > 0) {
+    if (hasCompleted) return 'completed';
+    if (hasFailed || force.failed) return 'failed';
+    if (hasCancelled || force.cancelled) return 'cancelled';
+  }
+  if (force.failed) return 'failed';
   if (hasSuspended && !hasRunning) return 'suspended';
   return (force.cancelled || hasCancelled) && !hasActive ? 'cancelled' : 'working';
 }
@@ -938,6 +1018,8 @@ function totalStatusLabel(status: TotalStatus): string {
   switch (status) {
     case 'working':
       return WORKING_LABEL;
+    case 'completed':
+      return COMPLETED_LABEL;
     case 'suspended':
       return SUSPENDED_LABEL;
     case 'failed':
@@ -950,6 +1032,8 @@ function totalStatusLabel(status: TotalStatus): string {
 function totalStatusColor(status: TotalStatus, colors: ColorPalette): string {
   switch (status) {
     case 'working':
+      return colors.success;
+    case 'completed':
       return colors.success;
     case 'suspended':
       return colors.warning;
@@ -1071,12 +1155,23 @@ function normalizeFailureText(text: string | undefined): string | undefined {
 }
 
 function nestedAgentSwarmFailureText(text: string): string | undefined {
+  const xmlFailureText = nestedAgentSwarmXmlFailureText(text);
+  if (xmlFailureText !== undefined) return nestedAgentSwarmFailureText(xmlFailureText) ?? xmlFailureText;
+
   if (!/^\s*agent_swarm:\s*failed\b/m.test(text)) return undefined;
   const match = /^\s*subagent error:\s*([\s\S]*?)(?=\n\[agent \d+\]\n|$)/m.exec(text);
   if (match === null) return undefined;
   const failureText = match[1];
   if (failureText === undefined) return undefined;
   return nestedAgentSwarmFailureText(failureText) ?? failureText;
+}
+
+function nestedAgentSwarmXmlFailureText(text: string): string | undefined {
+  if (!/<agent_swarm_result\b/.test(text)) return undefined;
+  const failed = parseAgentSwarmXmlResultStatuses(text).find((entry) => {
+    return entry.status === 'failed' && entry.failureText !== undefined;
+  });
+  return failed?.failureText;
 }
 
 function stripAgentSwarmPrefix(text: string): string {

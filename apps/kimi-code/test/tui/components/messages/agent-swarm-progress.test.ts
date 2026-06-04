@@ -52,6 +52,20 @@ describe('AgentSwarmProgressComponent', () => {
     expect(output).not.toContain('agents=2');
   });
 
+  it('renders a blank line above the AgentSwarm header', () => {
+    const component = new AgentSwarmProgressComponent({
+      description: 'Review changed files',
+      colors: darkColors,
+    });
+
+    component.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
+
+    const lines = strip(component.render(100).join('\n')).split('\n');
+
+    expect(lines[0]).toBe('');
+    expect(lines[1]).toContain('Agent swarm');
+  });
+
   it('fits three queued columns with the narrower gap and minimum cell width', () => {
     const component = new AgentSwarmProgressComponent({
       description: 'Review changed files',
@@ -92,7 +106,7 @@ describe('AgentSwarmProgressComponent', () => {
     output = strip(component.render(100).join('\n'));
     expect(output).toContain('001 [');
     expect(output).toContain('✓');
-    expect(output).not.toContain('Completed');
+    expect(output).toContain('Completed.');
     expect(output).toContain('002 [');
     expect(output).toContain('Failed');
   });
@@ -109,7 +123,7 @@ describe('AgentSwarmProgressComponent', () => {
     const output = strip(component.render(100).join('\n'));
 
     expect(output).toContain('✓ Reviewed imports and found no regressions');
-    expect(output).not.toContain('Completed');
+    expect(output).toContain('Completed.');
   });
 
   it('renders failure details from live subagent failures', () => {
@@ -164,20 +178,10 @@ describe('AgentSwarmProgressComponent', () => {
       items: ['src/a.ts'],
     });
     component.applyResult([
-      'agent_swarm: failed',
-      'description: Review changed files',
-      'items: 1',
-      'completed: 0',
-      'failed: 1',
-      '',
-      '[agent 1]',
-      'agent_id: agent-1',
-      'item: "src/a.ts"',
-      'actual_subagent_type: coder',
-      'status: failed',
-      'description: Review changed files #1 (coder)',
-      '',
-      'subagent error: Agent timed out after 30s.',
+      '<agent_swarm_result>',
+      '<summary>failed: 1</summary>',
+      '<subagent index="1" agent_id="agent-1" outcome="failed">Agent timed out after 30s.</subagent>',
+      '</agent_swarm_result>',
     ].join('\n'));
 
     const output = strip(component.render(100).join('\n'));
@@ -197,20 +201,9 @@ describe('AgentSwarmProgressComponent', () => {
       items: ['src/a.ts'],
     });
     component.applyResult([
-      'agent_swarm: failed',
-      'description: Review changed files',
-      'items: 1',
-      'completed: 0',
-      'failed: 1',
-      '',
-      '[agent 1]',
-      'agent_id: agent-1',
-      'item: "src/a.ts"',
-      'actual_subagent_type: coder',
-      'status: failed',
-      'description: Review changed files #1 (coder)',
-      '',
-      'subagent error: agent_swarm: failed',
+      '<agent_swarm_result>',
+      '<summary>failed: 1</summary>',
+      '<subagent index="1" agent_id="agent-1" outcome="failed">agent_swarm: failed',
       'description: Nested review',
       'items: 1',
       'completed: 0',
@@ -219,7 +212,8 @@ describe('AgentSwarmProgressComponent', () => {
       '[agent 1]',
       'status: failed',
       '',
-      'subagent error: [provider.rate_limit] 429 request reached user+model max RPM.',
+      'subagent error: [provider.rate_limit] 429 request reached user+model max RPM.</subagent>',
+      '</agent_swarm_result>',
     ].join('\n'));
 
     const output = strip(component.render(120).join('\n'));
@@ -240,27 +234,43 @@ describe('AgentSwarmProgressComponent', () => {
       items: ['src/a.ts'],
     });
     component.applyResult([
-      'agent_swarm: completed',
-      'description: Review changed files',
-      'items: 1',
-      'completed: 1',
-      'failed: 0',
-      '',
-      '[agent 1]',
-      'agent_id: agent-1',
-      'item: "src/a.ts"',
-      'actual_subagent_type: coder',
-      'status: completed',
-      'description: Review changed files #1 (coder)',
-      '',
-      '[summary]',
-      'Reviewed src/a.ts and confirmed imports are stable.',
+      '<agent_swarm_result>',
+      '<summary>completed: 1</summary>',
+      '<subagent index="1" agent_id="agent-1" outcome="completed">Reviewed src/a.ts and confirmed imports are stable.</subagent>',
+      '</agent_swarm_result>',
     ].join('\n'));
 
     const output = strip(component.render(100).join('\n'));
 
     expect(output).toContain('✓ Reviewed src/a.ts and confirmed imports are stable.');
-    expect(output).not.toContain('Completed');
+    expect(output).toContain('Completed.');
+  });
+
+  it('shows completed total status when only some subagents fail', () => {
+    const component = new AgentSwarmProgressComponent({
+      description: 'Review changed files',
+      colors: darkColors,
+    });
+
+    component.updateArgs({
+      description: 'Review changed files',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+    component.applyResult([
+      '<agent_swarm_result>',
+      '<summary>completed: 1, failed: 1</summary>',
+      '<subagent index="1" agent_id="agent-1" outcome="completed">Reviewed src/a.ts and confirmed imports are stable.</subagent>',
+      '<subagent index="2" agent_id="agent-2" outcome="failed">Agent timed out after 30s.</subagent>',
+      '</agent_swarm_result>',
+    ].join('\n'));
+
+    const output = strip(component.render(120).join('\n'));
+    const totalStatusLine = output.split('\n').find((line) => line.includes('Completed.'));
+
+    expect(totalStatusLine).toBeDefined();
+    expect(totalStatusLine).not.toContain('Failed.');
+    expect(output).toContain('✓ Reviewed src/a.ts');
+    expect(output).toContain('✗ Agent timed out after 30s.');
   });
 
   it('uses the latest assistant line as completed output when no summary is available', () => {
@@ -279,7 +289,7 @@ describe('AgentSwarmProgressComponent', () => {
     const output = strip(component.render(100).join('\n'));
 
     expect(output).toContain('✓ Imports look stable');
-    expect(output).not.toContain('Completed');
+    expect(output).toContain('Completed.');
   });
 
   it('shows latest assistant text after the progress bar with ellipsis truncation', () => {
@@ -334,6 +344,48 @@ describe('AgentSwarmProgressComponent', () => {
     expect(promptTextIndex).toBeGreaterThan(0);
     expect(progressBarIndex).toBeGreaterThan(0);
     expect(promptTextIndex).toBe(progressBarIndex);
+  });
+
+  it('renders the activity spinner before the total status line', () => {
+    const component = new AgentSwarmProgressComponent({
+      description: 'Review changed files',
+      colors: darkColors,
+    });
+
+    component.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
+    component.markInputComplete();
+    component.markStarted('agent-1');
+    component.setActivitySpinnerText(() => '🌗');
+
+    const statusLine = strip(component.render(80).join('\n'))
+      .split('\n')
+      .find((line) => line.includes('Working...'));
+
+    expect(statusLine).toBeDefined();
+    expect(statusLine?.startsWith('🌗 Working...')).toBe(true);
+  });
+
+  it('keeps a two-cell placeholder after the AgentSwarm tool call ends', () => {
+    const component = new AgentSwarmProgressComponent({
+      description: 'Review changed files',
+      colors: darkColors,
+    });
+
+    component.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
+    component.markInputComplete();
+    component.markStarted('agent-1');
+    component.setActivitySpinnerText(() => '🌗');
+    component.markToolCallEnded();
+    component.setActivitySpinnerText(() => '🌘');
+
+    const statusLine = strip(component.render(80).join('\n'))
+      .split('\n')
+      .find((line) => line.includes('Working...'));
+
+    expect(statusLine).toBeDefined();
+    expect(statusLine?.startsWith('   Working...')).toBe(true);
+    expect(statusLine).not.toContain('🌗');
+    expect(statusLine).not.toContain('🌘');
   });
 
   it('reserves one trailing cell for prompting streaming text', () => {

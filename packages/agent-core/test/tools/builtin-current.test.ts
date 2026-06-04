@@ -339,7 +339,13 @@ describe('current builtin collaboration tools', () => {
     ).toBe(true);
     expect(tool.parameters).toMatchObject({
       type: 'object',
-      properties: { subagent_type: { type: 'string' }, total_timeout: { type: 'integer' } },
+      properties: {
+        subagent_type: { type: 'string' },
+        timeout: {
+          type: 'integer',
+          description: expect.stringContaining('enough time to complete'),
+        },
+      },
     });
 
     const result = await executeTool(tool, context(input, 'call_swarm'));
@@ -370,8 +376,69 @@ describe('current builtin collaboration tools', () => {
         totalTimeoutMs: undefined,
       },
     );
-    expect(result.output).toContain('subagent_type: explore');
-    expect(result.output).toContain('explore result');
+    expect(result.output).toBe([
+      '<agent_swarm_result>',
+      '<summary>completed: 2</summary>',
+      '<subagent index="1" agent_id="agent-explore-1" outcome="completed">explore result a</subagent>',
+      '<subagent index="2" agent_id="agent-explore-2" outcome="completed">explore result b</subagent>',
+      '</agent_swarm_result>',
+    ].join('\n'));
+    expect(result.isError).toBeUndefined();
+  });
+
+  it('AgentSwarm reports failed subagents inside the XML result without failing the tool', async () => {
+    const host = mockSubagentHost({
+      runQueued: vi.fn().mockResolvedValue([
+        {
+          task: {
+            data: { index: 1, item: 'src/a.ts', prompt: 'Review src/a.ts' },
+            profileName: 'coder',
+            parentToolCallId: 'call_swarm',
+            prompt: 'Review src/a.ts',
+            description: 'Review files #1 (coder)',
+            runInBackground: false,
+          },
+          agentId: 'agent-coder-1',
+          status: 'completed',
+          result: 'imports are stable',
+        },
+        {
+          task: {
+            data: { index: 2, item: 'src/b.ts', prompt: 'Review src/b.ts' },
+            profileName: 'coder',
+            parentToolCallId: 'call_swarm',
+            prompt: 'Review src/b.ts',
+            description: 'Review files #2 (coder)',
+            runInBackground: false,
+          },
+          agentId: 'agent-coder-2',
+          status: 'failed',
+          error: 'Agent timed out after 30s.',
+        },
+      ]),
+    });
+    const tool = new AgentSwarmTool(host);
+
+    const result = await executeTool(
+      tool,
+      context(
+        {
+          description: 'Review files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts', 'src/b.ts'],
+        },
+        'call_swarm',
+      ),
+    );
+
+    expect(result.output).toBe([
+      '<agent_swarm_result>',
+      '<summary>completed: 1, failed: 1</summary>',
+      '<subagent index="1" agent_id="agent-coder-1" outcome="completed">imports are stable</subagent>',
+      '<subagent index="2" agent_id="agent-coder-2" outcome="failed">Agent timed out after 30s.</subagent>',
+      '</agent_swarm_result>',
+    ].join('\n'));
+    expect(result.isError).toBeUndefined();
   });
 
   it('Skill exposes parameters and reports unknown skills as tool errors', async () => {
