@@ -1,4 +1,4 @@
-import { APIContextOverflowError, ChatProviderError } from '#/errors';
+import { APIContextOverflowError, APIStatusError, ChatProviderError } from '#/errors';
 import { generate } from '#/generate';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import {
@@ -1682,8 +1682,52 @@ describe('OpenAIResponsesChatProvider', () => {
       ];
       const stream = new OpenAIResponsesStreamedMessage(makeAsyncIterable(events), true);
 
+      let caughtError: unknown;
+      try {
+        await collectStreamParts(stream);
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError).toBeInstanceOf(APIStatusError);
+      expect((caughtError as APIStatusError).statusCode).toBe(429);
+      expect((caughtError as Error).message).toMatch(/rate_limit_exceeded.*too many/);
+    });
+
+    it('normalizes malformed gateway error frames with nested rate-limit JSON', async () => {
+      const events = [
+        {
+          message:
+            'received error while streaming: {"type":"tokens","code":"rate_limit_exceeded","message":"Rate limit reached for gpt-5.5. Please try again in 325ms.","param":null}',
+        },
+      ];
+      const stream = new OpenAIResponsesStreamedMessage(makeAsyncIterable(events), true);
+
+      let caughtError: unknown;
+      try {
+        await collectStreamParts(stream);
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError).toBeInstanceOf(APIStatusError);
+      expect((caughtError as APIStatusError).statusCode).toBe(429);
+      expect((caughtError as Error).message).toContain('Rate limit reached for gpt-5.5');
+      expect((caughtError as Error).message).not.toContain('stream event.type must be a string');
+    });
+
+    it('rejects malformed stream events with a non-string type even when message is present', async () => {
+      const events = [
+        {
+          type: 42,
+          message:
+            'received error while streaming: {"type":"tokens","code":"rate_limit_exceeded","message":"too many requests","param":null}',
+        },
+      ];
+      const stream = new OpenAIResponsesStreamedMessage(makeAsyncIterable(events), true);
+
       await expect(collectStreamParts(stream)).rejects.toThrow(
-        /rate_limit_exceeded.*too many/,
+        'OpenAI Responses decode error: stream event.type must be a string.',
       );
     });
 
