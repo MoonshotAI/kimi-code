@@ -2112,10 +2112,10 @@ command = "vim"
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('OAuth login expired. Send /login to login.');
     expect(transcript).not.toContain('[auth.login_required]');
-    expect(transcript).not.toContain('kimi export');
+    expect(transcript).not.toContain('/export-debug-zip');
   });
 
-  it('appends the kimi export hint beneath session error messages', async () => {
+  it('appends the /export-debug-zip hint beneath session error messages', async () => {
     const { driver } = await makeDriver();
 
     driver.sessionEventHandler.handleEvent(
@@ -2132,11 +2132,12 @@ command = "vim"
 
     const transcript = stripSgr(driver.state.transcriptContainer.render(200).join('\n'));
     expect(transcript).toContain('Error: [compaction.failed]');
-    expect(transcript).toContain('If this persists, run `kimi export ses-1`');
+    expect(transcript).toContain('If this persists, run `/export-debug-zip`');
     expect(transcript).toContain("Please don't share it publicly");
+    expect(transcript).not.toContain('kimi export');
   });
 
-  it('skips the kimi export hint when no active session id is set', async () => {
+  it('skips the /export-debug-zip hint when no active session id is set', async () => {
     const { driver } = await makeDriver();
     driver.state.appState.sessionId = '';
 
@@ -2154,7 +2155,7 @@ command = "vim"
 
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('Error: [compaction.failed]');
-    expect(transcript).not.toContain('kimi export');
+    expect(transcript).not.toContain('/export-debug-zip');
   });
 
   it('shows ExitPlanMode plan only in the current-plan card during approval', async () => {
