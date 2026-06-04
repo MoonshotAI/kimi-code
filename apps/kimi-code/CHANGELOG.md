@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code
 
+## 0.10.1
+
+### Patch Changes
+
+- [#443](https://github.com/MoonshotAI/kimi-code/pull/443) [`15a4c64`](https://github.com/MoonshotAI/kimi-code/commit/15a4c64e5cea45c9f72d8c889f306f1f964a8ac6) - Fix a crash when starting a goal in the TUI.
+
 ## 0.10.0
 
 ### Minor Changes
