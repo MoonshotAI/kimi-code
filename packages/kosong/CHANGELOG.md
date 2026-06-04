@@ -1,5 +1,11 @@
 # @moonshot-ai/kosong
 
+## 0.3.3
+
+### Patch Changes
+
+- [#411](https://github.com/MoonshotAI/kimi-code/pull/411) [`4598262`](https://github.com/MoonshotAI/kimi-code/commit/459826292f855592288bcfddaa1c72529a6d8c64) - Normalize malformed Responses stream rate limit errors as provider rate limit failures.
+
 ## 0.3.2
 
 ### Patch Changes

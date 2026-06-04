@@ -1,5 +1,45 @@
 # @moonshot-ai/kimi-code
 
+## 0.10.0
+
+### Minor Changes
+
+- [#433](https://github.com/MoonshotAI/kimi-code/pull/433) [`85338e9`](https://github.com/MoonshotAI/kimi-code/commit/85338e9f7df5d98234fd42891e9bf2a2e6ad767b) - Add the built-in `update-config` skill — you can now have Kimi edit its own config files.
+
+- [#420](https://github.com/MoonshotAI/kimi-code/pull/420) [`86a42a2`](https://github.com/MoonshotAI/kimi-code/commit/86a42a26a1e01f1748a937031fa76ebeaa1e28a8) - Add persistent experimental feature toggles and a TUI panel that applies confirmed changes by reloading the current session.
+
+- [#383](https://github.com/MoonshotAI/kimi-code/pull/383) [`15d71b5`](https://github.com/MoonshotAI/kimi-code/commit/15d71b5130d949c35d9dc2641e807e08d72dce48) - Add /reload to reload the current session and apply updated config files, plus /reload-tui to reload only TUI preferences.
+
+- [#393](https://github.com/MoonshotAI/kimi-code/pull/393) [`beb12ac`](https://github.com/MoonshotAI/kimi-code/commit/beb12ac0216818a5c5eda24fb304e4ab01792784) - Users now can prepare several goals for the agent to work on sequentially. The agent will pick up the next goal from the queue once the current goal is completed. Use `/goal next <objective>` to queue a goal and `/goal next manage` to review and change the queue interactively.
+
+- [#431](https://github.com/MoonshotAI/kimi-code/pull/431) [`6a4e4c7`](https://github.com/MoonshotAI/kimi-code/commit/6a4e4c75d4bf6db3fefbb5c115d7a7c324bcae16) - Add a doctor command for validating Kimi Code configuration files.
+
+### Patch Changes
+
+- [#393](https://github.com/MoonshotAI/kimi-code/pull/393) [`beb12ac`](https://github.com/MoonshotAI/kimi-code/commit/beb12ac0216818a5c5eda24fb304e4ab01792784) - Stop carrying active and queued goals into forked sessions.
+
+- [#408](https://github.com/MoonshotAI/kimi-code/pull/408) [`6303bd2`](https://github.com/MoonshotAI/kimi-code/commit/6303bd2936ae168c674af6e685b0eed5a890c42f) - Point session error diagnostics to the `/export-debug-zip` command.
+
+- [#398](https://github.com/MoonshotAI/kimi-code/pull/398) [`b2801c4`](https://github.com/MoonshotAI/kimi-code/commit/b2801c4dbfe3f7e13f5468bfba1555fa12d1707c) - Set terminal tab titles without renaming the running process.
+
+- [#403](https://github.com/MoonshotAI/kimi-code/pull/403) [`d645d7e`](https://github.com/MoonshotAI/kimi-code/commit/d645d7e443857b3c974b9fd6065027c0f0cd6953) - Start automatic background updates as soon as startup's fresh update check finds a newer version.
+
+- [#387](https://github.com/MoonshotAI/kimi-code/pull/387) [`6e74027`](https://github.com/MoonshotAI/kimi-code/commit/6e74027fdc48ad124b2a62465bb5fd07e84d4712) - Lowercase the stale file content message in edit tool errors.
+
+- [#428](https://github.com/MoonshotAI/kimi-code/pull/428) [`853c5fc`](https://github.com/MoonshotAI/kimi-code/commit/853c5fc43741582ecbde3b4fccf82cddffe3626e) - Ensure Nix-packaged CLI builds can find ripgrep and fd.
+
+- [#411](https://github.com/MoonshotAI/kimi-code/pull/411) [`4598262`](https://github.com/MoonshotAI/kimi-code/commit/459826292f855592288bcfddaa1c72529a6d8c64) - Normalize malformed Responses stream rate limit errors as provider rate limit failures.
+
+- [#405](https://github.com/MoonshotAI/kimi-code/pull/405) [`07e2e0f`](https://github.com/MoonshotAI/kimi-code/commit/07e2e0f094fcbc8a6026eb53f5a70cc437bf7c52) - Refresh the update target before showing foreground update prompts so the displayed version matches the install.
+
+- [#399](https://github.com/MoonshotAI/kimi-code/pull/399) [`232ed87`](https://github.com/MoonshotAI/kimi-code/commit/232ed874d41de777e6ff9c539ac22d830d0b5c3a) - Keep managed OAuth credentials scoped to their configured authentication and API endpoints.
+
+- [#407](https://github.com/MoonshotAI/kimi-code/pull/407) [`07609b4`](https://github.com/MoonshotAI/kimi-code/commit/07609b41a31499bb5c7811dbab71fa427e621efc) - Set the CLI process title to kimi-code during startup.
+
+- [#419](https://github.com/MoonshotAI/kimi-code/pull/419) [`d0f8e24`](https://github.com/MoonshotAI/kimi-code/commit/d0f8e24e9b4d2c6dd68d93bc804a4390bf661c10) - Document the Git Bash prerequisite for Windows installs.
+
+- [#430](https://github.com/MoonshotAI/kimi-code/pull/430) [`be0da5f`](https://github.com/MoonshotAI/kimi-code/commit/be0da5ff39641e117d60045a43a7d5d2e0b85b75) - Fail early when Git Bash is missing on Windows before starting CLI sessions.
+
 ## 0.9.0
 
 ### Minor Changes
