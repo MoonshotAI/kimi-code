@@ -253,6 +253,42 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
       model: 'claude-opus-4-7',
       defaultMaxTokens: 24000,
     });
+    expect(resolved.maxOutputSize).toBe(24000);
+  });
+
+  it('exposes alias.maxOutputSize for OpenAI-compatible completion budgets', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          openai: {
+            type: 'openai',
+            apiKey: 'sk-openai',
+            baseUrl: 'https://openai.example/v1',
+          },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'gpt-alias': {
+            provider: 'openai',
+            model: 'gpt-runtime',
+            maxContextSize: 200000,
+            maxOutputSize: 131072,
+          },
+        },
+      },
+      model: 'gpt-alias',
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'openai',
+      model: 'gpt-runtime',
+      apiKey: 'sk-openai',
+      baseUrl: 'https://openai.example/v1',
+    });
+    expect('defaultMaxTokens' in resolved.provider).toBe(false);
+    expect(resolved.maxOutputSize).toBe(131072);
   });
 
   it('omits defaultMaxTokens when alias.maxOutputSize is unset', () => {

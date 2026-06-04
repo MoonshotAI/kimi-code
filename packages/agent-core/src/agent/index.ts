@@ -210,6 +210,7 @@ export class Agent {
     const loopControl = this.kimiConfig?.loopControl;
     const completionBudgetConfig = resolveCompletionBudget({
       reservedContextSize: loopControl?.reservedContextSize,
+      maxOutputSize: this.config.modelMaxOutputSize,
     });
     return new KosongLLM({
       provider,

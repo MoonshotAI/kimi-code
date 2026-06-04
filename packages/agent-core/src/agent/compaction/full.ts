@@ -245,6 +245,7 @@ export class FullCompaction {
         provider: this.agent.config.provider,
         budget: resolveCompletionBudget({
           reservedContextSize: this.agent.kimiConfig?.loopControl?.reservedContextSize,
+          maxOutputSize: this.agent.config.modelMaxOutputSize,
         }),
         capability: this.agent.config.modelCapabilities,
       });

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { emptyUsage } from '@moonshot-ai/kosong';
 
 import { ProviderManager } from '../../src/session/provider-manager';
 import { testAgent } from './harness';
+import type { GenerateFn } from '../../src/agent/turn/kosong-llm';
 
 describe('ConfigState model capabilities', () => {
   it('computes provider and model capabilities from ProviderManager metadata', () => {
@@ -73,7 +75,55 @@ describe('ConfigState model capabilities', () => {
     });
   });
 
-it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
+  it('applies model max output size to OpenAI-compatible providers', async () => {
+    let generatedModelParameters: Record<string, unknown> | undefined;
+    const generate: GenerateFn = async (chat) => {
+      generatedModelParameters = (
+        chat as { readonly modelParameters?: Record<string, unknown> }
+      ).modelParameters;
+      return {
+        id: 'response-1',
+        message: { role: 'assistant', content: [], toolCalls: [] },
+        usage: emptyUsage(),
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const ctx = testAgent({
+      generate,
+      providerManager: new ProviderManager({
+        config: {
+          providers: {
+            openai: {
+              type: 'openai',
+              apiKey: 'sk-openai',
+              baseUrl: 'https://openai.example/v1',
+            },
+          },
+          models: {
+            'gpt-alias': {
+              provider: 'openai',
+              model: 'gpt-runtime',
+              maxContextSize: 1_000_000,
+              maxOutputSize: 8192,
+            },
+          },
+        },
+      }),
+    });
+
+    ctx.agent.config.update({ modelAlias: 'gpt-alias' });
+
+    await ctx.agent.llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(generatedModelParameters).toMatchObject({ max_tokens: 8192 });
+  });
+
+  it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
     const ctx = testAgent({
       providerManager: new ProviderManager({
         promptCacheKey: 'session-test',

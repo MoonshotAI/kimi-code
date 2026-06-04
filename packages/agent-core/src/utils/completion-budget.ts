@@ -12,11 +12,12 @@ const MIN_FLOOR = 1;
 const DEFAULT_UNKNOWN_CONTEXT_FALLBACK = 32000;
 
 /**
- * Resolve configured completion budget. Env values are explicit hard caps;
+ * Resolve configured completion budget. Env values override model aliases;
  * non-positive env values disable clamping.
  */
 export function resolveCompletionBudget(args: {
   readonly reservedContextSize?: number;
+  readonly maxOutputSize?: number;
   readonly env?: NodeJS.ProcessEnv;
 }): CompletionBudgetConfig | undefined {
   const env = args.env ?? process.env;
@@ -27,6 +28,9 @@ export function resolveCompletionBudget(args: {
   const fromLegacy = parseEnvBudget(env['KIMI_MODEL_MAX_TOKENS']);
   if (fromLegacy !== 'absent') {
     return fromLegacy === 'disabled' ? undefined : { hardCap: fromLegacy };
+  }
+  if (args.maxOutputSize !== undefined) {
+    return { hardCap: args.maxOutputSize };
   }
   if (args.reservedContextSize !== undefined && args.reservedContextSize > 0) {
     return { fallback: args.reservedContextSize };
@@ -78,6 +82,12 @@ export function applyCompletionBudget(args: {
 }): ChatProvider {
   if (args.budget === undefined) return args.provider;
   if (args.provider.withMaxCompletionTokens === undefined) return args.provider;
+  if (
+    args.budget.hardCap === undefined &&
+    args.provider.completionBudgetStrategy === 'explicit-only'
+  ) {
+    return args.provider;
+  }
   const cap = computeCompletionBudgetCap({
     budget: args.budget,
     capability: args.capability,
