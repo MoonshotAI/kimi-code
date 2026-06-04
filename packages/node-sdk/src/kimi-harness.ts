@@ -84,8 +84,11 @@ export class KimiHarness {
   }
 
   async createSession(options: CreateSessionOptions): Promise<Session> {
-    const { planMode, ...coreOptions } = options;
-    const summary = await this.rpc.createSession(coreOptions);
+    const { planMode, kaos, ...coreOptions } = options;
+    const summary =
+      kaos === undefined
+        ? await this.rpc.createSession(coreOptions)
+        : await this.rpc.createSessionWithKaos(coreOptions, kaos);
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,
@@ -109,7 +112,11 @@ export class KimiHarness {
     const active = this.activeSessions.get(id);
     if (active !== undefined) return active;
 
-    const summary = await this.rpc.resumeSession({ ...input, id });
+    const { kaos, ...resumeInput } = input;
+    const summary =
+      kaos === undefined
+        ? await this.rpc.resumeSession({ ...resumeInput, id })
+        : await this.rpc.resumeSessionWithKaos({ ...resumeInput, id }, kaos);
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,

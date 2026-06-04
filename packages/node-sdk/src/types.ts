@@ -6,6 +6,7 @@ import type {
   TelemetryContextPatch,
   TelemetryProperties,
 } from '@moonshot-ai/agent-core';
+import type { Kaos } from '@moonshot-ai/kaos';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
@@ -92,6 +93,7 @@ export interface CreateSessionOptions {
   readonly permission?: PermissionMode | undefined;
   readonly planMode?: boolean;
   readonly metadata?: JsonObject | undefined;
+  readonly kaos?: Kaos | undefined;
 }
 
 export interface RenameSessionInput {
@@ -101,6 +103,7 @@ export interface RenameSessionInput {
 
 export interface ResumeSessionInput {
   readonly id: string;
+  readonly kaos?: Kaos | undefined;
 }
 
 export interface ForkSessionInput {
@@ -188,4 +191,4 @@ export interface SessionSummary {
 
 export type ResumedSessionState = Pick<ResumeSessionResult, 'sessionMetadata' | 'agents' | 'warning'>;
 
-export interface ResumedSessionSummary extends SessionSummary, ResumedSessionState {}
+export interface ResumedSessionSummary extends SessionSummary, ResumedSessionState { }

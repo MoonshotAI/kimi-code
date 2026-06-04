@@ -7,6 +7,7 @@
  */
 
 import { Readable, Writable } from 'node:stream';
+import { randomUUID } from 'node:crypto';
 
 import {
   AgentSideConnection,
@@ -44,9 +45,11 @@ import {
 } from '@agentclientprotocol/sdk';
 import type { KimiHarness, Session, SessionSummary } from '@moonshot-ai/kimi-code-sdk';
 import { log } from '@moonshot-ai/kimi-code-sdk';
+import { LocalKaos, type Kaos } from '@moonshot-ai/kaos';
 
 import { TERMINAL_AUTH_METHOD, buildTerminalAuthMethod } from './auth-methods';
 import { redirectConsoleToStderr } from './log-guard';
+import { AcpKaos } from './kaos-acp';
 import { AcpSession, type TelemetryTrackFn } from './session';
 import { buildSessionConfigOptions } from './config-options';
 import { availableCommandsUpdateNotification } from './events-map';
@@ -85,6 +88,13 @@ export class AcpServer implements Agent {
   private readonly agentInfo: Implementation | undefined;
   private readonly terminalAuthEnv: Readonly<Record<string, string>> | undefined;
   private readonly terminalAuthLegacyCommand: string | undefined;
+  /**
+   * Lazily-built inner {@link Kaos} (a {@link LocalKaos}) used as the
+   * delegate target for every {@link AcpKaos} this server hands out.
+   * One per server (not per session) so we don't re-probe the
+   * environment for every `session/new` call.
+   */
+  private innerKaos: Kaos | undefined = undefined;
 
   constructor(
     private readonly harness: KimiHarness,
@@ -184,13 +194,6 @@ export class AcpServer implements Agent {
     // if the SDK ever switches from spread-passthrough to explicit field
     // copy, this line breaks and we revisit the boundary.
     const mcpServers = acpMcpServersToConfigs(params.mcpServers);
-    const session = await this.harness.createSession({
-      workDir: params.cwd,
-      // @ts-expect-error — `mcpServers` is a kernel-side extension
-      // (agent-core `CreateSessionPayload`) the SDK transparently
-      // forwards via spread. See block comment above.
-      mcpServers,
-    });
     if (!this.conn) {
       // Defensive: every code path that constructs `AcpServer` (the
       // runners below, and any test that intends to drive `newSession`)
@@ -199,6 +202,23 @@ export class AcpServer implements Agent {
       // connection mid-stream.
       throw RequestError.internalError(undefined, 'AcpServer is missing its AgentSideConnection');
     }
+    // Pre-mint the session id so the optional `AcpKaos` (built when the
+    // client advertised `fs.readTextFile` / `fs.writeTextFile`) carries
+    // the correct reverse-RPC channel for the same session the kernel
+    // is about to construct. Boundary injection — the kaos is captured
+    // by the kernel `SessionImpl` ctor and every tool downstream sees
+    // the same reference, no AsyncLocalStorage needed.
+    const sessionId = `session_${randomUUID()}`;
+    const acpKaos = await this.maybeBuildAcpKaos(sessionId);
+    const session = await this.harness.createSession({
+      id: sessionId,
+      workDir: params.cwd,
+      ...(acpKaos !== undefined ? { kaos: acpKaos } : {}),
+      // @ts-expect-error — `mcpServers` is a kernel-side extension
+      // (agent-core `CreateSessionPayload`) the SDK transparently
+      // forwards via spread. See block comment above.
+      mcpServers,
+    });
     const currentModelId = await this.resolveCurrentModelId();
     const currentThinkingEnabled = await this.resolveCurrentThinkingEnabled();
     const acpSession = new AcpSession(
@@ -363,10 +383,12 @@ export class AcpServer implements Agent {
     // `resumeSession` spreads `input` so unknown fields ride to the
     // kernel.
     const mcpServers = acpMcpServersToConfigs(params.mcpServers);
+    const acpKaos = await this.maybeBuildAcpKaos(params.sessionId);
     let session: Session;
     try {
       session = await this.harness.resumeSession({
         id: params.sessionId,
+        ...(acpKaos !== undefined ? { kaos: acpKaos } : {}),
         // @ts-expect-error — see block comment above; mcpServers is a
         // kernel-only field that the SDK forwards via spread.
         mcpServers,
@@ -425,6 +447,33 @@ export class AcpServer implements Agent {
       DEFAULT_MODE_ID,
     );
     return { session, acpSession, configOptions };
+  }
+
+  /**
+   * Build an {@link AcpKaos} for a given session id if (and only if)
+   * the client advertised any FS reverse-RPC capability. Returns
+   * `undefined` otherwise — the caller then omits the `kaos` field
+   * from `harness.createSession`/`resumeSession`, leaving the kernel
+   * to fall back to its process-wide {@link LocalKaos}.
+   *
+   * The inner {@link LocalKaos} is built lazily on the first capable
+   * session and cached on `this.innerKaos`; subsequent sessions reuse
+   * it. The resulting {@link AcpKaos} is captured by the kernel
+   * `SessionImpl` ctor and every tool downstream sees the same
+   * reference — no AsyncLocalStorage involved.
+   */
+  private async maybeBuildAcpKaos(sessionId: string): Promise<AcpKaos | undefined> {
+    const fs = this.clientCapabilities?.fs;
+    if (!fs?.readTextFile && !fs?.writeTextFile) {
+      return undefined;
+    }
+    if (!this.conn) {
+      return undefined;
+    }
+    if (!this.innerKaos) {
+      this.innerKaos = await LocalKaos.create();
+    }
+    return new AcpKaos(this.conn, sessionId, this.innerKaos);
   }
 
   /**

@@ -46,7 +46,7 @@ function makeInMemoryStreamPair(): {
 }
 
 interface CapturedCall {
-  options: { workDir: string };
+  options: { id?: string; workDir: string; mcpServers?: Record<string, unknown> };
 }
 
 function makeHarness(sessionId: string, captured: CapturedCall[]): {
@@ -61,9 +61,9 @@ function makeHarness(sessionId: string, captured: CapturedCall[]): {
   } as unknown as Session;
   const harness = {
     auth: { status: async () => AUTHED_STATUS },
-    createSession: async (options: { workDir: string }) => {
+    createSession: async (options: { id?: string; workDir: string }) => {
       captured.push({ options });
-      return fakeSession;
+      return Object.assign({}, fakeSession, { id: options.id ?? sessionId }) as Session;
     },
     // Phase 14: server.newSession reads these to assemble configOptions.
     getConfig: async () => ({
@@ -98,26 +98,26 @@ describe('AcpServer session/new', () => {
 
     const response = await client.newSession(request);
 
-    expect(response.sessionId).toBe('sess-42');
+    expect(typeof response.sessionId).toBe('string');
+    expect(response.sessionId.length).toBeGreaterThan(0);
     expect(captured).toHaveLength(1);
-    expect(captured[0]?.options).toEqual({ workDir: '/tmp/work', mcpServers: {} });
+    expect(captured[0]?.options.workDir).toBe('/tmp/work');
+    expect(captured[0]?.options.id).toBe(response.sessionId);
+    expect(captured[0]?.options.mcpServers).toEqual({});
 
     // The wrapper is stashed in the map under the same id we returned to
     // the client (so Phase 3.3/3.4 can look it up by sessionId).
-    expect(server?.getSession('sess-42')?.id).toBe('sess-42');
+    expect(server?.getSession(response.sessionId)?.id).toBe(response.sessionId);
   });
 
   it('returns a distinct sessionId per call (one createSession per request)', async () => {
     const captured: CapturedCall[] = [];
-    let counter = 0;
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
-      createSession: async (options: { workDir: string }) => {
-        counter += 1;
-        const id = `sess-${counter}`;
+      createSession: async (options: { id?: string; workDir: string }) => {
         captured.push({ options });
         return {
-          id,
+          id: options.id ?? 'fallback',
           prompt: async () => undefined,
           cancel: async () => undefined,
           onEvent: () => () => undefined,
@@ -134,11 +134,14 @@ describe('AcpServer session/new', () => {
     const first = await client.newSession({ cwd: '/tmp/a', mcpServers: [] });
     const second = await client.newSession({ cwd: '/tmp/b', mcpServers: [] });
 
-    expect(first.sessionId).toBe('sess-1');
-    expect(second.sessionId).toBe('sess-2');
+    expect(typeof first.sessionId).toBe('string');
+    expect(typeof second.sessionId).toBe('string');
+    expect(first.sessionId).not.toBe(second.sessionId);
     expect(captured).toHaveLength(2);
-    expect(captured[0]?.options).toEqual({ workDir: '/tmp/a', mcpServers: {} });
-    expect(captured[1]?.options).toEqual({ workDir: '/tmp/b', mcpServers: {} });
+    expect(captured[0]?.options.workDir).toBe('/tmp/a');
+    expect(captured[0]?.options.id).toBe(first.sessionId);
+    expect(captured[1]?.options.workDir).toBe('/tmp/b');
+    expect(captured[1]?.options.id).toBe(second.sessionId);
   });
 
   it('advertises configOptions (PLAN D11 + Phase 15 thinking toggle) — model + thinking + mode under the unified SessionConfigOption surface', async () => {

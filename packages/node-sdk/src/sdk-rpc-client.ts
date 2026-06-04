@@ -13,12 +13,21 @@ import {
   type SDKAPI,
   type TelemetryClient,
 } from '@moonshot-ai/agent-core';
+import type { Kaos } from '@moonshot-ai/kaos';
 import { assertKimiHostIdentity, createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
 
 import { KimiAuthFacade } from '#/auth';
 import { KimiHarness } from '#/kimi-harness';
 import { ClientAPI, SDKRpcClientBase } from '#/rpc';
-import type { KimiHarnessOptions, KimiHostIdentity, OAuthRefreshOutcome } from '#/types';
+import type {
+  CreateSessionOptions,
+  KimiHarnessOptions,
+  KimiHostIdentity,
+  OAuthRefreshOutcome,
+  ResumeSessionInput,
+  ResumedSessionSummary,
+  SessionSummary,
+} from '#/types';
 
 export interface SDKRpcClientOptions {
   readonly homeDir?: string;
@@ -87,6 +96,25 @@ export class SDKRpcClient extends SDKRpcClientBase {
 
   protected async getRpc(): Promise<RPCMethods<CoreAPI>> {
     return this.ready;
+  }
+
+  override async createSessionWithKaos(
+    input: CreateSessionOptions,
+    kaos: Kaos,
+  ): Promise<SessionSummary> {
+    const { planMode, ...coreInput } = input;
+    void planMode;
+    return this.core.createSessionWithOverrides(coreInput, { kaos });
+  }
+
+  override async resumeSessionWithKaos(
+    input: ResumeSessionInput,
+    kaos: Kaos,
+  ): Promise<ResumedSessionSummary> {
+    return this.core.resumeSessionWithOverrides(
+      { ...input, sessionId: input.id },
+      { kaos },
+    );
   }
 
   private createKimiRequestHeaders(): Record<string, string> | undefined {

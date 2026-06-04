@@ -7,7 +7,6 @@ import {
   type PromptResponse,
   type SessionModeId,
 } from '@agentclientprotocol/sdk';
-import { LocalKaos, runWithKaos, type Kaos } from '@moonshot-ai/kaos';
 import {
   ErrorCodes,
   log,
@@ -29,7 +28,6 @@ import {
 } from './approval';
 import { buildSessionConfigOptions } from './config-options';
 import { acpBlocksToPromptParts } from './convert';
-import { AcpKaos } from './kaos-acp';
 import {
   acpToolCallId,
   assistantDeltaToSessionUpdate,
@@ -84,15 +82,6 @@ export class AcpSession {
    * `buildPermissionToolCallUpdate` exists for defence-in-depth.
    */
   private currentTurnId: number | undefined = undefined;
-
-  /**
-   * Lazily-built inner {@link Kaos} (a {@link LocalKaos}) that the
-   * per-prompt {@link AcpKaos} wraps. Cached on the session so we don't
-   * re-probe the environment on every prompt. Built lazily because the
-   * majority of sessions (those whose client does not advertise the FS
-   * capability) never need it.
-   */
-  private innerKaos: Kaos | undefined = undefined;
 
   /**
    * The adapter-side authoritative current BASE model id (no
@@ -450,7 +439,7 @@ export class AcpSession {
    * batch — completion ordering is what tells the caller (`loadSession`)
    * that the response is safe to return.
    */
-  async replayHistory(agentId: string = 'main'): Promise<void> {
+  async replayHistory(agentId: string = MAIN_AGENT_ID): Promise<void> {
     const sessionId = this.id;
     const conn = this.conn;
     const resumeState = this.session.getResumeState?.();
@@ -659,52 +648,13 @@ export class AcpSession {
     const sessionId = this.id;
     const conn = this.conn;
 
-    // Decide whether to bridge file I/O through ACP for this prompt.
-    // We honor the client's advertised capability surface only —
-    // unsupported clients silently fall back to `LocalKaos`, which keeps
-    // the rest of the codebase unaware of Phase 6.
-    //
-    // `runWithKaos` (NOT `setCurrentKaos`) is the correct primitive:
-    // `enterWith` persists for the rest of the current async context
-    // with no proper restore semantics, so concurrent prompts on the
-    // same process would step on each other. `run(...)` scopes the
-    // binding to the callback's async subtree.
-    const acpKaos = await this.maybeBuildAcpKaos();
-    if (!acpKaos) {
-      return this.runPromptBody(parts, sessionId, conn);
-    }
-    return runWithKaos(acpKaos, () => this.runPromptBody(parts, sessionId, conn));
+    return this.runPromptBody(parts, sessionId, conn);
   }
 
   /**
-   * Build an {@link AcpKaos} for this prompt if (and only if) the
-   * client advertised any FS reverse-RPC capability. Returns
-   * `undefined` otherwise — the caller then runs the prompt body in
-   * whatever Kaos was active before (typically the process-wide
-   * `LocalKaos` set up at startup).
-   *
-   * The inner {@link LocalKaos} is built lazily on the first capable
-   * prompt and cached on the instance (`this.innerKaos`); subsequent
-   * prompts reuse it.
-   */
-  private async maybeBuildAcpKaos(): Promise<AcpKaos | undefined> {
-    const fs = this.clientCapabilities?.fs;
-    if (!fs?.readTextFile && !fs?.writeTextFile) {
-      return undefined;
-    }
-    if (!this.innerKaos) {
-      this.innerKaos = await LocalKaos.create();
-    }
-    return new AcpKaos(this.conn, this.id, this.innerKaos);
-  }
-
-  /**
-   * The pre-Phase-6 body of {@link prompt}, extracted verbatim so that
-   * the new `runWithKaos` wrapper can apply uniformly to capable
-   * clients while non-capable clients hit the same code path with no
-   * wrapping. Splitting it out (rather than inlining the if/else twice)
-   * keeps the event-listener invariants — single `onEvent` subscription,
-   * `settled` flag semantics, `currentTurnId` reset — in one place.
+   * Body of {@link prompt}, extracted so the event-listener invariants
+   * — single `onEvent` subscription, `settled` flag semantics,
+   * `currentTurnId` reset — live in one place.
    */
   private runPromptBody(
     parts: ReturnType<typeof acpBlocksToPromptParts>,
@@ -713,6 +663,8 @@ export class AcpSession {
   ): Promise<PromptResponse> {
     return new Promise<PromptResponse>((resolve, reject) => {
       let settled = false;
+      const isFromMainAgent = (event: { agentId?: string }): boolean =>
+        event.agentId === undefined || event.agentId === MAIN_AGENT_ID;
       // Per-tool-call streaming args accumulator. Lives in the Promise
       // executor closure so each `prompt()` invocation gets its own
       // map and no state leaks across concurrent or sequential turns.
@@ -746,8 +698,36 @@ export class AcpSession {
         // tool card the client already rendered. This branch is purely
         // additive: it runs before the existing dispatch and never
         // returns, so the if-chain below behaves exactly as in Phase 4.
-        if ('turnId' in event && typeof event.turnId === 'number') {
+        // Subagent turn events carry their own `turnId`; filtering on
+        // `agentId` keeps `currentTurnId` aligned with the parent turn
+        // that the approval prompt actually belongs to.
+        if (
+          'turnId' in event &&
+          typeof event.turnId === 'number' &&
+          isFromMainAgent(event)
+        ) {
           this.currentTurnId = event.turnId;
+        }
+        if (event.type === 'error') {
+          if (settled) return;
+          if (!isFromMainAgent(event)) return;
+          if (event.code !== ErrorCodes.TURN_AGENT_BUSY) return;
+          settled = true;
+          argsByToolCall.clear();
+          startedToolCalls.clear();
+          this.currentTurnId = undefined;
+          unsub();
+          log.warn('acp: prompt rejected because another turn is active', {
+            sessionId,
+            details: event.details,
+          });
+          reject(
+            RequestError.invalidRequest(
+              { code: event.code, details: event.details },
+              event.message,
+            ),
+          );
+          return;
         }
         if (event.type === 'assistant.delta') {
           // `sessionUpdate` is itself async (it serializes onto the
@@ -903,6 +883,7 @@ export class AcpSession {
         }
         if (event.type === 'turn.ended') {
           if (settled) return;
+          if (!isFromMainAgent(event)) return;
           settled = true;
           if (event.reason === 'failed') {
             // Failures bubble up via the SDK `error` payload. Phase 11.1
@@ -1205,6 +1186,14 @@ function authRequiredFromUnknown(err: unknown): RequestError | undefined {
  */
 const THINKING_ON_LEVEL = 'high';
 const THINKING_OFF_LEVEL = 'off';
+
+/**
+ * Identifier the agent-core session emits for the main (user-facing)
+ * agent. Subagents are issued generated ids by `Session.spawnAgent`;
+ * filtering on this constant keeps `turn.ended` / `error` events from a
+ * child agent from settling the parent's `session/prompt` promise.
+ */
+const MAIN_AGENT_ID = 'main';
 
 /**
  * Parse a tool call's `arguments` field (kosong wire format: a JSON
