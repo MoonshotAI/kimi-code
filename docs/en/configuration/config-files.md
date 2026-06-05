@@ -185,7 +185,7 @@ You can also switch models temporarily without touching the config file — by s
 | `micro_compaction` | `boolean` | `false` | Trim older large tool results from context while preserving recent conversation |
 | `background_ask` | `boolean` | `false` | Allow `AskUserQuestion` to start a background question task when the Agent can continue working |
 
-Environment variables take priority over this table. `KIMI_CODE_EXPERIMENTAL_<NAME>` overrides one feature, and `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables all experimental features for that process. When a feature is controlled by the environment, `/experiments` shows it as locked.
+Environment variables take priority over this table. `KIMI_CODE_EXPERIMENTAL_<NAME>` overrides one feature, and `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables all experimental features for that process — see the full list in [Environment variables → Runtime switches](./env-vars.md#runtime-switches). When a feature is controlled by the environment, `/experiments` shows it as locked.
 
 ## `services`
 

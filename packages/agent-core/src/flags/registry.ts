@@ -36,6 +36,14 @@ export const FLAG_DEFINITIONS = [
     default: false,
     surface: 'core',
   },
+  {
+    id: 'sub-skill',
+    title: 'Sub-skill',
+    description: 'Enable discovery of nested skills inside skill bundles that declare has-sub-skill.',
+    env: 'KIMI_CODE_EXPERIMENTAL_SUB_SKILL',
+    default: false,
+    surface: 'core',
+  },
 ] as const satisfies readonly FlagDefinitionInput[];
 
 /** Literal union of registered flag ids. */

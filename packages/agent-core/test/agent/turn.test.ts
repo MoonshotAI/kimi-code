@@ -23,11 +23,6 @@ import type {
   QueuedSubagentTask,
   SessionSubagentHost,
 } from '../../src/session/subagent-host';
-import {
-  estimateTokens,
-  estimateTokensForMessages,
-  estimateTokensForTools,
-} from '../../src/utils/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { SessionGoalStore, type SessionGoalState } from '../../src/session/goal';
@@ -901,7 +896,7 @@ describe('Agent turn flow', () => {
     expect(payload).toMatchObject({
       turnStep: '0.1',
     });
-    expect(payload['estimatedInputTokens']).toEqual(expect.any(Number));
+    expect(payload).not.toHaveProperty('estimatedInputTokens');
     expect(payload).not.toHaveProperty('turnId');
     expect(payload).not.toHaveProperty('step');
     expect(payload).not.toHaveProperty('attempt');
@@ -969,7 +964,7 @@ describe('Agent turn flow', () => {
     }
   });
 
-  it('includes tool schemas in estimated LLM request tokens', async () => {
+  it('does not log estimated LLM request tokens when tools are present', async () => {
     const { logger, entries } = captureLogs();
     const ctx = testAgent({ log: logger });
     ctx.configure();
@@ -981,14 +976,10 @@ describe('Agent turn flow', () => {
 
     const input = ctx.llmCalls[0];
     expect(input?.tools.length).toBeGreaterThan(0);
-    const expectedTokens =
-      estimateTokens(input!.systemPrompt) +
-      estimateTokensForMessages(input!.history) +
-      estimateTokensForTools(input!.tools);
     const requestPayload = entries.find((entry) => entry.message === 'llm request')?.payload as
       | Record<string, unknown>
       | undefined;
-    expect(requestPayload?.['estimatedInputTokens']).toBe(expectedTokens);
+    expect(requestPayload).not.toHaveProperty('estimatedInputTokens');
   });
 
   it('classifies OAuth resolver failures as auth errors', async () => {

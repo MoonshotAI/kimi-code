@@ -166,7 +166,10 @@ export class Session {
       },
       telemetry: this.telemetry,
     });
-    this.skills = new SkillRegistry({ sessionId: options.id });
+    this.skills = new SkillRegistry({
+      sessionId: options.id,
+      experimentalFlags: this.experimentalFlags,
+    });
     this.mcp = new McpConnectionManager({
       oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
       log: this.log,
@@ -403,7 +406,7 @@ export class Session {
       builtinDir: this.options.skills?.builtinDir,
     });
     await this.skills.loadRoots(roots);
-    registerBuiltinSkills(this.skills);
+    registerBuiltinSkills(this.skills, { experimentalFlags: this.experimentalFlags });
   }
 
   private async loadMcpServers(): Promise<void> {
