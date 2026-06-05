@@ -50,7 +50,6 @@ reserved_context_size = 50000
 [background]
 max_running_tasks = 4
 keep_alive_on_exit = false
-agent_task_timeout_s = 900
 
 [experimental]
 goal_command = false
@@ -167,13 +166,12 @@ max_context_size = 1047576
 
 ## `background`
 
-`background` 控制后台任务（通过 `Bash` 工具或 `Agent` 工具的 `run_in_background=true` 参数启动）的并发数和超时行为。
+`background` 控制后台任务（通过 `Bash` 工具或 `Agent` 工具的 `run_in_background=true` 参数启动）的并发数。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `max_running_tasks` | `integer` | — | 同时运行的最大后台任务数 |
 | `keep_alive_on_exit` | `boolean` | `true` | 会话关闭时是否保留仍在运行的后台任务。设为 `false` 时，进程退出前会请求停止所有后台任务 |
-| `agent_task_timeout_s` | `integer` | — | 后台 Agent 任务的最长运行时间（秒） |
 
 `keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，优先级高于配置文件。
 

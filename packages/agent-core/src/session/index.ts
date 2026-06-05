@@ -456,11 +456,6 @@ export class Session {
     });
   }
 
-  private backgroundTaskTimeoutMs(): number | undefined {
-    const timeoutS = this.options.background?.agentTaskTimeoutS;
-    return timeoutS === undefined ? undefined : timeoutS * 1000;
-  }
-
   private refreshAgentBuiltinTools(): void {
     for (const agent of this.readyAgents()) {
       if (!agent.config.hasProvider) continue;
@@ -488,8 +483,7 @@ export class Session {
       rpc: proxyWithExtraPayload(this.rpc, { agentId: id }),
       modelProvider: this.options.providerManager,
       hookEngine: config.hookEngine ?? this.hookEngine,
-      subagentHost:
-        config.subagentHost ?? new SessionSubagentHost(this, id, this.backgroundTaskTimeoutMs()),
+      subagentHost: config.subagentHost ?? new SessionSubagentHost(this, id),
       mcp: this.mcp,
       goals: this.goals,
       permission: this.permissionOptions(parentAgentId, config.permission),

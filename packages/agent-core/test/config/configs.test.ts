@@ -99,7 +99,6 @@ compaction_trigger_ratio = 0.85
 max_running_tasks = 4
 keep_alive_on_exit = false
 kill_grace_period_ms = 2000
-agent_task_timeout_s = 900
 print_wait_ceiling_s = 3600
 
 [[hooks]]
@@ -173,7 +172,12 @@ describe('harness config TOML loader', () => {
       reservedContextSize: 50000,
       compactionTriggerRatio: 0.85,
     });
-    expect(config.background?.agentTaskTimeoutS).toBe(900);
+    expect(config.background).toMatchObject({
+      maxRunningTasks: 4,
+      keepAliveOnExit: false,
+      killGracePeriodMs: 2000,
+      printWaitCeilingS: 3600,
+    });
     expect(config.hooks).toEqual([
       {
         event: 'PreToolUse',

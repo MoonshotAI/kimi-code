@@ -1,6 +1,6 @@
 ---
-"@moonshot-ai/agent-core": patch
-"@moonshot-ai/kimi-code": patch
+"@moonshot-ai/agent-core": minor
+"@moonshot-ai/kimi-code": minor
 ---
 
-Show concise resume instructions when a foreground subagent times out.
+Use a fixed 30-minute timeout for subagents and show concise resume instructions when they time out.
