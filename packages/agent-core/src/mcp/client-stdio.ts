@@ -1,6 +1,6 @@
 import { ErrorCodes, KimiError } from '#/errors';
 import type { McpServerStdioConfig } from '#/config/schema';
-import { proxyEnvForChild } from '#/utils/proxy';
+import { proxyEnvForChild, reconcileChildNoProxy } from '#/utils/proxy';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
@@ -220,7 +220,9 @@ class BoundedTail {
 // style stdio servers fail to launch even with a valid config. A node child
 // does not inherit our in-process undici dispatcher, so `proxyEnvForChild`
 // adds `NODE_USE_ENV_PROXY` (and a loopback-protected `NO_PROXY`) to make it
-// honor the proxy natively. Explicit `config.env` entries still override.
+// honor the proxy natively. Explicit `config.env` entries still override —
+// including `NO_PROXY`, which `reconcileChildNoProxy` mirrors onto both casings
+// so a single-casing override isn't shadowed by the injected value.
 function mergeStdioEnv(configEnv?: Record<string, string>): Record<string, string> {
   const merged: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -228,5 +230,6 @@ function mergeStdioEnv(configEnv?: Record<string, string>): Record<string, strin
   }
   Object.assign(merged, proxyEnvForChild());
   if (configEnv !== undefined) Object.assign(merged, configEnv);
+  reconcileChildNoProxy(merged, configEnv);
   return merged;
 }

@@ -135,16 +135,22 @@ export function makeNoProxyMatcher(noProxy: string): (host: string) => boolean {
 }
 
 export interface ProxyAgentFactories {
-  /** Build the dispatcher for an HTTP/HTTPS proxy (reads HTTP(S)_PROXY from env). */
-  readonly makeHttpAgent: (options: { noProxy: string }) => Dispatcher;
+  /** Build the dispatcher for an HTTP/HTTPS proxy. */
+  readonly makeHttpAgent: (options: {
+    httpProxy?: string;
+    httpsProxy?: string;
+    noProxy: string;
+  }) => Dispatcher;
   /** Build the dispatcher for a SOCKS proxy. */
   readonly makeSocksAgent: (options: { proxy: SocksProxyConfig; noProxy: string }) => Dispatcher;
 }
 
-const defaultMakeHttpAgent: ProxyAgentFactories['makeHttpAgent'] = ({ noProxy }) =>
-  // EnvHttpProxyAgent reads HTTP_PROXY/HTTPS_PROXY from process.env itself; we
-  // only override noProxy to guarantee the loopback bypass.
-  new EnvHttpProxyAgent({ noProxy });
+const defaultMakeHttpAgent: ProxyAgentFactories['makeHttpAgent'] = ({ httpProxy, httpsProxy, noProxy }) =>
+  // Pass the resolved proxy URLs explicitly: left to itself EnvHttpProxyAgent
+  // reads `http_proxy ?? HTTP_PROXY`, where a blank lowercase value would mask a
+  // populated uppercase one and silently disable proxying. noProxy is likewise
+  // pre-resolved to guarantee the loopback bypass.
+  new EnvHttpProxyAgent({ httpProxy, httpsProxy, noProxy });
 
 const defaultMakeSocksAgent: ProxyAgentFactories['makeSocksAgent'] = ({ proxy, noProxy }) => {
   // undici has no SOCKS support, so we drive a custom connector: tunnel the
@@ -197,7 +203,19 @@ export function createProxyDispatcher(
   const { makeHttpAgent = defaultMakeHttpAgent, makeSocksAgent = defaultMakeSocksAgent } = factories;
   try {
     if (hasHttpProxy(env)) {
-      return makeHttpAgent({ noProxy: resolveNoProxy(env) });
+      // Resolve each scheme's proxy URL ourselves. Coerce a missing or
+      // SOCKS-scheme value to '' (falsy to undici) so EnvHttpProxyAgent neither
+      // builds a broken agent from a socks: URI nor re-reads a blank-masked or
+      // socks value back from process.env.
+      const pickHttpProxy = (keys: readonly string[]): string => {
+        const value = firstNonBlank(env, keys);
+        return value === undefined || SOCKS_SCHEMES.has(schemeOf(value) ?? '') ? '' : value;
+      };
+      return makeHttpAgent({
+        httpProxy: pickHttpProxy(['http_proxy', 'HTTP_PROXY']),
+        httpsProxy: pickHttpProxy(['https_proxy', 'HTTPS_PROXY']),
+        noProxy: resolveNoProxy(env),
+      });
     }
     const socks = resolveSocksProxy(env);
     if (socks !== undefined) {
@@ -255,4 +273,28 @@ export function proxyEnvForChild(env: Env = process.env): Record<string, string>
   if (!hasHttpProxy(env)) return {};
   const noProxy = resolveNoProxy(env);
   return { NODE_USE_ENV_PROXY: '1', NO_PROXY: noProxy, no_proxy: noProxy };
+}
+
+/**
+ * Mirror a server config's `NO_PROXY` override onto both casings of the child
+ * env. undici reads the lowercase `no_proxy` first, so without this the value
+ * {@link proxyEnvForChild} injected in the other casing would shadow an
+ * explicit per-server override.
+ *
+ * Uses the first NON-blank casing (a blank `no_proxy=''` must not mask a
+ * populated `NO_PROXY`, mirroring {@link resolveNoProxy}) and runs the value
+ * back through {@link resolveNoProxy} so the loopback bypass is preserved and
+ * `*` passes through verbatim. No-op when config sets no usable `NO_PROXY`.
+ */
+export function reconcileChildNoProxy(
+  childEnv: Record<string, string>,
+  configEnv?: Record<string, string>,
+): void {
+  const override = [configEnv?.['no_proxy'], configEnv?.['NO_PROXY']].find(
+    (value) => (value?.trim() ?? '').length > 0,
+  );
+  if (override === undefined) return;
+  const noProxy = resolveNoProxy({ no_proxy: override, NO_PROXY: override });
+  childEnv['NO_PROXY'] = noProxy;
+  childEnv['no_proxy'] = noProxy;
 }

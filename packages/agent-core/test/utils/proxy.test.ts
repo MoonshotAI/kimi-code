@@ -6,6 +6,7 @@ import {
   isProxyConfigured,
   makeNoProxyMatcher,
   proxyEnvForChild,
+  reconcileChildNoProxy,
   resolveNoProxy,
   resolveSocksProxy,
 } from '../../src/utils/proxy';
@@ -165,7 +166,7 @@ describe('createProxyDispatcher', () => {
     expect(makeSocksAgent).not.toHaveBeenCalled();
   });
 
-  it('builds an HTTP-proxy agent with loopback-protected NO_PROXY', () => {
+  it('builds an HTTP-proxy agent with resolved proxy URLs and loopback-protected NO_PROXY', () => {
     const sentinel = { id: 'http' } as never;
     const makeHttpAgent = vi.fn().mockReturnValue(sentinel);
     const makeSocksAgent = vi.fn();
@@ -174,7 +175,36 @@ describe('createProxyDispatcher', () => {
       { makeHttpAgent, makeSocksAgent },
     );
     expect(result).toBe(sentinel);
-    expect(makeHttpAgent).toHaveBeenCalledWith({ noProxy: 'corp,localhost,127.0.0.1,::1' });
+    expect(makeHttpAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ httpProxy: 'http://p:3128', noProxy: 'corp,localhost,127.0.0.1,::1' }),
+    );
+    expect(makeSocksAgent).not.toHaveBeenCalled();
+  });
+
+  it('passes the non-blank HTTP_PROXY even when the lowercase form is an empty string', () => {
+    // undici's EnvHttpProxyAgent reads `http_proxy ?? HTTP_PROXY`, so a blank
+    // lowercase value would mask the uppercase one — we must resolve and pass
+    // the proxy URL explicitly, otherwise the dispatcher installs but goes direct.
+    const makeHttpAgent = vi.fn().mockReturnValue({ id: 'http' } as never);
+    createProxyDispatcher({ http_proxy: '', HTTP_PROXY: 'http://proxy:3128' }, { makeHttpAgent });
+    expect(makeHttpAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ httpProxy: 'http://proxy:3128' }),
+    );
+  });
+
+  it('suppresses a SOCKS value sitting in HTTP_PROXY rather than feeding it to the HTTP agent', () => {
+    // EnvHttpProxyAgent cannot do SOCKS; passing it a socks: URI builds a broken
+    // ProxyAgent. When HTTPS is a real http-proxy (so the HTTP path is taken),
+    // the socks-in-HTTP_PROXY value must be coerced away, not forwarded.
+    const makeHttpAgent = vi.fn().mockReturnValue({ id: 'http' } as never);
+    const makeSocksAgent = vi.fn();
+    createProxyDispatcher(
+      { HTTP_PROXY: 'socks5://h:1', HTTPS_PROXY: 'http://real:3128' },
+      { makeHttpAgent, makeSocksAgent },
+    );
+    expect(makeHttpAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ httpProxy: '', httpsProxy: 'http://real:3128' }),
+    );
     expect(makeSocksAgent).not.toHaveBeenCalled();
   });
 
@@ -272,5 +302,58 @@ describe('proxyEnvForChild', () => {
 
   it('returns an empty object for a SOCKS-only proxy (children cannot use SOCKS natively)', () => {
     expect(proxyEnvForChild({ ALL_PROXY: 'socks5://127.0.0.1:1080' })).toEqual({});
+  });
+});
+
+describe('reconcileChildNoProxy', () => {
+  it('mirrors a config NO_PROXY override onto both casings and re-adds loopback', () => {
+    // Without mirroring, the lowercase `no_proxy` injected by proxyEnvForChild
+    // would shadow the server config's uppercase override (undici reads
+    // lowercase first); the override must also keep the loopback bypass.
+    const childEnv: Record<string, string> = {
+      NO_PROXY: 'corp,localhost,127.0.0.1,::1',
+      no_proxy: 'corp,localhost,127.0.0.1,::1',
+    };
+    reconcileChildNoProxy(childEnv, { NO_PROXY: 'server.local' });
+    expect(childEnv['NO_PROXY']).toBe('server.local,localhost,127.0.0.1,::1');
+    expect(childEnv['no_proxy']).toBe('server.local,localhost,127.0.0.1,::1');
+  });
+
+  it('prefers the first non-blank casing (lowercase) and keeps loopback', () => {
+    const childEnv: Record<string, string> = { NO_PROXY: 'aug', no_proxy: 'aug' };
+    reconcileChildNoProxy(childEnv, { no_proxy: 'lower', NO_PROXY: 'upper' });
+    expect(childEnv['NO_PROXY']).toBe('lower,localhost,127.0.0.1,::1');
+    expect(childEnv['no_proxy']).toBe('lower,localhost,127.0.0.1,::1');
+  });
+
+  it('does not let a blank lowercase no_proxy mask a populated NO_PROXY', () => {
+    const childEnv: Record<string, string> = { NO_PROXY: 'aug', no_proxy: 'aug' };
+    reconcileChildNoProxy(childEnv, { no_proxy: '', NO_PROXY: 'real.corp' });
+    expect(childEnv['NO_PROXY']).toBe('real.corp,localhost,127.0.0.1,::1');
+    expect(childEnv['no_proxy']).toBe('real.corp,localhost,127.0.0.1,::1');
+  });
+
+  it('passes the "*" wildcard override through verbatim', () => {
+    const childEnv: Record<string, string> = {
+      NO_PROXY: 'corp,localhost,127.0.0.1,::1',
+      no_proxy: 'corp,localhost,127.0.0.1,::1',
+    };
+    reconcileChildNoProxy(childEnv, { NO_PROXY: '*' });
+    expect(childEnv['NO_PROXY']).toBe('*');
+    expect(childEnv['no_proxy']).toBe('*');
+  });
+
+  it('ignores a config that provides no NO_PROXY or only a blank one', () => {
+    const childEnv: Record<string, string> = { NO_PROXY: 'aug', no_proxy: 'aug' };
+    reconcileChildNoProxy(childEnv, { OTHER: 'x' });
+    expect(childEnv['no_proxy']).toBe('aug');
+    reconcileChildNoProxy(childEnv, { no_proxy: '' });
+    expect(childEnv['no_proxy']).toBe('aug');
+  });
+
+  it('is a no-op when there is no config', () => {
+    const childEnv: Record<string, string> = { no_proxy: 'aug' };
+    reconcileChildNoProxy(childEnv, undefined);
+    expect(childEnv['no_proxy']).toBe('aug');
   });
 });
