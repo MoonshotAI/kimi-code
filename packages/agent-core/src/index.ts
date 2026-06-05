@@ -15,6 +15,7 @@ export {
   resolveGlobalLogPath,
 } from './logging/logger';
 export { resolveLoggingConfig } from './logging/resolve-config';
+export { slugifyWorkDirName } from './utils/workdir-slug';
 export type { ResolveLoggingInput } from './logging/resolve-config';
 export type {
   LogContext,
