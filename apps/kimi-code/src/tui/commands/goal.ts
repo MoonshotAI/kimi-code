@@ -388,8 +388,11 @@ async function startGoal(
   host.track('goal_create', { replace: parsed.replace });
   host.state.transcriptContainer.addChild(new GoalSetMessageComponent(host.state.theme.colors));
   host.state.ui.requestRender();
-  const sendInput = options.sendInput ?? host.sendNormalUserInput;
-  sendInput(parsed.objective);
+  if (options.sendInput !== undefined) {
+    options.sendInput(parsed.objective);
+  } else {
+    host.sendNormalUserInput(parsed.objective);
+  }
   return true;
 }
 
