@@ -292,6 +292,7 @@ describe('CLI options parsing', () => {
         'login',
         'doctor',
         'migrate',
+        'headless',
         'upgrade',
       ]);
     });
