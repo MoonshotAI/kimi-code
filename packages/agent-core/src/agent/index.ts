@@ -37,6 +37,7 @@ import {
 } from './compaction';
 import { CronManager } from './cron';
 import { ConfigState } from './config';
+import { applyKimiEnvGenerationParams } from './kimi-env-params';
 import { ContextMemory } from './context';
 import { HookEngine } from '../session/hooks';
 import { InjectionManager } from './injection/manager';
@@ -210,7 +211,10 @@ export class Agent {
 
   get llm(): KosongLLM {
     const model = this.config.model;
-    const provider = this.config.provider.withThinking(this.config.thinkingLevel);
+    const provider = applyKimiEnvGenerationParams(
+      this.config.provider.withThinking(this.config.thinkingLevel),
+      this.config.thinkingLevel,
+    );
     const loopControl = this.kimiConfig?.loopControl;
     const completionBudgetConfig = resolveCompletionBudget({
       maxOutputSize: this.config.maxOutputSize,
