@@ -37,7 +37,7 @@ import {
 } from './compaction';
 import { CronManager } from './cron';
 import { ConfigState } from './config';
-import { applyKimiEnvGenerationParams } from './kimi-env-params';
+import { applyKimiEnvThinkingKeep } from './kimi-env-params';
 import { ContextMemory } from './context';
 import { HookEngine } from '../session/hooks';
 import { InjectionManager } from './injection/manager';
@@ -211,7 +211,7 @@ export class Agent {
 
   get llm(): KosongLLM {
     const model = this.config.model;
-    const provider = applyKimiEnvGenerationParams(
+    const provider = applyKimiEnvThinkingKeep(
       this.config.provider.withThinking(this.config.thinkingLevel),
       this.config.thinkingLevel,
     );

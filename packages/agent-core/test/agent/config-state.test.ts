@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { emptyUsage } from '@moonshot-ai/kosong';
 
 import { ProviderManager } from '../../src/session/provider-manager';
@@ -156,5 +156,31 @@ describe('ConfigState model capabilities', () => {
       },
     });
     expect('sessionId' in ctx.agent).toBe(false);
+  });
+});
+
+describe('ConfigState.provider applies global KIMI_MODEL_* sampling params', () => {
+  it('injects KIMI_MODEL_TEMPERATURE into config.provider (the provider compaction also uses)', () => {
+    vi.stubEnv('KIMI_MODEL_TEMPERATURE', '0.3');
+    try {
+      const ctx = testAgent({
+        providerManager: new ProviderManager({
+          config: {
+            providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
+            models: {
+              'kimi-code': { provider: 'kimi', model: 'kimi-code', maxContextSize: 128_000 },
+            },
+          },
+        }),
+      });
+      ctx.agent.config.update({ modelAlias: 'kimi-code' });
+
+      const provider = ctx.agent.config.provider;
+      expect(Reflect.get(provider as object, '_generationKwargs')).toMatchObject({
+        temperature: 0.3,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
