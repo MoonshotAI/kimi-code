@@ -46,8 +46,7 @@ function readCustomRegistrySource(provider: ProviderConfig): CustomRegistrySourc
   if (candidate['kind'] !== 'apiJson') return undefined;
   const url = candidate['url'];
   const apiKey = candidate['apiKey'];
-  if (typeof url !== 'string' || url.length === 0) return undefined;
-  if (typeof apiKey !== 'string') return undefined;
+  if (typeof url !== 'string' || url.length === 0 || typeof apiKey !== 'string') return undefined;
   return { kind: 'apiJson', url, apiKey };
 }
 
@@ -66,38 +65,10 @@ function collectModelIdsForAliases(config: KimiConfig, aliasKeys: ReadonlySet<st
   return ids;
 }
 
-function providerAliasKeys(config: KimiConfig, providerId: string): Set<string> {
-  const keys = new Set<string>();
-  for (const [alias, model] of Object.entries(config.models ?? {})) {
-    if (model.provider === providerId) keys.add(alias);
-  }
-  return keys;
-}
-
-function generatedProviderAliasKeys(
-  config: KimiConfig,
-  providerId: string,
-  aliasPrefix: string,
-): Set<string> {
-  const keys = new Set<string>();
-  for (const [alias, model] of Object.entries(config.models ?? {})) {
-    if (model.provider === providerId && alias.startsWith(aliasPrefix)) {
-      keys.add(alias);
-    }
-  }
-  return keys;
-}
-
 function computeChanges(oldIds: Set<string>, newIds: Set<string>): { added: number; removed: number } {
-  let added = 0;
-  for (const id of newIds) {
-    if (!oldIds.has(id)) added++;
-  }
-  let removed = 0;
-  for (const id of oldIds) {
-    if (!newIds.has(id)) removed++;
-  }
-  return { added, removed };
+  const count = (ids: Set<string>, other: Set<string>): number =>
+    Array.from(ids).filter((id) => !other.has(id)).length;
+  return { added: count(newIds, oldIds), removed: count(oldIds, newIds) };
 }
 
 interface ProviderModelSnapshot {
@@ -149,47 +120,40 @@ function providerRefreshAliasKeys(
   providerId: string,
   aliasPrefix: string,
 ): Set<string> {
-  const keys = generatedProviderAliasKeys(config, providerId, aliasPrefix);
-  for (const key of providerAliasKeys(nextConfig, providerId)) keys.add(key);
+  const keys = new Set<string>();
+  for (const [alias, model] of Object.entries(config.models ?? {})) {
+    if (model.provider === providerId && alias.startsWith(aliasPrefix)) keys.add(alias);
+  }
+  for (const [alias, model] of Object.entries(nextConfig.models ?? {})) {
+    if (model.provider === providerId) keys.add(alias);
+  }
   return keys;
 }
 
-function preserveUserProviderAliases(
+function preserveAndRestoreUserAliases(
   config: KimiConfig,
+  next: KimiConfig,
   providerId: string,
   refreshedAliasKeys: ReadonlySet<string>,
-): Record<string, ModelAlias> {
+): void {
   const preserved: Record<string, ModelAlias> = {};
   for (const [alias, model] of Object.entries(config.models ?? {})) {
     if (model.provider !== providerId || refreshedAliasKeys.has(alias)) continue;
     preserved[alias] = structuredClone(model);
   }
-  return preserved;
+  if (Object.keys(preserved).length === 0) return;
+  next.models = { ...next.models, ...preserved };
 }
 
-function restoreProviderAliases(config: KimiConfig, aliases: Record<string, ModelAlias>): void {
-  if (Object.keys(aliases).length === 0) return;
-  config.models = {
-    ...config.models,
-    ...aliases,
-  };
-}
-
-function restoreDefaultSelection(
+function restoreAndClampDefaults(
   config: KimiConfig,
   defaultModel: string | undefined,
   defaultThinking: boolean | undefined,
 ): void {
-  if (defaultModel === undefined || config.models?.[defaultModel] === undefined) return;
-  config.defaultModel = defaultModel;
-  config.defaultThinking = defaultThinking;
-}
-
-// `apply*` may leave `defaultModel` pointing at an alias that no longer exists
-// (e.g. the previously-selected model was dropped from the registry). The host's
-// `setConfig` deep-merge cannot clear a key, so the matching `removeProvider`
-// call handles disk cleanup while this drops the dangling reference in memory.
-function clampDanglingDefault(config: KimiConfig): void {
+  if (defaultModel !== undefined && config.models?.[defaultModel] !== undefined) {
+    config.defaultModel = defaultModel;
+    config.defaultThinking = defaultThinking;
+  }
   if (config.defaultModel !== undefined && config.models?.[config.defaultModel] === undefined) {
     config.defaultModel = undefined;
     config.defaultThinking = undefined;
@@ -205,12 +169,44 @@ function pickDefaultModel(config: KimiConfig, providerId: string, models: Array<
     const alias = config.models?.[existingDefault];
     if (alias !== undefined && alias.provider === providerId) {
       const stillAvailable = models.find((m) => m.id === alias.model);
-      if (stillAvailable !== undefined) {
-        return stillAvailable.id;
-      }
+      if (stillAvailable !== undefined) return stillAvailable.id;
     }
   }
   return firstModel.id;
+}
+
+async function refreshSingleProvider(
+  host: RefreshProviderHost,
+  config: KimiConfig,
+  providerId: string,
+  providerName: string,
+  aliasPrefix: string,
+  apply: (next: KimiConfig) => void,
+): Promise<{ config: KimiConfig; changed?: ProviderChange }> {
+  const next = structuredClone(config);
+  apply(next);
+  const refreshedAliasKeys = providerRefreshAliasKeys(config, next, providerId, aliasPrefix);
+  preserveAndRestoreUserAliases(config, next, providerId, refreshedAliasKeys);
+  restoreAndClampDefaults(next, config.defaultModel, config.defaultThinking);
+
+  if (providerModelsEqual(config, next, providerId, refreshedAliasKeys)) {
+    return { config };
+  }
+  const { added, removed } = computeChanges(
+    collectModelIdsForAliases(config, refreshedAliasKeys),
+    collectModelIdsForAliases(next, refreshedAliasKeys),
+  );
+  await host.removeProvider(providerId);
+  const newConfig = await host.setConfig({
+    providers: next.providers,
+    models: next.models,
+    defaultModel: next.defaultModel,
+    defaultThinking: next.defaultThinking,
+  });
+  return {
+    config: newConfig,
+    changed: { providerId, providerName, added, removed },
+  };
 }
 
 export async function refreshAllProviderModels(host: RefreshProviderHost): Promise<RefreshResult> {
@@ -235,53 +231,26 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
         configuredOAuthRef: managedProvider.oauth,
       });
       const accessToken = await host.resolveOAuthToken(KIMI_CODE_PROVIDER_NAME, auth.oauthRef);
-      const models = await fetchManagedKimiCodeModels({
-        accessToken,
-        baseUrl: auth.baseUrl,
-      });
+      const models = await fetchManagedKimiCodeModels({ accessToken, baseUrl: auth.baseUrl });
       if (models.length > 0) {
-        const next = structuredClone(config);
-        applyManagedKimiCodeConfig(asManaged(next), {
-          models,
-          baseUrl: auth.baseUrl,
-          oauthKey: auth.oauthRef.key,
-          oauthHost: auth.oauthRef.oauthHost,
-          preserveDefaultModel: true,
-        });
-        const refreshedAliasKeys = providerRefreshAliasKeys(
+        const result = await refreshSingleProvider(
+          host,
           config,
-          next,
           KIMI_CODE_PROVIDER_NAME,
+          'Kimi Code',
           `${KIMI_CODE_PLATFORM_ID}/`,
+          (next) =>
+            applyManagedKimiCodeConfig(asManaged(next), {
+              models,
+              baseUrl: auth.baseUrl,
+              oauthKey: auth.oauthRef.key,
+              oauthHost: auth.oauthRef.oauthHost,
+              preserveDefaultModel: true,
+            }),
         );
-        restoreProviderAliases(
-          next,
-          preserveUserProviderAliases(config, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys),
-        );
-        restoreDefaultSelection(next, config.defaultModel, config.defaultThinking);
-        clampDanglingDefault(next);
-
-        if (providerModelsEqual(config, next, KIMI_CODE_PROVIDER_NAME, refreshedAliasKeys)) {
-          unchanged.push(KIMI_CODE_PROVIDER_NAME);
-        } else {
-          const { added, removed } = computeChanges(
-            collectModelIdsForAliases(config, refreshedAliasKeys),
-            collectModelIdsForAliases(next, refreshedAliasKeys),
-          );
-          await host.removeProvider(KIMI_CODE_PROVIDER_NAME);
-          config = await host.setConfig({
-            providers: next.providers,
-            models: next.models,
-            defaultModel: next.defaultModel,
-            defaultThinking: next.defaultThinking,
-          });
-          changed.push({
-            providerId: KIMI_CODE_PROVIDER_NAME,
-            providerName: 'Kimi Code',
-            added,
-            removed,
-          });
-        }
+        config = result.config;
+        if (result.changed !== undefined) changed.push(result.changed);
+        else unchanged.push(KIMI_CODE_PROVIDER_NAME);
       }
     } catch (error) {
       failed.push({
@@ -312,45 +281,24 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
       const selectedModelId = pickDefaultModel(config, providerId, models);
       const selectedModel = models.find((m) => m.id === selectedModelId);
       if (selectedModel === undefined) continue;
-      const next = structuredClone(config);
-      applyOpenPlatformConfig(asManaged(next), {
-        platform,
-        models,
-        selectedModel,
-        thinking: false,
-        apiKey,
-      });
-      const refreshedAliasKeys = providerRefreshAliasKeys(
+      const result = await refreshSingleProvider(
+        host,
         config,
-        next,
         providerId,
+        platform.name,
         `${providerId}/`,
+        (next) =>
+          applyOpenPlatformConfig(asManaged(next), {
+            platform,
+            models,
+            selectedModel,
+            thinking: false,
+            apiKey,
+          }),
       );
-      restoreProviderAliases(next, preserveUserProviderAliases(config, providerId, refreshedAliasKeys));
-      restoreDefaultSelection(next, config.defaultModel, config.defaultThinking);
-      clampDanglingDefault(next);
-
-      if (providerModelsEqual(config, next, providerId, refreshedAliasKeys)) {
-        unchanged.push(providerId);
-      } else {
-        const { added, removed } = computeChanges(
-          collectModelIdsForAliases(config, refreshedAliasKeys),
-          collectModelIdsForAliases(next, refreshedAliasKeys),
-        );
-        await host.removeProvider(providerId);
-        config = await host.setConfig({
-          providers: next.providers,
-          models: next.models,
-          defaultModel: next.defaultModel,
-          defaultThinking: next.defaultThinking,
-        });
-        changed.push({
-          providerId,
-          providerName: platform.name,
-          added,
-          removed,
-        });
-      }
+      config = result.config;
+      if (result.changed !== undefined) changed.push(result.changed);
+      else unchanged.push(providerId);
     } catch (error) {
       failed.push({
         provider: providerId,
@@ -384,12 +332,7 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
       // from the same source do not overwrite each other's aliases, and so the
       // config we compare is exactly the config we persist.
       const next = structuredClone(config);
-      const changedProviders: Array<{
-        readonly providerId: string;
-        readonly providerName: string;
-        readonly added: number;
-        readonly removed: number;
-      }> = [];
+      const changedProviders: ProviderChange[] = [];
 
       for (const providerId of providerIds) {
         const entry = entries[providerId];
@@ -397,7 +340,7 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
 
         applyCustomRegistryProvider(asManaged(next), entry, source);
         const refreshedAliasKeys = providerRefreshAliasKeys(config, next, providerId, `${providerId}/`);
-        restoreProviderAliases(next, preserveUserProviderAliases(config, providerId, refreshedAliasKeys));
+        preserveAndRestoreUserAliases(config, next, providerId, refreshedAliasKeys);
 
         if (providerModelsEqual(config, next, providerId, refreshedAliasKeys)) {
           unchanged.push(providerId);
@@ -406,18 +349,12 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
             collectModelIdsForAliases(config, refreshedAliasKeys),
             collectModelIdsForAliases(next, refreshedAliasKeys),
           );
-          changedProviders.push({
-            providerId,
-            providerName: entry.name || providerId,
-            added,
-            removed,
-          });
+          changedProviders.push({ providerId, providerName: entry.name || providerId, added, removed });
         }
       }
 
       if (changedProviders.length > 0) {
-        restoreDefaultSelection(next, config.defaultModel, config.defaultThinking);
-        clampDanglingDefault(next);
+        restoreAndClampDefaults(next, config.defaultModel, config.defaultThinking);
         for (const { providerId } of changedProviders) {
           await host.removeProvider(providerId);
         }
@@ -427,9 +364,7 @@ export async function refreshAllProviderModels(host: RefreshProviderHost): Promi
           defaultModel: next.defaultModel,
           defaultThinking: next.defaultThinking,
         });
-        for (const change of changedProviders) {
-          changed.push(change);
-        }
+        for (const change of changedProviders) changed.push(change);
       }
     } catch (error) {
       for (const providerId of providerIds) {

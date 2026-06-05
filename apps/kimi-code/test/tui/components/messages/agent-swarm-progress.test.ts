@@ -595,7 +595,7 @@ describe('AgentSwarmProgressComponent', () => {
     });
 
     component.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
-    component.appendAssistantDelta({
+    component.appendModelDelta({
       agentId: 'agent-1',
       delta: 'Reviewing src/a.ts\nImports look stable',
     });
@@ -616,7 +616,7 @@ describe('AgentSwarmProgressComponent', () => {
     component.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
     component.markInputComplete();
     component.recordToolCall({ agentId: 'agent-1', toolCallId: 'call-read' });
-    component.appendAssistantDelta({
+    component.appendModelDelta({
       agentId: 'agent-1',
       delta: 'Reviewing src/a.ts and checking imports for regressions in detail',
     });

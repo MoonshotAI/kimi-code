@@ -164,62 +164,18 @@ export class SessionSubagentHost {
   }
 
   async resume(agentId: string, options: RunSubagentOptions): Promise<SubagentHandle> {
-    options.signal.throwIfAborted();
-
-    const parent = await this.session.ensureAgentResumed(this.ownerAgentId);
-    const metadata = this.session.metadata.agents[agentId];
-    if (metadata?.type !== 'sub') {
-      throw new Error(`Agent instance "${agentId}" is not a subagent`);
-    }
-    if (metadata.parentAgentId !== this.ownerAgentId) {
-      throw new Error(`Agent instance "${agentId}" does not belong to this parent agent`);
-    }
-    const child = await this.session.ensureAgentResumed(agentId);
-    if (this.activeChildren.has(agentId) || child.turn.hasActiveTurn) {
-      throw new Error(
-        `Agent instance "${agentId}" is already running and cannot be resumed concurrently`,
-      );
-    }
-
-    const profileName = child.config.profileName ?? 'subagent';
-
-    const controller = new AbortController();
-    const unlinkAbortSignal = linkAbortSignal(options.signal, controller);
-    this.activeChildren.set(agentId, {
-      controller,
-      runInBackground: options.runInBackground,
-    });
-
-    const completion = this.runChild(
-      parent,
-      agentId,
-      child,
-      profileName,
-      {
-        ...options,
-        signal: controller.signal,
-      },
-      // A resumed subagent is realigned to the parent agent's current model,
-      // so a parent setModel between the initial spawn and the resume is
-      // reflected — a subagent always uses the parent agent's model.
-      () => {
-        child.config.update({ modelAlias: parent.config.modelAlias });
-        return Promise.resolve();
-      },
-    ).finally(() => {
-      unlinkAbortSignal();
-      this.activeChildren.delete(agentId);
-    });
-
-    return {
-      agentId,
-      profileName,
-      resumed: true,
-      completion,
-    };
+    return this.resumeOrRetry(agentId, options, 'resume');
   }
 
   async retry(agentId: string, options: RunSubagentOptions): Promise<SubagentHandle> {
+    return this.resumeOrRetry(agentId, options, 'retry');
+  }
+
+  private async resumeOrRetry(
+    agentId: string,
+    options: RunSubagentOptions,
+    operation: 'resume' | 'retry',
+  ): Promise<SubagentHandle> {
     options.signal.throwIfAborted();
 
     const parent = await this.session.ensureAgentResumed(this.ownerAgentId);
@@ -233,7 +189,7 @@ export class SessionSubagentHost {
     const child = await this.session.ensureAgentResumed(agentId);
     if (this.activeChildren.has(agentId) || child.turn.hasActiveTurn) {
       throw new Error(
-        `Agent instance "${agentId}" is already running and cannot be retried concurrently`,
+        `Agent instance "${agentId}" is already running and cannot be ${operation}d concurrently`,
       );
     }
 
@@ -246,20 +202,27 @@ export class SessionSubagentHost {
       runInBackground: options.runInBackground,
     });
 
-    const completion = this.runChildRetry(parent, agentId, child, profileName, {
-      ...options,
-      signal: controller.signal,
-    }).finally(() => {
+    const runPromise =
+      operation === 'resume'
+        ? this.runChild(
+            parent,
+            agentId,
+            child,
+            profileName,
+            { ...options, signal: controller.signal },
+            () => {
+              child.config.update({ modelAlias: parent.config.modelAlias });
+              return Promise.resolve();
+            },
+          )
+        : this.runChildRetry(parent, agentId, child, profileName, { ...options, signal: controller.signal });
+
+    const completion = runPromise.finally(() => {
       unlinkAbortSignal();
       this.activeChildren.delete(agentId);
     });
 
-    return {
-      agentId,
-      profileName,
-      resumed: true,
-      completion,
-    };
+    return { agentId, profileName, resumed: true, completion };
   }
 
   async runQueued<T>(
@@ -374,29 +337,19 @@ export class SessionSubagentHost {
       if (handle === undefined) {
         throw error;
       }
-      let message: string;
-      let status: QueuedSubagentRunResult<T>['status'] = 'failed';
-      let state: QueuedSubagentRunResult<T>['state'];
-      if (subagentDeadline?.timedOut() === true && options.timeoutMs !== undefined) {
-        message = `Subagent timed out after ${formatTimeoutMs(options.timeoutMs)}.`;
-      } else if (options.totalTimedOut() && options.totalTimeoutMs !== undefined) {
-        message = totalTimeoutMessage(options.totalTimeoutMs);
-      } else if (isUserCancellation(runSignal.reason)) {
-        status = 'aborted';
-        state = 'started';
-        message = 'The user manually interrupted this subagent batch.';
-      } else if (isAbortError(error)) {
-        message = 'The subagent was stopped before it finished.';
-      } else {
-        message = error instanceof Error ? error.message : String(error);
-      }
-      return {
-        task,
-        agentId: handle.agentId,
-        status,
-        state,
-        error: message,
-      };
+      const status: QueuedSubagentRunResult<T>['status'] = isUserCancellation(runSignal.reason) ? 'aborted' : 'failed';
+      const state = status === 'aborted' ? 'started' : undefined;
+      const message =
+        subagentDeadline?.timedOut() === true && options.timeoutMs !== undefined
+          ? `Subagent timed out after ${formatTimeoutMs(options.timeoutMs)}.`
+          : options.totalTimedOut() && options.totalTimeoutMs !== undefined
+            ? totalTimeoutMessage(options.totalTimeoutMs)
+            : status === 'aborted'
+              ? 'The user manually interrupted this subagent batch.'
+              : isAbortError(error)
+                ? 'The subagent was stopped before it finished.'
+                : error instanceof Error ? error.message : String(error);
+      return { task, agentId: handle.agentId, status, state, error: message };
     } finally {
       subagentDeadline?.clear();
     }
@@ -423,8 +376,7 @@ export class SessionSubagentHost {
   ): Promise<SubagentCompletion> {
     if (emitSpawnedEvent) this.emitSubagentSpawned(parent, childId, profileName, options);
     const unwatchFirstOutput = this.watchFirstOutput(child, options.onFirstOutput);
-
-    try {
+    return this.runChildWithErrorHandling(parent, childId, options, unwatchFirstOutput, async () => {
       await prepareChild();
       options.signal.throwIfAborted();
       await this.triggerSubagentStart(parent, profileName, options.prompt, options.signal);
@@ -441,21 +393,8 @@ export class SessionSubagentHost {
       this.emitSubagentStarted(parent, childId, profileName, options);
       options.onStarted?.();
       child.turn.prompt([{ type: 'text', text: childPrompt }], origin);
-      return await this.waitForChildCompletion(parent, childId, child, profileName, options, origin);
-    } catch (error) {
-      if (!shouldSuppressQueuedAttemptFailureEvent(options, error)) {
-        const message = error instanceof Error ? error.message : String(error);
-        parent.emitEvent({
-          type: 'subagent.failed',
-          subagentId: childId,
-          parentToolCallId: options.parentToolCallId,
-          error: message,
-        });
-      }
-      throw error;
-    } finally {
-      unwatchFirstOutput?.();
-    }
+      return this.waitForChildCompletion(parent, childId, child, profileName, options, origin);
+    });
   }
 
   private async runChildRetry(
@@ -466,8 +405,7 @@ export class SessionSubagentHost {
     options: RunSubagentOptions,
   ): Promise<SubagentCompletion> {
     const unwatchFirstOutput = this.watchFirstOutput(child, options.onFirstOutput);
-
-    try {
+    return this.runChildWithErrorHandling(parent, childId, options, unwatchFirstOutput, async () => {
       options.signal.throwIfAborted();
       child.config.update({ modelAlias: parent.config.modelAlias });
       const origin: PromptOrigin = options.origin ?? { kind: 'system_trigger', name: 'subagent' };
@@ -476,7 +414,19 @@ export class SessionSubagentHost {
       if (child.turn.retry(origin) === null) {
         throw new Error(`Agent instance "${childId}" could not start a retry turn`);
       }
-      return await this.waitForChildCompletion(parent, childId, child, profileName, options, origin);
+      return this.waitForChildCompletion(parent, childId, child, profileName, options, origin);
+    });
+  }
+
+  private async runChildWithErrorHandling(
+    parent: Agent,
+    childId: string,
+    options: RunSubagentOptions,
+    unwatchFirstOutput: (() => void) | undefined,
+    run: () => Promise<SubagentCompletion>,
+  ): Promise<SubagentCompletion> {
+    try {
+      return await run();
     } catch (error) {
       if (!shouldSuppressQueuedAttemptFailureEvent(options, error)) {
         const message = error instanceof Error ? error.message : String(error);
@@ -685,21 +635,12 @@ function isFirstOutputEvent(event: AgentEvent): boolean {
 function isRateLimit429Error(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   if (hasRateLimitStatus(error)) return true;
-  if (message.includes(RATE_LIMIT_429_MESSAGE)) return true;
-  if (message.includes(RATE_LIMIT_429_BODY)) return true;
-  if (message.includes('provider.rate_limit')) return true;
+  if ([RATE_LIMIT_429_MESSAGE, RATE_LIMIT_429_BODY, 'provider.rate_limit'].some((part) => message.includes(part))) return true;
   const normalized = message.toLowerCase();
-  if (normalized.includes('too many requests')) return true;
-  if (normalized.includes('max rpm')) return true;
-  if (normalized.includes('max tpm')) return true;
-  if (normalized.includes('requests per minute')) return true;
-  if (normalized.includes('tokens per minute')) return true;
+  const loosePatterns = ['too many requests', 'max rpm', 'max tpm', 'requests per minute', 'tokens per minute'];
+  if (loosePatterns.some((pattern) => normalized.includes(pattern))) return true;
   if (!/\b429\b/.test(normalized)) return false;
-  if (normalized.includes('apistatuserror')) return true;
-  if (normalized.includes('rate limit')) return true;
-  if (normalized.includes('rate_limit')) return true;
-  if (normalized.includes('rate-limited')) return true;
-  return false;
+  return ['apistatuserror', 'rate limit', 'rate_limit', 'rate-limited'].some((pattern) => normalized.includes(pattern));
 }
 
 function shouldSuppressQueuedAttemptFailureEvent(

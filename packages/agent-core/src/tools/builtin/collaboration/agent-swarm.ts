@@ -160,7 +160,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
       };
     } catch (error) {
       return {
-        output: errorMessage(error),
+        output: error instanceof Error ? error.message : String(error),
         isError: true,
       };
     }
@@ -201,43 +201,22 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
       signal,
       timeoutMs: args.timeout === undefined ? undefined : args.timeout * 1000,
     });
-    return renderSwarmResults(results.map(toSwarmRunResult));
+    return renderSwarmResults(results.map(({ task, ...result }) => ({ spec: task.data, ...result })));
   }
 }
 
 function createAgentSwarmSpecs(args: AgentSwarmToolInput): AgentSwarmSpec[] {
-  const resumeEntries = Object.entries(args.resume_agent_ids ?? {}).map(([agentId, prompt]) => {
-    return {
-      agentId: agentId.trim(),
-      prompt: prompt.trim(),
-    };
-  });
+  const resumeEntries = Object.entries(args.resume_agent_ids ?? {}).map(([agentId, prompt]) => ({
+    agentId: agentId.trim(),
+    prompt: prompt.trim(),
+  }));
   const items = (args.items ?? []).map((item) => item.trim());
   const totalCount = resumeEntries.length + items.length;
   if (totalCount < 2) {
     throw new Error('AgentSwarm requires at least 2 total subagents.');
   }
   if (totalCount > MAX_AGENT_SWARM_SUBAGENTS) {
-    throw new Error(
-      `AgentSwarm supports at most ${String(MAX_AGENT_SWARM_SUBAGENTS)} subagents.`,
-    );
-  }
-  const invalidResume = resumeEntries.find(
-    (entry) => entry.agentId.length === 0 || entry.prompt.length === 0,
-  );
-  if (invalidResume !== undefined) {
-    throw new Error('AgentSwarm resume_agent_ids must map non-empty agent ids to non-empty prompts.');
-  }
-  const invalidItem = items.find((item) => item.length === 0);
-  if (invalidItem !== undefined) {
-    throw new Error('AgentSwarm items must be non-empty strings.');
-  }
-  const promptTemplate = normalizeOptionalString(args.prompt_template);
-  if (items.length > 0 && promptTemplate === undefined) {
-    throw new Error('AgentSwarm prompt_template is required when items are provided.');
-  }
-  if (promptTemplate !== undefined && !promptTemplate.includes(PROMPT_TEMPLATE_PLACEHOLDER)) {
-    throw new Error(`AgentSwarm prompt_template must include ${PROMPT_TEMPLATE_PLACEHOLDER}.`);
+    throw new Error(`AgentSwarm supports at most ${String(MAX_AGENT_SWARM_SUBAGENTS)} subagents.`);
   }
 
   const seenPrompts = new Map<string, number>();
@@ -251,9 +230,7 @@ function createAgentSwarmSpecs(args: AgentSwarmToolInput): AgentSwarmSpec[] {
     });
   }
   if (items.length > 0) {
-    if (promptTemplate === undefined) {
-      throw new Error('AgentSwarm prompt_template is required when items are provided.');
-    }
+    const promptTemplate = normalizeOptionalString(args.prompt_template)!;
     items.forEach((item, index) => {
       const prompt = promptTemplate.split(PROMPT_TEMPLATE_PLACEHOLDER).join(item);
       const previousIndex = seenPrompts.get(prompt);
@@ -331,21 +308,4 @@ function escapeXmlAttribute(value: string): string {
     .replaceAll('"', '&quot;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;');
-}
-
-function toSwarmRunResult(
-  result: QueuedSubagentRunResult<AgentSwarmSpec>,
-): SwarmRunResult {
-  return {
-    spec: result.task.data,
-    agentId: result.agentId,
-    status: result.status,
-    state: result.state,
-    result: result.result,
-    error: result.error,
-  };
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

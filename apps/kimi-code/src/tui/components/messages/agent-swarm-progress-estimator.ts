@@ -238,12 +238,9 @@ export class AgentSwarmProgressEstimator {
   }
 
   hasPendingCatchup(): boolean {
-    for (const state of this.members.values()) {
-      if (state.lastTargetTicks !== undefined && state.lastTargetTicks > state.displayTicks + 0.1) {
-        return true;
-      }
-    }
-    return false;
+    return Array.from(this.members.values()).some(
+      (state) => state.lastTargetTicks !== undefined && state.lastTargetTicks > state.displayTicks + 0.1,
+    );
   }
 
   private markTerminal(
@@ -282,9 +279,7 @@ export class AgentSwarmProgressEstimator {
   }
 
   private getOrCreateMember(memberKey: string): MemberProgressState {
-    const existing = this.members.get(memberKey);
-    if (existing !== undefined) return existing;
-    const state: MemberProgressState = {
+    const state = this.members.get(memberKey) ?? {
       pausedDurationMs: 0,
       rawTicks: 0,
       seenToolCallIds: new Set(),

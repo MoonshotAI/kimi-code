@@ -123,9 +123,7 @@ export class SubagentLaunchQueue {
     let initialSuccessfulLaunches = 0;
 
     const finish = (fallback: string): Array<QueuedSubagentRunResult<T>> =>
-      results.map(
-        (result, index) => result ?? { task: tasks[index]!, status: 'failed', error: fallback },
-      );
+      results.map((result, index) => result ?? { task: tasks[index]!, status: 'failed', error: fallback });
 
     const finishInterrupted = (): Array<QueuedSubagentRunResult<T>> => {
       const activeAgentIds = new Map<number, string | undefined>();
@@ -213,27 +211,16 @@ export class SubagentLaunchQueue {
         pending,
         outcome,
         readiness,
-        get agentId() {
-          return agentId;
-        },
-        get ready() {
-          return ready;
-        },
-        get launchSucceeded() {
-          return launchSucceeded;
-        },
+        get agentId() { return agentId; },
+        get ready() { return ready; },
+        get launchSucceeded() { return launchSucceeded; },
         settled: false,
       };
-      void outcome.then(
-        () => {
-          attempt.settled = true;
-          markReadyOnly();
-        },
-        () => {
-          attempt.settled = true;
-          markReadyOnly();
-        },
-      );
+      const settle = (): void => {
+        attempt.settled = true;
+        markReadyOnly();
+      };
+      void outcome.then(settle, settle);
       active.push(attempt);
       return attempt;
     };
@@ -279,11 +266,11 @@ export class SubagentLaunchQueue {
     };
 
     const processSettledAttempts = async (): Promise<boolean> => {
-      for (let attempt = active.find((item) => item.settled); attempt !== undefined; ) {
+      while (true) {
+        const attempt = active.find((item) => item.settled);
+        if (attempt === undefined) return true;
         if (!(await processAttempt(attempt))) return false;
-        attempt = active.find((item) => item.settled);
       }
-      return true;
     };
 
     const nextSettled = (): Promise<void> =>
@@ -301,12 +288,9 @@ export class SubagentLaunchQueue {
         if (rateLimitMode) return;
         options.signal.throwIfAborted();
         const waits: Array<Promise<'delay' | 'settled' | 'readiness'>> = [delay];
-        const settled =
-          active.length === 0
-            ? undefined
-            : nextSettled().then(() => 'settled' as const);
+        const settled = nextSettled().then(() => 'settled' as const);
         const readiness = nextReadiness()?.then(() => 'readiness' as const);
-        if (settled !== undefined) waits.push(settled);
+        waits.push(settled);
         if (readiness !== undefined) waits.push(readiness);
         const waitResult = await abortable(Promise.race(waits), options.signal);
         if (waitResult === 'delay') return;
@@ -339,9 +323,8 @@ export class SubagentLaunchQueue {
     };
 
     const launchInitialBatch = (): void => {
-      const count = Math.min(SUBAGENT_LAUNCH_BATCH_SIZE, queued.length);
-      for (let index = 0; index < count; index += 1) {
-        launch(queued.shift()!);
+      for (const pending of queued.splice(0, Math.min(SUBAGENT_LAUNCH_BATCH_SIZE, queued.length))) {
+        launch(pending);
       }
     };
 
@@ -361,7 +344,6 @@ export class SubagentLaunchQueue {
         if (launched > 0) continue;
 
         if (active.length === 0) {
-          if (queued.length === 0) break;
           const wakeAt = nextRateLimitedLaunchWakeAt();
           if (wakeAt === undefined) {
             failQueued('No running subagents remained to open queue slots after rate-limited launches.');
@@ -394,9 +376,7 @@ export class SubagentLaunchQueue {
         try {
           await processSettledAttempts();
         } catch {
-          // A child may observe the same user abort before it returns a handle.
-          // Keep the parent tool result structured so the next turn has a
-          // balanced, inspectable swarm summary instead of a bare abort error.
+          // Children may observe the same user abort before returning handles.
         }
         return finishInterrupted();
       }
