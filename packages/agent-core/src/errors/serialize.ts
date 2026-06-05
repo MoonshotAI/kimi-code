@@ -1,5 +1,6 @@
 import {
   APIConnectionError,
+  APIEmptyResponseError,
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
@@ -99,6 +100,19 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
       message: error.message,
       name: error.name,
       retryable: KIMI_ERROR_INFO[ErrorCodes.PROVIDER_CONNECTION_ERROR].retryable,
+    };
+  }
+
+  if (error instanceof APIEmptyResponseError) {
+    return {
+      code: ErrorCodes.PROVIDER_API_ERROR,
+      message: error.message,
+      name: error.name,
+      details: {
+        finishReason: error.finishReason,
+        rawFinishReason: error.rawFinishReason,
+      },
+      retryable: KIMI_ERROR_INFO[ErrorCodes.PROVIDER_API_ERROR].retryable,
     };
   }
 
