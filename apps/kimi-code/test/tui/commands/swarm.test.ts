@@ -93,6 +93,19 @@ describe('handleSwarmCommand', () => {
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
+  it('turns swarm mode on when called without args while swarm mode is off', async () => {
+    const { host, session } = makeHost({ model: '', swarmMode: false });
+
+    await handleSwarmCommand(host, '');
+
+    expect(session.setSwarmMode).toHaveBeenCalledWith(true);
+    expect(host.setAppState).toHaveBeenCalledWith({ swarmMode: true });
+    expect(host.renderSwarmModeMarker).toHaveBeenCalledWith(true);
+    expect(host.showError).not.toHaveBeenCalled();
+    expect(host.showStatus).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+  });
+
   it('does not call the session when swarm mode is already on', async () => {
     const { host, session } = makeHost({ model: '', swarmMode: true });
 
@@ -113,6 +126,19 @@ describe('handleSwarmCommand', () => {
     expect(session.setSwarmMode).toHaveBeenCalledWith(false);
     expect(host.setAppState).toHaveBeenCalledWith({ swarmMode: false });
     expect(host.renderSwarmModeMarker).toHaveBeenCalledWith(false);
+    expect(host.showStatus).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+  });
+
+  it('turns swarm mode off when called without args while swarm mode is on', async () => {
+    const { host, session } = makeHost({ model: '', swarmMode: true });
+
+    await handleSwarmCommand(host, '');
+
+    expect(session.setSwarmMode).toHaveBeenCalledWith(false);
+    expect(host.setAppState).toHaveBeenCalledWith({ swarmMode: false });
+    expect(host.renderSwarmModeMarker).toHaveBeenCalledWith(false);
+    expect(host.showError).not.toHaveBeenCalled();
     expect(host.showStatus).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });

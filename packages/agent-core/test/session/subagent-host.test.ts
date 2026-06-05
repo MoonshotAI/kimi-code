@@ -133,6 +133,94 @@ describe('SessionSubagentHost', () => {
     }
   });
 
+  it('runQueued returns completed, started, and not-started results on user interrupt', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const { queue, attempts } = createRecordedLaunchQueue();
+      const running = queue.run(Array.from({ length: 6 }, (_, index) => queuedTask(index + 1)), {
+        signal: controller.signal,
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(5);
+      attempts.forEach((attempt, index) => {
+        attempt.markAgentId(`agent-${String(index + 1)}`);
+      });
+
+      attempts[0]!.outcome.resolve({
+        task: attempts[0]!.task,
+        agentId: 'agent-1',
+        status: 'completed',
+        result: 'completed 1',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      controller.abort(userCancellationReason());
+      const results = await running;
+
+      expect(results.map((result) => ({
+        data: result.task.data,
+        agentId: result.agentId,
+        status: result.status,
+        state: result.state,
+        result: result.result,
+        error: result.error,
+      }))).toEqual([
+        {
+          data: 1,
+          agentId: 'agent-1',
+          status: 'completed',
+          state: undefined,
+          result: 'completed 1',
+          error: undefined,
+        },
+        {
+          data: 2,
+          agentId: 'agent-2',
+          status: 'aborted',
+          state: 'started',
+          result: undefined,
+          error: 'The user manually interrupted this subagent batch before this subagent finished.',
+        },
+        {
+          data: 3,
+          agentId: 'agent-3',
+          status: 'aborted',
+          state: 'started',
+          result: undefined,
+          error: 'The user manually interrupted this subagent batch before this subagent finished.',
+        },
+        {
+          data: 4,
+          agentId: 'agent-4',
+          status: 'aborted',
+          state: 'started',
+          result: undefined,
+          error: 'The user manually interrupted this subagent batch before this subagent finished.',
+        },
+        {
+          data: 5,
+          agentId: 'agent-5',
+          status: 'aborted',
+          state: 'started',
+          result: undefined,
+          error: 'The user manually interrupted this subagent batch before this subagent finished.',
+        },
+        {
+          data: 6,
+          agentId: undefined,
+          status: 'aborted',
+          state: 'not_started',
+          result: undefined,
+          error: 'The user manually interrupted this subagent batch before this subagent was started.',
+        },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('runQueued keeps processing completions while waiting for the next initial launch', async () => {
     vi.useFakeTimers();
     try {
@@ -378,6 +466,7 @@ describe('SessionSubagentHost', () => {
         attempts.push({
           task: task as unknown as QueuedSubagentTask<number>,
           retryAgentId: options.retryAgentId,
+          markAgentId: options.markAgentId,
           markReady: options.markReady,
           outcome: outcome as unknown as QueuedAttemptRecord['outcome'],
         });
@@ -1987,6 +2076,7 @@ async function flushPromises(count = 2): Promise<void> {
 type QueuedAttemptRecord = {
   readonly task: QueuedSubagentTask<number>;
   readonly retryAgentId?: string;
+  readonly markAgentId: (agentId: string) => void;
   readonly markReady: () => void;
   readonly outcome: ReturnType<typeof createControlledPromise<QueuedSubagentAttemptOutcome<number>>>;
 };
@@ -2006,6 +2096,7 @@ function createRecordedLaunchQueue(
     attempts.push({
       task: task as unknown as QueuedSubagentTask<number>,
       retryAgentId: options.retryAgentId,
+      markAgentId: options.markAgentId,
       markReady: options.markReady,
       outcome: outcome as unknown as QueuedAttemptRecord['outcome'],
     });

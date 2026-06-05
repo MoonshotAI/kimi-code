@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { agentSwarmGridHeightForTerminalRows } from '#/tui/components/messages/agent-swarm-progress';
 import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
@@ -279,6 +280,13 @@ function setTerminalRows(driver: MessageDriver, rows: number): void {
   Object.defineProperty(driver.state.terminal, 'rows', {
     configurable: true,
     get: () => rows,
+  });
+}
+
+function setTerminalColumns(driver: MessageDriver, columns: number): void {
+  Object.defineProperty(driver.state.terminal, 'columns', {
+    configurable: true,
+    get: () => columns,
   });
 }
 
@@ -2550,6 +2558,80 @@ command = "vim"
     transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('✓ Imports are stable');
     expect(transcript).not.toContain('Completed');
+  });
+
+  it('does not let later transcript entries reduce the AgentSwarm grid height', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+    const terminalColumns = 80;
+    setTerminalColumns(driver, terminalColumns);
+    const outerChildren = driver.state.ui.children;
+    const transcriptIndex = outerChildren.indexOf(driver.state.transcriptContainer);
+    const rowsAfterTranscript = outerChildren
+      .slice(transcriptIndex + 1)
+      .reduce((sum, child) => sum + child.render(terminalColumns).length, 0);
+    const nonGridRows = 20 - (agentSwarmGridHeightForTerminalRows(20) ?? 0);
+    setTerminalRows(driver, rowsAfterTranscript + nonGridRows + 2);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        name: 'AgentSwarm',
+        args: {
+          description: 'Review changed files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts'],
+        },
+      } as Event,
+      sendQueued,
+    );
+
+    const swarmProgress = (
+      driver.sessionEventHandler as unknown as {
+        agentSwarmProgress: Map<string, { render(width: number): string[] }>;
+      }
+    ).agentSwarmProgress.get('call_swarm');
+    if (swarmProgress === undefined) throw new Error('expected AgentSwarm progress');
+
+    const transcriptWidth = Math.max(1, terminalColumns - 2);
+    const renderSwarm = (): string =>
+      stripSgr(swarmProgress.render(transcriptWidth).join('\n'));
+
+    expect(renderSwarm()).toContain('001 Queued...');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_read',
+        name: 'Read',
+        args: { path: 'src/after.ts' },
+      } as Event,
+      sendQueued,
+    );
+
+    const transcriptChildren = driver.state.transcriptContainer.children;
+    const swarmIndex = transcriptChildren.indexOf(
+      swarmProgress as (typeof transcriptChildren)[number],
+    );
+    expect(swarmIndex).toBeGreaterThanOrEqual(0);
+
+    const rowsAfterSwarmInTranscript = transcriptChildren
+      .slice(swarmIndex + 1)
+      .reduce((sum, child) => sum + child.render(transcriptWidth).length, 0);
+    expect(rowsAfterSwarmInTranscript).toBeGreaterThan(0);
+
+    expect(renderSwarm()).toContain('001 Queued...');
+    const transcript = stripSgr(
+      driver.state.transcriptContainer.render(terminalColumns).join('\n'),
+    );
+    expect(transcript).toContain('Using Read (src/after.ts)');
   });
 
   it('shows AgentSwarm as completed when only some subagents fail', async () => {

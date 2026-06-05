@@ -80,6 +80,13 @@ interface AgentSwarmResultStatus {
   readonly failureText?: string;
 }
 
+export interface AgentSwarmResultSummary {
+  readonly completed: number;
+  readonly failed: number;
+  readonly aborted: number;
+  readonly parsed: boolean;
+}
+
 interface AgentSwarmSummary {
   readonly active: number;
   readonly completed: number;
@@ -827,6 +834,23 @@ function parseAgentSwarmDescriptionIndex(description: string | undefined): numbe
   return Number.isInteger(index) && index > 0 ? index : undefined;
 }
 
+export function agentSwarmResultSummaryFromOutput(output: string): AgentSwarmResultSummary {
+  const statuses = parseAgentSwarmResultStatuses(output);
+  const aborted = countAgentSwarmAbortedResultStatuses(output);
+  let completed = 0;
+  let failed = 0;
+  for (const status of statuses) {
+    if (status.status === 'completed') completed += 1;
+    if (status.status === 'failed') failed += 1;
+  }
+  return {
+    completed,
+    failed,
+    aborted,
+    parsed: completed + failed + aborted > 0,
+  };
+}
+
 function parseAgentSwarmResultStatuses(output: string): AgentSwarmResultStatus[] {
   const xmlStatuses = parseAgentSwarmXmlResultStatuses(output);
   if (xmlStatuses.length > 0) return xmlStatuses;
@@ -859,6 +883,36 @@ function parseAgentSwarmXmlResultStatuses(output: string): AgentSwarmResultStatu
   return result;
 }
 
+function countAgentSwarmAbortedResultStatuses(output: string): number {
+  const xmlAborted = countAgentSwarmXmlAbortedResultStatuses(output);
+  if (xmlAborted > 0) return xmlAborted;
+  return countAgentSwarmLegacyAbortedResultStatuses(output);
+}
+
+function countAgentSwarmXmlAbortedResultStatuses(output: string): number {
+  let count = 0;
+  const tagPattern = /<subagent\b([^>]*)>/g;
+  let match: RegExpExecArray | null;
+  while ((match = tagPattern.exec(output)) !== null) {
+    const attrs = match[1] ?? '';
+    const closeIndex = output.indexOf('</subagent>', tagPattern.lastIndex);
+    if (closeIndex < 0) break;
+
+    const index = Number(xmlAttribute(attrs, 'index'));
+    const outcome = xmlAttribute(attrs, 'outcome');
+    if (
+      Number.isInteger(index) &&
+      index > 0 &&
+      (outcome === 'aborted' || outcome === 'cancelled')
+    ) {
+      count += 1;
+    }
+
+    tagPattern.lastIndex = closeIndex + '</subagent>'.length;
+  }
+  return count;
+}
+
 function xmlAttribute(attrs: string, name: string): string | undefined {
   const match = new RegExp(`\\b${name}="([^"]*)"`).exec(attrs);
   return match?.[1];
@@ -879,6 +933,12 @@ function parseAgentSwarmLegacyResultStatuses(output: string): AgentSwarmResultSt
     });
   }
   return result;
+}
+
+function countAgentSwarmLegacyAbortedResultStatuses(output: string): number {
+  return output.split(/\n(?=\[agent \d+\]\n)/).filter((block) =>
+    /^status: (aborted|cancelled)$/m.test(block)
+  ).length;
 }
 
 function parseAgentSwarmCompletedText(block: string): string | undefined {

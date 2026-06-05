@@ -115,7 +115,8 @@ type AgentSwarmSpec = AgentSwarmSpawnSpec | AgentSwarmResumeSpec;
 interface SwarmRunResult {
   readonly spec: AgentSwarmSpec;
   readonly agentId?: string;
-  readonly status: 'completed' | 'failed';
+  readonly status: 'completed' | 'failed' | 'aborted';
+  readonly state?: 'started' | 'not_started';
   readonly result?: string;
   readonly error?: string;
 }
@@ -270,18 +271,20 @@ function childDescription(swarmDescription: string, index: number, profileName: 
 
 function renderSwarmResults(results: readonly SwarmRunResult[]): string {
   const completed = results.filter((result) => result.status === 'completed').length;
-  const failed = results.length - completed;
+  const failed = results.filter((result) => result.status === 'failed').length;
+  const aborted = results.filter((result) => result.status === 'aborted').length;
   const lines = [
     '<agent_swarm_result>',
-    `<summary>${renderSwarmSummary(completed, failed)}</summary>`,
+    `<summary>${renderSwarmSummary(completed, failed, aborted)}</summary>`,
   ];
 
   for (const result of results) {
     const agentId = result.agentId === undefined ? '' : ` agent_id="${result.agentId}"`;
     const mode = result.spec.kind === 'resume' ? ' mode="resume"' : '';
+    const state = result.state === undefined ? '' : ` state="${result.state}"`;
     const body = result.status === 'completed' ? (result.result ?? '') : (result.error ?? 'unknown error');
     lines.push(
-      `<subagent index="${String(result.spec.index)}"${mode}${agentId} outcome="${result.status}">${body}</subagent>`,
+      `<subagent index="${String(result.spec.index)}"${mode}${agentId}${state} outcome="${result.status}">${body}</subagent>`,
     );
   }
 
@@ -295,10 +298,11 @@ function normalizeOptionalString(value: string | undefined): string | undefined 
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function renderSwarmSummary(completed: number, failed: number): string {
+function renderSwarmSummary(completed: number, failed: number, aborted = 0): string {
   const parts: string[] = [];
   if (completed > 0) parts.push(`completed: ${String(completed)}`);
   if (failed > 0) parts.push(`failed: ${String(failed)}`);
+  if (aborted > 0) parts.push(`aborted: ${String(aborted)}`);
   return parts.join(', ');
 }
 
@@ -309,6 +313,7 @@ function toSwarmRunResult(
     spec: result.task.data,
     agentId: result.agentId,
     status: result.status,
+    state: result.state,
     result: result.result,
     error: result.error,
   };

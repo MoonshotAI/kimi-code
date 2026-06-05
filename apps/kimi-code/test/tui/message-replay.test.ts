@@ -18,6 +18,10 @@ import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
+function stripAnsi(text: string): string {
+  return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
+}
+
 interface ReplayDriver {
   readonly state: TUIState;
   readonly streamingUI: StreamingUIController;
@@ -319,6 +323,42 @@ describe('KimiTUI resume message replay', () => {
     expect(driver.streamingUI.hasPendingReadGroup()).toBe(false);
     expect(driver.streamingUI.getToolComponent('call_read_1')).toBeUndefined();
     expect(driver.streamingUI.getToolComponent('call_read_2')).toBeUndefined();
+  });
+
+  it('renders replayed AgentSwarm calls as compact result summaries', async () => {
+    const replay: AgentReplayRecord[] = [
+      message('user', [{ type: 'text', text: 'review files with a swarm' }]),
+      message('assistant', [], {
+        toolCalls: [
+          toolCall('call_swarm', 'AgentSwarm', {
+            description: 'Review changed files',
+            items: ['src/a.ts', 'src/b.ts'],
+          }),
+        ],
+      }),
+      message(
+        'tool',
+        [{
+          type: 'text',
+          text: [
+            '<agent_swarm_result>',
+            '<summary>completed: 1, failed: 1</summary>',
+            '<subagent index="1" outcome="completed">Reviewed src/a.ts.</subagent>',
+            '<subagent index="2" outcome="failed">Agent timed out.</subagent>',
+            '</agent_swarm_result>',
+          ].join('\n'),
+        }],
+        { toolCallId: 'call_swarm' },
+      ),
+    ];
+
+    const driver = await replayIntoDriver(replay);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+
+    expect(transcript).toContain('Agent swarm: ✓ 1 completed · ✗ 1 failed');
+    expect(transcript).not.toContain('<agent_swarm_result>');
+    expect(transcript).not.toContain('Reviewed src/a.ts.');
+    expect(transcript).not.toContain('Agent timed out.');
   });
 
   it('hydrates todo and background snapshot state from resumed main agent', async () => {

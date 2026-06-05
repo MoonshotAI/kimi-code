@@ -21,13 +21,13 @@ export async function handleSwarmCommand(host: SlashCommandHost, args: string): 
     return;
   }
 
-  if (host.state.appState.model.trim().length === 0) {
-    host.showError(LLM_NOT_SET_MESSAGE);
+  if (prompt.length === 0) {
+    await applySwarmMode(host, !host.state.appState.swarmMode);
     return;
   }
 
-  if (prompt.length === 0) {
-    host.showError('Usage: /swarm <task|on|off>');
+  if (host.state.appState.model.trim().length === 0) {
+    host.showError(LLM_NOT_SET_MESSAGE);
     return;
   }
 

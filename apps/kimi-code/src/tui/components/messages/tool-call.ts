@@ -16,13 +16,14 @@ import {
   STREAMING_ARGS_FIELD_RE,
   STREAMING_ARGS_PREVIEW_MAX_CHARS,
 } from '#/tui/constant/streaming';
-import { STATUS_BULLET } from '#/tui/constant/symbols';
+import { FAILURE_MARK, STATUS_BULLET, SUCCESS_MARK } from '#/tui/constant/symbols';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
 
+import { agentSwarmResultSummaryFromOutput } from './agent-swarm-progress';
 import { PlanBoxComponent } from './plan-box';
 import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
@@ -35,6 +36,7 @@ const APPROVED_PLAN_MARKER = '## Approved Plan:';
 const STREAMING_PROGRESS_INTERVAL_MS = 1000;
 const SUBAGENT_ELAPSED_INTERVAL_MS = 1000;
 const PROGRESS_URL_RE = /https?:\/\/\S+/g;
+const ABORTED_MARK = '⊘';
 
 type SubagentTextKind = 'thinking' | 'text';
 type SubagentPhase = 'queued' | 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded';
@@ -1785,11 +1787,14 @@ export class ToolCallComponent extends Container {
 
   private buildContent(): void {
     const { result } = this;
-    if (result === undefined || !result.output) return;
+    if (result === undefined) return;
 
     if (this.toolCall.name === 'AgentSwarm') {
+      this.buildAgentSwarmResultSummary(result);
       return;
     }
+
+    if (!result.output) return;
 
     if (this.isSingleSubagentView()) {
       return;
@@ -1848,6 +1853,46 @@ export class ToolCallComponent extends Container {
     for (const component of components) {
       this.addChild(component);
     }
+  }
+
+  private buildAgentSwarmResultSummary(result: ToolResultBlockData): void {
+    const summary = agentSwarmResultSummaryFromOutput(result.output);
+    const dim = chalk.hex(this.colors.textDim);
+    const segments: string[] = [];
+
+    if (summary.completed > 0) {
+      segments.push(chalk.hex(this.colors.success)(
+        `${SUCCESS_MARK.trimEnd()} ${String(summary.completed)} completed`,
+      ));
+    }
+    if (summary.failed > 0) {
+      segments.push(chalk.hex(this.colors.error)(
+        `${FAILURE_MARK.trimEnd()} ${String(summary.failed)} failed`,
+      ));
+    }
+    if (summary.aborted > 0) {
+      segments.push(chalk.hex(this.colors.warning)(
+        `${ABORTED_MARK} ${String(summary.aborted)} aborted`,
+      ));
+    }
+
+    if (segments.length > 0) {
+      this.addChild(new Text(`${dim('Agent swarm: ')}${segments.join(dim(' · '))}`, 2, 0));
+      return;
+    }
+
+    const isAborted = result.is_error === true && /\b(?:aborted|cancelled)\b/i.test(result.output);
+    const color = isAborted
+      ? this.colors.warning
+      : result.is_error === true
+        ? this.colors.error
+        : this.colors.success;
+    const label = isAborted
+      ? `${ABORTED_MARK} Aborted.`
+      : result.is_error === true
+        ? `${FAILURE_MARK.trimEnd()} Failed.`
+        : `${SUCCESS_MARK.trimEnd()} Completed.`;
+    this.addChild(new Text(`${dim('Agent swarm: ')}${chalk.hex(color)(label)}`, 2, 0));
   }
 
   /**

@@ -2,7 +2,7 @@ import { createControlledPromise, sleep } from '@antfu/utils';
 import type { TokenUsage } from '@moonshot-ai/kosong';
 
 import type { PromptOrigin } from '../agent/context';
-import { abortable, createDeadlineAbortSignal } from '../utils/abort';
+import { abortable, createDeadlineAbortSignal, isUserCancellation } from '../utils/abort';
 
 const SUBAGENT_LAUNCH_BATCH_SIZE = 5;
 const SUBAGENT_QUEUE_LAUNCH_DELAY_MS = 500;
@@ -32,7 +32,8 @@ export type QueuedSubagentRunOptions = {
 export type QueuedSubagentRunResult<T = unknown> = {
   readonly task: QueuedSubagentTask<T>;
   readonly agentId?: string;
-  readonly status: 'completed' | 'failed';
+  readonly status: 'completed' | 'failed' | 'aborted';
+  readonly state?: 'started' | 'not_started';
   readonly result?: string;
   readonly usage?: TokenUsage;
   readonly error?: string;
@@ -65,6 +66,7 @@ type QueuedSubagentAttempt<T> = {
   readonly pending: QueuedSubagentPending;
   readonly outcome: Promise<QueuedSubagentAttemptOutcome<T>>;
   readonly readiness: Promise<void>;
+  readonly agentId?: string;
   readonly ready: boolean;
   readonly launchSucceeded: boolean;
   settled: boolean;
@@ -72,6 +74,7 @@ type QueuedSubagentAttempt<T> = {
 
 export type QueuedSubagentAttemptOptions = QueuedSubagentRunOptions & {
   readonly totalTimedOut: () => boolean;
+  readonly markAgentId: (agentId: string) => void;
   readonly markReady: () => void;
   readonly retryAgentId?: string;
 };
@@ -123,6 +126,32 @@ export class SubagentLaunchQueue {
         (result, index) => result ?? { task: tasks[index]!, status: 'failed', error: fallback },
       );
 
+    const finishInterrupted = (): Array<QueuedSubagentRunResult<T>> => {
+      const activeAgentIds = new Map<number, string | undefined>();
+      for (const attempt of active) {
+        activeAgentIds.set(attempt.pending.index, attempt.agentId ?? attempt.pending.agentId);
+      }
+      const queuedAgentIds = new Map<number, string | undefined>();
+      for (const pending of queued) {
+        if (pending.agentId !== undefined) queuedAgentIds.set(pending.index, pending.agentId);
+      }
+
+      return results.map((result, index) => {
+        if (result !== undefined) return result;
+        const task = tasks[index]!;
+        const wasStarted = activeAgentIds.has(index) || queuedAgentIds.has(index);
+        return {
+          task,
+          agentId: activeAgentIds.get(index) ?? queuedAgentIds.get(index) ?? task.resumeAgentId,
+          status: 'aborted',
+          state: wasStarted ? 'started' : 'not_started',
+          error: wasStarted
+            ? 'The user manually interrupted this subagent batch before this subagent finished.'
+            : 'The user manually interrupted this subagent batch before this subagent was started.',
+        };
+      });
+    };
+
     const requeueRateLimited = (pending: QueuedSubagentPending): void => {
       if (results[pending.index] !== undefined) return;
       queued.unshift(pending);
@@ -150,6 +179,7 @@ export class SubagentLaunchQueue {
 
     const launch = (pending: QueuedSubagentPending): QueuedSubagentAttempt<T> => {
       const readiness = createControlledPromise<void>();
+      let agentId = pending.agentId;
       let ready = false;
       let launchSucceeded = false;
       const markReadyOnly = (): void => {
@@ -172,6 +202,9 @@ export class SubagentLaunchQueue {
       const outcome = this.runAttempt(tasks[pending.index]!, {
         ...options,
         totalTimedOut,
+        markAgentId: (id) => {
+          agentId = id;
+        },
         markReady,
         retryAgentId: pending.agentId,
       });
@@ -179,6 +212,9 @@ export class SubagentLaunchQueue {
         pending,
         outcome,
         readiness,
+        get agentId() {
+          return agentId;
+        },
         get ready() {
           return ready;
         },
@@ -352,8 +388,18 @@ export class SubagentLaunchQueue {
 
       return finish('Subagent stopped before it could finish.');
     } catch (error) {
-      if (!totalTimedOut()) throw error;
-      return finish(totalTimeoutMessage(options.totalTimeoutMs));
+      if (totalTimedOut()) return finish(totalTimeoutMessage(options.totalTimeoutMs));
+      if (isUserCancellation(options.signal.reason)) {
+        try {
+          await processSettledAttempts();
+        } catch {
+          // A child may observe the same user abort before it returns a handle.
+          // Keep the parent tool result structured so the next turn has a
+          // balanced, inspectable swarm summary instead of a bare abort error.
+        }
+        return finishInterrupted();
+      }
+      throw error;
     } finally {
       totalDeadline?.clear();
     }

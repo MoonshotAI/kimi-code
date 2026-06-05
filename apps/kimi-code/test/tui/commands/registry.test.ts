@@ -4,6 +4,7 @@ import {
   parseSlashInput,
   resolveSlashCommandAvailability,
   sortSlashCommands,
+  swarmArgumentCompletions,
   type KimiSlashCommand,
 } from '#/tui/commands/index';
 import { describe, expect, it } from 'vitest';
@@ -53,6 +54,22 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(swarm!, 'on')).toBe('idle-only');
     expect(resolveSlashCommandAvailability(swarm!, 'off')).toBe('idle-only');
     expect(resolveSlashCommandAvailability(swarm!, 'Ship feature X')).toBe('idle-only');
+  });
+
+  it('offers swarm subcommand argument completions', () => {
+    const values = (prefix: string): string[] | null => {
+      const items = swarmArgumentCompletions(prefix);
+      return items === null ? null : items.map((item) => item.value);
+    };
+
+    expect(values('')).toEqual(['on', 'off']);
+    expect(values('O')).toEqual(['on', 'off']);
+    expect(swarmArgumentCompletions('of')).toEqual([
+      { value: 'off', label: 'off', description: 'Turn swarm mode off' },
+    ]);
+    expect(values('on')).toBeNull();
+    expect(values('off')).toBeNull();
+    expect(values('Ship feature X')).toBeNull();
   });
 
   it('defaults commands without explicit availability to idle-only', () => {

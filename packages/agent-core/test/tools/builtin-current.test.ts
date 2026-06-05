@@ -601,6 +601,77 @@ describe('current builtin collaboration tools', () => {
     expect(result.isError).toBeUndefined();
   });
 
+  it('AgentSwarm reports partial aborted subagents inside the XML result', async () => {
+    const host = mockSubagentHost({
+      runQueued: vi.fn().mockResolvedValue([
+        {
+          task: {
+            data: { kind: 'spawn', index: 1, item: 'src/a.ts', prompt: 'Review src/a.ts' },
+            profileName: 'coder',
+            parentToolCallId: 'call_swarm',
+            prompt: 'Review src/a.ts',
+            description: 'Review files #1 (coder)',
+            runInBackground: false,
+          },
+          agentId: 'agent-coder-1',
+          status: 'completed',
+          result: 'imports are stable',
+        },
+        {
+          task: {
+            data: { kind: 'spawn', index: 2, item: 'src/b.ts', prompt: 'Review src/b.ts' },
+            profileName: 'coder',
+            parentToolCallId: 'call_swarm',
+            prompt: 'Review src/b.ts',
+            description: 'Review files #2 (coder)',
+            runInBackground: false,
+          },
+          agentId: 'agent-coder-2',
+          status: 'aborted',
+          state: 'started',
+          error: 'The user manually interrupted this subagent batch before this subagent finished.',
+        },
+        {
+          task: {
+            data: { kind: 'spawn', index: 3, item: 'src/c.ts', prompt: 'Review src/c.ts' },
+            profileName: 'coder',
+            parentToolCallId: 'call_swarm',
+            prompt: 'Review src/c.ts',
+            description: 'Review files #3 (coder)',
+            runInBackground: false,
+          },
+          status: 'aborted',
+          state: 'not_started',
+          error: 'The user manually interrupted this subagent batch before this subagent was started.',
+        },
+      ]),
+    });
+    const swarmMode = mockSwarmMode();
+    const tool = new AgentSwarmTool(host, swarmMode);
+
+    const result = await executeTool(
+      tool,
+      context(
+        {
+          description: 'Review files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts', 'src/b.ts', 'src/c.ts'],
+        },
+        'call_swarm',
+      ),
+    );
+
+    expect(result.output).toBe([
+      '<agent_swarm_result>',
+      '<summary>completed: 1, aborted: 2</summary>',
+      '<subagent index="1" agent_id="agent-coder-1" outcome="completed">imports are stable</subagent>',
+      '<subagent index="2" agent_id="agent-coder-2" state="started" outcome="aborted">The user manually interrupted this subagent batch before this subagent finished.</subagent>',
+      '<subagent index="3" state="not_started" outcome="aborted">The user manually interrupted this subagent batch before this subagent was started.</subagent>',
+      '</agent_swarm_result>',
+    ].join('\n'));
+    expect(result.isError).toBeUndefined();
+  });
+
   it('Skill exposes parameters and reports unknown skills as tool errors', async () => {
     const tool = new SkillTool({
       skills: {

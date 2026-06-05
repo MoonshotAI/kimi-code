@@ -348,6 +348,7 @@ export class SessionSubagentHost {
           ...runOptions,
         });
       }
+      options.markAgentId(handle.agentId);
       const completion = await handle.completion;
       return {
         task,
@@ -364,11 +365,15 @@ export class SessionSubagentHost {
         throw error;
       }
       let message: string;
+      let status: QueuedSubagentRunResult<T>['status'] = 'failed';
+      let state: QueuedSubagentRunResult<T>['state'];
       if (subagentDeadline?.timedOut() === true && options.timeoutMs !== undefined) {
         message = `Subagent timed out after ${formatTimeoutMs(options.timeoutMs)}.`;
       } else if (options.totalTimedOut() && options.totalTimeoutMs !== undefined) {
         message = totalTimeoutMessage(options.totalTimeoutMs);
       } else if (isUserCancellation(runSignal.reason)) {
+        status = 'aborted';
+        state = 'started';
         message = 'The user manually interrupted this subagent batch.';
       } else if (isAbortError(error)) {
         message = 'The subagent was stopped before it finished.';
@@ -378,7 +383,8 @@ export class SessionSubagentHost {
       return {
         task,
         agentId: handle.agentId,
-        status: 'failed',
+        status,
+        state,
         error: message,
       };
     } finally {

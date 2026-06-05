@@ -49,7 +49,6 @@ import {
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
 } from '../constant/kimi-tui';
-import { CHROME_GUTTER } from '../constant/rendering';
 import {
   argsRecord,
   formatErrorPayload,
@@ -661,7 +660,7 @@ export class SessionEventHandler {
     progress = new AgentSwarmProgressComponent({
       description: agentSwarmDescriptionFromArgs(args),
       colors: this.host.state.theme.colors,
-      availableGridHeight: () => this.agentSwarmGridHeight(progress),
+      availableGridHeight: () => this.agentSwarmGridHeight(),
       requestRender: () => {
         this.host.state.ui.requestRender();
       },
@@ -675,7 +674,7 @@ export class SessionEventHandler {
     return progress;
   }
 
-  private agentSwarmGridHeight(progress: AgentSwarmProgressComponent): number | undefined {
+  private agentSwarmGridHeight(): number | undefined {
     const { state } = this.host;
     const terminalRows = state.ui.terminal.rows;
     const terminalColumns = state.ui.terminal.columns;
@@ -684,10 +683,11 @@ export class SessionEventHandler {
     }
 
     const width = Math.floor(terminalColumns);
-    const transcriptWidth = Math.max(1, width - CHROME_GUTTER * 2);
-    const rowsAfterSwarm =
-      renderedRowsAfterChild(state.transcriptContainer.children, progress, transcriptWidth) +
-      renderedRowsAfterChild(state.ui.children, state.transcriptContainer, width);
+    const rowsAfterSwarm = renderedRowsAfterChild(
+      state.ui.children,
+      state.transcriptContainer,
+      width,
+    );
     return agentSwarmGridHeightForTerminalRows(terminalRows, rowsAfterSwarm);
   }
 
