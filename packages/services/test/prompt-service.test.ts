@@ -31,6 +31,7 @@ import type {
 } from '@moonshot-ai/agent-core';
 
 import {
+  type IAuthSummaryService,
   type IEventBus,
   type IHarnessBridge,
   type HarnessRPC,
@@ -90,11 +91,30 @@ function makeBus(): { bus: IEventBus; events: Event[] } {
   return { bus, events };
 }
 
+/**
+ * Stub `IAuthSummaryService` for hermetic prompt-service tests. Default
+ * `ensureReady()` resolves; tests that need to exercise the readiness gate
+ * can pass `{ ensureReadyError }` and assert the error surfaces.
+ */
+function makeAuth(opts: { ensureReadyError?: Error } = {}): IAuthSummaryService {
+  return {
+    get: vi.fn().mockResolvedValue({
+      ready: true,
+      providers_count: 1,
+      default_model: 'kimi-k2',
+      managed_provider: null,
+    }),
+    ensureReady: vi.fn().mockImplementation(async () => {
+      if (opts.ensureReadyError) throw opts.ensureReadyError;
+    }),
+  };
+}
+
 describe('PromptServiceImpl.submit (W7.2)', () => {
   it('returns ULID-shaped prompt_id + user_message_id derived from it', async () => {
     const { bridge } = makeBridge();
     const { bus } = makeBus();
-    const impl = new PromptServiceImpl(bridge, bus);
+    const impl = new PromptServiceImpl(bridge, bus, makeAuth());
     const result = await impl.submit(SID, {
       content: [{ type: 'text', text: 'hello' }],
     });
@@ -105,7 +125,7 @@ describe('PromptServiceImpl.submit (W7.2)', () => {
   it('translates text + image content to kosong ContentParts', async () => {
     const { bridge, record } = makeBridge();
     const { bus } = makeBus();
-    const impl = new PromptServiceImpl(bridge, bus);
+    const impl = new PromptServiceImpl(bridge, bus, makeAuth());
     await impl.submit(SID, {
       content: [
         { type: 'text', text: 'hello' },
@@ -129,7 +149,7 @@ describe('PromptServiceImpl.submit (W7.2)', () => {
   it('throws SessionBusyError when a non-terminal prompt is already active', async () => {
     const { bridge } = makeBridge();
     const { bus } = makeBus();
-    const impl = new PromptServiceImpl(bridge, bus);
+    const impl = new PromptServiceImpl(bridge, bus, makeAuth());
     await impl.submit(SID, { content: [{ type: 'text', text: 'one' }] });
     await expect(
       impl.submit(SID, { content: [{ type: 'text', text: 'two' }] }),
@@ -139,7 +159,7 @@ describe('PromptServiceImpl.submit (W7.2)', () => {
   it('throws SessionNotFoundError on unknown session id', async () => {
     const { bridge } = makeBridge();
     const { bus } = makeBus();
-    const impl = new PromptServiceImpl(bridge, bus);
+    const impl = new PromptServiceImpl(bridge, bus, makeAuth());
     await expect(
       impl.submit('sess_missing', { content: [{ type: 'text', text: 'hi' }] }),
     ).rejects.toBeInstanceOf(SessionNotFoundError);
@@ -162,7 +182,7 @@ describe('PromptServiceImpl.submit (W7.2)', () => {
       dispose: vi.fn(),
     };
     const { bus } = makeBus();
-    const impl = new PromptServiceImpl(bridge, bus);
+    const impl = new PromptServiceImpl(bridge, bus, makeAuth());
     await expect(
       impl.submit(SID, { content: [{ type: 'text', text: 'x' }] }),
     ).rejects.toThrowError(/boom/);
@@ -175,7 +195,7 @@ describe('PromptServiceImpl.observeEvent (lifecycle synthesis)', () => {
   it('captures turnId on the first turn.started after submit', async () => {
     const { bridge } = makeBridge();
     const { bus } = makeBus();
-    const impl = new PromptServiceImpl(bridge, bus);
+    const impl = new PromptServiceImpl(bridge, bus, makeAuth());
     await impl.submit(SID, { content: [{ type: 'text', text: 'hi' }] });
     impl.observeEvent({
       type: 'turn.started',
@@ -190,7 +210,7 @@ describe('PromptServiceImpl.observeEvent (lifecycle synthesis)', () => {
   it('ignores subsequent turn.started events (treated as nested turns)', async () => {
     const { bridge } = makeBridge();
     const { bus } = makeBus();
-    const impl = new PromptServiceImpl(bridge, bus);
+    const impl = new PromptServiceImpl(bridge, bus, makeAuth());
     await impl.submit(SID, { content: [{ type: 'text', text: 'hi' }] });
     impl.observeEvent({
       type: 'turn.started',
@@ -212,7 +232,7 @@ describe('PromptServiceImpl.observeEvent (lifecycle synthesis)', () => {
   it('synthesizes prompt.completed on top-level turn.ended (reason=completed)', async () => {
     const { bridge } = makeBridge();
     const { bus, events } = makeBus();
-    const impl = new PromptServiceImpl(bridge, bus);
+    const impl = new PromptServiceImpl(bridge, bus, makeAuth());
     const submit = await impl.submit(SID, { content: [{ type: 'text', text: 'hi' }] });
     impl.observeEvent({
       type: 'turn.started',
@@ -247,7 +267,7 @@ describe('PromptServiceImpl.observeEvent (lifecycle synthesis)', () => {
   it('synthesizes prompt.aborted on top-level turn.ended (reason=cancelled)', async () => {
     const { bridge } = makeBridge();
     const { bus } = makeBus();
-    const impl = new PromptServiceImpl(bridge, bus);
+    const impl = new PromptServiceImpl(bridge, bus, makeAuth());
     await impl.submit(SID, { content: [{ type: 'text', text: 'hi' }] });
     impl.observeEvent({
       type: 'turn.started',
@@ -270,7 +290,7 @@ describe('PromptServiceImpl.observeEvent (lifecycle synthesis)', () => {
   it('ignores nested turn.ended (different turnId) so prompt stays active', async () => {
     const { bridge } = makeBridge();
     const { bus } = makeBus();
-    const impl = new PromptServiceImpl(bridge, bus);
+    const impl = new PromptServiceImpl(bridge, bus, makeAuth());
     await impl.submit(SID, { content: [{ type: 'text', text: 'hi' }] });
     impl.observeEvent({
       type: 'turn.started',
@@ -293,7 +313,7 @@ describe('PromptServiceImpl.observeEvent (lifecycle synthesis)', () => {
   it('is a no-op for events on a session with no active prompt', async () => {
     const { bridge } = makeBridge();
     const { bus } = makeBus();
-    const impl = new PromptServiceImpl(bridge, bus);
+    const impl = new PromptServiceImpl(bridge, bus, makeAuth());
     const derived = impl.observeEvent({
       type: 'turn.ended',
       turnId: 1,
@@ -309,7 +329,7 @@ describe('PromptServiceImpl.abort (W7.3)', () => {
   it('throws PromptNotFoundError when no active prompt for the session', async () => {
     const { bridge } = makeBridge();
     const { bus } = makeBus();
-    const impl = new PromptServiceImpl(bridge, bus);
+    const impl = new PromptServiceImpl(bridge, bus, makeAuth());
     await expect(impl.abort(SID, 'prompt_xyz')).rejects.toBeInstanceOf(
       PromptNotFoundError,
     );
@@ -318,7 +338,7 @@ describe('PromptServiceImpl.abort (W7.3)', () => {
   it('returns {aborted: true} and publishes prompt.aborted', async () => {
     const { bridge, record } = makeBridge();
     const { bus, events } = makeBus();
-    const impl = new PromptServiceImpl(bridge, bus);
+    const impl = new PromptServiceImpl(bridge, bus, makeAuth());
     const submit = await impl.submit(SID, {
       content: [{ type: 'text', text: 'hi' }],
     });
@@ -346,7 +366,7 @@ describe('PromptServiceImpl.abort (W7.3)', () => {
   it('throws PromptAlreadyCompletedError on the second abort', async () => {
     const { bridge } = makeBridge();
     const { bus } = makeBus();
-    const impl = new PromptServiceImpl(bridge, bus);
+    const impl = new PromptServiceImpl(bridge, bus, makeAuth());
     const submit = await impl.submit(SID, {
       content: [{ type: 'text', text: 'hi' }],
     });

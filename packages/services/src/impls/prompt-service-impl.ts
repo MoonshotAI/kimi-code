@@ -70,6 +70,7 @@ import type {
 import { ulid } from 'ulid';
 
 import { IHarnessBridge } from '../bridge/harness-bridge';
+import { IAuthSummaryService } from '../interfaces/auth-summary-service';
 import { IEventBus } from '../interfaces/event-bus';
 import {
   IPromptService,
@@ -156,6 +157,7 @@ export class PromptServiceImpl
   constructor(
     @IHarnessBridge private readonly bridge: IHarnessBridge,
     @IEventBus private readonly eventBus: IEventBus,
+    @IAuthSummaryService private readonly auth: IAuthSummaryService,
   ) {
     super();
   }
@@ -164,6 +166,11 @@ export class PromptServiceImpl
 
   async submit(sid: string, body: PromptSubmission): Promise<PromptSubmitResult> {
     await this._requireSession(sid);
+
+    // P2.1 D1 — readiness gate. Throws AuthProvisioningRequired /
+    // AuthTokenMissing / AuthModelNotResolved before we mint a prompt_id and
+    // hand off to agent-core. Daemon route layer maps to 40110/40111/40113.
+    await this.auth.ensureReady();
 
     const existing = this._active.get(sid);
     if (existing !== undefined && !existing.completed && !existing.aborted) {

@@ -1,0 +1,53 @@
+/**
+ * `GET /v1/auth` — readiness probe (P2.1 D2 / REST.md §3).
+ *
+ * Single权威 readiness signal that web/IDE clients hit on first paint to
+ * decide between onboarding vs. chat UI. Returns 200 + envelope regardless
+ * of provider state — failure modes for downstream entries (prompt submit,
+ * model PATCH) carry `40110/40111/40112/40113` codes; this probe never
+ * fails on auth.
+ *
+ * **No DI for input** — the route just resolves `IAuthSummaryService` from
+ * the accessor and forwards the snapshot. Same structural shape as
+ * `meta.ts`'s `RouteHost`.
+ *
+ * **Anti-corruption**: no SDK package imports; `IAuthSummaryService` is the
+ * services-package façade.
+ */
+
+import { authSummarySchema } from '@moonshot-ai/protocol';
+import { IAuthSummaryService } from '@moonshot-ai/services';
+import type { IInstantiationService } from '@moonshot-ai/agent-core';
+
+import { okEnvelope } from '../envelope.js';
+import { buildRouteSchema } from '../middleware/schema.js';
+
+interface RouteHost {
+  get(
+    path: string,
+    options: { schema?: Record<string, unknown> },
+    handler: (
+      req: { id: string },
+      reply: { send(payload: unknown): void },
+    ) => Promise<void> | void,
+  ): unknown;
+}
+
+export function registerAuthRoute(app: RouteHost, ix: IInstantiationService): void {
+  app.get(
+    '/auth',
+    {
+      schema: buildRouteSchema({
+        description: 'Get daemon auth readiness snapshot',
+        tags: ['auth'],
+        response: { 200: authSummarySchema },
+      }),
+    },
+    async (req, reply) => {
+      const summary = await ix.invokeFunction((a) =>
+        a.get(IAuthSummaryService).get(),
+      );
+      reply.send(okEnvelope(summary, req.id));
+    },
+  );
+}

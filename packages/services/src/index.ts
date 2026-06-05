@@ -35,6 +35,14 @@ export type {
   SyntheticPromptAbortedEvent,
   SyntheticPromptCompletedEvent,
 } from './impls/prompt-service-impl';
+export {
+  AuthSummaryServiceImpl,
+  type AuthSummaryServiceOptions,
+} from './impls/auth-summary-service-impl';
+export {
+  OAuthServiceImpl,
+  type OAuthServiceOptions,
+} from './impls/oauth-service-impl';
 export { ToolServiceImpl } from './impls/tool-service-impl';
 export { McpServiceImpl } from './impls/mcp-service-impl';
 export { TaskServiceImpl } from './impls/task-service-impl';

@@ -494,6 +494,9 @@ importers:
       '@moonshot-ai/agent-core':
         specifier: workspace:^
         version: link:../agent-core
+      '@moonshot-ai/kimi-code-oauth':
+        specifier: workspace:^
+        version: link:../oauth
       '@moonshot-ai/kimi-code-sdk':
         specifier: workspace:^
         version: link:../node-sdk

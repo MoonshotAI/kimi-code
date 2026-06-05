@@ -13,6 +13,14 @@ export { IApprovalBroker } from './approval-broker';
 export type { ApprovalRequest, ApprovalResponse } from './approval-broker';
 export { IQuestionBroker } from './question-broker';
 export type { QuestionRequest, QuestionResult } from './question-broker';
+export {
+  IAuthSummaryService,
+  AuthProvisioningRequiredError,
+  AuthTokenMissingError,
+  AuthTokenUnauthorizedError,
+  AuthModelNotResolvedError,
+} from './auth-summary-service';
+export { IOAuthService } from './oauth-service';
 export { ISessionService, SessionNotFoundError } from './session-service';
 export type { SessionListQuery } from './session-service';
 export { IMessageService, MessageNotFoundError } from './message-service';

@@ -2,14 +2,19 @@ import {
   InstantiationService,
   ServiceCollection,
   SyncDescriptor,
+  resolveConfigPath,
+  resolveKimiHome,
 } from '@moonshot-ai/agent-core';
 import {
+  AuthSummaryServiceImpl,
   HarnessBridge,
   IApprovalBroker,
+  IAuthSummaryService,
   IEventBus,
   IHarnessBridge,
   IMcpService,
   IMessageService,
+  IOAuthService,
   IPromptService,
   IQuestionBroker,
   ISessionService,
@@ -17,6 +22,7 @@ import {
   IToolService,
   McpServiceImpl,
   MessageServiceImpl,
+  OAuthServiceImpl,
   PromptServiceImpl,
   SessionNotFoundError,
   SessionServiceImpl,
@@ -43,6 +49,8 @@ import { registerMessagesRoutes } from './routes/messages.js';
 import { registerMetaRoute } from './routes/meta.js';
 import { registerPromptsRoutes } from './routes/prompts.js';
 import { registerApprovalsRoutes } from './routes/approvals.js';
+import { registerAuthRoute } from './routes/auth.js';
+import { registerOAuthRoutes } from './routes/oauth.js';
 import { registerQuestionsRoutes } from './routes/questions.js';
 import { registerSessionsRoutes } from './routes/sessions.js';
 import { registerTasksRoutes } from './routes/tasks.js';
@@ -183,6 +191,7 @@ export async function startDaemon(opts: DaemonStartOptions): Promise<RunningDaem
       },
       tags: [
         { name: 'meta', description: 'Daemon metadata' },
+        { name: 'auth', description: 'Auth readiness & login state' },
         { name: 'sessions', description: 'Session lifecycle' },
         { name: 'messages', description: 'Message history' },
         { name: 'prompts', description: 'Prompt submission & abort' },
@@ -254,6 +263,17 @@ export async function startDaemon(opts: DaemonStartOptions): Promise<RunningDaem
       serverId,
       startedAt,
     });
+
+    // P2.1 / Chain P2.1.1 — `GET /auth`. Readiness probe + onboarding gate
+    // signal. No body, no auth, always 200. Wired AFTER meta so reverse-
+    // dispose order matters not (route registrations are not stateful).
+    registerAuthRoute(apiV1 as unknown as Parameters<typeof registerAuthRoute>[0], ix);
+
+    // P2.7 / Chain P2.7.1 — `/oauth/*`. Device-code flow start / poll /
+    // cancel + logout. Grouped under the `auth` swagger tag since they're
+    // all login-related; the URL prefix `/oauth` keeps them out of
+    // `/auth`'s pure-readout namespace.
+    registerOAuthRoutes(apiV1 as unknown as Parameters<typeof registerOAuthRoutes>[0], ix);
 
     // W6.2 / Chain 2 — register `/sessions/*` routes. The route module
     // captures `ix` by reference; per-request `accessor.get(ISessionService)`
@@ -440,6 +460,41 @@ export async function startDaemon(opts: DaemonStartOptions): Promise<RunningDaem
       const messageService = ix.createInstance(MessageServiceImpl);
       services.set(IMessageService, messageService);
       a.get(IMessageService);
+
+      // P2.1 / Chain P2.1.2 — IAuthSummaryService. Powers `GET /v1/auth` +
+      // the `ensureReady` gate consumed by IPromptService. Constructed
+      // BEFORE IPromptService so the prompt impl can @-inject it.
+      // Reverse-dispose order: IPromptService → IAuthSummaryService →
+      // IMessageService → ISessionService → IHarnessBridge.
+      //
+      // The ctor takes a static `{homeDir, configPath}` options bag — same
+      // shape as `KimiCoreOptions` so the credential-file root and TOML
+      // path line up exactly with what HarnessBridge / KimiCore see.
+      // Tests pass `bridgeOptions.homeDir`; prod uses XDG defaults via
+      // `resolveKimiHome` / `resolveConfigPath`.
+      const authHomeDir = resolveKimiHome(opts.bridgeOptions?.homeDir);
+      const authConfigPath = resolveConfigPath({
+        homeDir: opts.bridgeOptions?.homeDir,
+        configPath: opts.bridgeOptions?.configPath,
+      });
+      const authSummaryService = ix.createInstance(AuthSummaryServiceImpl, {
+        homeDir: authHomeDir,
+        configPath: authConfigPath,
+      });
+      services.set(IAuthSummaryService, authSummaryService);
+      a.get(IAuthSummaryService);
+
+      // P2.7 — IOAuthService. Same options bag (homeDir + configPath) as
+      // IAuthSummaryService. Constructed BEFORE IPromptService so the auth
+      // gate sees a fully-wired oauth surface; reverse-dispose runs
+      // IOAuthService BEFORE IAuthSummaryService so any in-flight device
+      // flow gets aborted before the config readers go away.
+      const oauthService = ix.createInstance(OAuthServiceImpl, {
+        homeDir: authHomeDir,
+        configPath: authConfigPath,
+      });
+      services.set(IOAuthService, oauthService);
+      a.get(IOAuthService);
 
       // W7.2 / Chain 4 / P2.5 — IPromptService. Ctor takes IHarnessBridge + IEventBus
       // (the impl uses the bus both to publish synthetic prompt.completed /

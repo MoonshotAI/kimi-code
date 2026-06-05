@@ -33,6 +33,10 @@ import {
 } from '@moonshot-ai/protocol';
 import {
   IPromptService,
+  AuthModelNotResolvedError,
+  AuthProvisioningRequiredError,
+  AuthTokenMissingError,
+  AuthTokenUnauthorizedError,
   PromptAlreadyCompletedError,
   PromptNotFoundError,
   SessionBusyError,
@@ -202,6 +206,53 @@ function sendMappedError(
   }
   if (err instanceof SessionNotFoundError) {
     reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId));
+    return;
+  }
+  // P2.1 D1 — readiness gate failures. The envelope shape mirrors
+  // PLAN.md §3.1.4: `code` is the auth sub-code, `data: null`, `details`
+  // carries `{provider_id?, model_id?}` so clients can route onboarding
+  // without parsing `msg`.
+  if (err instanceof AuthProvisioningRequiredError) {
+    reply.send({
+      code: ErrorCode.AUTH_PROVISIONING_REQUIRED,
+      msg: err.message,
+      data: null,
+      request_id: requestId,
+      details: null,
+    });
+    return;
+  }
+  if (err instanceof AuthTokenMissingError) {
+    reply.send({
+      code: ErrorCode.AUTH_TOKEN_MISSING,
+      msg: err.message,
+      data: null,
+      request_id: requestId,
+      details: { provider_id: err.providerId },
+    });
+    return;
+  }
+  if (err instanceof AuthTokenUnauthorizedError) {
+    reply.send({
+      code: ErrorCode.AUTH_TOKEN_UNAUTHORIZED,
+      msg: err.message,
+      data: null,
+      request_id: requestId,
+      details: { provider_id: err.providerId },
+    });
+    return;
+  }
+  if (err instanceof AuthModelNotResolvedError) {
+    const details: Record<string, unknown> = {};
+    if (err.modelId !== undefined) details['model_id'] = err.modelId;
+    if (err.providerId !== undefined) details['provider_id'] = err.providerId;
+    reply.send({
+      code: ErrorCode.AUTH_MODEL_NOT_RESOLVED,
+      msg: err.message,
+      data: null,
+      request_id: requestId,
+      details: Object.keys(details).length === 0 ? null : details,
+    });
     return;
   }
   throw err;
