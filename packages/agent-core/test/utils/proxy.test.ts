@@ -337,14 +337,30 @@ describe('proxyEnvForChild', () => {
     expect(proxyEnvForChild({})).toEqual({});
   });
 
-  it('enables Node native env-proxy and protects loopback for spawned node children', () => {
+  it('enables Node native env-proxy, mirrors the proxy URL, and protects loopback', () => {
     // Sets BOTH casings: a child inherits the parent's env, and undici reads
-    // the lowercase no_proxy first — so the lowercase form must also carry the
-    // loopback-augmented value or the protection is silently defeated.
+    // the lowercase form first — so both NO_PROXY and the proxy URL must carry
+    // the resolved value or the protection/proxying is silently defeated.
     expect(proxyEnvForChild({ HTTP_PROXY: 'http://p:3128', NO_PROXY: 'corp' })).toEqual({
       NODE_USE_ENV_PROXY: '1',
       NO_PROXY: 'corp,localhost,127.0.0.1,::1,[::1]',
       no_proxy: 'corp,localhost,127.0.0.1,::1,[::1]',
+      HTTP_PROXY: 'http://p:3128',
+      http_proxy: 'http://p:3128',
+    });
+  });
+
+  it('synthesizes scheme-specific proxies from an http-scheme ALL_PROXY for the child', () => {
+    // Node's --use-env-proxy reads HTTP_PROXY/HTTPS_PROXY, not ALL_PROXY, so an
+    // ALL_PROXY-only parent must hand the child the scheme-specific vars.
+    expect(proxyEnvForChild({ ALL_PROXY: 'http://proxy:8080' })).toEqual({
+      NODE_USE_ENV_PROXY: '1',
+      NO_PROXY: 'localhost,127.0.0.1,::1,[::1]',
+      no_proxy: 'localhost,127.0.0.1,::1,[::1]',
+      HTTP_PROXY: 'http://proxy:8080',
+      http_proxy: 'http://proxy:8080',
+      HTTPS_PROXY: 'http://proxy:8080',
+      https_proxy: 'http://proxy:8080',
     });
   });
 
@@ -353,6 +369,8 @@ describe('proxyEnvForChild', () => {
       NODE_USE_ENV_PROXY: '1',
       NO_PROXY: '*',
       no_proxy: '*',
+      HTTP_PROXY: 'http://p:3128',
+      http_proxy: 'http://p:3128',
     });
   });
 

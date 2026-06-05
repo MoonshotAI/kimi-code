@@ -64,6 +64,20 @@ function hasHttpProxy(env: Env): boolean {
 }
 
 /**
+ * Resolve the effective http/https proxy URLs: the scheme-specific
+ * `HTTP_PROXY`/`HTTPS_PROXY` (ignoring a SOCKS-scheme value), falling back to an
+ * http-scheme `ALL_PROXY` catch-all. `undefined` for a scheme with no usable
+ * value.
+ */
+function resolveHttpProxyUrls(env: Env): { httpProxy?: string; httpsProxy?: string } {
+  const allProxy = httpSchemeValue(firstNonBlank(env, ['all_proxy', 'ALL_PROXY']));
+  return {
+    httpProxy: httpSchemeValue(firstNonBlank(env, ['http_proxy', 'HTTP_PROXY'])) ?? allProxy,
+    httpsProxy: httpSchemeValue(firstNonBlank(env, ['https_proxy', 'HTTPS_PROXY'])) ?? allProxy,
+  };
+}
+
+/**
  * Resolve a SOCKS proxy from the environment, or `undefined` if none. A SOCKS
  * proxy may be declared via `ALL_PROXY` (the common form for Clash / V2RayN) or
  * by putting a `socks*` scheme in `HTTP(S)_PROXY`. `ALL_PROXY` wins, then
@@ -253,16 +267,13 @@ export function createProxyDispatcher(
   const { makeHttpAgent = defaultMakeHttpAgent, makeSocksAgent = defaultMakeSocksAgent } = factories;
   try {
     if (hasHttpProxy(env)) {
-      // Resolve each scheme's proxy URL ourselves, falling back to an
-      // http-scheme ALL_PROXY (the catch-all). Coerce a missing or SOCKS-scheme
-      // value to '' (falsy to undici) so EnvHttpProxyAgent neither builds a
-      // broken agent from a socks: URI nor re-reads a blank-masked value from env.
-      const allProxy = httpSchemeValue(firstNonBlank(env, ['all_proxy', 'ALL_PROXY']));
-      const pickHttpProxy = (keys: readonly string[]): string =>
-        httpSchemeValue(firstNonBlank(env, keys)) ?? allProxy ?? '';
+      // Coerce a missing value to '' (falsy to undici) so EnvHttpProxyAgent
+      // neither builds a broken agent from a socks: URI nor re-reads a
+      // blank-masked value from env.
+      const { httpProxy, httpsProxy } = resolveHttpProxyUrls(env);
       return makeHttpAgent({
-        httpProxy: pickHttpProxy(['http_proxy', 'HTTP_PROXY']),
-        httpsProxy: pickHttpProxy(['https_proxy', 'HTTPS_PROXY']),
+        httpProxy: httpProxy ?? '',
+        httpsProxy: httpsProxy ?? '',
         noProxy: resolveNoProxy(env),
       });
     }
@@ -314,14 +325,32 @@ export function installGlobalProxyDispatcher(
  *
  * Only applies to HTTP/HTTPS proxies: Node's `--use-env-proxy` does not support
  * SOCKS, so a SOCKS-only proxy yields `{}` (child SOCKS proxying is out of
- * scope). Sets `NO_PROXY` in BOTH casings: the child inherits the parent's env
- * and undici reads the lowercase `no_proxy` first, so an inherited un-augmented
- * lowercase value would otherwise defeat the loopback protection.
+ * scope). Everything is set in BOTH casings: the child inherits the parent's
+ * env and undici reads the lowercase form first, so the lowercase variants must
+ * also carry the resolved values or the protection/proxying is silently lost.
+ *
+ * Because `--use-env-proxy` reads `HTTP_PROXY`/`HTTPS_PROXY` (not `ALL_PROXY`),
+ * an http-scheme `ALL_PROXY` is synthesized into the scheme-specific variables
+ * so an `ALL_PROXY`-only parent still proxies the child.
  */
 export function proxyEnvForChild(env: Env = process.env): Record<string, string> {
   if (!hasHttpProxy(env)) return {};
   const noProxy = resolveNoProxy(env);
-  return { NODE_USE_ENV_PROXY: '1', NO_PROXY: noProxy, no_proxy: noProxy };
+  const result: Record<string, string> = {
+    NODE_USE_ENV_PROXY: '1',
+    NO_PROXY: noProxy,
+    no_proxy: noProxy,
+  };
+  const { httpProxy, httpsProxy } = resolveHttpProxyUrls(env);
+  if (httpProxy !== undefined) {
+    result['HTTP_PROXY'] = httpProxy;
+    result['http_proxy'] = httpProxy;
+  }
+  if (httpsProxy !== undefined) {
+    result['HTTPS_PROXY'] = httpsProxy;
+    result['https_proxy'] = httpsProxy;
+  }
+  return result;
 }
 
 /**
