@@ -107,6 +107,7 @@ interface AgentSwarmResumeSpec {
   readonly kind: 'resume';
   readonly index: number;
   readonly agentId: string;
+  readonly item?: string;
   readonly prompt: string;
 }
 
@@ -172,7 +173,14 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     toolCallId: string,
   ): Promise<string> {
     const profileName = normalizeOptionalString(args.subagent_type) ?? DEFAULT_SUBAGENT_TYPE;
-    const tasks = specs.map((spec): QueuedSubagentTask<AgentSwarmSpec> => {
+    const specsWithPersistedItems = specs.map((spec): AgentSwarmSpec => {
+      if (spec.kind === 'spawn') return spec;
+      return {
+        ...spec,
+        item: this.subagentHost.getSwarmItem(spec.agentId),
+      };
+    });
+    const tasks = specsWithPersistedItems.map((spec): QueuedSubagentTask<AgentSwarmSpec> => {
       const resumeAgentId = spec.kind === 'resume' ? spec.agentId : undefined;
       return {
         data: spec,
@@ -184,6 +192,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
           spec.index,
           spec.kind === 'resume' ? 'resume' : profileName,
         ),
+        swarmItem: spec.item,
         runInBackground: false,
         resumeAgentId,
       };
@@ -290,10 +299,11 @@ function renderSwarmResults(results: readonly SwarmRunResult[]): string {
   for (const result of results) {
     const agentId = result.agentId === undefined ? '' : ` agent_id="${result.agentId}"`;
     const mode = result.spec.kind === 'resume' ? ' mode="resume"' : '';
+    const item = result.spec.item === undefined ? '' : ` item="${escapeXmlAttribute(result.spec.item)}"`;
     const state = result.state === undefined ? '' : ` state="${result.state}"`;
     const body = result.status === 'completed' ? (result.result ?? '') : (result.error ?? 'unknown error');
     lines.push(
-      `<subagent index="${String(result.spec.index)}"${mode}${agentId}${state} outcome="${result.status}">${body}</subagent>`,
+      `<subagent index="${String(result.spec.index)}"${mode}${agentId}${item}${state} outcome="${result.status}">${body}</subagent>`,
     );
   }
 
@@ -313,6 +323,14 @@ function renderSwarmSummary(completed: number, failed: number, aborted = 0): str
   if (failed > 0) parts.push(`failed: ${String(failed)}`);
   if (aborted > 0) parts.push(`aborted: ${String(aborted)}`);
   return parts.join(', ');
+}
+
+function escapeXmlAttribute(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
 }
 
 function toSwarmRunResult(

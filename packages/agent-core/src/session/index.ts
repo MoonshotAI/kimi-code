@@ -76,6 +76,7 @@ export interface AgentMeta {
   readonly homedir: string;
   readonly type: AgentType;
   readonly parentAgentId: string | null;
+  readonly swarmItem?: string;
 }
 
 interface ResumedAgent {
@@ -88,6 +89,7 @@ type AgentEntry = Agent | Promise<ResumedAgent>;
 export interface CreateAgentOptions {
   readonly profile?: ResolvedAgentProfile;
   readonly parentAgentId?: string;
+  readonly swarmItem?: string;
   readonly persistMetadata?: boolean;
 }
 
@@ -295,6 +297,7 @@ export class Session {
         homedir,
         type,
         parentAgentId,
+        swarmItem: options.swarmItem,
       };
       void this.writeMetadata();
     }

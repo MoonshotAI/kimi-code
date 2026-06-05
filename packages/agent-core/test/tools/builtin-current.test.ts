@@ -69,8 +69,13 @@ function context<Input>(args: Input, toolCallId = 'call_1') {
 function mockSubagentHost<T extends Partial<SessionSubagentHost>>(
   host: T,
 ): T & SessionSubagentHost {
-  return { spawn: vi.fn(), resume: vi.fn(), runQueued: vi.fn(), ...host } as unknown as T &
-    SessionSubagentHost;
+  return {
+    spawn: vi.fn(),
+    resume: vi.fn(),
+    runQueued: vi.fn(),
+    getSwarmItem: vi.fn(),
+    ...host,
+  } as unknown as T & SessionSubagentHost;
 }
 
 function mockSwarmMode(): SwarmMode {
@@ -383,6 +388,7 @@ describe('current builtin collaboration tools', () => {
           parentToolCallId: 'call_swarm',
           prompt: 'Review src/a.ts',
           description: 'Review files #1 (explore)',
+          swarmItem: 'src/a.ts',
           runInBackground: false,
           resumeAgentId: undefined,
         },
@@ -392,6 +398,7 @@ describe('current builtin collaboration tools', () => {
           parentToolCallId: 'call_swarm',
           prompt: 'Review src/b.ts',
           description: 'Review files #2 (explore)',
+          swarmItem: 'src/b.ts',
           runInBackground: false,
           resumeAgentId: undefined,
         },
@@ -405,8 +412,8 @@ describe('current builtin collaboration tools', () => {
     expect(result.output).toBe([
       '<agent_swarm_result>',
       '<summary>completed: 2</summary>',
-      '<subagent index="1" agent_id="agent-explore-1" outcome="completed">explore result a</subagent>',
-      '<subagent index="2" agent_id="agent-explore-2" outcome="completed">explore result b</subagent>',
+      '<subagent index="1" agent_id="agent-explore-1" item="src/a.ts" outcome="completed">explore result a</subagent>',
+      '<subagent index="2" agent_id="agent-explore-2" item="src/b.ts" outcome="completed">explore result b</subagent>',
       '</agent_swarm_result>',
     ].join('\n'));
     expect(result.isError).toBeUndefined();
@@ -444,7 +451,12 @@ describe('current builtin collaboration tools', () => {
         }));
       },
     );
+    const persistedItems: Record<string, string> = {
+      'agent-old-1': 'src/old-a.ts',
+      'agent-old-2': 'src/old-b.ts',
+    };
     const host = mockSubagentHost({
+      getSwarmItem: vi.fn((agentId: string) => persistedItems[agentId]),
       runQueued: runQueued as unknown as SessionSubagentHost['runQueued'],
     });
     const swarmMode = mockSwarmMode();
@@ -489,12 +501,14 @@ describe('current builtin collaboration tools', () => {
             kind: 'resume',
             index: 1,
             agentId: 'agent-old-1',
+            item: 'src/old-a.ts',
             prompt: 'Continue previous review A',
           },
           profileName: 'subagent',
           parentToolCallId: 'call_swarm',
           prompt: 'Continue previous review A',
           description: 'Finish review #1 (resume)',
+          swarmItem: 'src/old-a.ts',
           runInBackground: false,
           resumeAgentId: 'agent-old-1',
         },
@@ -503,12 +517,14 @@ describe('current builtin collaboration tools', () => {
             kind: 'resume',
             index: 2,
             agentId: 'agent-old-2',
+            item: 'src/old-b.ts',
             prompt: 'Continue previous review B',
           },
           profileName: 'subagent',
           parentToolCallId: 'call_swarm',
           prompt: 'Continue previous review B',
           description: 'Finish review #2 (resume)',
+          swarmItem: 'src/old-b.ts',
           runInBackground: false,
           resumeAgentId: 'agent-old-2',
         },
@@ -523,6 +539,7 @@ describe('current builtin collaboration tools', () => {
           parentToolCallId: 'call_swarm',
           prompt: 'Review src/new.ts',
           description: 'Finish review #3 (explore)',
+          swarmItem: 'src/new.ts',
           runInBackground: false,
           resumeAgentId: undefined,
         },
@@ -536,9 +553,9 @@ describe('current builtin collaboration tools', () => {
     expect(result.output).toBe([
       '<agent_swarm_result>',
       '<summary>completed: 3</summary>',
-      '<subagent index="1" mode="resume" agent_id="agent-old-1" outcome="completed">result 1</subagent>',
-      '<subagent index="2" mode="resume" agent_id="agent-old-2" outcome="completed">result 2</subagent>',
-      '<subagent index="3" agent_id="agent-new-3" outcome="completed">result 3</subagent>',
+      '<subagent index="1" mode="resume" agent_id="agent-old-1" item="src/old-a.ts" outcome="completed">result 1</subagent>',
+      '<subagent index="2" mode="resume" agent_id="agent-old-2" item="src/old-b.ts" outcome="completed">result 2</subagent>',
+      '<subagent index="3" agent_id="agent-new-3" item="src/new.ts" outcome="completed">result 3</subagent>',
       '</agent_swarm_result>',
     ].join('\n'));
     expect(result.isError).toBeUndefined();
@@ -594,8 +611,8 @@ describe('current builtin collaboration tools', () => {
       '<agent_swarm_result>',
       '<summary>completed: 1, failed: 1</summary>',
       '<resume_hint>Call AgentSwarm with resume_agent_ids using the agent_id values in this result to continue unfinished work.</resume_hint>',
-      '<subagent index="1" agent_id="agent-coder-1" outcome="completed">imports are stable</subagent>',
-      '<subagent index="2" agent_id="agent-coder-2" outcome="failed">Agent timed out after 30s.</subagent>',
+      '<subagent index="1" agent_id="agent-coder-1" item="src/a.ts" outcome="completed">imports are stable</subagent>',
+      '<subagent index="2" agent_id="agent-coder-2" item="src/b.ts" outcome="failed">Agent timed out after 30s.</subagent>',
       '</agent_swarm_result>',
     ].join('\n'));
     expect(swarmMode.enter).toHaveBeenCalledWith('implicit');
@@ -649,8 +666,8 @@ describe('current builtin collaboration tools', () => {
     expect(result.output).toBe([
       '<agent_swarm_result>',
       '<summary>failed: 2</summary>',
-      '<subagent index="1" outcome="failed">Agent did not start.</subagent>',
-      '<subagent index="2" outcome="failed">Agent also did not start.</subagent>',
+      '<subagent index="1" item="src/a.ts" outcome="failed">Agent did not start.</subagent>',
+      '<subagent index="2" item="src/b.ts" outcome="failed">Agent also did not start.</subagent>',
       '</agent_swarm_result>',
     ].join('\n'));
     expect(result.isError).toBeUndefined();
@@ -720,9 +737,9 @@ describe('current builtin collaboration tools', () => {
       '<agent_swarm_result>',
       '<summary>completed: 1, aborted: 2</summary>',
       '<resume_hint>Call AgentSwarm with resume_agent_ids using the agent_id values in this result to continue unfinished work.</resume_hint>',
-      '<subagent index="1" agent_id="agent-coder-1" outcome="completed">imports are stable</subagent>',
-      '<subagent index="2" agent_id="agent-coder-2" state="started" outcome="aborted">The user manually interrupted this subagent batch before this subagent finished.</subagent>',
-      '<subagent index="3" state="not_started" outcome="aborted">The user manually interrupted this subagent batch before this subagent was started.</subagent>',
+      '<subagent index="1" agent_id="agent-coder-1" item="src/a.ts" outcome="completed">imports are stable</subagent>',
+      '<subagent index="2" agent_id="agent-coder-2" item="src/b.ts" state="started" outcome="aborted">The user manually interrupted this subagent batch before this subagent finished.</subagent>',
+      '<subagent index="3" item="src/c.ts" state="not_started" outcome="aborted">The user manually interrupted this subagent batch before this subagent was started.</subagent>',
       '</agent_swarm_result>',
     ].join('\n'));
     expect(result.isError).toBeUndefined();

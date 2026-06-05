@@ -75,6 +75,7 @@ type RunSubagentOptions = {
   readonly parentToolCallUuid?: string;
   readonly prompt: string;
   readonly description: string;
+  readonly swarmItem?: string;
   readonly runInBackground: boolean;
   readonly origin?: PromptOrigin;
   readonly signal: AbortSignal;
@@ -129,7 +130,7 @@ export class SessionSubagentHost {
     const profile = this.resolveProfile(parent, options.profileName);
     const { id, agent } = await this.session.createAgent(
       { type: 'sub', generate: parent.rawGenerate },
-      { parentAgentId: this.ownerAgentId },
+      { parentAgentId: this.ownerAgentId, swarmItem: options.swarmItem },
     );
     const controller = new AbortController();
     const unlinkAbortSignal = linkAbortSignal(options.signal, controller);
@@ -314,6 +315,14 @@ export class SessionSubagentHost {
     return (await this.session.ensureAgentResumed(agentId)).config.profileName;
   }
 
+  getSwarmItem(agentId: string): string | undefined {
+    const metadata = this.session.metadata.agents[agentId];
+    if (metadata?.type !== 'sub' || metadata.parentAgentId !== this.ownerAgentId) {
+      return undefined;
+    }
+    return metadata.swarmItem;
+  }
+
   private async runQueuedTaskAttempt<T>(
     task: QueuedSubagentTask<T>,
     options: QueuedSubagentAttemptOptions,
@@ -331,6 +340,7 @@ export class SessionSubagentHost {
         parentToolCallUuid: task.parentToolCallUuid,
         prompt: task.prompt,
         description: task.description,
+        swarmItem: task.swarmItem,
         runInBackground: task.runInBackground,
         origin: task.origin,
         signal: runSignal,

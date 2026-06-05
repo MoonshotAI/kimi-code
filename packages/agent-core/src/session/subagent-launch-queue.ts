@@ -18,6 +18,7 @@ export type QueuedSubagentTask<T = unknown> = {
   readonly parentToolCallUuid?: string;
   readonly prompt: string;
   readonly description: string;
+  readonly swarmItem?: string;
   readonly runInBackground: boolean;
   readonly origin?: PromptOrigin;
   readonly resumeAgentId?: string;

@@ -1560,6 +1560,47 @@ describe('SessionSubagentHost', () => {
     ]);
   });
 
+  it('runQueued persists swarm item metadata for spawned tasks', async () => {
+    const parent = testAgent();
+    parent.configure();
+
+    const child = testAgent({ type: 'sub' });
+    child.configure();
+    const summary =
+      'Completed the queued swarm item and returned a detailed technical handoff so the parent can map the result back to the original swarm input. '.repeat(
+        2,
+      );
+    child.mockNextResponse({ type: 'text', text: summary });
+
+    const metadataAgents: Session['metadata']['agents'] = {};
+    const session = fakeSession(parent.agent, child.agent, metadataAgents);
+    const host = new SessionSubagentHost(session, 'main');
+
+    await expect(
+      host.runQueued([{ ...queuedTask(1), swarmItem: 'src/a.ts' }], { signal }),
+    ).resolves.toMatchObject([
+      {
+        agentId: 'agent-0',
+        status: 'completed',
+        result: summary.trim(),
+      },
+    ]);
+
+    expect(session.createAgent).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        parentAgentId: 'main',
+        swarmItem: 'src/a.ts',
+      }),
+    );
+    expect(metadataAgents['agent-0']).toMatchObject({
+      type: 'sub',
+      parentAgentId: 'main',
+      swarmItem: 'src/a.ts',
+    });
+    expect(host.getSwarmItem('agent-0')).toBe('src/a.ts');
+  });
+
   it('retries a rate-limited child turn without appending the original prompt again', async () => {
     const parent = testAgent();
     parent.configure();
@@ -1997,6 +2038,7 @@ function fakeSession(
             homedir: '/tmp/kimi-session/agents/agent-0',
             type: config.type ?? 'main',
             parentAgentId,
+            swarmItem: options.swarmItem,
           };
         }
         if (options.profile !== undefined) {
