@@ -56,6 +56,7 @@ export function appStateFromResumeAgent(agent: ResumedAgentState): Partial<AppSt
     maxContextTokens,
     contextUsage,
     planMode: agent.plan !== null,
+    swarmMode: agent.swarmMode ?? false,
     permissionMode: agent.permission.mode,
   };
 }

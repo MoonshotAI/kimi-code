@@ -108,6 +108,7 @@ function baseAgentState(
     replay,
     permission: { mode: 'manual', rules: [] },
     plan: null,
+    swarmMode: false,
     usage: {},
     tools: [],
     toolStore: {},

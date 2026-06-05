@@ -366,8 +366,14 @@ export class Agent {
         this.planMode.cancel(payload.id);
       },
       clearPlan: () => this.planMode.clear(),
-      runSwarm: (payload) => {
-        this.swarmMode.run(payload.input);
+      enterSwarm: () => {
+        this.swarmMode.enter();
+      },
+      exitSwarm: () => {
+        this.swarmMode.exit();
+      },
+      getSwarmMode: () => {
+        return this.swarmMode.isActive;
       },
       beginCompaction: (payload) => {
         this.fullCompaction.begin({ source: 'manual', instruction: payload.instruction });
@@ -424,7 +430,7 @@ export class Agent {
     };
   }
 
-  emitStatusUpdated(): void {
+  emitStatusUpdated(options: { readonly swarmMode?: boolean } = {}): void {
     if (this.records.restoring) return;
     if (!this.config.hasModel) return;
 
@@ -444,7 +450,7 @@ export class Agent {
       maxContextTokens,
       contextUsage,
       planMode: this.planMode.isActive,
-      swarmMode: this.swarmMode.isActive,
+      swarmMode: options.swarmMode ?? (this.swarmMode.isActive ? true : undefined),
       permission: this.permission.mode,
       usage,
     });

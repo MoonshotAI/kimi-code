@@ -80,6 +80,10 @@ export interface SetSessionPlanModeRpcInput extends SessionIdRpcInput {
   readonly enabled: boolean;
 }
 
+export interface SetSessionSwarmModeRpcInput extends SessionIdRpcInput {
+  readonly enabled: boolean;
+}
+
 export interface ActivateSkillRpcInput extends SessionIdRpcInput {
   readonly name: string;
   readonly args?: string | undefined;
@@ -260,13 +264,23 @@ export abstract class SDKRpcClientBase {
     });
   }
 
-  async swarm(input: SessionPromptRpcInput): Promise<void> {
+  async setSwarmMode(input: SetSessionSwarmModeRpcInput): Promise<void> {
     const rpc = await this.getRpc();
-    return rpc.runSwarm({
+    if (!input.enabled) {
+      return rpc.exitSwarm({
+        sessionId: input.sessionId,
+        agentId: this.interactiveAgentId,
+      });
+    }
+    return rpc.enterSwarm({
       sessionId: input.sessionId,
       agentId: this.interactiveAgentId,
-      input: input.input,
     });
+  }
+
+  async swarm(input: SessionPromptRpcInput): Promise<void> {
+    await this.setSwarmMode({ sessionId: input.sessionId, enabled: true });
+    return this.prompt(input);
   }
 
   async getPlan(input: SessionIdRpcInput): Promise<SessionPlan> {
@@ -346,6 +360,10 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId,
     });
+    const swarmMode = await rpc.getSwarmMode({
+      sessionId: input.sessionId,
+      agentId,
+    });
     const usage = await rpc.getUsage({
       sessionId: input.sessionId,
       agentId,
@@ -360,6 +378,7 @@ export abstract class SDKRpcClientBase {
       thinkingLevel: config.thinkingLevel,
       permission: permission.mode,
       planMode: plan !== null,
+      swarmMode,
       contextTokens,
       maxContextTokens,
       contextUsage,

@@ -68,6 +68,12 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'plan_mode.exit':
       agent.planMode.exit(input.id);
       return;
+    case 'swarm_mode.enter':
+      agent.swarmMode.restoreEnter();
+      return;
+    case 'swarm_mode.exit':
+      agent.swarmMode.exit();
+      return;
     case 'context.append_message':
       agent.context.appendMessage(input.message);
       return;

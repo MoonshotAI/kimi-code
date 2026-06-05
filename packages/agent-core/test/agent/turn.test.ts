@@ -248,6 +248,63 @@ describe('Agent turn flow', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('exits swarm mode after a turn completes normally', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'swarm done' });
+
+    await ctx.rpc.enterSwarm({});
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a swarm task' }] });
+    await ctx.untilTurnEnd();
+
+    const turnEndedIndex = eventIndex(ctx, '[rpc]', 'turn.ended');
+    const swarmExitIndex = eventIndex(ctx, '[wire]', 'swarm_mode.exit');
+    const inactiveStatusIndex = ctx.allEvents.findIndex((entry, index) => {
+      return (
+        index > turnEndedIndex &&
+        entry.type === '[rpc]' &&
+        entry.event === 'agent.status.updated' &&
+        (entry.args as { readonly swarmMode?: boolean }).swarmMode === false
+      );
+    });
+
+    expect(ctx.agent.swarmMode.isActive).toBe(false);
+    expect(swarmExitIndex).toBeGreaterThan(turnEndedIndex);
+    expect(inactiveStatusIndex).toBeGreaterThan(turnEndedIndex);
+    expect(ctx.agent.context.history.at(-1)?.origin).toEqual({
+      kind: 'injection',
+      variant: 'swarm_mode_exit',
+    });
+    await ctx.expectResumeMatches();
+  });
+
+  it('keeps swarm mode active when the swarm turn fails', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    await ctx.rpc.enterSwarm({});
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fail a swarm task' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.agent.swarmMode.isActive).toBe(true);
+    expect(eventIndex(ctx, '[wire]', 'swarm_mode.exit')).toBe(-1);
+  });
+
+  it('keeps swarm mode active when the user cancels the swarm turn', async () => {
+    const ctx = testAgent({ generate: abortableGenerate });
+    ctx.configure();
+
+    const stepStarted = ctx.once('turn.step.started');
+    await ctx.rpc.enterSwarm({});
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Cancel a swarm task' }] });
+    await stepStarted;
+    await ctx.rpc.cancel({ turnId: 0 });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.agent.swarmMode.isActive).toBe(true);
+    expect(eventIndex(ctx, '[wire]', 'swarm_mode.exit')).toBe(-1);
+  });
+
   it('emits a friendly model.not_configured error when no model is configured', async () => {
     const ctx = testAgent();
 
@@ -1399,6 +1456,37 @@ describe('Agent turn flow', () => {
     await ctx.expectResumeMatches();
   });
 });
+
+const abortableGenerate: GenerateFn = async (
+  _chat,
+  _systemPrompt,
+  _tools,
+  _history,
+  _callbacks,
+  options,
+) => {
+  await new Promise<void>((_resolve, reject) => {
+    const rejectAbort = () => {
+      const error = new Error('Aborted');
+      error.name = 'AbortError';
+      reject(error);
+    };
+    if (options?.signal?.aborted === true) {
+      rejectAbort();
+      return;
+    }
+    options?.signal?.addEventListener('abort', rejectAbort, { once: true });
+  });
+  throw new Error('abortableGenerate unexpectedly completed');
+};
+
+function eventIndex(
+  ctx: Pick<ReturnType<typeof testAgent>, 'allEvents'>,
+  type: string,
+  event: string,
+): number {
+  return ctx.allEvents.findIndex((entry) => entry.type === type && entry.event === event);
+}
 
 function bashCall(): ToolCall {
   return bashCallWithId('call_bash', 'printf should-not-run');

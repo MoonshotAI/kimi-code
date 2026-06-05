@@ -718,30 +718,6 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  sendSwarmUserInput(text: string): void {
-    if (this.state.appState.model.trim().length === 0) {
-      this.showError(LLM_NOT_SET_MESSAGE);
-      return;
-    }
-    const session = this.session;
-    if (session === undefined) {
-      this.showError(LLM_NOT_SET_MESSAGE);
-      return;
-    }
-    this.appendTranscriptEntry({
-      id: nextTranscriptId(),
-      kind: 'user',
-      turnId: undefined,
-      renderMode: 'plain',
-      content: text,
-    });
-    this.beginSessionRequest();
-    void session.swarm(text).catch((error: unknown) => {
-      const message = formatErrorMessage(error);
-      this.failSessionRequest(`Failed to send swarm prompt: ${message}`);
-    });
-  }
-
   private validateMediaCapabilities(
     extraction: ReturnType<typeof extractMediaAttachments>,
   ): boolean {
@@ -1058,6 +1034,7 @@ export class KimiTUI {
       thinking: status.thinkingLevel !== 'off',
       permissionMode: status.permission,
       planMode: status.planMode,
+      swarmMode: status.swarmMode ?? false,
       contextTokens: status.contextTokens,
       maxContextTokens: status.maxContextTokens,
       contextUsage: status.contextUsage,

@@ -139,7 +139,6 @@ export interface SlashCommandHost {
   createNewSession(): Promise<void>;
   showSessionPicker(): Promise<void>;
   sendNormalUserInput(text: string): void;
-  sendSwarmUserInput(text: string): void;
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void;
   readonly skillCommandMap: Map<string, string>;
 
@@ -304,7 +303,7 @@ async function handleBuiltInSlashCommand(
       await handlePlanCommand(host, args);
       return;
     case 'swarm':
-      handleSwarmCommand(host, args);
+      await handleSwarmCommand(host, args);
       return;
     case 'compact':
       await handleCompactCommand(host, args);
