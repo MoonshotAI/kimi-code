@@ -102,7 +102,7 @@ export class HelpPanelComponent extends Container implements Focusable {
 
     const shortcuts = this.opts.shortcuts ?? DEFAULT_KEYBOARD_SHORTCUTS;
     const kbdWidth = Math.max(8, ...shortcuts.map((s) => s.keys.length));
-    const sortedCmds = [...this.opts.commands].toSorted((a, b) => a.name.localeCompare(b.name));
+    const sortedCmds = [...this.opts.commands].toSorted(compareSlashCommandsForDisplay);
     const cmdLabels = sortedCmds.map((c) => {
       const aliases = c.aliases.length > 0 ? ` (${c.aliases.map((a) => '/' + a).join(', ')})` : '';
       return `/${c.name}${aliases}`;
@@ -145,4 +145,15 @@ export class HelpPanelComponent extends Container implements Focusable {
     this.scrollTop = 0;
     return lines.map((line) => truncateToWidth(line, width));
   }
+}
+
+function compareSlashCommandsForDisplay(a: HelpPanelCommand, b: HelpPanelCommand): number {
+  return (
+    getSlashCommandDisplayGroup(a.name) - getSlashCommandDisplayGroup(b.name) ||
+    a.name.localeCompare(b.name)
+  );
+}
+
+function getSlashCommandDisplayGroup(name: string): number {
+  return name.startsWith('skill:') ? 1 : 0;
 }

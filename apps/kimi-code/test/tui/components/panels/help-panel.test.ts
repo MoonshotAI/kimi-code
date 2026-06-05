@@ -34,19 +34,26 @@ describe('HelpPanelComponent', () => {
     expect(out).toMatch(/Exit/);
   });
 
-  it('sorts slash commands by name', () => {
+  it('sorts unprefixed commands before skill commands and by name within each group', () => {
     const panel = new HelpPanelComponent({
-      commands: [cmd('zebra', 'Z'), cmd('alpha', 'A'), cmd('mango', 'M')],
+      commands: [
+        cmd('zebra', 'Z'),
+        cmd('skill:bravo', 'B'),
+        cmd('alpha', 'A'),
+        cmd('mcp-config', 'M'),
+      ],
       colors: darkColors,
       onClose: () => {},
     });
     const out = strip(panel.render(80).join('\n'));
     const alphaIdx = out.indexOf('/alpha');
-    const mangoIdx = out.indexOf('/mango');
+    const mcpConfigIdx = out.indexOf('/mcp-config');
     const zebraIdx = out.indexOf('/zebra');
+    const skillBravoIdx = out.indexOf('/skill:bravo');
     expect(alphaIdx).toBeGreaterThan(-1);
-    expect(alphaIdx).toBeLessThan(mangoIdx);
-    expect(mangoIdx).toBeLessThan(zebraIdx);
+    expect(alphaIdx).toBeLessThan(mcpConfigIdx);
+    expect(mcpConfigIdx).toBeLessThan(zebraIdx);
+    expect(zebraIdx).toBeLessThan(skillBravoIdx);
   });
 
   it('Escape fires onClose', () => {
