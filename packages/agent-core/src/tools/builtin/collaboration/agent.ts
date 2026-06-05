@@ -281,7 +281,8 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         return { output: lines.join('\n') };
       } catch (error) {
         let message: string;
-        if (foregroundDeadline?.timedOut() === true && args.timeout !== undefined) {
+        const timedOut = foregroundDeadline?.timedOut() === true && args.timeout !== undefined;
+        if (timedOut) {
           message = `Agent timed out after ${args.timeout}s.`;
         } else if (isUserCancellation(signal.reason)) {
           message =
@@ -298,6 +299,11 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
           '',
           `subagent error: ${message}`,
         ];
+        if (timedOut) {
+          lines.push(
+            `resume_hint: Continue with Agent(resume="${handle.agentId}", prompt="continue"). Use agent_id only; do not set subagent_type. The subagent retains its prior context; redo any unfinished tool call if its result was lost.`,
+          );
+        }
         return { output: lines.join('\n'), isError: true };
       }
     } catch (error) {

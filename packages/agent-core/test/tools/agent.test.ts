@@ -747,6 +747,10 @@ describe('AgentTool', () => {
       expect(result.output).toContain('actual_subagent_type: coder');
       expect(result.output).toContain('status: failed');
       expect(result.output).toContain('subagent error: Agent timed out after 30s.');
+      expect(result.output).toContain('resume_hint:');
+      expect(result.output).toContain('Agent(resume="agent-child", prompt="continue")');
+      expect(result.output).toContain('do not set subagent_type');
+      expect(result.output).toContain('retains its prior context');
     } finally {
       vi.useRealTimers();
     }
