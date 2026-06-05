@@ -136,16 +136,13 @@ export class AgentSwarmProgressComponent implements Component {
   invalidate(): void {}
 
   setActivitySpinnerText(provider: (() => string) | undefined): void {
-    if (!this.toolCallActive) {
-      this.activitySpinnerText = () => ACTIVITY_SPINNER_PLACEHOLDER;
-      return;
-    }
+    if (!this.toolCallActive) return;
     this.activitySpinnerText = provider;
   }
 
   markToolCallEnded(): void {
     this.toolCallActive = false;
-    this.activitySpinnerText = () => ACTIVITY_SPINNER_PLACEHOLDER;
+    this.activitySpinnerText = undefined;
   }
 
   isToolCallActive(): boolean {
@@ -299,6 +296,7 @@ export class AgentSwarmProgressComponent implements Component {
       this.findMemberForSubagent(input.agentId, input.description);
     if (member === undefined || member.phase === 'completed' || member.phase === 'cancelled') return;
     member.agentId = input.agentId;
+    this.progressEstimator.markQueued(member.id, Date.now());
     member.phase = 'queued';
     delete member.suspendedReason;
     delete member.completedAtMs;
@@ -429,7 +427,6 @@ export class AgentSwarmProgressComponent implements Component {
         '',
         this.renderStatusLine(innerWidth),
         '',
-        chalk.hex(this.colors.primary)('─'.repeat(innerWidth)),
       ];
       return lines.map((line) => truncateToWidth(line, innerWidth));
     }
@@ -450,7 +447,6 @@ export class AgentSwarmProgressComponent implements Component {
       '',
       this.renderStatusLine(innerWidth),
       '',
-      chalk.hex(this.colors.primary)('─'.repeat(innerWidth)),
     ];
     this.startAnimationIfNeeded();
     return lines.map((line) => truncateToWidth(line, innerWidth));
@@ -473,20 +469,25 @@ export class AgentSwarmProgressComponent implements Component {
   }
 
   private renderStatusLine(width: number): string {
-    const spinner = this.activitySpinnerText?.() ?? '';
-    if (spinner.length > 0) {
-      const contentWidth = Math.max(0, width - visibleWidth(spinner));
-      if (contentWidth <= 0) return truncateToWidth(spinner, width);
-      return truncateToWidth(`${spinner}${this.renderStatusLineContent(contentWidth)}`, width);
-    }
-    return this.renderStatusLineContent(width);
-  }
-
-  private renderStatusLineContent(width: number): string {
     const status = totalStatus(this.members, {
       failed: this.failed,
       cancelled: this.cancelled,
     });
+    const prefix = this.renderActivityPrefix(status);
+    if (prefix.length > 0) {
+      const contentWidth = Math.max(0, width - visibleWidth(prefix));
+      if (contentWidth <= 0) return truncateToWidth(prefix, width);
+      return truncateToWidth(`${prefix}${this.renderStatusLineContent(contentWidth, status)}`, width);
+    }
+    return this.renderStatusLineContent(width, status);
+  }
+
+  private renderActivityPrefix(status: TotalStatus): string {
+    if (this.toolCallActive) return this.activitySpinnerText?.() ?? '';
+    return activityPrefixForTotalStatus(status, this.colors);
+  }
+
+  private renderStatusLineContent(width: number, status: TotalStatus): string {
     if (status !== 'working') return this.renderProgressStatusLine(width, status);
 
     if (!this.inputComplete) {
@@ -499,7 +500,7 @@ export class AgentSwarmProgressComponent implements Component {
   private renderProgressStatusLine(width: number, status: TotalStatus): string {
     const label = renderTotalStatusLabel(
       totalStatusLabel(status),
-      totalStatusColor(status, this.colors),
+      totalStatusLabelColor(status, this.members, this.colors),
     );
     if (this.members.length === 0) return truncateToWidth(label, width);
     const barWidth = Math.max(0, width - visibleWidth(label) - 2);
@@ -513,15 +514,15 @@ export class AgentSwarmProgressComponent implements Component {
   private renderOrchestratingStatusLine(width: number): string {
     if (this.itemsStarted) {
       return truncateToWidth(
-        renderTotalStatusLabel(ORCHESTRATING_LABEL, this.colors.textMuted),
+        renderInlineStatusLabel(ORCHESTRATING_LABEL, this.colors.primary),
         width,
       );
     }
 
     const promptTemplate = collapseWhitespace(this.promptTemplateText);
-    const label = renderTotalStatusLabel(
+    const label = renderInlineStatusLabel(
       promptTemplate.length > 0 ? PROMPTING_LABEL : ORCHESTRATING_LABEL,
-      this.colors.textMuted,
+      this.colors.primary,
     );
     if (promptTemplate.length === 0) return truncateToWidth(label, width);
 
@@ -589,7 +590,7 @@ export class AgentSwarmProgressComponent implements Component {
       capacityTicks: barWidth * BRAILLE_LEVELS.length,
       nowMs,
     });
-    const id = chalk.hex(this.colors.textDim)(member.id);
+    const id = chalk.hex(this.colors.primary)(member.id);
     const bar = brailleBar(
       estimate.displayTicks,
       snapshot.phase,
@@ -938,6 +939,25 @@ function renderTotalStatusLabel(label: string, color: string): string {
   return ` ${padAnsi(chalk.hex(color)(label), TOTAL_STATUS_LABEL_WIDTH)}`;
 }
 
+function renderInlineStatusLabel(label: string, color: string): string {
+  return ` ${chalk.hex(color)(label)}`;
+}
+
+function activityPrefixForTotalStatus(status: TotalStatus, colors: ColorPalette): string {
+  const color = totalStatusColor(status, colors);
+  switch (status) {
+    case 'completed':
+      return ` ${chalk.hex(color)(SUCCESS_MARK.trimEnd())}`;
+    case 'failed':
+      return ` ${chalk.hex(color)(FAILURE_MARK.trimEnd())}`;
+    case 'cancelled':
+      return ` ${chalk.hex(color)('⊘')}`;
+    case 'working':
+    case 'suspended':
+      return ACTIVITY_SPINNER_PLACEHOLDER;
+  }
+}
+
 function statusBarCounts(members: readonly AgentSwarmMember[]): StatusBarCount[] {
   const counts = new Map<StatusBarPhase, number>();
   for (const member of members) {
@@ -1044,6 +1064,17 @@ function totalStatusColor(status: TotalStatus, colors: ColorPalette): string {
   }
 }
 
+function totalStatusLabelColor(
+  status: TotalStatus,
+  members: readonly AgentSwarmMember[],
+  colors: ColorPalette,
+): string {
+  if (status === 'working' && !members.some((member) => member.phase === 'completed')) {
+    return colors.primary;
+  }
+  return totalStatusColor(status, colors);
+}
+
 function allocateSegmentWidths(counts: readonly number[], width: number): number[] {
   const total = counts.reduce((sum, count) => sum + count, 0);
   if (total <= 0 || width <= 0) return counts.map(() => 0);
@@ -1099,7 +1130,7 @@ function renderPendingCell(
   width: number,
   colors: ColorPalette,
 ): string {
-  const id = chalk.hex(colors.textDim)(member.id);
+  const id = chalk.hex(colors.primary)(member.id);
   const prefix = `${id} `;
   const itemText = collapseWhitespace(member.itemText);
   const label = itemText.length > 0 ? itemText : QUEUED_LABEL;
@@ -1112,7 +1143,7 @@ function renderQueuedCell(
   width: number,
   colors: ColorPalette,
 ): string {
-  const id = chalk.hex(colors.textDim)(member.id);
+  const id = chalk.hex(colors.primary)(member.id);
   const prefix = `${id} `;
   const labelWidth = Math.max(1, width - visibleWidth(prefix));
   return prefix + truncateWithColor(QUEUED_LABEL, labelWidth, colors.textDim);

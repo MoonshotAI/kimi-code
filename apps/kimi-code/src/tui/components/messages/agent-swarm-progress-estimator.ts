@@ -46,11 +46,13 @@ export interface AgentSwarmProgressEstimate {
 
 interface MemberProgressState {
   startedAtMs?: number;
+  pausedAtMs?: number;
+  pausedDurationMs: number;
   terminalAtMs?: number;
   terminalKind?: 'completed' | 'failed' | 'cancelled';
   rawTicks: number;
   readonly seenToolCallIds: Set<string>;
-  toolCallTimesMs: number[];
+  toolCallActiveTimesMs: number[];
   displayTicks: number;
   lastEstimateAtMs?: number;
   lastTargetTicks?: number;
@@ -106,7 +108,7 @@ export class AgentSwarmProgressEstimator {
 
   markStarted(memberKey: string, nowMs: number): void {
     const state = this.getOrCreateMember(memberKey);
-    state.startedAtMs ??= nowMs;
+    this.startWork(state, nowMs);
     if (state.rawTicks === 0) {
       state.rawTicks = 1;
       state.displayTicks = Math.max(state.displayTicks, 1);
@@ -115,18 +117,26 @@ export class AgentSwarmProgressEstimator {
     delete state.terminalKind;
   }
 
+  markQueued(memberKey: string, nowMs: number): void {
+    const state = this.getOrCreateMember(memberKey);
+    if (state.startedAtMs === undefined || state.terminalKind !== undefined) return;
+    state.pausedAtMs ??= nowMs;
+    state.lastEstimateAtMs = nowMs;
+    delete state.lastTargetTicks;
+  }
+
   recordToolCall(input: {
     readonly memberKey: string;
     readonly toolCallId: string;
     readonly nowMs: number;
   }): { readonly accepted: boolean; readonly rawTicks: number } {
     const state = this.getOrCreateMember(input.memberKey);
-    state.startedAtMs ??= input.nowMs;
+    this.startWork(state, input.nowMs);
     if (state.seenToolCallIds.has(input.toolCallId)) {
       return { accepted: false, rawTicks: state.rawTicks };
     }
     state.seenToolCallIds.add(input.toolCallId);
-    state.toolCallTimesMs.push(input.nowMs);
+    state.toolCallActiveTimesMs.push(this.activeElapsedMs(state, input.nowMs));
     state.rawTicks += 1;
     state.displayTicks = Math.max(state.displayTicks + 1, state.rawTicks);
     delete state.terminalAtMs;
@@ -242,19 +252,43 @@ export class AgentSwarmProgressEstimator {
     terminalKind: 'completed' | 'failed' | 'cancelled',
   ): void {
     const state = this.getOrCreateMember(memberKey);
+    this.finishPausedInterval(state, nowMs);
     state.terminalAtMs = nowMs;
     state.terminalKind = terminalKind;
     state.displayTicks = Math.max(state.displayTicks, state.rawTicks);
     delete state.lastTargetTicks;
   }
 
+  private startWork(state: MemberProgressState, nowMs: number): void {
+    const wasQueued = state.startedAtMs === undefined || state.pausedAtMs !== undefined;
+    state.startedAtMs ??= nowMs;
+    this.finishPausedInterval(state, nowMs);
+    if (!wasQueued) return;
+    delete state.lastEstimateAtMs;
+    delete state.lastTargetTicks;
+  }
+
+  private finishPausedInterval(state: MemberProgressState, nowMs: number): void {
+    if (state.pausedAtMs === undefined) return;
+    state.pausedDurationMs += Math.max(0, nowMs - state.pausedAtMs);
+    delete state.pausedAtMs;
+  }
+
+  private activeElapsedMs(state: MemberProgressState, nowMs: number): number {
+    if (state.startedAtMs === undefined) return 0;
+    const currentPausedMs =
+      state.pausedAtMs === undefined ? 0 : Math.max(0, nowMs - state.pausedAtMs);
+    return Math.max(0, nowMs - state.startedAtMs - state.pausedDurationMs - currentPausedMs);
+  }
+
   private getOrCreateMember(memberKey: string): MemberProgressState {
     const existing = this.members.get(memberKey);
     if (existing !== undefined) return existing;
     const state: MemberProgressState = {
+      pausedDurationMs: 0,
       rawTicks: 0,
       seenToolCallIds: new Set(),
-      toolCallTimesMs: [],
+      toolCallActiveTimesMs: [],
       displayTicks: 0,
     };
     this.members.set(memberKey, state);
@@ -280,7 +314,7 @@ export class AgentSwarmProgressEstimator {
       if (state.terminalKind !== 'completed') continue;
       if (state.startedAtMs === undefined || state.terminalAtMs === undefined) continue;
       if (state.rawTicks <= 0) continue;
-      const totalMs = state.terminalAtMs - state.startedAtMs;
+      const totalMs = this.activeElapsedMs(state, state.terminalAtMs);
       if (totalMs <= 0) continue;
       samples.push({ totalMs, rawTicks: state.rawTicks });
     }
@@ -293,8 +327,8 @@ export class AgentSwarmProgressEstimator {
     nowMs: number,
     completedConfidence: number,
   ): number {
-    const elapsedMs = Math.max(0, nowMs - (state.startedAtMs ?? nowMs));
-    const localRatePerMs = this.estimateLocalRatePerMs(state, elapsedMs, nowMs);
+    const elapsedMs = this.activeElapsedMs(state, nowMs);
+    const localRatePerMs = this.estimateLocalRatePerMs(state, elapsedMs);
     const rateWeight = confidence(state.rawTicks, RATE_TOOL_CONFIDENCE_SCALE);
     const clampedLocalRatePerMs = Math.max(
       localRatePerMs,
@@ -334,12 +368,11 @@ export class AgentSwarmProgressEstimator {
   private estimateLocalRatePerMs(
     state: MemberProgressState,
     elapsedMs: number,
-    nowMs: number,
   ): number {
-    if (elapsedMs <= 0 || state.toolCallTimesMs.length === 0) return 0;
+    if (elapsedMs <= 0 || state.toolCallActiveTimesMs.length === 0) return 0;
     let decayedToolCalls = 0;
-    for (const timeMs of state.toolCallTimesMs) {
-      decayedToolCalls += Math.exp(-(nowMs - timeMs) / this.rateWindowMs);
+    for (const timeMs of state.toolCallActiveTimesMs) {
+      decayedToolCalls += Math.exp(-Math.max(0, elapsedMs - timeMs) / this.rateWindowMs);
     }
     const decayedElapsedMs = this.rateWindowMs * (1 - Math.exp(-elapsedMs / this.rateWindowMs));
     if (decayedElapsedMs <= 0) return 0;

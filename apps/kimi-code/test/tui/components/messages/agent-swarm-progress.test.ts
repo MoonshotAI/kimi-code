@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
+import chalk from 'chalk';
 
 import {
   AgentSwarmProgressComponent,
@@ -13,6 +14,16 @@ import { darkColors } from '#/tui/theme/colors';
 
 function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
+}
+
+function withAnsiColor<T>(run: () => T): T {
+  const previousChalkLevel = chalk.level;
+  chalk.level = 3;
+  try {
+    return run();
+  } finally {
+    chalk.level = previousChalkLevel;
+  }
 }
 
 afterEach(() => {
@@ -34,6 +45,46 @@ describe('AgentSwarmProgressComponent', () => {
     expect(output).not.toContain('01');
   });
 
+  it('renders a trailing blank line without a bottom divider', () => {
+    const component = new AgentSwarmProgressComponent({
+      description: 'Review changed files',
+      colors: darkColors,
+    });
+
+    const lines = strip(component.render(100).join('\n')).split('\n');
+
+    expect(lines.at(-1)).toBe('');
+    expect(lines.at(-2)).toContain('Orchestrating...');
+    expect(lines.at(-2)).not.toMatch(/^─+$/);
+  });
+
+  it('renders orchestrating and prompting labels in primary blue', () => {
+    withAnsiColor(() => {
+      const orchestrating = new AgentSwarmProgressComponent({
+        description: 'Review changed files',
+        colors: darkColors,
+      });
+
+      const orchestratingLine = orchestrating.render(100).join('\n')
+        .split('\n')
+        .find((line) => line.includes('Orchestrating...'));
+      expect(orchestratingLine).toContain(chalk.hex(darkColors.primary)('Orchestrating...'));
+
+      const prompting = new AgentSwarmProgressComponent({
+        description: '',
+        colors: darkColors,
+      });
+      prompting.updateArgs({}, {
+        streamingArguments: '{"prompt_template":"Review every changed TypeScript file',
+      });
+
+      const promptingLine = prompting.render(100).join('\n')
+        .split('\n')
+        .find((line) => line.includes('Prompting...'));
+      expect(promptingLine).toContain(chalk.hex(darkColors.primary)('Prompting...'));
+    });
+  });
+
   it('renders spawned subagents as queued rows without empty progress bars', () => {
     const component = new AgentSwarmProgressComponent({
       description: 'Review changed files',
@@ -50,6 +101,28 @@ describe('AgentSwarmProgressComponent', () => {
     expect(output).not.toContain('001 [');
     expect(output).not.toContain('002 [');
     expect(output).not.toContain('agents=2');
+  });
+
+  it('renders agent ids in primary blue', () => {
+    withAnsiColor(() => {
+      const component = new AgentSwarmProgressComponent({
+        description: 'Review changed files',
+        colors: darkColors,
+      });
+
+      component.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
+      const queuedLine = component.render(80).join('\n')
+        .split('\n')
+        .find((line) => strip(line).startsWith('001 Queued...'));
+      expect(queuedLine).toContain(chalk.hex(darkColors.primary)('001'));
+
+      component.markInputComplete();
+      component.markStarted('agent-1');
+      const activeLine = component.render(80).join('\n')
+        .split('\n')
+        .find((line) => strip(line).startsWith('001 ['));
+      expect(activeLine).toContain(chalk.hex(darkColors.primary)('001'));
+    });
   });
 
   it('renders a blank line above the AgentSwarm header', () => {
@@ -312,7 +385,7 @@ describe('AgentSwarmProgressComponent', () => {
     expect(output).toContain('…');
   });
 
-  it('keeps total status labels fixed before bars and streaming text', () => {
+  it('uses natural status label width for prompting text', () => {
     const prompting = new AgentSwarmProgressComponent({
       description: '',
       colors: darkColors,
@@ -343,7 +416,7 @@ describe('AgentSwarmProgressComponent', () => {
     const progressBarIndex = workingLine?.indexOf('━') ?? -1;
     expect(promptTextIndex).toBeGreaterThan(0);
     expect(progressBarIndex).toBeGreaterThan(0);
-    expect(promptTextIndex).toBe(progressBarIndex);
+    expect(promptTextIndex).toBe(visibleWidth(' Prompting... '));
   });
 
   it('renders the activity spinner before the total status line', () => {
@@ -363,6 +436,33 @@ describe('AgentSwarmProgressComponent', () => {
 
     expect(statusLine).toBeDefined();
     expect(statusLine?.startsWith('🌗 Working...')).toBe(true);
+  });
+
+  it('renders working label blue until a subagent completes, then green', () => {
+    withAnsiColor(() => {
+      const component = new AgentSwarmProgressComponent({
+        description: 'Review changed files',
+        colors: darkColors,
+      });
+
+      component.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
+      component.registerSubagent({ agentId: 'agent-2', description: 'Review changed files #2 (coder)' });
+      component.markInputComplete();
+      component.markStarted('agent-1');
+      component.markStarted('agent-2');
+
+      const initialRawLine = component.render(80).join('\n')
+        .split('\n')
+        .find((line) => strip(line).includes('Working...'));
+      expect(initialRawLine).toContain(chalk.hex(darkColors.primary)('Working...'));
+
+      component.markCompleted('agent-1');
+
+      const partialRawLine = component.render(80).join('\n')
+        .split('\n')
+        .find((line) => strip(line).includes('Working...'));
+      expect(partialRawLine).toContain(chalk.hex(darkColors.success)('Working...'));
+    });
   });
 
   it('keeps a two-cell placeholder after the AgentSwarm tool call ends', () => {
@@ -386,6 +486,71 @@ describe('AgentSwarmProgressComponent', () => {
     expect(statusLine?.startsWith('   Working...')).toBe(true);
     expect(statusLine).not.toContain('🌗');
     expect(statusLine).not.toContain('🌘');
+  });
+
+  it('renders terminal status symbols in the same color as their labels', () => {
+    const previousChalkLevel = chalk.level;
+    chalk.level = 3;
+
+    try {
+      const completed = new AgentSwarmProgressComponent({
+        description: 'Review changed files',
+        colors: darkColors,
+      });
+      completed.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
+      completed.markInputComplete();
+      completed.markCompleted('agent-1', 'Imports are stable');
+      completed.setActivitySpinnerText(() => '🌗');
+      completed.markToolCallEnded();
+      completed.setActivitySpinnerText(() => '🌘');
+
+      const completedRawLine = completed.render(80).join('\n')
+        .split('\n')
+        .find((line) => strip(line).startsWith(' ✓ Completed.'));
+      const completedLine = completedRawLine === undefined ? undefined : strip(completedRawLine);
+      expect(completedLine).toBeDefined();
+      expect(completedLine?.startsWith(' ✓ Completed.')).toBe(true);
+      expect(completedRawLine).toContain(chalk.hex(darkColors.success)('✓'));
+      expect(completedLine).not.toContain('🌗');
+      expect(completedLine).not.toContain('🌘');
+
+      const failed = new AgentSwarmProgressComponent({
+        description: 'Review changed files',
+        colors: darkColors,
+      });
+      failed.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
+      failed.markInputComplete();
+      failed.markFailed('agent-1', 'Agent timed out');
+      failed.markToolCallEnded();
+
+      const failedRawLine = failed.render(80).join('\n')
+        .split('\n')
+        .find((line) => strip(line).startsWith(' ✗ Failed.'));
+      const failedLine = failedRawLine === undefined ? undefined : strip(failedRawLine);
+      expect(failedLine).toBeDefined();
+      expect(failedLine?.startsWith(' ✗ Failed.')).toBe(true);
+      expect(failedRawLine).toContain(chalk.hex(darkColors.error)('✗'));
+
+      const cancelled = new AgentSwarmProgressComponent({
+        description: 'Review changed files',
+        colors: darkColors,
+      });
+      cancelled.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
+      cancelled.markInputComplete();
+      cancelled.markStarted('agent-1');
+      cancelled.markActiveCancelled();
+      cancelled.markToolCallEnded();
+
+      const cancelledRawLine = cancelled.render(80).join('\n')
+        .split('\n')
+        .find((line) => strip(line).startsWith(' ⊘ Cancelled.'));
+      const cancelledLine = cancelledRawLine === undefined ? undefined : strip(cancelledRawLine);
+      expect(cancelledLine).toBeDefined();
+      expect(cancelledLine?.startsWith(' ⊘ Cancelled.')).toBe(true);
+      expect(cancelledRawLine).toContain(chalk.hex(darkColors.warning)('⊘'));
+    } finally {
+      chalk.level = previousChalkLevel;
+    }
   });
 
   it('reserves one trailing cell for prompting streaming text', () => {
@@ -571,6 +736,63 @@ describe('AgentSwarmProgressEstimator', () => {
     expect(estimate.rawTicks).toBe(2);
     expect(estimate.displayTicks).toBe(2);
     expect(estimate.estimatedTotalToolCalls).toBeUndefined();
+    expect(estimate.boosted).toBe(false);
+  });
+
+  it('excludes queued wait time from completed work samples', () => {
+    const estimator = new AgentSwarmProgressEstimator();
+
+    estimator.ensureMember('001', 0);
+    estimator.markStarted('001', 60_000);
+    estimator.recordToolCall({ memberKey: '001', toolCallId: 'read', nowMs: 61_000 });
+    estimator.markQueued('001', 62_000);
+    estimator.markStarted('001', 122_000);
+    estimator.recordToolCall({ memberKey: '001', toolCallId: 'write', nowMs: 123_000 });
+    estimator.markCompleted('001', 124_000);
+
+    const samples = (
+      estimator as unknown as {
+        completedSamples(): Array<{ totalMs: number; rawTicks: number }>;
+      }
+    ).completedSamples();
+    expect(samples).toEqual([{ totalMs: 4_000, rawTicks: 3 }]);
+  });
+
+  it('does not catch up progress using queued wait before start', () => {
+    const estimator = new AgentSwarmProgressEstimator({
+      catchupTimeMs: 1_000,
+      maxCatchupTicksPerSecond: 100,
+    });
+
+    estimator.markStarted('001', 0);
+    for (let index = 0; index < 10; index += 1) {
+      estimator.recordToolCall({
+        memberKey: '001',
+        toolCallId: `done-${index}`,
+        nowMs: 1_000 + index * 1_000,
+      });
+    }
+    estimator.markCompleted('001', 40_000);
+
+    estimator.ensureMember('002', 0);
+    estimator.estimate({
+      memberKey: '002',
+      phase: 'queued',
+      capacityTicks: 56,
+      nowMs: 0,
+    });
+    estimator.markStarted('002', 60_000);
+
+    const estimate = estimator.estimate({
+      memberKey: '002',
+      phase: 'running',
+      capacityTicks: 56,
+      nowMs: 60_000,
+    });
+
+    expect(estimate.rawTicks).toBe(1);
+    expect(estimate.displayTicks).toBe(1);
+    expect(estimate.targetTicks).toBeGreaterThan(1);
     expect(estimate.boosted).toBe(false);
   });
 
