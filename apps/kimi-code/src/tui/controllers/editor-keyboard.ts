@@ -37,6 +37,8 @@ export interface EditorKeyboardHost {
   handlePlanToggle(next: boolean): void;
   clearQueuedMessages(): void;
   setExternalEditorRunning(running: boolean): void;
+  suspendTerminalMouseTracking(): void;
+  resumeTerminalMouseTracking(): void;
 }
 
 export class EditorKeyboardController {
@@ -283,6 +285,7 @@ export class EditorKeyboardController {
     }
     this.host.setExternalEditorRunning(true);
     const seed = state.editor.getExpandedText?.() ?? state.editor.getText();
+    this.host.suspendTerminalMouseTracking();
     state.ui.stop();
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
@@ -300,6 +303,7 @@ export class EditorKeyboardController {
         process.stdin.pause();
       }
       state.ui.start();
+      this.host.resumeTerminalMouseTracking();
       state.ui.setFocus(state.editor);
       state.ui.requestRender(true);
       this.host.setExternalEditorRunning(false);

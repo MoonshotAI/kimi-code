@@ -114,6 +114,7 @@ import {
 import { createTUIState, type TUIState } from './tui-state';
 import { isExpandable, isPlanExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
+import { installEditorMouseTracking } from './utils/editor-mouse';
 import { formatErrorMessage } from './utils/event-payload';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments } from './utils/image-placeholder';
@@ -208,6 +209,7 @@ export class KimiTUI {
   aborted = false;
   private terminalFocusTrackingDispose: (() => void) | undefined;
   private terminalThemeTrackingDispose: (() => void) | undefined;
+  private terminalMouseTrackingDispose: (() => void) | undefined;
   private uninstallRainbowDance: () => void;
   private signalCleanupHandlers: Array<() => void> = [];
   private isShuttingDown = false;
@@ -416,6 +418,7 @@ export class KimiTUI {
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
+    this.resumeTerminalMouseTracking();
     return shouldReplayHistory;
   }
 
@@ -646,6 +649,7 @@ export class KimiTUI {
 
   private disposeTerminalTracking(): void {
     this.stopTerminalThemeTracking();
+    this.suspendTerminalMouseTracking();
     this.terminalFocusTrackingDispose?.();
     this.terminalFocusTrackingDispose = undefined;
   }
@@ -1613,6 +1617,18 @@ export class KimiTUI {
     this.terminalThemeTrackingDispose = undefined;
   }
 
+  suspendTerminalMouseTracking(): void {
+    this.terminalMouseTrackingDispose?.();
+    this.terminalMouseTrackingDispose = undefined;
+  }
+
+  resumeTerminalMouseTracking(): void {
+    this.suspendTerminalMouseTracking();
+    if (!isExperimentalFlagEnabled('terminal_mouse_input')) return;
+
+    this.terminalMouseTrackingDispose = installEditorMouseTracking(this.state);
+  }
+
   private applyResolvedAutoTheme(resolved: ResolvedTheme): void {
     if (this.state.appState.theme !== 'auto') return;
     if (this.state.theme.resolvedTheme === resolved) return;
@@ -1669,6 +1685,7 @@ export class KimiTUI {
   // =========================================================================
 
   mountEditorReplacement(panel: Component & Focusable): void {
+    this.suspendTerminalMouseTracking();
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(panel);
     this.state.ui.setFocus(panel);
@@ -1679,6 +1696,7 @@ export class KimiTUI {
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
+    this.resumeTerminalMouseTracking();
     this.state.ui.requestRender();
   }
 

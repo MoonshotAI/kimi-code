@@ -9,6 +9,13 @@ import {
   handleTerminalFocusInput,
   installTerminalFocusTracking,
 } from '#/tui/utils/terminal-focus';
+import {
+  DISABLE_TERMINAL_MOUSE_REPORTING,
+  ENABLE_TERMINAL_MOUSE_REPORTING,
+  installTerminalMouseTracking,
+  isPrimaryMousePress,
+  parseSgrMouseEvent,
+} from '#/tui/utils/editor-mouse';
 
 describe('terminal focus tracking', () => {
   it('updates focus state from terminal focus reporting sequences', () => {
@@ -55,5 +62,51 @@ describe('terminal focus tracking', () => {
     expect(removeInputListener).toHaveBeenCalledOnce();
     expect(state.terminal.write).toHaveBeenCalledWith(DISABLE_TERMINAL_FOCUS_REPORTING);
     expect(state.terminalState.focused).toBe(true);
+  });
+});
+
+describe('terminal mouse tracking', () => {
+  it('parses SGR mouse events and recognizes primary button presses', () => {
+    const press = parseSgrMouseEvent('\u001B[<0;12;4M');
+    expect(press).toEqual({ button: 0, col: 12, row: 4, final: 'M' });
+    expect(press === undefined ? false : isPrimaryMousePress(press)).toBe(true);
+
+    const modifiedPress = parseSgrMouseEvent('\u001B[<16;12;4M');
+    expect(modifiedPress === undefined ? false : isPrimaryMousePress(modifiedPress)).toBe(true);
+
+    const release = parseSgrMouseEvent('\u001B[<0;12;4m');
+    expect(release === undefined ? false : isPrimaryMousePress(release)).toBe(false);
+
+    expect(parseSgrMouseEvent('\u001B[12;4H')).toBeUndefined();
+  });
+
+  it('enables mouse reporting, consumes mouse input, and disables it on dispose', () => {
+    const listeners: Array<(data: string) => { consume?: boolean } | undefined> = [];
+    const removeInputListener = vi.fn();
+    const onMouseEvent = vi.fn();
+    const state = {
+      terminal: {
+        write: vi.fn(),
+      },
+      ui: {
+        addInputListener: vi.fn((listener) => {
+          listeners.push(listener);
+          return removeInputListener;
+        }),
+      },
+    } as unknown as TUIState;
+
+    const dispose = installTerminalMouseTracking(state, onMouseEvent);
+
+    expect(state.terminal.write).toHaveBeenCalledWith(ENABLE_TERMINAL_MOUSE_REPORTING);
+    expect(listeners).toHaveLength(1);
+    expect(listeners[0]?.('\u001B[<0;12;4M')).toEqual({ consume: true });
+    expect(onMouseEvent).toHaveBeenCalledWith({ button: 0, col: 12, row: 4, final: 'M' });
+    expect(listeners[0]?.('x')).toBeUndefined();
+
+    dispose();
+
+    expect(removeInputListener).toHaveBeenCalledOnce();
+    expect(state.terminal.write).toHaveBeenCalledWith(DISABLE_TERMINAL_MOUSE_REPORTING);
   });
 });

@@ -186,6 +186,7 @@ You can also switch models temporarily without touching the config file — by s
 | `goal_command` | `boolean` | `false` | Enable `/goal` and goal-management tools |
 | `micro_compaction` | `boolean` | `false` | Trim older large tool results from context while preserving recent conversation |
 | `background_ask` | `boolean` | `false` | Allow `AskUserQuestion` to start a background question task when the Agent can continue working |
+| `terminal_mouse_input` | `boolean` | `false` | Allow mouse clicks inside the main input box to move the cursor |
 
 Environment variables take priority over this table. `KIMI_CODE_EXPERIMENTAL_<NAME>` overrides one feature, and `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables all experimental features for that process. When a feature is controlled by the environment, `/experiments` shows it as locked.
 

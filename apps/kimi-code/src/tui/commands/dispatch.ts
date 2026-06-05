@@ -112,6 +112,7 @@ export interface SlashCommandHost {
   restoreEditor(): void;
   restoreInputText(text: string): void;
   refreshSlashCommandAutocomplete(): void;
+  resumeTerminalMouseTracking(): void;
 
   // Session
   requireSession(): Session;

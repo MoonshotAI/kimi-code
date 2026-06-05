@@ -4,14 +4,23 @@ import type {
   AutocompleteSuggestions,
   TUI,
 } from '@earendil-works/pi-tui';
+import { Container, Spacer } from '@earendil-works/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CustomEditor } from '#/tui/components/editor/custom-editor';
+import { GutterContainer } from '#/tui/components/chrome/gutter-container';
+import { CHROME_GUTTER } from '#/tui/constant/rendering';
 import { getColorPalette } from '#/tui/theme/index';
+import type { TUIState } from '#/tui/kimi-tui';
+import { resolveEditorMouseTarget } from '#/tui/utils/editor-mouse';
 
 function makeEditor(): CustomEditor {
   const tui = {
     requestRender: vi.fn(),
+    terminal: {
+      columns: 80,
+      rows: 24,
+    },
   } as unknown as TUI;
   return new CustomEditor(tui, { ...getColorPalette('dark') });
 }
@@ -230,5 +239,75 @@ describe('CustomEditor shortcut telemetry hooks', () => {
     editor.handleInput('\u001F');
 
     expect(onUndo).toHaveBeenCalledOnce();
+  });
+});
+
+describe('CustomEditor mouse cursor positioning', () => {
+  it('moves the cursor to the clicked column on a single-line prompt', () => {
+    const editor = makeEditor();
+    editor.setText('hello world');
+
+    expect(editor.moveCursorToMousePosition(1, 10, 40)).toBe(true);
+    expect(editor.getCursor()).toEqual({ line: 0, col: 6 });
+
+    editor.handleInput('X');
+    expect(editor.getText()).toBe('hello Xworld');
+  });
+
+  it('maps prompt clicks to line start and right-padding clicks to line end', () => {
+    const editor = makeEditor();
+    editor.setText('abc');
+
+    expect(editor.moveCursorToMousePosition(1, 2, 24)).toBe(true);
+    expect(editor.getCursor()).toEqual({ line: 0, col: 0 });
+
+    expect(editor.moveCursorToMousePosition(1, 20, 24)).toBe(true);
+    expect(editor.getCursor()).toEqual({ line: 0, col: 3 });
+  });
+
+  it('moves across logical lines', () => {
+    const editor = makeEditor();
+    editor.setText('one\ntwo');
+
+    expect(editor.moveCursorToMousePosition(2, 5, 40)).toBe(true);
+    expect(editor.getCursor()).toEqual({ line: 1, col: 1 });
+  });
+
+  it('maps clicks on wrapped visual lines back to logical columns', () => {
+    const editor = makeEditor();
+    editor.setText('abcdefghij');
+
+    expect(editor.moveCursorToMousePosition(2, 5, 16)).toBe(true);
+    expect(editor.getCursor()).toEqual({ line: 0, col: 9 });
+  });
+
+  it('resolves terminal mouse coordinates through the editor container gutter', () => {
+    const editor = makeEditor();
+    const ui = new Container();
+    const transcript = new Container();
+    const editorContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+    transcript.addChild(new Spacer(2));
+    editorContainer.addChild(editor);
+    ui.addChild(transcript);
+    ui.addChild(editorContainer);
+
+    const state = {
+      ui,
+      editor,
+      editorContainer,
+      terminal: {
+        columns: 40,
+        rows: 20,
+      },
+    } as unknown as TUIState;
+
+    expect(
+      resolveEditorMouseTarget(state, {
+        button: 0,
+        col: CHROME_GUTTER + 6 + 1,
+        row: 19,
+        final: 'M',
+      }),
+    ).toEqual({ row: 1, col: 6, width: 38 });
   });
 });

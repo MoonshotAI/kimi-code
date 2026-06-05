@@ -262,6 +262,7 @@ oauth = { storage = "file", key = "oauth/kimi-code-env-1234", oauth_host = "http
 goal_command = true
 micro_compaction = false
 background_ask = true
+terminal_mouse_input = false
 `;
     const config = parseConfigString(toml, configPath);
 
@@ -269,6 +270,7 @@ background_ask = true
       'goal_command': true,
       'micro_compaction': false,
       'background_ask': true,
+      'terminal_mouse_input': false,
     });
 
     await writeConfigFile(configPath, config);
@@ -278,6 +280,7 @@ background_ask = true
     expect(text).toContain('goal_command = true');
     expect(text).toContain('micro_compaction = false');
     expect(text).toContain('background_ask = true');
+    expect(text).toContain('terminal_mouse_input = false');
     expect(parseConfigString(text, configPath).experimental).toEqual(config.experimental);
   });
 

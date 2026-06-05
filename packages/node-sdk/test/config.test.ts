@@ -325,6 +325,7 @@ describe('KimiHarness config API', () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND', '');
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION', '');
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK', '');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_TERMINAL_MOUSE_INPUT', '');
     const homeDir = await makeTempDir();
     await writeFile(
       join(homeDir, 'config.toml'),
