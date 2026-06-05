@@ -80,8 +80,8 @@ KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
 | `/goal resume` | Resume a paused or blocked goal | Idle only |
 | `/goal cancel` | Remove the current goal | Always available |
 | `/goal replace <objective>` | Replace the saved goal with a new objective | Idle only |
-| `/goal next <objective>` | Queue an upcoming goal for this session. The agent does not see it until the current goal completes | Always available |
-| `/goal next manage` | Open the upcoming-goal manager. Use `↑`/`↓` to browse, `Space` to select a goal for moving, selected `↑`/`↓` to reorder it, `E` to edit, `D` to delete, and `Esc` to cancel | Always available |
+| `/goal next <objective>` | Queue an upcoming goal for this session. If no goal is active, start it immediately. The agent does not see queued goals until the current goal completes | Always available |
+| `/goal next manage` | Open the upcoming-goal manager. Use `↑`/`↓` to browse, `Space` to select a goal for moving, selected `↑`/`↓` to reorder it, `E` to edit, `D` to delete, and `Esc` to cancel. In the edit field, use `Shift-Enter` or `Ctrl-J` for a new line and `Enter` to save | Always available |
 
 The words `status`, `pause`, `resume`, `cancel`, `replace`, and `next` act as subcommands only when they are the first word after `/goal`. If your objective needs to start with one of those words, put `--` before it:
 

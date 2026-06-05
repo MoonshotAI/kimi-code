@@ -78,8 +78,8 @@ KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
 | `/goal resume` | 继续被暂停或被阻塞的目标 | 仅空闲时 |
 | `/goal cancel` | 移除当前目标 | 随时可用 |
 | `/goal replace <objective>` | 用新目标替换已保存的目标 | 仅空闲时 |
-| `/goal next <objective>` | 为当前会话安排一个后续目标。当前目标完成前，Agent 不会看到它 | 随时可用 |
-| `/goal next manage` | 打开后续目标管理器。用 `↑`/`↓` 浏览，`Space` 选择一个目标以便移动，选中后用 `↑`/`↓` 调整顺序，`E` 编辑，`D` 删除，`Esc` 取消 | 随时可用 |
+| `/goal next <objective>` | 为当前会话安排一个后续目标。如果当前没有目标，则立即开始它。当前目标完成前，Agent 不会看到已排队的目标 | 随时可用 |
+| `/goal next manage` | 打开后续目标管理器。用 `↑`/`↓` 浏览，`Space` 选择一个目标以便移动，选中后用 `↑`/`↓` 调整顺序，`E` 编辑，`D` 删除，`Esc` 取消。编辑输入框中，用 `Shift-Enter` 或 `Ctrl-J` 添加新行，用 `Enter` 保存 | 随时可用 |
 
 `status`、`pause`、`resume`、`cancel`、`replace` 和 `next` 只有作为 `/goal` 后的第一个词时才是子命令。如果你的目标需要以这些词开头，请在目标前加 `--`：
 
