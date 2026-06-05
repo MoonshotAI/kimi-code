@@ -163,6 +163,16 @@ The CLI also reads several standard system variables to detect the runtime envir
 - `WSL_DISTRO_NAME`, `WSLENV`: detect WSL for the clipboard PowerShell bridge
 - `LOCALAPPDATA`: used on Windows when probing for the Git Bash installation path
 
+## HTTP proxy
+
+Kimi Code honors the standard proxy environment variables for all outbound HTTP(S) traffic — model API calls, MCP servers, web tools, telemetry, sign-in, and update checks:
+
+- `HTTP_PROXY` / `http_proxy`: proxy used for `http://` requests
+- `HTTPS_PROXY` / `https_proxy`: proxy used for `https://` requests
+- `NO_PROXY` / `no_proxy`: comma-separated hosts that bypass the proxy
+
+The proxy is applied only when one of these variables is set; otherwise connections are made directly. Loopback hosts (`localhost`, `127.0.0.1`, `::1`) always bypass the proxy, so a local server such as a localhost MCP server keeps working when a proxy is configured — add your own internal hosts to `NO_PROXY` to exempt them too. Stdio MCP servers that run as Node processes honor the same settings automatically.
+
 ## Next steps
 
 - [Config overrides](./overrides.md) — how environment variables, CLI options, and the config file interact by priority
