@@ -1,6 +1,7 @@
 ---
 "@moonshot-ai/agent-core": patch
 "@moonshot-ai/kimi-code": patch
+"@moonshot-ai/migration-legacy": patch
 ---
 
 fix(migration-legacy): use shared slugifyWorkDirName from agent-core
