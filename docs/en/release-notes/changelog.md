@@ -2,7 +2,7 @@
 
 This page documents the changes in each Kimi Code CLI release.
 
-## 0.10.0
+## 0.10.0 (2026-06-04)
 
 ### Features
 
@@ -36,7 +36,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Document the Git Bash prerequisite for Windows installs.
 
-## 0.9.0
+## 0.9.0 (2026-06-03)
 
 ### Features
 
@@ -60,7 +60,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Allow SDK runtime creation to use a separate RPC client while preserving local CLI startup.
 
-## 0.8.0
+## 0.8.0 (2026-06-02)
 
 ### Features
 
@@ -106,7 +106,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Consolidate background task management under the agent background runtime.
 
-## 0.7.0
+## 0.7.0 (2026-06-02)
 
 ### Features
 
@@ -124,7 +124,7 @@ This page documents the changes in each Kimi Code CLI release.
 - Clarify Kimi Platform API key login labels and prompt details.
 - Polish a small TUI visual interaction.
 
-## 0.6.0
+## 0.6.0 (2026-05-29)
 
 ### Features
 
@@ -161,7 +161,7 @@ This page documents the changes in each Kimi Code CLI release.
 - Slim the LLM diagnostic logs with fewer, more compact fields.
 - Relocate shared tool service typing to the tool support layer.
 
-## 0.5.0
+## 0.5.0 (2026-05-28)
 
 ### Features
 
@@ -195,7 +195,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Refactor TUI code structure.
 
-## 0.4.0
+## 0.4.0 (2026-05-27)
 
 ### Features
 
@@ -222,7 +222,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Enhance `kimi export` to include more diagnostic information in the manifest.
 
-## 0.3.0
+## 0.3.0 (2026-05-26)
 
 ### Features
 
@@ -250,7 +250,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Improve the Write tool UX.
 
-## 0.2.0
+## 0.2.0 (2026-05-26)
 
 ### Features
 
