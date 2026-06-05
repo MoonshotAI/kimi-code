@@ -124,7 +124,7 @@ Prompt mode exits with code `0` when the goal completes, `3` when it blocks, and
 
 ## Skill Dynamic Commands
 
-Activated Skills are automatically registered as slash commands, all prefixed with the `skill:` namespace:
+Activated external Skills are automatically registered as slash commands with the `skill:` namespace prefix:
 
 ```
 /skill:<name> [extra text]
@@ -132,9 +132,9 @@ Activated Skills are automatically registered as slash commands, all prefixed wi
 
 For example, `/skill:code-style` loads the Skill named `code-style` and sends it to the Agent; any text appended after the command is concatenated to the Skill prompt.
 
-For convenience, Skill commands also support a shorthand form that omits the `skill:` prefix — `/<name>` — as long as the name is not taken by a built-in command. That is, `/code-style` falls back to matching `/skill:code-style`.
+For convenience, external Skill commands also support a shorthand form that omits the `skill:` prefix — `/<name>` — as long as the name is not taken by a system slash command. That is, `/code-style` falls back to matching `/skill:code-style`.
 
-Kimi Code CLI ships a built-in `mcp-config` Skill for configuring MCP servers and handling MCP OAuth login; invoke it directly with `/mcp-config`.
+Built-in Skills shipped with Kimi Code CLI, such as `mcp-config`, appear directly as `/<name>` in the slash command panel for cases like configuring MCP servers and handling MCP OAuth login.
 
 ::: info
 All Skill commands are only available in the idle state. `flow`-type Skills are also exposed via `/skill:<name>` — there is no separate `/flow:` namespace.

@@ -25,7 +25,7 @@ After pasting, the input box shows a placeholder that you can edit like normal t
 
 Anything starting with `/` is treated as a slash command. Typing `/` opens a completion menu that filters in real time as you keep typing; press `Esc` to close the menu. If nothing matches, the input is sent to the agent as a regular message.
 
-Active [Agent Skills](../customization/skills.md) are automatically registered as slash commands and invoked with `/skill:<name>`. If a skill name does not conflict with a built-in command, you can also drop the `skill:` prefix and type `/<name>` directly.
+Active [Agent Skills](../customization/skills.md) are automatically registered as slash commands: external Skills are invoked with `/skill:<name>`, while built-in Skills appear directly as `/<name>` in the slash command panel. If an external skill name does not conflict with a system slash command, you can also drop the `skill:` prefix and type `/<name>` directly.
 
 Some commands are only available when the agent is idle — you need to press `Esc` to interrupt streaming output or context compression before using them. Mode-toggle and query commands like `/yolo`, `/plan`, `/help`, and `/btw` are always available. For the full list, see [Slash commands reference](../reference/slash-commands.md).
 
