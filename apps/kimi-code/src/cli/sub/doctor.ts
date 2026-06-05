@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, normalize, resolve } from 'node:path';
 
 import {
   createKimiConfigRpc,
@@ -259,7 +259,12 @@ function formatFailure(results: readonly CheckResult[], issueCount: number): str
 function formatResults(results: readonly CheckResult[]): string[] {
   const lines: string[] = [];
   for (const result of results) {
-    lines.push(`${result.status} ${result.label.padEnd(12)} ${result.path}`);
+    // Normalize the path to the platform's native separators so config.toml
+    // (resolved via `pathe`, always `/`) and tui.toml (resolved via
+    // `node:path`, native separator) render consistently. Without this,
+    // Windows users see both `C:/Users/me/.kimi-code/config.toml` and
+    // `C:\Users\me\.kimi-code\tui.toml` in the same output.
+    lines.push(`${result.status} ${result.label.padEnd(12)} ${normalize(result.path)}`);
     if (result.message !== undefined) {
       for (const line of result.message.split('\n')) {
         lines.push(`  ${line}`);

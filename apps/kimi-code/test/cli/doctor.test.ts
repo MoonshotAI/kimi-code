@@ -267,4 +267,33 @@ max_context_size = "large"
     expect(err).toContain('Validation issues:');
     expect(err).toContain('models.kimi.max_context_size:');
   });
+
+  it('normalizes path separators in formatted output', async () => {
+    // Regression: config.toml is resolved via `pathe` (always `/`) while
+    // tui.toml is resolved via `node:path` (native separators on Windows).
+    // The formatted output must use one consistent separator — otherwise
+    // Windows users see a mix of `C:/Users/me/...` and `C:\Users\me\...`
+    // in the same `kimi doctor` block.
+    const { deps, stdout } = makeDeps();
+    const code = await handleDoctor(
+      {
+        ...deps,
+        // Force a `/`-only path here to simulate what `pathe` would yield.
+        defaultConfigPath: () => 'C:/fixture/.kimi-code/config.toml',
+        defaultTuiConfigPath: () => 'C:\\fixture\\.kimi-code\\tui.toml',
+        fileExists: () => false,
+      },
+      {},
+    );
+
+    expect(code).toBe(0);
+    const out = stdout.join('');
+    // On Windows, both lines should use backslashes; on POSIX, both forward
+    // slashes. Path.sep is what `normalize` aligns to.
+    const sep = process.platform === 'win32' ? '\\' : '/';
+    const expectedConfig = `C:${sep}fixture${sep}.kimi-code${sep}config.toml`;
+    const expectedTui = `C:${sep}fixture${sep}.kimi-code${sep}tui.toml`;
+    expect(out).toContain(expectedConfig);
+    expect(out).toContain(expectedTui);
+  });
 });
