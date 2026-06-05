@@ -25,7 +25,7 @@ describe('builtin skill: sub-skill', () => {
   it('registers through registerBuiltinSkills but stays out of the model skill listing', () => {
     const registry = new SkillRegistry();
     registerBuiltinSkills(registry, {
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub-skill': true }),
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': true }),
     });
 
     expect(registry.getSkill('sub-skill')).toBeDefined();
@@ -37,7 +37,7 @@ describe('builtin skill: sub-skill', () => {
   it('remains visible in the full skill list for CLI display when enabled', () => {
     const registry = new SkillRegistry();
     registerBuiltinSkills(registry, {
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub-skill': true }),
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': true }),
     });
 
     expect(registry.listSkills().some((skill) => skill.name === 'sub-skill')).toBe(true);
@@ -46,7 +46,7 @@ describe('builtin skill: sub-skill', () => {
   it('does not register sub-skill builtins when the scoped flag is disabled', () => {
     const registry = new SkillRegistry();
     registerBuiltinSkills(registry, {
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub-skill': false }),
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': false }),
     });
 
     expect(registry.getSkill('sub-skill')).toBeUndefined();
@@ -70,7 +70,7 @@ describe('builtin skill: sub-skill.review', () => {
   it('registers through registerBuiltinSkills', () => {
     const registry = new SkillRegistry();
     registerBuiltinSkills(registry, {
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub-skill': true }),
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': true }),
     });
 
     expect(registry.getSkill('sub-skill.review')).toBeDefined();
@@ -100,7 +100,7 @@ describe('builtin skill: sub-skill.consolidate', () => {
   it('registers through registerBuiltinSkills', () => {
     const registry = new SkillRegistry();
     registerBuiltinSkills(registry, {
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub-skill': true }),
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': true }),
     });
 
     expect(registry.getSkill('sub-skill.consolidate')).toBeDefined();

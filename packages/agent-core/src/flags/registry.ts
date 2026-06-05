@@ -37,7 +37,7 @@ export const FLAG_DEFINITIONS = [
     surface: 'core',
   },
   {
-    id: 'sub-skill',
+    id: 'sub_skill',
     title: 'Sub-skill',
     description: 'Enable discovery of nested skills inside skill bundles that declare has-sub-skill.',
     env: 'KIMI_CODE_EXPERIMENTAL_SUB_SKILL',

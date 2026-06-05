@@ -8,7 +8,7 @@ import { escapeXmlAttr } from '../utils/xml-escape';
 const LISTING_DESC_MAX = 250;
 
 type SubSkillFlagResolver = {
-  enabled(id: 'sub-skill'): boolean;
+  enabled(id: 'sub_skill'): boolean;
 };
 
 export class SkillNotFoundError extends Error {

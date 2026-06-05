@@ -391,7 +391,7 @@ describe('discoverSkills shape and ordering', () => {
 
     const skills = await discoverSkills({
       roots: [{ path: root, source: 'user' }],
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub-skill': true }),
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': true }),
     });
 
     expect(skills.map((s) => s.name)).toEqual(['inner', 'outer']);

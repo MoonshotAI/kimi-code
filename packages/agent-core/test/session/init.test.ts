@@ -486,7 +486,7 @@ describe('AgentAPI.startBtw', () => {
       homedir: sessionDir,
       rpc: createSessionRpc([]),
       skills: { explicitDirs: [skillsRoot] },
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub-skill': false }),
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': false }),
     });
 
     try {
@@ -504,7 +504,7 @@ describe('AgentAPI.startBtw', () => {
       homedir: sessionDir,
       rpc: createSessionRpc([]),
       skills: { explicitDirs: [skillsRoot] },
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub-skill': true }),
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': true }),
     });
 
     try {
