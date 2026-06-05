@@ -188,6 +188,12 @@ describe('default agent profiles', () => {
   it('renders the model-invocable skill listing for bundled prompts', () => {
     const skills = new SkillRegistry();
     skills.register(skill('review', { whenToUse: 'When code review is requested.' }));
+    skills.register({
+      ...skill('nested-review', { whenToUse: 'When nested review is requested.' }),
+      path: '/skills/parent/nested-review/SKILL.md',
+      dir: '/skills/parent/nested-review',
+      content: 'Nested review body must not enter system prompt.',
+    });
     skills.register(skill('private', { disableModelInvocation: true }));
     skills.register(skill('flow-only', { type: 'flow' }));
 
@@ -198,10 +204,14 @@ describe('default agent profiles', () => {
 
     expect(prompt).toContain('Current available skills:');
     expect(prompt).toContain('- review:');
+    expect(prompt).toContain('- nested-review:');
+    expect(prompt).toContain('Path: /skills/parent/nested-review/SKILL.md');
     expect(prompt).toContain('When to use: When code review is requested.');
+    expect(prompt).toContain('When to use: When nested review is requested.');
     expect(prompt).not.toContain('private');
     expect(prompt).not.toContain('flow-only');
     expect(prompt).not.toContain('body of review');
+    expect(prompt).not.toContain('Nested review body must not enter system prompt.');
   });
 
   it('renders the bundled default prompt from the current runtime context', () => {

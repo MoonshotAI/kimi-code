@@ -30,18 +30,32 @@ describe('skill slash commands', () => {
   it('builds slash commands and command map entries with skill prefixes', () => {
     const built = buildSkillSlashCommands([
       skill('review', 'prompt'),
+      skill('nested-review', 'prompt', {
+        description: 'Nested review skill',
+        path: '/skills/parent/nested-review/SKILL.md',
+      }),
       skill('agent-only', 'agent'),
       skill('commit', 'flow'),
     ]);
 
-    expect(built.commands.map((command) => command.name)).toEqual(['skill:review', 'skill:commit']);
+    expect(built.commands.map((command) => command.name)).toEqual([
+      'skill:review',
+      'skill:nested-review',
+      'skill:commit',
+    ]);
     expect(built.commands[0]).toMatchObject({
       name: 'skill:review',
       aliases: [],
       description: 'review skill',
     });
+    expect(built.commands[1]).toMatchObject({
+      name: 'skill:nested-review',
+      aliases: [],
+      description: 'Nested review skill',
+    });
     expect([...built.commandMap.entries()]).toEqual([
       ['skill:review', 'review'],
+      ['skill:nested-review', 'nested-review'],
       ['skill:commit', 'commit'],
     ]);
   });
