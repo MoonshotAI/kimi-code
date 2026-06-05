@@ -42,12 +42,21 @@ function firstNonBlank(env: Env, keys: readonly string[]): string | undefined {
   return undefined;
 }
 
-/** True when an HTTP- or HTTPS-scheme proxy (not a SOCKS one) is configured. */
+/** The value if it is an HTTP/HTTPS-scheme proxy (not SOCKS), else undefined. */
+function httpSchemeValue(value: string | undefined): string | undefined {
+  return value !== undefined && !SOCKS_SCHEMES.has(schemeOf(value) ?? '') ? value : undefined;
+}
+
+/**
+ * True when an HTTP/HTTPS-scheme proxy is configured — via `HTTP_PROXY`,
+ * `HTTPS_PROXY`, or an http-scheme `ALL_PROXY` (the catch-all fallback).
+ */
 function hasHttpProxy(env: Env): boolean {
   return [
     firstNonBlank(env, ['http_proxy', 'HTTP_PROXY']),
     firstNonBlank(env, ['https_proxy', 'HTTPS_PROXY']),
-  ].some((value) => value !== undefined && !SOCKS_SCHEMES.has(schemeOf(value) ?? ''));
+    firstNonBlank(env, ['all_proxy', 'ALL_PROXY']),
+  ].some((value) => httpSchemeValue(value) !== undefined);
 }
 
 /**
@@ -116,22 +125,54 @@ export function resolveNoProxy(env: Env = process.env): string {
 }
 
 /**
- * Build a predicate that returns true when a host should bypass the proxy,
- * given a `NO_PROXY` string. Matches `*` (all), exact hosts, and subdomains for
- * both bare (`example.com`) and leading-dot (`.example.com`) entries. Used for
+ * Build a predicate that returns true when a host (and optional port) should
+ * bypass the proxy, given a `NO_PROXY` string. Matches `*` (all), exact hosts,
+ * and subdomains for both bare (`example.com`) and leading-dot (`.example.com`)
+ * entries; a port-qualified entry (`host:443`) matches only that port. Used for
  * the SOCKS path, where bypass is not handled by undici for us.
  */
-export function makeNoProxyMatcher(noProxy: string): (host: string) => boolean {
+export function makeNoProxyMatcher(noProxy: string): (host: string, port?: number | string) => boolean {
   const entries = noProxy
     .split(',')
     .map((entry) => entry.trim().toLowerCase())
     .filter((entry) => entry.length > 0);
   if (entries.includes('*')) return () => true;
-  const hosts = [...new Set(entries.map((entry) => (entry.startsWith('.') ? entry.slice(1) : entry)))];
-  return (host: string) => {
+  const parsed = entries.map(parseNoProxyEntry);
+  return (host: string, port?: number | string) => {
     const target = host.toLowerCase();
-    return hosts.some((entry) => target === entry || target.endsWith(`.${entry}`));
+    const targetPort = port === undefined ? undefined : String(port);
+    return parsed.some(
+      ({ host: entry, port: entryPort }) =>
+        (entryPort === undefined || entryPort === targetPort) &&
+        (target === entry || target.endsWith(`.${entry}`)),
+    );
   };
+}
+
+/**
+ * Split a `NO_PROXY` entry into host (leading `.` stripped) and optional port.
+ * Handles bracketed IPv6 (`[::1]:443`) and avoids mistaking a bare IPv6
+ * address's colons (`::1`) for a `host:port` separator.
+ */
+function parseNoProxyEntry(entry: string): { host: string; port?: string } {
+  let host = entry;
+  let port: string | undefined;
+  if (entry.startsWith('[')) {
+    const close = entry.indexOf(']');
+    host = entry.slice(1, close);
+    const rest = entry.slice(close + 1);
+    if (rest.startsWith(':')) port = rest.slice(1);
+  } else {
+    const colon = entry.indexOf(':');
+    // Only a single colon followed by digits is a port; multiple colons mean a
+    // bare IPv6 address (e.g. `::1`), which carries no port.
+    if (colon !== -1 && colon === entry.lastIndexOf(':') && /^\d+$/.test(entry.slice(colon + 1))) {
+      host = entry.slice(0, colon);
+      port = entry.slice(colon + 1);
+    }
+  }
+  if (host.startsWith('.')) host = host.slice(1);
+  return port === undefined ? { host } : { host, port };
 }
 
 export interface ProxyAgentFactories {
@@ -160,7 +201,7 @@ const defaultMakeSocksAgent: ProxyAgentFactories['makeSocksAgent'] = ({ proxy, n
   const directConnect = buildConnector({});
   const bypass = makeNoProxyMatcher(noProxy);
   const connect: typeof directConnect = (options, callback) => {
-    if (bypass(options.hostname)) {
+    if (bypass(options.hostname, options.port)) {
       directConnect(options, callback);
       return;
     }
@@ -203,14 +244,13 @@ export function createProxyDispatcher(
   const { makeHttpAgent = defaultMakeHttpAgent, makeSocksAgent = defaultMakeSocksAgent } = factories;
   try {
     if (hasHttpProxy(env)) {
-      // Resolve each scheme's proxy URL ourselves. Coerce a missing or
-      // SOCKS-scheme value to '' (falsy to undici) so EnvHttpProxyAgent neither
-      // builds a broken agent from a socks: URI nor re-reads a blank-masked or
-      // socks value back from process.env.
-      const pickHttpProxy = (keys: readonly string[]): string => {
-        const value = firstNonBlank(env, keys);
-        return value === undefined || SOCKS_SCHEMES.has(schemeOf(value) ?? '') ? '' : value;
-      };
+      // Resolve each scheme's proxy URL ourselves, falling back to an
+      // http-scheme ALL_PROXY (the catch-all). Coerce a missing or SOCKS-scheme
+      // value to '' (falsy to undici) so EnvHttpProxyAgent neither builds a
+      // broken agent from a socks: URI nor re-reads a blank-masked value from env.
+      const allProxy = httpSchemeValue(firstNonBlank(env, ['all_proxy', 'ALL_PROXY']));
+      const pickHttpProxy = (keys: readonly string[]): string =>
+        httpSchemeValue(firstNonBlank(env, keys)) ?? allProxy ?? '';
       return makeHttpAgent({
         httpProxy: pickHttpProxy(['http_proxy', 'HTTP_PROXY']),
         httpsProxy: pickHttpProxy(['https_proxy', 'HTTPS_PROXY']),

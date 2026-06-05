@@ -220,7 +220,8 @@ class BoundedTail {
 // style stdio servers fail to launch even with a valid config. A node child
 // does not inherit our in-process undici dispatcher, so `proxyEnvForChild`
 // adds `NODE_USE_ENV_PROXY` (and a loopback-protected `NO_PROXY`) to make it
-// honor the proxy natively. Explicit `config.env` entries still override —
+// honor the proxy natively (on a Node version that supports the flag — ≥22.21
+// or ≥24.5). Explicit `config.env` entries still override —
 // including `NO_PROXY`, which `reconcileChildNoProxy` mirrors onto both casings
 // so a single-casing override isn't shadowed by the injected value.
 function mergeStdioEnv(configEnv?: Record<string, string>): Record<string, string> {

@@ -32,6 +32,10 @@ describe('isProxyConfigured', () => {
   it('is true when only a SOCKS proxy (ALL_PROXY) is set', () => {
     expect(isProxyConfigured({ ALL_PROXY: 'socks5://127.0.0.1:1080' })).toBe(true);
   });
+
+  it('is true for an http-scheme ALL_PROXY', () => {
+    expect(isProxyConfigured({ ALL_PROXY: 'http://proxy:8080' })).toBe(true);
+  });
 });
 
 describe('resolveNoProxy', () => {
@@ -155,6 +159,18 @@ describe('makeNoProxyMatcher', () => {
   it('never bypasses when NO_PROXY is empty', () => {
     expect(makeNoProxyMatcher('')('example.com')).toBe(false);
   });
+
+  it('matches a port-qualified entry only for the matching port', () => {
+    const bypass = makeNoProxyMatcher('api.example.com:443');
+    expect(bypass('api.example.com', 443)).toBe(true);
+    expect(bypass('api.example.com', '443')).toBe(true);
+    expect(bypass('api.example.com', 80)).toBe(false);
+  });
+
+  it('still matches a bare IPv6 loopback entry (colons are not a port)', () => {
+    const bypass = makeNoProxyMatcher('::1');
+    expect(bypass('::1')).toBe(true);
+  });
 });
 
 describe('createProxyDispatcher', () => {
@@ -206,6 +222,27 @@ describe('createProxyDispatcher', () => {
       expect.objectContaining({ httpProxy: '', httpsProxy: 'http://real:3128' }),
     );
     expect(makeSocksAgent).not.toHaveBeenCalled();
+  });
+
+  it('uses an http-scheme ALL_PROXY as the fallback for both http and https', () => {
+    const makeHttpAgent = vi.fn().mockReturnValue({ id: 'http' } as never);
+    const makeSocksAgent = vi.fn();
+    createProxyDispatcher({ ALL_PROXY: 'http://proxy:8080' }, { makeHttpAgent, makeSocksAgent });
+    expect(makeHttpAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ httpProxy: 'http://proxy:8080', httpsProxy: 'http://proxy:8080' }),
+    );
+    expect(makeSocksAgent).not.toHaveBeenCalled();
+  });
+
+  it('prefers a scheme-specific proxy over an http ALL_PROXY fallback', () => {
+    const makeHttpAgent = vi.fn().mockReturnValue({ id: 'http' } as never);
+    createProxyDispatcher(
+      { HTTP_PROXY: 'http://specific:1', ALL_PROXY: 'http://all:2' },
+      { makeHttpAgent },
+    );
+    expect(makeHttpAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ httpProxy: 'http://specific:1', httpsProxy: 'http://all:2' }),
+    );
   });
 
   it('builds a SOCKS agent when only a SOCKS proxy is configured', () => {
