@@ -1,22 +1,92 @@
-import { type Dispatcher, EnvHttpProxyAgent, setGlobalDispatcher as undiciSetGlobalDispatcher } from 'undici';
+import {
+  Agent,
+  buildConnector,
+  type Dispatcher,
+  EnvHttpProxyAgent,
+  setGlobalDispatcher as undiciSetGlobalDispatcher,
+} from 'undici';
+import { SocksClient } from 'socks';
 
 type Env = Readonly<Record<string, string | undefined>>;
 
-// Loopback hosts always bypass the proxy. Neither undici's EnvHttpProxyAgent
-// nor Node's `--use-env-proxy` exempt loopback by default, so without this a
-// user with HTTP_PROXY set would route `http://localhost:PORT` traffic (e.g. a
-// local MCP server) through a corporate proxy that refuses loopback — a
-// confusing failure that only proxy users would hit.
+/** A parsed SOCKS proxy endpoint, in the shape the `socks` client expects. */
+export interface SocksProxyConfig {
+  /** SOCKS protocol version: 4 (socks4/socks4a) or 5 (socks/socks5/socks5h). */
+  readonly type: 4 | 5;
+  readonly host: string;
+  readonly port: number;
+  readonly userId?: string;
+  readonly password?: string;
+}
+
+// Loopback hosts always bypass the proxy. Neither undici's EnvHttpProxyAgent,
+// Node's `--use-env-proxy`, nor our SOCKS connector exempt loopback by default,
+// so without this a user with a proxy set would route `http://localhost:PORT`
+// traffic (e.g. a local MCP server) through the proxy — a confusing failure
+// that only proxy users would hit.
 const LOOPBACK_NO_PROXY = ['localhost', '127.0.0.1', '::1'] as const;
 
-// The standard proxy variables undici honors, in both casings. ALL_PROXY is
-// intentionally omitted: EnvHttpProxyAgent has no equivalent option, so
-// advertising support for it would mislead.
-const PROXY_ENV_KEYS = ['http_proxy', 'HTTP_PROXY', 'https_proxy', 'HTTPS_PROXY'] as const;
+const SOCKS_SCHEMES = new Set(['socks', 'socks4', 'socks4a', 'socks5', 'socks5h']);
 
-/** True when any standard HTTP(S) proxy variable is set to a non-blank value. */
+/** Lowercase URL scheme (without the trailing colon), or undefined if absent. */
+function schemeOf(value: string): string | undefined {
+  return /^([a-z][a-z0-9+.-]*):/i.exec(value)?.[1]?.toLowerCase();
+}
+
+/** First non-blank value among `keys` (both casings are passed in by callers). */
+function firstNonBlank(env: Env, keys: readonly string[]): string | undefined {
+  for (const key of keys) {
+    const value = env[key]?.trim();
+    if (value !== undefined && value.length > 0) return value;
+  }
+  return undefined;
+}
+
+/** True when an HTTP- or HTTPS-scheme proxy (not a SOCKS one) is configured. */
+function hasHttpProxy(env: Env): boolean {
+  return [
+    firstNonBlank(env, ['http_proxy', 'HTTP_PROXY']),
+    firstNonBlank(env, ['https_proxy', 'HTTPS_PROXY']),
+  ].some((value) => value !== undefined && !SOCKS_SCHEMES.has(schemeOf(value) ?? ''));
+}
+
+/**
+ * Resolve a SOCKS proxy from the environment, or `undefined` if none. A SOCKS
+ * proxy may be declared via `ALL_PROXY` (the common form for Clash / V2RayN) or
+ * by putting a `socks*` scheme in `HTTP(S)_PROXY`. `ALL_PROXY` wins, then
+ * `HTTPS_PROXY`, then `HTTP_PROXY`. `socks://` is an alias for `socks5://`.
+ */
+export function resolveSocksProxy(env: Env = process.env): SocksProxyConfig | undefined {
+  const candidates = [
+    firstNonBlank(env, ['all_proxy', 'ALL_PROXY']),
+    firstNonBlank(env, ['https_proxy', 'HTTPS_PROXY']),
+    firstNonBlank(env, ['http_proxy', 'HTTP_PROXY']),
+  ];
+  for (const value of candidates) {
+    if (value === undefined) continue;
+    const scheme = schemeOf(value);
+    if (scheme === undefined || !SOCKS_SCHEMES.has(scheme)) continue;
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      continue;
+    }
+    const config: SocksProxyConfig = {
+      type: scheme === 'socks4' || scheme === 'socks4a' ? 4 : 5,
+      host: url.hostname,
+      port: url.port ? Number(url.port) : 1080,
+      ...(url.username ? { userId: decodeURIComponent(url.username) } : {}),
+      ...(url.password ? { password: decodeURIComponent(url.password) } : {}),
+    };
+    return config;
+  }
+  return undefined;
+}
+
+/** True when any HTTP(S) or SOCKS proxy variable is set to a usable value. */
 export function isProxyConfigured(env: Env = process.env): boolean {
-  return PROXY_ENV_KEYS.some((key) => (env[key]?.trim() ?? '').length > 0);
+  return hasHttpProxy(env) || resolveSocksProxy(env) !== undefined;
 }
 
 /**
@@ -45,32 +115,100 @@ export function resolveNoProxy(env: Env = process.env): string {
   return hosts.join(',');
 }
 
-/** Builds the proxy dispatcher; injectable so unit tests avoid real sockets. */
-export type ProxyAgentFactory = (options: { noProxy: string }) => Dispatcher;
+/**
+ * Build a predicate that returns true when a host should bypass the proxy,
+ * given a `NO_PROXY` string. Matches `*` (all), exact hosts, and subdomains for
+ * both bare (`example.com`) and leading-dot (`.example.com`) entries. Used for
+ * the SOCKS path, where bypass is not handled by undici for us.
+ */
+export function makeNoProxyMatcher(noProxy: string): (host: string) => boolean {
+  const entries = noProxy
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0);
+  if (entries.includes('*')) return () => true;
+  const hosts = [...new Set(entries.map((entry) => (entry.startsWith('.') ? entry.slice(1) : entry)))];
+  return (host: string) => {
+    const target = host.toLowerCase();
+    return hosts.some((entry) => target === entry || target.endsWith(`.${entry}`));
+  };
+}
 
-const defaultProxyAgentFactory: ProxyAgentFactory = ({ noProxy }) =>
+export interface ProxyAgentFactories {
+  /** Build the dispatcher for an HTTP/HTTPS proxy (reads HTTP(S)_PROXY from env). */
+  readonly makeHttpAgent: (options: { noProxy: string }) => Dispatcher;
+  /** Build the dispatcher for a SOCKS proxy. */
+  readonly makeSocksAgent: (options: { proxy: SocksProxyConfig; noProxy: string }) => Dispatcher;
+}
+
+const defaultMakeHttpAgent: ProxyAgentFactories['makeHttpAgent'] = ({ noProxy }) =>
   // EnvHttpProxyAgent reads HTTP_PROXY/HTTPS_PROXY from process.env itself; we
   // only override noProxy to guarantee the loopback bypass.
   new EnvHttpProxyAgent({ noProxy });
 
+const defaultMakeSocksAgent: ProxyAgentFactories['makeSocksAgent'] = ({ proxy, noProxy }) => {
+  // undici has no SOCKS support, so we drive a custom connector: tunnel the
+  // destination through the SOCKS proxy with the `socks` client, then hand the
+  // established socket back to undici's connector — which performs the TLS
+  // upgrade for https targets (reusing undici's ALPN/servername handling).
+  const directConnect = buildConnector({});
+  const bypass = makeNoProxyMatcher(noProxy);
+  const connect: typeof directConnect = (options, callback) => {
+    if (bypass(options.hostname)) {
+      directConnect(options, callback);
+      return;
+    }
+    void (async () => {
+      try {
+        const isTls = options.protocol === 'https:';
+        const port = Number(options.port) || (isTls ? 443 : 80);
+        const { socket } = await SocksClient.createConnection({
+          proxy: { host: proxy.host, port: proxy.port, type: proxy.type, userId: proxy.userId, password: proxy.password },
+          command: 'connect',
+          destination: { host: options.hostname, port },
+        });
+        if (isTls) {
+          // Upgrade the SOCKS socket to TLS via undici's own connector.
+          directConnect({ ...options, httpSocket: socket } as Parameters<typeof directConnect>[0], callback);
+        } else {
+          socket.setNoDelay(true);
+          callback(null, socket);
+        }
+      } catch (error) {
+        callback(error instanceof Error ? error : new Error(String(error)), null);
+      }
+    })();
+  };
+  return new Agent({ connect });
+};
+
 /**
- * Build an undici dispatcher that routes outbound `fetch` through
- * `HTTP_PROXY`/`HTTPS_PROXY` while honoring the (loopback-augmented)
- * `NO_PROXY`. Returns `undefined` when no proxy variable is set, so the
- * zero-config majority keeps Node's default dispatcher untouched.
+ * Build an undici dispatcher that routes outbound `fetch` through the
+ * configured proxy while honoring the (loopback-augmented) `NO_PROXY`. An
+ * HTTP/HTTPS proxy takes precedence for matching traffic; otherwise a SOCKS
+ * proxy (`ALL_PROXY` or a `socks*` scheme) is used. Returns `undefined` when no
+ * proxy variable is set, so the zero-config majority keeps Node's default
+ * dispatcher untouched.
  */
 export function createProxyDispatcher(
   env: Env = process.env,
-  makeAgent: ProxyAgentFactory = defaultProxyAgentFactory,
+  factories: Partial<ProxyAgentFactories> = {},
 ): Dispatcher | undefined {
-  if (!isProxyConfigured(env)) return undefined;
+  const { makeHttpAgent = defaultMakeHttpAgent, makeSocksAgent = defaultMakeSocksAgent } = factories;
   try {
-    return makeAgent({ noProxy: resolveNoProxy(env) });
+    if (hasHttpProxy(env)) {
+      return makeHttpAgent({ noProxy: resolveNoProxy(env) });
+    }
+    const socks = resolveSocksProxy(env);
+    if (socks !== undefined) {
+      return makeSocksAgent({ proxy: socks, noProxy: resolveNoProxy(env) });
+    }
+    return undefined;
   } catch (error) {
-    // A malformed proxy URL makes EnvHttpProxyAgent throw synchronously. Don't
+    // A malformed proxy URL makes agent construction throw synchronously. Don't
     // abort startup with a raw stack trace — report it and fall back to direct.
     const reason = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`kimi: ignoring invalid HTTP_PROXY/HTTPS_PROXY (${reason}); connecting directly\n`);
+    process.stderr.write(`kimi: ignoring invalid proxy configuration (${reason}); connecting directly\n`);
     return undefined;
   }
 }
@@ -107,15 +245,14 @@ export function installGlobalProxyDispatcher(
  * without bundling undici. An in-process global dispatcher is NOT inherited
  * across a process boundary — only env vars are — so children rely on this.
  *
- * Returns `{}` when no proxy is configured. `NODE_USE_ENV_PROXY` is harmless
- * for non-node children (ignored) and for node children without a proxy var.
- *
- * Sets `NO_PROXY` in BOTH casings: the child inherits the parent's env, and
- * undici reads the lowercase `no_proxy` first — so an inherited un-augmented
+ * Only applies to HTTP/HTTPS proxies: Node's `--use-env-proxy` does not support
+ * SOCKS, so a SOCKS-only proxy yields `{}` (child SOCKS proxying is out of
+ * scope). Sets `NO_PROXY` in BOTH casings: the child inherits the parent's env
+ * and undici reads the lowercase `no_proxy` first, so an inherited un-augmented
  * lowercase value would otherwise defeat the loopback protection.
  */
 export function proxyEnvForChild(env: Env = process.env): Record<string, string> {
-  if (!isProxyConfigured(env)) return {};
+  if (!hasHttpProxy(env)) return {};
   const noProxy = resolveNoProxy(env);
   return { NODE_USE_ENV_PROXY: '1', NO_PROXY: noProxy, no_proxy: noProxy };
 }
