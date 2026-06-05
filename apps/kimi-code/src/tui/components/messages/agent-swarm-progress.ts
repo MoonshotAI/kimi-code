@@ -25,19 +25,21 @@ const FAILED_PLACEHOLDER_NON_RED_FACTOR = 0.25;
 const STATUS_BAR_CHAR = '━';
 const PROMPTING_TEXT_TRAILING_GAP = 1;
 const ACTIVITY_SPINNER_PLACEHOLDER = '  ';
+const AGENT_SWARM_LEFT_INDENT = ' ';
+const AGENT_SWARM_RIGHT_GAP = 1;
 const ORCHESTRATING_LABEL = 'Orchestrating...';
 const PROMPTING_LABEL = 'Prompting...';
-const WORKING_LABEL = 'Working...';
+const WORKING_LABEL = ' Working...';
 const COMPLETED_LABEL = 'Completed.';
 const FAILED_LABEL = 'Failed.';
-const CANCELLED_LABEL = 'Cancelled.';
+const ABORTED_LABEL = 'Aborted.';
 const QUEUED_LABEL = 'Queued...';
 const SUSPENDED_LABEL = 'Suspended...';
 const TOTAL_STATUS_LABEL_WIDTH = Math.max(
   visibleWidth(WORKING_LABEL),
   visibleWidth(COMPLETED_LABEL),
   visibleWidth(FAILED_LABEL),
-  visibleWidth(CANCELLED_LABEL),
+  visibleWidth(ABORTED_LABEL),
   visibleWidth(SUSPENDED_LABEL),
 );
 
@@ -52,7 +54,7 @@ const STATUS_BAR_ORDER = [
 
 type AgentSwarmPhase = AgentSwarmProgressEstimatorPhase;
 type StatusBarPhase = typeof STATUS_BAR_ORDER[number];
-type TotalStatus = 'working' | 'completed' | 'suspended' | 'failed' | 'cancelled';
+type TotalStatus = 'working' | 'completed' | 'suspended' | 'failed' | 'aborted';
 
 interface AgentSwarmMember {
   readonly id: string;
@@ -102,7 +104,7 @@ const PHASE_LABELS: Record<AgentSwarmPhase, string> = {
   running: 'Running',
   completed: 'Completed',
   failed: 'Failed',
-  cancelled: 'Cancelled.',
+  cancelled: ABORTED_LABEL,
 };
 
 export class AgentSwarmProgressComponent implements Component {
@@ -113,7 +115,7 @@ export class AgentSwarmProgressComponent implements Component {
   private readonly requestRender: (() => void) | undefined;
   private inputComplete = false;
   private failed = false;
-  private cancelled = false;
+  private aborted = false;
   private itemsStarted = false;
   private toolCallActive = true;
   private promptTemplateText = '';
@@ -325,7 +327,7 @@ export class AgentSwarmProgressComponent implements Component {
 
   markSwarmFailed(failureText?: string): void {
     this.failed = true;
-    this.cancelled = false;
+    this.aborted = false;
     const normalizedFailureText = normalizeFailureText(failureText);
     const nowMs = Date.now();
     for (const member of this.members) {
@@ -350,7 +352,6 @@ export class AgentSwarmProgressComponent implements Component {
   markCancelled(agentId: string): void {
     const member = this.findMemberByAgentId(agentId);
     if (member === undefined) return;
-    this.cancelled = true;
     this.progressEstimator.markCancelled(member.id, Date.now());
     member.phase = 'cancelled';
     delete member.completedAtMs;
@@ -361,7 +362,7 @@ export class AgentSwarmProgressComponent implements Component {
   }
 
   markActiveCancelled(): void {
-    this.cancelled = true;
+    this.aborted = true;
     const nowMs = Date.now();
     for (const member of this.members) {
       if (
@@ -385,6 +386,7 @@ export class AgentSwarmProgressComponent implements Component {
   applyResult(output: string): boolean {
     const statuses = parseAgentSwarmResultStatuses(output);
     if (statuses.length === 0) return false;
+    this.aborted = false;
     const nowMs = Date.now();
     for (const entry of statuses) {
       this.ensureMemberCount(entry.index);
@@ -419,7 +421,11 @@ export class AgentSwarmProgressComponent implements Component {
   }
 
   render(width: number): string[] {
-    const innerWidth = Math.max(1, width);
+    const outerWidth = Math.max(1, width);
+    const innerWidth = Math.max(
+      1,
+      outerWidth - visibleWidth(AGENT_SWARM_LEFT_INDENT) - AGENT_SWARM_RIGHT_GAP,
+    );
     if (this.members.length === 0) {
       const lines = [
         '',
@@ -428,7 +434,7 @@ export class AgentSwarmProgressComponent implements Component {
         this.renderStatusLine(innerWidth),
         '',
       ];
-      return lines.map((line) => truncateToWidth(line, innerWidth));
+      return this.indentLines(lines, outerWidth);
     }
 
     const nowMs = Date.now();
@@ -449,7 +455,20 @@ export class AgentSwarmProgressComponent implements Component {
       '',
     ];
     this.startAnimationIfNeeded();
-    return lines.map((line) => truncateToWidth(line, innerWidth));
+    return this.indentLines(lines, outerWidth);
+  }
+
+  private indentLines(lines: readonly string[], width: number): string[] {
+    const contentWidth = Math.max(
+      0,
+      width - visibleWidth(AGENT_SWARM_LEFT_INDENT) - AGENT_SWARM_RIGHT_GAP,
+    );
+    return lines.map((line) =>
+      truncateToWidth(
+        AGENT_SWARM_LEFT_INDENT + truncateToWidth(line, contentWidth),
+        width,
+      )
+    );
   }
 
   private renderHeader(width: number, _summary: AgentSwarmSummary | undefined): string {
@@ -471,7 +490,7 @@ export class AgentSwarmProgressComponent implements Component {
   private renderStatusLine(width: number): string {
     const status = totalStatus(this.members, {
       failed: this.failed,
-      cancelled: this.cancelled,
+      aborted: this.aborted,
     });
     const prefix = this.renderActivityPrefix(status);
     if (prefix.length > 0) {
@@ -950,7 +969,7 @@ function activityPrefixForTotalStatus(status: TotalStatus, colors: ColorPalette)
       return ` ${chalk.hex(color)(SUCCESS_MARK.trimEnd())}`;
     case 'failed':
       return ` ${chalk.hex(color)(FAILURE_MARK.trimEnd())}`;
-    case 'cancelled':
+    case 'aborted':
       return ` ${chalk.hex(color)('⊘')}`;
     case 'working':
     case 'suspended':
@@ -1007,9 +1026,9 @@ function statusBarColor(phase: StatusBarPhase, colors: ColorPalette): string {
 
 function totalStatus(
   members: readonly AgentSwarmMember[],
-  force: { readonly failed: boolean; readonly cancelled: boolean },
+  force: { readonly failed: boolean; readonly aborted: boolean },
 ): TotalStatus {
-  if (force.cancelled && members.length === 0) return 'cancelled';
+  if (force.aborted) return 'aborted';
   if (force.failed && members.length === 0) return 'failed';
   const hasCompleted = members.some((member) => member.phase === 'completed');
   const hasFailed = members.some((member) => member.phase === 'failed');
@@ -1025,13 +1044,13 @@ function totalStatus(
     )
   );
   if (!hasActive && members.length > 0) {
+    if (hasCancelled) return 'aborted';
     if (hasCompleted) return 'completed';
     if (hasFailed || force.failed) return 'failed';
-    if (hasCancelled || force.cancelled) return 'cancelled';
   }
   if (force.failed) return 'failed';
   if (hasSuspended && !hasRunning) return 'suspended';
-  return (force.cancelled || hasCancelled) && !hasActive ? 'cancelled' : 'working';
+  return hasCancelled && !hasActive ? 'aborted' : 'working';
 }
 
 function totalStatusLabel(status: TotalStatus): string {
@@ -1044,8 +1063,8 @@ function totalStatusLabel(status: TotalStatus): string {
       return SUSPENDED_LABEL;
     case 'failed':
       return FAILED_LABEL;
-    case 'cancelled':
-      return CANCELLED_LABEL;
+    case 'aborted':
+      return ABORTED_LABEL;
   }
 }
 
@@ -1059,7 +1078,7 @@ function totalStatusColor(status: TotalStatus, colors: ColorPalette): string {
       return colors.warning;
     case 'failed':
       return colors.error;
-    case 'cancelled':
+    case 'aborted':
       return colors.warning;
   }
 }

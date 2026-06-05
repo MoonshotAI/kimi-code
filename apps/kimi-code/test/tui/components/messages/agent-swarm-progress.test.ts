@@ -53,9 +53,26 @@ describe('AgentSwarmProgressComponent', () => {
 
     const lines = strip(component.render(100).join('\n')).split('\n');
 
-    expect(lines.at(-1)).toBe('');
+    expect(lines.at(-1)).toBe(' ');
     expect(lines.at(-2)).toContain('Orchestrating...');
     expect(lines.at(-2)).not.toMatch(/^─+$/);
+  });
+
+  it('reserves one blank column on the right edge', () => {
+    const component = new AgentSwarmProgressComponent({
+      description: 'Review changed files',
+      colors: darkColors,
+    });
+
+    component.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
+    component.markInputComplete();
+    component.markStarted('agent-1');
+
+    const rendered = component.render(80).map(strip);
+
+    expect(rendered.every((line) => visibleWidth(line) <= 79)).toBe(true);
+    expect(rendered.some((line) => line.includes('Agent swarm'))).toBe(true);
+    expect(rendered.some((line) => line.includes('Working...'))).toBe(true);
   });
 
   it('renders orchestrating and prompting labels in primary blue', () => {
@@ -113,14 +130,14 @@ describe('AgentSwarmProgressComponent', () => {
       component.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
       const queuedLine = component.render(80).join('\n')
         .split('\n')
-        .find((line) => strip(line).startsWith('001 Queued...'));
+        .find((line) => strip(line).startsWith(' 001 Queued...'));
       expect(queuedLine).toContain(chalk.hex(darkColors.primary)('001'));
 
       component.markInputComplete();
       component.markStarted('agent-1');
       const activeLine = component.render(80).join('\n')
         .split('\n')
-        .find((line) => strip(line).startsWith('001 ['));
+        .find((line) => strip(line).startsWith(' 001 ['));
       expect(activeLine).toContain(chalk.hex(darkColors.primary)('001'));
     });
   });
@@ -135,7 +152,7 @@ describe('AgentSwarmProgressComponent', () => {
 
     const lines = strip(component.render(100).join('\n')).split('\n');
 
-    expect(lines[0]).toBe('');
+    expect(lines[0]).toBe(' ');
     expect(lines[1]).toContain('Agent swarm');
   });
 
@@ -149,7 +166,7 @@ describe('AgentSwarmProgressComponent', () => {
     component.registerSubagent({ agentId: 'agent-2', description: 'Review changed files #2 (coder)' });
     component.registerSubagent({ agentId: 'agent-3', description: 'Review changed files #3 (coder)' });
 
-    const lines = strip(component.render(94).join('\n')).split('\n');
+    const lines = strip(component.render(96).join('\n')).split('\n');
     const queuedLine = lines.find((line) => line.includes('001 Queued...'));
 
     expect(queuedLine).toBeDefined();
@@ -416,7 +433,7 @@ describe('AgentSwarmProgressComponent', () => {
     const progressBarIndex = workingLine?.indexOf('━') ?? -1;
     expect(promptTextIndex).toBeGreaterThan(0);
     expect(progressBarIndex).toBeGreaterThan(0);
-    expect(promptTextIndex).toBe(visibleWidth(' Prompting... '));
+    expect(promptTextIndex).toBe(visibleWidth('  Prompting... '));
   });
 
   it('renders the activity spinner before the total status line', () => {
@@ -435,7 +452,7 @@ describe('AgentSwarmProgressComponent', () => {
       .find((line) => line.includes('Working...'));
 
     expect(statusLine).toBeDefined();
-    expect(statusLine?.startsWith('🌗 Working...')).toBe(true);
+    expect(statusLine?.startsWith(' 🌗  Working...')).toBe(true);
   });
 
   it('renders working label blue until a subagent completes, then green', () => {
@@ -454,14 +471,14 @@ describe('AgentSwarmProgressComponent', () => {
       const initialRawLine = component.render(80).join('\n')
         .split('\n')
         .find((line) => strip(line).includes('Working...'));
-      expect(initialRawLine).toContain(chalk.hex(darkColors.primary)('Working...'));
+      expect(initialRawLine).toContain(chalk.hex(darkColors.primary)(' Working...'));
 
       component.markCompleted('agent-1');
 
       const partialRawLine = component.render(80).join('\n')
         .split('\n')
         .find((line) => strip(line).includes('Working...'));
-      expect(partialRawLine).toContain(chalk.hex(darkColors.success)('Working...'));
+      expect(partialRawLine).toContain(chalk.hex(darkColors.success)(' Working...'));
     });
   });
 
@@ -483,7 +500,7 @@ describe('AgentSwarmProgressComponent', () => {
       .find((line) => line.includes('Working...'));
 
     expect(statusLine).toBeDefined();
-    expect(statusLine?.startsWith('   Working...')).toBe(true);
+    expect(statusLine?.startsWith('     Working...')).toBe(true);
     expect(statusLine).not.toContain('🌗');
     expect(statusLine).not.toContain('🌘');
   });
@@ -506,10 +523,10 @@ describe('AgentSwarmProgressComponent', () => {
 
       const completedRawLine = completed.render(80).join('\n')
         .split('\n')
-        .find((line) => strip(line).startsWith(' ✓ Completed.'));
+        .find((line) => strip(line).startsWith('  ✓ Completed.'));
       const completedLine = completedRawLine === undefined ? undefined : strip(completedRawLine);
       expect(completedLine).toBeDefined();
-      expect(completedLine?.startsWith(' ✓ Completed.')).toBe(true);
+      expect(completedLine?.startsWith('  ✓ Completed.')).toBe(true);
       expect(completedRawLine).toContain(chalk.hex(darkColors.success)('✓'));
       expect(completedLine).not.toContain('🌗');
       expect(completedLine).not.toContain('🌘');
@@ -525,10 +542,10 @@ describe('AgentSwarmProgressComponent', () => {
 
       const failedRawLine = failed.render(80).join('\n')
         .split('\n')
-        .find((line) => strip(line).startsWith(' ✗ Failed.'));
+        .find((line) => strip(line).startsWith('  ✗ Failed.'));
       const failedLine = failedRawLine === undefined ? undefined : strip(failedRawLine);
       expect(failedLine).toBeDefined();
-      expect(failedLine?.startsWith(' ✗ Failed.')).toBe(true);
+      expect(failedLine?.startsWith('  ✗ Failed.')).toBe(true);
       expect(failedRawLine).toContain(chalk.hex(darkColors.error)('✗'));
 
       const cancelled = new AgentSwarmProgressComponent({
@@ -538,16 +555,38 @@ describe('AgentSwarmProgressComponent', () => {
       cancelled.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
       cancelled.markInputComplete();
       cancelled.markStarted('agent-1');
-      cancelled.markActiveCancelled();
+      cancelled.markCancelled('agent-1');
       cancelled.markToolCallEnded();
 
-      const cancelledRawLine = cancelled.render(80).join('\n')
+      const cancelledOutput = cancelled.render(80).join('\n');
+      expect(strip(cancelledOutput)).not.toContain('Cancelled.');
+
+      const cancelledRawLine = cancelledOutput
         .split('\n')
-        .find((line) => strip(line).startsWith(' ⊘ Cancelled.'));
+        .find((line) => strip(line).startsWith('  ⊘ Aborted.'));
       const cancelledLine = cancelledRawLine === undefined ? undefined : strip(cancelledRawLine);
       expect(cancelledLine).toBeDefined();
-      expect(cancelledLine?.startsWith(' ⊘ Cancelled.')).toBe(true);
+      expect(cancelledLine?.startsWith('  ⊘ Aborted.')).toBe(true);
+      expect(cancelledLine).not.toContain('Cancelled.');
       expect(cancelledRawLine).toContain(chalk.hex(darkColors.warning)('⊘'));
+
+      const aborted = new AgentSwarmProgressComponent({
+        description: 'Review changed files',
+        colors: darkColors,
+      });
+      aborted.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
+      aborted.markInputComplete();
+      aborted.markStarted('agent-1');
+      aborted.markActiveCancelled();
+      aborted.markToolCallEnded();
+
+      const abortedRawLine = aborted.render(80).join('\n')
+        .split('\n')
+        .find((line) => strip(line).startsWith('  ⊘ Aborted.'));
+      const abortedLine = abortedRawLine === undefined ? undefined : strip(abortedRawLine);
+      expect(abortedLine).toBeDefined();
+      expect(abortedLine?.startsWith('  ⊘ Aborted.')).toBe(true);
+      expect(abortedRawLine).toContain(chalk.hex(darkColors.warning)('⊘'));
     } finally {
       chalk.level = previousChalkLevel;
     }
@@ -567,7 +606,7 @@ describe('AgentSwarmProgressComponent', () => {
       .find((line) => line.includes('Prompting...'));
 
     expect(promptLine).toBeDefined();
-    expect(visibleWidth(promptLine ?? '')).toBe(49);
+    expect(visibleWidth(promptLine ?? '')).toBe(48);
   });
 
   it('renders boosted fractional progress ticks without leaking undefined cells', () => {
