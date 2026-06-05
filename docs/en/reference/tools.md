@@ -84,7 +84,7 @@ Collaboration tools handle inter-Agent coordination, user interaction, and Skill
 
 | Tool | Default Approval | Description |
 | --- | --- | --- |
-| `Agent` | Auto-allow | Spawn a subagent to execute a subtask |
+| `Agent` | Auto-allow | Spawn a sub-Agent to execute a subtask |
 | `AgentSwarm` | Auto-allow | Launch multiple subagents from a prompt template |
 | `AskUserQuestion` | Auto-allow | Ask the user a question to gather structured input |
 | `Skill` | Auto-allow | Invoke a registered inline Skill |
@@ -93,7 +93,7 @@ Collaboration tools handle inter-Agent coordination, user interaction, and Skill
 
 **`AgentSwarm`** launches multiple subagents from a shared `prompt_template` and an `items` array. The template must contain the `{{item}}` placeholder; each item replaces that placeholder and launches one subagent. Pass `subagent_type` to choose the profile used by every subagent in the swarm, or omit it to use `coder`. The tool accepts 2 to 50 items, waits for all subagents to finish, and returns an aggregated report. In the TUI, foreground swarms show a live `Agent swarm` progress panel above the input box.
 
-**`AskUserQuestion`** asks the user a structured multiple-choice question, useful for disambiguation or option selection. The `questions` parameter accepts 1–4 questions; each question requires `question` (ending with `?`), `options` (2–4 choices, each with a `label` and `description`), and optional `header` (max 12 characters) and `multi_select` (defaults to false). An "Other" option is appended automatically. Setting `background` to true starts a background question task and returns a task ID immediately. When the host does not support interactive questioning, a failure message is returned and the Agent should ask the user directly in a text reply instead.
+**`AskUserQuestion`** asks the user a structured multiple-choice question — useful for disambiguation or option selection. The `questions` parameter accepts 1–4 questions; each question requires `question` (ending with `?`), `options` (2–4 choices, each with a `label` and `description`), and optional `header` (max 12 characters) and `multi_select` (defaults to false). An "Other" option is appended automatically. Setting `background` to true starts a background question task and returns a task ID immediately. When the host does not support interactive questioning, a failure message is returned and the Agent should ask the user directly in a text reply instead.
 
 **`Skill`** allows the Agent to actively invoke a registered inline-type Skill. Accepts `skill` (the Skill name) and optional `args` (additional argument text). Only `type = "inline"` Skills can be called via this tool; Skills with `disableModelInvocation: true` are rejected. Maximum nesting depth is 3 levels. See [Agent Skills](../customization/skills.md) for details.
 

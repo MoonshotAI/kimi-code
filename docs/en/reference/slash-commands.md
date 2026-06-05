@@ -42,19 +42,19 @@ Some commands are only available in the idle state. Executing these commands whi
 
 | Command | Alias | Description | Always available |
 | --- | --- | --- | --- |
-| `/yolo [on\|off]` | `/yes` | Toggle YOLO mode. Without arguments, flip the current state; pass `on`/`off` explicitly to force the corresponding state. When enabled, ordinary tool call approvals are skipped; the Plan mode exit approval is not skipped. | Yes |
-| `/auto [on\|off]` | — | Toggle auto permission mode. Without arguments, flip the current state; pass `on`/`off` explicitly to force the corresponding state. When enabled, tool approvals are handled automatically and the agent will not ask questions. | Yes |
-| `/plan [on\|off]` | — | Toggle Plan mode. Without arguments, flip the current state; pass `on`/`off` explicitly to force the corresponding state. Toggling alone does not create an empty plan file. | Yes |
-| `/plan clear` | — | Clear the current plan. | No |
+| `/yolo [on\|off]` | `/yes` | Toggle YOLO mode. Without arguments, flips the current state; explicitly passing `on`/`off` forces the setting. When enabled, skips approval for regular tool calls; Plan mode exit approval is not affected | Yes |
+| `/auto [on\|off]` | — | Toggle auto permission mode. When enabled, tool approvals are handled automatically and the Agent will not ask the user questions | Yes |
+| `/plan [on\|off]` | — | Toggle Plan mode. Without arguments, flips the current state; explicitly passing `on`/`off` forces the setting. Simply toggling does not create an empty plan file | Yes |
+| `/plan clear` | — | Clear the current plan | No |
 | `/swarm on\|off` | — | Turn swarm mode on or off without sending a prompt. | Yes |
 | `/swarm <task>` | — | Turn swarm mode on, then send `<task>` as a normal prompt. If the turn completes normally, swarm mode turns off automatically. In `manual` permission mode, Kimi Code asks whether to switch to `auto` before starting. | No |
-| `/goal [status\|pause\|resume\|cancel\|replace <objective>\|<objective>]` | — | Start or manage an autonomous goal. This command is experimental; enable it from `/experiments`, `[experimental].goal_command`, or `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1`. | See below |
+| `/goal [...]` | — | Start or manage an autonomous goal (experimental feature; enable it from `/experiments`, `[experimental].goal_command`, or `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1`) | See below |
 
 ::: warning
 `/yolo` skips approval for regular tool calls. Please make sure you understand the potential risks before enabling it. Plan mode exit approval is not bypassed by `/yolo`; `Bash` inside Plan mode is still subject to the regular `/yolo` allow rules.
 :::
 
-## Autonomous goals
+## Autonomous Goal (Experimental)
 
 ::: info
 `/goal` is an experimental command. Enable it from `/experiments`, or write it in `~/.kimi-code/config.toml`:
