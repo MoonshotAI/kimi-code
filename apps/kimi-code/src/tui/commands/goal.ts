@@ -13,6 +13,7 @@ import {
 import {
   GoalSetMessageComponent,
   GoalStatusMessageComponent,
+  UpcomingGoalAddedMessageComponent,
 } from '../components/messages/goal-panel';
 import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
 import {
@@ -23,12 +24,12 @@ import {
   updateGoalQueueItem,
   type GoalQueueSnapshot,
 } from '../goal-queue-store';
-import { currentTheme } from '#/tui/theme';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';
 
 const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
 const RESUME_GOAL_INPUT = 'Resume the active goal.';
+const START_NEXT_GOAL_NOW_MESSAGE = 'No active goal. Starting this goal now.';
 
 type GoalCommandHost = Pick<
   SlashCommandHost,
@@ -176,14 +177,38 @@ async function queueNextGoal(
   host: SlashCommandHost,
   parsed: Extract<ParsedGoalCommand, { kind: 'next-add' }>,
 ): Promise<void> {
+  const session = host.requireSession();
+  let hasCurrentGoal: boolean;
   try {
-    await appendGoalQueueItem(host.requireSession(), { objective: parsed.objective });
+    const { goal } = await session.getGoal();
+    hasCurrentGoal = goal !== null;
+  } catch (error) {
+    host.showError(`Failed to inspect current goal: ${formatErrorMessage(error)}`);
+    return;
+  }
+
+  if (!hasCurrentGoal && !isBusy(host)) {
+    host.showStatus(START_NEXT_GOAL_NOW_MESSAGE);
+    await createGoal(
+      host,
+      { kind: 'create', objective: parsed.objective, replace: false },
+      `next ${parsed.objective}`,
+    );
+    return;
+  }
+
+  try {
+    await appendGoalQueueItem(session, { objective: parsed.objective });
   } catch (error) {
     host.showError(formatErrorMessage(error));
     return;
   }
   host.track('goal_queue_append');
-  host.showStatus('Upcoming goal added. It will start after the current goal is complete.');
+  if (!hasCurrentGoal) host.requestQueuedGoalPromotion?.();
+  host.state.transcriptContainer.addChild(
+    new UpcomingGoalAddedMessageComponent(),
+  );
+  host.state.ui.requestRender();
 }
 
 async function showGoalQueueManager(
@@ -303,7 +328,10 @@ export async function createGoal(
     return false;
   }
 
-  if (host.state.appState.permissionMode === 'manual') {
+  if (
+    host.state.appState.permissionMode === 'manual' ||
+    host.state.appState.permissionMode === 'yolo'
+  ) {
     showGoalStartPermissionPrompt(host, parsed, rawArgs ?? parsed.objective, options);
     return false;
   }
@@ -324,6 +352,7 @@ function showGoalStartPermissionPrompt(
   };
   host.mountEditorReplacement(
     new GoalStartPermissionPromptComponent({
+      mode: host.state.appState.permissionMode === 'yolo' ? 'yolo' : 'manual',
       onSelect: (choice) => {
         if (choice === 'cancel') {
           cancelStart();
@@ -343,7 +372,7 @@ async function startGoalWithPermission(
   choice: GoalStartPermissionChoice,
   options: GoalStartOptions,
 ): Promise<void> {
-  if (choice === 'auto' || choice === 'yolo') {
+  if (choice !== host.state.appState.permissionMode && (choice === 'auto' || choice === 'yolo')) {
     if (!(await setPermissionForGoal(host, choice))) return;
   }
   await startGoal(host, parsed, options);
@@ -464,4 +493,8 @@ async function showGoalStatus(host: SlashCommandHost): Promise<void> {
 
 function isStreaming(host: SlashCommandHost): boolean {
   return host.state.appState.streamingPhase !== 'idle';
+}
+
+function isBusy(host: SlashCommandHost): boolean {
+  return isStreaming(host) || host.state.appState.isCompacting;
 }

@@ -14,6 +14,10 @@ function strip(s: string): string {
   return s.replaceAll(/\u001B\[[0-9;]*m/g, '');
 }
 
+function expectHighlighted(out: string, token: string): void {
+  expect(out).toMatch(new RegExp(`\\u001B\\[[0-9;]*m${token}\\u001B\\[`));
+}
+
 describe('highlightFirstSlashToken', () => {
   it('colours /cmd when line starts with a slash', () => {
     const out = highlightFirstSlashToken('  /help rest of input', 'primary');
@@ -21,7 +25,25 @@ describe('highlightFirstSlashToken', () => {
     // Visible text unchanged
     expect(strip(out!)).toBe('  /help rest of input');
     // SGR escapes surround /help
-    expect(out!).toMatch(/\u001B\[.*m\/help\u001B\[/);
+    expectHighlighted(out!, '/help');
+  });
+
+  it('colours next in /goal next', () => {
+    const out = highlightFirstSlashToken('/goal next Ship feature X', 'primary');
+    expect(out).toBeDefined();
+    expect(strip(out!)).toBe('/goal next Ship feature X');
+    expectHighlighted(out!, '/goal');
+    expectHighlighted(out!, 'next');
+    expect(out!).toContain(' Ship feature X');
+  });
+
+  it('colours manage in /goal next manage', () => {
+    const out = highlightFirstSlashToken('/goal next manage', 'primary');
+    expect(out).toBeDefined();
+    expect(strip(out!)).toBe('/goal next manage');
+    expectHighlighted(out!, '/goal');
+    expectHighlighted(out!, 'next');
+    expectHighlighted(out!, 'manage');
   });
 
   it('returns undefined when the line has no slash', () => {

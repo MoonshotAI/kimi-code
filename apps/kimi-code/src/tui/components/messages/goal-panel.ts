@@ -16,7 +16,6 @@
 import type { Component } from '@earendil-works/pi-tui';
 import { Text, visibleWidth } from '@earendil-works/pi-tui';
 import type { GoalSnapshot, GoalStatus } from '@moonshot-ai/kimi-code-sdk';
-import chalk from 'chalk';
 
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
@@ -30,6 +29,12 @@ const MAX_OBJECTIVE_LINES = 6;
 const MAX_CRITERION_LINES = 3;
 const LABEL_WIDTH = 11;
 
+function renderLifecycleLine(label: string): string[] {
+  const marker = currentTheme.boldFg('primary', STATUS_BULLET);
+  const text = currentTheme.boldFg('primary', label);
+  return ['', marker + text];
+}
+
 /**
  * The "Goal set" confirmation shown after `/goal <objective>`. The objective is
  * rendered as the following user prompt, so this message only marks the state
@@ -39,9 +44,17 @@ export class GoalSetMessageComponent implements Component {
   invalidate(): void {}
 
   render(_width: number): string[] {
-    const marker = currentTheme.boldFg('primary', STATUS_BULLET);
-    const label = currentTheme.boldFg('primary', 'Goal set');
-    return ['', marker + label];
+    return renderLifecycleLine('Goal set');
+  }
+}
+
+export class UpcomingGoalAddedMessageComponent implements Component {
+  invalidate(): void {}
+
+  render(_width: number): string[] {
+    return renderLifecycleLine(
+      'Upcoming goal added. It will start after the current goal is complete.',
+    );
   }
 }
 
@@ -170,7 +183,7 @@ function statusToken(status: GoalStatus): ColorToken {
       return 'success';
     case 'blocked':
       return 'warning';
-    default: // paused
+    case 'paused':
       return 'textDim';
   }
 }
@@ -187,7 +200,7 @@ function formatElapsed(ms: number): string {
 
 /** Word-wrap to `width`, capped at `maxLines` (last line gets an ellipsis when clipped). */
 function wrap(text: string, width: number, maxLines: number): string[] {
-  const words = text.replace(/\s+/g, ' ').trim().split(' ');
+  const words = text.replaceAll(/\s+/g, ' ').trim().split(' ');
   const lines: string[] = [];
   let current = '';
   for (const word of words) {

@@ -7,6 +7,7 @@ import {
   type Focusable,
 } from '@earendil-works/pi-tui';
 
+import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 
 export type GoalStartPermissionChoice = 'auto' | 'yolo' | 'manual' | 'cancel';
@@ -18,11 +19,12 @@ interface GoalStartOption {
 }
 
 export interface GoalStartPermissionPromptOptions {
+  readonly mode: 'manual' | 'yolo';
   readonly onSelect: (choice: GoalStartPermissionChoice) => void;
   readonly onCancel: () => void;
 }
 
-const OPTIONS: readonly GoalStartOption[] = [
+const MANUAL_OPTIONS: readonly GoalStartOption[] = [
   {
     value: 'auto',
     label: 'Switch to Auto and start',
@@ -48,10 +50,36 @@ const OPTIONS: readonly GoalStartOption[] = [
   },
 ];
 
-const NOTICE_LINES = [
+const YOLO_OPTIONS: readonly GoalStartOption[] = [
+  {
+    value: 'auto',
+    label: 'Switch to Auto and start',
+    description:
+      'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
+  },
+  {
+    value: 'yolo',
+    label: 'Keep YOLO and start',
+    description:
+      'Tools and plan changes stay approved automatically. Kimi Code may still ask you questions.',
+  },
+  {
+    value: 'cancel',
+    label: 'Do not start',
+    description: 'Return to the input box with your goal command.',
+  },
+];
+
+const MANUAL_NOTICE_LINES = [
   'Manual mode asks you before Kimi Code runs commands, edits files, or takes other risky actions.',
   'Manual mode is not suitable for unattended goal work.',
   'You can go back without losing your command.',
+] as const;
+
+const YOLO_NOTICE_LINES = [
+  'YOLO mode approves tools and plan changes automatically.',
+  'YOLO mode can still stop for questions.',
+  'Switch to Auto if you want questions skipped during goal work.',
 ] as const;
 
 export class GoalStartPermissionPromptComponent implements Component, Focusable {
@@ -72,11 +100,11 @@ export class GoalStartPermissionPromptComponent implements Component, Focusable 
       return;
     }
     if (matchesKey(data, Key.down)) {
-      this.selectedIndex = Math.min(OPTIONS.length - 1, this.selectedIndex + 1);
+      this.selectedIndex = Math.min(this.options.length - 1, this.selectedIndex + 1);
       return;
     }
     if (matchesKey(data, Key.enter) || matchesKey(data, Key.space)) {
-      this.opts.onSelect(OPTIONS[this.selectedIndex]!.value);
+      this.opts.onSelect(this.options[this.selectedIndex]!.value);
     }
   }
 
@@ -84,23 +112,23 @@ export class GoalStartPermissionPromptComponent implements Component, Focusable 
     const rule = currentTheme.fg('primary', '─'.repeat(width));
     const lines = [
       rule,
-      currentTheme.boldFg('primary', ' Start a goal with approvals on?'),
+      currentTheme.boldFg('primary', ` ${this.title}`),
       currentTheme.fg('textMuted', ' ↑↓ navigate · Enter select · Esc return to input box'),
       '',
     ];
 
     const textWidth = Math.max(20, width - 2);
-    for (const paragraph of NOTICE_LINES) {
+    for (const paragraph of this.noticeLines) {
       for (const line of wrapPlain(paragraph, textWidth)) {
         lines.push(` ${styleModeNames(line, 'textMuted')}`);
       }
       lines.push('');
     }
 
-    for (let i = 0; i < OPTIONS.length; i += 1) {
-      const option = OPTIONS[i]!;
+    for (let i = 0; i < this.options.length; i += 1) {
+      const option = this.options[i]!;
       const selected = i === this.selectedIndex;
-      const pointer = selected ? '❯' : ' ';
+      const pointer = selected ? SELECT_POINTER : ' ';
       lines.push(
         currentTheme.fg(selected ? 'primary' : 'textDim', `  ${pointer} `) +
           styleLabel(option.label, selected),
@@ -113,6 +141,20 @@ export class GoalStartPermissionPromptComponent implements Component, Focusable 
 
     lines.push(rule);
     return lines.map((line) => truncateToWidth(line, width));
+  }
+
+  private get options(): readonly GoalStartOption[] {
+    return this.opts.mode === 'yolo' ? YOLO_OPTIONS : MANUAL_OPTIONS;
+  }
+
+  private get noticeLines(): readonly string[] {
+    return this.opts.mode === 'yolo' ? YOLO_NOTICE_LINES : MANUAL_NOTICE_LINES;
+  }
+
+  private get title(): string {
+    return this.opts.mode === 'yolo'
+      ? 'Start a goal in YOLO mode?'
+      : 'Start a goal with approvals on?';
   }
 }
 

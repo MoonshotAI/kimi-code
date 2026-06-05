@@ -69,12 +69,23 @@ export class FileMentionProvider implements AutocompleteProvider {
     cursorCol: number,
     options: { signal: AbortSignal; force?: boolean },
   ): Promise<AutocompleteSuggestions | null> {
-    const textBeforeCursor = (lines[cursorLine] ?? '').slice(0, cursorCol);
+    const currentLine = lines[cursorLine] ?? '';
+    const textBeforeCursor = currentLine.slice(0, cursorCol);
     const atPrefix = extractAtPrefix(textBeforeCursor);
 
     // Non-`@` branch (slash commands, `/path`, quoted paths) — pi-tui
-    // already owns the edge cases. No intercept.
+    // already owns the edge cases. We only suppress slash-argument
+    // completions when accepting one would insert before existing text.
     if (atPrefix === null) {
+      if (
+        shouldSuppressSlashArgumentCompletion(
+          textBeforeCursor,
+          currentLine.slice(cursorCol),
+          options.force,
+        )
+      ) {
+        return null;
+      }
       return this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
     }
 
@@ -140,6 +151,17 @@ function extractAtPrefix(text: string): string | null {
   }
   if (text[tokenStart] !== '@') return null;
   return text.slice(tokenStart);
+}
+
+function shouldSuppressSlashArgumentCompletion(
+  textBeforeCursor: string,
+  textAfterCursor: string,
+  force: boolean | undefined,
+): boolean {
+  if (force === true) return false;
+  if (!textBeforeCursor.startsWith('/')) return false;
+  if (!textBeforeCursor.includes(' ')) return false;
+  return textAfterCursor.trimStart().length > 0;
 }
 
 /** True when any path segment starts with a dot (e.g. `.github/x.yml`). */

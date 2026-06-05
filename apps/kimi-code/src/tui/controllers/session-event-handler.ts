@@ -50,7 +50,12 @@ import {
   serializeToolResultOutput,
   stringValue,
 } from '../utils/event-payload';
-import { readGoalQueue, removeGoalQueueItem, restoreGoalQueueItem } from '../goal-queue-store';
+import {
+  readGoalQueue,
+  removeGoalQueueItem,
+  restoreGoalQueueItem,
+  type UpcomingGoal,
+} from '../goal-queue-store';
 import { formatBackgroundAgentTranscript } from '../utils/background-agent-status';
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
 import { formatHookResultMarkdown, formatHookResultPlain } from '../utils/hook-result-format';
@@ -124,6 +129,7 @@ export class SessionEventHandler {
   private goalCompletionAwaitingClear = false;
   private goalCompletionTurnEnded = false;
   private queuedGoalPromotionPending = false;
+  private queuedGoalPromotionInFlight = false;
   private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
 
   resetRuntimeState(): void {
@@ -137,6 +143,7 @@ export class SessionEventHandler {
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
     this.queuedGoalPromotionPending = false;
+    this.queuedGoalPromotionInFlight = false;
     this.clearQueuedGoalPromotionTimer();
     this.stopAllMcpServerStatusSpinners();
   }
@@ -623,19 +630,29 @@ export class SessionEventHandler {
 
   private scheduleQueuedGoalPromotion(): void {
     if (!this.queuedGoalPromotionPending || !this.goalCompletionTurnEnded) return;
+    if (this.queuedGoalPromotionInFlight) return;
     if (this.queuedGoalPromotionTimer !== undefined) return;
     this.queuedGoalPromotionTimer = setTimeout(() => {
       this.queuedGoalPromotionTimer = undefined;
       if (!this.queuedGoalPromotionPending || !this.goalCompletionTurnEnded) return;
-      if (
-        this.host.state.appState.streamingPhase !== 'idle' ||
-        this.host.state.queuedMessages.length > 0
-      ) {
+      if (this.queuedGoalPromotionInFlight) return;
+      if (!this.isReadyForQueuedGoalPromotion()) {
         return;
       }
-      this.queuedGoalPromotionPending = false;
-      this.goalCompletionTurnEnded = false;
-      void this.promoteNextQueuedGoal();
+      this.queuedGoalPromotionInFlight = true;
+      void this.promoteNextQueuedGoal()
+        .then((complete) => {
+          if (complete) {
+            this.queuedGoalPromotionPending = false;
+            this.goalCompletionTurnEnded = false;
+            return;
+          }
+          this.goalCompletionTurnEnded = false;
+        })
+        .finally(() => {
+          this.queuedGoalPromotionInFlight = false;
+          this.scheduleQueuedGoalPromotion();
+        });
     }, 0);
   }
 
@@ -645,49 +662,67 @@ export class SessionEventHandler {
     this.queuedGoalPromotionTimer = undefined;
   }
 
-  private async promoteNextQueuedGoal(): Promise<void> {
+  requestQueuedGoalPromotion(): void {
+    this.queuedGoalPromotionPending = true;
+    this.goalCompletionTurnEnded = true;
+    this.scheduleQueuedGoalPromotion();
+  }
+
+  retryQueuedGoalPromotion(): void {
+    this.scheduleQueuedGoalPromotion();
+  }
+
+  private isReadyForQueuedGoalPromotion(session?: Session): boolean {
+    return (
+      (session === undefined || this.host.session === session) &&
+      !this.host.aborted &&
+      this.host.state.appState.streamingPhase === 'idle' &&
+      this.host.state.queuedMessages.length === 0
+    );
+  }
+
+  private async promoteNextQueuedGoal(): Promise<boolean> {
     const { host } = this;
     const session = host.session;
-    if (session === undefined || host.aborted) return;
+    if (session === undefined || host.aborted) return true;
 
     let queue;
     try {
       queue = await readGoalQueue(session);
     } catch (error) {
       host.showError(`Failed to read upcoming goals: ${formatErrorMessage(error)}`);
-      return;
+      return false;
     }
-    if (host.session !== session || host.aborted) return;
+    if (host.session !== session || host.aborted) return true;
 
     const next = queue.goals[0];
-    if (next === undefined) return;
+    if (next === undefined) return true;
 
-    await startGoalCommand(
+    if (!this.isReadyForQueuedGoalPromotion(session)) return false;
+
+    const started = await startGoalCommand(
       host,
       { kind: 'create', objective: next.objective, replace: false },
       next.objective,
       {
         beforeSend: async () => {
-          if (host.session !== session || host.aborted) return false;
+          if (!this.isReadyForQueuedGoalPromotion(session)) {
+            await this.cancelStartedQueuedGoal(session);
+            return false;
+          }
           try {
             await removeGoalQueueItem(session, { goalId: next.id });
           } catch (error) {
             host.showError(
               `Queued goal started, but could not be removed from the queue: ${formatErrorMessage(error)}`,
             );
+            await this.cancelStartedQueuedGoal(session);
             return false;
           }
-          if (host.session === session && !host.aborted) return true;
-          try {
-            await restoreGoalQueueItem(session, next);
-          } catch (error) {
-            host.showError(`Queued goal could not be restored: ${formatErrorMessage(error)}`);
+          if (this.isReadyForQueuedGoalPromotion(session)) {
+            return true;
           }
-          try {
-            await session.cancelGoal();
-          } catch (error) {
-            host.showError(`Queued goal could not be cancelled: ${formatErrorMessage(error)}`);
-          }
+          await this.restoreAndCancelStartedQueuedGoal(session, next);
           return false;
         },
         sendInput: (objective) => {
@@ -695,6 +730,27 @@ export class SessionEventHandler {
         },
       },
     );
+    return started || host.session !== session || host.aborted;
+  }
+
+  private async restoreAndCancelStartedQueuedGoal(
+    session: Session,
+    goal: UpcomingGoal,
+  ): Promise<void> {
+    try {
+      await restoreGoalQueueItem(session, goal);
+    } catch (error) {
+      this.host.showError(`Queued goal could not be restored: ${formatErrorMessage(error)}`);
+    }
+    await this.cancelStartedQueuedGoal(session);
+  }
+
+  private async cancelStartedQueuedGoal(session: Session): Promise<void> {
+    try {
+      await session.cancelGoal();
+    } catch (error) {
+      this.host.showError(`Queued goal could not be cancelled: ${formatErrorMessage(error)}`);
+    }
   }
 
   private async notifyQueuedGoalWaitingOnBlocked(): Promise<void> {

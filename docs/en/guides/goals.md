@@ -114,6 +114,8 @@ Write stop conditions into the objective. `/goal` does not have a separate stop-
 
 ## Queue upcoming goals
 
+Agents sometimes complete a goal too quickly. Users can be disappointed that they can assign only one goal at a time. Many people already know the upcoming goals they want to pursue. They had to wait for the current goal to complete, open the TUI, and submit the next goal manually.
+
 Use `/goal next` when you have more work ready but do not want to interrupt the current goal:
 
 ```sh
@@ -122,19 +124,15 @@ Use `/goal next` when you have more work ready but do not want to interrupt the 
 
 Upcoming goals are not visible to the agent while the current goal is running. When the current goal completes, Kimi Code starts the first upcoming goal in the same way as users enter `/goal <objective>`.
 
-Manage upcoming goals interactively with `/goal next manage`:
+If no goal is active, `/goal next <objective>` starts that objective immediately. It behaves like `/goal <objective>` and shows a status message before the goal starts.
+
+Manage upcoming goals interactively:
 
 ```sh
 /goal next manage
 ```
 
-| Key | Action |
-| --- | --- |
-| <kbd>↑</kbd> / <kbd>↓</kbd> | Browse the list |
-| <kbd>Space</kbd> | Select a goal for moving, then <kbd>↑</kbd> / <kbd>↓</kbd> to reorder |
-| <kbd>E</kbd> | Edit |
-| <kbd>D</kbd> | Delete |
-| <kbd>Esc</kbd> | Cancel |
+In the manager, use <kbd>↑</kbd> / <kbd>↓</kbd> to browse, <kbd>Space</kbd> to select a goal for moving, <kbd>↑</kbd> / <kbd>↓</kbd> to reorder it, <kbd>E</kbd> to edit, <kbd>D</kbd> to delete, and <kbd>Esc</kbd> to cancel. When editing, use <kbd>Shift-Enter</kbd> or <kbd>Ctrl-J</kbd> to add a new line, and <kbd>Enter</kbd> to save.
 
 If the current goal is paused, canceled, or blocked, Kimi Code does not start the next upcoming goal. When a goal blocks and upcoming goals exist, the TUI reminds you that they wait for completion.
 
