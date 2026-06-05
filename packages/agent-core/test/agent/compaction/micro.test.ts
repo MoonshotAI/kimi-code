@@ -438,7 +438,7 @@ describe('MicroCompaction', () => {
     ]);
   });
 
-  it('tracks telemetry when a cache miss advances the micro-compaction cutoff', () => {
+  it('tracks telemetry when a cache miss advances the micro_compaction cutoff', () => {
     vi.useFakeTimers();
     const records: TelemetryRecord[] = [];
     const microCompaction = {
@@ -485,7 +485,7 @@ describe('MicroCompaction', () => {
     expect(records.filter((record) => record.event === 'micro_compaction_applied')).toHaveLength(1);
   });
 
-  it('leaves context unchanged when the micro-compaction flag is disabled', () => {
+  it('leaves context unchanged when the micro_compaction flag is disabled', () => {
     vi.stubEnv(MICRO_COMPACTION_FLAG_ENV, '0');
     vi.useFakeTimers();
     const persistence = new InMemoryAgentRecordPersistence();
@@ -907,9 +907,9 @@ function hasMarker(messages: readonly Message[]): boolean {
 }
 
 function getMicroCompactionFlagEnv(): string {
-  const flag = FLAG_DEFINITIONS.find((definition) => definition.id === 'micro-compaction');
+  const flag = FLAG_DEFINITIONS.find((definition) => definition.id === 'micro_compaction');
   if (flag === undefined) {
-    throw new Error('Missing micro-compaction flag definition.');
+    throw new Error('Missing micro_compaction flag definition.');
   }
   return flag.env;
 }

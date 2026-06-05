@@ -2,6 +2,40 @@
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.10.0 (2026-06-04)
+
+### Features
+
+- Users now can prepare several goals for the agent to work on sequentially. The agent will pick up the next goal from the queue once the current goal is completed. Use `/goal next <objective>` to queue a goal and `/goal next manage` to review and change the queue interactively.
+- Add the built-in `update-config` skill — you can now have Kimi edit its own config files.
+- Add persistent experimental feature toggles and a TUI panel that applies confirmed changes by reloading the current session.
+- Add `/reload` to reload the current session and apply updated config files, plus `/reload-tui` to reload only TUI preferences.
+- Add a doctor command for validating Kimi Code configuration files.
+
+### Bug Fixes
+
+- Normalize malformed Responses stream rate limit errors as provider rate limit failures.
+- Keep managed OAuth credentials scoped to their configured authentication and API endpoints.
+- Stop carrying active and queued goals into forked sessions.
+- Fail early when Git Bash is missing on Windows before starting CLI sessions.
+- Refresh the update target before showing foreground update prompts so the displayed version matches the install.
+- Point session error diagnostics to the `/export-debug-zip` command.
+- Set terminal tab titles without renaming the running process.
+
+### Polish
+
+- Start automatic background updates as soon as startup's fresh update check finds a newer version.
+- Set the CLI process title to kimi-code during startup.
+- Lowercase the stale file content message in edit tool errors.
+
+### Refactors
+
+- Ensure Nix-packaged CLI builds can find ripgrep and fd.
+
+### Other
+
+- Document the Git Bash prerequisite for Windows installs.
+
 ## 0.9.0 (2026-06-03)
 
 ### Features

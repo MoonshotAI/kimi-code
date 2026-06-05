@@ -154,6 +154,42 @@ describe('Session lifecycle hooks', () => {
     expect(killSpy).toHaveBeenCalledWith('SIGTERM');
     expect(agent.background.getTask(taskId)?.status).toBe('killed');
   });
+
+  it('keeps background tasks alive and skips SessionEnd hooks when closing for reload', async () => {
+    const { command, logPath, sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-reload-close',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      background: { keepAliveOnExit: false },
+      hooks: [
+        { event: 'SessionStart', matcher: 'startup', command, timeout: 5 },
+        { event: 'SessionEnd', matcher: 'exit', command, timeout: 5 },
+      ],
+    });
+    const agent = await session.createMain();
+    const stopSpy = vi.spyOn(agent.cron!, 'stop');
+    const { proc, killSpy } = pendingProcess();
+    const taskId = agent.background.registerTask(
+      new ProcessBackgroundTask(proc, 'sleep 60', 'reload keeps alive'),
+    );
+
+    await session.closeForReload();
+
+    expect(stopSpy).toHaveBeenCalledOnce();
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(agent.background.getTask(taskId)?.status).toBe('running');
+    expect(await readHookPayloads(logPath)).toMatchObject([
+      {
+        hook_event_name: 'SessionStart',
+        session_id: 'session-reload-close',
+        cwd: workDir,
+        source: 'startup',
+      },
+    ]);
+  });
 });
 
 async function hookFixture(): Promise<{

@@ -2,7 +2,13 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { FileTokenStorage, KIMI_CODE_PROVIDER_NAME, type TokenInfo } from '@moonshot-ai/kimi-code-oauth';
+import {
+  FileTokenStorage,
+  KIMI_CODE_PROVIDER_NAME,
+  resolveKimiCodeOAuthKey,
+  resolveKimiTokenStorageName,
+  type TokenInfo,
+} from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createKimiHarness } from '#/index';
@@ -16,6 +22,12 @@ type FetchMock = (
   input: Parameters<typeof fetch>[0],
   init?: Parameters<typeof fetch>[1],
 ) => Promise<Response>;
+
+function fetchInputUrl(input: Parameters<typeof fetch>[0]): string {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
 
 function freshToken(): TokenInfo {
   return {
@@ -34,6 +46,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   await rm(homeDir, { recursive: true, force: true });
 });
 
@@ -47,6 +60,56 @@ describe('KimiHarness.auth', () => {
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     await expect(harness.auth.getCachedAccessToken()).resolves.toBe('oauth-access-token');
+  });
+
+  it('resolves cached access tokens from the configured scoped OAuth ref', async () => {
+    const oauthKey = resolveKimiCodeOAuthKey({
+      oauthHost: 'https://auth.dev.kimi.team',
+      baseUrl: 'https://coding.deva.msh.team/coding/v1',
+    });
+    const storageName = resolveKimiTokenStorageName({ oauthKey });
+    const storage = new FileTokenStorage(join(homeDir, 'credentials'));
+    await storage.save('kimi-code', freshToken());
+    await storage.save(storageName, { ...freshToken(), accessToken: 'dev-access-token' });
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "https://coding.deva.msh.team/coding/v1"
+api_key = ""
+oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.kimi.team" }
+`,
+    );
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    await expect(harness.auth.getCachedAccessToken()).resolves.toBe('dev-access-token');
+  });
+
+  it('reports auth status from the configured scoped OAuth ref', async () => {
+    const oauthKey = resolveKimiCodeOAuthKey({
+      oauthHost: 'https://auth.dev.kimi.team',
+      baseUrl: 'https://coding.deva.msh.team/coding/v1',
+    });
+    await new FileTokenStorage(join(homeDir, 'credentials')).save(
+      resolveKimiTokenStorageName({ oauthKey }),
+      { ...freshToken(), accessToken: 'dev-access-token' },
+    );
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "https://coding.deva.msh.team/coding/v1"
+api_key = ""
+oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.kimi.team" }
+`,
+    );
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    await expect(harness.auth.status()).resolves.toEqual({
+      providers: [{ providerName: KIMI_CODE_PROVIDER_NAME, hasToken: true }],
+    });
   });
 
   it('provisions SDK config using an existing Kimi OAuth token', async () => {
@@ -107,6 +170,200 @@ describe('KimiHarness.auth', () => {
     expect(config.services?.moonshotSearch?.oauth).toEqual({
       storage: 'file',
       key: 'oauth/kimi-code',
+    });
+  });
+
+  it('logs in against the configured scoped OAuth host and base URL when env is absent', async () => {
+    const baseUrl = 'https://coding.deva.msh.team/coding/v1';
+    const oauthHost = 'https://auth.dev.kimi.team';
+    const oauthKey = resolveKimiCodeOAuthKey({ oauthHost, baseUrl });
+    const storageName = resolveKimiTokenStorageName({ oauthKey });
+    const storage = new FileTokenStorage(join(homeDir, 'credentials'));
+    await storage.save(storageName, {
+      ...freshToken(),
+      accessToken: 'expired-dev-access-token',
+      refreshToken: 'dev-refresh-token',
+      expiresAt: 1,
+    });
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "${baseUrl}"
+api_key = ""
+oauth = { storage = "file", key = "${oauthKey}", oauth_host = "${oauthHost}" }
+`,
+    );
+    const fetchMock = vi.fn<FetchMock>(async (input, init) => {
+      const url = fetchInputUrl(input);
+      if (url === `${oauthHost}/api/oauth/token`) {
+        if (typeof init?.body !== 'string') throw new TypeError('expected form body');
+        const body = new URLSearchParams(init.body);
+        expect(body.get('grant_type')).toBe('refresh_token');
+        expect(body.get('refresh_token')).toBe('dev-refresh-token');
+        return new Response(
+          JSON.stringify({
+            access_token: 'rotated-dev-access-token',
+            refresh_token: 'rotated-dev-refresh-token',
+            expires_in: 3600,
+            scope: '',
+            token_type: 'Bearer',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      if (url === `${baseUrl}/models`) {
+        expect(new Headers(init?.headers).get('authorization')).toBe(
+          'Bearer rotated-dev-access-token',
+        );
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'kimi-for-coding',
+                context_length: 262144,
+                supports_reasoning: true,
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    await expect(harness.auth.login()).resolves.toMatchObject({
+      providerName: KIMI_CODE_PROVIDER_NAME,
+      ok: true,
+      defaultModel: 'kimi-code/kimi-for-coding',
+    });
+    await expect(storage.load(storageName)).resolves.toMatchObject({
+      accessToken: 'rotated-dev-access-token',
+    });
+    const config = await harness.getConfig({ reload: true });
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+      baseUrl,
+      oauth: { storage: 'file', key: oauthKey, oauthHost },
+    });
+    expect(fetchMock.mock.calls.map((call) => fetchInputUrl(call[0]))).toEqual([
+      `${oauthHost}/api/oauth/token`,
+      `${baseUrl}/models`,
+    ]);
+  });
+
+  it('recomputes legacy managed OAuth refs during login for non-default base URLs', async () => {
+    const baseUrl = 'https://api.example.test/coding/v1';
+    const oauthKey = resolveKimiCodeOAuthKey({ baseUrl });
+    const scopedStorageName = resolveKimiTokenStorageName({ oauthKey });
+    const storage = new FileTokenStorage(join(homeDir, 'credentials'));
+    await storage.save('kimi-code', { ...freshToken(), accessToken: 'legacy-access-token' });
+    await storage.save(scopedStorageName, {
+      ...freshToken(),
+      accessToken: 'scoped-access-token',
+    });
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "${baseUrl}"
+api_key = ""
+oauth = { storage = "file", key = "oauth/kimi-code" }
+`,
+    );
+    const fetchMock = vi.fn<FetchMock>(async (input, init) => {
+      expect(fetchInputUrl(input)).toBe(`${baseUrl}/models`);
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer scoped-access-token');
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'kimi-for-coding',
+              context_length: 262144,
+              supports_reasoning: true,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    await expect(harness.auth.login()).resolves.toMatchObject({
+      providerName: KIMI_CODE_PROVIDER_NAME,
+      ok: true,
+      defaultModel: 'kimi-code/kimi-for-coding',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const config = await harness.getConfig({ reload: true });
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+      baseUrl,
+      oauth: { storage: 'file', key: oauthKey, oauthHost: 'https://auth.kimi.com' },
+    });
+  });
+
+  it('logs in against environment OAuth host and base URL over persisted config', async () => {
+    const configuredBaseUrl = 'https://api.configured.example.test/coding/v1';
+    const envBaseUrl = 'https://api.env.example.test/coding/v1';
+    const envOauthHost = 'https://auth.env.example.test';
+    const configuredOauthKey = resolveKimiCodeOAuthKey({ baseUrl: configuredBaseUrl });
+    const envOauthKey = resolveKimiCodeOAuthKey({ oauthHost: envOauthHost, baseUrl: envBaseUrl });
+    const storage = new FileTokenStorage(join(homeDir, 'credentials'));
+    await storage.save(resolveKimiTokenStorageName({ oauthKey: configuredOauthKey }), {
+      ...freshToken(),
+      accessToken: 'configured-access-token',
+    });
+    await storage.save(resolveKimiTokenStorageName({ oauthKey: envOauthKey }), {
+      ...freshToken(),
+      accessToken: 'env-access-token',
+    });
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "${configuredBaseUrl}"
+api_key = ""
+oauth = { storage = "file", key = "${configuredOauthKey}", oauth_host = "https://auth.kimi.com" }
+`,
+    );
+    vi.stubEnv('KIMI_CODE_BASE_URL', envBaseUrl);
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', envOauthHost);
+    const fetchMock = vi.fn<FetchMock>(async (input, init) => {
+      expect(fetchInputUrl(input)).toBe(`${envBaseUrl}/models`);
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer env-access-token');
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'kimi-for-coding',
+              context_length: 262144,
+              supports_reasoning: true,
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    await expect(harness.auth.login()).resolves.toMatchObject({
+      providerName: KIMI_CODE_PROVIDER_NAME,
+      ok: true,
+      defaultModel: 'kimi-code/kimi-for-coding',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const config = await harness.getConfig({ reload: true });
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toMatchObject({
+      baseUrl: envBaseUrl,
+      oauth: { storage: 'file', key: envOauthKey, oauthHost: envOauthHost },
     });
   });
 
@@ -215,6 +472,85 @@ oauth = { storage = "file", key = "oauth/kimi-code" }
     expect(text).not.toContain('moonshot_search');
   });
 
+  it('removes the configured scoped OAuth token on logout without touching the production token', async () => {
+    const oauthKey = resolveKimiCodeOAuthKey({
+      oauthHost: 'https://auth.dev.kimi.team',
+      baseUrl: 'https://coding.deva.msh.team/coding/v1',
+    });
+    const storageName = resolveKimiTokenStorageName({ oauthKey });
+    const storage = new FileTokenStorage(join(homeDir, 'credentials'));
+    await storage.save('kimi-code', freshToken());
+    await storage.save(storageName, { ...freshToken(), accessToken: 'dev-access-token' });
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+default_model = "kimi-code/kimi-for-coding"
+
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "https://coding.deva.msh.team/coding/v1"
+api_key = ""
+oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.kimi.team" }
+
+[models."kimi-code/kimi-for-coding"]
+provider = "managed:kimi-code"
+model = "kimi-for-coding"
+max_context_size = 262144
+`,
+    );
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    await expect(harness.auth.logout()).resolves.toMatchObject({
+      providerName: KIMI_CODE_PROVIDER_NAME,
+      ok: true,
+    });
+
+    await expect(storage.load(storageName)).resolves.toBeUndefined();
+    await expect(storage.load('kimi-code')).resolves.toMatchObject({
+      accessToken: 'oauth-access-token',
+    });
+  });
+
+  it('recomputes legacy managed OAuth refs during logout for non-default base URLs', async () => {
+    const baseUrl = 'https://api.example.test/coding/v1';
+    const oauthKey = resolveKimiCodeOAuthKey({ baseUrl });
+    const scopedStorageName = resolveKimiTokenStorageName({ oauthKey });
+    const storage = new FileTokenStorage(join(homeDir, 'credentials'));
+    await storage.save('kimi-code', freshToken());
+    await storage.save(scopedStorageName, {
+      ...freshToken(),
+      accessToken: 'scoped-access-token',
+    });
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+default_model = "kimi-code/kimi-for-coding"
+
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "${baseUrl}"
+api_key = ""
+oauth = { storage = "file", key = "oauth/kimi-code" }
+
+[models."kimi-code/kimi-for-coding"]
+provider = "managed:kimi-code"
+model = "kimi-for-coding"
+max_context_size = 262144
+`,
+    );
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    await expect(harness.auth.logout()).resolves.toMatchObject({
+      providerName: KIMI_CODE_PROVIDER_NAME,
+      ok: true,
+    });
+
+    await expect(storage.load(scopedStorageName)).resolves.toBeUndefined();
+    await expect(storage.load('kimi-code')).resolves.toMatchObject({
+      accessToken: 'oauth-access-token',
+    });
+  });
+
   it('gets managed usage without host identity and sends only auth headers', async () => {
     await new FileTokenStorage(join(homeDir, 'credentials')).save('kimi-code', freshToken());
     const fetchMock = vi.fn<FetchMock>(
@@ -241,6 +577,142 @@ oauth = { storage = "file", key = "oauth/kimi-code" }
     expect(headers.get('accept')).toBe('application/json');
     expect(headers.get('user-agent')).toBeNull();
     expect(headers.get('x-msh-platform')).toBeNull();
+  });
+
+  it('uses configured scoped OAuth refs and base URLs for managed usage and feedback', async () => {
+    const baseUrl = 'https://coding.deva.msh.team/coding/v1';
+    const oauthKey = resolveKimiCodeOAuthKey({
+      oauthHost: 'https://auth.dev.kimi.team',
+      baseUrl,
+    });
+    const storageName = resolveKimiTokenStorageName({ oauthKey });
+    await new FileTokenStorage(join(homeDir, 'credentials')).save(storageName, {
+      ...freshToken(),
+      accessToken: 'dev-access-token',
+    });
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "${baseUrl}"
+api_key = ""
+oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.kimi.team" }
+`,
+    );
+    const fetchMock = vi.fn<FetchMock>(async (input) => {
+      const url = fetchInputUrl(input);
+      if (url.endsWith('/usages')) {
+        return new Response(
+          JSON.stringify({ usage: { used: 2, limit: 10, name: 'Dev limit' } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response('', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const harness = createKimiHarness({ homeDir });
+
+    await expect(harness.auth.getManagedUsage()).resolves.toMatchObject({
+      kind: 'ok',
+      summary: { label: 'Dev limit', used: 2, limit: 10 },
+    });
+    await expect(
+      harness.auth.submitFeedback({
+        content: 'dev feedback',
+        sessionId: 'sess-dev',
+        version: 'kimi-code-0.1.1',
+        os: 'Darwin 25.3.0',
+        model: 'kimi-code/kimi-for-coding',
+      }),
+    ).resolves.toEqual({ kind: 'ok' });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`${baseUrl}/usages`);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(`${baseUrl}/feedback`);
+    for (const call of fetchMock.mock.calls) {
+      const init = call[1];
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer dev-access-token');
+    }
+  });
+
+  it('uses environment managed endpoints for usage and feedback over persisted config', async () => {
+    const configuredBaseUrl = 'https://api.configured.example.test/coding/v1';
+    const envBaseUrl = 'https://api.env.example.test/coding/v1';
+    const envOauthHost = 'https://auth.env.example.test';
+    const configuredOauthKey = resolveKimiCodeOAuthKey({ baseUrl: configuredBaseUrl });
+    const envOauthKey = resolveKimiCodeOAuthKey({
+      oauthHost: envOauthHost,
+      baseUrl: envBaseUrl,
+    });
+    const storage = new FileTokenStorage(join(homeDir, 'credentials'));
+    await storage.save(resolveKimiTokenStorageName({ oauthKey: configuredOauthKey }), {
+      ...freshToken(),
+      accessToken: 'configured-access-token',
+    });
+    await storage.save(resolveKimiTokenStorageName({ oauthKey: envOauthKey }), {
+      ...freshToken(),
+      accessToken: 'env-access-token',
+    });
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "${configuredBaseUrl}"
+api_key = ""
+oauth = { storage = "file", key = "${configuredOauthKey}", oauth_host = "https://auth.kimi.com" }
+`,
+    );
+    vi.stubEnv('KIMI_CODE_BASE_URL', envBaseUrl);
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', envOauthHost);
+    const fetchMock = vi.fn<FetchMock>(async (input) => {
+      const url = fetchInputUrl(input);
+      if (url.endsWith('/usages')) {
+        return new Response(
+          JSON.stringify({ usage: { used: 3, limit: 10, name: 'Env limit' } }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response('', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const harness = createKimiHarness({ homeDir });
+
+    await expect(harness.auth.status()).resolves.toEqual({
+      providers: [{ providerName: KIMI_CODE_PROVIDER_NAME, hasToken: true }],
+    });
+    await expect(harness.auth.getCachedAccessToken()).resolves.toBe('env-access-token');
+    await expect(
+      harness.auth.resolveOAuthTokenProvider(KIMI_CODE_PROVIDER_NAME).getAccessToken(),
+    ).resolves.toBe('env-access-token');
+    await expect(
+      harness.auth
+        .resolveOAuthTokenProvider(KIMI_CODE_PROVIDER_NAME, {
+          storage: 'file',
+          key: configuredOauthKey,
+          oauthHost: 'https://auth.kimi.com',
+        })
+        .getAccessToken(),
+    ).resolves.toBe('env-access-token');
+    await expect(harness.auth.getManagedUsage()).resolves.toMatchObject({
+      kind: 'ok',
+      summary: { label: 'Env limit', used: 3, limit: 10 },
+    });
+    await expect(
+      harness.auth.submitFeedback({
+        content: 'env feedback',
+        sessionId: 'sess-env',
+        version: 'kimi-code-0.1.1',
+        os: 'Darwin 25.3.0',
+        model: 'kimi-code/kimi-for-coding',
+      }),
+    ).resolves.toEqual({ kind: 'ok' });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`${envBaseUrl}/usages`);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(`${envBaseUrl}/feedback`);
+    for (const call of fetchMock.mock.calls) {
+      expect(new Headers(call[1]?.headers).get('authorization')).toBe('Bearer env-access-token');
+    }
   });
 
   it('submitFeedback maps camelCase input to snake_case body and posts with bearer auth', async () => {

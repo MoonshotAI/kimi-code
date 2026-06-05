@@ -16,7 +16,7 @@ import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { AgentGroupComponent } from '#/tui/components/messages/agent-group';
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 
-vi.mock('#/tui/utils/open-url', () => ({ openUrl: vi.fn() }));
+vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
 interface ReplayDriver {
   readonly state: TUIState;
@@ -167,7 +167,7 @@ function makeHarness(initialSession: Session) {
     close: vi.fn(async () => {}),
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
-    getExperimentalFlags: vi.fn(async () => ({})),
+    getExperimentalFeatures: vi.fn(async () => []),
     interactiveAgentId: 'main',
     auth: {
       status: vi.fn(),

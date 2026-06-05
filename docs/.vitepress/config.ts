@@ -9,7 +9,15 @@ const base = rawBase
     : `/${rawBase}/`
   : '/'
 
-export default withMermaid(defineConfig({
+const mermaidOptimizeDeps = [
+  '@braintree/sanitize-url',
+  'dayjs',
+  'debug',
+  'cytoscape-cose-bilkent',
+  'cytoscape',
+]
+
+const config = withMermaid(defineConfig({
   base,
   title: 'Kimi Code CLI Docs',
   description: 'Kimi Code CLI Documentation',
@@ -45,6 +53,7 @@ export default withMermaid(defineConfig({
                 { text: '从 kimi-cli 迁移', link: '/zh/guides/migration' },
                 { text: '常见使用案例', link: '/zh/guides/use-cases' },
                 { text: '交互与输入', link: '/zh/guides/interaction' },
+                { text: '使用目标模式', link: '/zh/guides/goals' },
                 { text: '会话与上下文', link: '/zh/guides/sessions' },
                 { text: '在 IDE 中使用', link: '/zh/guides/ides' },
               ],
@@ -57,6 +66,7 @@ export default withMermaid(defineConfig({
                 { text: 'Model Context Protocol', link: '/zh/customization/mcp' },
                 { text: 'Agent Skills', link: '/zh/customization/skills' },
                 { text: 'Plugins', link: '/zh/customization/plugins' },
+                { text: 'Kimi Datasource', link: '/zh/customization/datasource' },
                 { text: 'Agent 与子 Agent', link: '/zh/customization/agents' },
                 { text: 'Hooks', link: '/zh/customization/hooks' },
               ],
@@ -120,6 +130,7 @@ export default withMermaid(defineConfig({
                 { text: 'Migrating from kimi-cli', link: '/en/guides/migration' },
                 { text: 'Common Use Cases', link: '/en/guides/use-cases' },
                 { text: 'Interaction and Input', link: '/en/guides/interaction' },
+                { text: 'Using Goals', link: '/en/guides/goals' },
                 { text: 'Sessions and Context', link: '/en/guides/sessions' },
                 { text: 'Using in IDEs', link: '/en/guides/ides' },
               ],
@@ -132,6 +143,7 @@ export default withMermaid(defineConfig({
                 { text: 'Model Context Protocol', link: '/en/customization/mcp' },
                 { text: 'Agent Skills', link: '/en/customization/skills' },
                 { text: 'Plugins', link: '/en/customization/plugins' },
+                { text: 'Kimi Datasource', link: '/en/customization/datasource' },
                 { text: 'Agents and Subagents', link: '/en/customization/agents' },
                 { text: 'Hooks', link: '/en/customization/hooks' },
               ],
@@ -183,6 +195,17 @@ export default withMermaid(defineConfig({
   },
 
   vite: {
+    optimizeDeps: {
+      include: mermaidOptimizeDeps.map((dep) => `mermaid > ${dep}`),
+    },
     plugins: [llmstxt()],
   },
 }))
+
+if (config.vite?.optimizeDeps?.include) {
+  config.vite.optimizeDeps.include = config.vite.optimizeDeps.include.filter(
+    (dep) => !mermaidOptimizeDeps.includes(dep),
+  )
+}
+
+export default config

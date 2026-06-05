@@ -1,6 +1,6 @@
 # Configuration files
 
-Kimi Code CLI writes all long-term preferences — which model to use, which API key to fill in, how many steps an Agent can run per turn — into a single TOML (a plain-text configuration format with a clear structure) file. Change it once and it takes effect on every startup.
+Kimi Code CLI writes all long-term preferences — which model to use, which API key to fill in, how many steps an Agent can run per turn — into TOML (a plain-text configuration format with a clear structure) files. Change them once and they take effect on every startup. Agent and runtime settings live in `config.toml`; terminal-UI and client preferences (theme, editor, notifications, auto-update) live in a companion `tui.toml`.
 
 Default location: `~/.kimi-code/config.toml`, created automatically on first run.
 
@@ -52,6 +52,11 @@ max_running_tasks = 4
 keep_alive_on_exit = false
 agent_task_timeout_s = 900
 
+[experimental]
+goal_command = false
+micro_compaction = false
+background_ask = false
+
 [[permission.rules]]
 decision = "allow"
 pattern = "Read"
@@ -85,11 +90,12 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `thinking` | `table` | — | Default parameters for Thinking mode → [`thinking`](#thinking) |
 | `loop_control` | `table` | — | Agent loop control parameters → [`loop_control`](#loop_control) |
 | `background` | `table` | — | Background task runtime parameters → [`background`](#background) |
+| `experimental` | `table` | — | Persistent experimental feature toggles → [`experimental`](#experimental) |
 | `services` | `table` | — | Built-in external service configuration → [`services`](#services) |
 | `permission` | `table` | — | Initial permission rules → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | Lifecycle hooks; see [Hooks](../customization/hooks.md) |
 
-The following sections cover each of the seven nested tables in turn: `providers`, `models`, `thinking`, `loop_control`, `background`, `services`, and `permission`.
+The following sections cover each of the nested tables in turn: `providers`, `models`, `thinking`, `loop_control`, `background`, `experimental`, `services`, and `permission`.
 
 ## `providers`
 
@@ -171,6 +177,18 @@ You can also switch models temporarily without touching the config file — by s
 
 `keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, which takes higher priority than `config.toml`.
 
+## `experimental`
+
+`experimental` stores persistent opt-ins for features that are not public by default yet. You can edit this table directly or run `/experiments` in the TUI. The TUI panel stages changes locally until you confirm them, then writes `config.toml` and reloads the current session. Each TOML key is the experimental flag ID, for example `goal_command`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `goal_command` | `boolean` | `false` | Enable `/goal` and goal-management tools |
+| `micro_compaction` | `boolean` | `false` | Trim older large tool results from context while preserving recent conversation |
+| `background_ask` | `boolean` | `false` | Allow `AskUserQuestion` to start a background question task when the Agent can continue working |
+
+Environment variables take priority over this table. `KIMI_CODE_EXPERIMENTAL_<NAME>` overrides one feature, and `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables all experimental features for that process. When a feature is controlled by the environment, `/experiments` shows it as locked.
+
 ## `services`
 
 `services` configures two built-in services: web search (`moonshot_search`) and web fetch (`moonshot_fetch`). Only these two fixed keys are recognized; other keys are ignored. Both entries share the same fields:
@@ -226,6 +244,35 @@ pattern = "Bash"
 ::: tip
 MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project-local `.kimi-code/mcp.json`, not in `config.toml`. The interactive configuration entry point is `/mcp-config`; see [Model Context Protocol](../customization/mcp.md).
 :::
+
+## `tui.toml`
+
+Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a companion `tui.toml` in the same directory (`~/.kimi-code/tui.toml`, or `$KIMI_CODE_HOME/tui.toml` when overridden). It is created with defaults on first run, and the interactive commands `/config`, `/theme`, and `/editor` write to it for you — so you rarely need to edit it by hand. If the file is malformed, the CLI falls back to defaults and shows a notice instead of failing to start.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `theme` | `string` | `auto` | Color theme: `auto` (follow the terminal), `dark`, or `light` |
+| `[editor].command` | `string` | `""` | External editor command for composing long input; empty falls back to `$VISUAL` / `$EDITOR` |
+| `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
+| `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
+| `[upgrade].auto_install` | `boolean` | `true` | Whether new versions are installed automatically |
+
+```toml
+# ~/.kimi-code/tui.toml
+theme = "auto" # "auto" | "dark" | "light"
+
+[editor]
+command = "" # empty uses $VISUAL / $EDITOR
+
+[notifications]
+enabled = true
+notification_condition = "unfocused" # "unfocused" | "always"
+
+[upgrade]
+auto_install = true
+```
+
+Changes apply on the next start, or immediately with `/reload-tui` (which reloads only `tui.toml`); `/reload` reloads both `config.toml` and `tui.toml`.
 
 ## Next steps
 

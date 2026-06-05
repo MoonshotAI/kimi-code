@@ -1,5 +1,10 @@
 import type { ModelCapability } from '#/capability';
-import { APIContextOverflowError, ChatProviderError, isContextOverflowErrorCode } from '#/errors';
+import {
+  APIContextOverflowError,
+  APIStatusError,
+  ChatProviderError,
+  isContextOverflowErrorCode,
+} from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import { extractText } from '#/message';
 import type {
@@ -109,6 +114,10 @@ function asRawObject(value: unknown): RawObject | null {
 function readStringField(object: RawObject, key: string): string | undefined {
   const value = object[key];
   return typeof value === 'string' ? value : undefined;
+}
+
+function hasOwn(object: RawObject, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(object, key);
 }
 
 function readNullableStringField(object: RawObject, key: string): string | null | undefined {
@@ -237,7 +246,63 @@ function errorFromOpenAIResponsesEvent(
   if (isContextOverflowErrorCode(code)) {
     return new APIContextOverflowError(400, fullMessage);
   }
+  if (code === 'rate_limit_exceeded') {
+    return new APIStatusError(429, fullMessage);
+  }
   return new ChatProviderError(fullMessage);
+}
+
+function parseNestedGatewayStreamError(message: string):
+  | {
+      code: string | null;
+      message: string;
+      param: string | null;
+    }
+  | undefined {
+  const marker = 'received error while streaming:';
+  const markerIndex = message.indexOf(marker);
+  if (markerIndex === -1) return undefined;
+
+  const jsonText = message.slice(markerIndex + marker.length).trim();
+  if (jsonText.length === 0) return undefined;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    return undefined;
+  }
+
+  const error = asRawObject(parsed);
+  if (error === null) return undefined;
+
+  const nestedMessage = readStringField(error, 'message');
+  if (nestedMessage === undefined) return undefined;
+
+  return {
+    code: readNullableStringField(error, 'code') ?? null,
+    message: nestedMessage,
+    param: readNullableStringField(error, 'param') ?? null,
+  };
+}
+
+function malformedStreamErrorEvent(message: string): ChatProviderError {
+  const nested = parseNestedGatewayStreamError(message);
+  if (nested !== undefined) {
+    return errorFromOpenAIResponsesEvent(
+      'OpenAI Responses malformed stream error',
+      nested.code,
+      nested.message,
+      nested.param,
+    );
+  }
+
+  return errorFromOpenAIResponsesEvent(
+    'OpenAI Responses malformed stream error',
+    null,
+    message,
+    null,
+  );
 }
 
 function readResponsesFailedResponseError(response: RawObject):
@@ -699,7 +764,16 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
 
     try {
       for await (const chunk of response) {
-        const type = requireStringField(chunk, 'type', 'stream event');
+        const type = readStringField(chunk, 'type');
+        if (type === undefined) {
+          if (!hasOwn(chunk, 'type')) {
+            const message = readStringField(chunk, 'message');
+            if (message !== undefined) {
+              throw malformedStreamErrorEvent(message);
+            }
+          }
+          failResponsesDecode('stream event.type', 'must be a string.');
+        }
 
         switch (type) {
           case 'response.output_text.delta':

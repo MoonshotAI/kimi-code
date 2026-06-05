@@ -5,7 +5,7 @@ import type { PermissionData, PermissionMode } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
 import type { ToolInfo } from '#/agent/tool';
 import type { KimiConfig, KimiConfigPatch, McpServerConfig } from '#/config';
-import type { ExperimentalFlagMap } from '#/flags';
+import type { ExperimentalFeatureState } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
 import type {
@@ -57,6 +57,10 @@ export interface CloseSessionPayload {
 export interface ResumeSessionPayload {
   readonly sessionId: string;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
+}
+
+export interface ReloadSessionPayload {
+  readonly sessionId: string;
 }
 
 export interface ForkSessionPayload {
@@ -353,13 +357,14 @@ type SessionAPIWithId = WithSessionId<SessionAPI>;
 
 export interface CoreAPI extends SessionAPIWithId {
   getCoreInfo: (payload: EmptyPayload) => CoreInfo;
-  getExperimentalFlags: (payload: EmptyPayload) => ExperimentalFlagMap;
+  getExperimentalFeatures: (payload: EmptyPayload) => readonly ExperimentalFeatureState[];
   getKimiConfig: (payload: GetKimiConfigPayload) => KimiConfig;
   setKimiConfig: (payload: SetKimiConfigPayload) => KimiConfig;
   removeKimiProvider: (payload: RemoveKimiProviderPayload) => KimiConfig;
   createSession: (payload: CreateSessionPayload) => SessionSummary;
   closeSession: (payload: CloseSessionPayload) => void;
   resumeSession: (payload: ResumeSessionPayload) => ResumeSessionResult;
+  reloadSession: (payload: ReloadSessionPayload) => ResumeSessionResult;
   forkSession: (payload: ForkSessionPayload) => ResumeSessionResult;
   listSessions: (payload: ListSessionsPayload) => readonly SessionSummary[];
   exportSession: (payload: ExportSessionPayload) => ExportSessionResult;
