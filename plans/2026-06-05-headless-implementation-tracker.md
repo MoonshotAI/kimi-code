@@ -122,13 +122,41 @@ This milestone shall cover:
 - [x] Real CLI smoke run passes.
 - [x] Self-contained commit created.
 
+## Current Milestone 6
+
+Implement goal-backed headless runs and graceful pause control.
+
+This milestone shall cover:
+
+- `--goal` creates a goal and prompts with the objective.
+- Goal-backed stdout stays metadata-only.
+- Goal-backed runs write one Markdown file per completed turn.
+- Goal-backed runs write `goal-status.json`.
+- Goal-backed status includes `control.path`.
+- `pause_goal` calls `pauseGoal()` and does not call `cancel()`.
+- Paused goals finish the active turn and end with `state: "paused"`.
+
+## Milestone 6 Progress
+
+- [x] Goal-mode tests written.
+- [x] Goal-mode tests fail for missing goal branch.
+- [x] Goal-mode run branch implemented.
+- [x] Graceful pause control test written.
+- [x] Graceful pause control test fails before polling.
+- [x] Control polling implemented.
+- [x] Focused tests pass.
+- [x] Typecheck passes.
+- [x] Build passes.
+- [x] Real goal CLI smoke run passes with `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1`.
+- [x] Self-contained commit created.
+
 ## Later Milestones
 
 - [x] Status, output, output-file, control, and approval helpers.
 - [x] SDK session lock helper.
 - [x] Headless status and goal-control commands.
 - [x] One-turn prompt-backed headless run execution.
-- [ ] Goal-backed multi-turn execution and file output.
+- [x] Goal-backed multi-turn execution and file output.
 - [ ] Docs and changeset.
 - [ ] Build CLI and run manual headless trials.
 - [ ] Three example projects under `~/Developer/@kimi-examples/`.

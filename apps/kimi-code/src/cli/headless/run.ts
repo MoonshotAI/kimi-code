@@ -17,12 +17,14 @@ import { formatHeadlessMetadataHeader } from './output';
 import {
   preflightHeadlessOutputDir,
   resolveHeadlessOutputDir,
+  writeHeadlessGoalStatusFile,
   writeHeadlessResponseFile,
 } from './output-files';
 import {
   preflightHeadlessStatusFile,
   readHeadlessRunStatus,
   type HeadlessApprovalStatus,
+  type HeadlessGoalStatus,
   type HeadlessRunFiles,
   type HeadlessRunState,
   type HeadlessRunStatus,
@@ -78,6 +80,11 @@ interface HeadlessSession {
   readonly summary?: HeadlessSessionSummary;
   onEvent(listener: (event: Event) => void): () => void;
   prompt(input: string): Promise<void>;
+  cancel(): Promise<void>;
+  createGoal(input: { readonly objective: string; readonly replace: boolean }): Promise<unknown>;
+  getGoal(): Promise<{ readonly goal: GoalSnapshotLike | null }>;
+  pauseGoal(input?: { readonly reason?: string }): Promise<unknown>;
+  cancelGoal(input?: { readonly reason?: string }): Promise<unknown>;
   setApprovalHandler(handler: unknown): void;
   setQuestionHandler(handler: unknown): void;
   getStatus(): Promise<{ readonly permission: 'yolo' | 'manual' | 'auto'; readonly model?: string }>;
@@ -101,10 +108,23 @@ interface RunContext {
   readonly statusFile?: string;
   readonly outputDir?: string;
   readonly metadataOnly: boolean;
+  readonly goalMode: boolean;
   readonly summary: MutableHeadlessRunSummary;
   status: HeadlessRunStatus;
   files: HeadlessRunFiles;
   assistantMarkdown: string;
+  currentTurnMarkdown: string;
+  turnResponses: Array<{ readonly turnId: number | null; readonly markdown: string }>;
+  goalTerminal: boolean;
+}
+
+interface GoalSnapshotLike {
+  readonly goalId?: string;
+  readonly status?: string;
+  readonly terminalReason?: string;
+  readonly turnsUsed?: number;
+  readonly tokensUsed?: number;
+  readonly wallClockMs?: number;
 }
 
 type MutableHeadlessRunSummary = {
@@ -141,16 +161,15 @@ async function runHeadlessRun(
   const startedAtMs = Date.now();
   const startedAt = new Date(startedAtMs).toISOString();
   let workDir = path.resolve(options.cwd ?? process.cwd());
-  const prompt = options.prompt;
-  if (prompt === undefined) {
-    throw new Error('Only --prompt headless runs are implemented in this slice.');
-  }
+  const prompt = options.prompt ?? options.goal ?? options.replaceGoal;
+  if (prompt === undefined) throw new Error('Specify a prompt or goal for headless run.');
+  const goalMode = options.goal !== undefined || options.replaceGoal !== undefined;
 
   if (options.statusFile !== undefined) {
     await preflightHeadlessStatusFile(options.statusFile);
   }
   const outputDir =
-    options.outputDir === undefined
+    options.outputDir === undefined && !goalMode
       ? undefined
       : resolveHeadlessOutputDir({
           explicitOutputDir: options.outputDir,
@@ -192,8 +211,24 @@ async function runHeadlessRun(
       statusFile: options.statusFile,
       outputDir,
       metadataOnly: options.metadataOnly,
+      goalMode,
       sessionId: session.id,
     });
+    if (goalMode) {
+      await session.createGoal({
+        objective: prompt,
+        replace: options.replaceGoal !== undefined,
+      });
+      context.status = {
+        ...context.status,
+        control: {
+          path: path.join(context.outputDir!, 'control.json'),
+          supportedActions: ['pause_goal', 'cancel_goal', 'interrupt'],
+          lastRequest: null,
+          lastApplied: null,
+        },
+      };
+    }
     await writeRunStatus(context, 'starting');
     await runHeadlessPromptTurn(session, prompt, context);
     await writeCurrentRunStatus(context);
@@ -276,6 +311,7 @@ function createRunContext(input: {
   readonly statusFile?: string;
   readonly outputDir?: string;
   readonly metadataOnly: boolean;
+  readonly goalMode: boolean;
   readonly sessionId: string;
 }): RunContext {
   const summary = emptySummary();
@@ -295,9 +331,13 @@ function createRunContext(input: {
     statusFile: input.statusFile,
     outputDir: input.outputDir,
     metadataOnly: input.metadataOnly,
+    goalMode: input.goalMode,
     summary,
     files,
     assistantMarkdown: '',
+    currentTurnMarkdown: '',
+    turnResponses: [],
+    goalTerminal: false,
     status: {
       schemaVersion: 1,
       runId: input.runId,
@@ -343,11 +383,15 @@ async function runHeadlessPromptTurn(
   let activeTurnId: number | null = null;
   let settled = false;
   let unsubscribe: (() => void) | undefined;
+  let controlTimer: NodeJS.Timeout | undefined;
+  let pendingControl = Promise.resolve();
+  const appliedControls = new Set<string>();
 
   await new Promise<void>((resolve, reject) => {
     const finish = (error?: Error): void => {
       if (settled) return;
       settled = true;
+      if (controlTimer !== undefined) clearInterval(controlTimer);
       unsubscribe?.();
       if (error !== undefined) {
         reject(error);
@@ -355,6 +399,18 @@ async function runHeadlessPromptTurn(
       }
       resolve();
     };
+
+    if (context.status.control !== null) {
+      controlTimer = setInterval(() => {
+        pendingControl = pendingControl
+          .then(() => applyControlRequest(session, context, appliedControls, finish))
+          .catch((error: unknown) => {
+            const normalized = error instanceof Error ? error : new Error(String(error));
+            updateRunStatus(context, 'failed', 'control.failed', { error: normalized });
+            finish(normalized);
+          });
+      }, 25);
+    }
 
     unsubscribe = session.onEvent((event) => {
       if (event.type === 'error' && event.agentId === 'main') {
@@ -364,6 +420,11 @@ async function runHeadlessPromptTurn(
         return;
       }
       if (event.agentId !== 'main') return;
+      if (event.type === 'goal.updated') {
+        handleGoalUpdated(context, event.snapshot as GoalSnapshotLike | null | undefined);
+        if (context.goalTerminal && activeTurnId === null) finish();
+        return;
+      }
       if (event.type === 'turn.started' && activeTurnId === null) {
         activeTurnId = event.turnId;
       }
@@ -371,8 +432,9 @@ async function runHeadlessPromptTurn(
       handleRunEvent(context, event);
       if (event.type === 'turn.ended') {
         if (event.reason === 'completed') {
-          updateRunStatus(context, 'completed', event.type);
-          finish();
+          activeTurnId = null;
+          updateRunStatus(context, finalRunStateForContext(context), event.type);
+          if (!context.goalMode || context.goalTerminal) finish();
           return;
         }
         const error = new Error(formatTurnEndedFailure(event));
@@ -387,11 +449,93 @@ async function runHeadlessPromptTurn(
       finish(normalized);
     });
   });
+  await pendingControl;
+}
+
+async function applyControlRequest(
+  session: HeadlessSession,
+  context: RunContext,
+  appliedControls: Set<string>,
+  finish: () => void,
+): Promise<void> {
+  const control = context.status.control;
+  if (control === null) return;
+  const request = await readHeadlessControlRequest(control.path);
+  if (request === null || appliedControls.has(request.commandId)) return;
+  appliedControls.add(request.commandId);
+  context.status = {
+    ...context.status,
+    control: { ...control, lastRequest: request },
+  };
+
+  try {
+    switch (request.action) {
+      case 'pause_goal':
+        await session.pauseGoal({ reason: 'headless control request' });
+        break;
+      case 'cancel_goal':
+        await session.cancelGoal({ reason: 'headless control request' });
+        break;
+      case 'interrupt':
+        await session.pauseGoal({ reason: 'headless control request' }).catch(() => {});
+        await session.cancel();
+        break;
+    }
+    const nextControl = context.status.control;
+    context.status = {
+      ...context.status,
+      state: request.action === 'interrupt' ? 'interrupted' : context.status.state,
+      control:
+        nextControl === null
+          ? null
+          : {
+              ...nextControl,
+              lastApplied: {
+                commandId: request.commandId,
+                action: request.action,
+                appliedAt: new Date().toISOString(),
+                result: 'applied',
+              },
+            },
+    };
+    updateRunStatus(context, context.status.state, 'control.applied');
+    await writeCurrentRunStatus(context);
+    if (request.action === 'interrupt') finish();
+  } catch (error) {
+    const nextControl = context.status.control;
+    context.status = {
+      ...context.status,
+      control:
+        nextControl === null
+          ? null
+          : {
+              ...nextControl,
+              lastApplied: {
+                commandId: request.commandId,
+                action: request.action,
+                appliedAt: new Date().toISOString(),
+                result: 'failed',
+                error: { message: error instanceof Error ? error.message : String(error) },
+              },
+            },
+    };
+    updateRunStatus(context, context.status.state, 'control.failed');
+    await writeCurrentRunStatus(context);
+  }
+}
+
+function handleGoalUpdated(context: RunContext, snapshot: GoalSnapshotLike | null | undefined): void {
+  if (snapshot === null || snapshot === undefined) return;
+  const goal = goalStatusFromSnapshot(snapshot);
+  context.status = { ...context.status, goal };
+  context.goalTerminal = isTerminalGoalStatus(goal.status);
+  updateRunStatus(context, context.status.state, 'goal.updated');
 }
 
 function handleRunEvent(context: RunContext, event: Event & { readonly turnId: number }): void {
   switch (event.type) {
     case 'turn.started':
+      context.currentTurnMarkdown = '';
       updateRunStatus(context, 'running', event.type, { turnId: event.turnId });
       return;
     case 'turn.step.started':
@@ -400,6 +544,7 @@ function handleRunEvent(context: RunContext, event: Event & { readonly turnId: n
       return;
     case 'assistant.delta':
       context.assistantMarkdown += event.delta;
+      context.currentTurnMarkdown += event.delta;
       context.summary.assistantCharCount += event.delta.length;
       updateRunStatus(context, 'running', event.type);
       return;
@@ -431,6 +576,12 @@ function handleRunEvent(context: RunContext, event: Event & { readonly turnId: n
       updateRunStatus(context, 'running', event.type);
       return;
     case 'turn.ended':
+      if (event.reason === 'completed') {
+        context.turnResponses.push({
+          turnId: event.turnId,
+          markdown: context.currentTurnMarkdown,
+        });
+      }
       return;
     default:
       updateRunStatus(context, context.status.state, event.type);
@@ -472,27 +623,44 @@ async function finalizeHeadlessRun(
   stdout: HeadlessOutput,
 ): Promise<void> {
   if (context.outputDir !== undefined) {
-    const responseFile = await writeHeadlessResponseFile({
-      outputDir: context.outputDir,
-      turnIndex: 1,
-      turnId: context.status.turnId,
-      markdown: context.assistantMarkdown,
-      updatedAt: context.status.updatedAt,
-    });
+    const responses = context.turnResponses.length > 0
+      ? context.turnResponses
+      : [{ turnId: context.status.turnId, markdown: context.assistantMarkdown }];
+    const responseFiles = [];
+    for (const [index, response] of responses.entries()) {
+      responseFiles.push(
+        await writeHeadlessResponseFile({
+          outputDir: context.outputDir,
+          turnIndex: index + 1,
+          turnId: response.turnId,
+          markdown: response.markdown,
+          updatedAt: context.status.updatedAt,
+        }),
+      );
+    }
+    const goalStatus =
+      context.goalMode && context.status.goal !== null
+        ? await writeHeadlessGoalStatusFile({
+            outputDir: context.outputDir,
+            goal: context.status.goal,
+            updatedAt: context.status.updatedAt,
+          })
+        : null;
     context.files = {
       ...context.files,
-      responses: [responseFile],
-      finalResponse: responseFile,
+      responses: responseFiles,
+      finalResponse: responseFiles.at(-1) ?? null,
+      goalStatus,
     };
     context.status = { ...context.status, files: context.files };
     await writeCurrentRunStatus(context);
   }
 
-  const responseFormat = context.metadataOnly
-    ? 'omitted'
-    : context.outputDir === undefined
-      ? 'markdown'
-      : 'files';
+  const responseFormat = context.outputDir !== undefined
+    ? 'files'
+    : context.metadataOnly
+      ? 'omitted'
+      : 'markdown';
   const metadata = {
     type: 'headless.result',
     schemaVersion: 1,
@@ -521,6 +689,37 @@ function requireConfiguredModel(...models: readonly (string | undefined)[]): str
     );
   }
   return model;
+}
+
+function goalStatusFromSnapshot(snapshot: GoalSnapshotLike): HeadlessGoalStatus {
+  return {
+    goalId: snapshot.goalId ?? null,
+    status: snapshot.status ?? null,
+    reason: snapshot.terminalReason ?? null,
+    turnsUsed: snapshot.turnsUsed ?? null,
+    tokensUsed: snapshot.tokensUsed ?? null,
+    wallClockMs: snapshot.wallClockMs ?? null,
+  };
+}
+
+function isTerminalGoalStatus(status: string | null): boolean {
+  return status === 'complete' || status === 'blocked' || status === 'paused' || status === 'cancelled';
+}
+
+function finalRunStateForContext(context: RunContext): HeadlessRunState {
+  if (!context.goalMode) return 'completed';
+  switch (context.status.goal?.status) {
+    case 'complete':
+      return 'completed';
+    case 'paused':
+      return 'paused';
+    case 'cancelled':
+      return 'cancelled';
+    case 'blocked':
+      return 'failed';
+    default:
+      return 'completed';
+  }
 }
 
 function hasTurnId(event: Event): event is Event & { readonly turnId: number } {

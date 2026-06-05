@@ -88,6 +88,20 @@ function outputWriter() {
   };
 }
 
+async function waitForAssertion(assertion: () => void): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw lastError;
+}
+
 function createFakeHeadlessRuntime() {
   const eventHandlers = new Set<(event: Record<string, unknown>) => void>();
   const session = {
@@ -103,6 +117,11 @@ function createFakeHeadlessRuntime() {
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
     getStatus: vi.fn(async () => ({ permission: 'manual' as const, model: 'saved-model' })),
+    createGoal: vi.fn(),
+    getGoal: vi.fn(),
+    pauseGoal: vi.fn(),
+    cancelGoal: vi.fn(),
+    cancel: vi.fn(async () => {}),
     onEvent: vi.fn((handler: (event: any) => void) => {
       eventHandlers.add(handler);
       return () => {
@@ -194,7 +213,13 @@ function createFakeHeadlessRuntime() {
     release: releaseLock,
   }));
 
-  return { session, harness, acquireLock, releaseLock };
+  const emit = (event: Record<string, unknown>) => {
+    for (const handler of eventHandlers) {
+      handler(event);
+    }
+  };
+
+  return { session, harness, acquireLock, releaseLock, emit };
 }
 
 function parseHeadless(argv: string[]): HeadlessCommand {
@@ -1059,5 +1084,254 @@ describe('runHeadless prompt run command', () => {
 
     expect(runtime.harness.resumeSession).not.toHaveBeenCalled();
     expect(runtime.acquireLock).not.toHaveBeenCalled();
+  });
+
+  it('runs goal mode with metadata-only stdout and one Markdown file per turn', async () => {
+    const dir = await createTempDir();
+    const statusFile = path.join(dir, 'status.json');
+    const outputDir = path.join(dir, 'out');
+    const runtime = createFakeHeadlessRuntime();
+    runtime.session.createGoal = vi.fn(async () => ({
+      goalId: 'goal_123',
+      status: 'active',
+      objective: 'raise coverage',
+      terminalReason: undefined,
+      turnsUsed: 0,
+      tokensUsed: 0,
+      wallClockMs: 0,
+      budget: {
+        tokenBudget: null,
+        turnBudget: null,
+        wallClockBudgetMs: null,
+        tokenBudgetReached: false,
+        turnBudgetReached: false,
+        wallClockBudgetReached: false,
+      },
+    }));
+    runtime.session.prompt.mockImplementationOnce(async () => {
+      runtime.emit({
+        type: 'turn.started',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        turnId: 7,
+        origin: { kind: 'user' },
+      });
+      runtime.emit({
+        type: 'assistant.delta',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        turnId: 7,
+        delta: 'Turn one.\n',
+      });
+      runtime.emit({
+        type: 'turn.ended',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        turnId: 7,
+        reason: 'completed',
+      });
+      runtime.emit({
+        type: 'turn.started',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        turnId: 8,
+        origin: { kind: 'user' },
+      });
+      runtime.emit({
+        type: 'assistant.delta',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        turnId: 8,
+        delta: 'Turn two.\n',
+      });
+      runtime.emit({
+        type: 'goal.updated',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        change: { kind: 'completion', status: 'complete' },
+        snapshot: {
+          goalId: 'goal_123',
+          status: 'complete',
+          objective: 'raise coverage',
+          terminalReason: 'Objective achieved.',
+          turnsUsed: 2,
+          tokensUsed: 12000,
+          wallClockMs: 45000,
+        },
+      });
+      runtime.emit({
+        type: 'turn.ended',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        turnId: 8,
+        reason: 'completed',
+      });
+    });
+    const stdout = outputWriter();
+
+    await runHeadless(
+      {
+        kind: 'run',
+        options: {
+          goal: 'raise coverage',
+          cwd: '/repo',
+          continue: false,
+          statusFile,
+          outputDir,
+          metadataOnly: false,
+          approvePlan: false,
+          rejectPlan: false,
+          skillsDirs: [],
+        },
+      },
+      '1.2.3-test',
+      {
+        stdout,
+        createHarness: () => runtime.harness,
+        acquireSessionRunLock: runtime.acquireLock,
+      },
+    );
+
+    expect(runtime.session.createGoal).toHaveBeenCalledWith({
+      objective: 'raise coverage',
+      replace: false,
+    });
+    expect(runtime.session.prompt).toHaveBeenCalledWith('raise coverage');
+    const metadata = JSON.parse(stdout.text());
+    expect(metadata).toMatchObject({
+      responseFormat: 'files',
+      responseOmitted: true,
+      goal: {
+        goalId: 'goal_123',
+        status: 'complete',
+        reason: 'Objective achieved.',
+        turnsUsed: 2,
+        tokensUsed: 12000,
+        wallClockMs: 45000,
+      },
+      files: {
+        responses: [
+          { turnIndex: 1, turnId: 7, state: 'completed', bytes: 10 },
+          { turnIndex: 2, turnId: 8, state: 'completed', bytes: 10 },
+        ],
+      },
+    });
+    const firstResponsePath = metadata.files.responses[0].path as string;
+    const secondResponsePath = metadata.files.responses[1].path as string;
+    await expect(readFile(firstResponsePath, 'utf-8')).resolves.toBe('Turn one.\n');
+    await expect(readFile(secondResponsePath, 'utf-8')).resolves.toBe('Turn two.\n');
+    await expect(readHeadlessRunStatus(statusFile)).resolves.toMatchObject({
+      goal: { status: 'complete' },
+      control: {
+        path: path.join(outputDir, 'control.json'),
+        supportedActions: ['pause_goal', 'cancel_goal', 'interrupt'],
+      },
+      files: {
+        responses: [{ turnId: 7 }, { turnId: 8 }],
+        goalStatus: {
+          path: path.join(outputDir, 'goal-status.json'),
+          state: 'completed',
+        },
+      },
+    });
+  });
+
+  it('applies pause_goal without interrupting the active turn', async () => {
+    const dir = await createTempDir();
+    const statusFile = path.join(dir, 'status.json');
+    const outputDir = path.join(dir, 'out');
+    const controlFile = path.join(outputDir, 'control.json');
+    const runtime = createFakeHeadlessRuntime();
+    runtime.session.createGoal.mockResolvedValueOnce({});
+    runtime.session.pauseGoal.mockResolvedValueOnce({});
+    runtime.session.prompt.mockImplementationOnce(async () => {
+      runtime.emit({
+        type: 'turn.started',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        turnId: 7,
+        origin: { kind: 'user' },
+      });
+      await writeHeadlessControlRequest(controlFile, {
+        schemaVersion: 1,
+        runId: 'run_test',
+        commandId: 'cmd_pause',
+        action: 'pause_goal',
+        requestedAt: '2026-06-05T00:00:05.000Z',
+      });
+      await waitForAssertion(() => {
+        expect(runtime.session.pauseGoal).toHaveBeenCalledWith({
+          reason: 'headless control request',
+        });
+      });
+      expect(runtime.session.cancel).not.toHaveBeenCalled();
+      runtime.emit({
+        type: 'assistant.delta',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        turnId: 7,
+        delta: 'Still finished.\n',
+      });
+      runtime.emit({
+        type: 'goal.updated',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        change: { kind: 'lifecycle', status: 'paused' },
+        snapshot: {
+          goalId: 'goal_123',
+          status: 'paused',
+          objective: 'raise coverage',
+          terminalReason: 'headless control request',
+          turnsUsed: 1,
+          tokensUsed: 100,
+          wallClockMs: 1000,
+        },
+      });
+      runtime.emit({
+        type: 'turn.ended',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        turnId: 7,
+        reason: 'completed',
+      });
+    });
+
+    await runHeadless(
+      {
+        kind: 'run',
+        options: {
+          goal: 'raise coverage',
+          cwd: '/repo',
+          continue: false,
+          statusFile,
+          outputDir,
+          metadataOnly: false,
+          approvePlan: false,
+          rejectPlan: false,
+          skillsDirs: [],
+        },
+      },
+      '1.2.3-test',
+      {
+        stdout: outputWriter(),
+        createHarness: () => runtime.harness,
+        acquireSessionRunLock: runtime.acquireLock,
+      },
+    );
+
+    await expect(readHeadlessRunStatus(statusFile)).resolves.toMatchObject({
+      state: 'paused',
+      control: {
+        lastRequest: { commandId: 'cmd_pause', action: 'pause_goal' },
+        lastApplied: {
+          commandId: 'cmd_pause',
+          action: 'pause_goal',
+          result: 'applied',
+        },
+      },
+      files: {
+        responses: [{ turnId: 7 }],
+      },
+    });
   });
 });
