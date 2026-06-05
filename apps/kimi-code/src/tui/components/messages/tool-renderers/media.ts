@@ -13,8 +13,8 @@
  * message.
  */
 
-import type { Component } from '@earendil-works/pi-tui';
-import { Text } from '@earendil-works/pi-tui';
+import type { Component, ImageTheme } from '@earendil-works/pi-tui';
+import { getCapabilities, Image, Text } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
 import type { ChipProvider } from './chip';
@@ -28,6 +28,7 @@ export interface ReadMediaSummary {
   bytes?: number;
   url?: string;
   originalSize?: string;
+  base64?: string;
 }
 
 const PATH_TAG_RE = /^<(image|video)\s+path="([^"]+)">$/;
@@ -56,6 +57,7 @@ export function parseReadMediaOutput(output: string): ReadMediaSummary | null {
   let bytes: number | undefined;
   let url: string | undefined;
   let originalSize: string | undefined;
+  let base64: string | undefined;
   let foundMedia = false;
 
   for (const raw of parsed) {
@@ -88,6 +90,7 @@ export function parseReadMediaOutput(output: string): ReadMediaSummary | null {
           if (data && data[1] !== undefined && data[2] !== undefined) {
             mimeType = data[1];
             bytes = bytesFromBase64(data[2]);
+            base64 = data[2];
           } else {
             url = u;
           }
@@ -104,6 +107,7 @@ export function parseReadMediaOutput(output: string): ReadMediaSummary | null {
   if (bytes !== undefined) summary.bytes = bytes;
   if (url !== undefined) summary.url = url;
   if (originalSize !== undefined) summary.originalSize = originalSize;
+  if (base64 !== undefined) summary.base64 = base64;
   return summary;
 }
 
@@ -121,6 +125,15 @@ function metaSegments(summary: ReadMediaSummary): string[] {
   return segs;
 }
 
+function parseOriginalSize(size?: string): { width: number; height: number } | undefined {
+  if (size === undefined) return undefined;
+  const match = /^(\d+)x(\d+)px$/.exec(size);
+  if (match && match[1] !== undefined && match[2] !== undefined) {
+    return { width: parseInt(match[1], 10), height: parseInt(match[2], 10) };
+  }
+  return undefined;
+}
+
 export const readMediaChip: ChipProvider = (_toolCall, result) => {
   if (result.is_error) return '';
   const summary = parseReadMediaOutput(result.output);
@@ -131,6 +144,9 @@ export const readMediaChip: ChipProvider = (_toolCall, result) => {
   }
   return `${summary.kind} (${meta.join(', ')})`;
 };
+
+const MAX_IMAGE_ROWS = 12;
+const MAX_IMAGE_WIDTH = 60;
 
 export const readMediaSummary: ResultRenderer = (toolCall, result, ctx) => {
   if (result.is_error) return renderTruncated(toolCall, result, ctx);
@@ -148,5 +164,29 @@ export const readMediaSummary: ResultRenderer = (toolCall, result, ctx) => {
   if (meta.length > 0) tail.push(meta.join(', '));
   if (summary.url !== undefined) tail.push(summary.url);
   out.push(new Text(`  ${dim(tail.join(' · '))}`, 0, 0));
+
+  // Render inline image on terminals that support Kitty / iTerm2 graphics protocols.
+  if (summary.kind === 'image' && summary.base64 !== undefined) {
+    const caps = getCapabilities();
+    if (caps.images === 'kitty' || caps.images === 'iterm2') {
+      const theme: ImageTheme = {
+        fallbackColor: (s: string) => chalk.hex(ctx.colors.textDim)(s),
+      };
+      const dims = parseOriginalSize(summary.originalSize);
+      const image = new Image(
+        summary.base64,
+        summary.mimeType ?? 'image/png',
+        theme,
+        {
+          maxHeightCells: MAX_IMAGE_ROWS,
+          maxWidthCells: MAX_IMAGE_WIDTH,
+          filename: summary.path ?? 'image',
+        },
+        dims ? { widthPx: dims.width, heightPx: dims.height } : undefined,
+      );
+      out.push(image);
+    }
+  }
+
   return out;
 };
