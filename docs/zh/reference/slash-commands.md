@@ -67,7 +67,7 @@ KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
 
 `/goal` 用于开始或管理目标模式：Kimi Code 会在自动续跑的轮次中持续朝一个持久目标工作。使用指导和示例见[使用目标模式](../guides/goals.md)。
 
-```
+```sh
 /goal 更新 checkout 文档，运行 docs build，如果 20 轮后仍被阻塞就停止
 ```
 

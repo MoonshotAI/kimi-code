@@ -69,7 +69,7 @@ KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
 
 `/goal` starts or manages goal mode: a persistent objective that Kimi Code works toward across automatically continuing turns. For usage guidance and examples, see [Goals](../guides/goals.md).
 
-```
+```sh
 /goal Update the checkout docs, run docs build, and stop if still blocked after 20 turns
 ```
 

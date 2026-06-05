@@ -125,10 +125,10 @@ kimi
 | `KIMI_DISABLE_TELEMETRY` | 关闭匿名遥测上报 | `1`、`true`、`yes`、`y`（不区分大小写） |
 | `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` | 会话关闭时是否保留后台任务，优先级高于 `config.toml` | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_PLUGIN_MARKETPLACE_URL` | 替换 `/plugins` 加载的 marketplace JSON | URL 或本地路径 |
-| `KIMI_CODE_EXPERIMENTAL_FLAG` | 在当前进程启用所有实验功能，优先级高于 `config.toml` 的 `[experimental]` | `1`、`true`、`yes`、`on` |
-| `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND` | 覆盖当前进程的 `[experimental].goal_command` | 真值或假值 |
-| `KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION` | 覆盖当前进程的 `[experimental].micro_compaction` | 真值或假值 |
-| `KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK` | 覆盖当前进程的 `[experimental].background_ask` | 真值或假值 |
+| `KIMI_CODE_EXPERIMENTAL_FLAG` | 在当前进程启用所有实验功能，优先级高于 `config.toml` 的 [`[experimental]`](./config-files.md#experimental) | `1`、`true`、`yes`、`on` |
+| `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND` | 覆盖当前进程的 [`[experimental].goal_command`](./config-files.md#experimental) | 真值或假值 |
+| `KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION` | 覆盖当前进程的 [`[experimental].micro_compaction`](./config-files.md#experimental) | 真值或假值 |
+| `KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK` | 覆盖当前进程的 [`[experimental].background_ask`](./config-files.md#experimental) | 真值或假值 |
 | `KIMI_SHELL_PATH` | Windows 上覆盖 Git Bash 路径（自动探测失败时使用） | 绝对路径 |
 | `KIMI_MODEL_MAX_COMPLETION_TOKENS` | 单步 LLM 请求的 `max_completion_tokens` 硬上限，仅对 `kimi` 供应商生效 | 正整数；`0` 或负数禁用 clamp |
 | `KIMI_MODEL_TEMPERATURE` | 每次请求的采样温度，仅对 `kimi` 供应商生效（全局生效，不依赖 `KIMI_MODEL_NAME`） | 数字，如 `0.3` |

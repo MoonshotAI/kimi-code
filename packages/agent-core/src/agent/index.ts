@@ -22,11 +22,6 @@ import type { SessionGoalStore } from '../session/goal';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import type { SkillRegistry } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
-import {
-  estimateTokens,
-  estimateTokensForMessages,
-  estimateTokensForTools,
-} from '../utils/tokens';
 import type { PromisableMethods } from '../utils/types';
 import { BackgroundManager, BackgroundTaskPersistence } from './background';
 import {
@@ -252,12 +247,7 @@ export class Agent {
     for (const message of history) {
       if (message.partial === true) partialMessageCount += 1;
     }
-    const requestMetadata: LlmRequestMetadata = {
-      estimatedInputTokens:
-        estimateTokens(systemPrompt) +
-        estimateTokensForMessages(history) +
-        estimateTokensForTools(tools),
-    };
+    const requestMetadata: LlmRequestMetadata = {};
     if (partialMessageCount > 0) {
       requestMetadata.partialMessageCount = partialMessageCount;
     }
@@ -462,7 +452,6 @@ interface LlmRequestContextFields {
 }
 
 interface LlmRequestMetadata {
-  estimatedInputTokens: number;
   partialMessageCount?: number;
 }
 

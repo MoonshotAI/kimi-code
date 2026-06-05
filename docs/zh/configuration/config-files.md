@@ -185,7 +185,7 @@ max_context_size = 1047576
 | `micro_compaction` | `boolean` | `false` | 清理较旧的大型工具结果内容，同时保留最近对话 |
 | `background_ask` | `boolean` | `false` | 允许 `AskUserQuestion` 在 Agent 可以继续工作时启动后台提问任务 |
 
-环境变量优先级高于这个表。`KIMI_CODE_EXPERIMENTAL_<NAME>` 可以覆盖单个功能，`KIMI_CODE_EXPERIMENTAL_FLAG=1` 会在当前进程启用所有实验功能。某个功能被环境变量控制时，`/experiments` 会显示为 locked。
+环境变量优先级高于这个表。`KIMI_CODE_EXPERIMENTAL_<NAME>` 可以覆盖单个功能，`KIMI_CODE_EXPERIMENTAL_FLAG=1` 会在当前进程启用所有实验功能——完整变量列表见[环境变量 → 运行时开关](./env-vars.md#运行时开关)。某个功能被环境变量控制时，`/experiments` 会显示为 locked。
 
 ## `services`
 
