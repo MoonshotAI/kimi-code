@@ -28,6 +28,7 @@ import type { SlashCommandHost } from './dispatch';
 
 const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
 const RESUME_GOAL_INPUT = 'Resume the active goal.';
+const START_NEXT_GOAL_NOW_MESSAGE = 'No active goal. Starting this goal now.';
 
 type GoalCommandHost = Pick<
   SlashCommandHost,
@@ -175,8 +176,28 @@ async function queueNextGoal(
   host: SlashCommandHost,
   parsed: Extract<ParsedGoalCommand, { kind: 'next-add' }>,
 ): Promise<void> {
+  const session = host.requireSession();
+  let hasCurrentGoal: boolean;
   try {
-    await appendGoalQueueItem(host.requireSession(), { objective: parsed.objective });
+    const { goal } = await session.getGoal();
+    hasCurrentGoal = goal !== null;
+  } catch (error) {
+    host.showError(`Failed to inspect current goal: ${formatErrorMessage(error)}`);
+    return;
+  }
+
+  if (!hasCurrentGoal) {
+    host.showStatus(START_NEXT_GOAL_NOW_MESSAGE);
+    await createGoal(
+      host,
+      { kind: 'create', objective: parsed.objective, replace: false },
+      `next ${parsed.objective}`,
+    );
+    return;
+  }
+
+  try {
+    await appendGoalQueueItem(session, { objective: parsed.objective });
   } catch (error) {
     host.showError(formatErrorMessage(error));
     return;

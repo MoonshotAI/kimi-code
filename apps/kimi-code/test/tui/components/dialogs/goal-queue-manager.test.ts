@@ -12,6 +12,7 @@ import type { GoalQueueSnapshot, UpcomingGoal } from '#/tui/goal-queue-store';
 const ANSI = /\u001B\[[0-9;]*m/g;
 const strip = (s: string): string => s.replaceAll(ANSI, '');
 const ESC = String.fromCodePoint(27);
+const CTRL_J = '\u001B[106;5u';
 const UP = `${ESC}[A`;
 const DOWN = `${ESC}[B`;
 
@@ -184,6 +185,41 @@ describe('GoalQueueEditDialogComponent', () => {
       goalId: 'g1',
       objective: 'Ship queued goal safely',
     });
+  });
+
+  it('supports multiline objective edits', () => {
+    const onDone = vi.fn();
+    const dialog = new GoalQueueEditDialogComponent({
+      goal: goal('g1', 'Ship queued goal'),
+      colors: darkColors,
+      onDone,
+    });
+
+    dialog.handleInput(CTRL_J);
+    dialog.handleInput('with a second line');
+    dialog.handleInput('\r');
+
+    expect(onDone).toHaveBeenCalledWith({
+      kind: 'save',
+      goalId: 'g1',
+      objective: 'Ship queued goal\nwith a second line',
+    });
+  });
+
+  it('renders multiline edits inside the dialog width', () => {
+    const dialog = new GoalQueueEditDialogComponent({
+      goal: goal('g1', 'First line\nSecond line'),
+      colors: darkColors,
+      onDone: vi.fn(),
+    });
+
+    const out = text(dialog, 36);
+
+    expect(out).toContain('> First line');
+    expect(out).toContain('  Second line');
+    for (const line of dialog.render(36)) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(36);
+    }
   });
 
   it('keeps accepting input after save returns control to the mounted dialog', () => {

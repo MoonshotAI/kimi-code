@@ -92,7 +92,9 @@ function makeHost(
   const session = {
     setPermission: vi.fn(async () => {}),
     createGoal: vi.fn(async () => fakeSnapshot()),
-    getGoal: vi.fn(async () => ({ goal: null })),
+    getGoal: vi.fn(async (): Promise<{ goal: ReturnType<typeof fakeSnapshot> | null }> => ({
+      goal: null,
+    })),
     pauseGoal: vi.fn(async () => fakeSnapshot()),
     resumeGoal: vi.fn(async () => fakeSnapshot()),
     cancelGoal: vi.fn(async () => fakeSnapshot()),
@@ -440,7 +442,11 @@ describe('handleGoalCommand', () => {
   });
 
   it('/goal next queues an upcoming goal and does not send it to the agent', async () => {
+    session.getGoal.mockResolvedValueOnce({ goal: fakeSnapshot() });
+
     await handleGoalCommand(host, 'next Ship release notes');
+
+    expect(session.getGoal).toHaveBeenCalledOnce();
     expect(appendGoalQueueItem).toHaveBeenCalledWith(session, {
       objective: 'Ship release notes',
     });
@@ -452,13 +458,55 @@ describe('handleGoalCommand', () => {
     expect(session.createGoal).not.toHaveBeenCalled();
   });
 
-  it('/goal next does not require a configured model', async () => {
+  it('/goal next starts immediately when there is no current goal', async () => {
+    await handleGoalCommand(host, 'next Ship release notes');
+
+    expect(session.getGoal).toHaveBeenCalledOnce();
+    expect(appendGoalQueueItem).not.toHaveBeenCalled();
+    expect(session.createGoal).toHaveBeenCalledWith(
+      expect.objectContaining({ objective: 'Ship release notes', replace: false }),
+    );
+    expect(host.showStatus).toHaveBeenCalledWith(
+      'No active goal. Starting this goal now.',
+    );
+    expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship release notes');
+  });
+
+  it('/goal next follows the normal goal-start prompt when there is no current goal', async () => {
+    const { host: manualHost, session: s } = makeHost({ permissionMode: 'manual' });
+
+    await handleGoalCommand(manualHost, 'next Ship release notes');
+
+    expect(s.getGoal).toHaveBeenCalledOnce();
+    expect(appendGoalQueueItem).not.toHaveBeenCalled();
+    expect(manualHost.mountEditorReplacement).toHaveBeenCalledOnce();
+    expect(s.createGoal).not.toHaveBeenCalled();
+
+    mountedPicker(manualHost).handleInput(ESCAPE);
+    expect(manualHost.restoreInputText).toHaveBeenCalledWith('/goal next Ship release notes');
+  });
+
+  it('/goal next does not require a configured model when queueing after a current goal', async () => {
     const { host: noModelHost, session: s } = makeHost({ model: '' });
+    s.getGoal.mockResolvedValueOnce({ goal: fakeSnapshot() });
+
     await handleGoalCommand(noModelHost, 'next Ship release notes');
+
     expect(appendGoalQueueItem).toHaveBeenCalledWith(s, {
       objective: 'Ship release notes',
     });
     expect(noModelHost.showError).not.toHaveBeenCalled();
+  });
+
+  it('/goal next requires a configured model when it starts immediately', async () => {
+    const { host: noModelHost, session: s } = makeHost({ model: '' });
+
+    await handleGoalCommand(noModelHost, 'next Ship release notes');
+
+    expect(s.getGoal).toHaveBeenCalledOnce();
+    expect(appendGoalQueueItem).not.toHaveBeenCalled();
+    expect(s.createGoal).not.toHaveBeenCalled();
+    expect(noModelHost.showError).toHaveBeenCalled();
   });
 
   it('/goal next manage opens the upcoming goal manager without sending input', async () => {
