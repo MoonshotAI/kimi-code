@@ -5,6 +5,8 @@
  * outer update preflight, then delegates to the requested UI runner.
  */
 
+import { normalize } from 'node:path';
+
 import {
   createKimiHarness,
   flushDiagnosticLogs,
@@ -20,6 +22,16 @@ import {
   track,
   withTelemetryContext,
 } from '@moonshot-ai/kimi-telemetry';
+
+/**
+ * The SDK resolves the log path via `pathe` (forward slashes everywhere)
+ * which produces `C:/Users/.../kimi-code.log` on Windows. Normalize to the
+ * platform-native separator before showing the path to the user so it
+ * matches what they'd see in File Explorer / their shell.
+ */
+function formatLogPathForUser(homeDir: string): string {
+  return normalize(resolveGlobalLogPath(homeDir));
+}
 
 import { createProgram } from './cli/commands';
 import type { CLIOptions } from './cli/options';
@@ -142,7 +154,7 @@ export function main(): void {
             operation,
           }),
         );
-        process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
+        process.stderr.write(`See log: ${formatLogPathForUser(resolveKimiHome())}\n`);
         process.exit(1);
       });
     },
@@ -150,7 +162,7 @@ export function main(): void {
       void handleMigrateCommand(version).catch(async (error: unknown) => {
         await logStartupFailure('run migration', error);
         process.stderr.write(formatStartupError(error, { operation: 'run migration' }));
-        process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
+        process.stderr.write(`See log: ${formatLogPathForUser(resolveKimiHome())}\n`);
         process.exit(1);
       });
     },
@@ -165,7 +177,7 @@ export function main(): void {
       void handleUpgradeCommand(version).catch(async (error: unknown) => {
         await logStartupFailure('upgrade', error);
         process.stderr.write(formatStartupError(error, { operation: 'upgrade' }));
-        process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
+        process.stderr.write(`See log: ${formatLogPathForUser(resolveKimiHome())}\n`);
         process.exit(1);
       });
     },
