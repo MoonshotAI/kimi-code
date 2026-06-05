@@ -1767,6 +1767,7 @@ export class KimiTUI {
   }
 
   hideSessionPicker(): void {
+    this.editorKeyboard.clearPendingExit();
     this.state.activeDialog = null;
     this.restoreEditor();
   }
