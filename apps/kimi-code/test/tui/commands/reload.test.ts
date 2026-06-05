@@ -51,6 +51,7 @@ auto_install = false
 
     expect(host.harness.getConfig).not.toHaveBeenCalled();
     expect(host.harness.getExperimentalFeatures).not.toHaveBeenCalled();
+    expect(host.resumeTerminalMouseTracking).not.toHaveBeenCalled();
     expect(session.reloadSession).not.toHaveBeenCalled();
     expect(host.state.appState).toMatchObject({
       theme: 'light',
@@ -79,6 +80,7 @@ auto_install = false
     expect(host.harness.getConfig).toHaveBeenCalledWith({ reload: true });
     expect(host.harness.getExperimentalFeatures).toHaveBeenCalledOnce();
     expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalledOnce();
+    expect(host.resumeTerminalMouseTracking).toHaveBeenCalledOnce();
     expect(isExperimentalFlagEnabled('goal_command')).toBe(true);
     expect(host.state.appState.theme).toBe('light');
     expect(host.state.appState.availableModels).toEqual({
@@ -138,6 +140,7 @@ function makeHost({
     }),
     refreshTerminalThemeTracking: vi.fn(),
     refreshSlashCommandAutocomplete: vi.fn(),
+    resumeTerminalMouseTracking: vi.fn(),
     reloadCurrentSessionView: vi.fn(async () => {}),
     showStatus: vi.fn(),
   } as unknown as SlashCommandHost & {
@@ -146,6 +149,7 @@ function makeHost({
       readonly getExperimentalFeatures: ReturnType<typeof vi.fn>;
     };
     readonly refreshSlashCommandAutocomplete: ReturnType<typeof vi.fn>;
+    readonly resumeTerminalMouseTracking: ReturnType<typeof vi.fn>;
     readonly reloadCurrentSessionView: ReturnType<typeof vi.fn>;
     readonly showStatus: ReturnType<typeof vi.fn>;
   };

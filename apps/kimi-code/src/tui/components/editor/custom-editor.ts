@@ -2,7 +2,14 @@
  * Custom editor extending pi-tui Editor with app-level keybindings.
  */
 
-import { Editor, isKeyRelease, matchesKey, Key, type TUI } from '@earendil-works/pi-tui';
+import {
+  Editor,
+  isKeyRelease,
+  matchesKey,
+  Key,
+  visibleWidth,
+  type TUI,
+} from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
 import type { ColorPalette } from '#/tui/theme/colors';
@@ -30,6 +37,26 @@ interface AutocompleteInternals {
   cancelAutocomplete(): void;
   readonly autocompleteAbort?: AbortController;
   readonly autocompleteDebounceTimer?: ReturnType<typeof setTimeout>;
+}
+
+interface VisualLine {
+  readonly logicalLine: number;
+  readonly startCol: number;
+  readonly length: number;
+}
+
+interface EditorStateInternals {
+  state: {
+    cursorLine: number;
+    cursorCol: number;
+  };
+  historyIndex: number;
+  lastAction: unknown;
+  preferredVisualCol: number | null;
+  snappedFromCursorCol: number | null;
+  readonly scrollOffset: number;
+  buildVisualLineMap(width: number): VisualLine[];
+  segment(text: string): Iterable<Intl.SegmentData>;
 }
 
 /**
@@ -83,6 +110,73 @@ function mapVisibleIdxToRaw(line: string, visibleIdx: number): number {
 
 function stripSgr(s: string): string {
   return s.replace(ANSI_SGR, '');
+}
+
+function cursorOffsetAtVisualColumn(
+  text: string,
+  targetCol: number,
+  allowEnd: boolean,
+  segments: Iterable<Intl.SegmentData>,
+): number {
+  if (targetCol <= 0) return 0;
+  let col = 0;
+  let lastStart = 0;
+
+  for (const segment of segments) {
+    const width = visibleWidth(segment.segment);
+    const end = col + width;
+    if (targetCol < end) {
+      return targetCol > col + width / 2 ? segment.index + segment.segment.length : segment.index;
+    }
+    col = end;
+    lastStart = segment.index;
+  }
+
+  return allowEnd ? text.length : lastStart;
+}
+
+function snapMouseCursorCol(
+  cursorCol: number,
+  segments: Iterable<Intl.SegmentData>,
+): number {
+  for (const segment of segments) {
+    const end = segment.index + segment.segment.length;
+    if (segment.segment.length > 1 && cursorCol > segment.index && cursorCol < end) {
+      return segment.index;
+    }
+  }
+  return cursorCol;
+}
+
+function mouseLayout(
+  width: number,
+  requestedPaddingX: number,
+): {
+  readonly contentWidth: number;
+  readonly layoutWidth: number;
+  readonly paddingX: number;
+} {
+  const maxPadding = Math.max(0, Math.floor((width - 1) / 2));
+  const paddingX = Math.min(requestedPaddingX, maxPadding);
+  const contentWidth = Math.max(1, width - paddingX * 2);
+  const layoutWidth = Math.max(1, contentWidth - (paddingX > 0 ? 0 : 1));
+  return { contentWidth, layoutWidth, paddingX };
+}
+
+function setMouseCursor(editor: EditorStateInternals, line: number, col: number): void {
+  editor.state.cursorLine = line;
+  editor.state.cursorCol = col;
+  editor.historyIndex = -1;
+  editor.lastAction = null;
+  editor.preferredVisualCol = null;
+  editor.snappedFromCursorCol = null;
+}
+
+function findBottomBorderRow(lines: readonly string[]): number {
+  for (let i = 1; i < lines.length; i++) {
+    if (stripSgr(lines[i] ?? '').startsWith('╰')) return i;
+  }
+  return -1;
 }
 
 function getNewlineInput(data: string): string | undefined {
@@ -187,6 +281,54 @@ export class CustomEditor extends Editor {
     // pi-tui exposes `isShowingAutocomplete()` but keeps cancellation private.
     // Kimi needs Esc to win over app-level cancel while the slash menu request is active.
     (this as unknown as AutocompleteInternals).cancelAutocomplete();
+  }
+
+  moveCursorToMousePosition(row: number, col: number, width: number): boolean {
+    if (
+      !Number.isInteger(row) ||
+      !Number.isInteger(col) ||
+      !Number.isInteger(width) ||
+      row < 1 ||
+      col < 1 ||
+      width < 3
+    ) {
+      return false;
+    }
+
+    const rendered = this.render(width);
+    const bottomBorderRow = findBottomBorderRow(rendered);
+    if (bottomBorderRow < 0 || row >= bottomBorderRow || col >= width - 1) return false;
+
+    const editor = this as unknown as EditorStateInternals;
+    const { contentWidth, layoutWidth, paddingX } = mouseLayout(width, this.getPaddingX());
+    const visualLineIndex = editor.scrollOffset + row - 1;
+    const visualLines = editor.buildVisualLineMap(layoutWidth);
+    const visual = visualLines[visualLineIndex];
+    if (visual === undefined) return false;
+
+    const lines = this.getLines();
+    const logicalLine = lines[visual.logicalLine] ?? '';
+    const visibleText = logicalLine.slice(visual.startCol, visual.startCol + visual.length);
+    const contentCol = Math.max(0, Math.min(contentWidth, col - paddingX));
+    const isLastSegment =
+      visualLineIndex === visualLines.length - 1 ||
+      visualLines[visualLineIndex + 1]?.logicalLine !== visual.logicalLine;
+    const offset = cursorOffsetAtVisualColumn(
+      visibleText,
+      contentCol,
+      isLastSegment,
+      editor.segment(visibleText),
+    );
+    const cursorCol = snapMouseCursorCol(
+      Math.min(logicalLine.length, visual.startCol + offset),
+      editor.segment(logicalLine),
+    );
+
+    if (this.hasAutocompleteActivity()) {
+      this.cancelAutocompleteActivity();
+    }
+    setMouseCursor(editor, visual.logicalLine, cursorCol);
+    return true;
   }
 
   override render(width: number): string[] {

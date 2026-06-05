@@ -37,6 +37,8 @@ Press `Shift-Tab` to enable or disable Plan mode. When enabled, the Agent priori
 | `Ctrl-E` | Expand or collapse the Plan card (moves the cursor to end-of-line when no Plan card is present) |
 | `Ctrl--` | Undo |
 
+Mouse cursor placement is experimental. After enabling `terminal_mouse_input` from `/experiments`, `[experimental].terminal_mouse_input = true`, or `KIMI_CODE_EXPERIMENTAL_TERMINAL_MOUSE_INPUT=1`, clicking inside the main input box moves the cursor to the clicked position. While this flag is enabled, many terminals route regular mouse drags to the app; use `Shift`-drag to select terminal text.
+
 Pressing `Ctrl-G` opens an external editor, selected according to the following priority:
 
 1. The editor configured via the `/editor` command

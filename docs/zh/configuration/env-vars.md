@@ -129,6 +129,7 @@ kimi
 | `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND` | 覆盖当前进程的 `[experimental].goal_command` | 真值或假值 |
 | `KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION` | 覆盖当前进程的 `[experimental].micro_compaction` | 真值或假值 |
 | `KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK` | 覆盖当前进程的 `[experimental].background_ask` | 真值或假值 |
+| `KIMI_CODE_EXPERIMENTAL_TERMINAL_MOUSE_INPUT` | 覆盖当前进程的 `[experimental].terminal_mouse_input` | 真值或假值 |
 | `KIMI_SHELL_PATH` | Windows 上覆盖 Git Bash 路径（自动探测失败时使用） | 绝对路径 |
 | `KIMI_MODEL_MAX_COMPLETION_TOKENS` | 单步 LLM 请求的 `max_completion_tokens` 硬上限，仅对 `kimi` 供应商生效 | 正整数；`0` 或负数禁用 clamp |
 | `KIMI_DISABLE_CRON` | 禁用定时任务工具（`CronCreate` 拒绝新计划，已有任务不触发） | `1` 表示禁用 |

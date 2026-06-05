@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MigrationPlan } from "@moonshot-ai/migration-legacy";
 import { log, type GoalSnapshot } from "@moonshot-ai/kimi-code-sdk";
 
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from "#/tui/kimi-tui";
+import { setExperimentalFeatures } from "#/tui/commands/experimental-flags";
 import {
   handleLoginCommand,
   handleLogoutCommand,
@@ -19,6 +20,10 @@ import {
   QUERY_TERMINAL_THEME,
   TERMINAL_THEME_LIGHT,
 } from "#/tui/utils/terminal-theme";
+import {
+  DISABLE_TERMINAL_MOUSE_REPORTING,
+  ENABLE_TERMINAL_MOUSE_REPORTING,
+} from "#/tui/utils/editor-mouse";
 
 vi.mock("#/tui/commands/prompts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("#/tui/commands/prompts")>();
@@ -38,6 +43,12 @@ interface RuntimeStateDriver extends StartupDriver {
 
 interface ThemeTrackingDriver extends StartupDriver {
   refreshTerminalThemeTracking(): void;
+}
+
+interface MouseTrackingDriver extends StartupDriver {
+  resumeTerminalMouseTracking(): void;
+  suspendTerminalMouseTracking(): void;
+  terminalMouseTrackingDispose?: () => void;
 }
 
 interface MigrateExitDriver extends StartupDriver {
@@ -203,6 +214,10 @@ function captureInputListeners(driver: StartupDriver) {
 }
 
 describe("KimiTUI startup", () => {
+  beforeEach(() => {
+    setExperimentalFeatures([]);
+  });
+
   it("creates a fresh session from startup flags and syncs runtime state", async () => {
     const session = makeSession({
       getStatus: vi.fn(async () => ({
@@ -404,6 +419,37 @@ describe("KimiTUI startup", () => {
 
     expect(addInputListener).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
+  });
+
+  it("does not track terminal mouse reports while the mouse input flag is disabled", () => {
+    const harness = makeHarness();
+    const driver = makeDriver(harness, makeStartupInput()) as unknown as MouseTrackingDriver;
+    const { write, addInputListener } = captureInputListeners(driver);
+
+    driver.resumeTerminalMouseTracking();
+
+    expect(addInputListener).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    expect(driver.terminalMouseTrackingDispose).toBeUndefined();
+  });
+
+  it("tracks terminal mouse reports while the mouse input flag is enabled", () => {
+    setExperimentalFeatures([{ id: "terminal_mouse_input", enabled: true }]);
+    const harness = makeHarness();
+    const driver = makeDriver(harness, makeStartupInput()) as unknown as MouseTrackingDriver;
+    const { write, addInputListener, removeInputListener } = captureInputListeners(driver);
+
+    driver.resumeTerminalMouseTracking();
+
+    expect(addInputListener).toHaveBeenCalledOnce();
+    expect(write).toHaveBeenCalledWith(ENABLE_TERMINAL_MOUSE_REPORTING);
+    expect(driver.terminalMouseTrackingDispose).toBeDefined();
+
+    driver.suspendTerminalMouseTracking();
+
+    expect(removeInputListener).toHaveBeenCalledOnce();
+    expect(write).toHaveBeenCalledWith(DISABLE_TERMINAL_MOUSE_REPORTING);
+    expect(driver.terminalMouseTrackingDispose).toBeUndefined();
   });
 
   it("disables terminal theme reports after leaving auto theme", () => {

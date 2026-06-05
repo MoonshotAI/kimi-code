@@ -22,6 +22,7 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
   const config = await host.harness.getConfig({ reload: true });
   setExperimentalFeatures(await host.harness.getExperimentalFeatures());
   host.refreshSlashCommandAutocomplete();
+  host.resumeTerminalMouseTracking();
   applyRuntimeConfig(host, config);
   applyReloadedTuiConfig(host, tuiConfig);
 

@@ -129,6 +129,7 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND` | Override `[experimental].goal_command` for this process | Truthy or falsy |
 | `KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION` | Override `[experimental].micro_compaction` for this process | Truthy or falsy |
 | `KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK` | Override `[experimental].background_ask` for this process | Truthy or falsy |
+| `KIMI_CODE_EXPERIMENTAL_TERMINAL_MOUSE_INPUT` | Override `[experimental].terminal_mouse_input` for this process | Truthy or falsy |
 | `KIMI_SHELL_PATH` | Override the Git Bash path on Windows (used when auto-detection fails) | Absolute path |
 | `KIMI_MODEL_MAX_COMPLETION_TOKENS` | Hard cap on `max_completion_tokens` per LLM step; applies to the `kimi` provider only | Positive integer; `0` or negative disables clamping |
 | `KIMI_DISABLE_CRON` | Disable the scheduled-task tool (`CronCreate` rejects new schedules; existing tasks do not fire) | `1` to disable |

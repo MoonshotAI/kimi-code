@@ -186,6 +186,7 @@ max_context_size = 1047576
 | `goal_command` | `boolean` | `false` | 启用 `/goal` 和 goal 管理工具 |
 | `micro_compaction` | `boolean` | `false` | 清理较旧的大型工具结果内容，同时保留最近对话 |
 | `background_ask` | `boolean` | `false` | 允许 `AskUserQuestion` 在 Agent 可以继续工作时启动后台提问任务 |
+| `terminal_mouse_input` | `boolean` | `false` | 允许在主输入框内通过鼠标点击移动光标；选择终端文本时可能需要按住 `Shift` 拖选 |
 
 环境变量优先级高于这个表。`KIMI_CODE_EXPERIMENTAL_<NAME>` 可以覆盖单个功能，`KIMI_CODE_EXPERIMENTAL_FLAG=1` 会在当前进程启用所有实验功能。某个功能被环境变量控制时，`/experiments` 会显示为 locked。
 
