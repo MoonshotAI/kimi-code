@@ -140,7 +140,7 @@ export class AgentGroupComponent extends Container {
     const allDone = finished === total;
     const bullet = allDone
       ? currentTheme.fg('success', STATUS_BULLET)
-      : currentTheme.fg('roleAssistant', STATUS_BULLET);
+      : currentTheme.fg('text', STATUS_BULLET);
 
     if (allDone) {
       const types = new Set(snapshots.map((s) => s.agentName).filter((n) => n !== undefined));

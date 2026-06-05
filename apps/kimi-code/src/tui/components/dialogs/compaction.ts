@@ -103,7 +103,7 @@ export class CompactionComponent extends Container {
       const label = currentTheme.boldFg('warning', 'Compaction cancelled');
       return `${bullet}${label}`;
     }
-    const bullet = this.blinkOn ? currentTheme.fg('roleAssistant', STATUS_BULLET) : '  ';
+    const bullet = this.blinkOn ? currentTheme.fg('text', STATUS_BULLET) : '  ';
     const label = currentTheme.boldFg('primary', 'Compacting context...');
     return `${bullet}${label}`;
   }

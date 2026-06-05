@@ -6,7 +6,7 @@
 import { isAbsolute, relative, sep } from 'node:path';
 
 import { Container, Text, Spacer, visibleWidth } from '@earendil-works/pi-tui';
-import type { Component, MarkdownTheme, TUI } from '@earendil-works/pi-tui';
+import type { Component, TUI } from '@earendil-works/pi-tui';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
 import { COMMAND_PREVIEW_LINES } from '#/tui/constant/rendering';
@@ -1171,7 +1171,7 @@ export class ToolCallComponent extends Container {
     } else {
       // Solid bullet for in-flight tools — the previous marker ↔ blank
       // toggle caused visible flicker on every re-render.
-      bullet = currentTheme.fg('roleAssistant', STATUS_BULLET);
+      bullet = currentTheme.fg('text', STATUS_BULLET);
     }
 
     if (toolCall.name === 'ExitPlanMode') {
@@ -1443,7 +1443,7 @@ export class ToolCallComponent extends Container {
       ? currentTheme.fg('error', '✗ ')
       : isDone
         ? currentTheme.fg('success', STATUS_BULLET)
-        : currentTheme.fg('roleAssistant', STATUS_BULLET);
+        : currentTheme.fg('text', STATUS_BULLET);
     const labelText = formatSubagentLabel(this.subagentAgentName);
     const label = currentTheme.boldFg('primary', labelText);
     const status = this.formatSingleSubagentStatus(phase);

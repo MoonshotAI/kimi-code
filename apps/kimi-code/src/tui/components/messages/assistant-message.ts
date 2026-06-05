@@ -58,7 +58,7 @@ export class AssistantMessageComponent implements Component {
     const lines: string[] = [''];
     for (let i = 0; i < contentLines.length; i++) {
       const p =
-        i === 0 && this.showBullet ? currentTheme.fg('roleAssistant', STATUS_BULLET) : MESSAGE_INDENT;
+        i === 0 && this.showBullet ? currentTheme.fg('text', STATUS_BULLET) : MESSAGE_INDENT;
       lines.push(p + contentLines[i]);
     }
     return lines;

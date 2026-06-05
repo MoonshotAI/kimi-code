@@ -206,7 +206,7 @@ function formatContextStatus(usage: number, tokens?: number, maxTokens?: number)
 }
 
 export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): string {
-  const base = chalk.hex(colors.status)(formatGitBadgeBase(status));
+  const base = chalk.hex(colors.textDim)(formatGitBadgeBase(status));
   if (status.pullRequest === null) return base;
 
   const pullRequest = chalk.hex(colors.primary)(
@@ -322,7 +322,7 @@ export class FooterComponent implements Component {
     }
 
     const cwd = shortenCwd(state.workDir);
-    if (cwd) left.push(chalk.hex(colors.status)(cwd));
+    if (cwd) left.push(chalk.hex(colors.textDim)(cwd));
 
     const git = this.gitCache.getStatus();
     if (git !== null) {

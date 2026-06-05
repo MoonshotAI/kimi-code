@@ -134,7 +134,7 @@ export class ReadGroupComponent extends Container {
     const dim = (text: string): string => currentTheme.dim(text);
 
     if (pending > 0) {
-      const bullet = currentTheme.fg('roleAssistant', STATUS_BULLET);
+      const bullet = currentTheme.fg('text', STATUS_BULLET);
       const label = currentTheme.boldFg('primary', `Reading ${String(total)} files…`);
       return `${bullet}${label}`;
     }

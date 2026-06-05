@@ -60,7 +60,7 @@ export class ThinkingComponent implements Component {
   }
 
   private styled(text: string): string {
-    return currentTheme.italicFg('roleThinking', text);
+    return currentTheme.italicFg('textDim', text);
   }
 
   finalize(): void {
@@ -87,19 +87,19 @@ export class ThinkingComponent implements Component {
           ? contentLines.slice(contentLines.length - THINKING_PREVIEW_LINES)
           : contentLines;
       const spinner = currentTheme.fg(
-        'roleThinking',
+        'textDim',
         `${BRAILLE_SPINNER_FRAMES[this.spinnerFrame] ?? BRAILLE_SPINNER_FRAMES[0]} `,
       );
       return [
         '',
-        spinner + currentTheme.fg('roleThinking', 'thinking...'),
+        spinner + currentTheme.fg('textDim', 'thinking...'),
         ...visibleLines.map((line) => MESSAGE_INDENT + line),
       ];
     }
 
     const rendered: string[] = [''];
     for (let i = 0; i < contentLines.length; i++) {
-      const p = i === 0 && this.showMarker ? currentTheme.fg('roleThinking', STATUS_BULLET) : MESSAGE_INDENT;
+      const p = i === 0 && this.showMarker ? currentTheme.fg('textDim', STATUS_BULLET) : MESSAGE_INDENT;
       rendered.push(p + contentLines[i]);
     }
 

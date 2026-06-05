@@ -134,7 +134,7 @@ describe('FooterComponent — context NaN resilience', () => {
       );
 
       const primaryIndex = out.indexOf(hexToSgr(darkColors.primary));
-      const statusIndex = out.indexOf(hexToSgr(darkColors.status));
+      const statusIndex = out.indexOf(hexToSgr(darkColors.textDim));
       const badgeIndex = out.indexOf('[PR#6]');
       expect(statusIndex).toBeGreaterThanOrEqual(0);
       expect(primaryIndex).toBeGreaterThanOrEqual(0);

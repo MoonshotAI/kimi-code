@@ -38,7 +38,7 @@ export function createMarkdownTheme(): MarkdownTheme {
     // Match the assistant-message bullet so list markers read like a reply
     // prefix. Ordered lists arrive as "1. " / "2. " and are left
     // untouched by the leading-dash anchor.
-    listBullet: (text) => chalk.hex(currentTheme.color('roleAssistant'))(text.replace(/^-/, '•')),
+    listBullet: (text) => chalk.hex(currentTheme.color('text'))(text.replace(/^-/, '•')),
     bold: (text) => chalk.bold(text),
     italic: (text) => chalk.italic(text),
     strikethrough: (text) => chalk.strikethrough(text),
