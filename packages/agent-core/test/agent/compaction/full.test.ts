@@ -1416,6 +1416,47 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('preserves thinking effort when compacting after provider context overflow', async () => {
+    let callCount = 0;
+    const providerThinkingEfforts: Array<Parameters<GenerateFn>[0]['thinkingEffort']> = [];
+    const generate: GenerateFn = async (provider, _system, _tools, _history, callbacks) => {
+      callCount += 1;
+      providerThinkingEfforts.push(provider.thinkingEffort);
+      if (callCount === 1) {
+        throw new APIContextOverflowError(
+          400,
+          'Context length exceeded',
+          'req-thinking-context-overflow',
+        );
+      }
+      if (callCount === 2) {
+        return textResult('Thinking compacted summary.');
+      }
+      if (callCount === 3) {
+        await callbacks?.onMessagePart?.({
+          type: 'text',
+          text: 'Recovered after thinking compaction.',
+        });
+        return textResult('Recovered after thinking compaction.');
+      }
+      throw new Error(`Unexpected generate call ${String(callCount)}`);
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.agent.config.update({ thinkingLevel: 'high' });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.newEvents();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Retry with thinking preserved' }] });
+    await ctx.untilTurnEnd();
+
+    expect(callCount).toBe(3);
+    expect(providerThinkingEfforts).toEqual(['high', 'high', 'high']);
+  });
+
   it('compacts provider overflow when model context size is unknown', async () => {
     let callCount = 0;
     const compactionMaxCompletionTokens: unknown[] = [];

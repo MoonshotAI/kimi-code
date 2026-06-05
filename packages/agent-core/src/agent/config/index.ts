@@ -97,7 +97,7 @@ export class ConfigState {
   }
 
   get provider(): ChatProvider {
-    return createProvider(this.providerConfig);
+    return createProvider(this.providerConfig).withThinking(this.thinkingLevel);
   }
 
   get model(): string {
