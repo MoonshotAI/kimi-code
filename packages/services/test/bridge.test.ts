@@ -199,6 +199,27 @@ describe('HarnessBridge direct construction (W3.2)', () => {
 
     await expect(bridge.rpc.getCoreInfo({})).rejects.toThrow(/disposed/);
   });
+
+  // Regression: prior to the BLOCKER fix the bridge never forwarded a
+  // `resolveOAuthTokenProvider` into KimiCore. ProviderManager.resolveAuth
+  // then synthesized a closure that ALWAYS threw `auth.login_required`
+  // even after a successful device-code login. The daemon's `/auth`
+  // readiness probe (file-existence check) still said `ready:true`, so the
+  // failure only surfaced inside the prompt turn. Lock down that the
+  // bridge default-wires a resolver from the same home/config paths
+  // KimiCore consumes.
+  it('default-wires a resolveOAuthTokenProvider when caller omits one', () => {
+    const resolver = HarnessBridge._defaultOAuthTokenResolver({ homeDir: tmpHome });
+    expect(typeof resolver).toBe('function');
+    // Calling the resolver with the managed-kimi-code provider name must
+    // return an object exposing `getAccessToken`. We don't invoke it —
+    // there's no token on disk in this hermetic test — but the shape is
+    // sufficient to prove the bridge wired a real BearerTokenProvider
+    // factory (not the always-throw sentinel).
+    const tokenProvider = resolver('managed:kimi-code');
+    expect(tokenProvider).toBeDefined();
+    expect(typeof tokenProvider?.getAccessToken).toBe('function');
+  });
 });
 
 describe('defaultServicesModule() composition (W3.2)', () => {

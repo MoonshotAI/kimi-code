@@ -32,11 +32,15 @@ import {
   createRPC,
   Disposable,
   KimiCore,
+  resolveConfigPath,
+  resolveKimiHome,
   type CoreAPI,
   type CoreRPC,
   type KimiCoreOptions,
+  type OAuthTokenProviderResolver,
   type SDKAPI,
 } from '@moonshot-ai/agent-core';
+import { KimiAuthFacade } from '@moonshot-ai/kimi-code-sdk';
 
 import { BridgeClientAPI } from './bridge-client-api';
 import { IApprovalBroker } from '../interfaces/approval-broker';
@@ -123,9 +127,28 @@ export class HarnessBridge extends Disposable implements IHarnessBridge {
     //    function KimiCore receives, `sdkRpc` is the one the bridge satisfies.
     const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
 
+    // Default-wire the OAuth token resolver. Without this, KimiCore's
+    // `ProviderManager.resolveAuth` sees `resolveOAuthTokenProvider ===
+    // undefined` and synthesizes a closure that ALWAYS throws
+    // `AUTH_LOGIN_REQUIRED` — even after a successful device-code login that
+    // persisted a fresh token to disk. The daemon's `/auth` readiness probe
+    // is a different code path (file existence on the credentials store) so
+    // it stays green; the failure only surfaces inside the prompt turn, as
+    // an `auth.login_required` error after `turn.step.started`. We bridge
+    // the gap by default-constructing a `KimiAuthFacade` against the same
+    // home + config paths KimiCore will use, and handing its
+    // `resolveOAuthTokenProvider` into the core. Callers (e.g. node-sdk
+    // tests) can still override via `options.resolveOAuthTokenProvider`.
+    const resolveOAuthTokenProvider: OAuthTokenProviderResolver =
+      options.resolveOAuthTokenProvider ??
+      HarnessBridge._defaultOAuthTokenResolver(options);
+
     // 2. Construct the core. KimiCore's ctor wires itself into `coreRpc` and
     //    exposes `this.sdk: Promise<SDKRPC>` for the reverse direction.
-    this._core = new KimiCore(coreRpc, options);
+    this._core = new KimiCore(coreRpc, {
+      ...options,
+      resolveOAuthTokenProvider,
+    });
 
     // 3. Satisfy the SDK side with a BridgeClientAPI that routes to brokers.
     //    sdkRpc returns Promise<RPCMethods<CoreAPI>> — these are the methods
@@ -191,5 +214,27 @@ export class HarnessBridge extends Disposable implements IHarnessBridge {
         };
       },
     });
+  }
+
+  /**
+   * Build the default `resolveOAuthTokenProvider` from the same home + config
+   * paths KimiCore resolves internally. Mirrors `SDKRpcClient`'s default in
+   * `packages/node-sdk/src/sdk-rpc-client.ts` so the daemon and the SDK
+   * runtimes share OAuth credentials when both run against the same
+   * `~/.kimi-code`.
+   *
+   * Exposed as `static` so tests can assert the wiring without exercising the
+   * full agent-core turn loop.
+   */
+  static _defaultOAuthTokenResolver(
+    options: HarnessBridgeOptions,
+  ): OAuthTokenProviderResolver {
+    const homeDir = resolveKimiHome(options.homeDir);
+    const configPath = resolveConfigPath({
+      homeDir: options.homeDir,
+      configPath: options.configPath,
+    });
+    const facade = new KimiAuthFacade({ homeDir, configPath });
+    return facade.resolveOAuthTokenProvider;
   }
 }

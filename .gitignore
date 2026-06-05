@@ -12,3 +12,7 @@ coverage/
 .kimi-stash-dir
 plugins/cdn/
 superpowers
+
+Dockerfile
+docker-compose.yml
+.dockerignore
