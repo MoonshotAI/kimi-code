@@ -50,7 +50,6 @@ describe('ExperimentsSelectorComponent', () => {
           source: 'env',
         }),
       ],
-      colors: darkColors,
       onApply: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -77,7 +76,6 @@ describe('ExperimentsSelectorComponent', () => {
     });
     const selector = new ExperimentsSelectorComponent({
       features: [first, second],
-      colors: darkColors,
       onApply,
       onCancel: vi.fn(),
     });
@@ -110,7 +108,6 @@ describe('ExperimentsSelectorComponent', () => {
           source: 'env',
         }),
       ],
-      colors: darkColors,
       onApply,
       onCancel: vi.fn(),
     });
@@ -134,7 +131,6 @@ describe('ExperimentsSelectorComponent', () => {
           env: 'KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK',
         }),
       ],
-      colors: darkColors,
       onApply: vi.fn(),
       onCancel,
     });

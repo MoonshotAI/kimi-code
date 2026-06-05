@@ -8,6 +8,7 @@ import type {
 
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { BtwPanelComponent } from '../components/panes/btw-panel';
+import { currentTheme } from '#/tui/theme';
 import { formatErrorMessage } from '../utils/event-payload';
 import { formatHookResultPlain } from '../utils/hook-result-format';
 import type { TUIState } from '../tui-state';
@@ -36,7 +37,6 @@ export class BtwPanelController {
   open(agentId: string, initialPrompt: string): void {
     let panel: BtwPanelComponent;
     panel = new BtwPanelComponent({
-      colors: this.host.state.theme.colors,
       markdownTheme: this.host.state.theme.markdownTheme,
       canUseScrollKeys: () => this.host.state.editor.getText().length === 0,
       terminalRows: () => this.host.state.terminal.rows,

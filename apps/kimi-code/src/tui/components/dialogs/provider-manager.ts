@@ -47,7 +47,7 @@ import chalk from 'chalk';
 
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
 import { pageView, type PageView } from '#/tui/utils/paging';
 
@@ -61,7 +61,6 @@ export interface ProviderManagerOptions {
   readonly providers: Record<string, ProviderConfig>;
   /** Provider id of the currently active model. */
   readonly activeProviderId?: string;
-  readonly colors: ColorPalette;
   readonly onAdd: () => void;
   /** Delete all providers under a source (Open Platform / custom-registry
    *  fetch / standalone). Passed the full provider-id list so the host
@@ -355,27 +354,26 @@ export class ProviderManagerComponent extends Container implements Focusable {
   }
 
   override render(width: number): string[] {
-    const { colors } = this.opts;
     const lines: string[] = [];
 
     // Header shape mirrors the model dialog (see model-selector.ts): a single
     // top border, the title, the keymap hint, then a blank line. No inner
     // border under the title.
-    const border = chalk.hex(colors.primary)('─'.repeat(width));
+    const border = currentTheme.fg('primary', '─'.repeat(width));
     lines.push(border);
-    lines.push(chalk.hex(colors.primary).bold(' Providers'));
-    lines.push(chalk.hex(colors.textMuted)(' ' + HEADER_HINT));
+    lines.push(currentTheme.boldFg('primary', ' Providers'));
+    lines.push(currentTheme.fg('textMuted', ' ' + HEADER_HINT));
     lines.push('');
 
     const rows = this.rows;
     if (rows.length === 0) {
-      lines.push(chalk.hex(colors.textMuted)('  No providers configured.'));
+      lines.push(currentTheme.fg('textMuted', '  No providers configured.'));
     } else {
       const view = this.page();
       for (let i = view.start; i < view.end; i++) {
         const row = rows[i];
         if (row === undefined) continue;
-        for (const line of renderRow(row, { isSelected: i === this.selectedIndex, width, colors })) {
+        for (const line of renderRow(row, { isSelected: i === this.selectedIndex, width })) {
           lines.push(line);
         }
       }
@@ -389,7 +387,8 @@ export class ProviderManagerComponent extends Container implements Focusable {
       const view = this.page();
       if (view.pageCount > 1) {
         lines.push(
-          chalk.hex(colors.textMuted)(
+          currentTheme.fg(
+            'textMuted',
             ` Page ${String(view.page + 1)}/${String(view.pageCount)}`,
           ),
         );
@@ -401,10 +400,9 @@ export class ProviderManagerComponent extends Container implements Focusable {
   }
 
   private renderConfirmLine(width: number): string {
-    const { colors } = this.opts;
     const confirm = this.confirm;
     const prompt = confirm?.label ?? '';
-    const styled = chalk.hex(colors.warning).bold(`  ${prompt} [y/N]`);
+    const styled = currentTheme.boldFg('warning', `  ${prompt} [y/N]`);
     return truncateToWidth(styled, width, '…');
   }
 }
@@ -412,19 +410,21 @@ export class ProviderManagerComponent extends Container implements Focusable {
 
 function renderRow(
   row: Row,
-  ctx: { isSelected: boolean; width: number; colors: ColorPalette },
+  ctx: { isSelected: boolean; width: number },
 ): string[] {
-  const { isSelected, width, colors } = ctx;
+  const { isSelected, width } = ctx;
   const pointer = isSelected ? SELECT_POINTER : ' ';
-  const pointerStyle = isSelected ? chalk.hex(colors.primary) : chalk.hex(colors.textDim);
+  const pointerStyle = (text: string) =>
+    isSelected ? currentTheme.fg('primary', text) : currentTheme.fg('textDim', text);
   // The synthetic "Add New Platform" row is an action/CTA: keep it in the brand
   // color so it never reads as disabled, and bold it when selected (matching
   // the other rows' selected treatment).
-  const labelStyle = isSelected
-    ? chalk.hex(colors.primary).bold
-    : row.kind === 'add'
-      ? chalk.hex(colors.primary)
-      : chalk.hex(colors.text);
+  const labelStyle = (text: string) =>
+    isSelected
+      ? currentTheme.boldFg('primary', text)
+      : row.kind === 'add'
+        ? currentTheme.fg('primary', text)
+        : currentTheme.fg('text', text);
 
   // The active provider is flagged with a trailing "← current" (success),
   // matching the model selector's current-item marker — see .agents/skills/write-tui/DESIGN.md.
@@ -435,13 +435,13 @@ function renderRow(
   const labelWidth = Math.max(0, width - 4 - visibleWidth(marker));
   const labelText = truncateToWidth(row.label, labelWidth, '…');
   let line = `  ${pointerStyle(`${pointer} `)}${labelStyle(labelText)}`;
-  if (isActive) line += chalk.hex(colors.success)(marker);
+  if (isActive) line += currentTheme.fg('success', marker);
 
   const lines: string[] = [line];
 
   if (row.kind === 'source' && row.baseUrl !== undefined && row.baseUrl.length > 0) {
     const urlText = truncateToWidth(row.baseUrl, Math.max(0, width - 6), '…');
-    lines.push(chalk.hex(colors.textMuted)(`      ${urlText}`));
+    lines.push(currentTheme.fg('textMuted', `      ${urlText}`));
   }
 
   return lines;

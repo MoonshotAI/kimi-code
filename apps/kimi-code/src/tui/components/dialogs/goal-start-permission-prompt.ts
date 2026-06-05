@@ -6,9 +6,8 @@ import {
   type Component,
   type Focusable,
 } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 export type GoalStartPermissionChoice = 'auto' | 'yolo' | 'manual' | 'cancel';
 
@@ -19,7 +18,6 @@ interface GoalStartOption {
 }
 
 export interface GoalStartPermissionPromptOptions {
-  readonly colors: ColorPalette;
   readonly onSelect: (choice: GoalStartPermissionChoice) => void;
   readonly onCancel: () => void;
 }
@@ -83,19 +81,18 @@ export class GoalStartPermissionPromptComponent implements Component, Focusable 
   }
 
   render(width: number): string[] {
-    const { colors } = this.opts;
-    const rule = chalk.hex(colors.primary)('─'.repeat(width));
+    const rule = currentTheme.fg('primary', '─'.repeat(width));
     const lines = [
       rule,
-      chalk.hex(colors.primary).bold(' Start a goal with approvals on?'),
-      chalk.hex(colors.textMuted)(' ↑↓ navigate · Enter select · Esc return to input box'),
+      currentTheme.boldFg('primary', ' Start a goal with approvals on?'),
+      currentTheme.fg('textMuted', ' ↑↓ navigate · Enter select · Esc return to input box'),
       '',
     ];
 
     const textWidth = Math.max(20, width - 2);
     for (const paragraph of NOTICE_LINES) {
       for (const line of wrapPlain(paragraph, textWidth)) {
-        lines.push(` ${styleModeNames(line, colors, colors.textMuted)}`);
+        lines.push(` ${styleModeNames(line, 'textMuted')}`);
       }
       lines.push('');
     }
@@ -105,11 +102,11 @@ export class GoalStartPermissionPromptComponent implements Component, Focusable 
       const selected = i === this.selectedIndex;
       const pointer = selected ? '❯' : ' ';
       lines.push(
-        chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `) +
-          styleLabel(option.label, selected, colors),
+        currentTheme.fg(selected ? 'primary' : 'textDim', `  ${pointer} `) +
+          styleLabel(option.label, selected),
       );
       for (const line of wrapPlain(option.description, Math.max(20, width - 4))) {
-        lines.push(`    ${styleModeNames(line, colors, colors.textMuted)}`);
+        lines.push(`    ${styleModeNames(line, 'textMuted')}`);
       }
       lines.push('');
     }
@@ -119,19 +116,17 @@ export class GoalStartPermissionPromptComponent implements Component, Focusable 
   }
 }
 
-function styleLabel(label: string, selected: boolean, colors: ColorPalette): string {
-  if (selected) return chalk.hex(colors.primary).bold(label);
-  return styleModeNames(label, colors, colors.text);
+function styleLabel(label: string, selected: boolean): string {
+  if (selected) return currentTheme.boldFg('primary', label);
+  return styleModeNames(label, 'text');
 }
 
-function styleModeNames(text: string, colors: ColorPalette, baseHex: string): string {
-  const base = chalk.hex(baseHex);
-  const strong = chalk.hex(colors.textStrong).bold;
+function styleModeNames(text: string, baseToken: 'text' | 'textMuted'): string {
   return text
     .split(/(\b(?:Manual|Auto|YOLO)\b)/g)
     .map((part) => {
-      if (part === 'Manual' || part === 'Auto' || part === 'YOLO') return strong(part);
-      return base(part);
+      if (part === 'Manual' || part === 'Auto' || part === 'YOLO') return currentTheme.boldFg('textStrong', part);
+      return currentTheme.fg(baseToken, part);
     })
     .join('');
 }

@@ -13,30 +13,52 @@
  */
 
 import { Container, Text, Spacer } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 import type { SkillActivationTrigger } from '#/tui/types';
 
 const ARGS_PREVIEW_MAX = 200;
 
 export class SkillActivationComponent extends Container {
+  private headText: Text;
+  private previewText?: Text;
+  private name: string;
+  private args?: string;
+
   constructor(
     name: string,
     args: string | undefined,
-    colors: ColorPalette,
     readonly trigger?: SkillActivationTrigger,
   ) {
     super();
+    this.name = name;
+    this.args = args;
     this.addChild(new Spacer(1));
     const head =
-      chalk.hex(colors.primary).bold('▶ Activated skill: ') + chalk.hex(colors.roleUser).bold(name);
-    this.addChild(new Text(head, 0, 0));
+      currentTheme.boldFg('primary', '▶ Activated skill: ') +
+      currentTheme.boldFg('roleUser', name);
+    this.headText = new Text(head, 0, 0);
+    this.addChild(this.headText);
     const trimmed = args?.trim() ?? '';
     if (trimmed.length > 0) {
       const preview =
         trimmed.length > ARGS_PREVIEW_MAX ? trimmed.slice(0, ARGS_PREVIEW_MAX) + '…' : trimmed;
-      this.addChild(new Text('  ' + chalk.hex(colors.textDim)(preview), 0, 0));
+      this.previewText = new Text('  ' + currentTheme.fg('textDim', preview), 0, 0);
+      this.addChild(this.previewText);
     }
+  }
+
+  override invalidate(): void {
+    const head =
+      currentTheme.boldFg('primary', '▶ Activated skill: ') +
+      currentTheme.boldFg('roleUser', this.name);
+    this.headText.setText(head);
+    if (this.previewText !== undefined && this.args !== undefined) {
+      const trimmed = this.args.trim();
+      const preview =
+        trimmed.length > ARGS_PREVIEW_MAX ? trimmed.slice(0, ARGS_PREVIEW_MAX) + '…' : trimmed;
+      this.previewText.setText('  ' + currentTheme.fg('textDim', preview));
+    }
+    super.invalidate();
   }
 }

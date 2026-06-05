@@ -33,6 +33,7 @@
   ],
   "type": "module",
   "imports": {
+    "#/tui/theme": "./src/tui/theme/index.ts",
     "#/*": [
       "./src/*.ts",
       "./src/*/index.ts"

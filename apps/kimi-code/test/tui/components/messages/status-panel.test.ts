@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildStatusReportLines } from '#/tui/components/messages/status-panel';
-import { darkColors } from '#/tui/theme/colors';
 
 function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -10,7 +9,6 @@ function strip(text: string): string {
 describe('status panel report lines', () => {
   it('formats runtime status, context, and managed usage without account or AGENTS.md rows', () => {
     const lines = buildStatusReportLines({
-      colors: darkColors,
       version: '1.2.3',
       model: 'k2',
       workDir: '/tmp/project',
@@ -72,7 +70,6 @@ describe('status panel report lines', () => {
 
   it('falls back to app state and shows status load errors as warnings', () => {
     const lines = buildStatusReportLines({
-      colors: darkColors,
       version: '1.2.3',
       model: '',
       workDir: '/tmp/project',

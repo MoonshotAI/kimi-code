@@ -9,9 +9,9 @@
 
 import type { Component } from '@earendil-works/pi-tui';
 import type { GoalChange } from '@moonshot-ai/kimi-code-sdk';
-import chalk from 'chalk';
 
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
+import type { ColorToken } from '#/tui/theme';
 
 const HEAD_INDENT = '  ';
 const DETAIL_INDENT = '    ';
@@ -22,8 +22,7 @@ export class GoalMarkerComponent implements Component {
   constructor(
     private readonly headline: string,
     private readonly detail: string | undefined,
-    private readonly colors: ColorPalette,
-    private readonly accentHex: string,
+    private readonly accentToken: ColorToken,
   ) {}
 
   invalidate(): void {}
@@ -33,18 +32,18 @@ export class GoalMarkerComponent implements Component {
   }
 
   render(width: number): string[] {
-    const dot = chalk.hex(this.accentHex)('◦');
-    const head = chalk.hex(this.colors.textDim)(this.headline);
+    const dot = currentTheme.fg(this.accentToken, '◦');
+    const head = currentTheme.fg('textDim', this.headline);
     const hasDetail = this.detail !== undefined && this.detail.length > 0;
     if (!hasDetail) return [`${HEAD_INDENT}${dot} ${head}`];
 
     if (!this.expanded) {
-      return [`${HEAD_INDENT}${dot} ${head} ${chalk.hex(this.colors.textMuted)('(ctrl+o)')}`];
+      return [`${HEAD_INDENT}${dot} ${head} ${currentTheme.fg('textMuted', '(ctrl+o)')}`];
     }
     const out = [`${HEAD_INDENT}${dot} ${head}`];
     const wrapWidth = Math.max(20, width - DETAIL_INDENT.length);
     for (const line of wrap(this.detail!, wrapWidth)) {
-      out.push(DETAIL_INDENT + chalk.hex(this.colors.textDim)(line));
+      out.push(DETAIL_INDENT + currentTheme.fg('textDim', line));
     }
     return out;
   }
@@ -57,29 +56,27 @@ export class GoalMarkerComponent implements Component {
  */
 export function buildGoalMarker(
   change: GoalChange,
-  colors: ColorPalette,
   expanded: boolean,
 ): GoalMarkerComponent | null {
-  const spec = markerSpec(change, colors);
+  const spec = markerSpec(change);
   if (spec === null) return null;
-  const marker = new GoalMarkerComponent(spec.headline, change.reason, colors, spec.accentHex);
+  const marker = new GoalMarkerComponent(spec.headline, change.reason, spec.accentToken);
   marker.setExpanded(expanded);
   return marker;
 }
 
 function markerSpec(
   change: GoalChange,
-  colors: ColorPalette,
-): { headline: string; accentHex: string } | null {
+): { headline: string; accentToken: ColorToken } | null {
   if (change.kind === 'lifecycle') {
     switch (change.status) {
       case 'paused':
-        return { headline: 'Goal paused', accentHex: colors.textDim };
+        return { headline: 'Goal paused', accentToken: 'textDim' };
       case 'active':
-        return { headline: 'Goal resumed', accentHex: colors.primary };
+        return { headline: 'Goal resumed', accentToken: 'primary' };
       case 'blocked':
         // The system stopped pursuing the goal; resumable via `/goal resume`.
-        return { headline: 'Goal blocked', accentHex: colors.warning };
+        return { headline: 'Goal blocked', accentToken: 'warning' };
       default:
         return null;
     }

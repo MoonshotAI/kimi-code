@@ -24,7 +24,7 @@ import {
 } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 import {
   ModelSelectorComponent,
@@ -41,7 +41,6 @@ export interface TabbedModelSelectorOptions {
   readonly currentValue: string;
   readonly selectedValue?: string;
   readonly currentThinking: boolean;
-  readonly colors: ColorPalette;
   /** When set, the tab for this provider id is initially active instead of the
    * tab derived from `currentValue`. */
   readonly initialTabId?: string;
@@ -133,15 +132,13 @@ export class TabbedModelSelectorComponent extends Container implements Focusable
    * (matching the AskUserQuestion dialog); inactive tabs are muted. Both have
    * the same visible width so switching never shifts the layout. */
   private styleTab(label: string, isActive: boolean): string {
-    const { colors } = this.opts;
     const cell = ` ${label} `;
     return isActive
-      ? chalk.bgHex(colors.primary).hex(colors.text).bold(cell)
-      : chalk.hex(colors.textMuted)(cell);
+      ? currentTheme.bg('primary', currentTheme.boldFg('text', cell))
+      : currentTheme.fg('textMuted', cell);
   }
 
   private renderTabStrip(width: number): string {
-    const { colors } = this.opts;
     const segments: string[] = [];
     for (let i = 0; i < this.tabs.length; i++) {
       const tab = this.tabs[i]!;
@@ -198,10 +195,10 @@ export class TabbedModelSelectorComponent extends Container implements Focusable
 
     const hasLeft = start > 0;
     const hasRight = end < segments.length;
-    let strip = hasLeft ? chalk.hex(colors.textMuted)('< ') : ' ';
+    let strip = hasLeft ? currentTheme.fg('textMuted', '< ') : ' ';
     strip += segments.slice(start, end).join(' ');
     if (hasRight) {
-      strip += chalk.hex(colors.textMuted)(' >');
+      strip += currentTheme.fg('textMuted', ' >');
     }
     return strip;
   }
@@ -251,7 +248,6 @@ function makeSelector(
     currentValue: opts.currentValue,
     ...(selectedValue !== undefined ? { selectedValue } : {}),
     currentThinking: opts.currentThinking,
-    colors: opts.colors,
     searchable: true,
     providerSwitchHint: true,
     onSelect: opts.onSelect,

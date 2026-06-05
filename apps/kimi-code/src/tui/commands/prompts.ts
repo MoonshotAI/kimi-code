@@ -16,12 +16,12 @@ import { ChoicePickerComponent, type ChoiceOption } from '../components/dialogs/
 import { FeedbackInputDialogComponent, type FeedbackInputDialogResult } from '../components/dialogs/feedback-input-dialog';
 import { ModelSelectorComponent } from '../components/dialogs/model-selector';
 import { PlatformSelectorComponent } from '../components/dialogs/platform-selector';
+import { currentTheme } from '#/tui/theme';
 import type { SlashCommandHost } from './dispatch';
 
 export function promptPlatformSelection(host: SlashCommandHost): Promise<string | undefined> {
   return new Promise((resolve) => {
     const selector = new PlatformSelectorComponent({
-      colors: host.state.theme.colors,
       onSelect: (platformId) => {
         host.restoreEditor();
         resolve(platformId);
@@ -45,7 +45,6 @@ export function promptLogoutProviderSelection(
       title: 'Select a provider to log out',
       options,
       currentValue,
-      colors: host.state.theme.colors,
       onSelect: (value) => {
         host.restoreEditor();
         resolve(value);
@@ -64,7 +63,7 @@ export function promptFeedbackInput(host: SlashCommandHost): Promise<string | un
     const dialog = new FeedbackInputDialogComponent((result: FeedbackInputDialogResult) => {
       host.restoreEditor();
       resolve(result.kind === 'ok' ? result.value : undefined);
-    }, host.state.theme.colors);
+    });
     host.mountEditorReplacement(dialog);
   });
 }
@@ -82,7 +81,6 @@ export function promptApiKey(
         host.restoreEditor();
         resolve(result.kind === 'ok' ? result.value : undefined);
       },
-      host.state.theme.colors,
     );
     host.mountEditorReplacement(dialog);
   });
@@ -109,7 +107,6 @@ export function promptCatalogProviderSelection(host: SlashCommandHost, catalog: 
     const picker = new ChoicePickerComponent({
       title: 'Select a provider',
       options,
-      colors: host.state.theme.colors,
       searchable: true,
       onSelect: (value) => {
         host.restoreEditor();
@@ -172,7 +169,6 @@ export function runModelSelector(
       models: modelDict,
       currentValue: firstAlias,
       currentThinking: initialThinking,
-      colors: host.state.theme.colors,
       searchable: true,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();

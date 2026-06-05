@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
-import { darkColors } from '#/tui/theme/colors';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 
 import { captureProcessWrite } from '../../../helpers/process';
@@ -19,7 +18,7 @@ describe('AssistantMessageComponent', () => {
   });
 
   it('uses the stable status bullet without stealing content width', () => {
-    const component = new AssistantMessageComponent(createMarkdownTheme(darkColors), darkColors);
+    const component = new AssistantMessageComponent();
 
     component.updateContent('abcdef');
 
@@ -31,7 +30,7 @@ describe('AssistantMessageComponent', () => {
   it('renders unknown markdown fence languages as plain text without stderr noise', () => {
     const stderr = captureProcessWrite('stderr');
     try {
-      const theme = createMarkdownTheme(darkColors);
+      const theme = createMarkdownTheme();
       expect(theme.highlightCode?.('hello\nworld', 'abcxyz')).toEqual(['hello', 'world']);
       expect(stderr.text()).not.toContain('Could not find the language');
     } finally {
@@ -40,7 +39,7 @@ describe('AssistantMessageComponent', () => {
   });
 
   it('preserves literal hook result XML in normal assistant text', () => {
-    const component = new AssistantMessageComponent(createMarkdownTheme(darkColors), darkColors);
+    const component = new AssistantMessageComponent();
 
     component.updateContent('<hook_result hook_event="UserPromptSubmit">\n{}\n</hook_result>');
 

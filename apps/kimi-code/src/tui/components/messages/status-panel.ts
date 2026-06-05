@@ -9,7 +9,7 @@ import type { ModelAlias, PermissionMode, SessionStatus } from '@moonshot-ai/kim
 import chalk from 'chalk';
 
 import { PRODUCT_NAME } from '#/constant/app';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 import {
   formatTokenCount,
   ratioSeverity,
@@ -26,7 +26,6 @@ interface FieldRow {
 }
 
 export interface StatusReportOptions {
-  readonly colors: ColorPalette;
   readonly version: string;
   readonly model: string;
   readonly workDir: string;
@@ -89,13 +88,12 @@ function contextValues(options: StatusReportOptions): {
 }
 
 export function buildStatusReportLines(options: StatusReportOptions): string[] {
-  const colors = options.colors;
-  const accent = chalk.hex(colors.primary).bold;
-  const value = chalk.hex(colors.text);
-  const muted = chalk.hex(colors.textDim);
-  const errorStyle = chalk.hex(colors.error);
-  const severityHex = (sev: 'ok' | 'warn' | 'danger'): string =>
-    sev === 'danger' ? colors.error : sev === 'warn' ? colors.warning : colors.success;
+  const accent = (text: string) => currentTheme.boldFg('primary', text);
+  const value = (text: string) => currentTheme.fg('text', text);
+  const muted = (text: string) => currentTheme.fg('textDim', text);
+  const errorStyle = (text: string) => currentTheme.fg('error', text);
+  const severityToken = (sev: 'ok' | 'warn' | 'danger'): 'error' | 'warning' | 'success' =>
+    sev === 'danger' ? 'error' : sev === 'warn' ? 'warning' : 'success';
 
   const permission = options.status?.permission ?? options.permissionMode;
   const planMode = options.status?.planMode ?? options.planMode;
@@ -125,7 +123,7 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
   if (maxTokens > 0) {
     const safeRatio = safeUsageRatio(ratio);
     const bar = renderProgressBar(safeRatio, 20);
-    const barColoured = chalk.hex(severityHex(ratioSeverity(safeRatio)))(bar);
+    const barColoured = currentTheme.fg(severityToken(ratioSeverity(safeRatio)), bar);
     lines.push(
       `  ${barColoured}  ${value(`${(safeRatio * 100).toFixed(1)}%`.padStart(6, ' '))}  ` +
         muted(`(${formatTokenCount(tokens)} / ${formatTokenCount(maxTokens)})`),
@@ -135,7 +133,6 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
   }
 
   const managedSection = buildManagedUsageReportLines({
-    colors,
     managedUsage: options.managedUsage,
     managedUsageError: options.managedUsageError,
   });

@@ -20,6 +20,7 @@ import {
 import { UsagePanelComponent } from '../components/messages/usage-panel';
 import { formatErrorMessage } from '../utils/event-payload';
 import { formatPluginSourceLabel } from '../utils/plugin-source-label';
+import { currentTheme } from '#/tui/theme';
 import { loadPluginMarketplace } from '#/utils/plugin-marketplace';
 import type { SlashCommandHost } from './dispatch';
 
@@ -154,7 +155,6 @@ async function showPluginsPicker(
       plugins,
       selectedId: options?.selectedId,
       pluginHint: options?.pluginHint,
-      colors: host.state.theme.colors,
       onSelect: (selection) => {
         // Each branch of the handler either mounts the next view or restores
         // the editor itself, so do not pre-restore here — that would flash the
@@ -181,7 +181,6 @@ async function showPluginMarketplacePicker(host: SlashCommandHost, source?: stri
         entries: marketplace.plugins,
         installedIds: new Set(installed.map((plugin) => plugin.id)),
         source: marketplace.source,
-        colors: host.state.theme.colors,
         onSelect: (selection) => {
           // Every marketplace action re-mounts a picker, so let the handler do
           // the mounting — pre-restoring the editor here would flash.
@@ -218,7 +217,6 @@ async function showPluginMcpPicker(
       info,
       selectedServer: options?.selectedServer,
       serverHint: options?.serverHint,
-      colors: host.state.theme.colors,
       onSelect: (selection) => {
         // Every MCP action re-mounts a picker, so let the handler do the
         // mounting — pre-restoring the editor here would flash on toggle.
@@ -247,7 +245,6 @@ async function confirmRemovePlugin(host: SlashCommandHost, id: string): Promise<
       new PluginRemoveConfirmComponent({
         id,
         displayName,
-        colors: host.state.theme.colors,
         onDone: (result: PluginRemoveConfirmResult) => {
           host.restoreEditor();
           resolveConfirmed(result.kind === 'confirm');
@@ -376,19 +373,18 @@ async function renderPluginsList(
 ): Promise<void> {
   const currentPlugins = plugins ?? (await host.requireSession().listPlugins());
   const lines = buildPluginsListLines({
-    colors: host.state.theme.colors,
     plugins: currentPlugins,
   });
   const title = ` Plugins (${currentPlugins.length}) `;
-  const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary, title);
+  const panel = new UsagePanelComponent(lines, 'primary', title);
   host.state.transcriptContainer.addChild(panel);
   host.state.ui.requestRender();
 }
 
 async function renderPluginInfo(host: SlashCommandHost, id: string): Promise<void> {
   const info = await host.requireSession().getPluginInfo(id);
-  const lines = buildPluginsInfoLines({ colors: host.state.theme.colors, info });
-  const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary, ` ${info.id} `);
+  const lines = buildPluginsInfoLines({ info });
+  const panel = new UsagePanelComponent(lines, 'primary', ` ${info.id} `);
   host.state.transcriptContainer.addChild(panel);
   host.state.ui.requestRender();
 }

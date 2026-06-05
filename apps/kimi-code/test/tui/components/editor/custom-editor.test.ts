@@ -7,13 +7,12 @@ import type {
 import { describe, expect, it, vi } from 'vitest';
 
 import { CustomEditor } from '#/tui/components/editor/custom-editor';
-import { getColorPalette } from '#/tui/theme/index';
 
 function makeEditor(): CustomEditor {
   const tui = {
     requestRender: vi.fn(),
   } as unknown as TUI;
-  return new CustomEditor(tui, { ...getColorPalette('dark') });
+  return new CustomEditor(tui);
 }
 
 async function flushAutocomplete(): Promise<void> {

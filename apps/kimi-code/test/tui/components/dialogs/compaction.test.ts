@@ -9,7 +9,7 @@ function strip(text: string): string {
 
 describe('CompactionComponent', () => {
   it('renders the custom instruction below the compacting label', () => {
-    const component = new CompactionComponent(darkColors, undefined, 'keep the recent files only');
+    const component = new CompactionComponent(undefined, 'keep the recent files only');
 
     try {
       const lines = component.render(120).map(strip);
@@ -23,7 +23,7 @@ describe('CompactionComponent', () => {
   });
 
   it('renders a cancelled terminal state', () => {
-    const component = new CompactionComponent(darkColors);
+    const component = new CompactionComponent();
 
     try {
       component.markCanceled();

@@ -47,7 +47,6 @@ function makeStartupInput(): KimiTUIStartupInput {
     },
     version: '0.0.0-test',
     workDir: '/tmp/proj-a',
-    resolvedTheme: 'dark',
   };
 }
 

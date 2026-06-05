@@ -5,7 +5,7 @@
  *  - private `dark` / `light` raw palettes — unsemantic constants reused
  *    across multiple semantic tokens to avoid hex literal duplication.
  *  - exported `darkColors` / `lightColors` — the semantic `ColorPalette`
- *    consumed by every UI component via chalk.hex(...).
+ *    consumed by every UI component via the global Theme singleton.
  *
  * Light palette values are tuned for ≥ 4.5:1 contrast against #FFFFFF
  * for text tokens and ≥ 3:1 for chrome (border / large text), matching
@@ -143,6 +143,7 @@ export const lightColors: ColorPalette = {
 
 export type ResolvedTheme = 'dark' | 'light';
 
-export function getColorPalette(theme: ResolvedTheme): ColorPalette {
-  return theme === 'dark' ? darkColors : lightColors;
+/** Synchronous palette lookup for built-in themes only. */
+export function getBuiltInPalette(resolved: ResolvedTheme): ColorPalette {
+  return resolved === 'dark' ? darkColors : lightColors;
 }

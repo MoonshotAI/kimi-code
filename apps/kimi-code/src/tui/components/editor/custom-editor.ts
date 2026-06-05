@@ -5,7 +5,7 @@
 import { Editor, isKeyRelease, matchesKey, Key, type TUI } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
 
 // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
@@ -128,26 +128,13 @@ export class CustomEditor extends Editor {
   private consumingPaste = false;
   private consumeBuffer = '';
 
-  /**
-   * `colors` is the live `ColorPalette` reference — the host mutates it
-   * in place on theme switch (`Object.assign(state.theme.colors, ...)`), so
-   * reading `this.colors.<token>` at render time always sees the
-   * current theme without any setter plumbing. The `EditorTheme` that
-   * pi-tui's `Editor` requires is derived from the same palette, and
-   * `paddingX: 2` reserves the two leading columns where `render()`
-   * paints the terminal-style `> ` prompt — both are implementation
-   * details, not caller knobs.
-   */
-  constructor(
-    tui: TUI,
-    private readonly colors: ColorPalette,
-  ) {
+  constructor(tui: TUI) {
     // paddingX: 4 reserves column 0 for the left vertical border (│),
     // column 1 as a single space between border and prompt, column 2 for
     // the `>` prompt token, and column 3 as the space between prompt and
     // content. The right side mirrors with 3 padding columns and the right
     // border at the last column.
-    super(tui, createEditorTheme(colors), { paddingX: 4 });
+    super(tui, createEditorTheme(), { paddingX: 4 });
   }
 
   private expandPasteMarkerAtCursor(): boolean {
@@ -199,7 +186,7 @@ export class CustomEditor extends Editor {
       // are not a thing in practice.
       const original = lines[firstContentIdx];
       if (original !== undefined) {
-        const highlighted = highlightFirstSlashToken(original, this.colors.primary);
+        const highlighted = highlightFirstSlashToken(original, 'primary');
         if (highlighted !== undefined) {
           lines[firstContentIdx] = highlighted;
         }
@@ -350,7 +337,7 @@ export class CustomEditor extends Editor {
  * locate `/` via visible-index math so ANSI pass-through survives.
  * Returns `undefined` if no token is found.
  */
-export function highlightFirstSlashToken(line: string, hex: string): string | undefined {
+export function highlightFirstSlashToken(line: string, token: 'primary'): string | undefined {
   const visible = stripSgr(line);
   const slashIdx = visible.indexOf('/');
   if (slashIdx < 0) return undefined;
@@ -371,9 +358,9 @@ export function highlightFirstSlashToken(line: string, hex: string): string | un
   const rawStart = mapVisibleIdxToRaw(line, slashIdx);
   const rawEnd = mapVisibleIdxToRaw(line, endVisible);
   const before = line.slice(0, rawStart);
-  const token = line.slice(rawStart, rawEnd);
+  const text = line.slice(rawStart, rawEnd);
   const after = line.slice(rawEnd);
-  return before + chalk.hex(hex).bold(token) + after;
+  return before + currentTheme.boldFg(token, text) + after;
 }
 
 /**

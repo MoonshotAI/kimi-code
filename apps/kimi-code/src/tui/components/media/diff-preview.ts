@@ -7,7 +7,7 @@
 
 import chalk from 'chalk';
 
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 export type DiffLineKind = 'context' | 'add' | 'delete';
 
@@ -20,14 +20,15 @@ interface DiffStyles {
   meta: (s: string) => string;
 }
 
-function makeDiffStyles(colors: ColorPalette): DiffStyles {
+function makeDiffStyles(): DiffStyles {
+  const palette = currentTheme.palette;
   return {
-    add: (s) => chalk.hex(colors.diffAdded)(s),
-    del: (s) => chalk.hex(colors.diffRemoved)(s),
-    addBold: (s) => chalk.bold.hex(colors.diffAddedStrong)(s),
-    delBold: (s) => chalk.bold.hex(colors.diffRemovedStrong)(s),
-    gutter: (s) => chalk.hex(colors.diffGutter)(s),
-    meta: (s) => chalk.hex(colors.diffMeta)(s),
+    add: (s) => chalk.hex(palette.diffAdded)(s),
+    del: (s) => chalk.hex(palette.diffRemoved)(s),
+    addBold: (s) => chalk.bold.hex(palette.diffAddedStrong)(s),
+    delBold: (s) => chalk.bold.hex(palette.diffRemovedStrong)(s),
+    gutter: (s) => chalk.hex(palette.diffGutter)(s),
+    meta: (s) => chalk.hex(palette.diffMeta)(s),
   };
 }
 
@@ -108,13 +109,12 @@ export function renderDiffLines(
   oldText: string,
   newText: string,
   path: string,
-  colors: ColorPalette,
   isIncomplete: boolean = false,
   oldStart?: number,
   newStart?: number,
   maxLines?: number,
 ): string[] {
-  const s = makeDiffStyles(colors);
+  const s = makeDiffStyles();
   const diffLines = computeDiffLines(oldText, newText, oldStart ?? 1, newStart ?? 1, isIncomplete);
   const changedLines = diffLines.filter((l) => l.kind !== 'context');
   const added = changedLines.filter((l) => l.kind === 'add').length;
@@ -234,10 +234,9 @@ export function renderDiffLinesClustered(
   oldText: string,
   newText: string,
   path: string,
-  colors: ColorPalette,
   opts: ClusteredDiffOptions = {},
 ): string[] {
-  const s = makeDiffStyles(colors);
+  const s = makeDiffStyles();
   const contextLines = opts.contextLines ?? 3;
   const maxLines = opts.maxLines;
   const diffLines = computeDiffLines(oldText, newText, 1, 1, opts.isIncomplete ?? false);

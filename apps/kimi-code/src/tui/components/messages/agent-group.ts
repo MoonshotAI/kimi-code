@@ -17,10 +17,9 @@
 
 import type { TUI } from '@earendil-works/pi-tui';
 import { Container, Spacer, Text } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 import type { ToolCallComponent, ToolCallSubagentSnapshot } from './tool-call';
 
@@ -37,11 +36,9 @@ export class AgentGroupComponent extends Container {
   private readonly bodyContainer: Container;
   private throttleTimer: ReturnType<typeof setTimeout> | null = null;
   private lastFlushPhases = new Map<string, ToolCallSubagentSnapshot['phase']>();
+  private _invalidating = false;
 
-  constructor(
-    private readonly colors: ColorPalette,
-    private readonly ui: TUI | undefined,
-  ) {
+  constructor(private readonly ui: TUI | undefined) {
     super();
     this.addChild(new Spacer(1));
     this.headerText = new Text('', 0, 0);
@@ -136,15 +133,14 @@ export class AgentGroupComponent extends Container {
   }
 
   private buildHeader(snapshots: readonly ToolCallSubagentSnapshot[]): string {
-    const colors = this.colors;
     const total = snapshots.length;
     const done = snapshots.filter((s) => s.phase === 'done').length;
     const failed = snapshots.filter((s) => s.phase === 'failed').length;
     const finished = done + failed;
     const allDone = finished === total;
     const bullet = allDone
-      ? chalk.hex(colors.success)(STATUS_BULLET)
-      : chalk.hex(colors.roleAssistant)(STATUS_BULLET);
+      ? currentTheme.fg('success', STATUS_BULLET)
+      : currentTheme.fg('roleAssistant', STATUS_BULLET);
 
     if (allDone) {
       const types = new Set(snapshots.map((s) => s.agentName).filter((n) => n !== undefined));
@@ -155,7 +151,7 @@ export class AgentGroupComponent extends Container {
       const totalTools = snapshots.reduce((acc, s) => acc + s.toolCount, 0);
       const totalTokens = snapshots.reduce((acc, s) => acc + s.tokens, 0);
       const tail = formatHeaderTail(totalTools, totalTokens);
-      return `${bullet}${chalk.hex(colors.primary).bold(headerLabel)}${tail}`;
+      return `${bullet}${currentTheme.boldFg('primary', headerLabel)}${tail}`;
     }
 
     let headerText = `Running ${String(total)} agents`;
@@ -168,19 +164,18 @@ export class AgentGroupComponent extends Container {
       if (running > 0) parts.push(`${String(running)} running`);
       headerText = `Running ${String(total)} agents (${parts.join(', ')})`;
     }
-    return `${bullet}${chalk.hex(colors.primary).bold(headerText)}`;
+    return `${bullet}${currentTheme.boldFg('primary', headerText)}`;
   }
 
   private appendLines(snap: ToolCallSubagentSnapshot, isLast: boolean): void {
-    const colors = this.colors;
-    const dim = chalk.dim;
+    const dim = (text: string) => currentTheme.dim(text);
 
     // First-level branch line.
     const branch1 = isLast ? '└─' : '├─';
     const agentType = snap.agentName ?? 'agent';
     const desc = snap.toolCallDescription || '(no description)';
-    const tail = formatLineTail(snap, colors);
-    const namePart = chalk.hex(colors.primary)(agentType);
+    const tail = formatLineTail(snap);
+    const namePart = currentTheme.fg('primary', agentType);
     const descPart = dim(`· ${desc}`);
     const stats = formatStats(snap);
     const line1 = `  ${branch1} ${namePart} ${descPart}${stats}${tail}`;
@@ -191,7 +186,7 @@ export class AgentGroupComponent extends Container {
     if (snap.phase === 'failed') {
       // Show one error line; error messages can be long.
       const errLine = (snap.errorText ?? 'Failed').split('\n').at(0) ?? 'Failed';
-      const errStr = chalk.hex(colors.error)(`Error: ${errLine}`);
+      const errStr = currentTheme.fg('error', `Error: ${errLine}`);
       this.bodyContainer.addChild(new Text(`  ${branch2}    ${errStr}`, 0, 0));
       return;
     }
@@ -205,6 +200,16 @@ export class AgentGroupComponent extends Container {
   }
 
   /** Releases throttle timers so destroyed components cannot refresh later. */
+  override invalidate(): void {
+    if (this._invalidating) {
+      super.invalidate();
+      return;
+    }
+    this._invalidating = true;
+    this.flushRender();
+    this._invalidating = false;
+  }
+
   dispose(): void {
     if (this.throttleTimer !== null) {
       clearTimeout(this.throttleTimer);
@@ -217,27 +222,28 @@ export class AgentGroupComponent extends Container {
 }
 
 function formatStats(snap: ToolCallSubagentSnapshot): string {
-  const dim = chalk.dim;
+  const dim = (text: string) => currentTheme.dim(text);
   const tools = ` · ${String(snap.toolCount)} tool${snap.toolCount === 1 ? '' : 's'}`;
   const tokens = snap.tokens > 0 ? ` · ${formatTokens(snap.tokens)}` : '';
   return dim(`${tools}${tokens}`);
 }
 
-function formatLineTail(snap: ToolCallSubagentSnapshot, colors: ColorPalette): string {
+function formatLineTail(snap: ToolCallSubagentSnapshot): string {
+  const dim = (text: string) => currentTheme.dim(text);
   if (snap.phase === 'done') {
-    return chalk.dim(' · ') + chalk.hex(colors.success)('✓ Completed');
+    return dim(' · ') + currentTheme.fg('success', '✓ Completed');
   }
   if (snap.phase === 'failed') {
-    return chalk.dim(' · ') + chalk.hex(colors.error)('✗ Failed');
+    return dim(' · ') + currentTheme.fg('error', '✗ Failed');
   }
   if (snap.phase === 'backgrounded') {
-    return chalk.dim(' · ◐ backgrounded');
+    return dim(' · ◐ backgrounded');
   }
   return '';
 }
 
 function formatHeaderTail(toolCount: number, tokens: number): string {
-  const dim = chalk.dim;
+  const dim = (text: string) => currentTheme.dim(text);
   const parts: string[] = [];
   if (toolCount > 0) parts.push(`${String(toolCount)} tool${toolCount === 1 ? '' : 's'}`);
   if (tokens > 0) parts.push(formatTokens(tokens));

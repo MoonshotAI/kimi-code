@@ -7,7 +7,6 @@
 
 import type { Component, TUI } from '@earendil-works/pi-tui';
 import { Text } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
 import {
   BRAILLE_SPINNER_FRAMES,
@@ -16,13 +15,12 @@ import {
   THINKING_PREVIEW_LINES,
 } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 export type ThinkingRenderMode = 'live' | 'finalized';
 
 export class ThinkingComponent implements Component {
   private text: string;
-  private color: string;
   private showMarker: boolean;
   private mode: ThinkingRenderMode;
   private expanded = false;
@@ -37,13 +35,11 @@ export class ThinkingComponent implements Component {
 
   constructor(
     text: string,
-    colors: ColorPalette,
     showMarker: boolean = true,
     mode: ThinkingRenderMode = 'finalized',
     ui?: TUI,
   ) {
     this.text = text;
-    this.color = colors.roleThinking;
     this.showMarker = showMarker;
     this.mode = mode;
     this.ui = ui;
@@ -53,7 +49,9 @@ export class ThinkingComponent implements Component {
     }
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.textComponent.setText(this.styled(this.text));
+  }
 
   setText(text: string): void {
     if (this.text === text) return;
@@ -62,7 +60,7 @@ export class ThinkingComponent implements Component {
   }
 
   private styled(text: string): string {
-    return chalk.hex(this.color).italic(text);
+    return currentTheme.italicFg('roleThinking', text);
   }
 
   finalize(): void {
@@ -88,19 +86,20 @@ export class ThinkingComponent implements Component {
         contentLines.length > THINKING_PREVIEW_LINES
           ? contentLines.slice(contentLines.length - THINKING_PREVIEW_LINES)
           : contentLines;
-      const spinner = chalk.hex(this.color)(
+      const spinner = currentTheme.fg(
+        'roleThinking',
         `${BRAILLE_SPINNER_FRAMES[this.spinnerFrame] ?? BRAILLE_SPINNER_FRAMES[0]} `,
       );
       return [
         '',
-        spinner + chalk.hex(this.color)('thinking...'),
+        spinner + currentTheme.fg('roleThinking', 'thinking...'),
         ...visibleLines.map((line) => MESSAGE_INDENT + line),
       ];
     }
 
     const rendered: string[] = [''];
     for (let i = 0; i < contentLines.length; i++) {
-      const p = i === 0 && this.showMarker ? chalk.hex(this.color)(STATUS_BULLET) : MESSAGE_INDENT;
+      const p = i === 0 && this.showMarker ? currentTheme.fg('roleThinking', STATUS_BULLET) : MESSAGE_INDENT;
       rendered.push(p + contentLines[i]);
     }
 
@@ -112,7 +111,7 @@ export class ThinkingComponent implements Component {
     const truncated = rendered.slice(0, 1 + THINKING_PREVIEW_LINES);
     const remaining = contentLines.length - THINKING_PREVIEW_LINES;
     truncated.push(
-      MESSAGE_INDENT + chalk.dim(`... (${String(remaining)} more lines, ctrl+o to expand)`),
+      MESSAGE_INDENT + currentTheme.dim(`... (${String(remaining)} more lines, ctrl+o to expand)`),
     );
     return truncated;
   }

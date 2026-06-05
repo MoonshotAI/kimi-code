@@ -36,7 +36,6 @@ describe('GoalQueueManagerComponent', () => {
   it('renders the upcoming goals and the management hint', () => {
     const manager = new GoalQueueManagerComponent({
       goals: [goal('g1', 'Ship queued goal')],
-      colors: darkColors,
       onAction: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -56,7 +55,6 @@ describe('GoalQueueManagerComponent', () => {
     });
     const manager = new GoalQueueManagerComponent({
       goals: [first, second],
-      colors: darkColors,
       onAction,
       onCancel: vi.fn(),
     });
@@ -82,7 +80,6 @@ describe('GoalQueueManagerComponent', () => {
     });
     const manager = new GoalQueueManagerComponent({
       goals: [first, second],
-      colors: darkColors,
       onAction,
       onCancel: vi.fn(),
     });
@@ -109,7 +106,6 @@ describe('GoalQueueManagerComponent', () => {
     );
     const manager = new GoalQueueManagerComponent({
       goals: [first, second],
-      colors: darkColors,
       onAction,
       onCancel: vi.fn(),
     });
@@ -127,7 +123,6 @@ describe('GoalQueueManagerComponent', () => {
     const onAction = vi.fn();
     const manager = new GoalQueueManagerComponent({
       goals: [goal('g1', 'First queued goal')],
-      colors: darkColors,
       onAction,
       onCancel: vi.fn(),
     });
@@ -141,7 +136,6 @@ describe('GoalQueueManagerComponent', () => {
     const onCancel = vi.fn();
     const manager = new GoalQueueManagerComponent({
       goals: [],
-      colors: darkColors,
       onAction: vi.fn(),
       onCancel,
     });
@@ -154,7 +148,6 @@ describe('GoalQueueManagerComponent', () => {
   it('never renders a line wider than the terminal', () => {
     const manager = new GoalQueueManagerComponent({
       goals: [goal('g1', 'A very long queued goal objective that should be truncated cleanly')],
-      colors: darkColors,
       onAction: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -172,7 +165,6 @@ describe('GoalQueueEditDialogComponent', () => {
     const onDone = vi.fn();
     const dialog = new GoalQueueEditDialogComponent({
       goal: goal('g1', 'Ship queued goal'),
-      colors: darkColors,
       onDone,
     });
 
@@ -190,7 +182,6 @@ describe('GoalQueueEditDialogComponent', () => {
     const onDone = vi.fn();
     const dialog = new GoalQueueEditDialogComponent({
       goal: goal('g1', 'Ship queued goal'),
-      colors: darkColors,
       onDone,
     });
 
@@ -204,7 +195,6 @@ describe('GoalQueueEditDialogComponent', () => {
     const onDone = vi.fn();
     const dialog = new GoalQueueEditDialogComponent({
       goal: goal('g1', ''),
-      colors: darkColors,
       onDone,
     });
 

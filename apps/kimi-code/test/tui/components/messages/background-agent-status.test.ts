@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import { BackgroundAgentStatusComponent } from '#/tui/components/messages/background-agent-status';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
-import { darkColors } from '#/tui/theme/colors';
 
 function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -10,30 +9,21 @@ function strip(text: string): string {
 
 describe('BackgroundAgentStatusComponent', () => {
   it('renders started/completed with the shared bullet and failed with a red x marker', () => {
-    const started = new BackgroundAgentStatusComponent(
-      {
-        phase: 'started',
-        headline: 'explore agent started in background',
-        detail: 'Explore project structure',
-      },
-      darkColors,
-    );
-    const completed = new BackgroundAgentStatusComponent(
-      {
-        phase: 'completed',
-        headline: 'explore agent completed in background',
-        detail: 'Explore project structure',
-      },
-      darkColors,
-    );
-    const failed = new BackgroundAgentStatusComponent(
-      {
-        phase: 'failed',
-        headline: 'explore agent failed in background',
-        detail: 'Explore project structure · boom',
-      },
-      darkColors,
-    );
+    const started = new BackgroundAgentStatusComponent({
+      phase: 'started',
+      headline: 'explore agent started in background',
+      detail: 'Explore project structure',
+    });
+    const completed = new BackgroundAgentStatusComponent({
+      phase: 'completed',
+      headline: 'explore agent completed in background',
+      detail: 'Explore project structure',
+    });
+    const failed = new BackgroundAgentStatusComponent({
+      phase: 'failed',
+      headline: 'explore agent failed in background',
+      detail: 'Explore project structure · boom',
+    });
 
     const startedLines = started.render(120).map((line) => strip(line).trimEnd());
     const completedLines = completed.render(120).map((line) => strip(line).trimEnd());

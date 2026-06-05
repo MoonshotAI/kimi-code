@@ -55,7 +55,7 @@ describe('createTUIState', () => {
     expect(state.editor).toBeDefined();
     expect(state.footer).toBeDefined();
     expect(state.todoPanel).toBeDefined();
-    expect(state.theme.colors).toBeDefined();
+    expect(state.theme.palette).toBeDefined();
     expect(state.theme.markdownTheme).toBeDefined();
 
     // App state is cloned from initialAppState, not reused by reference.

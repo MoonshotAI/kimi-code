@@ -8,6 +8,7 @@ import {
   handleReloadCommand,
   handleReloadTuiCommand,
 } from '#/tui/commands/reload';
+import { currentTheme } from '#/tui/theme';
 import type { SlashCommandHost } from '#/tui/commands';
 import {
   isExperimentalFlagEnabled,
@@ -60,7 +61,7 @@ auto_install = false
     });
     expect(host.showStatus).toHaveBeenCalledWith(
       'TUI config reloaded.',
-      host.state.theme.colors.success,
+      'success',
     );
   });
 
@@ -110,8 +111,7 @@ function makeHost({
       availableProviders: {},
     },
     theme: {
-      resolvedTheme: 'dark',
-      colors: {
+      palette: {
         success: '#00ff00',
       },
     },

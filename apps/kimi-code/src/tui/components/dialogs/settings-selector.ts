@@ -1,7 +1,5 @@
 import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 
-import type { ColorPalette } from '#/tui/theme/colors';
-
 export type SettingsSelection =
   | 'model'
   | 'theme'
@@ -62,7 +60,6 @@ function isSettingsSelection(value: string): value is SettingsSelection {
 }
 
 export interface SettingsSelectorOptions {
-  readonly colors: ColorPalette;
   readonly onSelect: (value: SettingsSelection) => void;
   readonly onCancel: () => void;
 }
@@ -72,7 +69,6 @@ export class SettingsSelectorComponent extends ChoicePickerComponent {
     super({
       title: 'Settings',
       options: [...SETTINGS_OPTIONS],
-      colors: opts.colors,
       onSelect: (value) => {
         if (isSettingsSelection(value)) opts.onSelect(value);
       },

@@ -17,6 +17,7 @@ import {
   withFeedbackVersionPrefix,
 } from '../constant/feedback';
 import { isManagedUsageProvider } from '../constant/kimi-tui';
+import { currentTheme } from '#/tui/theme';
 import { formatErrorMessage } from '../utils/event-payload';
 import { openUrl } from '#/utils/open-url';
 import { promptFeedbackInput } from './prompts';
@@ -88,7 +89,6 @@ export async function showUsage(host: SlashCommandHost): Promise<void> {
   const sessionUsage = await loadSessionUsageReport(host);
   const managedUsage = await loadManagedUsageReport(host);
   const lines = buildUsageReportLines({
-    colors: host.state.theme.colors,
     sessionUsage: sessionUsage.usage,
     sessionUsageError: sessionUsage.error,
     contextUsage: host.state.appState.contextUsage,
@@ -97,7 +97,7 @@ export async function showUsage(host: SlashCommandHost): Promise<void> {
     managedUsage: managedUsage?.usage,
     managedUsageError: managedUsage?.error,
   });
-  const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary);
+  const panel = new UsagePanelComponent(lines, 'primary');
   host.state.transcriptContainer.addChild(panel);
   host.state.ui.requestRender();
 }
@@ -109,7 +109,6 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
   ]);
   const appState = host.state.appState;
   const lines = buildStatusReportLines({
-    colors: host.state.theme.colors,
     version: appState.version,
     model: appState.model,
     workDir: appState.workDir,
@@ -127,7 +126,7 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
     managedUsage: managedUsage?.usage,
     managedUsageError: managedUsage?.error,
   });
-  const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary, ' Status ');
+  const panel = new UsagePanelComponent(lines, 'primary', ' Status ');
   host.state.transcriptContainer.addChild(panel);
   host.state.ui.requestRender();
 }
@@ -142,11 +141,10 @@ export async function showMcpServers(host: SlashCommandHost): Promise<void> {
   }
 
   const lines = buildMcpStatusReportLines({
-    colors: host.state.theme.colors,
     servers,
   });
   const title = servers.length > 0 ? ` MCP (${servers.length}) ` : ' MCP ';
-  const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary, title);
+  const panel = new UsagePanelComponent(lines, 'primary', title);
   host.state.transcriptContainer.addChild(panel);
   host.state.ui.requestRender();
 }

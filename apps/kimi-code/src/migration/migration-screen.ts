@@ -15,6 +15,7 @@ import { Container, matchesKey, Key, truncateToWidth, type Focusable } from '@ea
 import chalk from 'chalk';
 
 import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 import {
   resolveMigrationScope,
   runMigration as realRunMigration,
@@ -46,7 +47,7 @@ export interface MigrationScreenOptions {
   readonly plan: MigrationPlan;
   readonly sourceHome: string;
   readonly targetHome: string;
-  readonly colors: ColorPalette;
+  readonly colors?: ColorPalette;
   /** Called once the screen is finished; the host then restores the editor. */
   readonly onComplete: (result: MigrationScreenResult) => void;
   /** Triggers a re-render; the host wires this to `ui.requestRender()`. */
@@ -276,7 +277,7 @@ export class MigrationScreenComponent extends Container implements Focusable {
   }
 
   private renderResult(width: number): string[] {
-    const { colors } = this.opts;
+    const colors = this.opts.colors ?? currentTheme.palette;
     const lines: string[] = [chalk.hex(colors.primary)('─'.repeat(width))];
     if (this.migrationFailed) {
       lines.push(chalk.hex(colors.error).bold(' Migration failed'));
@@ -422,7 +423,7 @@ export class MigrationScreenComponent extends Container implements Focusable {
   }
 
   private renderProgress(width: number): string[] {
-    const { colors } = this.opts;
+    const colors = this.opts.colors ?? currentTheme.palette;
     const spinner = SPINNER_FRAMES[this.spinnerFrame] ?? SPINNER_FRAMES[0];
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),
@@ -452,7 +453,7 @@ export class MigrationScreenComponent extends Container implements Focusable {
   }
 
   private renderAsk(width: number): string[] {
-    const { colors } = this.opts;
+    const colors = this.opts.colors ?? currentTheme.palette;
     const step = this.currentStep();
     const lines: string[] = [
       chalk.hex(colors.primary)('─'.repeat(width)),

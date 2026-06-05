@@ -43,7 +43,7 @@ function goal(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
 }
 
 function lines(g: GoalSnapshot): string {
-  return strip(buildGoalReportLines({ colors: darkColors, goal: g }));
+  return strip(buildGoalReportLines(g));
 }
 
 describe('buildGoalReportLines', () => {
@@ -100,14 +100,14 @@ describe('buildGoalReportLines', () => {
 
 describe('GoalSetMessageComponent', () => {
   it('renders a marker-style lifecycle line without repeating the objective', () => {
-    const rendered = new GoalSetMessageComponent(darkColors).render(60);
+    const rendered = new GoalSetMessageComponent().render(60);
     // Leading blank line separates it from the line above.
     expect(rendered[0]).toBe('');
     expect(strip(rendered)).toBe('\n● Goal set');
   });
 
   it('renders the marker and label in the primary accent', () => {
-    const rendered = new GoalSetMessageComponent(darkColors).render(60);
+    const rendered = new GoalSetMessageComponent().render(60);
 
     expect(rendered[1]).toBe(
       chalk.hex(darkColors.primary).bold(STATUS_BULLET) +
@@ -118,7 +118,7 @@ describe('GoalSetMessageComponent', () => {
 
 describe('GoalStatusMessageComponent', () => {
   it('adds a blank line before the status box', () => {
-    const rendered = new GoalStatusMessageComponent(goal(), darkColors).render(80);
+    const rendered = new GoalStatusMessageComponent(goal()).render(80);
 
     expect(rendered[0]).toBe('');
     expect(strip([rendered[1]!])).toContain('╭ Goal · active ');
@@ -128,7 +128,7 @@ describe('GoalStatusMessageComponent', () => {
 describe('GoalCompletionMessageComponent', () => {
   it('renders the completion headline in green and keeps the stats line indented', () => {
     const message = '✓ Goal complete.\nWorked 1 turn over 2m28s, using 766.9k tokens.';
-    const rendered = new GoalCompletionMessageComponent(message, darkColors).render(80);
+    const rendered = new GoalCompletionMessageComponent(message).render(80);
 
     expect(rendered[0]).toBe('');
     expect(rendered[1]?.trimEnd()).toBe(

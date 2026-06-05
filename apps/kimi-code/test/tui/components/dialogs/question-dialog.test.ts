@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { QuestionDialogComponent } from '#/tui/components/dialogs/question-dialog';
 import type { PendingQuestion } from '#/tui/reverse-rpc/types';
-import { darkColors } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -50,7 +50,6 @@ function makeDialog(
       collected.push(response.answers);
       methods.push(response.method);
     },
-    darkColors,
     6,
     onToggleToolOutput,
     onTogglePlanExpand,
@@ -88,9 +87,9 @@ describe('QuestionDialogComponent', () => {
     expect(review).not.toContain('? Ready to submit your answers?');
     expect(review).not.toContain('Please answer all questions before submitting.');
     expect(reviewRaw).toContain(
-      chalk.hex(darkColors.text).bold(' Review your answer before submit'),
+      currentTheme.boldFg('text', ' Review your answer before submit'),
     );
-    expect(reviewRaw).toContain(chalk.hex(darkColors.text)(' Ready to submit your answers?'));
+    expect(reviewRaw).toContain(currentTheme.fg('text', ' Ready to submit your answers?'));
     expect(review).toContain('B1');
     expect(review).toContain('A2');
 
@@ -295,8 +294,8 @@ describe('QuestionDialogComponent', () => {
     dialog.handleInput('\u001B[D');
 
     const out = dialog.render(80).join('\n');
-    expect(out).toContain(chalk.hex(darkColors.success).bold('  → [1] A'));
-    expect(out).not.toContain(chalk.hex(darkColors.primary)('  → [1] A'));
+    expect(out).toContain(currentTheme.boldFg('success', '  → [1] A'));
+    expect(out).not.toContain(currentTheme.fg('primary', '  → [1] A'));
   });
 
   it('stretches the border to the full available width', () => {
@@ -356,7 +355,9 @@ describe('QuestionDialogComponent', () => {
     const { dialog } = makeDialog(pending);
 
     const out = dialog.render(80).join('\n');
-    expect(out).toContain(chalk.bgHex(darkColors.primary).hex(darkColors.text).bold(' First '));
+    expect(out).toContain(
+      chalk.bgHex(currentTheme.color('primary')).hex(currentTheme.color('text')).bold(' First '),
+    );
     expect(out).not.toContain('(●) First');
   });
 

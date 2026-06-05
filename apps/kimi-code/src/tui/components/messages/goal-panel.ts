@@ -20,7 +20,8 @@ import chalk from 'chalk';
 
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
+import type { ColorToken } from '#/tui/theme';
 import { formatTokenCount } from '#/utils/usage/usage-format';
 import { UsagePanelComponent } from './usage-panel';
 
@@ -35,22 +36,17 @@ const LABEL_WIDTH = 11;
  * change in the transcript.
  */
 export class GoalSetMessageComponent implements Component {
-  constructor(private readonly colors: ColorPalette) {}
-
   invalidate(): void {}
 
   render(_width: number): string[] {
-    const marker = chalk.hex(this.colors.primary).bold(STATUS_BULLET);
-    const label = chalk.hex(this.colors.primary).bold('Goal set');
+    const marker = currentTheme.boldFg('primary', STATUS_BULLET);
+    const label = currentTheme.boldFg('primary', 'Goal set');
     return ['', marker + label];
   }
 }
 
 export class GoalCompletionMessageComponent implements Component {
-  constructor(
-    private readonly message: string,
-    private readonly colors: ColorPalette,
-  ) {}
+  constructor(private readonly message: string) {}
 
   invalidate(): void {}
 
@@ -58,12 +54,12 @@ export class GoalCompletionMessageComponent implements Component {
     const [headline = '', ...details] = this.message.trim().split(/\r?\n/);
     if (headline.length === 0) return [];
 
-    const bullet = chalk.hex(this.colors.success).bold(STATUS_BULLET);
+    const bullet = currentTheme.boldFg('success', STATUS_BULLET);
     const bulletWidth = visibleWidth(STATUS_BULLET);
     const contentWidth = Math.max(1, width - bulletWidth);
     const lines: string[] = [''];
 
-    const headlineText = new Text(chalk.hex(this.colors.success).bold(headline), 0, 0);
+    const headlineText = new Text(currentTheme.boldFg('success', headline), 0, 0);
     const headlineLines = headlineText.render(contentWidth);
     for (let i = 0; i < headlineLines.length; i += 1) {
       lines.push((i === 0 ? bullet : MESSAGE_INDENT) + headlineLines[i]);
@@ -71,7 +67,7 @@ export class GoalCompletionMessageComponent implements Component {
 
     const detailText = details.join('\n').trim();
     if (detailText.length > 0) {
-      const detailLines = new Text(chalk.hex(this.colors.textDim)(detailText), 0, 0).render(
+      const detailLines = new Text(currentTheme.fg('textDim', detailText), 0, 0).render(
         contentWidth,
       );
       for (const line of detailLines) {
@@ -84,23 +80,15 @@ export class GoalCompletionMessageComponent implements Component {
 }
 
 export class GoalStatusMessageComponent implements Component {
-  constructor(
-    private readonly goal: GoalSnapshot,
-    private readonly colors: ColorPalette,
-  ) {}
+  constructor(private readonly goal: GoalSnapshot) {}
 
   invalidate(): void {}
 
   render(width: number): string[] {
-    const lines = buildGoalReportLines({ colors: this.colors, goal: this.goal });
-    const panel = new UsagePanelComponent(lines, this.colors.primary, goalPanelTitle(this.goal));
+    const lines = buildGoalReportLines(this.goal);
+    const panel = new UsagePanelComponent(lines, 'primary', goalPanelTitle(this.goal));
     return ['', ...panel.render(width)];
   }
-}
-
-export interface GoalReportOptions {
-  readonly colors: ColorPalette;
-  readonly goal: GoalSnapshot;
 }
 
 /** Box title, e.g. ` Goal · active `. */
@@ -108,11 +96,11 @@ export function goalPanelTitle(goal: GoalSnapshot): string {
   return ` Goal · ${goal.status} `;
 }
 
-export function buildGoalReportLines(options: GoalReportOptions): string[] {
-  const { colors, goal } = options;
-  const value = chalk.hex(colors.text);
-  const muted = chalk.hex(colors.textDim);
-  const bar = chalk.hex(statusHex(goal.status, colors));
+export function buildGoalReportLines(goal: GoalSnapshot): string[] {
+  const statusColor = statusToken(goal.status);
+  const bar = (s: string) => currentTheme.fg(statusColor, s);
+  const value = (s: string) => currentTheme.fg('text', s);
+  const muted = (s: string) => currentTheme.fg('textDim', s);
   // `complete` is the terminal outcome (the completion card); everything else
   // (active / paused / blocked) is a persisted, resumable goal that still shows
   // its stop condition. A reason is worth surfacing for stopped / complete states.
@@ -139,7 +127,7 @@ export function buildGoalReportLines(options: GoalReportOptions): string[] {
     lines.push(
       row(
         'Status',
-        chalk.hex(statusHex(goal.status, colors))(goal.status) +
+        currentTheme.fg(statusColor, goal.status) +
           (reason !== undefined ? muted(` — ${reason}`) : ''),
       ),
     );
@@ -174,16 +162,16 @@ function formatStopRow(goal: GoalSnapshot): string | null {
   return parts.length > 0 ? parts.join(', ') : null;
 }
 
-function statusHex(status: GoalStatus, colors: ColorPalette): string {
+function statusToken(status: GoalStatus): ColorToken {
   switch (status) {
     case 'active':
-      return colors.primary;
+      return 'primary';
     case 'complete':
-      return colors.success;
+      return 'success';
     case 'blocked':
-      return colors.warning;
+      return 'warning';
     default: // paused
-      return colors.textDim;
+      return 'textDim';
   }
 }
 

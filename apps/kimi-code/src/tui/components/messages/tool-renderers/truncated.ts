@@ -1,8 +1,7 @@
 import type { Component } from '@earendil-works/pi-tui';
 import { Text } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 import type { ResultRenderer } from './types';
 import { PREVIEW_LINES } from './types';
@@ -24,27 +23,37 @@ export function trimTrailingEmptyLines(lines: string[]): string[] {
  * JSON blobs) that would otherwise wrap to dozens of visual rows.
  */
 export class TruncatedOutputComponent implements Component {
-  private readonly textComponent: Text;
+  private textComponent: Text;
   private readonly expanded: boolean;
   private readonly maxLines: number;
+  private readonly output: string;
+  private readonly isError: boolean | undefined;
 
   constructor(
     output: string,
     options: {
       expanded: boolean;
       isError: boolean | undefined;
-      colors: ColorPalette;
       maxLines?: number;
     },
   ) {
     this.expanded = options.expanded;
     this.maxLines = options.maxLines ?? PREVIEW_LINES;
-    const tint = options.isError ? chalk.hex(options.colors.error) : chalk.dim;
+    this.output = output;
+    this.isError = options.isError;
     const cleaned = trimTrailingEmptyLines(output.split('\n')).join('\n');
-    this.textComponent = new Text(tint(cleaned), 2, 0);
+    this.textComponent = new Text(
+      options.isError ? currentTheme.fg('error', cleaned) : currentTheme.dim(cleaned),
+      2,
+      0,
+    );
   }
 
   invalidate(): void {
+    const cleaned = trimTrailingEmptyLines(this.output.split('\n')).join('\n');
+    this.textComponent.setText(
+      this.isError ? currentTheme.fg('error', cleaned) : currentTheme.dim(cleaned),
+    );
     this.textComponent.invalidate();
   }
 
@@ -59,7 +68,7 @@ export class TruncatedOutputComponent implements Component {
     const remaining = contentLines.length - this.maxLines;
     return [
       ...shown,
-      chalk.dim(`... (${String(remaining)} more lines, ctrl+o to expand)`),
+      currentTheme.dim(`... (${String(remaining)} more lines, ctrl+o to expand)`),
     ];
   }
 }
@@ -70,7 +79,6 @@ export const renderTruncated: ResultRenderer = (_toolCall, result, ctx) => {
     new TruncatedOutputComponent(result.output, {
       expanded: ctx.expanded,
       isError: result.is_error ?? false,
-      colors: ctx.colors,
     }),
   ];
 };

@@ -4,35 +4,31 @@
 
 import type { Component } from '@earendil-works/pi-tui';
 import { Spacer, Text, visibleWidth } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
 import { ImageThumbnail } from '#/tui/components/media/image-thumbnail';
 import { USER_MESSAGE_BULLET } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
 
 export class UserMessageComponent implements Component {
-  private color: string;
-  private textComponent: Text;
+  private text: string;
   private spacerComponent: Spacer;
   private imageThumbnails: ImageThumbnail[];
 
-  constructor(text: string, colors: ColorPalette, images?: ImageAttachment[]) {
-    this.color = colors.roleUser;
-    this.textComponent = new Text(chalk.hex(colors.roleUser).bold(text), 0, 0);
+  constructor(text: string, images?: ImageAttachment[]) {
+    this.text = text;
     this.spacerComponent = new Spacer(1);
-    this.imageThumbnails = images?.map((img) => new ImageThumbnail(img, colors)) ?? [];
+    this.imageThumbnails = images?.map((img) => new ImageThumbnail(img)) ?? [];
   }
 
   invalidate(): void {
-    this.textComponent.invalidate();
     for (const img of this.imageThumbnails) {
       img.invalidate?.();
     }
   }
 
   render(width: number): string[] {
-    const bullet = chalk.hex(this.color).bold(USER_MESSAGE_BULLET);
+    const bullet = currentTheme.boldFg('roleUser', USER_MESSAGE_BULLET);
     const bulletWidth = visibleWidth(bullet);
     const contentWidth = Math.max(1, width - bulletWidth);
 
@@ -43,8 +39,9 @@ export class UserMessageComponent implements Component {
       lines.push(line);
     }
 
-    // Text
-    const textLines = this.textComponent.render(contentWidth);
+    // Text — re-dye on every render so theme switches are reflected
+    const coloredText = currentTheme.boldFg('roleUser', this.text);
+    const textLines = new Text(coloredText, 0, 0).render(contentWidth);
     for (let i = 0; i < textLines.length; i++) {
       const prefix = i === 0 ? bullet : ' '.repeat(bulletWidth);
       lines.push(prefix + textLines[i]);

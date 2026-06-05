@@ -61,6 +61,8 @@ import {
   selectMcpStartupStatusRows,
 } from '../utils/mcp-server-status';
 import { openUrl } from '#/utils/open-url';
+import { currentTheme } from '#/tui/theme';
+import type { ColorToken } from '#/tui/theme';
 import { errorReportHintLine } from '../constant/feedback';
 import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
 import { nextTranscriptId } from '../utils/transcript-id';
@@ -91,7 +93,7 @@ export interface SessionEventHost {
   patchLivePane(patch: Partial<LivePaneState>): void;
   resetLivePane(): void;
   showError(msg: string): void;
-  showStatus(msg: string, color?: string): void;
+  showStatus(msg: string, color?: ColorToken): void;
   showNotice(title: string, detail?: string): void;
   track(event: string, props?: Record<string, unknown>): void;
   mountEditorReplacement(panel: Component & Focusable): void;
@@ -436,7 +438,7 @@ export class SessionEventHandler {
     const reason = event.reason;
     if (reason === 'error') return;
     if (reason === 'aborted' || reason === undefined || reason === '') {
-      this.host.showStatus('Interrupted by user', this.host.state.theme.colors.error);
+      this.host.showStatus('Interrupted by user', 'error');
       return;
     }
     this.host.showError(
@@ -611,7 +613,7 @@ export class SessionEventHandler {
     if (change.kind === 'lifecycle' && change.status === 'blocked') {
       void this.notifyQueuedGoalWaitingOnBlocked();
     }
-    const marker = buildGoalMarker(change, state.theme.colors, state.toolOutputExpanded);
+    const marker = buildGoalMarker(change, state.toolOutputExpanded);
     if (marker !== null) {
       state.transcriptContainer.addChild(marker);
       state.ui.requestRender();
@@ -738,7 +740,7 @@ export class SessionEventHandler {
   }
 
   private handleSessionWarning(event: WarningEvent): void {
-    this.host.showStatus(`Warning: ${event.message}`, this.host.state.theme.colors.warning);
+    this.host.showStatus(`Warning: ${event.message}`, 'warning');
   }
 
   private renderMcpServerStatus(server: McpServerStatusSnapshot): void {
@@ -750,29 +752,28 @@ export class SessionEventHandler {
     const summary = formatMcpStartupStatusSummary([...this.mcpServers.values()]);
     this.host.setAppState({ mcpServersSummary: summary || null });
 
-    const colors = state.theme.colors;
     switch (server.status) {
       case 'connected': {
         const toolStr = `${server.toolCount} tool${server.toolCount === 1 ? '' : 's'}`;
         const message = `MCP server "${server.name}" connected · ${toolStr} (${server.transport})`;
-        this.finalizeMcpServerStatusRow(server.name, message, colors.success);
+        this.finalizeMcpServerStatusRow(server.name, message, 'success');
         return;
       }
       case 'failed': {
         const message = `MCP server "${server.name}" failed${server.error !== undefined ? `: ${server.error}` : ''}`;
-        this.finalizeMcpServerStatusRow(server.name, message, colors.error);
+        this.finalizeMcpServerStatusRow(server.name, message, 'error');
         return;
       }
       case 'needs-auth': {
         const message = `MCP server "${server.name}" needs OAuth — run /mcp-config login ${server.name}`;
-        this.finalizeMcpServerStatusRow(server.name, message, colors.warning);
+        this.finalizeMcpServerStatusRow(server.name, message, 'warning');
         return;
       }
       case 'disabled':
         this.finalizeMcpServerStatusRow(
           server.name,
           `MCP server "${server.name}" disabled`,
-          colors.textMuted,
+          'textMuted',
         );
         return;
       case 'pending':
@@ -789,14 +790,14 @@ export class SessionEventHandler {
       existing.setLabel(label);
       return;
     }
-    const tint = (s: string): string => chalk.hex(state.theme.colors.textMuted)(s);
+    const tint = (s: string): string => currentTheme.fg('textMuted', s);
     const spinner = new MoonLoader(state.ui, 'braille', tint, label);
     state.transcriptContainer.addChild(spinner);
     this.mcpServerStatusSpinners.set(name, spinner);
     state.ui.requestRender();
   }
 
-  private finalizeMcpServerStatusRow(name: string, message: string, color: string): void {
+  private finalizeMcpServerStatusRow(name: string, message: string, color: ColorToken): void {
     const { state } = this.host;
     const spinner = this.mcpServerStatusSpinners.get(name);
     if (spinner === undefined) {
@@ -804,7 +805,7 @@ export class SessionEventHandler {
       return;
     }
     spinner.stop();
-    const status = new StatusMessageComponent(message, state.theme.colors, color);
+    const status = new StatusMessageComponent(message, color);
     const children = state.transcriptContainer.children;
     const idx = children.indexOf(spinner);
     if (idx >= 0) {

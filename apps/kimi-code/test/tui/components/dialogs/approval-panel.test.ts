@@ -7,11 +7,8 @@ import type {
   FileContentDisplayBlock,
   PendingApproval,
 } from '#/tui/reverse-rpc/types';
-import { getColorPalette } from '#/tui/theme/colors';
 
 import { captureProcessWrite } from '../../../helpers/process';
-
-const COLORS = getColorPalette('dark');
 
 function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -52,7 +49,6 @@ function makeDialog(): {
   const dialog = new ApprovalPanelComponent(
     makePending(),
     (response) => responses.push(response),
-    COLORS,
   );
   return { dialog, responses };
 }
@@ -84,7 +80,7 @@ describe('ApprovalPanelComponent', () => {
         choices: [{ label: 'Approve once', response: 'approved' }],
       },
     };
-    const dialog = new ApprovalPanelComponent(pending, () => {}, COLORS);
+    const dialog = new ApprovalPanelComponent(pending, () => {});
 
     const out = strip(dialog.render(80).join('\n'));
     expect(out).toContain('Dangerous: recursive delete');
@@ -184,7 +180,7 @@ describe('ApprovalPanelComponent', () => {
         ],
       },
     };
-    const dialog = new ApprovalPanelComponent(pending, () => {}, COLORS);
+    const dialog = new ApprovalPanelComponent(pending, () => {});
 
     const out = strip(dialog.render(80).join('\n'));
     expect(out).toContain('Ready to build with this plan?');
@@ -233,7 +229,6 @@ describe('ApprovalPanelComponent', () => {
     const dialog = new ApprovalPanelComponent(
       pending,
       (r) => responses.push(r),
-      COLORS,
       () => toolOutputToggles++,
       () => planToggles++,
       (block) => previewCalls.push(block),
@@ -278,7 +273,7 @@ describe('ApprovalPanelComponent', () => {
       },
     };
     let globalToggleCalls = 0;
-    const dialog = new ApprovalPanelComponent(pending, () => {}, COLORS, () => globalToggleCalls++);
+    const dialog = new ApprovalPanelComponent(pending, () => {}, () => globalToggleCalls++);
 
     dialog.handleInput('\u000F'); // Ctrl+O
 
@@ -308,7 +303,6 @@ describe('ApprovalPanelComponent', () => {
     const dialog = new ApprovalPanelComponent(
       pending,
       () => {},
-      COLORS,
       undefined,
       () => planToggles++,
       (block) => previewCalls.push(block),
@@ -343,7 +337,6 @@ describe('ApprovalPanelComponent', () => {
     const dialog = new ApprovalPanelComponent(
       pending,
       (r) => responses.push(r),
-      COLORS,
       undefined,
       undefined,
       (block) => previewCalls.push(block),
@@ -386,7 +379,6 @@ describe('ApprovalPanelComponent', () => {
       const dialog = new ApprovalPanelComponent(
         pending,
         () => {},
-        COLORS,
         undefined,
         undefined,
         (block) => previewCalls.push(block),
@@ -430,7 +422,6 @@ describe('ApprovalPanelComponent', () => {
     const dialog = new ApprovalPanelComponent(
       pending,
       (response) => responses.push(response),
-      COLORS,
     );
 
     dialog.handleInput('2');

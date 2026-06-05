@@ -7,15 +7,13 @@ import {
   visibleWidth,
   type Focusable,
 } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
-
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import type {
   GoalQueueMoveDirection,
   GoalQueueSnapshot,
   UpcomingGoal,
 } from '#/tui/goal-queue-store';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
@@ -35,7 +33,6 @@ export type GoalQueueManagerAction =
 export interface GoalQueueManagerOptions {
   readonly goals: readonly UpcomingGoal[];
   readonly selectedGoalId?: string;
-  readonly colors: ColorPalette;
   readonly pageSize?: number;
   readonly onAction: (
     action: GoalQueueManagerAction,
@@ -49,7 +46,6 @@ export type GoalQueueEditResult =
 
 export interface GoalQueueEditDialogOptions {
   readonly goal: UpcomingGoal;
-  readonly colors: ColorPalette;
   readonly onDone: (result: GoalQueueEditResult) => void;
 }
 
@@ -108,20 +104,19 @@ export class GoalQueueManagerComponent extends Container implements Focusable {
   }
 
   override render(width: number): string[] {
-    const { colors } = this.opts;
     const view = this.list.view();
     const hint = this.movingGoalId === undefined
       ? '↑↓ navigate · Space select · E edit · D delete · Esc cancel'
       : '↑↓ reorder · Space done · E edit · D delete · Esc cancel';
     const lines: string[] = [
-      chalk.hex(colors.primary)('─'.repeat(width)),
-      chalk.hex(colors.primary).bold(' Upcoming goals'),
-      chalk.hex(colors.textMuted)(` ${hint}`),
+      currentTheme.fg('primary', '─'.repeat(width)),
+      currentTheme.boldFg('primary', ' Upcoming goals'),
+      currentTheme.fg('textMuted', ` ${hint}`),
       '',
     ];
 
     if (this.goals.length === 0) {
-      lines.push(chalk.hex(colors.textMuted)('  No upcoming goals.'));
+      lines.push(currentTheme.fg('textMuted', '  No upcoming goals.'));
     } else {
       for (let i = view.page.start; i < view.page.end; i++) {
         const goal = view.items[i];
@@ -132,29 +127,30 @@ export class GoalQueueManagerComponent extends Container implements Focusable {
       const below = view.items.length - view.page.end;
       if (below > 0) {
         lines.push('');
-        lines.push(chalk.hex(colors.textMuted)(` ▼ ${String(below)} more`));
+        lines.push(currentTheme.fg('textMuted', ` ▼ ${String(below)} more`));
       }
     }
 
     lines.push('');
-    lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
+    lines.push(currentTheme.fg('primary', '─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width, ELLIPSIS));
   }
 
   private renderGoal(goal: UpcomingGoal, index: number, selected: boolean, width: number): string {
-    const { colors } = this.opts;
     const moving = goal.id === this.movingGoalId;
     const pointer = selected ? SELECT_POINTER : ' ';
-    const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
+    const prefix = currentTheme.fg(selected ? 'primary' : 'textDim', `  ${pointer} `);
     const labelPrefix = `${String(index + 1)}. `;
     const stateLabel = moving ? '  selected' : '';
     const labelWidth = visibleWidth(labelPrefix);
     const stateWidth = visibleWidth(stateLabel);
     const objectiveWidth = Math.max(1, width - 5 - labelWidth - stateWidth);
     const objective = truncateToWidth(goal.objective, objectiveWidth, ELLIPSIS);
-    const textStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
+    const textStyle = selected
+      ? (text: string) => currentTheme.boldFg('primary', text)
+      : (text: string) => currentTheme.fg('text', text);
     let line = prefix + textStyle(labelPrefix + objective);
-    if (moving) line += chalk.hex(colors.success)(stateLabel);
+    if (moving) line += currentTheme.fg('success', stateLabel);
     return line;
   }
 
@@ -236,15 +232,15 @@ export class GoalQueueEditDialogComponent extends Container implements Focusable
     const safeWidth = Math.max(28, width);
     const innerWidth = Math.max(10, safeWidth - 4);
     const pad = '  ';
-    const { colors } = this.opts;
-    const border = (s: string): string => chalk.hex(colors.primary)(s);
+    const border = (s: string): string => currentTheme.fg('primary', s);
     const title = truncateToWidth(
-      chalk.hex(colors.textStrong).bold('Edit upcoming goal'),
+      currentTheme.boldFg('textStrong', 'Edit upcoming goal'),
       innerWidth,
       ELLIPSIS,
     );
     const subtitle = truncateToWidth(
-      chalk.hex(this.error === undefined ? colors.textDim : colors.warning)(
+      currentTheme.fg(
+        this.error === undefined ? 'textDim' : 'warning',
         this.error ?? 'Update the queued objective.',
       ),
       innerWidth,
@@ -252,7 +248,7 @@ export class GoalQueueEditDialogComponent extends Container implements Focusable
     );
     const inputLine = this.input.render(innerWidth)[0] ?? '> ';
     const footer = truncateToWidth(
-      chalk.hex(colors.textDim)('Enter submit · Esc cancel'),
+      currentTheme.fg('textDim', 'Enter submit · Esc cancel'),
       innerWidth,
       ELLIPSIS,
     );

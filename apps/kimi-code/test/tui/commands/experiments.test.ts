@@ -34,7 +34,7 @@ function makeHost() {
   };
   const host = {
     state: {
-      theme: { colors: darkColors },
+      theme: { palette: darkColors },
       ui: { requestRender: vi.fn() },
     },
     harness: {
@@ -110,7 +110,7 @@ describe('experimental feature command handlers', () => {
     expect(host.harness.setConfig).not.toHaveBeenCalled();
     expect(host.showStatus).toHaveBeenCalledWith(
       'No experimental feature changes to apply.',
-      darkColors.textMuted,
+      'textMuted',
     );
   });
 });

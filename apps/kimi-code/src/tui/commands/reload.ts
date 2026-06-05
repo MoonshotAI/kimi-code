@@ -1,5 +1,6 @@
 import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 
+import { currentTheme, lightColors } from '#/tui/theme';
 import { loadTuiConfig, type TuiConfig } from '../config';
 import type { SlashCommandHost } from './dispatch';
 import { setExperimentalFeatures } from './experimental-flags';
@@ -7,7 +8,7 @@ import { setExperimentalFeatures } from './experimental-flags';
 export async function handleReloadTuiCommand(host: SlashCommandHost): Promise<void> {
   const tuiConfig = await loadTuiConfig();
   applyReloadedTuiConfig(host, tuiConfig);
-  host.showStatus('TUI config reloaded.', host.state.theme.colors.success);
+  host.showStatus('TUI config reloaded.', 'success');
 }
 
 export async function handleReloadCommand(host: SlashCommandHost): Promise<void> {
@@ -28,7 +29,7 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
   if (session === undefined) {
     host.showStatus(
       'Runtime and TUI config reloaded; no active session.',
-      host.state.theme.colors.success,
+      'success',
     );
   }
 }
@@ -37,7 +38,9 @@ export function applyReloadedTuiConfig(
   host: SlashCommandHost,
   config: TuiConfig,
 ): void {
-  const resolved = config.theme === 'auto' ? host.state.theme.resolvedTheme : config.theme;
+  const resolved = config.theme === 'auto'
+    ? (currentTheme.palette === lightColors ? 'light' : 'dark')
+    : undefined;
   host.applyTheme(config.theme, resolved);
   host.refreshTerminalThemeTracking();
   host.setAppState({

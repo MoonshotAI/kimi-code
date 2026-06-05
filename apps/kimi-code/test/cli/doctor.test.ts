@@ -207,7 +207,7 @@ max_context_size = 0
 `,
       'utf-8',
     );
-    await writeFile(join(dir, 'tui.toml'), 'theme = "blue"\n', 'utf-8');
+    await writeFile(join(dir, 'tui.toml'), 'editor = 123\n', 'utf-8');
     const { deps, stdout, stderr } = makeDeps();
 
     const code = await handleDoctor(deps, {});
@@ -219,14 +219,14 @@ max_context_size = 0
     expect(err).toContain(`ERROR config.toml  ${join(dir, 'config.toml')}`);
     expect(err).toContain('max_context_size');
     expect(err).toContain(`ERROR tui.toml     ${join(dir, 'tui.toml')}`);
-    expect(err).toContain('theme');
+    expect(err).toContain('editor');
   });
 
   it('formats Zod validation issues with field paths for tui.toml', async () => {
     await writeFile(
       join(dir, 'tui.toml'),
       `
-theme = "blue"
+editor = 123
 
 [notifications]
 enabled = "yes"
@@ -240,7 +240,7 @@ enabled = "yes"
     expect(code).toBe(1);
     const err = stderr.join('');
     expect(err).toContain('Validation issues:');
-    expect(err).toContain('theme:');
+    expect(err).toContain('editor:');
     expect(err).toContain('notifications.enabled:');
   });
 

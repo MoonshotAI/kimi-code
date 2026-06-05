@@ -16,9 +16,9 @@ import { SettingsSelectorComponent, type SettingsSelection } from '../components
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
 import { saveTuiConfig } from '../config';
-import type { Theme } from '../theme';
+import type { ThemeName } from '#/tui/theme';
+import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
-import { isTheme } from '../theme/index';
 import { formatErrorMessage } from '../utils/event-payload';
 import { showUsage } from './info';
 import { setExperimentalFeatures } from './experimental-flags';
@@ -186,9 +186,12 @@ export async function handleThemeCommand(host: SlashCommandHost, args: string): 
     showThemePicker(host);
     return;
   }
-  if (!isTheme(theme)) {
-    host.showError(`Unknown theme: ${theme}`);
-    return;
+  if (!isBuiltInTheme(theme)) {
+    const custom = await loadCustomThemeMerged(theme);
+    if (custom === null) {
+      host.showError(`Unknown theme: ${theme}`);
+      return;
+    }
   }
   await applyThemeChoice(host, theme);
 }
@@ -215,7 +218,6 @@ function showEditorPicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new EditorSelectorComponent({
       currentValue,
-      colors: host.state.theme.colors,
       onSelect: (value) => {
         host.restoreEditor();
         void applyEditorChoice(host, value);
@@ -245,7 +247,7 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
   } catch (error) {
     host.showStatus(
       `Failed to save editor: ${formatErrorMessage(error)}`,
-      host.state.theme.colors.error,
+      'error',
     );
     return;
   }
@@ -273,7 +275,6 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
       currentValue: host.state.appState.model,
       selectedValue,
       currentThinking: host.state.appState.thinking,
-      colors: host.state.theme.colors,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
         void performModelSwitch(host, alias, thinking);
@@ -338,7 +339,7 @@ async function performModelSwitch(host: SlashCommandHost, alias: string, thinkin
     : persisted
       ? `Saved ${alias} with thinking ${level} as default.`
       : `Already using ${alias} with thinking ${level}.`;
-  host.showStatus(status, host.state.theme.colors.success);
+  host.showStatus(status, 'success');
 }
 
 async function persistModelSelection(host: SlashCommandHost, alias: string, thinking: boolean): Promise<boolean> {
@@ -357,7 +358,6 @@ function showThemePicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new ThemeSelectorComponent({
       currentValue: host.state.appState.theme,
-      colors: host.state.theme.colors,
       onSelect: (value) => {
         host.restoreEditor();
         void applyThemeChoice(host, value);
@@ -369,7 +369,7 @@ function showThemePicker(host: SlashCommandHost): void {
   );
 }
 
-async function applyThemeChoice(host: SlashCommandHost, theme: Theme): Promise<void> {
+async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promise<void> {
   if (theme === host.state.appState.theme) {
     if (theme === 'auto') host.refreshTerminalThemeTracking();
     host.showStatus(`Theme unchanged: "${theme}".`);
@@ -386,12 +386,14 @@ async function applyThemeChoice(host: SlashCommandHost, theme: Theme): Promise<v
   } catch (error) {
     host.showStatus(
       `Failed to save theme: ${formatErrorMessage(error)}`,
-      host.state.theme.colors.error,
+      'error',
     );
     return;
   }
 
-  const resolved = theme === 'auto' ? host.state.theme.resolvedTheme : theme;
+  const resolved = theme === 'auto'
+    ? (currentTheme.palette === lightColors ? 'light' : 'dark')
+    : undefined;
   host.applyTheme(theme, resolved);
   host.refreshTerminalThemeTracking();
   host.track('theme_switch', { theme });
@@ -403,7 +405,6 @@ export function showPermissionPicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new PermissionSelectorComponent({
       currentValue: host.state.appState.permissionMode,
-      colors: host.state.theme.colors,
       onSelect: (value) => {
         host.restoreEditor();
         void applyPermissionChoice(host, value);
@@ -419,7 +420,6 @@ export function showUpdatePreferencePicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new UpdatePreferenceSelectorComponent({
       currentValue: host.state.appState.upgrade.autoInstall,
-      colors: host.state.theme.colors,
       onSelect: (value) => {
         host.restoreEditor();
         void applyUpdatePreferenceChoice(host, value);
@@ -449,7 +449,7 @@ export async function applyExperimentalFeatureChanges(
   if (changes.length === 0) {
     host.showStatus(
       'No experimental feature changes to apply.',
-      host.state.theme.colors.textMuted,
+      'textMuted',
     );
     return;
   }
@@ -472,7 +472,7 @@ export async function applyExperimentalFeatureChanges(
         'Experimental features updated. Session reloaded.',
       );
     } else {
-      host.showStatus('Experimental features updated.', host.state.theme.colors.success);
+      host.showStatus('Experimental features updated.', 'success');
     }
     host.track('experimental_features_apply', { changed: changes.length });
   } catch (error) {
@@ -487,7 +487,6 @@ function mountExperimentsPanel(
   host.mountEditorReplacement(
     new ExperimentsSelectorComponent({
       features,
-      colors: host.state.theme.colors,
       onApply: (changes) => {
         void applyExperimentalFeatureChanges(host, changes);
       },
@@ -504,7 +503,6 @@ type UpdatePreferenceHost = {
       SlashCommandHost['state']['appState'],
       'theme' | 'editorCommand' | 'notifications' | 'upgrade'
     >;
-    readonly theme: Pick<SlashCommandHost['state']['theme'], 'colors'>;
   };
   setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'upgrade'>): void;
   showStatus(msg: string, color?: string): void;
@@ -531,7 +529,7 @@ export async function applyUpdatePreferenceChoice(
   } catch (error) {
     host.showStatus(
       `Failed to save automatic update setting: ${formatErrorMessage(error)}`,
-      host.state.theme.colors.error,
+      'error',
     );
     return;
   }
@@ -562,7 +560,6 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
 export function showSettingsSelector(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new SettingsSelectorComponent({
-      colors: host.state.theme.colors,
       onSelect: (value) => {
         handleSettingsSelection(host, value);
       },

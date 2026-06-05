@@ -12,7 +12,7 @@ import type { SessionRow } from './components/dialogs/session-picker';
 import { CustomEditor } from './components/editor/custom-editor';
 import { CHROME_GUTTER } from './constant/rendering';
 import type { TasksBrowserState } from './controllers/tasks-browser';
-import { createKimiTUIThemeBundle, type KimiTUIThemeBundle } from './theme/bundle';
+import { currentTheme, type Theme } from './theme';
 import { createTerminalState, type TerminalState } from './utils/terminal-state';
 import {
   INITIAL_LIVE_PANE,
@@ -36,7 +36,7 @@ export interface TUIState {
   editorContainer: Container;
   footer: FooterComponent;
   editor: CustomEditor;
-  theme: KimiTUIThemeBundle;
+  theme: Theme;
   appState: AppState;
   startupState: TUIStartupState;
   livePane: LivePaneState;
@@ -55,7 +55,7 @@ export interface TUIState {
 
 export function createTUIState(options: KimiTUIOptions): TUIState {
   const initialAppState = options.initialAppState;
-  const theme = createKimiTUIThemeBundle(initialAppState.theme, options.resolvedTheme);
+  const theme = currentTheme;
 
   const terminal = new ProcessTerminal();
   const ui = new TUI(terminal);
@@ -63,12 +63,12 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const todoPanelContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-  const todoPanel = new TodoPanelComponent(theme.colors);
+  const todoPanel = new TodoPanelComponent(theme.palette);
   const queueContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const btwPanelContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const editorContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-  const editor = new CustomEditor(ui, theme.colors);
-  const footer = new FooterComponent({ ...initialAppState }, theme.colors, () => {
+  const editor = new CustomEditor(ui);
+  const footer = new FooterComponent({ ...initialAppState }, theme.palette, () => {
     ui.requestRender();
   });
 
@@ -82,8 +82,8 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     queueContainer,
     btwPanelContainer,
     editorContainer,
-    footer,
     editor,
+    footer,
     theme,
     appState: { ...initialAppState },
     startupState: 'pending',

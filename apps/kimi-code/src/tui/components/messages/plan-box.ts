@@ -7,10 +7,11 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { Component, MarkdownTheme } from '@earendil-works/pi-tui';
+import type { Component } from '@earendil-works/pi-tui';
 import { Markdown, visibleWidth } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
+import { currentTheme } from '#/tui/theme';
+import type { ColorToken } from '#/tui/theme';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 
 const LEFT_MARGIN = 2; // two-space indent matching other tool call children
@@ -23,7 +24,7 @@ export interface PlanBoxOptions {
   expanded?: boolean;
   status?: {
     readonly label: string;
-    readonly colorHex: string;
+    readonly colorToken: ColorToken;
   };
 }
 
@@ -37,8 +38,7 @@ export class PlanBoxComponent implements Component {
 
   constructor(
     plan: string,
-    markdownTheme: MarkdownTheme,
-    private readonly borderHex: string,
+    private readonly borderToken: ColorToken,
     private readonly planPath?: string,
     opts?: PlanBoxOptions,
   ) {
@@ -46,7 +46,7 @@ export class PlanBoxComponent implements Component {
     // parse + wrap output keyed on (text, width), so reusing the same
     // instance means repeated render() calls from the parent Container
     // hit the cache instead of re-parsing on every frame.
-    this.markdown = new Markdown(plan.trim(), 0, 0, markdownTheme);
+    this.markdown = new Markdown(plan.trim(), 0, 0, currentTheme.markdownTheme);
     this.maxContentLines = opts?.maxContentLines;
     this.expanded = opts?.expanded ?? false;
     this.status = opts?.status;
@@ -71,7 +71,7 @@ export class PlanBoxComponent implements Component {
     const horzLen = Math.max(2, width - LEFT_MARGIN - 2);
     const contentWidth = Math.max(1, horzLen - 2 * SIDE_PADDING);
 
-    const paint = (s: string): string => chalk.hex(this.borderHex)(s);
+    const paint = (s: string): string => currentTheme.fg(this.borderToken, s);
     const indent = ' '.repeat(LEFT_MARGIN);
 
     const title = this.buildTitle(horzLen);
@@ -89,7 +89,7 @@ export class PlanBoxComponent implements Component {
       lines.push(indent + paint('│') + ' ' + raw + ' '.repeat(pad) + ' ' + paint('│'));
     }
     if (hiddenCount > 0) {
-      const footer = chalk.dim(
+      const footer = currentTheme.dim(
         `... (${String(hiddenCount)} more line${hiddenCount === 1 ? '' : 's'}, ctrl+e to expand)`,
       );
       const pad = Math.max(0, contentWidth - visibleWidth(footer));
@@ -132,6 +132,6 @@ export class PlanBoxComponent implements Component {
   private buildStatusSuffix(): string {
     const status = this.status;
     if (status === undefined || status.label.length === 0) return '';
-    return ` · ${chalk.hex(status.colorHex)(status.label)}`;
+    return ` · ${currentTheme.fg(status.colorToken, status.label)}`;
   }
 }

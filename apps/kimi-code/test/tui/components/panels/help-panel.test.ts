@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 
 import type { KimiSlashCommand } from '#/tui/commands/index';
 import { HelpPanelComponent } from '#/tui/components/dialogs/help-panel';
-import { darkColors } from '#/tui/theme/colors';
 
 function cmd(name: string, description: string, aliases: string[] = []): KimiSlashCommand {
   return {
@@ -20,7 +19,6 @@ describe('HelpPanelComponent', () => {
   it('renders keyboard shortcuts + slash commands sections', () => {
     const panel = new HelpPanelComponent({
       commands: [cmd('exit', 'Exit', ['quit', 'q'])],
-      colors: darkColors,
       onClose: () => {},
     });
     const out = strip(panel.render(80).join('\n'));
@@ -37,7 +35,6 @@ describe('HelpPanelComponent', () => {
   it('sorts slash commands by name', () => {
     const panel = new HelpPanelComponent({
       commands: [cmd('zebra', 'Z'), cmd('alpha', 'A'), cmd('mango', 'M')],
-      colors: darkColors,
       onClose: () => {},
     });
     const out = strip(panel.render(80).join('\n'));
@@ -53,7 +50,6 @@ describe('HelpPanelComponent', () => {
     const onClose = vi.fn();
     const panel = new HelpPanelComponent({
       commands: [],
-      colors: darkColors,
       onClose,
     });
     panel.handleInput('\u001B'); // Esc
@@ -64,7 +60,6 @@ describe('HelpPanelComponent', () => {
     const onClose = vi.fn();
     const panel = new HelpPanelComponent({
       commands: [],
-      colors: darkColors,
       onClose,
     });
     panel.handleInput('q');
@@ -76,7 +71,6 @@ describe('HelpPanelComponent', () => {
     const many = Array.from({ length: 30 }, (_, i) => cmd(`cmd${String(i)}`, `Desc ${String(i)}`));
     const panel = new HelpPanelComponent({
       commands: many,
-      colors: darkColors,
       onClose: () => {},
       maxVisible: 6,
     });
@@ -88,7 +82,6 @@ describe('HelpPanelComponent', () => {
     const many = Array.from({ length: 30 }, (_, i) => cmd(`cmd${String(i)}`, 'd'));
     const panel = new HelpPanelComponent({
       commands: many,
-      colors: darkColors,
       onClose: () => {},
       maxVisible: 6,
     });

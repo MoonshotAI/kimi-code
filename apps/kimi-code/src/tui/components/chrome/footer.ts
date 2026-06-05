@@ -300,7 +300,7 @@ export class FooterComponent implements Component {
       const modelLabel = `${model}${thinkingLabel}`;
       let renderedModelLabel = chalk.hex(colors.text)(modelLabel);
       if (isRainbowDancing()) {
-        renderedModelLabel = renderDanceFooterModel(modelLabel, colors);
+        renderedModelLabel = renderDanceFooterModel(modelLabel);
       }
       left.push(renderedModelLabel);
     }
