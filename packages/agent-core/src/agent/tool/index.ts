@@ -415,7 +415,8 @@ export class ToolManager {
               log: this.agent.log,
             },
           ),
-        this.agent.subagentHost && new b.AgentSwarmTool(this.agent.subagentHost),
+        this.agent.subagentHost &&
+          new b.AgentSwarmTool(this.agent.subagentHost, this.agent.swarmMode),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),
       ]

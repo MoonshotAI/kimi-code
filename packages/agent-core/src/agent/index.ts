@@ -367,7 +367,7 @@ export class Agent {
       },
       clearPlan: () => this.planMode.clear(),
       enterSwarm: () => {
-        this.swarmMode.enter();
+        this.swarmMode.enter('explicit');
       },
       exitSwarm: () => {
         this.swarmMode.exit();

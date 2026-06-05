@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import type { SwarmMode } from '../../../agent/swarm';
 import type { BuiltinTool } from '../../../agent/tool';
 import type {
   QueuedSubagentRunResult,
@@ -79,7 +80,10 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
   readonly description = AGENT_SWARM_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentSwarmToolInputSchema);
 
-  constructor(private readonly subagentHost: SessionSubagentHost) {}
+  constructor(
+    private readonly subagentHost: SessionSubagentHost,
+    private readonly swarmMode: SwarmMode,
+  ) {}
 
   resolveExecution(args: AgentSwarmToolInput): ToolExecution {
     return {
@@ -101,6 +105,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     context: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
+      this.swarmMode.enter('implicit');
       const specs = createAgentSwarmSpecs(args);
       const result = await this.runSwarm(args, specs, context.signal, context.toolCallId);
       return {

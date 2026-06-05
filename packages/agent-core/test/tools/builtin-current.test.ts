@@ -11,6 +11,7 @@ import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Agent } from '../../src/agent';
+import type { SwarmMode } from '../../src/agent/swarm';
 import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
 import { SkillRegistry } from '../../src/skill';
@@ -66,6 +67,10 @@ function mockSubagentHost<T extends Partial<SessionSubagentHost>>(
 ): T & SessionSubagentHost {
   return { spawn: vi.fn(), resume: vi.fn(), runQueued: vi.fn(), ...host } as unknown as T &
     SessionSubagentHost;
+}
+
+function mockSwarmMode(): SwarmMode {
+  return { enter: vi.fn() } as unknown as SwarmMode;
 }
 
 function processWithOutput(stdout: string, exitCode = 0): KaosProcess {
@@ -324,7 +329,8 @@ describe('current builtin collaboration tools', () => {
         },
       ]),
     });
-    const tool = new AgentSwarmTool(host);
+    const swarmMode = mockSwarmMode();
+    const tool = new AgentSwarmTool(host, swarmMode);
     const input = {
       description: 'Review files',
       prompt_template: 'Review {{item}}',
@@ -352,6 +358,7 @@ describe('current builtin collaboration tools', () => {
 
     const result = await executeTool(tool, context(input, 'call_swarm'));
 
+    expect(swarmMode.enter).toHaveBeenCalledWith('implicit');
     expect(host.runQueued).toHaveBeenCalledTimes(1);
     expect(host.runQueued).toHaveBeenCalledWith(
       [
@@ -419,7 +426,8 @@ describe('current builtin collaboration tools', () => {
         },
       ]),
     });
-    const tool = new AgentSwarmTool(host);
+    const swarmMode = mockSwarmMode();
+    const tool = new AgentSwarmTool(host, swarmMode);
 
     const result = await executeTool(
       tool,
@@ -440,6 +448,7 @@ describe('current builtin collaboration tools', () => {
       '<subagent index="2" agent_id="agent-coder-2" outcome="failed">Agent timed out after 30s.</subagent>',
       '</agent_swarm_result>',
     ].join('\n'));
+    expect(swarmMode.enter).toHaveBeenCalledWith('implicit');
     expect(result.isError).toBeUndefined();
   });
 

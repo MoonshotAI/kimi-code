@@ -3,31 +3,37 @@ import type { Agent } from '..';
 import SWARM_MODE_ENTER_REMINDER from './enter-reminder.md';
 import SWARM_MODE_EXIT_REMINDER from './exit-reminder.md';
 
+type SwarmModeTrigger = 'explicit' | 'implicit';
+
 export class SwarmMode {
-  protected active = false;
+  protected active: SwarmModeTrigger | null = null;
 
   constructor(protected readonly agent: Agent) {}
 
-  enter(): void {
-    if (this.active) return;
-    this.agent.records.logRecord({ type: 'swarm_mode.enter' });
-    this.active = true;
-    this.agent.context.appendSystemReminder(SWARM_MODE_ENTER_REMINDER, {
-      kind: 'injection',
-      variant: 'swarm_mode',
-    });
+  enter(trigger: SwarmModeTrigger): void {
+    if (this.active !== null) return;
+    this.agent.records.logRecord({ type: 'swarm_mode.enter', trigger });
+    this.active = trigger;
+    if (trigger === 'explicit') {
+      this.agent.context.appendSystemReminder(SWARM_MODE_ENTER_REMINDER, {
+        kind: 'injection',
+        variant: 'swarm_mode',
+      });
+    }
     this.agent.emitStatusUpdated({ swarmMode: true });
   }
 
-  restoreEnter(): void {
-    this.active = true;
+  restoreEnter(trigger: SwarmModeTrigger): void {
+    this.active = trigger;
   }
 
   exit(): void {
-    if (!this.active) return;
+    if (this.active === null) return;
     this.agent.records.logRecord({ type: 'swarm_mode.exit' });
-    this.active = false;
+    const trigger = this.active;
+    this.active = null;
     this.agent.emitStatusUpdated({ swarmMode: false });
+    if (trigger !== 'explicit') return;
     if (this.agent.context.popMatchedMessage((origin) => origin?.kind === 'injection' && origin.variant === 'swarm_mode')) {
       return;
     }
@@ -40,6 +46,6 @@ export class SwarmMode {
   }
 
   get isActive(): boolean {
-    return this.active;
+    return this.active !== null;
   }
 }

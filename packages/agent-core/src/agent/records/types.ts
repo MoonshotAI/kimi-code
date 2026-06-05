@@ -47,7 +47,9 @@ export interface AgentRecordEvents {
     id?: string;
   };
 
-  'swarm_mode.enter': {};
+  'swarm_mode.enter': {
+    trigger: 'explicit' | 'implicit';
+  };
   'swarm_mode.exit': {};
 
   'tools.register_user_tool': UserToolRegistration;
