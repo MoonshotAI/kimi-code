@@ -16,22 +16,16 @@ import DESCRIPTION from './set-goal-budget.md';
 
 const MIN_REASONABLE_TIME_BUDGET_MS = 1_000;
 const MAX_REASONABLE_TIME_BUDGET_MS = 24 * 60 * 60 * 1000;
+const BUDGET_UNITS = ['turns', 'tokens', 'milliseconds', 'seconds', 'minutes', 'hours'] as const;
 
-const WholeNumberBudgetValueSchema = z
-  .number()
-  .int()
-  .positive()
-  .describe('The positive whole-number budget value.');
-const TimeBudgetValueSchema = z.number().positive().describe('The positive numeric time budget value.');
-
-export const SetGoalBudgetToolInputSchema = z.discriminatedUnion('unit', [
-  z.object({ value: WholeNumberBudgetValueSchema, unit: z.literal('turns') }).strict(),
-  z.object({ value: WholeNumberBudgetValueSchema, unit: z.literal('tokens') }).strict(),
-  z.object({ value: TimeBudgetValueSchema, unit: z.literal('milliseconds') }).strict(),
-  z.object({ value: TimeBudgetValueSchema, unit: z.literal('seconds') }).strict(),
-  z.object({ value: TimeBudgetValueSchema, unit: z.literal('minutes') }).strict(),
-  z.object({ value: TimeBudgetValueSchema, unit: z.literal('hours') }).strict(),
-]);
+export const SetGoalBudgetToolInputSchema = z
+  .object({
+    // Keep the provider-facing schema simple. Fractional turn/token budgets
+    // are normalized during execution instead of rejected at schema validation.
+    value: z.number().positive().describe('The positive numeric budget value.'),
+    unit: z.enum(BUDGET_UNITS),
+  })
+  .strict();
 
 export type SetGoalBudgetToolInput = z.infer<typeof SetGoalBudgetToolInputSchema>;
 
@@ -46,26 +40,42 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
     const store = requireGoalStore(this.agent, this.name);
     if (isGoalToolError(store)) return store;
 
+    const normalizedArgs = normalizeBudgetInput(args);
     return {
-      description: `Setting goal budget: ${formatBudget(args.value, args.unit)}`,
+      description: `Setting goal budget: ${formatBudget(
+        normalizedArgs.value,
+        normalizedArgs.unit,
+      )}`,
       approvalRule: this.name,
       execute: async () => {
         try {
-          const budget = budgetLimitsFromInput(args);
+          const budget = budgetLimitsFromInput(normalizedArgs);
           if (budget === null) {
             return {
               output:
-                `Goal budget not set: ${formatBudget(args.value, args.unit)} is not a ` +
+                `Goal budget not set: ${formatBudget(normalizedArgs.value, normalizedArgs.unit)} is not a ` +
                 'reasonable goal budget.',
             };
           }
           await store.setBudgetLimits({ budgetLimits: budget, actor: 'model' });
-          return { output: `Goal budget set: ${formatBudget(args.value, args.unit)}.` };
+          return {
+            output: `Goal budget set: ${formatBudget(normalizedArgs.value, normalizedArgs.unit)}.`,
+          };
         } catch (error) {
           return goalErrorResult(error);
         }
       },
     };
+  }
+}
+
+function normalizeBudgetInput(input: SetGoalBudgetToolInput): SetGoalBudgetToolInput {
+  switch (input.unit) {
+    case 'turns':
+    case 'tokens':
+      return { ...input, value: Math.max(1, Math.round(input.value)) };
+    default:
+      return input;
   }
 }
 

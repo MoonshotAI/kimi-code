@@ -9,7 +9,12 @@ import {
   track,
   withTelemetryContext,
 } from '@moonshot-ai/kimi-telemetry';
-import { KimiHarness, log, type TelemetryClient } from '@moonshot-ai/kimi-code-sdk';
+import {
+  createKimiHarness,
+  log,
+  type KimiHarness,
+  type TelemetryClient,
+} from '@moonshot-ai/kimi-code-sdk';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
 import { detectPendingMigration } from '#/migration/index';
@@ -51,7 +56,7 @@ export async function runShell(
     withContext: withTelemetryContext,
     setContext: setTelemetryContext,
   };
-  const harness = new KimiHarness({
+  const harness = createKimiHarness({
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
     telemetry: telemetryClient,
@@ -73,6 +78,7 @@ export async function runShell(
     platform: `${process.platform}/${process.arch}`,
     workDir,
   });
+
   await harness.ensureConfigFile();
   const migrationPlan = await detectPendingMigration({
     sourceHome: join(homedir(), '.kimi'),

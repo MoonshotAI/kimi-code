@@ -1,7 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type { Agent } from '../../src/agent';
 import { ErrorCodes } from '../../src/errors';
+import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
+import { compileToolArgsValidator, validateToolArgs } from '../../src/tools/args-validator';
 import {
   CreateGoalTool,
   CreateGoalToolInputSchema,
@@ -35,8 +37,6 @@ function fakeAgent(opts: { type?: 'main' | 'sub'; goals?: SessionGoalStore } = {
 function ctx<Input>(args: Input) {
   return { turnId: '0', toolCallId: 'call_1', args, signal };
 }
-
-const GOAL_FLAG = 'KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND';
 
 describe('CreateGoalTool', () => {
   it('creates a goal through the goal store', async () => {
@@ -129,13 +129,36 @@ describe('GetGoalTool', () => {
 });
 
 describe('SetGoalBudgetTool', () => {
+  it('advertises an object parameter schema for OpenAI-compatible providers', () => {
+    const parameters = new SetGoalBudgetTool(fakeAgent()).parameters;
+
+    expect(parameters).toMatchObject({
+      type: 'object',
+      required: ['value', 'unit'],
+      additionalProperties: false,
+      properties: {
+        value: expect.objectContaining({ type: 'number', exclusiveMinimum: 0 }),
+        unit: expect.objectContaining({
+          type: 'string',
+          enum: ['turns', 'tokens', 'milliseconds', 'seconds', 'minutes', 'hours'],
+        }),
+      },
+    });
+    expect(parameters).not.toHaveProperty('oneOf');
+    expect(parameters).not.toHaveProperty('anyOf');
+
+    const validator = compileToolArgsValidator(parameters);
+    expect(validateToolArgs(validator, { value: 1.5, unit: 'turns' })).toBeNull();
+    expect(validateToolArgs(validator, { value: 1.5, unit: 'hours' })).toBeNull();
+  });
+
   it('accepts a value with a supported budget unit', () => {
     for (const unit of ['turns', 'tokens', 'milliseconds', 'seconds', 'minutes', 'hours']) {
       expect(SetGoalBudgetToolInputSchema.safeParse({ value: 20, unit }).success).toBe(true);
     }
     expect(SetGoalBudgetToolInputSchema.safeParse({ value: 0, unit: 'turns' }).success).toBe(false);
     expect(SetGoalBudgetToolInputSchema.safeParse({ value: 1, unit: 'years' }).success).toBe(false);
-    expect(SetGoalBudgetToolInputSchema.safeParse({ value: 1.5, unit: 'turns' }).success).toBe(false);
+    expect(SetGoalBudgetToolInputSchema.safeParse({ value: 1.5, unit: 'turns' }).success).toBe(true);
     expect(SetGoalBudgetToolInputSchema.safeParse({ value: 1.5, unit: 'hours' }).success).toBe(true);
   });
 
@@ -158,6 +181,22 @@ describe('SetGoalBudgetTool', () => {
       'Goal budget set: 30 minutes.',
     );
     expect(store.getGoal().goal?.budget.wallClockBudgetMs).toBe(30 * 60 * 1000);
+  });
+
+  it('rounds fractional turn and token budgets before setting them', async () => {
+    const store = makeStore();
+    await store.createGoal({ objective: 'work' });
+    const tool = new SetGoalBudgetTool(fakeAgent({ goals: store }));
+
+    expect((await executeTool(tool, ctx({ value: 1.5, unit: 'turns' }))).output).toBe(
+      'Goal budget set: 2 turns.',
+    );
+    expect(store.getGoal().goal?.budget.turnBudget).toBe(2);
+
+    expect((await executeTool(tool, ctx({ value: 0.4, unit: 'tokens' }))).output).toBe(
+      'Goal budget set: 1 token.',
+    );
+    expect(store.getGoal().goal?.budget.tokenBudget).toBe(1);
   });
 
   it('ignores unreasonable time budgets and tells the model why', async () => {
@@ -257,48 +296,49 @@ describe('goal tools are main-agent-only', () => {
 });
 
 describe('ToolManager goal tool registration', () => {
-  const original = process.env[GOAL_FLAG];
-  afterEach(() => {
-    if (original === undefined) delete process.env[GOAL_FLAG];
-    else process.env[GOAL_FLAG] = original;
-  });
-
-  function loopToolNames(type: 'main' | 'sub'): readonly string[] {
-    const ctxAgent = testAgent({ type });
+  function loopToolNames(type: 'main' | 'sub', goalEnabled: boolean): readonly string[] {
+    const ctxAgent = testAgent({
+      type,
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, {
+        goal_command: goalEnabled,
+      }),
+    });
     // configure() gives the agent a provider so builtin tools can initialize.
     ctxAgent.configure({ tools: ['Read', 'CreateGoal', 'GetGoal', 'SetGoalBudget'] });
-    // Re-run registration so the gate reads the current flag state.
+    // Re-run registration so the gate reads the scoped flag resolver state.
     ctxAgent.agent.tools.initializeBuiltinTools();
     return ctxAgent.agent.tools.loopTools.map((tool) => tool.name);
   }
 
   it('omits goal tools when the flag is disabled', () => {
-    delete process.env[GOAL_FLAG];
-    const names = loopToolNames('main');
+    const names = loopToolNames('main', false);
     expect(names).not.toContain('CreateGoal');
     expect(names).not.toContain('GetGoal');
     expect(names).not.toContain('SetGoalBudget');
   });
 
   it('exposes goal tools to the main agent when the flag is enabled', () => {
-    process.env[GOAL_FLAG] = 'true';
-    const names = loopToolNames('main');
+    const names = loopToolNames('main', true);
     expect(names).toEqual(expect.arrayContaining(['CreateGoal', 'GetGoal']));
     expect(names).not.toContain('SetGoalBudget');
   });
 
   it('does not expose goal tools to subagents even when enabled', () => {
-    process.env[GOAL_FLAG] = 'true';
-    const names = loopToolNames('sub');
+    const names = loopToolNames('sub', true);
     expect(names).not.toContain('CreateGoal');
     expect(names).not.toContain('GetGoal');
     expect(names).not.toContain('SetGoalBudget');
   });
 
   it('hides goal mutation tools until a goal exists, then exposes them', async () => {
-    process.env[GOAL_FLAG] = 'true';
     const store = makeStore();
-    const ctxAgent = testAgent({ type: 'main', goals: store });
+    const ctxAgent = testAgent({
+      type: 'main',
+      goals: store,
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, {
+        goal_command: true,
+      }),
+    });
     ctxAgent.configure({ tools: ['Read', 'CreateGoal', 'GetGoal', 'SetGoalBudget', 'UpdateGoal'] });
     ctxAgent.agent.tools.initializeBuiltinTools();
     // No goal yet -> mutation tools are filtered out of the model's tool list.

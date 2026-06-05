@@ -5,6 +5,7 @@ import { join } from 'pathe';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ErrorCodes } from '../../src/errors';
+import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { Session } from '../../src/session';
 import { SessionAPIImpl } from '../../src/session/rpc';
 import {
@@ -19,8 +20,6 @@ import type { SDKSessionRPC } from '../../src/rpc';
 import type { TelemetryClient } from '../../src/telemetry';
 import { testKaos } from '../fixtures/test-kaos';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
-
-const GOAL_FLAG = 'KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND';
 
 /** An in-memory store backing plus a controllable lazy audit sink. */
 function makeAuditStore(opts: { sinkReady?: boolean } = {}) {
@@ -716,27 +715,22 @@ describe('SessionAPIImpl.updateSessionMetadata goal reservation', () => {
 });
 
 describe('SessionAPIImpl goal flag gating', () => {
-  const originalGoalFlag = process.env[GOAL_FLAG];
-
-  afterEach(() => {
-    if (originalGoalFlag === undefined) delete process.env[GOAL_FLAG];
-    else process.env[GOAL_FLAG] = originalGoalFlag;
-  });
-
-  function makeSession(sessionDir: string): Session {
+  function makeSession(sessionDir: string, goalEnabled: boolean): Session {
     return new Session({
       id: 'goal-rpc-flag',
       kaos: testKaos.withCwd(sessionDir),
       homedir: sessionDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(sessionDir, 'missing')] },
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, {
+        goal_command: goalEnabled,
+      }),
     });
   }
 
   it('rejects SDK goal creation when the flag is disabled', async () => {
-    delete process.env[GOAL_FLAG];
     const sessionDir = await makeTempDir();
-    const session = makeSession(sessionDir);
+    const session = makeSession(sessionDir, false);
     const api = new SessionAPIImpl(session);
 
     let thrown: unknown;
@@ -750,9 +744,8 @@ describe('SessionAPIImpl goal flag gating', () => {
   });
 
   it('allows SDK goal creation when the flag is enabled', async () => {
-    process.env[GOAL_FLAG] = 'true';
     const sessionDir = await makeTempDir();
-    const session = makeSession(sessionDir);
+    const session = makeSession(sessionDir, true);
     const api = new SessionAPIImpl(session);
 
     const snapshot = await api.createGoal({ objective: 'work' });

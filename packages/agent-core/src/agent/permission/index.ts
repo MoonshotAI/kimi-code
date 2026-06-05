@@ -10,7 +10,7 @@ import type {
   PermissionPolicyContext,
   PermissionPolicyResolution,
   PermissionPolicyResult,
-  PermissionRule
+  PermissionRule,
 } from './types';
 
 export * from './types';
@@ -26,11 +26,11 @@ interface PolicyEvaluation {
 }
 
 export class PermissionManager {
-  rules: PermissionRule[] = [];
+  readonly policies: PermissionPolicy[];
+  readonly rules: PermissionRule[] = [];
   private modeOverride: PermissionMode | undefined;
   private readonly parent: PermissionManager | undefined;
   private readonly localSessionApprovalRulePatterns = new Set<string>();
-  private readonly policies: readonly PermissionPolicy[];
 
   constructor(
     protected readonly agent: Agent,

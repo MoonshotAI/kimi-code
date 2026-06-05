@@ -1,25 +1,19 @@
 import {
-  createRPC,
   ErrorCodes,
-  KimiCore,
   makeErrorPayload,
-  resolveKimiHome,
   type AgentContextData,
   type ApprovalRequest,
   type ApprovalResponse,
   type CoreAPI,
   type Event,
-  type ExperimentalFlagMap,
-  type OAuthTokenProviderResolver,
+  type ExperimentalFeatureState,
   type QuestionRequest,
   type QuestionResult,
+  type RPCMethods,
   type SDKAPI,
-  type SDKRPCClient,
-  type TelemetryClient,
   type ToolCallRequest,
   type ToolCallResponse,
 } from '@moonshot-ai/agent-core';
-import { createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
 
 import type { ApprovalHandler, QuestionHandler } from '#/events';
 import type {
@@ -52,19 +46,9 @@ import type {
   SessionSummary,
   SkillSummary,
   Unsubscribe,
-  KimiHostIdentity,
 } from '#/types';
 
 const MAIN_AGENT_ID = 'main';
-
-export interface SDKRpcClientOptions {
-  readonly homeDir?: string | undefined;
-  readonly configPath?: string | undefined;
-  readonly identity?: KimiHostIdentity | undefined;
-  readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
-  readonly skillDirs?: readonly string[];
-  readonly telemetry?: TelemetryClient | undefined;
-}
 
 export interface SessionPromptRpcInput {
   readonly sessionId: string;
@@ -105,45 +89,15 @@ export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
   readonly name: string;
 }
 
-type ResolvedCoreAPI = Awaited<ReturnType<SDKRPCClient>>;
+type ResolvedCoreAPI = RPCMethods<CoreAPI>;
 
-export class SDKRpcClient {
-  readonly core: KimiCore;
+export abstract class SDKRpcClientBase {
   interactiveAgentId = MAIN_AGENT_ID;
-  private readonly ready: Promise<void>;
-  private rpc: ResolvedCoreAPI | undefined;
   private readonly eventListeners = new Set<(event: Event) => void>();
   private readonly approvalHandlers = new Map<string, ApprovalHandler>();
   private readonly questionHandlers = new Map<string, QuestionHandler>();
 
-  constructor(options: SDKRpcClientOptions = {}) {
-    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
-    const homeDir = resolveKimiHome(options.homeDir);
-    const kimiRequestHeaders =
-      options.identity === undefined
-        ? undefined
-        : createKimiDefaultHeaders({ homeDir, ...options.identity });
-    this.core = new KimiCore(coreRpc, {
-      homeDir: options.homeDir,
-      configPath: options.configPath,
-      kimiRequestHeaders,
-      resolveOAuthTokenProvider: options.resolveOAuthTokenProvider,
-      skillDirs: options.skillDirs,
-      telemetry: options.telemetry,
-      appVersion: options.identity?.version,
-    });
-    this.ready = sdkRpc(new ClientAPI(this)).then((rpc) => {
-      this.rpc = rpc;
-    });
-  }
-
-  get homeDir(): string {
-    return this.core.homeDir;
-  }
-
-  get configPath(): string {
-    return this.core.configPath;
-  }
+  protected abstract getRpc(): Promise<ResolvedCoreAPI>;
 
   async createSession(input: CreateSessionOptions): Promise<SessionSummary> {
     const rpc = await this.getRpc();
@@ -154,7 +108,12 @@ export class SDKRpcClient {
 
   async resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary> {
     const rpc = await this.getRpc();
-    return rpc.resumeSession({ sessionId: input.id });
+    return rpc.resumeSession({ ...input, sessionId: input.id });
+  }
+
+  async reloadSession(input: SessionIdRpcInput): Promise<ResumedSessionSummary> {
+    const rpc = await this.getRpc();
+    return rpc.reloadSession({ sessionId: input.sessionId });
   }
 
   async forkSession(input: ForkSessionInput): Promise<SessionSummary> {
@@ -202,9 +161,9 @@ export class SDKRpcClient {
     return rpc.getKimiConfig(input ?? {});
   }
 
-  async getExperimentalFlags(): Promise<ExperimentalFlagMap> {
+  async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {
     const rpc = await this.getRpc();
-    return rpc.getExperimentalFlags({});
+    return rpc.getExperimentalFeatures({});
   }
 
   async setConfig(input: KimiConfigPatch): Promise<KimiConfig> {
@@ -218,19 +177,21 @@ export class SDKRpcClient {
   }
 
   async prompt(input: SessionPromptRpcInput): Promise<void> {
+    const agentId = this.interactiveAgentId;
     const rpc = await this.getRpc();
     return rpc.prompt({
       sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
+      agentId,
       input: input.input,
     });
   }
 
   async steer(input: SessionPromptRpcInput): Promise<void> {
+    const agentId = this.interactiveAgentId;
     const rpc = await this.getRpc();
     return rpc.steer({
       sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
+      agentId,
       input: input.input,
     });
   }
@@ -240,11 +201,21 @@ export class SDKRpcClient {
     return rpc.generateAgentsMd({ sessionId: input.sessionId });
   }
 
+  async startBtw(input: SessionIdRpcInput): Promise<string> {
+    const agentId = this.interactiveAgentId;
+    const rpc = await this.getRpc();
+    return rpc.startBtw({
+      sessionId: input.sessionId,
+      agentId,
+    });
+  }
+
   async cancel(input: SessionIdRpcInput): Promise<void> {
+    const agentId = this.interactiveAgentId;
     const rpc = await this.getRpc();
     return rpc.cancel({
       sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
+      agentId,
     });
   }
 
@@ -610,17 +581,10 @@ export class SDKRpcClient {
     };
   }
 
-  private async getRpc(): Promise<ResolvedCoreAPI> {
-    await this.ready;
-    if (this.rpc === undefined) {
-      throw new Error('SDK RPC client was not initialized.');
-    }
-    return this.rpc;
-  }
 }
 
 export class ClientAPI implements SDKAPI {
-  constructor(readonly client: SDKRpcClient) {}
+  constructor(readonly client: SDKRpcClientBase) {}
 
   emitEvent(event: Event): void {
     this.client.receiveEvent(event);

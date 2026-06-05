@@ -54,7 +54,7 @@ const mocks = vi.hoisted(() => {
         telemetry: true,
       }),
     ),
-    harnessGetExperimentalFlags: vi.fn(async (): Promise<Record<string, boolean>> => ({})),
+    harnessGetExperimentalFeatures: vi.fn(async () => []),
     harnessCreateSession: vi.fn(async () => session),
     harnessResumeSession: vi.fn(async () => session),
     harnessListSessions: vi.fn(async () => [{ id: 'ses_previous', workDir: process.cwd() }]),
@@ -79,26 +79,25 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   return {
     ...actual,
     resolveKimiHome: mocks.resolveKimiHome,
-    KimiHarness: class {
-      homeDir: string;
-      auth = { getCachedAccessToken: mocks.harnessGetCachedAccessToken };
-      ensureConfigFile = mocks.harnessEnsureConfigFile;
-      getConfig = mocks.harnessGetConfig;
-      getExperimentalFlags = mocks.harnessGetExperimentalFlags;
-      createSession = mocks.harnessCreateSession;
-      resumeSession = mocks.harnessResumeSession;
-      listSessions = mocks.harnessListSessions;
-      close = mocks.harnessClose;
-      track = mocks.harnessTrack;
-
-      constructor(...args: unknown[]) {
-        const options = args[0] as { readonly homeDir?: string } | undefined;
-        this.homeDir = options?.homeDir ?? '/tmp/kimi-code-test-home';
-        if (mocks.harnessCreatesDeviceIdOnConstruction) {
-          mocks.createKimiDeviceId(this.homeDir);
-        }
-        mocks.kimiHarnessConstructor(...args);
+    createKimiHarness: (...args: unknown[]) => {
+      const options = args[0] as { readonly homeDir?: string } | undefined;
+      const homeDir = options?.homeDir ?? '/tmp/kimi-code-test-home';
+      if (mocks.harnessCreatesDeviceIdOnConstruction) {
+        mocks.createKimiDeviceId(homeDir);
       }
+      mocks.kimiHarnessConstructor(...args);
+      return {
+        homeDir,
+        auth: { getCachedAccessToken: mocks.harnessGetCachedAccessToken },
+        ensureConfigFile: mocks.harnessEnsureConfigFile,
+        getConfig: mocks.harnessGetConfig,
+        getExperimentalFeatures: mocks.harnessGetExperimentalFeatures,
+        createSession: mocks.harnessCreateSession,
+        resumeSession: mocks.harnessResumeSession,
+        listSessions: mocks.harnessListSessions,
+        close: mocks.harnessClose,
+        track: mocks.harnessTrack,
+      };
     },
   };
 });
@@ -213,6 +212,22 @@ describe('runPrompt', () => {
     expect(stderr.text()).toBe('To resume this session: kimi -r ses_prompt\n');
     expect(mocks.shutdownTelemetry).toHaveBeenCalled();
     expect(mocks.harnessClose).toHaveBeenCalled();
+  });
+
+  it('stops prompt startup when session creation fails', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    mocks.harnessCreateSession.mockRejectedValueOnce(new Error('Git Bash missing'));
+
+    await expect(runPrompt(opts(), '1.2.3-test', { stdout, stderr })).rejects.toThrow(
+      'Git Bash missing',
+    );
+
+    expect(mocks.harnessEnsureConfigFile).toHaveBeenCalledOnce();
+    expect(mocks.harnessGetConfig).toHaveBeenCalledOnce();
+    expect(mocks.harnessCreateSession).toHaveBeenCalledOnce();
+    expect(mocks.session.prompt).not.toHaveBeenCalled();
+    expect(mocks.harnessClose).toHaveBeenCalledOnce();
   });
 
   it('uses the CLI model override when creating a fresh prompt session', async () => {

@@ -18,9 +18,9 @@
  *   - `SessionStore.list({ workDir })`
  *   - `encodeWorkDirKey` / `normalizeWorkDir`
  *     all from `@moonshot-ai/agent-core/session/store`.
- *   - `Session` (constructor + `resume()` + `agents` map), from
+ *   - `Session` (constructor + `resume()` + `getReadyAgent()`), from
  *     `@moonshot-ai/agent-core`; `localKaos` from `@moonshot-ai/kaos`. After
- *     `resume()`, `session.agents.get('main').context.messages` exposes the
+ *     `resume()`, `session.getReadyAgent('main').context.messages` exposes the
  *     replayed message history.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -134,7 +134,7 @@ describe('migrated session loads in real kimi-core', () => {
     });
     try {
       await session.resume();
-      const mainAgent = session.agents.get('main');
+      const mainAgent = session.getReadyAgent('main');
       expect(mainAgent).toBeDefined();
 
       // The migrated wire carries no `config.update` bootstrap events, so a

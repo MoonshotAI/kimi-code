@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
@@ -36,7 +37,7 @@ vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   return { ...actual, promptFeedbackInput: vi.fn() };
 });
 
-vi.mock('#/tui/utils/open-url', () => ({ openUrl: vi.fn() }));
+vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
 const ESC = String.fromCodePoint(0x1b);
 const BEL = String.fromCodePoint(0x07);
@@ -113,6 +114,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     prompt: vi.fn(async () => {}),
     steer: vi.fn(async () => {}),
     init: vi.fn(async () => {}),
+    startBtw: vi.fn(async () => 'agent-btw'),
     undoHistory: vi.fn(async () => {}),
     cancel: vi.fn(async () => {}),
     cancelCompaction: vi.fn(async () => {}),
@@ -170,6 +172,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     setPluginMcpServerEnabled: vi.fn(async () => {}),
     removePlugin: vi.fn(async () => {}),
     reloadPlugins: vi.fn(async () => ({ added: [], removed: [], errors: [] })),
+    reloadSession: vi.fn(async () => ({})),
     getPluginInfo: vi.fn(async (id: string) => ({
       id,
       displayName: id,
@@ -206,7 +209,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
     interactiveAgentId: 'main',
-    getExperimentalFlags: vi.fn(async () => ({})),
+    getExperimentalFeatures: vi.fn(async () => []),
     auth: {
       status: vi.fn(),
       login: vi.fn(),
@@ -241,6 +244,37 @@ async function makeDriver(
 
 function renderTranscript(driver: MessageDriver): string {
   return driver.state.transcriptContainer.render(120).join('\n');
+}
+
+function renderBtwPanel(driver: MessageDriver): string {
+  return driver.state.btwPanelContainer.render(120).join('\n');
+}
+
+function getMountedBtwPanel(driver: MessageDriver): BtwPanelComponent {
+  const panel = driver.state.btwPanelContainer.children.find(
+    (child) => child instanceof BtwPanelComponent,
+  );
+  if (panel === undefined) throw new Error('Expected a mounted /btw panel.');
+  return panel;
+}
+
+async function openBtwPanel(
+  driver: MessageDriver,
+  session: ReturnType<typeof makeSession>,
+  prompt = 'side question',
+): Promise<void> {
+  driver.handleUserInput(`/btw ${prompt}`);
+  await vi.waitFor(() => {
+    expect(session.startBtw).toHaveBeenCalled();
+    expect(driver.state.btwPanelContainer.children).toHaveLength(2);
+  });
+}
+
+function setTerminalRows(driver: MessageDriver, rows: number): void {
+  Object.defineProperty(driver.state.terminal, 'rows', {
+    configurable: true,
+    get: () => rows,
+  });
 }
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -333,6 +367,57 @@ describe('KimiTUI message flow', () => {
     });
     expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'theme' });
     expect(harness.track).toHaveBeenCalledWith('theme_switch', { theme: 'light' });
+  });
+
+  it('dispatches /reload-tui without reloading the active session', async () => {
+    const homeDir = await makeTempHome();
+    process.env['KIMI_CODE_HOME'] = homeDir;
+    await writeFile(
+      join(homeDir, 'tui.toml'),
+      `
+theme = "light"
+
+[editor]
+command = "vim"
+`,
+      'utf-8',
+    );
+    const { driver, session, harness } = await makeDriver();
+    harness.track.mockClear();
+    session.reloadSession.mockClear();
+
+    driver.handleUserInput('/reload-tui');
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.theme).toBe('light');
+    });
+    expect(driver.state.appState.editorCommand).toBe('vim');
+    expect(session.reloadSession).not.toHaveBeenCalled();
+    expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'reload-tui' });
+  });
+
+  it('dispatches /reload through session reload and applies tui.toml', async () => {
+    const homeDir = await makeTempHome();
+    process.env['KIMI_CODE_HOME'] = homeDir;
+    await writeFile(join(homeDir, 'tui.toml'), 'theme = "light"\n', 'utf-8');
+    const { driver, session, harness } = await makeDriver();
+    harness.track.mockClear();
+    session.reloadSession.mockClear();
+    driver.handleUserInput('hello before reload');
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/reload');
+
+    await vi.waitFor(() => {
+      expect(session.reloadSession).toHaveBeenCalledOnce();
+    });
+    await vi.waitFor(() => {
+      expect(driver.state.appState.theme).toBe('light');
+    });
+    expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'reload' });
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('hello before reload');
+    expect(transcript).toContain('Session reloaded.');
   });
 
   it('tracks successful feedback submissions only after the request succeeds', async () => {
@@ -1067,7 +1152,7 @@ describe('KimiTUI message flow', () => {
           coalescedCount: 1,
           stale: false,
         },
-        prompt: '提醒用户：这是每分钟提醒',
+        prompt: 'Remind the user: this is a once-per-minute reminder',
       } as Event,
       vi.fn(),
     );
@@ -1075,7 +1160,7 @@ describe('KimiTUI message flow', () => {
     const entry = driver.state.transcriptEntries.at(-1);
     expect(entry).toMatchObject({
       kind: 'cron',
-      content: '提醒用户：这是每分钟提醒',
+      content: 'Remind the user: this is a once-per-minute reminder',
       cronData: {
         jobId: 'deadbeef',
         cron: '* * * * *',
@@ -1087,7 +1172,7 @@ describe('KimiTUI message flow', () => {
     const transcript = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
     expect(transcript).toContain('Scheduled reminder fired');
     expect(transcript).toContain('* * * * *');
-    expect(transcript).toContain('提醒用户：这是每分钟提醒');
+    expect(transcript).toContain('Remind the user: this is a once-per-minute reminder');
     expect(transcript).not.toContain('<cron-fire');
   });
 
@@ -1312,6 +1397,633 @@ describe('KimiTUI message flow', () => {
     expect(harness.track).toHaveBeenCalledWith('init_complete', undefined);
   });
 
+  it('starts /btw through a forked side agent without changing the main busy state', async () => {
+    const session = makeSession();
+    const { driver, harness } = await makeDriver(session);
+    harness.track.mockClear();
+    driver.state.appState.streamingPhase = 'composing';
+    driver.state.livePane.mode = 'thinking';
+
+    driver.handleUserInput('/btw What are you working on right now?');
+
+    await vi.waitFor(() => {
+      expect(session.startBtw).toHaveBeenCalledWith();
+    });
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('What are you working on right now?');
+    });
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.appState.streamingPhase).toBe('composing');
+    expect(driver.state.livePane.mode).toBe('thinking');
+    expect(harness.track).toHaveBeenCalledWith('input_command', { command: 'btw' });
+  });
+
+  it('opens /btw without a question and sends the first panel input to a side agent', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/btw');
+
+    await vi.waitFor(() => {
+      expect(session.startBtw).toHaveBeenCalledWith();
+    });
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(stripSgr(renderBtwPanel(driver))).toContain('Ready for a side question...');
+
+    driver.handleUserInput('What are you working on right now?');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('What are you working on right now?');
+    });
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(stripSgr(renderBtwPanel(driver))).toContain('Q: What are you working on right now?');
+  });
+
+  it('cancels an unused /btw side agent when closing an empty panel', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/btw');
+
+    await vi.waitFor(() => {
+      expect(session.startBtw).toHaveBeenCalledWith();
+    });
+    driver.state.editor.onEscape?.();
+
+    expect(session.cancel).toHaveBeenCalledOnce();
+    expect(driver.state.btwPanelContainer.children).toHaveLength(0);
+  });
+
+  it('renders /btw output in a dedicated panel instead of an Agent tool card', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session, 'What are you working on right now?');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        delta: 'I am implementing the dedicated /btw panel.',
+      } as Event,
+      () => {},
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        reason: 'completed',
+      } as Event,
+      () => {},
+    );
+
+    expect(driver.state.btwPanelContainer.children).toHaveLength(2);
+    expect(driver.state.btwPanelContainer.render(120)[0]?.trim()).toBe('');
+    expect(getMountedBtwPanel(driver).isRunning()).toBe(false);
+    expect(driver.state.editor.focused).toBe(true);
+
+    const transcript = stripSgr(renderTranscript(driver));
+    const panel = stripSgr(renderBtwPanel(driver));
+    const editorTopBorder = stripSgr(driver.state.editor.render(80)[0] ?? '');
+    expect(panel).toContain('BTW ─ Esc close');
+    expect(panel).not.toContain('ctrl+o expand');
+    expect(editorTopBorder.startsWith('├')).toBe(true);
+    expect(editorTopBorder.endsWith('┤')).toBe(true);
+
+    driver.state.editor.handleInput('/');
+    const highlightedEditorTopBorder = stripSgr(driver.state.editor.render(80)[0] ?? '');
+    expect(highlightedEditorTopBorder.startsWith('╭')).toBe(true);
+    expect(highlightedEditorTopBorder.endsWith('╮')).toBe(true);
+    expect(panel).not.toContain('BTW done');
+    expect(panel).not.toContain('BTW running');
+    expect(panel).not.toContain('BTW failed');
+    expect(panel).not.toContain('Ask:');
+    expect(panel).not.toContain('Type follow-up');
+    expect(panel).toContain('Q: What are you working on right now?');
+    expect(panel).toContain('I am implementing the dedicated /btw panel.');
+    expect(panel).not.toContain('Agent');
+    expect(transcript).not.toContain('BTW');
+    expect(transcript).not.toContain('Esc close');
+    expect(transcript).not.toContain('I am implementing the dedicated /btw panel.');
+  });
+
+  it('keeps the /btw panel closest to the input after later transcript output', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        delta: 'side answer',
+      } as Event,
+      () => {},
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        reason: 'completed',
+      } as Event,
+      () => {},
+    );
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        origin: { kind: 'user' },
+      } as Event,
+      () => {},
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        delta: 'main answer after btw',
+      } as Event,
+      () => {},
+    );
+    driver.streamingUI.flushNow();
+
+    const transcript = stripSgr(renderTranscript(driver));
+    const panel = stripSgr(renderBtwPanel(driver));
+    const rootChildren = driver.state.ui.children;
+    expect(rootChildren.indexOf(driver.state.btwPanelContainer)).toBe(
+      rootChildren.indexOf(driver.state.editorContainer) - 1,
+    );
+    expect(transcript).toContain('main answer after btw');
+    expect(transcript).not.toContain('side answer');
+    expect(panel).toContain('BTW');
+    expect(panel).not.toContain('BTW done');
+    expect(panel).not.toContain('BTW running');
+    expect(panel).not.toContain('BTW failed');
+    expect(panel).toContain('side answer');
+    expect(panel).not.toContain('main answer after btw');
+  });
+
+  it('renders only the tail of /btw thinking output', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        delta: ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7'].join('\n'),
+      } as Event,
+      () => {},
+    );
+
+    const transcript = stripSgr(renderTranscript(driver));
+    const panel = stripSgr(renderBtwPanel(driver));
+    expect(transcript).not.toContain('line7');
+    expect(panel).not.toContain('line1');
+    expect(panel).not.toContain('line5');
+    expect(panel).toContain('line6');
+    expect(panel).toContain('line7');
+  });
+
+  it('renders /btw body at its actual content height when under the cap', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session);
+
+    const lines = getMountedBtwPanel(driver).render(80).map(stripSgr);
+    expect(lines).toHaveLength(3);
+    expect(lines.join('\n')).toContain('Q: side question');
+    expect(lines.join('\n')).toContain('Waiting for answer...');
+  });
+
+  it('keeps /btw panel height stable when final output is shorter than thinking', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        delta: 'thinking line 1\nthinking line 2',
+      } as Event,
+      () => {},
+    );
+
+    const mountedPanel = getMountedBtwPanel(driver);
+    const thinkingLines = mountedPanel.render(80).map(stripSgr);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        delta: 'final answer',
+      } as Event,
+      () => {},
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        reason: 'completed',
+      } as Event,
+      () => {},
+    );
+
+    const finalLines = mountedPanel.render(80).map(stripSgr);
+    expect(finalLines).toHaveLength(thinkingLines.length);
+    expect(finalLines.join('\n')).toContain('final answer');
+    expect(finalLines.at(-1)).toMatch(/^│\s+│$/);
+  });
+
+  it('caps /btw height to half the terminal and supports scrolling', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    setTerminalRows(driver, 12);
+    await openBtwPanel(driver, session, 'question 1');
+
+    const panel = getMountedBtwPanel(driver);
+    panel.appendAnswer('answer 1');
+    panel.markDone();
+    for (let i = 2; i <= 8; i++) {
+      panel.submit(`question ${String(i)}`);
+      panel.appendAnswer(`answer ${String(i)}`);
+      panel.markDone();
+    }
+
+    const collapsed = panel.render(80).map(stripSgr);
+    expect(collapsed).toHaveLength(6);
+    expect(collapsed.join('\n')).toContain('BTW ─ Esc close · ↑↓ scroll');
+    expect(collapsed.join('\n')).not.toContain('ctrl+o expand');
+    expect(collapsed.join('\n')).toContain('question 8');
+    expect(collapsed.join('\n')).toContain('answer 8');
+    expect(collapsed.join('\n')).not.toContain('question 1');
+
+    driver.state.editor.setText('draft main input');
+    const collapsedWithInput = panel.render(80).map(stripSgr);
+    expect(collapsedWithInput.join('\n')).toContain('BTW ─ Esc close');
+    expect(collapsedWithInput.join('\n')).not.toContain('↑↓ scroll');
+    driver.state.editor.setText('');
+
+    const requestRender = vi.mocked(driver.state.ui.requestRender);
+    requestRender.mockClear();
+    for (let i = 0; i < 20; i++) {
+      driver.state.editor.handleInput('\u001B[A');
+    }
+    const scrolledUp = panel.render(80).map(stripSgr);
+    expect(requestRender).toHaveBeenCalled();
+    expect(scrolledUp.join('\n')).toContain('question 1');
+    expect(scrolledUp.join('\n')).not.toContain('answer 8');
+
+    panel.appendAnswer('\nstreamed tail while scrolled');
+    expect(panel.render(80).map(stripSgr)).toEqual(scrolledUp);
+
+    requestRender.mockClear();
+    for (let i = 0; i < 20; i++) {
+      driver.state.editor.handleInput('\u001B[B');
+    }
+    const scrolledDown = panel.render(80).map(stripSgr);
+    expect(requestRender).toHaveBeenCalled();
+    expect(scrolledDown.join('\n')).toContain('question 8');
+    expect(scrolledDown.join('\n')).toContain('answer 8');
+    expect(scrolledDown.join('\n')).toContain('streamed tail while scrolled');
+
+    setTerminalRows(driver, 4);
+    const tiny = panel.render(80).map(stripSgr);
+    expect(tiny).toHaveLength(3);
+    expect(tiny.join('\n')).not.toContain('ctrl+o expand');
+    expect(tiny.join('\n')).toContain('answer 8');
+
+    requestRender.mockClear();
+    driver.state.editor.onToggleToolExpand?.();
+    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(panel.render(80).map(stripSgr)).toEqual(tiny);
+  });
+
+  it('cancels and closes a running /btw panel on Escape', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session);
+
+    const panel = getMountedBtwPanel(driver);
+    expect(panel.isRunning()).toBe(true);
+    expect(driver.state.editor.focused).toBe(true);
+
+    const requestRender = vi.mocked(driver.state.ui.requestRender);
+    requestRender.mockClear();
+    driver.state.editor.onEscape?.();
+
+    expect(session.cancel).toHaveBeenCalledOnce();
+    expect(driver.state.btwPanelContainer.children).toHaveLength(0);
+    expect(requestRender.mock.calls.at(-1)).toEqual([true]);
+    const editorTopBorder = stripSgr(driver.state.editor.render(80)[0] ?? '');
+    expect(editorTopBorder.startsWith('╭')).toBe(true);
+    expect(editorTopBorder.endsWith('╮')).toBe(true);
+    expect(driver.state.editor.focused).toBe(true);
+  });
+
+  it('cancels a running /btw panel on Ctrl-C without closing it or cancelling main streaming', async () => {
+    const session = makeSession();
+    const { driver, harness } = await makeDriver(session);
+    const cancelledAgentIds: string[] = [];
+    session.cancel.mockImplementation(async () => {
+      cancelledAgentIds.push(harness.interactiveAgentId);
+    });
+    await openBtwPanel(driver, session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.editor.setText('draft main input');
+
+    const panel = getMountedBtwPanel(driver);
+    expect(panel.isRunning()).toBe(true);
+
+    driver.state.editor.onCtrlC?.();
+
+    expect(session.cancel).toHaveBeenCalledOnce();
+    expect(cancelledAgentIds).toEqual(['agent-btw']);
+    expect(getMountedBtwPanel(driver)).toBe(panel);
+    expect(driver.state.btwPanelContainer.children).toHaveLength(2);
+    expect(driver.state.editor.focused).toBe(true);
+    expect(driver.state.editor.getText()).toBe('draft main input');
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+  });
+
+  it('preserves rendered /btw output when a running panel is cancelled', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session);
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        delta: 'partial side answer',
+      } as Event,
+      () => {},
+    );
+
+    driver.state.editor.onCtrlC?.();
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        reason: 'cancelled',
+      } as Event,
+      () => {},
+    );
+
+    const panel = stripSgr(renderBtwPanel(driver));
+    expect(panel).toContain('partial side answer');
+    expect(panel).toContain('Interrupted by user');
+  });
+
+  it('cancels a running /btw panel when starting a new session clears it', async () => {
+    const initialSession = makeSession({ id: 'ses-initial' });
+    const nextSession = makeSession({ id: 'ses-next' });
+    const createSession = vi
+      .fn()
+      .mockResolvedValueOnce(initialSession)
+      .mockResolvedValueOnce(nextSession);
+    const { driver, harness } = await makeDriver(initialSession, { createSession });
+    const cancelledAgentIds: string[] = [];
+    initialSession.cancel.mockImplementation(async () => {
+      cancelledAgentIds.push(harness.interactiveAgentId);
+    });
+    await openBtwPanel(driver, initialSession);
+
+    driver.handleUserInput('/new');
+
+    await vi.waitFor(() => {
+      expect(driver.getCurrentSessionId()).toBe('ses-next');
+    });
+    expect(initialSession.cancel).toHaveBeenCalledOnce();
+    expect(cancelledAgentIds).toEqual(['agent-btw']);
+    expect(nextSession.cancel).not.toHaveBeenCalled();
+    expect(driver.state.btwPanelContainer.children).toHaveLength(0);
+  });
+
+  it('closes a completed /btw panel on Ctrl-C without cancelling main streaming', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        reason: 'completed',
+      } as Event,
+      () => {},
+    );
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.state.editor.setText('draft main input');
+
+    expect(getMountedBtwPanel(driver).isRunning()).toBe(false);
+
+    driver.state.editor.onCtrlC?.();
+
+    expect(session.cancel).not.toHaveBeenCalled();
+    expect(driver.state.btwPanelContainer.children).toHaveLength(0);
+    expect(driver.state.editor.focused).toBe(true);
+    expect(driver.state.editor.getText()).toBe('draft main input');
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+  });
+
+  it('closes a completed /btw panel on Escape without cancelling it', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        reason: 'completed',
+      } as Event,
+      () => {},
+    );
+
+    const panel = getMountedBtwPanel(driver);
+    expect(panel.isRunning()).toBe(false);
+    expect(driver.state.editor.focused).toBe(true);
+
+    driver.state.editor.onEscape?.();
+
+    expect(session.cancel).not.toHaveBeenCalled();
+    expect(driver.state.btwPanelContainer.children).toHaveLength(0);
+    expect(driver.state.editor.focused).toBe(true);
+  });
+
+  it('sends follow-up /btw input through ordinary prompt on the same side agent', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session, 'first question');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        reason: 'completed',
+      } as Event,
+      () => {},
+    );
+
+    const panel = getMountedBtwPanel(driver);
+    expect(panel.isRunning()).toBe(false);
+    driver.handleUserInput('follow up');
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('follow up');
+    });
+    expect(session.prompt).toHaveBeenCalledTimes(2);
+    expect(driver.state.btwPanelContainer.children).toHaveLength(2);
+    expect(driver.state.editor.focused).toBe(true);
+  });
+
+  it('keeps main input pointed at /btw while the panel is open', async () => {
+    let resolveBtwPrompt: (() => void) | undefined;
+    const session = makeSession({
+      prompt: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveBtwPrompt = resolve;
+          }),
+      ),
+    });
+    const { driver, harness } = await makeDriver(session);
+
+    await openBtwPanel(driver, session, 'slow side question');
+
+    expect(harness.interactiveAgentId).toBe('main');
+    driver.handleUserInput('follow-up while btw prompt is pending');
+    driver.handleUserInput('another follow-up while btw prompt is pending');
+
+    expect(session.prompt).toHaveBeenCalledTimes(1);
+    expect(driver.state.queuedMessages).toEqual([]);
+    expect(driver.state.editor.getText()).toBe('another follow-up while btw prompt is pending');
+    expect(stripSgr(renderTranscript(driver))).not.toContain(
+      'Wait for /btw to finish before sending another question.',
+    );
+    expect(
+      countOccurrences(
+        stripSgr(renderBtwPanel(driver)),
+        'Wait for /btw to finish before sending another question.',
+      ),
+    ).toBe(2);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'agent-btw',
+        sessionId: 'ses-1',
+        turnId: 0,
+        reason: 'completed',
+      } as Event,
+      () => {},
+    );
+
+    expect(stripSgr(renderBtwPanel(driver))).not.toContain(
+      'Wait for /btw to finish before sending another question.',
+    );
+
+    resolveBtwPrompt?.();
+  });
+
+  it('replaces a running /btw panel when another /btw command is submitted', async () => {
+    const session = makeSession({
+      startBtw: vi.fn()
+        .mockResolvedValueOnce('agent-btw-1')
+        .mockResolvedValueOnce('agent-btw-2'),
+    });
+    const { driver } = await makeDriver(session);
+    await openBtwPanel(driver, session, 'first question');
+
+    const firstPanel = getMountedBtwPanel(driver);
+    expect(firstPanel.isRunning()).toBe(true);
+
+    driver.handleUserInput('/btw second question');
+
+    await vi.waitFor(() => {
+      expect(session.startBtw).toHaveBeenCalledTimes(2);
+    });
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('second question');
+    });
+
+    const secondPanel = getMountedBtwPanel(driver);
+    expect(secondPanel).not.toBe(firstPanel);
+    expect(session.cancel).toHaveBeenCalledTimes(1);
+    expect(session.prompt).toHaveBeenCalledTimes(2);
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'agent-btw-1',
+        sessionId: 'ses-1',
+        turnId: 0,
+        delta: 'answer from old side agent',
+      } as Event,
+      () => {},
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'assistant.delta',
+        agentId: 'agent-btw-2',
+        sessionId: 'ses-1',
+        turnId: 1,
+        delta: 'answer from new side agent',
+      } as Event,
+      () => {},
+    );
+
+    const renderedPanel = stripSgr(renderBtwPanel(driver));
+    expect(renderedPanel).not.toContain('answer from old side agent');
+    expect(renderedPanel).toContain('answer from new side agent');
+  });
+
+  it('does not run /btw without a selected model', async () => {
+    const { driver, session } = await makeDriver();
+
+    driver.state.appState.model = '';
+    driver.handleUserInput('/btw');
+    expect(session.startBtw).not.toHaveBeenCalled();
+    expect(driver.state.btwPanelContainer.children).toHaveLength(0);
+    expect(stripSgr(renderTranscript(driver))).toContain('LLM not set');
+
+    driver.handleUserInput('/btw What are you doing now?');
+
+    expect(session.startBtw).not.toHaveBeenCalled();
+    expect(stripSgr(renderTranscript(driver))).toContain('LLM not set');
+  });
+
   it('queues Ctrl-S input instead of steering while /init is running', async () => {
     let resolveInit: (() => void) | undefined;
     const session = makeSession({
@@ -1400,10 +2112,10 @@ describe('KimiTUI message flow', () => {
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('OAuth login expired. Send /login to login.');
     expect(transcript).not.toContain('[auth.login_required]');
-    expect(transcript).not.toContain('kimi export');
+    expect(transcript).not.toContain('/export-debug-zip');
   });
 
-  it('appends the kimi export hint beneath session error messages', async () => {
+  it('appends the /export-debug-zip hint beneath session error messages', async () => {
     const { driver } = await makeDriver();
 
     driver.sessionEventHandler.handleEvent(
@@ -1420,11 +2132,12 @@ describe('KimiTUI message flow', () => {
 
     const transcript = stripSgr(driver.state.transcriptContainer.render(200).join('\n'));
     expect(transcript).toContain('Error: [compaction.failed]');
-    expect(transcript).toContain('If this persists, run `kimi export ses-1`');
+    expect(transcript).toContain('If this persists, run `/export-debug-zip`');
     expect(transcript).toContain("Please don't share it publicly");
+    expect(transcript).not.toContain('kimi export');
   });
 
-  it('skips the kimi export hint when no active session id is set', async () => {
+  it('skips the /export-debug-zip hint when no active session id is set', async () => {
     const { driver } = await makeDriver();
     driver.state.appState.sessionId = '';
 
@@ -1442,7 +2155,7 @@ describe('KimiTUI message flow', () => {
 
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('Error: [compaction.failed]');
-    expect(transcript).not.toContain('kimi export');
+    expect(transcript).not.toContain('/export-debug-zip');
   });
 
   it('shows ExitPlanMode plan only in the current-plan card during approval', async () => {
@@ -1763,7 +2476,7 @@ describe('KimiTUI message flow', () => {
       );
     });
     const picker = driver.state.editorContainer.children[0] as PluginMarketplaceSelectorComponent;
-    picker.handleInput(' ');
+    picker.handleInput('\r');
 
     await vi.waitFor(() => {
       expect(session.installPlugin).toHaveBeenCalledWith(join(marketplaceDir, 'kimi-datasource'));
@@ -1800,7 +2513,7 @@ describe('KimiTUI message flow', () => {
         );
       });
       const picker = driver.state.editorContainer.children[0] as PluginMarketplaceSelectorComponent;
-      picker.handleInput(' ');
+      picker.handleInput('\r');
 
       await vi.waitFor(() => {
         expect(session.installPlugin).toHaveBeenCalledWith(
@@ -1845,16 +2558,22 @@ describe('KimiTUI message flow', () => {
     const overview = driver.state.editorContainer.children[0] as PluginsOverviewSelectorComponent;
     overview.handleInput(' ');
 
+    // Toggling refreshes the picker in place: it must not flash back to the
+    // editor between the keypress and the refreshed picker mounting.
+    expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
+      PluginsOverviewSelectorComponent,
+    );
+
     await vi.waitFor(() => {
       expect(session.setPluginEnabled).toHaveBeenCalledWith('demo', false);
     });
+    // The picker stays mounted the whole time (no editor flash), so wait for the
+    // refreshed render rather than for an instance swap.
     await vi.waitFor(() => {
-      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(
-        PluginsOverviewSelectorComponent,
-      );
+      const refreshed = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
+      expect(refreshed).toContain('❯ Demo  disabled  require run /new to apply');
     });
     const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-    expect(out).toContain('❯ Demo  disabled  pending /new');
     expect(out).not.toContain('Space enable');
     expect(stripSgr(renderTranscript(driver))).not.toContain('Disabled demo. Run /new to apply.');
   });
@@ -1947,7 +2666,7 @@ describe('KimiTUI message flow', () => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginMcpSelectorComponent);
     });
     const out = stripSgr(driver.state.editorContainer.children[0]!.render(120).join('\n'));
-    expect(out).toContain('❯ data  disabled  pending /new');
+    expect(out).toContain('❯ data  disabled  require run /new to apply');
     expect(stripSgr(renderTranscript(driver))).not.toContain(
       'Disabled MCP server data for kimi-datasource. Run /new to apply.',
     );
@@ -2033,15 +2752,16 @@ describe('KimiTUI message flow', () => {
     const picker = driver.state.editorContainer.children[0];
     expect(picker).toBeInstanceOf(TabbedModelSelectorComponent);
     const pickerOutput = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
-    expect(pickerOutput).toContain('Kimi K2 (Kimi Code) ← current');
-    expect(pickerOutput).toContain('❯ Kimi Turbo (Kimi Code)');
+    expect(pickerOutput).toMatch(/Kimi K2\s+Kimi Code ← current/);
+    expect(pickerOutput).toMatch(/❯ Kimi Turbo\s+Kimi Code/);
     (picker as TabbedModelSelectorComponent).handleInput('t');
     (picker as TabbedModelSelectorComponent).handleInput('u');
     const filteredOutput = stripSgr((picker as TabbedModelSelectorComponent).render(120).join('\n'));
     expect(filteredOutput).toContain('Search: tu');
-    expect(filteredOutput).toContain('Kimi Turbo (Kimi Code)');
-    expect(filteredOutput).not.toContain('Kimi K2 (Kimi Code)');
-    (picker as TabbedModelSelectorComponent).handleInput('/');
+    expect(filteredOutput).toContain('Kimi Turbo');
+    expect(filteredOutput).not.toContain('Kimi K2');
+    // Turbo is a thinking-capable model that is not the active one, so it
+    // defaults to thinking on — selecting it applies thinking without a toggle.
     (picker as TabbedModelSelectorComponent).handleInput('\r');
 
     await vi.waitFor(() => {
@@ -2118,8 +2838,8 @@ describe('KimiTUI message flow', () => {
 
     const output = stripSgr((picker as ModelSelectorComponent).render(120).join('\n'));
     expect(output).toContain('Search: tu');
-    expect(output).toContain('Kimi Turbo (Kimi Code)');
-    expect(output).not.toContain('Kimi Alpha (Kimi Code)');
+    expect(output).toContain('Kimi Turbo');
+    expect(output).not.toContain('Kimi Alpha');
 
     (picker as ModelSelectorComponent).handleInput('\u001B');
     (picker as ModelSelectorComponent).handleInput('\u001B');
@@ -2142,6 +2862,30 @@ describe('KimiTUI message flow', () => {
     expect(write).toHaveBeenCalledWith(deleteAllKittyImages());
   });
 
+  it('updates terminal title through pi-tui without changing process title', async () => {
+    const originalTitle = process.title;
+    const { driver } = await makeDriver(makeSession({ id: 'ses-1' }));
+    const setTitle = vi.spyOn(driver.state.terminal, 'setTitle').mockImplementation(() => {});
+
+    try {
+      process.title = 'kimi-test-runner';
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'session.meta.updated',
+          sessionId: 'ses-1',
+          agentId: 'main',
+          title: 'Implement terminal title',
+        } as Event,
+        () => {},
+      );
+
+      expect(setTitle).toHaveBeenCalledWith('Implement terminal title');
+      expect(process.title).toBe('kimi-test-runner');
+    } finally {
+      process.title = originalTitle;
+    }
+  });
+
   it('forks the active session and switches to the returned session', async () => {
     const originalTitle = process.title;
     const source = makeSession({
@@ -2154,8 +2898,10 @@ describe('KimiTUI message flow', () => {
     });
     const forkSession = vi.fn(async () => forked);
     const { driver, harness } = await makeDriver(source, { forkSession });
+    const setTitle = vi.spyOn(driver.state.terminal, 'setTitle').mockImplementation(() => {});
 
     try {
+      process.title = 'kimi-test-runner';
       driver.handleUserInput('/fork ignored args');
 
       await vi.waitFor(() => {
@@ -2165,7 +2911,8 @@ describe('KimiTUI message flow', () => {
         });
         expect(driver.getCurrentSessionId()).toBe('ses-fork');
       });
-      expect(process.title).toBe('Fork: Source title');
+      expect(setTitle).toHaveBeenCalledWith('Fork: Source title');
+      expect(process.title).toBe('kimi-test-runner');
       expect(source.close).toHaveBeenCalledOnce();
       expect(forked.onEvent).toHaveBeenCalledOnce();
       expect(harness.resumeSession).not.toHaveBeenCalled();
@@ -2273,7 +3020,7 @@ describe('KimiTUI message flow', () => {
 
     const transcript = stripSgr(renderTranscript(driver));
     expect(transcript).toContain('t7');
-    expect(transcript).not.toContain('ctrl+o to expand');
+    expect(transcript).not.toContain('ctrl+o expand');
   });
 
   it('renders hook results without XML tags', async () => {

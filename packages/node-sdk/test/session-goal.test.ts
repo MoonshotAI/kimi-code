@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { Session } from '#/session';
-import type { SDKRpcClient } from '#/rpc';
+import type { SDKRpcClientBase } from '#/rpc';
 
 function makeSession() {
   const rpc = {
@@ -11,7 +11,7 @@ function makeSession() {
     resumeGoal: vi.fn(async () => ({ goalId: 'g1' })),
     cancelGoal: vi.fn(async () => ({ goalId: 'g1' })),
     clearSessionHandlers: vi.fn(),
-  } as unknown as SDKRpcClient;
+  } as unknown as SDKRpcClientBase;
   const session = new Session({ id: 'ses_goal', workDir: '/tmp/work', rpc });
   return { session, rpc };
 }

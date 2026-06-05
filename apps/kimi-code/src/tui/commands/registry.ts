@@ -10,10 +10,24 @@ const GOAL_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'resume', description: 'Resume a paused goal' },
   { value: 'cancel', description: 'Cancel and remove the current goal' },
   { value: 'replace', description: 'Replace the current goal with a new objective' },
+  { value: 'next', description: 'Queue an upcoming goal' },
+];
+
+const GOAL_NEXT_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'manage', description: 'Manage upcoming goals' },
 ];
 
 /** Argument autocompletion for the `/goal` command (subcommands). */
 export function goalArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+  const nextMatch = argumentPrefix.match(/^next\s+(\S*)$/i);
+  if (nextMatch !== null) {
+    return (
+      completeLeadingArg(GOAL_NEXT_ARG_COMPLETIONS, nextMatch[1] ?? '')?.map((item) => ({
+        ...item,
+        value: `next ${item.value}`,
+      })) ?? null
+    );
+  }
   return completeLeadingArg(GOAL_ARG_COMPLETIONS, argumentPrefix);
 }
 
@@ -68,6 +82,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'btw',
+    aliases: [],
+    description: 'Ask a forked side agent a question',
+    priority: 90,
+    availability: 'always',
+  },
+  {
     name: 'help',
     aliases: ['h', '?'],
     description: 'Show available commands and shortcuts',
@@ -108,6 +129,27 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'experiments',
+    aliases: ['experimental'],
+    description: 'Manage experimental features',
+    priority: 60,
+    availability: 'idle-only',
+  },
+  {
+    name: 'reload',
+    aliases: [],
+    description: 'Reload session and apply config.toml settings plus tui.toml UI preferences',
+    priority: 60,
+    availability: 'idle-only',
+  },
+  {
+    name: 'reload-tui',
+    aliases: [],
+    description: 'Reload only tui.toml UI preferences',
+    priority: 60,
+    availability: 'always',
+  },
+  {
     name: 'compact',
     aliases: [],
     description: 'Compact the conversation context',
@@ -118,7 +160,7 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Start or manage an autonomous goal',
     priority: 80,
-    experimentalFlag: 'goal-command',
+    experimentalFlag: 'goal_command',
     // No argumentHint: the menu description stays as short as every other
     // command's. The subcommands (status/pause/resume/cancel/replace) surface in
     // the argument autocomplete list once the user types `/goal ` (see
@@ -128,6 +170,7 @@ export const BUILTIN_SLASH_COMMANDS = [
     // resume start (or restart) a turn and so are idle-only.
     availability: (args) => {
       const trimmed = args.trim();
+      if (trimmed === 'next' || trimmed.startsWith('next ')) return 'always';
       return trimmed === '' || trimmed === 'status' || trimmed === 'pause' || trimmed === 'cancel'
         ? 'always'
         : 'idle-only';

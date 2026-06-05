@@ -1,23 +1,13 @@
 import {
-  ensureConfigFile,
   ErrorCodes,
   KimiError,
-  getRootLogger,
-  noopTelemetryClient,
-  resolveConfigPath,
-  resolveKimiHome,
-  resolveLoggingConfig,
   withTelemetryContext,
-  type ExperimentalFlagMap,
-  type TelemetryClient,
-  type TelemetryContextPatch,
-  type TelemetryProperties,
+  type ExperimentalFeatureState,
 } from '@moonshot-ai/agent-core';
-import { assertKimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 
-import { KimiAuthFacade } from '#/auth';
-import { SDKRpcClient } from '#/rpc';
 import { Session } from '#/session';
+import type { KimiAuthFacade } from '#/auth';
+import type { SDKRpcClientBase } from '#/rpc';
 import type {
   CreateSessionOptions,
   ExportSessionInput,
@@ -26,13 +16,26 @@ import type {
   GetConfigOptions,
   KimiConfig,
   KimiConfigPatch,
-  KimiHarnessOptions,
   KimiHostIdentity,
   ListSessionsOptions,
   RenameSessionInput,
   ResumeSessionInput,
   SessionSummary,
+  TelemetryClient,
+  TelemetryContextPatch,
+  TelemetryProperties,
 } from '#/types';
+
+export interface KimiHarnessRuntimeOptions {
+  readonly identity?: KimiHostIdentity;
+  readonly uiMode?: string;
+  readonly homeDir: string;
+  readonly configPath: string;
+  readonly auth: KimiAuthFacade;
+  readonly telemetry: TelemetryClient;
+  readonly ensureConfigFile: () => Promise<void>;
+  readonly onClose: () => void | Promise<void>;
+}
 
 export class KimiHarness {
   readonly homeDir: string;
@@ -43,39 +46,21 @@ export class KimiHarness {
   private readonly uiMode: string;
   private readonly telemetry: TelemetryClient;
   private readonly activeSessions = new Map<string, Session>();
-  private readonly rpc: SDKRpcClient;
+  private readonly ensureConfigFileImpl: () => Promise<void>;
+  private readonly closeImpl: () => void | Promise<void>;
 
-  constructor(options: KimiHarnessOptions) {
-    this.identity =
-      options.identity === undefined ? undefined : assertKimiHostIdentity(options.identity);
+  constructor(
+    private readonly rpc: SDKRpcClientBase,
+    options: KimiHarnessRuntimeOptions,
+  ) {
+    this.identity = options.identity;
     this.uiMode = options.uiMode ?? DEFAULT_SESSION_STARTED_UI_MODE;
-    this.homeDir = resolveKimiHome(options.homeDir);
-    this.configPath = resolveConfigPath({
-      homeDir: this.homeDir,
-      configPath: options.configPath,
-    });
-    this.configureLogging();
-    this.telemetry = options.telemetry ?? noopTelemetryClient;
-    this.auth = new KimiAuthFacade({
-      homeDir: this.homeDir,
-      configPath: this.configPath,
-      identity: this.identity,
-      onRefresh: options.onOAuthRefresh,
-    });
-    this.rpc = new SDKRpcClient({
-      homeDir: options.homeDir,
-      configPath: this.configPath,
-      identity: this.identity,
-      resolveOAuthTokenProvider: this.auth.resolveOAuthTokenProvider,
-      skillDirs: options.skillDirs,
-      telemetry: this.telemetry,
-    });
-  }
-
-  private configureLogging(): void {
-    // Fresh configure completes synchronously on the first-time path; pre-init
-    // noop covers any caller that races before this returns.
-    void getRootLogger().configure(resolveLoggingConfig({ homeDir: this.homeDir }));
+    this.homeDir = options.homeDir;
+    this.configPath = options.configPath;
+    this.telemetry = options.telemetry;
+    this.auth = options.auth;
+    this.ensureConfigFileImpl = options.ensureConfigFile;
+    this.closeImpl = options.onClose;
   }
 
   get sessions(): ReadonlyMap<string, Session> {
@@ -124,7 +109,7 @@ export class KimiHarness {
     const active = this.activeSessions.get(id);
     if (active !== undefined) return active;
 
-    const summary = await this.rpc.resumeSession({ id });
+    const summary = await this.rpc.resumeSession({ ...input, id });
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,
@@ -137,6 +122,31 @@ export class KimiHarness {
     this.activeSessions.set(session.id, session);
     this.trackSessionStarted(summary.id, true);
     this.trackSessionEvent(session.id, 'session_resume');
+    return session;
+  }
+
+  async reloadSession(input: ResumeSessionInput): Promise<Session> {
+    const id = normalizeSessionId(input.id);
+    const active = this.activeSessions.get(id);
+    if (active !== undefined) {
+      await active.reloadSession();
+      this.trackSessionEvent(active.id, 'session_reload');
+      return active;
+    }
+
+    const summary = await this.rpc.reloadSession({ sessionId: id });
+    const session = new Session({
+      id: summary.id,
+      workDir: summary.workDir,
+      summary,
+      rpc: this.rpc,
+      onClose: () => {
+        this.activeSessions.delete(summary.id);
+      },
+    });
+    this.activeSessions.set(session.id, session);
+    this.trackSessionStarted(summary.id, true);
+    this.trackSessionEvent(session.id, 'session_reload');
     return session;
   }
 
@@ -192,13 +202,12 @@ export class KimiHarness {
     return this.rpc.getConfig(options);
   }
 
-  /** Resolved enabled-state of every experimental flag (flag id → enabled). */
-  async getExperimentalFlags(): Promise<ExperimentalFlagMap> {
-    return this.rpc.getExperimentalFlags();
+  async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {
+    return this.rpc.getExperimentalFeatures();
   }
 
   async ensureConfigFile(): Promise<void> {
-    await ensureConfigFile(this.configPath);
+    await this.ensureConfigFileImpl();
   }
 
   async setConfig(patch: KimiConfigPatch): Promise<KimiConfig> {
@@ -211,11 +220,7 @@ export class KimiHarness {
 
   async close(): Promise<void> {
     await Promise.all(Array.from(this.activeSessions.values(), (session) => session.close()));
-    try {
-      await getRootLogger().flush();
-    } catch {
-      // never let logger flush block process exit
-    }
+    await this.closeImpl();
   }
 
   private trackSessionEvent(eventSessionId: string, event: string): void {

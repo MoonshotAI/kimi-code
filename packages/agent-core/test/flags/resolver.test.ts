@@ -13,12 +13,16 @@ import {
 const DEFS = [
   {
     id: 'a-on-default',
+    title: 'A on default',
+    description: 'Fake flag A.',
     env: 'KIMI_CODE_EXPERIMENTAL_A',
     default: true,
     surface: 'core',
   },
   {
     id: 'b-off-default',
+    title: 'B off default',
+    description: 'Fake flag B.',
     env: 'KIMI_CODE_EXPERIMENTAL_B',
     default: false,
     surface: 'tui',
@@ -91,6 +95,74 @@ describe('FlagResolver', () => {
   it('unknown id resolves to false (defensive)', () => {
     expect(make({})('not-a-real-flag')).toBe(false);
   });
+
+  it('uses config overrides between env and registry defaults', () => {
+    const resolver = new FlagResolver({}, DEFS, {
+      'a-on-default': false,
+      'b-off-default': true,
+    } as never);
+
+    expect(resolver.enabled('a-on-default' as FlagId)).toBe(false);
+    expect(resolver.enabled('b-off-default' as FlagId)).toBe(true);
+  });
+
+  it('keeps env precedence above config overrides', () => {
+    const resolver = new FlagResolver(
+      {
+        KIMI_CODE_EXPERIMENTAL_A: '1',
+        KIMI_CODE_EXPERIMENTAL_B: '0',
+      },
+      DEFS,
+      {
+        'a-on-default': false,
+        'b-off-default': true,
+      } as never,
+    );
+
+    expect(resolver.enabled('a-on-default' as FlagId)).toBe(true);
+    expect(resolver.enabled('b-off-default' as FlagId)).toBe(false);
+  });
+
+  it('updates config overrides without leaking into another resolver', () => {
+    const first = new FlagResolver({}, DEFS, { 'b-off-default': true } as never);
+    const second = new FlagResolver({}, DEFS);
+
+    expect(first.enabled('b-off-default' as FlagId)).toBe(true);
+    expect(second.enabled('b-off-default' as FlagId)).toBe(false);
+
+    first.setConfigOverrides({ 'b-off-default': false } as never);
+
+    expect(first.enabled('b-off-default' as FlagId)).toBe(false);
+    expect(second.enabled('b-off-default' as FlagId)).toBe(false);
+  });
+
+  it('explains the source of the effective value', () => {
+    const defaulted = new FlagResolver({}, DEFS);
+    expect(defaulted.explain('b-off-default' as FlagId)).toMatchObject({
+      id: 'b-off-default',
+      enabled: false,
+      source: 'default',
+      configValue: undefined,
+    });
+
+    const configured = new FlagResolver({}, DEFS, { 'b-off-default': true } as never);
+    expect(configured.explain('b-off-default' as FlagId)).toMatchObject({
+      enabled: true,
+      source: 'config',
+      configValue: true,
+    });
+
+    const fromEnv = new FlagResolver(
+      { KIMI_CODE_EXPERIMENTAL_B: '0' },
+      DEFS,
+      { 'b-off-default': true } as never,
+    );
+    expect(fromEnv.explain('b-off-default' as FlagId)).toMatchObject({
+      enabled: false,
+      source: 'env',
+      configValue: true,
+    });
+  });
 });
 
 describe('FLAG_DEFINITIONS invariants', () => {
@@ -102,6 +174,8 @@ describe('FLAG_DEFINITIONS invariants', () => {
       expect(def.env.startsWith('KIMI_CODE_EXPERIMENTAL_')).toBe(true);
       expect(def.env).not.toBe(MASTER_ENV);
       expect(def.id).not.toBe('flag'); // reserved: would collide with the master switch
+      expect(def.title.length).toBeGreaterThan(0);
+      expect(def.description.length).toBeGreaterThan(0);
       expect(seenEnv.has(def.env)).toBe(false);
       expect(seenId.has(def.id)).toBe(false);
       seenEnv.add(def.env);

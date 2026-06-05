@@ -22,7 +22,7 @@ export interface AuthFlowHost {
   appendStartupNotice(extra: string): void;
   readonly sessionEventHandler: SessionEventHandler;
   fetchSessions(): Promise<void>;
-  refreshSessionTitle(): void;
+  updateTerminalTitle(): void;
   refreshSkillCommands(session?: SkillListSession): Promise<void>;
 }
 
@@ -82,7 +82,7 @@ export class AuthFlowController {
     await host.syncRuntimeState(session);
     host.sessionEventHandler.startSubscription();
     void host.fetchSessions();
-    host.refreshSessionTitle();
+    host.updateTerminalTitle();
     void host.refreshSkillCommands(host.session);
   }
 

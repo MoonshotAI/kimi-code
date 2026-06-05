@@ -227,6 +227,34 @@ describe('resolveRuntimeProvider model metadata', () => {
 });
 
 describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
+  it('returns alias.maxOutputSize for request completion budgeting', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          openai: {
+            type: 'openai',
+            apiKey: 'sk-openai',
+            baseUrl: 'https://openai.example/v1',
+          },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'deepseek-alias': {
+            provider: 'openai',
+            model: 'deepseek-v4-flash',
+            maxContextSize: 1_000_000,
+            maxOutputSize: 384000,
+          },
+        },
+      },
+      model: 'deepseek-alias',
+    });
+
+    expect(resolved.maxOutputSize).toBe(384000);
+  });
+
   it('forwards alias.maxOutputSize to the anthropic provider config as defaultMaxTokens', () => {
     const resolved = resolveRuntimeProvider({
       config: {

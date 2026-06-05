@@ -1,10 +1,10 @@
 # Sessions and context
 
-Kimi Code CLI persists every conversation as a "session", preserving message history and metadata so you can close the terminal and resume later. This page covers resuming sessions, context compaction, and managing sessions from inside the TUI.
+Kimi Code CLI persists every conversation as a "session" — storing message history and metadata so you can close the terminal and pick up right where you left off. This page covers how to resume sessions, manage context, and export or fork sessions.
 
 ## Session storage
 
-All sessions are stored under `$KIMI_CODE_HOME/sessions/` (default `~/.kimi-code/sessions/`), bucketed by working directory:
+All sessions are saved under `$KIMI_CODE_HOME/sessions/` (default: `~/.kimi-code/sessions/`), grouped by working directory:
 
 ```text
 ~/.kimi-code/
@@ -21,16 +21,16 @@ All sessions are stored under `$KIMI_CODE_HOME/sessions/` (default `~/.kimi-code
                     └── wire.jsonl
 ```
 
-- `state.json` — session title and metadata.
-- `agents/*/wire.jsonl` — agent event stream.
+- `state.json`: session metadata such as title and creation time.
+- `agents/*/wire.jsonl`: the agent event stream, used for session recovery and replay.
 
-::: warning Note
-Manually editing files under `sessions/` can leave a session unrecoverable due to ordering constraints in `state.json` and `wire.jsonl`.
+::: warning
+Do not manually edit files inside the `sessions/` directory — doing so may prevent sessions from being restored correctly.
 :::
 
 ## Starting and resuming sessions
 
-By default, `kimi` creates a new session each time. To continue where you left off:
+Every time you run `kimi` directly it creates a new session. To resume a previous session, use one of the following:
 
 **Resume the most recent session in the current directory:**
 
@@ -38,75 +38,81 @@ By default, `kimi` creates a new session each time. To continue where you left o
 kimi --continue
 ```
 
-**Resume a specific session:**
+**Resume a specific session by ID:**
 
 ```sh
 kimi --session abc123
 ```
 
-`-r` / `--resume` are equivalent aliases.
-
-**Pick interactively:**
+**Interactively browse session history and choose one:**
 
 ```sh
 kimi --session
 ```
 
-::: warning Note
-`--continue` and `--session` are mutually exclusive; `--yolo` and `--plan` also cannot be combined with them.
+::: warning
+`--continue` and `--session` are mutually exclusive. `--yolo` and `--plan` cannot be combined with them either.
 :::
 
 ## Switching sessions inside the TUI
 
-- `/new` (`/clear`): switch to a new session.
-- `/sessions` (`/resume`): browse and resume past sessions.
-- `/fork`: fork the current session (see below).
-- `/title <text>` (`/rename`): set a session title for easier recognition. Without an argument, shows the current title.
+You can manage sessions without leaving the terminal. The following slash commands are available only when the agent is idle:
 
-`/sessions`, `/new`, `/fork`, and `/compact` are only available while idle. During streaming output or context compaction, interrupt the current operation first with `Esc` or `Ctrl-C`.
+- **`/new`** (alias `/clear`): switch to a new session, discarding the current context.
+- **`/sessions`** (alias `/resume`): browse and resume a previous session.
+- **`/fork`**: fork the current session (see below).
+- **`/title <text>`** (alias `/rename`): set a session title for easier identification; without arguments, displays the current title.
 
-## Context compaction
+## Context compression
 
-Kimi Code CLI automatically compresses message history when context approaches the window limit. You can also trigger it manually:
+As a conversation grows, Kimi Code CLI automatically compresses the message history when the context approaches the window limit, freeing up token space. You can also trigger compression manually at any time:
 
-```text
+```
 /compact
 ```
 
-Pass a custom hint to tell the model what to preserve:
+You can pass a hint to tell the model what to prioritize when compressing:
 
-```text
-/compact Keep the discussion related to database migrations
+```
+/compact Keep the discussion about database migrations
 ```
 
-## Forking sessions
+## Forking a session
 
-To try a new line of thinking without disrupting the current conversation, use `/fork`:
+To explore a new direction without disrupting the current conversation, use `/fork`:
 
-```text
+```
 /fork
 ```
 
-The forked session is fully independent; you can switch back to the original at any time.
+The two resulting sessions are completely independent and do not affect each other. You can switch back to the original at any time using `/sessions`. A saved `/goal` is not copied to the fork. Start a new goal there if you want autonomous goal work.
 
-## Exporting sessions
+## Exporting a session
 
-Package a session into a ZIP:
+Use `kimi export` to package a session as a ZIP file — useful for sharing, archiving, or filing a bug report:
 
 ```sh
 kimi export <sessionId>
 ```
 
-Without a `sessionId`, it exports the most recent session (interactively asks for confirmation; pass `-y` to skip). Use `-o` to set the output path:
+Omitting `sessionId` exports the most recent session in the current directory (with an interactive confirmation prompt; add `-y` to skip). Use `-o` to specify an output path:
 
 ```sh
 kimi export <sessionId> -o ~/Desktop/my-session.zip
 ```
 
-The ZIP is written to the current working directory by default. The session's own diagnostic log is always bundled along with the session directory. The global diagnostic log at `$KIMI_CODE_HOME/logs/kimi-code.log` — which captures events that do not belong to a session, such as TUI startup and login — is also bundled by default; pass `--no-include-global-log` to skip it.
+The export includes all files in the session directory, including diagnostic logs. The global diagnostic log (`~/.kimi-code/logs/kimi-code.log`) is also bundled by default; add `--no-include-global-log` to exclude it.
 
-You can also export the current session without leaving the TUI. `/export-debug-zip` produces the same kind of debug ZIP as `kimi export`, while `/export-md` (alias `/export`) writes a human-readable Markdown transcript — useful for sharing or archiving a readable conversation history. `/export-md` accepts an optional path; with no argument, it writes to `kimi-export-<short-id>-<timestamp>.md` in the working directory.
+You can also export from inside the TUI without leaving the interactive session:
 
-::: tip Tip
-Exported files may contain sensitive information. Review the contents before sharing.
+- **`/export-debug-zip`**: produces the same debug ZIP as `kimi export`.
+- **`/export-md`** (alias `/export`): exports the conversation as a human-readable Markdown file, suitable for sharing or archiving. Accepts an optional path argument; without one, it writes to `kimi-export-<short-id>-<timestamp>.md` in the current working directory.
+
+::: tip
+Exported files may contain code, command output, and file paths that are sensitive. Review the content before sharing.
 :::
+
+## Next steps
+
+- [Data locations](../configuration/data-locations.md) — full directory layout for session files
+- [kimi command reference](../reference/kimi-command.md) — complete parameter reference for `--continue`, `--session`, `export`, and other commands

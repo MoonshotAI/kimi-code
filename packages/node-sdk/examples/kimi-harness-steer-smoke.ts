@@ -1,4 +1,4 @@
-import { KimiHarness } from '@moonshot-ai/kimi-code-sdk';
+import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
 import {
   smokeIdentityFromEnv,
@@ -10,7 +10,7 @@ const PROMPT = 'Draft a long checklist for validating a TypeScript SDK runtime.'
 const STEER = 'Also include cancellation and permission-mode checks.';
 
 async function main(): Promise<void> {
-  const harness = new KimiHarness({ identity: smokeIdentityFromEnv() });
+  const harness = createKimiHarness({ identity: smokeIdentityFromEnv() });
 
   try {
     const session = await createConfiguredSession(harness);

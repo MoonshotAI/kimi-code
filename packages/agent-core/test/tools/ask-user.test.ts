@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Agent } from '../../src/agent';
 import type { PermissionMode } from '../../src/agent/permission';
 import { ErrorCodes, KimiError } from '../../src/errors';
+import { FLAG_DEFINITIONS, FlagResolver, MASTER_ENV } from '../../src/flags';
 import type { QuestionRequest, QuestionResult } from '../../src/rpc';
 import {
   AskUserQuestionInputSchema,
@@ -57,6 +58,7 @@ function makeTool(
     permission: { mode: options.mode ?? 'manual' },
     rpc: { requestQuestion },
     telemetry: { track: telemetryTrack },
+    experimentalFlags: new FlagResolver(),
   } as unknown as Agent;
   return { tool: new AskUserQuestionTool(agent), requestQuestion, telemetryTrack };
 }
@@ -109,6 +111,34 @@ describe('AskUserQuestionTool', () => {
 
     const labelSchema = optionsSchema.items.properties.label;
     expect(labelSchema.description).toContain("append '(Recommended)'");
+  });
+
+  it('builds the background-question schema from the agent scoped resolver', () => {
+    vi.stubEnv(MASTER_ENV, '1');
+    const enabledAgent = {
+      rpc: { requestQuestion: vi.fn() },
+      telemetry: { track: vi.fn() },
+      background: createBackgroundManager().manager,
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, {
+        'background_ask': true,
+      }),
+    } as unknown as Agent;
+    const disabledAgent = {
+      rpc: { requestQuestion: vi.fn() },
+      telemetry: { track: vi.fn() },
+      background: createBackgroundManager().manager,
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, {
+        'background_ask': false,
+      }),
+    } as unknown as Agent;
+
+    const enabledTool = new AskUserQuestionTool(enabledAgent);
+    const disabledTool = new AskUserQuestionTool(disabledAgent);
+
+    expect(enabledTool.description).toContain('Set background=true');
+    expect(JSON.stringify(enabledTool.parameters)).toContain('background');
+    expect(disabledTool.description).not.toContain('Set background=true');
+    expect(JSON.stringify(disabledTool.parameters)).not.toContain('background');
   });
 
   it.each(['manual', 'yolo'] as const)(
@@ -186,6 +216,7 @@ describe('AskUserQuestionTool', () => {
       rpc: { requestQuestion },
       telemetry: { track: telemetryTrack },
       background: manager,
+      experimentalFlags: new FlagResolver(),
     } as unknown as Agent;
     const tool = new AskUserQuestionTool(agent);
     expect(tool.description).toContain('Set background=true');
@@ -232,6 +263,7 @@ describe('AskUserQuestionTool', () => {
       rpc: { requestQuestion },
       telemetry: { track: vi.fn() },
       background: manager,
+      experimentalFlags: new FlagResolver(),
     } as unknown as Agent;
     const tool = new AskUserQuestionTool(agent);
     expect(tool.description).not.toContain('Set background=true');

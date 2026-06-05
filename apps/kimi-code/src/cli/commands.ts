@@ -1,11 +1,12 @@
+import { CLI_COMMAND_NAME } from '#/constant/app';
+import { registerMigrateCommand } from '#/migration/index';
 import { Command, Option } from 'commander';
 
-import { CLI_COMMAND_NAME } from '#/constant/app';
-
-import { registerMigrateCommand } from '#/migration/index';
-
 import type { CLIOptions } from './options';
+import { registerAcpCommand } from './sub/acp';
+import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
+import { registerLoginCommand } from './sub/login';
 import { registerProviderCommand } from './sub/provider';
 
 export type MainCommandHandler = (opts: CLIOptions) => void;
@@ -26,10 +27,8 @@ export function createProgram(
     .allowUnknownOption(false)
     .configureHelp({ helpWidth: 100 })
     .helpOption('-h, --help', 'Show help.')
-    .addHelpText(
-      'after',
-      '\nDocumentation:        https://moonshotai.github.io/kimi-code/\n'
-    );
+    .usage('[options] [command]')
+    .addHelpText('after', '\nDocumentation:        https://moonshotai.github.io/kimi-code/\n');
 
   program
     .addOption(
@@ -78,6 +77,9 @@ export function createProgram(
 
   registerExportCommand(program);
   registerProviderCommand(program);
+  registerAcpCommand(program);
+  registerLoginCommand(program);
+  registerDoctorCommand(program);
   registerMigrateCommand(program, onMigrate);
   program
     .command('upgrade')
@@ -95,7 +97,11 @@ export function createProgram(
       onPluginNodeRunner(entry, args);
     });
 
-  program.action(() => {
+  program.argument('[args...]').action((args: string[]) => {
+    if (args.length > 0) {
+      program.error(`unknown command '${args[0]}'. See '${CLI_COMMAND_NAME} --help'.`);
+    }
+
     const raw = program.opts<Record<string, unknown>>();
 
     const rawSession = raw['session'] ?? raw['resume'];

@@ -4,8 +4,8 @@ import type { BackgroundTaskInfo } from '#/agent/background';
 import type { PermissionData, PermissionMode } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
 import type { ToolInfo } from '#/agent/tool';
-import type { KimiConfig, KimiConfigPatch } from '#/config';
-import type { ExperimentalFlagMap } from '#/flags';
+import type { KimiConfig, KimiConfigPatch, McpServerConfig } from '#/config';
+import type { ExperimentalFeatureState } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
 import type {
@@ -47,6 +47,7 @@ export interface CreateSessionPayload {
   readonly thinking?: string | undefined;
   readonly permission?: PermissionMode | undefined;
   readonly metadata?: JsonObject | undefined;
+  readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
 }
 
 export interface CloseSessionPayload {
@@ -54,6 +55,11 @@ export interface CloseSessionPayload {
 }
 
 export interface ResumeSessionPayload {
+  readonly sessionId: string;
+  readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
+}
+
+export interface ReloadSessionPayload {
   readonly sessionId: string;
 }
 
@@ -317,6 +323,7 @@ export interface AgentAPI {
   stopBackground: (payload: StopBackgroundPayload) => void;
   clearContext: (payload: EmptyPayload) => void;
   activateSkill: (payload: ActivateSkillPayload) => void;
+  startBtw: (payload: EmptyPayload) => string;
   getBackgroundOutput: (payload: GetBackgroundOutputPayload) => string;
   getContext: (payload: EmptyPayload) => AgentContextData;
   getConfig: (payload: EmptyPayload) => AgentConfigData;
@@ -350,13 +357,14 @@ type SessionAPIWithId = WithSessionId<SessionAPI>;
 
 export interface CoreAPI extends SessionAPIWithId {
   getCoreInfo: (payload: EmptyPayload) => CoreInfo;
-  getExperimentalFlags: (payload: EmptyPayload) => ExperimentalFlagMap;
+  getExperimentalFeatures: (payload: EmptyPayload) => readonly ExperimentalFeatureState[];
   getKimiConfig: (payload: GetKimiConfigPayload) => KimiConfig;
   setKimiConfig: (payload: SetKimiConfigPayload) => KimiConfig;
   removeKimiProvider: (payload: RemoveKimiProviderPayload) => KimiConfig;
   createSession: (payload: CreateSessionPayload) => SessionSummary;
   closeSession: (payload: CloseSessionPayload) => void;
   resumeSession: (payload: ResumeSessionPayload) => ResumeSessionResult;
+  reloadSession: (payload: ReloadSessionPayload) => ResumeSessionResult;
   forkSession: (payload: ForkSessionPayload) => ResumeSessionResult;
   listSessions: (payload: ListSessionsPayload) => readonly SessionSummary[];
   exportSession: (payload: ExportSessionPayload) => ExportSessionResult;

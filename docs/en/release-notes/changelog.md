@@ -2,7 +2,65 @@
 
 This page documents the changes in each Kimi Code CLI release.
 
-## 0.8.0
+## 0.10.0 (2026-06-04)
+
+### Features
+
+- Users now can prepare several goals for the agent to work on sequentially. The agent will pick up the next goal from the queue once the current goal is completed. Use `/goal next <objective>` to queue a goal and `/goal next manage` to review and change the queue interactively.
+- Add the built-in `update-config` skill — you can now have Kimi edit its own config files.
+- Add persistent experimental feature toggles and a TUI panel that applies confirmed changes by reloading the current session.
+- Add `/reload` to reload the current session and apply updated config files, plus `/reload-tui` to reload only TUI preferences.
+- Add a doctor command for validating Kimi Code configuration files.
+
+### Bug Fixes
+
+- Normalize malformed Responses stream rate limit errors as provider rate limit failures.
+- Keep managed OAuth credentials scoped to their configured authentication and API endpoints.
+- Stop carrying active and queued goals into forked sessions.
+- Fail early when Git Bash is missing on Windows before starting CLI sessions.
+- Refresh the update target before showing foreground update prompts so the displayed version matches the install.
+- Point session error diagnostics to the `/export-debug-zip` command.
+- Set terminal tab titles without renaming the running process.
+
+### Polish
+
+- Start automatic background updates as soon as startup's fresh update check finds a newer version.
+- Set the CLI process title to kimi-code during startup.
+- Lowercase the stale file content message in edit tool errors.
+
+### Refactors
+
+- Ensure Nix-packaged CLI builds can find ripgrep and fd.
+
+### Other
+
+- Document the Git Bash prerequisite for Windows installs.
+
+## 0.9.0 (2026-06-03)
+
+### Features
+
+- Add the `kimi acp` subcommand: kimi-code now speaks [Agent Client Protocol 0.23](https://agentclientprotocol.com/) over stdio so IDEs (Zed, JetBrains AI Chat, custom clients) can drive sessions directly — coverage matrix, Zed configuration and breaking pre-release notes are in [kimi acp Subcommand Page](https://moonshotai.github.io/kimi-code/en/reference/kimi-acp.html).
+- Add `/btw` for side-channel conversations without steering the active main turn, and allow `/btw` to open the side-channel panel before entering a question.
+
+### Bug Fixes
+
+- Fix external editor (Ctrl+G) on Windows by removing `/bin/sh` dependency and using platform-aware shell quoting for temp file paths.
+- Use the OpenAI completion token field required by newer Chat Completions models.
+- Use configured model output limits for completion token caps.
+- Fix goal budget tool schemas for OpenAI-compatible providers.
+- Resume saved subagents lazily when they are accessed.
+
+### Polish
+
+- Unify the interaction and visuals across TUI dialogs and selectors.
+- Log enabled experimental flags at startup.
+
+### Refactors
+
+- Allow SDK runtime creation to use a separate RPC client while preserving local CLI startup.
+
+## 0.8.0 (2026-06-02)
 
 ### Features
 
@@ -48,7 +106,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Consolidate background task management under the agent background runtime.
 
-## 0.7.0
+## 0.7.0 (2026-06-02)
 
 ### Features
 
@@ -66,7 +124,7 @@ This page documents the changes in each Kimi Code CLI release.
 - Clarify Kimi Platform API key login labels and prompt details.
 - Polish a small TUI visual interaction.
 
-## 0.6.0
+## 0.6.0 (2026-05-29)
 
 ### Features
 
@@ -103,7 +161,7 @@ This page documents the changes in each Kimi Code CLI release.
 - Slim the LLM diagnostic logs with fewer, more compact fields.
 - Relocate shared tool service typing to the tool support layer.
 
-## 0.5.0
+## 0.5.0 (2026-05-28)
 
 ### Features
 
@@ -137,7 +195,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Refactor TUI code structure.
 
-## 0.4.0
+## 0.4.0 (2026-05-27)
 
 ### Features
 
@@ -164,7 +222,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Enhance `kimi export` to include more diagnostic information in the manifest.
 
-## 0.3.0
+## 0.3.0 (2026-05-26)
 
 ### Features
 
@@ -192,7 +250,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Improve the Write tool UX.
 
-## 0.2.0
+## 0.2.0 (2026-05-26)
 
 ### Features
 

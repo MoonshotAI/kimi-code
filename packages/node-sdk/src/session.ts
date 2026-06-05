@@ -1,6 +1,12 @@
-import { ErrorCodes, KimiError, type AgentContextData, type KimiErrorCode } from '@moonshot-ai/agent-core';
+import {
+  ErrorCodes,
+  KimiError,
+  type AgentContextData,
+  type KimiErrorCode,
+} from '@moonshot-ai/agent-core';
+
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
-import type { SDKRpcClient } from '#/rpc';
+import type { SDKRpcClientBase } from '#/rpc';
 import type {
   BackgroundTaskInfo,
   CompactOptions,
@@ -15,6 +21,7 @@ import type {
   PromptInput,
   ReloadSummary,
   ResumedSessionState,
+  ResumedSessionSummary,
   SessionPlan,
   SessionStatus,
   SessionSummary,
@@ -30,17 +37,17 @@ export interface SessionOptions {
   readonly workDir: string;
   readonly summary?: SessionSummary | undefined;
   readonly resumeState?: ResumedSessionState | undefined;
-  readonly rpc: SDKRpcClient;
+  readonly rpc: SDKRpcClientBase;
   readonly onClose?: (() => void | Promise<void>) | undefined;
 }
 
 export class Session {
   readonly id: string;
   readonly workDir: string;
-  readonly summary?: SessionSummary | undefined;
-  private readonly resumeState: ResumedSessionState | undefined;
+  summary?: SessionSummary | undefined;
+  private resumeState: ResumedSessionState | undefined;
 
-  private readonly rpc: SDKRpcClient;
+  private readonly rpc: SDKRpcClientBase;
   private readonly onClose?: (() => void | Promise<void>) | undefined;
   private closed = false;
 
@@ -56,6 +63,14 @@ export class Session {
   getResumeState(): ResumedSessionState | undefined {
     this.ensureOpen();
     return this.resumeState;
+  }
+
+  async reloadSession(): Promise<ResumedSessionSummary> {
+    this.ensureOpen();
+    const summary = await this.rpc.reloadSession({ sessionId: this.id });
+    this.summary = summary;
+    this.resumeState = resumeStateFromSummary(summary);
+    return summary;
   }
 
   onEvent(listener: (event: Event) => void): Unsubscribe {
@@ -96,6 +111,11 @@ export class Session {
   async init(): Promise<void> {
     this.ensureOpen();
     await this.rpc.generateAgentsMd({ sessionId: this.id });
+  }
+
+  async startBtw(): Promise<string> {
+    this.ensureOpen();
+    return this.rpc.startBtw({ sessionId: this.id });
   }
 
   async cancel(): Promise<void> {

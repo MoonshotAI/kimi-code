@@ -25,6 +25,7 @@ import {
 import type { BackgroundTaskInfo, BackgroundTaskStatus } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 
+import { SELECT_POINTER } from '@/tui/constant/symbols';
 import type { ColorPalette } from '@/tui/theme/colors';
 import { printableChar } from '@/tui/utils/printable-key';
 
@@ -359,7 +360,7 @@ export class TasksBrowserApp extends Container implements Focusable {
       const warn = (text: string): string => chalk.hex(colors.warning).bold(text);
       const line =
         ` ${warn('Stop')} ${chalk.hex(colors.text)(this.pendingStopTaskId)}? ` +
-        `${key('Y')} ${dim('confirm')}  ${key('N')} ${dim('cancel')} `;
+        `${key('Y')} ${dim('confirm')}  ${key('N')}${dim('/')}${key('esc')} ${dim('cancel')} `;
       return fitExactly(line, width);
     }
 
@@ -369,7 +370,7 @@ export class TasksBrowserApp extends Container implements Focusable {
       `${key('S')} ${dim('stop')}`,
       `${key('R')} ${dim('refresh')}`,
       `${key('Tab')} ${dim('filter')}`,
-      `${key('Q/Esc')} ${dim('exit')} `,
+      `${key('Q/Esc')} ${dim('cancel')} `,
     ];
     const left = parts.join('  ');
     const flash = this.props.flashMessage;
@@ -462,7 +463,7 @@ export class TasksBrowserApp extends Container implements Focusable {
 
   private renderListRow(task: BackgroundTaskInfo, selected: boolean, innerWidth: number): string {
     const colors = this.props.colors;
-    const pointer = selected ? '> ' : '  ';
+    const pointer = selected ? `${SELECT_POINTER} ` : '  ';
     const pointerStyled = chalk.hex(selected ? colors.primary : colors.textDim)(pointer);
 
     const idColor = selected

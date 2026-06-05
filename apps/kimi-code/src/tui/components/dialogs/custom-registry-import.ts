@@ -5,7 +5,8 @@
  *
  * Geometry mirrors `ApiKeyInputDialogComponent` so the chrome stays
  * consistent with the API-key login flow. Two fields, switched with
- * Tab / Shift-Tab; Enter on the last field submits, Esc cancels.
+ * Tab / Shift-Tab / Up / Down; Enter advances to the next field (and submits
+ * on the last field), Esc cancels. Both fields are required.
  */
 
 import {
@@ -34,7 +35,8 @@ const TITLE = 'Import custom provider registry';
 const SUBTITLE_DEFAULT = 'Paste an api.json URL and its Bearer token.';
 const SUBTITLE_URL_EMPTY = 'Registry URL cannot be empty.';
 const SUBTITLE_TOKEN_EMPTY = 'Bearer token cannot be empty.';
-const FOOTER = 'Tab to switch  ·  Enter to submit  ·  Esc to cancel';
+const FOOTER_NOT_LAST = 'Tab / ↑↓ to switch  ·  Enter for next field  ·  Esc to cancel';
+const FOOTER_LAST = 'Tab / ↑↓ to switch  ·  Enter to submit  ·  Esc to cancel';
 
 type FieldId = 'url' | 'token';
 
@@ -83,11 +85,13 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
     this.onDone = onDone;
     this.colors = colors;
     if (defaultUrl.length > 0) this.urlInput.setValue(defaultUrl);
+    // Enter on the URL field advances to the token field; Enter on the token
+    // (last) field submits.
     this.urlInput.onSubmit = () => {
-      this.handleEnter();
+      this.focusField('token');
     };
     this.tokenInput.onSubmit = () => {
-      this.handleEnter();
+      this.handleSubmit();
     };
   }
 
@@ -104,6 +108,14 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
 
     if (matchesKey(data, Key.tab) || matchesKey(data, Key.shift('tab'))) {
       this.toggleField();
+      return;
+    }
+    if (matchesKey(data, Key.down)) {
+      this.focusField('token');
+      return;
+    }
+    if (matchesKey(data, Key.up)) {
+      this.focusField('url');
       return;
     }
 
@@ -142,7 +154,9 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
           ? SUBTITLE_TOKEN_EMPTY
           : SUBTITLE_DEFAULT;
     const subtitleStyled = chalk.hex(this.colors.textDim)(subtitleText);
-    const footerStyled = chalk.hex(this.colors.textDim)(FOOTER);
+    const footerStyled = chalk.hex(this.colors.textDim)(
+      this.activeField === 'url' ? FOOTER_NOT_LAST : FOOTER_LAST,
+    );
 
     const urlLabelText = 'Registry URL';
     const tokenLabelText = 'Bearer token';
@@ -198,11 +212,15 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
   }
 
   private toggleField(): void {
-    this.hint = 'none';
-    this.activeField = this.activeField === 'url' ? 'token' : 'url';
+    this.focusField(this.activeField === 'url' ? 'token' : 'url');
   }
 
-  private handleEnter(): void {
+  private focusField(field: FieldId): void {
+    this.hint = 'none';
+    this.activeField = field;
+  }
+
+  private handleSubmit(): void {
     if (this.done) return;
 
     const urlValue = this.urlInput.getValue().trim();
@@ -211,6 +229,11 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
     if (urlValue.length === 0) {
       this.hint = 'url-empty';
       this.activeField = 'url';
+      return;
+    }
+    if (tokenValue.length === 0) {
+      this.hint = 'token-empty';
+      this.activeField = 'token';
       return;
     }
 

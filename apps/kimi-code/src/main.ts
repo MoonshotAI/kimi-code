@@ -6,7 +6,7 @@
  */
 
 import {
-  KimiHarness,
+  createKimiHarness,
   flushDiagnosticLogs,
   log,
   resolveGlobalLogPath,
@@ -32,11 +32,10 @@ import { handleUpgrade } from './cli/sub/upgrade';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './cli/telemetry';
 import { runUpdatePreflight } from './cli/update/preflight';
 import { createKimiCodeHostIdentity, getVersion } from './cli/version';
-import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from './constant/app';
+import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, PROCESS_NAME } from './constant/app';
 import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
 import { installNativeModuleHook } from './native/module-hook';
 import { runNativeAssetSmokeIfRequested } from './native/smoke';
-import { initProcessName } from './utils/process/proctitle';
 
 export async function handleMainCommand(opts: CLIOptions, version: string): Promise<void> {
   let validated: ReturnType<typeof validateOptions>;
@@ -78,7 +77,7 @@ export async function handleUpgradeCommand(version: string): Promise<void> {
     withContext: withTelemetryContext,
     setContext: setTelemetryContext,
   };
-  const harness = new KimiHarness({
+  const harness = createKimiHarness({
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
     telemetry: telemetryClient,
@@ -116,7 +115,7 @@ const MIGRATE_CLI_OPTIONS: CLIOptions = {
 };
 
 export function main(): void {
-  initProcessName();
+  process.title = PROCESS_NAME;
   installCrashHandlers();
   installNativeModuleHook();
   if (runNativeAssetSmokeIfRequested()) return;

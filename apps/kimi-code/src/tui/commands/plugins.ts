@@ -156,7 +156,9 @@ async function showPluginsPicker(
       pluginHint: options?.pluginHint,
       colors: host.state.theme.colors,
       onSelect: (selection) => {
-        host.restoreEditor();
+        // Each branch of the handler either mounts the next view or restores
+        // the editor itself, so do not pre-restore here — that would flash the
+        // editor for in-place actions like toggling a plugin.
         void handlePluginsOverviewSelection(host, selection).catch((error: unknown) => {
           host.showError(`/plugins failed: ${formatErrorMessage(error)}`);
         });
@@ -181,7 +183,8 @@ async function showPluginMarketplacePicker(host: SlashCommandHost, source?: stri
         source: marketplace.source,
         colors: host.state.theme.colors,
         onSelect: (selection) => {
-          host.restoreEditor();
+          // Every marketplace action re-mounts a picker, so let the handler do
+          // the mounting — pre-restoring the editor here would flash.
           void handlePluginMarketplaceSelection(host, selection).catch((error: unknown) => {
             host.showError(`/plugins marketplace failed: ${formatErrorMessage(error)}`);
           });
@@ -217,7 +220,8 @@ async function showPluginMcpPicker(
       serverHint: options?.serverHint,
       colors: host.state.theme.colors,
       onSelect: (selection) => {
-        host.restoreEditor();
+        // Every MCP action re-mounts a picker, so let the handler do the
+        // mounting — pre-restoring the editor here would flash on toggle.
         void handlePluginMcpSelection(host, selection).catch((error: unknown) => {
           host.showError(`/plugins mcp failed: ${formatErrorMessage(error)}`);
         });
@@ -292,6 +296,7 @@ async function handlePluginsOverviewSelection(
       await showPluginsPicker(host);
       return;
     case 'show-list':
+      host.restoreEditor();
       await renderPluginsList(host);
       return;
     case 'toggle': {
@@ -316,6 +321,7 @@ async function handlePluginsOverviewSelection(
       await showPluginsPicker(host);
       return;
     case 'info':
+      host.restoreEditor();
       await renderPluginInfo(host, selection.id);
       return;
   }
@@ -475,5 +481,5 @@ function resolvePluginInstallSource(source: string, workDir: string): string {
 }
 
 function pluginInlineChangeHint(): string {
-  return 'pending /new';
+  return 'require run /new to apply';
 }

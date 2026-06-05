@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'pathe';
+import { readFile, stat } from 'node:fs/promises';
+import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
 
 import { resolveKimiHome } from '#/config/path';
 import { McpServerConfigSchema, type McpServerConfig } from '#/config/schema';
@@ -12,6 +12,7 @@ const McpJsonFileSchema = z.object({
 
 export interface McpJsonPaths {
   readonly user: string;
+  readonly projectRoot: string;
   readonly project: string;
 }
 
@@ -20,9 +21,12 @@ export interface ResolveMcpJsonPathsInput {
   readonly homeDir?: string;
 }
 
-export function resolveMcpJsonPaths(input: ResolveMcpJsonPathsInput): McpJsonPaths {
+export async function resolveMcpJsonPaths(input: ResolveMcpJsonPathsInput): Promise<McpJsonPaths> {
+  const projectRoot = await findProjectRoot(input.cwd);
+
   return {
     user: join(resolveKimiHome(input.homeDir), 'mcp.json'),
+    projectRoot: join(projectRoot, '.mcp.json'),
     project: join(input.cwd, '.kimi-code', 'mcp.json'),
   };
 }
@@ -33,10 +37,11 @@ export interface LoadMcpServersInput {
 }
 
 /**
- * Load MCP server declarations from the user-global `~/.kimi-code/mcp.json`
- * and the project-local `<cwd>/.kimi-code/mcp.json`. Entries in the project
- * file override user-global entries with the same key, so a repo can specialise
- * or replace a shared definition.
+ * Load MCP server declarations from the user-global `~/.kimi-code/mcp.json`,
+ * the project-root `<project root>/.mcp.json`, and the project-local
+ * `<cwd>/.kimi-code/mcp.json`. Entries in later files override earlier files
+ * with the same key, so a repo can specialise or replace a shared definition,
+ * and Kimi-specific project config wins over the Claude-compatible root file.
  *
  * Note: project-local entries may spawn stdio commands at session start, so
  * opening a session inside an untrusted checkout will execute whatever its
@@ -45,12 +50,45 @@ export interface LoadMcpServersInput {
 export async function loadMcpServers(
   input: LoadMcpServersInput,
 ): Promise<Record<string, McpServerConfig>> {
-  const paths = resolveMcpJsonPaths({ cwd: input.cwd, homeDir: input.homeDir });
-  const [user, project] = await Promise.all([readMcpJson(paths.user), readMcpJson(paths.project)]);
-  return { ...user, ...project };
+  const paths = await resolveMcpJsonPaths({ cwd: input.cwd, homeDir: input.homeDir });
+  const [user, projectRoot, project] = await Promise.all([
+    readMcpJson(paths.user),
+    readMcpJson(paths.projectRoot, { stdioCwdBase: dirname(paths.projectRoot) }),
+    readMcpJson(paths.project),
+  ]);
+  return { ...user, ...projectRoot, ...project };
 }
 
-async function readMcpJson(filePath: string): Promise<Record<string, McpServerConfig>> {
+async function findProjectRoot(cwd: string): Promise<string> {
+  const start = normalize(cwd);
+  let current = start;
+
+  while (true) {
+    if (await pathExists(join(current, '.git'))) return current;
+    const parent = dirname(current);
+    if (parent === current) return start;
+    current = parent;
+  }
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch (error: unknown) {
+    if (isPathMissing(error)) return false;
+    throw error;
+  }
+}
+
+interface ReadMcpJsonOptions {
+  readonly stdioCwdBase?: string;
+}
+
+async function readMcpJson(
+  filePath: string,
+  options: ReadMcpJsonOptions = {},
+): Promise<Record<string, McpServerConfig>> {
   let text: string;
   try {
     text = await readFile(filePath, 'utf-8');
@@ -73,7 +111,7 @@ async function readMcpJson(filePath: string): Promise<Record<string, McpServerCo
   }
 
   try {
-    return McpJsonFileSchema.parse(data).mcpServers;
+    return normalizeMcpServers(McpJsonFileSchema.parse(data).mcpServers, options);
   } catch (error: unknown) {
     throw new KimiError(ErrorCodes.CONFIG_INVALID, `Invalid MCP server config in ${filePath}: ${describeError(error)}`, {
       cause: error,
@@ -81,13 +119,40 @@ async function readMcpJson(filePath: string): Promise<Record<string, McpServerCo
   }
 }
 
-function isFileNotFound(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as { code: unknown }).code === 'ENOENT'
+function normalizeMcpServers(
+  servers: Record<string, McpServerConfig>,
+  options: ReadMcpJsonOptions,
+): Record<string, McpServerConfig> {
+  const stdioCwdBase = options.stdioCwdBase;
+  if (stdioCwdBase === undefined) return servers;
+
+  return Object.fromEntries(
+    Object.entries(servers).map(([name, config]) => [name, normalizeStdioCwd(config, stdioCwdBase)]),
   );
+}
+
+function normalizeStdioCwd(config: McpServerConfig, cwdBase: string): McpServerConfig {
+  if (config.transport !== 'stdio') return config;
+  const cwd = config.cwd === undefined ? cwdBase : resolvePath(cwdBase, config.cwd);
+  return { ...config, cwd };
+}
+
+function resolvePath(base: string, value: string): string {
+  return isAbsolute(value) ? normalize(value) : resolve(base, value);
+}
+
+function isFileNotFound(error: unknown): boolean {
+  return getErrorCode(error) === 'ENOENT';
+}
+
+function isPathMissing(error: unknown): boolean {
+  const code = getErrorCode(error);
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
+function getErrorCode(error: unknown): unknown {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return undefined;
+  return (error as { code: unknown }).code;
 }
 
 function describeError(error: unknown): string {

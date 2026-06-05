@@ -1,60 +1,52 @@
 # Providers and models
 
-Kimi Code CLI integrates with multiple LLM platforms through a unified provider abstraction. Each provider handles one API protocol, and models are declared on top of a provider with their own name, context length, and capabilities. This page describes every provider type currently supported and how to configure them in `~/.kimi-code/config.toml`.
+Kimi Code CLI supports connecting to multiple LLM platforms simultaneously — one-click login via the Kimi Code managed service, connecting Claude with an Anthropic API key, or connecting third-party inference services via the OpenAI-compatible protocol. Each provider corresponds to a specific API protocol; models are declared on top of providers with their own name, context length, and capabilities. This page explains how to configure each type of provider in `config.toml`.
 
-## Overview
+## Supported provider types
 
-The `type` field of each entry in the `providers` table determines which implementation is used. The currently supported types are:
+The `type` field in the `providers` table determines which protocol implementation to use:
 
-| Type | Protocol | Typical platforms |
+| Type | Protocol | Typical use |
 | --- | --- | --- |
-| `kimi` | OpenAI-compatible (chat completions style) | Kimi Code, Kimi Platform API key |
-| `anthropic` | Anthropic Messages | Claude API |
-| `openai` | OpenAI Chat Completions | OpenAI and compatible services |
-| `openai_responses` | OpenAI Responses API | OpenAI's newer Responses endpoint |
+| `kimi` | OpenAI-compatible | Kimi Code managed service, Kimi Platform API key |
+| `anthropic` | Anthropic Messages | Claude model family |
+| `openai` | OpenAI Chat Completions | OpenAI and compatible services, DeepSeek, Qwen, etc. |
+| `openai_responses` | OpenAI Responses API | OpenAI's newer Responses interface |
 | `google-genai` | Google GenAI | Gemini API |
 | `vertexai` | Google GenAI on Vertex | Google Cloud Vertex AI |
 
-All providers stream model interactions by default. Thinking, vision, and tool-call capabilities are matched automatically by model name prefix, so you do not need to spell them out in the config.
+All providers communicate with models in streaming mode by default. Capabilities such as thinking, vision, and tool use are matched automatically by model name prefix — you typically do not need to declare them manually.
 
-API keys may be written into the `api_key` field, or supplied under the `[providers.<name>.env]` sub-table. The lookup order is `api_key` > sub-table key > missing error. **Kimi Code CLI does not automatically fall back to shell environment variables** — `export KIMI_API_KEY` in your terminal alone will not give a provider credentials; you must write them into `config.toml` (see [Configuration overrides: provider credentials](./overrides.md#provider-credentials) for details). `api_key` and `oauth` are mutually exclusive on the same provider; setting both causes an error when the model is resolved. OAuth credentials are handled by the built-in login flow and do not need to be configured manually.
+**Credential priority**: `api_key` direct field > `[providers.<name>.env]` sub-table key > if both are absent, startup fails with an error. The CLI does not fall back to shell environment variables for credentials — see [Config overrides: provider credentials](./overrides.md#provider-credentials).
 
-The `[providers.<name>.env]` sub-table lets you supply credentials or endpoint overrides directly inside `config.toml`. These values are scoped to the provider and do not leak into the global shell environment:
+## `/provider` — interactive provider management
 
-```toml
-[providers.my-anthropic.env]
-ANTHROPIC_API_KEY = "sk-ant-xxxxx"
-ANTHROPIC_BASE_URL = "https://my-proxy.example.com"
-```
+Prefer not to edit TOML by hand? Type `/provider` in the TUI to open the **provider manager**, where you can interactively add or remove providers.
 
-The most common ways to switch providers are: use the `/model` slash command inside the TUI to pick from already-configured models, or edit `config.toml` directly to adjust the `[providers.*]` and `[models.*]` tables. See [Config files](./config-files.md) for the full field reference.
+The manager displays providers as a list of entries grouped by source. Navigation:
 
-## `/provider` and provider management
+- ↑/↓ to move the cursor, ←/→ to page
+- `d` to delete the current provider (with `[y/N]` confirmation)
+- Press Enter on the `[ Add New Platform ]` row to add a new provider
 
-Run the `/provider` slash command inside the TUI to open the **provider manager**, an interactive view of every configured provider grouped by source. From this screen you can add new providers or delete existing ones without editing `config.toml` by hand.
+Two paths when adding:
 
-The manager lists each platform source — open platform logins, custom registry imports, and standalone providers — as a single row. Navigate with ↑/↓ and page with ←/→. Press `d` on a row to delete that source; a `[y/N]` confirmation appears before anything is removed. Press `Enter` on the `[ Add New Platform ]` row to add a provider.
+- **Known third-party provider**: fetches the model catalog from [models.dev](https://models.dev/), select a provider → enter an API key → select a default model
+- **Custom registry (api.json)**: paste a custom registry URL and Bearer token; the CLI automatically creates the `providers` / `models` entries
 
-Adding a provider offers two paths:
-
-- **Known third-party provider** — fetches the latest catalog from [models.dev](https://models.dev/), lets you pick a provider and enter its API key, then opens the model selector so you can choose the default model.
-- **Custom registry (api.json)** — imports one or more providers from a custom registry URL. Paste the registry address and its Bearer token; the CLI fetches the registry, creates the corresponding `[providers.<name>]` and `[models.<alias>]` entries, and refreshes the available model list automatically.
-
-When you add a provider or switch models, the **tabbed model selector** splits the available models into per-provider tabs. Press `Tab` / `Shift-Tab` to cycle between tabs, then use the usual ↑/↓ and `Enter` to pick the model you want.
-
-::: warning Note
-The Kimi Code OAuth provider (the account you sign into with `/login`) is intentionally hidden from `/provider`; manage that account with `/login` and `/logout` instead.
+::: warning
+Kimi Code OAuth managed accounts logged in via `/login` do not appear in `/provider`. Use `/login` and `/logout` to manage them.
 :::
 
-For scripted or non-interactive setups, the same custom-registry import is available from the shell via the [`kimi provider`](../reference/kimi-command.md#kimi-provider) subcommand.
+The same operations are also available in non-interactive environments via the shell command: [`kimi provider`](../reference/kimi-command.md#kimi-provider).
 
 ## `kimi`
 
-`kimi` connects to the Moonshot AI API using the OpenAI-compatible protocol.
+For connecting to Moonshot AI's OpenAI-compatible interface, including the Kimi Code managed service and Kimi Platform API keys.
 
 - Default `base_url`: `https://api.moonshot.ai/v1`
-- Environment variables: `KIMI_API_KEY`, `KIMI_BASE_URL`
-- Extra capability: video upload
+- Credential key names: `KIMI_API_KEY`, `KIMI_BASE_URL`
+- Additional capability: supports video upload
 
 ```toml
 [providers.kimi]
@@ -63,17 +55,15 @@ base_url = "https://api.moonshot.ai/v1"
 api_key = "sk-xxxxx"
 ```
 
-The Kimi Code hosted service configures its `base_url` and credentials automatically after OAuth login; see [OAuth and credential injection](#oauth-and-credential-injection) and [Environment variables](./env-vars.md) for details.
+> When using the Kimi Code managed service, running `/login` automatically configures `base_url` and credentials — no manual setup needed.
 
 ## `anthropic`
 
-`anthropic` integrates with the Claude API. Standard Claude models automatically enable vision, tool calls, and thinking where supported. For custom or unreleased models, declare `capabilities` explicitly under `[models.<alias>]`.
+For connecting to the Claude API. Standard Claude models automatically enable vision, tool use, and Thinking (where supported); custom or uncovered models need `capabilities` declared explicitly on `[models.<alias>]`.
 
-Thinking can be controlled via `/model`, `/settings`, or configuration.
-
-- Default `base_url`: follows the Anthropic SDK default
-- Environment variables: `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`
-- Default `max_tokens`: set automatically per model. To override it (for example for testing or for an unrecognized alias), set `max_output_size` on the model alias (see [`config-files.md`](./config-files.md#models)). Recognized aliases are capped at the documented server-side ceiling.
+- Default `base_url`: follows Anthropic SDK default
+- Credential key names: `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`
+- Default `max_tokens`: inferred per model. To override, set `max_output_size` on the model alias
 
 ```toml
 [providers.anthropic]
@@ -84,20 +74,17 @@ api_key = "sk-ant-xxxxx"
 provider = "anthropic"
 model = "claude-opus-4-7"
 max_context_size = 200000
-# Optional: lower the output budget for testing, or set one for a model
-# this CLI doesn't know about yet. Omit to use the per-model default
-# above.
-# max_output_size = 32000
+# max_output_size = 32000  # optional; omit to use the model-inferred default
 ```
 
 ## `openai`
 
-`openai` corresponds to the OpenAI Chat Completions protocol and can also be used to connect to any third-party service that speaks the same protocol (simply override `base_url`). Thinking, vision, and tool-call capabilities are inferred automatically from the model name.
+For connecting to the OpenAI Chat Completions protocol, as well as any third-party service compatible with that protocol (override `base_url` as needed).
 
-Third-party reasoner models (DeepSeek, Qwen, One API and other gateway-fronted services) work out of the box: thinking content is round-tripped under the de facto `reasoning_content` field, and `reasoning_effort` is auto-injected when the conversation contains prior thinking so gateways with strict validation accept the request. If a gateway uses a non-standard field name, override it via `reasoning_key` on the model alias — see [`config-files.md`](./config-files.md#models).
+Third-party reasoning models (DeepSeek, Qwen, One API, etc.) work out of the box: the CLI automatically handles the `reasoning_content` field and `reasoning_effort` injection. If your gateway returns reasoning content under a non-standard field name, set `reasoning_key` on the model alias to override.
 
 - Default `base_url`: `https://api.openai.com/v1`
-- Environment variables: `OPENAI_API_KEY`, `OPENAI_BASE_URL`
+- Credential key names: `OPENAI_API_KEY`, `OPENAI_BASE_URL`
 
 ```toml
 [providers.openai]
@@ -108,10 +95,10 @@ api_key = "sk-xxxxx"
 
 ## `openai_responses`
 
-`openai_responses` corresponds to OpenAI's newer Responses API. It always operates in streaming mode; capabilities are inferred automatically from the model name.
+Corresponds to OpenAI's newer Responses API, always operating in streaming mode. Configuration is the same as `openai`.
 
 - Default `base_url`: `https://api.openai.com/v1`
-- Environment variables: `OPENAI_API_KEY`, `OPENAI_BASE_URL`
+- Credential key names: `OPENAI_API_KEY`, `OPENAI_BASE_URL`
 
 ```toml
 [providers.openai-responses]
@@ -122,9 +109,9 @@ api_key = "sk-xxxxx"
 
 ## `google-genai`
 
-`google-genai` connects directly to the Google Gemini API. Thinking, vision, and multimodal capabilities are inferred automatically from the model name.
+For connecting directly to the Google Gemini API. Thinking, vision, and multimodal capabilities are auto-detected by model name.
 
-- Environment variable: `GOOGLE_API_KEY`
+- Credential key name: `GOOGLE_API_KEY`
 
 ```toml
 [providers.gemini]
@@ -134,9 +121,9 @@ api_key = "xxxxx"
 
 ## `vertexai`
 
-`vertexai` shares the same implementation as `google-genai`; setting `type = "vertexai"` switches it to the Vertex AI access path.
+Shares the same implementation as `google-genai`; setting `type = "vertexai"` switches to the Vertex AI access path.
 
-Authentication follows the standard Google Cloud flow: authenticate via `gcloud auth application-default login`, or set `GOOGLE_APPLICATION_CREDENTIALS` to a service-account JSON (this step is a generic Google SDK mechanism unrelated to Kimi Code configuration). **The project and region must be written into the `[providers.vertexai.env]` sub-table** — `export GOOGLE_CLOUD_PROJECT` or `export GOOGLE_CLOUD_LOCATION` in the shell will not be read by the CLI. When `GOOGLE_CLOUD_LOCATION` is missing, the CLI tries to infer it from `base_url`. API keys (`VERTEXAI_API_KEY` or `GOOGLE_API_KEY`) likewise go into the sub-table.
+Authentication follows the standard Google Cloud ADC flow (`gcloud auth application-default login` or a `GOOGLE_APPLICATION_CREDENTIALS` service account JSON) — this part is unrelated to Kimi Code. **The project ID and region must be written in the `[providers.vertexai.env]` sub-table** — simply `export GOOGLE_CLOUD_PROJECT` in the shell will not be read by the CLI.
 
 ```toml
 [providers.vertexai]
@@ -148,10 +135,16 @@ GOOGLE_CLOUD_LOCATION = "us-central1"
 ```
 
 ```sh
-gcloud auth application-default login   # one-time
+gcloud auth application-default login   # one-time authentication
 kimi
 ```
 
 ## OAuth and credential injection
 
-Some platforms (such as the Kimi Code hosted service) use OAuth instead of static API keys. Credentials are injected at runtime by the built-in kimi-oauth toolchain, and the login flow takes care of writing and refreshing them automatically — there is nothing to configure by hand for this in your config file.
+The Kimi Code managed service uses OAuth rather than static API keys. After running `/login`, the built-in authentication toolchain automatically writes and refreshes credentials — no manual configuration is needed in `config.toml` for this.
+
+## Next steps
+
+- [Configuration files](./config-files.md) — full field reference for the `providers` and `models` tables
+- [Config overrides](./overrides.md) — credential resolution priority rules for providers
+- [Environment variables](./env-vars.md) — credential key names per provider type

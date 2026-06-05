@@ -1,6 +1,22 @@
 export { KimiHarness } from '#/kimi-harness';
+export type { KimiHarnessRuntimeOptions } from '#/kimi-harness';
 export { Session } from '#/session';
 export { KimiAuthFacade } from '#/auth';
+export {
+  createKimiHarness,
+  SDKRpcClient,
+  type SDKRpcClientOptions,
+} from '#/sdk-rpc-client';
+export {
+  createKimiConfigRpc,
+  KimiConfigRpcClient,
+  type KimiConfigRpc,
+  type KimiConfigValidationIssue,
+  type KimiConfigValidationPathSegment,
+  type ResolveKimiConfigPathInput,
+  type ValidateKimiConfigTomlInput,
+} from '#/config-rpc';
+export { SDKRpcClientBase } from '#/rpc';
 export { KimiForCodingProvider } from '#/kimi-code-model-provider';
 export type { KimiForCodingProviderOptions } from '#/kimi-code-model-provider';
 
@@ -51,9 +67,11 @@ export type { LogContext, LogLevel, LogPayload, Logger } from '@moonshot-ai/agen
 export { buildGoalCompletionMessage } from '@moonshot-ai/agent-core';
 
 // Experimental feature flags — types only. Resolved values come from
-// `KimiHarness.getExperimentalFlags()` over RPC, not from a re-exported runtime value.
+// `KimiHarness.getExperimentalFeatures()` over RPC, not from a re-exported runtime value.
 export type {
+  ExperimentalFeatureState,
   ExperimentalFlagMap,
+  ExperimentalFlagSource,
   FlagDefinition,
   FlagDefinitionInput,
   FlagId,

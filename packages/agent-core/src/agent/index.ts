@@ -15,6 +15,7 @@ import {
 import type { EnabledPluginSessionStart } from '#/plugin';
 
 import type { McpConnectionManager } from '../mcp';
+import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
 import type { ModelProvider } from '../session/provider-manager';
 import type { SessionGoalStore } from '../session/goal';
@@ -90,6 +91,7 @@ export interface AgentOptions {
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
   readonly appVersion?: string;
+  readonly experimentalFlags?: ExperimentalFlagResolver;
 }
 
 export class Agent {
@@ -109,6 +111,7 @@ export class Agent {
   readonly log: Logger;
   readonly telemetry: TelemetryClient;
   readonly appVersion?: string;
+  readonly experimentalFlags: ExperimentalFlagResolver;
 
   readonly blobStore: BlobStore | undefined;
   readonly records: AgentRecords;
@@ -146,6 +149,7 @@ export class Agent {
     this.appVersion = options.appVersion;
     this.log = options.log ?? log;
     this.telemetry = options.telemetry ?? noopTelemetryClient;
+    this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
 
     this.blobStore = options.homedir
       ? new BlobStore({ blobsDir: join(options.homedir, 'blobs') })
@@ -209,6 +213,7 @@ export class Agent {
     const provider = this.config.provider.withThinking(this.config.thinkingLevel);
     const loopControl = this.kimiConfig?.loopControl;
     const completionBudgetConfig = resolveCompletionBudget({
+      maxOutputSize: this.config.maxOutputSize,
       reservedContextSize: loopControl?.reservedContextSize,
     });
     return new KosongLLM({
@@ -387,6 +392,7 @@ export class Agent {
         }
         this.skills.activate(payload);
       },
+      startBtw: () => this.subagentHost!.startBtw(),
       getBackgroundOutput: (payload) => this.background.readOutput(payload.taskId, payload.tail),
       getContext: () => this.context.data(),
       getConfig: () => this.config.data(),

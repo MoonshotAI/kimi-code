@@ -12,12 +12,12 @@
  *
  * Keyboard:
  *   - ↑ / ↓             move highlight
- *   - ← / →             page up / down
+ *   - ← / → · PgUp/PgDn page
  *   - Enter             on `[ Add New Platform ]` → `onAdd()`
- *   - d (lowercase)     delete with inline `[y/N]` confirmation
+ *   - D                 delete with inline `[y/N]` confirmation
  *                         on a source row → `onDeleteSource(providerIds)`
  *                         on `[ Add New Platform ]` → ignored
- *   - Esc               `onClose()` (outside the confirm substate)
+ *   - Esc               `onClose()` (outside confirm)
  *
  * The `[y/N]` confirmation is a transient substate handled in-component:
  * while armed, only `y` / `Y` / `n` / `N` / `Esc` are honored and the
@@ -46,6 +46,7 @@ import {
 import chalk from 'chalk';
 
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
+import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import type { ColorPalette } from '#/tui/theme/colors';
 import { printableChar } from '#/tui/utils/printable-key';
 import { pageView, type PageView } from '#/tui/utils/paging';
@@ -92,7 +93,7 @@ type Row = SourceRow | AddRow;
 
 const ADD_ROW_LABEL = '[ Add New Platform ]';
 const PAGE_SIZE = 8;
-const HEADER_HINT = '↑↓ navigate · ←→ page · d delete · Esc close';
+const HEADER_HINT = '↑↓ navigate · D delete · Esc cancel';
 
 // Narrows a `ProviderConfig` blob to a `CustomRegistrySource` payload.
 // Mirrors `readCustomRegistrySource` in `kimi-tui.ts`. We can't import
@@ -225,7 +226,7 @@ export class ProviderManagerComponent extends Container implements Focusable {
           (row) => row.kind === 'source' && row.providerIds.includes(opts.activeProviderId ?? ''),
         )
       : -1;
-    this.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
+    this.selectedIndex = Math.max(activeIdx, 0);
     this.confirm = undefined;
   }
 
@@ -261,6 +262,7 @@ export class ProviderManagerComponent extends Container implements Focusable {
     this.invalidate();
   }
 
+  /** Rows after applying the active fuzzy filter; the add-row is always kept. */
   private page(): PageView {
     return pageView(this.rows.length, this.selectedIndex, PAGE_SIZE);
   }
@@ -276,42 +278,45 @@ export class ProviderManagerComponent extends Container implements Focusable {
       return;
     }
 
+    const rows = this.rows;
+
     if (matchesKey(data, Key.up)) {
-      if (this.rows.length === 0) return;
+      if (rows.length === 0) return;
       this.selectedIndex = Math.max(0, this.selectedIndex - 1);
       this.invalidate();
       return;
     }
     if (matchesKey(data, Key.down)) {
-      if (this.rows.length === 0) return;
-      this.selectedIndex = Math.min(this.rows.length - 1, this.selectedIndex + 1);
+      if (rows.length === 0) return;
+      this.selectedIndex = Math.min(rows.length - 1, this.selectedIndex + 1);
       this.invalidate();
       return;
     }
 
     if (matchesKey(data, Key.left) || matchesKey(data, Key.pageUp)) {
-      if (this.rows.length === 0) return;
+      if (rows.length === 0) return;
       this.selectedIndex = Math.max(0, this.selectedIndex - PAGE_SIZE);
       this.invalidate();
       return;
     }
     if (matchesKey(data, Key.right) || matchesKey(data, Key.pageDown)) {
-      if (this.rows.length === 0) return;
-      this.selectedIndex = Math.min(this.rows.length - 1, this.selectedIndex + PAGE_SIZE);
+      if (rows.length === 0) return;
+      this.selectedIndex = Math.min(rows.length - 1, this.selectedIndex + PAGE_SIZE);
       this.invalidate();
       return;
     }
 
     if (matchesKey(data, Key.enter)) {
-      const selected = this.rows[this.selectedIndex];
+      const selected = rows[this.selectedIndex];
       if (selected?.kind === 'add') {
         this.opts.onAdd();
       }
       return;
     }
 
-    const k = printableChar(data);
-    if (k === 'd') {
+    // Delete the highlighted provider with the D key.
+    const ch = printableChar(data);
+    if (ch === 'd' || ch === 'D') {
       this.armDeleteConfirm();
     }
   }
@@ -353,20 +358,22 @@ export class ProviderManagerComponent extends Container implements Focusable {
     const { colors } = this.opts;
     const lines: string[] = [];
 
+    // Header shape mirrors the model dialog (see model-selector.ts): a single
+    // top border, the title, the keymap hint, then a blank line. No inner
+    // border under the title.
     const border = chalk.hex(colors.primary)('─'.repeat(width));
     lines.push(border);
-    lines.push(renderHeader(width, colors));
-    lines.push(border);
+    lines.push(chalk.hex(colors.primary).bold(' Providers'));
+    lines.push(chalk.hex(colors.textMuted)(' ' + HEADER_HINT));
     lines.push('');
 
-    lines.push(renderColumnHeader(width, colors));
-
-    if (this.rows.length === 0) {
+    const rows = this.rows;
+    if (rows.length === 0) {
       lines.push(chalk.hex(colors.textMuted)('  No providers configured.'));
     } else {
       const view = this.page();
       for (let i = view.start; i < view.end; i++) {
-        const row = this.rows[i];
+        const row = rows[i];
         if (row === undefined) continue;
         for (const line of renderRow(row, { isSelected: i === this.selectedIndex, width, colors })) {
           lines.push(line);
@@ -387,7 +394,6 @@ export class ProviderManagerComponent extends Container implements Focusable {
           ),
         );
       }
-      lines.push(renderFooterHint(width, colors));
     }
 
     lines.push(border);
@@ -403,47 +409,35 @@ export class ProviderManagerComponent extends Container implements Focusable {
   }
 }
 
-function renderHeader(width: number, colors: ColorPalette): string {
-  const title = chalk.hex(colors.primary).bold(' Providers');
-  return truncateToWidth(title, width, '…');
-}
-
-function renderColumnHeader(width: number, colors: ColorPalette): string {
-  const muted = chalk.hex(colors.textMuted);
-  const padded = padCell('', Math.max(0, width - 2));
-  return `  ${muted(padded)}`;
-}
-
-function renderFooterHint(width: number, colors: ColorPalette): string {
-  const hint = chalk.hex(colors.textMuted)(' ' + HEADER_HINT);
-  return truncateToWidth(hint, width, '…');
-}
 
 function renderRow(
   row: Row,
   ctx: { isSelected: boolean; width: number; colors: ColorPalette },
 ): string[] {
   const { isSelected, width, colors } = ctx;
-  const pointer = isSelected ? '❯' : ' ';
+  const pointer = isSelected ? SELECT_POINTER : ' ';
   const pointerStyle = isSelected ? chalk.hex(colors.primary) : chalk.hex(colors.textDim);
-  const indicatorStyle = chalk.hex(colors.success);
-  const labelStyle =
-    row.kind === 'add'
-      ? chalk.hex(colors.textMuted)
-      : isSelected
-        ? chalk.hex(colors.primary).bold
-        : chalk.hex(colors.text);
+  // The synthetic "Add New Platform" row is an action/CTA: keep it in the brand
+  // color so it never reads as disabled, and bold it when selected (matching
+  // the other rows' selected treatment).
+  const labelStyle = isSelected
+    ? chalk.hex(colors.primary).bold
+    : row.kind === 'add'
+      ? chalk.hex(colors.primary)
+      : chalk.hex(colors.text);
 
-  const indicatorRendered =
-    row.kind === 'source' && row.hasActive ? indicatorStyle('● ') : '  ';
+  // The active provider is flagged with a trailing "← current" (success),
+  // matching the model selector's current-item marker — see .agents/skills/write-tui/DESIGN.md.
+  const isActive = row.kind === 'source' && row.hasActive;
+  const marker = isActive ? ` ${CURRENT_MARK}` : '';
 
-  // Reserve 2 leading spaces + 2 for pointer + 2 for indicator.
-  const labelWidth = Math.max(0, width - 6);
+  // Reserve 2 leading spaces + 2 for the pointer + room for the marker.
+  const labelWidth = Math.max(0, width - 4 - visibleWidth(marker));
   const labelText = truncateToWidth(row.label, labelWidth, '…');
-  const styledLabel = labelStyle(labelText);
-  const labelPadded = styledLabel + ' '.repeat(Math.max(0, labelWidth - visibleWidth(labelText)));
+  let line = `  ${pointerStyle(`${pointer} `)}${labelStyle(labelText)}`;
+  if (isActive) line += chalk.hex(colors.success)(marker);
 
-  const lines: string[] = [`  ${pointerStyle(`${pointer} `)}${indicatorRendered}${labelPadded}`];
+  const lines: string[] = [line];
 
   if (row.kind === 'source' && row.baseUrl !== undefined && row.baseUrl.length > 0) {
     const urlText = truncateToWidth(row.baseUrl, Math.max(0, width - 6), '…');
@@ -451,10 +445,4 @@ function renderRow(
   }
 
   return lines;
-}
-
-function padCell(text: string, width: number): string {
-  const w = visibleWidth(text);
-  if (w >= width) return truncateToWidth(text, width, '…');
-  return text + ' '.repeat(width - w);
 }

@@ -1,5 +1,79 @@
 # @moonshot-ai/kimi-code
 
+## 0.10.1
+
+### Patch Changes
+
+- [#443](https://github.com/MoonshotAI/kimi-code/pull/443) [`15a4c64`](https://github.com/MoonshotAI/kimi-code/commit/15a4c64e5cea45c9f72d8c889f306f1f964a8ac6) - Fix a crash when starting a goal in the TUI.
+
+## 0.10.0
+
+### Minor Changes
+
+- [#433](https://github.com/MoonshotAI/kimi-code/pull/433) [`85338e9`](https://github.com/MoonshotAI/kimi-code/commit/85338e9f7df5d98234fd42891e9bf2a2e6ad767b) - Add the built-in `update-config` skill — you can now have Kimi edit its own config files.
+
+- [#420](https://github.com/MoonshotAI/kimi-code/pull/420) [`86a42a2`](https://github.com/MoonshotAI/kimi-code/commit/86a42a26a1e01f1748a937031fa76ebeaa1e28a8) - Add persistent experimental feature toggles and a TUI panel that applies confirmed changes by reloading the current session.
+
+- [#383](https://github.com/MoonshotAI/kimi-code/pull/383) [`15d71b5`](https://github.com/MoonshotAI/kimi-code/commit/15d71b5130d949c35d9dc2641e807e08d72dce48) - Add /reload to reload the current session and apply updated config files, plus /reload-tui to reload only TUI preferences.
+
+- [#393](https://github.com/MoonshotAI/kimi-code/pull/393) [`beb12ac`](https://github.com/MoonshotAI/kimi-code/commit/beb12ac0216818a5c5eda24fb304e4ab01792784) - Users now can prepare several goals for the agent to work on sequentially. The agent will pick up the next goal from the queue once the current goal is completed. Use `/goal next <objective>` to queue a goal and `/goal next manage` to review and change the queue interactively.
+
+- [#431](https://github.com/MoonshotAI/kimi-code/pull/431) [`6a4e4c7`](https://github.com/MoonshotAI/kimi-code/commit/6a4e4c75d4bf6db3fefbb5c115d7a7c324bcae16) - Add a doctor command for validating Kimi Code configuration files.
+
+### Patch Changes
+
+- [#393](https://github.com/MoonshotAI/kimi-code/pull/393) [`beb12ac`](https://github.com/MoonshotAI/kimi-code/commit/beb12ac0216818a5c5eda24fb304e4ab01792784) - Stop carrying active and queued goals into forked sessions.
+
+- [#408](https://github.com/MoonshotAI/kimi-code/pull/408) [`6303bd2`](https://github.com/MoonshotAI/kimi-code/commit/6303bd2936ae168c674af6e685b0eed5a890c42f) - Point session error diagnostics to the `/export-debug-zip` command.
+
+- [#398](https://github.com/MoonshotAI/kimi-code/pull/398) [`b2801c4`](https://github.com/MoonshotAI/kimi-code/commit/b2801c4dbfe3f7e13f5468bfba1555fa12d1707c) - Set terminal tab titles without renaming the running process.
+
+- [#403](https://github.com/MoonshotAI/kimi-code/pull/403) [`d645d7e`](https://github.com/MoonshotAI/kimi-code/commit/d645d7e443857b3c974b9fd6065027c0f0cd6953) - Start automatic background updates as soon as startup's fresh update check finds a newer version.
+
+- [#387](https://github.com/MoonshotAI/kimi-code/pull/387) [`6e74027`](https://github.com/MoonshotAI/kimi-code/commit/6e74027fdc48ad124b2a62465bb5fd07e84d4712) - Lowercase the stale file content message in edit tool errors.
+
+- [#428](https://github.com/MoonshotAI/kimi-code/pull/428) [`853c5fc`](https://github.com/MoonshotAI/kimi-code/commit/853c5fc43741582ecbde3b4fccf82cddffe3626e) - Ensure Nix-packaged CLI builds can find ripgrep and fd.
+
+- [#411](https://github.com/MoonshotAI/kimi-code/pull/411) [`4598262`](https://github.com/MoonshotAI/kimi-code/commit/459826292f855592288bcfddaa1c72529a6d8c64) - Normalize malformed Responses stream rate limit errors as provider rate limit failures.
+
+- [#405](https://github.com/MoonshotAI/kimi-code/pull/405) [`07e2e0f`](https://github.com/MoonshotAI/kimi-code/commit/07e2e0f094fcbc8a6026eb53f5a70cc437bf7c52) - Refresh the update target before showing foreground update prompts so the displayed version matches the install.
+
+- [#399](https://github.com/MoonshotAI/kimi-code/pull/399) [`232ed87`](https://github.com/MoonshotAI/kimi-code/commit/232ed874d41de777e6ff9c539ac22d830d0b5c3a) - Keep managed OAuth credentials scoped to their configured authentication and API endpoints.
+
+- [#407](https://github.com/MoonshotAI/kimi-code/pull/407) [`07609b4`](https://github.com/MoonshotAI/kimi-code/commit/07609b41a31499bb5c7811dbab71fa427e621efc) - Set the CLI process title to kimi-code during startup.
+
+- [#419](https://github.com/MoonshotAI/kimi-code/pull/419) [`d0f8e24`](https://github.com/MoonshotAI/kimi-code/commit/d0f8e24e9b4d2c6dd68d93bc804a4390bf661c10) - Document the Git Bash prerequisite for Windows installs.
+
+- [#430](https://github.com/MoonshotAI/kimi-code/pull/430) [`be0da5f`](https://github.com/MoonshotAI/kimi-code/commit/be0da5ff39641e117d60045a43a7d5d2e0b85b75) - Fail early when Git Bash is missing on Windows before starting CLI sessions.
+
+## 0.9.0
+
+### Minor Changes
+
+- [#368](https://github.com/MoonshotAI/kimi-code/pull/368) [`3eafa79`](https://github.com/MoonshotAI/kimi-code/commit/3eafa79f39c06b67d18bd2c1fd5321d2d889ed90) - Add `@moonshot-ai/acp-adapter` and the `kimi acp` subcommand: kimi-code now speaks [Agent Client Protocol 0.23](https://agentclientprotocol.com/) over stdio so IDEs (Zed, JetBrains AI Chat, custom clients) can drive sessions directly — coverage matrix, Zed configuration and breaking pre-release notes are in [kimi acp Subcommand Page](https://moonshotai.github.io/kimi-code/en/reference/kimi-acp.html).
+
+- [#338](https://github.com/MoonshotAI/kimi-code/pull/338) [`ba7dd73`](https://github.com/MoonshotAI/kimi-code/commit/ba7dd736a3b295b2a29c229a944208c232d51458) - Add `/btw` for side-channel conversations without steering the active main turn.
+
+- [#357](https://github.com/MoonshotAI/kimi-code/pull/357) [`179aecf`](https://github.com/MoonshotAI/kimi-code/commit/179aecf42379e8ef4091f5351c91cd460ba11bdd) - Log enabled experimental flags at startup.
+
+- [#378](https://github.com/MoonshotAI/kimi-code/pull/378) [`e0d28b4`](https://github.com/MoonshotAI/kimi-code/commit/e0d28b4941ad6f16e69bdf56a4185655feec5320) - Allow `/btw` to open the side-channel panel before entering a question.
+
+### Patch Changes
+
+- [#246](https://github.com/MoonshotAI/kimi-code/pull/246) [`7d1f889`](https://github.com/MoonshotAI/kimi-code/commit/7d1f889d3dc123f44a8d14543e5aaf8aeef2c752) - Fix external editor (Ctrl+G) on Windows by removing `/bin/sh` dependency and using platform-aware shell quoting for temp file paths.
+
+- [#365](https://github.com/MoonshotAI/kimi-code/pull/365) [`6a22523`](https://github.com/MoonshotAI/kimi-code/commit/6a2252343a0d624b326b2d369ec908bc8d60092d) - Fix goal budget tool schemas for OpenAI-compatible providers.
+
+- [#365](https://github.com/MoonshotAI/kimi-code/pull/365) [`6a22523`](https://github.com/MoonshotAI/kimi-code/commit/6a2252343a0d624b326b2d369ec908bc8d60092d) - Use the OpenAI completion token field required by newer Chat Completions models.
+
+- [#380](https://github.com/MoonshotAI/kimi-code/pull/380) [`8639105`](https://github.com/MoonshotAI/kimi-code/commit/86391053139ad4ea437afe79f472412fb1b106a1) - Resume saved subagents lazily when they are accessed.
+
+- [#339](https://github.com/MoonshotAI/kimi-code/pull/339) [`a6b16ce`](https://github.com/MoonshotAI/kimi-code/commit/a6b16ce6b4bdc20ed33888975c7da7ff1919e22f) - Allow SDK runtime creation to use a separate RPC client while preserving local CLI startup.
+
+- [#363](https://github.com/MoonshotAI/kimi-code/pull/363) [`90879f3`](https://github.com/MoonshotAI/kimi-code/commit/90879f37af2ddb941223d293a67615f8f557e3af) - Unify the interaction and visuals across TUI dialogs and selectors.
+
+- [#365](https://github.com/MoonshotAI/kimi-code/pull/365) [`6a22523`](https://github.com/MoonshotAI/kimi-code/commit/6a2252343a0d624b326b2d369ec908bc8d60092d) - Use configured model output limits for completion token caps.
+
 ## 0.8.0
 
 ### Minor Changes

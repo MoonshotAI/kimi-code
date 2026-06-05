@@ -97,7 +97,10 @@ async function setupSession(
       hooks,
     }),
   );
-  const { agent } = await session.createAgent({ type: 'main', generate: generate ?? scripted.generate }, goalProfile(tools));
+  const { agent } = await session.createAgent(
+    { type: 'main', generate: generate ?? scripted.generate },
+    { profile: goalProfile(tools) },
+  );
   agent.config.update({ modelAlias: 'mock-model', thinkingLevel: 'off' });
   agent.permission.setMode('yolo');
   return { session, agent, scripted };

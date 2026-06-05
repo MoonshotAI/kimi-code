@@ -14,6 +14,7 @@ import {
   KIMI_CODE_OAUTH_KEY,
   KIMI_CODE_PROVIDER_NAME,
   provisionManagedKimiCodeConfig,
+  resolveKimiCodeOAuthKey,
   type ManagedKimiCodeProvisionResult,
   type ManagedKimiConfigAdapter,
 } from './managed-kimi-code';
@@ -58,10 +59,13 @@ export interface KimiOAuthToolkitOptions<TConfig = unknown> {
 export interface KimiOAuthLoginOptions extends LoginOptions {
   readonly provisionConfig?: boolean | undefined;
   readonly baseUrl?: string | undefined;
+  readonly oauthRef?: KimiOAuthTokenRef | undefined;
+  readonly oauthHost?: string | undefined;
 }
 
 export interface KimiOAuthTokenRef {
   readonly key?: string | undefined;
+  readonly oauthHost?: string | undefined;
 }
 
 export interface KimiOAuthLoginResult {
@@ -114,13 +118,18 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     };
   }
 
-  async status(providerName?: string | undefined): Promise<AuthStatus> {
+  async status(
+    providerName?: string | undefined,
+    oauthRef?: KimiOAuthTokenRef | undefined,
+  ): Promise<AuthStatus> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    const oauthHost = this.oauthHostFor(oauthRef);
+    const oauthKey = oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
     return {
       providers: [
         {
           providerName: name,
-          hasToken: await this.managerFor(name).hasToken(),
+          hasToken: await this.managerFor(name, oauthKey, oauthHost).hasToken(),
         },
       ],
     };
@@ -131,48 +140,81 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     options: KimiOAuthLoginOptions = {},
   ): Promise<KimiOAuthLoginResult> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
-    const manager = this.managerFor(name);
+    const oauthHost = this.oauthHostFor(options.oauthRef, options.oauthHost);
+    const oauthKey = options.oauthRef?.key ?? this.defaultOAuthKey(options.baseUrl, oauthHost);
+    const manager = this.managerFor(name, oauthKey, oauthHost);
     const hadToken = await manager.hasToken();
+    let usedDeviceLogin = false;
+    const loginWithDevice = async (): Promise<string> => {
+      usedDeviceLogin = true;
+      return (
+        await manager.login({
+          signal: options.signal,
+          onDeviceCode: options.onDeviceCode,
+        })
+      ).accessToken;
+    };
     let accessToken: string;
     if (hadToken) {
       try {
         accessToken = await manager.ensureFresh();
       } catch (error) {
         if (!(error instanceof OAuthUnauthorizedError)) throw error;
-        accessToken = (
-          await manager.login({
-            signal: options.signal,
-            onDeviceCode: options.onDeviceCode,
-          })
-        ).accessToken;
+        accessToken = await loginWithDevice();
       }
     } else {
-      accessToken = (
-        await manager.login({
-          signal: options.signal,
-          onDeviceCode: options.onDeviceCode,
-        })
-      ).accessToken;
+      accessToken = await loginWithDevice();
     }
 
     const shouldProvision = options.provisionConfig ?? this.configAdapter !== undefined;
-    const provision =
-      shouldProvision && this.configAdapter !== undefined
-        ? await provisionManagedKimiCodeConfig({
-            accessToken,
-            adapter: this.configAdapter,
-            baseUrl: options.baseUrl,
-            preserveDefaultModel: hadToken,
-            fetchImpl: this.fetchImpl,
-          })
-        : undefined;
+    const configAdapter = this.configAdapter;
+    let provision: ManagedKimiCodeProvisionResult | undefined;
+    if (shouldProvision && configAdapter !== undefined) {
+      const provisionWithToken = (token: string): Promise<ManagedKimiCodeProvisionResult> =>
+        provisionManagedKimiCodeConfig({
+          accessToken: token,
+          adapter: configAdapter,
+          baseUrl: options.baseUrl,
+          oauthKey,
+          oauthHost,
+          preserveDefaultModel: hadToken,
+          fetchImpl: this.fetchImpl,
+        });
+      try {
+        provision = await provisionWithToken(accessToken);
+      } catch (error) {
+        if (!(error instanceof OAuthUnauthorizedError) || !hadToken || usedDeviceLogin) {
+          throw error;
+        }
+        let retryToken: string;
+        try {
+          retryToken = await manager.ensureFresh({ force: true });
+        } catch (refreshError) {
+          if (!(refreshError instanceof OAuthUnauthorizedError)) throw refreshError;
+          retryToken = await loginWithDevice();
+        }
+        try {
+          provision = await provisionWithToken(retryToken);
+        } catch (retryError) {
+          if (!(retryError instanceof OAuthUnauthorizedError) || usedDeviceLogin) {
+            throw retryError;
+          }
+          provision = await provisionWithToken(await loginWithDevice());
+        }
+      }
+    }
 
     return { providerName: name, ok: true, provision };
   }
 
-  async logout(providerName?: string | undefined): Promise<KimiOAuthLogoutResult> {
+  async logout(
+    providerName?: string | undefined,
+    oauthRef?: KimiOAuthTokenRef | undefined,
+  ): Promise<KimiOAuthLogoutResult> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
-    await this.managerFor(name).logout();
+    const oauthHost = this.oauthHostFor(oauthRef);
+    const oauthKey = oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
+    await this.managerFor(name, oauthKey, oauthHost).logout();
     if (this.configAdapter?.remove !== undefined && name === KIMI_CODE_PROVIDER_NAME) {
       const config = await this.configAdapter.read();
       this.configAdapter.remove(config);
@@ -183,10 +225,15 @@ export class KimiOAuthToolkit<TConfig = unknown> {
 
   async ensureFresh(
     providerName?: string | undefined,
-    options: { readonly force?: boolean | undefined } = {},
+    options: {
+      readonly force?: boolean | undefined;
+      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+    } = {},
   ): Promise<string> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
-    return this.managerFor(name).ensureFresh(options);
+    const oauthHost = this.oauthHostFor(options.oauthRef);
+    const oauthKey = options.oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
+    return this.managerFor(name, oauthKey, oauthHost).ensureFresh(options);
   }
 
   async getCachedAccessToken(
@@ -194,8 +241,9 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     oauthRef?: KimiOAuthTokenRef,
   ): Promise<string | undefined> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
-    const oauthKey = oauthRef?.key ?? KIMI_CODE_OAUTH_KEY;
-    return this.managerFor(name, oauthKey).getCachedAccessToken();
+    const oauthHost = this.oauthHostFor(oauthRef);
+    const oauthKey = oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
+    return this.managerFor(name, oauthKey, oauthHost).getCachedAccessToken();
   }
 
   tokenProvider(
@@ -203,17 +251,26 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     oauthRef?: KimiOAuthTokenRef | undefined,
   ): BearerTokenProvider {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
-    const oauthKey = oauthRef?.key ?? KIMI_CODE_OAUTH_KEY;
+    const oauthHost = this.oauthHostFor(oauthRef);
+    const oauthKey = oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
     return {
-      getAccessToken: (options) => this.managerFor(name, oauthKey).ensureFresh(options),
+      getAccessToken: (options) => this.managerFor(name, oauthKey, oauthHost).ensureFresh(options),
     };
   }
 
-  async getManagedUsage(providerName?: string | undefined): Promise<AuthManagedUsageResult> {
+  async getManagedUsage(
+    providerName?: string | undefined,
+    options: {
+      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly baseUrl?: string | undefined;
+    } = {},
+  ): Promise<AuthManagedUsageResult> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     try {
-      const accessToken = await this.ensureFresh(name);
-      const result = await fetchManagedUsage(kimiCodeUsageUrl(), accessToken);
+      const accessToken = await this.ensureFresh(name, {
+        oauthRef: options.oauthRef ?? this.defaultOAuthRef(options.baseUrl),
+      });
+      const result = await fetchManagedUsage(managedUsageUrl(options.baseUrl), accessToken);
       if (result.kind === 'error') return result;
       return {
         kind: 'ok',
@@ -231,11 +288,17 @@ export class KimiOAuthToolkit<TConfig = unknown> {
   async submitFeedback(
     body: SubmitFeedbackBody,
     providerName?: string | undefined,
+    options: {
+      readonly oauthRef?: KimiOAuthTokenRef | undefined;
+      readonly baseUrl?: string | undefined;
+    } = {},
   ): Promise<FetchSubmitFeedbackResult> {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
     try {
-      const accessToken = await this.ensureFresh(name);
-      return await fetchSubmitFeedback(kimiCodeFeedbackUrl(), accessToken, body);
+      const accessToken = await this.ensureFresh(name, {
+        oauthRef: options.oauthRef ?? this.defaultOAuthRef(options.baseUrl),
+      });
+      return await fetchSubmitFeedback(managedFeedbackUrl(options.baseUrl), accessToken, body);
     } catch (error) {
       return {
         kind: 'error',
@@ -244,15 +307,22 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     }
   }
 
-  managerFor(providerName: string, oauthKey = KIMI_CODE_OAUTH_KEY): OAuthManager {
+  managerFor(
+    providerName: string,
+    oauthKey = KIMI_CODE_OAUTH_KEY,
+    oauthHost?: string | undefined,
+  ): OAuthManager {
     const storageName = resolveKimiTokenStorageName({ providerName, oauthKey });
-    let manager = this.managers.get(storageName);
+    const effectiveOAuthHost = oauthHost ?? this.flowConfig.oauthHost;
+    const managerKey = `${storageName}\0${normalizeOAuthHost(effectiveOAuthHost)}`;
+    let manager = this.managers.get(managerKey);
     if (manager !== undefined) return manager;
 
     const identity = this.identity;
     manager = new OAuthManager({
       config: {
         ...this.flowConfig,
+        oauthHost: effectiveOAuthHost,
         name: storageName,
       },
       storage: this.storage,
@@ -267,8 +337,32 @@ export class KimiOAuthToolkit<TConfig = unknown> {
               }),
       ...this.managerOptions,
     });
-    this.managers.set(storageName, manager);
+    this.managers.set(managerKey, manager);
     return manager;
+  }
+
+  private defaultOAuthKey(
+    baseUrl?: string | undefined,
+    oauthHost?: string | undefined,
+  ): string {
+    return resolveKimiCodeOAuthKey({
+      oauthHost: oauthHost ?? this.flowConfig.oauthHost,
+      baseUrl,
+    });
+  }
+
+  private defaultOAuthRef(baseUrl?: string | undefined): KimiOAuthTokenRef {
+    return {
+      key: this.defaultOAuthKey(baseUrl, this.flowConfig.oauthHost),
+      oauthHost: this.flowConfig.oauthHost,
+    };
+  }
+
+  private oauthHostFor(
+    oauthRef?: KimiOAuthTokenRef | undefined,
+    oauthHost?: string | undefined,
+  ): string {
+    return oauthRef?.oauthHost ?? oauthHost ?? this.flowConfig.oauthHost;
   }
 }
 
@@ -297,4 +391,18 @@ function defaultKimiHome(): string {
   const override = process.env['KIMI_CODE_HOME'];
   if (override !== undefined && override.length > 0) return override;
   return join(homedir(), '.kimi-code');
+}
+
+function managedUsageUrl(baseUrl: string | undefined): string {
+  if (baseUrl === undefined) return kimiCodeUsageUrl();
+  return `${baseUrl.replace(/\/+$/, '')}/usages`;
+}
+
+function managedFeedbackUrl(baseUrl: string | undefined): string {
+  if (baseUrl === undefined) return kimiCodeFeedbackUrl();
+  return `${baseUrl.replace(/\/+$/, '')}/feedback`;
+}
+
+function normalizeOAuthHost(oauthHost: string): string {
+  return oauthHost.trim().replace(/\/+$/, '');
 }

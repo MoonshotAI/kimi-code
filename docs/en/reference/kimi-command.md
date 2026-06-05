@@ -1,209 +1,252 @@
-# kimi Command
+# `kimi` Command
 
-`kimi` is the main command of Kimi Code CLI, used to start an interactive session in the terminal. When run without any arguments, it opens a new session in the current working directory; with different flags, you can resume a previous session, skip approvals, start in Plan mode, or point at custom Skills directories.
+`kimi` is the main command for Kimi Code CLI, used to start an interactive session in the terminal. Running it without any arguments opens a new session in the current working directory; combined with different flags, you can resume a previous session, skip approvals, start in Plan mode, or load Skills from a custom directory.
 
 ```sh
 kimi [options]
 kimi <subcommand> [options]
 ```
 
-## Main command options
+## Main Command Options
 
-The table below lists all options supported by the `kimi` main command. All flags are optional — running `kimi` on its own is enough to enter an interactive session.
+All flags are optional — run `kimi` directly to enter an interactive session:
 
 | Option | Short | Description |
 | --- | --- | --- |
-| `--version` | `-V` | Print the version number and exit. |
-| `--help` | `-h` | Show help information and exit. |
-| `--session [id]` | `-S` | Resume a session. With an ID, open the specified session directly; without an ID, enter the interactive picker to choose from historical sessions. |
-| `--continue` | `-C` | Continue the most recent session in the current working directory, without manually specifying an ID. |
-| `--model <model>` | `-m` | Use a model alias for this invocation. When omitted, new sessions use `default_model` from the config file, and resumed sessions use the session's current model. |
-| `--prompt <prompt>` | `-p` | Run one prompt non-interactively and stream assistant output to stdout. This mode uses `auto` permission for tool calls and does not open the TUI. |
-| `--output-format <format>` | | Set the non-interactive output format. Supported values are `text` and `stream-json`. Only valid with `--prompt`; defaults to `text`. |
-| `--yolo` | `-y` | Auto-approve ordinary tool calls, skipping approval requests; Plan mode `Bash` approval and Plan mode exit approval are not skipped. |
-| `--auto` | | Start in auto permission mode. Tool approvals are handled automatically and the agent will not ask questions. |
-| `--plan` | | Start a new session in Plan mode, where the AI favors read-only tools for exploration and planning and can write the current plan file; Plan mode `Bash` is handled separately according to the permission mode. |
-| `--skills-dir <dir>` | | Load Skills from the specified directory, replacing the auto-discovered user and project directories. Can be passed multiple times to stack several directories. See [Custom Skills directories](#custom-skills-directories) below. |
+| `--version` | `-V` | Print the version number and exit |
+| `--help` | `-h` | Show help information and exit |
+| `--session [id]` | `-S` | Resume a session. With an ID, opens that session directly; without an ID, enters an interactive selector |
+| `--continue` | `-C` | Continue the most recent session in the current working directory, without specifying an ID manually |
+| `--model <model>` | `-m` | Specify a model alias for this launch. When omitted, new sessions use `default_model` from the config file |
+| `--prompt <prompt>` | `-p` | Run a single prompt non-interactively and stream the Assistant output to stdout. This mode does not open the TUI |
+| `--output-format <format>` | | Set the non-interactive output format; supports `text` and `stream-json`. Can only be used with `--prompt`; defaults to `text` |
+| `--yolo` | `-y` | Auto-approve regular tool calls, skipping approval requests |
+| `--auto` | | Start with auto permission mode; tool approvals are handled automatically and the Agent will not ask the user questions |
+| `--plan` | | Start a new session in Plan mode — the AI will prioritize read-only tools for exploration and planning |
+| `--skills-dir <dir>` | | Load Skills from the specified directory, replacing the automatically discovered user and project directories. Can be repeated |
 
-`-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo`. They do not appear in the help output and behave identically to their official counterparts.
+`-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output.
 
-::: warning Note
-`--yolo` skips human confirmation for ordinary tool calls, including file writes and shell command execution. Use it only inside trusted working directories. Plan mode exit approval is not skipped by `--yolo`; in Plan mode, `Bash` also follows the same ordinary allow rules as `--yolo`.
+::: warning
+`--yolo` skips human approval for regular tool calls, including file writes and shell command execution. Use it only in trusted working directories. Plan mode exit approval is not bypassed by `--yolo`; `Bash` inside Plan mode is handled under the regular allow rules.
 :::
 
-### Flag conflict rules
+### Flag Conflict Rules
 
 The following combinations are rejected at startup:
 
-- `--continue` and `--session` are mutually exclusive: both mean "resume a previous session" and overlap in meaning.
-- `--yolo` cannot be combined with `--continue` or `--session`: when resuming a session, the original session's approval settings are preserved. This rule only applies to interactive mode; in `--prompt` mode, `--yolo` is rejected earlier because it is mutually exclusive with `--prompt`.
-- `--auto` cannot be combined with `--continue` or `--session`: same rationale as `--yolo`.
-- `--auto` cannot be combined with `--yolo`: the two permission modes are mutually exclusive.
-- `--plan` cannot be combined with `--continue` or `--session`: Plan mode only applies to new sessions.
-- `--prompt` cannot be combined with `--yolo`, `--auto`, or `--plan`: non-interactive mode always uses `auto` permission and does not enter Plan mode.
-- `--prompt` can be combined with `--continue` or `--session <id>` with an ID; bare `--session` without an ID would open the interactive picker and therefore cannot be used in non-interactive mode.
-- `--output-format` can only be used with `--prompt`; the interactive TUI does not support writing the full event stream as stdout JSONL.
+- `--continue` and `--session` are mutually exclusive — both mean "resume a previous session"
+- `--yolo` and `--auto` are mutually exclusive — the two permission modes cannot be combined
+- `--yolo` and `--auto` cannot be used together with `--continue` or `--session` — resumed sessions inherit the approval settings of the original session
+- `--plan` cannot be used with `--continue` or `--session` — Plan mode only takes effect for new sessions
+- `--prompt` cannot be used with `--yolo`, `--auto`, or `--plan` — non-interactive mode uses `auto` permission by default
+- `--output-format` can only be used together with `--prompt`
 
-If you need to force YOLO or Plan mode while resuming a session, switch into them from inside the interactive session via slash commands instead.
+To force YOLO or Plan mode when resuming a session, switch via slash commands inside the interactive session instead.
 
-## Typical usage
+## Common Usage
 
-The most common entry point is to run `kimi` directly to start a fresh session in the current directory:
+Start a new session directly:
 
 ```sh
 kimi
 ```
 
-If the previous session was interrupted (terminal closed, network disconnected, etc.) and you want to pick up where you left off, use `--continue`:
+Pick up where you left off (automatically finds the most recent session in the current directory):
 
 ```sh
 kimi --continue
 ```
 
-This automatically finds and resumes the most recent session under the current working directory. To pick a different historical session, run `kimi --session` to enter the interactive picker, or pass a known session ID directly:
+Choose from the session history list, or specify a known ID directly:
 
 ```sh
+kimi --session
 kimi --session 01HZ...XYZ
 ```
 
-When the task is trivial and you don't want to be interrupted by frequent approval requests, add `--yolo`:
+Skip approval prompts — suitable for batch tasks that are known to be safe:
 
 ```sh
 kimi --yolo
 ```
 
-If you want the agent to handle approvals on its own and not ask questions, use `--auto`:
+Let the Agent handle everything autonomously, without asking the user questions:
 
 ```sh
 kimi --auto
 ```
 
-If you want the AI to read the code and produce an implementation plan first, rather than immediately editing files, use `--plan` to enter Plan mode:
+Read the code and produce an implementation plan before making any file changes:
 
 ```sh
 kimi --plan
 ```
 
-### Custom Skills directories
+### Custom Skills Directories
 
-To load custom Skills directories, you have two options:
+There are two ways to specify Skills directories, with different semantics:
 
-- **CLI flag `--skills-dir <dir>`**: Can be passed multiple times and **replaces** the auto-discovered user and project directories. Useful for temporary overrides or use in scripts. For example, to mount two directories at once:
+- **`--skills-dir <dir>`** (CLI flag): **Replaces** the automatically discovered user and project directories for this launch only. Can be repeated to stack multiple directories:
 
   ```sh
   kimi --skills-dir /path/to/team-skills --skills-dir ./local-skills
   ```
 
-- **`extra_skill_dirs` in `config.toml`**: Appends extra directories in the config file and **stacks** them with the auto-discovered ones. Suitable for persistent configuration of team-shared Skills (see [Agent Skills](../customization/skills.md)).
+- **`extra_skill_dirs`** (`config.toml`): **Adds** directories on top of the automatically discovered ones, taking effect permanently. Suitable for configuring team-shared Skills. See [Agent Skills](../customization/skills.md).
 
-## Non-interactive execution
+## Non-Interactive Execution
 
-Use `-p` when a script or CI job needs to run one prompt:
+When running a single prompt in a script or CI environment, use `-p`:
 
 ```sh
 kimi -p "Summarize the current repository status"
 ```
 
-Output uses transcript-style blocks: thinking and assistant text start with `• `, with continuation lines indented by two spaces. Assistant text is written to stdout; thinking, tool progress, and the `To resume this session: kimi -r <id>` hint are written to stderr. Prompt mode does not wait for manual approvals: ordinary tool calls, Plan approvals, and agent questions follow the `auto` permission policy. Static deny rules still block matching tool calls.
+Output uses a transcript style: thinking content and Assistant text are both prefixed with `• `, and wrapped lines are indented by two spaces. Assistant text goes to stdout; thinking, tool progress, and "resuming session" notices go to stderr. In `-p` mode, no human approval is requested — regular tool calls are handled under the `auto` permission policy, while static deny rules remain in effect.
 
-To switch models for a single invocation, add `-m`:
+Temporarily switch the model:
 
 ```sh
 kimi -m kimi-code/kimi-for-coding -p "Explain the latest diff"
 ```
 
-If a script needs structured output, use JSONL:
+When you need to parse output programmatically, use the `stream-json` format — each line on stdout is a JSON object:
 
 ```sh
 kimi -p "List changed files" --output-format stream-json
 ```
 
-In `stream-json` mode, each stdout line is one JSON object. Ordinary replies are emitted as assistant messages. If the model calls tools, the output first includes an assistant message with `tool_calls`, then the corresponding tool message, followed by later assistant messages. Thinking content is not written to JSONL; tool progress and the resume-session hint still go to stderr.
+In `stream-json` mode, regular replies produce an Assistant message; when the model calls a tool, an Assistant message with `tool_calls` is emitted first, followed by the corresponding Tool message, then subsequent Assistant messages. Thinking content is not written to JSONL; tool progress and "resuming session" notices are still written to stderr.
 
 ## Subcommands
 
+`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
+
+### `kimi login`
+
+Log in to Kimi Code OAuth via the RFC 8628 device-code flow, without entering the TUI. The command issues a device authorization request, prints the verification URL and user code to stderr, then polls until the browser-side authorization is complete. The generated token is written to the same local location as TUI `/login` and is loaded automatically the next time `kimi` starts.
+
+```sh
+kimi login
+```
+
+This subcommand has no flags. Press `Ctrl-C` at any time during polling to cancel; the exit code is `1` on cancellation or failure, and `0` on success.
+
+### `kimi acp`
+
+Switch Kimi Code CLI to ACP (Agent Client Protocol) mode, communicating with an IDE via JSON-RPC over stdin/stdout so the editor can directly drive kimi's sessions and tool calls. You typically do not need to run this manually — the IDE starts it as a subprocess entry point. For configuration, see [Using in IDEs](../guides/ides.md); for technical details, see the [kimi acp reference](./kimi-acp.md).
+
+```sh
+kimi acp
+```
+
+### `kimi doctor`
+
+Validate `config.toml` and `tui.toml` without starting the TUI or modifying either file. By default, the command checks the files under `KIMI_CODE_HOME` (or `~/.kimi-code` when the environment variable is unset). Missing default files are reported as skipped because built-in defaults can apply.
+
+```sh
+kimi doctor
+```
+
+| Command | Description |
+| --- | --- |
+| `kimi doctor` | Validate the default `config.toml` and `tui.toml` |
+| `kimi doctor config [path]` | Validate only `config.toml`, using `path` instead of the default file when provided |
+| `kimi doctor tui [path]` | Validate only `tui.toml`, using `path` instead of the default file when provided |
+
+When an explicit path is passed, the file must exist. The command exits with `0` when all checked files are valid or skipped, and `1` when any requested file is missing or invalid.
+
+```sh
+# Check the default config files
+kimi doctor
+
+# Check only the default runtime config
+kimi doctor config
+
+# Check a candidate TUI config before replacing the live config
+kimi doctor tui ./tui.toml
+```
+
 ### `kimi export`
 
-Bundle a session into a ZIP file for sharing, archival, or bug reports. The exported archive contains all files under the session directory, such as context records, state files, and the session diagnostic log if that session has already produced `logs/kimi-code.log`.
+Package a session into a ZIP file for sharing, archiving, or submitting bug reports.
 
 ```sh
 kimi export [sessionId] [options]
 ```
 
-| Argument / Option | Short | Description |
+| Parameter / Option | Short | Description |
 | --- | --- | --- |
-| `sessionId` | | The ID of the session to export. When omitted, the most recent session under the current working directory is selected automatically and a confirmation is requested. |
-| `--output <path>` | `-o` | Output path for the ZIP file. When omitted, writes to a default filename in the current directory. |
-| `--yes` | `-y` | Skip the confirmation prompt for the default session and export directly. |
-| `--no-include-global-log` | | Skip bundling the active global diagnostic log, `~/.kimi-code/logs/kimi-code.log`. It is included by default. |
+| `sessionId` | | The ID of the session to export. When omitted, the most recent session in the current working directory is automatically selected and requires confirmation |
+| `--output <path>` | `-o` | Output ZIP file path. When omitted, writes to a default filename in the current directory |
+| `--yes` | `-y` | Skip the confirmation prompt for the default session and export directly |
+| `--no-include-global-log` | | Do not include the global diagnostic log. Included by default |
 
-By default, export includes files inside the target session directory. If that directory contains `logs/kimi-code.log`, it appears in the ZIP as `logs/kimi-code.log`. The global diagnostic log at `~/.kimi-code/logs/kimi-code.log` is also bundled by default, because it may contain events from other sessions or projects. Add `--no-include-global-log` when you do not want to share it. When included, its ZIP path is `logs/global/kimi-code.log`; rotated files such as `kimi-code.log.1` are not bundled.
-
-When `sessionId` is omitted, the command first prints the session to be exported and asks for confirmation; `-y` skips this prompt, which is handy for scripts:
+The export contains all files in the target session directory. The global diagnostic log (`~/.kimi-code/logs/kimi-code.log`) is included by default because it may contain events from other sessions or projects; add `--no-include-global-log` if you do not want to share it.
 
 ```sh
-# Export the most recent session under the current working directory, skipping confirmation
+# Export the most recent session in the current directory, skipping confirmation
 kimi export -y
 
 # Export a specific session to a custom path
 kimi export 01HZ...XYZ -o ./bug-report.zip
 
-# Exclude the global diagnostic log to avoid sharing events from other sessions
+# Exclude the global diagnostic log
 kimi export 01HZ...XYZ -o ./bug-report.zip --no-include-global-log
 ```
 
 ### `kimi migrate`
 
-Migrate local data from an older version of kimi-cli to kimi-code. This command has no flags and runs fully interactively, guiding you through the entire migration process.
+Migrate local data from a legacy kimi-cli installation to kimi-code, including session history and configuration files. Runs entirely interactively, guiding you through the full process.
 
 ```sh
 kimi migrate
 ```
 
-If you previously used an older version of kimi-cli, run this command to migrate historical sessions, configuration, and other data to kimi-code to avoid data loss. For the full migration flow, what gets migrated, and things to watch out for, see [Migrating from kimi-cli](../guides/migration.md).
+For full migration instructions, see [Migrating from kimi-cli](../guides/migration.md).
 
 ### `kimi upgrade`
 
-Check the latest Kimi Code CLI version immediately and show the update prompt. This command has no flags and exits after the selected action.
+Immediately check for the latest version and display an update prompt; exits after you make a selection.
 
 ```sh
 kimi upgrade
 ```
 
-For global npm, pnpm, yarn, bun, and macOS / Linux native installs, `kimi upgrade` uses the same prompt as startup update checks. Choose `Install update now` to run the corresponding foreground install command, or continue with the current version. If no newer version is available, it prints the current up-to-date status. If the current installation cannot be upgraded automatically, such as Windows native installs or an unsupported layout, it prints the manual update command instead.
+For global npm, pnpm, yarn, bun, and macOS / Linux native installations, `kimi upgrade` shows update options; selecting `Install update now` runs the corresponding foreground install command. When the current installation method cannot be upgraded automatically (e.g., Windows native installation), the manual update command is printed instead.
 
 ### `kimi provider`
 
-Manage LLM providers from the shell — the non-interactive equivalent of the TUI `/provider` command. Useful for scripting, CI bootstrap, and provisioning a fresh machine.
+Manage providers in the shell — the non-interactive equivalent of `/provider` in the TUI. Suitable for scripted deployments, CI initialization, and one-line setup on a new machine.
 
 ```sh
 kimi provider <action> [options]
 ```
 
-Three actions are available:
+Five actions are available:
 
 #### `kimi provider add <url>`
 
-Import every provider listed in a custom registry (an `api.json` document). The command fetches the registry, creates one `[providers.<id>]` table per top-level entry, populates `[models.<alias>]` for each model in the document, and persists the `source = { kind = "apiJson", url, api_key }` block on every provider so the next TUI launch refreshes the model list automatically.
+Bulk-import all providers from a custom registry (`api.json`). The command fetches the registry, creates a `[providers.<id>]` and `[models.<alias>]` entry for each item, and writes `source` metadata so the TUI refreshes the model list automatically on next startup.
 
-| Argument / Option | Description |
+| Parameter / Option | Description |
 | --- | --- |
-| `<url>` | Registry URL, e.g. `https://registry.example.com/v1/models/api.json`. |
-| `--api-key <key>` | Bearer token sent with the registry fetch. Falls back to the `KIMI_REGISTRY_API_KEY` environment variable when omitted. Required. |
+| `<url>` | Registry URL |
+| `--api-key <key>` | Bearer token for accessing the registry. Falls back to the `KIMI_REGISTRY_API_KEY` environment variable if not provided; required |
 
 ```sh
-# One-line import — every provider and model in the registry lands in ~/.kimi-code/config.toml
 kimi provider add https://registry.example.com/v1/models/api.json --api-key YOUR_KEY
 
-# Or via environment variable, for CI / .envrc-style workflows
+# Or via environment variable (suitable for CI / .envrc)
 KIMI_REGISTRY_API_KEY=YOUR_KEY kimi provider add https://registry.example.com/v1/models/api.json
 ```
 
-If a provider id already exists, it is replaced (its stale model aliases are removed first, mirroring the TUI flow). No default model is selected — pick one later via `-m` or `/model` inside the TUI.
+If a provider ID already exists, it is removed and re-created. The default model is not set automatically; you can select one later with `-m` or `/model` in the TUI.
 
 #### `kimi provider remove <providerId>`
 
-Delete a provider and every model alias that referenced it. If the removed provider was the source of `default_model`, that field is cleared.
+Remove the specified provider and all its model aliases. If the removed provider is the one referenced by `default_model`, `default_model` is also cleared.
 
 ```sh
 kimi provider remove kohub
@@ -211,7 +254,7 @@ kimi provider remove kohub
 
 #### `kimi provider list`
 
-Print one row per configured provider with its type, model count, and source (`apiJson(...)`, `oauth`, or `inline`). Add `--json` to emit the raw `providers` and `models` tables as JSON for further processing.
+Print each configured provider on a separate line, including type, model count, and source. Add `--json` to output the raw `providers` and `models` tables for programmatic processing.
 
 ```sh
 kimi provider list
@@ -220,41 +263,39 @@ kimi provider list --json | jq '.providers | keys'
 
 #### `kimi provider catalog list [providerId]`
 
-Discover providers known to the public [models.dev](https://models.dev/) catalog without writing anything. With no argument, prints one row per provider showing its inferred wire type and model count. With a `providerId`, drills into that provider and lists each model with its context window and capabilities.
+Browse the public [models.dev](https://models.dev/) model catalog without modifying any configuration. Without an argument, lists all providers along with their protocol type and model count; with a `providerId`, lists all models under that provider along with their context window and capabilities.
 
-| Argument / Option | Description |
+| Parameter / Option | Description |
 | --- | --- |
-| `[providerId]` | Optional. Catalog provider id to drill into. |
-| `--filter <substring>` | Case-insensitive id/name substring filter (top-level only). |
-| `--url <url>` | Override catalog URL. Defaults to `https://models.dev/api.json`. |
-| `--json` | Emit the matching catalog slice as JSON. |
+| `[providerId]` | Optional — the provider ID to inspect |
+| `--filter <substring>` | Case-insensitive substring filter on ID or name |
+| `--url <url>` | Override the catalog URL; defaults to `https://models.dev/api.json` |
+| `--json` | Output matching entries as JSON |
 
 ```sh
-# Browse providers
 kimi provider catalog list
 kimi provider catalog list --filter anthropic
-
-# Inspect one provider's models
 kimi provider catalog list anthropic
 ```
 
 #### `kimi provider catalog add <providerId>`
 
-Import a known provider directly from the catalog. The catalog supplies the wire type, base URL, model identifiers, context limits, and capabilities — you only have to supply the API key.
+Import a known provider directly from the catalog by ID. The protocol type, base URL, and model information are all supplied by the catalog — only an API key is required.
 
-| Argument / Option | Description |
+| Parameter / Option | Description |
 | --- | --- |
-| `<providerId>` | Catalog provider id, e.g. `anthropic`, `openai`, `google`. |
-| `--api-key <key>` | API key for the provider. Falls back to `KIMI_REGISTRY_API_KEY`. Required. |
-| `--default-model <modelId>` | Optional. Set `default_model` to `<providerId>/<modelId>` after import. The model must be one listed by `catalog list <providerId>`. |
-| `--url <url>` | Override catalog URL. Defaults to `https://models.dev/api.json`. |
-
-When `--default-model` is omitted, the existing `default_model` is preserved (you can still pick a model later via `-m` or the TUI `/model` command).
+| `<providerId>` | Provider ID in the catalog, e.g., `anthropic`, `openai` |
+| `--api-key <key>` | Provider API key. Falls back to `KIMI_REGISTRY_API_KEY` if not provided; required |
+| `--default-model <modelId>` | Optional — set `default_model` to `<providerId>/<modelId>` after import |
+| `--url <url>` | Override the catalog URL; defaults to `https://models.dev/api.json` |
 
 ```sh
-# Look up what's available
-kimi provider catalog list anthropic
-
-# Import and set the default in one go
+kimi provider catalog list anthropic          # Browse available models first
 kimi provider catalog add anthropic --api-key sk-ant-... --default-model claude-opus-4-7
 ```
+
+## Next steps
+
+- [Slash Commands](./slash-commands.md) — Quick reference for control commands in the interactive TUI
+- [Configuration Files](../configuration/config-files.md) — Persistent configuration for `default_model`, permission mode, and other startup parameters
+- [Agent Skills](../customization/skills.md) — Skill file format for directories loaded via `--skills-dir`

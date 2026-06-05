@@ -9,6 +9,7 @@ import {
   formatConfigValidationError,
   getDefaultConfig,
   type BackgroundConfig,
+  type ExperimentalConfig,
   type HookDefConfig,
   type KimiConfig,
   type LoopControl,
@@ -132,6 +133,8 @@ export function transformTomlData(data: Record<string, unknown>): Record<string,
       result[targetKey] = transformLoopControlData(value);
     } else if (targetKey === 'background' && isPlainObject(value)) {
       result[targetKey] = transformPlainObject(value);
+    } else if (targetKey === 'experimental' && isPlainObject(value)) {
+      result[targetKey] = cloneRecord(value);
     } else if (!isPlainObject(value)) {
       result[targetKey] = value;
     }
@@ -302,6 +305,7 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
   setSection(out, 'services', config.services, servicesToToml);
   setSection(out, 'loop_control', config.loopControl, loopControlToToml);
   setSection(out, 'background', config.background, backgroundToToml);
+  setSection(out, 'experimental', config.experimental, experimentalToToml);
   setSection(out, 'permission', config.permission, permissionToToml);
   setHooks(out, config.hooks);
 
@@ -463,6 +467,17 @@ function backgroundToToml(
   return out;
 }
 
+function experimentalToToml(
+  experimental: ExperimentalConfig,
+  _rawExperimental: unknown,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(experimental)) {
+    setDefined(out, key, value);
+  }
+  return out;
+}
+
 function setHooks(out: Record<string, unknown>, hooks: readonly HookDefConfig[] | undefined): void {
   if (hooks === undefined) {
     delete out['hooks'];
@@ -482,7 +497,7 @@ function hookToToml(hook: HookDefConfig): Record<string, unknown> {
 function oauthToToml(oauth: OAuthRef): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(oauth)) {
-    out[camelToSnake(key)] = value;
+    setDefined(out, camelToSnake(key), value);
   }
   return out;
 }
