@@ -251,7 +251,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `theme` | `string` | `auto` | Color theme: `auto` (follow the terminal), `dark`, or `light` |
+| `theme` | `string` | `auto` | Color theme: `auto` (follow the terminal), `dark`, `light`, or the name of a [custom theme](../customization/themes) |
 | `[editor].command` | `string` | `""` | External editor command for composing long input; empty falls back to `$VISUAL` / `$EDITOR` |
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
@@ -259,7 +259,7 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 
 ```toml
 # ~/.kimi-code/tui.toml
-theme = "auto" # "auto" | "dark" | "light"
+theme = "auto" # "auto" | "dark" | "light" | custom theme name
 
 [editor]
 command = "" # empty uses $VISUAL / $EDITOR
