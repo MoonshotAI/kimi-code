@@ -273,10 +273,19 @@ function renderSwarmResults(results: readonly SwarmRunResult[]): string {
   const completed = results.filter((result) => result.status === 'completed').length;
   const failed = results.filter((result) => result.status === 'failed').length;
   const aborted = results.filter((result) => result.status === 'aborted').length;
+  const shouldRenderResumeHint =
+    results.some((result) => result.status !== 'completed') &&
+    results.some((result) => result.agentId !== undefined);
   const lines = [
     '<agent_swarm_result>',
     `<summary>${renderSwarmSummary(completed, failed, aborted)}</summary>`,
   ];
+
+  if (shouldRenderResumeHint) {
+    lines.push(
+      '<resume_hint>Call AgentSwarm with resume_agent_ids using the agent_id values in this result to continue unfinished work.</resume_hint>',
+    );
+  }
 
   for (const result of results) {
     const agentId = result.agentId === undefined ? '' : ` agent_id="${result.agentId}"`;

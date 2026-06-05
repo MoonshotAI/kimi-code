@@ -906,6 +906,28 @@ describe('AgentSwarmProgressComponent', () => {
     expect(output).toContain('002 src/b.ts');
   });
 
+  it('creates pending rows from resume_agent_ids before streamed args items', () => {
+    const component = new AgentSwarmProgressComponent({
+      description: '',
+      colors: darkColors,
+    });
+
+    component.updateArgs({
+      description: 'Review changed files',
+      resume_agent_ids: {
+        'agent-old-1': 'continue',
+        'agent-old-2': 'continue',
+      },
+      items: ['src/a.ts'],
+    });
+    const output = strip(component.render(100).join('\n'));
+
+    expect(output).toContain('001 (resumed)');
+    expect(output).toContain('002 (resumed)');
+    expect(output).toContain('003 src/a.ts');
+    expect(output).not.toContain('001 [');
+  });
+
   it('counts partial items before each string is complete', () => {
     expect(
       agentSwarmPartialItemsCountFromArguments('{"items":["src/a.ts","src/b'),
@@ -931,6 +953,23 @@ describe('AgentSwarmProgressComponent', () => {
 
     expect(output).toContain('001 src/a.ts');
     expect(output).toContain('002 src/b');
+  });
+
+  it('creates pending rows from partial streaming resume_agent_ids', () => {
+    const component = new AgentSwarmProgressComponent({
+      description: '',
+      colors: darkColors,
+    });
+
+    component.updateArgs({}, {
+      streamingArguments:
+        '{"description":"Resume reviews","resume_agent_ids":{"agent-old-1":"continue","agent-old-2":"cont',
+    });
+    const output = strip(component.render(100).join('\n'));
+
+    expect(output).toContain('001 (resumed)');
+    expect(output).toContain('002 (resumed)');
+    expect(output).not.toContain('003');
   });
 
   it('adds subagent rows incrementally as spawn events arrive', () => {

@@ -38,6 +38,7 @@ const FAILED_LABEL = 'Failed.';
 const ABORTED_LABEL = 'Aborted.';
 const QUEUED_LABEL = 'Queued...';
 const SUSPENDED_LABEL = 'Suspended...';
+const RESUMED_ITEM_LABEL = '(resumed)';
 
 const STATUS_BAR_ORDER = [
   'completed',
@@ -185,17 +186,24 @@ export class AgentSwarmProgressComponent implements Component {
     if (description.length > 0 || this.description.length === 0) {
       this.description = description;
     }
+    const fullResumeItems = agentSwarmResumeItemsFromArgs(args);
+    const partialResumeItems =
+      options.streamingArguments === undefined
+        ? []
+        : agentSwarmPartialResumeItemsFromArguments(options.streamingArguments);
     const fullItems = agentSwarmItemsFromArgs(args);
     const partialItems =
       options.streamingArguments === undefined
         ? []
         : agentSwarmPartialItemsFromArguments(options.streamingArguments);
+    const fullRows = [...fullResumeItems, ...fullItems];
+    const partialRows = [...partialResumeItems, ...partialItems];
     if (
-      fullItems.length > 0 ||
-      partialItems.length > 0 ||
+      fullRows.length > 0 ||
+      partialRows.length > 0 ||
       (
         options.streamingArguments !== undefined &&
-        agentSwarmItemsStartedFromArguments(options.streamingArguments)
+        agentSwarmWorkItemsStartedFromArguments(options.streamingArguments)
       )
     ) {
       this.itemsStarted = true;
@@ -211,9 +219,9 @@ export class AgentSwarmProgressComponent implements Component {
       this.promptTemplateText = promptTemplate;
     }
 
-    const itemCount = Math.max(fullItems.length, partialItems.length);
+    const itemCount = Math.max(fullRows.length, partialRows.length);
     if (itemCount > 0) this.ensureMemberCount(itemCount);
-    this.updateItemTexts(fullItems, partialItems);
+    this.updateItemTexts(fullRows, partialRows);
   }
 
   markInputComplete(): void {
@@ -782,12 +790,24 @@ export function agentSwarmItemsFromArgs(args: Record<string, unknown>): string[]
   return items.map(String);
 }
 
+function agentSwarmResumeItemsFromArgs(args: Record<string, unknown>): string[] {
+  const resumeAgentIds = args['resume_agent_ids'];
+  if (
+    typeof resumeAgentIds !== 'object' ||
+    resumeAgentIds === null ||
+    Array.isArray(resumeAgentIds)
+  ) {
+    return [];
+  }
+  return Object.keys(resumeAgentIds).map(() => RESUMED_ITEM_LABEL);
+}
+
 export function agentSwarmPartialItemsCountFromArguments(argumentsText: string): number {
   return agentSwarmPartialItemsFromArguments(argumentsText).length;
 }
 
-function agentSwarmItemsStartedFromArguments(argumentsText: string): boolean {
-  return /"items"\s*:/.test(argumentsText);
+function agentSwarmWorkItemsStartedFromArguments(argumentsText: string): boolean {
+  return /"items"\s*:/.test(argumentsText) || /"resume_agent_ids"\s*:/.test(argumentsText);
 }
 
 export function agentSwarmPartialItemsFromArguments(argumentsText: string): string[] {
@@ -808,6 +828,15 @@ export function agentSwarmPartialItemsFromArguments(argumentsText: string): stri
     return items;
   }
   return items;
+}
+
+function agentSwarmPartialResumeItemsFromArguments(argumentsText: string): string[] {
+  const match = /"resume_agent_ids"\s*:\s*\{/.exec(argumentsText);
+  if (match === null) return [];
+  return Array.from(
+    { length: countPartialJsonObjectEntries(argumentsText, match.index + match[0].length) },
+    () => RESUMED_ITEM_LABEL,
+  );
 }
 
 export function agentSwarmDescriptionFromArgs(args: Record<string, unknown>): string {
@@ -1520,6 +1549,29 @@ function latestNonEmptyLine(text: string): string {
     if (line.length > 0) return line;
   }
   return '';
+}
+
+function countPartialJsonObjectEntries(text: string, startIndex: number): number {
+  let count = 0;
+  let expectKey = true;
+  for (let i = startIndex; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '}') return count;
+    if (ch === ',') {
+      expectKey = true;
+      continue;
+    }
+    if (ch !== '"') continue;
+
+    const parsed = parsePartialJsonString(text, i + 1);
+    if (expectKey) {
+      if (parsed.closed || parsed.value.length > 0) count += 1;
+      expectKey = false;
+    }
+    if (!parsed.closed) return count;
+    i = parsed.nextIndex;
+  }
+  return count;
 }
 
 function parsePartialJsonString(

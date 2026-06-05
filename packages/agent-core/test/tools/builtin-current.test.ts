@@ -593,11 +593,66 @@ describe('current builtin collaboration tools', () => {
     expect(result.output).toBe([
       '<agent_swarm_result>',
       '<summary>completed: 1, failed: 1</summary>',
+      '<resume_hint>Call AgentSwarm with resume_agent_ids using the agent_id values in this result to continue unfinished work.</resume_hint>',
       '<subagent index="1" agent_id="agent-coder-1" outcome="completed">imports are stable</subagent>',
       '<subagent index="2" agent_id="agent-coder-2" outcome="failed">Agent timed out after 30s.</subagent>',
       '</agent_swarm_result>',
     ].join('\n'));
     expect(swarmMode.enter).toHaveBeenCalledWith('implicit');
+    expect(result.isError).toBeUndefined();
+  });
+
+  it('AgentSwarm omits resume hint when incomplete subagents have no agent ids', async () => {
+    const host = mockSubagentHost({
+      runQueued: vi.fn().mockResolvedValue([
+        {
+          task: {
+            data: { kind: 'spawn', index: 1, item: 'src/a.ts', prompt: 'Review src/a.ts' },
+            profileName: 'coder',
+            parentToolCallId: 'call_swarm',
+            prompt: 'Review src/a.ts',
+            description: 'Review files #1 (coder)',
+            runInBackground: false,
+          },
+          status: 'failed',
+          error: 'Agent did not start.',
+        },
+        {
+          task: {
+            data: { kind: 'spawn', index: 2, item: 'src/b.ts', prompt: 'Review src/b.ts' },
+            profileName: 'coder',
+            parentToolCallId: 'call_swarm',
+            prompt: 'Review src/b.ts',
+            description: 'Review files #2 (coder)',
+            runInBackground: false,
+          },
+          status: 'failed',
+          error: 'Agent also did not start.',
+        },
+      ]),
+    });
+    const swarmMode = mockSwarmMode();
+    const tool = new AgentSwarmTool(host, swarmMode);
+
+    const result = await executeTool(
+      tool,
+      context(
+        {
+          description: 'Review files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts', 'src/b.ts'],
+        },
+        'call_swarm',
+      ),
+    );
+
+    expect(result.output).toBe([
+      '<agent_swarm_result>',
+      '<summary>failed: 2</summary>',
+      '<subagent index="1" outcome="failed">Agent did not start.</subagent>',
+      '<subagent index="2" outcome="failed">Agent also did not start.</subagent>',
+      '</agent_swarm_result>',
+    ].join('\n'));
     expect(result.isError).toBeUndefined();
   });
 
@@ -664,6 +719,7 @@ describe('current builtin collaboration tools', () => {
     expect(result.output).toBe([
       '<agent_swarm_result>',
       '<summary>completed: 1, aborted: 2</summary>',
+      '<resume_hint>Call AgentSwarm with resume_agent_ids using the agent_id values in this result to continue unfinished work.</resume_hint>',
       '<subagent index="1" agent_id="agent-coder-1" outcome="completed">imports are stable</subagent>',
       '<subagent index="2" agent_id="agent-coder-2" state="started" outcome="aborted">The user manually interrupted this subagent batch before this subagent finished.</subagent>',
       '<subagent index="3" state="not_started" outcome="aborted">The user manually interrupted this subagent batch before this subagent was started.</subagent>',
