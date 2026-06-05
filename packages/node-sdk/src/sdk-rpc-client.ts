@@ -101,19 +101,21 @@ export class SDKRpcClient extends SDKRpcClientBase {
   override async createSessionWithKaos(
     input: CreateSessionOptions,
     kaos: Kaos,
+    persistenceKaos?: Kaos,
   ): Promise<SessionSummary> {
     const { planMode, ...coreInput } = input;
     void planMode;
-    return this.core.createSessionWithOverrides(coreInput, { kaos });
+    return this.core.createSessionWithOverrides(coreInput, { kaos, persistenceKaos });
   }
 
   override async resumeSessionWithKaos(
     input: ResumeSessionInput,
     kaos: Kaos,
+    persistenceKaos?: Kaos,
   ): Promise<ResumedSessionSummary> {
     return this.core.resumeSessionWithOverrides(
       { ...input, sessionId: input.id },
-      { kaos },
+      { kaos, persistenceKaos },
     );
   }
 

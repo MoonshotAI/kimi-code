@@ -142,6 +142,16 @@ export class AcpKaos implements Kaos {
   }
 
   /**
+   * Return a small UTF-8 header derived from the same ACP text source as
+   * `readText` / `readLines`, used only by text-read callers for sniffing.
+   * Keep `readBytes` local so binary callers such as ReadMediaFile stay safe.
+   */
+  async readTextPreview(path: string, n: number): Promise<Buffer> {
+    const text = await this.readText(path);
+    return Buffer.from(text.slice(0, n), 'utf8');
+  }
+
+  /**
    * Yield lines from the file, each terminated by its `\n` (the final
    * line has no terminator if the file did not end with `\n`). Matches
    * {@link LocalKaos.readLines} so tools that depend on line terminators
@@ -248,16 +258,13 @@ function wrapKaosError(prefix: string, cause: unknown): KaosError {
 }
 
 /**
- * Return true iff `err` looks like a "file does not exist" failure on
- * the read side of an ACP append-mode write. We recognize:
- *  - `RequestError` with code `-32002` (the ACP SDK's `resourceNotFound`).
- *  - The `KaosError` wrapper around such a `RequestError` (which `readText`
- *    above produces) — unwrap via `.cause`.
- *  - A loose "not found" / "no such file" string match as a last resort,
- *    for clients that synthesize errors without using the SDK helpers.
- *
- * Permission denials, transport errors, and anything else propagate so
- * append never silently overwrites an existing file.
+ * Return true iff `err` is a structured "file does not exist" failure on
+ * the read side of an ACP append-mode write. We only trust the ACP SDK's
+ * `RequestError.resourceNotFound` code (`-32002`), optionally wrapped in a
+ * `KaosError` by `readText` above. Message substring matching is intentionally
+ * avoided: wrapper messages include the path, so a path or non-ENOENT failure
+ * mentioning "not found" could otherwise be misclassified and cause append
+ * mode to overwrite existing content.
  */
 function isNotFoundError(err: unknown): boolean {
   const visited = new Set<unknown>();
@@ -266,8 +273,6 @@ function isNotFoundError(err: unknown): boolean {
     visited.add(cur);
     if (cur instanceof RequestError && cur.code === -32002) return true;
     if (cur instanceof Error) {
-      const msg = cur.message.toLowerCase();
-      if (msg.includes('not found') || msg.includes('no such file')) return true;
       cur = (cur as Error & { cause?: unknown }).cause;
       continue;
     }

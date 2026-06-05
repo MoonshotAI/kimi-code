@@ -94,6 +94,7 @@ export interface CreateSessionOptions {
   readonly planMode?: boolean;
   readonly metadata?: JsonObject | undefined;
   readonly kaos?: Kaos | undefined;
+  readonly persistenceKaos?: Kaos | undefined;
 }
 
 export interface RenameSessionInput {
@@ -104,6 +105,7 @@ export interface RenameSessionInput {
 export interface ResumeSessionInput {
   readonly id: string;
   readonly kaos?: Kaos | undefined;
+  readonly persistenceKaos?: Kaos | undefined;
 }
 
 export interface ForkSessionInput {

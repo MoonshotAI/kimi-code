@@ -340,19 +340,20 @@ describe('AcpKaos', () => {
       ]);
     });
 
-    it('append mode also treats loose "not found" message as missing file', async () => {
-      // Some clients return plain JSON-RPC errors without the SDK helpers.
+    it('append mode does not treat a loose "not found" message as missing file', async () => {
+      // ACP adapters should only trust structured not-found errors here; wrapper
+      // messages include the path, so path-only or permission failures can contain
+      // "not found" without meaning that the target is absent.
       const conn = makeMockConn({
         readHandler: async () => {
-          throw new Error('file not found');
+          throw new Error('permission denied for /tmp/not found/file.txt');
         },
       });
       const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
-      const n = await kaos.writeText('/missing.ts', 'fresh', { mode: 'a' });
-      expect(n).toBe(5);
-      expect(conn.writeCalls).toEqual([
-        { sessionId: 's1', path: '/missing.ts', content: 'fresh' },
-      ]);
+
+      await expect(kaos.writeText('/tmp/not found/file.txt', 'fresh', { mode: 'a' }))
+        .rejects.toBeInstanceOf(KaosError);
+      expect(conn.writeCalls).toEqual([]);
     });
 
     it('append mode rethrows non-not-found read errors and does NOT issue a write', async () => {

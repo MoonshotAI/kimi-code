@@ -189,7 +189,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   async createSessionWithOverrides(
     input: CreateSessionPayload,
-    overrides: { kaos?: Kaos },
+    overrides: { kaos?: Kaos; persistenceKaos?: Kaos },
   ): Promise<SessionSummary> {
     const options = input;
     const workDir = requiredWorkDir('createSession', options.workDir);
@@ -219,8 +219,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     // ctor block throws, `session.close()` releases the sink (and mcp).
     const runtime = await this.resolveRuntime(config);
     const parentKaos = overrides.kaos ?? (await this.getKaos());
+    const persistenceKaos = overrides.persistenceKaos ?? parentKaos;
     const session = new Session({
       kaos: parentKaos.withCwd(workDir),
+      persistenceKaos,
       toolServices: runtime,
       config,
       id,
@@ -296,11 +298,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   async resumeSessionWithOverrides(
     input: ResumeSessionPayload,
-    overrides: { kaos?: Kaos },
+    overrides: { kaos?: Kaos; persistenceKaos?: Kaos },
   ): Promise<ResumeSessionResult> {
     const summary = await this.sessionStore.get(input.sessionId);
     const active = this.sessions.get(summary.id);
     if (active !== undefined) {
+      if (overrides.kaos !== undefined) {
+        active.setToolKaos(overrides.kaos.withCwd(summary.workDir));
+      }
       return resumeSessionResult(summary, active);
     }
 
@@ -315,8 +320,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
     const runtime = await this.resolveRuntime(config);
     const parentKaos = overrides.kaos ?? (await this.getKaos());
+    const persistenceKaos = overrides.persistenceKaos ?? parentKaos;
     const session = new Session({
       kaos: parentKaos.withCwd(summary.workDir),
+      persistenceKaos,
       toolServices: runtime,
       config,
       id: summary.id,

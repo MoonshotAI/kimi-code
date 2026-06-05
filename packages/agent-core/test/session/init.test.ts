@@ -4,6 +4,7 @@ import { join } from 'pathe';
 
 import { testKaos } from '../fixtures/test-kaos';
 import type { ProviderConfig, ToolCall } from '@moonshot-ai/kosong';
+import type { Kaos } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent, AgentOptions } from '../../src/agent';
@@ -115,6 +116,53 @@ describe('Session.init', () => {
     expect(contextText).toContain('Latest AGENTS.md file content:');
     expect(contextText).toContain('latest project instructions');
     expect(contextText).not.toContain('Task requirements:');
+  });
+
+  it('loads AGENTS.md via the persistence kaos when the tool kaos rejects readText (Zed ACP "Internal error" regression)', async () => {
+    const workDir = await makeTempDir();
+    const sessionDir = await makeTempDir();
+    await mkdir(join(workDir, '.git'));
+    await writeFile(join(workDir, 'AGENTS.md'), 'project instructions from disk', 'utf-8');
+
+    // Simulate Zed's `fs/readTextFile` returning a generic -32603 Internal
+    // error: every `readText` through the tool kaos rejects. The persistence
+    // kaos is a real LocalKaos that can reach AGENTS.md on disk.
+    const toolKaos = wrapReadTextWithError(
+      testKaos.withCwd(workDir),
+      new Error('acp: readTextFile failed: Internal error'),
+    );
+
+    const capturedContext: { agentsMd: string | undefined } = { agentsMd: undefined };
+    const events: Array<Record<string, unknown>> = [];
+    const session = new Session({
+      id: 'test-bootstrap-acp-fallback',
+      kaos: toolKaos,
+      persistenceKaos: testKaos.withCwd(workDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc(events),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      providerManager: testProviderManager(),
+    });
+    try {
+      const { agent } = await session.createAgent(
+        { type: 'main' },
+        {
+          profile: {
+            name: 'capture',
+            systemPrompt: (ctx) => {
+              capturedContext.agentsMd = ctx.agentsMd;
+              return '<system-prompt>';
+            },
+            tools: [],
+          },
+        },
+      );
+
+      expect(agent.config.systemPrompt).toBe('<system-prompt>');
+      expect(capturedContext.agentsMd).toContain('project instructions from disk');
+    } finally {
+      await session.close();
+    }
   });
 
   it('tracks connected and failed MCP server totals after initial load', async () => {
@@ -587,4 +635,31 @@ function createSessionRpc(events: Array<Record<string, unknown>>): SDKSessionRPC
       isError: true,
     })),
   } as SDKSessionRPC;
+}
+
+/**
+ * Wrap a {@link Kaos} so every `readText` (and `readLines`, which reads via
+ * `readText` in the ACP bridge) rejects with `cause`. Used to simulate the
+ * Zed ACP `fs/readTextFile` "Internal error" path that broke session bootstrap
+ * before AGENTS.md loading was rerouted onto the persistence kaos.
+ */
+function wrapReadTextWithError(inner: Kaos, cause: Error): Kaos {
+  return new Proxy(inner, {
+    get(target, prop, receiver) {
+      if (prop === 'readText') {
+        return async () => {
+          throw cause;
+        };
+      }
+      if (prop === 'readLines') {
+        return async function* () {
+          throw cause;
+        };
+      }
+      if (prop === 'withCwd') {
+        return (cwd: string) => wrapReadTextWithError(target.withCwd(cwd), cause);
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
 }

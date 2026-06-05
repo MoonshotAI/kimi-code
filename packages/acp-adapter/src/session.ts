@@ -45,6 +45,7 @@ import {
 } from './events-map';
 import { acpModeToToggles, DEFAULT_MODE_ID, isAcpModeId, type AcpModeId } from './modes';
 import { outcomeToQuestionAnswer, questionItemToPermissionOptions } from './question';
+import { detectSlashIntent } from './slash';
 
 /**
  * Telemetry sink threaded into {@link AcpSession} so reverse-RPC bridges
@@ -120,6 +121,20 @@ export class AcpSession {
    * new mode. Always one of the four PLAN D9 literals.
    */
   private currentModeIdInternal: AcpModeId = DEFAULT_MODE_ID;
+
+  /**
+   * Per-session `slash command name → skill name` map, seeded by
+   * {@link AcpServer.emitAvailableCommandsUpdate} from the same
+   * `listSkills()` snapshot that builds the client palette. Consulted
+   * by {@link prompt} to intercept `/skill:<name> ...` inputs and
+   * route them to {@link Session.activateSkill} instead of forwarding
+   * the raw slash text to {@link Session.prompt} — which is what made
+   * Zed fall back to model-driven Bash exploration of
+   * `~/.kimi-code/skills/` and incurred permission prompts. Defaults
+   * to an empty map so adapter-level unit tests (which never call
+   * `setSkillCommandMap`) behave as a no-op passthrough.
+   */
+  private skillCommandMap: ReadonlyMap<string, string> = new Map();
 
   constructor(
     readonly conn: AgentSideConnection,
@@ -236,6 +251,17 @@ export class AcpSession {
    */
   async cancel(): Promise<void> {
     await this.session.cancel();
+  }
+
+  /**
+   * Seed the per-session `slash command name → skill name` map used by
+   * {@link prompt} to intercept `/skill:<name> ...` inputs. Called by
+   * {@link AcpServer.emitAvailableCommandsUpdate} from the same
+   * `listSkills()` snapshot that builds the client palette, so the map
+   * stays in lockstep with what the client advertises.
+   */
+  setSkillCommandMap(map: ReadonlyMap<string, string>): void {
+    this.skillCommandMap = map;
   }
 
   /**
@@ -648,18 +674,48 @@ export class AcpSession {
     const sessionId = this.id;
     const conn = this.conn;
 
-    return this.runPromptBody(parts, sessionId, conn);
+    // ACP clients (Zed, JetBrains) send `/skill:<name> [args]` as a
+    // plain text `ContentBlock` in `session/prompt`. The TUI client
+    // parses the same form in-process and dispatches via
+    // `Session.activateSkill(...)`, which renders the skill template
+    // inline and never round-trips through model→tool→FS lookup. To
+    // keep the two surfaces semantically aligned we re-parse here and
+    // route to the same SDK entry point; everything else (including
+    // unknown slash commands like `/clear`, which are TUI-only)
+    // passes through to `Session.prompt` unchanged.
+    const intent = detectLeadingSlashIntent(blocks, this.skillCommandMap);
+    if (intent.kind === 'skill') {
+      this.emitTelemetry('acp_skill_activated', { skill_name: intent.skillName });
+      const skillName = intent.skillName;
+      const skillArgs = intent.args;
+      return this.runTurnBody(sessionId, conn, () =>
+        // `activateSkill` accepts `args?: string | undefined`; pass the
+        // empty string through verbatim — the SDK's
+        // `normalizeOptionalString` converts `''` to `undefined`, which
+        // is the canonical "no args" form for the skill renderer.
+        this.session.activateSkill(skillName, skillArgs.length > 0 ? skillArgs : undefined),
+      );
+    }
+
+    return this.runTurnBody(sessionId, conn, () => this.session.prompt(parts));
   }
 
   /**
    * Body of {@link prompt}, extracted so the event-listener invariants
    * — single `onEvent` subscription, `settled` flag semantics,
-   * `currentTurnId` reset — live in one place.
+   * `currentTurnId` reset — live in one place and can be driven by
+   * either `Session.prompt(parts)` or `Session.activateSkill(name, args)`.
+   * Both entry points trigger the same downstream turn (skill
+   * activation internally calls `agent.turn.prompt(...)` after
+   * injecting the `<kimi-skill-loaded>` block — see
+   * `packages/agent-core/src/agent/skill/index.ts`), so the event
+   * subscription's `turn.started` / `turn.ended` semantics apply
+   * uniformly.
    */
-  private runPromptBody(
-    parts: ReturnType<typeof acpBlocksToPromptParts>,
+  private runTurnBody(
     sessionId: string,
     conn: AgentSideConnection,
+    kick: () => Promise<unknown>,
   ): Promise<PromptResponse> {
     return new Promise<PromptResponse>((resolve, reject) => {
       let settled = false;
@@ -691,7 +747,16 @@ export class AcpSession {
       // each turn produces a distinct wire-level tool call that needs
       // its own CREATE.
       const startedToolCalls = new Set<string>();
+      const initialActiveTurnId = this.currentTurnId;
+      let hasReceivedOwnTurnStarted = false;
       const unsub = this.session.onEvent((event) => {
+        if (
+          event.type === 'turn.started' &&
+          isFromMainAgent(event) &&
+          (initialActiveTurnId === undefined || event.turnId !== initialActiveTurnId)
+        ) {
+          hasReceivedOwnTurnStarted = true;
+        }
         // Track the active turn so `handleApproval` (registered once at
         // construction, called via `setApprovalHandler`) can compose the
         // prefixed `${turnId}:${toolCallId}` wire id that matches the
@@ -712,6 +777,7 @@ export class AcpSession {
           if (settled) return;
           if (!isFromMainAgent(event)) return;
           if (event.code !== ErrorCodes.TURN_AGENT_BUSY) return;
+          if (hasReceivedOwnTurnStarted) return;
           settled = true;
           argsByToolCall.clear();
           startedToolCalls.clear();
@@ -730,6 +796,7 @@ export class AcpSession {
           return;
         }
         if (event.type === 'assistant.delta') {
+          if (!isFromMainAgent(event)) return;
           // `sessionUpdate` is itself async (it serializes onto the
           // ndjson stream). The text deltas form a strictly ordered
           // single-producer/single-consumer pipeline, so each await
@@ -747,6 +814,7 @@ export class AcpSession {
           return;
         }
         if (event.type === 'thinking.delta') {
+          if (!isFromMainAgent(event)) return;
           conn
             .sessionUpdate(thinkingDeltaToSessionUpdate(sessionId, event))
             .catch((err) => {
@@ -758,6 +826,7 @@ export class AcpSession {
           return;
         }
         if (event.type === 'tool.call.started') {
+          if (!isFromMainAgent(event)) return;
           // Seed the accumulator with the **stringified initial args**.
           // The wire-level `tool_call_update` is REPLACE-content (not
           // append) so each subsequent delta emits the cumulative args
@@ -816,6 +885,7 @@ export class AcpSession {
           return;
         }
         if (event.type === 'tool.call.delta') {
+          if (!isFromMainAgent(event)) return;
           // The agent-core emits these args-stream deltas BEFORE the
           // `tool.call.started` event (deltas come from the provider's
           // streaming phase; started is dispatched afterwards). If we
@@ -858,6 +928,7 @@ export class AcpSession {
           return;
         }
         if (event.type === 'tool.progress') {
+          if (!isFromMainAgent(event)) return;
           const note = toolProgressToSessionUpdate(sessionId, event);
           if (note === null) return;
           conn.sessionUpdate(note).catch((err) => {
@@ -870,6 +941,7 @@ export class AcpSession {
           return;
         }
         if (event.type === 'tool.result') {
+          if (!isFromMainAgent(event)) return;
           conn
             .sessionUpdate(toolResultToSessionUpdate(sessionId, event))
             .catch((err) => {
@@ -919,7 +991,7 @@ export class AcpSession {
         }
       });
 
-      this.session.prompt(parts).catch((err) => {
+      kick().catch((err) => {
         if (settled) return;
         settled = true;
         unsub();
@@ -1111,6 +1183,29 @@ export class AcpSession {
  * The kimi-cli Python reference performs the same mapping at
  * `kimi-cli/src/kimi_cli/acp/session.py:218-247`; this is the TS port.
  */
+/**
+ * Inspect the leading `ContentBlock` of an ACP prompt for a
+ * `/skill:<name>` form. Only the first block is examined — when Zed
+ * (or any other ACP client) sends a slash command, it always lives in
+ * the first text block; multi-part prompts that interleave images or
+ * resources before text are typed by humans and do not start with a
+ * slash. Non-text leading blocks short-circuit to passthrough.
+ *
+ * The parsing/resolution itself is delegated to `./slash` —
+ * deliberately duplicated from the TUI's
+ * `apps/kimi-code/src/tui/commands/parse.ts` and `resolve.ts` to
+ * avoid an app→package import inversion. See `./slash`'s top-of-file
+ * comment for the sync target.
+ */
+function detectLeadingSlashIntent(
+  blocks: readonly ContentBlock[],
+  skillCommandMap: ReadonlyMap<string, string>,
+): ReturnType<typeof detectSlashIntent> {
+  const first = blocks[0];
+  if (!first || first.type !== 'text') return { kind: 'passthrough' };
+  return detectSlashIntent(first.text, skillCommandMap);
+}
+
 function mapPromptError(err: unknown, sessionId: string): RequestError {
   const authErr = authRequiredFromUnknown(err);
   if (authErr) {

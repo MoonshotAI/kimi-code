@@ -115,8 +115,10 @@ export abstract class SDKRpcClientBase {
   async createSessionWithKaos(
     input: CreateSessionOptions,
     kaos: Kaos,
+    persistenceKaos?: Kaos,
   ): Promise<SessionSummary> {
     void kaos;
+    void persistenceKaos;
     return this.createSession(input);
   }
 
@@ -128,8 +130,10 @@ export abstract class SDKRpcClientBase {
   async resumeSessionWithKaos(
     input: ResumeSessionInput,
     kaos: Kaos,
+    persistenceKaos?: Kaos,
   ): Promise<ResumedSessionSummary> {
     void kaos;
+    void persistenceKaos;
     return this.resumeSession(input);
   }
 

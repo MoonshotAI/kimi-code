@@ -543,6 +543,31 @@ describe('ReadTool', () => {
     expect(output).toContain(`Max ${String(MAX_BYTES)} bytes reached.`);
   });
 
+  it('uses text preview for sniffing before falling back to readBytes', async () => {
+    const content = 'hello from acp buffer\nsecond line\n';
+    const readBytes = vi.fn<Kaos['readBytes']>().mockImplementation(async () => Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const readTextPreview = vi.fn(async (_path: string, n: number) => Buffer.from(content.slice(0, n), 'utf8'));
+    const tool = new ReadTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+        readBytes,
+        readTextPreview,
+        readLines: vi.fn<Kaos['readLines']>().mockImplementation(readLinesFromContent(content)),
+        readText: vi.fn<Kaos['readText']>().mockRejectedValue(new Error('full readText should not be called')),
+      } as unknown as Partial<Kaos>),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool, context({ path: '/tmp/acp.txt' }));
+    const output = toolContentString(result);
+
+    expect(result.isError).toBeFalsy();
+    expect(output).toContain('1	hello from acp buffer');
+    expect(output).toContain('2	second line');
+    expect(readTextPreview).toHaveBeenCalledWith('/tmp/acp.txt', MEDIA_SNIFF_BYTES);
+    expect(readBytes).not.toHaveBeenCalled();
+  });
+
   it('reads through bounded byte preflight and streams line iteration without full readText', async () => {
     const content = Array.from({ length: MAX_LINES + 5 }, (_, i) => `line ${String(i + 1)}`).join(
       '\n',

@@ -59,7 +59,7 @@ function makeInMemoryStreamPair(): {
 }
 
 interface CapturedCreate {
-  options: { id?: string; workDir: string; kaos?: Kaos };
+  options: { id?: string; workDir: string; kaos?: Kaos; persistenceKaos?: Kaos };
 }
 
 function makeHarness(captured: CapturedCreate[]): KimiHarness {
@@ -72,7 +72,7 @@ function makeHarness(captured: CapturedCreate[]): KimiHarness {
     }) as unknown as Session;
   return {
     auth: { status: async () => AUTHED_STATUS },
-    createSession: async (options: { id?: string; workDir: string; kaos?: Kaos }) => {
+    createSession: async (options: { id?: string; workDir: string; kaos?: Kaos; persistenceKaos?: Kaos }) => {
       captured.push({ options });
       return fakeSession(options.id ?? 'fallback');
     },
@@ -98,6 +98,8 @@ describe('AcpServer FS-capability activation (boundary injection)', () => {
     expect(captured).toHaveLength(1);
     expect(captured[0]?.options.kaos).toBeInstanceOf(AcpKaos);
     expect(captured[0]?.options.kaos?.name).toBe('acp(local)');
+    expect(captured[0]?.options.persistenceKaos).toBeDefined();
+    expect(captured[0]?.options.persistenceKaos).not.toBe(captured[0]?.options.kaos);
   });
 
   it('passes an AcpKaos when only fs.writeTextFile is advertised', async () => {
@@ -116,9 +118,11 @@ describe('AcpServer FS-capability activation (boundary injection)', () => {
 
     expect(captured).toHaveLength(1);
     expect(captured[0]?.options.kaos).toBeInstanceOf(AcpKaos);
+    expect(captured[0]?.options.persistenceKaos).toBeDefined();
+    expect(captured[0]?.options.persistenceKaos).not.toBe(captured[0]?.options.kaos);
   });
 
-  it('omits kaos when the client advertises no FS capability', async () => {
+  it('passes persistenceKaos only when tool AcpKaos is active and omits both when no FS capability', async () => {
     const captured: CapturedCreate[] = [];
     const harness = makeHarness(captured);
     const { agentStream, clientStream } = makeInMemoryStreamPair();
@@ -134,6 +138,7 @@ describe('AcpServer FS-capability activation (boundary injection)', () => {
 
     expect(captured).toHaveLength(1);
     expect(captured[0]?.options.kaos).toBeUndefined();
+    expect(captured[0]?.options.persistenceKaos).toBeUndefined();
   });
 
   it('omits kaos when the FS capability flags are both false', async () => {
@@ -152,6 +157,7 @@ describe('AcpServer FS-capability activation (boundary injection)', () => {
 
     expect(captured).toHaveLength(1);
     expect(captured[0]?.options.kaos).toBeUndefined();
+    expect(captured[0]?.options.persistenceKaos).toBeUndefined();
   });
 
   it('threads the per-session id into the AcpKaos so reverse-RPC calls route to the right session', async () => {

@@ -79,6 +79,17 @@ interface FinishReadResultInput {
   readonly requestedLines: number;
 }
 
+type TextPreviewKaos = Kaos & {
+  readTextPreview?: (path: string, n: number) => Promise<Buffer>;
+};
+
+async function readTextHeader(kaos: TextPreviewKaos, path: string, n: number): Promise<Buffer> {
+  if (kaos.readTextPreview !== undefined) {
+    return kaos.readTextPreview(path, n);
+  }
+  return kaos.readBytes(path, n);
+}
+
 function truncateLine(line: string, maxLength: number): string {
   if (line.length <= maxLength) return line;
   const marker = '...';
@@ -211,7 +222,7 @@ export class ReadTool implements BuiltinTool<ReadInput> {
         return { isError: true, output: `"${args.path}" is not a file.` };
       }
 
-      const header = await this.kaos.readBytes(safePath, MEDIA_SNIFF_BYTES);
+      const header = await readTextHeader(this.kaos, safePath, MEDIA_SNIFF_BYTES);
       const fileType = detectFileType(safePath, header);
       if (fileType.kind === 'image' || fileType.kind === 'video') {
         return {
