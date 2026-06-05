@@ -2,7 +2,7 @@
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
-## 0.10.0
+## 0.10.0（2026-06-04）
 
 ### 新功能
 
@@ -36,11 +36,11 @@
 
 - 在 Windows 安装说明中补充 Git Bash 前置条件。
 
-## 0.9.0
+## 0.9.0（2026-06-03）
 
 ### 新功能
 
-- 支持 `kimi acp` 子命令：kimi-code 现在可通过 stdio 使用 [Agent Client Protocol 0.23](https://agentclientprotocol.com/)，因此 IDE（Zed、JetBrains AI Chat、自定义客户端）可以直接驱动会话；覆盖矩阵、Zed 配置和破坏性预发布说明见 [kimi acp 子命令页面](https://moonshotai.github.io/kimi-code/en/reference/kimi-acp.html)。
+- 支持 `kimi acp` 子命令：kimi-code 现在可通过 stdio 使用 [Agent Client Protocol 0.23](https://agentclientprotocol.com/)，因此 IDE（Zed、JetBrains AI Chat、自定义客户端）可以直接驱动会话；覆盖矩阵、Zed 配置和破坏性预发布说明见 [kimi acp 子命令页面](https://moonshotai.github.io/kimi-code/zh/reference/kimi-acp.html)。
 - 新增 `/btw`，用于进行不会引导当前主轮次的侧通道对话，并允许 `/btw` 在输入问题前打开侧通道面板。
 
 ### 修复
@@ -60,7 +60,7 @@
 
 - 允许 SDK 运行时创建使用单独的 RPC client，同时保留本地 CLI 启动流程。
 
-## 0.8.0
+## 0.8.0（2026-06-02）
 
 ### 新功能
 
@@ -106,7 +106,7 @@
 
 - 将后台任务管理统一到 Agent 后台运行时中。
 
-## 0.7.0
+## 0.7.0（2026-06-02）
 
 ### 新功能
 
@@ -124,7 +124,7 @@
 - 明确 Kimi Platform API 密钥登录的标签和提示细节。
 - 优化终端界面中的一处细微视觉交互。
 
-## 0.6.0
+## 0.6.0（2026-05-29）
 
 ### 新功能
 
@@ -161,7 +161,7 @@
 - 精简 LLM 诊断日志，使用更少、更紧凑的字段。
 - 将共享的工具服务类型定义迁移到工具支持层。
 
-## 0.5.0
+## 0.5.0（2026-05-28）
 
 ### 新功能
 
@@ -195,7 +195,7 @@
 
 - 重构终端界面的代码结构。
 
-## 0.4.0
+## 0.4.0（2026-05-27）
 
 ### 新功能
 
@@ -222,7 +222,7 @@
 
 - 增强 `kimi export`，在 manifest 中记录更多诊断信息。
 
-## 0.3.0
+## 0.3.0（2026-05-26）
 
 ### 新功能
 
@@ -250,7 +250,7 @@
 
 - 改进 `Write` 工具的交互体验。
 
-## 0.2.0
+## 0.2.0（2026-05-26）
 
 ### 新功能
 

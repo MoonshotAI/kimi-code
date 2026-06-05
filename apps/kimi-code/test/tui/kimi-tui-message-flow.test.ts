@@ -2137,6 +2137,41 @@ command = "vim"
     expect(transcript).not.toContain('kimi export');
   });
 
+  it('shows concise provider filter text for filtered session errors', async () => {
+    const { driver } = await makeDriver();
+    const verboseMessage =
+      'The API returned a response containing only thinking content without any text or tool calls. ' +
+      'This usually indicates the stream was interrupted or the output token budget was exhausted ' +
+      'during reasoning. Provider stop details: finishReason=filtered, rawFinishReason=content_filter. ' +
+      'The provider filtered the response before visible output was emitted. Provider: example-provider, model: example-model';
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'error',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        code: 'provider.api_error',
+        message: verboseMessage,
+        details: {
+          finishReason: 'filtered',
+          rawFinishReason: 'content_filter',
+        },
+        retryable: true,
+      } as Event,
+      vi.fn(),
+    );
+
+    const transcript = stripSgr(driver.state.transcriptContainer.render(200).join('\n'));
+    expect(transcript).toContain(
+      'Error: [provider.api_error] Provider filtered the response before visible output',
+    );
+    expect(transcript).toContain('finishReason=filtered');
+    expect(transcript).toContain('rawFinishReason=content_filter');
+    expect(transcript).not.toContain('only thinking content');
+    expect(transcript).not.toContain('token budget');
+    expect(transcript).not.toContain('stream was interrupted');
+  });
+
   it('skips the /export-debug-zip hint when no active session id is set', async () => {
     const { driver } = await makeDriver();
     driver.state.appState.sessionId = '';

@@ -6,7 +6,7 @@ import {
   type ProviderConfig,
 } from '@moonshot-ai/kosong';
 
-import { applyKimiEnvSamplingParams } from '../kimi-env-params';
+import { applyKimiEnvSamplingParams, applyKimiEnvThinkingKeep } from '../kimi-env-params';
 
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
@@ -99,11 +99,13 @@ export class ConfigState {
   }
 
   get provider(): ChatProvider {
-    // Sampling params (KIMI_MODEL_TEMPERATURE / TOP_P) are applied here so every
-    // request built from config.provider — main loop and full-history compaction
-    // alike — carries them. thinking.keep is applied later in Agent.llm because
-    // it depends on the runtime thinking state.
-    return applyKimiEnvSamplingParams(createProvider(this.providerConfig));
+    // All provider-level request config is applied here so every request built
+    // from config.provider — the main loop AND full-history compaction — carries it:
+    //   - withThinking: preserve thinking during compaction (#464)
+    //   - sampling params: KIMI_MODEL_TEMPERATURE / KIMI_MODEL_TOP_P
+    //   - thinking.keep: KIMI_MODEL_THINKING_KEEP (only while thinking is on)
+    const provider = createProvider(this.providerConfig).withThinking(this.thinkingLevel);
+    return applyKimiEnvThinkingKeep(applyKimiEnvSamplingParams(provider), this.thinkingLevel);
   }
 
   get model(): string {

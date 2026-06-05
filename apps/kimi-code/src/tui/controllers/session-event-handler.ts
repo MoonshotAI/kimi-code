@@ -44,6 +44,7 @@ import {
 } from '../constant/kimi-tui';
 import {
   argsRecord,
+  formatErrorPayload,
   formatErrorMessage,
   isTodoItemShape,
   serializeToolResultOutput,
@@ -730,7 +731,7 @@ export class SessionEventHandler {
       this.host.showError(OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE);
       return;
     }
-    this.host.showError(`[${event.code}] ${event.message}`);
+    this.host.showError(formatErrorPayload(event));
     const sessionId = this.host.state.appState.sessionId;
     if (sessionId.length > 0) {
       this.host.showStatus(errorReportHintLine());

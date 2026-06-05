@@ -8,9 +8,9 @@ import type { TokenUsage } from './usage';
  *
  * Values above `high` are provider/model-specific and may be clamped by the
  * adapter when the native API has no matching level. OpenAI maps `max` to its
- * `xhigh` ceiling; Kimi and Gemini cap `xhigh`/`max` at `high`; Anthropic
- * supports `xhigh`/`max` only on selected models and otherwise clamps to
- * `high`.
+ * `xhigh` ceiling on Responses and selected Chat Completions models; Kimi and
+ * Gemini cap `xhigh`/`max` at `high`; Anthropic supports `xhigh`/`max` only
+ * on selected models and otherwise clamps to `high`.
  */
 export type ThinkingEffort = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 

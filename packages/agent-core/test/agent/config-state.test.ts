@@ -159,26 +159,62 @@ describe('ConfigState model capabilities', () => {
   });
 });
 
-describe('ConfigState.provider applies global KIMI_MODEL_* sampling params', () => {
+describe('ConfigState.provider applies global KIMI_MODEL_* request config', () => {
+  function kimiAgent() {
+    return testAgent({
+      providerManager: new ProviderManager({
+        config: {
+          providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
+          models: {
+            'kimi-code': { provider: 'kimi', model: 'kimi-code', maxContextSize: 128_000 },
+          },
+        },
+      }),
+    });
+  }
+
   it('injects KIMI_MODEL_TEMPERATURE into config.provider (the provider compaction also uses)', () => {
     vi.stubEnv('KIMI_MODEL_TEMPERATURE', '0.3');
     try {
-      const ctx = testAgent({
-        providerManager: new ProviderManager({
-          config: {
-            providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
-            models: {
-              'kimi-code': { provider: 'kimi', model: 'kimi-code', maxContextSize: 128_000 },
-            },
-          },
-        }),
-      });
+      const ctx = kimiAgent();
       ctx.agent.config.update({ modelAlias: 'kimi-code' });
 
       const provider = ctx.agent.config.provider;
       expect(Reflect.get(provider as object, '_generationKwargs')).toMatchObject({
         temperature: 0.3,
       });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('injects KIMI_MODEL_THINKING_KEEP into config.provider when thinking is on (so compaction keeps it)', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
+    try {
+      const ctx = kimiAgent();
+      ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
+
+      const provider = ctx.agent.config.provider;
+      const gen = Reflect.get(provider as object, '_generationKwargs') as {
+        extra_body?: { thinking?: { keep?: unknown } };
+      };
+      expect(gen.extra_body?.thinking?.keep).toBe('all');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('does NOT inject thinking.keep into config.provider when thinking is off', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_KEEP', 'all');
+    try {
+      const ctx = kimiAgent();
+      ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingLevel: 'off' });
+
+      const provider = ctx.agent.config.provider;
+      const gen = Reflect.get(provider as object, '_generationKwargs') as {
+        extra_body?: { thinking?: { keep?: unknown } };
+      };
+      expect(gen.extra_body?.thinking?.keep).toBeUndefined();
     } finally {
       vi.unstubAllEnvs();
     }

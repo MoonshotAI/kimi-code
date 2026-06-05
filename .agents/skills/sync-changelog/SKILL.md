@@ -148,10 +148,24 @@ This page documents the changes in each Kimi Code CLI release.
 
 Insert new version blocks immediately after the header paragraph and before the previous latest version.
 
+Every version heading must carry its release date in parentheses:
+
+```text
+## <version> (YYYY-MM-DD)
+```
+
+Take the date from the version's published GitHub Release tag, not from when you run the sync:
+
+```bash
+git log -1 --format=%cs "@moonshot-ai/kimi-code@<version>"
+```
+
+Use the half-width parenthesis form ` (YYYY-MM-DD)` on the English page. Never invent or guess a date; if the tag is missing, stop and confirm with the user.
+
 Example:
 
 ```markdown
-## 0.2.0
+## 0.2.0 (2026-05-26)
 
 ### Bug Fixes
 
@@ -179,7 +193,7 @@ Chinese page requirements:
   本页记录 Kimi Code CLI 每个版本的变更内容。
   ```
 
-- Preserve version headings exactly, such as `## 0.2.0`.
+- Preserve version headings including the release date, but use full-width parentheses on the Chinese page, such as `## 0.2.0（2026-05-26）`. The date must match the English page; only the parenthesis style differs (half-width `()` in English, full-width `（）` in Chinese).
 - Translate section headings exactly:
   - `### Features` → `### 新功能`
   - `### Bug Fixes` → `### 修复`
@@ -202,6 +216,7 @@ git diff docs/en/release-notes/changelog.md docs/zh/release-notes/changelog.md
 Check:
 
 - Versions and version counts match between English and Chinese.
+- Every version heading carries its release date from the published tag, with half-width parentheses in English and full-width in Chinese.
 - Each version has the same section set and order on both pages.
 - Each section has the same number of entries on both pages.
 - Within each section, the most valuable, obvious, and larger entries appear before smaller or narrower entries.
@@ -254,6 +269,7 @@ Do **not** create a changeset for changelog docs sync. Docs sync does not enter 
 | Translating tool names, command names, or config keys | Keep them as written |
 | Creating a changeset for docs sync | Do not create one |
 | Using curly quotes or half-width Chinese punctuation | Follow `docs/AGENTS.md` |
+| Omitting the release date from a version heading, or guessing it | Add ` (YYYY-MM-DD)` (full-width `（）` in Chinese) taken from the published tag |
 
 ## Stop Signals
 

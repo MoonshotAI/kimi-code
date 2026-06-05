@@ -248,6 +248,61 @@ describe('Agent turn flow', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('includes provider finish reason details on empty response failures', async () => {
+    const generate: GenerateFn = async () => {
+      throw new APIEmptyResponseError(
+        'The API returned a response containing only thinking content without any text or tool calls. ' +
+          'Provider stop details: finishReason=filtered, rawFinishReason=content_filter.',
+        {
+          finishReason: 'filtered',
+          rawFinishReason: 'content_filter',
+        },
+      );
+    };
+    const ctx = testAgent({
+      generate,
+      ...singleAttemptAgentOptions(),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Trigger filtered response' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'turn.ended',
+        args: expect.objectContaining({
+          reason: 'failed',
+          error: expect.objectContaining({
+            code: 'provider.api_error',
+            name: 'APIEmptyResponseError',
+            details: expect.objectContaining({
+              finishReason: 'filtered',
+              rawFinishReason: 'content_filter',
+              turnId: 0,
+            }),
+          }),
+        }),
+      }),
+    );
+    expect(ctx.newEvents()).toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'error',
+        args: expect.objectContaining({
+          code: 'provider.api_error',
+          name: 'APIEmptyResponseError',
+          details: expect.objectContaining({
+            finishReason: 'filtered',
+            rawFinishReason: 'content_filter',
+            turnId: 0,
+          }),
+        }),
+      }),
+    );
+  });
+
   it('emits a friendly model.not_configured error when no model is configured', async () => {
     const ctx = testAgent();
 

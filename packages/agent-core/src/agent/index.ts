@@ -37,7 +37,6 @@ import {
 } from './compaction';
 import { CronManager } from './cron';
 import { ConfigState } from './config';
-import { applyKimiEnvThinkingKeep } from './kimi-env-params';
 import { ContextMemory } from './context';
 import { HookEngine } from '../session/hooks';
 import { InjectionManager } from './injection/manager';
@@ -211,10 +210,9 @@ export class Agent {
 
   get llm(): KosongLLM {
     const model = this.config.model;
-    const provider = applyKimiEnvThinkingKeep(
-      this.config.provider.withThinking(this.config.thinkingLevel),
-      this.config.thinkingLevel,
-    );
+    // All provider-level request config (thinking, sampling params, thinking.keep)
+    // is applied in ConfigState.provider so compaction shares it. See get provider().
+    const provider = this.config.provider;
     const loopControl = this.kimiConfig?.loopControl;
     const completionBudgetConfig = resolveCompletionBudget({
       maxOutputSize: this.config.maxOutputSize,
