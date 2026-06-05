@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { emptyUsage } from '@moonshot-ai/kosong';
 
+import { KIMI_NOW_PLACEHOLDER } from '../../src/profile';
 import { ProviderManager } from '../../src/session/provider-manager';
 import { testAgent } from './harness';
 
@@ -156,5 +157,80 @@ describe('ConfigState model capabilities', () => {
       },
     });
     expect('sessionId' in ctx.agent).toBe(false);
+  });
+});
+
+describe('ConfigState systemPrompt KIMI_NOW placeholder', () => {
+  function makeAgent(): ReturnType<typeof testAgent> {
+    return testAgent({
+      providerManager: new ProviderManager({
+        config: {
+          providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
+          models: {
+            'kimi-code': { provider: 'kimi', model: 'kimi-code', maxContextSize: 128_000 },
+          },
+        },
+      }),
+    });
+  }
+
+  it('substitutes the KIMI_NOW placeholder with the current ISO timestamp on read', () => {
+    const ctx = makeAgent();
+    ctx.agent.config.update({
+      systemPrompt: `Hello at ${KIMI_NOW_PLACEHOLDER} world`,
+    });
+
+    const before = Date.now();
+    const out = ctx.agent.config.systemPrompt;
+    const after = Date.now();
+
+    expect(out).not.toContain(KIMI_NOW_PLACEHOLDER);
+    const match = /Hello at (.+) world/.exec(out);
+    expect(match).not.toBeNull();
+    const substitutedIso = match![1]!;
+    const substitutedMs = Date.parse(substitutedIso);
+    expect(Number.isFinite(substitutedMs)).toBe(true);
+    // Allow a 1s window for the wall clock to drift between sampling.
+    expect(substitutedMs).toBeGreaterThanOrEqual(before - 1000);
+    expect(substitutedMs).toBeLessThanOrEqual(after + 1000);
+  });
+
+  it('returns a fresh timestamp on each read (lazy, not cached)', async () => {
+    const ctx = makeAgent();
+    ctx.agent.config.update({
+      systemPrompt: `now=${KIMI_NOW_PLACEHOLDER}`,
+    });
+    const first = ctx.agent.config.systemPrompt;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const second = ctx.agent.config.systemPrompt;
+
+    // Both reads should produce a valid ISO timestamp, and the second
+    // must be strictly after the first (proves the getter is live).
+    const firstIso = /now=(.+)/.exec(first)![1]!;
+    const secondIso = /now=(.+)/.exec(second)![1]!;
+    expect(Date.parse(secondIso)).toBeGreaterThan(Date.parse(firstIso));
+  });
+
+  it('passes through systemPrompts that do not contain the placeholder unchanged', () => {
+    const ctx = makeAgent();
+    ctx.agent.config.update({
+      systemPrompt: 'Static prompt at 2026-05-08T00:00:00Z',
+    });
+
+    expect(ctx.agent.config.systemPrompt).toBe('Static prompt at 2026-05-08T00:00:00Z');
+  });
+
+  it('substitutes every occurrence (multiple placeholders within one prompt)', () => {
+    const ctx = makeAgent();
+    ctx.agent.config.update({
+      systemPrompt: `a=${KIMI_NOW_PLACEHOLDER} b=${KIMI_NOW_PLACEHOLDER}`,
+    });
+
+    const out = ctx.agent.config.systemPrompt;
+    expect(out).not.toContain(KIMI_NOW_PLACEHOLDER);
+    const match = /a=(.+) b=(.+)/.exec(out);
+    expect(match).not.toBeNull();
+    // Both substitutions share the same Date instance, so they match exactly.
+    expect(match![1]).toBe(match![2]);
   });
 });

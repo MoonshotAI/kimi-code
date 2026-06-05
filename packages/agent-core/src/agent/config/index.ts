@@ -8,6 +8,7 @@ import {
 
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
+import { KIMI_NOW_PLACEHOLDER } from '../../profile';
 import type { AgentConfigData, AgentConfigUpdateData } from './types';
 import { resolveThinkingEffort, type ThinkingEffort } from './thinking';
 import type { ResolvedRuntimeProvider } from '../../session/provider-manager';
@@ -120,7 +121,14 @@ export class ConfigState {
   }
 
   get systemPrompt(): string {
-    return this._systemPrompt;
+    // Lazily substitute the KIMI_NOW placeholder so the timestamp stays
+    // fresh across turns and resume. New sessions (post-fix) render the
+    // placeholder into the stored string; old sessions that have a baked
+    // timestamp simply pass through unchanged.
+    if (!this._systemPrompt.includes(KIMI_NOW_PLACEHOLDER)) {
+      return this._systemPrompt;
+    }
+    return this._systemPrompt.replaceAll(KIMI_NOW_PLACEHOLDER, new Date().toISOString());
   }
 
   get modelCapabilities(): ModelCapability {

@@ -16,7 +16,7 @@ import type { EnabledPluginSessionStart } from '#/plugin';
 
 import type { McpConnectionManager } from '../mcp';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
-import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
+import { KIMI_NOW_PLACEHOLDER, type PreparedSystemPromptContext, type ResolvedAgentProfile } from '../profile';
 import type { ModelProvider } from '../session/provider-manager';
 import type { SessionGoalStore } from '../session/goal';
 import type { SessionSubagentHost } from '../session/subagent-host';
@@ -282,6 +282,13 @@ export class Agent {
     const systemPrompt = profile.systemPrompt({
       osEnv: this.kaos.osEnv,
       cwd: this.config.cwd,
+      // Embed a sentinel placeholder rather than a concrete timestamp here:
+      // `useProfile` is called once at session bootstrap, but the rendered
+      // string is reused for every turn (and survives session resume via the
+      // wire log). A baked-in timestamp goes stale immediately after the
+      // session is suspended and restored later. `ConfigState.systemPrompt`
+      // substitutes the placeholder with the current ISO time on every read.
+      now: KIMI_NOW_PLACEHOLDER,
       skills: this.skills?.registry,
       cwdListing: context?.cwdListing,
       agentsMd: context?.agentsMd,

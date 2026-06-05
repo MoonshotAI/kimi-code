@@ -46,6 +46,19 @@ export interface SystemPromptContext {
 
 export type SystemPromptRenderer = (context: SystemPromptContext) => string;
 
+/**
+ * Sentinel embedded into the rendered system prompt in place of a concrete
+ * `KIMI_NOW` timestamp. Substituted with the current wall-clock ISO time at
+ * read time (`ConfigState.systemPrompt` getter) so the value stays fresh
+ * across turns and — most importantly — across session resume, instead of
+ * being frozen at session-creation time.
+ *
+ * Chosen as a long opaque string that no agent template or user content
+ * is expected to contain literally. Persisted verbatim in the wire log so
+ * restored sessions inherit live substitution automatically.
+ */
+export const KIMI_NOW_PLACEHOLDER = '__KIMI_NOW_PLACEHOLDER_v1__';
+
 export interface ResolvedAgentProfile {
   name: string;
   description?: string;
