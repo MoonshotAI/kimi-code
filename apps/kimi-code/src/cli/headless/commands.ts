@@ -183,7 +183,7 @@ function registerGoalControlCommand(
 ): void {
   const command = goal
     .command(name)
-    .description(`${name} a running headless goal.`)
+    .description(getGoalControlDescription(action))
     .requiredOption('--file <path>', 'Status file for the running headless goal.')
     .option('--wait', 'Wait until the running process applies the request.', false);
 
@@ -193,6 +193,17 @@ function registerGoalControlCommand(
       options: buildGoalControlOptions(options, action, command),
     });
   });
+}
+
+function getGoalControlDescription(action: HeadlessControlAction): string {
+  switch (action) {
+    case 'pause_goal':
+      return 'Let the current turn finish, then pause the goal.';
+    case 'cancel_goal':
+      return 'Let the current turn finish, then cancel the goal.';
+    case 'interrupt':
+      return 'Stop the active turn now and leave the goal paused when possible.';
+  }
 }
 
 function buildRunOptions(raw: RawHeadlessRunOptions): HeadlessRunOptions {

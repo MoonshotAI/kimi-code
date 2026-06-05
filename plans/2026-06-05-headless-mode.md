@@ -448,6 +448,8 @@ Control request writes shall be atomic:
 - Write final status with `state: "paused"`.
 - Leave the goal resumable.
 - Exit with the existing paused goal exit code.
+- Match the TUI `/goal pause` user experience.
+- Do not use the word "pause" for immediate turn interruption.
 
 `cancel_goal` behavior:
 
@@ -467,6 +469,7 @@ Control request writes shall be atomic:
 - Write final status with `state: "interrupted"`.
 - Leave the goal resumable when `pauseGoal()` succeeds.
 - Exit with the existing paused goal exit code.
+- Use this action for the behavior that stops the active turn immediately.
 
 After applying any control request, write `control.lastApplied` with:
 

@@ -20,7 +20,36 @@ This milestone shall cover:
 - [x] Command parsing and routing implemented.
 - [x] Focused tests pass.
 - [x] CLI help checked.
-- [ ] Self-contained commit created.
+- [x] Self-contained commit created: `4d26627 feat: add headless command surface`.
+
+## Current Milestone 2
+
+Implement headless status, output-file, control, and approval helpers.
+
+This milestone shall cover:
+
+- Atomic status file writes and reads.
+- Status file preflight.
+- Metadata header formatting.
+- Output directory resolution.
+- Atomic response and goal-status file writes.
+- Control request writes and reads.
+- Non-fatal unused plan flag warnings.
+
+Goal control semantics:
+
+- `pause_goal` shall match TUI `/goal pause`: finish the current turn, then stop before the next goal turn.
+- `cancel_goal` shall finish the current turn, then cancel the goal before the next goal turn.
+- `interrupt` shall stop the active turn immediately and leave the goal paused when possible.
+
+## Milestone 2 Progress
+
+- [x] Helper tests written.
+- [x] Helper tests fail for missing modules.
+- [x] Helper modules implemented.
+- [x] Focused tests pass.
+- [x] Typecheck passes.
+- [x] Self-contained commit created.
 
 ## Later Milestones
 
