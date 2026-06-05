@@ -96,12 +96,38 @@ This milestone shall cover:
 - [x] Build passes.
 - [x] Self-contained commit created.
 
+## Current Milestone 5
+
+Implement one-turn prompt-backed `headless run`.
+
+This milestone shall cover:
+
+- New-session prompt runs.
+- `--cwd` for new sessions.
+- `--session` cwd validation.
+- Session run lock acquisition and release.
+- Status file updates.
+- Default JSON metadata header plus Markdown.
+- `--metadata-only`.
+- `--output-dir` response files.
+
+## Milestone 5 Progress
+
+- [x] Prompt-run tests written.
+- [x] Prompt-run tests fail for the missing run branch.
+- [x] Prompt run branch implemented.
+- [x] Focused tests pass.
+- [x] Typecheck passes.
+- [x] Build passes.
+- [x] Real CLI smoke run passes.
+- [x] Self-contained commit created.
+
 ## Later Milestones
 
 - [x] Status, output, output-file, control, and approval helpers.
 - [x] SDK session lock helper.
 - [x] Headless status and goal-control commands.
-- [ ] Headless run execution.
+- [x] One-turn prompt-backed headless run execution.
 - [ ] Goal-backed multi-turn execution and file output.
 - [ ] Docs and changeset.
 - [ ] Build CLI and run manual headless trials.

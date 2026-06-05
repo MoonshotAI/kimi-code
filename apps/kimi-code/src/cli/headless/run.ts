@@ -1,16 +1,35 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 
-import type { HeadlessCommand } from './commands';
+import {
+  acquireSessionRunLock as acquireSdkSessionRunLock,
+  createKimiHarness,
+  type Event,
+} from '@moonshot-ai/kimi-code-sdk';
+
+import type { HeadlessCommand, HeadlessRunOptions } from './commands';
 import {
   readHeadlessControlRequest,
   waitForHeadlessControlApplied,
   writeHeadlessControlRequest,
 } from './control';
+import { formatHeadlessMetadataHeader } from './output';
 import {
+  preflightHeadlessOutputDir,
+  resolveHeadlessOutputDir,
+  writeHeadlessResponseFile,
+} from './output-files';
+import {
+  preflightHeadlessStatusFile,
   readHeadlessRunStatus,
   type HeadlessApprovalStatus,
+  type HeadlessRunFiles,
+  type HeadlessRunState,
   type HeadlessRunStatus,
+  type HeadlessRunSummary,
+  writeHeadlessRunStatus,
 } from './status-file';
+import { createKimiCodeHostIdentity } from '../version';
 
 interface HeadlessOutput {
   write(chunk: string): boolean;
@@ -18,14 +37,85 @@ interface HeadlessOutput {
 
 interface HeadlessRunIO {
   readonly stdout?: HeadlessOutput;
+  readonly createHarness?: (options: {
+    readonly identity: ReturnType<typeof createKimiCodeHostIdentity>;
+    readonly uiMode: string;
+    readonly skillDirs: readonly string[];
+  }) => HeadlessHarness;
+  readonly acquireSessionRunLock?: (input: {
+    readonly sessionDir: string;
+    readonly runId: string;
+    readonly pid: number;
+    readonly command: string;
+  }) => Promise<HeadlessSessionRunLock>;
 }
+
+interface HeadlessHarness {
+  ensureConfigFile(): Promise<void>;
+  getConfig(): Promise<{ readonly defaultModel?: string }>;
+  createSession(input: {
+    readonly workDir: string;
+    readonly model: string;
+    readonly permission: 'auto';
+  }): Promise<HeadlessSession>;
+  resumeSession(input: { readonly id: string }): Promise<HeadlessSession>;
+  listSessions(input?: {
+    readonly workDir?: string;
+    readonly sessionId?: string;
+  }): Promise<readonly HeadlessSessionSummary[]>;
+  close(): Promise<void>;
+}
+
+interface HeadlessSessionSummary {
+  readonly id: string;
+  readonly workDir: string;
+  readonly sessionDir: string;
+}
+
+interface HeadlessSession {
+  readonly id: string;
+  readonly workDir: string;
+  readonly summary?: HeadlessSessionSummary;
+  onEvent(listener: (event: Event) => void): () => void;
+  prompt(input: string): Promise<void>;
+  setApprovalHandler(handler: unknown): void;
+  setQuestionHandler(handler: unknown): void;
+  getStatus(): Promise<{ readonly permission: 'yolo' | 'manual' | 'auto'; readonly model?: string }>;
+  setPermission(mode: 'auto' | 'manual' | 'yolo'): Promise<void>;
+  setModel(model: string): Promise<void>;
+}
+
+interface HeadlessSessionRunLock {
+  readonly sessionDir: string;
+  readonly runId: string;
+  release(): Promise<void>;
+}
+
+interface RunContext {
+  readonly runId: string;
+  readonly startedAtMs: number;
+  readonly startedAt: string;
+  readonly pid: number;
+  readonly workDir: string;
+  readonly model: string | null;
+  readonly statusFile?: string;
+  readonly outputDir?: string;
+  readonly metadataOnly: boolean;
+  readonly summary: MutableHeadlessRunSummary;
+  status: HeadlessRunStatus;
+  files: HeadlessRunFiles;
+  assistantMarkdown: string;
+}
+
+type MutableHeadlessRunSummary = {
+  -readonly [Key in keyof HeadlessRunSummary]: HeadlessRunSummary[Key];
+};
 
 export async function runHeadless(
   command: HeadlessCommand,
   version: string,
   io: HeadlessRunIO = {},
 ): Promise<void> {
-  void version;
   const stdout = io.stdout ?? process.stdout;
 
   switch (command.kind) {
@@ -36,8 +126,410 @@ export async function runHeadless(
       await runHeadlessGoalControl(command.options, stdout);
       return;
     case 'run':
-      throw new Error('headless run is not implemented yet');
+      await runHeadlessRun(command.options, version, io, stdout);
+      return;
   }
+}
+
+async function runHeadlessRun(
+  options: HeadlessRunOptions,
+  version: string,
+  io: HeadlessRunIO,
+  stdout: HeadlessOutput,
+): Promise<void> {
+  const runId = `run_${randomUUID()}`;
+  const startedAtMs = Date.now();
+  const startedAt = new Date(startedAtMs).toISOString();
+  let workDir = path.resolve(options.cwd ?? process.cwd());
+  const prompt = options.prompt;
+  if (prompt === undefined) {
+    throw new Error('Only --prompt headless runs are implemented in this slice.');
+  }
+
+  if (options.statusFile !== undefined) {
+    await preflightHeadlessStatusFile(options.statusFile);
+  }
+  const outputDir =
+    options.outputDir === undefined
+      ? undefined
+      : resolveHeadlessOutputDir({
+          explicitOutputDir: options.outputDir,
+          statusFile: options.statusFile,
+          runId,
+        });
+  if (outputDir !== undefined) {
+    await preflightHeadlessOutputDir(outputDir);
+  }
+
+  const createHarness = io.createHarness ?? ((input) => createKimiHarness(input));
+  const acquireSessionRunLock = io.acquireSessionRunLock ?? acquireSdkSessionRunLock;
+  const harness = createHarness({
+    identity: createKimiCodeHostIdentity(version),
+    uiMode: 'headless',
+    skillDirs: options.skillsDirs,
+  });
+  let lock: HeadlessSessionRunLock | undefined;
+
+  try {
+    await harness.ensureConfigFile();
+    const config = await harness.getConfig();
+    const resolved = await resolveHeadlessSession(harness, options, workDir, config.defaultModel);
+    workDir = resolved.workDir;
+    lock = await acquireSessionRunLock({
+      sessionDir: resolved.sessionDir,
+      runId,
+      pid: process.pid,
+      command: 'headless run',
+    });
+    const session = resolved.session;
+    installHeadlessRunHandlers(session);
+    const context = createRunContext({
+      runId,
+      startedAtMs,
+      startedAt,
+      workDir,
+      model: resolved.model,
+      statusFile: options.statusFile,
+      outputDir,
+      metadataOnly: options.metadataOnly,
+      sessionId: session.id,
+    });
+    await writeRunStatus(context, 'starting');
+    await runHeadlessPromptTurn(session, prompt, context);
+    await writeCurrentRunStatus(context);
+    await finalizeHeadlessRun(context, stdout);
+  } finally {
+    await lock?.release();
+    await harness.close();
+  }
+}
+
+async function resolveHeadlessSession(
+  harness: HeadlessHarness,
+  options: HeadlessRunOptions,
+  initialWorkDir: string,
+  defaultModel: string | undefined,
+): Promise<{
+  readonly session: HeadlessSession;
+  readonly sessionDir: string;
+  readonly workDir: string;
+  readonly model: string;
+}> {
+  if (options.session !== undefined) {
+    const sessions = await harness.listSessions({ sessionId: options.session });
+    const target = sessions[0];
+    if (target === undefined) throw new Error(`Session "${options.session}" not found.`);
+    if (options.cwd !== undefined && target.workDir !== initialWorkDir) {
+      throw new Error(`Session "${options.session}" was created under a different directory.`);
+    }
+    const session = await harness.resumeSession({ id: options.session });
+    const status = await session.getStatus();
+    if (options.model !== undefined) await session.setModel(options.model);
+    return {
+      session,
+      sessionDir: target.sessionDir,
+      workDir: options.cwd === undefined ? target.workDir : initialWorkDir,
+      model: requireConfiguredModel(options.model, status.model, defaultModel),
+    };
+  }
+
+  if (options.continue) {
+    const sessions = await harness.listSessions({ workDir: initialWorkDir });
+    const previous = sessions[0];
+    if (previous !== undefined) {
+      const session = await harness.resumeSession({ id: previous.id });
+      const status = await session.getStatus();
+      if (options.model !== undefined) await session.setModel(options.model);
+      return {
+        session,
+        sessionDir: previous.sessionDir,
+        workDir: initialWorkDir,
+        model: requireConfiguredModel(options.model, status.model, defaultModel),
+      };
+    }
+  }
+
+  const model = requireConfiguredModel(options.model, defaultModel);
+  const session = await harness.createSession({
+    workDir: initialWorkDir,
+    model,
+    permission: 'auto',
+  });
+  const sessionDir = session.summary?.sessionDir;
+  if (sessionDir === undefined) {
+    throw new Error(`Session "${session.id}" did not report a session directory.`);
+  }
+  return { session, sessionDir, workDir: initialWorkDir, model };
+}
+
+function installHeadlessRunHandlers(session: HeadlessSession): void {
+  session.setApprovalHandler(() => ({ decision: 'approved' }));
+  session.setQuestionHandler(() => null);
+}
+
+function createRunContext(input: {
+  readonly runId: string;
+  readonly startedAtMs: number;
+  readonly startedAt: string;
+  readonly workDir: string;
+  readonly model: string;
+  readonly statusFile?: string;
+  readonly outputDir?: string;
+  readonly metadataOnly: boolean;
+  readonly sessionId: string;
+}): RunContext {
+  const summary = emptySummary();
+  const files: HeadlessRunFiles = {
+    outputDir: input.outputDir ?? null,
+    responses: [],
+    finalResponse: null,
+    goalStatus: null,
+  };
+  return {
+    runId: input.runId,
+    startedAtMs: input.startedAtMs,
+    startedAt: input.startedAt,
+    pid: process.pid,
+    workDir: input.workDir,
+    model: input.model,
+    statusFile: input.statusFile,
+    outputDir: input.outputDir,
+    metadataOnly: input.metadataOnly,
+    summary,
+    files,
+    assistantMarkdown: '',
+    status: {
+      schemaVersion: 1,
+      runId: input.runId,
+      pid: process.pid,
+      sessionId: input.sessionId,
+      turnId: null,
+      state: 'starting',
+      workDir: input.workDir,
+      model: input.model,
+      startedAt: input.startedAt,
+      updatedAt: input.startedAt,
+      elapsedMs: 0,
+      lastEvent: null,
+      activeTool: null,
+      summary,
+      approval: null,
+      goal: null,
+      warnings: [],
+      files,
+      control: null,
+      error: null,
+      resumeCommand: `kimi -r ${input.sessionId}`,
+    },
+  };
+}
+
+function emptySummary(): MutableHeadlessRunSummary {
+  return {
+    turnStepCount: 0,
+    toolCallCount: 0,
+    completedToolCallCount: 0,
+    failedToolCallCount: 0,
+    assistantCharCount: 0,
+    thinkingCharCount: 0,
+  };
+}
+
+async function runHeadlessPromptTurn(
+  session: HeadlessSession,
+  prompt: string,
+  context: RunContext,
+): Promise<void> {
+  let activeTurnId: number | null = null;
+  let settled = false;
+  let unsubscribe: (() => void) | undefined;
+
+  await new Promise<void>((resolve, reject) => {
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      unsubscribe?.();
+      if (error !== undefined) {
+        reject(error);
+        return;
+      }
+      resolve();
+    };
+
+    unsubscribe = session.onEvent((event) => {
+      if (event.type === 'error' && event.agentId === 'main') {
+        const error = new Error(`${event.code}: ${event.message}`);
+        updateRunStatus(context, 'failed', event.type, { error });
+        finish(error);
+        return;
+      }
+      if (event.agentId !== 'main') return;
+      if (event.type === 'turn.started' && activeTurnId === null) {
+        activeTurnId = event.turnId;
+      }
+      if (!hasTurnId(event) || (activeTurnId !== null && event.turnId !== activeTurnId)) return;
+      handleRunEvent(context, event);
+      if (event.type === 'turn.ended') {
+        if (event.reason === 'completed') {
+          updateRunStatus(context, 'completed', event.type);
+          finish();
+          return;
+        }
+        const error = new Error(formatTurnEndedFailure(event));
+        updateRunStatus(context, 'failed', event.type, { error });
+        finish(error);
+      }
+    });
+
+    session.prompt(prompt).catch((error: unknown) => {
+      const normalized = error instanceof Error ? error : new Error(String(error));
+      updateRunStatus(context, 'failed', 'prompt.failed', { error: normalized });
+      finish(normalized);
+    });
+  });
+}
+
+function handleRunEvent(context: RunContext, event: Event & { readonly turnId: number }): void {
+  switch (event.type) {
+    case 'turn.started':
+      updateRunStatus(context, 'running', event.type, { turnId: event.turnId });
+      return;
+    case 'turn.step.started':
+      context.summary.turnStepCount += 1;
+      updateRunStatus(context, 'running', event.type);
+      return;
+    case 'assistant.delta':
+      context.assistantMarkdown += event.delta;
+      context.summary.assistantCharCount += event.delta.length;
+      updateRunStatus(context, 'running', event.type);
+      return;
+    case 'thinking.delta':
+      context.summary.thinkingCharCount += event.delta.length;
+      updateRunStatus(context, 'running', event.type);
+      return;
+    case 'tool.call.started':
+      context.summary.toolCallCount += 1;
+      context.status = {
+        ...context.status,
+        activeTool: {
+          toolCallId: event.toolCallId,
+          name: event.name,
+          description: event.description,
+        },
+      };
+      updateRunStatus(context, 'running', event.type);
+      return;
+    case 'tool.result':
+      if (event.isError === true) {
+        context.summary.failedToolCallCount += 1;
+      } else {
+        context.summary.completedToolCallCount += 1;
+      }
+      if (context.status.activeTool?.toolCallId === event.toolCallId) {
+        context.status = { ...context.status, activeTool: null };
+      }
+      updateRunStatus(context, 'running', event.type);
+      return;
+    case 'turn.ended':
+      return;
+    default:
+      updateRunStatus(context, context.status.state, event.type);
+  }
+}
+
+function updateRunStatus(
+  context: RunContext,
+  state: HeadlessRunState,
+  lastEvent: string,
+  options: { readonly turnId?: number; readonly error?: Error } = {},
+): void {
+  const updatedAt = new Date().toISOString();
+  context.status = {
+    ...context.status,
+    turnId: options.turnId ?? context.status.turnId,
+    state,
+    updatedAt,
+    elapsedMs: Date.now() - context.startedAtMs,
+    lastEvent,
+    summary: { ...context.summary },
+    files: context.files,
+    error: options.error === undefined ? context.status.error : { message: options.error.message },
+  };
+}
+
+async function writeRunStatus(context: RunContext, state: HeadlessRunState): Promise<void> {
+  updateRunStatus(context, state, context.status.lastEvent ?? 'run.status');
+  await writeCurrentRunStatus(context);
+}
+
+async function writeCurrentRunStatus(context: RunContext): Promise<void> {
+  if (context.statusFile === undefined) return;
+  await writeHeadlessRunStatus(context.statusFile, context.status);
+}
+
+async function finalizeHeadlessRun(
+  context: RunContext,
+  stdout: HeadlessOutput,
+): Promise<void> {
+  if (context.outputDir !== undefined) {
+    const responseFile = await writeHeadlessResponseFile({
+      outputDir: context.outputDir,
+      turnIndex: 1,
+      turnId: context.status.turnId,
+      markdown: context.assistantMarkdown,
+      updatedAt: context.status.updatedAt,
+    });
+    context.files = {
+      ...context.files,
+      responses: [responseFile],
+      finalResponse: responseFile,
+    };
+    context.status = { ...context.status, files: context.files };
+    await writeCurrentRunStatus(context);
+  }
+
+  const responseFormat = context.metadataOnly
+    ? 'omitted'
+    : context.outputDir === undefined
+      ? 'markdown'
+      : 'files';
+  const metadata = {
+    type: 'headless.result',
+    schemaVersion: 1,
+    runId: context.runId,
+    sessionId: context.status.sessionId,
+    turnId: context.status.turnId,
+    state: context.status.state,
+    responseFormat,
+    responseOmitted: responseFormat !== 'markdown',
+    resumeCommand: context.status.resumeCommand,
+    summary: context.status.summary,
+    approval: context.status.approval,
+    goal: context.status.goal,
+    warnings: context.status.warnings,
+    files: context.files,
+  } satisfies Parameters<typeof formatHeadlessMetadataHeader>[0];
+  stdout.write(formatHeadlessMetadataHeader(metadata));
+  if (responseFormat === 'markdown') stdout.write(context.assistantMarkdown);
+}
+
+function requireConfiguredModel(...models: readonly (string | undefined)[]): string {
+  const model = models.find((item) => item !== undefined && item.trim().length > 0);
+  if (model === undefined) {
+    throw new Error(
+      'No model configured. Run `kimi` and use /login to sign in, then retry; or set default_model in config.toml.',
+    );
+  }
+  return model;
+}
+
+function hasTurnId(event: Event): event is Event & { readonly turnId: number } {
+  return 'turnId' in event;
+}
+
+function formatTurnEndedFailure(event: Extract<Event, { type: 'turn.ended' }>): string {
+  if (event.error !== undefined) return `${event.error.code}: ${event.error.message}`;
+  return `Headless turn ended with reason: ${event.reason}`;
 }
 
 async function runHeadlessStatus(

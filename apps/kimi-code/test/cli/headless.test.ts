@@ -88,6 +88,115 @@ function outputWriter() {
   };
 }
 
+function createFakeHeadlessRuntime() {
+  const eventHandlers = new Set<(event: Record<string, unknown>) => void>();
+  const session = {
+    id: 'ses_headless',
+    workDir: '/repo',
+    summary: {
+      id: 'ses_headless',
+      workDir: '/repo',
+      sessionDir: '/tmp/ses_headless',
+    },
+    setModel: vi.fn(async () => {}),
+    setPermission: vi.fn(async () => {}),
+    setApprovalHandler: vi.fn(),
+    setQuestionHandler: vi.fn(),
+    getStatus: vi.fn(async () => ({ permission: 'manual' as const, model: 'saved-model' })),
+    onEvent: vi.fn((handler: (event: any) => void) => {
+      eventHandlers.add(handler);
+      return () => {
+        eventHandlers.delete(handler);
+      };
+    }),
+    prompt: vi.fn(async () => {
+      for (const handler of eventHandlers) {
+        handler({
+          type: 'turn.started',
+          sessionId: 'ses_headless',
+          agentId: 'main',
+          turnId: 7,
+          origin: { kind: 'user' },
+        });
+        handler({
+          type: 'turn.step.started',
+          sessionId: 'ses_headless',
+          agentId: 'main',
+          turnId: 7,
+          stepIndex: 1,
+        });
+        handler({
+          type: 'thinking.delta',
+          sessionId: 'ses_headless',
+          agentId: 'main',
+          turnId: 7,
+          delta: 'thinking',
+        });
+        handler({
+          type: 'assistant.delta',
+          sessionId: 'ses_headless',
+          agentId: 'main',
+          turnId: 7,
+          delta: '## Done\n',
+        });
+        handler({
+          type: 'tool.call.started',
+          sessionId: 'ses_headless',
+          agentId: 'main',
+          turnId: 7,
+          toolCallId: 'call_1',
+          name: 'functions.exec_command',
+          args: { cmd: 'pnpm test' },
+        });
+        handler({
+          type: 'tool.result',
+          sessionId: 'ses_headless',
+          agentId: 'main',
+          turnId: 7,
+          toolCallId: 'call_1',
+          output: 'ok',
+        });
+        handler({
+          type: 'assistant.delta',
+          sessionId: 'ses_headless',
+          agentId: 'main',
+          turnId: 7,
+          delta: 'All set.\n',
+        });
+        handler({
+          type: 'turn.ended',
+          sessionId: 'ses_headless',
+          agentId: 'main',
+          turnId: 7,
+          reason: 'completed',
+        });
+      }
+    }),
+  };
+  const harness = {
+    ensureConfigFile: vi.fn(),
+    getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'k2', telemetry: true })),
+    createSession: vi.fn(async () => session),
+    resumeSession: vi.fn(async () => session),
+    listSessions: vi.fn(async () => [
+      {
+        id: 'ses_headless',
+        workDir: '/repo',
+        sessionDir: '/tmp/ses_headless',
+      },
+    ]),
+    close: vi.fn(),
+  };
+  const releaseLock = vi.fn(async () => {});
+  const acquireLock = vi.fn(async () => ({
+    sessionDir: '/tmp/ses_headless',
+    runId: 'run_test',
+    release: releaseLock,
+  }));
+
+  return { session, harness, acquireLock, releaseLock };
+}
+
 function parseHeadless(argv: string[]): HeadlessCommand {
   let captured: HeadlessCommand | undefined;
 
@@ -759,5 +868,196 @@ describe('runHeadless goal control command', () => {
         '1.2.3-test',
       ),
     ).rejects.toThrow('Status file does not contain a control path.');
+  });
+});
+
+describe('runHeadless prompt run command', () => {
+  it('runs one prompt turn and prints metadata plus Markdown by default', async () => {
+    const dir = await createTempDir();
+    const statusFile = path.join(dir, 'status.json');
+    const runtime = createFakeHeadlessRuntime();
+    const stdout = outputWriter();
+
+    await runHeadless(
+      {
+        kind: 'run',
+        options: {
+          prompt: 'inspect',
+          cwd: '/repo',
+          continue: false,
+          statusFile,
+          metadataOnly: false,
+          approvePlan: false,
+          rejectPlan: false,
+          skillsDirs: [],
+        },
+      },
+      '1.2.3-test',
+      {
+        stdout,
+        createHarness: () => runtime.harness,
+        acquireSessionRunLock: runtime.acquireLock,
+      },
+    );
+
+    expect(runtime.harness.createSession).toHaveBeenCalledWith({
+      workDir: '/repo',
+      model: 'k2',
+      permission: 'auto',
+    });
+    expect(runtime.acquireLock).toHaveBeenCalledWith({
+      sessionDir: '/tmp/ses_headless',
+      runId: expect.any(String),
+      pid: process.pid,
+      command: 'headless run',
+    });
+    expect(runtime.session.prompt).toHaveBeenCalledWith('inspect');
+    expect(runtime.releaseLock).toHaveBeenCalledOnce();
+    expect(runtime.harness.close).toHaveBeenCalledOnce();
+
+    const [metadataLine, markdown] = stdout.text().split('\n\n');
+    expect(JSON.parse(metadataLine!)).toMatchObject({
+      type: 'headless.result',
+      schemaVersion: 1,
+      sessionId: 'ses_headless',
+      turnId: 7,
+      state: 'completed',
+      responseFormat: 'markdown',
+      responseOmitted: false,
+      summary: {
+        turnStepCount: 1,
+        toolCallCount: 1,
+        completedToolCallCount: 1,
+        failedToolCallCount: 0,
+        assistantCharCount: 17,
+        thinkingCharCount: 8,
+      },
+    });
+    expect(markdown).toBe('## Done\nAll set.\n');
+    await expect(readHeadlessRunStatus(statusFile)).resolves.toMatchObject({
+      state: 'completed',
+      sessionId: 'ses_headless',
+      turnId: 7,
+      summary: {
+        toolCallCount: 1,
+        completedToolCallCount: 1,
+      },
+    });
+  });
+
+  it('omits Markdown when metadataOnly is set', async () => {
+    const runtime = createFakeHeadlessRuntime();
+    const stdout = outputWriter();
+
+    await runHeadless(
+      {
+        kind: 'run',
+        options: {
+          prompt: 'inspect',
+          cwd: '/repo',
+          continue: false,
+          metadataOnly: true,
+          approvePlan: false,
+          rejectPlan: false,
+          skillsDirs: [],
+        },
+      },
+      '1.2.3-test',
+      {
+        stdout,
+        createHarness: () => runtime.harness,
+        acquireSessionRunLock: runtime.acquireLock,
+      },
+    );
+
+    const output = JSON.parse(stdout.text());
+    expect(output).toMatchObject({
+      responseFormat: 'omitted',
+      responseOmitted: true,
+    });
+  });
+
+  it('writes Markdown to output files when outputDir is set', async () => {
+    const dir = await createTempDir();
+    const runtime = createFakeHeadlessRuntime();
+    const stdout = outputWriter();
+
+    await runHeadless(
+      {
+        kind: 'run',
+        options: {
+          prompt: 'inspect',
+          cwd: '/repo',
+          continue: false,
+          outputDir: dir,
+          metadataOnly: false,
+          approvePlan: false,
+          rejectPlan: false,
+          skillsDirs: [],
+        },
+      },
+      '1.2.3-test',
+      {
+        stdout,
+        createHarness: () => runtime.harness,
+        acquireSessionRunLock: runtime.acquireLock,
+      },
+    );
+
+    const metadata = JSON.parse(stdout.text());
+    expect(metadata).toMatchObject({
+      responseFormat: 'files',
+      responseOmitted: true,
+      files: {
+        outputDir: dir,
+        responses: [
+          {
+            turnIndex: 1,
+            turnId: 7,
+            state: 'completed',
+            bytes: 17,
+          },
+        ],
+      },
+    });
+    const responsePath = metadata.files.responses[0].path as string;
+    await expect(readFile(responsePath, 'utf-8')).resolves.toBe('## Done\nAll set.\n');
+  });
+
+  it('fails before resume when --session and --cwd mismatch the session workdir', async () => {
+    const runtime = createFakeHeadlessRuntime();
+    runtime.harness.listSessions.mockResolvedValueOnce([
+      {
+        id: 'ses_headless',
+        workDir: '/other',
+        sessionDir: '/tmp/ses_headless',
+      },
+    ]);
+
+    await expect(
+      runHeadless(
+        {
+          kind: 'run',
+          options: {
+            prompt: 'inspect',
+            cwd: '/repo',
+            session: 'ses_headless',
+            continue: false,
+            metadataOnly: false,
+            approvePlan: false,
+            rejectPlan: false,
+            skillsDirs: [],
+          },
+        },
+        '1.2.3-test',
+        {
+          createHarness: () => runtime.harness,
+          acquireSessionRunLock: runtime.acquireLock,
+        },
+      ),
+    ).rejects.toThrow('Session "ses_headless" was created under a different directory.');
+
+    expect(runtime.harness.resumeSession).not.toHaveBeenCalled();
+    expect(runtime.acquireLock).not.toHaveBeenCalled();
   });
 });
