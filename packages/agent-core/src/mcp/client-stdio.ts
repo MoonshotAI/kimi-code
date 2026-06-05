@@ -217,20 +217,24 @@ class BoundedTail {
 }
 
 // Inherit the parent's env so PATH/HOME/etc. survive — otherwise `npx`/`uvx`
-// style stdio servers fail to launch even with a valid config. A node child
-// does not inherit our in-process undici dispatcher, so `proxyEnvForChild`
-// adds `NODE_USE_ENV_PROXY` (and a loopback-protected `NO_PROXY`) to make it
-// honor the proxy natively (on a Node version that supports the flag — ≥22.21
-// or ≥24.5). Explicit `config.env` entries still override —
-// including `NO_PROXY`, which `reconcileChildNoProxy` mirrors onto both casings
-// so a single-casing override isn't shadowed by the injected value.
-function mergeStdioEnv(configEnv?: Record<string, string>): Record<string, string> {
+// style stdio servers fail to launch even with a valid config. `config.env`
+// overrides on conflict. A node child does not inherit our in-process undici
+// dispatcher, so `proxyEnvForChild` adds `NODE_USE_ENV_PROXY` (and a
+// loopback-protected `NO_PROXY`) to make it honor the proxy natively (on a Node
+// version that supports the flag — ≥22.21 or ≥24.5). It is computed from the
+// MERGED env so a proxy declared only in `config.env` is honored too.
+// `reconcileChildNoProxy` then mirrors a single-casing `NO_PROXY` override onto
+// both casings so it isn't shadowed by the injected value.
+export function mergeStdioEnv(
+  configEnv?: Record<string, string>,
+  parentEnv: Readonly<Record<string, string | undefined>> = process.env,
+): Record<string, string> {
   const merged: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const [key, value] of Object.entries(parentEnv)) {
     if (value !== undefined) merged[key] = value;
   }
-  Object.assign(merged, proxyEnvForChild());
   if (configEnv !== undefined) Object.assign(merged, configEnv);
+  Object.assign(merged, proxyEnvForChild(merged));
   reconcileChildNoProxy(merged, configEnv);
   return merged;
 }

@@ -24,7 +24,11 @@ export interface SocksProxyConfig {
 // so without this a user with a proxy set would route `http://localhost:PORT`
 // traffic (e.g. a local MCP server) through the proxy — a confusing failure
 // that only proxy users would hit.
-const LOOPBACK_NO_PROXY = ['localhost', '127.0.0.1', '::1'] as const;
+// `::1` and the bracketed `[::1]` are both listed: undici's EnvHttpProxyAgent
+// only bypasses the IPv6 loopback when the NO_PROXY entry is bracketed (it
+// otherwise mis-parses `::1` as host `:` port `1`), while our own SOCKS matcher
+// normalizes brackets away — so including both covers every path.
+const LOOPBACK_NO_PROXY = ['localhost', '127.0.0.1', '::1', '[::1]'] as const;
 
 const SOCKS_SCHEMES = new Set(['socks', 'socks4', 'socks4a', 'socks5', 'socks5h']);
 
@@ -83,7 +87,9 @@ export function resolveSocksProxy(env: Env = process.env): SocksProxyConfig | un
     }
     const config: SocksProxyConfig = {
       type: scheme === 'socks4' || scheme === 'socks4a' ? 4 : 5,
-      host: url.hostname,
+      // Strip IPv6 brackets: the `socks` client wants the bare address (`::1`),
+      // not the URL's bracketed `[::1]`, which it would treat as a hostname.
+      host: url.hostname.replaceAll(/^\[|\]$/g, ''),
       port: url.port ? Number(url.port) : 1080,
       ...(url.username ? { userId: decodeURIComponent(url.username) } : {}),
       ...(url.password ? { password: decodeURIComponent(url.password) } : {}),
@@ -139,7 +145,7 @@ export function makeNoProxyMatcher(noProxy: string): (host: string, port?: numbe
   if (entries.includes('*')) return () => true;
   const parsed = entries.map(parseNoProxyEntry);
   return (host: string, port?: number | string) => {
-    const target = host.toLowerCase();
+    const target = host.toLowerCase().replaceAll(/^\[|\]$/g, '');
     const targetPort = port === undefined ? undefined : String(port);
     return parsed.some(
       ({ host: entry, port: entryPort }) =>
@@ -171,7 +177,10 @@ function parseNoProxyEntry(entry: string): { host: string; port?: string } {
       port = entry.slice(colon + 1);
     }
   }
-  if (host.startsWith('.')) host = host.slice(1);
+  // Normalize a wildcard domain (`*.example.com`) and a leading-dot
+  // (`.example.com`) to the bare domain; subdomain matching is handled below.
+  if (host.startsWith('*.')) host = host.slice(2);
+  else if (host.startsWith('.')) host = host.slice(1);
   return port === undefined ? { host } : { host, port };
 }
 
