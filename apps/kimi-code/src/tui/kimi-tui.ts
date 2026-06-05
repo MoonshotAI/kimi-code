@@ -35,7 +35,7 @@ import {
   BUILTIN_SLASH_COMMANDS,
   buildSkillSlashCommands,
   isExperimentalFlagEnabled,
-  setExperimentalFlags,
+  setExperimentalFeatures,
   sortSlashCommands,
   type KimiSlashCommand,
   type SkillListSession,
@@ -332,6 +332,10 @@ export class KimiTUI {
     this.state.editor.setAutocompleteProvider(provider);
   }
 
+  refreshSlashCommandAutocomplete(): void {
+    this.setupAutocomplete();
+  }
+
   async refreshSkillCommands(session?: SkillListSession): Promise<void> {
     if (session === undefined) {
       this.skillCommands = [];
@@ -476,7 +480,7 @@ export class KimiTUI {
   }
 
   private async init(): Promise<boolean> {
-    setExperimentalFlags(await this.harness.getExperimentalFlags());
+    setExperimentalFeatures(await this.harness.getExperimentalFeatures());
     await this.authFlow.refreshAvailableModels();
     void this.refreshProviderModelsInBackground();
 
@@ -1044,7 +1048,7 @@ export class KimiTUI {
   async syncRuntimeState(session: Session = this.requireSession()): Promise<void> {
     const [status, goalResult] = await Promise.all([
       session.getStatus(),
-      isExperimentalFlagEnabled('goal-command')
+      isExperimentalFlagEnabled('goal_command')
         ? session.getGoal()
         : Promise.resolve({ goal: null }),
     ]);

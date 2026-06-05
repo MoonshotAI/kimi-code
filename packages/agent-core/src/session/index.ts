@@ -40,6 +40,7 @@ import {
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
 import { SessionSubagentHost } from './subagent-host';
 import type { ToolServices } from '../tools/support/services';
+import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 
 export interface SessionOptions {
   readonly kaos: Kaos;
@@ -59,6 +60,7 @@ export interface SessionOptions {
   readonly telemetry?: TelemetryClient | undefined;
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
   readonly appVersion?: string;
+  readonly experimentalFlags?: ExperimentalFlagResolver;
 }
 
 export interface SessionSkillConfig {
@@ -112,6 +114,7 @@ export class Session {
   private readonly logHandle: SessionLogHandle | undefined;
   readonly hookEngine: HookEngine;
   readonly goals: SessionGoalStore;
+  readonly experimentalFlags: ExperimentalFlagResolver;
   private agentIdCounter = 0;
   private readonly skillsReady: Promise<void>;
   metadata: SessionMeta = {
@@ -139,6 +142,7 @@ export class Session {
       this.logHandle?.logger ??
       (options.id === undefined ? log : log.createChild({ sessionId: options.id }));
     this.rpc = options.rpc;
+    this.experimentalFlags = options.experimentalFlags ?? new FlagResolver();
     this.hookEngine = new HookEngine(options.hooks, {
       cwd: options.kaos.getcwd(),
       sessionId: options.id,
@@ -494,6 +498,7 @@ export class Session {
       log: this.log.createChild({ agentId: id }),
       pluginSessionStarts: type === 'main' ? this.options.pluginSessionStarts : undefined,
       appVersion: this.options.appVersion,
+      experimentalFlags: this.experimentalFlags,
     });
   }
 

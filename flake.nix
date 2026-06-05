@@ -147,6 +147,7 @@
               nodejs
               pnpm
               (pkgs.pnpmConfigHook.override { inherit pnpm; })
+              pkgs.makeWrapper
             ]
             # The SEA inject step (postject) invalidates the macOS code
             # signature on the copied Node executable; build.mjs then re-applies
@@ -190,6 +191,10 @@
               runHook postInstall
             '';
 
+            postInstall = ''
+              wrapProgram $out/bin/kimi --prefix PATH : ${lib.makeBinPath [ pkgs.ripgrep pkgs.fd ]}
+            '';
+
             meta = {
               description = "Kimi Code CLI";
               homepage = "https://github.com/MoonshotAI/kimi-code";
@@ -223,6 +228,8 @@
             packages = [
               nodejs
               pnpm
+              pkgs.ripgrep
+              pkgs.fd
             ];
           };
       });

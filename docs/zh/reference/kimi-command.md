@@ -121,7 +121,7 @@ kimi -p "List changed files" --output-format stream-json
 
 ## 子命令
 
-`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
+`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
 
 ### `kimi login`
 
@@ -139,6 +139,33 @@ kimi login
 
 ```sh
 kimi acp
+```
+
+### `kimi doctor`
+
+校验 `config.toml` 和 `tui.toml`，不会启动 TUI，也不会修改任一文件。默认检查 `KIMI_CODE_HOME` 下的文件；未设置该环境变量时检查 `~/.kimi-code`。默认路径缺失时会显示为跳过，因为内置默认值仍可生效。
+
+```sh
+kimi doctor
+```
+
+| 命令 | 说明 |
+| --- | --- |
+| `kimi doctor` | 校验默认 `config.toml` 和 `tui.toml` |
+| `kimi doctor config [path]` | 只校验 `config.toml`；传入 `path` 时使用该文件而不是默认文件 |
+| `kimi doctor tui [path]` | 只校验 `tui.toml`；传入 `path` 时使用该文件而不是默认文件 |
+
+显式传入路径时，文件必须存在。所有被检查的文件都有效或被跳过时，退出码为 `0`；任何指定文件缺失或配置无效时，退出码为 `1`。
+
+```sh
+# 检查默认配置文件
+kimi doctor
+
+# 只检查默认运行时配置
+kimi doctor config
+
+# 替换正式 TUI 配置前，先检查候选文件
+kimi doctor tui ./tui.toml
 ```
 
 ### `kimi export`

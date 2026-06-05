@@ -17,6 +17,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/provider` | — | Open the interactive provider manager to view, add, and remove configured providers. See [Platforms & Models — `/provider` and provider management](../configuration/providers.md#provider-与供应商管理) | Yes |
 | `/model` | — | Switch the LLM model used in the current session | Yes |
 | `/settings` | `/config` | Open the settings panel inside the TUI | Yes |
+| `/experiments` | `/experimental` | Open the experimental feature panel. Confirm changes to persist them to `config.toml` and reload the current session | Yes |
 | `/permission` | — | Select a permission mode | Yes |
 | `/editor` | — | Configure the external editor launched by `Ctrl-G` | Yes |
 | `/theme` | — | Switch the terminal UI color theme | Yes |
@@ -46,7 +47,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/plan [on\|off]` | — | Toggle Plan mode. Without arguments, flip the current state; pass `on`/`off` explicitly to force the corresponding state. Toggling alone does not create an empty plan file. | Yes |
 | `/plan clear` | — | Clear the current plan. | No |
 | `/swarm <task>` | — | Run one task in swarm mode. In `manual` permission mode, Kimi Code asks whether to switch to `auto` before starting. | No |
-| `/goal [status\|pause\|resume\|cancel\|replace <objective>\|<objective>]` | — | Start or manage an autonomous goal. This command is experimental. Enable it with `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1`. | See below |
+| `/goal [status\|pause\|resume\|cancel\|replace <objective>\|<objective>]` | — | Start or manage an autonomous goal. This command is experimental; enable it from `/experiments`, `[experimental].goal_command`, or `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1`. | See below |
 
 ::: warning
 `/yolo` skips approval for regular tool calls. Please make sure you understand the potential risks before enabling it. Plan mode exit approval is not bypassed by `/yolo`; `Bash` inside Plan mode is still subject to the regular `/yolo` allow rules.
@@ -55,27 +56,23 @@ Some commands are only available in the idle state. Executing these commands whi
 ## Autonomous goals
 
 ::: info
-`/goal` is an experimental command. Enable it by setting an environment variable when starting `kimi`:
+`/goal` is an experimental command. Enable it from `/experiments`, or write it in `~/.kimi-code/config.toml`:
+```toml
+[experimental]
+goal_command = true
+```
+
+You can also override the setting for one process with an environment variable:
 ```sh
 KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
 ```
 :::
 
-`/goal` is for tasks you want Kimi Code to work on continuously across automatically continuing turns. Write the goal after the command to start:
+`/goal` starts or manages goal mode: a persistent objective that Kimi Code works toward across automatically continuing turns. For usage guidance and examples, see [Goals](../guides/goals.md).
 
 ```
 /goal Update the checkout docs, run docs build, and stop if still blocked after 20 turns
 ```
-
-Kimi Code saves the goal, sends it as the next User message, and keeps running subsequent turns until the goal stops. A goal has three stop states:
-
-- `complete`: The goal is done — Kimi Code sends a completion message and clears the goal
-- `paused`: You paused the goal, interrupted the current turn, or resumed a session that had an active goal
-- `blocked`: Kimi Code stopped because it needs input, cannot complete the goal, reached a budget limit, or encountered a runtime failure
-
-Stop conditions must be written into the goal itself; `/goal` has no separate stop-limit flag.
-
-Subcommands for managing the current goal:
 
 | Command | Action | Availability |
 | --- | --- | --- |
@@ -84,14 +81,28 @@ Subcommands for managing the current goal:
 | `/goal resume` | Resume a paused or blocked goal | Idle only |
 | `/goal cancel` | Remove the current goal | Always available |
 | `/goal replace <objective>` | Replace the saved goal with a new objective | Idle only |
+| `/goal next <objective>` | Queue an upcoming goal for this session. The agent does not see it until the current goal completes | Always available |
+| `/goal next manage` | Open the upcoming-goal manager. Use `↑`/`↓` to browse, `Space` to select a goal for moving, selected `↑`/`↓` to reorder it, `E` to edit, `D` to delete, and `Esc` to cancel | Always available |
 
-Only one goal can be saved per session. If the objective needs to start with a subcommand keyword such as `status` or `pause`, use `--` as a separator:
+The words `status`, `pause`, `resume`, `cancel`, `replace`, and `next` act as subcommands only when they are the first word after `/goal`. If your objective needs to start with one of those words, put `--` before it:
 
+```sh
+/goal -- cancel the old rollout note after the new docs are published
 ```
-/goal -- cancel The function needs to return a retryable error on order failure, with tests added
+
+If an upcoming goal needs to start with `manage`, put `--` after `next`:
+
+```sh
+/goal next -- manage the release checklist
 ```
 
-In `manual` permission mode, the goal may pause to wait for tool call approval — not suitable for unattended scenarios.
+In non-interactive prompt mode, only the create forms start goal mode:
+
+```sh
+KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi -p "/goal Fix the failing checkout test"
+```
+
+Prompt mode exits with code `0` when the goal completes, `3` when it blocks, and `6` when it pauses. Other `/goal` subcommands, including `next`, are TUI controls and are not handled by `kimi -p`.
 
 ## Information & Status
 

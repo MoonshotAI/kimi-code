@@ -7,6 +7,7 @@ export type SettingsSelection =
   | 'theme'
   | 'editor'
   | 'permission'
+  | 'experiments'
   | 'upgrade'
   | 'usage';
 
@@ -32,6 +33,11 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     description: 'Set the external editor command.',
   },
   {
+    value: 'experiments',
+    label: 'Experiments',
+    description: 'Turn experimental features on or off.',
+  },
+  {
     value: 'upgrade',
     label: 'Automatic updates',
     description: 'Turn automatic CLI updates on or off.',
@@ -49,6 +55,7 @@ function isSettingsSelection(value: string): value is SettingsSelection {
     value === 'theme' ||
     value === 'editor' ||
     value === 'permission' ||
+    value === 'experiments' ||
     value === 'upgrade' ||
     value === 'usage'
   );

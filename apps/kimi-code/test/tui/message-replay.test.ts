@@ -167,7 +167,7 @@ function makeHarness(initialSession: Session) {
     close: vi.fn(async () => {}),
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
-    getExperimentalFlags: vi.fn(async () => ({})),
+    getExperimentalFeatures: vi.fn(async () => []),
     interactiveAgentId: 'main',
     auth: {
       status: vi.fn(),

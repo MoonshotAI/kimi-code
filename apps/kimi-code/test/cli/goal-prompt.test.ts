@@ -110,7 +110,7 @@ const mocks = vi.hoisted(() => {
     session,
     eventHandlers,
     mainEvent,
-    experimentalFlags: { 'goal-command': true } as Record<string, boolean>,
+    experimentalFeatures: [{ id: 'goal_command', enabled: true }],
     sessions: [] as Array<{ readonly id: string; readonly workDir: string }>,
   };
 });
@@ -124,7 +124,7 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
       auth: { getCachedAccessToken: vi.fn() },
       ensureConfigFile: vi.fn(),
       getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'k2', telemetry: true })),
-      getExperimentalFlags: vi.fn(async () => mocks.experimentalFlags),
+      getExperimentalFeatures: vi.fn(async () => mocks.experimentalFeatures),
       createSession: vi.fn(async () => mocks.session),
       resumeSession: vi.fn(async () => mocks.session),
       listSessions: vi.fn(async () => mocks.sessions),
@@ -168,7 +168,7 @@ describe('runPrompt headless goal mode', () => {
 
   beforeEach(() => {
     savedExitCode = process.exitCode;
-    mocks.experimentalFlags = { 'goal-command': true };
+    mocks.experimentalFeatures = [{ id: 'goal_command', enabled: true }];
     mocks.sessions = [];
     mocks.session.createGoal.mockClear();
     mocks.session.getStatus.mockResolvedValue({ permission: 'auto', model: 'k2' } as never);
@@ -238,7 +238,7 @@ describe('runPrompt headless goal mode', () => {
   });
 
   it('treats /goal as a normal prompt when the flag is disabled', async () => {
-    mocks.experimentalFlags = {};
+    mocks.experimentalFeatures = [];
     const stdout = writer();
     const stderr = writer();
     await runPrompt(opts(), 'test', {

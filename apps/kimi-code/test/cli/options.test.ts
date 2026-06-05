@@ -315,6 +315,7 @@ describe('CLI options parsing', () => {
         'provider',
         'acp',
         'login',
+        'doctor',
         'migrate',
         'swarm-demo',
         'upgrade',

@@ -1,6 +1,6 @@
 # 配置文件
 
-Kimi Code CLI 把所有长期偏好写进一份 TOML（一种结构清晰的纯文本配置格式）文件——比如使用哪个模型、填哪个 API 密钥、Agent 每轮最多跑几步。改一次，每次启动都生效。
+Kimi Code CLI 把所有长期偏好写进 `~/.kimi-code/` 下的 TOML（一种结构清晰的纯文本配置格式）文件——比如使用哪个模型、填哪个 API 密钥、Agent 每轮最多跑几步。改一次，每次启动都生效。Agent 与运行时设置放在 `config.toml`，终端界面与客户端偏好（主题、编辑器、通知、自动更新）放在配套的 `tui.toml`。
 
 默认位置：`~/.kimi-code/config.toml`，首次运行时自动创建。
 
@@ -52,6 +52,11 @@ max_running_tasks = 4
 keep_alive_on_exit = false
 agent_task_timeout_s = 900
 
+[experimental]
+goal_command = false
+micro_compaction = false
+background_ask = false
+
 [[permission.rules]]
 decision = "allow"
 pattern = "Read"
@@ -85,11 +90,12 @@ timeout = 5
 | `thinking` | `table` | — | Thinking 模式默认参数 → [`thinking`](#thinking) |
 | `loop_control` | `table` | — | Agent 循环控制参数 → [`loop_control`](#loop_control) |
 | `background` | `table` | — | 后台任务运行参数 → [`background`](#background) |
+| `experimental` | `table` | — | 持久化实验功能开关 → [`experimental`](#experimental) |
 | `services` | `table` | — | 内置外部服务配置 → [`services`](#services) |
 | `permission` | `table` | — | 初始权限规则 → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | 生命周期 hook，详见 [Hooks](../customization/hooks.md) |
 
-以下各节对 `providers`、`models`、`thinking`、`loop_control`、`background`、`services`、`permission` 七个嵌套表逐一展开。
+以下各节对 `providers`、`models`、`thinking`、`loop_control`、`background`、`experimental`、`services`、`permission` 等嵌套表逐一展开。
 
 ## `providers`
 
@@ -171,6 +177,18 @@ max_context_size = 1047576
 
 `keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，优先级高于配置文件。
 
+## `experimental`
+
+`experimental` 存放尚未默认公开的功能开关。可以直接编辑这个表，也可以在 TUI 中运行 `/experiments`。TUI 面板会先暂存选择，确认后写入 `config.toml` 并重载当前会话。每个 TOML key 就是实验 flag ID，例如 `goal_command`。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `goal_command` | `boolean` | `false` | 启用 `/goal` 和 goal 管理工具 |
+| `micro_compaction` | `boolean` | `false` | 清理较旧的大型工具结果内容，同时保留最近对话 |
+| `background_ask` | `boolean` | `false` | 允许 `AskUserQuestion` 在 Agent 可以继续工作时启动后台提问任务 |
+
+环境变量优先级高于这个表。`KIMI_CODE_EXPERIMENTAL_<NAME>` 可以覆盖单个功能，`KIMI_CODE_EXPERIMENTAL_FLAG=1` 会在当前进程启用所有实验功能。某个功能被环境变量控制时，`/experiments` 会显示为 locked。
+
 ## `services`
 
 `services` 配置网页搜索（`moonshot_search`）和网页抓取（`moonshot_fetch`）两项内置服务。只识别这两个固定 key，其他 key 会被忽略。两项字段相同：
@@ -226,6 +244,35 @@ pattern = "Bash"
 ::: tip
 MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-code/mcp.json` 中，不在 `config.toml` 里。交互式配置入口是 `/mcp-config`，详见 [Model Context Protocol](../customization/mcp.md)。
 :::
+
+## `tui.toml`
+
+除了 `config.toml`，CLI 还在同一目录下用一份配套的 `tui.toml` 保存终端界面与客户端偏好（`~/.kimi-code/tui.toml`，或覆盖后的 `$KIMI_CODE_HOME/tui.toml`）。它在首次运行时以默认值创建，交互式命令 `/config`、`/theme`、`/editor` 会自动写入，通常无需手动编辑。文件格式有误时，CLI 会回退到默认值并给出提示，而不是启动失败。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `theme` | `string` | `auto` | 配色主题：`auto`（跟随终端）、`dark`、`light` |
+| `[editor].command` | `string` | `""` | 编写长输入用的外部编辑器命令；留空则回退到 `$VISUAL` / `$EDITOR` |
+| `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
+| `[notifications].notification_condition` | `string` | `unfocused` | 何时通知：`unfocused`（仅终端失去焦点时）或 `always`（总是） |
+| `[upgrade].auto_install` | `boolean` | `true` | 是否自动安装新版本 |
+
+```toml
+# ~/.kimi-code/tui.toml
+theme = "auto" # "auto" | "dark" | "light"
+
+[editor]
+command = "" # 留空则使用 $VISUAL / $EDITOR
+
+[notifications]
+enabled = true
+notification_condition = "unfocused" # "unfocused" | "always"
+
+[upgrade]
+auto_install = true
+```
+
+修改在下次启动时生效，或用 `/reload-tui` 立即生效（只重载 `tui.toml`）；`/reload` 会同时重载 `config.toml` 和 `tui.toml`。
 
 ## 下一步
 
