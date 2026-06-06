@@ -85,7 +85,7 @@ describe('Session.init', () => {
       expect.objectContaining({
         type: 'turn.started',
         agentId: 'agent-0',
-        origin: { kind: 'system_trigger', name: 'init' },
+        origin: { kind: 'system_trigger', name: 'subagent' },
       }),
     );
     expect(events).toContainEqual(

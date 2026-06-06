@@ -76,7 +76,7 @@ describe('Agent config', () => {
 
     expect(ctx.newEvents()).toMatchInlineSnapshot(`
       [wire] config.update            { "profileName": "test-profile", "systemPrompt": "Profile system prompt.", "time": "<time>" }
-      [emit] agent.status.updated     { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "permission": "manual" }
+      [emit] agent.status.updated     { "model": "mock-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual" }
       [wire] tools.set_active_tools   { "names": [ "Bash" ], "time": "<time>" }
     `);
     await ctx.expectResumeMatches();
@@ -138,9 +138,9 @@ describe('Agent config', () => {
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] permission.record_approval_result   { "turnId": 0, "toolCallId": "call_bash", "toolName": "Bash", "action": "Running: printf original-result", "result": { "decision": "approved", "selectedLabel": "approve" }, "time": "<time>" }
       [wire] config.update                       { "modelAlias": "changed-model", "time": "<time>" }
-      [emit] agent.status.updated                { "model": "changed-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "permission": "manual" }
+      [emit] agent.status.updated                { "model": "changed-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual" }
       [wire] config.update                       { "systemPrompt": "Changed system prompt.", "time": "<time>" }
-      [emit] agent.status.updated                { "model": "changed-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "permission": "manual" }
+      [emit] agent.status.updated                { "model": "changed-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual" }
       [wire] tools.set_active_tools              { "names": [], "time": "<time>" }
       [wire] context.append_loop_event           { "event": { "type": "tool.call", "uuid": "call_bash", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf original-result", "timeout": 60 }, "description": "Running: printf original-result", "display": { "kind": "command", "command": "printf original-result", "cwd": "<cwd>", "language": "bash" } }, "time": "<time>" }
       [emit] tool.call.started                   { "turnId": 0, "toolCallId": "call_bash", "name": "Bash", "args": { "command": "printf original-result", "timeout": 60 }, "description": "Running: printf original-result", "display": { "kind": "command", "command": "printf original-result", "cwd": "<cwd>", "language": "bash" } }
@@ -149,7 +149,7 @@ describe('Agent config', () => {
       [wire] context.append_loop_event           { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "usage": { "inputOther": 9, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }, "time": "<time>" }
       [emit] turn.step.completed                 { "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 9, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use" }
       [wire] usage.record                        { "model": "mock-model", "usage": { "inputOther": 9, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated                { "model": "changed-model", "contextTokens": 32, "maxContextTokens": 1000000, "contextUsage": 0.000032, "planMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 9, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 9, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 9, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated                { "model": "changed-model", "contextTokens": 32, "maxContextTokens": 1000000, "contextUsage": 0.000032, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 9, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 9, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 9, "output": 23, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] context.append_loop_event           { "event": { "type": "step.begin", "uuid": "<uuid-3>", "turnId": "0", "step": 2 }, "time": "<time>" }
       [emit] turn.step.started                   { "turnId": 0, "step": 2, "stepId": "<uuid-3>" }
       [emit] assistant.delta                     { "turnId": 0, "delta": "Still using the original turn config." }
@@ -157,7 +157,7 @@ describe('Agent config', () => {
       [wire] context.append_loop_event           { "event": { "type": "step.end", "uuid": "<uuid-3>", "turnId": "0", "step": 2, "usage": { "inputOther": 37, "output": 13, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }, "time": "<time>" }
       [emit] turn.step.completed                 { "turnId": 0, "step": 2, "stepId": "<uuid-3>", "usage": { "inputOther": 37, "output": 13, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [wire] usage.record                        { "model": "mock-model", "usage": { "inputOther": 37, "output": 13, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated                { "model": "changed-model", "contextTokens": 50, "maxContextTokens": 1000000, "contextUsage": 0.00005, "planMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 46, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 46, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 46, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated                { "model": "changed-model", "contextTokens": 50, "maxContextTokens": 1000000, "contextUsage": 0.00005, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 46, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 46, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 46, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                          { "turnId": 0, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`
@@ -181,7 +181,7 @@ describe('Agent config', () => {
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-5>", "turnId": "1", "step": 1, "usage": { "inputOther": 56, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }, "time": "<time>" }
       [emit] turn.step.completed         { "turnId": 1, "step": 1, "stepId": "<uuid-5>", "usage": { "inputOther": 56, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn" }
       [wire] usage.record                { "model": "changed-model", "usage": { "inputOther": 56, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
-      [emit] agent.status.updated        { "model": "changed-model", "contextTokens": 68, "maxContextTokens": 1000000, "contextUsage": 0.000068, "planMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 46, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 }, "changed-model": { "inputOther": 56, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 102, "output": 48, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 56, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
+      [emit] agent.status.updated        { "model": "changed-model", "contextTokens": 68, "maxContextTokens": 1000000, "contextUsage": 0.000068, "planMode": false, "swarmMode": false, "permission": "manual", "usage": { "byModel": { "mock-model": { "inputOther": 46, "output": 36, "inputCacheRead": 0, "inputCacheCreation": 0 }, "changed-model": { "inputOther": 56, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 102, "output": 48, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 56, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [emit] turn.ended                  { "turnId": 1, "reason": "completed" }
     `);
     expect(ctx.lastLlmInput()).toMatchInlineSnapshot(`

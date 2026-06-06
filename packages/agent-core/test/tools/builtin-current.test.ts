@@ -366,10 +366,6 @@ describe('current builtin collaboration tools', () => {
       type: 'object',
       properties: {
         subagent_type: { type: 'string' },
-        timeout: {
-          type: 'integer',
-          description: expect.stringContaining('enough time to complete'),
-        },
       },
     });
     expect(Object.keys(tool.parameters['properties'] as Record<string, unknown>).at(-1)).toBe(
@@ -391,6 +387,7 @@ describe('current builtin collaboration tools', () => {
           swarmItem: 'src/a.ts',
           runInBackground: false,
           resumeAgentId: undefined,
+          signal,
         },
         {
           data: { kind: 'spawn', index: 2, item: 'src/b.ts', prompt: 'Review src/b.ts' },
@@ -401,13 +398,9 @@ describe('current builtin collaboration tools', () => {
           swarmItem: 'src/b.ts',
           runInBackground: false,
           resumeAgentId: undefined,
+          signal,
         },
       ],
-      {
-        signal,
-        timeoutMs: undefined,
-        totalTimeoutMs: undefined,
-      },
     );
     expect(result.output).toBe([
       '<agent_swarm_result>',
@@ -511,6 +504,7 @@ describe('current builtin collaboration tools', () => {
           swarmItem: 'src/old-a.ts',
           runInBackground: false,
           resumeAgentId: 'agent-old-1',
+          signal,
         },
         {
           data: {
@@ -527,6 +521,7 @@ describe('current builtin collaboration tools', () => {
           swarmItem: 'src/old-b.ts',
           runInBackground: false,
           resumeAgentId: 'agent-old-2',
+          signal,
         },
         {
           data: {
@@ -542,13 +537,9 @@ describe('current builtin collaboration tools', () => {
           swarmItem: 'src/new.ts',
           runInBackground: false,
           resumeAgentId: undefined,
+          signal,
         },
       ],
-      {
-        signal,
-        timeoutMs: undefined,
-        totalTimeoutMs: undefined,
-      },
     );
     expect(result.output).toBe([
       '<agent_swarm_result>',
