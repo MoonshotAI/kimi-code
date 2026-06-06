@@ -477,7 +477,7 @@ describe('SubagentBatch scheduling contract', () => {
         ],
         { signal },
       );
-      running.finally(() => {
+      void running.finally(() => {
         settled = true;
       });
 

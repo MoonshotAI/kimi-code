@@ -630,7 +630,7 @@ describe('ToolCallComponent', () => {
     });
 
     let out = strip(component.render(120).join('\n'));
-    expect(out).toContain('Explore Agent Starting (explore project xxx) · 0 tools · 0s');
+    expect(out).toContain('Explore Agent Queued (explore project xxx) · 0 tools · 0s');
     expect(out).not.toContain('Using Agent');
     expect(out).not.toContain('Used Agent');
 
