@@ -292,7 +292,7 @@ describe('Agent turn flow', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('keeps task swarm mode active when the swarm turn fails', async () => {
+  it('exits task swarm mode when the swarm turn fails', async () => {
     const ctx = testAgent();
     ctx.configure();
 
@@ -300,11 +300,11 @@ describe('Agent turn flow', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fail a swarm task' }] });
     await ctx.untilTurnEnd();
 
-    expect(ctx.agent.swarmMode.isActive).toBe(true);
-    expect(eventIndex(ctx, '[wire]', 'swarm_mode.exit')).toBe(-1);
+    expect(ctx.agent.swarmMode.isActive).toBe(false);
+    expect(eventIndex(ctx, '[wire]', 'swarm_mode.exit')).toBeGreaterThan(-1);
   });
 
-  it('keeps task swarm mode active when the user cancels the swarm turn', async () => {
+  it('exits task swarm mode when the user cancels the swarm turn', async () => {
     const ctx = testAgent({ generate: abortableGenerate });
     ctx.configure();
 
@@ -315,8 +315,8 @@ describe('Agent turn flow', () => {
     await ctx.rpc.cancel({ turnId: 0 });
     await ctx.untilTurnEnd();
 
-    expect(ctx.agent.swarmMode.isActive).toBe(true);
-    expect(eventIndex(ctx, '[wire]', 'swarm_mode.exit')).toBe(-1);
+    expect(ctx.agent.swarmMode.isActive).toBe(false);
+    expect(eventIndex(ctx, '[wire]', 'swarm_mode.exit')).toBeGreaterThan(-1);
   });
 
   it('enters silent swarm mode when the agent calls AgentSwarm', async () => {
