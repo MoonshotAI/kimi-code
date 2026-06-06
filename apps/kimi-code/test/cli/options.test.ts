@@ -280,31 +280,6 @@ describe('CLI options parsing', () => {
       expect(upgradeCalls).toBe(1);
     });
 
-    it('routes swarm-demo with the optional count argument', () => {
-      const swarmDemoCounts: Array<string | undefined> = [];
-      const program = createProgram(
-        '0.0.0',
-        () => {
-          throw new Error('main action should not run');
-        },
-        () => {},
-        () => {},
-        () => {},
-        (count) => {
-          swarmDemoCounts.push(count);
-        },
-      );
-      program.exitOverride();
-      program.configureOutput({
-        writeOut: () => {},
-        writeErr: () => {},
-      });
-
-      program.parse(['node', 'kimi', 'swarm-demo', '48']);
-
-      expect(swarmDemoCounts).toEqual(['48']);
-    });
-
     it('registers the visible sub-commands', () => {
       const program = createProgram('0.0.0', () => {}, () => {});
       const commandNames: string[] = program.commands
@@ -317,7 +292,6 @@ describe('CLI options parsing', () => {
         'login',
         'doctor',
         'migrate',
-        'swarm-demo',
         'upgrade',
       ]);
     });
