@@ -461,7 +461,7 @@ describe('SessionSubagentHost', () => {
       ) => {
         const outcome = createControlledPromise<QueuedSubagentAttemptOutcome<T>>();
         if (attempts.length >= 7) {
-          setTimeout(options.markReady, 100);
+          setTimeout(() => options.markReady(), 100);
         }
         attempts.push({
           task: task as unknown as QueuedSubagentTask<number>,
