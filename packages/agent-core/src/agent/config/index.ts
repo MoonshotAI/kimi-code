@@ -17,6 +17,8 @@ import type { ResolvedRuntimeProvider } from '../../session/provider-manager';
 export * from './types';
 export { resolveThinkingEffort, type ThinkingEffort } from './thinking';
 
+const KIMI_NOW_LINE_RE = /The current date and time in ISO format is `[^`]*`\./;
+
 export class ConfigState {
   private _cwd: string;
   private _modelAlias: string | undefined;
@@ -131,6 +133,10 @@ export class ConfigState {
     return this._systemPrompt;
   }
 
+  refreshRuntimeValues(): void {
+    this._systemPrompt = refreshKimiNow(this._systemPrompt);
+  }
+
   get modelCapabilities(): ModelCapability {
     return this.tryResolvedProviderConfig()?.modelCapabilities ?? UNKNOWN_CAPABILITY;
   }
@@ -151,4 +157,11 @@ export class ConfigState {
       return undefined;
     }
   }
+}
+
+function refreshKimiNow(systemPrompt: string): string {
+  return systemPrompt.replace(
+    KIMI_NOW_LINE_RE,
+    `The current date and time in ISO format is \`${new Date().toISOString()}\`.`,
+  );
 }

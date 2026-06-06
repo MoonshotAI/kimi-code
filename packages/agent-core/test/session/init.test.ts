@@ -37,6 +37,47 @@ afterEach(async () => {
 });
 
 describe('Session.init', () => {
+  it('refreshes KIMI_NOW in the system prompt when resuming a session', async () => {
+    vi.useFakeTimers();
+    try {
+      const workDir = await makeTempDir();
+      const sessionDir = await makeTempDir();
+      const oldNow = '2026-05-08T00:00:18.000Z';
+      const resumedNow = '2026-06-05T02:42:13.000Z';
+
+      vi.setSystemTime(new Date(oldNow));
+      const session = new Session({
+        id: 'test-kimi-now',
+        kaos: testKaos.withCwd(workDir),
+        homedir: sessionDir,
+        rpc: createSessionRpc([]),
+        skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+        providerManager: testProviderManager(),
+      });
+      await session.createMain();
+      expect(session.getReadyAgent('main')?.config.systemPrompt).toContain(oldNow);
+      await session.closeForReload();
+
+      vi.setSystemTime(new Date(resumedNow));
+      const resumed = new Session({
+        id: 'test-kimi-now',
+        kaos: testKaos.withCwd(workDir),
+        homedir: sessionDir,
+        rpc: createSessionRpc([]),
+        skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+        providerManager: testProviderManager(),
+      });
+      await resumed.resume();
+
+      const prompt = resumed.getReadyAgent('main')?.config.systemPrompt;
+      expect(prompt).toContain(resumedNow);
+      expect(prompt).not.toContain(oldNow);
+      await resumed.closeForReload();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('runs an isolated system-trigger turn and records the latest AGENTS as a system reminder', async () => {
     const workDir = await makeTempDir();
     const sessionDir = await makeTempDir();
