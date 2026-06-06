@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { basename, dirname } from 'node:path';
 
 import { log, type Logger } from '@moonshot-ai/kimi-code-sdk';
 import type { TelemetryProperties } from '@moonshot-ai/kimi-telemetry';
@@ -92,6 +93,7 @@ export function canAutoInstall(source: InstallSource, platform: NodeJS.Platform)
 interface SpawnCommand {
   readonly cmd: string;
   readonly args: readonly string[];
+  readonly env?: Record<string, string>;
 }
 
 export function spawnForSource(
@@ -108,13 +110,31 @@ export function spawnForSource(
       return { cmd: withCmdSuffix('yarn', platform), args: ['global', 'add', `${NPM_PACKAGE_NAME}@${version}`] };
     case 'bun-global':
       return { cmd: bunCommand(platform), args: ['add', '-g', `${NPM_PACKAGE_NAME}@${version}`] };
-    case 'native':
+    case 'native': {
       // `curl … | bash` reports only the trailing bash's exit status, so a
       // failed download (curl can't connect → empty stdin → bash exits 0)
       // would look like a successful update. `pipefail` makes the pipeline
       // surface curl's non-zero status so installUpdate() rejects and we warn
       // instead of printing "Updated …".
-      return { cmd: 'bash', args: ['-c', `set -o pipefail; ${NATIVE_INSTALL_COMMAND_UNIX}`] };
+      //
+      // Point KIMI_INSTALL_DIR at the directory containing the current native
+      // binary so the install script overwrites it in place.  The install
+      // script always writes to ${KIMI_INSTALL_DIR}/bin/kimi, so when the
+      // binary lives under a `bin/` subdirectory we pass the parent of that
+      // `bin/` dir (e.g. ~/.local/bin/kimi → ~/.local).
+      // Set KIMI_NO_MODIFY_PATH to skip shell-rc modification — during an
+      // upgrade the binary is already on the user's PATH.
+      const execDir = dirname(process.execPath);
+      const installDir = basename(execDir) === 'bin' ? dirname(execDir) : execDir;
+      return {
+        cmd: 'bash',
+        args: ['-c', `set -o pipefail; ${NATIVE_INSTALL_COMMAND_UNIX}`],
+        env: {
+          KIMI_INSTALL_DIR: installDir,
+          KIMI_NO_MODIFY_PATH: '1',
+        },
+      };
+    }
     case 'unsupported':
       throw new Error('unsupported install source cannot be auto-installed');
   }
@@ -379,9 +399,12 @@ export async function installUpdate(
   version: string,
   platform: NodeJS.Platform,
 ): Promise<void> {
-  const { cmd, args } = spawnForSource(source, version, platform);
+  const { cmd, args, env } = spawnForSource(source, version, platform);
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(cmd, [...args], { stdio: 'inherit' });
+    const child = spawn(cmd, [...args], {
+      stdio: 'inherit',
+      ...(env ? { env: { ...process.env, ...env } } : {}),
+    });
     child.once('error', reject);
     child.once('exit', (code, signal) => {
       if (code === 0) {
@@ -435,7 +458,7 @@ async function startBackgroundInstall(
       source,
     });
 
-    const { cmd, args } = spawnForSource(source, target.version, platform);
+    const { cmd, args, env } = spawnForSource(source, target.version, platform);
     let settled = false;
 
     const finish = (succeeded: boolean): void => {
@@ -487,7 +510,11 @@ async function startBackgroundInstall(
       });
     };
 
-    const child = spawn(cmd, [...args], { detached: true, stdio: 'ignore' });
+    const child = spawn(cmd, [...args], {
+      detached: true,
+      stdio: 'ignore',
+      ...(env ? { env: { ...process.env, ...env } } : {}),
+    });
     child.once('error', () => { finish(false); });
     child.once('exit', (code) => { finish(code === 0); });
     child.unref();

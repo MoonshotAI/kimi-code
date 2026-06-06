@@ -1,6 +1,7 @@
 import type * as ChildProcess from 'node:child_process';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { basename, dirname } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -411,7 +412,15 @@ describe('runUpdatePreflight', () => {
       await runUpdatePreflight('0.4.0', options);
       const call = mocks.spawn.mock.calls[0];
       expect(call?.[0]).toBe('bash');
-      expect(call?.[2]).toEqual({ stdio: 'inherit' });
+      const execDir = dirname(process.execPath);
+      const expectedInstallDir = basename(execDir) === 'bin' ? dirname(execDir) : execDir;
+      expect(call?.[2]).toMatchObject({
+        stdio: 'inherit',
+        env: expect.objectContaining({
+          KIMI_INSTALL_DIR: expectedInstallDir,
+          KIMI_NO_MODIFY_PATH: '1',
+        }),
+      });
       const [flag, script] = call?.[1] as string[];
       expect(flag).toBe('-c');
       // pipefail must come before the pipeline so a failed `curl` is not masked
