@@ -505,6 +505,34 @@ describe('AgentSwarmProgressComponent', () => {
     expect(output).not.toContain('Failed:');
   });
 
+  it('applies no-index AgentSwarm result statuses by tag order', () => {
+    const component = new AgentSwarmProgressComponent({
+      description: 'Review changed files',
+      colors: darkColors,
+    });
+
+    component.updateArgs({
+      description: 'Review changed files',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+    const applied = component.applyResult([
+      '<agent_swarm_result>',
+      '<summary>failed: 1, aborted: 1</summary>',
+      '<subagent agent_id="agent-1" item="src/a.ts" outcome="failed">' +
+        'Agent timed out after 30s.</subagent>',
+      '<subagent agent_id="agent-2" item="src/b.ts" outcome="aborted">' +
+        'User interrupted.</subagent>',
+      '</agent_swarm_result>',
+    ].join('\n'));
+
+    const output = strip(component.render(120).join('\n'));
+
+    expect(applied).toBe(true);
+    expect(output).toContain('✗ Agent timed out after 30s.');
+    expect(output).toContain('⊘ Aborted.');
+    expect(output).not.toContain('Completed.');
+  });
+
   it('strips nested AgentSwarm prefixes from failure details', () => {
     const component = new AgentSwarmProgressComponent({
       description: 'Review changed files',

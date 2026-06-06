@@ -361,6 +361,45 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).not.toContain('Agent timed out.');
   });
 
+  it('does not show no-index replayed AgentSwarm failures as completed', async () => {
+    const replay: AgentReplayRecord[] = [
+      message('user', [{ type: 'text', text: 'review files with a swarm' }]),
+      message('assistant', [], {
+        toolCalls: [
+          toolCall('call_swarm', 'AgentSwarm', {
+            description: 'Review changed files',
+            items: ['src/a.ts', 'src/b.ts'],
+          }),
+        ],
+      }),
+      message(
+        'tool',
+        [{
+          type: 'text',
+          text: [
+            '<agent_swarm_result>',
+            '<summary>failed: 1, aborted: 1</summary>',
+            '<resume_hint>Call AgentSwarm with resume_agent_ids using the agent_id values ' +
+              'in this result to continue unfinished work.</resume_hint>',
+            '<subagent agent_id="agent-1" item="src/a.ts" outcome="failed">' +
+              'Agent timed out.</subagent>',
+            '<subagent agent_id="agent-2" item="src/b.ts" outcome="aborted">' +
+              'User interrupted.</subagent>',
+            '</agent_swarm_result>',
+          ].join('\n'),
+        }],
+        { toolCallId: 'call_swarm' },
+      ),
+    ];
+
+    const driver = await replayIntoDriver(replay);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+
+    expect(transcript).toContain('Agent swarm: ✗ 1 failed · ⊘ 1 aborted');
+    expect(transcript).not.toContain('Agent swarm: ✓ Completed.');
+    expect(transcript).not.toContain('<agent_swarm_result>');
+  });
+
   it('hydrates todo and background snapshot state from resumed main agent', async () => {
     const driver = await replayIntoDriver([], {
       toolStore: {

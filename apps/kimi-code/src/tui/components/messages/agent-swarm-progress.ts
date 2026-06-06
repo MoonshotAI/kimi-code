@@ -82,7 +82,7 @@ interface AgentSwarmSnapshot {
 
 interface AgentSwarmResultStatus {
   readonly index: number;
-  readonly status: 'completed' | 'failed';
+  readonly status: 'completed' | 'failed' | 'cancelled';
   readonly completedText?: string;
   readonly failureText?: string;
 }
@@ -396,6 +396,16 @@ export class AgentSwarmProgressComponent implements Component {
         const normalizedFailureText = normalizeFailureText(entry.failureText);
         if (normalizedFailureText !== undefined) member.failureText = normalizedFailureText;
         clearMemberState(member, 'completedAtMs', 'completedText', 'suspendedReason');
+      } else {
+        this.progressEstimator.markCancelled(member.id, nowMs);
+        clearMemberState(
+          member,
+          'completedAtMs',
+          'completedText',
+          'failedAtMs',
+          'failureText',
+          'suspendedReason',
+        );
       }
       member.phase = entry.status;
     }
@@ -835,18 +845,19 @@ function parseAgentSwarmDescriptionIndex(description: string | undefined): numbe
 
 export function agentSwarmResultSummaryFromOutput(output: string): AgentSwarmResultSummary {
   const statuses = parseAgentSwarmResultStatuses(output);
-  const aborted = countAgentSwarmAbortedResultStatuses(output);
   let completed = 0;
   let failed = 0;
+  let aborted = 0;
   for (const status of statuses) {
     if (status.status === 'completed') completed += 1;
     if (status.status === 'failed') failed += 1;
+    if (status.status === 'cancelled') aborted += 1;
   }
   return {
     completed,
     failed,
     aborted,
-    parsed: completed + failed + aborted > 0,
+    parsed: statuses.length > 0,
   };
 }
 
@@ -858,17 +869,19 @@ function parseAgentSwarmResultStatuses(output: string): AgentSwarmResultStatus[]
 
 function forEachSubagentTag<T>(
   output: string,
-  callback: (attrs: string, body: string) => T | undefined,
+  callback: (attrs: string, body: string, index: number) => T | undefined,
 ): T[] {
   const result: T[] = [];
   const tagPattern = /<subagent\b([^>]*)>/g;
   let match: RegExpExecArray | null;
+  let index = 0;
   while ((match = tagPattern.exec(output)) !== null) {
     const attrs = match[1] ?? '';
     const closeIndex = output.indexOf('</subagent>', tagPattern.lastIndex);
     if (closeIndex < 0) break;
     const body = output.slice(tagPattern.lastIndex, closeIndex);
-    const value = callback(attrs, body);
+    index += 1;
+    const value = callback(attrs, body, index);
     if (value !== undefined) result.push(value);
     tagPattern.lastIndex = closeIndex + '</subagent>'.length;
   }
@@ -876,31 +889,26 @@ function forEachSubagentTag<T>(
 }
 
 function parseAgentSwarmXmlResultStatuses(output: string): AgentSwarmResultStatus[] {
-  return forEachSubagentTag(output, (attrs, body) => {
-    const index = Number(xmlAttribute(attrs, 'index'));
+  return forEachSubagentTag(output, (attrs, body, tagIndex) => {
+    const explicitIndex = Number(xmlAttribute(attrs, 'index'));
+    const index =
+      Number.isInteger(explicitIndex) && explicitIndex > 0 ? explicitIndex : tagIndex;
     const outcome = xmlAttribute(attrs, 'outcome');
-    if (!Number.isInteger(index) || index <= 0 || (outcome !== 'completed' && outcome !== 'failed')) {
+    if (
+      outcome !== 'completed' &&
+      outcome !== 'failed' &&
+      outcome !== 'aborted' &&
+      outcome !== 'cancelled'
+    ) {
       return undefined;
     }
     return {
       index,
-      status: outcome,
+      status: outcome === 'aborted' || outcome === 'cancelled' ? 'cancelled' : outcome,
       completedText: outcome === 'completed' ? body : undefined,
       failureText: outcome === 'failed' ? body : undefined,
     };
   });
-}
-
-function countAgentSwarmAbortedResultStatuses(output: string): number {
-  const xmlAborted = forEachSubagentTag(output, (attrs) => {
-    const index = Number(xmlAttribute(attrs, 'index'));
-    const outcome = xmlAttribute(attrs, 'outcome');
-    return Number.isInteger(index) && index > 0 && (outcome === 'aborted' || outcome === 'cancelled')
-      ? true
-      : undefined;
-  }).length;
-  if (xmlAborted > 0) return xmlAborted;
-  return countAgentSwarmLegacyAbortedResultStatuses(output);
 }
 
 function xmlAttribute(attrs: string, name: string): string | undefined {
@@ -908,7 +916,10 @@ function xmlAttribute(attrs: string, name: string): string | undefined {
   return match?.[1];
 }
 
-function forEachAgentBlock<T>(output: string, callback: (block: string, index: number) => T | undefined): T[] {
+function forEachAgentBlock<T>(
+  output: string,
+  callback: (block: string, index: number) => T | undefined,
+): T[] {
   const result: T[] = [];
   for (const block of output.split(/\n(?=\[agent \d+\]\n)/)) {
     const indexMatch = /^\[agent (\d+)\]$/m.exec(block);
@@ -921,21 +932,16 @@ function forEachAgentBlock<T>(output: string, callback: (block: string, index: n
 
 function parseAgentSwarmLegacyResultStatuses(output: string): AgentSwarmResultStatus[] {
   return forEachAgentBlock(output, (block, index) => {
-    const statusMatch = /^status: (completed|failed)$/m.exec(block);
+    const statusMatch = /^status: (completed|failed|aborted|cancelled)$/m.exec(block);
     if (statusMatch === null) return undefined;
+    const status = statusMatch[1] as 'completed' | 'failed' | 'aborted' | 'cancelled';
     return {
       index,
-      status: statusMatch[1] as 'completed' | 'failed',
-      completedText: parseAgentSwarmCompletedText(block),
-      failureText: parseAgentSwarmFailureText(block),
+      status: status === 'aborted' || status === 'cancelled' ? 'cancelled' : status,
+      completedText: status === 'completed' ? parseAgentSwarmCompletedText(block) : undefined,
+      failureText: status === 'failed' ? parseAgentSwarmFailureText(block) : undefined,
     };
   });
-}
-
-function countAgentSwarmLegacyAbortedResultStatuses(output: string): number {
-  return forEachAgentBlock(output, (block) =>
-    /^status: (aborted|cancelled)$/m.test(block) ? true : undefined,
-  ).length;
 }
 
 function parseAgentSwarmCompletedText(block: string): string | undefined {
