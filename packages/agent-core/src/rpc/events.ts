@@ -209,32 +209,18 @@ export interface SubagentSpawnedEvent {
   readonly parentToolCallUuid?: string | undefined;
   readonly parentAgentId?: string | undefined;
   readonly description?: string | undefined;
-  readonly swarmIndex?: number | undefined;
+  readonly swarmIndex?: number;
   readonly runInBackground: boolean;
 }
 
 export interface SubagentStartedEvent {
   readonly type: 'subagent.started';
   readonly subagentId: string;
-  readonly subagentName: string;
-  readonly parentToolCallId: string;
-  readonly parentToolCallUuid?: string | undefined;
-  readonly parentAgentId?: string | undefined;
-  readonly description?: string | undefined;
-  readonly swarmIndex?: number | undefined;
-  readonly runInBackground: boolean;
 }
 
 export interface SubagentSuspendedEvent {
   readonly type: 'subagent.suspended';
   readonly subagentId: string;
-  readonly subagentName: string;
-  readonly parentToolCallId: string;
-  readonly parentToolCallUuid?: string | undefined;
-  readonly parentAgentId?: string | undefined;
-  readonly description?: string | undefined;
-  readonly swarmIndex?: number | undefined;
-  readonly runInBackground: boolean;
   readonly reason: string;
 }
 

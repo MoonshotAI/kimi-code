@@ -59,10 +59,6 @@ describe('SessionSubagentHost', () => {
         event: 'subagent.suspended',
         args: expect.objectContaining({
           subagentId: 'agent-0',
-          subagentName: 'coder',
-          parentToolCallId: 'call_swarm',
-          swarmIndex: 1,
-          runInBackground: false,
           reason: 'Provider rate limit; subagent requeued for retry.',
         }),
       }),
@@ -1003,8 +999,6 @@ describe('SessionSubagentHost', () => {
         event: 'subagent.started',
         args: expect.objectContaining({
           subagentId: 'agent-0',
-          parentToolCallId: 'call_swarm',
-          swarmIndex: 1,
         }),
       }),
     );

@@ -62,15 +62,12 @@ function startSwarmProgress(driver: ActivityDriver, state: TUIState): AgentSwarm
     subagentName: 'coder',
     parentToolCallId: 'call_swarm',
     description: 'Review changed files #1 (coder)',
+    swarmIndex: 1,
     runInBackground: false,
   } as Parameters<typeof handler.handleLifecycleEvent>[0]);
   handler.handleLifecycleEvent({
     type: 'subagent.started',
     subagentId: 'agent-1',
-    subagentName: 'coder',
-    parentToolCallId: 'call_swarm',
-    description: 'Review changed files #1 (coder)',
-    runInBackground: false,
   } as Parameters<typeof handler.handleLifecycleEvent>[0]);
 
   const progress = state.transcriptContainer.children.find(

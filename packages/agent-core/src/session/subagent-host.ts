@@ -157,7 +157,7 @@ export class SessionSubagentHost {
       try {
         runOptions.signal.throwIfAborted();
         child.config.update({ modelAlias: parent.config.modelAlias });
-        this.emitSubagentStarted(parent, agentId, profileName, runOptions);
+        this.emitSubagentStarted(parent, agentId);
         const turnId = child.turn.retry('agent-host');
         if (turnId === null) {
           throw new Error(`Agent instance "${agentId}" could not start a retry turn`);
@@ -201,13 +201,6 @@ export class SessionSubagentHost {
     parent?.emitEvent({
       type: 'subagent.suspended',
       subagentId: event.agentId,
-      subagentName: event.task.profileName,
-      parentToolCallId: event.task.parentToolCallId,
-      parentToolCallUuid: event.task.parentToolCallUuid,
-      parentAgentId: this.ownerAgentId,
-      description: event.task.description,
-      swarmIndex: event.task.swarmIndex,
-      runInBackground: event.task.runInBackground,
       reason: event.reason,
     });
   }
@@ -311,7 +304,7 @@ export class SessionSubagentHost {
       if (gitContext) childPrompt = `${gitContext}\n\n${childPrompt}`;
     }
 
-    this.emitSubagentStarted(parent, childId, profileName, options);
+    this.emitSubagentStarted(parent, childId);
     const turnId = child.turn.prompt([{ type: 'text', text: childPrompt }], SUBAGENT_PROMPT_ORIGIN);
     if (turnId === null) {
       throw new Error(`Agent instance "${childId}" could not start a turn`);
@@ -437,19 +430,10 @@ export class SessionSubagentHost {
   private emitSubagentStarted(
     parent: Agent,
     childId: string,
-    profileName: string,
-    options: RunSubagentOptions,
   ): void {
     parent.emitEvent({
       type: 'subagent.started',
       subagentId: childId,
-      subagentName: profileName,
-      parentToolCallId: options.parentToolCallId,
-      parentToolCallUuid: options.parentToolCallUuid,
-      parentAgentId: this.ownerAgentId,
-      description: options.description,
-      swarmIndex: options.swarmIndex,
-      runInBackground: options.runInBackground,
     });
   }
 

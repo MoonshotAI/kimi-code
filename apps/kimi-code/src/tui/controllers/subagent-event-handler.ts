@@ -26,6 +26,8 @@ import type { SessionEventHost } from './session-event-handler';
 export interface SubagentInfo {
   readonly parentToolCallId: string;
   readonly name: string;
+  readonly runInBackground: boolean;
+  readonly swarmIndex?: number;
 }
 
 export type SubagentLifecycleEvent = Event & { type: `subagent.${string}` };
@@ -250,15 +252,17 @@ export class SubAgentEventHandler {
   private handleSubagentStarted(
     event: SubagentLifecycleEventOf<'subagent.started'>,
   ): void {
-    this.rememberSubagent(event);
-    if (!event.runInBackground) this.handleForegroundSubagentStarted(event);
+    const info = this.subagentInfo.get(event.subagentId);
+    if (info === undefined) return;
+    if (!info.runInBackground) this.handleForegroundSubagentStarted(event, info);
   }
 
   private handleSubagentSuspended(
     event: SubagentLifecycleEventOf<'subagent.suspended'>,
   ): void {
-    this.rememberSubagent(event);
-    if (!event.runInBackground) this.handleForegroundSubagentSuspended(event);
+    const info = this.subagentInfo.get(event.subagentId);
+    if (info === undefined) return;
+    if (!info.runInBackground) this.handleForegroundSubagentSuspended(event, info);
   }
 
   private handleSubagentCompleted(
@@ -376,15 +380,13 @@ export class SubAgentEventHandler {
   }
 
   private rememberSubagent(
-    event:
-      | SubagentLifecycleEventOf<'subagent.spawned'>
-      | SubagentLifecycleEventOf<'subagent.started'>
-      | SubagentLifecycleEventOf<'subagent.suspended'>,
+    event: SubagentLifecycleEventOf<'subagent.spawned'>,
   ): void {
-    if (event.type !== 'subagent.spawned' && this.subagentInfo.has(event.subagentId)) return;
     this.subagentInfo.set(event.subagentId, {
       parentToolCallId: event.parentToolCallId,
       name: event.subagentName,
+      runInBackground: event.runInBackground,
+      swarmIndex: event.swarmIndex,
     });
   }
 
@@ -412,30 +414,32 @@ export class SubAgentEventHandler {
 
   private handleForegroundSubagentStarted(
     event: SubagentLifecycleEventOf<'subagent.started'>,
+    info: SubagentInfo,
   ): void {
-    if (this.updateAgentSwarmProgress(event.parentToolCallId, (progress) => {
+    if (this.updateAgentSwarmProgress(info.parentToolCallId, (progress) => {
       progress.markStarted(event.subagentId);
     })) {
       return;
     }
 
-    const tc = this.getOrActivateToolComponent(event.parentToolCallId);
+    const tc = this.getOrActivateToolComponent(info.parentToolCallId);
     if (tc === undefined) return;
     tc.onSubagentStarted({
       agentId: event.subagentId,
-      agentName: event.subagentName,
-      runInBackground: event.runInBackground,
+      agentName: info.name,
+      runInBackground: info.runInBackground,
     });
   }
 
   private handleForegroundSubagentSuspended(
     event: SubagentLifecycleEventOf<'subagent.suspended'>,
+    info: SubagentInfo,
   ): void {
-    this.updateAgentSwarmProgress(event.parentToolCallId, (progress) => {
+    this.updateAgentSwarmProgress(info.parentToolCallId, (progress) => {
       progress.markSuspended({
         agentId: event.subagentId,
         reason: event.reason,
-        swarmIndex: event.swarmIndex,
+        swarmIndex: info.swarmIndex,
       });
     });
   }
