@@ -20,7 +20,7 @@ export class SwarmMode {
         variant: 'swarm_mode',
       });
     }
-    this.agent.emitStatusUpdated({ swarmMode: true });
+    this.agent.emitStatusUpdated();
   }
 
   restoreEnter(trigger: SwarmModeTrigger): void {
@@ -32,7 +32,7 @@ export class SwarmMode {
     this.agent.records.logRecord({ type: 'swarm_mode.exit' });
     const trigger = this.active;
     this.active = null;
-    this.agent.emitStatusUpdated({ swarmMode: false });
+    this.agent.emitStatusUpdated();
     if (trigger !== 'explicit') return;
     if (this.agent.context.popMatchedMessage((origin) => origin?.kind === 'injection' && origin.variant === 'swarm_mode')) {
       return;

@@ -206,16 +206,6 @@ kimi migrate
 
 完整迁移说明见[从 kimi-cli 迁移](../guides/migration.md)。
 
-### `kimi swarm-demo`
-
-运行一个终端 UI 动画演示，展示多个 swarm 的进度条。该命令不会启动 LLM 会话，也不会调用供应商，只用于预览 swarm UI。
-
-```sh
-kimi swarm-demo [count]
-```
-
-省略 `count` 时默认展示 32 个 swarm。传入正整数可以调整数量。演示会持续动画，直到按下 `q`、`Esc` 或 `Ctrl-C` 退出。
-
 ### `kimi upgrade`
 
 立即检查最新版本并展示更新提示，选择操作后退出。

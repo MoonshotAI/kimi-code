@@ -206,16 +206,6 @@ kimi migrate
 
 For full migration instructions, see [Migrating from kimi-cli](../guides/migration.md).
 
-### `kimi swarm-demo`
-
-Run an animated terminal UI demo that shows progress bars for multiple swarms. It does not start an LLM session or call a provider; it is only for previewing the swarm UI.
-
-```sh
-kimi swarm-demo [count]
-```
-
-When `count` is omitted, the demo renders 32 swarms. Pass a positive integer to change the number shown. The demo keeps animating until you press `q`, `Esc`, or `Ctrl-C`.
-
 ### `kimi upgrade`
 
 Immediately check for the latest version and display an update prompt; exits after you make a selection.

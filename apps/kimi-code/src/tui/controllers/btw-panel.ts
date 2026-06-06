@@ -133,7 +133,6 @@ export class BtwPanelController {
       case 'compaction.started':
       case 'cron.fired':
       case 'error':
-      case 'goal.updated':
       case 'mcp.server.status':
       case 'session.meta.updated':
       case 'skill.activated':
