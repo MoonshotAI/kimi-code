@@ -100,6 +100,7 @@ describe('built-in slash command registry', () => {
     expect(new Set(names).size).toBe(names.length);
     expect(names).toEqual(
       expect.arrayContaining([
+        'check-update',
         'compact',
         'btw',
         'editor',
@@ -123,6 +124,7 @@ describe('built-in slash command registry', () => {
         'theme',
         'title',
         'undo',
+        'update',
         'usage',
         'version',
         'yolo',

@@ -122,6 +122,20 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'update',
+    aliases: ['upgrade'],
+    description: 'Check and install updates',
+    priority: 60,
+    availability: 'always',
+  },
+  {
+    name: 'check-update',
+    aliases: [],
+    description: 'Check for available updates without installing',
+    priority: 60,
+    availability: 'always',
+  },
+  {
     name: 'plugins',
     aliases: [],
     description: 'Manage plugins',

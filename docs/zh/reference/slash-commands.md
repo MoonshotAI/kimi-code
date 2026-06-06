@@ -112,6 +112,8 @@ Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `
 | `/mcp` | — | 列出当前会话中的 MCP server 及连接状态 | 是 |
 | `/plugins` | — | 打开交互式 plugin 管理器 | 是 |
 | `/version` | — | 显示 Kimi Code CLI 版本号 | 是 |
+| `/check-update` | — | 检查是否有可用更新（不安装） | 是 |
+| `/update` | `/upgrade` | 检查并安装最新版本（如可用） | 是 |
 | `/feedback` | — | 提交反馈以改进 Kimi Code CLI | 是 |
 
 ## 退出
