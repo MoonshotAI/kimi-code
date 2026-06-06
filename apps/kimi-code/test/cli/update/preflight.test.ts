@@ -413,12 +413,17 @@ describe('runUpdatePreflight', () => {
       const call = mocks.spawn.mock.calls[0];
       expect(call?.[0]).toBe('bash');
       const execDir = dirname(process.execPath);
-      const envExpect: Record<string, unknown> = { KIMI_NO_MODIFY_PATH: '1' };
-      if (basename(execDir) === 'bin') envExpect.KIMI_INSTALL_DIR = dirname(execDir);
-      expect(call?.[2]).toMatchObject({
-        stdio: 'inherit',
-        env: expect.objectContaining(envExpect),
-      });
+      if (basename(execDir) === 'bin') {
+        expect(call?.[2]).toMatchObject({
+          stdio: 'inherit',
+          env: expect.objectContaining({
+            KIMI_INSTALL_DIR: dirname(execDir),
+            KIMI_NO_MODIFY_PATH: '1',
+          }),
+        });
+      } else {
+        expect(call?.[2]).toEqual({ stdio: 'inherit' });
+      }
       const [flag, script] = call?.[1] as string[];
       expect(flag).toBe('-c');
       // pipefail must come before the pipeline so a failed `curl` is not masked

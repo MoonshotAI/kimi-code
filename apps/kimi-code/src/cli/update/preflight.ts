@@ -72,6 +72,11 @@ function nativeInstallDir(): string | undefined {
   return basename(execDir) === 'bin' ? dirname(execDir) : undefined;
 }
 
+/** Shell-quote a value for single-quote context: safe for paths containing `'`. */
+function shellQuote(val: string): string {
+  return `'${val.replace(/'/g, "'\\''")}'`;
+}
+
 /**
  * Render the env-var suffix (`| KIMI_…=… bash`) for a native install command.
  * The spawned path passes these variables through `SpawnCommand.env`; the
@@ -80,9 +85,11 @@ function nativeInstallDir(): string | undefined {
  */
 function nativeEnvPrefix(): string {
   const dir = nativeInstallDir();
-  const vars = ['KIMI_NO_MODIFY_PATH=1'];
-  if (dir !== undefined) vars.unshift(`KIMI_INSTALL_DIR='${dir}'`);
-  return vars.join(' ');
+  // Only override the install prefix and suppress PATH edits when we know
+  // where the running binary lives; otherwise let the installer use its
+  // defaults (including PATH modification) so the update ends up reachable.
+  if (dir === undefined) return '';
+  return `KIMI_INSTALL_DIR=${shellQuote(dir)} KIMI_NO_MODIFY_PATH=1`;
 }
 
 export function installCommandFor(
@@ -99,10 +106,13 @@ export function installCommandFor(
       return `yarn global add ${NPM_PACKAGE_NAME}@${version}`;
     case 'bun-global':
       return `bun add -g ${NPM_PACKAGE_NAME}@${version}`;
-    case 'native':
-      return platform === 'win32'
-        ? NATIVE_INSTALL_COMMAND_WIN
-        : NATIVE_INSTALL_COMMAND_UNIX.replace('| bash', `| ${nativeEnvPrefix()} bash`);
+    case 'native': {
+      if (platform === 'win32') return NATIVE_INSTALL_COMMAND_WIN;
+      const suffix = nativeEnvPrefix();
+      return suffix
+        ? NATIVE_INSTALL_COMMAND_UNIX.replace('| bash', `| ${suffix} bash`)
+        : NATIVE_INSTALL_COMMAND_UNIX;
+    }
     case 'unsupported':
       return `npm install -g ${NPM_PACKAGE_NAME}@${version}`;
   }
@@ -155,14 +165,21 @@ export function spawnForSource(
       // binary lives under a `bin/` subdirectory we pass the parent of that
       // `bin/` dir (e.g. ~/.local/bin/kimi → ~/.local).
       // Set KIMI_NO_MODIFY_PATH to skip shell-rc modification — during an
-      // upgrade the binary is already on the user's PATH.
+      // upgrade the binary is already on the user's PATH.  Only pass these
+      // vars when we know the running binary's prefix; otherwise let the
+      // installer use its full defaults (including PATH modification) so
+      // the update ends up reachable.
       const installDir = nativeInstallDir();
-      const env: Record<string, string> = { KIMI_NO_MODIFY_PATH: '1' };
-      if (installDir !== undefined) env.KIMI_INSTALL_DIR = installDir;
+      if (installDir !== undefined) {
+        return {
+          cmd: 'bash',
+          args: ['-c', `set -o pipefail; ${NATIVE_INSTALL_COMMAND_UNIX}`],
+          env: { KIMI_INSTALL_DIR: installDir, KIMI_NO_MODIFY_PATH: '1' },
+        };
+      }
       return {
         cmd: 'bash',
         args: ['-c', `set -o pipefail; ${NATIVE_INSTALL_COMMAND_UNIX}`],
-        env,
       };
     }
     case 'unsupported':
