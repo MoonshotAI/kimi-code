@@ -21,6 +21,7 @@ import { AutoModeApprovePermissionPolicy } from '../../src/agent/permission/poli
 import { AutoModeAskUserQuestionDenyPermissionPolicy } from '../../src/agent/permission/policies/auto-mode-ask-user-question-deny';
 import { FallbackAskPermissionPolicy } from '../../src/agent/permission/policies/fallback-ask';
 import { createPermissionDecisionPolicies } from '../../src/agent/permission/policies';
+import { SwarmModeAgentSwarmApprovePermissionPolicy } from '../../src/agent/permission/policies/swarm-mode-agent-swarm-approve';
 import { YoloModeApprovePermissionPolicy } from '../../src/agent/permission/policies/yolo-mode-approve';
 import { ToolAccesses } from '../../src/loop';
 import type { ToolInputDisplay } from '../../src/tools/display';
@@ -679,6 +680,7 @@ describe('Permission policy chain', () => {
       'git-control-path-access-ask',
       'cwd-outside-file-write-ask',
       'yolo-mode-approve',
+      'swarm-mode-agent-swarm-approve',
       'default-tool-approve',
       'git-cwd-write-approve',
       'fallback-ask',
@@ -738,6 +740,23 @@ describe('Simple permission policy direct behavior', () => {
     expect(policy.evaluate()).toBeUndefined();
     Object.assign(agent.permission, { mode: 'yolo' });
     expect(policy.evaluate()).toEqual({ kind: 'approve' });
+  });
+
+  it('approves only AgentSwarm when swarm mode is active', () => {
+    const swarmMode = { isActive: false };
+    const agent = { swarmMode } as unknown as Agent;
+    const policy = new SwarmModeAgentSwarmApprovePermissionPolicy(agent);
+
+    expect(
+      policy.evaluate(hookContext({ id: 'call_agent_swarm_inactive', toolName: 'AgentSwarm' })),
+    ).toBeUndefined();
+    Object.assign(swarmMode, { isActive: true });
+    expect(
+      policy.evaluate(hookContext({ id: 'call_agent_swarm_active', toolName: 'AgentSwarm' })),
+    ).toEqual({ kind: 'approve' });
+    expect(
+      policy.evaluate(hookContext({ id: 'call_agent_active', toolName: 'Agent' })),
+    ).toBeUndefined();
   });
 
   it('always asks in FallbackAskPermissionPolicy', () => {
@@ -3639,6 +3658,7 @@ function makePermissionManager(
     readonly agentType?: Agent['type'];
     readonly hooks?: Agent['hooks'];
     readonly approvalRpc?: boolean;
+    readonly swarmModeActive?: boolean;
   } = {},
 ): {
   manager: PermissionManager;
@@ -3669,6 +3689,11 @@ function makePermissionManager(
       },
       data: vi.fn(async () => null),
       exit: vi.fn(),
+    },
+    swarmMode: {
+      get isActive() {
+        return options.swarmModeActive ?? false;
+      },
     },
   } as unknown as Agent;
   manager = new PermissionManager(agent, options);
@@ -3722,6 +3747,11 @@ function makePlanPermissionManager(input: {
         };
       }),
       exit,
+    },
+    swarmMode: {
+      get isActive() {
+        return false;
+      },
     },
   } as unknown as Agent;
   const manager = new PermissionManager(agent);

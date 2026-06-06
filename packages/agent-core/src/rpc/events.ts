@@ -227,7 +227,6 @@ export interface SubagentSuspendedEvent {
 export interface SubagentCompletedEvent {
   readonly type: 'subagent.completed';
   readonly subagentId: string;
-  readonly parentToolCallId: string;
   readonly resultSummary: string;
   readonly usage?: TokenUsage | undefined;
   readonly contextTokens?: number | undefined;
@@ -236,7 +235,6 @@ export interface SubagentCompletedEvent {
 export interface SubagentFailedEvent {
   readonly type: 'subagent.failed';
   readonly subagentId: string;
-  readonly parentToolCallId: string;
   readonly error: string;
 }
 

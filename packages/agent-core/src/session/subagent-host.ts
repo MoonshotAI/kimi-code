@@ -342,7 +342,6 @@ export class SessionSubagentHost {
     parent.emitEvent({
       type: 'subagent.completed',
       subagentId: childId,
-      parentToolCallId: options.parentToolCallId,
       resultSummary: result,
       usage,
       contextTokens: child.context.tokenCount,
@@ -450,7 +449,6 @@ export class SessionSubagentHost {
     parent.emitEvent({
       type: 'subagent.failed',
       subagentId: childId,
-      parentToolCallId: options.parentToolCallId,
       error: error instanceof Error ? error.message : String(error),
     });
   }

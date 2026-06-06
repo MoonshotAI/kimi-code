@@ -287,7 +287,6 @@ describe('SessionSubagentHost', () => {
         event: 'subagent.completed',
         args: expect.objectContaining({
           subagentId: 'agent-0',
-          parentToolCallId: 'call_agent',
           resultSummary: 'Investigated the request and completed the child task end to end. The relevant module was located, its behavior traced through every call site, and the requested change applied and verified against the existing test suite.',
         }),
       }),
@@ -506,7 +505,6 @@ describe('SessionSubagentHost', () => {
         event: 'subagent.failed',
         args: expect.objectContaining({
           subagentId: 'agent-0',
-          parentToolCallId: 'call_agent',
           error: 'Aborted',
         }),
       }),
@@ -719,7 +717,6 @@ describe('SessionSubagentHost', () => {
         event: 'subagent.failed',
         args: expect.objectContaining({
           subagentId: 'agent-0',
-          parentToolCallId: 'call_agent',
           error: expect.stringContaining(
             'Subagent turn failed before completing its final summary: reason=max_tokens',
           ),

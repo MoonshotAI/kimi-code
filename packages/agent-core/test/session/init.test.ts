@@ -93,7 +93,6 @@ describe('Session.init', () => {
         type: 'subagent.completed',
         agentId: 'main',
         subagentId: 'agent-0',
-        parentToolCallId: 'generate-agents-md',
         contextTokens: expect.any(Number),
       }),
     );

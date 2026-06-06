@@ -288,7 +288,9 @@ export class SubAgentEventHandler {
       return;
     }
 
-    this.handleForegroundSubagentCompleted(event);
+    const info = this.subagentInfo.get(event.subagentId);
+    if (info === undefined || info.runInBackground) return;
+    this.handleForegroundSubagentCompleted(event, info);
   }
 
   private handleSubagentFailed(
@@ -323,7 +325,9 @@ export class SubAgentEventHandler {
       return;
     }
 
-    this.handleForegroundSubagentFailed(event);
+    const info = this.subagentInfo.get(event.subagentId);
+    if (info === undefined || info.runInBackground) return;
+    this.handleForegroundSubagentFailed(event, info);
   }
 
   private findAgentTaskId(
@@ -445,38 +449,42 @@ export class SubAgentEventHandler {
 
   private handleForegroundSubagentCompleted(
     event: SubagentLifecycleEventOf<'subagent.completed'>,
+    info: SubagentInfo,
   ): void {
-    if (this.updateAgentSwarmProgress(event.parentToolCallId, (progress) => {
+    const { parentToolCallId } = info;
+    if (this.updateAgentSwarmProgress(parentToolCallId, (progress) => {
       progress.markCompleted(event.subagentId, event.resultSummary);
     })) {
-      this.host.streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
+      this.host.streamingUI.removeToolComponentIfInactive(parentToolCallId);
       return;
     }
 
-    const tc = this.host.streamingUI.getToolComponent(event.parentToolCallId);
+    const tc = this.host.streamingUI.getToolComponent(parentToolCallId);
     if (tc === undefined) return;
     tc.onSubagentCompleted({
       contextTokens: event.contextTokens,
       usage: event.usage,
       resultSummary: event.resultSummary,
     });
-    this.host.streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
+    this.host.streamingUI.removeToolComponentIfInactive(parentToolCallId);
   }
 
   private handleForegroundSubagentFailed(
     event: SubagentLifecycleEventOf<'subagent.failed'>,
+    info: SubagentInfo,
   ): void {
-    if (this.updateAgentSwarmProgress(event.parentToolCallId, (progress) => {
+    const { parentToolCallId } = info;
+    if (this.updateAgentSwarmProgress(parentToolCallId, (progress) => {
       this.markAgentSwarmFailedOrCancelled(progress, event.subagentId, event.error);
     })) {
-      this.host.streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
+      this.host.streamingUI.removeToolComponentIfInactive(parentToolCallId);
       return;
     }
 
-    const tc = this.host.streamingUI.getToolComponent(event.parentToolCallId);
+    const tc = this.host.streamingUI.getToolComponent(parentToolCallId);
     if (tc === undefined) return;
     tc.onSubagentFailed({ error: event.error });
-    this.host.streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
+    this.host.streamingUI.removeToolComponentIfInactive(parentToolCallId);
   }
 
   private applySubagentEventToSwarmProgress(

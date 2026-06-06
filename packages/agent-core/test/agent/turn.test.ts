@@ -335,6 +335,7 @@ describe('Agent turn flow', () => {
     });
     const ctx = testAgent({ subagentHost });
     ctx.configure({ tools: ['AgentSwarm'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
 
     ctx.mockNextResponse(
       { type: 'text', text: 'I will launch a swarm.' },
