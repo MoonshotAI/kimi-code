@@ -79,7 +79,11 @@ export interface SubagentLauncher {
 export class SubagentLaunchQueue {
   constructor(private launcher: SubagentLauncher) { }
 
-  enqueue<T>(tasks: readonly QueuedSubagentTask<T>[]): Array<Promise<QueuedSubagentRunResult<T>>> {
+  enqueue<T>(task: QueuedSubagentTask<T>): Promise<QueuedSubagentRunResult<T>> {
+    // TODO
+  }
+
+  old_code() {
     const queued = tasks.map((_, index): QueuedSubagentPending => ({ index }));
     const active: Array<QueuedSubagentAttempt<T>> = [];
     const results: Array<QueuedSubagentRunResult<T> | undefined> = Array.from({
