@@ -18,7 +18,8 @@ Normal phase:
 - The first provider rate limit stops the ramp and enters rate-limit phase.
 
 Rate-limit phase:
-- A provider rate limit never finishes the task. Save the agent id for same-agent retry, emit suspended, and requeue the task at the front; its own eligibility delays are 3000 ms, 6000 ms, 12000 ms, then doubling.
+- A provider rate limit requeues while there is other unfinished work. Save the agent id for same-agent retry, emit suspended, and requeue the task at the front; its own eligibility delays are 3000 ms, 6000 ms, 12000 ms, then doubling.
+- If the rate-limited attempt is the only unfinished task, fail that task instead of suspending the whole batch forever.
 - Enter with capacity equal to ready normal launches, minimum 1; set the next global launch no earlier than 3000 ms later; then shrink capacity by 1, minimum 1. Later rate limits shrink by 1, minimum 1, at most once per 2000 ms.
 - Each pass starts at most 1 task: active attempts must be below capacity, global launch time reached, and task eligibility reached. Choose the first eligible queued task, then set next global launch to now plus the current interval. If blocked by time, wake at the earlier of next launch/eligibility and next capacity recovery.
 - Core recovery rule: in rate-limit phase, if work is queued and no provider rate limit happened for 3 minutes, capacity increases by 1, which can launch one more task immediately. This can happen once per quiet window; a new rate limit restarts the window. If active attempts still fill capacity, wake at the next recovery time.
@@ -90,6 +91,7 @@ export type SubagentBatchLauncher = {
 type RateLimitedOutcome = {
   readonly type: 'rate_limited';
   readonly agentId: string;
+  readonly error: string;
 };
 
 type AttemptOutcome<T> = SubagentResult<T> | RateLimitedOutcome;
@@ -320,7 +322,11 @@ export class SubagentBatch<T> {
       };
     } catch (error) {
       if (isProviderRateLimitError(error)) {
-        return { type: 'rate_limited', agentId: handle.agentId };
+        return {
+          type: 'rate_limited',
+          agentId: handle.agentId,
+          error: this.attemptErrorMessage(attempt, error, 'failed'),
+        };
       }
 
       return this.failedAttemptOutcome(attempt, error);
@@ -363,6 +369,14 @@ export class SubagentBatch<T> {
 
     if ('status' in outcome) {
       this.results[attempt.state.index] = outcome;
+    } else if (this.isOnlyUnfinishedTask(attempt.state)) {
+      this.results[attempt.state.index] = {
+        task: attempt.state.task,
+        agentId: outcome.agentId,
+        status: 'failed',
+        state: 'started',
+        error: outcome.error,
+      };
     } else {
       this.requeueRateLimited(attempt, outcome.agentId);
     }
@@ -493,6 +507,10 @@ export class SubagentBatch<T> {
       return true;
     }
     return false;
+  }
+
+  private isOnlyUnfinishedTask(state: TaskState<T>): boolean {
+    return this.results.every((result, index) => index === state.index || result !== undefined);
   }
 
   private finishWithUserCancellation(): void {

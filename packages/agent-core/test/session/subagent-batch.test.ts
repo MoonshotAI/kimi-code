@@ -264,6 +264,51 @@ describe('SubagentBatch scheduling contract', () => {
     }
   });
 
+  it('fails the only unfinished task on provider rate limit instead of suspending forever', async () => {
+    vi.useFakeTimers();
+    try {
+      const onSuspended = vi.fn();
+      const { runBatch, attempts } = createMockBatchRunner({ onSuspended });
+      const running = runBatch(Array.from({ length: 2 }, (_, index) => queuedTask(index + 1)), {
+        signal,
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(2);
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+
+      attempts[0]!.outcome.resolve({
+        task: attempts[0]!.task,
+        agentId: 'agent-1',
+        status: 'completed',
+        result: 'completed 1',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      attempts[1]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-2' });
+      await expect(running).resolves.toMatchObject([
+        {
+          task: { data: 1 },
+          agentId: 'agent-1',
+          status: 'completed',
+          result: 'completed 1',
+        },
+        {
+          task: { data: 2 },
+          agentId: 'agent-2',
+          status: 'failed',
+          state: 'started',
+          error: 'Rate limited',
+        },
+      ]);
+      expect(onSuspended).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('rate-limit capacity blocks launches while active attempts fill all slots', async () => {
     vi.useFakeTimers();
     try {
