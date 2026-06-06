@@ -419,6 +419,18 @@ describe('current builtin collaboration tools', () => {
     expect(result.isError).toBeUndefined();
   });
 
+  it('AgentSwarm does not expose permission rule argument matching', () => {
+    const tool = new AgentSwarmTool(mockSubagentHost({}), mockSwarmMode());
+    const execution = tool.resolveExecution({
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+
+    expect(execution.approvalRule).toBe('AgentSwarm');
+    expect(execution.matchesRule).toBeUndefined();
+  });
+
   it('AgentSwarm rejects more than 128 subagents at execution time', async () => {
     const host = mockSubagentHost({ runQueued: vi.fn() });
     const swarmMode = mockSwarmMode();

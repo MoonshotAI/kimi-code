@@ -3593,6 +3593,7 @@ describe('Permission rule helpers', () => {
         path: '/workspace/a.ts',
       }),
     ).toBe(false);
+    expect(ruleMatches(permissionRule('AgentSwarm(swarm)'), 'AgentSwarm', {})).toBe(false);
   });
 
   it('treats empty arg patterns as tool-name-only matches', () => {

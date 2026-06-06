@@ -10,7 +10,6 @@ import {
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
-import { matchesGlobRuleSubject } from '../../support/rule-match';
 import AGENT_SWARM_DESCRIPTION from './agent-swarm.md';
 
 const DEFAULT_SUBAGENT_TYPE = 'coder';
@@ -95,16 +94,16 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
   ) {}
 
   resolveExecution(args: AgentSwarmToolInput): ToolExecution {
+    const agentCount = (args.items?.length ?? 0) + Object.keys(args.resume_agent_ids ?? {}).length;
     return {
-      accesses: ToolAccesses.none(),
+      accesses: ToolAccesses.all(),
       description: `Launching agent swarm: ${args.description}`,
       display: {
         kind: 'agent_call',
-        agent_name: 'swarm',
+        agent_name: `swarm (${agentCount} subagents)`,
         prompt: args.description,
       },
       approvalRule: this.name,
-      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, 'swarm'),
       execute: (ctx) => this.execution(args, ctx),
     };
   }
