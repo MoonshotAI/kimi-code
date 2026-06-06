@@ -3,6 +3,7 @@ import {
   KimiError,
   type AgentContextData,
   type KimiErrorCode,
+  type SwarmModeTrigger,
 } from '@moonshot-ai/agent-core';
 
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
@@ -173,7 +174,7 @@ export class Session {
     await this.rpc.setPlanMode({ sessionId: this.id, enabled });
   }
 
-  async setSwarmMode(enabled: boolean): Promise<void> {
+  async setSwarmMode(enabled: boolean, trigger: SwarmModeTrigger): Promise<void> {
     this.ensureOpen();
     if (typeof enabled !== 'boolean') {
       throw new KimiError(
@@ -181,7 +182,7 @@ export class Session {
         'Session swarm mode must be a boolean',
       );
     }
-    await this.rpc.setSwarmMode({ sessionId: this.id, enabled });
+    await this.rpc.setSwarmMode({ sessionId: this.id, enabled, trigger });
   }
 
   async getPlan(): Promise<SessionPlan> {

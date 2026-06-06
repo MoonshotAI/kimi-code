@@ -13,6 +13,7 @@ import {
   type SDKAPI,
   type ToolCallRequest,
   type ToolCallResponse,
+  type SwarmModeTrigger,
 } from '@moonshot-ai/agent-core';
 
 import type { ApprovalHandler, QuestionHandler } from '#/events';
@@ -82,6 +83,7 @@ export interface SetSessionPlanModeRpcInput extends SessionIdRpcInput {
 
 export interface SetSessionSwarmModeRpcInput extends SessionIdRpcInput {
   readonly enabled: boolean;
+  readonly trigger: SwarmModeTrigger;
 }
 
 export interface ActivateSkillRpcInput extends SessionIdRpcInput {
@@ -275,11 +277,12 @@ export abstract class SDKRpcClientBase {
     return rpc.enterSwarm({
       sessionId: input.sessionId,
       agentId: this.interactiveAgentId,
+      trigger: input.trigger,
     });
   }
 
   async swarm(input: SessionPromptRpcInput): Promise<void> {
-    await this.setSwarmMode({ sessionId: input.sessionId, enabled: true });
+    await this.setSwarmMode({ sessionId: input.sessionId, enabled: true, trigger: 'task' });
     return this.prompt(input);
   }
 

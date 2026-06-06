@@ -2121,7 +2121,7 @@ command = "vim"
     driver.handleUserInput('/swarm on');
 
     await vi.waitFor(() => {
-      expect(session.setSwarmMode).toHaveBeenCalledWith(true);
+      expect(session.setSwarmMode).toHaveBeenCalledWith(true, 'manual');
     });
     await vi.waitFor(() => {
       expect(countOccurrences(stripSgr(renderTranscript(driver)), 'Swarm activated')).toBe(1);
@@ -2165,7 +2165,7 @@ command = "vim"
     driver.handleUserInput('/swarm off');
 
     await vi.waitFor(() => {
-      expect(session.setSwarmMode).toHaveBeenCalledWith(false);
+      expect(session.setSwarmMode).toHaveBeenCalledWith(false, 'manual');
     });
     await vi.waitFor(() => {
       expect(countOccurrences(stripSgr(renderTranscript(driver)), 'Swarm deactivated')).toBe(1);

@@ -60,6 +60,7 @@ import type { Kaos } from '@moonshot-ai/kaos';
 import type { ToolServices } from '../tools/support/services';
 
 export type { AgentRecord, AgentRecordPersistence } from './records';
+export type { SwarmModeTrigger } from './swarm';
 export type { BuiltinTool, ToolInfo, ToolSource, UserToolRegistration } from './tool';
 export { buildGoalCompletionMessage } from './goal/completion';
 
@@ -357,8 +358,8 @@ export class Agent {
         this.planMode.cancel(payload.id);
       },
       clearPlan: () => this.planMode.clear(),
-      enterSwarm: () => {
-        this.swarmMode.enter('explicit');
+      enterSwarm: (payload) => {
+        this.swarmMode.enter(payload.trigger);
       },
       exitSwarm: () => {
         this.swarmMode.exit();

@@ -50,6 +50,7 @@ import type {
   CreateGoalPayload,
   CreateSessionPayload,
   EmptyPayload,
+  EnterSwarmPayload,
   GoalControlPayload,
   GoalSnapshot,
   GoalToolResult,
@@ -523,7 +524,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).clearPlan(payload);
   }
 
-  enterSwarm({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+  enterSwarm({ sessionId, ...payload }: SessionAgentPayload<EnterSwarmPayload>) {
     return this.sessionApi(sessionId).enterSwarm(payload);
   }
 

@@ -376,7 +376,7 @@ describe('current builtin collaboration tools', () => {
 
     const result = await executeTool(tool, context(input, 'call_swarm'));
 
-    expect(swarmMode.enter).toHaveBeenCalledWith('implicit');
+    expect(swarmMode.enter).toHaveBeenCalledWith('tool');
     expect(host.runQueued).toHaveBeenCalledTimes(1);
     expect(host.runQueued).toHaveBeenCalledWith(
       [
@@ -713,7 +713,7 @@ describe('current builtin collaboration tools', () => {
       '<subagent agent_id="agent-coder-2" item="src/b.ts" outcome="failed">Agent timed out after 30s.</subagent>',
       '</agent_swarm_result>',
     ].join('\n'));
-    expect(swarmMode.enter).toHaveBeenCalledWith('implicit');
+    expect(swarmMode.enter).toHaveBeenCalledWith('tool');
     expect(result.isError).toBeUndefined();
   });
 

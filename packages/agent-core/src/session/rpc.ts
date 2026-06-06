@@ -7,6 +7,7 @@ import type {
   CancelPlanPayload,
   CreateGoalPayload,
   EmptyPayload,
+  EnterSwarmPayload,
   GoalControlPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
@@ -198,7 +199,7 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return (await this.getAgent(agentId)).clearPlan(payload);
   }
 
-  async enterSwarm({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+  async enterSwarm({ agentId, ...payload }: AgentScopedPayload<EnterSwarmPayload>) {
     return (await this.getAgent(agentId)).enterSwarm(payload);
   }
 

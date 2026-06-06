@@ -113,7 +113,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     context: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
-      this.swarmMode.enter('implicit');
+      this.swarmMode.enter('tool');
       const result = await this.runSwarm(args, context.signal, context.toolCallId);
       return {
         output: result,

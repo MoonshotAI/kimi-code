@@ -248,12 +248,26 @@ describe('Agent turn flow', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('exits swarm mode after a turn completes normally', async () => {
+  it('keeps manual swarm mode active after a turn completes normally', async () => {
     const ctx = testAgent();
     ctx.configure();
     ctx.mockNextResponse({ type: 'text', text: 'swarm done' });
 
-    await ctx.rpc.enterSwarm({});
+    await ctx.rpc.enterSwarm({ trigger: 'manual' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a swarm task' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.agent.swarmMode.isActive).toBe(true);
+    expect(eventIndex(ctx, '[wire]', 'swarm_mode.exit')).toBe(-1);
+    await ctx.expectResumeMatches();
+  });
+
+  it('exits task swarm mode after a turn completes normally', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'swarm done' });
+
+    await ctx.rpc.enterSwarm({ trigger: 'task' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a swarm task' }] });
     await ctx.untilTurnEnd();
 
@@ -278,11 +292,11 @@ describe('Agent turn flow', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('keeps swarm mode active when the swarm turn fails', async () => {
+  it('keeps task swarm mode active when the swarm turn fails', async () => {
     const ctx = testAgent();
     ctx.configure();
 
-    await ctx.rpc.enterSwarm({});
+    await ctx.rpc.enterSwarm({ trigger: 'task' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fail a swarm task' }] });
     await ctx.untilTurnEnd();
 
@@ -290,12 +304,12 @@ describe('Agent turn flow', () => {
     expect(eventIndex(ctx, '[wire]', 'swarm_mode.exit')).toBe(-1);
   });
 
-  it('keeps swarm mode active when the user cancels the swarm turn', async () => {
+  it('keeps task swarm mode active when the user cancels the swarm turn', async () => {
     const ctx = testAgent({ generate: abortableGenerate });
     ctx.configure();
 
     const stepStarted = ctx.once('turn.step.started');
-    await ctx.rpc.enterSwarm({});
+    await ctx.rpc.enterSwarm({ trigger: 'task' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Cancel a swarm task' }] });
     await stepStarted;
     await ctx.rpc.cancel({ turnId: 0 });
@@ -339,7 +353,7 @@ describe('Agent turn flow', () => {
       .filter((origin) => origin?.kind === 'injection');
 
     expect(runQueued).toHaveBeenCalledTimes(1);
-    expect(enterEvent?.args).toMatchObject({ trigger: 'implicit' });
+    expect(enterEvent?.args).toMatchObject({ trigger: 'tool' });
     expect(ctx.agent.swarmMode.isActive).toBe(false);
     expect(eventIndex(ctx, '[wire]', 'swarm_mode.exit')).toBeGreaterThan(
       eventIndex(ctx, '[rpc]', 'turn.ended'),

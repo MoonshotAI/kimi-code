@@ -3,6 +3,7 @@ import type { AgentContextData } from '#/agent/context';
 import type { BackgroundTaskInfo } from '#/agent/background';
 import type { PermissionData, PermissionMode } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
+import type { SwarmModeTrigger } from '#/agent/swarm';
 import type { ToolInfo } from '#/agent/tool';
 import type { KimiConfig, KimiConfigPatch, McpServerConfig } from '#/config';
 import type { ExperimentalFeatureState } from '#/flags';
@@ -167,6 +168,9 @@ export interface SetModelResult {
 export interface CancelPlanPayload {
   readonly id?: string;
 }
+export interface EnterSwarmPayload {
+  readonly trigger: SwarmModeTrigger;
+}
 export interface BeginCompactionPayload {
   readonly instruction?: string;
 }
@@ -315,7 +319,7 @@ export interface AgentAPI {
   enterPlan: (payload: EmptyPayload) => void;
   cancelPlan: (payload: CancelPlanPayload) => void;
   clearPlan: (payload: EmptyPayload) => void;
-  enterSwarm: (payload: EmptyPayload) => void;
+  enterSwarm: (payload: EnterSwarmPayload) => void;
   exitSwarm: (payload: EmptyPayload) => void;
   getSwarmMode: (payload: EmptyPayload) => boolean;
   beginCompaction: (payload: BeginCompactionPayload) => void;

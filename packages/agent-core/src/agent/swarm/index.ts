@@ -3,7 +3,12 @@ import type { Agent } from '..';
 import SWARM_MODE_ENTER_REMINDER from './enter-reminder.md';
 import SWARM_MODE_EXIT_REMINDER from './exit-reminder.md';
 
-export type SwarmModeTrigger = 'explicit' | 'implicit';
+/**
+ * manual = persistent toggle (/swarm on);
+ * task = one-shot /swarm prompt;
+ * tool = AgentSwarm entry.
+ */
+export type SwarmModeTrigger = 'manual' | 'task' | 'tool';
 
 export class SwarmMode {
   protected active: SwarmModeTrigger | null = null;
@@ -14,7 +19,7 @@ export class SwarmMode {
     if (this.active !== null) return;
     this.agent.records.logRecord({ type: 'swarm_mode.enter', trigger });
     this.active = trigger;
-    if (trigger === 'explicit') {
+    if (trigger !== 'tool') {
       this.agent.context.appendSystemReminder(SWARM_MODE_ENTER_REMINDER, {
         kind: 'injection',
         variant: 'swarm_mode',
@@ -33,7 +38,7 @@ export class SwarmMode {
     const trigger = this.active;
     this.active = null;
     this.agent.emitStatusUpdated();
-    if (trigger !== 'explicit') return;
+    if (trigger === 'tool') return;
     if (this.agent.context.popMatchedMessage((origin) => origin?.kind === 'injection' && origin.variant === 'swarm_mode')) {
       return;
     }
@@ -47,5 +52,9 @@ export class SwarmMode {
 
   get isActive(): boolean {
     return this.active !== null;
+  }
+
+  get shouldAutoExit(): boolean {
+    return this.active === 'task' || this.active === 'tool';
   }
 }

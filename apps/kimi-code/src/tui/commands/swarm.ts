@@ -91,7 +91,9 @@ async function startSwarmTask(host: SlashCommandHost, prompt: string): Promise<v
 }
 
 async function activateSwarmForTask(host: SlashCommandHost): Promise<boolean> {
-  if (!host.state.appState.swarmMode && !(await setSwarmMode(host, true))) return false;
+  if (!host.state.appState.swarmMode && !(await setSwarmMode(host, true, 'task'))) {
+    return false;
+  }
   renderSwarmModeMarker(host, true);
   return true;
 }
@@ -105,13 +107,17 @@ async function applySwarmMode(host: SlashCommandHost, enabled: boolean): Promise
     host.showStatus('Swarm mode is already off.');
     return;
   }
-  if (!(await setSwarmMode(host, enabled))) return;
+  if (!(await setSwarmMode(host, enabled, 'manual'))) return;
   renderSwarmModeMarker(host, enabled);
 }
 
-async function setSwarmMode(host: SlashCommandHost, enabled: boolean): Promise<boolean> {
+async function setSwarmMode(
+  host: SlashCommandHost,
+  enabled: boolean,
+  trigger: 'manual' | 'task',
+): Promise<boolean> {
   try {
-    await host.requireSession().setSwarmMode(enabled);
+    await host.requireSession().setSwarmMode(enabled, trigger);
   } catch (error) {
     host.showError(
       `Failed to ${enabled ? 'enable' : 'disable'} swarm mode: ${formatErrorMessage(error)}`,
