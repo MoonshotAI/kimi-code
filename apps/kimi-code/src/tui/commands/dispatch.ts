@@ -129,7 +129,6 @@ export interface SlashCommandHost {
   showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle;
   showProgressSpinner(label: string): LoginProgressSpinnerHandle;
   clearAgentSwarmProgress(): void;
-  renderSwarmModeMarker(active: boolean): void;
 
   // Theme
   applyTheme(theme: Theme, resolved?: ResolvedTheme): void;

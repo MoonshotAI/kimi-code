@@ -51,6 +51,35 @@ function makeDriverWithTerminalProgress(): {
   return { driver, state: driver.state, setProgress };
 }
 
+function startSwarmProgress(driver: ActivityDriver, state: TUIState): AgentSwarmProgressComponent {
+  const handler = driver.sessionEventHandler.subAgentEventHandler;
+  handler.handleAgentSwarmToolCallStarted('call_swarm', {
+    description: 'Review changed files',
+  });
+  handler.handleLifecycleEvent({
+    type: 'subagent.spawned',
+    subagentId: 'agent-1',
+    subagentName: 'coder',
+    parentToolCallId: 'call_swarm',
+    description: 'Review changed files #1 (coder)',
+    runInBackground: false,
+  } as Parameters<typeof handler.handleLifecycleEvent>[0]);
+  handler.handleLifecycleEvent({
+    type: 'subagent.started',
+    subagentId: 'agent-1',
+    subagentName: 'coder',
+    parentToolCallId: 'call_swarm',
+    description: 'Review changed files #1 (coder)',
+    runInBackground: false,
+  } as Parameters<typeof handler.handleLifecycleEvent>[0]);
+
+  const progress = state.transcriptContainer.children.find(
+    (child): child is AgentSwarmProgressComponent => child instanceof AgentSwarmProgressComponent,
+  );
+  if (progress === undefined) throw new Error('expected AgentSwarm progress');
+  return progress;
+}
+
 describe('updateActivityPane terminal progress', () => {
   it('toggles terminal progress when the activity pane enters and leaves work mode', () => {
     vi.useFakeTimers();
@@ -123,14 +152,7 @@ describe('updateActivityPane terminal progress', () => {
     vi.useFakeTimers();
     try {
       const { driver, state, setProgress } = makeDriverWithTerminalProgress();
-      const progress = new AgentSwarmProgressComponent({
-        description: 'Review changed files',
-        colors: state.theme.colors,
-      });
-      progress.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
-      progress.markInputComplete();
-      progress.markStarted('agent-1');
-      driver.sessionEventHandler.agentSwarmProgress.set('call_swarm', progress);
+      const progress = startSwarmProgress(driver, state);
       state.livePane = { ...state.livePane, mode: 'tool' };
 
       driver.updateActivityPane();
@@ -142,8 +164,7 @@ describe('updateActivityPane terminal progress', () => {
       expect(strip(progress.render(80).join('\n'))).toContain('🌑 Working...');
 
       state.activitySpinner?.instance.stop();
-      progress.dispose();
-      driver.sessionEventHandler.agentSwarmProgress.clear();
+      driver.sessionEventHandler.clearAgentSwarmProgress();
     } finally {
       vi.useRealTimers();
     }
@@ -153,15 +174,16 @@ describe('updateActivityPane terminal progress', () => {
     vi.useFakeTimers();
     try {
       const { driver, state } = makeDriverWithTerminalProgress();
-      const progress = new AgentSwarmProgressComponent({
-        description: 'Review changed files',
-        colors: state.theme.colors,
-      });
-      progress.registerSubagent({ agentId: 'agent-1', description: 'Review changed files #1 (coder)' });
-      progress.markInputComplete();
-      progress.markStarted('agent-1');
-      progress.markToolCallEnded();
-      driver.sessionEventHandler.agentSwarmProgress.set('call_swarm', progress);
+      const progress = startSwarmProgress(driver, state);
+      driver.sessionEventHandler.subAgentEventHandler.handleAgentSwarmToolResult(
+        'call_swarm',
+        {
+          tool_call_id: 'call_swarm',
+          output: 'Done',
+          is_error: false,
+        },
+        false,
+      );
       state.livePane = { ...state.livePane, mode: 'tool' };
 
       driver.updateActivityPane();
@@ -173,8 +195,7 @@ describe('updateActivityPane terminal progress', () => {
       expect(output).not.toContain('🌑 Working...');
 
       state.activitySpinner?.instance.stop();
-      progress.dispose();
-      driver.sessionEventHandler.agentSwarmProgress.clear();
+      driver.sessionEventHandler.clearAgentSwarmProgress();
     } finally {
       vi.useRealTimers();
     }

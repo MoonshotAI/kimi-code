@@ -9,7 +9,6 @@ import type { PromptOrigin } from '../agent/context';
 import { ErrorCodes, type KimiErrorPayload } from '../errors';
 import { DenyAllPermissionPolicy } from '../agent/permission/policies/deny-all';
 import { InMemoryAgentRecordPersistence } from '../agent/records';
-import type { LoopTurnStopReason } from '../loop';
 import { isAbortError } from '../loop/errors';
 import {
   DEFAULT_AGENT_PROFILES,
@@ -72,21 +71,16 @@ export interface RunSubagentOptions {
   readonly signal: AbortSignal;
   readonly onReady?: () => void;
   readonly suppressRateLimitFailureEvent?: boolean;
-};
+}
 
 export interface SpawnSubagentOptions extends RunSubagentOptions {
   readonly profileName: string;
   readonly swarmItem?: string;
-};
+}
 
 type SubagentCompletion = {
   readonly result: string;
   readonly usage?: TokenUsage;
-};
-
-type ActiveChild = {
-  readonly controller: AbortController;
-  readonly runInBackground: boolean;
 };
 
 export type SubagentHandle = {
@@ -97,7 +91,13 @@ export type SubagentHandle = {
 };
 
 export class SessionSubagentHost {
-  private readonly activeChildren = new Map<string, ActiveChild>();
+  private readonly activeChildren = new Map<
+    string,
+    {
+      readonly controller: AbortController;
+      readonly runInBackground: boolean;
+    }
+  >();
 
   constructor(
     private readonly session: Session,
@@ -113,28 +113,15 @@ export class SessionSubagentHost {
       { type: 'sub', generate: parent.rawGenerate },
       { parentAgentId: this.ownerAgentId, swarmItem: options.swarmItem },
     );
-    const controller = new AbortController();
-    const unlinkAbortSignal = linkAbortSignal(options.signal, controller);
-    this.activeChildren.set(id, {
-      controller,
-      runInBackground: options.runInBackground,
-    });
-
-    this.emitSubagentSpawned(parent, id, profile.name, options);
-    const completion = this.runChild(
-      parent,
-      id,
-      agent,
-      profile.name,
-      {
-        ...options,
-        signal: controller.signal,
-      },
-      () => this.configureChild(parent, agent, profile),
-      false,
-    ).finally(() => {
-      unlinkAbortSignal();
-      this.activeChildren.delete(id);
+    const completion = this.runWithActiveChild(id, options, async (runOptions) => {
+      this.emitSubagentSpawned(parent, id, profile.name, runOptions);
+      try {
+        await this.configureChild(parent, agent, profile);
+        return await this.runPromptTurn(parent, id, agent, profile.name, runOptions);
+      } catch (error) {
+        this.emitSubagentFailed(parent, id, runOptions, error);
+        throw error;
+      }
     });
     return {
       agentId: id,
@@ -145,20 +132,46 @@ export class SessionSubagentHost {
   }
 
   async resume(agentId: string, options: RunSubagentOptions): Promise<SubagentHandle> {
-    return this.resumeOrRetry(agentId, options, 'resume');
+    options.signal.throwIfAborted();
+    const { parent, child, profileName } = await this.ensureIdleSubagent(agentId);
+    const completion = this.runWithActiveChild(agentId, options, async (runOptions) => {
+      this.emitSubagentSpawned(parent, agentId, profileName, runOptions);
+      try {
+        child.config.update({ modelAlias: parent.config.modelAlias });
+        return await this.runPromptTurn(parent, agentId, child, profileName, runOptions);
+      } catch (error) {
+        this.emitSubagentFailed(parent, agentId, runOptions, error);
+        throw error;
+      }
+    });
+    return { agentId, profileName, resumed: true, completion };
   }
 
   async retry(agentId: string, options: RunSubagentOptions): Promise<SubagentHandle> {
-    return this.resumeOrRetry(agentId, options, 'retry');
+    options.signal.throwIfAborted();
+    const { parent, child, profileName } = await this.ensureIdleSubagent(agentId);
+    const completion = this.runWithActiveChild(agentId, options, async (runOptions) => {
+      try {
+        runOptions.signal.throwIfAborted();
+        child.config.update({ modelAlias: parent.config.modelAlias });
+        this.emitSubagentStarted(parent, agentId, profileName, runOptions);
+        const turnId = child.turn.retry('agent-host');
+        if (turnId === null) {
+          throw new Error(`Agent instance "${agentId}" could not start a retry turn`);
+        }
+        this.observeFirstRequest(child, runOptions);
+        return await this.waitForChildCompletion(parent, agentId, child, profileName, runOptions);
+      } catch (error) {
+        this.emitSubagentFailed(parent, agentId, runOptions, error);
+        throw error;
+      }
+    });
+    return { agentId, profileName, resumed: true, completion };
   }
 
-  private async resumeOrRetry(
+  private async ensureIdleSubagent(
     agentId: string,
-    options: RunSubagentOptions,
-    operation: 'resume' | 'retry',
-  ): Promise<SubagentHandle> {
-    options.signal.throwIfAborted();
-
+  ): Promise<{ readonly parent: Agent; readonly child: Agent; readonly profileName: string }> {
     const parent = await this.session.ensureAgentResumed(this.ownerAgentId);
     const metadata = this.session.metadata.agents[agentId];
     if (metadata?.type !== 'sub') {
@@ -169,41 +182,11 @@ export class SessionSubagentHost {
     }
     const child = await this.session.ensureAgentResumed(agentId);
     if (this.activeChildren.has(agentId) || child.turn.hasActiveTurn) {
-      throw new Error(
-        `Agent instance "${agentId}" is already running and cannot be ${operation}d concurrently`,
-      );
+      throw new Error(`Agent instance "${agentId}" is already running and cannot run concurrently`);
     }
 
     const profileName = child.config.profileName ?? 'subagent';
-
-    const controller = new AbortController();
-    const unlinkAbortSignal = linkAbortSignal(options.signal, controller);
-    this.activeChildren.set(agentId, {
-      controller,
-      runInBackground: options.runInBackground,
-    });
-
-    const runPromise =
-      operation === 'resume'
-        ? this.runChild(
-            parent,
-            agentId,
-            child,
-            profileName,
-            { ...options, signal: controller.signal },
-            () => {
-              child.config.update({ modelAlias: parent.config.modelAlias });
-              return Promise.resolve();
-            },
-          )
-        : this.runChildRetry(parent, agentId, child, profileName, { ...options, signal: controller.signal });
-
-    const completion = runPromise.finally(() => {
-      unlinkAbortSignal();
-      this.activeChildren.delete(agentId);
-    });
-
-    return { agentId, profileName, resumed: true, completion };
+    return { parent, child, profileName };
   }
 
   async runQueued<T>(tasks: readonly QueuedSubagentTask<T>[]): Promise<Array<SubagentResult<T>>> {
@@ -211,7 +194,18 @@ export class SessionSubagentHost {
   }
 
   suspended(event: SubagentSuspendedEvent): void {
-    this.emitSubagentSuspended(event);
+    const parent = this.session.getReadyAgent?.(this.ownerAgentId);
+    parent?.emitEvent({
+      type: 'subagent.suspended',
+      subagentId: event.agentId,
+      subagentName: event.task.profileName,
+      parentToolCallId: event.task.parentToolCallId,
+      parentToolCallUuid: event.task.parentToolCallUuid,
+      parentAgentId: this.ownerAgentId,
+      description: event.task.description,
+      runInBackground: event.task.runInBackground,
+      reason: event.reason,
+    });
   }
 
   async startBtw(): Promise<string> {
@@ -278,79 +272,48 @@ export class SessionSubagentHost {
     return profile;
   }
 
-  private async runChild(
+  private runWithActiveChild(
+    childId: string,
+    options: RunSubagentOptions,
+    run: (options: RunSubagentOptions) => Promise<SubagentCompletion>,
+  ): Promise<SubagentCompletion> {
+    const controller = new AbortController();
+    const unlinkAbortSignal = linkAbortSignal(options.signal, controller);
+    this.activeChildren.set(childId, {
+      controller,
+      runInBackground: options.runInBackground,
+    });
+
+    return run({ ...options, signal: controller.signal }).finally(() => {
+      unlinkAbortSignal();
+      this.activeChildren.delete(childId);
+    });
+  }
+
+  private async runPromptTurn(
     parent: Agent,
     childId: string,
     child: Agent,
     profileName: string,
     options: RunSubagentOptions,
-    prepareChild: () => Promise<void>,
-    emitSpawnedEvent = true,
   ): Promise<SubagentCompletion> {
-    if (emitSpawnedEvent) this.emitSubagentSpawned(parent, childId, profileName, options);
-    return this.runChildWithErrorHandling(parent, childId, options, async () => {
-      await prepareChild();
-      options.signal.throwIfAborted();
-      await this.triggerSubagentStart(parent, profileName, options.prompt, options.signal);
-      options.signal.throwIfAborted();
+    options.signal.throwIfAborted();
+    await this.triggerSubagentStart(parent, profileName, options.prompt, options.signal);
+    options.signal.throwIfAborted();
 
-      // Explore subagents start cold; a git-context block helps them orient
-      // in the repository before searching.
-      let childPrompt = options.prompt;
-      if (profileName === 'explore') {
-        const gitContext = await collectGitContext(child.kaos, child.config.cwd);
-        if (gitContext) childPrompt = `${gitContext}\n\n${childPrompt}`;
-      }
-      this.emitSubagentStarted(parent, childId, profileName, options);
+    let childPrompt = options.prompt;
+    if (profileName === 'explore') {
+      const gitContext = await collectGitContext(child.kaos, child.config.cwd);
+      if (gitContext) childPrompt = `${gitContext}\n\n${childPrompt}`;
+    }
+
+    this.emitSubagentStarted(parent, childId, profileName, options);
     const turnId = child.turn.prompt([{ type: 'text', text: childPrompt }], SUBAGENT_PROMPT_ORIGIN);
     if (turnId === null) {
       throw new Error(`Agent instance "${childId}" could not start a turn`);
     }
     this.observeFirstRequest(child, options);
-      return this.waitForChildCompletion(parent, childId, child, profileName, options);
-    });
-  }
-
-  private async runChildRetry(
-    parent: Agent,
-    childId: string,
-    child: Agent,
-    profileName: string,
-    options: RunSubagentOptions,
-  ): Promise<SubagentCompletion> {
-    return this.runChildWithErrorHandling(parent, childId, options, async () => {
-      options.signal.throwIfAborted();
-      child.config.update({ modelAlias: parent.config.modelAlias });
-      this.emitSubagentStarted(parent, childId, profileName, options);
-      const turnId = child.turn.retry('agent-host');
-      if (turnId === null) {
-        throw new Error(`Agent instance "${childId}" could not start a retry turn`);
-      }
-      this.observeFirstRequest(child, options);
-      return this.waitForChildCompletion(parent, childId, child, profileName, options);
-    });
-  }
-
-  private async runChildWithErrorHandling(
-    parent: Agent,
-    childId: string,
-    options: RunSubagentOptions,
-    run: () => Promise<SubagentCompletion>,
-  ): Promise<SubagentCompletion> {
-    try {
-      return await run();
-    } catch (error) {
-      if (!shouldSuppressQueuedAttemptFailureEvent(options, error)) {
-        const message = error instanceof Error ? error.message : String(error);
-        parent.emitEvent({
-          type: 'subagent.failed',
-          subagentId: childId,
-          parentToolCallId: options.parentToolCallId,
-          error: message,
-        });
-      }
-      throw error;
-    }
+    return this.waitForChildCompletion(parent, childId, child, profileName, options);
   }
 
   private async waitForChildCompletion(
@@ -484,18 +447,18 @@ export class SessionSubagentHost {
     });
   }
 
-  private emitSubagentSuspended(event: SubagentSuspendedEvent): void {
-    const parent = this.session.getReadyAgent?.(this.ownerAgentId);
-    parent?.emitEvent({
-      type: 'subagent.suspended',
-      subagentId: event.agentId,
-      subagentName: event.task.profileName,
-      parentToolCallId: event.task.parentToolCallId,
-      parentToolCallUuid: event.task.parentToolCallUuid,
-      parentAgentId: this.ownerAgentId,
-      description: event.task.description,
-      runInBackground: event.task.runInBackground,
-      reason: event.reason,
+  private emitSubagentFailed(
+    parent: Agent,
+    childId: string,
+    options: RunSubagentOptions,
+    error: unknown,
+  ): void {
+    if (shouldSuppressQueuedAttemptFailureEvent(options, error)) return;
+    parent.emitEvent({
+      type: 'subagent.failed',
+      subagentId: childId,
+      parentToolCallId: options.parentToolCallId,
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 }
@@ -513,19 +476,15 @@ async function runChildTurnToCompletion(child: Agent, signal: AbortSignal): Prom
         : `[${turnEnded.error.code}] ${turnEnded.error.message}`,
     );
   }
-  throwIfSubagentStoppedAtMaxTokens(completion.stopReason);
+  if (completion.stopReason === 'max_tokens') {
+    throw new Error(`${SUBAGENT_MAX_TOKENS_ERROR}.`);
+  }
 }
 
 function providerRateLimitErrorFromPayload(error: KimiErrorPayload): APIProviderRateLimitError {
   const requestId =
     typeof error.details?.['requestId'] === 'string' ? error.details['requestId'] : null;
   return new APIProviderRateLimitError(error.message, requestId);
-}
-
-function throwIfSubagentStoppedAtMaxTokens(stopReason: LoopTurnStopReason | undefined): void {
-  if (stopReason === 'max_tokens') {
-    throw new Error(`${SUBAGENT_MAX_TOKENS_ERROR}.`);
-  }
 }
 
 function lastAssistantText(agent: Agent): string {

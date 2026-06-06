@@ -1,7 +1,12 @@
 import { isProviderRateLimitError, type TokenUsage } from '@moonshot-ai/kosong';
 import * as retry from 'retry';
 
-import type { RunSubagentOptions, SpawnSubagentOptions, SubagentHandle } from '.';
+import type {
+  RunSubagentOptions,
+  SessionSubagentHost,
+  SpawnSubagentOptions,
+  SubagentHandle,
+} from './subagent-host';
 import { isUserCancellation } from '../utils/abort';
 
 const INITIAL_LAUNCH_LIMIT = 5;
@@ -35,13 +40,6 @@ export type SubagentResult<T = unknown> = {
   readonly usage?: TokenUsage;
   readonly error?: string;
 };
-
-export interface SubagentLauncher {
-  spawn(options: SpawnSubagentOptions): Promise<SubagentHandle>;
-  resume(agentId: string, options: RunSubagentOptions): Promise<SubagentHandle>;
-  retry(agentId: string, options: RunSubagentOptions): Promise<SubagentHandle>;
-  suspended?(event: SubagentSuspendedEvent): void;
-}
 
 export type SubagentSuspendedEvent = {
   readonly task: QueuedSubagentTask;
@@ -103,7 +101,10 @@ export class SubagentBatch<T> {
   private nextRateLimitLaunchAt = 0;
 
   constructor(
-    private readonly launcher: SubagentLauncher,
+    private readonly launcher: Pick<
+      SessionSubagentHost,
+      'spawn' | 'resume' | 'retry' | 'suspended'
+    >,
     tasks: readonly QueuedSubagentTask<T>[],
   ) {
     this.states = tasks.map((task, index) => ({

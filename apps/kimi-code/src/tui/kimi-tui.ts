@@ -76,7 +76,6 @@ import {
   NoticeMessageComponent,
   StatusMessageComponent,
 } from './components/messages/status-message';
-import { SwarmModeMarkerComponent } from './components/messages/swarm-markers';
 import { ThinkingComponent } from './components/messages/thinking';
 import { ToolCallComponent } from './components/messages/tool-call';
 import { UserMessageComponent } from './components/messages/user-message';
@@ -993,13 +992,6 @@ export class KimiTUI {
 
   clearAgentSwarmProgress(): void {
     this.sessionEventHandler.clearAgentSwarmProgress();
-  }
-
-  renderSwarmModeMarker(active: boolean): void {
-    this.state.transcriptContainer.addChild(
-      new SwarmModeMarkerComponent(active, this.state.theme.colors),
-    );
-    this.state.ui.requestRender();
   }
 
   // =========================================================================
