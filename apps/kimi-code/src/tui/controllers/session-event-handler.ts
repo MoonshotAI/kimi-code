@@ -536,7 +536,7 @@ export class SessionEventHandler {
   }
 
   private handleStatusUpdate(event: AgentStatusUpdatedEvent): void {
-    const shouldRenderSwarmCompleted =
+    const shouldRenderSwarmEnded =
       event.swarmMode === false &&
       this.host.state.appState.swarmMode &&
       this.host.state.swarmModeEntry === 'task';
@@ -553,8 +553,8 @@ export class SessionEventHandler {
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
     if (event.swarmMode === false) {
       this.host.state.swarmModeEntry = undefined;
-      if (shouldRenderSwarmCompleted) {
-        this.renderSwarmModeMarker('completed');
+      if (shouldRenderSwarmEnded) {
+        this.renderSwarmModeMarker('ended');
       }
     }
   }

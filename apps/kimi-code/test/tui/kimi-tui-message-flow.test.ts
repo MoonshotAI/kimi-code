@@ -2112,14 +2112,14 @@ command = "vim"
     expect(driver.state.appState.swarmMode).toBe(false);
     transcript = stripSgr(renderTranscript(driver));
     expect(transcript).not.toContain('Swarm deactivated');
-    expect(transcript).not.toContain('Swarm completed');
+    expect(transcript).not.toContain('Swarm ended');
 
     expect(countOccurrences(transcript, 'Swarm activated')).toBe(0);
     expect(countOccurrences(transcript, 'Swarm deactivated')).toBe(0);
-    expect(countOccurrences(transcript, 'Swarm completed')).toBe(0);
+    expect(countOccurrences(transcript, 'Swarm ended')).toBe(0);
   });
 
-  it('renders a completed marker when a one-shot /swarm task exits', async () => {
+  it('renders an ended marker when a one-shot /swarm task exits', async () => {
     const { driver, session } = await makeDriver();
     driver.state.appState.permissionMode = 'auto';
 
@@ -2133,7 +2133,7 @@ command = "vim"
     });
     let transcript = stripSgr(renderTranscript(driver));
     expect(countOccurrences(transcript, 'Swarm activated')).toBe(1);
-    expect(transcript).not.toContain('Swarm completed');
+    expect(transcript).not.toContain('Swarm ended');
 
     driver.sessionEventHandler.handleEvent(
       {
@@ -2148,7 +2148,7 @@ command = "vim"
     expect(driver.state.appState.swarmMode).toBe(false);
     transcript = stripSgr(renderTranscript(driver));
     expect(countOccurrences(transcript, 'Swarm activated')).toBe(1);
-    expect(countOccurrences(transcript, 'Swarm completed')).toBe(1);
+    expect(countOccurrences(transcript, 'Swarm ended')).toBe(1);
     expect(transcript).not.toContain('Swarm deactivated');
   });
 

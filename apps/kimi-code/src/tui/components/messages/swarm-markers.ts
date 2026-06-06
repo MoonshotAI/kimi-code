@@ -4,7 +4,7 @@ import chalk from 'chalk';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import type { ColorPalette } from '#/tui/theme/colors';
 
-export type SwarmModeMarkerState = 'active' | 'inactive' | 'completed';
+export type SwarmModeMarkerState = 'active' | 'inactive' | 'ended';
 
 export class SwarmModeMarkerComponent implements Component {
   constructor(
@@ -28,7 +28,7 @@ function swarmMarkerLabel(state: SwarmModeMarkerState): string {
       return 'Swarm activated';
     case 'inactive':
       return 'Swarm deactivated';
-    case 'completed':
-      return 'Swarm completed';
+    case 'ended':
+      return 'Swarm ended';
   }
 }
