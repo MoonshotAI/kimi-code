@@ -32,7 +32,6 @@ export interface ReplayRenderContext {
   toolCalls: Map<string, ToolCallBlockData>;
   completedToolCallIds: Set<string>;
   skillActivationIds: Set<string>;
-  suppressNextPlanModeOffNotice: boolean;
 }
 
 export interface SkillActivationProjection {
@@ -113,7 +112,6 @@ export function createReplayRenderContext(): ReplayRenderContext {
     toolCalls: new Map(),
     completedToolCallIds: new Set(),
     skillActivationIds: new Set(),
-    suppressNextPlanModeOffNotice: false,
   };
 }
 

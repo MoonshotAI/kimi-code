@@ -58,15 +58,6 @@ async function applyPlanMode(host: SlashCommandHost, session: Session, enabled: 
   try {
     await session.setPlanMode(enabled);
     host.setAppState({ planMode: enabled });
-    if (enabled) {
-      const plan = await session.getPlan().catch(() => null);
-      host.showNotice(
-        'Plan mode: ON',
-        plan?.path !== undefined ? `Plan will be created here: ${plan.path}` : undefined,
-      );
-      return;
-    }
-    host.showNotice('Plan mode: OFF');
   } catch (error) {
     const msg = formatErrorMessage(error);
     host.showError(`Failed to set plan mode: ${msg}`);
