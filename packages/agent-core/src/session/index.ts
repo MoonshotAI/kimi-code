@@ -338,7 +338,6 @@ export class Session {
         prompt: DEFAULT_INIT_PROMPT,
         description: 'Initialize AGENTS.md',
         runInBackground: false,
-        origin: { kind: 'system_trigger', name: 'init' },
         signal: new AbortController().signal,
       });
       await handle.completion;

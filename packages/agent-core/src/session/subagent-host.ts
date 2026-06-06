@@ -1,4 +1,4 @@
-import type { TokenUsage } from '@moonshot-ai/kosong';
+import { isProviderRateLimitError, type TokenUsage } from '@moonshot-ai/kosong';
 
 import type { Agent } from '../agent';
 import type { PromptOrigin } from '../agent/context';
@@ -13,29 +13,21 @@ import {
 } from '../profile';
 import type { AgentEvent } from '../rpc';
 import {
-  createDeadlineAbortSignal,
-  isUserCancellation,
   linkAbortSignal,
   userCancellationReason,
 } from '../utils/abort';
 import { collectGitContext } from './git-context';
 import type { Session } from './index';
 import {
-  SubagentLaunchQueue,
-  formatTimeoutMs,
-  totalTimeoutMessage,
-  type QueuedSubagentAttemptOptions,
-  type QueuedSubagentAttemptOutcome,
-  type QueuedSubagentRunOptions,
-  type QueuedSubagentRunResult,
-  type QueuedSubagentSuspended,
+  SubagentBatch,
+  type SubagentResult,
+  type SubagentSuspendedEvent,
   type QueuedSubagentTask,
 } from './subagent-batch';
 import SUMMARY_CONTINUATION_PROMPT from './summary-continuation.md';
 
 export type {
-  QueuedSubagentRunOptions,
-  QueuedSubagentRunResult,
+  SubagentResult as QueuedSubagentRunResult,
   QueuedSubagentTask,
 } from './subagent-batch';
 
@@ -49,12 +41,9 @@ const SUMMARY_CONTINUATION_ATTEMPTS = 1;
 const HOOK_TEXT_PREVIEW_LENGTH = 500;
 const SUBAGENT_MAX_TOKENS_ERROR =
   'Subagent turn failed before completing its final summary: reason=max_tokens';
-const RATE_LIMIT_429_MESSAGE =
-  "429 We're receiving too many requests at the moment. Please wait a moment and try again.";
-const RATE_LIMIT_429_BODY =
-  "We're receiving too many requests at the moment. Please wait a moment and try again.";
 const TOOL_CALL_DISABLED_MESSAGE =
   'Tool calls are disabled for side questions. Answer with text only.';
+const SUBAGENT_PROMPT_ORIGIN: PromptOrigin = { kind: 'system_trigger', name: 'subagent' };
 const SIDE_QUESTION_SYSTEM_REMINDER = `
 This is a side-channel conversation with the user. You should answer user questions directly based on what you already know.
 
@@ -76,7 +65,6 @@ export interface RunSubagentOptions {
   readonly prompt: string;
   readonly description: string;
   readonly runInBackground: boolean;
-  readonly origin?: PromptOrigin;
   readonly signal: AbortSignal;
   readonly onStarted?: () => void;
   readonly onFirstOutput?: () => void;
@@ -107,21 +95,11 @@ export type SubagentHandle = {
 
 export class SessionSubagentHost {
   private readonly activeChildren = new Map<string, ActiveChild>();
-  readonly launchQueue: SubagentLaunchQueue;
 
   constructor(
     private readonly session: Session,
     private readonly ownerAgentId: string,
-  ) {
-    this.launchQueue = new SubagentLaunchQueue(
-      (task, options) => this.runQueuedTaskAttempt(task, options),
-      {
-        onSuspended: (event) => {
-          this.emitSubagentSuspended(event);
-        },
-      },
-    );
-  }
+  ) {}
 
   async spawn(options: SpawnSubagentOptions): Promise<SubagentHandle> {
     options.signal.throwIfAborted();
@@ -225,11 +203,12 @@ export class SessionSubagentHost {
     return { agentId, profileName, resumed: true, completion };
   }
 
-  async runQueued<T>(
-    tasks: readonly QueuedSubagentTask<T>[],
-    options: QueuedSubagentRunOptions,
-  ): Promise<Array<QueuedSubagentRunResult<T>>> {
-    return this.launchQueue.enqueue(tasks, options);
+  async runQueued<T>(tasks: readonly QueuedSubagentTask<T>[]): Promise<Array<SubagentResult<T>>> {
+    return new SubagentBatch(this, tasks).run();
+  }
+
+  suspended(event: SubagentSuspendedEvent): void {
+    this.emitSubagentSuspended(event);
   }
 
   async startBtw(): Promise<string> {
@@ -286,75 +265,6 @@ export class SessionSubagentHost {
     return metadata.swarmItem;
   }
 
-  private async runQueuedTaskAttempt<T>(
-    task: QueuedSubagentTask<T>,
-    options: QueuedSubagentAttemptOptions,
-  ): Promise<QueuedSubagentAttemptOutcome<T>> {
-    const subagentDeadline =
-      options.timeoutMs === undefined
-        ? undefined
-        : createDeadlineAbortSignal(options.signal, options.timeoutMs);
-    const runSignal = subagentDeadline?.signal ?? options.signal;
-    let handle: SubagentHandle | undefined;
-    try {
-      runSignal.throwIfAborted();
-      const runOptions = {
-        parentToolCallId: task.parentToolCallId,
-        parentToolCallUuid: task.parentToolCallUuid,
-        prompt: task.prompt,
-        description: task.description,
-        swarmItem: task.swarmItem,
-        runInBackground: task.runInBackground,
-        origin: task.origin,
-        signal: runSignal,
-        onStarted: options.markReady,
-        onFirstOutput: options.markReady,
-        suppressRateLimitFailureEvent: true,
-      };
-      if (options.retryAgentId !== undefined) {
-        handle = await this.retry(options.retryAgentId, runOptions);
-      } else if (task.resumeAgentId !== undefined) {
-        handle = await this.resume(task.resumeAgentId, runOptions);
-      } else {
-        handle = await this.spawn({
-          profileName: task.profileName,
-          ...runOptions,
-        });
-      }
-      options.markAgentId(handle.agentId);
-      const completion = await handle.completion;
-      return {
-        task,
-        agentId: handle.agentId,
-        status: 'completed',
-        result: completion.result,
-        usage: completion.usage,
-      };
-    } catch (error) {
-      if (isRateLimit429Error(error)) {
-        return { type: 'rate_limited', agentId: handle?.agentId };
-      }
-      if (handle === undefined) {
-        throw error;
-      }
-      const status: QueuedSubagentRunResult<T>['status'] = isUserCancellation(runSignal.reason) ? 'aborted' : 'failed';
-      const state = status === 'aborted' ? 'started' : undefined;
-      const message =
-        subagentDeadline?.timedOut() === true && options.timeoutMs !== undefined
-          ? `Subagent timed out after ${formatTimeoutMs(options.timeoutMs)}.`
-          : options.totalTimedOut() && options.totalTimeoutMs !== undefined
-            ? totalTimeoutMessage(options.totalTimeoutMs)
-            : status === 'aborted'
-              ? 'The user manually interrupted this subagent batch.'
-              : isAbortError(error)
-                ? 'The subagent was stopped before it finished.'
-                : error instanceof Error ? error.message : String(error);
-      return { task, agentId: handle.agentId, status, state, error: message };
-    } finally {
-      subagentDeadline?.clear();
-    }
-  }
-
   private resolveProfile(parent: Agent, profileName: string): ResolvedAgentProfile {
     const profile =
       DEFAULT_AGENT_PROFILES[parent.config.profileName ?? 'agent']?.subagents?.[profileName] ??
@@ -389,11 +299,10 @@ export class SessionSubagentHost {
         const gitContext = await collectGitContext(child.kaos, child.config.cwd);
         if (gitContext) childPrompt = `${gitContext}\n\n${childPrompt}`;
       }
-      const origin: PromptOrigin = options.origin ?? { kind: 'system_trigger', name: 'subagent' };
       this.emitSubagentStarted(parent, childId, profileName, options);
       options.onStarted?.();
-      child.turn.prompt([{ type: 'text', text: childPrompt }], origin);
-      return this.waitForChildCompletion(parent, childId, child, profileName, options, origin);
+      child.turn.prompt([{ type: 'text', text: childPrompt }], SUBAGENT_PROMPT_ORIGIN);
+      return this.waitForChildCompletion(parent, childId, child, profileName, options);
     });
   }
 
@@ -413,7 +322,7 @@ export class SessionSubagentHost {
       if (child.turn.retry('agent-host') === null) {
         throw new Error(`Agent instance "${childId}" could not start a retry turn`);
       }
-      return this.waitForChildCompletion(parent, childId, child, profileName, options, origin);
+      return this.waitForChildCompletion(parent, childId, child, profileName, options);
     });
   }
 
@@ -448,7 +357,6 @@ export class SessionSubagentHost {
     child: Agent,
     profileName: string,
     options: RunSubagentOptions,
-    origin: PromptOrigin,
   ): Promise<SubagentCompletion> {
     await runChildTurnToCompletion(child, options.signal);
 
@@ -461,7 +369,7 @@ export class SessionSubagentHost {
     while (remainingContinuations > 0 && result.length < SUMMARY_MIN_LENGTH) {
       remainingContinuations -= 1;
       options.signal.throwIfAborted();
-      child.turn.prompt([{ type: 'text', text: SUMMARY_CONTINUATION_PROMPT }], origin);
+      child.turn.prompt([{ type: 'text', text: SUMMARY_CONTINUATION_PROMPT }], SUBAGENT_PROMPT_ORIGIN);
       await runChildTurnToCompletion(child, options.signal);
       result = lastAssistantText(child);
     }
@@ -527,11 +435,16 @@ export class SessionSubagentHost {
   ): (() => void) | undefined {
     if (onFirstOutput === undefined) return undefined;
     let emitted = false;
-    return child.onEvent((event) => {
+    const emitEvent = child.emitEvent.bind(child);
+    child.emitEvent = (event: AgentEvent) => {
+      emitEvent(event);
       if (emitted || !isFirstOutputEvent(event)) return;
       emitted = true;
       onFirstOutput();
-    });
+    };
+    return () => {
+      child.emitEvent = emitEvent;
+    };
   }
 
   private emitSubagentSpawned(
@@ -574,7 +487,7 @@ export class SessionSubagentHost {
     });
   }
 
-  private emitSubagentSuspended(event: QueuedSubagentSuspended): void {
+  private emitSubagentSuspended(event: SubagentSuspendedEvent): void {
     const parent = this.session.getReadyAgent?.(this.ownerAgentId);
     parent?.emitEvent({
       type: 'subagent.suspended',
@@ -631,29 +544,11 @@ function isFirstOutputEvent(event: AgentEvent): boolean {
   return event.type === 'tool.call.started';
 }
 
-function isRateLimit429Error(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  if (hasRateLimitStatus(error)) return true;
-  if ([RATE_LIMIT_429_MESSAGE, RATE_LIMIT_429_BODY, 'provider.rate_limit'].some((part) => message.includes(part))) return true;
-  const normalized = message.toLowerCase();
-  const loosePatterns = ['too many requests', 'max rpm', 'max tpm', 'requests per minute', 'tokens per minute'];
-  if (loosePatterns.some((pattern) => normalized.includes(pattern))) return true;
-  if (!/\b429\b/.test(normalized)) return false;
-  return ['apistatuserror', 'rate limit', 'rate_limit', 'rate-limited'].some((pattern) => normalized.includes(pattern));
-}
-
 function shouldSuppressQueuedAttemptFailureEvent(
   options: RunSubagentOptions,
   error: unknown,
 ): boolean {
   if (options.suppressRateLimitFailureEvent !== true) return false;
-  if (isRateLimit429Error(error)) return true;
+  if (isProviderRateLimitError(error)) return true;
   return isAbortError(error) || options.signal.aborted;
-}
-
-function hasRateLimitStatus(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const statusCode = (error as { readonly statusCode?: unknown }).statusCode;
-  const status = (error as { readonly status?: unknown }).status;
-  return statusCode === 429 || status === 429;
 }

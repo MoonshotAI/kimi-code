@@ -2,7 +2,6 @@ import { isProviderRateLimitError, type TokenUsage } from '@moonshot-ai/kosong';
 import * as retry from 'retry';
 
 import type { RunSubagentOptions, SpawnSubagentOptions, SubagentHandle } from '.';
-import type { PromptOrigin } from '../agent/context';
 import { isUserCancellation } from '../utils/abort';
 
 const INITIAL_LAUNCH_LIMIT = 5;
@@ -22,7 +21,6 @@ export type QueuedSubagentTask<T = unknown> = {
   readonly description: string;
   readonly swarmItem?: string;
   readonly runInBackground: boolean;
-  readonly origin?: PromptOrigin;
   readonly resumeAgentId?: string;
   readonly timeout?: number;
   readonly signal?: AbortSignal;
@@ -45,7 +43,7 @@ export interface SubagentLauncher {
   suspended?(event: SubagentSuspendedEvent): void;
 }
 
-type SubagentSuspendedEvent = {
+export type SubagentSuspendedEvent = {
   readonly task: QueuedSubagentTask;
   readonly agentId: string;
   readonly reason: string;
@@ -253,7 +251,6 @@ export class SubagentBatch<T> {
       prompt: task.prompt,
       description: task.description,
       runInBackground: task.runInBackground,
-      origin: task.origin,
       signal: attempt.controller.signal,
       onStarted: () => {
         this.markAttemptReady(attempt);

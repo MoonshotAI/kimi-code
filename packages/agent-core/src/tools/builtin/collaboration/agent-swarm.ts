@@ -180,6 +180,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
         item: this.subagentHost.getSwarmItem(spec.agentId),
       };
     });
+    const timeout = args.timeout === undefined ? undefined : args.timeout * 1000;
     const tasks = specsWithPersistedItems.map((spec): QueuedSubagentTask<AgentSwarmSpec> => {
       const resumeAgentId = spec.kind === 'resume' ? spec.agentId : undefined;
       return {
@@ -195,12 +196,11 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
         swarmItem: spec.item,
         runInBackground: false,
         resumeAgentId,
+        signal,
+        timeout,
       };
     });
-    const results = await this.subagentHost.runQueued(tasks, {
-      signal,
-      timeoutMs: args.timeout === undefined ? undefined : args.timeout * 1000,
-    });
+    const results = await this.subagentHost.runQueued(tasks);
     return renderSwarmResults(results.map(({ task, ...result }) => ({ spec: task.data, ...result })));
   }
 }
