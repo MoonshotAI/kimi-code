@@ -55,6 +55,29 @@ function bunCommand(platform: NodeJS.Platform): string {
   return platform === 'win32' ? 'bun.exe' : 'bun';
 }
 
+/**
+ * Compute the install prefix for a native (SEA) install.
+ *
+ * The native install script writes to `$KIMI_INSTALL_DIR/bin/kimi`.  To
+ * overwrite the currently running binary we point the env var at the
+ * parent of the `bin/` directory that contains it, if any (e.g.
+ * `~/.local/bin/kimi` → `~/.local`).
+ */
+function nativeInstallDir(): string {
+  const execDir = dirname(process.execPath);
+  return basename(execDir) === 'bin' ? dirname(execDir) : execDir;
+}
+
+/**
+ * Render the env-var prefix for a native install command so the user-visible
+ * command matches what the spawned process actually runs.
+ */
+function nativeEnvPrefix(): string {
+  const dir = nativeInstallDir();
+  // Shell-quote: single-quote wraps the value so spaces are safe.
+  return `KIMI_INSTALL_DIR='${dir}' KIMI_NO_MODIFY_PATH=1`;
+}
+
 export function installCommandFor(
   source: InstallSource,
   version: string,
@@ -70,7 +93,9 @@ export function installCommandFor(
     case 'bun-global':
       return `bun add -g ${NPM_PACKAGE_NAME}@${version}`;
     case 'native':
-      return platform === 'win32' ? NATIVE_INSTALL_COMMAND_WIN : NATIVE_INSTALL_COMMAND_UNIX;
+      return platform === 'win32'
+        ? NATIVE_INSTALL_COMMAND_WIN
+        : `${nativeEnvPrefix()} ${NATIVE_INSTALL_COMMAND_UNIX}`;
     case 'unsupported':
       return `npm install -g ${NPM_PACKAGE_NAME}@${version}`;
   }
@@ -124,8 +149,7 @@ export function spawnForSource(
       // `bin/` dir (e.g. ~/.local/bin/kimi → ~/.local).
       // Set KIMI_NO_MODIFY_PATH to skip shell-rc modification — during an
       // upgrade the binary is already on the user's PATH.
-      const execDir = dirname(process.execPath);
-      const installDir = basename(execDir) === 'bin' ? dirname(execDir) : execDir;
+      const installDir = nativeInstallDir();
       return {
         cmd: 'bash',
         args: ['-c', `set -o pipefail; ${NATIVE_INSTALL_COMMAND_UNIX}`],
