@@ -30,6 +30,7 @@ const ACTIVITY_SPINNER_PLACEHOLDER = '  ';
 const AGENT_SWARM_LEFT_INDENT = ' ';
 const AGENT_SWARM_RIGHT_GAP = 1;
 const AGENT_SWARM_NON_GRID_LINES = 6;
+const COMPACT_TERMINAL_MARK_WIDTH = 1;
 const ORCHESTRATING_LABEL = 'Orchestrating...';
 const PROMPTING_LABEL = 'Prompting...';
 const WORKING_LABEL = 'Working...';
@@ -58,6 +59,16 @@ type ClearableMemberKey =
   | 'failedAtMs'
   | 'failureText'
   | 'suspendedReason';
+
+const COMPLETED_CLEAR_KEYS = ['failedAtMs', 'failureText', 'suspendedReason'] as const satisfies readonly ClearableMemberKey[];
+const FAILED_CLEAR_KEYS = ['completedAtMs', 'completedText', 'suspendedReason'] as const satisfies readonly ClearableMemberKey[];
+const TERMINAL_CLEAR_KEYS = [
+  'completedAtMs',
+  'completedText',
+  'failedAtMs',
+  'failureText',
+  'suspendedReason',
+] as const satisfies readonly ClearableMemberKey[];
 
 interface AgentSwarmMember {
   readonly id: string;
@@ -188,37 +199,30 @@ export class AgentSwarmProgressComponent implements Component {
     args: Record<string, unknown>,
     options: { readonly streamingArguments?: string | undefined } = {},
   ): void {
+    const streamingArguments = options.streamingArguments;
     const description = agentSwarmDescriptionFromArgs(args);
     if (description.length > 0 || this.description.length === 0) {
       this.description = description;
     }
-    const fullResumeItems = agentSwarmResumeItemsFromArgs(args);
-    const partialResumeItems =
-      options.streamingArguments === undefined
-        ? []
-        : agentSwarmPartialResumeItemsFromArguments(options.streamingArguments);
-    const fullItems = agentSwarmItemsFromArgs(args);
-    const partialItems =
-      options.streamingArguments === undefined
-        ? []
-        : agentSwarmPartialItemsFromArguments(options.streamingArguments);
-    const fullRows = [...fullResumeItems, ...fullItems];
-    const partialRows = [...partialResumeItems, ...partialItems];
+    const fullRows = [...agentSwarmResumeItemsFromArgs(args), ...agentSwarmItemsFromArgs(args)];
+    const partialRows = streamingArguments === undefined
+      ? []
+      : [
+          ...agentSwarmPartialResumeItemsFromArguments(streamingArguments),
+          ...agentSwarmPartialItemsFromArguments(streamingArguments),
+        ];
     if (
       fullRows.length > 0 ||
       partialRows.length > 0 ||
-      (
-        options.streamingArguments !== undefined &&
-        agentSwarmWorkItemsStartedFromArguments(options.streamingArguments)
-      )
+      (streamingArguments !== undefined && agentSwarmWorkItemsStartedFromArguments(streamingArguments))
     ) {
       this.itemsStarted = true;
     }
     const fullPromptTemplate = agentSwarmPromptTemplateFromArgs(args);
     const partialPromptTemplate =
-      options.streamingArguments === undefined
+      streamingArguments === undefined
         ? ''
-        : agentSwarmPartialPromptTemplateFromArguments(options.streamingArguments);
+        : agentSwarmPartialPromptTemplateFromArguments(streamingArguments);
     const promptTemplate =
       fullPromptTemplate.length > 0 ? fullPromptTemplate : partialPromptTemplate;
     if (promptTemplate.length > 0 || this.promptTemplateText.length === 0) {
@@ -294,14 +298,7 @@ export class AgentSwarmProgressComponent implements Component {
     const member = this.findMemberByAgentId(agentId);
     if (member === undefined || member.phase === 'failed' || member.phase === 'cancelled') return;
     const nowMs = Date.now();
-    if (member.phase !== 'completed') {
-      this.progressEstimator.markCompleted(member.id, nowMs);
-      member.completedAtMs = nowMs;
-    }
-    const normalizedCompletedText = normalizeFinalOutputText(completedText);
-    if (normalizedCompletedText !== undefined) member.completedText = normalizedCompletedText;
-    clearMemberState(member, 'failedAtMs', 'failureText', 'suspendedReason');
-    member.phase = 'completed';
+    this.completeMember(member, nowMs, completedText);
     this.startAnimationIfNeeded();
   }
 
@@ -316,7 +313,7 @@ export class AgentSwarmProgressComponent implements Component {
     member.agentId = input.agentId;
     this.progressEstimator.markQueued(member.id, Date.now());
     member.phase = 'queued';
-    clearMemberState(member, 'suspendedReason', 'completedAtMs', 'completedText', 'failedAtMs', 'failureText');
+    clearMemberState(member, ...TERMINAL_CLEAR_KEYS);
     this.startAnimationIfNeeded();
   }
 
@@ -324,29 +321,17 @@ export class AgentSwarmProgressComponent implements Component {
     const member = this.findMemberByAgentId(agentId);
     if (member === undefined) return;
     const nowMs = Date.now();
-    if (member.phase !== 'failed') {
-      this.progressEstimator.markFailed(member.id, nowMs);
-      member.failedAtMs = nowMs;
-    }
-    const normalizedFailureText = normalizeFailureText(failureText);
-    if (normalizedFailureText !== undefined) member.failureText = normalizedFailureText;
-    member.phase = 'failed';
-    clearMemberState(member, 'completedAtMs', 'completedText', 'suspendedReason');
+    this.failMember(member, nowMs, failureText);
     this.startAnimationIfNeeded();
   }
 
   markSwarmFailed(failureText?: string): void {
     this.failed = true;
     this.aborted = false;
-    const normalizedFailureText = normalizeFailureText(failureText);
     const nowMs = Date.now();
     for (const member of this.members) {
       if (isTerminalPhase(member.phase)) continue;
-      this.progressEstimator.markFailed(member.id, nowMs);
-      member.failedAtMs = nowMs;
-      if (normalizedFailureText !== undefined) member.failureText = normalizedFailureText;
-      member.phase = 'failed';
-      clearMemberState(member, 'completedAtMs', 'completedText', 'suspendedReason');
+      this.failMember(member, nowMs, failureText);
     }
     this.startAnimationIfNeeded();
   }
@@ -354,9 +339,7 @@ export class AgentSwarmProgressComponent implements Component {
   markCancelled(agentId: string): void {
     const member = this.findMemberByAgentId(agentId);
     if (member === undefined) return;
-    this.progressEstimator.markCancelled(member.id, Date.now());
-    member.phase = 'cancelled';
-    clearMemberState(member, 'completedAtMs', 'completedText', 'failedAtMs', 'failureText', 'suspendedReason');
+    this.cancelMember(member, Date.now());
   }
 
   markActiveCancelled(): void {
@@ -364,9 +347,7 @@ export class AgentSwarmProgressComponent implements Component {
     const nowMs = Date.now();
     for (const member of this.members) {
       if (isTerminalPhase(member.phase)) continue;
-      this.progressEstimator.markCancelled(member.id, nowMs);
-      member.phase = 'cancelled';
-      clearMemberState(member, 'completedAtMs', 'completedText', 'failedAtMs', 'failureText', 'suspendedReason');
+      this.cancelMember(member, nowMs);
     }
     this.startAnimationIfNeeded();
   }
@@ -381,33 +362,12 @@ export class AgentSwarmProgressComponent implements Component {
       const member = this.members[entry.index - 1];
       if (member === undefined) continue;
       if (entry.status === 'completed') {
-        if (member.phase !== 'completed') {
-          this.progressEstimator.markCompleted(member.id, nowMs);
-          member.completedAtMs = nowMs;
-        }
-        const normalizedCompletedText = normalizeFinalOutputText(entry.completedText);
-        if (normalizedCompletedText !== undefined) member.completedText = normalizedCompletedText;
-        clearMemberState(member, 'failedAtMs', 'failureText', 'suspendedReason');
+        this.completeMember(member, nowMs, entry.completedText);
       } else if (entry.status === 'failed') {
-        if (member.phase !== 'failed') {
-          this.progressEstimator.markFailed(member.id, nowMs);
-          member.failedAtMs = nowMs;
-        }
-        const normalizedFailureText = normalizeFailureText(entry.failureText);
-        if (normalizedFailureText !== undefined) member.failureText = normalizedFailureText;
-        clearMemberState(member, 'completedAtMs', 'completedText', 'suspendedReason');
+        this.failMember(member, nowMs, entry.failureText);
       } else {
-        this.progressEstimator.markCancelled(member.id, nowMs);
-        clearMemberState(
-          member,
-          'completedAtMs',
-          'completedText',
-          'failedAtMs',
-          'failureText',
-          'suspendedReason',
-        );
+        this.cancelMember(member, nowMs);
       }
-      member.phase = entry.status;
     }
     this.startAnimationIfNeeded();
     return true;
@@ -734,6 +694,34 @@ export class AgentSwarmProgressComponent implements Component {
       if (setTicks) member.ticks = Math.max(member.ticks, 1);
     }
     delete member.suspendedReason;
+  }
+
+  private completeMember(member: AgentSwarmMember, nowMs: number, completedText?: string): void {
+    if (member.phase !== 'completed') {
+      this.progressEstimator.markCompleted(member.id, nowMs);
+      member.completedAtMs = nowMs;
+    }
+    const normalizedCompletedText = normalizeFinalOutputText(completedText);
+    if (normalizedCompletedText !== undefined) member.completedText = normalizedCompletedText;
+    member.phase = 'completed';
+    clearMemberState(member, ...COMPLETED_CLEAR_KEYS);
+  }
+
+  private failMember(member: AgentSwarmMember, nowMs: number, failureText?: string): void {
+    if (member.phase !== 'failed') {
+      this.progressEstimator.markFailed(member.id, nowMs);
+      member.failedAtMs = nowMs;
+    }
+    const normalizedFailureText = normalizeFailureText(failureText);
+    if (normalizedFailureText !== undefined) member.failureText = normalizedFailureText;
+    member.phase = 'failed';
+    clearMemberState(member, ...FAILED_CLEAR_KEYS);
+  }
+
+  private cancelMember(member: AgentSwarmMember, nowMs: number): void {
+    this.progressEstimator.markCancelled(member.id, nowMs);
+    member.phase = 'cancelled';
+    clearMemberState(member, ...TERMINAL_CLEAR_KEYS);
   }
 }
 
@@ -1092,20 +1080,16 @@ function compactColumnsForLayout(
 function compactBarCellsForCellWidth(cellWidth: number, idWidth: number): number {
   return Math.max(
     1,
-    cellWidth - compactFixedWidth(idWidth) - compactTerminalMarkWidth(),
+    cellWidth - compactFixedWidth(idWidth) - COMPACT_TERMINAL_MARK_WIDTH,
   );
 }
 
 function compactCellWidth(idWidth: number, barCells: number): number {
-  return compactFixedWidth(idWidth) + Math.max(1, barCells) + compactTerminalMarkWidth();
+  return compactFixedWidth(idWidth) + Math.max(1, barCells) + COMPACT_TERMINAL_MARK_WIDTH;
 }
 
 function compactFixedWidth(idWidth: number): number {
   return idWidth + 1 + 2;
-}
-
-function compactTerminalMarkWidth(): number {
-  return 1;
 }
 
 function summarizeSnapshots(snapshots: readonly AgentSwarmSnapshot[]): AgentSwarmSummary {

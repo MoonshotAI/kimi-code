@@ -1665,19 +1665,13 @@ export class KimiTUI {
 
   private shouldPlaceActivitySpinnerInAgentSwarm(effectiveMode: EffectiveActivityPaneMode): boolean {
     return (
-      Array.from(this.sessionEventHandler.agentSwarmProgress.values()).some((progress) =>
-        progress.isToolCallActive()
-      ) &&
+      this.sessionEventHandler.hasActiveAgentSwarmToolCall() &&
       (effectiveMode === 'waiting' || effectiveMode === 'tool')
     );
   }
 
   private syncAgentSwarmActivitySpinner(spinner: MoonLoader | undefined): void {
-    for (const progress of this.sessionEventHandler.agentSwarmProgress.values()) {
-      progress.setActivitySpinnerText(
-        spinner === undefined ? undefined : () => spinner.renderInline(),
-      );
-    }
+    this.sessionEventHandler.syncAgentSwarmActivitySpinner(spinner);
   }
 
   private syncTerminalProgress(active: boolean): void {

@@ -440,8 +440,12 @@ describe('KimiTUI resume message replay', () => {
       ],
     });
 
-    expect(driver.sessionEventHandler.backgroundAgentMetadata.has('agent-bg1')).toBe(true);
-    expect(driver.sessionEventHandler.backgroundAgentMetadata.has('task-bg1')).toBe(false);
+    expect(
+      driver.sessionEventHandler.subAgentEventHandler.backgroundAgentMetadata.has('agent-bg1'),
+    ).toBe(true);
+    expect(
+      driver.sessionEventHandler.subAgentEventHandler.backgroundAgentMetadata.has('task-bg1'),
+    ).toBe(false);
 
     driver.sessionEventHandler.handleEvent(
       {
@@ -459,7 +463,9 @@ describe('KimiTUI resume message replay', () => {
       (entry) => entry.backgroundAgentStatus?.phase === 'completed',
     );
 
-    expect(driver.sessionEventHandler.backgroundAgentMetadata.has('agent-bg1')).toBe(false);
+    expect(
+      driver.sessionEventHandler.subAgentEventHandler.backgroundAgentMetadata.has('agent-bg1'),
+    ).toBe(false);
     expect(status?.backgroundAgentStatus?.headline).toBe('agent completed in background');
     expect(status?.backgroundAgentStatus?.detail).toContain('Review long-running work');
   });
@@ -503,7 +509,11 @@ describe('KimiTUI resume message replay', () => {
     );
 
     expect(applyTerminalStatus.mock.calls.map(([args]) => args.status)).toEqual(['timed_out']);
-    expect(driver.sessionEventHandler.backgroundAgentMetadata.has('agent-bg-timeout')).toBe(false);
+    expect(
+      driver.sessionEventHandler.subAgentEventHandler.backgroundAgentMetadata.has(
+        'agent-bg-timeout',
+      ),
+    ).toBe(false);
     expect(driver.sessionEventHandler.backgroundTaskTranscriptedTerminal.has('task-bg-timeout'))
       .toBe(true);
     expect(

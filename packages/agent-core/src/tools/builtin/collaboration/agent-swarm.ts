@@ -3,7 +3,6 @@ import { z } from 'zod';
 import type { SwarmMode } from '../../../agent/swarm';
 import type { BuiltinTool } from '../../../agent/tool';
 import type {
-  QueuedSubagentRunResult,
   QueuedSubagentTask,
   SessionSubagentHost,
 } from '../../../session/subagent-host';
@@ -24,15 +23,6 @@ export const AgentSwarmToolInputSchema = z
       .trim()
       .min(1)
       .describe('Short description for the whole swarm.'),
-    timeout: z
-      .number()
-      .int()
-      .min(60)
-      .max(3600)
-      .optional()
-      .describe(
-        'Timeout in seconds for each subagent. Set a generous value so every child agent has enough time to complete its full assigned task.',
-      ),
     subagent_type: z
       .string()
       .trim()
@@ -180,7 +170,6 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
         item: this.subagentHost.getSwarmItem(spec.agentId),
       };
     });
-    const timeout = args.timeout === undefined ? undefined : args.timeout * 1000;
     const tasks = specsWithPersistedItems.map((spec): QueuedSubagentTask<AgentSwarmSpec> => {
       const resumeAgentId = spec.kind === 'resume' ? spec.agentId : undefined;
       return {
@@ -197,7 +186,6 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
         runInBackground: false,
         resumeAgentId,
         signal,
-        timeout,
       };
     });
     const results = await this.subagentHost.runQueued(tasks);

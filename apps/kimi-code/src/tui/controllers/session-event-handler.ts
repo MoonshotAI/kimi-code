@@ -17,11 +17,6 @@ import type {
   Session,
   SessionMetaUpdatedEvent,
   SkillActivatedEvent,
-  SubagentCompletedEvent,
-  SubagentFailedEvent,
-  SubagentSpawnedEvent,
-  SubagentStartedEvent,
-  SubagentSuspendedEvent,
   ThinkingDeltaEvent,
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
@@ -37,15 +32,9 @@ import type {
 import { buildGoalCompletionMessage } from '@moonshot-ai/kimi-code-sdk';
 
 import { MoonLoader } from '../components/chrome/moon-loader';
-import {
-  AgentSwarmProgressComponent,
-  agentSwarmDescriptionFromArgs,
-  agentSwarmGridHeightForTerminalRows,
-} from '../components/messages/agent-swarm-progress';
 import { buildGoalMarker } from '../components/messages/goal-markers';
 import { StatusMessageComponent } from '../components/messages/status-message';
 import {
-  MAIN_AGENT_ID,
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
 } from '../constant/kimi-tui';
@@ -63,9 +52,8 @@ import {
   restoreGoalQueueItem,
   type UpcomingGoal,
 } from '../goal-queue-store';
-import { formatBackgroundAgentTranscript } from '../utils/background-agent-status';
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
-import { formatHookResultMarkdown, formatHookResultPlain } from '../utils/hook-result-format';
+import { formatHookResultMarkdown } from '../utils/hook-result-format';
 import { McpOAuthAuthorizationUrlOpener } from '../utils/mcp-oauth';
 import {
   formatMcpStartupStatusSummary,
@@ -80,9 +68,9 @@ import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
 import type { StreamingUIController } from './streaming-ui';
 import type { TasksBrowserController } from './tasks-browser';
+import { SubAgentEventHandler } from './subagent-event-handler';
 import type {
   AppState,
-  BackgroundAgentMetadata,
   LivePaneState,
   QueuedMessage,
   ToolCallBlockData,
@@ -120,31 +108,27 @@ export interface SessionEventHost {
   readonly tasksBrowserController: TasksBrowserController;
 }
 
-function renderedRowsAfterChild(
-  children: readonly Component[],
-  child: Component,
-  width: number,
-): number {
-  const childIndex = children.indexOf(child);
-  if (childIndex < 0) return 0;
-  return children
-    .slice(childIndex + 1)
-    .reduce((sum, component) => sum + component.render(width).length, 0);
-}
-
 export class SessionEventHandler {
-  constructor(private readonly host: SessionEventHost) {}
+  readonly subAgentEventHandler: SubAgentEventHandler;
+
+  constructor(private readonly host: SessionEventHost) {
+    this.subAgentEventHandler = new SubAgentEventHandler(host, {
+      backgroundTasks: this.backgroundTasks,
+      backgroundTaskTranscriptedTerminal: this.backgroundTaskTranscriptedTerminal,
+      syncBackgroundAgentBadge: () => {
+        this.syncBackgroundTaskBadge();
+      },
+    });
+  }
 
   // Runtime state – owned by this handler, reset between sessions.
-  backgroundAgentMetadata: Map<string, BackgroundAgentMetadata> = new Map();
   backgroundTasks: Map<string, BackgroundTaskInfo> = new Map();
   backgroundTaskTranscriptedTerminal: Set<string> = new Set();
-  subagentInfo: Map<string, { parentToolCallId: string; name: string }> = new Map();
+
   renderedSkillActivationIds: Set<string> = new Set();
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
   mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
-  agentSwarmProgress: Map<string, AgentSwarmProgressComponent> = new Map();
   private goalCompletionAwaitingClear = false;
   private goalCompletionTurnEnded = false;
   private queuedGoalPromotionPending = false;
@@ -152,14 +136,12 @@ export class SessionEventHandler {
   private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
 
   resetRuntimeState(): void {
-    this.backgroundAgentMetadata.clear();
     this.backgroundTasks.clear();
     this.backgroundTaskTranscriptedTerminal.clear();
-    this.subagentInfo.clear();
+    this.subAgentEventHandler.resetRuntimeState();
     this.renderedSkillActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
     this.mcpServers.clear();
-    this.clearAgentSwarmProgress();
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
     this.queuedGoalPromotionPending = false;
@@ -169,11 +151,15 @@ export class SessionEventHandler {
   }
 
   clearAgentSwarmProgress(): void {
-    for (const progress of this.agentSwarmProgress.values()) {
-      progress.dispose();
-    }
-    this.agentSwarmProgress.clear();
-    this.host.updateActivityPane();
+    this.subAgentEventHandler.clearAgentSwarmProgress();
+  }
+
+  hasActiveAgentSwarmToolCall(): boolean {
+    return this.subAgentEventHandler.hasActiveAgentSwarmToolCall();
+  }
+
+  syncAgentSwarmActivitySpinner(spinner: MoonLoader | undefined): void {
+    this.subAgentEventHandler.syncAgentSwarmActivitySpinner(spinner);
   }
 
   startSubscription(): void {
@@ -232,7 +218,7 @@ export class SessionEventHandler {
   }
 
   handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
-    if (this.routeSubagentEvent(event)) return;
+    if (this.subAgentEventHandler.routeChildAgentEvent(event)) return;
 
     if ('turnId' in event && event.turnId !== undefined) {
       this.host.streamingUI.setTurnId(String(event.turnId));
@@ -262,11 +248,12 @@ export class SessionEventHandler {
       case 'compaction.completed': this.handleCompactionEnd(event, sendQueued); break;
       case 'compaction.blocked': break;
       case 'compaction.cancelled': this.handleCompactionCancel(event, sendQueued); break;
-      case 'subagent.spawned': this.handleSubagentSpawned(event); break;
-      case 'subagent.started': this.handleSubagentStarted(event); break;
-      case 'subagent.suspended': this.handleSubagentSuspended(event); break;
-      case 'subagent.completed': this.handleSubagentCompleted(event); break;
-      case 'subagent.failed': this.handleSubagentFailed(event); break;
+      case 'subagent.spawned':
+      case 'subagent.started':
+      case 'subagent.suspended':
+      case 'subagent.completed':
+      case 'subagent.failed':
+        this.subAgentEventHandler.handleLifecycleEvent(event); break;
       case 'background.task.started':
       case 'background.task.terminated':
         this.handleBackgroundTaskEvent(event); break;
@@ -287,124 +274,6 @@ export class SessionEventHandler {
   // ---------------------------------------------------------------------------
   // Private handlers
   // ---------------------------------------------------------------------------
-
-  private routeSubagentEvent(event: Event): boolean {
-    const subagentId = event.agentId;
-    if (subagentId === MAIN_AGENT_ID) return false;
-
-    const { streamingUI } = this.host;
-    if (this.host.btwPanelController.routeEvent(event)) return true;
-
-    const info = this.subagentInfo.get(subagentId);
-    if (info === undefined) return true;
-    if (info.parentToolCallId.length === 0) return true;
-    const { parentToolCallId } = info;
-    const sourceName = info.name;
-    const toolCall = streamingUI.getToolComponent(parentToolCallId);
-    const swarmProgress = this.agentSwarmProgress.get(parentToolCallId);
-    if (swarmProgress !== undefined) {
-      if (event.type === 'assistant.delta' || event.type === 'thinking.delta') {
-        swarmProgress.appendModelDelta({
-          agentId: subagentId,
-          delta: event.delta,
-        });
-      } else if (event.type === 'tool.call.started') {
-        swarmProgress.recordToolCall({
-          agentId: subagentId,
-          toolCallId: event.toolCallId,
-        });
-      } else if (event.type === 'subagent.started') {
-        swarmProgress.markStarted(event.subagentId);
-      } else if (event.type === 'subagent.suspended') {
-        swarmProgress.markSuspended({
-          agentId: event.subagentId,
-          reason: event.reason,
-          description: event.description,
-        });
-      } else if (event.type === 'subagent.failed') {
-        if (isUserCancelledSubagentError(event.error)) {
-          swarmProgress.markCancelled(event.subagentId);
-        } else {
-          swarmProgress.markFailed(event.subagentId, event.error);
-        }
-      }
-      this.host.state.ui.requestRender();
-      return true;
-    }
-    if (toolCall === undefined) return true;
-    toolCall.setSubagentMeta(subagentId, sourceName);
-
-    switch (event.type) {
-      case 'hook.result':
-        toolCall.appendSubagentText(formatHookResultPlain(event), 'text');
-        return true;
-      case 'assistant.delta':
-        toolCall.appendSubagentText(event.delta, 'text');
-        return true;
-      case 'thinking.delta':
-        toolCall.appendSubagentText(event.delta, 'thinking');
-        return true;
-      case 'tool.call.started':
-        toolCall.appendSubToolCall({
-          id: `${subagentId}:${event.toolCallId}`,
-          name: event.name,
-          args: argsRecord(event.args),
-        });
-        return true;
-      case 'tool.call.delta':
-        toolCall.appendSubToolCallDelta({
-          id: `${subagentId}:${event.toolCallId}`,
-          name: event.name,
-          argumentsPart: event.argumentsPart ?? null,
-        });
-        return true;
-      case 'tool.result':
-        toolCall.finishSubToolCall({
-          tool_call_id: `${subagentId}:${event.toolCallId}`,
-          output: serializeToolResultOutput(event.output),
-          is_error: event.isError,
-        });
-        return true;
-      case 'agent.status.updated': {
-        const usageObj = event.usage;
-        const totalUsage = usageObj?.total ?? usageObj?.currentTurn;
-        toolCall.updateSubagentMetrics({
-          contextTokens: event.contextTokens,
-          usage: totalUsage,
-        });
-        return true;
-      }
-      case 'background.task.started':
-      case 'background.task.terminated':
-      case 'compaction.blocked':
-      case 'compaction.cancelled':
-      case 'compaction.completed':
-      case 'compaction.started':
-      case 'cron.fired':
-      case 'error':
-      case 'goal.updated':
-      case 'warning':
-      case 'session.meta.updated':
-      case 'skill.activated':
-      case 'subagent.completed':
-      case 'subagent.failed':
-      case 'subagent.spawned':
-      case 'subagent.started':
-      case 'subagent.suspended':
-      case 'tool.progress':
-      case 'tool.list.updated':
-      case 'mcp.server.status':
-      case 'turn.ended':
-      case 'turn.started':
-      case 'turn.step.completed':
-      case 'turn.step.interrupted':
-      case 'turn.step.retrying':
-      case 'turn.step.started':
-        return true;
-      default:
-        return true;
-    }
-  }
 
   private handleTurnBegin(_event: TurnStartedEvent): void {
     void _event;
@@ -498,32 +367,7 @@ export class SessionEventHandler {
   }
 
   private markActiveAgentSwarmsCancelled(): void {
-    let updated = false;
-    for (const [toolCallId, progress] of this.agentSwarmProgress) {
-      if (progress.isRequestStreaming()) {
-        this.removeAgentSwarmProgress(toolCallId, progress);
-        updated = true;
-        continue;
-      }
-      progress.markActiveCancelled();
-      updated = true;
-    }
-    if (updated) this.host.state.ui.requestRender();
-  }
-
-  private removeAgentSwarmProgress(
-    toolCallId: string,
-    progress: AgentSwarmProgressComponent,
-  ): void {
-    this.agentSwarmProgress.delete(toolCallId);
-    progress.dispose();
-    const children = this.host.state.transcriptContainer.children;
-    const index = children.indexOf(progress);
-    if (index >= 0) {
-      children.splice(index, 1);
-      this.host.state.transcriptContainer.invalidate();
-    }
-    this.host.updateActivityPane();
+    this.subAgentEventHandler.markActiveAgentSwarmsCancelled();
   }
 
   private isAnthropicSessionActive(): boolean {
@@ -615,9 +459,7 @@ export class SessionEventHandler {
     };
     streamingUI.registerToolCall(toolCall);
     if (event.name === 'AgentSwarm') {
-      const progress = this.ensureAgentSwarmProgress(event.toolCallId, toolCall.args);
-      progress.markInputComplete();
-      this.host.state.ui.requestRender();
+      this.subAgentEventHandler.handleAgentSwarmToolCallStarted(event.toolCallId, toolCall.args);
     }
     this.host.patchLivePane({
       mode: 'tool',
@@ -633,12 +475,11 @@ export class SessionEventHandler {
     const preview = streamingUI.getStreamingToolCallPreview(event.toolCallId);
     if (
       preview !== undefined &&
-      (preview.name === 'AgentSwarm' || this.agentSwarmProgress.has(event.toolCallId))
+      (preview.name === 'AgentSwarm' || this.subAgentEventHandler.hasAgentSwarmProgress(event.toolCallId))
     ) {
-      this.ensureAgentSwarmProgress(event.toolCallId, preview.args, {
+      this.subAgentEventHandler.handleAgentSwarmToolCallDelta(event.toolCallId, preview.args, {
         streamingArguments: preview.argumentsText,
       });
-      this.host.state.ui.requestRender();
     }
 
     this.host.patchLivePane({
@@ -650,52 +491,6 @@ export class SessionEventHandler {
       this.host.setAppState({ streamingPhase: 'composing', streamingStartTime: Date.now() });
     }
     streamingUI.scheduleFlush();
-  }
-
-  private ensureAgentSwarmProgress(
-    toolCallId: string,
-    args: Record<string, unknown>,
-    options: { readonly streamingArguments?: string | undefined } = {},
-  ): AgentSwarmProgressComponent {
-    const existing = this.agentSwarmProgress.get(toolCallId);
-    if (existing !== undefined) {
-      existing.updateArgs(args, options);
-      return existing;
-    }
-
-    let progress: AgentSwarmProgressComponent;
-    progress = new AgentSwarmProgressComponent({
-      description: agentSwarmDescriptionFromArgs(args),
-      colors: this.host.state.theme.colors,
-      availableGridHeight: () => this.agentSwarmGridHeight(),
-      requestRender: () => {
-        this.host.state.ui.requestRender();
-      },
-    });
-    progress.updateArgs(args, options);
-    this.agentSwarmProgress.set(toolCallId, progress);
-    this.host.streamingUI.finalizeLiveTextBuffers('tool');
-    this.host.state.transcriptContainer.addChild(progress);
-    this.host.updateActivityPane();
-    this.host.state.ui.requestRender();
-    return progress;
-  }
-
-  private agentSwarmGridHeight(): number | undefined {
-    const { state } = this.host;
-    const terminalRows = state.ui.terminal.rows;
-    const terminalColumns = state.ui.terminal.columns;
-    if (!Number.isFinite(terminalColumns) || terminalColumns <= 0) {
-      return agentSwarmGridHeightForTerminalRows(terminalRows);
-    }
-
-    const width = Math.floor(terminalColumns);
-    const rowsAfterSwarm = renderedRowsAfterChild(
-      state.ui.children,
-      state.transcriptContainer,
-      width,
-    );
-    return agentSwarmGridHeightForTerminalRows(terminalRows, rowsAfterSwarm);
   }
 
   private handleToolProgress(event: ToolProgressEvent): void {
@@ -717,27 +512,11 @@ export class SessionEventHandler {
       synthetic: event.synthetic,
     };
     const matchedCall = streamingUI.completeToolResult(event.toolCallId, resultData);
-    const progress = this.agentSwarmProgress.get(event.toolCallId);
-    if (progress !== undefined) {
-      if (event.isError === true && isUserCancelledSubagentError(resultData.output)) {
-        if (progress.isRequestStreaming()) {
-          this.removeAgentSwarmProgress(event.toolCallId, progress);
-        } else {
-          progress.markToolCallEnded();
-          progress.markActiveCancelled();
-        }
-      } else if (event.isError === true) {
-        progress.markToolCallEnded();
-        if (!progress.applyResult(resultData.output)) {
-          progress.markSwarmFailed(resultData.output);
-        }
-      } else {
-        progress.markToolCallEnded();
-        progress.applyResult(resultData.output);
-      }
-      this.host.updateActivityPane();
-      this.host.state.ui.requestRender();
-    }
+    this.subAgentEventHandler.handleAgentSwarmToolResult(
+      event.toolCallId,
+      resultData,
+      event.isError === true,
+    );
     if (matchedCall !== undefined && matchedCall.name === 'TodoList' && !event.isError) {
       const rawTodos = (matchedCall.args as { todos?: unknown }).todos;
       if (Array.isArray(rawTodos)) {
@@ -1115,262 +894,6 @@ export class SessionEventHandler {
     }
   }
 
-  private handleSubagentSpawned(event: SubagentSpawnedEvent): void {
-    const { streamingUI } = this.host;
-    this.subagentInfo.set(event.subagentId, {
-      parentToolCallId: event.parentToolCallId,
-      name: event.subagentName,
-    });
-
-    if (event.runInBackground) {
-      const meta = this.buildBackgroundAgentMetadata(event);
-      this.backgroundAgentMetadata.set(event.subagentId, meta);
-      this.appendBackgroundAgentEntry('started', meta);
-      this.syncBackgroundAgentBadge();
-      return;
-    }
-
-    const swarmProgress = this.agentSwarmProgress.get(event.parentToolCallId);
-    if (swarmProgress !== undefined) {
-      swarmProgress.registerSubagent({
-        agentId: event.subagentId,
-        description: event.description,
-      });
-      this.host.state.ui.requestRender();
-      return;
-    }
-
-    let tc = streamingUI.getToolComponent(event.parentToolCallId);
-    if (tc === undefined) {
-      const toolCall = streamingUI.getActiveToolCall(event.parentToolCallId);
-      if (toolCall !== undefined) {
-        streamingUI.onToolCallStart(toolCall);
-        tc = streamingUI.getToolComponent(event.parentToolCallId);
-      }
-    }
-    tc ??= this.createStandaloneSubagentToolCall(event);
-    if (tc === undefined) return;
-    tc.onSubagentSpawned({
-      agentId: event.subagentId,
-      agentName: event.subagentName,
-      runInBackground: event.runInBackground,
-    });
-  }
-
-  private handleSubagentStarted(event: SubagentStartedEvent): void {
-    const { streamingUI } = this.host;
-    const existing = this.subagentInfo.get(event.subagentId);
-    if (existing === undefined) {
-      this.subagentInfo.set(event.subagentId, {
-        parentToolCallId: event.parentToolCallId,
-        name: event.subagentName,
-      });
-    }
-
-    if (event.runInBackground) return;
-
-    const swarmProgress = this.agentSwarmProgress.get(event.parentToolCallId);
-    if (swarmProgress !== undefined) {
-      swarmProgress.markStarted(event.subagentId);
-      this.host.state.ui.requestRender();
-      return;
-    }
-
-    let tc = streamingUI.getToolComponent(event.parentToolCallId);
-    if (tc === undefined) {
-      const toolCall = streamingUI.getActiveToolCall(event.parentToolCallId);
-      if (toolCall !== undefined) {
-        streamingUI.onToolCallStart(toolCall);
-        tc = streamingUI.getToolComponent(event.parentToolCallId);
-      }
-    }
-    if (tc === undefined) return;
-    tc.onSubagentStarted({
-      agentId: event.subagentId,
-      agentName: event.subagentName,
-      runInBackground: event.runInBackground,
-    });
-  }
-
-  private handleSubagentSuspended(event: SubagentSuspendedEvent): void {
-    const existing = this.subagentInfo.get(event.subagentId);
-    if (existing === undefined) {
-      this.subagentInfo.set(event.subagentId, {
-        parentToolCallId: event.parentToolCallId,
-        name: event.subagentName,
-      });
-    }
-
-    if (event.runInBackground) return;
-
-    const swarmProgress = this.agentSwarmProgress.get(event.parentToolCallId);
-    if (swarmProgress !== undefined) {
-      swarmProgress.markSuspended({
-        agentId: event.subagentId,
-        reason: event.reason,
-        description: event.description,
-      });
-      this.host.state.ui.requestRender();
-    }
-  }
-
-  private handleSubagentCompleted(event: SubagentCompletedEvent): void {
-    const { streamingUI } = this.host;
-    const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
-    if (backgroundMeta !== undefined) {
-      const taskId = this.findAgentTaskId(event.subagentId, backgroundMeta);
-      this.backgroundAgentMetadata.delete(event.subagentId);
-      this.syncBackgroundAgentBadge();
-      if (taskId !== undefined && this.backgroundTaskTranscriptedTerminal.has(taskId)) {
-        return;
-      }
-      if (taskId !== undefined) {
-        this.backgroundTaskTranscriptedTerminal.add(taskId);
-      }
-      const extras =
-        event.resultSummary === undefined ? undefined : { resultSummary: event.resultSummary };
-      this.appendBackgroundAgentEntry('completed', backgroundMeta, extras);
-      return;
-    }
-    const swarmProgress = this.agentSwarmProgress.get(event.parentToolCallId);
-    if (swarmProgress !== undefined) {
-      swarmProgress.markCompleted(event.subagentId, event.resultSummary);
-      this.host.state.ui.requestRender();
-      streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
-      return;
-    }
-    const tc = streamingUI.getToolComponent(event.parentToolCallId);
-    if (tc === undefined) return;
-    tc.onSubagentCompleted({
-      contextTokens: event.contextTokens,
-      usage: event.usage,
-      resultSummary: event.resultSummary,
-    });
-    streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
-  }
-
-  private handleSubagentFailed(event: SubagentFailedEvent): void {
-    const { streamingUI } = this.host;
-    const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
-    if (backgroundMeta !== undefined) {
-      const taskId = this.findAgentTaskId(event.subagentId, backgroundMeta);
-      const task = taskId === undefined ? undefined : this.backgroundTasks.get(taskId);
-      this.backgroundAgentMetadata.delete(event.subagentId);
-      this.syncBackgroundAgentBadge();
-      if (task?.kind === 'agent' && task.status === 'timed_out') {
-        // The deadline path already stamped the Agent card as timed out; the
-        // abort-triggered child failure should not downgrade it to failed.
-        return;
-      }
-      // Push the real subagent error onto the parent Agent card too —
-      // `background.task.terminated` arrives separately (possibly later)
-      // with no error string and would only stamp the generic
-      // `Background agent failed`. The card and the separate transcript
-      // entry now share the same actual reason.
-      streamingUI.applyBackgroundTaskTerminalStatus({
-        agentId: event.subagentId,
-        description: backgroundMeta.description ?? '',
-        status: 'failed',
-        errorText: event.error,
-      });
-      if (taskId !== undefined && this.backgroundTaskTranscriptedTerminal.has(taskId)) {
-        return;
-      }
-      if (taskId !== undefined) {
-        this.backgroundTaskTranscriptedTerminal.add(taskId);
-      }
-      this.appendBackgroundAgentEntry('failed', backgroundMeta, { error: event.error });
-      return;
-    }
-    const swarmProgress = this.agentSwarmProgress.get(event.parentToolCallId);
-    if (swarmProgress !== undefined) {
-      if (isUserCancelledSubagentError(event.error)) {
-        swarmProgress.markCancelled(event.subagentId);
-      } else {
-        swarmProgress.markFailed(event.subagentId, event.error);
-      }
-      this.host.state.ui.requestRender();
-      streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
-      return;
-    }
-    const tc = streamingUI.getToolComponent(event.parentToolCallId);
-    if (tc === undefined) return;
-    tc.onSubagentFailed({ error: event.error });
-    streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
-  }
-
-  private createStandaloneSubagentToolCall(event: SubagentSpawnedEvent) {
-    const { streamingUI } = this.host;
-    const description = event.description ?? `Run ${event.subagentName} agent`;
-    const { turnId, step } = streamingUI.getTurnContext();
-    const toolCall: ToolCallBlockData = {
-      id: event.parentToolCallId,
-      name: 'Agent',
-      args: {
-        description,
-        subagent_type: event.subagentName,
-      },
-      description,
-      step,
-      turnId,
-    };
-    streamingUI.onToolCallStart(toolCall);
-    return streamingUI.getToolComponent(event.parentToolCallId);
-  }
-
-  private findAgentTaskId(
-    subagentId: string,
-    meta: BackgroundAgentMetadata,
-  ): string | undefined {
-    for (const info of this.backgroundTasks.values()) {
-      if (info.kind !== 'agent') continue;
-      if (info.agentId === subagentId) return info.taskId;
-    }
-    const description = meta.description ?? meta.agentName;
-    if (description === undefined) return undefined;
-    let match: string | undefined;
-    for (const info of this.backgroundTasks.values()) {
-      if (info.kind !== 'agent') continue;
-      if (info.description !== description) continue;
-      if (match !== undefined) return undefined;
-      match = info.taskId;
-    }
-    return match;
-  }
-
-  private buildBackgroundAgentMetadata(event: SubagentSpawnedEvent): BackgroundAgentMetadata {
-    const parent = this.host.streamingUI.getActiveToolCall(event.parentToolCallId);
-    const description = parent?.args['description'] ?? event.description;
-    return {
-      agentId: event.subagentId,
-      parentToolCallId: event.parentToolCallId,
-      agentName: event.subagentName,
-      description: typeof description === 'string' ? description : undefined,
-    };
-  }
-
-  private appendBackgroundAgentEntry(
-    phase: 'started' | 'completed' | 'failed',
-    meta: BackgroundAgentMetadata,
-    extras: { resultSummary?: string; error?: string } | undefined = undefined,
-  ): void {
-    const status = formatBackgroundAgentTranscript(phase, meta, extras);
-    const entry: TranscriptEntry = {
-      id: nextTranscriptId(),
-      kind: 'status',
-      turnId: this.host.streamingUI.getTurnContext().turnId,
-      renderMode: 'plain',
-      content: status.headline,
-      detail: status.detail,
-      backgroundAgentStatus: status,
-    };
-    this.host.appendTranscriptEntry(entry);
-  }
-
-  private syncBackgroundAgentBadge(): void {
-    this.syncBackgroundTaskBadge();
-  }
-
   // ---------------------------------------------------------------------------
   // Background task lifecycle
   // ---------------------------------------------------------------------------
@@ -1473,14 +996,4 @@ export class SessionEventHandler {
     state.footer.setBackgroundCounts({ bashTasks, agentTasks });
     state.ui.requestRender();
   }
-}
-
-function isUserCancelledSubagentError(error: string): boolean {
-  const normalized = error.trim();
-  return (
-    normalized === 'Aborted by the user' ||
-    normalized === 'The user manually interrupted this subagent batch.' ||
-    normalized.startsWith('The user manually interrupted this subagent ') ||
-    normalized.includes('This was a deliberate user action, not a system error')
-  );
 }
