@@ -408,10 +408,9 @@ export class SessionSubagentHost {
     return this.runChildWithErrorHandling(parent, childId, options, unwatchFirstOutput, async () => {
       options.signal.throwIfAborted();
       child.config.update({ modelAlias: parent.config.modelAlias });
-      const origin: PromptOrigin = options.origin ?? { kind: 'system_trigger', name: 'subagent' };
       this.emitSubagentStarted(parent, childId, profileName, options);
       options.onStarted?.();
-      if (child.turn.retry(origin) === null) {
+      if (child.turn.retry('agent-host') === null) {
         throw new Error(`Agent instance "${childId}" could not start a retry turn`);
       }
       return this.waitForChildCompletion(parent, childId, child, profileName, options, origin);

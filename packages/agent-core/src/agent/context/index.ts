@@ -40,6 +40,7 @@ export class ContextMemory {
     content: readonly ContentPart[],
     origin: PromptOrigin = USER_PROMPT_ORIGIN,
   ): void {
+    if (content.length === 0) return;
     this.appendMessage({
       role: 'user',
       content: [...content],

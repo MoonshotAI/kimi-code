@@ -128,7 +128,6 @@ export class Agent {
   readonly replayBuilder: ReplayBuilder;
 
   private lastLlmConfigLogSignature?: string;
-  private readonly eventListeners = new Set<(event: AgentEvent) => void>();
 
   constructor(options: AgentOptions) {
     this.type = options.type ?? 'main';
@@ -411,18 +410,10 @@ export class Agent {
 
   emitEvent(event: AgentEvent): void {
     if (this.records.restoring) return;
-    for (const listener of this.eventListeners) listener(event);
     void this.rpc?.emitEvent?.(event);
   }
 
-  onEvent(listener: (event: AgentEvent) => void): () => void {
-    this.eventListeners.add(listener);
-    return () => {
-      this.eventListeners.delete(listener);
-    };
-  }
-
-  emitStatusUpdated(options: { readonly swarmMode?: boolean } = {}): void {
+  emitStatusUpdated(): void {
     if (this.records.restoring) return;
     if (!this.config.hasModel) return;
 
@@ -442,7 +433,7 @@ export class Agent {
       maxContextTokens,
       contextUsage,
       planMode: this.planMode.isActive,
-      swarmMode: options.swarmMode ?? (this.swarmMode.isActive ? true : undefined),
+      swarmMode: this.swarmMode.isActive,
       permission: this.permission.mode,
       usage,
     });
