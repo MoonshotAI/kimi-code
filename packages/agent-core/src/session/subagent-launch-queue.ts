@@ -3,6 +3,7 @@ import type { TokenUsage } from '@moonshot-ai/kosong';
 
 import type { PromptOrigin } from '../agent/context';
 import { abortable, createDeadlineAbortSignal, isUserCancellation } from '../utils/abort';
+import type { RunSubagentOptions, SpawnSubagentOptions, SubagentHandle } from '.';
 
 const SUBAGENT_LAUNCH_BATCH_SIZE = 5;
 const SUBAGENT_QUEUE_LAUNCH_DELAY_MS = 500;
@@ -22,12 +23,8 @@ export type QueuedSubagentTask<T = unknown> = {
   readonly runInBackground: boolean;
   readonly origin?: PromptOrigin;
   readonly resumeAgentId?: string;
-};
-
-export type QueuedSubagentRunOptions = {
-  readonly signal: AbortSignal;
-  readonly timeoutMs?: number;
-  readonly totalTimeoutMs?: number;
+  readonly timeout?: number;
+  readonly signal?: AbortSignal;
 };
 
 export type QueuedSubagentRunResult<T = unknown> = {
@@ -73,43 +70,16 @@ type QueuedSubagentAttempt<T> = {
   settled: boolean;
 };
 
-export type QueuedSubagentAttemptOptions = QueuedSubagentRunOptions & {
-  readonly totalTimedOut: () => boolean;
-  readonly markAgentId: (agentId: string) => void;
-  readonly markReady: () => void;
-  readonly retryAgentId?: string;
-};
-
-type RunQueuedSubagentAttempt = <T>(
-  task: QueuedSubagentTask<T>,
-  options: QueuedSubagentAttemptOptions,
-) => Promise<QueuedSubagentAttemptOutcome<T>>;
-
-type SubagentLaunchQueueEvents = {
-  readonly onSuspended?: (event: QueuedSubagentSuspended) => void;
-};
+export interface SubagentLauncher {
+  spawn(options: SpawnSubagentOptions): Promise<SubagentHandle>;
+  resume(agentId: string, options: RunSubagentOptions): Promise<SubagentHandle>;
+  retry(agentId: string): Promise<SubagentHandle>;
+}
 
 export class SubagentLaunchQueue {
-  constructor(
-    private readonly runAttempt: RunQueuedSubagentAttempt,
-    private readonly events: SubagentLaunchQueueEvents = {},
-  ) {}
+  constructor(private launcher: SubagentLauncher) { }
 
-  async run<T>(
-    tasks: readonly QueuedSubagentTask<T>[],
-    runOptions: QueuedSubagentRunOptions,
-  ): Promise<Array<QueuedSubagentRunResult<T>>> {
-    const totalDeadline =
-      runOptions.totalTimeoutMs === undefined
-        ? undefined
-        : createDeadlineAbortSignal(runOptions.signal, runOptions.totalTimeoutMs);
-    const options: QueuedSubagentRunOptions = {
-      signal: totalDeadline?.signal ?? runOptions.signal,
-      timeoutMs: runOptions.timeoutMs,
-      totalTimeoutMs: runOptions.totalTimeoutMs,
-    };
-    const totalTimedOut = (): boolean => totalDeadline?.timedOut() === true;
-
+  enqueue<T>(tasks: readonly QueuedSubagentTask<T>[]): Array<Promise<QueuedSubagentRunResult<T>>> {
     const queued = tasks.map((_, index): QueuedSubagentPending => ({ index }));
     const active: Array<QueuedSubagentAttempt<T>> = [];
     const results: Array<QueuedSubagentRunResult<T> | undefined> = Array.from({
@@ -337,7 +307,6 @@ export class SubagentLaunchQueue {
       }
 
       while (active.length > 0 || queued.length > 0) {
-        options.signal.throwIfAborted();
         await processSettledAttempts();
 
         const launched = launchRateLimitedQueued();

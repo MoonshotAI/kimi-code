@@ -70,12 +70,11 @@ IMPORTANT:
 - If you do not know the answer, say so directly.
 `;
 
-type RunSubagentOptions = {
+export interface RunSubagentOptions {
   readonly parentToolCallId: string;
   readonly parentToolCallUuid?: string;
   readonly prompt: string;
   readonly description: string;
-  readonly swarmItem?: string;
   readonly runInBackground: boolean;
   readonly origin?: PromptOrigin;
   readonly signal: AbortSignal;
@@ -84,8 +83,9 @@ type RunSubagentOptions = {
   readonly suppressRateLimitFailureEvent?: boolean;
 };
 
-type SpawnSubagentOptions = RunSubagentOptions & {
+export interface SpawnSubagentOptions extends RunSubagentOptions {
   readonly profileName: string;
+  readonly swarmItem?: string;
 };
 
 type SubagentCompletion = {
@@ -229,7 +229,7 @@ export class SessionSubagentHost {
     tasks: readonly QueuedSubagentTask<T>[],
     options: QueuedSubagentRunOptions,
   ): Promise<Array<QueuedSubagentRunResult<T>>> {
-    return this.launchQueue.run(tasks, options);
+    return this.launchQueue.enqueue(tasks, options);
   }
 
   async startBtw(): Promise<string> {

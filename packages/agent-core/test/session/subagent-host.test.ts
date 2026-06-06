@@ -51,7 +51,7 @@ describe('SessionSubagentHost', () => {
     vi.useFakeTimers();
     try {
       const { queue, attempts } = createRecordedLaunchQueue();
-      const running = queue.run(
+      const running = queue.enqueue(
         Array.from({ length: 9 }, (_, index) => queuedTask(index + 1)),
         { signal },
       );
@@ -99,7 +99,7 @@ describe('SessionSubagentHost', () => {
     try {
       const controller = new AbortController();
       const { queue, attempts } = createRecordedLaunchQueue();
-      const running = queue.run(Array.from({ length: 9 }, (_, index) => queuedTask(index + 1)), {
+      const running = queue.enqueue(Array.from({ length: 9 }, (_, index) => queuedTask(index + 1)), {
         signal: controller.signal,
       });
       void running.catch(() => {});
@@ -138,7 +138,7 @@ describe('SessionSubagentHost', () => {
     try {
       const controller = new AbortController();
       const { queue, attempts } = createRecordedLaunchQueue();
-      const running = queue.run(Array.from({ length: 6 }, (_, index) => queuedTask(index + 1)), {
+      const running = queue.enqueue(Array.from({ length: 6 }, (_, index) => queuedTask(index + 1)), {
         signal: controller.signal,
       });
 
@@ -225,7 +225,7 @@ describe('SessionSubagentHost', () => {
     vi.useFakeTimers();
     try {
       const { queue, attempts } = createRecordedLaunchQueue();
-      const running = queue.run(
+      const running = queue.enqueue(
         Array.from({ length: 6 }, (_, index) => queuedTask(index + 1)),
         { signal },
       );
@@ -265,7 +265,7 @@ describe('SessionSubagentHost', () => {
       const controller = new AbortController();
       const onSuspended = vi.fn();
       const { queue, attempts } = createRecordedLaunchQueue({ onSuspended });
-      const running = queue.run(Array.from({ length: 8 }, (_, index) => queuedTask(index + 1)), {
+      const running = queue.enqueue(Array.from({ length: 8 }, (_, index) => queuedTask(index + 1)), {
         signal: controller.signal,
       });
       void running.catch(() => {});
@@ -322,7 +322,7 @@ describe('SessionSubagentHost', () => {
     try {
       const controller = new AbortController();
       const { queue, attempts } = createRecordedLaunchQueue();
-      const running = queue.run(Array.from({ length: 12 }, (_, index) => queuedTask(index + 1)), {
+      const running = queue.enqueue(Array.from({ length: 12 }, (_, index) => queuedTask(index + 1)), {
         signal: controller.signal,
       });
       void running.catch(() => {});
@@ -367,7 +367,7 @@ describe('SessionSubagentHost', () => {
     try {
       const controller = new AbortController();
       const { queue, attempts } = createRecordedLaunchQueue();
-      const running = queue.run(Array.from({ length: 8 }, (_, index) => queuedTask(index + 1)), {
+      const running = queue.enqueue(Array.from({ length: 8 }, (_, index) => queuedTask(index + 1)), {
         signal: controller.signal,
       });
       void running.catch(() => {});
@@ -418,7 +418,7 @@ describe('SessionSubagentHost', () => {
     vi.useFakeTimers();
     try {
       const { queue, attempts } = createRecordedLaunchQueue();
-      const running = queue.run([queuedTask(1)], { signal, totalTimeoutMs: 10_000 });
+      const running = queue.enqueue([queuedTask(1)], { signal, totalTimeoutMs: 10_000 });
 
       await vi.advanceTimersByTimeAsync(0);
       attempts[0]!.markReady();
@@ -473,7 +473,7 @@ describe('SessionSubagentHost', () => {
         return outcome;
       });
 
-      const running = queue.run(
+      const running = queue.enqueue(
         Array.from({ length: 9 }, (_, index) => queuedTask(index + 1)),
         { signal: controller.signal },
       );
