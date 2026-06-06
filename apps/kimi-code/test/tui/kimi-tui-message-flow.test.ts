@@ -12,7 +12,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
-import { agentSwarmGridHeightForTerminalRows } from '#/tui/components/messages/agent-swarm-progress';
+import {
+  AgentSwarmProgressComponent,
+  agentSwarmGridHeightForTerminalRows,
+} from '#/tui/components/messages/agent-swarm-progress';
 import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
@@ -2590,11 +2593,9 @@ command = "vim"
       sendQueued,
     );
 
-    const swarmProgress = (
-      driver.sessionEventHandler as unknown as {
-        agentSwarmProgress: Map<string, { render(width: number): string[] }>;
-      }
-    ).agentSwarmProgress.get('call_swarm');
+    const swarmProgress = driver.state.transcriptContainer.children.find(
+      (child): child is AgentSwarmProgressComponent => child instanceof AgentSwarmProgressComponent,
+    );
     if (swarmProgress === undefined) throw new Error('expected AgentSwarm progress');
 
     const transcriptWidth = Math.max(1, terminalColumns - 2);
