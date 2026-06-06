@@ -56,26 +56,33 @@ function bunCommand(platform: NodeJS.Platform): string {
 }
 
 /**
- * Compute the install prefix for a native (SEA) install.
+ * Compute the install prefix for a native (SEA) install, or undefined when
+ * the running binary is not inside a `bin/` directory (e.g. unpacked archive).
  *
  * The native install script writes to `$KIMI_INSTALL_DIR/bin/kimi`.  To
  * overwrite the currently running binary we point the env var at the
  * parent of the `bin/` directory that contains it, if any (e.g.
- * `~/.local/bin/kimi` → `~/.local`).
+ * `~/.local/bin/kimi` → `~/.local`).  When the binary is not under a `bin/`
+ * directory we cannot safely determine a prefix that would cause the installer
+ * to overwrite it, so we skip the override and let the installer use its
+ * default location.
  */
-function nativeInstallDir(): string {
+function nativeInstallDir(): string | undefined {
   const execDir = dirname(process.execPath);
-  return basename(execDir) === 'bin' ? dirname(execDir) : execDir;
+  return basename(execDir) === 'bin' ? dirname(execDir) : undefined;
 }
 
 /**
- * Render the env-var prefix for a native install command so the user-visible
- * command matches what the spawned process actually runs.
+ * Render the env-var suffix (`| KIMI_…=… bash`) for a native install command.
+ * The spawned path passes these variables through `SpawnCommand.env`; the
+ * user-visible command places them between the pipe and `bash` so that they
+ * are visible to the install script when the user copy-pastes.
  */
 function nativeEnvPrefix(): string {
   const dir = nativeInstallDir();
-  // Shell-quote: single-quote wraps the value so spaces are safe.
-  return `KIMI_INSTALL_DIR='${dir}' KIMI_NO_MODIFY_PATH=1`;
+  const vars = ['KIMI_NO_MODIFY_PATH=1'];
+  if (dir !== undefined) vars.unshift(`KIMI_INSTALL_DIR='${dir}'`);
+  return vars.join(' ');
 }
 
 export function installCommandFor(
@@ -95,7 +102,7 @@ export function installCommandFor(
     case 'native':
       return platform === 'win32'
         ? NATIVE_INSTALL_COMMAND_WIN
-        : `${nativeEnvPrefix()} ${NATIVE_INSTALL_COMMAND_UNIX}`;
+        : NATIVE_INSTALL_COMMAND_UNIX.replace('| bash', `| ${nativeEnvPrefix()} bash`);
     case 'unsupported':
       return `npm install -g ${NPM_PACKAGE_NAME}@${version}`;
   }
@@ -150,13 +157,12 @@ export function spawnForSource(
       // Set KIMI_NO_MODIFY_PATH to skip shell-rc modification — during an
       // upgrade the binary is already on the user's PATH.
       const installDir = nativeInstallDir();
+      const env: Record<string, string> = { KIMI_NO_MODIFY_PATH: '1' };
+      if (installDir !== undefined) env.KIMI_INSTALL_DIR = installDir;
       return {
         cmd: 'bash',
         args: ['-c', `set -o pipefail; ${NATIVE_INSTALL_COMMAND_UNIX}`],
-        env: {
-          KIMI_INSTALL_DIR: installDir,
-          KIMI_NO_MODIFY_PATH: '1',
-        },
+        env,
       };
     }
     case 'unsupported':

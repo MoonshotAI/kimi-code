@@ -413,13 +413,11 @@ describe('runUpdatePreflight', () => {
       const call = mocks.spawn.mock.calls[0];
       expect(call?.[0]).toBe('bash');
       const execDir = dirname(process.execPath);
-      const expectedInstallDir = basename(execDir) === 'bin' ? dirname(execDir) : execDir;
+      const envExpect: Record<string, unknown> = { KIMI_NO_MODIFY_PATH: '1' };
+      if (basename(execDir) === 'bin') envExpect.KIMI_INSTALL_DIR = dirname(execDir);
       expect(call?.[2]).toMatchObject({
         stdio: 'inherit',
-        env: expect.objectContaining({
-          KIMI_INSTALL_DIR: expectedInstallDir,
-          KIMI_NO_MODIFY_PATH: '1',
-        }),
+        env: expect.objectContaining(envExpect),
       });
       const [flag, script] = call?.[1] as string[];
       expect(flag).toBe('-c');

@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Point `KIMI_INSTALL_DIR` at the current binary's directory so native upgrade overwrites it in place
+Fix native upgrade: set `KIMI_INSTALL_DIR` only when binary is under `bin/`; place env vars after pipe in prompt command so they reach the install script
