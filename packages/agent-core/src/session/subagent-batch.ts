@@ -252,10 +252,7 @@ export class SubagentBatch<T> {
       description: task.description,
       runInBackground: task.runInBackground,
       signal: attempt.controller.signal,
-      onStarted: () => {
-        this.markAttemptReady(attempt);
-      },
-      onFirstOutput: () => {
+      onReady: () => {
         this.markAttemptReady(attempt);
       },
       suppressRateLimitFailureEvent: true,

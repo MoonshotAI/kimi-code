@@ -1,7 +1,12 @@
-import { isProviderRateLimitError, type TokenUsage } from '@moonshot-ai/kosong';
+import {
+  APIProviderRateLimitError,
+  isProviderRateLimitError,
+  type TokenUsage,
+} from '@moonshot-ai/kosong';
 
 import type { Agent } from '../agent';
 import type { PromptOrigin } from '../agent/context';
+import { ErrorCodes, type KimiErrorPayload } from '../errors';
 import { DenyAllPermissionPolicy } from '../agent/permission/policies/deny-all';
 import { InMemoryAgentRecordPersistence } from '../agent/records';
 import type { LoopTurnStopReason } from '../loop';
@@ -11,7 +16,6 @@ import {
   prepareSystemPromptContext,
   type ResolvedAgentProfile,
 } from '../profile';
-import type { AgentEvent } from '../rpc';
 import {
   linkAbortSignal,
   userCancellationReason,
@@ -66,8 +70,7 @@ export interface RunSubagentOptions {
   readonly description: string;
   readonly runInBackground: boolean;
   readonly signal: AbortSignal;
-  readonly onStarted?: () => void;
-  readonly onFirstOutput?: () => void;
+  readonly onReady?: () => void;
   readonly suppressRateLimitFailureEvent?: boolean;
 };
 
@@ -285,8 +288,7 @@ export class SessionSubagentHost {
     emitSpawnedEvent = true,
   ): Promise<SubagentCompletion> {
     if (emitSpawnedEvent) this.emitSubagentSpawned(parent, childId, profileName, options);
-    const unwatchFirstOutput = this.watchFirstOutput(child, options.onFirstOutput);
-    return this.runChildWithErrorHandling(parent, childId, options, unwatchFirstOutput, async () => {
+    return this.runChildWithErrorHandling(parent, childId, options, async () => {
       await prepareChild();
       options.signal.throwIfAborted();
       await this.triggerSubagentStart(parent, profileName, options.prompt, options.signal);
@@ -300,8 +302,11 @@ export class SessionSubagentHost {
         if (gitContext) childPrompt = `${gitContext}\n\n${childPrompt}`;
       }
       this.emitSubagentStarted(parent, childId, profileName, options);
-      options.onStarted?.();
-      child.turn.prompt([{ type: 'text', text: childPrompt }], SUBAGENT_PROMPT_ORIGIN);
+    const turnId = child.turn.prompt([{ type: 'text', text: childPrompt }], SUBAGENT_PROMPT_ORIGIN);
+    if (turnId === null) {
+      throw new Error(`Agent instance "${childId}" could not start a turn`);
+    }
+    this.observeFirstRequest(child, options);
       return this.waitForChildCompletion(parent, childId, child, profileName, options);
     });
   }
@@ -313,15 +318,15 @@ export class SessionSubagentHost {
     profileName: string,
     options: RunSubagentOptions,
   ): Promise<SubagentCompletion> {
-    const unwatchFirstOutput = this.watchFirstOutput(child, options.onFirstOutput);
-    return this.runChildWithErrorHandling(parent, childId, options, unwatchFirstOutput, async () => {
+    return this.runChildWithErrorHandling(parent, childId, options, async () => {
       options.signal.throwIfAborted();
       child.config.update({ modelAlias: parent.config.modelAlias });
       this.emitSubagentStarted(parent, childId, profileName, options);
-      options.onStarted?.();
-      if (child.turn.retry('agent-host') === null) {
+      const turnId = child.turn.retry('agent-host');
+      if (turnId === null) {
         throw new Error(`Agent instance "${childId}" could not start a retry turn`);
       }
+      this.observeFirstRequest(child, options);
       return this.waitForChildCompletion(parent, childId, child, profileName, options);
     });
   }
@@ -330,7 +335,6 @@ export class SessionSubagentHost {
     parent: Agent,
     childId: string,
     options: RunSubagentOptions,
-    unwatchFirstOutput: (() => void) | undefined,
     run: () => Promise<SubagentCompletion>,
   ): Promise<SubagentCompletion> {
     try {
@@ -346,8 +350,6 @@ export class SessionSubagentHost {
         });
       }
       throw error;
-    } finally {
-      unwatchFirstOutput?.();
     }
   }
 
@@ -429,22 +431,17 @@ export class SessionSubagentHost {
     });
   }
 
-  private watchFirstOutput(
+  private observeFirstRequest(
     child: Agent,
-    onFirstOutput: (() => void) | undefined,
-  ): (() => void) | undefined {
-    if (onFirstOutput === undefined) return undefined;
-    let emitted = false;
-    const emitEvent = child.emitEvent.bind(child);
-    child.emitEvent = (event: AgentEvent) => {
-      emitEvent(event);
-      if (emitted || !isFirstOutputEvent(event)) return;
-      emitted = true;
-      onFirstOutput();
-    };
-    return () => {
-      child.emitEvent = emitEvent;
-    };
+    options: RunSubagentOptions,
+  ): void {
+    if (options.onReady === undefined) return;
+    void child.turn
+      .waitForTurnFirstRequest()
+      .then(() => {
+        options.onReady?.();
+      })
+      .catch(() => {});
   }
 
   private emitSubagentSpawned(
@@ -507,6 +504,9 @@ async function runChildTurnToCompletion(child: Agent, signal: AbortSignal): Prom
   const completion = await child.turn.waitForCurrentTurn(signal);
   const turnEnded = completion.event;
   if (turnEnded.reason !== 'completed') {
+    if (turnEnded.error?.code === ErrorCodes.PROVIDER_RATE_LIMIT) {
+      throw providerRateLimitErrorFromPayload(turnEnded.error);
+    }
     throw new Error(
       turnEnded.error === undefined
         ? `Subagent turn ${turnEnded.reason}`
@@ -514,6 +514,12 @@ async function runChildTurnToCompletion(child: Agent, signal: AbortSignal): Prom
     );
   }
   throwIfSubagentStoppedAtMaxTokens(completion.stopReason);
+}
+
+function providerRateLimitErrorFromPayload(error: KimiErrorPayload): APIProviderRateLimitError {
+  const requestId =
+    typeof error.details?.['requestId'] === 'string' ? error.details['requestId'] : null;
+  return new APIProviderRateLimitError(error.message, requestId);
 }
 
 function throwIfSubagentStoppedAtMaxTokens(stopReason: LoopTurnStopReason | undefined): void {
@@ -532,16 +538,6 @@ function lastAssistantText(agent: Agent): string {
     if (text.trim().length > 0) return text.trim();
   }
   return '';
-}
-
-function isFirstOutputEvent(event: AgentEvent): boolean {
-  if (event.type === 'assistant.delta' || event.type === 'thinking.delta') {
-    return event.delta.length > 0;
-  }
-  if (event.type === 'tool.call.delta') {
-    return (event.name?.length ?? 0) > 0 || (event.argumentsPart?.length ?? 0) > 0;
-  }
-  return event.type === 'tool.call.started';
 }
 
 function shouldSuppressQueuedAttemptFailureEvent(

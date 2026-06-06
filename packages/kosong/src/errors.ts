@@ -57,6 +57,17 @@ export class APIContextOverflowError extends APIStatusError {
 }
 
 /**
+ * HTTP status error that specifically means the provider rate-limited the
+ * request.
+ */
+export class APIProviderRateLimitError extends APIStatusError {
+  constructor(message: string, requestId?: string | null) {
+    super(429, message, requestId);
+    this.name = 'APIProviderRateLimitError';
+  }
+}
+
+/**
  * The API returned an empty response (no content, no tool calls).
  */
 export class APIEmptyResponseError extends ChatProviderError {
@@ -117,6 +128,9 @@ export function normalizeAPIStatusError(
   message: string,
   requestId?: string | null,
 ): APIStatusError {
+  if (statusCode === 429) {
+    return new APIProviderRateLimitError(message, requestId);
+  }
   if (isContextOverflowStatusError(statusCode, message)) {
     return new APIContextOverflowError(statusCode, message, requestId);
   }
@@ -130,6 +144,8 @@ export function isContextOverflowStatusError(statusCode: number, message: string
 }
 
 export function isProviderRateLimitError(error: unknown): boolean {
+  if (error instanceof APIProviderRateLimitError) return true;
+
   const statusCode = getStatusCode(error);
   if (statusCode !== undefined) return statusCode === 429;
 
