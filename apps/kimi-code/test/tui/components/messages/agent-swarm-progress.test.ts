@@ -1126,6 +1126,30 @@ describe('AgentSwarmProgressComponent', () => {
     expect(output).not.toContain('002 [');
   });
 
+  it('maps subagents by structured swarm indexes when descriptions include issue references', () => {
+    const component = new AgentSwarmProgressComponent({
+      description: 'Fix #123',
+      colors: darkColors,
+    });
+
+    component.updateArgs({
+      description: 'Fix #123',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+    component.registerSubagent({
+      agentId: 'agent-2',
+      description: 'Fix #123 #2 (coder)',
+      swarmIndex: 2,
+    });
+    component.markStarted('agent-2');
+
+    const output = strip(component.render(100).join('\n'));
+
+    expect(output).toContain('001 src/a.ts');
+    expect(output).toContain('002 [');
+    expect(output).not.toContain('123 [');
+  });
+
   it('extracts description and item list from AgentSwarm args', () => {
     const args = {
       description: 'Review changed files',

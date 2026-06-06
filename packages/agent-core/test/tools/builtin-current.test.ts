@@ -433,6 +433,45 @@ describe('current builtin collaboration tools', () => {
     expect(host.runQueued).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      name: 'a single item without resumed agents',
+      input: {
+        description: 'Review one file',
+        prompt_template: 'Review {{item}}',
+        items: ['src/only.ts'],
+      },
+      output: 'AgentSwarm requires at least 2 items unless resume_agent_ids is provided.',
+    },
+    {
+      name: 'items without a prompt template',
+      input: {
+        description: 'Review files',
+        items: ['src/a.ts', 'src/b.ts'],
+      },
+      output: 'prompt_template is required when items are provided.',
+    },
+    {
+      name: 'a prompt template without the item placeholder',
+      input: {
+        description: 'Review files',
+        prompt_template: 'Review files',
+        items: ['src/a.ts', 'src/b.ts'],
+      },
+      output: 'prompt_template must include the {{item}} placeholder.',
+    },
+  ])('AgentSwarm rejects $name at execution time', async ({ input, output }) => {
+    const host = mockSubagentHost({ runQueued: vi.fn() });
+    const swarmMode = mockSwarmMode();
+    const tool = new AgentSwarmTool(host, swarmMode);
+
+    const result = await executeTool(tool, context(input));
+
+    expect(result.output).toBe(output);
+    expect(result.isError).toBe(true);
+    expect(host.runQueued).not.toHaveBeenCalled();
+  });
+
   it('AgentSwarm resumes mapped agents before spawning item subagents', async () => {
     const runQueued = vi.fn(
       async <T>(
@@ -484,7 +523,7 @@ describe('current builtin collaboration tools', () => {
           'agent-old-1': 'Continue previous review A',
         },
       }).success,
-    ).toBe(false);
+    ).toBe(true);
 
     const result = await executeTool(tool, context(input, 'call_swarm'));
 
@@ -551,6 +590,68 @@ describe('current builtin collaboration tools', () => {
       '<subagent mode="resume" agent_id="agent-old-1" item="src/old-a.ts" outcome="completed">result 1</subagent>',
       '<subagent mode="resume" agent_id="agent-old-2" item="src/old-b.ts" outcome="completed">result 2</subagent>',
       '<subagent agent_id="agent-new-3" item="src/new.ts" outcome="completed">result 3</subagent>',
+      '</agent_swarm_result>',
+    ].join('\n'));
+    expect(result.isError).toBeUndefined();
+  });
+
+  it('AgentSwarm allows a single resumed subagent without item subagents', async () => {
+    const runQueued = vi.fn(
+      async <T>(
+        tasks: readonly QueuedSubagentTask<T>[],
+      ): Promise<Array<QueuedSubagentRunResult<T>>> => {
+        return tasks.map((task) => ({
+          task,
+          agentId: task.kind === 'resume' ? task.resumeAgentId : 'agent-new',
+          status: 'completed' as const,
+          result: 'resumed result',
+        }));
+      },
+    );
+    const host = mockSubagentHost({
+      getSwarmItem: vi.fn((agentId: string) =>
+        agentId === 'agent-old-1' ? 'src/old-a.ts' : undefined,
+      ),
+      runQueued: runQueued as unknown as SessionSubagentHost['runQueued'],
+    });
+    const swarmMode = mockSwarmMode();
+    const tool = new AgentSwarmTool(host, swarmMode);
+    const input = {
+      description: 'Resume review',
+      resume_agent_ids: {
+        'agent-old-1': 'Continue previous review A',
+      },
+    };
+
+    expect(AgentSwarmToolInputSchema.safeParse(input).success).toBe(true);
+
+    const result = await executeTool(tool, context(input, 'call_swarm'));
+
+    expect(host.runQueued).toHaveBeenCalledTimes(1);
+    expect(host.runQueued).toHaveBeenCalledWith([
+      {
+        kind: 'resume',
+        data: {
+          kind: 'resume',
+          index: 1,
+          agentId: 'agent-old-1',
+          item: 'src/old-a.ts',
+          prompt: 'Continue previous review A',
+        },
+        profileName: 'subagent',
+        parentToolCallId: 'call_swarm',
+        prompt: 'Continue previous review A',
+        description: 'Resume review #1 (resume)',
+        swarmItem: 'src/old-a.ts',
+        runInBackground: false,
+        resumeAgentId: 'agent-old-1',
+        signal,
+      },
+    ]);
+    expect(result.output).toBe([
+      '<agent_swarm_result>',
+      '<summary>completed: 1</summary>',
+      '<subagent mode="resume" agent_id="agent-old-1" item="src/old-a.ts" outcome="completed">resumed result</subagent>',
       '</agent_swarm_result>',
     ].join('\n'));
     expect(result.isError).toBeUndefined();

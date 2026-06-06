@@ -209,6 +209,7 @@ export interface SubagentSpawnedEvent {
   readonly parentToolCallUuid?: string | undefined;
   readonly parentAgentId?: string | undefined;
   readonly description?: string | undefined;
+  readonly swarmIndex?: number | undefined;
   readonly runInBackground: boolean;
 }
 
@@ -220,6 +221,7 @@ export interface SubagentStartedEvent {
   readonly parentToolCallUuid?: string | undefined;
   readonly parentAgentId?: string | undefined;
   readonly description?: string | undefined;
+  readonly swarmIndex?: number | undefined;
   readonly runInBackground: boolean;
 }
 
@@ -231,6 +233,7 @@ export interface SubagentSuspendedEvent {
   readonly parentToolCallUuid?: string | undefined;
   readonly parentAgentId?: string | undefined;
   readonly description?: string | undefined;
+  readonly swarmIndex?: number | undefined;
   readonly runInBackground: boolean;
   readonly reason: string;
 }

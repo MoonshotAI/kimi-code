@@ -394,7 +394,7 @@ export class SubAgentEventHandler {
     if (this.updateAgentSwarmProgress(event.parentToolCallId, (progress) => {
       progress.registerSubagent({
         agentId: event.subagentId,
-        description: event.description,
+        swarmIndex: event.swarmIndex,
       });
     })) {
       return;
@@ -435,7 +435,7 @@ export class SubAgentEventHandler {
       progress.markSuspended({
         agentId: event.subagentId,
         reason: event.reason,
-        description: event.description,
+        swarmIndex: event.swarmIndex,
       });
     });
   }

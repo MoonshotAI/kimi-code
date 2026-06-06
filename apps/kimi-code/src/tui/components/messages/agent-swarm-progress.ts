@@ -283,9 +283,10 @@ export class AgentSwarmProgressComponent implements Component {
 
   registerSubagent(input: {
     readonly agentId: string;
+    readonly swarmIndex?: number;
     readonly description?: string | undefined;
   }): void {
-    const member = this.findMemberForSubagent(input.agentId, input.description);
+    const member = this.findMemberForSubagent(input.agentId, input.swarmIndex);
     if (member === undefined) return;
     member.agentId = input.agentId;
     if (member.phase === 'pending') member.phase = 'queued';
@@ -342,10 +343,11 @@ export class AgentSwarmProgressComponent implements Component {
   markSuspended(input: {
     readonly agentId: string;
     readonly reason: string;
+    readonly swarmIndex?: number;
     readonly description?: string | undefined;
   }): void {
     const member = this.findMemberByAgentId(input.agentId) ??
-      this.findMemberForSubagent(input.agentId, input.description);
+      this.findMemberForSubagent(input.agentId, input.swarmIndex);
     if (member === undefined || member.phase === 'completed' || member.phase === 'cancelled') return;
     member.agentId = input.agentId;
     this.progressEstimator.markQueued(member.id, Date.now());
@@ -650,16 +652,15 @@ export class AgentSwarmProgressComponent implements Component {
 
   private findMemberForSubagent(
     agentId: string,
-    description: string | undefined,
+    swarmIndex: number | undefined,
   ): AgentSwarmMember | undefined {
     const existing = this.findMemberByAgentId(agentId);
     if (existing !== undefined) return existing;
 
-    const index = parseAgentSwarmDescriptionIndex(description);
-    if (index !== undefined) {
-      this.ensureMemberCount(index);
-      const byDescription = this.members[index - 1];
-      if (byDescription !== undefined) return byDescription;
+    if (swarmIndex !== undefined && Number.isInteger(swarmIndex) && swarmIndex > 0) {
+      this.ensureMemberCount(swarmIndex);
+      const byIndex = this.members[swarmIndex - 1];
+      if (byIndex !== undefined) return byIndex;
     }
 
     const unassigned = this.members.find((member) => member.agentId === undefined);
@@ -880,14 +881,6 @@ function agentSwarmPartialPromptTemplateFromArguments(argumentsText: string): st
   const match = /"prompt_template"\s*:\s*"/.exec(argumentsText);
   if (match === null) return '';
   return parsePartialJsonString(argumentsText, match.index + match[0].length).value;
-}
-
-function parseAgentSwarmDescriptionIndex(description: string | undefined): number | undefined {
-  if (description === undefined) return undefined;
-  const match = /#(\d+)(?:\s|$|\()/.exec(description);
-  if (match === null) return undefined;
-  const index = Number(match[1]);
-  return Number.isInteger(index) && index > 0 ? index : undefined;
 }
 
 export function agentSwarmResultSummaryFromOutput(output: string): AgentSwarmResultSummary {

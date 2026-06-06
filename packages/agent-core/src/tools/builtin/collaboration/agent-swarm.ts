@@ -35,9 +35,6 @@ export const AgentSwarmToolInputSchema = z
       .string()
       .trim()
       .min(1)
-      .refine((value) => value.includes(PROMPT_TEMPLATE_PLACEHOLDER), {
-        message: `prompt_template must include the ${PROMPT_TEMPLATE_PLACEHOLDER} placeholder.`,
-      })
       .optional()
       .describe(
         `Prompt template for each subagent. The ${PROMPT_TEMPLATE_PLACEHOLDER} placeholder is replaced with each item value.`,
@@ -56,33 +53,7 @@ export const AgentSwarmToolInputSchema = z
         'Map of existing subagent agent_id to the prompt used to resume that subagent. These resumed subagents are launched before new item-based subagents.',
       ),
   })
-  .strict()
-  .superRefine((args, ctx) => {
-    const itemCount = args.items?.length ?? 0;
-    const resumeCount = Object.keys(args.resume_agent_ids ?? {}).length;
-    const totalCount = itemCount + resumeCount;
-    if (itemCount > 0 && args.prompt_template === undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['prompt_template'],
-        message: 'prompt_template is required when items are provided.',
-      });
-    }
-    if (totalCount < 2) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['items'],
-        message: 'AgentSwarm requires at least 2 total subagents.',
-      });
-    }
-    if (totalCount > MAX_AGENT_SWARM_SUBAGENTS) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['items'],
-        message: `AgentSwarm supports at most ${String(MAX_AGENT_SWARM_SUBAGENTS)} subagents.`,
-      });
-    }
-  });
+  .strict();
 
 export type AgentSwarmToolInput = z.infer<typeof AgentSwarmToolInputSchema>;
 
@@ -170,6 +141,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
         parentToolCallId: toolCallId,
         prompt: spec.prompt,
         description: childDescription(args.description, spec.index, descriptionName),
+        swarmIndex: spec.index,
         runInBackground: false,
         swarmItem: spec.item,
         signal,
@@ -200,12 +172,23 @@ function createAgentSwarmSpecs(
     prompt: prompt.trim(),
   }));
   const items = (args.items ?? []).map((item) => item.trim());
-  const totalCount = resumeEntries.length + items.length;
-  if (totalCount < 2) {
-    throw new Error('AgentSwarm requires at least 2 total subagents.');
+  const itemCount = items.length;
+  const resumeCount = resumeEntries.length;
+  const totalCount = resumeCount + itemCount;
+  if (!hasMinimumAgentSwarmInputs(itemCount, resumeCount)) {
+    throw new Error('AgentSwarm requires at least 2 items unless resume_agent_ids is provided.');
   }
   if (totalCount > MAX_AGENT_SWARM_SUBAGENTS) {
     throw new Error(`AgentSwarm supports at most ${String(MAX_AGENT_SWARM_SUBAGENTS)} subagents.`);
+  }
+  const promptTemplate = normalizeOptionalString(args.prompt_template);
+  if (items.length > 0 && promptTemplate === undefined) {
+    throw new Error('prompt_template is required when items are provided.');
+  }
+  if (promptTemplate !== undefined && !promptTemplate.includes(PROMPT_TEMPLATE_PLACEHOLDER)) {
+    throw new Error(
+      `prompt_template must include the ${PROMPT_TEMPLATE_PLACEHOLDER} placeholder.`,
+    );
   }
 
   const seenPrompts = new Map<string, number>();
@@ -220,9 +203,9 @@ function createAgentSwarmSpecs(
     });
   }
   if (items.length > 0) {
-    const promptTemplate = normalizeOptionalString(args.prompt_template)!;
+    const itemPromptTemplate = promptTemplate!;
     items.forEach((item, index) => {
-      const prompt = promptTemplate.split(PROMPT_TEMPLATE_PLACEHOLDER).join(item);
+      const prompt = itemPromptTemplate.split(PROMPT_TEMPLATE_PLACEHOLDER).join(item);
       const previousIndex = seenPrompts.get(prompt);
       if (previousIndex !== undefined) {
         throw new Error(
@@ -239,6 +222,10 @@ function createAgentSwarmSpecs(
     });
   }
   return specs;
+}
+
+function hasMinimumAgentSwarmInputs(itemCount: number, resumeCount: number): boolean {
+  return resumeCount > 0 || itemCount >= 2;
 }
 
 function childDescription(swarmDescription: string, index: number, profileName: string): string {

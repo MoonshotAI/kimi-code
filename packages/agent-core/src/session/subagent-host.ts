@@ -69,6 +69,7 @@ export interface RunSubagentOptions {
   readonly parentToolCallUuid?: string;
   readonly prompt: string;
   readonly description: string;
+  readonly swarmIndex?: number;
   readonly runInBackground: boolean;
   readonly signal: AbortSignal;
   readonly onReady?: () => void;
@@ -205,6 +206,7 @@ export class SessionSubagentHost {
       parentToolCallUuid: event.task.parentToolCallUuid,
       parentAgentId: this.ownerAgentId,
       description: event.task.description,
+      swarmIndex: event.task.swarmIndex,
       runInBackground: event.task.runInBackground,
       reason: event.reason,
     });
@@ -423,6 +425,7 @@ export class SessionSubagentHost {
       parentToolCallUuid: options.parentToolCallUuid,
       parentAgentId: this.ownerAgentId,
       description: options.description,
+      swarmIndex: options.swarmIndex,
       runInBackground: options.runInBackground,
     });
     parent.telemetry.track('subagent_created', {
@@ -445,6 +448,7 @@ export class SessionSubagentHost {
       parentToolCallUuid: options.parentToolCallUuid,
       parentAgentId: this.ownerAgentId,
       description: options.description,
+      swarmIndex: options.swarmIndex,
       runInBackground: options.runInBackground,
     });
   }
