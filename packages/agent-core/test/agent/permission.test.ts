@@ -2105,6 +2105,46 @@ describe('Agent-local approve for session', () => {
     expect(requestApproval).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    ['quotes and parens', `python -c "print('1')"`, `python -c "print('2')"`],
+    ['quotes and pipes', `printf "a|b" | sed "s|a|c|"`, `printf "a|b" | sed "s|a|d|"`],
+  ] as const)(
+    'reuses approve-for-session for literal Bash commands containing %s',
+    async (_caseName, command, changedCommand) => {
+      const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+        decision: 'approved',
+        scope: 'session',
+        selectedLabel: 'Approve for this session',
+      }));
+      const call = (id: string, commandText: string) =>
+        manager.beforeToolCall(
+          hookContext({
+            id,
+            args: { command: commandText, timeout: 60 },
+          }),
+        );
+
+      await expect(call('call_literal_special_1', command)).resolves.toBeUndefined();
+      expect(manager.sessionApprovalRulePatterns).toContain(literalRulePattern('Bash', command));
+
+      await expect(call('call_literal_special_2', command)).resolves.toBeUndefined();
+      expect(requestApproval).toHaveBeenCalledTimes(1);
+      expect(telemetryTrack).toHaveBeenCalledWith(
+        'permission_policy_decision',
+        expect.objectContaining({
+          policy_name: 'session-approval-history',
+          tool_name: 'Bash',
+          decision: 'approve',
+          has_rule_args: true,
+          match_strategy: 'matches_rule',
+        }),
+      );
+
+      await expect(call('call_literal_special_3', changedCommand)).resolves.toBeUndefined();
+      expect(requestApproval).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it('keeps approved once responses one-shot', async () => {
     const { manager, record, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
