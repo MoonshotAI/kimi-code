@@ -82,6 +82,7 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Toggle swarm mode or run one task in swarm mode',
     priority: 100,
+    experimentalFlag: 'agent_swarm',
     completeArgs: swarmArgumentCompletions,
     availability: 'idle-only',
   },

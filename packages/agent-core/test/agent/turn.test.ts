@@ -16,6 +16,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { HookEngine } from '../../src/session/hooks';
+import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import type { AgentOptions } from '../../src/agent';
 import type { Logger, LogPayload } from '../../src/logging';
 import type {
@@ -333,7 +334,10 @@ describe('Agent turn flow', () => {
     const subagentHost = mockSubagentHost({
       runQueued: runQueued as unknown as SessionSubagentHost['runQueued'],
     });
-    const ctx = testAgent({ subagentHost });
+    const ctx = testAgent({
+      subagentHost,
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { agent_swarm: true }),
+    });
     ctx.configure({ tools: ['AgentSwarm'] });
     await ctx.rpc.setPermission({ mode: 'yolo' });
 

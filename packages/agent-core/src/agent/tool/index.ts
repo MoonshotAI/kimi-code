@@ -377,6 +377,7 @@ export class ToolManager {
       this.enabledTools.has('TaskStop');
     const goalCommandEnabled =
       this.agent.experimentalFlags.enabled('goal_command') && this.agent.type === 'main';
+    const agentSwarmEnabled = this.agent.experimentalFlags.enabled('agent_swarm');
     this.builtinTools = new Map(
       [
         new b.ReadTool(kaos, workspace),
@@ -416,6 +417,7 @@ export class ToolManager {
             },
           ),
         this.agent.subagentHost &&
+          agentSwarmEnabled &&
           new b.AgentSwarmTool(this.agent.subagentHost, this.agent.swarmMode),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),

@@ -51,6 +51,7 @@ describe('built-in slash command registry', () => {
   it('keeps swarm mode changes and swarm tasks idle-only', () => {
     const swarm = findBuiltInSlashCommand('swarm');
     expect(swarm).toBeDefined();
+    expect((swarm as KimiSlashCommand).experimentalFlag).toBe('agent_swarm');
     expect(resolveSlashCommandAvailability(swarm!, 'on')).toBe('idle-only');
     expect(resolveSlashCommandAvailability(swarm!, 'off')).toBe('idle-only');
     expect(resolveSlashCommandAvailability(swarm!, 'Ship feature X')).toBe('idle-only');

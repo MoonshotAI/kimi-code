@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { HookEngine } from '../../src/session/hooks';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
+import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { createCommandKaos, testAgent } from './harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
@@ -249,6 +250,24 @@ describe('Agent tools', () => {
     const managedBash = ctx.agent.tools.loopTools.find((tool) => tool.name === 'Bash');
     expect(managedBash).toBeDefined();
     expect(managedBash!.description).toContain('run_in_background=true');
+  });
+
+  it('gates AgentSwarm behind the agent_swarm flag', () => {
+    const subagentHost = {} as unknown as SessionSubagentHost;
+
+    const disabled = testAgent({
+      subagentHost,
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS),
+    });
+    disabled.configure({ tools: ['AgentSwarm'] });
+    expect(disabled.agent.tools.loopTools.some((tool) => tool.name === 'AgentSwarm')).toBe(false);
+
+    const enabled = testAgent({
+      subagentHost,
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { agent_swarm: true }),
+    });
+    enabled.configure({ tools: ['AgentSwarm'] });
+    expect(enabled.agent.tools.loopTools.some((tool) => tool.name === 'AgentSwarm')).toBe(true);
   });
 
   it('routes registered user tools through tool.call request/response', async () => {
