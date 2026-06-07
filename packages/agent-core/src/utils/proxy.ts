@@ -314,9 +314,25 @@ export function installGlobalProxyDispatcher(
   const dispatcher = deps.createProxyDispatcher(env);
   if (dispatcher === undefined) return false;
   deps.setGlobalDispatcher(dispatcher);
-  if (env === process.env) {
+
+  if (env === process.env && hasHttpProxy(env)) {
+    // For Node 22+, native fetch resolves env proxy lazily and works immediately
+    // once process.env.NODE_USE_ENV_PROXY is set.
     process.env['NODE_USE_ENV_PROXY'] = '1';
+
+    // For Node 22+ native node:http clients (which resolve proxy at startup before
+    // user code runs), we must respawn the process with NODE_USE_ENV_PROXY=1.
+    // We skip this inside vitest (where NODE_ENV === 'test') to prevent exiting the test runner.
+    if (process.env['NODE_ENV'] !== 'test' && process.env['VITEST'] === undefined) {
+      const { spawnSync } = require('node:child_process');
+      const result = spawnSync(process.execPath, process.argv.slice(1), {
+        stdio: 'inherit',
+        env: { ...process.env, NODE_USE_ENV_PROXY: '1' },
+      });
+      process.exit(result.status ?? 0);
+    }
   }
+
   return true;
 }
 
