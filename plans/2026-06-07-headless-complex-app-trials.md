@@ -419,6 +419,67 @@ node /Users/chengluyu/.codex/worktrees/4260/headless-daemon/apps/kimi-code/dist/
   --file "$RUN_DIR/status.json"
 ```
 
+## Turn Wait Protocol
+
+The operator shall supervise each headless turn without joining Kimi's creation loop.
+
+After starting `kimi headless`, wait for one of two events:
+
+- the process exits
+- one minute passes
+
+During the one-minute wait:
+
+- do not read code
+- do not read generated files
+- do not read diffs
+- do not inspect artifacts
+- do not poll status repeatedly
+- do not update tracker files
+- do not send extra prompts
+
+If the operator is using an interactive process session, the wait may be a blocking read with no input:
+
+```text
+write_stdin({
+  session_id: <kimi-process-session>,
+  chars: "",
+  yield_time_ms: 60000
+})
+```
+
+This call only waits for the process to produce output or exit.
+
+It shall not be treated as active supervision work.
+
+If the process exits before 60 seconds, handle the completed run immediately.
+
+If one minute passes and the process is still running, read only compact status fields:
+
+```sh
+jq '{state,lastEvent,turnId,summary,error,updatedAt}' "$RUN_DIR/status.json"
+```
+
+If status is healthy, wait another minute.
+
+A turn taking more than 5 minutes is not suspicious by itself.
+
+Do not classify a run as stuck only because it is slow.
+
+Treat it as stuck only when status stops changing for a long period, the process is gone without a terminal status, or a clear headless-mode bug appears.
+
+The operator shall not read Kimi's code while the turn is running.
+
+The operator should inspect outcomes after the turn finishes:
+
+- final status
+- final response file
+- app-local Git status and latest commit
+- tests and build
+- browser behavior with Playwright when the app can run
+
+The operator should read code only when the outcome is unclear, tests fail in a way that needs triage, or a headless-mode bug needs evidence.
+
 ## Playwright Supervision Contract
 
 Before using Playwright, verify `npx`:
