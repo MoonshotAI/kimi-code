@@ -320,6 +320,36 @@ describe('installGlobalProxyDispatcher', () => {
     expect(setGlobalDispatcher).toHaveBeenCalledWith(dispatcher);
   });
 
+  it('sets process.env.NODE_USE_ENV_PROXY when proxy is set and env is process.env', () => {
+    const originalNodeUseEnvProxy = process.env['NODE_USE_ENV_PROXY'];
+    delete process.env['NODE_USE_ENV_PROXY'];
+    const originalHttpProxy = process.env['HTTP_PROXY'];
+    process.env['HTTP_PROXY'] = 'http://p:3128';
+
+    try {
+      const dispatcher = { id: 'dispatcher' } as never;
+      const setGlobalDispatcher = vi.fn();
+      const createDispatcher = vi.fn().mockReturnValue(dispatcher);
+      const installed = installGlobalProxyDispatcher(
+        process.env,
+        { setGlobalDispatcher, createProxyDispatcher: createDispatcher },
+      );
+      expect(installed).toBe(true);
+      expect(process.env['NODE_USE_ENV_PROXY']).toBe('1');
+    } finally {
+      if (originalNodeUseEnvProxy !== undefined) {
+        process.env['NODE_USE_ENV_PROXY'] = originalNodeUseEnvProxy;
+      } else {
+        delete process.env['NODE_USE_ENV_PROXY'];
+      }
+      if (originalHttpProxy !== undefined) {
+        process.env['HTTP_PROXY'] = originalHttpProxy;
+      } else {
+        delete process.env['HTTP_PROXY'];
+      }
+    }
+  });
+
   it('installs nothing and returns false when no proxy is set', () => {
     const setGlobalDispatcher = vi.fn();
     const createDispatcher = vi.fn().mockReturnValue(undefined);

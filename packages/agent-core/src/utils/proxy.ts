@@ -314,6 +314,9 @@ export function installGlobalProxyDispatcher(
   const dispatcher = deps.createProxyDispatcher(env);
   if (dispatcher === undefined) return false;
   deps.setGlobalDispatcher(dispatcher);
+  if (env === process.env) {
+    process.env['NODE_USE_ENV_PROXY'] = '1';
+  }
   return true;
 }
 
