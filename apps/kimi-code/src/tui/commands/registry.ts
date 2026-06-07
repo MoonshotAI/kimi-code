@@ -202,6 +202,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'context',
+    aliases: [],
+    description: 'Show a breakdown of what fills the context window',
+    priority: 60,
+    availability: 'always',
+  },
+  {
     name: 'status',
     aliases: [],
     description: 'Show current session and runtime status',

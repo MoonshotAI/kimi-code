@@ -18,6 +18,7 @@ import {
 import type { ApprovalHandler, QuestionHandler } from '#/events';
 import type {
   BackgroundTaskInfo,
+  ContextBreakdown,
   CreateSessionOptions,
   ExportSessionInput,
   ExportSessionResult,
@@ -313,6 +314,14 @@ export abstract class SDKRpcClientBase {
   async getUsage(input: SessionIdRpcInput): Promise<SessionUsage> {
     const rpc = await this.getRpc();
     return rpc.getUsage({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
+  }
+
+  async getContextBreakdown(input: SessionIdRpcInput): Promise<ContextBreakdown> {
+    const rpc = await this.getRpc();
+    return rpc.getContextBreakdown({
       sessionId: input.sessionId,
       agentId: this.interactiveAgentId,
     });

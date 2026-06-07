@@ -15,6 +15,7 @@ import {
   ratioSeverity,
   renderProgressBar,
   safeUsageRatio,
+  severityHex,
 } from '#/utils/usage/usage-format';
 
 import { buildManagedUsageReportLines, type ManagedUsageReport } from './usage-panel';
@@ -94,8 +95,6 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
   const value = chalk.hex(colors.text);
   const muted = chalk.hex(colors.textDim);
   const errorStyle = chalk.hex(colors.error);
-  const severityHex = (sev: 'ok' | 'warn' | 'danger'): string =>
-    sev === 'danger' ? colors.error : sev === 'warn' ? colors.warning : colors.success;
 
   const permission = options.status?.permission ?? options.permissionMode;
   const planMode = options.status?.planMode ?? options.planMode;
@@ -125,7 +124,7 @@ export function buildStatusReportLines(options: StatusReportOptions): string[] {
   if (maxTokens > 0) {
     const safeRatio = safeUsageRatio(ratio);
     const bar = renderProgressBar(safeRatio, 20);
-    const barColoured = chalk.hex(severityHex(ratioSeverity(safeRatio)))(bar);
+    const barColoured = chalk.hex(severityHex(ratioSeverity(safeRatio), colors))(bar);
     lines.push(
       `  ${barColoured}  ${value(`${(safeRatio * 100).toFixed(1)}%`.padStart(6, ' '))}  ` +
         muted(`(${formatTokenCount(tokens)} / ${formatTokenCount(maxTokens)})`),

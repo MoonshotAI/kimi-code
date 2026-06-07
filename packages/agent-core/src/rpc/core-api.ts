@@ -1,5 +1,5 @@
 import type { AgentConfigData } from '#/agent/config';
-import type { AgentContextData } from '#/agent/context';
+import type { AgentContextData, ContextBreakdown } from '#/agent/context';
 import type { BackgroundTaskInfo } from '#/agent/background';
 import type { PermissionData, PermissionMode } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
@@ -331,6 +331,7 @@ export interface AgentAPI {
   getPlan: (payload: EmptyPayload) => PlanData;
   getUsage: (payload: EmptyPayload) => UsageStatus;
   getTools: (payload: EmptyPayload) => readonly ToolInfo[];
+  getContextBreakdown: (payload: EmptyPayload) => ContextBreakdown;
   getBackground: (payload: GetBackgroundPayload) => readonly BackgroundTaskInfo[];
 }
 

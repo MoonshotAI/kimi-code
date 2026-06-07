@@ -1,7 +1,13 @@
 import { release as osRelease, type as osType } from 'node:os';
 
-import type { McpServerInfo, SessionStatus, SessionUsage } from '@moonshot-ai/kimi-code-sdk';
+import type {
+  ContextBreakdown,
+  McpServerInfo,
+  SessionStatus,
+  SessionUsage,
+} from '@moonshot-ai/kimi-code-sdk';
 
+import { buildContextReportLines } from '../components/messages/context-panel';
 import { buildMcpStatusReportLines } from '../components/messages/mcp-status-panel';
 import { buildStatusReportLines } from '../components/messages/status-panel';
 import { buildUsageReportLines, UsagePanelComponent, type ManagedUsageReport } from '../components/messages/usage-panel';
@@ -147,6 +153,21 @@ export async function showMcpServers(host: SlashCommandHost): Promise<void> {
   });
   const title = servers.length > 0 ? ` MCP (${servers.length}) ` : ' MCP ';
   const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary, title);
+  host.state.transcriptContainer.addChild(panel);
+  host.state.ui.requestRender();
+}
+
+export async function showContext(host: SlashCommandHost): Promise<void> {
+  let breakdown: ContextBreakdown;
+  try {
+    breakdown = await host.requireSession().getContextBreakdown();
+  } catch (error) {
+    host.showError(`Failed to load context breakdown: ${formatErrorMessage(error)}`);
+    return;
+  }
+
+  const lines = buildContextReportLines({ colors: host.state.theme.colors, breakdown });
+  const panel = new UsagePanelComponent(lines, host.state.theme.colors.primary, ' Context ');
   host.state.transcriptContainer.addChild(panel);
   host.state.ui.requestRender();
 }

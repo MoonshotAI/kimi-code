@@ -32,7 +32,7 @@ import {
 } from './compaction';
 import { CronManager } from './cron';
 import { ConfigState } from './config';
-import { ContextMemory } from './context';
+import { computeContextBreakdown, ContextMemory } from './context';
 import { HookEngine } from '../session/hooks';
 import { InjectionManager } from './injection/manager';
 import { PermissionManager, type PermissionManagerOptions } from './permission';
@@ -55,6 +55,7 @@ import {
 } from './turn/kosong-llm';
 import { UsageRecorder } from './usage';
 import { resolveCompletionBudget } from '../utils/completion-budget';
+import { estimateTokens, estimateTokensForTools } from '../utils/tokens';
 import type { Kaos } from '@moonshot-ai/kaos';
 import type { ToolServices } from '../tools/support/services';
 
@@ -392,6 +393,7 @@ export class Agent {
       getPlan: () => this.planMode.data(),
       getUsage: () => this.usage.data(),
       getTools: () => this.tools.data(),
+      getContextBreakdown: () => computeContextBreakdown(this),
       getBackground: (payload) => this.background.list(payload.activeOnly ?? false, payload.limit),
     };
   }
@@ -405,8 +407,33 @@ export class Agent {
     if (this.records.restoring) return;
     if (!this.config.hasModel) return;
 
-    const contextTokens = this.context.tokenCount;
-    const maxContextTokens = this.config.modelCapabilities.max_context_tokens;
+    const realTokens = this.context.tokenCount;
+    const windowTokens = this.config.modelCapabilities.max_context_tokens;
+
+    // The reported usage can fold in the always-sent baseline (system prompt +
+    // tool schemas + skills + memory) per config. `off` keeps the legacy
+    // message-only behaviour and pays no estimation cost.
+    let contextTokens = realTokens;
+    let maxContextTokens = windowTokens;
+    const baselineMode = this.kimiConfig?.contextWindow?.baselineMode ?? 'off';
+    if (baselineMode !== 'off') {
+      const baseline = this.contextBaselineTokens();
+      const pending = Math.max(0, this.context.tokenCountWithPending - realTokens);
+      // The real provider count already includes the baseline after the first
+      // turn, so take the max instead of adding (which would double-count).
+      const withBaseline = Math.max(realTokens, baseline + pending);
+      if (baselineMode === 'include') {
+        contextTokens = withBaseline;
+      } else {
+        // `subtract`: reserve the baseline out of the usable window so the
+        // percentage reflects how full the remaining conversation space is.
+        contextTokens = Math.max(0, withBaseline - baseline);
+        if (windowTokens !== undefined && windowTokens > 0) {
+          maxContextTokens = Math.max(0, windowTokens - baseline);
+        }
+      }
+    }
+
     const contextUsage =
       maxContextTokens !== undefined && maxContextTokens > 0
         ? contextTokens / maxContextTokens
@@ -424,6 +451,27 @@ export class Agent {
       permission: this.permission.mode,
       usage,
     });
+  }
+
+  private baselineCache?: { prompt: string; toolCount: number; tokens: number };
+
+  /**
+   * Estimated tokens of the always-sent context baseline — the rendered system
+   * prompt (which already embeds skills + memory) plus the tool schemas.
+   * Memoized on the system-prompt reference and tool count, both of which change
+   * when the profile or active tool set does; a slightly stale floor is harmless
+   * because the real provider count supersedes it via `max()`.
+   */
+  private contextBaselineTokens(): number {
+    const prompt = this.config.systemPrompt;
+    const toolCount = this.tools.loopTools.length;
+    const cache = this.baselineCache;
+    if (cache?.prompt === prompt && cache.toolCount === toolCount) {
+      return cache.tokens;
+    }
+    const tokens = estimateTokens(prompt) + estimateTokensForTools(this.tools.loopTools);
+    this.baselineCache = { prompt, toolCount, tokens };
+    return tokens;
   }
 
   private emitRecordsWriteError(error: unknown, record?: AgentRecord | undefined): void {

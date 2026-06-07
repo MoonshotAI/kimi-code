@@ -9,6 +9,7 @@ import {
   formatConfigValidationError,
   getDefaultConfig,
   type BackgroundConfig,
+  type ContextWindowConfig,
   type ExperimentalConfig,
   type HookDefConfig,
   type KimiConfig,
@@ -132,6 +133,8 @@ export function transformTomlData(data: Record<string, unknown>): Record<string,
     } else if (targetKey === 'loopControl' && isPlainObject(value)) {
       result[targetKey] = transformLoopControlData(value);
     } else if (targetKey === 'background' && isPlainObject(value)) {
+      result[targetKey] = transformPlainObject(value);
+    } else if (targetKey === 'contextWindow' && isPlainObject(value)) {
       result[targetKey] = transformPlainObject(value);
     } else if (targetKey === 'experimental' && isPlainObject(value)) {
       result[targetKey] = cloneRecord(value);
@@ -305,6 +308,7 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
   setSection(out, 'services', config.services, servicesToToml);
   setSection(out, 'loop_control', config.loopControl, loopControlToToml);
   setSection(out, 'background', config.background, backgroundToToml);
+  setSection(out, 'context_window', config.contextWindow, contextWindowToToml);
   setSection(out, 'experimental', config.experimental, experimentalToToml);
   setSection(out, 'permission', config.permission, permissionToToml);
   setHooks(out, config.hooks);
@@ -462,6 +466,17 @@ function backgroundToToml(
 ): Record<string, unknown> {
   const out = cloneRecord(rawBackground);
   for (const [key, value] of Object.entries(background)) {
+    setDefined(out, camelToSnake(key), value);
+  }
+  return out;
+}
+
+function contextWindowToToml(
+  contextWindow: ContextWindowConfig,
+  rawContextWindow: unknown,
+): Record<string, unknown> {
+  const out = cloneRecord(rawContextWindow);
+  for (const [key, value] of Object.entries(contextWindow)) {
     setDefined(out, camelToSnake(key), value);
   }
   return out;

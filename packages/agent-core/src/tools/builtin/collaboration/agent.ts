@@ -105,8 +105,11 @@ const AGENT_TIMEOUT_DESCRIPTION = '30 minutes';
 
 // ── AgentTool class ──────────────────────────────────────────────────
 
+/** Canonical name of the built-in subagent tool. */
+export const AGENT_TOOL_NAME = 'Agent' as const;
+
 export class AgentTool implements BuiltinTool<AgentToolInput> {
-  readonly name: string = 'Agent';
+  readonly name: string = AGENT_TOOL_NAME;
   readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentToolInputSchema);
   constructor(

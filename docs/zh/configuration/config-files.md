@@ -51,6 +51,9 @@ reserved_context_size = 50000
 max_running_tasks = 4
 keep_alive_on_exit = false
 
+[context_window]
+baseline_mode = "include"
+
 [experimental]
 goal_command = false
 micro_compaction = false
@@ -89,12 +92,13 @@ timeout = 5
 | `thinking` | `table` | — | Thinking 模式默认参数 → [`thinking`](#thinking) |
 | `loop_control` | `table` | — | Agent 循环控制参数 → [`loop_control`](#loop_control) |
 | `background` | `table` | — | 后台任务运行参数 → [`background`](#background) |
+| `context_window` | `table` | — | 上下文占用指示器的计量方式 → [`context_window`](#context_window) |
 | `experimental` | `table` | — | 持久化实验功能开关 → [`experimental`](#experimental) |
 | `services` | `table` | — | 内置外部服务配置 → [`services`](#services) |
 | `permission` | `table` | — | 初始权限规则 → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | 生命周期 hook，详见 [Hooks](../customization/hooks.md) |
 
-以下各节对 `providers`、`models`、`thinking`、`loop_control`、`background`、`experimental`、`services`、`permission` 等嵌套表逐一展开。
+以下各节对 `providers`、`models`、`thinking`、`loop_control`、`background`、`context_window`、`experimental`、`services`、`permission` 等嵌套表逐一展开。
 
 ## `providers`
 
@@ -174,6 +178,14 @@ max_context_size = 1047576
 | `keep_alive_on_exit` | `boolean` | `true` | 会话关闭时是否保留仍在运行的后台任务。设为 `false` 时，进程退出前会请求停止所有后台任务 |
 
 `keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，优先级高于配置文件。
+
+## `context_window`
+
+`context_window` 控制上下文占用指示器（状态栏百分比、`/usage`、`/status`）如何计入始终发送的基线——即每次请求都会携带、在首条消息之前就已存在的系统提示词、工具 schema、技能清单与记忆文件。无论此设置如何，`/context` 命令始终展示完整分解。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `baseline_mode` | `string` | `off` | `off`：仅计入对话 / 真实 provider 总量，新会话因此显示约 0%。`include`：将基线计入已用 token。`subtract`：从可用窗口中预留基线，使百分比反映剩余空间的占用程度。 |
 
 ## `experimental`
 

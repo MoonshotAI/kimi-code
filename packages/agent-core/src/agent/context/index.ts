@@ -14,6 +14,7 @@ import {
 } from './types';
 
 export * from './types';
+export * from './breakdown';
 
 const TOOL_ERROR_STATUS = '<system>ERROR: Tool execution failed.</system>';
 const TOOL_EMPTY_STATUS = '<system>Tool output is empty.</system>';

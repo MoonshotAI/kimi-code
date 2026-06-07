@@ -105,6 +105,23 @@ export const BackgroundConfigSchema = z.object({
 
 export type BackgroundConfig = z.infer<typeof BackgroundConfigSchema>;
 
+export const ContextWindowConfigSchema = z.object({
+  /**
+   * How the always-sent baseline (system prompt + tool schemas + skills +
+   * memory) is reflected in the context-usage indicator (footer / `/usage` /
+   * `/status`):
+   *   - `off`      (default) count only the conversation / real provider total,
+   *                 so a fresh session reads ~0.
+   *   - `include`  add the baseline into the used-token count.
+   *   - `subtract` reserve the baseline out of the usable window, so the
+   *                 percentage reflects how full the remaining space is.
+   * The `/context` command always shows the full honest breakdown regardless.
+   */
+  baselineMode: z.enum(['off', 'include', 'subtract']).optional(),
+});
+
+export type ContextWindowConfig = z.infer<typeof ContextWindowConfigSchema>;
+
 const ExperimentalFlagIdSet = new Set<string>(FLAG_DEFINITIONS.map((def) => def.id));
 
 export const ExperimentalConfigSchema = z
@@ -217,6 +234,7 @@ export const KimiConfigSchema = z.object({
   extraSkillDirs: z.array(z.string()).optional(),
   loopControl: LoopControlSchema.optional(),
   background: BackgroundConfigSchema.optional(),
+  contextWindow: ContextWindowConfigSchema.optional(),
   experimental: ExperimentalConfigSchema.optional(),
   telemetry: z.boolean().optional(),
   raw: z.record(z.string(), z.unknown()).optional(),
@@ -230,6 +248,7 @@ const ThinkingConfigPatchSchema = ThinkingConfigSchema.partial();
 const PermissionConfigPatchSchema = PermissionConfigSchema.partial();
 const LoopControlPatchSchema = LoopControlSchema.partial();
 const BackgroundConfigPatchSchema = BackgroundConfigSchema.partial();
+const ContextWindowConfigPatchSchema = ContextWindowConfigSchema.partial();
 const ExperimentalConfigPatchSchema = ExperimentalConfigSchema;
 const MoonshotServiceConfigPatchSchema = MoonshotServiceConfigSchema.partial();
 const ServicesConfigPatchSchema = z.object({
@@ -256,6 +275,7 @@ export const KimiConfigPatchSchema = z
     extraSkillDirs: z.array(z.string()).optional(),
     loopControl: LoopControlPatchSchema.optional(),
     background: BackgroundConfigPatchSchema.optional(),
+    contextWindow: ContextWindowConfigPatchSchema.optional(),
     experimental: ExperimentalConfigPatchSchema.optional(),
     telemetry: z.boolean().optional(),
   })

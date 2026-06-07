@@ -14,6 +14,7 @@ import {
   ratioSeverity,
   renderProgressBar,
   safeUsageRatio,
+  severityHex,
 } from '#/utils/usage/usage-format';
 import type { ColorPalette } from '#/tui/theme/colors';
 
@@ -108,7 +109,7 @@ function buildManagedUsageSection(
   value: Colorize,
   muted: Colorize,
   errorStyle: Colorize,
-  severityHex: (sev: 'ok' | 'warn' | 'danger') => string,
+  colors: ColorPalette,
 ): string[] {
   if (error !== undefined) return [accent('Plan usage'), errorStyle(`  ${error}`)];
   if (usage === undefined) return [];
@@ -129,7 +130,7 @@ function buildManagedUsageSection(
     const ratioUsed = usedRatio(row);
     const bar = renderProgressBar(ratioUsed, 20);
     const pct = `${Math.round(ratioUsed * 100)}% used`;
-    const barColoured = chalk.hex(severityHex(ratioSeverity(ratioUsed)))(bar);
+    const barColoured = chalk.hex(severityHex(ratioSeverity(ratioUsed), colors))(bar);
     const label = row.label.padEnd(labelWidth, ' ');
     const resetStr = row.resetHint ? `  ${muted(row.resetHint)}` : '';
     out.push(`  ${muted(label)}  ${barColoured}  ${value(pct.padEnd(pctWidth, ' '))}${resetStr}`);
@@ -143,8 +144,6 @@ export function buildManagedUsageReportLines(options: ManagedUsageReportLineOpti
   const value = chalk.hex(colors.text);
   const muted = chalk.hex(colors.textDim);
   const errorStyle = chalk.hex(colors.error);
-  const severityHex = (sev: 'ok' | 'warn' | 'danger'): string =>
-    sev === 'danger' ? colors.error : sev === 'warn' ? colors.warning : colors.success;
 
   return buildManagedUsageSection(
     options.managedUsage,
@@ -153,7 +152,7 @@ export function buildManagedUsageReportLines(options: ManagedUsageReportLineOpti
     value,
     muted,
     errorStyle,
-    severityHex,
+    colors,
   );
 }
 
@@ -163,8 +162,6 @@ export function buildUsageReportLines(options: UsageReportOptions): string[] {
   const value = chalk.hex(colors.text);
   const muted = chalk.hex(colors.textDim);
   const errorStyle = chalk.hex(colors.error);
-  const severityHex = (sev: 'ok' | 'warn' | 'danger'): string =>
-    sev === 'danger' ? colors.error : sev === 'warn' ? colors.warning : colors.success;
 
   const lines: string[] = [
     accent('Session usage'),
@@ -181,7 +178,7 @@ export function buildUsageReportLines(options: UsageReportOptions): string[] {
     const ratio = safeUsageRatio(options.contextUsage);
     const bar = renderProgressBar(ratio, 20);
     const pct = `${(ratio * 100).toFixed(1)}%`;
-    const barColoured = chalk.hex(severityHex(ratioSeverity(ratio)))(bar);
+    const barColoured = chalk.hex(severityHex(ratioSeverity(ratio), colors))(bar);
     lines.push('');
     lines.push(accent('Context window'));
     lines.push(

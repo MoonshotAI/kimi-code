@@ -2,6 +2,7 @@ import {
   ErrorCodes,
   KimiError,
   type AgentContextData,
+  type ContextBreakdown,
   type KimiErrorCode,
 } from '@moonshot-ai/agent-core';
 
@@ -202,6 +203,11 @@ export class Session {
   async getUsage(): Promise<SessionUsage> {
     this.ensureOpen();
     return this.rpc.getUsage({ sessionId: this.id });
+  }
+
+  async getContextBreakdown(): Promise<ContextBreakdown> {
+    this.ensureOpen();
+    return this.rpc.getContextBreakdown({ sessionId: this.id });
   }
 
   async getStatus(): Promise<SessionStatus> {

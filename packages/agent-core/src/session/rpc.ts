@@ -268,6 +268,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return (await this.getAgent(agentId)).getTools(payload);
   }
 
+  async getContextBreakdown({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return (await this.getAgent(agentId)).getContextBreakdown(payload);
+  }
+
   async getBackground({ agentId, ...payload }: AgentScopedPayload<GetBackgroundPayload>) {
     return (await this.getAgent(agentId)).getBackground(payload);
   }

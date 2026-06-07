@@ -39,7 +39,13 @@ import {
 } from './config';
 import { handleGoalCommand } from './goal';
 import { handleProviderCommand } from './provider';
-import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
+import {
+  handleFeedbackCommand,
+  showContext,
+  showMcpServers,
+  showStatusReport,
+  showUsage,
+} from './info';
 import { handlePluginsCommand } from './plugins';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
 import {
@@ -75,6 +81,7 @@ export {
 } from './config';
 export {
   handleFeedbackCommand,
+  showContext,
   showMcpServers,
   showStatusReport,
   showUsage,
@@ -278,6 +285,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'usage':
       void showUsage(host);
+      return;
+    case 'context':
+      void showContext(host);
       return;
     case 'status':
       void showStatusReport(host);

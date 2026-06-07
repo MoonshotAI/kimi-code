@@ -51,6 +51,9 @@ reserved_context_size = 50000
 max_running_tasks = 4
 keep_alive_on_exit = false
 
+[context_window]
+baseline_mode = "include"
+
 [experimental]
 goal_command = false
 micro_compaction = false
@@ -89,12 +92,13 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `thinking` | `table` | — | Default parameters for Thinking mode → [`thinking`](#thinking) |
 | `loop_control` | `table` | — | Agent loop control parameters → [`loop_control`](#loop_control) |
 | `background` | `table` | — | Background task runtime parameters → [`background`](#background) |
+| `context_window` | `table` | — | Context-usage indicator accounting → [`context_window`](#context_window) |
 | `experimental` | `table` | — | Persistent experimental feature toggles → [`experimental`](#experimental) |
 | `services` | `table` | — | Built-in external service configuration → [`services`](#services) |
 | `permission` | `table` | — | Initial permission rules → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | Lifecycle hooks; see [Hooks](../customization/hooks.md) |
 
-The following sections cover each of the nested tables in turn: `providers`, `models`, `thinking`, `loop_control`, `background`, `experimental`, `services`, and `permission`.
+The following sections cover each of the nested tables in turn: `providers`, `models`, `thinking`, `loop_control`, `background`, `context_window`, `experimental`, `services`, and `permission`.
 
 ## `providers`
 
@@ -174,6 +178,14 @@ You can also switch models temporarily without touching the config file — by s
 | `keep_alive_on_exit` | `boolean` | `true` | Whether to keep still-running background tasks when the session closes. Set to `false` to request that all background tasks stop before the process exits |
 
 `keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, which takes higher priority than `config.toml`.
+
+## `context_window`
+
+`context_window` controls how the context-usage indicator (the status-bar percentage, `/usage`, and `/status`) accounts for the always-sent baseline — the system prompt, tool schemas, skills listing, and memory files that every request carries even before the first message. The `/context` command always shows the full breakdown regardless of this setting.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `baseline_mode` | `string` | `off` | `off`: count only the conversation / real provider total, so a fresh session reads ~0%. `include`: add the baseline into the used-token count. `subtract`: reserve the baseline out of the usable window so the percentage reflects how full the remaining space is. |
 
 ## `experimental`
 

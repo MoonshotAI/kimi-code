@@ -31,6 +31,9 @@ export type {
 export { USER_PROMPT_ORIGIN } from './agent/context';
 export type {
   AgentContextData,
+  ContextBreakdown,
+  ContextCategory,
+  ContextCategoryKey,
   ContextMessage,
   PromptOrigin,
   UserPromptOrigin,

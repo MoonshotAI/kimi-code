@@ -110,6 +110,7 @@ Prompt mode exits with code `0` when the goal completes, `3` when it blocks, and
 | `/help` | `/h`, `/?` | Show keyboard shortcuts and all available commands | Yes |
 | `/btw [question]` | — | Open a side conversation in a forked sub-Agent without affecting the current main Agent turn; without a question, opens the panel first to wait for input | Yes |
 | `/usage` | — | Show token usage, context consumption, and quota information | Yes |
+| `/context` | — | Break down what fills the context window (system prompt, tools, MCP tools, custom agents, memory, skills, messages, free space) | Yes |
 | `/status` | — | Show the current session runtime state: version, model, working directory, permission mode, etc. | Yes |
 | `/mcp` | — | List MCP servers and their connection status in the current session | Yes |
 | `/plugins` | — | Open the interactive plugin manager | Yes |
