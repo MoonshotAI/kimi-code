@@ -114,30 +114,81 @@ describe('acpBlocksToPromptParts', () => {
     );
   });
 
-  it('inlines resource_link blocks as <resource_link uri name /> text', () => {
+  it('projects file:// resource_link blocks to bare paths', () => {
     const out = acpBlocksToPromptParts([
       resourceLinkBlock('file:///a.txt', 'a'),
       textBlock('see linked file'),
       resourceLinkBlock('file:///b.txt', 'b'),
     ]);
     expect(out).toEqual([
-      { type: 'text', text: '<resource_link uri="file:///a.txt" name="a" />' },
+      { type: 'text', text: '/a.txt' },
       { type: 'text', text: 'see linked file' },
-      { type: 'text', text: '<resource_link uri="file:///b.txt" name="b" />' },
+      { type: 'text', text: '/b.txt' },
     ]);
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it('escapes XML-special characters in resource_link attributes', () => {
+  it('appends a line range to file:// paths when the fragment carries one', () => {
     const out = acpBlocksToPromptParts([
-      resourceLinkBlock('file:///a&b.txt', 'name with "quotes" & <angle>'),
+      resourceLinkBlock('file:///src/foo.ts#L10', 'foo.ts'),
+      resourceLinkBlock('file:///src/foo.ts#L10-L20', 'foo.ts'),
+      resourceLinkBlock('file:///src/foo.ts#L10-20', 'foo.ts'),
+      resourceLinkBlock('file:///src/foo.ts?line=10', 'foo.ts'),
+      resourceLinkBlock('file:///src/foo.ts?lines=10-20', 'foo.ts'),
+    ]);
+    expect(out.map((p) => (p.type === 'text' ? p.text : ''))).toEqual([
+      '/src/foo.ts:10',
+      '/src/foo.ts:10-20',
+      '/src/foo.ts:10-20',
+      '/src/foo.ts:10',
+      '/src/foo.ts:10-20',
+    ]);
+  });
+
+  it('URL-decodes file:// paths (spaces, unicode)', () => {
+    const out = acpBlocksToPromptParts([
+      resourceLinkBlock('file:///Users/a%20b/foo.ts', 'foo.ts'),
+      resourceLinkBlock('file:///Users/%E4%B8%AD%E6%96%87/foo.ts', 'foo.ts'),
+    ]);
+    expect(out).toEqual([
+      { type: 'text', text: '/Users/a b/foo.ts' },
+      { type: 'text', text: '/Users/中文/foo.ts' },
+    ]);
+  });
+
+  it('strips the leading slash on Windows file:// drive paths', () => {
+    const out = acpBlocksToPromptParts([
+      resourceLinkBlock('file:///C:/Users/x/foo.ts', 'foo.ts'),
+      resourceLinkBlock('file:///D:/work/bar.ts#L42', 'bar.ts'),
+    ]);
+    expect(out).toEqual([
+      { type: 'text', text: 'C:/Users/x/foo.ts' },
+      { type: 'text', text: 'D:/work/bar.ts:42' },
+    ]);
+  });
+
+  it('keeps the XML wrapper for non-file:// resource_link schemes', () => {
+    const out = acpBlocksToPromptParts([
+      resourceLinkBlock('zed:///agent/terminal-selection?lines=10', 'Terminal (10 lines)'),
+      resourceLinkBlock('https://example.com/spec', 'spec'),
     ]);
     expect(out).toEqual([
       {
         type: 'text',
         text:
-          '<resource_link uri="file:///a&amp;b.txt" name="name with &quot;quotes&quot; &amp; &lt;angle&gt;" />',
+          '<resource_link uri="zed:///agent/terminal-selection?lines=10" name="Terminal (10 lines)" />',
       },
+      {
+        type: 'text',
+        text: '<resource_link uri="https://example.com/spec" name="spec" />',
+      },
+    ]);
+  });
+
+  it('falls back to the XML wrapper for unparseable resource_link uris', () => {
+    const out = acpBlocksToPromptParts([resourceLinkBlock('not a url', 'weird')]);
+    expect(out).toEqual([
+      { type: 'text', text: '<resource_link uri="not a url" name="weird" />' },
     ]);
   });
 
@@ -169,6 +220,19 @@ describe('acpBlocksToPromptParts', () => {
     );
   });
 
+  it('escapes XML-special characters in non-file:// resource_link attributes', () => {
+    const out = acpBlocksToPromptParts([
+      resourceLinkBlock('https://example.com/a&b', 'name with "quotes" & <angle>'),
+    ]);
+    expect(out).toEqual([
+      {
+        type: 'text',
+        text:
+          '<resource_link uri="https://example.com/a&amp;b" name="name with &quot;quotes&quot; &amp; &lt;angle&gt;" />',
+      },
+    ]);
+  });
+
   it('emits mixed text + resource_link + embedded text resource in input order', () => {
     const out = acpBlocksToPromptParts([
       textBlock('header'),
@@ -177,7 +241,7 @@ describe('acpBlocksToPromptParts', () => {
     ]);
     expect(out).toEqual([
       { type: 'text', text: 'header' },
-      { type: 'text', text: '<resource_link uri="file:///x" name="x" />' },
+      { type: 'text', text: '/x' },
       { type: 'text', text: '<resource uri="file:///y.txt">body</resource>' },
     ]);
     expect(warnSpy).not.toHaveBeenCalled();

@@ -220,7 +220,7 @@ export class AcpServer implements Agent {
       promptCapabilities: {
         image: true,
         audio: false,
-        embeddedContext: false,
+        embeddedContext: true,
       },
       mcpCapabilities: {
         http: true,
