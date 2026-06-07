@@ -41,6 +41,7 @@ describe('CLI options parsing', () => {
       expect(opts.outputFormat).toBeUndefined();
       expect(opts.prompt).toBeUndefined();
       expect(opts.skillsDirs).toEqual([]);
+      expect(opts.agentsDir).toBeUndefined();
     });
   });
 
@@ -252,6 +253,12 @@ describe('CLI options parsing', () => {
         '/one',
         '/two',
       ]);
+    });
+  });
+
+  describe('--agents-dir', () => {
+    it('parses a custom agents directory', () => {
+      expect(parse(['--agents-dir', '/custom/agents']).agentsDir).toBe('/custom/agents');
     });
   });
 

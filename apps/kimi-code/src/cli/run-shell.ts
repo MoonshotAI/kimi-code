@@ -60,6 +60,7 @@ export async function runShell(
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
     telemetry: telemetryClient,
+    agentsDir: opts.agentsDir,
     onOAuthRefresh: (outcome) => {
       if (outcome.success) {
         track('oauth_refresh', { success: true });

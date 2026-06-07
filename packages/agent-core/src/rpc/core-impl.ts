@@ -29,6 +29,12 @@ import {
 } from '../flags';
 import type { Logger } from '../logging/types';
 import { resolveSessionMcpConfig, mergeCallerMcpServers, type SessionMcpConfig } from '../mcp';
+import {
+  DEFAULT_AGENT_PROFILES,
+  DEFAULT_INIT_PROMPT,
+  loadCustomAgentProfiles,
+  type ResolvedAgentProfile,
+} from '../profile';
 import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
 import { exportSessionDirectory } from '../session/export';
 import {
@@ -120,6 +126,7 @@ export interface KimiCoreOptions {
   readonly skillDirs?: readonly string[];
   readonly telemetry?: TelemetryClient | undefined;
   readonly appVersion?: string;
+  readonly agentsDir?: string | undefined;
 }
 
 export class KimiCore implements PromisableMethods<CoreAPI> {
@@ -143,6 +150,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private pluginsLoadError: Error | undefined;
   private readonly appVersion: string | undefined;
   private readonly experimentalFlags: FlagResolver;
+  private readonly agentsDir: string | undefined;
+  private agentProfilesPromise:
+    | Promise<{ profiles: Record<string, ResolvedAgentProfile>; initPrompt: string }>
+    | undefined;
 
   constructor(
     protected readonly rpcClient: CoreRPCClient,
@@ -161,6 +172,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     this.skillDirs = options.skillDirs ?? [];
     this.telemetry = options.telemetry ?? noopTelemetryClient;
     this.appVersion = options.appVersion;
+    this.agentsDir = options.agentsDir;
     ensureKimiHome(this.homeDir);
     this.config = loadRuntimeConfig(this.configPath);
     this.experimentalFlags = new FlagResolver(
@@ -206,6 +218,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     await this.pluginsReady;
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
     const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
+    const { profiles, initPrompt } = await this.resolveAgentProfiles();
 
     // Session ctor attaches its own log sink. If anything in the setup-after-
     // ctor block throws, `session.close()` releases the sink (and mcp).
@@ -228,6 +241,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       telemetry: withTelemetryContext(this.telemetry, { sessionId: summary.id }),
       pluginSessionStarts,
       appVersion: this.appVersion,
+      profiles,
+      initPrompt,
     });
     try {
       session.metadata = {
@@ -297,6 +312,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     await this.pluginsReady;
     const pluginSessionStarts = this.plugins.enabledSessionStarts();
     const mcpConfig = this.mergePluginMcpConfig(withCallerMcp);
+    const { profiles, initPrompt } = await this.resolveAgentProfiles();
     const runtime = await this.resolveRuntime(config);
     const session = new Session({
       kaos: (await this.getKaos()).withCwd(summary.workDir),
@@ -317,6 +333,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       initializeMainAgent: false,
       pluginSessionStarts,
       appVersion: this.appVersion,
+      profiles,
+      initPrompt,
     });
     let warning: string | undefined;
     try {
@@ -800,6 +818,26 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       });
     }
     return new SessionAPIImpl(session);
+  }
+
+  private async resolveAgentProfiles(): Promise<{
+    profiles: Record<string, ResolvedAgentProfile>;
+    initPrompt: string;
+  }> {
+    if (this.agentProfilesPromise === undefined) {
+      this.agentProfilesPromise = this.loadAgentProfiles();
+    }
+    return this.agentProfilesPromise;
+  }
+
+  private async loadAgentProfiles(): Promise<{
+    profiles: Record<string, ResolvedAgentProfile>;
+    initPrompt: string;
+  }> {
+    if (this.agentsDir === undefined) {
+      return { profiles: DEFAULT_AGENT_PROFILES, initPrompt: DEFAULT_INIT_PROMPT };
+    }
+    return loadCustomAgentProfiles(this.agentsDir);
   }
 
   private reloadProviderManager(): KimiConfig {

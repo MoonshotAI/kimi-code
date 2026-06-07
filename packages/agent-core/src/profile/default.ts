@@ -8,7 +8,7 @@ import { loadAgentProfilesFromSources } from './load';
 
 // Keyed by the source path the profile loader expects: profile YAML files
 // plus any file referenced through `systemPromptPath`.
-const PROFILE_SOURCES: Record<string, string> = {
+export const PROFILE_SOURCES: Record<string, string> = {
   'profile/default/agent.yaml': agentYaml,
   'profile/default/coder.yaml': coderYaml,
   'profile/default/explore.yaml': exploreYaml,
@@ -18,9 +18,11 @@ const PROFILE_SOURCES: Record<string, string> = {
 
 export const DEFAULT_INIT_PROMPT = initMd;
 
+export const DEFAULT_PROFILE_PATHS = ['agent.yaml', 'coder.yaml', 'explore.yaml', 'plan.yaml'].map(
+  (file) => `profile/default/${file}`,
+);
+
 export const DEFAULT_AGENT_PROFILES = loadAgentProfilesFromSources(
-  ['agent.yaml', 'coder.yaml', 'explore.yaml', 'plan.yaml'].map(
-    (file) => `profile/default/${file}`,
-  ),
+  DEFAULT_PROFILE_PATHS,
   PROFILE_SOURCES,
 );

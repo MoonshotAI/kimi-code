@@ -220,9 +220,10 @@ export class SessionSubagentHost {
   }
 
   private resolveProfile(parent: Agent, profileName: string): ResolvedAgentProfile {
+    const profiles = this.session.options.profiles ?? DEFAULT_AGENT_PROFILES;
     const profile =
-      DEFAULT_AGENT_PROFILES[parent.config.profileName ?? 'agent']?.subagents?.[profileName] ??
-      DEFAULT_AGENT_PROFILES['agent']?.subagents?.[profileName];
+      profiles[parent.config.profileName ?? 'agent']?.subagents?.[profileName] ??
+      profiles['agent']?.subagents?.[profileName];
     if (profile === undefined) {
       throw new Error(`Subagent profile "${profileName}" was not found`);
     }

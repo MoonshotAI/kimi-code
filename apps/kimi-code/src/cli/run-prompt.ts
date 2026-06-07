@@ -75,6 +75,7 @@ export async function runPrompt(
     identity: createKimiCodeHostIdentity(version),
     uiMode: PROMPT_UI_MODE,
     skillDirs: opts.skillsDirs,
+    agentsDir: opts.agentsDir,
     telemetry: telemetryClient,
     onOAuthRefresh: (outcome) => {
       if (outcome.success) {

@@ -82,6 +82,7 @@ export interface KimiHarnessOptions {
   readonly skillDirs?: readonly string[];
   readonly telemetry?: TelemetryClient | undefined;
   readonly onOAuthRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
+  readonly agentsDir?: string | undefined;
 }
 
 export interface CreateSessionOptions {

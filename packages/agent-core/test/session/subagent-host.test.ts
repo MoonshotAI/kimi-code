@@ -324,6 +324,7 @@ describe('SessionSubagentHost', () => {
     const createAgent = vi.fn();
     const host = new SessionSubagentHost(
       {
+        options: {},
         agents: new Map([['main', parent.agent]]),
         ensureAgentResumed: vi.fn(async () => parent.agent),
         createAgent,
@@ -349,6 +350,7 @@ describe('SessionSubagentHost', () => {
     const createAgent = vi.fn();
     const host = new SessionSubagentHost(
       {
+        options: {},
         agents: new Map([['main', parent.agent]]),
         ensureAgentResumed: vi.fn(async () => parent.agent),
         createAgent,
@@ -1125,6 +1127,7 @@ function fakeSession(
     agents.set('agent-0', child);
   }
   return {
+    options: {},
     agents,
     metadata: {
       createdAt: '2026-01-01T00:00:00.000Z',

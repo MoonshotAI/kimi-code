@@ -61,6 +61,8 @@ export interface SessionOptions {
   readonly pluginSessionStarts?: readonly EnabledPluginSessionStart[];
   readonly appVersion?: string;
   readonly experimentalFlags?: ExperimentalFlagResolver;
+  readonly profiles?: Record<string, ResolvedAgentProfile>;
+  readonly initPrompt?: string;
 }
 
 export interface SessionSkillConfig {
@@ -190,8 +192,9 @@ export class Session {
   }
 
   async createMain() {
+    const profiles = this.options.profiles ?? DEFAULT_AGENT_PROFILES;
     const { agent } = await this.createAgent({ type: 'main' }, {
-      profile: DEFAULT_AGENT_PROFILES['agent'],
+      profile: profiles['agent'],
     });
     // The main-agent audit sink now exists; flush any goal records queued before it.
     this.goals.flushPendingRecords();
@@ -219,7 +222,8 @@ export class Session {
     // default profile so the resumed session is usable. Native sessions always
     // replay a non-empty system prompt and never enter this branch.
     const main = this.getReadyAgent('main');
-    const profile = DEFAULT_AGENT_PROFILES['agent'];
+    const profiles = this.options.profiles ?? DEFAULT_AGENT_PROFILES;
+    const profile = profiles['agent'];
     if (main !== undefined && profile !== undefined && main.config.systemPrompt === '') {
       await this.bootstrapAgentProfile(main, profile);
     }
@@ -331,7 +335,7 @@ export class Session {
     try {
       const handle = await mainAgent.subagentHost!.spawn('coder', {
         parentToolCallId: 'generate-agents-md',
-        prompt: DEFAULT_INIT_PROMPT,
+        prompt: this.options.initPrompt ?? DEFAULT_INIT_PROMPT,
         description: 'Initialize AGENTS.md',
         runInBackground: false,
         origin: { kind: 'system_trigger', name: 'init' },

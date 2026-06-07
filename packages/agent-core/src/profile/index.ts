@@ -3,3 +3,4 @@ export * from './context';
 export * from './load';
 export * from './resolve';
 export * from './default';
+export * from './custom-loader';

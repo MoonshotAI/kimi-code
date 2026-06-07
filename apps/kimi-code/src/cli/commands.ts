@@ -71,6 +71,12 @@ export function createProgram(
         .argParser((value: string, previous: string[] | undefined) => [...(previous ?? []), value])
         .default([]),
     )
+    .addOption(
+      new Option(
+        '--agents-dir <dir>',
+        'Load agent profiles from this directory instead of the bundled defaults.',
+      ),
+    )
     .addOption(new Option('--yes').hideHelp().default(false))
     .addOption(new Option('--auto-approve').hideHelp().default(false))
     .option('--plan', 'Start in plan mode.', false);
@@ -119,6 +125,7 @@ export function createProgram(
       outputFormat: raw['outputFormat'] as CLIOptions['outputFormat'],
       prompt: raw['prompt'] as string | undefined,
       skillsDirs: raw['skillsDir'] as string[],
+      agentsDir: raw['agentsDir'] as string | undefined,
     };
 
     onMain(opts);
