@@ -71,6 +71,18 @@ describe('APIEmptyResponseError', () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe('APIEmptyResponseError');
     expect(err.message).toBe('empty response');
+    expect(err.finishReason).toBeNull();
+    expect(err.rawFinishReason).toBeNull();
+  });
+
+  it('preserves provider finish reason details', () => {
+    const err = new APIEmptyResponseError('empty response', {
+      finishReason: 'filtered',
+      rawFinishReason: 'content_filter',
+    });
+
+    expect(err.finishReason).toBe('filtered');
+    expect(err.rawFinishReason).toBe('content_filter');
   });
 });
 

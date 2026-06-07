@@ -18,11 +18,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { HookEngine } from '../../src/session/hooks';
 import type { AgentOptions } from '../../src/agent';
 import type { Logger, LogPayload } from '../../src/logging';
-import {
-  estimateTokens,
-  estimateTokensForMessages,
-  estimateTokensForTools,
-} from '../../src/utils/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { SessionGoalStore, type SessionGoalState } from '../../src/session/goal';
@@ -303,6 +298,61 @@ describe('Agent turn flow', () => {
       `[emit] error   { "code": "internal", "message": "Unexpected generate call #1", "name": "Error", "retryable": false, "details": { "turnId": 0 } }`,
     );
     await ctx.expectResumeMatches();
+  });
+
+  it('includes provider finish reason details on empty response failures', async () => {
+    const generate: GenerateFn = async () => {
+      throw new APIEmptyResponseError(
+        'The API returned a response containing only thinking content without any text or tool calls. ' +
+          'Provider stop details: finishReason=filtered, rawFinishReason=content_filter.',
+        {
+          finishReason: 'filtered',
+          rawFinishReason: 'content_filter',
+        },
+      );
+    };
+    const ctx = testAgent({
+      generate,
+      ...singleAttemptAgentOptions(),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Trigger filtered response' }] });
+    const events = await ctx.untilTurnEnd();
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'turn.ended',
+        args: expect.objectContaining({
+          reason: 'failed',
+          error: expect.objectContaining({
+            code: 'provider.api_error',
+            name: 'APIEmptyResponseError',
+            details: expect.objectContaining({
+              finishReason: 'filtered',
+              rawFinishReason: 'content_filter',
+              turnId: 0,
+            }),
+          }),
+        }),
+      }),
+    );
+    expect(ctx.newEvents()).toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'error',
+        args: expect.objectContaining({
+          code: 'provider.api_error',
+          name: 'APIEmptyResponseError',
+          details: expect.objectContaining({
+            finishReason: 'filtered',
+            rawFinishReason: 'content_filter',
+            turnId: 0,
+          }),
+        }),
+      }),
+    );
   });
 
   it('emits a friendly model.not_configured error when no model is configured', async () => {
@@ -794,7 +844,7 @@ describe('Agent turn flow', () => {
     expect(payload).toMatchObject({
       turnStep: '0.1',
     });
-    expect(payload['estimatedInputTokens']).toEqual(expect.any(Number));
+    expect(payload).not.toHaveProperty('estimatedInputTokens');
     expect(payload).not.toHaveProperty('turnId');
     expect(payload).not.toHaveProperty('step');
     expect(payload).not.toHaveProperty('attempt');
@@ -862,7 +912,7 @@ describe('Agent turn flow', () => {
     }
   });
 
-  it('includes tool schemas in estimated LLM request tokens', async () => {
+  it('does not log estimated LLM request tokens when tools are present', async () => {
     const { logger, entries } = captureLogs();
     const ctx = testAgent({ log: logger });
     ctx.configure();
@@ -874,14 +924,10 @@ describe('Agent turn flow', () => {
 
     const input = ctx.llmCalls[0];
     expect(input?.tools.length).toBeGreaterThan(0);
-    const expectedTokens =
-      estimateTokens(input!.systemPrompt) +
-      estimateTokensForMessages(input!.history) +
-      estimateTokensForTools(input!.tools);
     const requestPayload = entries.find((entry) => entry.message === 'llm request')?.payload as
       | Record<string, unknown>
       | undefined;
-    expect(requestPayload?.['estimatedInputTokens']).toBe(expectedTokens);
+    expect(requestPayload).not.toHaveProperty('estimatedInputTokens');
   });
 
   it('classifies OAuth resolver failures as auth errors', async () => {

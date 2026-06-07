@@ -18,10 +18,22 @@ export function isUserActivatableSkill(skill: SkillSummary): boolean {
   );
 }
 
+function compareSkillSlashCommands(a: SkillSummary, b: SkillSummary): number {
+  return (
+    getSkillSlashCommandGroup(a.source) - getSkillSlashCommandGroup(b.source) ||
+    a.name.localeCompare(b.name)
+  );
+}
+
+function getSkillSlashCommandGroup(source: SkillSummary['source']): number {
+  return source === 'builtin' ? 0 : 1;
+}
+
 export function buildSkillSlashCommands(skills: readonly SkillSummary[]): SkillSlashCommands {
   const commandMap = new Map<string, string>();
-  const commands = skills.filter(isUserActivatableSkill).map((skill) => {
-    const commandName = `skill:${skill.name}`;
+  const sortedSkills = [...skills].toSorted(compareSkillSlashCommands);
+  const commands = sortedSkills.filter(isUserActivatableSkill).map((skill) => {
+    const commandName = skill.source === 'builtin' ? skill.name : `skill:${skill.name}`;
     commandMap.set(commandName, skill.name);
     return {
       name: commandName,

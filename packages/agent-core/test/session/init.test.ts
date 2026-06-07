@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent, AgentOptions } from '../../src/agent';
 import { trimTrailingOpenToolExchange } from '../../src/agent/context/projector';
+import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
@@ -454,6 +455,65 @@ describe('AgentAPI.startBtw', () => {
       expect(events.filter((event) => String(event['type']).startsWith('subagent.'))).toEqual([]);
     } finally {
       await session.close();
+    }
+  });
+
+  it('uses session-scoped experimental flags for sub-skill discovery and builtins', async () => {
+    const workDir = await makeTempDir();
+    const sessionDir = await makeTempDir();
+    const skillsRoot = join(workDir, 'skills');
+    await mkdir(join(skillsRoot, 'outer', 'inner'), { recursive: true });
+    await writeFile(
+      join(skillsRoot, 'outer', 'SKILL.md'),
+      [
+        '---',
+        'name: outer',
+        'description: Parent skill',
+        'has-sub-skill: true',
+        '---',
+        '',
+        'Outer body.',
+      ].join('\n'),
+    );
+    await writeFile(
+      join(skillsRoot, 'outer', 'inner', 'SKILL.md'),
+      ['---', 'name: inner', 'description: Nested skill', '---', '', 'Inner body.'].join('\n'),
+    );
+
+    const disabledSession = new Session({
+      id: 'test-disabled-sub-skills',
+      kaos: testKaos.withCwd(workDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc([]),
+      skills: { explicitDirs: [skillsRoot] },
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': false }),
+    });
+
+    try {
+      const disabledSkills = await disabledSession.listSkills();
+      expect(disabledSkills.map((skill) => skill.name)).toContain('outer');
+      expect(disabledSkills.map((skill) => skill.name)).not.toContain('inner');
+      expect(disabledSkills.map((skill) => skill.name)).not.toContain('sub-skill.consolidate');
+    } finally {
+      await disabledSession.close();
+    }
+
+    const enabledSession = new Session({
+      id: 'test-enabled-sub-skills',
+      kaos: testKaos.withCwd(workDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc([]),
+      skills: { explicitDirs: [skillsRoot] },
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': true }),
+    });
+
+    try {
+      const enabledSkills = await enabledSession.listSkills();
+      expect(enabledSkills.map((skill) => skill.name)).toContain('outer');
+      expect(enabledSkills.map((skill) => skill.name)).toContain('inner');
+      expect(enabledSkills.map((skill) => skill.name)).toContain('sub-skill.consolidate');
+    } finally {
+      await enabledSession.close();
     }
   });
 });

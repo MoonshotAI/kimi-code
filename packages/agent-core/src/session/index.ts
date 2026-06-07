@@ -166,7 +166,10 @@ export class Session {
       },
       telemetry: this.telemetry,
     });
-    this.skills = new SkillRegistry({ sessionId: options.id });
+    this.skills = new SkillRegistry({
+      sessionId: options.id,
+      experimentalFlags: this.experimentalFlags,
+    });
     this.mcp = new McpConnectionManager({
       oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
       log: this.log,
@@ -402,7 +405,7 @@ export class Session {
       builtinDir: this.options.skills?.builtinDir,
     });
     await this.skills.loadRoots(roots);
-    registerBuiltinSkills(this.skills);
+    registerBuiltinSkills(this.skills, { experimentalFlags: this.experimentalFlags });
   }
 
   private async loadMcpServers(): Promise<void> {
@@ -456,11 +459,6 @@ export class Session {
     });
   }
 
-  private backgroundTaskTimeoutMs(): number | undefined {
-    const timeoutS = this.options.background?.agentTaskTimeoutS;
-    return timeoutS === undefined ? undefined : timeoutS * 1000;
-  }
-
   private refreshAgentBuiltinTools(): void {
     for (const agent of this.readyAgents()) {
       if (!agent.config.hasProvider) continue;
@@ -488,8 +486,7 @@ export class Session {
       rpc: proxyWithExtraPayload(this.rpc, { agentId: id }),
       modelProvider: this.options.providerManager,
       hookEngine: config.hookEngine ?? this.hookEngine,
-      subagentHost:
-        config.subagentHost ?? new SessionSubagentHost(this, id, this.backgroundTaskTimeoutMs()),
+      subagentHost: config.subagentHost ?? new SessionSubagentHost(this, id),
       mcp: this.mcp,
       goals: this.goals,
       permission: this.permissionOptions(parentAgentId, config.permission),

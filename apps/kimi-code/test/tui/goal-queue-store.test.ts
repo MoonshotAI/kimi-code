@@ -145,6 +145,15 @@ describe('goal queue store', () => {
     await expect(readQueueFile()).resolves.toEqual({ version: 1, goals: [] });
   });
 
+  it('does not clear the queue file when JSON cannot be parsed', async () => {
+    const partial = '{"version":1,"goals":[';
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, QUEUE_FILE), partial, 'utf-8');
+
+    await expect(readGoalQueue(session())).rejects.toThrow('Invalid JSON in goal queue');
+    await expect(readFile(join(dir, QUEUE_FILE), 'utf-8')).resolves.toBe(partial);
+  });
+
   it('throws when the session summary does not expose a session directory', async () => {
     await expect(readGoalQueue({ id: 'missing', summary: undefined })).rejects.toThrow(
       'Session missing does not expose a session directory',

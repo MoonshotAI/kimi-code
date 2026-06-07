@@ -171,6 +171,22 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
+  it('resolves unprefixed built-in skill commands and blocks them while busy', () => {
+    const skillCommandMap = new Map([['mcp-config', 'mcp-config']]);
+
+    expect(resolve('/mcp-config', { skillCommandMap })).toEqual({
+      kind: 'skill',
+      commandName: 'mcp-config',
+      skillName: 'mcp-config',
+      args: '',
+    });
+    expect(resolve('/mcp-config', { skillCommandMap, isCompacting: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'mcp-config',
+      reason: 'compacting',
+    });
+  });
+
   it('returns message for unknown slash input', () => {
     expect(resolve('/does-not-exist arg')).toEqual({
       kind: 'message',
@@ -228,10 +244,14 @@ describe('goal command resolution', () => {
 
 describe('slash command busy helpers', () => {
   it('resolves skill command aliases with and without skill prefix', () => {
-    const map = new Map([['skill:review', 'review']]);
+    const map = new Map([
+      ['skill:review', 'review'],
+      ['mcp-config', 'mcp-config'],
+    ]);
 
     expect(resolveSkillCommand(map, 'skill:review')).toBe('review');
     expect(resolveSkillCommand(map, 'review')).toBe('review');
+    expect(resolveSkillCommand(map, 'mcp-config')).toBe('mcp-config');
   });
 
   it('formats busy messages', () => {

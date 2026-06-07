@@ -1,3 +1,5 @@
+import type { FinishReason } from './provider';
+
 /**
  * Base error for all chat provider errors.
  */
@@ -58,9 +60,20 @@ export class APIContextOverflowError extends APIStatusError {
  * The API returned an empty response (no content, no tool calls).
  */
 export class APIEmptyResponseError extends ChatProviderError {
-  constructor(message: string) {
+  readonly finishReason: FinishReason | null;
+  readonly rawFinishReason: string | null;
+
+  constructor(
+    message: string,
+    options: {
+      readonly finishReason?: FinishReason | null;
+      readonly rawFinishReason?: string | null;
+    } = {},
+  ) {
     super(message);
     this.name = 'APIEmptyResponseError';
+    this.finishReason = options.finishReason ?? null;
+    this.rawFinishReason = options.rawFinishReason ?? null;
   }
 }
 

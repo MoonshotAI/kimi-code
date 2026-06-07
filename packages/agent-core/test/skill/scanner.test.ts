@@ -2,13 +2,15 @@ import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import path from 'pathe';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { discoverSkills, resolveSkillRoots, SkillRegistry, type SkillRoot } from '../../src/skill';
 
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const dir of tempDirs.splice(0)) {
     await rm(dir, { recursive: true, force: true });
   }
@@ -335,20 +337,139 @@ describe('discoverSkills shape and ordering', () => {
     expect(skills.map((s) => s.name)).toEqual(['alpha', 'beta', 'top']);
   });
 
-  it('does not descend into a skill bundle subdirectory', async () => {
+  it('discovers nested SKILL.md files inside a skill bundle when has-sub-skill is enabled', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SUB_SKILL', '1');
     const { repoDir } = await makeWorkspace();
     const root = path.join(repoDir, '.kimi-code', 'skills');
     await writeSkill(root, path.join('outer', 'SKILL.md'), [
       '---',
       'name: outer',
-      'description: The real skill',
+      'description: Parent skill',
+      'has-sub-skill: true',
       '---',
+      '',
+      'Outer body.',
     ]);
     await writeSkill(root, path.join('outer', 'references', 'inner', 'SKILL.md'), [
       '---',
       'name: inner',
-      'description: Should be ignored',
+      'description: Nested skill',
       '---',
+      '',
+      'Inner body should stay private until activation.',
+    ]);
+    await writeFile(
+      path.join(root, 'outer', 'references', 'notes.md'),
+      'Nested payload should not be listed.',
+    );
+
+    const skills = await discoverSkills({ roots: [{ path: root, source: 'user' }] });
+
+    expect(skills.map((s) => s.name)).toEqual(['inner', 'outer']);
+  });
+
+  it('discovers nested SKILL.md files when sub-skill is enabled by scoped config', async () => {
+    const { repoDir } = await makeWorkspace();
+    const root = path.join(repoDir, '.kimi-code', 'skills');
+    await writeSkill(root, path.join('outer', 'SKILL.md'), [
+      '---',
+      'name: outer',
+      'description: Parent skill',
+      'has-sub-skill: true',
+      '---',
+      '',
+      'Outer body.',
+    ]);
+    await writeSkill(root, path.join('outer', 'references', 'inner', 'SKILL.md'), [
+      '---',
+      'name: inner',
+      'description: Nested skill',
+      '---',
+      '',
+      'Inner body.',
+    ]);
+
+    const skills = await discoverSkills({
+      roots: [{ path: root, source: 'user' }],
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': true }),
+    });
+
+    expect(skills.map((s) => s.name)).toEqual(['inner', 'outer']);
+  });
+
+  it('does not discover nested SKILL.md files when the parent bundle disables sub-skills', async () => {
+    const { repoDir } = await makeWorkspace();
+    const root = path.join(repoDir, '.kimi-code', 'skills');
+    await writeSkill(root, path.join('outer', 'SKILL.md'), [
+      '---',
+      'name: outer',
+      'description: Parent skill',
+      '---',
+      '',
+      'Outer body.',
+    ]);
+    await writeSkill(root, path.join('outer', 'references', 'inner', 'SKILL.md'), [
+      '---',
+      'name: inner',
+      'description: Nested skill',
+      '---',
+      '',
+      'Inner body should stay private until activation.',
+    ]);
+
+    const skills = await discoverSkills({ roots: [{ path: root, source: 'user' }] });
+
+    expect(skills.map((s) => s.name)).toEqual(['outer']);
+  });
+
+  it('discovers nested SKILL.md files when has-sub-skill is nested under metadata', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SUB_SKILL', '1');
+    const { repoDir } = await makeWorkspace();
+    const root = path.join(repoDir, '.kimi-code', 'skills');
+    await writeSkill(root, path.join('outer', 'SKILL.md'), [
+      '---',
+      'name: outer',
+      'description: Parent skill',
+      'metadata:',
+      '  has-sub-skill: true',
+      '---',
+      '',
+      'Outer body.',
+    ]);
+    await writeSkill(root, path.join('outer', 'inner', 'SKILL.md'), [
+      '---',
+      'name: outer.inner',
+      'description: Nested skill',
+      '---',
+      '',
+      'Inner body.',
+    ]);
+
+    const skills = await discoverSkills({ roots: [{ path: root, source: 'user' }] });
+
+    expect(skills.map((s) => s.name)).toEqual(['outer', 'outer.inner']);
+  });
+
+  it('treats sub-skill discovery as opt-in via the KIMI_CODE_EXPERIMENTAL_SUB_SKILL flag', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SUB_SKILL', '0');
+    const { repoDir } = await makeWorkspace();
+    const root = path.join(repoDir, '.kimi-code', 'skills');
+    await writeSkill(root, path.join('outer', 'SKILL.md'), [
+      '---',
+      'name: outer',
+      'description: Parent skill',
+      'has-sub-skill: true',
+      '---',
+      '',
+      'Outer body.',
+    ]);
+    await writeSkill(root, path.join('outer', 'inner', 'SKILL.md'), [
+      '---',
+      'name: outer.inner',
+      'description: Nested skill',
+      '---',
+      '',
+      'Inner body.',
     ]);
 
     const skills = await discoverSkills({ roots: [{ path: root, source: 'user' }] });

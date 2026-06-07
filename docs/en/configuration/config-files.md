@@ -50,7 +50,6 @@ reserved_context_size = 50000
 [background]
 max_running_tasks = 4
 keep_alive_on_exit = false
-agent_task_timeout_s = 900
 
 [experimental]
 goal_command = false
@@ -167,13 +166,12 @@ You can also switch models temporarily without touching the config file — by s
 
 ## `background`
 
-`background` controls the concurrency and timeout behavior of background tasks (launched via the `Bash` tool or the `Agent` tool's `run_in_background=true` parameter).
+`background` controls the concurrency behavior of background tasks (launched via the `Bash` tool or the `Agent` tool's `run_in_background=true` parameter).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `max_running_tasks` | `integer` | — | Maximum number of background tasks running concurrently |
 | `keep_alive_on_exit` | `boolean` | `true` | Whether to keep still-running background tasks when the session closes. Set to `false` to request that all background tasks stop before the process exits |
-| `agent_task_timeout_s` | `integer` | — | Maximum runtime in seconds for background Agent tasks |
 
 `keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, which takes higher priority than `config.toml`.
 
@@ -187,7 +185,7 @@ You can also switch models temporarily without touching the config file — by s
 | `micro_compaction` | `boolean` | `false` | Trim older large tool results from context while preserving recent conversation |
 | `background_ask` | `boolean` | `false` | Allow `AskUserQuestion` to start a background question task when the Agent can continue working |
 
-Environment variables take priority over this table. `KIMI_CODE_EXPERIMENTAL_<NAME>` overrides one feature, and `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables all experimental features for that process. When a feature is controlled by the environment, `/experiments` shows it as locked.
+Environment variables take priority over this table. `KIMI_CODE_EXPERIMENTAL_<NAME>` overrides one feature, and `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables all experimental features for that process — see the full list in [Environment variables → Runtime switches](./env-vars.md#runtime-switches). When a feature is controlled by the environment, `/experiments` shows it as locked.
 
 ## `services`
 

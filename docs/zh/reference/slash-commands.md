@@ -67,7 +67,7 @@ KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
 
 `/goal` 用于开始或管理目标模式：Kimi Code 会在自动续跑的轮次中持续朝一个持久目标工作。使用指导和示例见[使用目标模式](../guides/goals.md)。
 
-```
+```sh
 /goal 更新 checkout 文档，运行 docs build，如果 20 轮后仍被阻塞就停止
 ```
 
@@ -78,8 +78,8 @@ KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
 | `/goal resume` | 继续被暂停或被阻塞的目标 | 仅空闲时 |
 | `/goal cancel` | 移除当前目标 | 随时可用 |
 | `/goal replace <objective>` | 用新目标替换已保存的目标 | 仅空闲时 |
-| `/goal next <objective>` | 为当前会话安排一个后续目标。当前目标完成前，Agent 不会看到它 | 随时可用 |
-| `/goal next manage` | 打开后续目标管理器。用 `↑`/`↓` 浏览，`Space` 选择一个目标以便移动，选中后用 `↑`/`↓` 调整顺序，`E` 编辑，`D` 删除，`Esc` 取消 | 随时可用 |
+| `/goal next <objective>` | 为当前会话安排一个后续目标。如果当前没有目标，则立即开始它。当前目标完成前，Agent 不会看到已排队的目标 | 随时可用 |
+| `/goal next manage` | 打开后续目标管理器。用 <kbd>↑</kbd> / <kbd>↓</kbd> 浏览，<kbd>Space</kbd> 选择一个目标以便移动，选中后用 <kbd>↑</kbd> / <kbd>↓</kbd> 调整顺序，<kbd>E</kbd> 编辑，<kbd>D</kbd> 删除，<kbd>Esc</kbd> 取消。编辑输入框中，用 <kbd>Shift-Enter</kbd> 或 <kbd>Ctrl-J</kbd> 添加新行，用 <kbd>Enter</kbd> 保存 | 随时可用 |
 
 `status`、`pause`、`resume`、`cancel`、`replace` 和 `next` 只有作为 `/goal` 后的第一个词时才是子命令。如果你的目标需要以这些词开头，请在目标前加 `--`：
 
@@ -122,7 +122,7 @@ Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `
 
 ## Skill 动态命令
 
-已激活的 Skill 会自动注册为斜杠命令，统一以 `skill:` 作为命名空间前缀：
+已激活的外部 Skill 会自动注册为斜杠命令，并以 `skill:` 作为命名空间前缀：
 
 ```
 /skill:<name> [附加文本]
@@ -130,9 +130,9 @@ Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `
 
 例如 `/skill:code-style` 加载名为 `code-style` 的 Skill 并发送给 Agent；命令后附带的文本拼接到 Skill 提示词之后。
 
-为方便输入，Skill 命令同时支持省略 `skill:` 前缀的简写形式 `/<name>`，前提是该名称未被内置命令占用——即 `/code-style` 会回退匹配到 `/skill:code-style`。
+为方便输入，外部 Skill 命令同时支持省略 `skill:` 前缀的简写形式 `/<name>`，前提是该名称未被系统斜杠命令占用——即 `/code-style` 会回退匹配到 `/skill:code-style`。
 
-Kimi Code CLI 随包内置了 `mcp-config` Skill，用于配置 MCP server 和处理 MCP OAuth 登录；可直接输入 `/mcp-config` 调用。
+Kimi Code CLI 随包内置的 Skill（例如 `mcp-config`）会直接以 `/<name>` 形式出现在斜杠命令面板中，用于配置 MCP server 和处理 MCP OAuth 登录等场景。
 
 ::: info 说明
 所有 Skill 命令仅在空闲状态下可用。`flow` 类型的 Skill 同样通过 `/skill:<name>` 暴露，没有独立的 `/flow:` 命名空间。

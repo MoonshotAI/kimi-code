@@ -7,7 +7,12 @@ import type { TokenUsage } from '#/usage';
 import { describe, expect, it, vi } from 'vitest';
 function createMockStream(
   parts: StreamedMessagePart[],
-  opts?: { id?: string; usage?: TokenUsage },
+  opts?: {
+    id?: string;
+    usage?: TokenUsage;
+    finishReason?: StreamedMessage['finishReason'];
+    rawFinishReason?: string | null;
+  },
 ): StreamedMessage {
   return {
     get id(): string | null {
@@ -16,8 +21,8 @@ function createMockStream(
     get usage(): TokenUsage | null {
       return opts?.usage ?? null;
     },
-    finishReason: null,
-    rawFinishReason: null,
+    finishReason: opts?.finishReason ?? null,
+    rawFinishReason: opts?.rawFinishReason ?? null,
     async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
       for (const part of parts) {
         yield part;
@@ -199,6 +204,29 @@ describe('generate()', () => {
     const provider = createMockProvider(stream);
 
     await expect(generate(provider, '', [], [])).rejects.toThrow(/only thinking content/);
+  });
+
+  it('includes finish reason details on think-only APIEmptyResponseError', async () => {
+    const stream = createMockStream(
+      [{ type: 'think', think: 'Deep thinking about the problem...' }],
+      { finishReason: 'filtered', rawFinishReason: 'content_filter' },
+    );
+    const provider = createMockProvider(stream);
+
+    let caught: unknown;
+    try {
+      await generate(provider, '', [], []);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(APIEmptyResponseError);
+    const err = caught as APIEmptyResponseError;
+    expect(err.finishReason).toBe('filtered');
+    expect(err.rawFinishReason).toBe('content_filter');
+    expect(err.message).toContain('finishReason=filtered');
+    expect(err.message).toContain('rawFinishReason=content_filter');
+    expect(err.message).toContain('provider filtered the response');
   });
 
   it('throws APIEmptyResponseError for think + empty/whitespace text', async () => {

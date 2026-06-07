@@ -27,6 +27,11 @@ export type {
 export * from './provider';
 export { createProvider } from './providers';
 export type { ProviderConfig, ProviderType } from './providers';
+// Kimi provider: exported so callers can narrow a `ChatProvider` to the Kimi
+// backend (instanceof) and apply Kimi-specific request params (generation
+// kwargs, `thinking.keep` extra body).
+export { KimiChatProvider } from './providers/kimi';
+export type { ExtraBody, GenerationKwargs, KimiOptions, ThinkingConfig } from './providers/kimi';
 
 // Model capability matrix
 export { UNKNOWN_CAPABILITY, isUnknownCapability } from './capability';

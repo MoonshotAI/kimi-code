@@ -66,7 +66,6 @@ compaction_trigger_ratio = 0.85
 max_running_tasks = 4
 keep_alive_on_exit = false
 kill_grace_period_ms = 2000
-agent_task_timeout_s = 900
 print_wait_ceiling_s = 3600
 
 [services.moonshot_search]
@@ -154,7 +153,6 @@ max_context_size = "large"
       maxRunningTasks: 4,
       keepAliveOnExit: false,
       killGracePeriodMs: 2000,
-      agentTaskTimeoutS: 900,
       printWaitCeilingS: 3600,
     });
     expect(config.services?.moonshotSearch?.customHeaders).toEqual({ 'X-Search': '1' });

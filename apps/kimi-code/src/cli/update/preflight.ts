@@ -293,6 +293,18 @@ async function showPendingBackgroundInstallNotice(
   return nextState;
 }
 
+/**
+ * `KIMI_CODE_NO_AUTO_UPDATE` (or the legacy `KIMI_CLI_NO_AUTO_UPDATE` alias)
+ * fully disables the update preflight — no check, no background install, no
+ * prompt. Migrated from kimi-cli, where the variable gated all auto-update
+ * behavior. Accepts the usual truthy values (`1`/`true`/`yes`/`on`).
+ */
+function isAutoUpdateDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  const truthy = (value?: string): boolean =>
+    ['1', 'true', 'yes', 'on'].includes((value ?? '').trim().toLowerCase());
+  return truthy(env['KIMI_CODE_NO_AUTO_UPDATE']) || truthy(env['KIMI_CLI_NO_AUTO_UPDATE']);
+}
+
 async function shouldAutoInstallUpdates(): Promise<boolean> {
   try {
     const config = await loadTuiConfig();
@@ -531,6 +543,10 @@ export async function runUpdatePreflight(
   const stderr = options.stderr ?? process.stderr;
   const logger = options.logger ?? log;
   const platform = process.platform;
+
+  if (isAutoUpdateDisabledByEnv()) {
+    return 'continue';
+  }
 
   try {
     const isInteractive =

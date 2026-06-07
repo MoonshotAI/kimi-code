@@ -12,7 +12,10 @@ import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import OpenAI from 'openai';
 
-import { getOpenAILegacyModelCapability } from './capability-registry';
+import {
+  getOpenAILegacyModelCapability,
+  supportsOpenAIChatCompletionsXHighReasoning,
+} from './capability-registry';
 import {
   convertContentPart,
   convertOpenAIError,
@@ -130,6 +133,16 @@ function normalizeGenerationKwargs(
     delete kwargs.max_tokens;
   }
   return kwargs;
+}
+
+function clampChatCompletionsReasoningEffort(
+  reasoningEffort: string | undefined,
+  model: string,
+): string | undefined {
+  if (reasoningEffort !== 'xhigh') {
+    return reasoningEffort;
+  }
+  return supportsOpenAIChatCompletionsXHighReasoning(model) ? 'xhigh' : 'high';
 }
 
 function convertMessage(
@@ -505,7 +518,10 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): OpenAILegacyChatProvider {
-    const reasoningEffort = thinkingEffortToReasoningEffort(effort);
+    const reasoningEffort = clampChatCompletionsReasoningEffort(
+      thinkingEffortToReasoningEffort(effort),
+      this._model,
+    );
     const clone = this._clone();
     clone._reasoningEffort = reasoningEffort;
     return clone;

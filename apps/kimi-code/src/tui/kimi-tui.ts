@@ -827,6 +827,10 @@ export class KimiTUI {
     });
   }
 
+  requestQueuedGoalPromotion(): void {
+    this.sessionEventHandler.requestQueuedGoalPromotion();
+  }
+
   private sendMessageInternal(session: Session, input: string, options?: SendMessageOptions): void {
     const imageAttachmentIds =
       options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
@@ -965,7 +969,10 @@ export class KimiTUI {
     if ('planMode' in patch) this.updateEditorBorderHighlight();
     this.state.footer.setState(this.state.appState);
     this.updateActivityPane();
-    if (busyChanged) this.updateQueueDisplay();
+    if (busyChanged) {
+      this.updateQueueDisplay();
+      this.sessionEventHandler.retryQueuedGoalPromotion();
+    }
     this.state.ui.requestRender();
   }
 

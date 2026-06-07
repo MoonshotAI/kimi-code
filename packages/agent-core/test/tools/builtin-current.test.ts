@@ -277,13 +277,16 @@ describe('current builtin collaboration tools', () => {
     });
 
     const result = await executeTool(tool, context(input, 'call_agent'));
-    expect(host.spawn).toHaveBeenCalledWith('coder', {
-      parentToolCallId: 'call_agent',
-      prompt: 'Investigate',
-      description: 'Find cause',
-      runInBackground: false,
-      signal,
-    });
+    expect(host.spawn).toHaveBeenCalledWith(
+      'coder',
+      expect.objectContaining({
+        parentToolCallId: 'call_agent',
+        prompt: 'Investigate',
+        description: 'Find cause',
+        runInBackground: false,
+        signal: expect.any(AbortSignal),
+      }),
+    );
     expect(result.output).toContain('child result');
   });
 
