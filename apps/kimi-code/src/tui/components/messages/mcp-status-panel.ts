@@ -58,6 +58,19 @@ function formatToolsAvailable(count: number): string {
   return `${count} tool${count === 1 ? '' : 's'} available`;
 }
 
+/**
+ * Collapse a (possibly multi-line) MCP error into a single line. The status
+ * panel renders each returned string as exactly one boxed row (see
+ * `UsagePanelComponent.render`), so an embedded newline — e.g. the
+ * `\nstderr: ...` a failed stdio server appends — would drop the trailing
+ * text to column 0 and punch through the rounded border. Folding every run
+ * of whitespace to a single space keeps the error on one row, which the
+ * panel then truncates to the available width.
+ */
+function formatErrorLine(error: string): string {
+  return error.trim().replaceAll(/\s+/g, ' ');
+}
+
 function sortedServers(servers: readonly McpServerInfo[]): McpServerInfo[] {
   return servers.toSorted(
     (a, b) =>
@@ -129,7 +142,7 @@ export function buildMcpStatusReportLines(options: McpStatusReportOptions): stri
       server.error !== undefined &&
       server.error.trim().length > 0
     ) {
-      lines.push(`    ${muted('error:')} ${error(server.error.trim())}`);
+      lines.push(`    ${muted('error:')} ${error(formatErrorLine(server.error))}`);
     }
     if (server.status === 'needs-auth') {
       lines.push(`    ${muted('action:')} ${value(`run /mcp-config login ${server.name}`)}`);
