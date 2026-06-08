@@ -1,5 +1,6 @@
 import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 
+import { listCustomThemesSync } from '#/tui/theme/custom-theme-loader';
 import type { ThemeName } from '#/tui/theme/index';
 
 const THEME_OPTIONS: readonly ChoiceOption[] = [
@@ -30,20 +31,5 @@ export class ThemeSelectorComponent extends ChoicePickerComponent {
       },
       onCancel: opts.onCancel,
     });
-  }
-}
-
-// Synchronous fallback — reads dir synchronously for the picker.
-import { readdirSync } from 'node:fs';
-import { getCustomThemesDir } from '#/tui/theme/custom-theme-loader';
-
-function listCustomThemesSync(): string[] {
-  try {
-    const entries = readdirSync(getCustomThemesDir(), { withFileTypes: true });
-    return entries
-      .filter((e) => e.isFile() && e.name.endsWith('.json'))
-      .map((e) => e.name.replace(/\.json$/, ''));
-  } catch {
-    return [];
   }
 }

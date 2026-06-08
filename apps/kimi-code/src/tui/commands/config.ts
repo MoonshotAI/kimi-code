@@ -376,6 +376,17 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
     return;
   }
 
+  // Validate custom themes up front so a missing / malformed file reports an
+  // error instead of silently persisting a name that resolves to the dark
+  // fallback.
+  if (!isBuiltInTheme(theme)) {
+    const palette = await loadCustomThemeMerged(theme);
+    if (palette === null) {
+      host.showStatus(`Theme "${theme}" could not be loaded.`, 'error');
+      return;
+    }
+  }
+
   try {
     await saveTuiConfig({
       theme,
@@ -394,7 +405,7 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
   const resolved = theme === 'auto'
     ? (currentTheme.palette === lightColors ? 'light' : 'dark')
     : undefined;
-  host.applyTheme(theme, resolved);
+  await host.applyTheme(theme, resolved);
   host.refreshTerminalThemeTracking();
   host.track('theme_switch', { theme });
   const detail = theme === 'auto' ? ` (tracking terminal; current: ${resolved})` : '';

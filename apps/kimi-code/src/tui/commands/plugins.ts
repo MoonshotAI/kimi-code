@@ -371,19 +371,23 @@ async function renderPluginsList(
   plugins?: readonly PluginSummary[],
 ): Promise<void> {
   const currentPlugins = plugins ?? (await host.requireSession().listPlugins());
-  const lines = buildPluginsListLines({
-    plugins: currentPlugins,
-  });
   const title = ` Plugins (${currentPlugins.length}) `;
-  const panel = new UsagePanelComponent(lines, 'primary', title);
+  const panel = new UsagePanelComponent(
+    () => buildPluginsListLines({ plugins: currentPlugins }),
+    'primary',
+    title,
+  );
   host.state.transcriptContainer.addChild(panel);
   host.state.ui.requestRender();
 }
 
 async function renderPluginInfo(host: SlashCommandHost, id: string): Promise<void> {
   const info = await host.requireSession().getPluginInfo(id);
-  const lines = buildPluginsInfoLines({ info });
-  const panel = new UsagePanelComponent(lines, 'primary', ` ${info.id} `);
+  const panel = new UsagePanelComponent(
+    () => buildPluginsInfoLines({ info }),
+    'primary',
+    ` ${info.id} `,
+  );
   host.state.transcriptContainer.addChild(panel);
   host.state.ui.requestRender();
 }

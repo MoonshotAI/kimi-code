@@ -1606,6 +1606,9 @@ export class KimiTUI {
     this.updateEditorBorderHighlight();
     this.state.footer.setColors(palette);
     this.state.todoPanel.setColors(palette);
+    // Repaint already-rendered transcript entries (status/markdown caches hold
+    // old ANSI codes), matching applyTheme()'s behaviour.
+    this.state.transcriptContainer.invalidate();
     this.state.ui.requestRender(true);
   }
 

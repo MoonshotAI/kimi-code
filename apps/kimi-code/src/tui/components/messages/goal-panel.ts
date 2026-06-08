@@ -98,8 +98,11 @@ export class GoalStatusMessageComponent implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
-    const lines = buildGoalReportLines(this.goal);
-    const panel = new UsagePanelComponent(lines, 'primary', goalPanelTitle(this.goal));
+    const panel = new UsagePanelComponent(
+      () => buildGoalReportLines(this.goal),
+      'primary',
+      goalPanelTitle(this.goal),
+    );
     return ['', ...panel.render(width)];
   }
 }

@@ -201,13 +201,22 @@ export function buildUsageReportLines(options: UsageReportOptions): string[] {
 }
 
 export class UsagePanelComponent implements Component {
+  /** Cached coloured lines; rebuilt from `buildLines` on every invalidate. */
+  private lines: readonly string[];
+
   constructor(
-    private readonly lines: readonly string[],
+    private readonly buildLines: () => readonly string[],
     private readonly borderToken: ColorToken,
     private readonly title: string = ' Usage ',
-  ) {}
+  ) {
+    this.lines = buildLines();
+  }
 
-  invalidate(): void {}
+  invalidate(): void {
+    // Report bodies embed palette colours, so a theme switch must re-run the
+    // builder to repaint the cached lines (the data itself is captured).
+    this.lines = this.buildLines();
+  }
 
   render(width: number): string[] {
     const paint = (s: string): string => currentTheme.fg(this.borderToken, s);

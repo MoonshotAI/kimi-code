@@ -7,7 +7,7 @@ import { setExperimentalFeatures } from './experimental-flags';
 
 export async function handleReloadTuiCommand(host: SlashCommandHost): Promise<void> {
   const tuiConfig = await loadTuiConfig();
-  applyReloadedTuiConfig(host, tuiConfig);
+  await applyReloadedTuiConfig(host, tuiConfig);
   host.showStatus('TUI config reloaded.', 'success');
 }
 
@@ -24,7 +24,7 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
   setExperimentalFeatures(await host.harness.getExperimentalFeatures());
   host.refreshSlashCommandAutocomplete();
   applyRuntimeConfig(host, config);
-  applyReloadedTuiConfig(host, tuiConfig);
+  await applyReloadedTuiConfig(host, tuiConfig);
 
   if (session === undefined) {
     host.showStatus(
@@ -34,14 +34,14 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
   }
 }
 
-export function applyReloadedTuiConfig(
+export async function applyReloadedTuiConfig(
   host: SlashCommandHost,
   config: TuiConfig,
-): void {
+): Promise<void> {
   const resolved = config.theme === 'auto'
     ? (currentTheme.palette === lightColors ? 'light' : 'dark')
     : undefined;
-  host.applyTheme(config.theme, resolved);
+  await host.applyTheme(config.theme, resolved);
   host.refreshTerminalThemeTracking();
   host.setAppState({
     editorCommand: config.editorCommand,

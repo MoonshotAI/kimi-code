@@ -118,4 +118,19 @@ command = "   "
       upgrade: { autoInstall: false },
     });
   });
+
+  it('escapes special characters in a custom theme name so the TOML round-trips', async () => {
+    const theme = 'weird"name\\with-quote';
+    await saveTuiConfig(
+      {
+        theme,
+        editorCommand: null,
+        notifications: DEFAULT_TUI_CONFIG.notifications,
+        upgrade: DEFAULT_TUI_CONFIG.upgrade,
+      },
+      filePath,
+    );
+
+    expect((await loadTuiConfig(filePath)).theme).toBe(theme);
+  });
 });

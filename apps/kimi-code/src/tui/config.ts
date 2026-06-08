@@ -149,7 +149,7 @@ export function renderTuiConfig(config: TuiConfig): string {
 # Client preferences for kimi-code.
 # Agent/runtime settings stay in ~/.kimi-code/config.toml.
 
-theme = "${config.theme}" # "auto" | "dark" | "light"
+theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | custom theme name
 
 [editor]
 command = "${escapeTomlBasicString(config.editorCommand ?? '')}" # Empty uses $VISUAL / $EDITOR
