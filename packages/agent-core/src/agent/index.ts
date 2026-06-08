@@ -297,6 +297,7 @@ export class Agent {
 
   async resume(): Promise<{ warning?: string }> {
     const result = await this.records.replay();
+    this.config.refreshRuntimeValues();
     await this.background.loadFromDisk();
     await this.background.reconcile();
     await this.cron?.loadFromDisk();
