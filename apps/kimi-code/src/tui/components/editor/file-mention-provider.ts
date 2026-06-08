@@ -63,13 +63,15 @@ export class FileMentionProvider implements AutocompleteProvider {
 
     const atPrefix = extractAtPrefix(textBeforeCursor);
     if (atPrefix !== null) {
-      try {
-        const innerResult = await this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
-        if (innerResult !== null) return innerResult;
-      } catch {
-        // If fd is missing, deleted mid-session, or fails to spawn, keep @ completion usable.
+      if (this.fdPath === null) {
+        return getFsMentionSuggestions(this.workDir, atPrefix, options.signal);
       }
-      return getFsMentionSuggestions(this.workDir, atPrefix, options.signal);
+      try {
+        return await this.inner.getSuggestions(lines, cursorLine, cursorCol, options);
+      } catch {
+        // If fd fails to spawn unexpectedly, keep @ completion usable.
+        return getFsMentionSuggestions(this.workDir, atPrefix, options.signal);
+      }
     }
 
     try {

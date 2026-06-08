@@ -90,14 +90,13 @@ describe('FileMentionProvider', () => {
     expect(result!.items.map((item) => item.value)).toContain('@src/components/Button.tsx');
   });
 
-  it('falls back to filesystem suggestions when the configured fd path is unavailable', async () => {
+  it('does not bypass fd filtering with filesystem suggestions when fd returns no matches', async () => {
     writeFileSync(join(workDir, 'README.md'), 'readme');
     const provider = new FileMentionProvider([], workDir, join(workDir, 'missing-fd'));
 
     const result = await provider.getSuggestions(['@read'], 0, 5, { signal: ctrl() });
 
-    expect(result).not.toBeNull();
-    expect(result!.items.map((item) => item.value)).toContain('@README.md');
+    expect(result).toBeNull();
   });
 
   it('filesystem fallback returns folders and excludes .git', async () => {
