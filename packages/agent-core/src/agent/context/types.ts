@@ -64,6 +64,11 @@ export interface HookResultOrigin {
   readonly blocked?: boolean;
 }
 
+export interface RetryOrigin {
+  readonly kind: 'retry';
+  readonly trigger?: string;
+}
+
 export type PromptOrigin =
   | UserPromptOrigin
   | SkillActivationOrigin
@@ -73,7 +78,8 @@ export type PromptOrigin =
   | BackgroundTaskOrigin
   | CronJobOrigin
   | CronMissedOrigin
-  | HookResultOrigin;
+  | HookResultOrigin
+  | RetryOrigin;
 
 export type ContextMessage = Message & {
   readonly origin?: PromptOrigin | undefined;

@@ -200,7 +200,8 @@ export class AgentGroupComponent extends Container {
       return;
     }
     // Running or not-yet-started agents show latest activity, with a fallback.
-    const activity = snap.latestActivity ?? 'Initializing…';
+    const fallback = snap.phase === 'queued' ? 'Queued…' : 'Initializing…';
+    const activity = snap.latestActivity ?? fallback;
     this.bodyContainer.addChild(new Text(`  ${branch2}    ${dim(activity)}`, 0, 0));
   }
 

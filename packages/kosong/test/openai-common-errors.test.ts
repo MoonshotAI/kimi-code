@@ -1,6 +1,7 @@
 import {
   APIConnectionError,
   APIContextOverflowError,
+  APIProviderRateLimitError,
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
@@ -108,6 +109,14 @@ describe('convertOpenAIError: context overflow', () => {
     const result = convertOpenAIError(err);
     expect(result).toBeInstanceOf(APIContextOverflowError);
     expect((result as APIContextOverflowError).statusCode).toBe(413);
+  });
+});
+describe('convertOpenAIError: provider rate limit', () => {
+  it('normalizes HTTP 429 status errors to APIProviderRateLimitError', () => {
+    const err = new OpenAIAPIError(429, undefined, 'Too many requests', new Headers());
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect((result as APIProviderRateLimitError).statusCode).toBe(429);
   });
 });
 describe('convertOpenAIError: subclass errors still match first', () => {

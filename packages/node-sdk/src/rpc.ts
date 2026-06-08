@@ -13,6 +13,7 @@ import {
   type SDKAPI,
   type ToolCallRequest,
   type ToolCallResponse,
+  type SwarmModeTrigger,
 } from '@moonshot-ai/agent-core';
 
 import type { ApprovalHandler, QuestionHandler } from '#/events';
@@ -79,6 +80,10 @@ export interface SetSessionPermissionRpcInput extends SessionIdRpcInput {
 export interface SetSessionPlanModeRpcInput extends SessionIdRpcInput {
   readonly enabled: boolean;
 }
+
+export type SetSessionSwarmModeRpcInput =
+  | (SessionIdRpcInput & { readonly enabled: true; readonly trigger: SwarmModeTrigger })
+  | (SessionIdRpcInput & { readonly enabled: false });
 
 export interface ActivateSkillRpcInput extends SessionIdRpcInput {
   readonly name: string;
@@ -260,6 +265,35 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  async setSwarmMode(input: SetSessionSwarmModeRpcInput): Promise<void> {
+    if (input.enabled) return this.enterSwarmMode(input);
+    return this.exitSwarmMode(input);
+  }
+
+  async swarm(input: SessionPromptRpcInput): Promise<void> {
+    await this.enterSwarmMode({ sessionId: input.sessionId, trigger: 'task' });
+    return this.prompt(input);
+  }
+
+  private async enterSwarmMode(
+    input: SessionIdRpcInput & { readonly trigger: SwarmModeTrigger },
+  ): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.enterSwarm({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      trigger: input.trigger,
+    });
+  }
+
+  private async exitSwarmMode(input: SessionIdRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.exitSwarm({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
+  }
+
   async getPlan(input: SessionIdRpcInput): Promise<SessionPlan> {
     const rpc = await this.getRpc();
     return rpc.getPlan({
@@ -337,6 +371,10 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId,
     });
+    const swarmMode = await rpc.getSwarmMode({
+      sessionId: input.sessionId,
+      agentId,
+    });
     const usage = await rpc.getUsage({
       sessionId: input.sessionId,
       agentId,
@@ -351,6 +389,7 @@ export abstract class SDKRpcClientBase {
       thinkingLevel: config.thinkingLevel,
       permission: permission.mode,
       planMode: plan !== null,
+      swarmMode,
       contextTokens,
       maxContextTokens,
       contextUsage,

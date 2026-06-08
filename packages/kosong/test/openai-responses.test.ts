@@ -1,4 +1,9 @@
-import { APIContextOverflowError, APIStatusError, ChatProviderError } from '#/errors';
+import {
+  APIContextOverflowError,
+  APIProviderRateLimitError,
+  APIStatusError,
+  ChatProviderError,
+} from '#/errors';
 import { generate } from '#/generate';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import {
@@ -1689,8 +1694,8 @@ describe('OpenAIResponsesChatProvider', () => {
         caughtError = error;
       }
 
-      expect(caughtError).toBeInstanceOf(APIStatusError);
-      expect((caughtError as APIStatusError).statusCode).toBe(429);
+      expect(caughtError).toBeInstanceOf(APIProviderRateLimitError);
+      expect((caughtError as APIProviderRateLimitError).statusCode).toBe(429);
       expect((caughtError as Error).message).toMatch(/rate_limit_exceeded.*too many/);
     });
 
@@ -1710,8 +1715,8 @@ describe('OpenAIResponsesChatProvider', () => {
         caughtError = error;
       }
 
-      expect(caughtError).toBeInstanceOf(APIStatusError);
-      expect((caughtError as APIStatusError).statusCode).toBe(429);
+      expect(caughtError).toBeInstanceOf(APIProviderRateLimitError);
+      expect((caughtError as APIProviderRateLimitError).statusCode).toBe(429);
       expect((caughtError as Error).message).toContain('Rate limit reached for gpt-5.5');
       expect((caughtError as Error).message).not.toContain('stream event.type must be a string');
     });

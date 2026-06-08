@@ -9,6 +9,7 @@ export { darkColors, lightColors, getColorPalette } from './colors';
 export type { ColorPalette, ResolvedTheme } from './colors';
 export { createThemeStyles } from './styles';
 export type { ThemeStyles } from './styles';
+export { gradientText } from './gradient-text';
 export { createMarkdownTheme, createEditorTheme } from './pi-tui-theme';
 export { detectTerminalTheme } from './detect';
 
