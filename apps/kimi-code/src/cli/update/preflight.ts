@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { basename, dirname } from 'node:path';
 
 import { log, type Logger } from '@moonshot-ai/kimi-code-sdk';
 import type { TelemetryProperties } from '@moonshot-ai/kimi-telemetry';
@@ -54,6 +55,43 @@ function bunCommand(platform: NodeJS.Platform): string {
   return platform === 'win32' ? 'bun.exe' : 'bun';
 }
 
+/**
+ * Compute the install prefix for a native (SEA) install, or undefined when
+ * the running binary is not inside a `bin/` directory (e.g. unpacked archive).
+ *
+ * The native install script writes to `$KIMI_INSTALL_DIR/bin/kimi`.  To
+ * overwrite the currently running binary we point the env var at the
+ * parent of the `bin/` directory that contains it, if any (e.g.
+ * `~/.local/bin/kimi` → `~/.local`).  When the binary is not under a `bin/`
+ * directory we cannot safely determine a prefix that would cause the installer
+ * to overwrite it, so we skip the override and let the installer use its
+ * default location.
+ */
+function nativeInstallDir(): string | undefined {
+  const execDir = dirname(process.execPath);
+  return basename(execDir) === 'bin' ? dirname(execDir) : undefined;
+}
+
+/** Shell-quote a value for single-quote context: safe for paths containing `'`. */
+function shellQuote(val: string): string {
+  return `'${val.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Render the env-var suffix (`| KIMI_…=… bash`) for a native install command.
+ * The spawned path passes these variables through `SpawnCommand.env`; the
+ * user-visible command places them between the pipe and `bash` so that they
+ * are visible to the install script when the user copy-pastes.
+ */
+function nativeEnvPrefix(): string {
+  const dir = nativeInstallDir();
+  // Only override the install prefix and suppress PATH edits when we know
+  // where the running binary lives; otherwise let the installer use its
+  // defaults (including PATH modification) so the update ends up reachable.
+  if (dir === undefined) return '';
+  return `KIMI_INSTALL_DIR=${shellQuote(dir)} KIMI_NO_MODIFY_PATH=1`;
+}
+
 export function installCommandFor(
   source: InstallSource,
   version: string,
@@ -68,8 +106,13 @@ export function installCommandFor(
       return `yarn global add ${NPM_PACKAGE_NAME}@${version}`;
     case 'bun-global':
       return `bun add -g ${NPM_PACKAGE_NAME}@${version}`;
-    case 'native':
-      return platform === 'win32' ? NATIVE_INSTALL_COMMAND_WIN : NATIVE_INSTALL_COMMAND_UNIX;
+    case 'native': {
+      if (platform === 'win32') return NATIVE_INSTALL_COMMAND_WIN;
+      const suffix = nativeEnvPrefix();
+      return suffix
+        ? NATIVE_INSTALL_COMMAND_UNIX.replace('| bash', `| ${suffix} bash`)
+        : NATIVE_INSTALL_COMMAND_UNIX;
+    }
     case 'unsupported':
       return `npm install -g ${NPM_PACKAGE_NAME}@${version}`;
   }
@@ -92,6 +135,7 @@ export function canAutoInstall(source: InstallSource, platform: NodeJS.Platform)
 interface SpawnCommand {
   readonly cmd: string;
   readonly args: readonly string[];
+  readonly env?: Record<string, string>;
 }
 
 export function spawnForSource(
@@ -108,13 +152,36 @@ export function spawnForSource(
       return { cmd: withCmdSuffix('yarn', platform), args: ['global', 'add', `${NPM_PACKAGE_NAME}@${version}`] };
     case 'bun-global':
       return { cmd: bunCommand(platform), args: ['add', '-g', `${NPM_PACKAGE_NAME}@${version}`] };
-    case 'native':
+    case 'native': {
       // `curl … | bash` reports only the trailing bash's exit status, so a
       // failed download (curl can't connect → empty stdin → bash exits 0)
       // would look like a successful update. `pipefail` makes the pipeline
       // surface curl's non-zero status so installUpdate() rejects and we warn
       // instead of printing "Updated …".
-      return { cmd: 'bash', args: ['-c', `set -o pipefail; ${NATIVE_INSTALL_COMMAND_UNIX}`] };
+      //
+      // Point KIMI_INSTALL_DIR at the directory containing the current native
+      // binary so the install script overwrites it in place.  The install
+      // script always writes to ${KIMI_INSTALL_DIR}/bin/kimi, so when the
+      // binary lives under a `bin/` subdirectory we pass the parent of that
+      // `bin/` dir (e.g. ~/.local/bin/kimi → ~/.local).
+      // Set KIMI_NO_MODIFY_PATH to skip shell-rc modification — during an
+      // upgrade the binary is already on the user's PATH.  Only pass these
+      // vars when we know the running binary's prefix; otherwise let the
+      // installer use its full defaults (including PATH modification) so
+      // the update ends up reachable.
+      const installDir = nativeInstallDir();
+      if (installDir !== undefined) {
+        return {
+          cmd: 'bash',
+          args: ['-c', `set -o pipefail; ${NATIVE_INSTALL_COMMAND_UNIX}`],
+          env: { KIMI_INSTALL_DIR: installDir, KIMI_NO_MODIFY_PATH: '1' },
+        };
+      }
+      return {
+        cmd: 'bash',
+        args: ['-c', `set -o pipefail; ${NATIVE_INSTALL_COMMAND_UNIX}`],
+      };
+    }
     case 'unsupported':
       throw new Error('unsupported install source cannot be auto-installed');
   }
@@ -379,9 +446,12 @@ export async function installUpdate(
   version: string,
   platform: NodeJS.Platform,
 ): Promise<void> {
-  const { cmd, args } = spawnForSource(source, version, platform);
+  const { cmd, args, env } = spawnForSource(source, version, platform);
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(cmd, [...args], { stdio: 'inherit' });
+    const child = spawn(cmd, [...args], {
+      stdio: 'inherit',
+      ...(env ? { env: { ...process.env, ...env } } : {}),
+    });
     child.once('error', reject);
     child.once('exit', (code, signal) => {
       if (code === 0) {
@@ -435,7 +505,7 @@ async function startBackgroundInstall(
       source,
     });
 
-    const { cmd, args } = spawnForSource(source, target.version, platform);
+    const { cmd, args, env } = spawnForSource(source, target.version, platform);
     let settled = false;
 
     const finish = (succeeded: boolean): void => {
@@ -487,7 +557,11 @@ async function startBackgroundInstall(
       });
     };
 
-    const child = spawn(cmd, [...args], { detached: true, stdio: 'ignore' });
+    const child = spawn(cmd, [...args], {
+      detached: true,
+      stdio: 'ignore',
+      ...(env ? { env: { ...process.env, ...env } } : {}),
+    });
     child.once('error', () => { finish(false); });
     child.once('exit', (code) => { finish(code === 0); });
     child.unref();
