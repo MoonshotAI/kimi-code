@@ -30,6 +30,11 @@ const TEMPLATED = new Set([
   'tools/builtin/collaboration/skill-tool.md',
 ]);
 
+const STATIC_PLACEHOLDER_PROTOCOL_FILES = new Set([
+  'agent/swarm/enter-reminder.md',
+  'tools/builtin/collaboration/agent-swarm.md',
+]);
+
 const mdFiles = globSync('**/*.md', { cwd: SRC })
   .map((file) => file.split('\\').join('/'))
   .filter((file) => !file.endsWith('README.md'));
@@ -42,6 +47,7 @@ describe('prompt placeholders', () => {
   it('static .md files contain no unrendered template syntax', () => {
     for (const file of mdFiles) {
       if (TEMPLATED.has(file)) continue;
+      if (STATIC_PLACEHOLDER_PROTOCOL_FILES.has(file)) continue;
       const content = readFileSync(join(SRC, file), 'utf-8');
       expect(
         /\{\{|\{%|\$\{/.test(content),

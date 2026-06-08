@@ -23,6 +23,7 @@ export {
   showPermissionPicker,
   showSettingsSelector,
 } from './config';
+export { handleSwarmCommand } from './swarm';
 export {
   handleFeedbackCommand,
   showMcpServers,

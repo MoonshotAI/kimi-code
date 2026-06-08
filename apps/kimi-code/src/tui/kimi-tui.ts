@@ -22,6 +22,7 @@ import type {
   Session,
 } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
+import { resolve } from 'pathe';
 
 import type { CLIOptions } from '#/cli/options';
 import { MigrationScreenComponent, type MigrationScreenResult } from '#/migration/index';
@@ -112,7 +113,7 @@ import {
   type TUIStartupState,
 } from './types';
 import { createTUIState, type TUIState } from './tui-state';
-import { isExpandable, isPlanExpandable } from './utils/component-capabilities';
+import { isExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
@@ -162,6 +163,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     sessionId: '',
     permissionMode: startupPermission,
     planMode: input.cliOptions.plan,
+    swarmMode: false,
     thinking: false,
     contextUsage: 0,
     contextTokens: 0,
@@ -511,7 +513,7 @@ export class KimiTUI {
           if (target === undefined) {
             throw new Error(`Session "${startup.sessionFlag}" not found.`);
           }
-          if (target.workDir !== workDir) {
+          if (resolve(target.workDir) !== resolve(workDir)) {
             this.state.ui.stop();
             process.stderr.write(
               `${chalk.hex(this.state.theme.colors.warning)(
@@ -1036,6 +1038,7 @@ export class KimiTUI {
       thinking: status.thinkingLevel !== 'off',
       permissionMode: status.permission,
       planMode: status.planMode,
+      swarmMode: status.swarmMode ?? false,
       contextTokens: status.contextTokens,
       maxContextTokens: status.maxContextTokens,
       contextUsage: status.contextUsage,
@@ -1066,6 +1069,7 @@ export class KimiTUI {
     this.approvalController.cancelAll(reason);
     this.questionController.cancelAll(reason);
     this.session = undefined;
+    this.state.swarmModeEntry = undefined;
     this.harness.setTelemetryContext({ sessionId: null });
     this.setAppState({ goal: null });
     return previous;
@@ -1112,6 +1116,7 @@ export class KimiTUI {
     this.aborted = false;
     this.streamingUI.discardPending();
     this.state.queuedMessages = [];
+    this.state.swarmModeEntry = undefined;
     this.harness.interactiveAgentId = MAIN_AGENT_ID;
     this.streamingUI.resetToolCallState();
     this.streamingUI.resetToolUi();
@@ -1308,7 +1313,6 @@ export class KimiTUI {
             this.state.appState.workDir,
           );
           if (this.state.toolOutputExpanded) tc.setExpanded(true);
-          if (this.state.planExpanded) tc.setPlanExpanded(true);
           return tc;
         }
         if (entry.backgroundAgentStatus !== undefined) {
@@ -1468,24 +1472,32 @@ export class KimiTUI {
   updateActivityPane(): void {
     const effectiveMode = this.resolveActivityPaneMode();
     this.syncTerminalProgress(this.shouldShowTerminalProgress(effectiveMode));
+    const placeSpinnerInAgentSwarm = this.shouldPlaceActivitySpinnerInAgentSwarm(effectiveMode);
+    const activityModeKey = `${effectiveMode}:${placeSpinnerInAgentSwarm ? 'swarm' : 'pane'}`;
 
     if (
-      effectiveMode === this.lastActivityMode &&
+      activityModeKey === this.lastActivityMode &&
       (effectiveMode === 'waiting' || effectiveMode === 'thinking' || effectiveMode === 'tool')
     ) {
+      if (placeSpinnerInAgentSwarm) {
+        this.syncAgentSwarmActivitySpinner(this.state.activitySpinner?.instance);
+      }
       return;
     }
 
-    this.lastActivityMode = effectiveMode;
+    this.lastActivityMode = activityModeKey;
     this.state.activityContainer.clear();
 
     switch (effectiveMode) {
       case 'hidden':
         this.stopActivitySpinner();
+        this.syncAgentSwarmActivitySpinner(undefined);
         this.state.ui.requestRender();
         return;
       case 'waiting': {
         const spinner = this.ensureActivitySpinner('moon');
+        this.syncAgentSwarmActivitySpinner(placeSpinnerInAgentSwarm ? spinner : undefined);
+        if (placeSpinnerInAgentSwarm) break;
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({
             mode: 'waiting',
@@ -1496,12 +1508,14 @@ export class KimiTUI {
       }
       case 'thinking': {
         this.stopActivitySpinner();
+        this.syncAgentSwarmActivitySpinner(undefined);
         break;
       }
       case 'composing': {
         const spinner = this.ensureActivitySpinner('braille', 'working...', (s) =>
           chalk.hex(this.state.theme.colors.primary)(s),
         );
+        this.syncAgentSwarmActivitySpinner(undefined);
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({
             mode: 'composing',
@@ -1512,6 +1526,8 @@ export class KimiTUI {
       }
       case 'tool': {
         const spinner = this.ensureActivitySpinner('moon');
+        this.syncAgentSwarmActivitySpinner(placeSpinnerInAgentSwarm ? spinner : undefined);
+        if (placeSpinnerInAgentSwarm) break;
         this.state.activityContainer.addChild(
           new ActivityPaneComponent({
             mode: 'tool',
@@ -1523,6 +1539,7 @@ export class KimiTUI {
       case 'idle':
       case 'session': {
         this.stopActivitySpinner();
+        this.syncAgentSwarmActivitySpinner(undefined);
         break;
       }
     }
@@ -1569,21 +1586,6 @@ export class KimiTUI {
       }
     }
     this.state.ui.requestRender();
-  }
-
-  // Returns true when at least one card toggled, so the caller can consume the keystroke.
-  togglePlanExpansion(): boolean {
-    const next = !this.state.planExpanded;
-    let toggled = false;
-    for (const child of this.state.transcriptContainer.children) {
-      if (isPlanExpandable(child) && child.setPlanExpanded(next)) {
-        toggled = true;
-      }
-    }
-    if (!toggled) return false;
-    this.state.planExpanded = next;
-    this.state.ui.requestRender();
-    return true;
   }
 
   updateEditorBorderHighlight(text?: string): void {
@@ -1634,6 +1636,17 @@ export class KimiTUI {
       effectiveMode === 'composing' ||
       effectiveMode === 'tool'
     );
+  }
+
+  private shouldPlaceActivitySpinnerInAgentSwarm(effectiveMode: EffectiveActivityPaneMode): boolean {
+    return (
+      this.sessionEventHandler.hasActiveAgentSwarmToolCall() &&
+      (effectiveMode === 'waiting' || effectiveMode === 'tool')
+    );
+  }
+
+  private syncAgentSwarmActivitySpinner(spinner: MoonLoader | undefined): void {
+    this.sessionEventHandler.syncAgentSwarmActivitySpinner(spinner);
   }
 
   private syncTerminalProgress(active: boolean): void {
@@ -1803,9 +1816,6 @@ export class KimiTUI {
       () => {
         this.toggleToolOutputExpansion();
       },
-      () => {
-        this.togglePlanExpansion();
-      },
       (block) => {
         this.openApprovalPreview(panel, block);
       },
@@ -1875,9 +1885,6 @@ export class KimiTUI {
       undefined,
       () => {
         this.toggleToolOutputExpansion();
-      },
-      () => {
-        this.togglePlanExpansion();
       },
     );
     this.mountEditorReplacement(dialog);

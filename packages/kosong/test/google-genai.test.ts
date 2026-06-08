@@ -1,6 +1,7 @@
 import {
   APIConnectionError,
   APIContextOverflowError,
+  APIProviderRateLimitError,
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
@@ -1461,6 +1462,14 @@ describe('convertGoogleGenAIError (unit)', () => {
     const result = convertGoogleGenAIError(error);
     expect(result).toBeInstanceOf(APIStatusError);
     expect((result as APIStatusError).statusCode).toBe(503);
+  });
+
+  it('normalizes numeric 429 code property as APIProviderRateLimitError', () => {
+    const error = new Error('too many requests');
+    (error as Error & { code: number }).code = 429;
+    const result = convertGoogleGenAIError(error);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect((result as APIProviderRateLimitError).statusCode).toBe(429);
   });
 
   it('normalizes numeric context overflow errors', () => {

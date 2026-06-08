@@ -21,6 +21,10 @@ function resolve(
 }
 
 describe('resolveSlashCommandInput', () => {
+  afterEach(() => {
+    setExperimentalFeatures([]);
+  });
+
   it('returns not-command for normal text', () => {
     expect(resolve('hello')).toEqual({ kind: 'not-command' });
   });
@@ -54,6 +58,7 @@ describe('resolveSlashCommandInput', () => {
   });
 
   it('blocks idle-only built-ins while streaming', () => {
+    setExperimentalFeatures([{ id: 'agent_swarm', enabled: true }]);
     expect(resolve('/new', { isStreaming: true })).toEqual({
       kind: 'blocked',
       commandName: 'new',
@@ -89,9 +94,20 @@ describe('resolveSlashCommandInput', () => {
       commandName: 'experiments',
       reason: 'streaming',
     });
+    expect(resolve('/swarm on', { isStreaming: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'swarm',
+      reason: 'streaming',
+    });
+    expect(resolve('/swarm off', { isStreaming: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'swarm',
+      reason: 'streaming',
+    });
   });
 
   it('blocks model and session pickers while compacting', () => {
+    setExperimentalFeatures([{ id: 'agent_swarm', enabled: true }]);
     expect(resolve('/sessions', { isCompacting: true })).toEqual({
       kind: 'blocked',
       commandName: 'sessions',
@@ -110,6 +126,16 @@ describe('resolveSlashCommandInput', () => {
     expect(resolve('/experiments', { isCompacting: true })).toEqual({
       kind: 'blocked',
       commandName: 'experiments',
+      reason: 'compacting',
+    });
+    expect(resolve('/swarm on', { isCompacting: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'swarm',
+      reason: 'compacting',
+    });
+    expect(resolve('/swarm off', { isCompacting: true })).toEqual({
+      kind: 'blocked',
+      commandName: 'swarm',
       reason: 'compacting',
     });
   });
@@ -191,6 +217,22 @@ describe('resolveSlashCommandInput', () => {
     expect(resolve('/does-not-exist arg')).toEqual({
       kind: 'message',
       input: '/does-not-exist arg',
+    });
+  });
+
+  it('treats /swarm as a normal message when agent_swarm is disabled', () => {
+    expect(resolve('/swarm on')).toEqual({
+      kind: 'message',
+      input: '/swarm on',
+    });
+  });
+
+  it('resolves /swarm when agent_swarm is enabled', () => {
+    setExperimentalFeatures([{ id: 'agent_swarm', enabled: true }]);
+    expect(resolve('/swarm Ship feature X')).toMatchObject({
+      kind: 'builtin',
+      name: 'swarm',
+      args: 'Ship feature X',
     });
   });
 

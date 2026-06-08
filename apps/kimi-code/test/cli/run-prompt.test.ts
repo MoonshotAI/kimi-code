@@ -440,6 +440,28 @@ describe('runPrompt', () => {
     expect(mocks.session.setPermission).toHaveBeenNthCalledWith(2, 'manual');
   });
 
+  it('allows resuming a concrete session when Windows workdir uses backslashes', async () => {
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(String.raw`C:\Users\kimi\project`);
+    mocks.harnessListSessions.mockResolvedValueOnce([
+      { id: 'ses_existing', workDir: 'C:/Users/kimi/project' },
+    ]);
+
+    try {
+      await runPrompt(opts({ session: 'ses_existing' }), '1.2.3-test', {
+        stdout: { write: vi.fn(() => true) },
+        stderr: { write: vi.fn(() => true) },
+      });
+    } finally {
+      cwd.mockRestore();
+    }
+
+    expect(mocks.harnessListSessions).toHaveBeenCalledWith({
+      sessionId: 'ses_existing',
+      workDir: String.raw`C:\Users\kimi\project`,
+    });
+    expect(mocks.harnessResumeSession).toHaveBeenCalledWith({ id: 'ses_existing' });
+  });
+
   it('applies the CLI model override to resumed prompt sessions', async () => {
     await runPrompt(opts({ session: 'ses_existing', model: 'kimi-code/k2.5' }), '1.2.3-test', {
       stdout: { write: vi.fn(() => true) },

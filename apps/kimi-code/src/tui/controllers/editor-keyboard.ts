@@ -31,7 +31,6 @@ export interface EditorKeyboardHost {
   updateEditorBorderHighlight(text?: string): void;
   updateQueueDisplay(): void;
   toggleToolOutputExpansion(): void;
-  togglePlanExpansion(): boolean;
   hideSessionPicker(): void;
   stop(exitCode?: number): Promise<void>;
   handlePlanToggle(next: boolean): void;
@@ -149,8 +148,6 @@ export class EditorKeyboardController {
       host.track('shortcut_expand');
       host.toggleToolOutputExpansion();
     };
-
-    editor.onTogglePlanExpand = () => host.togglePlanExpansion();
 
     editor.onCtrlS = () => {
       if (host.state.appState.streamingPhase === 'idle' || host.state.appState.isCompacting) return;

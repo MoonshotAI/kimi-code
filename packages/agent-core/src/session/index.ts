@@ -76,6 +76,7 @@ export interface AgentMeta {
   readonly homedir: string;
   readonly type: AgentType;
   readonly parentAgentId: string | null;
+  readonly swarmItem?: string;
 }
 
 interface ResumedAgent {
@@ -88,6 +89,7 @@ type AgentEntry = Agent | Promise<ResumedAgent>;
 export interface CreateAgentOptions {
   readonly profile?: ResolvedAgentProfile;
   readonly parentAgentId?: string;
+  readonly swarmItem?: string;
   readonly persistMetadata?: boolean;
 }
 
@@ -295,6 +297,7 @@ export class Session {
         homedir,
         type,
         parentAgentId,
+        swarmItem: options.swarmItem,
       };
       void this.writeMetadata();
     }
@@ -329,12 +332,12 @@ export class Session {
     const mainAgent = this.requireMainAgent();
 
     try {
-      const handle = await mainAgent.subagentHost!.spawn('coder', {
+      const handle = await mainAgent.subagentHost!.spawn({
+        profileName: 'coder',
         parentToolCallId: 'generate-agents-md',
         prompt: DEFAULT_INIT_PROMPT,
         description: 'Initialize AGENTS.md',
         runInBackground: false,
-        origin: { kind: 'system_trigger', name: 'init' },
         signal: new AbortController().signal,
       });
       await handle.completion;

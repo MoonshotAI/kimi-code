@@ -128,6 +128,61 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain('do not show');
   });
 
+  it('renders AgentSwarm results as a one-line summary without raw XML', () => {
+    const output = [
+      '<agent_swarm_result>',
+      '<summary>completed: 1, failed: 1, aborted: 1</summary>',
+      '<subagent index="1" outcome="completed">Reviewed src/a.ts.</subagent>',
+      '<subagent index="2" outcome="failed">Agent timed out.</subagent>',
+      '<subagent index="3" outcome="aborted">User aborted.</subagent>',
+      '</agent_swarm_result>',
+    ].join('\n');
+    const component = new ToolCallComponent(
+      {
+        id: 'call_swarm',
+        name: 'AgentSwarm',
+        args: {
+          description: 'Review changed files',
+          items: ['src/a.ts', 'src/b.ts', 'src/c.ts'],
+        },
+      },
+      {
+        tool_call_id: 'call_swarm',
+        output,
+        is_error: false,
+      },
+      darkColors,
+    );
+
+    const out = strip(component.render(120).join('\n'));
+
+    expect(out).toContain('Agent swarm: ✓ 1 completed · ✗ 1 failed · ⊘ 1 aborted');
+    expect(out).not.toContain('<agent_swarm_result>');
+    expect(out).not.toContain('Reviewed src/a.ts.');
+    expect(out).not.toContain('Agent timed out.');
+  });
+
+  it('renders an AgentSwarm fallback summary when the result is not structured', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_swarm_failed',
+        name: 'AgentSwarm',
+        args: { description: 'Review changed files' },
+      },
+      {
+        tool_call_id: 'call_swarm_failed',
+        output: 'provider request failed',
+        is_error: true,
+      },
+      darkColors,
+    );
+
+    const out = strip(component.render(120).join('\n'));
+
+    expect(out).toContain('Agent swarm: ✗ Failed.');
+    expect(out).not.toContain('provider request failed');
+  });
+
   it('still renders tool output when the body merely contains <system later on', () => {
     const component = new ToolCallComponent(
       {
@@ -200,7 +255,7 @@ describe('ToolCallComponent', () => {
     expect(after).not.toContain('/tmp/refactor.md');
   });
 
-  it('caps the plan preview to the terminal height and expands on ctrl+e', () => {
+  it('renders the full plan preview', () => {
     const longPlan = `# Refactor session\n\n${Array.from({ length: 40 }, (_, i) => `- step ${String(i + 1)}`).join('\n')}`;
     const component = new ToolCallComponent(
       {
@@ -214,39 +269,13 @@ describe('ToolCallComponent', () => {
       createMarkdownTheme(darkColors),
     );
 
-    const collapsed = strip(component.render(100).join('\n'));
-    expect(collapsed).toContain('step 1');
-    expect(collapsed).toMatch(/\.\.\. \(\d+ more lines, ctrl\+e to expand\)/);
-    expect(collapsed).not.toContain('step 40');
-
-    expect(component.setPlanExpanded(true)).toBe(true);
-    const expanded = strip(component.render(100).join('\n'));
-    expect(expanded).toContain('step 40');
-    expect(expanded).not.toContain('ctrl+e to expand');
-  });
-
-  it('plan preview controls are no-ops for non-ExitPlanMode tool calls', () => {
-    const component = new ToolCallComponent(
-      {
-        id: 'call_bash_plan',
-        name: 'Bash',
-        args: { command: 'echo hi' },
-      },
-      undefined,
-      darkColors,
-      undefined,
-      createMarkdownTheme(darkColors),
-    );
-
-    expect(component.setPlanExpanded(true)).toBe(false);
-    component.setPlanInfo({ plan: 'should be ignored', path: '/etc/hosts' });
-
     const out = strip(component.render(100).join('\n'));
-    expect(out).not.toContain('should be ignored');
-    expect(out).not.toContain('plan:');
+    expect(out).toContain('step 1');
+    expect(out).toContain('step 40');
+    expect(out).not.toContain('more lines');
   });
 
-  it('ctrl+o does not affect the plan preview cap', () => {
+  it('ctrl+o does not affect the full plan preview', () => {
     const longPlan = `# P\n\n${Array.from({ length: 40 }, (_, i) => `- step ${String(i + 1)}`).join('\n')}`;
     const component = new ToolCallComponent(
       {
@@ -261,8 +290,8 @@ describe('ToolCallComponent', () => {
     );
     component.setExpanded(true);
     const out = strip(component.render(100).join('\n'));
-    expect(out).toContain('ctrl+e to expand');
-    expect(out).not.toContain('step 40');
+    expect(out).toContain('step 40');
+    expect(out).not.toContain('more lines');
   });
 
   it('header chips an Approved status when ExitPlanMode result indicates approval', () => {
@@ -575,7 +604,7 @@ describe('ToolCallComponent', () => {
     });
 
     let out = strip(component.render(120).join('\n'));
-    expect(out).toContain('Explore Agent Starting (explore project xxx) · 0 tools · 0s');
+    expect(out).toContain('Explore Agent Queued (explore project xxx) · 0 tools · 0s');
     expect(out).not.toContain('Using Agent');
     expect(out).not.toContain('Used Agent');
 
