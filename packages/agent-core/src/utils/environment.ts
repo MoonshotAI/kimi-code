@@ -35,11 +35,6 @@ export interface Environment {
   readonly shellPath: string;
 }
 
-export interface ExecFileTextResult {
-  readonly exitCode: number;
-  readonly stdout: string;
-}
-
 export interface EnvironmentDeps {
   // Accepts the full Node `Platform` enum plus arbitrary strings for
   // forward-compatible OS kinds.
@@ -52,11 +47,10 @@ export interface EnvironmentDeps {
     file: string,
     args: readonly string[],
     timeoutMs: number,
-  ) => Promise<ExecFileTextResult | undefined>;
+  ) => Promise<string | undefined>;
 }
 
 const GIT_EXEC_PATH_TIMEOUT_MS = 5_000;
-const WHERE_GIT_TIMEOUT_MS = 5_000;
 
 function resolveOsKind(platform: string): OsKind {
   switch (platform) {
@@ -106,21 +100,19 @@ async function locateWindowsGitBash(deps: EnvironmentDeps): Promise<string> {
     }
   }
 
-  for (const gitExe of await findWindowsGitExecutables(deps)) {
-    const inferred = gitBashCandidateFromGitExe(gitExe);
-    checked.push(inferred);
-    if (await deps.isFile(inferred)) {
-      return inferred;
-    }
+  const gitExecutables = await findExecutablesOnPath(
+    'git.exe',
+    deps.env['PATH'],
+    deps.platform,
+    deps.isFile,
+  );
 
-    const gitExecPath = await readGitExecPath(deps, gitExe);
-    if (gitExecPath === undefined) {
-      continue;
-    }
-    for (const candidate of gitBashCandidatesFromGitExecPath(gitExecPath)) {
-      checked.push(candidate);
-      if (await deps.isFile(candidate)) {
-        return candidate;
+  for (const gitExe of gitExecutables) {
+    const inferred = gitBashCandidateFromGitExe(gitExe);
+    if (inferred !== undefined) {
+      checked.push(inferred);
+      if (await deps.isFile(inferred)) {
+        return inferred;
       }
     }
   }
@@ -140,6 +132,19 @@ async function locateWindowsGitBash(deps: EnvironmentDeps): Promise<string> {
     }
   }
 
+  for (const gitExe of gitExecutables) {
+    const gitExecPath = await readGitExecPath(deps, gitExe);
+    if (gitExecPath === undefined) {
+      continue;
+    }
+    for (const candidate of gitBashCandidatesFromGitExecPath(gitExecPath)) {
+      checked.push(candidate);
+      if (await deps.isFile(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
   throw new KimiError(
     ErrorCodes.SHELL_GIT_BASH_NOT_FOUND,
     `Git Bash was not found on this Windows host. Install Git for Windows from https://gitforwindows.org/ or set KIMI_SHELL_PATH to a bash.exe. Checked: ${checked.join(', ')}.`,
@@ -150,10 +155,10 @@ async function readGitExecPath(
   deps: EnvironmentDeps,
   gitExe: string,
 ): Promise<string | undefined> {
-  const result = await deps.execFileText(gitExe, ['--exec-path'], GIT_EXEC_PATH_TIMEOUT_MS);
-  if (result === undefined || result.exitCode !== 0) return undefined;
+  const stdout = await deps.execFileText(gitExe, ['--exec-path'], GIT_EXEC_PATH_TIMEOUT_MS);
+  if (stdout === undefined) return undefined;
 
-  for (const line of result.stdout.split(/\r?\n/)) {
+  for (const line of stdout.split(/\r?\n/)) {
     const execPath = line.trim();
     if (execPath.length > 0) {
       return execPath;
@@ -162,43 +167,19 @@ async function readGitExecPath(
   return undefined;
 }
 
-async function findWindowsGitExecutables(deps: EnvironmentDeps): Promise<readonly string[]> {
-  const whereResult = await deps.execFileText('where.exe', ['git'], WHERE_GIT_TIMEOUT_MS);
-  if (whereResult !== undefined && whereResult.exitCode === 0) {
-    const wherePaths = parseExecutableLines(whereResult.stdout).filter((path) =>
-      nodePath.win32.basename(path).toLowerCase() === 'git.exe'
-    );
-    if (wherePaths.length > 0) {
-      return dedupeWindowsPaths(wherePaths);
-    }
-  }
-
-  return findExecutablesOnPath('git.exe', deps.env['PATH'], deps.platform, deps.isFile);
-}
-
-function parseExecutableLines(stdout: string): readonly string[] {
-  const paths: string[] = [];
-  for (const line of stdout.split(/\r?\n/)) {
-    const path = line.trim();
-    if (path.length > 0) {
-      paths.push(path);
-    }
-  }
-  return paths;
-}
-
 // Most Git for Windows installs put `git.exe` in `<root>\cmd\git.exe`,
 // with bash at `<root>\bin\bash.exe`. Portable installs sometimes put
-// both in `<root>\bin\`. Scoop shims live elsewhere, but this cheap
-// candidate is still checked before falling back to `git --exec-path`.
-function gitBashCandidateFromGitExe(gitExe: string): string {
+// both in `<root>\bin\`. Only infer from those anchored layouts; package
+// manager shims live elsewhere and must resolve through `git --exec-path`.
+function gitBashCandidateFromGitExe(gitExe: string): string | undefined {
+  const normalizedGitExe = nodePath.win32.normalize(normalizeWindowsPath(gitExe));
+  const gitDir = nodePath.win32.dirname(normalizedGitExe);
+  const gitDirName = nodePath.win32.basename(gitDir).toLowerCase();
+  if (gitDirName !== 'cmd' && gitDirName !== 'bin') {
+    return undefined;
+  }
   return nodePath.win32.normalize(
-    nodePath.win32.join(
-      normalizeWindowsPath(nodePath.win32.dirname(gitExe)),
-      '..',
-      'bin',
-      'bash.exe',
-    ),
+    nodePath.win32.join(nodePath.win32.dirname(gitDir), 'bin', 'bash.exe'),
   );
 }
 
@@ -283,7 +264,7 @@ async function execFileText(
   file: string,
   args: readonly string[],
   timeoutMs: number,
-): Promise<ExecFileTextResult | undefined> {
+): Promise<string | undefined> {
   return new Promise((resolve) => {
     nodeExecFile(
       file,
@@ -294,7 +275,7 @@ async function execFileText(
           resolve(undefined);
           return;
         }
-        resolve({ exitCode: 0, stdout });
+        resolve(stdout);
       },
     );
   });
