@@ -309,11 +309,15 @@ export class ReadTool implements BuiltinTool<ReadInput> {
           pathClass: this.kaos.pathClass(),
           homeDir: this.kaos.gethome(),
         }),
-      execute: () => this.execution(args, path),
+      execute: ({ signal }) => this.execution(args, path, signal),
     };
   }
 
-  private async execution(args: ReadInput, safePath: string): Promise<ExecutableToolResult> {
+  private async execution(
+    args: ReadInput,
+    safePath: string,
+    signal: AbortSignal,
+  ): Promise<ExecutableToolResult> {
     try {
       let stat: StatResult;
       try {
@@ -356,6 +360,7 @@ export class ReadTool implements BuiltinTool<ReadInput> {
             lineOffset,
             effectiveLimit,
             requestedLines,
+            signal,
           );
         }
         return await this.readPdfForward(
@@ -364,6 +369,7 @@ export class ReadTool implements BuiltinTool<ReadInput> {
           lineOffset,
           effectiveLimit,
           requestedLines,
+          signal,
         );
       }
       if (fileType.kind === 'unknown') {
@@ -497,11 +503,12 @@ export class ReadTool implements BuiltinTool<ReadInput> {
     lineOffset: number,
     effectiveLimit: number,
     requestedLines: number,
+    signal: AbortSignal,
   ): Promise<ExecutableToolResult> {
     const selectedEntries: ReadLineEntry[] = [];
     let maxLinesReached = false;
     let collectionClosed = false;
-    const extraction = await this.extractPdfText(safePath, displayPath, {
+    const extraction = await this.extractPdfText(safePath, displayPath, signal, {
       onEntry: (entry) => {
         if (collectionClosed) {
           if (effectiveLimit >= MAX_LINES && entry.lineNo >= lineOffset) {
@@ -542,10 +549,11 @@ export class ReadTool implements BuiltinTool<ReadInput> {
     lineOffset: number,
     effectiveLimit: number,
     requestedLines: number,
+    signal: AbortSignal,
   ): Promise<ExecutableToolResult> {
     const tailCount = Math.abs(lineOffset);
     const entries: ReadLineEntry[] = [];
-    const extraction = await this.extractPdfText(safePath, displayPath, {
+    const extraction = await this.extractPdfText(safePath, displayPath, signal, {
       onEntry: (entry) => {
         entries.push(entry);
         if (entries.length > tailCount) {
@@ -571,8 +579,17 @@ export class ReadTool implements BuiltinTool<ReadInput> {
   private async extractPdfText(
     safePath: string,
     displayPath: string,
+    signal: AbortSignal,
     options: StreamTextOptions,
   ): Promise<CollectTextResult> {
+    if (signal.aborted) {
+      return {
+        result: { isError: true, output: pdfNotReadableOutput(displayPath, 'aborted') },
+        flags: { hasCrLf: false, hasLf: false, hasLoneCr: false },
+        totalLines: 0,
+      };
+    }
+
     let proc: KaosProcess;
     try {
       proc = await this.kaos.exec('pdftotext', '-layout', '-enc', 'UTF-8', safePath, '-');
@@ -604,6 +621,7 @@ export class ReadTool implements BuiltinTool<ReadInput> {
     }
 
     let timedOut = false;
+    let aborted = false;
     let killed = false;
     const killProc = async (): Promise<void> => {
       if (killed) return;
@@ -613,7 +631,24 @@ export class ReadTool implements BuiltinTool<ReadInput> {
       } catch {
         /* process already gone */
       }
+      try {
+        proc.stdout.destroy();
+      } catch {
+        /* ignore */
+      }
+      try {
+        proc.stderr.destroy();
+      } catch {
+        /* ignore */
+      }
     };
+    const onAbort = (): void => {
+      aborted = true;
+      void killProc();
+    };
+    signal.addEventListener('abort', onAbort);
+    if (signal.aborted) onAbort();
+
     const timeoutHandle = setTimeout(() => {
       timedOut = true;
       void killProc();
@@ -634,6 +669,13 @@ export class ReadTool implements BuiltinTool<ReadInput> {
               `pdftotext timed out after ${String(PDF_TEXT_EXTRACTION_TIMEOUT_MS / 1000)}s`,
             ),
           },
+          flags: { hasCrLf: false, hasLf: false, hasLoneCr: false },
+          totalLines: 0,
+        };
+      }
+      if (aborted) {
+        return {
+          result: { isError: true, output: pdfNotReadableOutput(displayPath, 'aborted') },
           flags: { hasCrLf: false, hasLf: false, hasLoneCr: false },
           totalLines: 0,
         };
@@ -668,6 +710,7 @@ export class ReadTool implements BuiltinTool<ReadInput> {
       };
     } finally {
       clearTimeout(timeoutHandle);
+      signal.removeEventListener('abort', onAbort);
     }
   }
 

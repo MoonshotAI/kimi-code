@@ -1,5 +1,5 @@
 import type { Kaos } from '@moonshot-ai/kaos';
-import { Readable, Writable } from 'node:stream';
+import { PassThrough, Readable, Writable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ExperimentalFlagResolver } from '../../src/flags';
@@ -35,12 +35,12 @@ const DIRECTORY_STAT = {
   stMode: 0o040_755,
 } satisfies Awaited<ReturnType<Kaos['stat']>>;
 
-function context(args: ReadInput) {
+function context(args: ReadInput, abortSignal: AbortSignal = signal) {
   return {
     turnId: '0',
     toolCallId: 'call_read',
     args,
-    signal,
+    signal: abortSignal,
   };
 }
 
@@ -111,6 +111,40 @@ function processFromOutput(
     exitCode: options.exitCode ?? 0,
     wait: async () => options.exitCode ?? 0,
     kill: async () => {},
+  };
+}
+
+function pendingProcess() {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  let currentExitCode: number | null = null;
+  let resolveWait: (code: number) => void = () => {};
+  const waitPromise = new Promise<number>((resolve) => {
+    resolveWait = resolve;
+  });
+  const kill = vi.fn(async () => {
+    currentExitCode = 143;
+    stdout.end();
+    stderr.end();
+    resolveWait(143);
+  });
+  return {
+    proc: {
+      stdin: new Writable({
+        write(_chunk, _encoding, callback) {
+          callback();
+        },
+      }),
+      stdout,
+      stderr,
+      pid: 1235,
+      get exitCode() {
+        return currentExitCode;
+      },
+      wait: vi.fn(async () => waitPromise),
+      kill,
+    } satisfies Awaited<ReturnType<Kaos['exec']>>,
+    kill,
   };
 }
 
@@ -530,6 +564,49 @@ describe('ReadTool', () => {
       ),
     );
     expect(exec).toHaveBeenCalledWith('pdftotext', '-layout', '-enc', 'UTF-8', '/tmp/paper.pdf', '-');
+  });
+
+  it('does not start pdftotext when PDF reading is already aborted', async () => {
+    const { tool, exec } = pdfTool();
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await executeTool(tool, context({ path: '/tmp/paper.pdf' }, controller.signal));
+
+    expect(result).toEqual({
+      isError: true,
+      output: 'Failed to extract text from PDF "/tmp/paper.pdf" with pdftotext: aborted',
+    });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('kills pdftotext when PDF reading is aborted after the process starts', async () => {
+    const header = Buffer.from('%PDF-1.7\n', 'utf8');
+    const { proc, kill } = pendingProcess();
+    const exec = vi.fn<Kaos['exec']>().mockResolvedValue(proc);
+    const tool = new ReadTool(
+      createFakeKaos({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+        readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(header),
+        exec,
+      }),
+      PERMISSIVE_WORKSPACE,
+      flagsEnabled(true),
+    );
+    const controller = new AbortController();
+
+    const pending = executeTool(tool, context({ path: '/tmp/slow.pdf' }, controller.signal));
+    await vi.waitFor(() => {
+      expect(exec).toHaveBeenCalledOnce();
+    });
+    controller.abort();
+    const result = await pending;
+
+    expect(kill).toHaveBeenCalledWith('SIGTERM');
+    expect(result).toEqual({
+      isError: true,
+      output: 'Failed to extract text from PDF "/tmp/slow.pdf" with pdftotext: aborted',
+    });
   });
 
   it('applies line_offset and n_lines to extracted PDF text', async () => {
