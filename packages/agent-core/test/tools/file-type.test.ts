@@ -123,6 +123,13 @@ describe('sniffMediaFromMagic', () => {
     expect(sniffMediaFromMagic(Buffer.from('plain text content'))).toBeNull();
   });
 
+  it('recognises PDF magic bytes', () => {
+    expect(sniffMediaFromMagic(Buffer.from('%PDF-1.7\n', 'utf8'))).toEqual<FileType>({
+      kind: 'text',
+      mimeType: 'application/pdf',
+    });
+  });
+
   it('uses MEDIA_SNIFF_BYTES as the header slice size ceiling', () => {
     // Typed constant guard.
     expect(MEDIA_SNIFF_BYTES).toBe(512);
@@ -200,6 +207,17 @@ describe('detectFileType', () => {
     expect(result.kind).toBe('unknown');
   });
 
+  it('resolves PDF as a text-workflow subtype by extension and magic bytes', () => {
+    expect(detectFileType('paper.pdf')).toEqual<FileType>({
+      kind: 'text',
+      mimeType: 'application/pdf',
+    });
+    expect(detectFileType('paper', Buffer.from('%PDF-1.7\n', 'utf8'))).toEqual<FileType>({
+      kind: 'text',
+      mimeType: 'application/pdf',
+    });
+  });
+
   it('falls back to plain text for unknown suffix with no magic bytes', () => {
     const result = detectFileType('README');
     expect(result.kind).toBe('text');
@@ -209,7 +227,10 @@ describe('detectFileType', () => {
   it('exposes the suffix maps as readonly records', () => {
     expect(IMAGE_MIME_BY_SUFFIX['.png']).toBe('image/png');
     expect(VIDEO_MIME_BY_SUFFIX['.mkv']).toBe('video/x-matroska');
-    expect(NON_TEXT_SUFFIXES.has('.pdf')).toBe(true);
+    expect(detectFileType('paper.pdf')).toEqual({
+      kind: 'text',
+      mimeType: 'application/pdf',
+    });
     expect(NON_TEXT_SUFFIXES.has('.zip')).toBe(true);
     expect(NON_TEXT_SUFFIXES.has('.dll')).toBe(true);
   });
@@ -224,7 +245,10 @@ describe('detectFileType', () => {
     expect(detectFileType('.env').kind).toBe('text');
     expect(detectFileType('icon.svg').kind).toBe('text');
     expect(detectFileType('archive.tar.gz').kind).toBe('unknown');
-    expect(detectFileType('my file.pdf').kind).toBe('unknown');
+    expect(detectFileType('my file.pdf')).toEqual({
+      kind: 'text',
+      mimeType: 'application/pdf',
+    });
   });
 
   it('keeps TypeScript suffixes as text rather than MPEG-TS video', () => {

@@ -2,6 +2,7 @@ Execute a `{{ SHELL_NAME }}` command. Use this for shell semantics — pipes, en
 
 **Translate these to a dedicated tool instead:**
 - `cat` / `head` / `tail` (known path) → `Read`
+- `pdftotext` / PDF preview or extraction for a known `.pdf` path → `Read`
 - `sed` / `awk` (in-place edit) → `Edit`
 - `echo > file` / `cat <<EOF` → `Write`
 - `find` / recursive `ls` to locate files by name pattern → `Glob` (plain `ls <known-directory>` is fine for listing a directory)

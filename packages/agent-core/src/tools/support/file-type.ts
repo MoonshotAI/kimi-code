@@ -50,7 +50,6 @@ export const NON_TEXT_SUFFIXES: ReadonlySet<string> = new Set<string>([
   '.psd',
   '.ai',
   '.eps',
-  '.pdf',
   '.doc',
   '.docx',
   '.dot',
@@ -155,6 +154,8 @@ const FTYP_VIDEO_BRANDS: Readonly<Record<string, string>> = Object.freeze({
   '3g2': 'video/3gpp2',
 });
 
+const PDF_MIME_TYPE = 'application/pdf';
+
 function toBuffer(data: Buffer | Uint8Array): Buffer {
   return Buffer.isBuffer(data) ? data : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
 }
@@ -219,6 +220,9 @@ export function sniffMediaFromMagic(data: Buffer | Uint8Array): FileType | null 
     const lowered = header.toString('latin1').toLowerCase();
     if (lowered.includes('webm')) return { kind: 'video', mimeType: 'video/webm' };
     if (lowered.includes('matroska')) return { kind: 'video', mimeType: 'video/x-matroska' };
+  }
+  if (startsWith(header, Buffer.from('%PDF-'))) {
+    return { kind: 'text', mimeType: PDF_MIME_TYPE };
   }
   const brand = sniffFtypBrand(header);
   if (brand !== null && brand !== '') {
@@ -345,6 +349,8 @@ export function detectFileType(path: string, header?: Buffer | Uint8Array): File
   let mediaHint: FileType | null = null;
   if (suffix in TEXT_MIME_BY_SUFFIX) {
     mediaHint = { kind: 'text', mimeType: TEXT_MIME_BY_SUFFIX[suffix]! };
+  } else if (suffix === '.pdf') {
+    mediaHint = { kind: 'text', mimeType: PDF_MIME_TYPE };
   } else if (suffix in IMAGE_MIME_BY_SUFFIX) {
     mediaHint = { kind: 'image', mimeType: IMAGE_MIME_BY_SUFFIX[suffix]! };
   } else if (suffix in VIDEO_MIME_BY_SUFFIX) {

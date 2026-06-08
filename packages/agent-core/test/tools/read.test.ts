@@ -1,6 +1,8 @@
 import type { Kaos } from '@moonshot-ai/kaos';
+import { Readable, Writable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ExperimentalFlagResolver } from '../../src/flags';
 import {
   MAX_BYTES,
   MAX_LINE_LENGTH,
@@ -77,6 +79,72 @@ function toolWithContent(content: string, workspace: WorkspaceConfig = PERMISSIV
     }),
     workspace,
   );
+}
+
+function flagsEnabled(enabled: boolean): ExperimentalFlagResolver {
+  return {
+    enabled: (id) => id === 'pdf_read' && enabled,
+    snapshot: () => ({ pdf_read: enabled }),
+    enabledIds: () => (enabled ? ['pdf_read'] : []),
+    explain: () => undefined,
+    explainAll: () => [],
+    setConfigOverrides: () => {},
+  };
+}
+
+function processFromOutput(
+  stdout: string,
+  options: {
+    readonly stderr?: string;
+    readonly exitCode?: number;
+  } = {},
+): Awaited<ReturnType<Kaos['exec']>> {
+  return {
+    stdin: new Writable({
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    }),
+    stdout: Readable.from(stdout === '' ? [] : [stdout]),
+    stderr: Readable.from(options.stderr === undefined ? [] : [options.stderr]),
+    pid: 1234,
+    exitCode: options.exitCode ?? 0,
+    wait: async () => options.exitCode ?? 0,
+    kill: async () => {},
+  };
+}
+
+function pdfTool(
+  options: {
+    readonly stdout?: string;
+    readonly stderr?: string;
+    readonly exitCode?: number;
+    readonly execError?: Error;
+    readonly enabled?: boolean;
+  } = {},
+) {
+  const header = Buffer.from('%PDF-1.7\n', 'utf8');
+  const exec = vi.fn<Kaos['exec']>();
+  if (options.execError !== undefined) {
+    exec.mockRejectedValue(options.execError);
+  } else {
+    exec.mockResolvedValue(
+      processFromOutput(options.stdout ?? 'alpha\nbeta\n', {
+        stderr: options.stderr,
+        exitCode: options.exitCode,
+      }),
+    );
+  }
+  const tool = new ReadTool(
+    createFakeKaos({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue(REGULAR_FILE_STAT),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(header),
+      exec,
+    }),
+    PERMISSIVE_WORKSPACE,
+    flagsEnabled(options.enabled ?? true),
+  );
+  return { tool, exec };
 }
 
 describe('ReadTool', () => {
@@ -435,6 +503,91 @@ describe('ReadTool', () => {
     expect(readText).not.toHaveBeenCalled();
   });
 
+  it('rejects PDF files when experimental PDF reading is disabled', async () => {
+    const { tool, exec } = pdfTool({ enabled: false });
+
+    const result = await executeTool(tool, context({ path: '/tmp/paper.pdf' }));
+
+    expect(result).toEqual({
+      isError: true,
+      output:
+        '"/tmp/paper.pdf" is a PDF file. PDF text extraction is experimental; enable KIMI_CODE_EXPERIMENTAL_PDF_READ to read it with pdftotext.',
+    });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('extracts PDF text with pdftotext when experimental PDF reading is enabled', async () => {
+    const { tool, exec } = pdfTool({
+      stdout: 'Title line\nbody line\n',
+    });
+
+    const result = await executeTool(tool, context({ path: '/tmp/paper.pdf' }));
+
+    expect(result.output).toBe(
+      withReadStatus(
+        '1\tTitle line\n2\tbody line',
+        '2 lines read from PDF starting from line 1. Total lines in file: 2. End of file reached.',
+      ),
+    );
+    expect(exec).toHaveBeenCalledWith('pdftotext', '-layout', '-enc', 'UTF-8', '/tmp/paper.pdf', '-');
+  });
+
+  it('applies line_offset and n_lines to extracted PDF text', async () => {
+    const { tool } = pdfTool({
+      stdout: 'a\nb\nc\nd\n',
+    });
+
+    const result = await executeTool(tool, context({ path: '/tmp/paper.pdf', line_offset: 2, n_lines: 2 }));
+
+    expect(result.output).toBe(
+      withReadStatus(
+        '2\tb\n3\tc',
+        '2 lines read from PDF starting from line 2. Total lines in file: 4.',
+      ),
+    );
+  });
+
+  it('supports tail reads from extracted PDF text', async () => {
+    const { tool } = pdfTool({
+      stdout: 'a\nb\nc\nd\n',
+    });
+
+    const result = await executeTool(tool, context({ path: '/tmp/paper.pdf', line_offset: -2 }));
+
+    expect(result.output).toBe(
+      withReadStatus(
+        '3\tc\n4\td',
+        '2 lines read from PDF starting from line 3. Total lines in file: 4. End of file reached.',
+      ),
+    );
+  });
+
+  it('returns an install hint when pdftotext is missing', async () => {
+    const enoent = Object.assign(new Error('spawn pdftotext ENOENT'), { code: 'ENOENT' });
+    const { tool } = pdfTool({ execError: enoent });
+
+    const result = await executeTool(tool, context({ path: '/tmp/paper.pdf' }));
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('PDF text extraction requires `pdftotext` from Poppler');
+    expect(result.output).toContain('sudo apt-get install poppler-utils');
+  });
+
+  it('returns pdftotext stderr when PDF extraction fails', async () => {
+    const { tool } = pdfTool({
+      exitCode: 1,
+      stderr: 'Syntax Error: could not read xref',
+    });
+
+    const result = await executeTool(tool, context({ path: '/tmp/bad.pdf' }));
+
+    expect(result).toEqual({
+      isError: true,
+      output:
+        'Failed to extract text from PDF "/tmp/bad.pdf" with pdftotext: Syntax Error: could not read xref',
+    });
+  });
+
   it('rejects NUL-containing binary files before text decoding', async () => {
     const header = Buffer.concat([Buffer.from('plain prefix'), Buffer.from([0x00, 0x01])]);
     const readText = vi
@@ -631,13 +784,17 @@ describe('ReadTool', () => {
     expect(output).not.toContain('Max');
   });
 
-  it('description pins line/byte caps, tail mode, and the Grep-over-Read preference', () => {
+  it('description pins line/byte caps, tail mode, PDF support, and tool preferences', () => {
     const tool = toolWithContent('');
     // Numeric caps are part of the stable contract.
     expect(tool.description).toContain(String(MAX_LINES));
     expect(tool.description).toContain(String(MAX_LINE_LENGTH));
     // Tail mode (negative line_offset) is documented.
     expect(tool.description).toMatch(/negative line_offset|reads from the end/i);
+    // PDF is part of the text workflow and should not be routed through Bash
+    // just to invoke pdftotext.
+    expect(tool.description).toMatch(/PDF files are treated as a text-workflow subtype/i);
+    expect(tool.description).toMatch(/Do not use `pdftotext` via Bash/i);
     // Recommend Grep when searching for unknown content.
     expect(tool.description).toContain('Grep');
   });
@@ -805,6 +962,7 @@ describe('ReadTool description and schema parity', () => {
     ).properties.path;
 
     expect(pathProperty.description).toContain('working directory');
+    expect(pathProperty.description).toContain('PDF files');
     expect(pathProperty.description).not.toMatch(/^Absolute path/);
   });
 

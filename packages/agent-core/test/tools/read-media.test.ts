@@ -376,6 +376,26 @@ describe('ReadMediaFileTool', () => {
     expect(result.output).not.toContain('ReadFile');
   });
 
+  it('rejects PDF files as text-workflow files with a Read hint', async () => {
+    const pdf = Buffer.from('%PDF-1.7\n', 'utf8');
+    const tool = makeReadMediaTool({
+      stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: pdf.length }),
+      readBytes: vi.fn<Kaos['readBytes']>().mockResolvedValue(pdf),
+    });
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_pdf',
+      args: { path: '/workspace/paper.pdf' },
+      signal,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toBe(
+      '"/workspace/paper.pdf" is a text file. Use Read to read text files.',
+    );
+  });
+
   it('rejects unknown binary files without legacy Python-tool wording', async () => {
     const blob = Buffer.from([0x00, 0x01, 0x02, 0x03]);
     const tool = makeReadMediaTool({

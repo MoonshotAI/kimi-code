@@ -198,6 +198,13 @@ describe('BashTool', () => {
     }
   });
 
+  it('routes known PDF text extraction commands back to Read in the prompt', () => {
+    const tool = new BashTool(createFakeKaos({ osEnv: posixEnv }), '/workspace');
+
+    expect(tool.description).toContain('pdftotext');
+    expect(tool.description).toMatch(/known `\.pdf` path → `Read`/);
+  });
+
   it('exposes a default timeout in the JSON Schema', () => {
     const tool = new BashTool(createFakeKaos({ osEnv: posixEnv }), '/workspace');
     const properties = (tool.parameters as { properties: Record<string, { default?: number }> })

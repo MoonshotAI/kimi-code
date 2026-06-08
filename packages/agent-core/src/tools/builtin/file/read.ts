@@ -1,6 +1,9 @@
-import type { Kaos, StatResult } from '@moonshot-ai/kaos';
+import type { Kaos, KaosProcess, StatResult } from '@moonshot-ai/kaos';
+import type { Readable } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 import { z } from 'zod';
 
+import type { ExperimentalFlagResolver } from '../../../flags';
 import type { BuiltinTool } from '../../../agent/tool';
 import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
@@ -18,6 +21,8 @@ export const MAX_LINE_LENGTH: number = 2000;
 export const MAX_BYTES: number = 100 * 1024;
 const S_IFMT = 0o170000;
 const S_IFREG = 0o100000;
+const PDF_TEXT_EXTRACTION_TIMEOUT_MS = 120_000;
+const PDF_TEXT_EXTRACTION_MAX_STDERR_BYTES = 16 * 1024;
 
 const PositiveLineOffsetSchema = z.number().int().min(1);
 const TailLineOffsetSchema = z.number().int().min(-MAX_LINES).max(-1);
@@ -26,7 +31,7 @@ export const ReadInputSchema = z.object({
   path: z
     .string()
     .describe(
-      'Path to a text file. Relative paths resolve against the working directory; a path outside the working directory must be absolute. Directories are not supported; use `ls` via Bash for a known directory, or Glob for pattern search.',
+      'Path to a text file, including PDF files when experimental PDF text extraction is enabled. Relative paths resolve against the working directory; a path outside the working directory must be absolute. Directories are not supported; use `ls` via Bash for a known directory, or Glob for pattern search.',
     ),
   line_offset: z
     .union([PositiveLineOffsetSchema, TailLineOffsetSchema])
@@ -77,6 +82,33 @@ interface FinishReadResultInput {
   readonly startLine: number;
   readonly totalLines: number;
   readonly requestedLines: number;
+  readonly sourceKind?: string;
+}
+
+interface FinishEntriesReadResultInput {
+  readonly entries: readonly ReadLineEntry[];
+  readonly flags: LineEndingFlags;
+  readonly maxLinesReached: boolean;
+  readonly requestedLines: number;
+  readonly startLine: number;
+  readonly totalLines: number;
+  readonly sourceKind?: string;
+  readonly byteTruncationMode?: 'head' | 'tail';
+}
+
+interface CollectTextResult {
+  readonly result?: ExecutableToolResult;
+  readonly flags: LineEndingFlags;
+  readonly totalLines: number;
+}
+
+interface StreamTextOptions {
+  readonly onEntry: (entry: ReadLineEntry) => void;
+}
+
+interface CappedStreamResult {
+  readonly text: string;
+  readonly truncated: boolean;
 }
 
 function truncateLine(line: string, maxLength: number): string {
@@ -152,6 +184,90 @@ function containsNulByte(text: string): boolean {
   return text.includes('\u0000');
 }
 
+function isAbortError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === 'AbortError' || /aborted|abort/i.test(error.message))
+  );
+}
+
+function isEnoentError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as NodeJS.ErrnoException).code === 'ENOENT'
+  );
+}
+
+function pdftotextUnavailableOutput(): string {
+  return (
+    'PDF text extraction requires `pdftotext` from Poppler, but it was not found. ' +
+    'Install Poppler (macOS: `brew install poppler`; Ubuntu/Debian: `sudo apt-get install poppler-utils`) and retry.'
+  );
+}
+
+async function readStreamWithCap(stream: Readable, maxBytes: number): Promise<CappedStreamResult> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  let truncated = false;
+  for await (const chunk of stream) {
+    const buf: Buffer = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : (chunk as Buffer);
+    if (truncated) continue;
+    if (total + buf.length > maxBytes) {
+      const remaining = maxBytes - total;
+      if (remaining > 0) chunks.push(buf.subarray(0, remaining));
+      total = maxBytes;
+      truncated = true;
+      continue;
+    }
+    chunks.push(buf);
+    total += buf.length;
+  }
+  return { text: Buffer.concat(chunks).toString('utf8'), truncated };
+}
+
+async function collectTextLines(
+  stream: Readable,
+  options: StreamTextOptions,
+): Promise<CollectTextResult> {
+  const decoder = new StringDecoder('utf8');
+  const flags: LineEndingFlags = { hasCrLf: false, hasLf: false, hasLoneCr: false };
+  let totalLines = 0;
+  let pending = '';
+
+  const flushLine = (line: string): void => {
+    totalLines += 1;
+    updateLineEndingFlags(flags, line);
+    const entry = {
+      lineNo: totalLines,
+      rawContent: stripTrailingLf(line),
+    };
+    options.onEntry(entry);
+  };
+
+  for await (const chunk of stream) {
+    const buf: Buffer = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : (chunk as Buffer);
+    pending += decoder.write(buf);
+    let start = 0;
+    for (let i = 0; i < pending.length; i += 1) {
+      if (pending.codePointAt(i) !== 10) continue;
+      flushLine(pending.slice(start, i + 1));
+      start = i + 1;
+    }
+    pending = pending.slice(start);
+  }
+  pending += decoder.end();
+  if (pending.length > 0) {
+    flushLine(pending);
+  }
+
+  return { flags, totalLines };
+}
+
+function pdfNotReadableOutput(path: string, reason: string): string {
+  return `Failed to extract text from PDF "${path}" with pdftotext: ${reason}`;
+}
+
 function notReadableFileOutput(path: string): string {
   return (
     `"${path}" is not readable as UTF-8 text. ` +
@@ -173,6 +289,7 @@ export class ReadTool implements BuiltinTool<ReadInput> {
   constructor(
     private readonly kaos: Kaos,
     private readonly workspace: WorkspaceConfig,
+    private readonly experimentalFlags?: ExperimentalFlagResolver,
   ) {}
 
   resolveExecution(args: ReadInput): ToolExecution {
@@ -219,16 +336,42 @@ export class ReadTool implements BuiltinTool<ReadInput> {
           output: `"${args.path}" is a ${fileType.kind} file. Use ReadMediaFile to read image or video files.`,
         };
       }
+      const lineOffset = args.line_offset ?? 1;
+      const requestedLines = args.n_lines ?? MAX_LINES;
+      const effectiveLimit = Math.min(requestedLines, MAX_LINES);
+
+      if (fileType.kind === 'text' && fileType.mimeType === 'application/pdf') {
+        if (this.experimentalFlags?.enabled('pdf_read') !== true) {
+          return {
+            isError: true,
+            output:
+              `"${args.path}" is a PDF file. PDF text extraction is experimental; ` +
+              'enable KIMI_CODE_EXPERIMENTAL_PDF_READ to read it with pdftotext.',
+          };
+        }
+        if (lineOffset < 0) {
+          return await this.readPdfTail(
+            safePath,
+            args.path,
+            lineOffset,
+            effectiveLimit,
+            requestedLines,
+          );
+        }
+        return await this.readPdfForward(
+          safePath,
+          args.path,
+          lineOffset,
+          effectiveLimit,
+          requestedLines,
+        );
+      }
       if (fileType.kind === 'unknown') {
         return {
           isError: true,
           output: notReadableFileOutput(args.path),
         };
       }
-
-      const lineOffset = args.line_offset ?? 1;
-      const requestedLines = args.n_lines ?? MAX_LINES;
-      const effectiveLimit = Math.min(requestedLines, MAX_LINES);
 
       if (lineOffset < 0) {
         return await this.readTail(
@@ -299,38 +442,11 @@ export class ReadTool implements BuiltinTool<ReadInput> {
       }
     }
 
-    const lineEndingStyle = lineEndingStyleFromFlags(flags);
-    const renderedLines: string[] = [];
-    const truncatedLineNumbers: number[] = [];
-    let bytes = 0;
-    let maxBytesReached = false;
-
-    for (const entry of selectedEntries) {
-      const rendered = renderLine(entry, lineEndingStyle);
-      const lineBytes = renderedLineBytes(rendered.line, renderedLines.length === 0);
-      if (renderedLines.length > 0 && bytes + lineBytes > MAX_BYTES) {
-        maxBytesReached = true;
-        break;
-      }
-
-      if (rendered.wasTruncated) {
-        truncatedLineNumbers.push(entry.lineNo);
-      }
-      renderedLines.push(rendered.line);
-      bytes += lineBytes;
-      if (bytes >= MAX_BYTES) {
-        maxBytesReached = true;
-        break;
-      }
-    }
-
-    return this.finishReadResult({
-      renderedLines,
-      truncatedLineNumbers,
+    return this.finishEntriesReadResult({
+      entries: selectedEntries,
+      flags,
       maxLinesReached,
-      maxBytesReached,
-      lineEndingStyle,
-      startLine: renderedLines.length > 0 ? lineOffset : 0,
+      startLine: selectedEntries.length > 0 ? lineOffset : 0,
       totalLines: currentLineNo,
       requestedLines,
     });
@@ -363,8 +479,201 @@ export class ReadTool implements BuiltinTool<ReadInput> {
       }
     }
 
-    const lineEndingStyle = lineEndingStyleFromFlags(flags);
-    let renderedCandidates = entries.slice(0, effectiveLimit).map((entry) => {
+    const selected = entries.slice(0, effectiveLimit);
+    return this.finishEntriesReadResult({
+      entries: selected,
+      flags,
+      maxLinesReached: false,
+      startLine: selected[0]?.lineNo ?? 0,
+      totalLines: currentLineNo,
+      requestedLines,
+      byteTruncationMode: 'tail',
+    });
+  }
+
+  private async readPdfForward(
+    safePath: string,
+    displayPath: string,
+    lineOffset: number,
+    effectiveLimit: number,
+    requestedLines: number,
+  ): Promise<ExecutableToolResult> {
+    const selectedEntries: ReadLineEntry[] = [];
+    let maxLinesReached = false;
+    let collectionClosed = false;
+    const extraction = await this.extractPdfText(safePath, displayPath, {
+      onEntry: (entry) => {
+        if (collectionClosed) {
+          if (effectiveLimit >= MAX_LINES && entry.lineNo >= lineOffset) {
+            maxLinesReached = true;
+          }
+          return;
+        }
+        if (entry.lineNo < lineOffset) return;
+        if (selectedEntries.length >= effectiveLimit) {
+          if (effectiveLimit >= MAX_LINES) {
+            maxLinesReached = true;
+          }
+          collectionClosed = true;
+          return;
+        }
+        selectedEntries.push(entry);
+        if (selectedEntries.length >= effectiveLimit) {
+          collectionClosed = true;
+        }
+      },
+    });
+    if (extraction.result !== undefined) return extraction.result;
+
+    return this.finishEntriesReadResult({
+      entries: selectedEntries,
+      flags: extraction.flags,
+      maxLinesReached,
+      requestedLines,
+      startLine: selectedEntries.length > 0 ? lineOffset : 0,
+      totalLines: extraction.totalLines,
+      sourceKind: 'PDF',
+    });
+  }
+
+  private async readPdfTail(
+    safePath: string,
+    displayPath: string,
+    lineOffset: number,
+    effectiveLimit: number,
+    requestedLines: number,
+  ): Promise<ExecutableToolResult> {
+    const tailCount = Math.abs(lineOffset);
+    const entries: ReadLineEntry[] = [];
+    const extraction = await this.extractPdfText(safePath, displayPath, {
+      onEntry: (entry) => {
+        entries.push(entry);
+        if (entries.length > tailCount) {
+          entries.shift();
+        }
+      },
+    });
+    if (extraction.result !== undefined) return extraction.result;
+
+    const selected = entries.slice(0, effectiveLimit);
+    return this.finishEntriesReadResult({
+      entries: selected,
+      flags: extraction.flags,
+      maxLinesReached: false,
+      requestedLines,
+      startLine: selected[0]?.lineNo ?? 0,
+      totalLines: extraction.totalLines,
+      sourceKind: 'PDF',
+      byteTruncationMode: 'tail',
+    });
+  }
+
+  private async extractPdfText(
+    safePath: string,
+    displayPath: string,
+    options: StreamTextOptions,
+  ): Promise<CollectTextResult> {
+    let proc: KaosProcess;
+    try {
+      proc = await this.kaos.exec('pdftotext', '-layout', '-enc', 'UTF-8', safePath, '-');
+    } catch (error) {
+      if (isEnoentError(error)) {
+        return {
+          result: { isError: true, output: pdftotextUnavailableOutput() },
+          flags: { hasCrLf: false, hasLf: false, hasLoneCr: false },
+          totalLines: 0,
+        };
+      }
+      return {
+        result: {
+          isError: true,
+          output: pdfNotReadableOutput(
+            displayPath,
+            error instanceof Error ? error.message : String(error),
+          ),
+        },
+        flags: { hasCrLf: false, hasLf: false, hasLoneCr: false },
+        totalLines: 0,
+      };
+    }
+
+    try {
+      proc.stdin.end();
+    } catch {
+      /* process already gone */
+    }
+
+    let timedOut = false;
+    let killed = false;
+    const killProc = async (): Promise<void> => {
+      if (killed) return;
+      killed = true;
+      try {
+        await proc.kill('SIGTERM');
+      } catch {
+        /* process already gone */
+      }
+    };
+    const timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      void killProc();
+    }, PDF_TEXT_EXTRACTION_TIMEOUT_MS);
+
+    try {
+      const [textResult, stderrResult, exitCode] = await Promise.all([
+        collectTextLines(proc.stdout, options),
+        readStreamWithCap(proc.stderr, PDF_TEXT_EXTRACTION_MAX_STDERR_BYTES),
+        proc.wait(),
+      ]);
+      if (timedOut) {
+        return {
+          result: {
+            isError: true,
+            output: pdfNotReadableOutput(
+              displayPath,
+              `pdftotext timed out after ${String(PDF_TEXT_EXTRACTION_TIMEOUT_MS / 1000)}s`,
+            ),
+          },
+          flags: { hasCrLf: false, hasLf: false, hasLoneCr: false },
+          totalLines: 0,
+        };
+      }
+      if (exitCode !== 0) {
+        const detail = stderrResult.text.trim() || `pdftotext exited with code ${String(exitCode)}`;
+        return {
+          result: { isError: true, output: pdfNotReadableOutput(displayPath, detail) },
+          flags: textResult.flags,
+          totalLines: textResult.totalLines,
+        };
+      }
+      return textResult;
+    } catch (error) {
+      if (isAbortError(error)) {
+        return {
+          result: { isError: true, output: pdfNotReadableOutput(displayPath, 'aborted') },
+          flags: { hasCrLf: false, hasLf: false, hasLoneCr: false },
+          totalLines: 0,
+        };
+      }
+      return {
+        result: {
+          isError: true,
+          output: pdfNotReadableOutput(
+            displayPath,
+            error instanceof Error ? error.message : String(error),
+          ),
+        },
+        flags: { hasCrLf: false, hasLf: false, hasLoneCr: false },
+        totalLines: 0,
+      };
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+  }
+
+  private finishEntriesReadResult(input: FinishEntriesReadResultInput): ExecutableToolResult {
+    const lineEndingStyle = lineEndingStyleFromFlags(input.flags);
+    let renderedCandidates = input.entries.map((entry) => {
       return { entry, rendered: renderLine(entry, lineEndingStyle) };
     });
 
@@ -378,12 +687,20 @@ export class ReadTool implements BuiltinTool<ReadInput> {
       maxBytesReached = true;
       const kept: typeof renderedCandidates = [];
       let bytes = 0;
-      for (let i = renderedCandidates.length - 1; i >= 0; i -= 1) {
+      const iterateFromTail = input.byteTruncationMode === 'tail';
+      const start = iterateFromTail ? renderedCandidates.length - 1 : 0;
+      const end = iterateFromTail ? -1 : renderedCandidates.length;
+      const step = iterateFromTail ? -1 : 1;
+      for (let i = start; i !== end; i += step) {
         const candidate = renderedCandidates[i];
         if (candidate === undefined) continue;
         const lineBytes = renderedLineBytes(candidate.rendered.line, kept.length === 0);
-        if (bytes + lineBytes > MAX_BYTES) break;
-        kept.unshift(candidate);
+        if (bytes + lineBytes > MAX_BYTES && (iterateFromTail || kept.length > 0)) break;
+        if (iterateFromTail) {
+          kept.unshift(candidate);
+        } else {
+          kept.push(candidate);
+        }
         bytes += lineBytes;
       }
       renderedCandidates = kept;
@@ -401,12 +718,13 @@ export class ReadTool implements BuiltinTool<ReadInput> {
     return this.finishReadResult({
       renderedLines,
       truncatedLineNumbers,
-      maxLinesReached: false,
+      maxLinesReached: input.maxLinesReached,
       maxBytesReached,
       lineEndingStyle,
-      startLine: renderedCandidates[0]?.entry.lineNo ?? 0,
-      totalLines: currentLineNo,
-      requestedLines,
+      startLine: renderedCandidates[0]?.entry.lineNo ?? input.startLine,
+      totalLines: input.totalLines,
+      requestedLines: input.requestedLines,
+      sourceKind: input.sourceKind,
     });
   }
 
@@ -428,9 +746,9 @@ export class ReadTool implements BuiltinTool<ReadInput> {
     const parts =
       lineCount > 0
         ? [
-            `${String(lineCount)} ${lineWord} read from file starting from line ${String(input.startLine)}.`,
+            `${String(lineCount)} ${lineWord} read from ${input.sourceKind ?? 'file'} starting from line ${String(input.startLine)}.`,
           ]
-        : ['No lines read from file.'];
+        : [`No lines read from ${input.sourceKind ?? 'file'}.`];
 
     parts.push(`Total lines in file: ${String(input.totalLines)}.`);
     if (input.maxLinesReached) {

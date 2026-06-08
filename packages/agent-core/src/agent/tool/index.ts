@@ -379,7 +379,7 @@ export class ToolManager {
       this.agent.experimentalFlags.enabled('goal_command') && this.agent.type === 'main';
     this.builtinTools = new Map(
       [
-        new b.ReadTool(kaos, workspace),
+        new b.ReadTool(kaos, workspace, this.agent.experimentalFlags),
         new b.WriteTool(kaos, workspace),
         new b.EditTool(kaos, workspace),
         new b.GrepTool(kaos, workspace),

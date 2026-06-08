@@ -44,6 +44,14 @@ export const FLAG_DEFINITIONS = [
     default: false,
     surface: 'core',
   },
+  {
+    id: 'pdf_read',
+    title: 'PDF Read',
+    description: 'Allow the Read tool to extract text from PDF files through pdftotext.',
+    env: 'KIMI_CODE_EXPERIMENTAL_PDF_READ',
+    default: false,
+    surface: 'core',
+  },
 ] as const satisfies readonly FlagDefinitionInput[];
 
 /** Literal union of registered flag ids. */
