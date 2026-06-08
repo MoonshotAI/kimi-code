@@ -24,8 +24,8 @@ Help the user design, write, and apply a custom color theme for the kimi-code TU
   }
   ```
 
-  - `name` (required), `displayName` (optional), `colors` (each value a 6-digit hex `#RRGGBB`).
-- **Partial themes are fine**: any token you leave out falls back to the built-in `dark` value, so you can recolor just a few tokens or all of them.
+  - `name` (required), `displayName` (optional), `base` (optional: `"dark"` default, or `"light"`), `colors` (each value a 6-digit hex `#RRGGBB`).
+- **Partial themes are fine**: any token you leave out falls back to the **base** palette (`dark` by default; set `"base": "light"` for a light theme), so you can recolor just a few tokens or all of them.
 
 ## Source of truth: the docs token reference
 
@@ -63,7 +63,7 @@ Only set tokens from this set — unknown keys are silently ignored at load. If 
 ## Workflow
 
 1. **Ask the user what they want first — before choosing any colors.** Clarify, in one short exchange:
-   - **Light or dark?** A light theme (dark text on a light background) or a dark theme (light text on a dark background). This sets the whole direction, so settle it first.
+   - **Light or dark?** A light theme (dark text on a light background) or a dark theme (light text on a dark background). This sets the whole direction, so settle it first. For a light theme, set `"base": "light"` so the tokens you leave out inherit the light palette instead of dark.
    - **What style / mood?** e.g. warm vs cool, vivid vs muted, high vs low contrast, a named vibe ("nord", "solarized", "sunset"), or a base to start from (an existing theme, or `dark` / `light`).
    - **Any specific colors?** Whether they have exact hex values to anchor on (a brand color, a preferred `primary`, etc.).
 
@@ -83,7 +83,7 @@ Only set tokens from this set — unknown keys are silently ignored at load. If 
    node -e 'const p=require("os").homedir()+"/.kimi-code/themes/<name>.json";const c=(require(p).colors)||{};const bad=Object.entries(c).filter(([,v])=>!/^#[0-9a-fA-F]{6}$/.test(v));console.log(bad.length?["invalid:",...bad]:"all hex valid")'
    ```
 
-   Invalid values are skipped with a warning at load (not fatal), but fix them so the theme renders as intended.
+   Invalid values are silently skipped at load (they fall back to the base palette; not fatal), but fix them so the theme renders as intended.
 6. **Tell the user how to apply it** (next section).
 
 ## Applying the theme

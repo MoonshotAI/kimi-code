@@ -19,6 +19,11 @@
       "type": "string",
       "description": "Human-readable theme name shown in UI"
     },
+    "base": {
+      "type": "string",
+      "enum": ["dark", "light"],
+      "description": "Built-in palette that unspecified tokens fall back to (default: dark)"
+    },
     "colors": {
       "type": "object",
       "description": "Color overrides. Omitted tokens fall back to the dark theme defaults.",

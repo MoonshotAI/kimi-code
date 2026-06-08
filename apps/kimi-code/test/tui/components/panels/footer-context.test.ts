@@ -44,7 +44,7 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
 
 describe('FooterComponent — context NaN resilience', () => {
   it('NaN usage → renders 0.0% (never literal "NaN%")', () => {
-    const fc = new FooterComponent(baseState({ contextUsage: Number.NaN }), darkColors);
+    const fc = new FooterComponent(baseState({ contextUsage: Number.NaN }));
     const out = strip(fc.render(120).join(''));
     expect(out).not.toMatch(/NaN/);
     expect(out).toMatch(/context: 0\.0%/);
@@ -53,7 +53,6 @@ describe('FooterComponent — context NaN resilience', () => {
   it('undefined-ish (coerced) usage → renders 0.0%', () => {
     const fc = new FooterComponent(
       baseState({ contextUsage: undefined as unknown as number }),
-      darkColors,
     );
     const out = strip(fc.render(120).join(''));
     expect(out).not.toMatch(/NaN/);
@@ -61,13 +60,13 @@ describe('FooterComponent — context NaN resilience', () => {
   });
 
   it('clamps ratios above 1.0 → renders 100.0%', () => {
-    const fc = new FooterComponent(baseState({ contextUsage: 1.5 }), darkColors);
+    const fc = new FooterComponent(baseState({ contextUsage: 1.5 }));
     const out = strip(fc.render(120).join(''));
     expect(out).toMatch(/context: 100\.0%/);
   });
 
   it('ratio 0.427 → renders 42.7%', () => {
-    const fc = new FooterComponent(baseState({ contextUsage: 0.427 }), darkColors);
+    const fc = new FooterComponent(baseState({ contextUsage: 0.427 }));
     const out = strip(fc.render(200).join(''));
     expect(out).toMatch(/context: 42\.7%/);
   });
@@ -75,7 +74,6 @@ describe('FooterComponent — context NaN resilience', () => {
   it('tokens provided but max=0 → falls back to percent-only, no division-by-zero artefact', () => {
     const fc = new FooterComponent(
       baseState({ contextUsage: 0, contextTokens: 500, maxContextTokens: 0 }),
-      darkColors,
     );
     const out = strip(fc.render(200).join(''));
     expect(out).not.toMatch(/Infinity|NaN/);
@@ -85,7 +83,7 @@ describe('FooterComponent — context NaN resilience', () => {
   });
 
   it('setState updates visible model and context values', () => {
-    const footer = new FooterComponent(baseState({ model: 'k2', contextUsage: 0 }), darkColors);
+    const footer = new FooterComponent(baseState({ model: 'k2', contextUsage: 0 }));
 
     footer.setState(baseState({ model: 'kimi-k2-5', contextUsage: 0.5 }));
 
@@ -96,15 +94,15 @@ describe('FooterComponent — context NaN resilience', () => {
   });
 
   it('shows "thinking" label when thinking is enabled, hides it when disabled', () => {
-    const on = new FooterComponent(baseState({ model: 'k2', thinking: true }), darkColors);
-    const off = new FooterComponent(baseState({ model: 'k2', thinking: false }), darkColors);
+    const on = new FooterComponent(baseState({ model: 'k2', thinking: true }));
+    const off = new FooterComponent(baseState({ model: 'k2', thinking: false }));
 
     expect(strip(on.render(120)[0]!)).toContain('thinking');
     expect(strip(off.render(120)[0]!)).not.toContain('thinking');
   });
 
   it('renders transient hints on the context line', () => {
-    const footer = new FooterComponent(baseState(), darkColors);
+    const footer = new FooterComponent(baseState());
 
     footer.setTransientHint('Press Ctrl-C again to exit');
 

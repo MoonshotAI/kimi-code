@@ -11,7 +11,7 @@ Add a `.json` file to the themes directory:
 
 Create the directory if it does not exist. **The filename is the theme name**: `ember.json` appears in `/theme` as `Custom: ember`.
 
-A minimal theme only sets the colors you want to change; the rest fall back to `dark`:
+A minimal theme only sets the colors you want to change; the rest fall back to the **base palette** (`dark` by default):
 
 ```json
 {
@@ -27,6 +27,7 @@ Fields:
 
 - `name` (required): the theme identifier.
 - `displayName` (optional): a human-readable name.
+- `base` (optional): the built-in palette that unspecified tokens inherit — `"dark"` (default) or `"light"`. Set `"base": "light"` when you are building a **light** theme so the tokens you leave out stay readable on a light background (otherwise they fall back to the dark palette).
 - `colors` (optional): the color tokens to override, each a 6-digit hex value (e.g. `#FE8019`).
 
 > Tip: copying a full example like the one below and tweaking it is the fastest way to start.
@@ -84,7 +85,7 @@ Two ways:
 
 Custom themes are designed to never get in your way:
 
-- **An invalid color value** (not `#` followed by 6 hex digits): that one entry is skipped with a warning; the rest of the colors still apply.
+- **An invalid color value** (not `#` followed by 6 hex digits): that one entry is silently skipped (it falls back to the `dark` default); the rest of the colors still apply.
 - **An unrecognized token**: ignored, with no effect on other colors.
 - **A missing file or malformed JSON**: silently falls back to `dark`.
 

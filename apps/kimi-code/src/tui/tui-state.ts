@@ -63,12 +63,12 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const todoPanelContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
-  const todoPanel = new TodoPanelComponent(theme.palette);
+  const todoPanel = new TodoPanelComponent();
   const queueContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const btwPanelContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const editorContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   const editor = new CustomEditor(ui);
-  const footer = new FooterComponent({ ...initialAppState }, theme.palette, () => {
+  const footer = new FooterComponent({ ...initialAppState }, () => {
     ui.requestRender();
   });
 

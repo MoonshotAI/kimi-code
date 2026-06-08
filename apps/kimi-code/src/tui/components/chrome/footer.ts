@@ -11,6 +11,7 @@ import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
+import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
 import {
@@ -217,7 +218,6 @@ export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): s
 
 export class FooterComponent implements Component {
   private state: AppState;
-  private colors: ColorPalette;
   private readonly onRefresh: () => void;
   private gitCache: GitStatusCache;
   private gitCacheWorkDir: string;
@@ -235,9 +235,8 @@ export class FooterComponent implements Component {
   private backgroundBashTaskCount = 0;
   private backgroundAgentCount = 0;
 
-  constructor(state: AppState, colors: ColorPalette, onRefresh: () => void = () => {}) {
+  constructor(state: AppState, onRefresh: () => void = () => {}) {
     this.state = state;
-    this.colors = colors;
     this.onRefresh = onRefresh;
     this.gitCacheWorkDir = state.workDir;
     this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onRefresh });
@@ -253,10 +252,6 @@ export class FooterComponent implements Component {
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
     this.state = state;
-  }
-
-  setColors(colors: ColorPalette): void {
-    this.colors = colors;
   }
 
   /**
@@ -282,7 +277,7 @@ export class FooterComponent implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
-    const colors = this.colors;
+    const colors = currentTheme.palette;
     const state = this.state;
 
     // ── Line 1: mode badges + model + [N task(s) running] + [N agent(s) running] + cwd + git + hints ──

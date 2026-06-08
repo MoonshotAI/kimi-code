@@ -9,7 +9,9 @@ import {
   listCustomThemes,
   listCustomThemesSync,
   loadCustomTheme,
+  loadCustomThemeMerged,
 } from '#/tui/theme/custom-theme-loader';
+import { darkColors, lightColors } from '#/tui/theme';
 
 let home: string;
 const originalHome = process.env['KIMI_CODE_HOME'];
@@ -62,5 +64,23 @@ describe('custom theme loader', () => {
 
   it('returns null for a missing theme file', async () => {
     expect(await loadCustomTheme('does-not-exist')).toBeNull();
+  });
+
+  it('falls back to the dark palette for unspecified tokens by default', async () => {
+    writeTheme('solar-dark', { name: 'solar-dark', colors: { primary: '#268bd2' } });
+    const merged = await loadCustomThemeMerged('solar-dark');
+    expect(merged?.primary).toBe('#268bd2');
+    expect(merged?.text).toBe(darkColors.text);
+  });
+
+  it('falls back to the light palette when base is "light"', async () => {
+    writeTheme('solar-light', {
+      name: 'solar-light',
+      base: 'light',
+      colors: { primary: '#268bd2' },
+    });
+    const merged = await loadCustomThemeMerged('solar-light');
+    expect(merged?.primary).toBe('#268bd2');
+    expect(merged?.text).toBe(lightColors.text);
   });
 });

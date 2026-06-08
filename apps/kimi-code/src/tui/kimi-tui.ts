@@ -1576,8 +1576,6 @@ export class KimiTUI {
     currentTheme.setPalette(palette);
     this.setAppState({ theme: themeName });
     this.updateEditorBorderHighlight();
-    this.state.footer.setColors(palette);
-    this.state.todoPanel.setColors(palette);
     // Force every historical message to re-render so Markdown/Text caches
     // (which hold old ANSI colour codes) are cleared.
     this.state.transcriptContainer.invalidate();
@@ -1604,8 +1602,6 @@ export class KimiTUI {
     if (currentTheme.palette === palette) return;
     currentTheme.setPalette(palette);
     this.updateEditorBorderHighlight();
-    this.state.footer.setColors(palette);
-    this.state.todoPanel.setColors(palette);
     // Repaint already-rendered transcript entries (status/markdown caches hold
     // old ANSI codes), matching applyTheme()'s behaviour.
     this.state.transcriptContainer.invalidate();
