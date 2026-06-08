@@ -28,8 +28,8 @@ describe('getFdAssetName', () => {
     expect(getFdAssetName('darwin', 'x64')).toBe('fd-v10.3.0-x86_64-apple-darwin.tar.gz');
   });
 
-  it('returns the Linux x64 asset name', () => {
-    expect(getFdAssetName('linux', 'x64')).toBe('fd-v10.4.2-x86_64-unknown-linux-gnu.tar.gz');
+  it('returns the Linux x64 musl asset name', () => {
+    expect(getFdAssetName('linux', 'x64')).toBe('fd-v10.4.2-x86_64-unknown-linux-musl.tar.gz');
   });
 
   it('returns the Windows x64 asset name', () => {

@@ -29,8 +29,8 @@ const FD_ARCHIVE_SHA256: Record<string, string> = {
     '50d30f13fe3d5914b14c4fff5abcbd4d0cdab4b855970a6956f4f006c17117a3',
   'fd-v10.4.2-aarch64-unknown-linux-gnu.tar.gz':
     '6c51f7c5446b3338b1e401ff15dc194c590bb2fa64fd43ff3278300f073adec5',
-  'fd-v10.4.2-x86_64-unknown-linux-gnu.tar.gz':
-    'def59805cd14b5651b68990855f426ad087f3b96881296d963910431ba3143c8',
+  'fd-v10.4.2-x86_64-unknown-linux-musl.tar.gz':
+    'e3257d48e29a6be965187dbd24ce9af564e0fe67b3e73c9bdcd180f4ec11bdde',
   'fd-v10.4.2-aarch64-pc-windows-msvc.zip':
     '4f9110c2d5b33a7f760bfa5510f4c113d828109f7277d421b1053a9943c0fc92',
   'fd-v10.4.2-x86_64-pc-windows-msvc.zip':
@@ -89,7 +89,7 @@ export function getFdAssetName(plat = platform(), architecture = arch()): string
   }
   if (plat === 'linux') {
     if (architecture === 'arm64') return 'fd-v10.4.2-aarch64-unknown-linux-gnu.tar.gz';
-    if (architecture === 'x64') return 'fd-v10.4.2-x86_64-unknown-linux-gnu.tar.gz';
+    if (architecture === 'x64') return 'fd-v10.4.2-x86_64-unknown-linux-musl.tar.gz';
     return null;
   }
   if (plat === 'win32') {
@@ -109,13 +109,13 @@ async function downloadFd(): Promise<string | null> {
   const binDir = getBinDir();
   mkdirSync(binDir, { recursive: true });
 
-  const archivePath = join(binDir, assetName);
   const binaryPath = getManagedFdBinaryPath();
   const extractDir = join(
     binDir,
     `fd_extract_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
   );
   mkdirSync(extractDir, { recursive: true });
+  const archivePath = join(extractDir, assetName);
 
   try {
     const downloadUrl = `${FD_BASE_URL}/${assetName}`;
@@ -134,7 +134,6 @@ async function downloadFd(): Promise<string | null> {
     }
     return binaryPath;
   } finally {
-    rmSync(archivePath, { force: true });
     rmSync(extractDir, { recursive: true, force: true });
   }
 }
