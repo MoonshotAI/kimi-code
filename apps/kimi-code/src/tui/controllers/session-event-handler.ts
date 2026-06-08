@@ -12,6 +12,7 @@ import type {
   CronFiredEvent,
   ErrorEvent,
   Event,
+  GoalChange,
   GoalUpdatedEvent,
   HookResultEvent,
   Session,
@@ -135,6 +136,7 @@ export class SessionEventHandler {
   mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
   private goalCompletionAwaitingClear = false;
   private goalCompletionTurnEnded = false;
+  private pendingModelBlockedFallback: GoalChange | undefined;
   private queuedGoalPromotionPending = false;
   private queuedGoalPromotionInFlight = false;
   private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
@@ -148,6 +150,7 @@ export class SessionEventHandler {
     this.mcpServers.clear();
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
+    this.pendingModelBlockedFallback = undefined;
     this.queuedGoalPromotionPending = false;
     this.queuedGoalPromotionInFlight = false;
     this.clearQueuedGoalPromotionTimer();
@@ -324,6 +327,7 @@ export class SessionEventHandler {
     }
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeTurn(sendQueued);
+    this.renderPendingModelBlockedFallback();
     this.goalCompletionTurnEnded = true;
     this.scheduleQueuedGoalPromotion();
   }
@@ -415,6 +419,9 @@ export class SessionEventHandler {
       streamingUI.flushThinkingToTranscript('idle');
     }
 
+    if (event.delta.trim().length > 0) {
+      this.pendingModelBlockedFallback = undefined;
+    }
     streamingUI.appendAssistantDelta(event.delta);
 
     this.host.patchLivePane({
@@ -434,6 +441,9 @@ export class SessionEventHandler {
       this.host.streamingUI.flushThinkingToTranscript('idle');
     }
     this.host.streamingUI.finalizeAssistantStream();
+    if (event.content.trim().length > 0) {
+      this.pendingModelBlockedFallback = undefined;
+    }
     this.host.appendTranscriptEntry({
       id: nextTranscriptId(),
       kind: 'assistant',
@@ -573,6 +583,9 @@ export class SessionEventHandler {
       this.queuedGoalPromotionPending = true;
       this.scheduleQueuedGoalPromotion();
     }
+    if (event.snapshot === null) {
+      this.pendingModelBlockedFallback = undefined;
+    }
     const change = event.change;
     if (change === undefined) return;
     const { state } = this.host;
@@ -582,6 +595,7 @@ export class SessionEventHandler {
     // The model-facing follow-up prompt stays in context without the checkmark;
     // resume rebuilds this deterministic card from the goal.update audit stats.
     if (change.kind === 'completion' && event.snapshot !== null) {
+      this.pendingModelBlockedFallback = undefined;
       this.goalCompletionAwaitingClear = true;
       this.goalCompletionTurnEnded = false;
       this.host.appendTranscriptEntry({
@@ -598,13 +612,36 @@ export class SessionEventHandler {
     // ctrl+o-expandable marker.
     if (change.kind === 'lifecycle' && change.status === 'blocked') {
       void this.notifyQueuedGoalWaitingOnBlocked();
-      if (event.snapshot?.updatedBy === 'model') return;
+      if (event.snapshot?.updatedBy === 'model') {
+        this.pendingModelBlockedFallback = change;
+        return;
+      }
+      this.pendingModelBlockedFallback = undefined;
+    } else if (change.kind === 'lifecycle') {
+      this.pendingModelBlockedFallback = undefined;
     }
     const marker = buildGoalMarker(
       change,
       state.theme.colors,
       state.toolOutputExpanded,
       event.snapshot?.updatedBy,
+    );
+    if (marker !== null) {
+      state.transcriptContainer.addChild(marker);
+      state.ui.requestRender();
+    }
+  }
+
+  private renderPendingModelBlockedFallback(): void {
+    const change = this.pendingModelBlockedFallback;
+    if (change === undefined) return;
+    this.pendingModelBlockedFallback = undefined;
+    const { state } = this.host;
+    const marker = buildGoalMarker(
+      change,
+      state.theme.colors,
+      state.toolOutputExpanded,
+      'model',
     );
     if (marker !== null) {
       state.transcriptContainer.addChild(marker);

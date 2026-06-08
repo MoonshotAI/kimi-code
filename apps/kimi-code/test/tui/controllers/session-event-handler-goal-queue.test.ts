@@ -72,6 +72,10 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
       flushNow: vi.fn(),
       resetToolUi: vi.fn(),
       finalizeTurn: vi.fn(),
+      hasThinkingDraft: vi.fn(() => false),
+      flushThinkingToTranscript: vi.fn(),
+      appendAssistantDelta: vi.fn(),
+      scheduleFlush: vi.fn(),
     },
     requireSession: vi.fn(() => session),
     setAppState: vi.fn(),
@@ -137,6 +141,21 @@ function turnEndedEvent() {
     turnId: 1,
     reason: 'completed',
   } as const;
+}
+
+function modelBlockedEvent() {
+  return {
+    type: 'goal.updated',
+    sessionId: 's1',
+    agentId: 'main',
+    snapshot: fakeGoalSnapshot('Blocked goal', 'blocked'),
+    change: { kind: 'lifecycle', status: 'blocked' },
+  } as const;
+}
+
+function addedTranscriptText(host: ReturnType<typeof makeHost>['host']): string {
+  const component = host.state.transcriptContainer.addChild.mock.calls.at(-1)?.[0];
+  return component.render(80).join('\n').replaceAll(/\[[0-9;]*m/g, '');
 }
 
 describe('SessionEventHandler goal queue promotion', () => {
@@ -357,15 +376,38 @@ describe('SessionEventHandler goal queue promotion', () => {
   it('does not render a duplicate marker for a model-reported blocked goal', () => {
     const { host } = makeHost();
     const handler = new SessionEventHandler(host);
-    const event = {
-      type: 'goal.updated',
-      sessionId: 's1',
-      agentId: 'main',
-      snapshot: fakeGoalSnapshot('Blocked goal', 'blocked'),
-      change: { kind: 'lifecycle', status: 'blocked' },
-    } as const;
 
-    handler.handleEvent(event, vi.fn());
+    handler.handleEvent(modelBlockedEvent(), vi.fn());
+
+    expect(host.state.transcriptContainer.addChild).not.toHaveBeenCalled();
+  });
+
+  it('renders a blocked fallback when the model does not explain the blocked goal', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent(modelBlockedEvent(), vi.fn());
+    handler.handleEvent(turnEndedEvent(), vi.fn());
+
+    expect(addedTranscriptText(host)).toBe('  ◦ Goal blocked');
+  });
+
+  it('does not render a blocked fallback after the model explains the blocked goal', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent(modelBlockedEvent(), vi.fn());
+    handler.handleEvent(
+      {
+        type: 'assistant.delta',
+        sessionId: 's1',
+        agentId: 'main',
+        turnId: 1,
+        delta: 'I am blocked because I need credentials.',
+      },
+      vi.fn(),
+    );
+    handler.handleEvent(turnEndedEvent(), vi.fn());
 
     expect(host.state.transcriptContainer.addChild).not.toHaveBeenCalled();
   });
