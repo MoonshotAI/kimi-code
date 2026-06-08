@@ -76,11 +76,24 @@ describe('slash', () => {
       });
     });
 
-    it('falls back to passthrough for unknown slash commands', () => {
-      // TUI builtins like /clear are not ACP-executable; let them
-      // pass through as plain text rather than rejecting at the
-      // adapter boundary (the model can still display the literal).
-      expect(detectSlashIntent('/clear', map)).toEqual({ kind: 'passthrough' });
+    it('reports unknown slash commands instead of passing them to the model', () => {
+      // TUI builtins like /clear are not ACP-executable. Report them as
+      // unknown so the adapter can render a local error instead of sending
+      // the literal command to the model.
+      expect(detectSlashIntent('/clear', map)).toEqual({
+        kind: 'unknown',
+        name: 'clear',
+        args: '',
+      });
+    });
+
+    it('routes ACP built-in commands', () => {
+      expect(detectSlashIntent('/compact summarize aggressively', map)).toEqual({
+        kind: 'builtin',
+        name: 'compact',
+        args: 'summarize aggressively',
+      });
+      expect(detectSlashIntent('/status', map)).toEqual({ kind: 'builtin', name: 'status', args: '' });
     });
 
     it('falls back to passthrough for non-slash text', () => {

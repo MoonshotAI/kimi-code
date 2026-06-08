@@ -906,16 +906,15 @@ export class AcpServer implements Agent {
       const { commands, skillCommandMap } = await this.resolveSlashCommands(
         acpSession.session,
       );
-      // Seed the AcpSession's per-session skill map BEFORE the
-      // notification goes out. The resolver call already awaited the
-      // (async) `listSkills()` round trip, so the map is the same
-      // snapshot the client sees in its palette — no separate
-      // listSkills() invocation, no race window between "the client
-      // has skill X in its palette" and "the adapter knows to
-      // intercept /skill:X". Intentionally tolerant of older AcpSession
-      // builds that pre-date `setSkillCommandMap` (adapter-level unit
-      // tests construct stubbed sessions).
-      if (typeof acpSession.setSkillCommandMap === 'function') {
+      // Seed the AcpSession's command catalog BEFORE the notification goes
+      // out. The resolver call already awaited the (async) `listSkills()`
+      // round trip, so the command list and skill map are the same snapshot
+      // the client sees in its palette — no race between "/skill:X is
+      // advertised" and "the adapter can intercept /skill:X". Intentionally
+      // tolerant of older AcpSession builds in adapter-level unit tests.
+      if (typeof acpSession.setAvailableCommands === 'function') {
+        acpSession.setAvailableCommands(commands, skillCommandMap);
+      } else if (typeof acpSession.setSkillCommandMap === 'function') {
         acpSession.setSkillCommandMap(skillCommandMap);
       }
       await this.conn.sessionUpdate(

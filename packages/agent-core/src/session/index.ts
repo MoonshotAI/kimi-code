@@ -204,6 +204,7 @@ export class Session {
     for (const agent of this.readyAgents()) {
       agent.setKaos(kaos.withCwd(agent.config.cwd));
     }
+    this.refreshAgentBuiltinTools();
   }
 
   /**

@@ -2,14 +2,18 @@
 //
 // Copied from the TUI's `apps/kimi-code/src/tui/commands/parse.ts` and the
 // skill-resolution slice of `apps/kimi-code/src/tui/commands/resolve.ts`
-// (`resolveSkillCommand`). The TUI's resolver also handles builtin slash
-// commands and `streaming/compacting` busy gates; ACP does not surface
-// those concepts (Zed serializes `session/prompt` requests at the
-// transport layer, and TUI builtins like `/clear` are TUI-process-only),
-// so this module deliberately only handles the `skill:<name>` form.
+// (`resolveSkillCommand`). ACP only intercepts commands the adapter can execute
+// directly: skills plus the small ACP-owned built-in command set. Other slash
+// inputs are reported as unknown commands instead of being silently sent to the
+// model as prompt text.
 //
 // Sync target: if the TUI parser's accepted grammar changes (e.g. the
 // "no `/` inside name" rule), update the duplicate here too.
+
+import {
+  ACP_BUILTIN_SLASH_COMMAND_NAMES,
+  type AcpBuiltinSlashCommandName,
+} from './builtin-commands';
 
 export interface ParsedSlashInput {
   readonly name: string;
@@ -18,6 +22,8 @@ export interface ParsedSlashInput {
 
 export type SlashIntent =
   | { readonly kind: 'skill'; readonly skillName: string; readonly args: string }
+  | { readonly kind: 'builtin'; readonly name: AcpBuiltinSlashCommandName; readonly args: string }
+  | { readonly kind: 'unknown'; readonly name: string; readonly args: string }
   | { readonly kind: 'passthrough' };
 
 export function parseSlashInput(input: string): ParsedSlashInput | null {
@@ -41,10 +47,16 @@ export function resolveSkillCommand(
 export function detectSlashIntent(
   text: string,
   skillCommandMap: ReadonlyMap<string, string>,
+  builtinCommandNames: ReadonlySet<string> = ACP_BUILTIN_SLASH_COMMAND_NAMES,
 ): SlashIntent {
   const parsed = parseSlashInput(text);
   if (parsed === null) return { kind: 'passthrough' };
   const skillName = resolveSkillCommand(skillCommandMap, parsed.name);
-  if (skillName === undefined) return { kind: 'passthrough' };
-  return { kind: 'skill', skillName, args: parsed.args };
+  if (skillName !== undefined) {
+    return { kind: 'skill', skillName, args: parsed.args };
+  }
+  if (builtinCommandNames.has(parsed.name)) {
+    return { kind: 'builtin', name: parsed.name as AcpBuiltinSlashCommandName, args: parsed.args };
+  }
+  return { kind: 'unknown', name: parsed.name, args: parsed.args };
 }

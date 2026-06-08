@@ -167,6 +167,32 @@ describe('acpBlocksToPromptParts', () => {
     ]);
   });
 
+  it('preserves non-local file:// hosts as UNC paths', () => {
+    const out = acpBlocksToPromptParts([
+      resourceLinkBlock('file://server/share/project/a.ts#L3', 'a.ts'),
+      resourceLinkBlock('file://server/share/project/b.ts?lines=10-20', 'b.ts'),
+      resourceLinkBlock('file://localhost/share/project/c.ts#L3', 'c.ts'),
+    ]);
+    expect(out).toEqual([
+      { type: 'text', text: '//server/share/project/a.ts:3' },
+      { type: 'text', text: '//server/share/project/b.ts:10-20' },
+      { type: 'text', text: '/share/project/c.ts:3' },
+    ]);
+  });
+
+  it('lowercases UNC hosts so case-variant inputs collapse to one ref', () => {
+    const out = acpBlocksToPromptParts([
+      resourceLinkBlock('file://SERVER/share/project/a.ts#L3', 'a.ts'),
+      resourceLinkBlock('file://Server/share/project/a.ts#L3', 'a.ts'),
+      resourceLinkBlock('file://LOCALHOST/share/project/c.ts#L3', 'c.ts'),
+    ]);
+    expect(out).toEqual([
+      { type: 'text', text: '//server/share/project/a.ts:3' },
+      { type: 'text', text: '//server/share/project/a.ts:3' },
+      { type: 'text', text: '/share/project/c.ts:3' },
+    ]);
+  });
+
   it('keeps the XML wrapper for non-file:// resource_link schemes', () => {
     const out = acpBlocksToPromptParts([
       resourceLinkBlock('zed:///agent/terminal-selection?lines=10', 'Terminal (10 lines)'),

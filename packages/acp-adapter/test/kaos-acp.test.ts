@@ -146,17 +146,17 @@ function makeMockInner(): MockInnerKaos {
         stCtime: 0,
       } as StatResult;
     },
-    // eslint-disable-next-line require-yield
     iterdir: async function* (path: string) {
       spy.iterdirCalls.push(path);
+      yield* [];
     },
-    // eslint-disable-next-line require-yield
     glob: async function* (
       path: string,
       pattern: string,
       options?: { caseSensitive?: boolean },
     ) {
       spy.globCalls.push({ path, pattern, options });
+      yield* [];
     },
     mkdir: async (path: string, options?: { parents?: boolean; existOk?: boolean }) => {
       spy.mkdirCalls.push({ path, options });
@@ -179,7 +179,9 @@ function makeMockInner(): MockInnerKaos {
       spy.readTextCalls.push(path);
       return 'INNER';
     },
-    readLines: async function* () {},
+    readLines: async function* () {
+      yield* [];
+    },
     writeBytes: async () => 0,
     writeText: async (path: string, data: string) => {
       spy.writeTextCalls.push({ path, data });

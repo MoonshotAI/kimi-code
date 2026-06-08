@@ -95,8 +95,31 @@ function fileLinkToTextRef(uri: string): string | null {
     return null;
   }
   if (url.protocol !== 'file:') return null;
-  let path = decodeURIComponent(url.pathname);
-  if (/^\/[A-Za-z]:/.test(path)) path = path.slice(1);
+
+  let path: string;
+  try {
+    path = decodeURIComponent(url.pathname);
+  } catch {
+    return null;
+  }
+
+  // `file://server/share/a.ts` is the URI form of a Windows UNC path
+  // (`\\server\share\a.ts`). `URL.pathname` only carries `/share/a.ts`; the
+  // host is part of the file location, so keep it in the projected text ref.
+  // `file://localhost/...` is still treated as local. Host is lower-cased so
+  // `file://Server/...` and `file://server/...` collapse to one ref.
+  const host = url.hostname.toLowerCase();
+  const isUncHost = host !== '' && host !== 'localhost';
+
+  // Drive-letter normalization is local-only: a UNC URI never legitimately
+  // carries `/C:/...` in its path, so we leave such inputs untouched rather
+  // than stripping a leading slash that would alter the UNC payload.
+  if (!isUncHost && /^\/[A-Za-z]:/.test(path)) path = path.slice(1);
+
+  if (isUncHost) {
+    path = `//${host}${path.startsWith('/') ? path : `/${path}`}`;
+  }
+
   const range = parseLineRange(url.hash) ?? parseLineRange(url.search);
   return range !== null ? `${path}:${range}` : path;
 }

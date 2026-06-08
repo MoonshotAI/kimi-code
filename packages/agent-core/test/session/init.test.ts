@@ -4,7 +4,7 @@ import { join } from 'pathe';
 
 import { testKaos } from '../fixtures/test-kaos';
 import type { ProviderConfig, ToolCall } from '@moonshot-ai/kosong';
-import type { Kaos } from '@moonshot-ai/kaos';
+import type { Kaos, StatResult } from '@moonshot-ai/kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent, AgentOptions } from '../../src/agent';
@@ -18,6 +18,8 @@ import { SessionAPIImpl } from '../../src/session/rpc';
 import { estimateTokensForMessages } from '../../src/utils/tokens';
 import { createScriptedGenerate } from '../agent/harness/scripted-generate';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
+import { executeTool } from '../tools/fixtures/execute-tool';
+import { createFakeKaos, toolContentString } from '../tools/fixtures/fake-kaos';
 
 const MOCK_PROVIDER = {
   type: 'kimi',
@@ -160,6 +162,48 @@ describe('Session.init', () => {
 
       expect(agent.config.systemPrompt).toBe('<system-prompt>');
       expect(capturedContext.agentsMd).toContain('project instructions from disk');
+    } finally {
+      await session.close();
+    }
+  });
+
+  it('rebuilds builtin tools when rebinding the session tool kaos', async () => {
+    const workDir = await makeTempDir();
+    const sessionDir = await makeTempDir();
+    const staleKaos = createReadToolKaos(workDir, 'stale kaos\n');
+    const replacementKaos = createReadToolKaos(workDir, 'replacement kaos\n');
+    const session = new Session({
+      id: 'test-rebind-tool-kaos',
+      kaos: staleKaos,
+      persistenceKaos: testKaos.withCwd(sessionDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc([]),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      providerManager: testProviderManager(),
+    });
+
+    try {
+      const { agent } = await session.createAgent({ type: 'main' }, { profile: testProfile() });
+      agent.config.update({
+        modelAlias: 'mock-model',
+        thinkingLevel: 'off',
+      });
+      agent.tools.initializeBuiltinTools();
+      agent.tools.setActiveTools(['Read']);
+
+      session.setToolKaos(replacementKaos);
+
+      const readTool = agent.tools.loopTools.find((candidate) => candidate.name === 'Read');
+      expect(readTool).toBeDefined();
+      const result = await executeTool(readTool!, {
+        args: { path: join(workDir, 'file.txt') },
+        turnId: '1',
+        toolCallId: 'call_read',
+        signal: new AbortController().signal,
+      });
+
+      expect(result.isError).not.toBe(true);
+      expect(toolContentString(result)).toContain('replacement kaos');
     } finally {
       await session.close();
     }
@@ -599,6 +643,29 @@ function testProfile(): ResolvedAgentProfile {
   };
 }
 
+function createReadToolKaos(cwd: string, content: string): Kaos {
+  return createFakeKaos({
+    getcwd: () => cwd,
+    stat: async () =>
+      ({
+        stMode: 0o100644,
+        stIno: 1,
+        stDev: 1,
+        stNlink: 1,
+        stUid: 0,
+        stGid: 0,
+        stSize: content.length,
+        stAtime: 0,
+        stMtime: 0,
+        stCtime: 0,
+      }) satisfies StatResult,
+    readBytes: async () => Buffer.from(content),
+    readLines: async function* () {
+      yield content;
+    },
+  });
+}
+
 function registerLookupNoteTool(agent: Agent): void {
   agent.tools.registerUserTool({
     name: 'LookupNote',
@@ -653,6 +720,7 @@ function wrapReadTextWithError(inner: Kaos, cause: Error): Kaos {
       }
       if (prop === 'readLines') {
         return async function* () {
+          yield* [];
           throw cause;
         };
       }

@@ -22,6 +22,7 @@
 import type { Command } from 'commander';
 
 import {
+  ACP_BUILTIN_SLASH_COMMANDS,
   runAcpServer,
   type AvailableCommand,
   type SlashCommandsSnapshot,
@@ -30,7 +31,6 @@ import { createKimiHarness, type Session, type SkillSummary } from '@moonshot-ai
 
 import { KIMI_CODE_HOME_ENV } from '#/constant/app';
 import { createKimiCodeHostIdentity, getVersion } from '#/cli/version';
-import { BUILTIN_SLASH_COMMANDS } from '#/tui/commands/registry';
 import { buildSkillSlashCommands } from '#/tui/commands/skills';
 
 import { runLoginFlow } from './login-flow';
@@ -72,9 +72,10 @@ export function registerAcpCommand(parent: Command): void {
       // client can spawn it with `args:['login']` for the top-level
       // `kimi login` subcommand — matches kimi-cli `acp/server.py:77-96`.
       const legacyCommand = process.argv[1];
-      const builtinCommands: AvailableCommand[] = BUILTIN_SLASH_COMMANDS.map((cmd) => ({
+      const builtinCommands: AvailableCommand[] = (ACP_BUILTIN_SLASH_COMMANDS as readonly AvailableCommand[]).map((cmd) => ({
         name: cmd.name,
         description: cmd.description,
+        input: cmd.input,
       }));
       // Skills are session-scoped (per-cwd config), so we defer the
       // listSkills() call until the adapter hands us the just-created

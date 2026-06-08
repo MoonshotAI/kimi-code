@@ -222,10 +222,9 @@ describe('AcpSession slash routing', () => {
     expect(calls.activate).toEqual([{ name: 'foo', args: undefined }]);
   });
 
-  it('passes through unknown slash (and non-slash) text to Session.prompt', async () => {
+  it('intercepts unknown slash commands locally and lets non-slash text flow to Session.prompt', async () => {
     const sessionId = 'sess-slash-C';
     const { session, calls } = makeFakeSession(sessionId, [
-      endedTurn(sessionId),
       endedTurn(sessionId),
     ]);
     const harness = {
@@ -256,22 +255,24 @@ describe('AcpSession slash routing', () => {
     await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
     await waitForAvailableCommands(collecting);
 
-    // Unknown slash: `/clear` is a TUI builtin not present in the
-    // skillCommandMap, so it MUST fall through to Session.prompt
-    // verbatim — the model receives the literal text.
+    // Unknown slash (`/clear` is a TUI builtin not advertised by ACP):
+    // the adapter must NOT forward it to the model. It produces a local
+    // "unknown command" reply and returns `end_turn` without invoking
+    // Session.prompt.
     await client.prompt({ sessionId, prompt: [textBlock('/clear')] });
     // Plain text: trivially passes through.
     await client.prompt({ sessionId, prompt: [textBlock('hello world')] });
 
-    expect(calls.prompt).toBe(2);
+    expect(calls.prompt).toBe(1);
     expect(calls.activate).toEqual([]);
   });
 
-  it('does not intercept slash when no skillCommandMap has been seeded', async () => {
+  it('intercepts a `/skill:foo` form locally when no skillCommandMap has been seeded', async () => {
     // No `slashCommands` option at all → the adapter's internal map
-    // stays empty, so even a syntactically valid `/skill:foo` form
-    // falls through to Session.prompt. Verifies the "tolerant by
-    // default" stance for adapter-level unit tests.
+    // stays empty, so `/skill:foo` resolves to no skill. Per the new
+    // ACP-owned routing contract, the adapter must still NOT forward
+    // the slash form to the model — it surfaces a local "unknown
+    // command" reply and skips Session.prompt.
     const sessionId = 'sess-slash-D';
     const { session, calls } = makeFakeSession(sessionId, [endedTurn(sessionId)]);
     const harness = {
@@ -294,7 +295,80 @@ describe('AcpSession slash routing', () => {
       prompt: [textBlock('/skill:foo bar')],
     });
 
-    expect(calls.prompt).toBe(1);
+    expect(calls.prompt).toBe(0);
     expect(calls.activate).toEqual([]);
+  });
+
+  it('routes built-in `/help` locally and surfaces the advertised palette', async () => {
+    const sessionId = 'sess-slash-help';
+    const { session, calls } = makeFakeSession(sessionId, [endedTurn(sessionId)]);
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    await client.prompt({ sessionId, prompt: [textBlock('/help')] });
+
+    expect(calls.prompt).toBe(0);
+    expect(calls.activate).toEqual([]);
+    const helpReply = collecting.updates.find(
+      (n) =>
+        (n.update as { sessionUpdate?: string }).sessionUpdate === 'agent_message_chunk',
+    );
+    expect(helpReply).toBeDefined();
+    const text =
+      (helpReply!.update as { content?: { text?: string } }).content?.text ?? '';
+    expect(text).toContain('Available ACP commands:');
+    expect(text).toContain('/compact');
+    expect(text).toContain('/help');
+  });
+
+  it('routes built-in `/status` locally and renders SDK status fields', async () => {
+    const sessionId = 'sess-slash-status';
+    const { session, calls } = makeFakeSession(sessionId, [endedTurn(sessionId)]);
+    // Bolt a minimal getStatus onto the fake session — the adapter only
+    // reads from it; we don't need the rest of the SDK surface here.
+    (session as unknown as { getStatus: () => Promise<unknown> }).getStatus = async () => ({
+      model: 'mock-model',
+      thinkingLevel: 'low',
+      permission: 'ask',
+      planMode: false,
+      contextTokens: 1234,
+      maxContextTokens: 200_000,
+      contextUsage: 0.00617,
+    });
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    await client.prompt({ sessionId, prompt: [textBlock('/status')] });
+
+    expect(calls.prompt).toBe(0);
+    expect(calls.activate).toEqual([]);
+    const reply = collecting.updates.find(
+      (n) =>
+        (n.update as { sessionUpdate?: string }).sessionUpdate === 'agent_message_chunk',
+    );
+    const text = (reply!.update as { content?: { text?: string } }).content?.text ?? '';
+    expect(text).toContain('Session status:');
+    expect(text).toContain('Model: mock-model');
+    expect(text).toContain('Context: 1,234 / 200,000 (0.6%)');
   });
 });
