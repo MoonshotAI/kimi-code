@@ -68,6 +68,8 @@ export function installCommandFor(
       return `yarn global add ${NPM_PACKAGE_NAME}@${version}`;
     case 'bun-global':
       return `bun add -g ${NPM_PACKAGE_NAME}@${version}`;
+    case 'homebrew':
+      return 'brew upgrade kimi-code';
     case 'native':
       return platform === 'win32' ? NATIVE_INSTALL_COMMAND_WIN : NATIVE_INSTALL_COMMAND_UNIX;
     case 'unsupported':
@@ -81,6 +83,7 @@ export function canAutoInstall(source: InstallSource, platform: NodeJS.Platform)
     case 'pnpm-global':
     case 'yarn-global':
     case 'bun-global':
+    case 'homebrew':
       return true;
     case 'native':
       return platform !== 'win32';
@@ -108,6 +111,8 @@ export function spawnForSource(
       return { cmd: withCmdSuffix('yarn', platform), args: ['global', 'add', `${NPM_PACKAGE_NAME}@${version}`] };
     case 'bun-global':
       return { cmd: bunCommand(platform), args: ['add', '-g', `${NPM_PACKAGE_NAME}@${version}`] };
+    case 'homebrew':
+      return { cmd: 'brew', args: ['upgrade', 'kimi-code'] };
     case 'native':
       // `curl … | bash` reports only the trailing bash's exit status, so a
       // failed download (curl can't connect → empty stdin → bash exits 0)
@@ -137,6 +142,9 @@ export function renderManualUpdateMessage(
     case 'yarn-global':
     case 'bun-global':
       sourceDesc = source;
+      break;
+    case 'homebrew':
+      sourceDesc = 'homebrew';
       break;
     case 'native':
       sourceDesc = 'native (windows). Auto-update is not supported on this platform.';

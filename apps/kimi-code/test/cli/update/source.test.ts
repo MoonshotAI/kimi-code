@@ -47,6 +47,24 @@ describe('classifyByPathHeuristic', () => {
     ).toBe('bun-global');
   });
 
+  it('detects homebrew on macOS (Cellar path)', () => {
+    expect(
+      classifyByPathHeuristic('/opt/homebrew/Cellar/kimi-code/0.5.0/libexec/lib/node_modules/@moonshot-ai/kimi-code'),
+    ).toBe('homebrew');
+  });
+
+  it('detects homebrew on macOS (homebrew prefix path)', () => {
+    expect(
+      classifyByPathHeuristic('/usr/local/Cellar/kimi-code/0.5.0/libexec/lib/node_modules/@moonshot-ai/kimi-code'),
+    ).toBe('homebrew');
+  });
+
+  it('detects homebrew on Linux (Linuxbrew)', () => {
+    expect(
+      classifyByPathHeuristic('/home/linuxbrew/.linuxbrew/Cellar/kimi-code/0.5.0/libexec/lib/node_modules/@moonshot-ai/kimi-code'),
+    ).toBe('homebrew');
+  });
+
   it('returns null for an unknown layout', () => {
     expect(classifyByPathHeuristic('/Users/me/dev/@moonshot-ai/kimi-code')).toBeNull();
   });
@@ -110,6 +128,18 @@ describe('detectInstallSource', () => {
         platform: 'darwin',
       }),
     ).resolves.toBe('npm-global');
+  });
+
+  it('returns homebrew when packageRoot matches Cellar heuristic', async () => {
+    await expect(
+      detectInstallSource({
+        getPackageRoot: () =>
+          '/opt/homebrew/Cellar/kimi-code/0.5.0/libexec/lib/node_modules/@moonshot-ai/kimi-code',
+        getGlobalPrefix: async () => '/usr/local',
+        detectNative: () => false,
+        platform: 'darwin',
+      }),
+    ).resolves.toBe('homebrew');
   });
 
   it('returns native when SEA isSea() is true (highest priority)', async () => {

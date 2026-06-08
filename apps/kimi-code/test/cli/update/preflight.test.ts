@@ -397,6 +397,39 @@ describe('runUpdatePreflight', () => {
     );
   });
 
+  it('homebrew: spawns brew upgrade kimi-code', async () => {
+    disableAutoInstall();
+    mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.detectInstallSource.mockResolvedValue('homebrew');
+    mocks.promptForInstallChoice.mockResolvedValue('install');
+    mockSpawnExit(0);
+    const { options } = captureOutput();
+    await runUpdatePreflight('0.4.0', options);
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      'brew',
+      ['upgrade', 'kimi-code'],
+      { stdio: 'inherit' },
+    );
+  });
+
+  it('homebrew: starts automatic background update', async () => {
+    mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.readUpdateInstallState.mockResolvedValue(installState());
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.detectInstallSource.mockResolvedValue('homebrew');
+    mockSpawnExit(0);
+    const { options } = captureOutput();
+
+    await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+    expect(promptForInstallChoice).not.toHaveBeenCalled();
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      'brew',
+      ['upgrade', 'kimi-code'],
+      { detached: true, stdio: 'ignore' },
+    );
+  });
+
   it('native on darwin: spawns bash -c with pipefail-guarded curl|bash', async () => {
     disableAutoInstall();
     mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));

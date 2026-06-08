@@ -40,6 +40,7 @@ export function detectNativeInstall(): boolean {
 const PNPM_PATH_SEGMENT = 'pnpm/global/';
 const YARN_PATH_SEGMENTS = ['.config/yarn/global/', '/.yarn/global/'];
 const BUN_PATH_SEGMENT = '.bun/install/global/';
+const HOMEBREW_PATH_SEGMENTS = ['/cellar/', '/homebrew/'];
 
 function normalizeForHeuristic(filePath: string): string {
   return filePath.replaceAll('\\', '/').toLowerCase();
@@ -57,6 +58,9 @@ export function classifyByPathHeuristic(packageRoot: string): InstallSource | nu
     if (normalized.includes(seg)) return 'yarn-global';
   }
   if (normalized.includes(BUN_PATH_SEGMENT)) return 'bun-global';
+  for (const seg of HOMEBREW_PATH_SEGMENTS) {
+    if (normalized.includes(seg)) return 'homebrew';
+  }
   return null;
 }
 
