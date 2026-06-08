@@ -120,7 +120,8 @@ export async function runToolCallBatch(
   response: LLMChatResponse,
 ): Promise<ToolCallBatchResult> {
   if (response.toolCalls.length === 0) return { stopTurn: false };
-  const calls = response.toolCalls.map((toolCall) => preflightToolCall(step.tools, toolCall));
+  const toolsByName = buildToolsByName(step.tools);
+  const calls = response.toolCalls.map((toolCall) => preflightToolCall(toolsByName, toolCall));
   const scheduler = new ToolScheduler<PendingToolResult>();
   const pendingResults: Array<Promise<PendingToolResult>> = [];
   let stopTurn = false;
@@ -163,18 +164,29 @@ export async function runToolCallBatch(
   return { stopTurn };
 }
 
+function buildToolsByName(
+  tools: readonly ExecutableTool[] | undefined,
+): ReadonlyMap<string, ExecutableTool> | undefined {
+  if (tools === undefined || tools.length === 0) return undefined;
+  const byName = new Map<string, ExecutableTool>();
+  for (const tool of tools) {
+    if (!byName.has(tool.name)) byName.set(tool.name, tool);
+  }
+  return byName;
+}
+
 /**
  * Provider-order validation pass. It does not run hooks, spawn tools, or write
  * events. Validator compilation may populate the local cache.
  */
 function preflightToolCall(
-  tools: readonly ExecutableTool[] | undefined,
+  toolsByName: ReadonlyMap<string, ExecutableTool> | undefined,
   toolCall: ToolCall,
 ): PreflightedToolCall {
   const toolName = toolCall.name;
   const parsedArgs = parseToolCallArguments(toolCall.arguments);
   const args = parsedArgs.success ? parsedArgs.data : {};
-  const tool = tools?.find((candidate) => candidate.name === toolName);
+  const tool = toolsByName?.get(toolName);
   if (tool === undefined) {
     return {
       kind: 'rejected',
