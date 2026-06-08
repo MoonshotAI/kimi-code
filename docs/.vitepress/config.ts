@@ -184,6 +184,11 @@ const config = withMermaid(defineConfig({
     },
   },
 
+  redirects: {
+    '/zh/customization/datasource': '/zh/customization/plugins',
+    '/en/customization/datasource': '/en/customization/plugins',
+  },
+
   themeConfig: {
     outline: [2, 3],
     search: { provider: 'local' },
