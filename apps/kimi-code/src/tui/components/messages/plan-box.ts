@@ -19,8 +19,6 @@ const TITLE_PREFIX = ' plan: ';
 const TITLE_SUFFIX = ' ';
 
 export interface PlanBoxOptions {
-  maxContentLines?: number;
-  expanded?: boolean;
   status?: {
     readonly label: string;
     readonly colorHex: string;
@@ -29,8 +27,6 @@ export interface PlanBoxOptions {
 
 export class PlanBoxComponent implements Component {
   private readonly markdown: Markdown;
-  private readonly maxContentLines: number | undefined;
-  private readonly expanded: boolean;
   private readonly status: PlanBoxOptions['status'];
   private cachedWidth: number | undefined;
   private cachedLines: string[] | undefined;
@@ -47,8 +43,6 @@ export class PlanBoxComponent implements Component {
     // instance means repeated render() calls from the parent Container
     // hit the cache instead of re-parsing on every frame.
     this.markdown = new Markdown(plan.trim(), 0, 0, markdownTheme);
-    this.maxContentLines = opts?.maxContentLines;
-    this.expanded = opts?.expanded ?? false;
     this.status = opts?.status;
   }
 
@@ -81,34 +75,17 @@ export class PlanBoxComponent implements Component {
     const bottom = indent + paint('└' + '─'.repeat(horzLen) + '┘');
 
     const rawLines = this.markdown.render(contentWidth);
-    const { shown, hiddenCount } = this.capContentLines(rawLines);
 
     const lines: string[] = [top];
-    for (const raw of shown) {
+    for (const raw of rawLines) {
       const pad = Math.max(0, contentWidth - visibleWidth(raw));
       lines.push(indent + paint('│') + ' ' + raw + ' '.repeat(pad) + ' ' + paint('│'));
-    }
-    if (hiddenCount > 0) {
-      const footer = chalk.dim(
-        `... (${String(hiddenCount)} more line${hiddenCount === 1 ? '' : 's'}, ctrl+e to expand)`,
-      );
-      const pad = Math.max(0, contentWidth - visibleWidth(footer));
-      lines.push(indent + paint('│') + ' ' + footer + ' '.repeat(pad) + ' ' + paint('│'));
     }
     lines.push(bottom);
 
     this.cachedWidth = width;
     this.cachedLines = lines;
     return lines;
-  }
-
-  private capContentLines(rawLines: string[]): { shown: string[]; hiddenCount: number } {
-    const cap = this.maxContentLines;
-    if (this.expanded || cap === undefined || rawLines.length <= cap) {
-      return { shown: rawLines, hiddenCount: 0 };
-    }
-    const shownCount = Math.max(0, cap - 1);
-    return { shown: rawLines.slice(0, shownCount), hiddenCount: rawLines.length - shownCount };
   }
 
   private buildTitle(horzLen: number): string {

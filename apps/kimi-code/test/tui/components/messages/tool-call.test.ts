@@ -255,7 +255,7 @@ describe('ToolCallComponent', () => {
     expect(after).not.toContain('/tmp/refactor.md');
   });
 
-  it('caps the plan preview to the terminal height and expands on ctrl+e', () => {
+  it('renders the full plan preview', () => {
     const longPlan = `# Refactor session\n\n${Array.from({ length: 40 }, (_, i) => `- step ${String(i + 1)}`).join('\n')}`;
     const component = new ToolCallComponent(
       {
@@ -269,39 +269,13 @@ describe('ToolCallComponent', () => {
       createMarkdownTheme(darkColors),
     );
 
-    const collapsed = strip(component.render(100).join('\n'));
-    expect(collapsed).toContain('step 1');
-    expect(collapsed).toMatch(/\.\.\. \(\d+ more lines, ctrl\+e to expand\)/);
-    expect(collapsed).not.toContain('step 40');
-
-    expect(component.setPlanExpanded(true)).toBe(true);
-    const expanded = strip(component.render(100).join('\n'));
-    expect(expanded).toContain('step 40');
-    expect(expanded).not.toContain('ctrl+e to expand');
-  });
-
-  it('plan preview controls are no-ops for non-ExitPlanMode tool calls', () => {
-    const component = new ToolCallComponent(
-      {
-        id: 'call_bash_plan',
-        name: 'Bash',
-        args: { command: 'echo hi' },
-      },
-      undefined,
-      darkColors,
-      undefined,
-      createMarkdownTheme(darkColors),
-    );
-
-    expect(component.setPlanExpanded(true)).toBe(false);
-    component.setPlanInfo({ plan: 'should be ignored', path: '/etc/hosts' });
-
     const out = strip(component.render(100).join('\n'));
-    expect(out).not.toContain('should be ignored');
-    expect(out).not.toContain('plan:');
+    expect(out).toContain('step 1');
+    expect(out).toContain('step 40');
+    expect(out).not.toContain('more lines');
   });
 
-  it('ctrl+o does not affect the plan preview cap', () => {
+  it('ctrl+o does not affect the full plan preview', () => {
     const longPlan = `# P\n\n${Array.from({ length: 40 }, (_, i) => `- step ${String(i + 1)}`).join('\n')}`;
     const component = new ToolCallComponent(
       {
@@ -316,8 +290,8 @@ describe('ToolCallComponent', () => {
     );
     component.setExpanded(true);
     const out = strip(component.render(100).join('\n'));
-    expect(out).toContain('ctrl+e to expand');
-    expect(out).not.toContain('step 40');
+    expect(out).toContain('step 40');
+    expect(out).not.toContain('more lines');
   });
 
   it('header chips an Approved status when ExitPlanMode result indicates approval', () => {

@@ -488,7 +488,6 @@ class PrefixedWrappedLine implements Component {
 
 export class ToolCallComponent extends Container {
   private expanded = false;
-  private planExpanded = false;
   private toolCall: ToolCallBlockData;
   private result: ToolResultBlockData | undefined;
   private colors: ColorPalette;
@@ -606,17 +605,6 @@ export class ToolCallComponent extends Container {
     // children and would leave the call preview stuck at its initial
     // collapsed size.
     this.rebuildBody();
-  }
-
-  // Toggle the plan box's expanded state independently from tool-output
-  // expansion. Returns true iff this card actually owns a plan preview
-  // (ExitPlanMode), so the caller can decide whether to consume the keystroke.
-  setPlanExpanded(expanded: boolean): boolean {
-    if (this.toolCall.name !== 'ExitPlanMode') return false;
-    if (this.planExpanded === expanded) return true;
-    this.planExpanded = expanded;
-    this.rebuildBody();
-    return true;
   }
 
   setResult(result: ToolResultBlockData): void {
@@ -1793,20 +1781,12 @@ export class ToolCallComponent extends Container {
     if (this.markdownTheme !== undefined) {
       this.addChild(
         new PlanBoxComponent(plan, this.markdownTheme, this.colors.success, path, {
-          maxContentLines: this.computePlanBoxMaxContentLines(),
-          expanded: this.planExpanded,
           status: this.resolvePlanBoxStatus(),
         }),
       );
     } else {
       this.addChild(new Text(chalk.dim(plan), 2, 0));
     }
-  }
-
-  private computePlanBoxMaxContentLines(): number | undefined {
-    const rows = this.ui?.terminal.rows;
-    if (rows === undefined || !Number.isFinite(rows) || rows <= 0) return undefined;
-    return Math.max(8, Math.floor(rows * 0.6) - 4);
   }
 
   private resolvePlanForPreview(): string {
