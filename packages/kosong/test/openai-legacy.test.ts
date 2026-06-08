@@ -718,7 +718,7 @@ describe('OpenAILegacyChatProvider', () => {
       expect(body['reasoning_effort']).toBe('high');
     });
 
-    it.each(['gpt-5.2', 'gpt-5.4', 'gpt-5.5', 'openai/gpt-5.5'])(
+    it.each(['gpt-5.2', 'gpt-5.4', 'gpt-5.5', 'openai/gpt-5.5', 'deepseek-v4-flash', 'deepseek-v4-pro'])(
       '.withThinking("xhigh") passes through for Chat Completions xhigh model %s',
       async (model) => {
         const provider = createProvider({ model }).withThinking('xhigh');
@@ -732,7 +732,7 @@ describe('OpenAILegacyChatProvider', () => {
       },
     );
 
-    it.each(['gpt-5.1', 'gpt-5.4-mini', 'gpt-5.4-pro', 'kimi-k2.6', 'some-model'])(
+    it.each(['gpt-5.1', 'gpt-5.4-mini', 'gpt-5.4-pro'])(
       '.withThinking("xhigh") clamps to high for Chat Completions model %s',
       async (model) => {
         const provider = createProvider({ model }).withThinking('xhigh');

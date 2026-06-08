@@ -158,7 +158,7 @@ function normalizeModelName(modelName: string): string {
   return modelName.toLowerCase();
 }
 
-function modelIdLeaf(modelName: string): string {
+export function modelIdLeaf(modelName: string): string {
   return normalizeModelName(modelName).trim().split('/').at(-1) ?? '';
 }
 

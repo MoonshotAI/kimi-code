@@ -14,6 +14,7 @@ import OpenAI from 'openai';
 
 import {
   getOpenAILegacyModelCapability,
+  modelIdLeaf,
   supportsOpenAIChatCompletionsXHighReasoning,
 } from './capability-registry';
 import {
@@ -140,6 +141,17 @@ function clampChatCompletionsReasoningEffort(
   model: string,
 ): string | undefined {
   if (reasoningEffort !== 'xhigh') {
+    return reasoningEffort;
+  }
+  // Only clamp for known OpenAI models. Other providers (DeepSeek, Qwen,
+  // One API gateways, etc.) using the openai-legacy adapter may support
+  // xhigh/max reasoning_effort natively, so we should not downgrade them.
+  const modelLeaf = modelIdLeaf(model);
+  const isOpenAIModel =
+    modelLeaf.startsWith('gpt-') ||
+    modelLeaf.startsWith('o1') ||
+    modelLeaf.startsWith('o3');
+  if (!isOpenAIModel) {
     return reasoningEffort;
   }
   return supportsOpenAIChatCompletionsXHighReasoning(model) ? 'xhigh' : 'high';
