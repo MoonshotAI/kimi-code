@@ -362,7 +362,7 @@ export class SessionSubagentHost {
       thinkingLevel: parent.config.thinkingLevel,
     });
 
-    const context = await prepareSystemPromptContext(child.kaos);
+    const context = await prepareSystemPromptContext(child.kaos, this.session.options.kimiHomeDir);
     child.useProfile(profile, context);
     child.tools.inheritUserTools(parent.tools);
   }

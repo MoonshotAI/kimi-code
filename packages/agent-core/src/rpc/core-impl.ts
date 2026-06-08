@@ -778,6 +778,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const explicitDirs = this.skillDirs.length > 0 ? this.skillDirs : undefined;
     return {
       userHomeDir: this.userHomeDir,
+      brandHomeDir: this.homeDir,
       explicitDirs,
       extraDirs: config.extraSkillDirs,
       pluginSkillRoots: this.plugins.pluginSkillRoots(),

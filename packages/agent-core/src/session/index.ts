@@ -65,6 +65,8 @@ export interface SessionOptions {
 
 export interface SessionSkillConfig {
   readonly userHomeDir?: string;
+  /** Brand data dir (KIMI_CODE_HOME); user brand skills live under `<brandHomeDir>/skills`. */
+  readonly brandHomeDir?: string;
   readonly explicitDirs?: readonly string[];
   readonly extraDirs?: readonly string[];
   readonly pluginSkillRoots?: readonly SkillRoot[];
@@ -323,7 +325,7 @@ export class Session {
     agent: Agent,
     profile: ResolvedAgentProfile,
   ): Promise<void> {
-    const context = await prepareSystemPromptContext(agent.kaos);
+    const context = await prepareSystemPromptContext(agent.kaos, this.options.kimiHomeDir);
     agent.useProfile(profile, context);
   }
 
@@ -342,7 +344,7 @@ export class Session {
       });
       await handle.completion;
 
-      const agentsMd = await loadAgentsMd(mainAgent.kaos);
+      const agentsMd = await loadAgentsMd(mainAgent.kaos, this.options.kimiHomeDir);
       mainAgent.context.appendSystemReminder(initCompletionReminder(agentsMd), {
         kind: 'injection',
         variant: 'init',
@@ -399,6 +401,7 @@ export class Session {
     const roots = await resolveSkillRoots({
       paths: {
         userHomeDir: this.options.skills?.userHomeDir ?? homedir(),
+        brandHomeDir: this.options.skills?.brandHomeDir ?? this.options.kimiHomeDir,
         workDir: this.options.kaos.getcwd(),
       },
       explicitDirs: this.options.skills?.explicitDirs,
