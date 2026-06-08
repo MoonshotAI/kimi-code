@@ -11,6 +11,7 @@ import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@moonshot-ai/acp-adapter', () => ({
+  ACP_BUILTIN_SLASH_COMMANDS: [],
   runAcpServer: vi.fn(async () => undefined),
 }));
 
