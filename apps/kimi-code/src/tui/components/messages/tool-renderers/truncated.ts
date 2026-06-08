@@ -7,6 +7,8 @@ import type { ColorPalette } from '#/tui/theme/colors';
 import type { ResultRenderer } from './types';
 import { PREVIEW_LINES } from './types';
 
+const DEFAULT_INDENT = 2;
+
 export function trimTrailingEmptyLines(lines: string[]): string[] {
   let end = lines.length;
   while (end > 0) {
@@ -27,6 +29,8 @@ export class TruncatedOutputComponent implements Component {
   private readonly textComponent: Text;
   private readonly expanded: boolean;
   private readonly maxLines: number;
+  private readonly indent: number;
+  private readonly expandHint: boolean;
 
   constructor(
     output: string,
@@ -35,13 +39,19 @@ export class TruncatedOutputComponent implements Component {
       isError: boolean | undefined;
       colors: ColorPalette;
       maxLines?: number;
+      indent?: number;
+      // When false, the truncation footer omits the "ctrl+o to expand" promise
+      // (for contexts whose output is fixed-truncated and never expands).
+      expandHint?: boolean;
     },
   ) {
     this.expanded = options.expanded;
     this.maxLines = options.maxLines ?? PREVIEW_LINES;
+    this.indent = options.indent ?? DEFAULT_INDENT;
+    this.expandHint = options.expandHint ?? true;
     const tint = options.isError ? chalk.hex(options.colors.error) : chalk.dim;
     const cleaned = trimTrailingEmptyLines(output.split('\n')).join('\n');
-    this.textComponent = new Text(tint(cleaned), 2, 0);
+    this.textComponent = new Text(tint(cleaned), this.indent, 0);
   }
 
   invalidate(): void {
@@ -57,10 +67,10 @@ export class TruncatedOutputComponent implements Component {
 
     const shown = contentLines.slice(0, this.maxLines);
     const remaining = contentLines.length - this.maxLines;
-    return [
-      ...shown,
-      chalk.dim(`... (${String(remaining)} more lines, ctrl+o to expand)`),
-    ];
+    const hint = this.expandHint
+      ? `... (${String(remaining)} more lines, ctrl+o to expand)`
+      : `... (${String(remaining)} more lines)`;
+    return [...shown, ' '.repeat(this.indent) + chalk.dim(hint)];
   }
 }
 

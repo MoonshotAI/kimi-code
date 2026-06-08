@@ -255,7 +255,7 @@ describe('ToolCallComponent', () => {
     expect(after).not.toContain('/tmp/refactor.md');
   });
 
-  it('caps the plan preview to the terminal height and expands on ctrl+e', () => {
+  it('renders the full plan preview', () => {
     const longPlan = `# Refactor session\n\n${Array.from({ length: 40 }, (_, i) => `- step ${String(i + 1)}`).join('\n')}`;
     const component = new ToolCallComponent(
       {
@@ -269,39 +269,13 @@ describe('ToolCallComponent', () => {
       createMarkdownTheme(darkColors),
     );
 
-    const collapsed = strip(component.render(100).join('\n'));
-    expect(collapsed).toContain('step 1');
-    expect(collapsed).toMatch(/\.\.\. \(\d+ more lines, ctrl\+e to expand\)/);
-    expect(collapsed).not.toContain('step 40');
-
-    expect(component.setPlanExpanded(true)).toBe(true);
-    const expanded = strip(component.render(100).join('\n'));
-    expect(expanded).toContain('step 40');
-    expect(expanded).not.toContain('ctrl+e to expand');
-  });
-
-  it('plan preview controls are no-ops for non-ExitPlanMode tool calls', () => {
-    const component = new ToolCallComponent(
-      {
-        id: 'call_bash_plan',
-        name: 'Bash',
-        args: { command: 'echo hi' },
-      },
-      undefined,
-      darkColors,
-      undefined,
-      createMarkdownTheme(darkColors),
-    );
-
-    expect(component.setPlanExpanded(true)).toBe(false);
-    component.setPlanInfo({ plan: 'should be ignored', path: '/etc/hosts' });
-
     const out = strip(component.render(100).join('\n'));
-    expect(out).not.toContain('should be ignored');
-    expect(out).not.toContain('plan:');
+    expect(out).toContain('step 1');
+    expect(out).toContain('step 40');
+    expect(out).not.toContain('more lines');
   });
 
-  it('ctrl+o does not affect the plan preview cap', () => {
+  it('ctrl+o does not affect the full plan preview', () => {
     const longPlan = `# P\n\n${Array.from({ length: 40 }, (_, i) => `- step ${String(i + 1)}`).join('\n')}`;
     const component = new ToolCallComponent(
       {
@@ -316,8 +290,8 @@ describe('ToolCallComponent', () => {
     );
     component.setExpanded(true);
     const out = strip(component.render(100).join('\n'));
-    expect(out).toContain('ctrl+e to expand');
-    expect(out).not.toContain('step 40');
+    expect(out).toContain('step 40');
+    expect(out).not.toContain('more lines');
   });
 
   it('header chips an Approved status when ExitPlanMode result indicates approval', () => {
@@ -647,9 +621,9 @@ describe('ToolCallComponent', () => {
     expect(out).toContain('Explore Agent Running (explore project xxx) · 1 tool · 10s');
     expect(out).toContain('Using Read (apps/kimi-code/src/tui/utils/background-agent-status.ts)');
     expect(out).not.toContain('think1');
-    expect(out).not.toContain('think2');
+    expect(out).toContain('think2');
     expect(out).toContain('think3');
-    expect(out).toContain('◌ think3');
+    expect(out).toContain('◌ think2');
     expect(out).not.toContain('answer1');
     expect(out).not.toContain('answer2');
     expect(out).toContain('answer3');
@@ -784,11 +758,131 @@ describe('ToolCallComponent', () => {
     );
 
     const lines = strip(component.render(34).join('\n')).split('\n');
-    expect(lines).toContain('  ◌ thinking words that should    ');
-    expect(lines).toContain('    wrap with a clean hanging     ');
+    // Thinking is scrolled to its last two display rows, so the head of the
+    // wrapped paragraph drops and the ◌ marker hangs on the first kept row.
+    expect(lines.some((l) => l.includes('◌ wrap with a clean hanging'))).toBe(true);
+    expect(lines.join('\n')).not.toContain('thinking words that should');
     expect(lines).toContain('    indent                        ');
+    // Output keeps its full hanging-indent wrap (unchanged behavior).
     expect(lines).toContain('  └ output words that should also ');
     expect(lines).toContain('    wrap with a clean hanging     ');
+  });
+
+  it('scrolls single subagent thinking to the last two display rows', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_scroll',
+        name: 'Agent',
+        args: { description: 'long think' },
+      },
+      undefined,
+      darkColors,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_scroll',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    // A single long logical line (no newlines) wraps to many display rows;
+    // only the last THINKING_PREVIEW_LINES (2) should remain visible.
+    const segs = Array.from({ length: 30 }, (_, i) => `seg${String(i).padStart(2, '0')}`);
+    component.appendSubagentText(segs.join(' '), 'thinking');
+
+    const lines = strip(component.render(40).join('\n')).split('\n');
+    const thinkingRows = lines.filter((l) => /seg\d\d/.test(l));
+    expect(thinkingRows.length).toBe(2);
+    expect(lines.join('\n')).toContain('seg29');
+    expect(lines.join('\n')).not.toContain('seg00');
+  });
+
+  it('shows and truncates a single subagent Bash tool output', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_bash_out',
+        name: 'Agent',
+        args: { description: 'run bash' },
+      },
+      undefined,
+      darkColors,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_bash',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    component.appendSubToolCall({
+      id: 'sub_bash:cmd',
+      name: 'Bash',
+      args: { command: 'ls -la' },
+    });
+    const output = Array.from({ length: 10 }, (_, i) => `bash-line-${String(i)}`).join('\n');
+    component.finishSubToolCall({ tool_call_id: 'sub_bash:cmd', output, is_error: false });
+
+    let out = strip(component.render(120).join('\n'));
+    expect(out).toContain('Used Bash (ls -la)');
+    expect(out).toContain('bash-line-0');
+    expect(out).toContain('bash-line-2');
+    expect(out).not.toContain('bash-line-3');
+    expect(out).toContain('... (7 more lines)');
+    // Subagent output is fixed-truncated: no ctrl+o promise.
+    expect(out).not.toContain('ctrl+o');
+
+    // The global ctrl+o expand toggle must NOT expand subagent output.
+    component.setExpanded(true);
+    out = strip(component.render(120).join('\n'));
+    expect(out).not.toContain('bash-line-9');
+    expect(out).toContain('... (7 more lines)');
+  });
+
+  it('truncates unknown subagent tool output but leaves recognized tools as rows', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_mixed',
+        name: 'Agent',
+        args: { description: 'mixed tools' },
+      },
+      undefined,
+      darkColors,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_mixed',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    component.appendSubToolCall({
+      id: 'sub_mixed:read',
+      name: 'Read',
+      args: { path: 'foo.ts' },
+    });
+    component.finishSubToolCall({
+      tool_call_id: 'sub_mixed:read',
+      output: 'recognized-read-body\nhidden-read-line',
+      is_error: false,
+    });
+    component.appendSubToolCall({
+      id: 'sub_mixed:mcp',
+      name: 'mcp__server__do',
+      args: {},
+    });
+    const mcpOut = Array.from({ length: 5 }, (_, i) => `mcp-line-${String(i)}`).join('\n');
+    component.finishSubToolCall({ tool_call_id: 'sub_mixed:mcp', output: mcpOut, is_error: false });
+
+    const out = strip(component.render(120).join('\n'));
+    // Recognized tool: activity row only, no output body.
+    expect(out).toContain('Used Read (foo.ts)');
+    expect(out).not.toContain('recognized-read-body');
+    // Unknown/MCP tool: truncated output body, no ctrl+o promise.
+    expect(out).toContain('mcp-line-0');
+    expect(out).toContain('mcp-line-2');
+    expect(out).not.toContain('mcp-line-3');
+    expect(out).toContain('... (2 more lines)');
+    expect(out).not.toContain('ctrl+o');
   });
 
   it('renders failed single subagents with the dedicated header and error text', () => {

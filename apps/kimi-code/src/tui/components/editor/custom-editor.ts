@@ -96,10 +96,6 @@ export class CustomEditor extends Editor {
   public onCtrlD?: () => void;
   public onCtrlC?: () => void;
   public onToggleToolExpand?: () => void;
-  // Returns true when a plan card actually handled the toggle. When it
-  // returns false (no plan in the transcript) the keystroke falls through
-  // to pi-tui's default ctrl+e binding (move cursor to end of line).
-  public onTogglePlanExpand?: () => boolean;
   public onOpenExternalEditor?: () => void;
   public onCtrlS?: () => void;
   public onUndo?: () => void;
@@ -290,11 +286,6 @@ export class CustomEditor extends Editor {
     if (matchesKey(normalized, Key.ctrl('o'))) {
       this.onToggleToolExpand?.();
       return;
-    }
-
-    if (matchesKey(normalized, Key.ctrl('e'))) {
-      if (this.onTogglePlanExpand?.() === true) return;
-      // No plan to toggle — fall through to pi-tui's end-of-line.
     }
 
     if (matchesKey(normalized, Key.ctrl('s'))) {
