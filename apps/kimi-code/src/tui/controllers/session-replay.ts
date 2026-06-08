@@ -257,12 +257,6 @@ export class SessionReplayRenderer {
       return;
     }
     if (isGoalCompletionSystemReminder(message)) {
-      const goalCompletion = goalCompletionFromSystemReminder(message);
-      if (goalCompletion === null) return;
-      this.flushAssistant(context);
-      this.host.appendTranscriptEntry(
-        replayEntry(context, 'assistant', goalCompletion, 'markdown'),
-      );
       return;
     }
 
@@ -617,13 +611,6 @@ function goalLifecycleReplayContent(change: GoalReplayLifecycleChange): string {
     case undefined:
       return 'Goal updated';
   }
-}
-
-function goalCompletionFromSystemReminder(message: ContextMessage): string | null {
-  const text = contentPartsToText(message.content);
-  const match = /^<system-reminder>\n([\s\S]*)\n<\/system-reminder>$/.exec(text);
-  const content = match?.[1] ?? text;
-  return content.trimStart().startsWith('✓ Goal complete') ? content : null;
 }
 
 function isGoalCompletionSystemReminder(message: ContextMessage): boolean {

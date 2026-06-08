@@ -277,7 +277,7 @@ function backgroundTask(
 }
 
 describe('KimiTUI resume message replay', () => {
-  it('renders persisted goal completion reminders as assistant completion messages', async () => {
+  it('does not render legacy goal completion context reminders as transcript messages', async () => {
     const driver = await replayIntoDriver([
       message(
         'user',
@@ -291,14 +291,9 @@ describe('KimiTUI resume message replay', () => {
       ),
     ]);
 
-    const entry = driver.state.transcriptEntries.find((item) =>
-      item.content.includes('Goal complete'),
-    );
-    expect(entry).toMatchObject({
-      kind: 'assistant',
-      renderMode: 'markdown',
-      content: '✓ Goal complete.\nWorked 1 turn over 7m15s, using 4.3M tokens.',
-    });
+    expect(driver.state.transcriptEntries).toEqual([]);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).not.toContain('Goal complete');
   });
 
   it('does not render neutral goal completion context reminders as transcript messages', async () => {
