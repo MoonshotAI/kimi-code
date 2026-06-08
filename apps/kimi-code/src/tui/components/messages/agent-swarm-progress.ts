@@ -6,6 +6,7 @@ import {
   type AgentSwarmProgressEstimatorPhase,
 } from '#/tui/components/messages/agent-swarm-progress-estimator';
 import { FAILURE_MARK, SUCCESS_MARK } from '#/tui/constant/symbols';
+import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import { gradientText } from '#/tui/theme/gradient-text';
 
@@ -169,7 +170,6 @@ export interface AgentSwarmGridLayout {
 
 export interface AgentSwarmProgressOptions {
   readonly description: string;
-  readonly colors: ColorPalette;
   readonly requestRender?: () => void;
   readonly availableGridHeight?: () => number | undefined;
 }
@@ -188,7 +188,6 @@ export class AgentSwarmProgressComponent implements Component {
   private members: AgentSwarmMember[];
   private readonly progressEstimator = new AgentSwarmProgressEstimator();
   private description: string;
-  private readonly colors: ColorPalette;
   private readonly requestRender: (() => void) | undefined;
   private readonly availableGridHeight: (() => number | undefined) | undefined;
   private inputComplete = false;
@@ -202,10 +201,14 @@ export class AgentSwarmProgressComponent implements Component {
 
   constructor(options: AgentSwarmProgressOptions) {
     this.description = options.description;
-    this.colors = options.colors;
     this.requestRender = options.requestRender;
     this.availableGridHeight = options.availableGridHeight;
     this.members = [];
+  }
+
+  /** Live palette, read on each render so a theme switch recolors the panel. */
+  private get colors(): ColorPalette {
+    return currentTheme.palette;
   }
 
   dispose(): void {

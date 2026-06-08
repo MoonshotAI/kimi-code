@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
+import chalk from 'chalk';
 
 import {
   AgentSwarmProgressComponent,
@@ -12,7 +13,7 @@ import {
   calculateAgentSwarmGridLayout,
 } from '#/tui/components/messages/agent-swarm-progress';
 import { AgentSwarmProgressEstimator } from '#/tui/components/messages/agent-swarm-progress-estimator';
-import { darkColors } from '#/tui/theme/colors';
+import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 
 const DEFAULT_DESCRIPTION = 'Review changed files';
 
@@ -25,7 +26,6 @@ function createComponent(
 ): AgentSwarmProgressComponent {
   return new AgentSwarmProgressComponent({
     description: options.description ?? DEFAULT_DESCRIPTION,
-    colors: options.colors ?? darkColors,
     requestRender: options.requestRender,
     availableGridHeight: options.availableGridHeight,
   });
@@ -57,6 +57,7 @@ function startSubagents(component: AgentSwarmProgressComponent, count: number): 
 
 afterEach(() => {
   vi.useRealTimers();
+  currentTheme.setPalette(darkColors);
 });
 
 describe('calculateAgentSwarmGridLayout', () => {
@@ -164,6 +165,29 @@ describe('AgentSwarmProgressComponent', () => {
     expect(output).toContain('Review changed files');
     expect(output).toContain('Orchestrating...');
     expect(output).not.toContain('01');
+  });
+
+  it('repaints from the active palette when the theme changes', () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3; // force truecolor so palette differences surface as ANSI
+    try {
+      const component = createComponent();
+      const titleOf = (): string => {
+        const line = component.render(100).find((l) => strip(l).includes('Agent Swarm'));
+        if (line === undefined) throw new Error('title line not found');
+        return line;
+      };
+      const before = titleOf();
+
+      currentTheme.setPalette(lightColors);
+      const after = titleOf();
+
+      // Same visible text, different ANSI colours (reads currentTheme live).
+      expect(strip(after)).toBe(strip(before));
+      expect(after).not.toBe(before);
+    } finally {
+      chalk.level = previousLevel;
+    }
   });
 
   it('renders blank padding around the block without a bottom divider', () => {
