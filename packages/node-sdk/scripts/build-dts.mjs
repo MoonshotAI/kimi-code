@@ -33,6 +33,7 @@ function run(command, args) {
     const child = spawn(executable, args, {
       cwd: packageRoot,
       stdio: 'inherit',
+      shell: true,
     });
 
     child.once('error', reject);
