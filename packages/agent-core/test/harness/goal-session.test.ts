@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { AgentOptions } from '../../src/agent';
+import type { KimiConfig } from '../../src/config';
 import { ErrorCodes, KimiError } from '../../src/errors';
 import type { HookDef } from '../../src/session/hooks';
 import type { ResolvedAgentProfile } from '../../src/profile';
@@ -85,6 +86,7 @@ async function setupSession(
   tools: readonly string[],
   generate?: NonNullable<AgentOptions['generate']>,
   hooks?: readonly HookDef[],
+  config?: KimiConfig,
 ) {
   const scripted = createScriptedGenerate();
   const session = track(
@@ -96,6 +98,7 @@ async function setupSession(
       skills: { explicitDirs: [join(sessionDir, 'missing')] },
       providerManager: testProviderManager(),
       hooks,
+      config,
     }),
   );
   const { agent } = await session.createAgent(
@@ -269,6 +272,49 @@ describe('goal session end-to-end', () => {
     const goal = api.getGoal({}).goal;
     expect(goal?.status).toBe('blocked');
     expect(goal?.terminalReason).toBeUndefined();
+  });
+
+  it('does not force a goal outcome summary after maxStepsPerTurn is exhausted', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent, scripted } = await setupSession(
+      sessionDir,
+      events,
+      ['GetGoal', 'UpdateGoal'],
+      undefined,
+      undefined,
+      { providers: {}, loopControl: { maxStepsPerTurn: 1 } },
+    );
+    const api = new SessionAPIImpl(session);
+    await api.createGoal({ objective: 'work' });
+
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'complete',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete' }),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'This summary should not run.' });
+
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    expect(scripted.calls).toHaveLength(1);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'turn.ended',
+        reason: 'completed',
+      }),
+    );
+    expect(events).not.toContainEqual(
+      expect.objectContaining({
+        type: 'turn.ended',
+        reason: 'failed',
+        error: expect.objectContaining({ code: ErrorCodes.LOOP_MAX_STEPS_EXCEEDED }),
+      }),
+    );
+    expect(api.getGoal({}).goal).toBeNull();
+    expect(JSON.stringify(agent.context.history)).not.toContain('Write a concise final message');
   });
 
   it('pauses the goal on provider rate limits', async () => {

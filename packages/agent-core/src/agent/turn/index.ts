@@ -637,6 +637,10 @@ export class TurnFlow {
                 isGoalOutcomeReminder(this.agent.context.history.at(-1))
               ) {
                 goalOutcomeMessageContinuationUsed = true;
+                if (!hasStepBudgetRemaining(loopControl?.maxStepsPerTurn, ctx.stepNumber)) {
+                  this.agent.context.popMatchedMessage(isGoalOutcomeReminderOrigin);
+                  return { continue: false };
+                }
                 return { continue: true };
               }
 
@@ -875,11 +879,19 @@ export class TurnFlow {
 }
 
 function isGoalOutcomeReminder(message: { readonly origin?: PromptOrigin | undefined } | undefined): boolean {
+  return isGoalOutcomeReminderOrigin(message?.origin);
+}
+
+function isGoalOutcomeReminderOrigin(origin: PromptOrigin | undefined): boolean {
   return (
-    message?.origin?.kind === 'system_trigger' &&
-    (message.origin.name === GOAL_COMPLETION_REMINDER_NAME ||
-      message.origin.name === GOAL_BLOCKED_REMINDER_NAME)
+    origin?.kind === 'system_trigger' &&
+    (origin.name === GOAL_COMPLETION_REMINDER_NAME ||
+      origin.name === GOAL_BLOCKED_REMINDER_NAME)
   );
+}
+
+function hasStepBudgetRemaining(maxSteps: number | undefined, currentStep: number): boolean {
+  return maxSteps === undefined || maxSteps <= 0 || currentStep < maxSteps;
 }
 
 function mapLoopEvent(event: LoopEvent, turnId: number): AgentEvent | undefined {
