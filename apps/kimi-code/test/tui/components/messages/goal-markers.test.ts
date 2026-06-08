@@ -40,6 +40,17 @@ describe('buildGoalMarker', () => {
     );
   });
 
+  it('does not repeat paused for runtime pause reasons', () => {
+    const marker = buildGoalMarker(
+      { kind: 'lifecycle', status: 'paused', reason: 'Paused after runtime error: socket hang up' } as GoalChange,
+      darkColors,
+      false,
+      'runtime',
+    );
+
+    expect(strip(marker!.render(80))).toBe('\n● Goal paused after runtime error: socket hang up');
+  });
+
   it('returns null for a completion change (it posts its own message)', () => {
     expect(
       buildGoalMarker({ kind: 'completion', status: 'complete' } as GoalChange, darkColors, false),

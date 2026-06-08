@@ -150,6 +150,7 @@ function prominentMarker(headline: string, accentHex: string) {
 function pausedHeadline(reason: string | undefined, actor: GoalMarkerActor | undefined): string {
   if (reason === 'Paused after interruption') return "Goal paused due to user's interruption";
   if (actor === 'user') return 'Goal paused by the user.';
+  if (reason?.startsWith('Paused ') === true) return `Goal ${lowercaseFirst(reason)}`;
   if (reason !== undefined && reason.length > 0) return `Goal paused: ${reason}`;
   return 'Goal paused';
 }
@@ -158,6 +159,10 @@ function resumedHeadline(actor: GoalMarkerActor | undefined): string {
   if (actor === 'user') return 'Goal resumed by the user.';
   if (actor === 'model') return 'Goal resumed by the agent.';
   return 'Goal resumed';
+}
+
+function lowercaseFirst(text: string): string {
+  return text.length === 0 ? text : `${text[0]!.toLowerCase()}${text.slice(1)}`;
 }
 
 function wrap(text: string, width: number): string[] {
