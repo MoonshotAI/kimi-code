@@ -11,7 +11,11 @@ import chalk from 'chalk';
 
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
-import { COMMAND_PREVIEW_LINES } from '#/tui/constant/rendering';
+import {
+  COMMAND_PREVIEW_LINES,
+  RESULT_PREVIEW_LINES,
+  THINKING_PREVIEW_LINES,
+} from '#/tui/constant/rendering';
 import {
   STREAMING_ARGS_FIELD_RE,
   STREAMING_ARGS_PREVIEW_MAX_CHARS,
@@ -27,11 +31,14 @@ import { agentSwarmResultSummaryFromOutput } from './agent-swarm-progress';
 import { PlanBoxComponent } from './plan-box';
 import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
-import { pickResultRenderer } from './tool-renderers/registry';
+import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
+import { TruncatedOutputComponent } from './tool-renderers/truncated';
 
 const MAX_ARG_LENGTH = 60;
 const MAX_SUB_TOOL_CALLS_SHOWN = 4;
 const MAX_SINGLE_SUBAGENT_TOOL_ROWS = 4;
+// Hanging indent for a sub-tool's previewed output, nested under its activity row.
+const SUBAGENT_SUBTOOL_OUTPUT_INDENT = 6;
 const APPROVED_PLAN_MARKER = '## Approved Plan:';
 const STREAMING_PROGRESS_INTERVAL_MS = 1000;
 const SUBAGENT_ELAPSED_INTERVAL_MS = 1000;
@@ -59,6 +66,7 @@ interface SubToolActivity {
   name: string;
   args: Record<string, unknown>;
   phase: 'ongoing' | 'done' | 'failed';
+  output?: string;
   readonly orderSeq: number;
 }
 
@@ -453,6 +461,10 @@ class PrefixedWrappedLine implements Component {
     private readonly firstPrefix: string,
     private readonly continuationPrefix: string,
     private readonly text: string,
+    // When set, only the last N wrapped display rows are kept, so a long
+    // unwrapped paragraph scrolls within a fixed window instead of growing
+    // unbounded. The first kept row still gets `firstPrefix`.
+    private readonly tailLines?: number,
   ) { }
 
   invalidate(): void { }
@@ -463,7 +475,11 @@ class PrefixedWrappedLine implements Component {
       visibleWidth(this.continuationPrefix),
     );
     const contentWidth = Math.max(1, width - prefixWidth);
-    const lines = new Text(this.text, 0, 0).render(contentWidth);
+    const wrapped = new Text(this.text, 0, 0).render(contentWidth);
+    const lines =
+      this.tailLines !== undefined && wrapped.length > this.tailLines
+        ? wrapped.slice(wrapped.length - this.tailLines)
+        : wrapped;
     return lines.map((line, index) =>
       index === 0 ? `${this.firstPrefix}${line}` : `${this.continuationPrefix}${line}`,
     );
@@ -700,6 +716,7 @@ export class ToolCallComponent extends Container {
         call.name,
         call.args,
         call.result.is_error === true ? 'failed' : 'done',
+        call.result.output,
       );
     }
     while (this.finishedSubCalls.length > MAX_SUB_TOOL_CALLS_SHOWN) {
@@ -820,12 +837,14 @@ export class ToolCallComponent extends Container {
     name: string,
     args: Record<string, unknown>,
     phase: SubToolActivity['phase'],
+    output?: string,
   ): void {
     const existing = this.subToolActivities.get(id);
     if (existing !== undefined) {
       existing.name = name;
       existing.args = args;
       existing.phase = phase;
+      if (output !== undefined) existing.output = output;
       return;
     }
     this.subToolActivities.set(id, {
@@ -833,6 +852,7 @@ export class ToolCallComponent extends Container {
       name,
       args,
       phase,
+      ...(output !== undefined ? { output } : {}),
       orderSeq: ++this.subToolOrderSeq,
     });
   }
@@ -1186,6 +1206,7 @@ export class ToolCallComponent extends Container {
       ongoing.name,
       ongoing.args,
       result.is_error === true ? 'failed' : 'done',
+      result.output,
     );
     while (this.finishedSubCalls.length > MAX_SUB_TOOL_CALLS_SHOWN) {
       this.finishedSubCalls.shift();
@@ -1549,6 +1570,7 @@ export class ToolCallComponent extends Container {
             : chalk.hex(this.colors.text)('•');
       const verb = activity.phase === 'ongoing' ? 'Using' : 'Used';
       this.addChild(new Text(`  ${mark} ${this.formatSubToolActivity(verb, activity)}`, 0, 0));
+      this.addSubToolOutputPreview(activity);
     }
 
     if (this.getDerivedSubagentPhase() === 'failed' && this.subagentError !== undefined) {
@@ -1566,10 +1588,19 @@ export class ToolCallComponent extends Container {
     }
 
     const outputLine = tailNonEmptyLines(this.subagentText, 1).at(-1);
-    const thinkingLine = tailNonEmptyLines(this.subagentThinkingText, 1).at(-1);
-    if (this.getDerivedSubagentPhase() !== 'done' && thinkingLine !== undefined) {
+    if (
+      this.getDerivedSubagentPhase() !== 'done' &&
+      this.subagentThinkingText.trim().length > 0
+    ) {
+      // Scroll thinking within a fixed two-row window (width-aware), matching
+      // the main agent's live thinking instead of growing without bound.
       this.addChild(
-        new PrefixedWrappedLine(`  ${chalk.dim('◌')} `, '    ', chalk.dim(thinkingLine)),
+        new PrefixedWrappedLine(
+          `  ${chalk.dim('◌')} `,
+          '    ',
+          chalk.dim(this.subagentThinkingText.trimEnd()),
+          THINKING_PREVIEW_LINES,
+        ),
       );
     }
     if (outputLine !== undefined) {
@@ -1581,6 +1612,28 @@ export class ToolCallComponent extends Container {
         ),
       );
     }
+  }
+
+  private addSubToolOutputPreview(activity: SubToolActivity): void {
+    if (activity.phase === 'ongoing') return;
+    const output = activity.output;
+    if (output === undefined || output.trim().length === 0) return;
+    // Mirror the main agent: Bash and any tool without a dedicated renderer
+    // (every MCP tool included) get a truncated output preview. Recognized
+    // tools keep their compact activity row only.
+    if (activity.name !== 'Bash' && !isGenericToolResult(activity.name)) return;
+    this.addChild(
+      new TruncatedOutputComponent(output, {
+        // Subagent output is always fixed-truncated; it does not take part in
+        // the ctrl+o expand toggle, so don't advertise it either.
+        expanded: false,
+        expandHint: false,
+        isError: activity.phase === 'failed',
+        colors: this.colors,
+        maxLines: RESULT_PREVIEW_LINES,
+        indent: SUBAGENT_SUBTOOL_OUTPUT_INDENT,
+      }),
+    );
   }
 
   private getRecentSubToolActivities(): SubToolActivity[] {

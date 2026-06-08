@@ -1,7 +1,10 @@
 import type { Component } from '@earendil-works/pi-tui';
 import { describe, expect, it } from 'vitest';
 
-import { pickResultRenderer } from '#/tui/components/messages/tool-renderers/registry';
+import {
+  isGenericToolResult,
+  pickResultRenderer,
+} from '#/tui/components/messages/tool-renderers/registry';
 import { darkColors } from '#/tui/theme/colors';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
@@ -161,6 +164,15 @@ describe('tool-result registry', () => {
       ),
     );
     expect(out).toContain('ENOENT: foo.ts not found');
+  });
+
+  it('flags only fallback (truncated) tools as generic results', () => {
+    expect(isGenericToolResult('SomethingUnknown')).toBe(true);
+    expect(isGenericToolResult('mcp__server__do')).toBe(true);
+    expect(isGenericToolResult('Bash')).toBe(false);
+    expect(isGenericToolResult('Read')).toBe(false);
+    expect(isGenericToolResult('Grep')).toBe(false);
+    expect(isGenericToolResult('Edit')).toBe(false);
   });
 
   it('truncates unknown tool output by wrapped visual lines, not raw newlines', () => {
