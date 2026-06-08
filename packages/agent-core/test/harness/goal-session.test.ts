@@ -2,11 +2,12 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { APIStatusError, type ProviderConfig } from '@moonshot-ai/kosong';
+import { APIConnectionError, APIStatusError, type ProviderConfig } from '@moonshot-ai/kosong';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { AgentOptions } from '../../src/agent';
+import { ErrorCodes, KimiError } from '../../src/errors';
 import type { HookDef } from '../../src/session/hooks';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
@@ -250,6 +251,74 @@ describe('goal session end-to-end', () => {
     const goal = api.getGoal({}).goal;
     expect(goal?.status).toBe('paused');
     expect(goal?.terminalReason).toBe('Paused after provider rate limit');
+  });
+
+  it('pauses the goal on provider connection errors', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent } = await setupSession(sessionDir, events, ['GetGoal'], async () => {
+      throw new APIConnectionError('socket hang up');
+    });
+    const api = new SessionAPIImpl(session);
+    await api.createGoal({ objective: 'work' });
+
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    const goal = api.getGoal({}).goal;
+    expect(goal?.status).toBe('paused');
+    expect(goal?.terminalReason).toBe('Paused after provider connection error: socket hang up');
+  });
+
+  it('pauses the goal on provider authentication errors', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent } = await setupSession(sessionDir, events, ['GetGoal'], async () => {
+      throw new APIStatusError(401, 'Unauthorized', 'req-401');
+    });
+    const api = new SessionAPIImpl(session);
+    await api.createGoal({ objective: 'work' });
+
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    const goal = api.getGoal({}).goal;
+    expect(goal?.status).toBe('paused');
+    expect(goal?.terminalReason).toBe('Paused after provider authentication error: Unauthorized');
+  });
+
+  it('pauses the goal on model configuration errors', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent } = await setupSession(sessionDir, events, ['GetGoal'], async () => {
+      throw new KimiError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
+    });
+    const api = new SessionAPIImpl(session);
+    await api.createGoal({ objective: 'work' });
+
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    const goal = api.getGoal({}).goal;
+    expect(goal?.status).toBe('paused');
+    expect(goal?.terminalReason).toBe('Paused after model configuration error: LLM not set, send "/login" to login');
+  });
+
+  it('pauses the goal on runtime errors', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent } = await setupSession(sessionDir, events, ['GetGoal'], async () => {
+      throw new Error('unexpected failure');
+    });
+    const api = new SessionAPIImpl(session);
+    await api.createGoal({ objective: 'work' });
+
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    const goal = api.getGoal({}).goal;
+    expect(goal?.status).toBe('paused');
+    expect(goal?.terminalReason).toBe('Paused after runtime error: unexpected failure');
   });
 
   it('blocks the goal when the initial prompt hook blocks the objective', async () => {

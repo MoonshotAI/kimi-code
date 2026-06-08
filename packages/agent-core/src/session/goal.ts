@@ -33,8 +33,8 @@ export const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
  * | Status     | Persisted | Resumable | Set by                          | Meaning                                          |
  * |------------|-----------|-----------|---------------------------------|--------------------------------------------------|
  * | `active`   | yes       | (running) | createGoal / resumeGoal         | The goal driver may run continuation turns.      |
- * | `paused`   | yes       | yes       | pauseGoal / pauseActiveGoal /   | User, interrupt, resume, or retryable runtime    |
- * |            |           |           | pauseOnInterrupt /              | stop parked it; intact.                          |
+ * | `paused`   | yes       | yes       | pauseGoal / pauseActiveGoal /   | User, interrupt, resume, or runtime failure      |
+ * |            |           |           | pauseOnInterrupt /              | parked it; intact.                               |
  * |            |           |           | normalizeMetadata               |                                                  |
  * | `blocked`  | yes       | yes       | markBlocked                     | The system stopped it for some `reason`.         |
  * | `complete` | no        | —         | markComplete                    | Success — announced in a message, then cleared.  |
@@ -45,10 +45,10 @@ export const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
  * and resumable via `/goal resume`" — differing only in *who* stopped it (the
  * user vs the system) and the human-readable `reason`. There is no separate
  * `impossible`, `budget_limited`, `error`, or `cancelled` status: an
- * unachievable goal, an exhausted budget, or a non-retryable runtime failure
- * becomes `blocked(+reason)`, retryable runtime stops become `paused(+reason)`,
- * and `cancelGoal` discards the record entirely. See {@link SessionGoalStore}
- * for the setters and the per-status notes below.
+ * unachievable goal or an exhausted budget becomes `blocked(+reason)`,
+ * runtime/model/provider failures become `paused(+reason)`, and `cancelGoal`
+ * discards the record entirely. See {@link SessionGoalStore} for the setters
+ * and the per-status notes below.
  */
 export type GoalStatus =
   /**
@@ -63,18 +63,17 @@ export type GoalStatus =
    * `/goal resume`. Reached three ways: the user pauses (`pauseGoal`); a live
    * turn is aborted mid-flight, e.g. Esc/shutdown (`pauseOnInterrupt`); or a
    * session is resumed from disk, where an `active` goal cannot still be running
-   * and is demoted (`normalizeMetadata`); or a retryable runtime stop such as a
-   * provider rate limit parked it via `pauseActiveGoal`.
+   * and is demoted (`normalizeMetadata`); or a runtime/model/provider failure
+   * parked it via `pauseActiveGoal`.
    */
   | 'paused'
   /**
    * The *system* stopped pursuing the goal, for a reason carried in
    * `terminalReason`: the model reported it cannot proceed via
    * `UpdateGoal('blocked')` (an external blocker, or an objective it deems
-   * unachievable); a configured hard budget (token/turn/time) was reached; or a
-   * non-retryable runtime failure occurred. Set by `markBlocked` (from the
-   * model's `UpdateGoal`, the budget check in the goal driver, and the driver's
-   * turn-failure catch).
+   * unachievable); or a configured hard budget (token/turn/time) was reached.
+   * Set by `markBlocked` from the model's `UpdateGoal`, the budget check in the
+   * goal driver, and prompt-hook blocks.
    * Resumable like `paused` — `/goal resume` re-activates it; a plain message
    * just runs one normal turn without reactivating the loop. Editing the goal
    * while blocked takes effect on the next turn.
@@ -247,15 +246,16 @@ export interface SessionGoalStoreOptions {
  *   The model marks completion via the `UpdateGoal('complete')` tool; the turn
  *   driver reads the status at the turn boundary. `markComplete` announces, then
  *   clears the record.
- * - System stop: `markBlocked(reason)` sets `blocked` for any reason the system
- *   stops pursuing — the model's `UpdateGoal('blocked')`, a hard budget, or a
- *   runtime error. `blocked` is resumable.
- * - User stop: `pauseGoal` and the interrupt path `pauseOnInterrupt` set `paused`
- *   (resumable); `cancelGoal` discards the record entirely (no status — this is
- *   what `/goal cancel` does, the single remove action).
- * - An aborted turn (Esc / shutdown) is not terminal: it pauses the goal, so it
- *   stays resumable — mirroring how `normalizeMetadata` demotes an `active` goal
- *   to `paused` on session resume.
+ * - Task stop: `markBlocked(reason)` sets `blocked` when the model cannot
+ *   proceed, a prompt hook blocks, or a hard budget is reached. `blocked` is
+ *   resumable.
+ * - Pause: `pauseGoal`, `pauseActiveGoal`, and the interrupt path
+ *   `pauseOnInterrupt` set `paused` (resumable); `cancelGoal` discards the
+ *   record entirely (no status — this is what `/goal cancel` does, the single
+ *   remove action).
+ * - An aborted or failed turn is not terminal: it pauses the goal, so it stays
+ *   resumable — mirroring how `normalizeMetadata` demotes an `active` goal to
+ *   `paused` on session resume.
  */
 export class SessionGoalStore {
   /** Audit records queued until the main-agent sink becomes available. */
@@ -511,7 +511,7 @@ export class SessionGoalStore {
   /**
    * Marks the goal `blocked`: the system stopped pursuing it for `reason` — the
    * model's `UpdateGoal('blocked')` (incl. objectives it deems unachievable), a
-   * hard budget reached by the goal driver, or a runtime failure in the driver.
+   * hard budget reached by the goal driver, or a prompt-hook block.
    * `blocked` is persisted and **resumable** via
    * `/goal resume` (it is a sibling of `paused`, not a dead end), so it emits a
    * `lifecycle` change. No-ops for a goal that is missing or not active, so a

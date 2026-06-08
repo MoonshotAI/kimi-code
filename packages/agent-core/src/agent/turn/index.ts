@@ -70,6 +70,11 @@ const LLM_NOT_SET_MESSAGE = 'LLM not set, send "/login" to login';
 /** Origin tag for the synthetic "continue" prompt that drives each goal turn. */
 const GOAL_CONTINUATION_ORIGIN: PromptOrigin = { kind: 'system_trigger', name: 'goal_continuation' };
 const GOAL_RATE_LIMIT_PAUSE_REASON = 'Paused after provider rate limit';
+const GOAL_PROVIDER_CONNECTION_PAUSE_PREFIX = 'Paused after provider connection error';
+const GOAL_PROVIDER_AUTH_PAUSE_PREFIX = 'Paused after provider authentication error';
+const GOAL_PROVIDER_API_PAUSE_PREFIX = 'Paused after provider API error';
+const GOAL_MODEL_CONFIG_PAUSE_PREFIX = 'Paused after model configuration error';
+const GOAL_RUNTIME_PAUSE_PREFIX = 'Paused after runtime error';
 
 /**
  * The prompt the goal driver appends to start each continuation turn — the
@@ -331,9 +336,9 @@ export class TurnFlow {
    * full turn, then reads the goal status the model set via `UpdateGoal`:
    * `complete` (the record is cleared) / `blocked` / `paused` stop the loop;
    * `active` (the model didn't decide) re-injects the goal reminder and runs the
-   * next continuation turn. An aborted turn pauses the goal; a provider rate
-   * limit also pauses it. Other failed turns block it (all resumable). Returns
-   * the final turn's result.
+   * next continuation turn. Aborted or failed turns pause the goal. Goal-state
+   * blockers, such as explicit `UpdateGoal('blocked')`, prompt-hook blocks, and
+   * budget limits, block it (all resumable). Returns the final turn's result.
    */
   private async driveGoal(
     firstTurnId: number,
@@ -364,13 +369,9 @@ export class TurnFlow {
         return end;
       }
       if (end.event.reason === 'failed') {
-        const pauseReason = goalFailurePauseReason(end.event.error);
-        if (pauseReason !== null) {
-          await this.agent.goals?.pauseActiveGoal({ actor: 'runtime', reason: pauseReason });
-          return end;
-        }
-        await this.agent.goals?.markBlocked({
-          reason: `Runtime error: ${end.event.error?.message ?? 'unknown'}`,
+        await this.agent.goals?.pauseActiveGoal({
+          actor: 'runtime',
+          reason: goalFailurePauseReason(end.event.error),
         });
         return end;
       }
@@ -989,9 +990,28 @@ function summarizeTurnError(error: unknown, turnId: number): KimiErrorPayload {
   return { ...payload, details };
 }
 
-function goalFailurePauseReason(error: KimiErrorPayload | undefined): string | null {
+function goalFailurePauseReason(error: KimiErrorPayload | undefined): string {
   if (error?.code === ErrorCodes.PROVIDER_RATE_LIMIT) return GOAL_RATE_LIMIT_PAUSE_REASON;
-  return null;
+  if (error?.code === ErrorCodes.PROVIDER_CONNECTION_ERROR) {
+    return pauseReasonWithMessage(GOAL_PROVIDER_CONNECTION_PAUSE_PREFIX, error.message);
+  }
+  if (error?.code === ErrorCodes.PROVIDER_AUTH_ERROR) {
+    return pauseReasonWithMessage(GOAL_PROVIDER_AUTH_PAUSE_PREFIX, error.message);
+  }
+  if (error?.code === ErrorCodes.PROVIDER_API_ERROR) {
+    return pauseReasonWithMessage(GOAL_PROVIDER_API_PAUSE_PREFIX, error.message);
+  }
+  if (
+    error?.code === ErrorCodes.MODEL_NOT_CONFIGURED ||
+    error?.code === ErrorCodes.MODEL_CONFIG_INVALID
+  ) {
+    return pauseReasonWithMessage(GOAL_MODEL_CONFIG_PAUSE_PREFIX, error.message);
+  }
+  return pauseReasonWithMessage(GOAL_RUNTIME_PAUSE_PREFIX, error?.message);
+}
+
+function pauseReasonWithMessage(prefix: string, message: string | undefined): string {
+  return message === undefined || message.length === 0 ? prefix : `${prefix}: ${message}`;
 }
 
 function toolInputRecord(args: unknown): Record<string, unknown> {
