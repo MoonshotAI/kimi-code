@@ -18,6 +18,7 @@ export interface AppState {
   sessionId: string;
   permissionMode: PermissionMode;
   planMode: boolean;
+  swarmMode: boolean;
   thinking: boolean;
   contextUsage: number;
   contextTokens: number;

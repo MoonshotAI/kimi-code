@@ -16,13 +16,14 @@ import {
   STREAMING_ARGS_FIELD_RE,
   STREAMING_ARGS_PREVIEW_MAX_CHARS,
 } from '#/tui/constant/streaming';
-import { STATUS_BULLET } from '#/tui/constant/symbols';
+import { FAILURE_MARK, STATUS_BULLET, SUCCESS_MARK } from '#/tui/constant/symbols';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
 
+import { agentSwarmResultSummaryFromOutput } from './agent-swarm-progress';
 import { PlanBoxComponent } from './plan-box';
 import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
@@ -35,9 +36,10 @@ const APPROVED_PLAN_MARKER = '## Approved Plan:';
 const STREAMING_PROGRESS_INTERVAL_MS = 1000;
 const SUBAGENT_ELAPSED_INTERVAL_MS = 1000;
 const PROGRESS_URL_RE = /https?:\/\/\S+/g;
+const ABORTED_MARK = '⊘';
 
 type SubagentTextKind = 'thinking' | 'text';
-
+type SubagentPhase = 'queued' | 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded';
 
 interface FinishedSubCall {
   readonly name: string;
@@ -75,7 +77,7 @@ export interface ToolCallSubagentSnapshot {
   readonly toolName: string;
   readonly toolCallDescription: string;
   readonly agentName: string | undefined;
-  readonly phase: 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded' | undefined;
+  readonly phase: SubagentPhase | undefined;
   readonly toolCount: number;
   readonly tokens: number;
   readonly isError: boolean;
@@ -507,8 +509,8 @@ export class ToolCallComponent extends Container {
    */
   private subagentText = '';
   private subagentThinkingText = '';
-  // ── Subagent lifecycle state from subagent.spawned/completed/failed ──
-  private subagentPhase: 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded' | undefined;
+  // ── Subagent lifecycle state from subagent.spawned/started/completed/failed ──
+  private subagentPhase: SubagentPhase | undefined;
   /**
    * Authoritative terminal phase for a backgrounded subagent. Set from
    * `BackgroundTaskInfo.status` via `setBackgroundTaskTerminalStatus` once
@@ -862,7 +864,7 @@ export class ToolCallComponent extends Container {
     const shouldTick =
       this.isSingleSubagentView() &&
       this.subagentStartedAtMs !== undefined &&
-      (phase === 'spawning' || phase === 'running');
+      (phase === 'queued' || phase === 'spawning' || phase === 'running');
     if (!shouldTick) {
       this.stopSubagentElapsedTimer();
       return;
@@ -870,7 +872,7 @@ export class ToolCallComponent extends Container {
     if (this.ui === undefined || this.subagentElapsedTimer !== undefined) return;
     this.subagentElapsedTimer = setInterval(() => {
       const latestPhase = this.getDerivedSubagentPhase();
-      if (latestPhase !== 'spawning' && latestPhase !== 'running') {
+      if (latestPhase !== 'queued' && latestPhase !== 'spawning' && latestPhase !== 'running') {
         this.stopSubagentElapsedTimer();
         return;
       }
@@ -897,10 +899,10 @@ export class ToolCallComponent extends Container {
   }
 
   /**
-   * Handles SDK `subagent.spawned`. The child agent is registered, but internal
-   * activity events (`assistant.delta` or `tool.call.started`) may not have
-   * arrived yet, so the UI moves to the 'spawning' placeholder state unless the
-   * agent is running in the background.
+   * Handles SDK `subagent.spawned`. The child agent is registered with the
+   * parent call, but its prompt may still be queued behind other subagents.
+   * `subagent.started` moves it to 'running' when the child turn actually
+   * begins.
    */
   onSubagentSpawned(meta: {
     agentId: string;
@@ -909,9 +911,30 @@ export class ToolCallComponent extends Container {
   }): void {
     this.subagentAgentId = meta.agentId;
     this.subagentAgentName = meta.agentName;
-    this.subagentPhase = meta.runInBackground ? 'backgrounded' : 'spawning';
+    this.subagentPhase = meta.runInBackground ? 'backgrounded' : 'queued';
     this.subagentStartedAtMs = Date.now();
     this.subagentEndedAtMs = undefined;
+    this.syncSubagentElapsedTimer();
+    this.headerText.setText(this.buildHeader());
+    this.rebuildContent();
+    this.notifySnapshotChange();
+    this.ui?.requestRender();
+  }
+
+  /** Handles SDK `subagent.started` once a queued child turn begins. */
+  onSubagentStarted(meta: {
+    agentId: string;
+    agentName?: string | undefined;
+    runInBackground: boolean;
+  }): void {
+    this.subagentAgentId = meta.agentId;
+    this.subagentAgentName = meta.agentName;
+    if (
+      !meta.runInBackground &&
+      (this.subagentPhase === undefined || this.subagentPhase === 'queued')
+    ) {
+      this.subagentPhase = 'running';
+    }
     this.syncSubagentElapsedTimer();
     this.headerText.setText(this.buildHeader());
     this.rebuildContent();
@@ -1066,7 +1089,11 @@ export class ToolCallComponent extends Container {
       this.subagentText += text;
     }
     // Child-agent activity means it is running unless already terminal/backgrounded.
-    if (this.subagentPhase === undefined || this.subagentPhase === 'spawning') {
+    if (
+      this.subagentPhase === undefined ||
+      this.subagentPhase === 'queued' ||
+      this.subagentPhase === 'spawning'
+    ) {
       this.subagentPhase = 'running';
     }
     this.headerText.setText(this.buildHeader());
@@ -1085,7 +1112,11 @@ export class ToolCallComponent extends Container {
         : {}),
     });
     this.upsertSubToolActivity(call.id, call.name, call.args, 'ongoing');
-    if (this.subagentPhase === undefined || this.subagentPhase === 'spawning') {
+    if (
+      this.subagentPhase === undefined ||
+      this.subagentPhase === 'queued' ||
+      this.subagentPhase === 'spawning'
+    ) {
       this.subagentPhase = 'running';
     }
     this.headerText.setText(this.buildHeader());
@@ -1111,6 +1142,13 @@ export class ToolCallComponent extends Container {
       streamingArguments: nextArgsText,
     });
     this.upsertSubToolActivity(delta.id, delta.name ?? existing?.name ?? 'Tool', parsed, 'ongoing');
+    if (
+      this.subagentPhase === undefined ||
+      this.subagentPhase === 'queued' ||
+      this.subagentPhase === 'spawning'
+    ) {
+      this.subagentPhase = 'running';
+    }
     this.headerText.setText(this.buildHeader());
     this.rebuildContent();
     this.notifySnapshotChange();
@@ -1354,6 +1392,7 @@ export class ToolCallComponent extends Container {
 
   /**
    * Header phase/token chip. No chip is shown when phase is undefined.
+   *   queued        -> queued
    *   spawning      -> starting
    *   running       -> running
    *   done          -> N tools, 8.4k tok
@@ -1365,6 +1404,9 @@ export class ToolCallComponent extends Container {
     const dim = chalk.dim;
     const parts: string[] = [];
     switch (this.subagentPhase) {
+      case 'queued':
+        parts.push('○ queued');
+        break;
       case 'spawning':
         parts.push('↻ starting…');
         break;
@@ -1413,13 +1455,7 @@ export class ToolCallComponent extends Container {
     return this.toolCall.name === 'Agent' && this.hasSubagentState();
   }
 
-  private getDerivedSubagentPhase():
-    | 'spawning'
-    | 'running'
-    | 'done'
-    | 'failed'
-    | 'backgrounded'
-    | undefined {
+  private getDerivedSubagentPhase(): SubagentPhase | undefined {
     if (this.backgroundTaskTerminalPhase !== undefined) {
       return this.backgroundTaskTerminalPhase;
     }
@@ -1451,9 +1487,7 @@ export class ToolCallComponent extends Container {
     return `${bullet}${label} ${status}${descriptionText}${stats}`;
   }
 
-  private formatSingleSubagentStatus(
-    phase: 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded' | undefined,
-  ): string {
+  private formatSingleSubagentStatus(phase: SubagentPhase | undefined): string {
     switch (phase) {
       case 'done':
         return chalk.hex(this.colors.success)('Completed');
@@ -1463,6 +1497,8 @@ export class ToolCallComponent extends Container {
         return chalk.hex(this.colors.primary)('Running');
       case 'backgrounded':
         return 'Backgrounded';
+      case 'queued':
+        return chalk.hex(this.colors.primary)('Queued');
       case 'spawning':
       case undefined:
         return chalk.hex(this.colors.primary)('Starting');
@@ -1731,7 +1767,14 @@ export class ToolCallComponent extends Container {
 
   private buildContent(): void {
     const { result } = this;
-    if (result === undefined || !result.output) return;
+    if (result === undefined) return;
+
+    if (this.toolCall.name === 'AgentSwarm') {
+      this.buildAgentSwarmResultSummary(result);
+      return;
+    }
+
+    if (!result.output) return;
 
     if (this.isSingleSubagentView()) {
       return;
@@ -1790,6 +1833,46 @@ export class ToolCallComponent extends Container {
     for (const component of components) {
       this.addChild(component);
     }
+  }
+
+  private buildAgentSwarmResultSummary(result: ToolResultBlockData): void {
+    const summary = agentSwarmResultSummaryFromOutput(result.output);
+    const dim = chalk.hex(this.colors.textDim);
+    const segments: string[] = [];
+
+    if (summary.completed > 0) {
+      segments.push(chalk.hex(this.colors.success)(
+        `${SUCCESS_MARK.trimEnd()} ${String(summary.completed)} completed`,
+      ));
+    }
+    if (summary.failed > 0) {
+      segments.push(chalk.hex(this.colors.error)(
+        `${FAILURE_MARK.trimEnd()} ${String(summary.failed)} failed`,
+      ));
+    }
+    if (summary.aborted > 0) {
+      segments.push(chalk.hex(this.colors.warning)(
+        `${ABORTED_MARK} ${String(summary.aborted)} aborted`,
+      ));
+    }
+
+    if (segments.length > 0) {
+      this.addChild(new Text(`${dim('Agent swarm: ')}${segments.join(dim(' · '))}`, 2, 0));
+      return;
+    }
+
+    const isAborted = result.is_error === true && /\b(?:aborted|cancelled)\b/i.test(result.output);
+    const color = isAborted
+      ? this.colors.warning
+      : result.is_error === true
+        ? this.colors.error
+        : this.colors.success;
+    const label = isAborted
+      ? `${ABORTED_MARK} Aborted.`
+      : result.is_error === true
+        ? `${FAILURE_MARK.trimEnd()} Failed.`
+        : `${SUCCESS_MARK.trimEnd()} Completed.`;
+    this.addChild(new Text(`${dim('Agent swarm: ')}${chalk.hex(color)(label)}`, 2, 0));
   }
 
   /**

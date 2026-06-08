@@ -208,8 +208,8 @@ describe('AgentTool', () => {
     );
 
     expect(host.spawn).toHaveBeenCalledWith(
-      'explore',
       expect.objectContaining({
+        profileName: 'explore',
         parentToolCallId: 'call_agent',
         prompt: 'Investigate',
         description: 'Find cause',
@@ -242,9 +242,9 @@ describe('AgentTool', () => {
     );
 
     expect(host.spawn).toHaveBeenCalledWith(
-      'coder',
       expect.objectContaining({
         parentToolCallId: 'call_agent',
+        profileName: 'coder',
       }),
     );
   });
@@ -669,17 +669,25 @@ describe('AgentTool', () => {
   it('reports a deliberate user interruption when a foreground subagent is cancelled by the user', async () => {
     const controller = new AbortController();
     const host = mockSubagentHost({
-      spawn: vi.fn((_profileName: string, options: { signal: AbortSignal }) =>
+      spawn: vi.fn(
+        (
+          profileNameOrOptions: string | { readonly signal: AbortSignal },
+          legacyOptions?: { readonly signal: AbortSignal },
+        ) =>
         Promise.resolve({
           agentId: 'agent-child',
           profileName: 'coder',
           resumed: false,
           completion: new Promise<{ result: string }>((_resolve, reject) => {
+            const signal =
+              typeof profileNameOrOptions === 'string'
+                ? legacyOptions!.signal
+                : profileNameOrOptions.signal;
             const onAbort = (): void => {
-              reject(options.signal.reason);
+              reject(signal.reason);
             };
-            if (options.signal.aborted) onAbort();
-            else options.signal.addEventListener('abort', onAbort, { once: true });
+            if (signal.aborted) onAbort();
+            else signal.addEventListener('abort', onAbort, { once: true });
           }),
         }),
       ),
@@ -711,16 +719,24 @@ describe('AgentTool', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       const host = mockSubagentHost({
-        spawn: vi.fn((_profileName: string, options: { signal: AbortSignal }) =>
+        spawn: vi.fn(
+          (
+            profileNameOrOptions: string | { readonly signal: AbortSignal },
+            legacyOptions?: { readonly signal: AbortSignal },
+          ) =>
           Promise.resolve({
             agentId: 'agent-child',
             profileName: 'coder',
             resumed: false,
             completion: new Promise<{ result: string }>((_resolve, reject) => {
-              options.signal.addEventListener(
+              const signal =
+                typeof profileNameOrOptions === 'string'
+                  ? legacyOptions!.signal
+                  : profileNameOrOptions.signal;
+              signal.addEventListener(
                 'abort',
                 () => {
-                  reject(options.signal.reason);
+                  reject(signal.reason);
                 },
                 { once: true },
               );

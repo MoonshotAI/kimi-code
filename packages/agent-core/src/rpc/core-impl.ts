@@ -50,6 +50,7 @@ import type {
   CreateGoalPayload,
   CreateSessionPayload,
   EmptyPayload,
+  EnterSwarmPayload,
   GoalControlPayload,
   GoalSnapshot,
   GoalToolResult,
@@ -523,6 +524,18 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).clearPlan(payload);
   }
 
+  enterSwarm({ sessionId, ...payload }: SessionAgentPayload<EnterSwarmPayload>) {
+    return this.sessionApi(sessionId).enterSwarm(payload);
+  }
+
+  exitSwarm({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).exitSwarm(payload);
+  }
+
+  getSwarmMode({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).getSwarmMode(payload);
+  }
+
   beginCompaction({ sessionId, ...payload }: SessionAgentPayload<BeginCompactionPayload>) {
     return this.sessionApi(sessionId).beginCompaction(payload);
   }
@@ -943,6 +956,7 @@ async function resumeSessionResult(
     const context = await api.getContext({ agentId });
     const permission = await api.getPermission({ agentId });
     const plan = await api.getPlan({ agentId });
+    const swarmMode = await api.getSwarmMode({ agentId });
     const usage = await api.getUsage({ agentId });
     agents[agentId] = {
       type: agent.type,
@@ -951,6 +965,7 @@ async function resumeSessionResult(
       replay: agent.replayBuilder.buildResult(),
       permission,
       plan,
+      swarmMode,
       usage,
       tools: await api.getTools({ agentId }),
       toolStore: agent.tools.storeData(),

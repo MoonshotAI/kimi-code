@@ -278,7 +278,7 @@ export class StreamingUIController {
       existingComponent.updateToolCall(toolCall);
     } else if (existing === undefined) {
       this.finalizeLiveTextBuffers('tool');
-      if (toolCall.name !== 'Agent') {
+      if (toolCall.name !== 'Agent' && toolCall.name !== 'AgentSwarm') {
         this.onToolCallStart(toolCall);
       }
     }
@@ -297,6 +297,19 @@ export class StreamingUIController {
     const startedAtMs = existing?.startedAtMs ?? Date.now();
     this._streamingToolCallArguments.set(id, { name, argumentsText, startedAtMs });
     this.pendingToolCallFlushIds.add(id);
+  }
+
+  getStreamingToolCallPreview(
+    id: string,
+  ): { name: string; args: Record<string, unknown>; argumentsText: string; startedAtMs: number } | undefined {
+    const streaming = this._streamingToolCallArguments.get(id);
+    if (streaming === undefined) return undefined;
+    return {
+      name: streaming.name ?? this._activeToolCalls.get(id)?.name ?? 'Tool',
+      args: parseStreamingArgs(streaming.argumentsText),
+      argumentsText: streaming.argumentsText,
+      startedAtMs: streaming.startedAtMs,
+    };
   }
 
   /** Completes a tool call: delivers the result and removes tracking state.
@@ -718,7 +731,7 @@ export class StreamingUIController {
     const existingComponent = this._pendingToolComponents.get(id);
     if (existingComponent !== undefined) {
       existingComponent.updateToolCall(toolCall);
-    } else if (toolCall.name !== 'Agent') {
+    } else if (toolCall.name !== 'Agent' && toolCall.name !== 'AgentSwarm') {
       this.onToolCallStart(toolCall);
     }
   }

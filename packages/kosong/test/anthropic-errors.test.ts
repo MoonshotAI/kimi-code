@@ -1,6 +1,7 @@
 import {
   APIConnectionError,
   APIContextOverflowError,
+  APIProviderRateLimitError,
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
@@ -72,7 +73,7 @@ describe('convertAnthropicError', () => {
     expect((result as APIStatusError).statusCode).toBe(401);
   });
 
-  it('RateLimitError -> APIStatusError with 429', () => {
+  it('RateLimitError -> APIProviderRateLimitError with 429', () => {
     const err = new AnthropicRateLimitError(
       429,
       { type: 'error', error: { type: 'rate_limit_error', message: 'rate limited' } },
@@ -80,8 +81,8 @@ describe('convertAnthropicError', () => {
       new Headers(),
     );
     const result = convertAnthropicError(err);
-    expect(result).toBeInstanceOf(APIStatusError);
-    expect((result as APIStatusError).statusCode).toBe(429);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect((result as APIProviderRateLimitError).statusCode).toBe(429);
   });
 
   it('generic AnthropicError -> ChatProviderError', () => {
@@ -161,7 +162,7 @@ describe('non-stream error propagation', () => {
     ).rejects.toThrow(APIStatusError);
   });
 
-  it('RateLimitError during generate is converted to APIStatusError(429)', async () => {
+  it('RateLimitError during generate is converted to APIProviderRateLimitError(429)', async () => {
     const provider = createNonStreamProvider();
     const sdkError = new AnthropicRateLimitError(
       429,
@@ -179,8 +180,8 @@ describe('non-stream error propagation', () => {
       );
       expect.unreachable('Should have thrown');
     } catch (error) {
-      expect(error).toBeInstanceOf(APIStatusError);
-      expect((error as APIStatusError).statusCode).toBe(429);
+      expect(error).toBeInstanceOf(APIProviderRateLimitError);
+      expect((error as APIProviderRateLimitError).statusCode).toBe(429);
     }
   });
 
@@ -298,7 +299,7 @@ describe('stream error propagation', () => {
     ).rejects.toThrow(APIStatusError);
   });
 
-  it('RateLimitError during stream iteration is converted to APIStatusError(429)', async () => {
+  it('RateLimitError during stream iteration is converted to APIProviderRateLimitError(429)', async () => {
     const provider = createStreamProvider();
     const sdkError = new AnthropicRateLimitError(
       429,
@@ -321,8 +322,8 @@ describe('stream error propagation', () => {
       }
       expect.unreachable('Should have thrown');
     } catch (error) {
-      expect(error).toBeInstanceOf(APIStatusError);
-      expect((error as APIStatusError).statusCode).toBe(429);
+      expect(error).toBeInstanceOf(APIProviderRateLimitError);
+      expect((error as APIProviderRateLimitError).statusCode).toBe(429);
     }
   });
 

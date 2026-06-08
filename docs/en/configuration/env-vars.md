@@ -155,13 +155,13 @@ The CLI also reads several standard system variables to detect the runtime envir
 
 - `HOME`: used to resolve the default data path
 - `VISUAL`, `EDITOR`: external editor command (`VISUAL` takes precedence)
-- `PATH`: used to locate dependencies such as `rg` and `git`
+- `PATH`: used to locate dependencies such as `rg` and `git`; on Windows, Git Bash detection checks each `git.exe` found on `PATH`, including package-manager shims such as Scoop
 - `NO_COLOR`, `FORCE_COLOR`: control color output (following the [no-color.org](https://no-color.org) convention)
 - `CI`: when non-empty and not `"0"`, disables theme detection and falls back to the dark theme
 - `TERM_PROGRAM`, `TERM`, `TMUX`: detect terminal features and notification support
 - `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_SESSION_TYPE`: detect Linux graphical sessions (for clipboard and image features)
 - `WSL_DISTRO_NAME`, `WSLENV`: detect WSL for the clipboard PowerShell bridge
-- `LOCALAPPDATA`: used on Windows when probing for the Git Bash installation path
+- `LOCALAPPDATA`: used on Windows as a fallback when probing for the Git Bash installation path
 
 ## HTTP proxy
 

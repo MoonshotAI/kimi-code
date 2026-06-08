@@ -92,6 +92,38 @@ describe('ApprovalPanelComponent', () => {
     expect(out).not.toContain('⚠');
   });
 
+  it('wraps a long single-line shell command instead of truncating it', () => {
+    const head = 'approve-long-command-head';
+    const tail = 'approve-long-command-tail';
+    const command = `printf ${head}_${'x'.repeat(220)}_${tail}`;
+    const pending: PendingApproval = {
+      data: {
+        id: 'approval_long_command',
+        tool_call_id: 'tool_long_command',
+        tool_name: 'Bash',
+        action: 'run',
+        description: '',
+        display: [
+          {
+            type: 'shell',
+            language: 'bash',
+            command,
+          },
+        ],
+        choices: [{ label: 'Approve once', response: 'approved' }],
+      },
+    };
+    const dialog = new ApprovalPanelComponent(pending, () => {}, COLORS);
+
+    const rendered = dialog.render(60);
+    const out = strip(rendered.join('\n'));
+    expect(rendered.length).toBeGreaterThan(8);
+    expect(out).toContain(head);
+    expect(out).toContain(tail);
+    expect(out).not.toContain('...');
+    expect(out).not.toContain('…');
+  });
+
   it('numeric shortcuts still drive approval actions', () => {
     const { dialog, responses } = makeDialog();
     dialog.handleInput('2');

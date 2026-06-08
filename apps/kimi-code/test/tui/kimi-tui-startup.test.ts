@@ -897,6 +897,31 @@ describe("KimiTUI startup", () => {
 
     expect(uiContainsFooter(driver)).toBe(true);
   });
+
+  it("resumes a startup session when Windows workdir uses backslashes", async () => {
+    const session = makeSession({ id: "ses-target" });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [
+        { id: "ses-target", workDir: "C:/Users/kimi/project" },
+      ]),
+    });
+    const driver = makeDriver(
+      harness,
+      {
+        ...makeStartupInput({ session: "ses-target" }),
+        workDir: String.raw`C:\Users\kimi\project`,
+      },
+    );
+
+    await expect(driver.init()).resolves.toBe(true);
+
+    expect(harness.listSessions).toHaveBeenCalledWith({
+      sessionId: "ses-target",
+      workDir: String.raw`C:\Users\kimi\project`,
+    });
+    expect(harness.resumeSession).toHaveBeenCalledWith({ id: "ses-target" });
+    expect(driver.state.appState.sessionId).toBe("ses-target");
+  });
 });
 
 function uiContainsFooter(driver: StartupDriver): boolean {

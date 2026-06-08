@@ -57,6 +57,17 @@ export class APIContextOverflowError extends APIStatusError {
 }
 
 /**
+ * HTTP status error that specifically means the provider rate-limited the
+ * request.
+ */
+export class APIProviderRateLimitError extends APIStatusError {
+  constructor(message: string, requestId?: string | null) {
+    super(429, message, requestId);
+    this.name = 'APIProviderRateLimitError';
+  }
+}
+
+/**
  * The API returned an empty response (no content, no tool calls).
  */
 export class APIEmptyResponseError extends ChatProviderError {
@@ -98,6 +109,16 @@ const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
   /request.*exceed(?:ed|s|ing)?.*model token limit/,
 ] as const;
 
+const PROVIDER_RATE_LIMIT_MESSAGE_PATTERNS = [
+  /(?:apistatuserror.*429|429.*apistatuserror)/,
+  /429.*too many requests/,
+  /too many requests/,
+  /provider\.rate_limit/,
+  /reached .*max rpm/,
+  /rate[ _-]?limit(?:ed)?/,
+  /rate-limited/,
+] as const;
+
 export function isContextOverflowErrorCode(code: string | null | undefined): boolean {
   return code === 'context_length_exceeded';
 }
@@ -107,6 +128,9 @@ export function normalizeAPIStatusError(
   message: string,
   requestId?: string | null,
 ): APIStatusError {
+  if (statusCode === 429) {
+    return new APIProviderRateLimitError(message, requestId);
+  }
   if (isContextOverflowStatusError(statusCode, message)) {
     return new APIContextOverflowError(statusCode, message, requestId);
   }
@@ -117,4 +141,36 @@ export function isContextOverflowStatusError(statusCode: number, message: string
   if (statusCode !== 400 && statusCode !== 413 && statusCode !== 422) return false;
   const lowerMessage = message.toLowerCase();
   return CONTEXT_OVERFLOW_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+}
+
+export function isProviderRateLimitError(error: unknown): boolean {
+  if (error instanceof APIProviderRateLimitError) return true;
+
+  const statusCode = getStatusCode(error);
+  if (statusCode !== undefined) return statusCode === 429;
+
+  const lowerMessage = errorMessage(error).toLowerCase();
+  return PROVIDER_RATE_LIMIT_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+}
+
+function getStatusCode(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+
+  const record = error as Record<string, unknown>;
+  const statusCode = record['statusCode'];
+  if (typeof statusCode === 'number') return statusCode;
+  const status = record['status'];
+  if (typeof status === 'number') return status;
+
+  const response = record['response'];
+  if (typeof response !== 'object' || response === null) return undefined;
+  const responseRecord = response as Record<string, unknown>;
+  const responseStatusCode = responseRecord['statusCode'];
+  if (typeof responseStatusCode === 'number') return responseStatusCode;
+  const responseStatus = responseRecord['status'];
+  return typeof responseStatus === 'number' ? responseStatus : undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

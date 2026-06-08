@@ -56,6 +56,7 @@ export function appStateFromResumeAgent(agent: ResumedAgentState): Partial<AppSt
     maxContextTokens,
     contextUsage,
     planMode: agent.plan !== null,
+    swarmMode: agent.swarmMode ?? false,
     permissionMode: agent.permission.mode,
   };
 }
@@ -255,6 +256,7 @@ function isReplayUserTurnRecord(record: AgentReplayRecord): boolean {
     case 'cron_missed':
     case 'hook_result':
     case 'injection':
+    case 'retry':
     case 'system_trigger':
       return false;
   }

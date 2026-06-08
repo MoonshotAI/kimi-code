@@ -37,6 +37,14 @@ export const FLAG_DEFINITIONS = [
     surface: 'core',
   },
   {
+    id: 'agent_swarm',
+    title: 'Agent swarm',
+    description: 'Enable the AgentSwarm tool and /swarm command.',
+    env: 'KIMI_CODE_EXPERIMENTAL_AGENT_SWARM',
+    default: false,
+    surface: 'both',
+  },
+  {
     id: 'sub_skill',
     title: 'Sub-skill',
     description: 'Enable discovery of nested skills inside skill bundles that declare has-sub-skill.',

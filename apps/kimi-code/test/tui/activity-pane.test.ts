@@ -1,10 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { AgentSwarmProgressComponent } from '#/tui/components/messages/agent-swarm-progress';
+import type { SessionEventHandler } from '#/tui/controllers/session-event-handler';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 
 interface ActivityDriver {
   state: TUIState;
+  sessionEventHandler: SessionEventHandler;
   updateActivityPane(): void;
+}
+
+function strip(text: string): string {
+  return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
 }
 
 function makeStartupInput(): KimiTUIStartupInput {
@@ -42,6 +49,32 @@ function makeDriverWithTerminalProgress(): {
   vi.spyOn(driver.state.ui, 'requestRender').mockImplementation(() => {});
   driver.state.terminal = { columns: 80, setProgress } as unknown as TUIState['terminal'];
   return { driver, state: driver.state, setProgress };
+}
+
+function startSwarmProgress(driver: ActivityDriver, state: TUIState): AgentSwarmProgressComponent {
+  const handler = driver.sessionEventHandler.subAgentEventHandler;
+  handler.handleAgentSwarmToolCallStarted('call_swarm', {
+    description: 'Review changed files',
+  });
+  handler.handleLifecycleEvent({
+    type: 'subagent.spawned',
+    subagentId: 'agent-1',
+    subagentName: 'coder',
+    parentToolCallId: 'call_swarm',
+    description: 'Review changed files #1 (coder)',
+    swarmIndex: 1,
+    runInBackground: false,
+  } as Parameters<typeof handler.handleLifecycleEvent>[0]);
+  handler.handleLifecycleEvent({
+    type: 'subagent.started',
+    subagentId: 'agent-1',
+  } as Parameters<typeof handler.handleLifecycleEvent>[0]);
+
+  const progress = state.transcriptContainer.children.find(
+    (child): child is AgentSwarmProgressComponent => child instanceof AgentSwarmProgressComponent,
+  );
+  if (progress === undefined) throw new Error('expected AgentSwarm progress');
+  return progress;
 }
 
 describe('updateActivityPane terminal progress', () => {
@@ -107,6 +140,59 @@ describe('updateActivityPane terminal progress', () => {
       expect(setProgress).toHaveBeenCalledTimes(2);
       expect(setProgress).toHaveBeenLastCalledWith(false);
       expect(state.activitySpinner).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('moves the moon spinner into the AgentSwarm progress row while active', () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, state, setProgress } = makeDriverWithTerminalProgress();
+      const progress = startSwarmProgress(driver, state);
+      state.livePane = { ...state.livePane, mode: 'tool' };
+
+      driver.updateActivityPane();
+
+      expect(setProgress).toHaveBeenCalledTimes(1);
+      expect(setProgress).toHaveBeenLastCalledWith(true);
+      expect(state.activitySpinner).not.toBeNull();
+      expect(state.activityContainer.children).toHaveLength(0);
+      expect(strip(progress.render(80).join('\n'))).toContain('🌑 Working...');
+
+      state.activitySpinner?.instance.stop();
+      driver.sessionEventHandler.clearAgentSwarmProgress();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps ended AgentSwarm progress on a placeholder instead of the moon spinner', () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, state } = makeDriverWithTerminalProgress();
+      const progress = startSwarmProgress(driver, state);
+      driver.sessionEventHandler.subAgentEventHandler.handleAgentSwarmToolResult(
+        'call_swarm',
+        {
+          tool_call_id: 'call_swarm',
+          output: 'Done',
+          is_error: false,
+        },
+        false,
+      );
+      state.livePane = { ...state.livePane, mode: 'tool' };
+
+      driver.updateActivityPane();
+
+      expect(state.activitySpinner).not.toBeNull();
+      expect(state.activityContainer.children).toHaveLength(1);
+      const output = strip(progress.render(80).join('\n'));
+      expect(output).toContain('  Working...');
+      expect(output).not.toContain('🌑 Working...');
+
+      state.activitySpinner?.instance.stop();
+      driver.sessionEventHandler.clearAgentSwarmProgress();
     } finally {
       vi.useRealTimers();
     }
