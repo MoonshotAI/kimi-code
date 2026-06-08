@@ -71,7 +71,7 @@ export function buildGoalToolHeader(options: {
   return `${marker}${label}${argText}${chip}`;
 }
 
-export function formatGoalBudgetArg(args: Record<string, unknown>): string | undefined {
+function formatGoalBudgetArg(args: Record<string, unknown>): string | undefined {
   const value = args['value'];
   const unit = args['unit'];
   if (typeof value !== 'number' || !Number.isFinite(value) || typeof unit !== 'string') {

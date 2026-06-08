@@ -136,6 +136,7 @@ export class SessionEventHandler {
   mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
   private goalCompletionAwaitingClear = false;
   private goalCompletionTurnEnded = false;
+  private currentTurnHasAssistantText = false;
   private pendingModelBlockedFallback: GoalChange | undefined;
   private queuedGoalPromotionPending = false;
   private queuedGoalPromotionInFlight = false;
@@ -150,6 +151,7 @@ export class SessionEventHandler {
     this.mcpServers.clear();
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
+    this.currentTurnHasAssistantText = false;
     this.pendingModelBlockedFallback = undefined;
     this.queuedGoalPromotionPending = false;
     this.queuedGoalPromotionInFlight = false;
@@ -284,6 +286,7 @@ export class SessionEventHandler {
 
   private handleTurnBegin(_event: TurnStartedEvent): void {
     void _event;
+    this.currentTurnHasAssistantText = false;
     this.clearAgentSwarmProgress();
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.setStep(0);
@@ -328,6 +331,7 @@ export class SessionEventHandler {
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeTurn(sendQueued);
     this.renderPendingModelBlockedFallback();
+    this.currentTurnHasAssistantText = false;
     this.goalCompletionTurnEnded = true;
     this.scheduleQueuedGoalPromotion();
   }
@@ -420,6 +424,7 @@ export class SessionEventHandler {
     }
 
     if (event.delta.trim().length > 0) {
+      this.currentTurnHasAssistantText = true;
       this.pendingModelBlockedFallback = undefined;
     }
     streamingUI.appendAssistantDelta(event.delta);
@@ -442,6 +447,7 @@ export class SessionEventHandler {
     }
     this.host.streamingUI.finalizeAssistantStream();
     if (event.content.trim().length > 0) {
+      this.currentTurnHasAssistantText = true;
       this.pendingModelBlockedFallback = undefined;
     }
     this.host.appendTranscriptEntry({
@@ -613,7 +619,9 @@ export class SessionEventHandler {
     if (change.kind === 'lifecycle' && change.status === 'blocked') {
       void this.notifyQueuedGoalWaitingOnBlocked();
       if (event.snapshot?.updatedBy === 'model') {
-        this.pendingModelBlockedFallback = change;
+        this.pendingModelBlockedFallback = this.currentTurnHasAssistantText
+          ? undefined
+          : change;
         return;
       }
       this.pendingModelBlockedFallback = undefined;

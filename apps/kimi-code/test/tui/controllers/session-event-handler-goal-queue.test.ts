@@ -412,6 +412,26 @@ describe('SessionEventHandler goal queue promotion', () => {
     expect(host.state.transcriptContainer.addChild).not.toHaveBeenCalled();
   });
 
+  it('does not render a blocked fallback after earlier assistant text in the same turn', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent(
+      {
+        type: 'assistant.delta',
+        sessionId: 's1',
+        agentId: 'main',
+        turnId: 1,
+        delta: 'I am blocked because I need credentials.',
+      },
+      vi.fn(),
+    );
+    handler.handleEvent(modelBlockedEvent(), vi.fn());
+    handler.handleEvent(turnEndedEvent(), vi.fn());
+
+    expect(host.state.transcriptContainer.addChild).not.toHaveBeenCalled();
+  });
+
   it('does not promote on paused or cancelled updates', async () => {
     const { host, session } = makeHost();
     const handler = new SessionEventHandler(host);
