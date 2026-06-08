@@ -112,7 +112,7 @@ import {
   type TUIStartupState,
 } from './types';
 import { createTUIState, type TUIState } from './tui-state';
-import { isExpandable, isPlanExpandable } from './utils/component-capabilities';
+import { isExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
@@ -1308,7 +1308,6 @@ export class KimiTUI {
             this.state.appState.workDir,
           );
           if (this.state.toolOutputExpanded) tc.setExpanded(true);
-          if (this.state.planExpanded) tc.setPlanExpanded(true);
           return tc;
         }
         if (entry.backgroundAgentStatus !== undefined) {
@@ -1571,21 +1570,6 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  // Returns true when at least one card toggled, so the caller can consume the keystroke.
-  togglePlanExpansion(): boolean {
-    const next = !this.state.planExpanded;
-    let toggled = false;
-    for (const child of this.state.transcriptContainer.children) {
-      if (isPlanExpandable(child) && child.setPlanExpanded(next)) {
-        toggled = true;
-      }
-    }
-    if (!toggled) return false;
-    this.state.planExpanded = next;
-    this.state.ui.requestRender();
-    return true;
-  }
-
   updateEditorBorderHighlight(text?: string): void {
     const trimmed = (text ?? this.state.editor.getText()).trimStart();
     const highlighted = this.state.appState.planMode || trimmed.startsWith('/');
@@ -1803,9 +1787,6 @@ export class KimiTUI {
       () => {
         this.toggleToolOutputExpansion();
       },
-      () => {
-        this.togglePlanExpansion();
-      },
       (block) => {
         this.openApprovalPreview(panel, block);
       },
@@ -1875,9 +1856,6 @@ export class KimiTUI {
       undefined,
       () => {
         this.toggleToolOutputExpansion();
-      },
-      () => {
-        this.togglePlanExpansion();
       },
     );
     this.mountEditorReplacement(dialog);

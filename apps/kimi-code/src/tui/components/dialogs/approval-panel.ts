@@ -189,7 +189,6 @@ export class ApprovalPanelComponent extends Container implements Focusable {
   private request: PendingApproval;
   private readonly colors: ColorPalette;
   private readonly onToggleToolOutput: (() => void) | undefined;
-  private readonly onTogglePlanExpand: (() => void) | undefined;
   private readonly onOpenPreview:
     | ((block: DiffDisplayBlock | FileContentDisplayBlock) => void)
     | undefined;
@@ -199,7 +198,6 @@ export class ApprovalPanelComponent extends Container implements Focusable {
     onResponse: (response: ApprovalPanelResponse) => void,
     colors: ColorPalette,
     onToggleToolOutput?: () => void,
-    onTogglePlanExpand?: () => void,
     onOpenPreview?: (block: DiffDisplayBlock | FileContentDisplayBlock) => void,
   ) {
     super();
@@ -207,7 +205,6 @@ export class ApprovalPanelComponent extends Container implements Focusable {
     this.onResponse = onResponse;
     this.colors = colors;
     this.onToggleToolOutput = onToggleToolOutput;
-    this.onTogglePlanExpand = onTogglePlanExpand;
     this.onOpenPreview = onOpenPreview;
     this.feedbackInput.onSubmit = (value) => {
       this.submit(this.selectedIndex, value);
@@ -253,8 +250,6 @@ export class ApprovalPanelComponent extends Container implements Focusable {
       const previewable = this.findPreviewableBlock();
       if (previewable !== undefined && this.onOpenPreview !== undefined) {
         this.onOpenPreview(previewable);
-      } else {
-        this.onTogglePlanExpand?.();
       }
       return;
     }

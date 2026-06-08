@@ -604,7 +604,6 @@ export class StreamingUIController {
       state.appState.workDir,
     );
     if (state.toolOutputExpanded) tc.setExpanded(true);
-    if (state.planExpanded) tc.setPlanExpanded(true);
     this._pendingToolComponents.set(toolCall.id, tc);
 
     if (toolCall.name !== 'Agent') this._pendingAgentGroup = null;
@@ -651,7 +650,6 @@ export class StreamingUIController {
         state.appState.workDir,
       );
       if (state.toolOutputExpanded) completed.setExpanded(true);
-      if (state.planExpanded) completed.setPlanExpanded(true);
       state.transcriptContainer.addChild(completed);
       state.ui.requestRender();
     }

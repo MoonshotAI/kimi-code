@@ -44,7 +44,6 @@ export interface TUIState {
   terminalState: TerminalState;
   activitySpinner: { instance: MoonLoader; style: SpinnerStyle } | null;
   toolOutputExpanded: boolean;
-  planExpanded: boolean;
   sessions: SessionRow[];
   loadingSessions: boolean;
   activeDialog: 'session-picker' | 'help' | null;
@@ -92,7 +91,6 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     terminalState: createTerminalState(),
     activitySpinner: null,
     toolOutputExpanded: false,
-    planExpanded: false,
     sessions: [],
     loadingSessions: false,
     activeDialog: null,

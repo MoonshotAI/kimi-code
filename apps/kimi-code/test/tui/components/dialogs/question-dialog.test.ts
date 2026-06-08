@@ -36,7 +36,6 @@ function makePending(
 function makeDialog(
   pending: PendingQuestion,
   onToggleToolOutput?: () => void,
-  onTogglePlanExpand?: () => void,
 ): {
   dialog: QuestionDialogComponent;
   collected: string[][];
@@ -53,7 +52,6 @@ function makeDialog(
     darkColors,
     6,
     onToggleToolOutput,
-    onTogglePlanExpand,
   );
   return { dialog, collected, methods };
 }
@@ -428,17 +426,6 @@ describe('QuestionDialogComponent', () => {
     const { dialog, collected } = makeDialog(pending, () => toggles++);
     dialog.handleInput('\u000F'); // Ctrl+O
     expect(toggles).toBe(1);
-    expect(collected).toEqual([]);
-  });
-
-  it('forwards ctrl+e to the global plan-expand toggle without answering', () => {
-    let planToggles = 0;
-    const pending = makePending([
-      { question: 'Q?', multi_select: false, options: [{ label: 'A' }] },
-    ]);
-    const { dialog, collected } = makeDialog(pending, undefined, () => planToggles++);
-    dialog.handleInput('\u0005'); // Ctrl+E
-    expect(planToggles).toBe(1);
     expect(collected).toEqual([]);
   });
 
