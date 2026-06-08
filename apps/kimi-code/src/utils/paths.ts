@@ -10,6 +10,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  KIMI_CODE_BIN_DIR_NAME,
   KIMI_CODE_DATA_DIR_NAME,
   KIMI_CODE_HOME_ENV,
   KIMI_CODE_INPUT_HISTORY_DIR_NAME,
@@ -38,6 +39,13 @@ export function getDataDir(): string {
  */
 export function getLogDir(): string {
   return join(getDataDir(), KIMI_CODE_LOG_DIR_NAME);
+}
+
+/**
+ * Return the managed tools directory: `<dataDir>/bin/`.
+ */
+export function getBinDir(): string {
+  return join(getDataDir(), KIMI_CODE_BIN_DIR_NAME);
 }
 
 /**

@@ -701,6 +701,54 @@ describe('resolveSkillRoots ordering and priority', () => {
   });
 });
 
+describe('resolveSkillRoots brand home (KIMI_CODE_HOME)', () => {
+  it('resolves the user brand skills root under brandHomeDir while keeping generic under the real home', async () => {
+    const { homeDir, workDir } = await makeWorkspace();
+    const brandHomeDir = path.join(homeDir, '..', 'brand-home');
+    await mkdir(path.join(brandHomeDir, 'skills'), { recursive: true });
+    await mkdir(path.join(homeDir, '.agents', 'skills'), { recursive: true });
+
+    const roots = await resolveSkillRoots({
+      paths: { userHomeDir: homeDir, brandHomeDir, workDir },
+    });
+
+    const userRoots = roots.filter((r) => r.source === 'user').map((r) => r.path);
+    expect(userRoots).toContain(await realpath(path.join(brandHomeDir, 'skills')));
+    expect(userRoots).toContain(await realpath(path.join(homeDir, '.agents', 'skills')));
+  });
+
+  it('never nests a second .kimi-code under the brand home', async () => {
+    const { homeDir, workDir } = await makeWorkspace();
+    // Mirrors the default case where brandHomeDir already IS the ~/.kimi-code dir.
+    const brandHomeDir = path.join(homeDir, '.kimi-code');
+    await mkdir(path.join(brandHomeDir, 'skills'), { recursive: true });
+    // The doubled-prefix path that must never be selected.
+    await mkdir(path.join(brandHomeDir, '.kimi-code', 'skills'), { recursive: true });
+
+    const roots = await resolveSkillRoots({
+      paths: { userHomeDir: homeDir, brandHomeDir, workDir },
+    });
+
+    const userRoots = roots.filter((r) => r.source === 'user').map((r) => r.path);
+    expect(userRoots).toContain(await realpath(path.join(brandHomeDir, 'skills')));
+    expect(userRoots).not.toContain(
+      await realpath(path.join(brandHomeDir, '.kimi-code', 'skills')),
+    );
+  });
+
+  it('falls back to <userHomeDir>/.kimi-code/skills when brandHomeDir is omitted', async () => {
+    const { homeDir, workDir } = await makeWorkspace();
+    await mkdir(path.join(homeDir, '.kimi-code', 'skills'), { recursive: true });
+
+    const roots = await resolveSkillRoots({
+      paths: { userHomeDir: homeDir, workDir },
+    });
+
+    const userRoots = roots.filter((r) => r.source === 'user').map((r) => r.path);
+    expect(userRoots).toContain(await realpath(path.join(homeDir, '.kimi-code', 'skills')));
+  });
+});
+
 describe('resolveSkillRoots extra dirs', () => {
   it('appends extra dirs to the resolved roots', async () => {
     const { homeDir, repoDir, workDir } = await makeWorkspace();

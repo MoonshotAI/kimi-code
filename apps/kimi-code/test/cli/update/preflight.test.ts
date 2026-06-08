@@ -397,6 +397,17 @@ describe('runUpdatePreflight', () => {
     );
   });
 
+  it('homebrew: prints manual brew upgrade command, does not spawn', async () => {
+    mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.detectInstallSource.mockResolvedValue('homebrew');
+    const { stdout, options } = captureOutput();
+    await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+    expect(stdout.join('')).toContain('brew upgrade kimi-code');
+    expect(promptForInstallChoice).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+
   it('native on darwin: spawns bash -c with pipefail-guarded curl|bash', async () => {
     disableAutoInstall();
     mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));

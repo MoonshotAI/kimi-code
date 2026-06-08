@@ -3,8 +3,11 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createKimiHarness } from '#/index';
-import type { KimiError, KimiHarness } from '#/index';
+import type { Kaos } from '@moonshot-ai/kaos';
+import { createKimiHarness, KimiHarness } from '#/index';
+import type { KimiError } from '#/index';
+import type { ResumeSessionInput, ResumedSessionSummary } from '#/types';
+import { SDKRpcClientBase } from '#/rpc';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { waitForAgentWireEvent } from './session-runtime-helpers';
@@ -41,6 +44,44 @@ max_context_size = 1000
 `,
     'utf-8',
   );
+}
+
+class StubRpc extends SDKRpcClientBase {
+  resumeCalls: Array<{ input: ResumeSessionInput; kaos: Kaos; persistenceKaos?: Kaos }> = [];
+
+  protected async getRpc(): Promise<never> {
+    throw new Error('not used');
+  }
+
+  override async createSession(input: { id?: string; workDir: string }) {
+    return {
+      id: input.id ?? 'ses_stub',
+      workDir: input.workDir,
+      sessionDir: '/tmp/session',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+  }
+
+  override async resumeSessionWithKaos(input: ResumeSessionInput, kaos: Kaos, persistenceKaos?: Kaos): Promise<ResumedSessionSummary> {
+    this.resumeCalls.push({ input, kaos, persistenceKaos });
+    return {
+      id: input.id,
+      workDir: '/tmp/work',
+      sessionDir: '/tmp/session',
+      createdAt: 1,
+      updatedAt: 1,
+      sessionMetadata: {
+        createdAt: '',
+        updatedAt: '',
+        title: '',
+        isCustomTitle: false,
+        agents: {},
+        custom: {},
+      },
+      agents: {},
+    };
+  }
 }
 
 describe('KimiHarness.createSession transport link', () => {
@@ -485,6 +526,32 @@ effort = "medium"
     } finally {
       await harness.close();
     }
+  });
+
+  it('rebinds an active session when resumeSession receives a new Kaos', async () => {
+    const records: TelemetryRecord[] = [];
+    const rpc = new StubRpc();
+    const harness = new KimiHarness(rpc, {
+      homeDir: '/tmp/home',
+      configPath: '/tmp/config.toml',
+      auth: { status: async () => ({ providers: [] }) } as never,
+      telemetry: recordingTelemetry(records),
+      ensureConfigFile: async () => undefined,
+      onClose: () => undefined,
+    });
+
+    const session = await harness.createSession({ id: 'ses_active', workDir: '/tmp/work' });
+    const kaos = {} as Kaos;
+
+    const resumed = await harness.resumeSession({ id: session.id, kaos });
+
+    expect(resumed).toBe(session);
+    expect(rpc.resumeCalls).toHaveLength(1);
+    expect(rpc.resumeCalls[0]).toMatchObject({
+      input: { id: 'ses_active' },
+      kaos,
+      persistenceKaos: undefined,
+    });
   });
 });
 

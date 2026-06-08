@@ -1306,6 +1306,48 @@ describe('Session.createAgent', () => {
     expect(created.agent.config.systemPrompt).toContain('leaf instructions');
   });
 
+  it('uses the kimi home for global branded AGENTS.md files', async () => {
+    const realHome = '/real-home';
+    const kimiHome = '/kimi-home';
+    const workDir = '/repo/packages/app';
+    const kaos = createFakeKaos({
+      gethome: () => realHome,
+      mkdir: vi.fn(async () => {}),
+      writeText: vi.fn().mockResolvedValue(0),
+      stat: vi.fn(async (path: string) => {
+        if (['/repo', '/repo/.git', '/repo/packages', workDir].includes(path)) {
+          return stat('dir');
+        }
+        if ([`${kimiHome}/AGENTS.md`, `${realHome}/.kimi-code/AGENTS.md`].includes(path)) {
+          return stat('file');
+        }
+        throw new Error(`ENOENT ${path}`);
+      }),
+      // oxlint-disable-next-line require-yield
+      iterdir: async function* () {
+        return;
+      },
+      readText: vi.fn(async (path: string) => {
+        if (path === `${kimiHome}/AGENTS.md`) return 'kimi home instructions';
+        if (path === `${realHome}/.kimi-code/AGENTS.md`) return 'stale real-home instructions';
+        throw new Error(`ENOENT ${path}`);
+      }),
+    });
+    const session = new Session({
+      id: 'test-kimi-home-agents-md',
+      kaos: kaos.withCwd(workDir),
+      homedir: '/tmp/kimi-session',
+      kimiHomeDir: kimiHome,
+      rpc: createSessionRpc(),
+      initializeMainAgent: false,
+    });
+
+    const created = await session.createAgent({ type: 'main' }, { profile: contextProfile() });
+
+    expect(created.agent.config.systemPrompt).toContain('kimi home instructions');
+    expect(created.agent.config.systemPrompt).not.toContain('stale real-home instructions');
+  });
+
   it('inherits the parent agent cwd when creating a subagent', async () => {
     const sessionWorkDir = '/session/work';
     const parentWorkDir = '/parent/work';
@@ -1409,6 +1451,7 @@ function fakeSession(
   }
   return {
     agents,
+    options: { kimiHomeDir: undefined },
     metadata: {
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
@@ -1418,6 +1461,7 @@ function fakeSession(
       custom: {},
     },
     writeMetadata: vi.fn(async () => {}),
+    systemContextKaos: vi.fn((cwd: string) => parent.kaos.withCwd(cwd)),
     getReadyAgent: vi.fn((id: string) => agents.get(id)),
     ensureAgentResumed: vi.fn(async (id: string) => {
       const agent = agents.get(id);

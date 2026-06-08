@@ -43,6 +43,7 @@ import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 
 export interface SessionOptions {
   readonly kaos: Kaos;
+  readonly persistenceKaos?: Kaos;
   readonly config?: KimiConfig;
   readonly id?: string | undefined;
   readonly homedir: string;
@@ -64,6 +65,8 @@ export interface SessionOptions {
 
 export interface SessionSkillConfig {
   readonly userHomeDir?: string;
+  /** Brand data dir (KIMI_CODE_HOME); user brand skills live under `<brandHomeDir>/skills`. */
+  readonly brandHomeDir?: string;
   readonly explicitDirs?: readonly string[];
   readonly extraDirs?: readonly string[];
   readonly pluginSkillRoots?: readonly SkillRoot[];
@@ -115,6 +118,8 @@ export class Session {
   private readonly logHandle: SessionLogHandle | undefined;
   readonly hookEngine: HookEngine;
   readonly experimentalFlags: ExperimentalFlagResolver;
+  private toolKaos: Kaos;
+  private persistenceKaos: Kaos;
   private agentIdCounter = 0;
   private readonly skillsReady: Promise<void>;
   metadata: SessionMeta = {
@@ -135,9 +140,9 @@ export class Session {
       options.id === undefined
         ? undefined
         : getRootLogger().attachSession({
-            sessionId: options.id,
-            sessionDir: options.homedir,
-          });
+          sessionId: options.id,
+          sessionDir: options.homedir,
+        });
     this.log =
       this.logHandle?.logger ??
       (options.id === undefined ? log : log.createChild({ sessionId: options.id }));
@@ -148,6 +153,8 @@ export class Session {
       sessionId: options.id,
     });
     this.telemetry = options.telemetry ?? noopTelemetryClient;
+    this.toolKaos = options.kaos;
+    this.persistenceKaos = options.persistenceKaos ?? options.kaos;
     this.skills = new SkillRegistry({
       sessionId: options.id,
       experimentalFlags: this.experimentalFlags,
@@ -169,6 +176,26 @@ export class Session {
     void this.loadMcpServers().catch((error: unknown) => {
       this.emitInitialMcpLoadError(error);
     });
+  }
+
+
+  setToolKaos(kaos: Kaos) {
+    this.toolKaos = kaos;
+    for (const agent of this.readyAgents()) {
+      agent.setKaos(kaos.withCwd(agent.config.cwd));
+    }
+    this.refreshAgentBuiltinTools();
+  }
+
+  /**
+   * Kaos used by session-internal bootstrap (AGENTS.md context, cwd listing)
+   * and metadata persistence. Always backed by the persistence sink (typically
+   * the local filesystem) so a transient ACP-side failure on system files like
+   * `AGENTS.md` never blocks `bootstrapAgentProfile` — tool calls still route
+   * through `agent.kaos` and continue to honor the ACP bridge.
+   */
+  systemContextKaos(cwd: string): Kaos {
+    return this.persistenceKaos.withCwd(cwd);
   }
 
   async createMain() {
@@ -295,7 +322,10 @@ export class Session {
     agent: Agent,
     profile: ResolvedAgentProfile,
   ): Promise<void> {
-    const context = await prepareSystemPromptContext(agent.kaos);
+    const context = await prepareSystemPromptContext(
+      this.systemContextKaos(agent.kaos.getcwd()),
+      this.options.kimiHomeDir,
+    );
     agent.useProfile(profile, context);
   }
 
@@ -314,7 +344,7 @@ export class Session {
       });
       await handle.completion;
 
-      const agentsMd = await loadAgentsMd(mainAgent.kaos);
+      const agentsMd = await loadAgentsMd(mainAgent.kaos, this.options.kimiHomeDir);
       mainAgent.context.appendSystemReminder(initCompletionReminder(agentsMd), {
         kind: 'injection',
         variant: 'init',
@@ -343,15 +373,15 @@ export class Session {
   writeMetadata() {
     const text = JSON.stringify(this.metadata, null, 2);
     const write = async () => {
-      await this.options.kaos.mkdir(this.options.homedir, { parents: true, existOk: true });
-      await this.options.kaos.writeText(this.metadataPath, text);
+      await this.persistenceKaos.mkdir(this.options.homedir, { parents: true, existOk: true });
+      await this.persistenceKaos.writeText(this.metadataPath, text);
     };
     this.writeMetadataPromise = this.writeMetadataPromise.then(write, write);
     return this.writeMetadataPromise;
   }
 
   async readMetadata() {
-    const text = await this.options.kaos.readText(this.metadataPath);
+    const text = await this.persistenceKaos.readText(this.metadataPath);
     this.metadata = JSON.parse(text);
     return this.metadata;
   }
@@ -371,6 +401,7 @@ export class Session {
     const roots = await resolveSkillRoots({
       paths: {
         userHomeDir: this.options.skills?.userHomeDir ?? homedir(),
+        brandHomeDir: this.options.skills?.brandHomeDir ?? this.options.kimiHomeDir,
         workDir: this.options.kaos.getcwd(),
       },
       explicitDirs: this.options.skills?.explicitDirs,
@@ -449,11 +480,11 @@ export class Session {
     parentAgentId: string | null = null,
   ): Agent {
     const parentAgent = parentAgentId !== null ? this.getReadyAgent(parentAgentId) : undefined;
-    const cwd = parentAgent?.config.cwd ?? this.options.kaos.getcwd();
+    const cwd = parentAgent?.config.cwd ?? this.toolKaos.getcwd();
     return new Agent({
       ...config,
       type,
-      kaos: this.options.kaos.withCwd(cwd),
+      kaos: this.toolKaos.withCwd(cwd),
       toolServices: this.options.toolServices,
       config: this.options.config,
       homedir,

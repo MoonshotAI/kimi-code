@@ -71,6 +71,7 @@
     "chalk": "^5.4.1",
     "cli-highlight": "^2.1.11",
     "commander": "^13.1.0",
+    "pathe": "^2.0.3",
     "semver": "^7.7.4",
     "smol-toml": "^1.6.1",
     "zod": "^4.3.6"

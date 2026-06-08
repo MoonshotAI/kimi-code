@@ -89,44 +89,13 @@ describe('PlanBoxComponent', () => {
     expect(top).not.toContain('plan:');
   });
 
-  it('renders all lines when content fits under maxContentLines', () => {
-    const plan = Array.from({ length: 5 }, (_, i) => `- step ${String(i + 1)}`).join('\n');
-    const box = new PlanBoxComponent(plan, theme, darkColors.success, undefined, {
-      maxContentLines: 20,
-    });
+  it('renders all plan lines without a truncation footer', () => {
+    const plan = Array.from({ length: 30 }, (_, i) => `- step ${String(i + 1)}`).join('\n');
+    const box = new PlanBoxComponent(plan, theme, darkColors.success);
     const out = strip(box.render(80).join('\n'));
     expect(out).toContain('step 1');
-    expect(out).toContain('step 5');
-    expect(out).not.toContain('ctrl+e to expand');
-  });
-
-  it('truncates content over maxContentLines with a footer inside the box', () => {
-    const plan = Array.from({ length: 30 }, (_, i) => `- step ${String(i + 1)}`).join('\n');
-    const box = new PlanBoxComponent(plan, theme, darkColors.success, undefined, {
-      maxContentLines: 10,
-    });
-    const rendered = box.render(80);
-    const out = strip(rendered.join('\n'));
-    expect(out).toContain('step 1');
-    expect(out).toContain('step 9');
-    expect(out).not.toContain('step 10');
-    expect(out).toMatch(/\.\.\. \(\d+ more lines, ctrl\+e to expand\)/);
-    // Footer must live inside the bordered box, not after it.
-    const footerIdx = rendered.findIndex((line) => strip(line).includes('ctrl+e to expand'));
-    const bottomIdx = rendered.findIndex((line) => strip(line).includes('└'));
-    expect(footerIdx).toBeGreaterThan(-1);
-    expect(footerIdx).toBeLessThan(bottomIdx);
-    expect(strip(rendered[footerIdx]!)).toMatch(/^\s+│.*│\s*$/);
-  });
-
-  it('renders the full plan when expanded is true, ignoring maxContentLines', () => {
-    const plan = Array.from({ length: 30 }, (_, i) => `- step ${String(i + 1)}`).join('\n');
-    const box = new PlanBoxComponent(plan, theme, darkColors.success, undefined, {
-      maxContentLines: 10,
-      expanded: true,
-    });
-    const out = strip(box.render(80).join('\n'));
     expect(out).toContain('step 30');
-    expect(out).not.toContain('ctrl+e to expand');
+    expect(out).not.toContain('more lines');
   });
+
 });

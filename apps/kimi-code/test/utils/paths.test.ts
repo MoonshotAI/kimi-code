@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  getBinDir,
   getDataDir,
   getInputHistoryFile,
   getLogDir,
@@ -46,6 +47,17 @@ describe('getLogDir', () => {
   it('respects KIMI_CODE_HOME', () => {
     process.env['KIMI_CODE_HOME'] = '/z';
     expect(getLogDir()).toBe(join('/z', 'logs'));
+  });
+});
+
+describe('getBinDir', () => {
+  it('returns <dataDir>/bin', () => {
+    expect(getBinDir()).toBe(join(homedir(), '.kimi-code', 'bin'));
+  });
+
+  it('respects KIMI_CODE_HOME', () => {
+    process.env['KIMI_CODE_HOME'] = '/custom-bin-home';
+    expect(getBinDir()).toBe(join('/custom-bin-home', 'bin'));
   });
 });
 

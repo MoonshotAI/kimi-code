@@ -15,6 +15,7 @@ import {
   type ToolCallResponse,
   type SwarmModeTrigger,
 } from '@moonshot-ai/agent-core';
+import type { Kaos } from '@moonshot-ai/kaos';
 
 import type { ApprovalHandler, QuestionHandler } from '#/events';
 import type {
@@ -111,9 +112,29 @@ export abstract class SDKRpcClientBase {
     return rpc.createSession(coreInput);
   }
 
+  async createSessionWithKaos(
+    input: CreateSessionOptions,
+    kaos: Kaos,
+    persistenceKaos?: Kaos,
+  ): Promise<SessionSummary> {
+    void kaos;
+    void persistenceKaos;
+    return this.createSession(input);
+  }
+
   async resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary> {
     const rpc = await this.getRpc();
     return rpc.resumeSession({ ...input, sessionId: input.id });
+  }
+
+  async resumeSessionWithKaos(
+    input: ResumeSessionInput,
+    kaos: Kaos,
+    persistenceKaos?: Kaos,
+  ): Promise<ResumedSessionSummary> {
+    void kaos;
+    void persistenceKaos;
+    return this.resumeSession(input);
   }
 
   async reloadSession(input: SessionIdRpcInput): Promise<ResumedSessionSummary> {

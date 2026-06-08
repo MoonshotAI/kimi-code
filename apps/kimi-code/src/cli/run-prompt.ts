@@ -17,6 +17,7 @@ import {
   type SessionStatus,
   type TelemetryClient,
 } from '@moonshot-ai/kimi-code-sdk';
+import { resolve } from 'pathe';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
 import { experimentalFeatureMap } from '#/utils/experimental-features';
@@ -230,7 +231,7 @@ async function resolvePromptSession(
     if (target === undefined) {
       throw new Error(`Session "${opts.session}" not found.`);
     }
-    if (target.workDir !== workDir) {
+    if (resolve(target.workDir) !== resolve(workDir)) {
       stderr.write(
         `${chalk.hex('#E8A838')(
           `Session "${opts.session}" was created under a different directory.\n` +

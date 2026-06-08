@@ -30,6 +30,7 @@ interface StartupDriver {
   init(): Promise<boolean>;
   handleLoginCommand(): Promise<void>;
   handleLogoutCommand(): Promise<void>;
+  stop(exitCode?: number): Promise<void>;
 }
 
 interface RuntimeStateDriver extends StartupDriver {
@@ -113,6 +114,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     setPlanMode: vi.fn(async () => {}),
     getGoal: vi.fn(async () => ({ goal: null })),
     onEvent: vi.fn(() => () => {}),
+    getResumeState: vi.fn(() => null),
     listSkills: vi.fn(async () => []),
     close: vi.fn(async () => {}),
     ...overrides,
@@ -355,6 +357,34 @@ describe("KimiTUI startup", () => {
     expect(harness.createSession).not.toHaveBeenCalled();
     expect(harness.resumeSession).not.toHaveBeenCalled();
     expect(driver.state.startupState).toBe("picker");
+  });
+
+  it("clears startup picker exit confirmation before resuming a selected session", async () => {
+    const session = makeSession({ id: "ses-picked" });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [
+        {
+          id: "ses-picked",
+          title: "Picked session",
+          workDir: "/tmp/proj-a",
+          updatedAt: Date.now(),
+        },
+      ]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ session: "" }));
+    const stop = vi.spyOn(driver, "stop").mockResolvedValue(undefined);
+
+    await expect((driver as unknown as MigrateExitDriver).initMainTui()).resolves.toBe(false);
+    await (driver as unknown as { bootstrapFromPicker(): Promise<void> }).bootstrapFromPicker();
+
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput("\u0003");
+    picker.handleInput("\r");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    driver.state.editor.onCtrlC?.();
+
+    expect(stop).not.toHaveBeenCalled();
   });
 
   it("tracks terminal theme reports while auto theme is active", () => {
@@ -892,6 +922,31 @@ describe("KimiTUI startup", () => {
     await driver.initMainTui();
 
     expect(uiContainsFooter(driver)).toBe(true);
+  });
+
+  it("resumes a startup session when Windows workdir uses backslashes", async () => {
+    const session = makeSession({ id: "ses-target" });
+    const harness = makeHarness(session, {
+      listSessions: vi.fn(async () => [
+        { id: "ses-target", workDir: "C:/Users/kimi/project" },
+      ]),
+    });
+    const driver = makeDriver(
+      harness,
+      {
+        ...makeStartupInput({ session: "ses-target" }),
+        workDir: String.raw`C:\Users\kimi\project`,
+      },
+    );
+
+    await expect(driver.init()).resolves.toBe(true);
+
+    expect(harness.listSessions).toHaveBeenCalledWith({
+      sessionId: "ses-target",
+      workDir: String.raw`C:\Users\kimi\project`,
+    });
+    expect(harness.resumeSession).toHaveBeenCalledWith({ id: "ses-target" });
+    expect(driver.state.appState.sessionId).toBe("ses-target");
   });
 });
 
