@@ -59,7 +59,7 @@ export function buildGoalToolHeader(options: {
   const tone = result?.is_error === true ? colors.error : colors.primary;
   const label = chalk.hex(tone).bold(goalToolLabel(toolCall.name, result, toolCall.args));
   const marker =
-    toolCall.name === 'UpdateGoal' && result !== undefined && result.is_error !== true
+    result !== undefined && result.is_error !== true
       ? chalk.hex(colors.primary)(STATUS_BULLET)
       : bullet;
   const arg =

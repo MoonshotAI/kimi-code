@@ -556,6 +556,32 @@ describe('ToolCallComponent', () => {
     expect(out).not.toContain('Goal budget set: 10 turns.');
   });
 
+  it('renders successful SetGoalBudget headers with the primary goal marker', () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_goal_budget',
+          name: 'SetGoalBudget',
+          args: { value: 10, unit: 'turns' },
+        },
+        {
+          tool_call_id: 'call_goal_budget',
+          output: 'Goal budget set: 10 turns.',
+          is_error: false,
+        },
+        darkColors,
+      );
+
+      const out = component.render(100).join('\n');
+      expect(out).toContain(chalk.hex(darkColors.primary)(STATUS_BULLET));
+      expect(out).not.toContain(chalk.hex(darkColors.success)(STATUS_BULLET));
+    } finally {
+      chalk.level = previousLevel;
+    }
+  });
+
   it('renders UpdateGoal as a model-reported status, not a user lifecycle marker', () => {
     const component = new ToolCallComponent(
       {
