@@ -37,6 +37,7 @@ import type { AgentEvent, TurnEndedEvent } from '../../rpc';
 import type { TelemetryPropertyValue } from '../../telemetry';
 import { abortable, userCancellationReason } from '../../utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
+import { GOAL_COMPLETION_REMINDER_NAME } from '../goal/completion';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
 import { ToolCallDeduplicator } from './tool-dedup';
@@ -568,6 +569,7 @@ export class TurnFlow {
 
   private async runStepLoop(turnId: number, signal: AbortSignal): Promise<LoopTurnStopReason> {
     let stopHookContinuationUsed = false;
+    let goalCompletionSummaryContinuationUsed = false;
     const deduper = new ToolCallDeduplicator({ telemetry: this.agent.telemetry });
     await this.agent.mcp?.waitForInitialLoad(signal);
     // Surface the active goal at the start of the turn (append-only; no-op when
@@ -627,7 +629,17 @@ export class TurnFlow {
               if (this.flushSteerBuffer()) return { continue: true };
               signal.throwIfAborted();
 
-              // 2. The external Stop hook gets exactly one continuation; the cap
+              // 2. After UpdateGoal marks a goal complete, ask the model for one
+              //    final user-facing summary before the turn ends.
+              if (
+                !goalCompletionSummaryContinuationUsed &&
+                isGoalCompletionReminder(this.agent.context.history.at(-1))
+              ) {
+                goalCompletionSummaryContinuationUsed = true;
+                return { continue: true };
+              }
+
+              // 3. The external Stop hook gets exactly one continuation; the cap
               //    is intentionally separate from (and does not cap) goal mode.
               if (!stopHookContinuationUsed) {
                 const stopBlock = await this.agent.hooks?.triggerBlock('Stop', {
@@ -648,7 +660,7 @@ export class TurnFlow {
                 }
               }
 
-              // 3. Otherwise stop. Goal continuation is no longer driven here:
+              // 4. Otherwise stop. Goal continuation is no longer driven here:
               //    each goal turn is an ordinary turn, and the goal driver decides
               //    whether to run another after this one ends.
               return { continue: false };
@@ -859,6 +871,13 @@ export class TurnFlow {
     const failure = this.stepFailureByTurn.get(turnId);
     return failure?.reason === 'error' && failure.activeStep !== undefined;
   }
+}
+
+function isGoalCompletionReminder(message: { readonly origin?: PromptOrigin | undefined } | undefined): boolean {
+  return (
+    message?.origin?.kind === 'system_trigger' &&
+    message.origin.name === GOAL_COMPLETION_REMINDER_NAME
+  );
 }
 
 function mapLoopEvent(event: LoopEvent, turnId: number): AgentEvent | undefined {

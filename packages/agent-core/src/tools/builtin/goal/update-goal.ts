@@ -13,7 +13,10 @@
 import type { Agent } from '#/agent';
 import { z } from 'zod';
 
-import { buildGoalCompletionMessage } from '../../../agent/goal/completion';
+import {
+  GOAL_COMPLETION_REMINDER_NAME,
+  buildGoalCompletionSummaryPrompt,
+} from '../../../agent/goal/completion';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
@@ -54,14 +57,14 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
           if (args.status === 'complete') {
             const completed = await store.markComplete({ actor: 'model' });
             // `complete` is transient — markComplete announces then clears the
-            // record. Store the deterministic completion line as a system
-            // reminder, so the next provider request ends with a user message
-            // after the UpdateGoal tool result. Anthropic-compatible providers
-            // reject trailing assistant messages as unsupported prefill.
+            // record. Store the summary request as a system reminder, so the
+            // next provider request ends with a user message after the
+            // UpdateGoal tool result. Anthropic-compatible providers reject
+            // trailing assistant messages as unsupported prefill.
             if (completed !== null) {
-              this.agent.context.appendSystemReminder(buildGoalCompletionMessage(completed), {
+              this.agent.context.appendSystemReminder(buildGoalCompletionSummaryPrompt(completed), {
                 kind: 'system_trigger',
-                name: 'goal_completion',
+                name: GOAL_COMPLETION_REMINDER_NAME,
               });
             }
             return { output: 'Goal marked complete.', stopTurn: true };

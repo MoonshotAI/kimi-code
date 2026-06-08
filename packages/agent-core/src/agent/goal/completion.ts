@@ -1,12 +1,10 @@
 import type { GoalSnapshot } from '../../session/goal';
 
+export const GOAL_COMPLETION_REMINDER_NAME = 'goal_completion';
+
 /**
- * The deterministic goal-completion message. When the model marks a goal
- * `complete` via UpdateGoal, the tool stores this verbatim inside a
- * `<system-reminder>` (so it persists in the conversation without creating an
- * assistant prefill), and the TUI renders the same text live off the completion
- * event. It is built from the
- * final snapshot — not the model — so the figures (turns / tokens / time) are
+ * The deterministic goal-completion message. It is built from the final
+ * snapshot — not the model — so the figures (turns / tokens / time) are
  * guaranteed exact.
  */
 export function buildGoalCompletionMessage(goal: GoalSnapshot): string {
@@ -14,6 +12,14 @@ export function buildGoalCompletionMessage(goal: GoalSnapshot): string {
   const turns = `${goal.turnsUsed} turn${goal.turnsUsed === 1 ? '' : 's'}`;
   const stats = `Worked ${turns} over ${formatElapsed(goal.wallClockMs)}, using ${formatTokens(goal.tokensUsed)} tokens.`;
   return `${head}\n${stats}`;
+}
+
+export function buildGoalCompletionSummaryPrompt(goal: GoalSnapshot): string {
+  return [
+    buildGoalCompletionMessage(goal),
+    '',
+    'Now summarize how you completed the goal for the user. Mention the main work completed and any validation you ran. Do not call more goal tools.',
+  ].join('\n');
 }
 
 function formatElapsed(ms: number): string {

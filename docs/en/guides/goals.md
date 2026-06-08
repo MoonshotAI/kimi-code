@@ -106,7 +106,7 @@ Use the same command surface to inspect or control the current goal:
 
 A goal can stop in three ways:
 
-- **complete**: the objective is done, and Kimi Code clears the goal
+- **complete**: the objective is done, Kimi Code clears the goal, and the agent summarizes how it completed the work
 - **paused**: you paused it, interrupted the turn, or resumed a session that had an active goal
 - **blocked**: Kimi Code needs input, cannot complete the goal as stated, reached a budget limit, or hit a runtime failure
 

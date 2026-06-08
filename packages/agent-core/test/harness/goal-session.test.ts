@@ -116,14 +116,18 @@ describe('goal session end-to-end', () => {
     await api.createGoal({ objective: 'Ship feature X', completionCriterion: 'tests pass' });
 
     // Turn 1 stops without deciding -> the driver runs a second turn. In turn 2
-    // the model calls UpdateGoal('complete'), which clears the goal and ends the
-    // drive. No evaluator: the model's own tool call is the decision.
+    // the model calls UpdateGoal('complete'), which clears the goal. The turn
+    // then gives the model one final step to summarize how it finished.
     scripted.mockNextResponse({ type: 'text', text: 'Working on the objective.' });
     scripted.mockNextResponse({
       type: 'function',
       id: 'c1',
       name: 'UpdateGoal',
       arguments: JSON.stringify({ status: 'complete' }),
+    });
+    scripted.mockNextResponse({
+      type: 'text',
+      text: 'I completed the goal by updating the feature and running the tests.',
     });
 
     agent.turn.prompt([{ type: 'text', text: 'Ship feature X' }]);
@@ -145,14 +149,16 @@ describe('goal session end-to-end', () => {
     expect(continuationHistory).toContain('Keep the self-audit brief');
     expect(continuationHistory).toContain('do not run another goal turn');
 
-    // Terminal UpdateGoal ends the turn immediately. The completion reminder is
-    // still appended after the tool result, so any later request ends with a
-    // user message rather than an assistant prefill.
-    expect(scripted.calls).toHaveLength(2);
+    // Terminal UpdateGoal asks the model for one final user-facing summary.
+    expect(scripted.calls).toHaveLength(3);
+    const summaryHistory = JSON.stringify(scripted.calls[2]?.history ?? []);
+    expect(summaryHistory).toContain('Goal complete.');
+    expect(summaryHistory).toContain('summarize how you completed the goal');
     const lastContextMessage = agent.context.history.at(-1);
-    expect(lastContextMessage?.role).toBe('user');
-    expect(JSON.stringify(lastContextMessage?.content)).toContain('<system-reminder>');
-    expect(JSON.stringify(lastContextMessage?.content)).toContain('Goal complete.');
+    expect(lastContextMessage?.role).toBe('assistant');
+    expect(JSON.stringify(lastContextMessage?.content)).toContain(
+      'I completed the goal by updating the feature and running the tests.',
+    );
 
     // Completion is transient: it announces, then clears the durable record, so
     // the goal box disappears and nothing is left on disk.
@@ -217,13 +223,15 @@ describe('goal session end-to-end', () => {
       name: 'UpdateGoal',
       arguments: JSON.stringify({ status: 'complete' }),
     });
+    scripted.mockNextResponse({ type: 'text', text: 'I completed the resumed goal.' });
 
     agent.turn.prompt([{ type: 'text', text: 'Keep working on the goal' }]);
     await agent.turn.waitForCurrentTurn();
 
-    expect(scripted.calls.length).toBeGreaterThanOrEqual(3);
+    expect(scripted.calls.length).toBeGreaterThanOrEqual(4);
     expect(JSON.stringify(scripted.calls[0]?.history ?? [])).toContain('currently paused');
     expect(JSON.stringify(scripted.calls[2]?.history ?? [])).toContain('Continue working toward the active goal');
+    expect(JSON.stringify(scripted.calls[3]?.history ?? [])).toContain('summarize how you completed the goal');
     expect(api.getGoal({}).goal).toBeNull();
   });
 
