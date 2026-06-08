@@ -184,11 +184,6 @@ const config = withMermaid(defineConfig({
     },
   },
 
-  redirects: {
-    '/zh/customization/datasource': '/zh/customization/plugins',
-    '/en/customization/datasource': '/en/customization/plugins',
-  },
-
   themeConfig: {
     outline: [2, 3],
     search: { provider: 'local' },
@@ -201,28 +196,7 @@ const config = withMermaid(defineConfig({
     optimizeDeps: {
       include: mermaidOptimizeDeps.map((dep) => `mermaid > ${dep}`),
     },
-    plugins: [
-      llmstxt(),
-      {
-        name: 'dev-redirects',
-        configureServer(server) {
-          const map: Record<string, string> = {
-            '/zh/customization/datasource': '/zh/customization/plugins',
-            '/en/customization/datasource': '/en/customization/plugins',
-          }
-          server.middlewares.use((req, res, next) => {
-            const url = (req.url ?? '').split('?')[0].replace(/\.html$/, '')
-            const target = map[url]
-            if (target) {
-              res.writeHead(302, { Location: target })
-              res.end()
-              return
-            }
-            next()
-          })
-        },
-      },
-    ],
+    plugins: [llmstxt()],
   },
 }))
 
