@@ -94,6 +94,7 @@ export class MigrationScreenComponent extends Container implements Focusable {
   private spinnerTimer: ReturnType<typeof setInterval> | undefined;
   private report: MigrationReport | undefined;
   private migrationFailed = false;
+  private migrationFailureReason: string | undefined;
 
   constructor(opts: MigrationScreenOptions) {
     super();
@@ -114,8 +115,9 @@ export class MigrationScreenComponent extends Container implements Focusable {
   }
 
   /** Host calls this if runMigration threw. */
-  showFailure(): void {
+  showFailure(error?: unknown): void {
     this.migrationFailed = true;
+    this.migrationFailureReason = formatMigrationFailureReason(error);
     this.phase = 'result';
     this.stopSpinner();
   }
@@ -261,8 +263,8 @@ export class MigrationScreenComponent extends Container implements Focusable {
         this.showResult(report);
         this.opts.requestRender?.();
       },
-      () => {
-        this.showFailure();
+      (error) => {
+        this.showFailure(error);
         this.opts.requestRender?.();
       },
     );
@@ -281,6 +283,10 @@ export class MigrationScreenComponent extends Container implements Focusable {
     const lines: string[] = [chalk.hex(colors.primary)('─'.repeat(width))];
     if (this.migrationFailed) {
       lines.push(chalk.hex(colors.error).bold(' Migration failed'));
+      if (this.migrationFailureReason !== undefined) {
+        lines.push('');
+        lines.push(chalk.hex(colors.text)(` Reason: ${this.migrationFailureReason}`));
+      }
       lines.push('');
       lines.push(chalk.hex(colors.text)(' You can retry later by running "kimi migrate".'));
       lines.push('');
@@ -486,6 +492,45 @@ export class MigrationScreenComponent extends Container implements Focusable {
     lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
     return lines.map((l) => truncateToWidth(l, width));
   }
+}
+
+function formatMigrationFailureReason(error: unknown): string | undefined {
+  let reason: string | undefined;
+  if (error instanceof Error) {
+    reason = error.message !== '' ? error.message : error.name;
+  } else if (typeof error === 'string') {
+    reason = error;
+  } else if (typeof error === 'object' && error !== null) {
+    const maybeMessage = (error as { readonly message?: unknown }).message;
+    if (typeof maybeMessage === 'string' && maybeMessage !== '') {
+      reason = maybeMessage;
+    }
+  }
+  if (reason === undefined) {
+    switch (typeof error) {
+      case 'number':
+      case 'boolean':
+      case 'bigint':
+        reason = `${error}`;
+        break;
+      case 'symbol':
+        reason =
+          error.description !== undefined ? `Symbol(${error.description})` : 'Symbol rejection';
+        break;
+      case 'function':
+        reason = error.name !== '' ? `Function ${error.name}` : 'Function rejection';
+        break;
+      case 'object':
+        if (error !== null) reason = 'Object rejection';
+        break;
+      case 'undefined':
+        break;
+      case 'string':
+        break;
+    }
+  }
+  const trimmed = reason?.trim();
+  return trimmed === undefined || trimmed === '' ? undefined : trimmed;
 }
 
 function summarizePlan(plan: MigrationPlan): string {

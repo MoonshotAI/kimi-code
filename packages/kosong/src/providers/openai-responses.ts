@@ -1,7 +1,7 @@
 import type { ModelCapability } from '#/capability';
 import {
   APIContextOverflowError,
-  APIStatusError,
+  APIProviderRateLimitError,
   ChatProviderError,
   isContextOverflowErrorCode,
 } from '#/errors';
@@ -247,7 +247,7 @@ function errorFromOpenAIResponsesEvent(
     return new APIContextOverflowError(400, fullMessage);
   }
   if (code === 'rate_limit_exceeded') {
-    return new APIStatusError(429, fullMessage);
+    return new APIProviderRateLimitError(fullMessage);
   }
   return new ChatProviderError(fullMessage);
 }

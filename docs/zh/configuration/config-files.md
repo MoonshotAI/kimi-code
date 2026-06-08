@@ -219,7 +219,7 @@ api_key = "sk-xxx"
 | `pattern` | `string` | 是 | 匹配模式，格式为 `工具名` 或 `工具名(参数模式)`，如 `Read`、`Bash(rm -rf*)` |
 | `reason` | `string` | 否 | 规则说明，仅用于调试和审计 |
 
-内置工具名见[内置工具](../reference/tools.md)；MCP 工具和自定义工具只能按工具名匹配，不支持参数模式。
+内置工具名见[内置工具](../reference/tools.md)。大多数支持规则参数的内置工具会定义自己的匹配对象，例如 `Bash(command-pattern)` 或 `Read(path-pattern)`。`AgentSwarm`、MCP 工具和自定义工具只能按工具名匹配，不支持参数模式。
 
 ```toml
 [[permission.rules]]
