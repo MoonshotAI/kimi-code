@@ -53,16 +53,16 @@ describe('classifyByPathHeuristic', () => {
     ).toBe('homebrew');
   });
 
-  it('detects homebrew on macOS (homebrew prefix path)', () => {
-    expect(
-      classifyByPathHeuristic('/usr/local/Cellar/kimi-code/0.5.0/libexec/lib/node_modules/@moonshot-ai/kimi-code'),
-    ).toBe('homebrew');
-  });
-
   it('detects homebrew on Linux (Linuxbrew)', () => {
     expect(
       classifyByPathHeuristic('/home/linuxbrew/.linuxbrew/Cellar/kimi-code/0.5.0/libexec/lib/node_modules/@moonshot-ai/kimi-code'),
     ).toBe('homebrew');
+  });
+
+  it('does not treat npm-global under Homebrew prefix as homebrew', () => {
+    expect(
+      classifyByPathHeuristic('/opt/homebrew/lib/node_modules/@moonshot-ai/kimi-code'),
+    ).toBeNull();
   });
 
   it('returns null for an unknown layout', () => {

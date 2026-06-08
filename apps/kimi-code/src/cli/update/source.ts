@@ -40,7 +40,10 @@ export function detectNativeInstall(): boolean {
 const PNPM_PATH_SEGMENT = 'pnpm/global/';
 const YARN_PATH_SEGMENTS = ['.config/yarn/global/', '/.yarn/global/'];
 const BUN_PATH_SEGMENT = '.bun/install/global/';
-const HOMEBREW_PATH_SEGMENTS = ['/cellar/', '/homebrew/'];
+// Homebrew installs formulae under its Cellar directory. Avoid matching the
+// broader /homebrew/ prefix — on Apple Silicon, npm itself lives under
+// /opt/homebrew/, so `npm install -g` paths also contain /homebrew/.
+const HOMEBREW_PATH_SEGMENT = '/cellar/';
 
 function normalizeForHeuristic(filePath: string): string {
   return filePath.replaceAll('\\', '/').toLowerCase();
@@ -58,9 +61,7 @@ export function classifyByPathHeuristic(packageRoot: string): InstallSource | nu
     if (normalized.includes(seg)) return 'yarn-global';
   }
   if (normalized.includes(BUN_PATH_SEGMENT)) return 'bun-global';
-  for (const seg of HOMEBREW_PATH_SEGMENTS) {
-    if (normalized.includes(seg)) return 'homebrew';
-  }
+  if (normalized.includes(HOMEBREW_PATH_SEGMENT)) return 'homebrew';
   return null;
 }
 
