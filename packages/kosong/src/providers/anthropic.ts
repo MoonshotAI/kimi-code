@@ -15,7 +15,7 @@ import type {
   ThinkingEffort,
 } from '#/provider';
 import type { Tool } from '#/tool';
-import type { TokenUsage } from '#/usage';
+import { inputTotal, type TokenUsage } from '#/usage';
 import Anthropic, {
   APIError as AnthropicAPIError,
   APIConnectionError as AnthropicConnectionError,
@@ -639,11 +639,31 @@ class AnthropicStreamedMessage implements StreamedMessage {
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
   }): void {
+    const inputCacheRead = usage.cache_read_input_tokens ?? 0;
+    const inputCacheCreation = usage.cache_creation_input_tokens ?? 0;
     this._usage = {
-      inputOther: usage.input_tokens ?? 0,
+      inputOther: Math.max((usage.input_tokens ?? 0) - inputCacheRead - inputCacheCreation, 0),
       output: usage.output_tokens ?? 0,
-      inputCacheRead: usage.cache_read_input_tokens ?? 0,
-      inputCacheCreation: usage.cache_creation_input_tokens ?? 0,
+      inputCacheRead,
+      inputCacheCreation,
+    };
+  }
+
+  private _mergeUsage(usage: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  }): void {
+    const inputCacheRead = usage.cache_read_input_tokens ?? this._usage.inputCacheRead;
+    const inputCacheCreation =
+      usage.cache_creation_input_tokens ?? this._usage.inputCacheCreation;
+    const totalInput = usage.input_tokens ?? inputTotal(this._usage);
+    this._usage = {
+      inputOther: Math.max(totalInput - inputCacheRead - inputCacheCreation, 0),
+      output: usage.output_tokens ?? this._usage.output,
+      inputCacheRead,
+      inputCacheCreation,
     };
   }
 
@@ -792,18 +812,24 @@ class AnthropicStreamedMessage implements StreamedMessage {
           // Update usage from delta
           const deltaUsage = (evt as { usage?: Record<string, unknown> }).usage;
           if (deltaUsage !== undefined) {
-            if (typeof deltaUsage['output_tokens'] === 'number') {
-              this._usage.output = deltaUsage['output_tokens'];
-            }
-            if (typeof deltaUsage['cache_read_input_tokens'] === 'number') {
-              this._usage.inputCacheRead = deltaUsage['cache_read_input_tokens'];
-            }
-            if (typeof deltaUsage['cache_creation_input_tokens'] === 'number') {
-              this._usage.inputCacheCreation = deltaUsage['cache_creation_input_tokens'];
-            }
-            if (typeof deltaUsage['input_tokens'] === 'number') {
-              this._usage.inputOther = deltaUsage['input_tokens'];
-            }
+            this._mergeUsage({
+              input_tokens:
+                typeof deltaUsage['input_tokens'] === 'number'
+                  ? deltaUsage['input_tokens']
+                  : undefined,
+              output_tokens:
+                typeof deltaUsage['output_tokens'] === 'number'
+                  ? deltaUsage['output_tokens']
+                  : undefined,
+              cache_read_input_tokens:
+                typeof deltaUsage['cache_read_input_tokens'] === 'number'
+                  ? deltaUsage['cache_read_input_tokens']
+                  : undefined,
+              cache_creation_input_tokens:
+                typeof deltaUsage['cache_creation_input_tokens'] === 'number'
+                  ? deltaUsage['cache_creation_input_tokens']
+                  : undefined,
+            });
           }
           // The terminal `stop_reason` lives on `delta.stop_reason` of the
           // last `message_delta` event for this response. Capture it here.
