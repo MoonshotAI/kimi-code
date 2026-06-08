@@ -598,6 +598,7 @@ export class SessionEventHandler {
     // ctrl+o-expandable marker.
     if (change.kind === 'lifecycle' && change.status === 'blocked') {
       void this.notifyQueuedGoalWaitingOnBlocked();
+      if (event.snapshot?.updatedBy === 'model') return;
     }
     const marker = buildGoalMarker(change, state.theme.colors, state.toolOutputExpanded);
     if (marker !== null) {

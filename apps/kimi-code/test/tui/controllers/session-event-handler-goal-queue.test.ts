@@ -354,6 +354,22 @@ describe('SessionEventHandler goal queue promotion', () => {
     expect(session.createGoal).not.toHaveBeenCalled();
   });
 
+  it('does not render a duplicate marker for a model-reported blocked goal', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+    const event = {
+      type: 'goal.updated',
+      sessionId: 's1',
+      agentId: 'main',
+      snapshot: fakeGoalSnapshot('Blocked goal', 'blocked'),
+      change: { kind: 'lifecycle', status: 'blocked' },
+    } as const;
+
+    handler.handleEvent(event, vi.fn());
+
+    expect(host.state.transcriptContainer.addChild).not.toHaveBeenCalled();
+  });
+
   it('does not promote on paused or cancelled updates', async () => {
     const { host, session } = makeHost();
     const handler = new SessionEventHandler(host);
