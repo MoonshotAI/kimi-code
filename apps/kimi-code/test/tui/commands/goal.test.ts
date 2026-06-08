@@ -623,6 +623,8 @@ describe('handleGoalCommand', () => {
     await handleGoalCommand(host, 'cancel');
     expect(session.cancelGoal).toHaveBeenCalledOnce();
     expect(host.track).toHaveBeenCalledWith('goal_cancel');
+    expect(host.showNotice).toHaveBeenCalledWith('Goal cancelled.');
+    expect(host.showStatus).not.toHaveBeenCalledWith('Goal cancelled.');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 

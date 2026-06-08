@@ -478,7 +478,7 @@ async function cancelGoal(host: SlashCommandHost): Promise<void> {
     return;
   }
   host.track('goal_cancel');
-  host.showStatus('Goal cancelled.');
+  host.showNotice('Goal cancelled.');
 }
 
 async function showGoalStatus(host: SlashCommandHost): Promise<void> {
