@@ -6,6 +6,7 @@ import type { ColorPalette } from '#/tui/theme/colors';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import { formatTokenCount } from '#/utils/usage/usage-format';
 
+import { formatGoalElapsed, pluralizeGoalCount } from '../goal-format';
 import { renderTruncated } from './truncated';
 import type { ResultRenderer } from './types';
 
@@ -193,24 +194,10 @@ function parseGoalValue(output: string): Record<string, unknown> | null | undefi
 
 function formatGoalStats(goal: GoalSnapshotView): string {
   return [
-    pluralize(goal.turnsUsed, 'turn'),
+    pluralizeGoalCount(goal.turnsUsed, 'turn'),
     `${formatTokenCount(goal.tokensUsed)} tokens`,
-    formatElapsed(goal.wallClockMs),
+    formatGoalElapsed(goal.wallClockMs),
   ].join(' · ');
-}
-
-function formatElapsed(ms: number): string {
-  const totalSeconds = Math.round(ms / 1000);
-  if (totalSeconds < 60) return `${String(totalSeconds)}s`;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) return `${String(minutes)}m ${seconds.toString().padStart(2, '0')}s`;
-  const hours = Math.floor(minutes / 60);
-  return `${String(hours)}h ${(minutes % 60).toString().padStart(2, '0')}m`;
-}
-
-function pluralize(n: number, singular: string, plural?: string): string {
-  return `${String(n)} ${n === 1 ? singular : (plural ?? `${singular}s`)}`;
 }
 
 function truncateOneLine(text: string, max: number): string {

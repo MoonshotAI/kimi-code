@@ -22,6 +22,7 @@ import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import type { ColorPalette } from '#/tui/theme/colors';
 import { formatTokenCount } from '#/utils/usage/usage-format';
+import { formatGoalElapsed } from './goal-format';
 import { UsagePanelComponent } from './usage-panel';
 
 const WRAP_WIDTH = 72;
@@ -161,7 +162,7 @@ export function buildGoalReportLines(options: GoalReportOptions): string[] {
       ),
     );
   }
-  lines.push(row('Running', value(formatElapsed(goal.wallClockMs))));
+  lines.push(row('Running', value(formatGoalElapsed(goal.wallClockMs))));
   lines.push(row('Turns', value(`${goal.turnsUsed}`)));
   lines.push(row('Tokens', value(formatTokenCount(goal.tokensUsed))));
   if (!isComplete) {
@@ -186,7 +187,7 @@ function formatStopRow(goal: GoalSnapshot): string | null {
     parts.push(`at ${formatTokenCount(budget.tokenBudget)} tokens`);
   }
   if (budget.wallClockBudgetMs !== null) {
-    parts.push(`after ${formatElapsed(budget.wallClockBudgetMs)}`);
+    parts.push(`after ${formatGoalElapsed(budget.wallClockBudgetMs)}`);
   }
   return parts.length > 0 ? parts.join(', ') : null;
 }
@@ -202,16 +203,6 @@ function statusHex(status: GoalStatus, colors: ColorPalette): string {
     case 'paused':
       return colors.textDim;
   }
-}
-
-function formatElapsed(ms: number): string {
-  const totalSeconds = Math.round(ms / 1000);
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${(minutes % 60).toString().padStart(2, '0')}m`;
 }
 
 /** Word-wrap to `width`, capped at `maxLines` (last line gets an ellipsis when clipped). */
