@@ -29,7 +29,6 @@ import type {
   TurnStepStartedEvent,
   WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
-import { buildGoalCompletionMessage } from '@moonshot-ai/kimi-code-sdk';
 
 import { MoonLoader } from '../components/chrome/moon-loader';
 import { buildGoalMarker } from '../components/messages/goal-markers';
@@ -42,6 +41,7 @@ import {
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
 } from '../constant/kimi-tui';
+import { buildGoalCompletionMessage } from '../utils/goal-completion';
 import {
   argsRecord,
   formatErrorPayload,
@@ -579,8 +579,8 @@ export class SessionEventHandler {
 
     // Completion -> the box disappears (snapshot cleared on the follow-up null
     // update) and a deterministic completion message lands in the transcript.
-    // The same text is appended to the conversation by the continuation
-    // controller, so it persists and renders identically on resume.
+    // Resume renders the same text from the durable goal completion replay
+    // record, so live and replayed completion cards stay identical.
     if (change.kind === 'completion' && event.snapshot !== null) {
       this.goalCompletionAwaitingClear = true;
       this.goalCompletionTurnEnded = false;

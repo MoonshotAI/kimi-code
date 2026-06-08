@@ -181,6 +181,7 @@ async function runHeadlessGoal(
   const unsubscribeGoalEvents = session.onEvent((event) => {
     if (
       event.type === 'goal.updated' &&
+      event.agentId === 'main' &&
       event.change?.kind === 'completion' &&
       event.snapshot !== null
     ) {

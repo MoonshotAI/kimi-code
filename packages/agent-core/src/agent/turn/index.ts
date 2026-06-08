@@ -112,7 +112,7 @@ export class TurnFlow {
 
   /** Whether goal-mode runtime behavior (continuation, abnormal-end marking) applies. */
   private get goalRuntimeEnabled(): boolean {
-    return this.agent.experimentalFlags.enabled('goal_command') && this.agent.type === 'main';
+    return this.agent.experimentalFlags.enabled('goal_command');
   }
 
   // Returns the new turnId, or null if the turn was marked as resuming.
@@ -294,14 +294,14 @@ export class TurnFlow {
       this.activeTurn !== 'resuming' &&
       this.activeTurn.controller.signal === signal;
     try {
-      const initialGoalStatus = this.agent.goals?.getGoal().goal?.status;
+      const initialGoalStatus = this.agent.goal.getGoal().goal?.status;
       if (this.goalRuntimeEnabled && initialGoalStatus === 'active') {
         return await this.driveGoal(firstTurnId, input, origin, signal);
       }
       const end = await this.runOneTurn(firstTurnId, input, origin, signal, true);
       const resumedFromPausedOrBlocked =
         initialGoalStatus === 'paused' || initialGoalStatus === 'blocked';
-      const currentGoalStatus = this.agent.goals?.getGoal().goal?.status;
+      const currentGoalStatus = this.agent.goal.getGoal().goal?.status;
       if (
         this.goalRuntimeEnabled &&
         resumedFromPausedOrBlocked &&
@@ -344,9 +344,9 @@ export class TurnFlow {
     let turnInput = input;
     let turnOrigin = origin;
     while (true) {
-      const goalBeforeTurn = this.agent.goals?.getGoal().goal ?? null;
+      const goalBeforeTurn = this.agent.goal.getGoal().goal;
       if (goalBeforeTurn?.status === 'active' && goalBeforeTurn.budget.overBudget) {
-        await this.agent.goals?.markBlocked({ reason: 'A configured budget was reached' });
+        await this.agent.goal.markBlocked({ reason: 'A configured budget was reached' });
         const ended = await this.endGoalTurnWithoutModel(turnId, turnInput, turnOrigin);
         return { event: ended };
       }
@@ -355,40 +355,40 @@ export class TurnFlow {
       // completion stats include the turn in which the model reports `complete`.
       // Wall-clock is tracked live by the store (anchored while `active`), so the
       // timer is correct even when the model completes mid-turn.
-      await this.agent.goals?.incrementTurn();
+      await this.agent.goal.incrementTurn();
       const end = await this.runOneTurn(turnId, turnInput, turnOrigin, signal, false);
 
       if (end.event.reason === 'cancelled') {
-        await this.agent.goals?.pauseOnInterrupt({ reason: 'Paused after interruption' });
+        await this.agent.goal.pauseOnInterrupt({ reason: 'Paused after interruption' });
         return end;
       }
       if (end.event.reason === 'failed') {
         const pauseReason = goalFailurePauseReason(end.event.error);
         if (pauseReason !== null) {
-          await this.agent.goals?.pauseActiveGoal({ actor: 'runtime', reason: pauseReason });
+          await this.agent.goal.pauseActiveGoal({ reason: pauseReason });
           return end;
         }
-        await this.agent.goals?.markBlocked({
+        await this.agent.goal.markBlocked({
           reason: `Runtime error: ${end.event.error?.message ?? 'unknown'}`,
         });
         return end;
       }
       if (end.blockedByUserPromptHook === true) {
-        await this.agent.goals?.markBlocked({ reason: 'Blocked by UserPromptSubmit hook' });
+        await this.agent.goal.markBlocked({ reason: 'Blocked by UserPromptSubmit hook' });
         return end;
       }
 
       // The model decides via UpdateGoal: a cleared record means `complete`;
       // anything non-active means it stopped (blocked / paused). Only a still
       // `active` goal continues to another turn.
-      const goal = this.agent.goals?.getGoal().goal ?? null;
+      const goal = this.agent.goal.getGoal().goal;
       if (goal === null || goal.status !== 'active') {
         return end;
       }
       // Hard budgets (turn / token / wall-clock, set via the SDK) are a
       // deterministic ceiling: block when reached. `blocked` is resumable.
       if (goal.budget.overBudget) {
-        await this.agent.goals?.markBlocked({ reason: 'A configured budget was reached' });
+        await this.agent.goal.markBlocked({ reason: 'A configured budget was reached' });
         return end;
       }
 
@@ -591,15 +591,8 @@ export class TurnFlow {
           maxSteps: loopControl?.maxStepsPerTurn,
           maxRetryAttempts: loopControl?.maxRetriesPerStep,
           recordStepUsage: async (usage) => {
-            const activeGoal = this.agent.goals?.getActiveGoal();
-            if (activeGoal === undefined || activeGoal === null) return;
             try {
-              const snapshot = await this.agent.goals?.recordTokenUsage({
-                tokenDelta: grandTotal(usage),
-                agentId: this.agentId,
-                agentType: this.agent.type,
-                source: 'agent_step',
-              });
+              const snapshot = await this.agent.goal.recordTokenUsage(grandTotal(usage));
               stopForGoalBudget = snapshot?.budget.overBudget === true;
             } catch (error) {
               this.agent.log.warn('goal token accounting failed', { error });

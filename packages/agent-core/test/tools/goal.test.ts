@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Agent } from '../../src/agent';
+import { GoalMode } from '../../src/agent/goal';
 import { ErrorCodes } from '../../src/errors';
 import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { compileToolArgsValidator, validateToolArgs } from '../../src/tools/args-validator';
@@ -13,25 +14,25 @@ import {
   UpdateGoalTool,
   UpdateGoalToolInputSchema,
 } from '../../src/tools/builtin';
-import { SessionGoalStore, type SessionGoalState } from '../../src/session/goal';
 import { testAgent } from '../agent/harness/agent';
 import { executeTool } from './fixtures/execute-tool';
 
 const signal = new AbortController().signal;
 
 function makeStore() {
-  let state: SessionGoalState | undefined;
-  return new SessionGoalStore({
-    sessionId: 'test',
-    readState: () => state,
-    writeState: async (next) => {
-      state = next;
-    },
-  });
+  return fakeAgent().goal;
 }
 
-function fakeAgent(opts: { type?: 'main' | 'sub'; goals?: SessionGoalStore } = {}): Agent {
-  return { type: opts.type ?? 'main', goals: opts.goals } as unknown as Agent;
+function fakeAgent(opts: { type?: 'main' | 'sub'; goal?: GoalMode } = {}): Agent {
+  const agent = {
+    type: opts.type ?? 'main',
+    records: { logRecord: () => {} },
+    emitEvent: () => {},
+    telemetry: { track: () => {} },
+    context: { appendSystemReminder: () => {} },
+  } as unknown as Agent;
+  (agent as { goal: GoalMode }).goal = opts.goal ?? new GoalMode(agent);
+  return agent;
 }
 
 function ctx<Input>(args: Input) {
@@ -41,7 +42,7 @@ function ctx<Input>(args: Input) {
 describe('CreateGoalTool', () => {
   it('creates a goal through the goal store', async () => {
     const store = makeStore();
-    const tool = new CreateGoalTool(fakeAgent({ goals: store }));
+    const tool = new CreateGoalTool(fakeAgent({ goal: store }));
     const result = await executeTool(tool, ctx({ objective: 'Ship feature X' }));
     expect(result.isError).toBeFalsy();
     expect(store.getGoal().goal?.objective).toBe('Ship feature X');
@@ -49,7 +50,7 @@ describe('CreateGoalTool', () => {
 
   it('passes completionCriterion and replace', async () => {
     const store = makeStore();
-    const tool = new CreateGoalTool(fakeAgent({ goals: store }));
+    const tool = new CreateGoalTool(fakeAgent({ goal: store }));
     await executeTool(tool, ctx({ objective: 'first' }));
     await executeTool(
       tool,
@@ -67,19 +68,13 @@ describe('CreateGoalTool', () => {
 
   it('rejects empty and too-long objectives via the store', async () => {
     const store = makeStore();
-    const tool = new CreateGoalTool(fakeAgent({ goals: store }));
-    const empty = await executeTool(tool, ctx({ objective: '   ' }));
-    expect(empty).toMatchObject({ isError: true });
-    expect(empty.output).toContain(ErrorCodes.GOAL_OBJECTIVE_EMPTY);
-    const long = await executeTool(tool, ctx({ objective: 'x'.repeat(4001) }));
-    expect(long).toMatchObject({ isError: true });
-    expect(long.output).toContain(ErrorCodes.GOAL_OBJECTIVE_TOO_LONG);
-  });
-
-  it('errors when agent.goals is undefined', async () => {
-    const tool = new CreateGoalTool(fakeAgent({ goals: undefined }));
-    const result = await executeTool(tool, ctx({ objective: 'work' }));
-    expect(result).toMatchObject({ isError: true });
+    const tool = new CreateGoalTool(fakeAgent({ goal: store }));
+    await expect(executeTool(tool, ctx({ objective: '   ' }))).rejects.toMatchObject({
+      code: ErrorCodes.GOAL_OBJECTIVE_EMPTY,
+    });
+    await expect(executeTool(tool, ctx({ objective: 'x'.repeat(4001) }))).rejects.toMatchObject({
+      code: ErrorCodes.GOAL_OBJECTIVE_TOO_LONG,
+    });
   });
 
   it('uses the imported markdown description', () => {
@@ -92,21 +87,16 @@ describe('CreateGoalTool', () => {
 describe('GetGoalTool', () => {
   it('returns { goal: null } when no goal exists', async () => {
     const store = makeStore();
-    const tool = new GetGoalTool(fakeAgent({ goals: store }));
-    const result = await executeTool(tool, ctx({}));
-    expect(JSON.parse(result.output as string)).toEqual({ goal: null });
-  });
-
-  it('returns { goal: null } when agent.goals is undefined', async () => {
-    const tool = new GetGoalTool(fakeAgent({ goals: undefined }));
+    const tool = new GetGoalTool(fakeAgent({ goal: store }));
     const result = await executeTool(tool, ctx({}));
     expect(JSON.parse(result.output as string)).toEqual({ goal: null });
   });
 
   it('returns active goal state with budgets', async () => {
     const store = makeStore();
-    await store.createGoal({ objective: 'work', budgetLimits: { tokenBudget: 100 } });
-    const tool = new GetGoalTool(fakeAgent({ goals: store }));
+    await store.createGoal({ objective: 'work' });
+    await store.setBudgetLimits({ budgetLimits: { tokenBudget: 100 } }, 'model');
+    const tool = new GetGoalTool(fakeAgent({ goal: store }));
     const result = await executeTool(tool, ctx({}));
     const parsed = JSON.parse(result.output as string);
     expect(parsed.goal.status).toBe('active');
@@ -118,7 +108,7 @@ describe('GetGoalTool', () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
     await store.pauseGoal();
-    const tool = new GetGoalTool(fakeAgent({ goals: store }));
+    const tool = new GetGoalTool(fakeAgent({ goal: store }));
     let parsed = JSON.parse((await executeTool(tool, ctx({}))).output as string);
     expect(parsed.goal.status).toBe('paused');
     await store.resumeGoal();
@@ -165,7 +155,7 @@ describe('SetGoalBudgetTool', () => {
   it('sets turn, token, and time budgets on the current goal', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
-    const tool = new SetGoalBudgetTool(fakeAgent({ goals: store }));
+    const tool = new SetGoalBudgetTool(fakeAgent({ goal: store }));
 
     expect((await executeTool(tool, ctx({ value: 20, unit: 'turns' }))).output).toBe(
       'Goal budget set: 20 turns.',
@@ -186,7 +176,7 @@ describe('SetGoalBudgetTool', () => {
   it('rounds fractional turn and token budgets before setting them', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
-    const tool = new SetGoalBudgetTool(fakeAgent({ goals: store }));
+    const tool = new SetGoalBudgetTool(fakeAgent({ goal: store }));
 
     expect((await executeTool(tool, ctx({ value: 1.5, unit: 'turns' }))).output).toBe(
       'Goal budget set: 2 turns.',
@@ -202,7 +192,7 @@ describe('SetGoalBudgetTool', () => {
   it('ignores unreasonable time budgets and tells the model why', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
-    const tool = new SetGoalBudgetTool(fakeAgent({ goals: store }));
+    const tool = new SetGoalBudgetTool(fakeAgent({ goal: store }));
 
     const tiny = await executeTool(tool, ctx({ value: 1, unit: 'milliseconds' }));
     expect(tiny.isError).toBeFalsy();
@@ -217,13 +207,20 @@ describe('SetGoalBudgetTool', () => {
 });
 
 describe('UpdateGoalTool', () => {
-  // The complete path appends the completion line as a system reminder, so the
-  // agent needs a context exposing appendSystemReminder.
-  function agentWithContext(store: SessionGoalStore): Agent {
+  // The complete path appends a context reminder, so the agent needs a context
+  // exposing appendSystemReminder.
+  function agentWithContext(
+    store: GoalMode,
+    reminders: Array<{ readonly content: string; readonly origin: unknown }> = [],
+  ): Agent {
     return {
       type: 'main',
-      goals: store,
-      context: { appendSystemReminder: () => {} },
+      goal: store,
+      context: {
+        appendSystemReminder: (content: string, origin: unknown) => {
+          reminders.push({ content, origin });
+        },
+      },
     } as unknown as Agent;
   }
 
@@ -238,14 +235,23 @@ describe('UpdateGoalTool', () => {
 
   it('`complete` marks the goal complete and clears it (transient)', async () => {
     const store = makeStore();
+    const reminders: Array<{ readonly content: string; readonly origin: unknown }> = [];
     await store.createGoal({ objective: 'work' });
     const result = await executeTool(
-      new UpdateGoalTool(agentWithContext(store)),
+      new UpdateGoalTool(agentWithContext(store, reminders)),
       ctx({ status: 'complete' }),
     );
     expect(result.isError).toBeFalsy();
     expect(result.stopTurn).toBe(true);
     expect(store.getGoal().goal).toBeNull();
+    expect(reminders).toEqual([
+      {
+        content:
+          'The current goal was marked complete and cleared. ' +
+          'Handle the next user request normally unless the user starts or resumes a goal.',
+        origin: { kind: 'system_trigger', name: 'goal_completion' },
+      },
+    ]);
   });
 
   it('`blocked` marks the goal blocked (resumable)', async () => {
@@ -278,20 +284,6 @@ describe('UpdateGoalTool', () => {
     expect(result.isError).toBeFalsy();
     expect(result.output).toBe('Goal resumed.');
     expect(store.getGoal().goal?.status).toBe('active');
-  });
-});
-
-describe('goal tools are main-agent-only', () => {
-  it('all goal tools return isError on a non-main agent', async () => {
-    const store = makeStore();
-    const agent = fakeAgent({ type: 'sub', goals: store });
-    expect(await executeTool(new CreateGoalTool(agent), ctx({ objective: 'x' }))).toMatchObject({
-      isError: true,
-    });
-    expect(await executeTool(new GetGoalTool(agent), ctx({}))).toMatchObject({ isError: true });
-    expect(await executeTool(new SetGoalBudgetTool(agent), ctx({ value: 1, unit: 'turns' }))).toMatchObject({
-      isError: true,
-    });
   });
 });
 
@@ -334,7 +326,7 @@ describe('ToolManager goal tool registration', () => {
     const store = makeStore();
     const ctxAgent = testAgent({
       type: 'main',
-      goals: store,
+      goal: store,
       experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, {
         goal_command: true,
       }),
@@ -349,7 +341,7 @@ describe('ToolManager goal tool registration', () => {
     expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).toContain('UpdateGoal');
     expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).toContain('SetGoalBudget');
 
-    await store.markComplete({ actor: 'model' });
+    await store.markComplete({}, 'model');
     expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).not.toContain('UpdateGoal');
     expect(ctxAgent.agent.tools.loopTools.map((t) => t.name)).not.toContain('SetGoalBudget');
   });

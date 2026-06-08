@@ -66,10 +66,6 @@ export type { LogContext, LogLevel, LogPayload, Logger } from '@moonshot-ai/agen
 // outbound fetch honors HTTP_PROXY / HTTPS_PROXY / NO_PROXY.
 export { installGlobalProxyDispatcher } from '@moonshot-ai/agent-core';
 
-// Goal completion message builder — single source of truth for the deterministic
-// "Goal complete · turns · tokens · time" text (live render + persisted message).
-export { buildGoalCompletionMessage } from '@moonshot-ai/agent-core';
-
 // Experimental feature flags — types only. Resolved values come from
 // `KimiHarness.getExperimentalFeatures()` over RPC, not from a re-exported runtime value.
 export type {

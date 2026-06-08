@@ -2,6 +2,7 @@ import type { AgentType } from '#/agent';
 import type { BackgroundTaskInfo } from '#/agent/background';
 import type { AgentConfigData, AgentConfigUpdateData } from '#/agent/config';
 import type { AgentContextData, ContextMessage } from '#/agent/context';
+import type { GoalChange, GoalSnapshot } from '#/agent/goal';
 import type {
   PermissionApprovalResultRecord,
   PermissionData,
@@ -15,6 +16,11 @@ import type { SessionMeta } from '#/session';
 
 export type AgentReplayRecord =
   | { type: 'message'; message: ContextMessage }
+  | {
+      type: 'goal_updated';
+      snapshot: GoalSnapshot;
+      change: GoalChange | { readonly kind: 'created' };
+    }
   | { type: 'plan_updated'; enabled: boolean }
   | { type: 'config_updated'; config: AgentConfigUpdateData }
   | { type: 'permission_updated'; mode: PermissionMode }

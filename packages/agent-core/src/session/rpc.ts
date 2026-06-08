@@ -8,7 +8,6 @@ import type {
   CreateGoalPayload,
   EmptyPayload,
   EnterSwarmPayload,
-  GoalControlPayload,
   GetBackgroundOutputPayload,
   GetBackgroundPayload,
   McpServerInfo,
@@ -58,28 +57,11 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
   }
 
   async updateSessionMetadata(payload: UpdateSessionMetadataPayload): Promise<void> {
-    // `metadata.custom.goal` is reserved for the goal lifecycle store. Generic
-    // metadata updates must neither overwrite an active goal nor write the goal
-    // field directly.
-    const reservedGoal = this.session.metadata.custom?.['goal'];
-    const patchCustom = (payload.metadata as Partial<SessionMeta> | undefined)?.custom;
-    if (patchCustom !== undefined && 'goal' in patchCustom) {
-      throw new KimiError(
-        ErrorCodes.GOAL_METADATA_RESERVED,
-        'metadata.custom.goal is reserved; use the goal lifecycle methods',
-      );
-    }
     this.session.metadata = {
       ...this.session.metadata,
       ...payload.metadata,
       agents: this.session.metadata.agents,
     };
-    if (reservedGoal !== undefined) {
-      this.session.metadata.custom = {
-        ...this.session.metadata.custom,
-        goal: reservedGoal,
-      };
-    }
     await this.session.writeMetadata();
   }
 
@@ -106,50 +88,6 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   generateAgentsMd(_payload: EmptyPayload): Promise<void> {
     return this.session.generateAgentsMd();
-  }
-
-  // --- Goal lifecycle (delegates to the session goal store) -------------
-
-  createGoal(payload: CreateGoalPayload) {
-    this.assertGoalCommandEnabled();
-    return this.session.goals.createGoal({ ...payload, actor: 'user' });
-  }
-
-  getGoal(_payload: EmptyPayload) {
-    this.assertGoalCommandEnabled();
-    return this.session.goals.getGoal();
-  }
-
-  pauseGoal(payload: GoalControlPayload) {
-    this.assertGoalCommandEnabled();
-    return this.session.goals.pauseGoal({ actor: 'user', reason: payload.reason });
-  }
-
-  resumeGoal(payload: GoalControlPayload) {
-    this.assertGoalCommandEnabled();
-    return this.session.goals.resumeGoal({ actor: 'user', reason: payload.reason });
-  }
-
-  async cancelGoal(payload: GoalControlPayload) {
-    this.assertGoalCommandEnabled();
-    const snapshot = await this.session.goals.cancelGoal({
-      actor: 'user',
-      reason: payload.reason,
-    });
-    this.session.getReadyAgent('main')?.context.appendSystemReminder(
-      [
-        'The user cancelled the current goal.',
-        'Ignore earlier active-goal reminders for that goal.',
-        'Handle the next user request normally unless the user starts or resumes a goal.',
-      ].join(' '),
-      { kind: 'system_trigger', name: 'goal_cancelled' },
-    );
-    return snapshot;
-  }
-
-  private assertGoalCommandEnabled(): void {
-    if (this.session.experimentalFlags.enabled('goal_command')) return;
-    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'Goal command is disabled');
   }
 
   async prompt({ agentId, ...payload }: AgentScopedPayload<PromptPayload>) {
@@ -248,6 +186,26 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
 
   async startBtw({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>): Promise<string> {
     return (await this.getAgent(agentId)).startBtw(payload);
+  }
+
+  async createGoal({ agentId, ...payload }: AgentScopedPayload<CreateGoalPayload>) {
+    return (await this.getAgent(agentId)).createGoal(payload);
+  }
+
+  async getGoal({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return (await this.getAgent(agentId)).getGoal(payload);
+  }
+
+  async pauseGoal({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return (await this.getAgent(agentId)).pauseGoal(payload);
+  }
+
+  async resumeGoal({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return (await this.getAgent(agentId)).resumeGoal(payload);
+  }
+
+  async cancelGoal({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return (await this.getAgent(agentId)).cancelGoal(payload);
   }
 
   async getBackgroundOutput({

@@ -8,10 +8,9 @@ import type { Agent } from '#/agent';
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
-import type { GoalBudgetLimits } from '../../../session/goal';
+import type { GoalBudgetLimits } from '../../../agent/goal';
 import type { ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
-import { goalErrorResult, isGoalToolError, requireGoalStore } from './shared';
 import DESCRIPTION from './set-goal-budget.md';
 
 const MIN_REASONABLE_TIME_BUDGET_MS = 1_000;
@@ -37,8 +36,7 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
   constructor(private readonly agent: Agent) {}
 
   resolveExecution(args: SetGoalBudgetToolInput): ToolExecution {
-    const store = requireGoalStore(this.agent, this.name);
-    if (isGoalToolError(store)) return store;
+    const goal = this.agent.goal;
 
     const normalizedArgs = normalizeBudgetInput(args);
     return {
@@ -48,22 +46,18 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
       )}`,
       approvalRule: this.name,
       execute: async () => {
-        try {
-          const budget = budgetLimitsFromInput(normalizedArgs);
-          if (budget === null) {
-            return {
-              output:
-                `Goal budget not set: ${formatBudget(normalizedArgs.value, normalizedArgs.unit)} is not a ` +
-                'reasonable goal budget.',
-            };
-          }
-          await store.setBudgetLimits({ budgetLimits: budget, actor: 'model' });
+        const budget = budgetLimitsFromInput(normalizedArgs);
+        if (budget === null) {
           return {
-            output: `Goal budget set: ${formatBudget(normalizedArgs.value, normalizedArgs.unit)}.`,
+            output:
+              `Goal budget not set: ${formatBudget(normalizedArgs.value, normalizedArgs.unit)} is not a ` +
+              'reasonable goal budget.',
           };
-        } catch (error) {
-          return goalErrorResult(error);
         }
+        await goal.setBudgetLimits({ budgetLimits: budget }, 'model');
+        return {
+          output: `Goal budget set: ${formatBudget(normalizedArgs.value, normalizedArgs.unit)}.`,
+        };
       },
     };
   }
@@ -74,7 +68,10 @@ function normalizeBudgetInput(input: SetGoalBudgetToolInput): SetGoalBudgetToolI
     case 'turns':
     case 'tokens':
       return { ...input, value: Math.max(1, Math.round(input.value)) };
-    default:
+    case 'milliseconds':
+    case 'seconds':
+    case 'minutes':
+    case 'hours':
       return input;
   }
 }
@@ -85,7 +82,10 @@ function budgetLimitsFromInput(input: SetGoalBudgetToolInput): GoalBudgetLimits 
       return { turnBudget: input.value };
     case 'tokens':
       return { tokenBudget: input.value };
-    default: {
+    case 'milliseconds':
+    case 'seconds':
+    case 'minutes':
+    case 'hours': {
       const wallClockBudgetMs = Math.round(toMilliseconds(input.value, input.unit));
       if (
         wallClockBudgetMs < MIN_REASONABLE_TIME_BUDGET_MS ||
