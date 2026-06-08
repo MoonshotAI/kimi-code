@@ -579,8 +579,8 @@ export class SessionEventHandler {
 
     // Completion -> the box disappears (snapshot cleared on the follow-up null
     // update) and a deterministic completion message lands in the transcript.
-    // The same text is appended to the conversation by the continuation
-    // controller, so it persists and renders identically on resume.
+    // The model-facing follow-up prompt stays in context without the checkmark;
+    // resume rebuilds this deterministic card from the goal.update audit stats.
     if (change.kind === 'completion' && event.snapshot !== null) {
       this.goalCompletionAwaitingClear = true;
       this.goalCompletionTurnEnded = false;

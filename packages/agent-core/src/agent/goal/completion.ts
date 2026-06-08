@@ -3,12 +3,23 @@ import type { GoalSnapshot } from '../../session/goal';
 export const GOAL_COMPLETION_REMINDER_NAME = 'goal_completion';
 export const GOAL_BLOCKED_REMINDER_NAME = 'goal_blocked';
 
+interface GoalCompletionStats {
+  readonly terminalReason?: string | undefined;
+  readonly turnsUsed: number;
+  readonly tokensUsed: number;
+  readonly wallClockMs: number;
+}
+
 /**
  * The deterministic goal-completion message. It is built from the final
  * snapshot — not the model — so the figures (turns / tokens / time) are
  * guaranteed exact.
  */
 export function buildGoalCompletionMessage(goal: GoalSnapshot): string {
+  return buildGoalCompletionMessageFromStats(goal);
+}
+
+export function buildGoalCompletionMessageFromStats(goal: GoalCompletionStats): string {
   const head = `✓ Goal complete${goal.terminalReason ? ` — ${goal.terminalReason}` : ''}.`;
   const turns = `${goal.turnsUsed} turn${goal.turnsUsed === 1 ? '' : 's'}`;
   const stats = `Worked ${turns} over ${formatElapsed(goal.wallClockMs)}, using ${formatTokens(goal.tokensUsed)} tokens.`;

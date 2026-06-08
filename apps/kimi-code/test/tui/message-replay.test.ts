@@ -261,6 +261,24 @@ describe('KimiTUI resume message replay', () => {
     });
   });
 
+  it('renders replayed goal completion records as assistant completion messages', async () => {
+    const driver = await replayIntoDriver([
+      {
+        type: 'goal_completion',
+        content: '✓ Goal complete.\nWorked 1 turn over 7m15s, using 4.3M tokens.',
+      },
+    ]);
+
+    const entry = driver.state.transcriptEntries.find((item) =>
+      item.content.includes('Goal complete'),
+    );
+    expect(entry).toMatchObject({
+      kind: 'assistant',
+      renderMode: 'markdown',
+      content: '✓ Goal complete.\nWorked 1 turn over 7m15s, using 4.3M tokens.',
+    });
+  });
+
   it('does not replay model-facing goal completion prompts as transcript messages', async () => {
     const driver = await replayIntoDriver([
       message(

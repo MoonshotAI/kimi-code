@@ -323,6 +323,30 @@ describe('Agent resume', () => {
     });
   });
 
+  it('rebuilds goal completion replay cards without adding model-visible context', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'goal.update',
+        goalId: 'goal-1',
+        status: 'complete',
+        actor: 'model',
+        reason: 'all tests passed',
+        turnsUsed: 2,
+        tokensUsed: 1200,
+        wallClockMs: 65_000,
+      },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.context.history).toHaveLength(0);
+    expect(ctx.agent.replayBuilder.buildResult()).toContainEqual({
+      type: 'goal_completion',
+      content: '✓ Goal complete — all tests passed.\nWorked 2 turns over 1m05s, using 1.2k tokens.',
+    });
+  });
+
   it('removes replay messages matching undone history', async () => {
     const persistence = new RecordingAgentPersistence([
       {

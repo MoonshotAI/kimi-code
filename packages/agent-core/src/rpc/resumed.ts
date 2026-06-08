@@ -15,6 +15,7 @@ import type { SessionMeta } from '#/session';
 
 export type AgentReplayRecord =
   | { type: 'message'; message: ContextMessage }
+  | { type: 'goal_completion'; content: string }
   | { type: 'plan_updated'; enabled: boolean }
   | { type: 'config_updated'; config: AgentConfigUpdateData }
   | { type: 'permission_updated'; mode: PermissionMode }

@@ -173,6 +173,12 @@ export class SessionReplayRenderer {
       case 'message':
         this.renderMessage(context, record.message);
         return;
+      case 'goal_completion':
+        this.flushAssistant(context);
+        this.host.appendTranscriptEntry(
+          replayEntry(context, 'assistant', record.content, 'markdown'),
+        );
+        return;
       case 'plan_updated':
         this.flushAssistant(context);
         if (!record.enabled && context.suppressNextPlanModeOffNotice) {
