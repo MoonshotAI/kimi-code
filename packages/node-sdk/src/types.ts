@@ -167,6 +167,7 @@ export interface SessionStatus {
   readonly thinkingLevel: string;
   readonly permission: PermissionMode;
   readonly planMode: boolean;
+  readonly swarmMode?: boolean | undefined;
   readonly contextTokens: number;
   readonly maxContextTokens: number;
   readonly contextUsage: number;

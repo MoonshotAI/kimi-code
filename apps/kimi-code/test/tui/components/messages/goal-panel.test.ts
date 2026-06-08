@@ -6,6 +6,7 @@ import {
   GoalCompletionMessageComponent,
   GoalSetMessageComponent,
   GoalStatusMessageComponent,
+  UpcomingGoalAddedMessageComponent,
   goalPanelTitle,
 } from '#/tui/components/messages/goal-panel';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
@@ -112,6 +113,22 @@ describe('GoalSetMessageComponent', () => {
     expect(rendered[1]).toBe(
       chalk.hex(darkColors.primary).bold(STATUS_BULLET) +
         chalk.hex(darkColors.primary).bold('Goal set'),
+    );
+  });
+});
+
+describe('UpcomingGoalAddedMessageComponent', () => {
+  it('renders the upcoming-goal confirmation like the goal-set lifecycle line', () => {
+    const rendered = new UpcomingGoalAddedMessageComponent(darkColors).render(80);
+
+    expect(strip(rendered)).toBe(
+      '\n● Upcoming goal added. It will start after the current goal is complete.',
+    );
+    expect(rendered[1]).toBe(
+      chalk.hex(darkColors.primary).bold(STATUS_BULLET) +
+        chalk.hex(darkColors.primary).bold(
+          'Upcoming goal added. It will start after the current goal is complete.',
+        ),
     );
   });
 });

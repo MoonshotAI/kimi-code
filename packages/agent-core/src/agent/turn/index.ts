@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 
+import { createControlledPromise, type ControlledPromise } from '@antfu/utils';
 import {
   APIConnectionError,
   APIContextOverflowError,
@@ -41,8 +42,10 @@ import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
 import { ToolCallDeduplicator } from './tool-dedup';
 
 interface ActiveTurn {
-  controller: AbortController;
-  promise: Promise<TurnEndResult>;
+  readonly turnId: number;
+  readonly controller: AbortController;
+  readonly promise: Promise<TurnEndResult>;
+  readonly firstRequest: ControlledPromise<void>;
 }
 
 interface BufferedSteer {
@@ -137,6 +140,10 @@ export class TurnFlow {
     return this.launch(input, origin);
   }
 
+  retry(trigger?: string): number | null {
+    return this.prompt([], { kind: 'retry', trigger });
+  }
+
   private launch(input: readonly ContentPart[], origin: PromptOrigin): number | null {
     if (this.activeTurn) {
       this.agent.emitEvent({
@@ -156,7 +163,17 @@ export class TurnFlow {
     const turnId = this.allocateTurnId();
     const controller = new AbortController();
     const promise = this.turnWorker(turnId, input, origin, controller.signal);
-    this.activeTurn = { controller, promise };
+    const firstRequest = createControlledPromise<void>();
+    this.activeTurn = {
+      turnId,
+      controller,
+      promise,
+      firstRequest,
+    };
+
+    void firstRequest.catch(() => undefined);
+    void promise.then(firstRequest.reject, firstRequest.reject);
+
     return turnId;
   }
 
@@ -205,11 +222,15 @@ export class TurnFlow {
     return this.activeTurn !== null && this.activeTurn !== 'resuming';
   }
 
-  waitForCurrentTurn(signal?: AbortSignal | undefined): Promise<TurnEndResult> {
-    const active = this.activeTurn;
-    if (active === null || active === 'resuming') {
-      return Promise.reject(new Error('No active turn'));
+  private ensureActiveTurn(): ActiveTurn {
+    if (this.activeTurn === null || this.activeTurn === 'resuming') {
+      throw new Error('No active turn');
     }
+    return this.activeTurn;
+  }
+
+  waitForCurrentTurn(signal?: AbortSignal | undefined): Promise<TurnEndResult> {
+    const active = this.ensureActiveTurn();
     signal?.throwIfAborted();
     if (signal === undefined) return active.promise;
 
@@ -222,6 +243,10 @@ export class TurnFlow {
     return abortable(active.promise, signal).finally(() => {
       signal.removeEventListener('abort', onAbort);
     });
+  }
+
+  waitForTurnFirstRequest(): Promise<void> {
+    return this.ensureActiveTurn().firstRequest;
   }
 
   private abortTurn(reason: unknown) {
@@ -475,6 +500,9 @@ export class TurnFlow {
     if (standalone && this.currentId === turnId) {
       this.activeTurn = null;
     }
+    if (this.agent.swarmMode.shouldAutoExit) {
+      this.agent.swarmMode.exit();
+    }
     if (errorEvent !== undefined) {
       this.agent.emitEvent(errorEvent);
     }
@@ -693,11 +721,30 @@ export class TurnFlow {
         this.agent.context.appendLoopEvent(event);
       },
       emitLiveEvent: (event: LoopEvent) => {
+        this.noteFirstRequestEvent(event);
         this.trackLoopTelemetry(event, turnId);
         const mapped = mapLoopEvent(event, turnId);
         if (mapped !== undefined) this.agent.emitEvent(mapped);
       },
     });
+  }
+
+  private noteFirstRequestEvent(event: LoopEvent): void {
+    switch (event.type) {
+      case 'step.end':
+      case 'content.part':
+      case 'tool.call':
+      case 'text.delta':
+      case 'thinking.delta':
+      case 'tool.call.delta': {
+        const active = this.activeTurn;
+        if (active === null || active === 'resuming') return;
+        active.firstRequest.resolve();
+        return;
+      }
+      default:
+        return;
+    }
   }
 
   private trackLoopTelemetry(event: LoopEvent, turnId: number): void {

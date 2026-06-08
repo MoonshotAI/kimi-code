@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { KimiError } from '../../src/errors';
-import { StdioMcpClient } from '../../src/mcp/client-stdio';
+import { mergeStdioEnv, StdioMcpClient } from '../../src/mcp/client-stdio';
 
 const here = import.meta.dirname;
 const fixture = join(here, 'fixtures', 'mock-stdio-server.mjs');
@@ -245,4 +245,25 @@ describe('StdioMcpClient', () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(closes).toEqual([]);
   }, 15000);
+});
+
+describe('mergeStdioEnv', () => {
+  it('enables NODE_USE_ENV_PROXY for a proxy set only in the server config.env', () => {
+    const merged = mergeStdioEnv({ HTTP_PROXY: 'http://corp:3128' }, { PATH: '/usr/bin' });
+    expect(merged['HTTP_PROXY']).toBe('http://corp:3128');
+    expect(merged['NODE_USE_ENV_PROXY']).toBe('1');
+    expect(merged['NO_PROXY']).toBe('localhost,127.0.0.1,::1,[::1]');
+    expect(merged['PATH']).toBe('/usr/bin');
+  });
+
+  it('does not inject NODE_USE_ENV_PROXY when no proxy is configured', () => {
+    const merged = mergeStdioEnv(undefined, { PATH: '/usr/bin' });
+    expect(merged['NODE_USE_ENV_PROXY']).toBeUndefined();
+    expect(merged['PATH']).toBe('/usr/bin');
+  });
+
+  it('lets config.env override the parent env', () => {
+    const merged = mergeStdioEnv({ FOO: 'override' }, { FOO: 'parent', PATH: '/x' });
+    expect(merged['FOO']).toBe('override');
+  });
 });

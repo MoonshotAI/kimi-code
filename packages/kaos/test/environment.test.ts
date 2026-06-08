@@ -6,8 +6,9 @@
  *   - macOS / Linux / Windows / unknown → `osKind`
  *   - POSIX path probing prefers /bin/bash, falls back to /usr/bin/bash,
  *     /usr/local/bin/bash, then /bin/sh (with shellName 'sh').
- *   - Windows resolves Git Bash via `KIMI_SHELL_PATH`, `git.exe` on PATH,
- *     or well-known install locations; throws `KaosShellNotFoundError`
+ *   - Windows resolves Git Bash via `KIMI_SHELL_PATH`, `git.exe` on PATH
+ *     (including `git --exec-path` for shims), or well-known install
+ *     locations; throws `KaosShellNotFoundError`
  *     if none are present.
  *   - `osArch` / `osVersion` are populated from the Node OS APIs.
  *
@@ -32,21 +33,27 @@ interface StubOpts {
   readonly release?: string;
   readonly env?: Record<string, string | undefined>;
   readonly existingPaths?: readonly string[];
-  readonly executables?: Readonly<Record<string, string>>;
+  readonly execFileResults?: Readonly<Record<string, string>>;
+  readonly execFileText?: Parameters<typeof detectEnvironment>[0]['execFileText'];
 }
 
 /** Build a stub deps bag mimicking Node's `os` + `process` surface. */
 function stubDeps(opts: StubOpts): Parameters<typeof detectEnvironment>[0] {
   const existing = new Set(opts.existingPaths ?? []);
-  const executables = opts.executables ?? {};
   return {
     platform: opts.platform,
     arch: opts.arch ?? 'x86_64',
     release: opts.release ?? '1.2.3',
     env: opts.env ?? {},
     isFile: async (path: string) => existing.has(path),
-    findExecutable: async (name: string) => executables[name],
+    execFileText:
+      opts.execFileText ??
+      (async (file: string, args: readonly string[]) => opts.execFileResults?.[execFileKey(file, args)]),
   };
+}
+
+function execFileKey(file: string, args: readonly string[]): string {
+  return [file, ...args].join('\0');
 }
 
 describe('detectEnvironment', () => {
@@ -146,23 +153,152 @@ describe('detectEnvironment', () => {
   });
 
   it('infers Git Bash from git.exe on PATH when override is absent', async () => {
+    const gitExe = 'C:\\Program Files\\Git\\cmd\\git.exe';
     const env = await detectEnvironment(
       stubDeps({
         platform: 'win32',
-        executables: { 'git.exe': 'C:\\Program Files\\Git\\cmd\\git.exe' },
-        existingPaths: ['C:\\Program Files\\Git\\bin\\bash.exe'],
+        env: { PATH: 'C:\\Program Files\\Git\\cmd' },
+        existingPaths: [gitExe, 'C:\\Program Files\\Git\\bin\\bash.exe'],
+        execFileText: async (file: string) => {
+          throw new Error(`unexpected execFileText call for ${file}`);
+        },
       }),
     );
     expect(env.shellName).toBe('bash');
     expect(env.shellPath).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
   });
 
-  it('infers Git Bash from usr/bin when bin/bash.exe is missing', async () => {
+  it('resolves a Scoop git shim through git --exec-path', async () => {
+    const gitExe = 'C:\\Users\\me\\scoop\\shims\\git.exe';
     const env = await detectEnvironment(
       stubDeps({
         platform: 'win32',
-        executables: { 'git.exe': 'D:\\Program Files\\Git\\cmd\\git.exe' },
-        existingPaths: ['D:\\Program Files\\Git\\usr\\bin\\bash.exe'],
+        env: { PATH: 'C:\\Users\\me\\scoop\\shims' },
+        execFileResults: {
+          [execFileKey(gitExe, ['--exec-path'])]:
+            'C:/Users/me/scoop/apps/git/current/mingw64/libexec/git-core\n',
+        },
+        existingPaths: [gitExe, 'C:\\Users\\me\\scoop\\apps\\git\\current\\bin\\bash.exe'],
+      }),
+    );
+    expect(env.shellName).toBe('bash');
+    expect(env.shellPath).toBe('C:\\Users\\me\\scoop\\apps\\git\\current\\bin\\bash.exe');
+  });
+
+  it('resolves a Scoop git shim through usr/bin when bin/bash.exe is missing', async () => {
+    const gitExe = 'C:\\Users\\me\\scoop\\shims\\git.exe';
+    const env = await detectEnvironment(
+      stubDeps({
+        platform: 'win32',
+        env: { PATH: 'C:\\Users\\me\\scoop\\shims' },
+        execFileResults: {
+          [execFileKey(gitExe, ['--exec-path'])]:
+            'C:/Users/me/scoop/apps/git/current/mingw64/libexec/git-core\n',
+        },
+        existingPaths: [gitExe, 'C:\\Users\\me\\scoop\\apps\\git\\current\\usr\\bin\\bash.exe'],
+      }),
+    );
+    expect(env.shellName).toBe('bash');
+    expect(env.shellPath).toBe('C:\\Users\\me\\scoop\\apps\\git\\current\\usr\\bin\\bash.exe');
+  });
+
+  it('does not treat shim-adjacent bash.exe as the Git installation shell', async () => {
+    const gitExe = 'C:\\Users\\me\\scoop\\shims\\git.exe';
+    const env = await detectEnvironment(
+      stubDeps({
+        platform: 'win32',
+        env: { PATH: 'C:\\Users\\me\\scoop\\shims' },
+        execFileResults: {
+          [execFileKey(gitExe, ['--exec-path'])]:
+            'C:/Users/me/scoop/apps/git/current/mingw64/libexec/git-core\n',
+        },
+        existingPaths: [
+          gitExe,
+          'C:\\Users\\me\\scoop\\bin\\bash.exe',
+          'C:\\Users\\me\\scoop\\apps\\git\\current\\bin\\bash.exe',
+        ],
+      }),
+    );
+    expect(env.shellName).toBe('bash');
+    expect(env.shellPath).toBe('C:\\Users\\me\\scoop\\apps\\git\\current\\bin\\bash.exe');
+  });
+
+  it('checks later git.exe matches when the first one cannot resolve Git Bash', async () => {
+    const scoopGit = 'C:\\Users\\me\\scoop\\shims\\git.exe';
+    const portableGit = 'D:\\PortableGit\\cmd\\git.exe';
+    const env = await detectEnvironment(
+      stubDeps({
+        platform: 'win32',
+        env: { PATH: 'C:\\Users\\me\\scoop\\shims;D:\\PortableGit\\cmd' },
+        existingPaths: [scoopGit, portableGit, 'D:\\PortableGit\\bin\\bash.exe'],
+      }),
+    );
+    expect(env.shellName).toBe('bash');
+    expect(env.shellPath).toBe('D:\\PortableGit\\bin\\bash.exe');
+  });
+
+  it('keeps PATH order when an earlier shim resolves through git --exec-path', async () => {
+    const scoopGit = 'C:\\Users\\me\\scoop\\shims\\git.exe';
+    const portableGit = 'D:\\PortableGit\\cmd\\git.exe';
+    const env = await detectEnvironment(
+      stubDeps({
+        platform: 'win32',
+        env: { PATH: 'C:\\Users\\me\\scoop\\shims;D:\\PortableGit\\cmd' },
+        execFileResults: {
+          [execFileKey(scoopGit, ['--exec-path'])]:
+            'C:/Users/me/scoop/apps/git/current/mingw64/libexec/git-core\n',
+        },
+        existingPaths: [
+          scoopGit,
+          portableGit,
+          'C:\\Users\\me\\scoop\\apps\\git\\current\\bin\\bash.exe',
+          'D:\\PortableGit\\bin\\bash.exe',
+        ],
+      }),
+    );
+    expect(env.shellName).toBe('bash');
+    expect(env.shellPath).toBe('C:\\Users\\me\\scoop\\apps\\git\\current\\bin\\bash.exe');
+  });
+
+  it('skips relative Windows PATH entries before git --exec-path probing', async () => {
+    const relativeGit = 'tools\\git.exe';
+    const error = await detectEnvironment(
+      stubDeps({
+        platform: 'win32',
+        env: { PATH: 'tools' },
+        existingPaths: [relativeGit],
+        execFileText: async (file: string) => {
+          throw new Error(`unexpected execFileText call for ${file}`);
+        },
+      }),
+    ).then(
+      () => {
+        throw new Error('expected throw');
+      },
+      (error: unknown) => error,
+    );
+    expect(error).toBeInstanceOf(KaosShellNotFoundError);
+  });
+
+  it('scans PATH directly for git.exe candidates', async () => {
+    const env = await detectEnvironment(
+      stubDeps({
+        platform: 'win32',
+        env: { PATH: 'D:\\PortableGit\\cmd' },
+        existingPaths: ['D:\\PortableGit\\cmd\\git.exe', 'D:\\PortableGit\\bin\\bash.exe'],
+      }),
+    );
+    expect(env.shellName).toBe('bash');
+    expect(env.shellPath).toBe('D:\\PortableGit\\bin\\bash.exe');
+  });
+
+  it('infers Git Bash from usr/bin when bin/bash.exe is missing', async () => {
+    const gitExe = 'D:\\Program Files\\Git\\cmd\\git.exe';
+    const env = await detectEnvironment(
+      stubDeps({
+        platform: 'win32',
+        env: { PATH: 'D:\\Program Files\\Git\\cmd' },
+        existingPaths: [gitExe, 'D:\\Program Files\\Git\\usr\\bin\\bash.exe'],
       }),
     );
     expect(env.shellName).toBe('bash');
@@ -200,7 +336,7 @@ describe('detectEnvironment', () => {
     expect(env.shellPath).toBe('C:\\Users\\me\\AppData\\Local\\Programs\\Git\\bin\\bash.exe');
   });
 
-it('falls back to usr/bin under LOCALAPPDATA when bin/bash.exe is missing', async () => {
+  it('falls back to usr/bin under LOCALAPPDATA when bin/bash.exe is missing', async () => {
     const env = await detectEnvironment(
       stubDeps({
         platform: 'win32',

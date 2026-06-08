@@ -22,11 +22,6 @@ import type { SessionGoalStore } from '../session/goal';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import type { SkillRegistry } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
-import {
-  estimateTokens,
-  estimateTokensForMessages,
-  estimateTokensForTools,
-} from '../utils/tokens';
 import type { PromisableMethods } from '../utils/types';
 import { BackgroundManager, BackgroundTaskPersistence } from './background';
 import {
@@ -51,6 +46,7 @@ import {
 } from './records';
 import { ReplayBuilder } from './replay';
 import { SkillManager } from './skill';
+import { SwarmMode } from './swarm';
 import { ToolManager } from './tool/index';
 import { TurnFlow } from './turn';
 import {
@@ -64,6 +60,7 @@ import type { Kaos } from '@moonshot-ai/kaos';
 import type { ToolServices } from '../tools/support/services';
 
 export type { AgentRecord, AgentRecordPersistence } from './records';
+export type { SwarmModeTrigger } from './swarm';
 export type { BuiltinTool, ToolInfo, ToolSource, UserToolRegistration } from './tool';
 export { buildGoalCompletionMessage } from './goal/completion';
 
@@ -123,6 +120,7 @@ export class Agent {
   readonly injection: InjectionManager;
   readonly permission: PermissionManager;
   readonly planMode: PlanMode;
+  readonly swarmMode: SwarmMode;
   readonly usage: UsageRecorder;
   readonly skills: SkillManager | null;
   readonly tools: ToolManager;
@@ -174,6 +172,7 @@ export class Agent {
     this.injection = new InjectionManager(this);
     this.permission = new PermissionManager(this, options.permission);
     this.planMode = new PlanMode(this);
+    this.swarmMode = new SwarmMode(this);
     this.usage = new UsageRecorder(this);
     this.skills = options.skills ? new SkillManager(this, options.skills) : null;
     this.tools = new ToolManager(this);
@@ -252,12 +251,7 @@ export class Agent {
     for (const message of history) {
       if (message.partial === true) partialMessageCount += 1;
     }
-    const requestMetadata: LlmRequestMetadata = {
-      estimatedInputTokens:
-        estimateTokens(systemPrompt) +
-        estimateTokensForMessages(history) +
-        estimateTokensForTools(tools),
-    };
+    const requestMetadata: LlmRequestMetadata = {};
     if (partialMessageCount > 0) {
       requestMetadata.partialMessageCount = partialMessageCount;
     }
@@ -364,6 +358,15 @@ export class Agent {
         this.planMode.cancel(payload.id);
       },
       clearPlan: () => this.planMode.clear(),
+      enterSwarm: (payload) => {
+        this.swarmMode.enter(payload.trigger);
+      },
+      exitSwarm: () => {
+        this.swarmMode.exit();
+      },
+      getSwarmMode: () => {
+        return this.swarmMode.isActive;
+      },
       beginCompaction: (payload) => {
         this.fullCompaction.begin({ source: 'manual', instruction: payload.instruction });
       },
@@ -431,6 +434,7 @@ export class Agent {
       maxContextTokens,
       contextUsage,
       planMode: this.planMode.isActive,
+      swarmMode: this.swarmMode.isActive,
       permission: this.permission.mode,
       usage,
     });
@@ -462,7 +466,6 @@ interface LlmRequestContextFields {
 }
 
 interface LlmRequestMetadata {
-  estimatedInputTokens: number;
   partialMessageCount?: number;
 }
 

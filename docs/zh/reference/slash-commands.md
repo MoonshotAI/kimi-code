@@ -44,6 +44,8 @@
 | `/auto [on\|off]` | — | 切换 auto 权限模式。开启后工具审批自动处理，Agent 不会向用户提问 | 是 |
 | `/plan [on\|off]` | — | 切换 Plan 模式。不带参数时翻转；显式传 `on`/`off` 时强制设置。单纯切换不会创建空计划文件 | 是 |
 | `/plan clear` | — | 清除当前 plan 方案 | 否 |
+| `/swarm on\|off` | — | 开启或关闭 swarm mode，但不发送提示词。 | 是 |
+| `/swarm <task>` | — | 先开启 swarm mode，再把 `<task>` 作为普通提示词发送。如果该轮次正常完成，swarm mode 会自动关闭。若当前是 `manual` 权限模式，启动前会提示是否切换到 `auto`。 | 否 |
 | `/goal [...]` | — | 开始或管理目标模式（实验功能；可通过 `/experiments`、`[experimental].goal_command` 或 `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1` 启用） | 见下文 |
 
 ::: warning 注意
@@ -78,8 +80,8 @@ KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
 | `/goal resume` | 继续被暂停或被阻塞的目标 | 仅空闲时 |
 | `/goal cancel` | 移除当前目标 | 随时可用 |
 | `/goal replace <objective>` | 用新目标替换已保存的目标 | 仅空闲时 |
-| `/goal next <objective>` | 为当前会话安排一个后续目标。当前目标完成前，Agent 不会看到它 | 随时可用 |
-| `/goal next manage` | 打开后续目标管理器。用 `↑`/`↓` 浏览，`Space` 选择一个目标以便移动，选中后用 `↑`/`↓` 调整顺序，`E` 编辑，`D` 删除，`Esc` 取消 | 随时可用 |
+| `/goal next <objective>` | 为当前会话安排一个后续目标。如果当前没有目标，则立即开始它。当前目标完成前，Agent 不会看到已排队的目标 | 随时可用 |
+| `/goal next manage` | 打开后续目标管理器。用 <kbd>↑</kbd> / <kbd>↓</kbd> 浏览，<kbd>Space</kbd> 选择一个目标以便移动，选中后用 <kbd>↑</kbd> / <kbd>↓</kbd> 调整顺序，<kbd>E</kbd> 编辑，<kbd>D</kbd> 删除，<kbd>Esc</kbd> 取消。编辑输入框中，用 <kbd>Shift-Enter</kbd> 或 <kbd>Ctrl-J</kbd> 添加新行，用 <kbd>Enter</kbd> 保存 | 随时可用 |
 
 `status`、`pause`、`resume`、`cancel`、`replace` 和 `next` 只有作为 `/goal` 后的第一个词时才是子命令。如果你的目标需要以这些词开头，请在目标前加 `--`：
 
@@ -122,7 +124,7 @@ Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `
 
 ## Skill 动态命令
 
-已激活的 Skill 会自动注册为斜杠命令，统一以 `skill:` 作为命名空间前缀：
+已激活的外部 Skill 会自动注册为斜杠命令，并以 `skill:` 作为命名空间前缀：
 
 ```
 /skill:<name> [附加文本]
@@ -130,9 +132,9 @@ Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `
 
 例如 `/skill:code-style` 加载名为 `code-style` 的 Skill 并发送给 Agent；命令后附带的文本拼接到 Skill 提示词之后。
 
-为方便输入，Skill 命令同时支持省略 `skill:` 前缀的简写形式 `/<name>`，前提是该名称未被内置命令占用——即 `/code-style` 会回退匹配到 `/skill:code-style`。
+为方便输入，外部 Skill 命令同时支持省略 `skill:` 前缀的简写形式 `/<name>`，前提是该名称未被系统斜杠命令占用——即 `/code-style` 会回退匹配到 `/skill:code-style`。
 
-Kimi Code CLI 随包内置了 `mcp-config` Skill，用于配置 MCP server 和处理 MCP OAuth 登录；可直接输入 `/mcp-config` 调用。
+Kimi Code CLI 随包内置的 Skill（例如 `mcp-config`）会直接以 `/<name>` 形式出现在斜杠命令面板中，用于配置 MCP server 和处理 MCP OAuth 登录等场景。
 
 ::: info 说明
 所有 Skill 命令仅在空闲状态下可用。`flow` 类型的 Skill 同样通过 `/skill:<name>` 暴露，没有独立的 `/flow:` 命名空间。

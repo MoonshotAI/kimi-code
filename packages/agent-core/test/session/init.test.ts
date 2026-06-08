@@ -85,7 +85,7 @@ describe('Session.init', () => {
       expect.objectContaining({
         type: 'turn.started',
         agentId: 'agent-0',
-        origin: { kind: 'system_trigger', name: 'init' },
+        origin: { kind: 'system_trigger', name: 'subagent' },
       }),
     );
     expect(events).toContainEqual(
@@ -93,7 +93,6 @@ describe('Session.init', () => {
         type: 'subagent.completed',
         agentId: 'main',
         subagentId: 'agent-0',
-        parentToolCallId: 'generate-agents-md',
         contextTokens: expect.any(Number),
       }),
     );
@@ -486,7 +485,7 @@ describe('AgentAPI.startBtw', () => {
       homedir: sessionDir,
       rpc: createSessionRpc([]),
       skills: { explicitDirs: [skillsRoot] },
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub-skill': false }),
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': false }),
     });
 
     try {
@@ -504,7 +503,7 @@ describe('AgentAPI.startBtw', () => {
       homedir: sessionDir,
       rpc: createSessionRpc([]),
       skills: { explicitDirs: [skillsRoot] },
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub-skill': true }),
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': true }),
     });
 
     try {

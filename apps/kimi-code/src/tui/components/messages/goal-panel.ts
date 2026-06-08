@@ -29,6 +29,12 @@ const MAX_OBJECTIVE_LINES = 6;
 const MAX_CRITERION_LINES = 3;
 const LABEL_WIDTH = 11;
 
+function renderLifecycleLine(label: string, colors: ColorPalette): string[] {
+  const marker = chalk.hex(colors.primary).bold(STATUS_BULLET);
+  const text = chalk.hex(colors.primary).bold(label);
+  return ['', marker + text];
+}
+
 /**
  * The "Goal set" confirmation shown after `/goal <objective>`. The objective is
  * rendered as the following user prompt, so this message only marks the state
@@ -40,9 +46,20 @@ export class GoalSetMessageComponent implements Component {
   invalidate(): void {}
 
   render(_width: number): string[] {
-    const marker = chalk.hex(this.colors.primary).bold(STATUS_BULLET);
-    const label = chalk.hex(this.colors.primary).bold('Goal set');
-    return ['', marker + label];
+    return renderLifecycleLine('Goal set', this.colors);
+  }
+}
+
+export class UpcomingGoalAddedMessageComponent implements Component {
+  constructor(private readonly colors: ColorPalette) {}
+
+  invalidate(): void {}
+
+  render(_width: number): string[] {
+    return renderLifecycleLine(
+      'Upcoming goal added. It will start after the current goal is complete.',
+      this.colors,
+    );
   }
 }
 
@@ -182,7 +199,7 @@ function statusHex(status: GoalStatus, colors: ColorPalette): string {
       return colors.success;
     case 'blocked':
       return colors.warning;
-    default: // paused
+    case 'paused':
       return colors.textDim;
   }
 }
@@ -199,7 +216,7 @@ function formatElapsed(ms: number): string {
 
 /** Word-wrap to `width`, capped at `maxLines` (last line gets an ellipsis when clipped). */
 function wrap(text: string, width: number, maxLines: number): string[] {
-  const words = text.replace(/\s+/g, ' ').trim().split(' ');
+  const words = text.replaceAll(/\s+/g, ' ').trim().split(' ');
   const lines: string[] = [];
   let current = '';
   for (const word of words) {

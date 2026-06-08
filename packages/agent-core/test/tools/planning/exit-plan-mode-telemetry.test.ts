@@ -46,6 +46,11 @@ function makeAgent(input: {
       })),
       exit: exitPlanMode,
     },
+    swarmMode: {
+      get isActive() {
+        return false;
+      },
+    },
     permission: { mode: input.mode },
     type: 'main',
     config: { cwd: '/workspace' },

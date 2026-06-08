@@ -17,9 +17,6 @@ import type {
   Session,
   SessionMetaUpdatedEvent,
   SkillActivatedEvent,
-  SubagentCompletedEvent,
-  SubagentFailedEvent,
-  SubagentSpawnedEvent,
   ThinkingDeltaEvent,
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
@@ -38,7 +35,10 @@ import { MoonLoader } from '../components/chrome/moon-loader';
 import { buildGoalMarker } from '../components/messages/goal-markers';
 import { StatusMessageComponent } from '../components/messages/status-message';
 import {
-  MAIN_AGENT_ID,
+  SwarmModeMarkerComponent,
+  type SwarmModeMarkerState,
+} from '../components/messages/swarm-markers';
+import {
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
 } from '../constant/kimi-tui';
@@ -50,10 +50,14 @@ import {
   serializeToolResultOutput,
   stringValue,
 } from '../utils/event-payload';
-import { readGoalQueue, removeGoalQueueItem, restoreGoalQueueItem } from '../goal-queue-store';
-import { formatBackgroundAgentTranscript } from '../utils/background-agent-status';
+import {
+  readGoalQueue,
+  removeGoalQueueItem,
+  restoreGoalQueueItem,
+  type UpcomingGoal,
+} from '../goal-queue-store';
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
-import { formatHookResultMarkdown, formatHookResultPlain } from '../utils/hook-result-format';
+import { formatHookResultMarkdown } from '../utils/hook-result-format';
 import { McpOAuthAuthorizationUrlOpener } from '../utils/mcp-oauth';
 import {
   formatMcpStartupStatusSummary,
@@ -68,9 +72,9 @@ import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
 import type { StreamingUIController } from './streaming-ui';
 import type { TasksBrowserController } from './tasks-browser';
+import { SubAgentEventHandler } from './subagent-event-handler';
 import type {
   AppState,
-  BackgroundAgentMetadata,
   LivePaneState,
   QueuedMessage,
   ToolCallBlockData,
@@ -94,6 +98,7 @@ export interface SessionEventHost {
   showError(msg: string): void;
   showStatus(msg: string, color?: string): void;
   showNotice(title: string, detail?: string): void;
+  updateActivityPane(): void;
   track(event: string, props?: Record<string, unknown>): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
@@ -108,13 +113,22 @@ export interface SessionEventHost {
 }
 
 export class SessionEventHandler {
-  constructor(private readonly host: SessionEventHost) {}
+  readonly subAgentEventHandler: SubAgentEventHandler;
+
+  constructor(private readonly host: SessionEventHost) {
+    this.subAgentEventHandler = new SubAgentEventHandler(host, {
+      backgroundTasks: this.backgroundTasks,
+      backgroundTaskTranscriptedTerminal: this.backgroundTaskTranscriptedTerminal,
+      syncBackgroundAgentBadge: () => {
+        this.syncBackgroundTaskBadge();
+      },
+    });
+  }
 
   // Runtime state – owned by this handler, reset between sessions.
-  backgroundAgentMetadata: Map<string, BackgroundAgentMetadata> = new Map();
   backgroundTasks: Map<string, BackgroundTaskInfo> = new Map();
   backgroundTaskTranscriptedTerminal: Set<string> = new Set();
-  subagentInfo: Map<string, { parentToolCallId: string; name: string }> = new Map();
+
   renderedSkillActivationIds: Set<string> = new Set();
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
@@ -122,21 +136,34 @@ export class SessionEventHandler {
   private goalCompletionAwaitingClear = false;
   private goalCompletionTurnEnded = false;
   private queuedGoalPromotionPending = false;
+  private queuedGoalPromotionInFlight = false;
   private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
 
   resetRuntimeState(): void {
-    this.backgroundAgentMetadata.clear();
     this.backgroundTasks.clear();
     this.backgroundTaskTranscriptedTerminal.clear();
-    this.subagentInfo.clear();
+    this.subAgentEventHandler.resetRuntimeState();
     this.renderedSkillActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
     this.mcpServers.clear();
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
     this.queuedGoalPromotionPending = false;
+    this.queuedGoalPromotionInFlight = false;
     this.clearQueuedGoalPromotionTimer();
     this.stopAllMcpServerStatusSpinners();
+  }
+
+  clearAgentSwarmProgress(): void {
+    this.subAgentEventHandler.clearAgentSwarmProgress();
+  }
+
+  hasActiveAgentSwarmToolCall(): boolean {
+    return this.subAgentEventHandler.hasActiveAgentSwarmToolCall();
+  }
+
+  syncAgentSwarmActivitySpinner(spinner: MoonLoader | undefined): void {
+    this.subAgentEventHandler.syncAgentSwarmActivitySpinner(spinner);
   }
 
   startSubscription(): void {
@@ -195,7 +222,7 @@ export class SessionEventHandler {
   }
 
   handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
-    if (this.routeSubagentEvent(event)) return;
+    if (this.subAgentEventHandler.routeChildAgentEvent(event)) return;
 
     if ('turnId' in event && event.turnId !== undefined) {
       this.host.streamingUI.setTurnId(String(event.turnId));
@@ -225,9 +252,12 @@ export class SessionEventHandler {
       case 'compaction.completed': this.handleCompactionEnd(event, sendQueued); break;
       case 'compaction.blocked': break;
       case 'compaction.cancelled': this.handleCompactionCancel(event, sendQueued); break;
-      case 'subagent.spawned': this.handleSubagentSpawned(event); break;
-      case 'subagent.completed': this.handleSubagentCompleted(event); break;
-      case 'subagent.failed': this.handleSubagentFailed(event); break;
+      case 'subagent.spawned':
+      case 'subagent.started':
+      case 'subagent.suspended':
+      case 'subagent.completed':
+      case 'subagent.failed':
+        this.subAgentEventHandler.handleLifecycleEvent(event); break;
       case 'background.task.started':
       case 'background.task.terminated':
         this.handleBackgroundTaskEvent(event); break;
@@ -249,94 +279,9 @@ export class SessionEventHandler {
   // Private handlers
   // ---------------------------------------------------------------------------
 
-  private routeSubagentEvent(event: Event): boolean {
-    const subagentId = event.agentId;
-    if (subagentId === MAIN_AGENT_ID) return false;
-
-    const { streamingUI } = this.host;
-    if (this.host.btwPanelController.routeEvent(event)) return true;
-
-    const info = this.subagentInfo.get(subagentId);
-    if (info === undefined) return true;
-    if (info.parentToolCallId.length === 0) return true;
-    const { parentToolCallId } = info;
-    const sourceName = info.name;
-    const toolCall = streamingUI.getToolComponent(parentToolCallId);
-    if (toolCall === undefined) return true;
-    toolCall.setSubagentMeta(subagentId, sourceName);
-
-    switch (event.type) {
-      case 'hook.result':
-        toolCall.appendSubagentText(formatHookResultPlain(event), 'text');
-        return true;
-      case 'assistant.delta':
-        toolCall.appendSubagentText(event.delta, 'text');
-        return true;
-      case 'thinking.delta':
-        toolCall.appendSubagentText(event.delta, 'thinking');
-        return true;
-      case 'tool.call.started':
-        toolCall.appendSubToolCall({
-          id: `${subagentId}:${event.toolCallId}`,
-          name: event.name,
-          args: argsRecord(event.args),
-        });
-        return true;
-      case 'tool.call.delta':
-        toolCall.appendSubToolCallDelta({
-          id: `${subagentId}:${event.toolCallId}`,
-          name: event.name,
-          argumentsPart: event.argumentsPart ?? null,
-        });
-        return true;
-      case 'tool.result':
-        toolCall.finishSubToolCall({
-          tool_call_id: `${subagentId}:${event.toolCallId}`,
-          output: serializeToolResultOutput(event.output),
-          is_error: event.isError,
-        });
-        return true;
-      case 'agent.status.updated': {
-        const usageObj = event.usage;
-        const totalUsage = usageObj?.total ?? usageObj?.currentTurn;
-        toolCall.updateSubagentMetrics({
-          contextTokens: event.contextTokens,
-          usage: totalUsage,
-        });
-        return true;
-      }
-      case 'background.task.started':
-      case 'background.task.terminated':
-      case 'compaction.blocked':
-      case 'compaction.cancelled':
-      case 'compaction.completed':
-      case 'compaction.started':
-      case 'cron.fired':
-      case 'error':
-      case 'warning':
-      case 'goal.updated':
-      case 'session.meta.updated':
-      case 'skill.activated':
-      case 'subagent.completed':
-      case 'subagent.failed':
-      case 'subagent.spawned':
-      case 'tool.progress':
-      case 'tool.list.updated':
-      case 'mcp.server.status':
-      case 'turn.ended':
-      case 'turn.started':
-      case 'turn.step.completed':
-      case 'turn.step.interrupted':
-      case 'turn.step.retrying':
-      case 'turn.step.started':
-        return true;
-      default:
-        return true;
-    }
-  }
-
   private handleTurnBegin(_event: TurnStartedEvent): void {
     void _event;
+    this.clearAgentSwarmProgress();
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.setStep(0);
     this.host.patchLivePane({
@@ -368,9 +313,11 @@ export class SessionEventHandler {
     });
   }
 
-  private handleTurnEnd(_event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
-    void _event;
+  private handleTurnEnd(event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
     this.host.streamingUI.flushNow();
+    if (event.reason === 'cancelled') {
+      this.markActiveAgentSwarmsCancelled();
+    }
     const todos = this.host.state.todoPanel.getTodos();
     if (todos.length > 0 && todos.every((t) => t.status === 'done')) {
       this.host.streamingUI.setTodoList([]);
@@ -423,6 +370,10 @@ export class SessionEventHandler {
     if (text !== undefined) this.host.showStatus(text);
   }
 
+  private markActiveAgentSwarmsCancelled(): void {
+    this.subAgentEventHandler.markActiveAgentSwarmsCancelled();
+  }
+
   private isAnthropicSessionActive(): boolean {
     const { state } = this.host;
     const providerKey = state.appState.availableModels[state.appState.model]?.provider;
@@ -437,6 +388,7 @@ export class SessionEventHandler {
     const reason = event.reason;
     if (reason === 'error') return;
     if (reason === 'aborted' || reason === undefined || reason === '') {
+      this.markActiveAgentSwarmsCancelled();
       this.host.showStatus('Interrupted by user', this.host.state.theme.colors.error);
       return;
     }
@@ -510,6 +462,9 @@ export class SessionEventHandler {
       turnId,
     };
     streamingUI.registerToolCall(toolCall);
+    if (event.name === 'AgentSwarm') {
+      this.subAgentEventHandler.handleAgentSwarmToolCallStarted(event.toolCallId, toolCall.args);
+    }
     this.host.patchLivePane({
       mode: 'tool',
       pendingApproval: null,
@@ -521,6 +476,15 @@ export class SessionEventHandler {
     if (event.toolCallId.length === 0) return;
     const { state, streamingUI } = this.host;
     streamingUI.accumulateToolCallDelta(event.toolCallId, event.name, event.argumentsPart);
+    const preview = streamingUI.getStreamingToolCallPreview(event.toolCallId);
+    if (
+      preview !== undefined &&
+      (preview.name === 'AgentSwarm' || this.subAgentEventHandler.hasAgentSwarmProgress(event.toolCallId))
+    ) {
+      this.subAgentEventHandler.handleAgentSwarmToolCallDelta(event.toolCallId, preview.args, {
+        streamingArguments: preview.argumentsText,
+      });
+    }
 
     this.host.patchLivePane({
       mode: 'tool',
@@ -552,6 +516,11 @@ export class SessionEventHandler {
       synthetic: event.synthetic,
     };
     const matchedCall = streamingUI.completeToolResult(event.toolCallId, resultData);
+    this.subAgentEventHandler.handleAgentSwarmToolResult(
+      event.toolCallId,
+      resultData,
+      event.isError === true,
+    );
     if (matchedCall !== undefined && matchedCall.name === 'TodoList' && !event.isError) {
       const rawTodos = (matchedCall.args as { todos?: unknown }).todos;
       if (Array.isArray(rawTodos)) {
@@ -567,16 +536,34 @@ export class SessionEventHandler {
   }
 
   private handleStatusUpdate(event: AgentStatusUpdatedEvent): void {
+    const shouldRenderSwarmEnded =
+      event.swarmMode === false &&
+      this.host.state.appState.swarmMode &&
+      this.host.state.swarmModeEntry === 'task';
     const patch: Partial<AppState> = {};
     if (event.contextUsage !== undefined) patch.contextUsage = event.contextUsage;
     if (event.contextTokens !== undefined) patch.contextTokens = event.contextTokens;
     if (event.maxContextTokens !== undefined) patch.maxContextTokens = event.maxContextTokens;
     if (event.planMode !== undefined) patch.planMode = event.planMode;
+    if (event.swarmMode !== undefined) patch.swarmMode = event.swarmMode;
     if (event.permission !== undefined) {
       patch.permissionMode = event.permission;
     }
     if (event.model !== undefined) patch.model = event.model;
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
+    if (event.swarmMode === false) {
+      this.host.state.swarmModeEntry = undefined;
+      if (shouldRenderSwarmEnded) {
+        this.renderSwarmModeMarker('ended');
+      }
+    }
+  }
+
+  private renderSwarmModeMarker(state: SwarmModeMarkerState): void {
+    this.host.state.transcriptContainer.addChild(
+      new SwarmModeMarkerComponent(state, this.host.state.theme.colors),
+    );
+    this.host.state.ui.requestRender();
   }
 
   private handleGoalUpdated(event: GoalUpdatedEvent): void {
@@ -621,19 +608,29 @@ export class SessionEventHandler {
 
   private scheduleQueuedGoalPromotion(): void {
     if (!this.queuedGoalPromotionPending || !this.goalCompletionTurnEnded) return;
+    if (this.queuedGoalPromotionInFlight) return;
     if (this.queuedGoalPromotionTimer !== undefined) return;
     this.queuedGoalPromotionTimer = setTimeout(() => {
       this.queuedGoalPromotionTimer = undefined;
       if (!this.queuedGoalPromotionPending || !this.goalCompletionTurnEnded) return;
-      if (
-        this.host.state.appState.streamingPhase !== 'idle' ||
-        this.host.state.queuedMessages.length > 0
-      ) {
+      if (this.queuedGoalPromotionInFlight) return;
+      if (!this.isReadyForQueuedGoalPromotion()) {
         return;
       }
-      this.queuedGoalPromotionPending = false;
-      this.goalCompletionTurnEnded = false;
-      void this.promoteNextQueuedGoal();
+      this.queuedGoalPromotionInFlight = true;
+      void this.promoteNextQueuedGoal()
+        .then((complete) => {
+          if (complete) {
+            this.queuedGoalPromotionPending = false;
+            this.goalCompletionTurnEnded = false;
+            return;
+          }
+          this.goalCompletionTurnEnded = false;
+        })
+        .finally(() => {
+          this.queuedGoalPromotionInFlight = false;
+          this.scheduleQueuedGoalPromotion();
+        });
     }, 0);
   }
 
@@ -643,49 +640,67 @@ export class SessionEventHandler {
     this.queuedGoalPromotionTimer = undefined;
   }
 
-  private async promoteNextQueuedGoal(): Promise<void> {
+  requestQueuedGoalPromotion(): void {
+    this.queuedGoalPromotionPending = true;
+    this.goalCompletionTurnEnded = true;
+    this.scheduleQueuedGoalPromotion();
+  }
+
+  retryQueuedGoalPromotion(): void {
+    this.scheduleQueuedGoalPromotion();
+  }
+
+  private isReadyForQueuedGoalPromotion(session?: Session): boolean {
+    return (
+      (session === undefined || this.host.session === session) &&
+      !this.host.aborted &&
+      this.host.state.appState.streamingPhase === 'idle' &&
+      this.host.state.queuedMessages.length === 0
+    );
+  }
+
+  private async promoteNextQueuedGoal(): Promise<boolean> {
     const { host } = this;
     const session = host.session;
-    if (session === undefined || host.aborted) return;
+    if (session === undefined || host.aborted) return true;
 
     let queue;
     try {
       queue = await readGoalQueue(session);
     } catch (error) {
       host.showError(`Failed to read upcoming goals: ${formatErrorMessage(error)}`);
-      return;
+      return false;
     }
-    if (host.session !== session || host.aborted) return;
+    if (host.session !== session || host.aborted) return true;
 
     const next = queue.goals[0];
-    if (next === undefined) return;
+    if (next === undefined) return true;
 
-    await startGoalCommand(
+    if (!this.isReadyForQueuedGoalPromotion(session)) return false;
+
+    const started = await startGoalCommand(
       host,
       { kind: 'create', objective: next.objective, replace: false },
       next.objective,
       {
         beforeSend: async () => {
-          if (host.session !== session || host.aborted) return false;
+          if (!this.isReadyForQueuedGoalPromotion(session)) {
+            await this.cancelStartedQueuedGoal(session);
+            return false;
+          }
           try {
             await removeGoalQueueItem(session, { goalId: next.id });
           } catch (error) {
             host.showError(
               `Queued goal started, but could not be removed from the queue: ${formatErrorMessage(error)}`,
             );
+            await this.cancelStartedQueuedGoal(session);
             return false;
           }
-          if (host.session === session && !host.aborted) return true;
-          try {
-            await restoreGoalQueueItem(session, next);
-          } catch (error) {
-            host.showError(`Queued goal could not be restored: ${formatErrorMessage(error)}`);
+          if (this.isReadyForQueuedGoalPromotion(session)) {
+            return true;
           }
-          try {
-            await session.cancelGoal();
-          } catch (error) {
-            host.showError(`Queued goal could not be cancelled: ${formatErrorMessage(error)}`);
-          }
+          await this.restoreAndCancelStartedQueuedGoal(session, next);
           return false;
         },
         sendInput: (objective) => {
@@ -693,6 +708,27 @@ export class SessionEventHandler {
         },
       },
     );
+    return started || host.session !== session || host.aborted;
+  }
+
+  private async restoreAndCancelStartedQueuedGoal(
+    session: Session,
+    goal: UpcomingGoal,
+  ): Promise<void> {
+    try {
+      await restoreGoalQueueItem(session, goal);
+    } catch (error) {
+      this.host.showError(`Queued goal could not be restored: ${formatErrorMessage(error)}`);
+    }
+    await this.cancelStartedQueuedGoal(session);
+  }
+
+  private async cancelStartedQueuedGoal(session: Session): Promise<void> {
+    try {
+      await session.cancelGoal();
+    } catch (error) {
+      this.host.showError(`Queued goal could not be cancelled: ${formatErrorMessage(error)}`);
+    }
   }
 
   private async notifyQueuedGoalWaitingOnBlocked(): Promise<void> {
@@ -877,177 +913,6 @@ export class SessionEventHandler {
     } else {
       this.host.setAppState({ isCompacting: false });
     }
-  }
-
-  private handleSubagentSpawned(event: SubagentSpawnedEvent): void {
-    const { streamingUI } = this.host;
-    this.subagentInfo.set(event.subagentId, {
-      parentToolCallId: event.parentToolCallId,
-      name: event.subagentName,
-    });
-
-    if (event.runInBackground) {
-      const meta = this.buildBackgroundAgentMetadata(event);
-      this.backgroundAgentMetadata.set(event.subagentId, meta);
-      this.appendBackgroundAgentEntry('started', meta);
-      this.syncBackgroundAgentBadge();
-      return;
-    }
-
-    let tc = streamingUI.getToolComponent(event.parentToolCallId);
-    if (tc === undefined) {
-      const toolCall = streamingUI.getActiveToolCall(event.parentToolCallId);
-      if (toolCall !== undefined) {
-        streamingUI.onToolCallStart(toolCall);
-        tc = streamingUI.getToolComponent(event.parentToolCallId);
-      }
-    }
-    tc ??= this.createStandaloneSubagentToolCall(event);
-    if (tc === undefined) return;
-    tc.onSubagentSpawned({
-      agentId: event.subagentId,
-      agentName: event.subagentName,
-      runInBackground: event.runInBackground,
-    });
-  }
-
-  private handleSubagentCompleted(event: SubagentCompletedEvent): void {
-    const { streamingUI } = this.host;
-    const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
-    if (backgroundMeta !== undefined) {
-      const taskId = this.findAgentTaskId(event.subagentId, backgroundMeta);
-      this.backgroundAgentMetadata.delete(event.subagentId);
-      this.syncBackgroundAgentBadge();
-      if (taskId !== undefined && this.backgroundTaskTranscriptedTerminal.has(taskId)) {
-        return;
-      }
-      if (taskId !== undefined) {
-        this.backgroundTaskTranscriptedTerminal.add(taskId);
-      }
-      const extras =
-        event.resultSummary === undefined ? undefined : { resultSummary: event.resultSummary };
-      this.appendBackgroundAgentEntry('completed', backgroundMeta, extras);
-      return;
-    }
-    const tc = streamingUI.getToolComponent(event.parentToolCallId);
-    if (tc === undefined) return;
-    tc.onSubagentCompleted({
-      contextTokens: event.contextTokens,
-      usage: event.usage,
-      resultSummary: event.resultSummary,
-    });
-    streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
-  }
-
-  private handleSubagentFailed(event: SubagentFailedEvent): void {
-    const { streamingUI } = this.host;
-    const backgroundMeta = this.backgroundAgentMetadata.get(event.subagentId);
-    if (backgroundMeta !== undefined) {
-      const taskId = this.findAgentTaskId(event.subagentId, backgroundMeta);
-      const task = taskId === undefined ? undefined : this.backgroundTasks.get(taskId);
-      this.backgroundAgentMetadata.delete(event.subagentId);
-      this.syncBackgroundAgentBadge();
-      if (task?.kind === 'agent' && task.status === 'timed_out') {
-        // The deadline path already stamped the Agent card as timed out; the
-        // abort-triggered child failure should not downgrade it to failed.
-        return;
-      }
-      // Push the real subagent error onto the parent Agent card too —
-      // `background.task.terminated` arrives separately (possibly later)
-      // with no error string and would only stamp the generic
-      // `Background agent failed`. The card and the separate transcript
-      // entry now share the same actual reason.
-      streamingUI.applyBackgroundTaskTerminalStatus({
-        agentId: event.subagentId,
-        description: backgroundMeta.description ?? '',
-        status: 'failed',
-        errorText: event.error,
-      });
-      if (taskId !== undefined && this.backgroundTaskTranscriptedTerminal.has(taskId)) {
-        return;
-      }
-      if (taskId !== undefined) {
-        this.backgroundTaskTranscriptedTerminal.add(taskId);
-      }
-      this.appendBackgroundAgentEntry('failed', backgroundMeta, { error: event.error });
-      return;
-    }
-    const tc = streamingUI.getToolComponent(event.parentToolCallId);
-    if (tc === undefined) return;
-    tc.onSubagentFailed({ error: event.error });
-    streamingUI.removeToolComponentIfInactive(event.parentToolCallId);
-  }
-
-  private createStandaloneSubagentToolCall(event: SubagentSpawnedEvent) {
-    const { streamingUI } = this.host;
-    const description = event.description ?? `Run ${event.subagentName} agent`;
-    const { turnId, step } = streamingUI.getTurnContext();
-    const toolCall: ToolCallBlockData = {
-      id: event.parentToolCallId,
-      name: 'Agent',
-      args: {
-        description,
-        subagent_type: event.subagentName,
-      },
-      description,
-      step,
-      turnId,
-    };
-    streamingUI.onToolCallStart(toolCall);
-    return streamingUI.getToolComponent(event.parentToolCallId);
-  }
-
-  private findAgentTaskId(
-    subagentId: string,
-    meta: BackgroundAgentMetadata,
-  ): string | undefined {
-    for (const info of this.backgroundTasks.values()) {
-      if (info.kind !== 'agent') continue;
-      if (info.agentId === subagentId) return info.taskId;
-    }
-    const description = meta.description ?? meta.agentName;
-    if (description === undefined) return undefined;
-    let match: string | undefined;
-    for (const info of this.backgroundTasks.values()) {
-      if (info.kind !== 'agent') continue;
-      if (info.description !== description) continue;
-      if (match !== undefined) return undefined;
-      match = info.taskId;
-    }
-    return match;
-  }
-
-  private buildBackgroundAgentMetadata(event: SubagentSpawnedEvent): BackgroundAgentMetadata {
-    const parent = this.host.streamingUI.getActiveToolCall(event.parentToolCallId);
-    const description = parent?.args['description'] ?? event.description;
-    return {
-      agentId: event.subagentId,
-      parentToolCallId: event.parentToolCallId,
-      agentName: event.subagentName,
-      description: typeof description === 'string' ? description : undefined,
-    };
-  }
-
-  private appendBackgroundAgentEntry(
-    phase: 'started' | 'completed' | 'failed',
-    meta: BackgroundAgentMetadata,
-    extras: { resultSummary?: string; error?: string } | undefined = undefined,
-  ): void {
-    const status = formatBackgroundAgentTranscript(phase, meta, extras);
-    const entry: TranscriptEntry = {
-      id: nextTranscriptId(),
-      kind: 'status',
-      turnId: this.host.streamingUI.getTurnContext().turnId,
-      renderMode: 'plain',
-      content: status.headline,
-      detail: status.detail,
-      backgroundAgentStatus: status,
-    };
-    this.host.appendTranscriptEntry(entry);
-  }
-
-  private syncBackgroundAgentBadge(): void {
-    this.syncBackgroundTaskBadge();
   }
 
   // ---------------------------------------------------------------------------

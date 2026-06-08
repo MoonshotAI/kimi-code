@@ -24,7 +24,12 @@ import { ToolAccesses } from '../../../loop/tool-access';
 import { isAbortError } from '../../../loop/errors';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import type { ResolvedAgentProfile } from '../../../profile';
-import type { SessionSubagentHost, SubagentHandle } from '../../../session/subagent-host';
+import {
+  DEFAULT_SUBAGENT_TIMEOUT_DESCRIPTION,
+  DEFAULT_SUBAGENT_TIMEOUT_MS,
+  type SessionSubagentHost,
+  type SubagentHandle,
+} from '../../../session/subagent-host';
 import {
   createDeadlineAbortSignal,
   isUserCancellation,
@@ -99,9 +104,6 @@ export type AgentToolOutput = z.infer<typeof AgentToolOutputSchema>;
 
 const BACKGROUND_AGENT_UNAVAILABLE =
   'Background agent execution is not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.';
-const AGENT_TIMEOUT_SECONDS = 30 * 60;
-const AGENT_TIMEOUT_MS = AGENT_TIMEOUT_SECONDS * 1000;
-const AGENT_TIMEOUT_DESCRIPTION = '30 minutes';
 
 // ── AgentTool class ──────────────────────────────────────────────────
 
@@ -186,7 +188,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       }
       const backgroundController = runInBackground ? new AbortController() : undefined;
       foregroundDeadline =
-        !runInBackground ? createDeadlineAbortSignal(signal, AGENT_TIMEOUT_MS) : undefined;
+        !runInBackground ? createDeadlineAbortSignal(signal, DEFAULT_SUBAGENT_TIMEOUT_MS) : undefined;
 
       const options = {
         parentToolCallId: toolCallId,
@@ -203,7 +205,10 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
           handle = await this.subagentHost.resume(resumeAgentId, options);
         } else {
           const profileName = requestedProfileName ?? 'coder';
-          handle = await this.subagentHost.spawn(profileName, options);
+          handle = await this.subagentHost.spawn({
+            profileName,
+            ...options,
+          });
         }
       } catch (error) {
         this.log?.warn('subagent launch failed', {
@@ -222,7 +227,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         try {
           taskId = this.backgroundManager!.registerTask(
             new AgentBackgroundTask(handle.completion, args.description, {
-              timeoutMs: AGENT_TIMEOUT_MS,
+              timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS,
               agentId: handle.agentId,
               subagentType: handle.profileName,
               abort: () => {
@@ -274,7 +279,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         let message: string;
         const timedOut = foregroundDeadline?.timedOut() === true;
         if (timedOut) {
-          message = `Agent timed out after ${AGENT_TIMEOUT_DESCRIPTION}.`;
+          message = `Agent timed out after ${DEFAULT_SUBAGENT_TIMEOUT_DESCRIPTION}.`;
         } else if (isUserCancellation(signal.reason)) {
           message =
             'The user manually interrupted this subagent (and any sibling agents launched alongside it). This was a deliberate user action, not a system error, a timeout, or a capacity/concurrency limit. Do not retry automatically or speculate about why it failed — wait for the user\'s next instruction.';
@@ -300,7 +305,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     } catch (error) {
       let message: string;
       if (foregroundDeadline?.timedOut() === true) {
-        message = `Agent timed out after ${AGENT_TIMEOUT_DESCRIPTION}.`;
+        message = `Agent timed out after ${DEFAULT_SUBAGENT_TIMEOUT_DESCRIPTION}.`;
       } else if (isUserCancellation(signal.reason)) {
         message =
           'The user manually interrupted this subagent (and any sibling agents launched alongside it). This was a deliberate user action, not a system error, a timeout, or a capacity/concurrency limit. Do not retry automatically or speculate about why it failed — wait for the user\'s next instruction.';

@@ -46,6 +46,8 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/auto [on\|off]` | — | Toggle auto permission mode. When enabled, tool approvals are handled automatically and the Agent will not ask the user questions | Yes |
 | `/plan [on\|off]` | — | Toggle Plan mode. Without arguments, flips the current state; explicitly passing `on`/`off` forces the setting. Simply toggling does not create an empty plan file | Yes |
 | `/plan clear` | — | Clear the current plan | No |
+| `/swarm on\|off` | — | Turn swarm mode on or off without sending a prompt. | Yes |
+| `/swarm <task>` | — | Turn swarm mode on, then send `<task>` as a normal prompt. If the turn completes normally, swarm mode turns off automatically. In `manual` permission mode, Kimi Code asks whether to switch to `auto` before starting. | No |
 | `/goal [...]` | — | Start or manage an autonomous goal (experimental feature; enable it from `/experiments`, `[experimental].goal_command`, or `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1`) | See below |
 
 ::: warning
@@ -80,8 +82,8 @@ KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
 | `/goal resume` | Resume a paused or blocked goal | Idle only |
 | `/goal cancel` | Remove the current goal | Always available |
 | `/goal replace <objective>` | Replace the saved goal with a new objective | Idle only |
-| `/goal next <objective>` | Queue an upcoming goal for this session. The agent does not see it until the current goal completes | Always available |
-| `/goal next manage` | Open the upcoming-goal manager. Use `↑`/`↓` to browse, `Space` to select a goal for moving, selected `↑`/`↓` to reorder it, `E` to edit, `D` to delete, and `Esc` to cancel | Always available |
+| `/goal next <objective>` | Queue an upcoming goal for this session. If no goal is active, start it immediately. The agent does not see queued goals until the current goal completes | Always available |
+| `/goal next manage` | Open the upcoming-goal manager. Use <kbd>↑</kbd> / <kbd>↓</kbd> to browse, <kbd>Space</kbd> to select a goal for moving, selected <kbd>↑</kbd> / <kbd>↓</kbd> to reorder it, <kbd>E</kbd> to edit, <kbd>D</kbd> to delete, and <kbd>Esc</kbd> to cancel. In the edit field, use <kbd>Shift-Enter</kbd> or <kbd>Ctrl-J</kbd> for a new line and <kbd>Enter</kbd> to save | Always available |
 
 The words `status`, `pause`, `resume`, `cancel`, `replace`, and `next` act as subcommands only when they are the first word after `/goal`. If your objective needs to start with one of those words, put `--` before it:
 
@@ -124,7 +126,7 @@ Prompt mode exits with code `0` when the goal completes, `3` when it blocks, and
 
 ## Skill Dynamic Commands
 
-Activated Skills are automatically registered as slash commands, all prefixed with the `skill:` namespace:
+Activated external Skills are automatically registered as slash commands with the `skill:` namespace prefix:
 
 ```
 /skill:<name> [extra text]
@@ -132,9 +134,9 @@ Activated Skills are automatically registered as slash commands, all prefixed wi
 
 For example, `/skill:code-style` loads the Skill named `code-style` and sends it to the Agent; any text appended after the command is concatenated to the Skill prompt.
 
-For convenience, Skill commands also support a shorthand form that omits the `skill:` prefix — `/<name>` — as long as the name is not taken by a built-in command. That is, `/code-style` falls back to matching `/skill:code-style`.
+For convenience, external Skill commands also support a shorthand form that omits the `skill:` prefix — `/<name>` — as long as the name is not taken by a system slash command. That is, `/code-style` falls back to matching `/skill:code-style`.
 
-Kimi Code CLI ships a built-in `mcp-config` Skill for configuring MCP servers and handling MCP OAuth login; invoke it directly with `/mcp-config`.
+Built-in Skills shipped with Kimi Code CLI, such as `mcp-config`, appear directly as `/<name>` in the slash command panel for cases like configuring MCP servers and handling MCP OAuth login.
 
 ::: info
 All Skill commands are only available in the idle state. `flow`-type Skills are also exposed via `/skill:<name>` — there is no separate `/flow:` namespace.

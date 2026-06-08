@@ -12,7 +12,7 @@ const PROJECT_BRAND_DIRS = ['.kimi-code/skills'] as const;
 const PROJECT_GENERIC_DIRS = ['.agents/skills'] as const;
 
 type SubSkillFlagResolver = {
-  enabled(id: 'sub-skill'): boolean;
+  enabled(id: 'sub_skill'): boolean;
 };
 
 // Bounds recursion so a directory symlink cycle inside a skill root cannot
@@ -394,7 +394,7 @@ function hasSubSkillEnabled(
   skill: SkillDefinition,
   experimentalFlags: SubSkillFlagResolver,
 ): boolean {
-  if (!experimentalFlags.enabled('sub-skill')) return false;
+  if (!experimentalFlags.enabled('sub_skill')) return false;
   const nested = skill.metadata['metadata'];
   const nestedFlag =
     typeof nested === 'object' && nested !== null

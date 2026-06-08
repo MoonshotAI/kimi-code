@@ -23,6 +23,7 @@ tools:
   - Skill
   - WebSearch
   - Agent
+  - AgentSwarm
   - FetchURL
   - AskUserQuestion
   - EnterPlanMode

@@ -27,6 +27,19 @@ function ctrl(): AbortSignal {
 }
 
 const NO_FD = null;
+const GOAL_COMMAND = {
+  name: 'goal',
+  description: 'Start or manage a goal',
+  getArgumentCompletions: (prefix: string) =>
+    prefix.length === 0
+      ? [
+          {
+            value: 'status',
+            label: 'status',
+          },
+        ]
+      : null,
+};
 
 describe('FileMentionProvider — @ prefix detection + git-backed suggestions', () => {
   it('returns null when there is no @ mention and the dir is empty', async () => {
@@ -34,6 +47,22 @@ describe('FileMentionProvider — @ prefix detection + git-backed suggestions', 
     const result = await provider.getSuggestions(['hello world'], 0, 11, { signal: ctrl() });
     // pi-tui inner will also return null for non-path plain text.
     expect(result).toBeNull();
+  });
+
+  it('does not complete slash arguments before existing free text', async () => {
+    const provider = new FileMentionProvider([GOAL_COMMAND], '/repo', NO_FD, stubGitCache([]));
+    const line = '/goal Fix the checkout docs';
+    const result = await provider.getSuggestions([line], 0, '/goal '.length, { signal: ctrl() });
+    expect(result).toBeNull();
+  });
+
+  it('still completes slash arguments at the end of an empty argument', async () => {
+    const provider = new FileMentionProvider([GOAL_COMMAND], '/repo', NO_FD, stubGitCache([]));
+    const line = '/goal ';
+    const result = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+    expect(result).not.toBeNull();
+    expect(result!.prefix).toBe('');
+    expect(result!.items.map((item) => item.value)).toEqual(['status']);
   });
 
   it('bare @ surfaces the first files as a starting list', async () => {

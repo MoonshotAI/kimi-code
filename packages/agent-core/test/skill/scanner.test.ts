@@ -391,7 +391,7 @@ describe('discoverSkills shape and ordering', () => {
 
     const skills = await discoverSkills({
       roots: [{ path: root, source: 'user' }],
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub-skill': true }),
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': true }),
     });
 
     expect(skills.map((s) => s.name)).toEqual(['inner', 'outer']);
@@ -451,7 +451,6 @@ describe('discoverSkills shape and ordering', () => {
   });
 
   it('treats sub-skill discovery as opt-in via the KIMI_CODE_EXPERIMENTAL_SUB_SKILL flag', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SUB_SKILL', '0');
     const { repoDir } = await makeWorkspace();
     const root = path.join(repoDir, '.kimi-code', 'skills');
     await writeSkill(root, path.join('outer', 'SKILL.md'), [
@@ -472,7 +471,10 @@ describe('discoverSkills shape and ordering', () => {
       'Inner body.',
     ]);
 
-    const skills = await discoverSkills({ roots: [{ path: root, source: 'user' }] });
+    const skills = await discoverSkills({
+      roots: [{ path: root, source: 'user' }],
+      experimentalFlags: new FlagResolver({ KIMI_CODE_EXPERIMENTAL_SUB_SKILL: '0' }),
+    });
 
     expect(skills.map((s) => s.name)).toEqual(['outer']);
   });

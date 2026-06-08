@@ -2,6 +2,44 @@
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.11.0 (2026-06-05)
+
+### Features
+
+- Add experimental sub-skill discovery gated by the `KIMI_CODE_EXPERIMENTAL_SUB_SKILL` environment variable. Ships the `sub-skill` builtin bundle (`sub-skill.review`, `sub-skill.consolidate`) for inventorying and consolidating skills into hierarchical groups.
+- Add the following environment variables:
+
+  - `KIMI_MODEL_TEMPERATURE`, `KIMI_MODEL_TOP_P` — sampling parameters applied globally to any `kimi` provider (not tied to `KIMI_MODEL_NAME`).
+  - `KIMI_MODEL_THINKING_KEEP` — Moonshot preserved-thinking passthrough (`thinking.keep`), injected only while Thinking is on.
+  - `KIMI_CODE_NO_AUTO_UPDATE` (legacy alias `KIMI_CLI_NO_AUTO_UPDATE`) — fully disables the update preflight (no check, background install, or prompt).
+- Show built-in skills as direct slash commands and group them ahead of external skill commands.
+
+### Bug Fixes
+
+- Fix slash command autocomplete so goal text can be submitted when the cursor is before existing text.
+- Fix queued goals so failed promotion attempts do not lose or duplicate queued work.
+- Fix upcoming-goal queue handling while editing or pasting queued goals.
+- Ask before starting goals in YOLO mode so users can switch to Auto for unattended work.
+- Show concise provider filtering errors when responses are blocked before visible output.
+- Show "unknown command" instead of "too many arguments" when an invalid subcommand is entered.
+- Clamp OpenAI Chat Completions `xhigh` and `max` thinking effort to `high` unless the model supports `xhigh` on `v1/chat/completions`.
+- Preserve thinking effort when compacting long conversations.
+- Refresh provider model metadata when capabilities change without model ID changes.
+
+### Polish
+
+- Show the upcoming-goal confirmation with the same accent treatment as goal lifecycle messages.
+- Start upcoming goals immediately when there is no active goal to wait for.
+  Support multiline edits when managing upcoming goals.
+- Use a fixed 30-minute timeout for subagents and show concise resume instructions when they time out.
+- Highlight goal queue subcommands while typing slash commands.
+
+## 0.10.1 (2026-06-05)
+
+### Bug Fixes
+
+- Fix a crash when starting a goal in the TUI.
+
 ## 0.10.0 (2026-06-04)
 
 ### Features
