@@ -2,6 +2,21 @@ import { describe, it, expect } from 'vitest';
 
 import { injectPromptSymbol } from '#/tui/components/editor/custom-editor';
 
+describe('injectPromptSymbol with custom symbol', () => {
+  it('places a "$ " prompt when symbol is "$"', () => {
+    expect(injectPromptSymbol('    hello world', '$')).toBe('  $ hello world');
+  });
+
+  it('preserves overall visible width with custom symbol', () => {
+    const original = '    hello       ';
+    expect(injectPromptSymbol(original, '$')).toHaveLength(original.length);
+  });
+
+  it('returns undefined when the line is too short regardless of symbol', () => {
+    expect(injectPromptSymbol('   ', '$')).toBeUndefined();
+  });
+});
+
 describe('injectPromptSymbol', () => {
   it('places a "> " prompt at columns 2-3 (col 0 = border, col 1 = single-space gap)', () => {
     expect(injectPromptSymbol('    hello world')).toBe('  > hello world');

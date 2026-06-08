@@ -35,6 +35,7 @@ export interface EditorKeyboardHost {
   hideSessionPicker(): void;
   stop(exitCode?: number): Promise<void>;
   handlePlanToggle(next: boolean): void;
+  handleInputModeToggle(): void;
   clearQueuedMessages(): void;
   setExternalEditorRunning(running: boolean): void;
 }
@@ -100,6 +101,12 @@ export class EditorKeyboardController {
         editor.setText('');
       }
       this.armPendingExit('ctrl-c', CTRL_C_HINT);
+    };
+
+    editor.onCtrlX = () => {
+      const next = host.state.appState.inputMode === 'agent' ? 'shell' : 'agent';
+      host.track('shortcut_mode_switch', { to_mode: next });
+      host.handleInputModeToggle();
     };
 
     editor.onCtrlD = () => {

@@ -32,6 +32,7 @@ const appState: AppState = {
   availableModels: {},
   availableProviders: {},
   mcpServersSummary: null,
+  inputMode: 'agent',
 };
 
 function truecolorCodes(text: string): Set<string> {

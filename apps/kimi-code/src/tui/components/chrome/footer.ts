@@ -52,6 +52,7 @@ export interface ToolbarTip {
 
 const TOOLBAR_TIPS: readonly ToolbarTip[] = [
   { text: 'shift+tab: plan mode' },
+  { text: 'ctrl+x: toggle mode' },
   { text: '/model: switch model' },
   { text: 'ctrl+s: steer mid-turn', priority: 2 },
   { text: '/compact: compact context', priority: 2 },
@@ -292,6 +293,7 @@ export class FooterComponent implements Component {
     if (state.permissionMode === 'yolo') modes.push(chalk.hex(colors.warning).bold('yolo'));
     if (state.planMode) modes.push(chalk.hex(colors.primary).bold('plan'));
     if (state.swarmMode) modes.push(chalk.hex(colors.accent).bold('swarm'));
+    if (state.inputMode === 'shell') modes.push(chalk.hex(colors.primary).bold('shell'));
     if (modes.length > 0) left.push(modes.join(' '));
 
     const goalBadge = formatGoalBadge(state.goal, colors, this.goalWallClockMs(state.goal));

@@ -38,6 +38,7 @@ function baseState(overrides: Partial<AppState> = {}): AppState {
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
     availableModels: {},
+    inputMode: 'agent',
     ...overrides,
   } as AppState;
 }

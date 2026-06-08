@@ -85,8 +85,8 @@ describe('CustomEditor Kitty key release handling', () => {
 });
 
 describe('CustomEditor paste marker expansion', () => {
-  const PASTE_START = '\x1b[200~';
-  const PASTE_END = '\x1b[201~';
+  const PASTE_START = '\x1B[200~';
+  const PASTE_END = '\x1B[201~';
 
   function simulateLargePaste(editor: CustomEditor, content: string): void {
     editor.handleInput(`${PASTE_START}${content}${PASTE_END}`);
@@ -151,7 +151,7 @@ describe('CustomEditor paste marker expansion', () => {
 
     expect(editor.getText()).toMatch(/\[paste #1/);
 
-    editor.handleInput('\x16');
+    editor.handleInput('\u0016');
 
     expect(editor.getText()).not.toContain('[paste #');
     expect(editor.getText()).toContain(longText);
@@ -195,7 +195,7 @@ describe('CustomEditor paste marker expansion', () => {
 
     // Split: PASTE_START in chunk 1, paste-end split across chunk 2 and 3
     editor.handleInput(`${PASTE_START}data`);
-    editor.handleInput('\x1b[20');
+    editor.handleInput('\x1B[20');
     editor.handleInput('1~');
 
     expect(editor.getText()).toContain(longText);
@@ -204,6 +204,18 @@ describe('CustomEditor paste marker expansion', () => {
     // Verify editor is not stuck — next keystrokes should work normally
     editor.handleInput('x');
     expect(editor.getText()).toContain('x');
+  });
+});
+
+describe('CustomEditor Ctrl+X handling', () => {
+  it('dispatches onCtrlX when Ctrl+X is pressed', () => {
+    const editor = makeEditor();
+    const onCtrlX = vi.fn();
+    editor.onCtrlX = onCtrlX;
+
+    editor.handleInput('\u001B[120;5u'); // kitty CSI-u for ctrl+x
+
+    expect(onCtrlX).toHaveBeenCalledOnce();
   });
 });
 

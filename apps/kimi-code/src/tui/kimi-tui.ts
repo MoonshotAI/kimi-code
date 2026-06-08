@@ -127,6 +127,9 @@ import { installTerminalThemeTracking } from './utils/terminal-theme';
 import { detectTmuxKeyboardWarning } from './utils/tmux-keyboard';
 import { markTranscriptComponent } from './utils/transcript-component-metadata';
 import { nextTranscriptId } from './utils/transcript-id';
+import { parseSlashInput } from './commands/parse';
+import { findBuiltInSlashCommand } from './commands/registry';
+import { runShellCommand } from './utils/shell-executor';
 
 export type { TUIState } from './tui-state';
 export { createTUIState } from './tui-state';
@@ -182,6 +185,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     sessionTitle: null,
     goal: null,
     mcpServersSummary: null,
+    inputMode: 'agent',
   };
 }
 
@@ -190,6 +194,11 @@ interface SendMessageOptions {
   readonly imageAttachmentIds?: readonly number[];
   readonly hasMedia?: boolean;
 }
+
+const AGENT_ONLY_COMMANDS = new Set([
+  'new', 'plan', 'compact', 'goal', 'undo', 'fork',
+  'init', 'export-md', 'export-debug-zip',
+]);
 
 export class KimiTUI {
   readonly harness: KimiHarness;
@@ -683,14 +692,49 @@ export class KimiTUI {
     void slashCommands.handlePlanCommand(this, next ? 'on' : 'off');
   }
 
+  handleInputModeToggle(): void {
+    const next = this.state.appState.inputMode === 'agent' ? 'shell' : 'agent';
+    this.setAppState({ inputMode: next });
+    this.state.editor.promptSymbol = next === 'shell' ? '$' : '>';
+    this.updateEditorBorderHighlight();
+    this.state.ui.requestRender();
+  }
+
   handleUserInput(text: string): void {
     if (text.trim().length === 0) return;
     if (this.state.appState.isReplaying) {
       this.showError('Cannot send input while session history is replaying.');
       return;
     }
+
+    if (this.state.appState.inputMode === 'shell') {
+      const parsed = parseSlashInput(text);
+      if (parsed !== null) {
+        const resolved = findBuiltInSlashCommand(parsed.name);
+        const commandName = resolved?.name ?? parsed.name;
+        if (AGENT_ONLY_COMMANDS.has(commandName)) {
+          this.showError(`/${parsed.name} is not available in shell mode. Press Ctrl+X to switch to agent mode.`);
+          return;
+        }
+        void this.persistInputHistory(text);
+        slashCommands.dispatchInput(this, text);
+        return;
+      }
+      void this.executeShellCommand(text);
+      return;
+    }
+
     void this.persistInputHistory(text);
     slashCommands.dispatchInput(this, text);
+  }
+
+  private async executeShellCommand(text: string): Promise<void> {
+    try {
+      await runShellCommand(text, this.state.ui);
+    } catch (error) {
+      const msg = formatErrorMessage(error);
+      this.showError(`Shell command failed: ${msg}`);
+    }
   }
 
   sendNormalUserInput(text: string): void {

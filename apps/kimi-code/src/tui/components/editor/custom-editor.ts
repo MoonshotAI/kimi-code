@@ -95,6 +95,7 @@ export class CustomEditor extends Editor {
   public onEscape?: () => void;
   public onCtrlD?: () => void;
   public onCtrlC?: () => void;
+  public onCtrlX?: () => void;
   public onToggleToolExpand?: () => void;
   // Returns true when a plan card actually handled the toggle. When it
   // returns false (no plan in the transcript) the keystroke falls through
@@ -124,6 +125,7 @@ export class CustomEditor extends Editor {
    * the next keystroke.
    */
   public onPasteImage?: () => Promise<boolean>;
+  public promptSymbol = '>';
 
   private consumingPaste = false;
   private consumeBuffer = '';
@@ -207,7 +209,7 @@ export class CustomEditor extends Editor {
     }
     const firstContent = lines[firstContentIdx];
     if (firstContent !== undefined) {
-      const withPrompt = injectPromptSymbol(firstContent);
+      const withPrompt = injectPromptSymbol(firstContent, this.promptSymbol);
       if (withPrompt !== undefined) {
         lines[firstContentIdx] = withPrompt;
       }
@@ -279,6 +281,11 @@ export class CustomEditor extends Editor {
 
     if (matchesKey(normalized, Key.ctrl('c'))) {
       this.onCtrlC?.();
+      return;
+    }
+
+    if (matchesKey(normalized, Key.ctrl('x'))) {
+      this.onCtrlX?.();
       return;
     }
 
@@ -435,12 +442,14 @@ function highlightVisibleRanges(
  * default foreground colour renders the symbol. Returns `undefined` if the
  * line is too short or doesn't begin with the expected padding.
  */
-export function injectPromptSymbol(line: string): string | undefined {
+export function injectPromptSymbol(line: string, symbol = '>'): string | undefined {
   if (line.length < 4) return undefined;
   for (let i = 0; i < 4; i++) {
     if (line[i] !== ' ') return undefined;
   }
-  return '  > ' + line.slice(4);
+  const symbolWithSpace = `${symbol} `;
+  const padding = ' '.repeat(Math.max(0, 4 - symbolWithSpace.length));
+  return padding + symbolWithSpace + line.slice(4);
 }
 
 /**

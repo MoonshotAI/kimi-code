@@ -38,6 +38,7 @@ export interface AppState {
   /** Current goal snapshot for the footer badge; null/undefined when no active goal. */
   goal?: GoalSnapshot | null;
   mcpServersSummary: string | null;
+  inputMode: 'agent' | 'shell';
 }
 
 export interface ToolCallBlockData {

@@ -55,6 +55,7 @@ const appState: AppState = {
   availableModels: {},
   availableProviders: {},
   mcpServersSummary: null,
+  inputMode: 'agent',
 };
 
 describe('FooterComponent', () => {
@@ -88,5 +89,19 @@ describe('FooterComponent', () => {
 
     expect(codes.has(RAINBOW_CYAN)).toBe(false);
     expect(codes.has(RAINBOW_GREEN)).toBe(false);
+  });
+
+  it('renders the [shell] badge when inputMode is shell', () => {
+    const shellState = { ...appState, inputMode: 'shell' as const };
+    const footer = new FooterComponent(shellState, darkColors);
+    const lines = footer.render(120);
+    expect(lines[0]).toContain('shell');
+  });
+
+  it('does not render the [shell] badge when inputMode is agent', () => {
+    const agentState = { ...appState, inputMode: 'agent' as const };
+    const footer = new FooterComponent(agentState, darkColors);
+    const lines = footer.render(120);
+    expect(lines[0]).not.toContain('shell');
   });
 });
