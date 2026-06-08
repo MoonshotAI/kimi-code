@@ -152,6 +152,7 @@ function pausedHeadline(reason: string | undefined, actor: GoalMarkerActor | und
   if (actor === 'user') return 'Goal paused by the user.';
   if (reason?.startsWith('Paused ') === true) return `Goal ${lowercaseFirst(reason)}`;
   if (reason !== undefined && reason.length > 0) return `Goal paused: ${reason}`;
+  if (actor === 'model') return 'Goal paused by the agent.';
   return 'Goal paused';
 }
 

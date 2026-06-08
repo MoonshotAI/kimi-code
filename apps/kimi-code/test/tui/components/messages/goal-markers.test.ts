@@ -51,6 +51,24 @@ describe('buildGoalMarker', () => {
     expect(strip(marker!.render(80))).toBe('\n● Goal paused after runtime error: socket hang up');
   });
 
+  it('attributes model pause and resume markers to the agent', () => {
+    const paused = buildGoalMarker(
+      { kind: 'lifecycle', status: 'paused' } as GoalChange,
+      darkColors,
+      false,
+      'model',
+    );
+    const resumed = buildGoalMarker(
+      { kind: 'lifecycle', status: 'active' } as GoalChange,
+      darkColors,
+      false,
+      'model',
+    );
+
+    expect(strip(paused!.render(80))).toBe('\n● Goal paused by the agent.');
+    expect(strip(resumed!.render(80))).toBe('\n● Goal resumed by the agent.');
+  });
+
   it('returns null for a completion change (it posts its own message)', () => {
     expect(
       buildGoalMarker({ kind: 'completion', status: 'complete' } as GoalChange, darkColors, false),
