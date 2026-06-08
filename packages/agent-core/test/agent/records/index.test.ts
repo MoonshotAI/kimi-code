@@ -2,15 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
-  AgentRecords,
   InMemoryAgentRecordPersistence,
   type AgentRecord,
 } from '../../../src/agent/records';
+import { testAgent } from '../harness/agent';
 
 describe('AgentRecords persistence metadata', () => {
   it('writes metadata before the first persisted record', async () => {
     const persistence = new InMemoryAgentRecordPersistence();
-    const records = new AgentRecords(() => {}, persistence);
+    const records = testAgent({ persistence }).agent.records;
 
     records.logRecord({
       type: 'turn.prompt',
@@ -29,7 +29,7 @@ describe('AgentRecords persistence metadata', () => {
 
   it('does not write metadata when replaying an empty stream', async () => {
     const persistence = new InMemoryAgentRecordPersistence();
-    const records = new AgentRecords(() => {}, persistence);
+    const records = testAgent({ persistence }).agent.records;
 
     await records.replay();
     records.logRecord({
@@ -53,7 +53,7 @@ describe('AgentRecords persistence metadata', () => {
         origin: { kind: 'user' },
       },
     ]);
-    const records = new AgentRecords(() => {}, persistence);
+    const records = testAgent({ persistence }).agent.records;
 
     await expect(records.replay()).rejects.toThrow(
       'AgentRecords replay expected metadata as the first record',
@@ -73,7 +73,7 @@ describe('AgentRecords persistence metadata', () => {
         origin: { kind: 'user' },
       },
     ]);
-    const records = new AgentRecords(() => {}, persistence);
+    const records = testAgent({ persistence }).agent.records;
 
     await records.replay();
     records.logRecord({
@@ -104,7 +104,7 @@ describe('AgentRecords persistence metadata', () => {
         origin: { kind: 'user' },
       },
     ]);
-    const records = new AgentRecords(() => {}, persistence);
+    const records = testAgent({ persistence }).agent.records;
 
     await records.replay();
 
@@ -136,7 +136,7 @@ describe('AgentRecords persistence metadata', () => {
         },
       } as unknown as AgentRecord,
     ]);
-    const records = new AgentRecords(() => {}, persistence);
+    const records = testAgent({ persistence }).agent.records;
 
     await records.replay();
 
@@ -157,7 +157,7 @@ describe('AgentRecords persistence metadata', () => {
     expect(migrated.message.toolCalls[0]?.['function']).toBeUndefined();
   });
 
-  it('rejects replaying records from a newer wire version', async () => {
+  it('warns but continues when replaying records from a newer wire version', async () => {
     const persistence = new InMemoryAgentRecordPersistence([
       {
         type: 'metadata',
@@ -165,11 +165,11 @@ describe('AgentRecords persistence metadata', () => {
         created_at: 1,
       },
     ]);
-    const records = new AgentRecords(() => {}, persistence);
+    const records = testAgent({ persistence }).agent.records;
 
-    await expect(records.replay()).rejects.toThrow(
-      `Unsupported wire protocol version: 9.9 (current: ${AGENT_WIRE_PROTOCOL_VERSION})`,
-    );
+    const result = await records.replay();
+    expect(result.warning).toContain('9.9');
+    expect(result.warning).toContain(AGENT_WIRE_PROTOCOL_VERSION);
   });
 
   it('rejects replaying records without a registered migration path', async () => {
@@ -180,9 +180,31 @@ describe('AgentRecords persistence metadata', () => {
         created_at: 1,
       },
     ]);
-    const records = new AgentRecords(() => {}, persistence);
+    const records = testAgent({ persistence }).agent.records;
 
     await expect(records.replay()).rejects.toThrow('Missing wire migration for version 0.9');
+  });
+
+  it('ignores goal.* records during replay, leaving agent state unchanged', async () => {
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'goal.create',
+        goalId: 'g1',
+        objective: 'do work',
+        status: 'active',
+        actor: 'user',
+        budgetLimits: { turnBudget: 20 },
+      },
+      { type: 'goal.account_usage', goalId: 'g1', usageKind: 'token', delta: 5, tokensUsed: 5, wallClockMs: 0 },
+      { type: 'goal.continuation', goalId: 'g1', turnsUsed: 1 },
+      { type: 'goal.update', goalId: 'g1', status: 'complete', actor: 'model' },
+      { type: 'goal.clear', goalId: 'g1', actor: 'user' },
+    ]);
+    const { agent } = testAgent({ persistence });
+
+    await expect(agent.records.replay()).resolves.toEqual({ warning: undefined });
+    expect(agent.context.history).toHaveLength(0);
   });
 });
 

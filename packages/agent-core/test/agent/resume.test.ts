@@ -1,6 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join } from 'pathe';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -9,7 +9,7 @@ import {
   AGENT_WIRE_PROTOCOL_VERSION,
   InMemoryAgentRecordPersistence,
 } from '../../src/agent/records';
-import { appendTaskOutput, writeTask } from '../../src/tools/background/persist';
+import { BackgroundTaskPersistence } from '../../src/agent/background';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { testAgent } from './harness/agent';
 import { DEFAULT_TEST_SYSTEM_PROMPT } from './harness/snapshots';
@@ -194,19 +194,20 @@ describe('Agent resume', () => {
     ]);
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-resume-delivered-'));
     try {
-      const ctx = testAgent({ persistence });
-      ctx.agent.background.attachSessionDir(sessionDir);
-      await writeTask(sessionDir, {
-        task_id: 'agent-seen0000',
-        command: '[agent] already delivered',
+      const backgroundPersistence = new BackgroundTaskPersistence(sessionDir);
+      const ctx = testAgent({ persistence, homedir: sessionDir });
+      await backgroundPersistence.writeTask({
+        taskId: 'agent-seen0000',
+        kind: 'agent',
         description: 'already delivered',
-        pid: 0,
-        started_at: 1_700_000_000,
-        ended_at: 1_700_000_010,
-        exit_code: 0,
+        startedAt: 1_700_000_000,
+        endedAt: 1_700_000_010,
         status: 'completed',
       });
-      await appendTaskOutput(sessionDir, 'agent-seen0000', 'already delivered summary');
+      await backgroundPersistence.appendTaskOutput(
+        'agent-seen0000',
+        'already delivered summary',
+      );
       const steer = vi.spyOn(ctx.agent.turn, 'steer');
 
       await ctx.agent.resume();
@@ -233,19 +234,17 @@ describe('Agent resume', () => {
     ]);
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-resume-undelivered-'));
     try {
-      const ctx = testAgent({ persistence });
-      ctx.agent.background.attachSessionDir(sessionDir);
-      await writeTask(sessionDir, {
-        task_id: 'agent-new00000',
-        command: '[agent] newly delivered',
+      const backgroundPersistence = new BackgroundTaskPersistence(sessionDir);
+      const ctx = testAgent({ persistence, homedir: sessionDir });
+      await backgroundPersistence.writeTask({
+        taskId: 'agent-new00000',
+        kind: 'agent',
         description: 'newly delivered',
-        pid: 0,
-        started_at: 1_700_000_000,
-        ended_at: 1_700_000_010,
-        exit_code: 0,
+        startedAt: 1_700_000_000,
+        endedAt: 1_700_000_010,
         status: 'completed',
       });
-      await appendTaskOutput(sessionDir, 'agent-new00000', 'newly delivered summary');
+      await backgroundPersistence.appendTaskOutput('agent-new00000', 'newly delivered summary');
       const steer = vi.spyOn(ctx.agent.turn, 'steer');
 
       await ctx.agent.resume();
@@ -321,6 +320,106 @@ describe('Agent resume', () => {
         toolCallId: 'call_failed_bash',
         isError: true,
       }),
+    });
+  });
+
+  it('removes replay messages matching undone history', async () => {
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'first prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.begin',
+          uuid: 'step-1',
+          turnId: '0',
+          step: 1,
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          uuid: 'part-1',
+          turnId: '0',
+          step: 1,
+          stepUuid: 'step-1',
+          part: { type: 'text', text: 'first response' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.end',
+          uuid: 'step-1',
+          turnId: '0',
+          step: 1,
+        },
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'second prompt' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.begin',
+          uuid: 'step-2',
+          turnId: '1',
+          step: 1,
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'content.part',
+          uuid: 'part-2',
+          turnId: '1',
+          step: 1,
+          stepUuid: 'step-2',
+          part: { type: 'text', text: 'second response' },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'step.end',
+          uuid: 'step-2',
+          turnId: '1',
+          step: 1,
+        },
+      },
+      { type: 'context.undo', count: 1 },
+    ]);
+    const ctx = testAgent({ persistence });
+
+    await ctx.agent.resume();
+
+    expect(ctx.agent.context.history).toHaveLength(2);
+    expect(ctx.agent.context.history[0]?.role).toBe('user');
+    expect(ctx.agent.context.history[1]?.role).toBe('assistant');
+
+    const replay = ctx.agent.replayBuilder.buildResult();
+    expect(replay).toHaveLength(2);
+    expect(replay[0]).toMatchObject({
+      type: 'message',
+      message: expect.objectContaining({ role: 'user', content: [{ type: 'text', text: 'first prompt' }] }),
+    });
+    expect(replay[1]).toMatchObject({
+      type: 'message',
+      message: expect.objectContaining({ role: 'assistant', content: [{ type: 'text', text: 'first response' }] }),
     });
   });
 });
@@ -461,10 +560,6 @@ function resumeHistory(): AgentRecord[] {
     },
     {
       type: 'full_compaction.complete',
-      summary: 'Historical compacted summary.',
-      compactedCount: 3,
-      tokensBefore: 12,
-      tokensAfter: 4,
     },
     {
       type: 'context.apply_compaction',

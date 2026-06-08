@@ -7,25 +7,28 @@
 
 import { createInterface } from 'node:readline/promises';
 
-import { createKimiDeviceId, KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import {
-  initializeTelemetry,
   setTelemetryContext,
   shutdownTelemetry,
   track,
   withTelemetryContext,
 } from '@moonshot-ai/kimi-telemetry';
 import {
-  KimiHarness,
+  createKimiHarness,
   type ExportSessionInput,
   type ExportSessionResult,
+  type KimiHarness,
   type SessionSummary,
+  type ShellEnvironment,
   type TelemetryClient,
 } from '@moonshot-ai/kimi-code-sdk';
 import type { Command } from 'commander';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
+import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
+import { createCliTelemetryBootstrap, initializeCliTelemetry } from '#/cli/telemetry';
+import { detectInstallSource } from '#/cli/update/source';
 import { createKimiCodeHostIdentity } from '#/cli/version';
+import { detectShellEnvironment } from '#/utils/process/shell-env';
 
 interface WritableLike {
   write(chunk: string): boolean;
@@ -42,6 +45,8 @@ export interface ExportDeps {
   readonly listSessions: (workDir: string) => Promise<readonly SessionSummary[]>;
   readonly exportSession: (input: ExportSessionInput) => Promise<ExportSessionResult>;
   readonly confirmPreviousSession: (summary: PreviousSessionSummary) => Promise<boolean>;
+  readonly getInstallSource: () => Promise<string>;
+  readonly getShellEnv: () => ShellEnvironment;
   readonly version: string;
   readonly cwd: () => string;
   readonly stdout: WritableLike;
@@ -82,9 +87,13 @@ export async function handleExport(
   }
 
   try {
+    const installSource = await deps.getInstallSource();
+    const shellEnv = deps.getShellEnv();
     const result = await deps.exportSession({
       id: resolvedId,
       version: deps.version,
+      installSource,
+      shellEnv,
       ...(output === undefined ? {} : { outputPath: output }),
       ...(opts.includeGlobalLog ? { includeGlobalLog: true } : {}),
     });
@@ -121,6 +130,7 @@ export function registerExportCommand(parent: Command, deps?: Partial<ExportDeps
 
 function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDeps {
   let harness: KimiHarness | undefined;
+  let telemetryBootstrap: ReturnType<typeof createCliTelemetryBootstrap> | undefined;
   let telemetryInitialized = false;
   let telemetryShutdown = false;
   const identity = createKimiCodeHostIdentity();
@@ -129,8 +139,14 @@ function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDep
     withContext: withTelemetryContext,
     setContext: setTelemetryContext,
   };
+  const getTelemetryBootstrap = (): ReturnType<typeof createCliTelemetryBootstrap> => {
+    telemetryBootstrap ??= createCliTelemetryBootstrap();
+    return telemetryBootstrap;
+  };
   const getHarness = (): KimiHarness => {
-    harness ??= new KimiHarness({
+    const currentTelemetryBootstrap = getTelemetryBootstrap();
+    harness ??= createKimiHarness({
+      homeDir: currentTelemetryBootstrap.homeDir,
       identity,
       telemetry: telemetryClient,
     });
@@ -138,20 +154,16 @@ function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDep
   };
   const initializeDefaultTelemetry = async (): Promise<void> => {
     if (telemetryInitialized) return;
+    const currentTelemetryBootstrap = getTelemetryBootstrap();
     const currentHarness = getHarness();
     await currentHarness.ensureConfigFile();
     const config = await currentHarness.getConfig();
-    const deviceId = createKimiDeviceId(currentHarness.homeDir);
-    initializeTelemetry({
-      homeDir: currentHarness.homeDir,
-      deviceId,
-      enabled: config.telemetry !== false,
-      appName: CLI_USER_AGENT_PRODUCT,
+    initializeCliTelemetry({
+      harness: currentHarness,
+      bootstrap: currentTelemetryBootstrap,
+      config,
       version: identity.version,
       uiMode: CLI_UI_MODE,
-      model: config.defaultModel,
-      getAccessToken: async () =>
-        (await currentHarness.auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
     });
     telemetryInitialized = true;
   };
@@ -178,6 +190,8 @@ function createDefaultExportDeps(overrides: Partial<ExportDeps> = {}): ExportDep
         }
       }),
     version: overrides.version ?? identity.version,
+    getInstallSource: overrides.getInstallSource ?? (() => detectInstallSource()),
+    getShellEnv: overrides.getShellEnv ?? detectShellEnvironment,
     confirmPreviousSession: overrides.confirmPreviousSession ?? confirmPreviousSession,
     cwd: overrides.cwd ?? (() => process.cwd()),
     stdout: overrides.stdout ?? process.stdout,

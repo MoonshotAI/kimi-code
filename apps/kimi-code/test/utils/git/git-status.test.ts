@@ -149,6 +149,57 @@ describe('git status cache', () => {
     });
   });
 
+  it('keeps footer git status working when gh pull-request lookup throws synchronously', async () => {
+    const onChange = vi.fn();
+    mocks.execFile.mockImplementation(() => {
+      const error = Object.assign(new Error('spawn ENOTDIR'), { code: 'ENOTDIR' });
+      throw error;
+    });
+    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('rev-parse')) {
+        return { status: 0, stdout: 'true\n' };
+      }
+      if (args.includes('branch')) {
+        return { status: 0, stdout: 'main\n' };
+      }
+      if (args.includes('status')) {
+        return {
+          status: 0,
+          stdout: '## main...origin/main\n M src/app.ts\n',
+        };
+      }
+      if (args.includes('diff')) {
+        return { status: 0, stdout: '2\t1\tsrc/app.ts\n' };
+      }
+      return { status: 1, stdout: '' };
+    });
+
+    const cache = createGitStatusCache('/tmp/repo', { onChange });
+
+    expect(cache.getStatus()).toEqual({
+      branch: 'main',
+      dirty: true,
+      ahead: 0,
+      behind: 0,
+      diffAdded: 2,
+      diffDeleted: 1,
+      pullRequest: null,
+    });
+
+    await Promise.resolve();
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(cache.getStatus()).toEqual({
+      branch: 'main',
+      dirty: true,
+      ahead: 0,
+      behind: 0,
+      diffAdded: 2,
+      diffDeleted: 1,
+      pullRequest: null,
+    });
+  });
+
   it('returns null when the working directory is not a git repo and formats badges', () => {
     mocks.spawnSync.mockReturnValue({ status: 1, stdout: '' });
     expect(createGitStatusCache('/tmp/not-a-repo').getStatus()).toBeNull();

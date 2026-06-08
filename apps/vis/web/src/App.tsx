@@ -11,7 +11,7 @@ export function App() {
         <Route path="/" element={<SessionListPage />} />
         <Route path="/sessions/:sessionId" element={<SessionDetailPage />} />
         <Route
-          path="/sessions/:sessionId/subagents/:agentId"
+          path="/sessions/:sessionId/agents/:agentId"
           element={<SubagentDetailPage />}
         />
       </Routes>

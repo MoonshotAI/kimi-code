@@ -1,215 +1,375 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 
-import type { VisWireRecord } from '../../types';
+import type {
+  AgentRecord,
+  ContentPart,
+  ContextMessage,
+  LoopRecordedEvent,
+  ToolCall,
+  WireEntry,
+} from '../../types';
 import { CopyButton } from '../shared/CopyButton';
+import { ImagePreview } from '../shared/ImagePreview';
 import { JsonViewer } from '../shared/JsonViewer';
 import { SizePreview } from '../shared/SizePreview';
 
 interface WireRowDetailProps {
-  record: VisWireRecord;
-  /** Counterpart in a tool_call ↔ tool_result pair (if applicable). */
-  paired?: VisWireRecord | undefined;
-  /** Whether the counterpart is visible in the current filter. null when
-   *  there is no counterpart at all. */
-  pairedInFiltered?: boolean | null;
-  /** Scroll to + expand a given seq. */
-  onJumpTo?: (seq: number) => void;
+  entry: WireEntry;
+  /** Scroll to + expand a given line. */
+  onJumpTo?: (lineNo: number) => void;
 }
 
-/** Fields that are best rendered as collapsible large-payload blocks rather than
- *  as key-value pairs. Keyed by the path (dot-separated) from record root. */
-const LARGE_FIELDS: Record<string, true> = {
-  new_prompt: true,
-  system_prompt: true,
-  summary: true,
-  think: true,
-  text: true,
-  content: true,
-  output: true,
-  user_input: true,
-  'data.body': true,
-  'data.args': true,
-  'data.payload': true,
-  'data.tail_output': true,
-  'data.result_summary': true,
-  'data.error': true,
-  'data.reason': true,
-  'data.content': true,
-  'data.summary': true,
-  result_summary: true,
-  new_content: true,
-};
+type JsonView = 'none' | 'raw' | 'projected';
 
-const TOP_LEVEL_META = new Set(['type', 'seq', 'time']);
-
-export function WireRowDetail({ record, paired, pairedInFiltered, onJumpTo }: WireRowDetailProps) {
-  const [showRaw, setShowRaw] = useState(false);
-  const entries = Object.entries(record as Record<string, unknown>).filter(
-    ([k]) => !TOP_LEVEL_META.has(k),
-  );
+export function WireRowDetail({ entry }: WireRowDetailProps) {
+  const [view, setView] = useState<JsonView>('none');
+  // Only offer the dual view when migration actually changed something.
+  // For records on the current protocol, `raw` and `data` are identical
+  // and the toggle would just be visual noise.
+  const migrated = !sameJson(entry.raw, entry.data);
 
   return (
     <div className="pl-[120px] pr-2 py-1 font-mono text-[12px]">
-      <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
-        {entries.map(([key, value]) => renderField(key, value, key))}
-      </div>
-      {paired !== undefined ? (
-        <PairedSection
-          self={record}
-          paired={paired}
-          pairedInFiltered={pairedInFiltered ?? null}
-          onJumpTo={onJumpTo}
-        />
-      ) : null}
+      {renderFriendly(entry.data)}
       <div className="mt-2 flex items-center justify-end gap-3">
-        <CopyButton value={JSON.stringify(record, null, 2)} label="copy record json" />
+        <CopyButton
+          value={JSON.stringify(entry.raw, null, 2)}
+          label="copy raw"
+        />
+        {migrated ? (
+          <CopyButton
+            value={JSON.stringify(entry.data, null, 2)}
+            label="copy projected"
+          />
+        ) : null}
         <button
-          onClick={() =>{  setShowRaw((v) => !v); }}
-          className="font-mono text-[10px] text-fg-3 hover:text-fg-1"
+          onClick={() => {
+            setView((v) => (v === 'raw' ? 'none' : 'raw'));
+          }}
+          className={`font-mono text-[10px] ${
+            view === 'raw' ? 'text-fg-0' : 'text-fg-3 hover:text-fg-1'
+          }`}
+          title="What this line looks like on disk (no vis-side transforms)"
         >
-          {showRaw ? '[ hide raw json ]' : '[ {…} raw json ]'}
+          {view === 'raw' ? '[ hide raw ]' : '[ {…} raw ]'}
         </button>
+        {migrated ? (
+          <button
+            onClick={() => {
+              setView((v) => (v === 'projected' ? 'none' : 'projected'));
+            }}
+            className={`font-mono text-[10px] ${
+              view === 'projected' ? 'text-fg-0' : 'text-fg-3 hover:text-fg-1'
+            }`}
+            title="Same line after vis applied the agent-core migration chain"
+          >
+            {view === 'projected' ? '[ hide projected ]' : '[ {…} projected ]'}
+          </button>
+        ) : null}
       </div>
-      {showRaw ? (
+      {view !== 'none' ? (
         <div className="mt-2 border border-border bg-surface-0 p-2">
-          <JsonViewer value={record} defaultOpenDepth={2} />
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em] text-fg-3">
+            {view === 'raw' ? 'as written on disk' : 'after vis migration'}
+            {migrated && view === 'raw' ? (
+              <span className="ml-2 text-[var(--color-sev-warning)]">
+                — differs from projected
+              </span>
+            ) : null}
+          </div>
+          <JsonViewer
+            value={view === 'raw' ? entry.raw : entry.data}
+            defaultOpenDepth={2}
+          />
         </div>
       ) : null}
     </div>
   );
 }
 
-/** Renders the "↳ paired with tool_result (seq N)" section below a
- *  tool_call row (or the reverse). Shows a compact preview of the
- *  counterpart and a jump button that scrolls-to + expands that row. */
-function PairedSection({
-  self,
-  paired,
-  pairedInFiltered,
-  onJumpTo,
-}: {
-  self: VisWireRecord;
-  paired: VisWireRecord;
-  pairedInFiltered: boolean | null;
-  onJumpTo?: (seq: number) => void;
-}) {
-  const selfIsCall = self.type === 'tool_call';
-  const preview = selfIsCall ? previewToolResult(paired) : previewToolCallArgs(paired);
-  const isError =
-    paired.type === 'tool_result' && (paired as { is_error?: boolean }).is_error === true;
-  const hidden = pairedInFiltered === false;
+function sameJson(a: unknown, b: unknown): boolean {
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
+function renderFriendly(record: AgentRecord) {
+  switch (record.type) {
+    case 'context.append_message':
+      return <MessageDetail message={record.message} />;
+    case 'context.append_loop_event':
+      return <LoopEventDetail event={record.event} />;
+    case 'turn.prompt':
+    case 'turn.steer':
+      return (
+        <div className="space-y-2">
+          <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+            <FieldRow label="origin" wide>
+              <JsonViewer value={record.origin} defaultOpenDepth={2} />
+            </FieldRow>
+          </div>
+          <div>
+            <div className="mb-1 text-fg-2">
+              input ({record.input.length} part{record.input.length === 1 ? '' : 's'})
+            </div>
+            <div className="space-y-1">
+              {record.input.map((part, i) => (
+                <ContentPartView key={i} part={part} />
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    case 'context.apply_compaction':
+    case 'full_compaction.complete':
+      return (
+        <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+          <FieldRow label="summary" wide>
+            <SizePreview label="summary" sizeBytes={record.summary.length} preview={record.summary}>
+              <pre className="whitespace-pre-wrap break-words text-fg-1">{record.summary}</pre>
+            </SizePreview>
+          </FieldRow>
+          <FieldRow label="compactedCount">
+            <span className="text-[var(--color-sev-info)]">{record.compactedCount}</span>
+          </FieldRow>
+          <FieldRow label="tokensBefore">
+            <span className="text-[var(--color-sev-info)]">{record.tokensBefore}</span>
+          </FieldRow>
+          <FieldRow label="tokensAfter">
+            <span className="text-[var(--color-sev-info)]">{record.tokensAfter}</span>
+          </FieldRow>
+        </div>
+      );
+    default:
+      return <JsonViewer value={record} defaultOpenDepth={2} />;
+  }
+}
+function MessageDetail({ message }: { message: ContextMessage }) {
   return (
-    <div className="mt-3 border-t border-border pt-2">
-      <div className="flex items-center gap-2 font-mono text-[11px]">
-        <span className="text-fg-3">↳ paired</span>
-        <span className="text-fg-1">{paired.type}</span>
-        <span className="text-fg-3">seq</span>
-        <span className="tabular text-fg-0">{paired.seq}</span>
-        {isError ? (
-          <span className="border border-[var(--color-sev-error)] px-1 text-[10px] text-[var(--color-sev-error)]">
-            error
-          </span>
+    <div className="space-y-2">
+      <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+        <FieldRow label="role">
+          <span className="text-[var(--color-cat-ephemeral)]">"{message.role}"</span>
+        </FieldRow>
+        {message.toolCallId ? (
+          <FieldRow label="toolCallId">
+            <Mono>{message.toolCallId}</Mono>
+          </FieldRow>
         ) : null}
-        {hidden ? <span className="text-fg-3">(hidden by filter)</span> : null}
-        <button
-          type="button"
-          onClick={() => onJumpTo?.(paired.seq)}
-          disabled={hidden || onJumpTo === undefined}
-          className="ml-auto border border-border px-2 py-0.5 text-fg-2 hover:border-border-strong hover:text-fg-0 disabled:opacity-40 disabled:hover:border-border disabled:hover:text-fg-2"
-          title={
-            hidden ? 'counterpart is currently filtered out' : 'scroll to + expand counterpart'
-          }
-        >
-          jump →
-        </button>
+        {message.origin ? (
+          <FieldRow label="origin" wide>
+            <JsonViewer value={message.origin} defaultOpenDepth={2} />
+          </FieldRow>
+        ) : null}
+        {message.isError === true ? (
+          <FieldRow label="isError">
+            <span className="text-[var(--color-sev-error)]">true</span>
+          </FieldRow>
+        ) : null}
+        {message.partial === true ? (
+          <FieldRow label="partial">
+            <span className="text-[var(--color-sev-warning)]">true</span>
+          </FieldRow>
+        ) : null}
       </div>
-      {preview.length > 0 ? (
-        <pre className="mt-1 max-h-[5.5em] overflow-hidden whitespace-pre-wrap break-words font-mono text-[11.5px] text-fg-1">
-          {preview.length > 400 ? preview.slice(0, 400) + '…' : preview}
-        </pre>
-      ) : (
-        <div className="mt-1 font-mono text-[11px] text-fg-3">(empty)</div>
-      )}
+
+      {message.content.length > 0 ? (
+        <div>
+          <div className="mb-1 text-fg-2">content ({message.content.length} part{message.content.length === 1 ? '' : 's'})</div>
+          <div className="space-y-1">
+            {message.content.map((part, i) => (
+              <ContentPartView key={i} part={part} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {message.toolCalls.length > 0 ? (
+        <div>
+          <div className="mb-1 text-fg-2">
+            toolCalls ({message.toolCalls.length})
+          </div>
+          <div className="space-y-1">
+            {message.toolCalls.map((tc) => (
+              <ToolCallView key={tc.id} call={tc} />
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function previewToolCallArgs(call: VisWireRecord): string {
-  const args = (call as { data?: { args?: unknown } }).data?.args;
-  if (args === undefined) return '';
-  if (typeof args === 'string') return args;
-  try {
-    return JSON.stringify(args, null, 2);
-  } catch {
-    // Circular refs / BigInt / etc. — don't fall through to String(unknown)
-    // which produces "[object Object]" and hides the actual problem.
-    return '(unserialisable args)';
-  }
-}
-
-function previewToolResult(result: VisWireRecord): string {
-  const out = (result as { output?: unknown }).output;
-  if (out === undefined || out === null) return '';
-  if (typeof out === 'string') return out;
-  try {
-    return JSON.stringify(out, null, 2);
-  } catch {
-    return '(unserialisable output)';
-  }
-}
-
-function renderField(key: string, value: unknown, path: string) {
-  // Null / undefined
-  if (value === null || value === undefined) {
-    return (
-      <FieldRow key={path} label={key}>
-        <span className="text-fg-3">null</span>
-      </FieldRow>
-    );
-  }
-
-  // Large-payload fields: render via SizePreview with JsonViewer inside
-  if (LARGE_FIELDS[path] || LARGE_FIELDS[key]) {
-    if (typeof value === 'string') {
+function ContentPartView({ part }: { part: ContentPart }) {
+  switch (part.type) {
+    case 'text':
       return (
-        <FieldRow key={path} label={key} wide>
-          <SizePreview label={key} sizeBytes={value.length} preview={value}>
-            <pre className="whitespace-pre-wrap break-words text-fg-1">{value}</pre>
-          </SizePreview>
-        </FieldRow>
+        <div className="border border-border bg-surface-0 p-2">
+          <div className="mb-1 text-fg-3">text · {part.text.length}b</div>
+          <pre className="whitespace-pre-wrap break-words text-fg-1">{part.text}</pre>
+        </div>
+      );
+    case 'think':
+      return (
+        <div className="border border-[var(--color-cat-config)]/40 bg-surface-0 p-2">
+          <div className="mb-1 text-[var(--color-cat-config)]">think · {part.think.length}b</div>
+          <pre className="whitespace-pre-wrap break-words text-fg-1">{part.think}</pre>
+        </div>
+      );
+    case 'image_url':
+      return <ImagePreview url={part.imageUrl.url} />;
+    case 'audio_url':
+      return (
+        <div className="border border-border bg-surface-0 p-2">
+          <div className="mb-1 text-fg-3">audio_url</div>
+          <Mono className="break-all">{part.audioUrl.url}</Mono>
+        </div>
+      );
+    case 'video_url':
+      return (
+        <div className="border border-border bg-surface-0 p-2">
+          <div className="mb-1 text-fg-3">video_url</div>
+          <Mono className="break-all">{part.videoUrl.url}</Mono>
+        </div>
+      );
+    default:
+      return <JsonViewer value={part} defaultOpenDepth={1} />;
+  }
+}
+
+function ToolCallView({ call }: { call: ToolCall }) {
+  const args = call.arguments ?? '';
+  let parsed: unknown = null;
+  if (typeof args === 'string' && args.length > 0) {
+    try {
+      parsed = JSON.parse(args);
+    } catch {
+      parsed = null;
+    }
+  }
+  return (
+    <div className="border border-[var(--color-cat-tools)]/40 bg-surface-0 p-2">
+      <div className="flex items-center justify-between gap-2">
+        <Mono className="text-[var(--color-cat-tools)]">{call.name}</Mono>
+        <Mono className="text-fg-3 text-[10px]">#{call.id}</Mono>
+      </div>
+      <div className="mt-1">
+        {parsed !== null ? (
+          <JsonViewer value={parsed} defaultOpenDepth={1} />
+        ) : (
+          <pre className="whitespace-pre-wrap break-words text-fg-1">{args}</pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LoopEventDetail({ event }: { event: LoopRecordedEvent }) {
+  switch (event.type) {
+    case 'tool.call': {
+      let parsed: unknown = event.args;
+      if (typeof event.args === 'string') {
+        try {
+          parsed = JSON.parse(event.args);
+        } catch {
+          parsed = event.args;
+        }
+      }
+      return (
+        <div className="space-y-2">
+          <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+            <FieldRow label="name">
+              <Mono className="text-[var(--color-cat-tools)]">{event.name}</Mono>
+            </FieldRow>
+            <FieldRow label="toolCallId">
+              <Mono>{event.toolCallId}</Mono>
+            </FieldRow>
+            <FieldRow label="step">
+              <span className="text-[var(--color-sev-info)]">{event.step}</span>
+            </FieldRow>
+            <FieldRow label="turnId">
+              <Mono>{event.turnId}</Mono>
+            </FieldRow>
+            {event.description ? (
+              <FieldRow label="description" wide>
+                <pre className="whitespace-pre-wrap break-words text-fg-1">
+                  {event.description}
+                </pre>
+              </FieldRow>
+            ) : null}
+          </div>
+          <div>
+            <div className="mb-1 text-fg-2">args</div>
+            <JsonViewer value={parsed} defaultOpenDepth={2} />
+          </div>
+          {event.display ? (
+            <div>
+              <div className="mb-1 text-fg-2">display</div>
+              <JsonViewer value={event.display} defaultOpenDepth={1} />
+            </div>
+          ) : null}
+        </div>
       );
     }
-    // non-string large fields: JSON tree
-    return (
-      <FieldRow key={path} label={key} wide>
-        <SizePreview label={key} sizeBytes={JSON.stringify(value).length}>
-          <JsonViewer value={value} defaultOpenDepth={1} />
-        </SizePreview>
-      </FieldRow>
-    );
+    case 'tool.result': {
+      const isError = event.result.isError === true;
+      const output = event.result.output;
+      return (
+        <div className="space-y-2">
+          <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
+            <FieldRow label="toolCallId">
+              <Mono>{event.toolCallId}</Mono>
+            </FieldRow>
+            <FieldRow label="parentUuid">
+              <Mono>{event.parentUuid}</Mono>
+            </FieldRow>
+            <FieldRow label="isError">
+              <span
+                className={
+                  isError ? 'text-[var(--color-sev-error)]' : 'text-[var(--color-sev-success)]'
+                }
+              >
+                {String(isError)}
+              </span>
+            </FieldRow>
+            {event.result.message !== undefined ? (
+              <FieldRow label="message" wide>
+                <pre className="whitespace-pre-wrap break-words text-fg-1">
+                  {event.result.message}
+                </pre>
+              </FieldRow>
+            ) : null}
+          </div>
+          <div>
+            <div className="mb-1 text-fg-2">output</div>
+            {typeof output === 'string' ? (
+              <SizePreview label="output" sizeBytes={output.length} preview={output}>
+                <pre className="whitespace-pre-wrap break-words text-fg-1">{output}</pre>
+              </SizePreview>
+            ) : (
+              <div className="space-y-1">
+                {output.map((p, i) => (
+                  <ContentPartView key={i} part={p} />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+    case 'step.begin':
+    case 'step.end':
+    case 'content.part':
+      return <JsonViewer value={event} defaultOpenDepth={2} />;
+    default:
+      return <JsonViewer value={event} defaultOpenDepth={2} />;
   }
+}
 
-  // Primitive
-  if (typeof value !== 'object') {
-    const repr =
-      typeof value === 'string'
-        ? `"${truncate(value, 160)}"`
-        : typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint'
-          ? String(value)
-          : typeof value;
-    return (
-      <FieldRow key={path} label={key}>
-        <span className={typeColor(value)}>{repr}</span>
-      </FieldRow>
-    );
-  }
-
-  // Nested object: inline JsonViewer
-  return (
-    <FieldRow key={path} label={key} wide>
-      <JsonViewer value={value} defaultOpenDepth={1} />
-    </FieldRow>
-  );
+function Mono({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return <span className={`font-mono text-[12px] text-fg-0 ${className}`}>{children}</span>;
 }
 
 function FieldRow({
@@ -218,19 +378,17 @@ function FieldRow({
   wide = false,
 }: {
   label: string;
-  children: ReactNode;
+  children: React.ReactNode;
   wide?: boolean;
 }) {
   if (wide) {
     return (
-      <>
-        <div className="col-span-2 flex items-baseline gap-3">
-          <span className="w-[140px] shrink-0 font-mono text-[11px] text-fg-2 text-right">
-            {label}
-          </span>
-          <div className="flex-1 min-w-0">{children}</div>
-        </div>
-      </>
+      <div className="col-span-2 flex items-baseline gap-3">
+        <span className="w-[140px] shrink-0 font-mono text-[11px] text-fg-2 text-right">
+          {label}
+        </span>
+        <div className="flex-1 min-w-0">{children}</div>
+      </div>
     );
   }
   return (
@@ -239,15 +397,4 @@ function FieldRow({
       <div className="font-mono text-[12px] text-fg-0 min-w-0 break-words">{children}</div>
     </>
   );
-}
-
-function typeColor(v: unknown): string {
-  if (typeof v === 'boolean') return 'text-[var(--color-cat-config)]';
-  if (typeof v === 'number') return 'text-[var(--color-sev-info)]';
-  if (typeof v === 'string') return 'text-[var(--color-cat-ephemeral)]';
-  return 'text-fg-0';
-}
-
-function truncate(s: string, n: number): string {
-  return s.length <= n ? s : s.slice(0, n) + '…';
 }

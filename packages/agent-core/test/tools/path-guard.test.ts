@@ -7,7 +7,6 @@ import {
   isWithinWorkspace,
   normalizeUserPath,
   PathSecurityError,
-  STRICT_WORKSPACE_ACCESS_POLICY,
   assertPathAllowed,
   resolvePathAccess,
   resolvePathAccessPath,
@@ -31,15 +30,6 @@ const POSIX_KAOS = {
 };
 
 describe('path access policy', () => {
-  it('strict policy rejects absolute paths outside workspace roots', () => {
-    expect(() =>
-      resolvePathAccess('/etc/hosts', '/workspace', WORKSPACE, {
-        operation: 'read',
-        policy: STRICT_WORKSPACE_ACCESS_POLICY,
-      }),
-    ).toThrow(PathSecurityError);
-  });
-
   it('default policy allows absolute paths outside workspace roots', () => {
     const result = resolvePathAccess('/etc/hosts', '/workspace', WORKSPACE, {
       operation: 'read',
@@ -147,12 +137,18 @@ describe('path access policy', () => {
     ).toBe('/workspace/~/notes/today.txt');
   });
 
-  it('legacy assertPathAllowed keeps strict shared-prefix behavior', () => {
-    expect(() =>
+  it('legacy assertPathAllowed allows absolute outside paths but rejects relative escapes', () => {
+    expect(
       assertPathAllowed('/workspace-evil/secrets.txt', '/workspace', WORKSPACE, {
         mode: 'read',
       }),
-    ).toThrow(/outside the workspace/);
+    ).toBe('/workspace-evil/secrets.txt');
+
+    expect(() =>
+      assertPathAllowed('../../outside.txt', '/workspace/project', WORKSPACE, {
+        mode: 'read',
+      }),
+    ).toThrow(/absolute path/);
   });
 
   it('canonicalizes paths with an explicit posix path class', () => {
@@ -168,8 +164,8 @@ describe('path access policy', () => {
       policy: DEFAULT_WORKSPACE_ACCESS_POLICY,
     });
 
-    expect(result).toEqual({ path: 'C:\\workspace\\file.txt', outsideWorkspace: false });
-    expect(isWithinDirectory('C:\\WORKSPACE\\file.txt', 'c:\\workspace', 'win32')).toBe(true);
+    expect(result).toEqual({ path: 'C:/workspace/file.txt', outsideWorkspace: false });
+    expect(isWithinDirectory('C:/WORKSPACE/file.txt', 'c:/workspace', 'win32')).toBe(true);
   });
 
   it('converts Git Bash POSIX drive paths before applying win32 workspace checks', () => {
@@ -180,7 +176,7 @@ describe('path access policy', () => {
       homeDir: 'C:\\Users\\test',
     });
 
-    expect(result).toEqual({ path: 'C:\\workspace\\file.txt', outsideWorkspace: false });
+    expect(result).toEqual({ path: 'C:/workspace/file.txt', outsideWorkspace: false });
   });
 
   it('uses the provided path class when deciding whether an outside path is absolute', () => {
@@ -190,7 +186,7 @@ describe('path access policy', () => {
       policy: DEFAULT_WORKSPACE_ACCESS_POLICY,
     });
 
-    expect(result).toEqual({ path: 'C:\\outside\\file.txt', outsideWorkspace: true });
+    expect(result).toEqual({ path: 'C:/outside/file.txt', outsideWorkspace: true });
   });
 
   it('expands leading tilde paths with the provided win32 home directory', () => {
@@ -202,7 +198,7 @@ describe('path access policy', () => {
     });
 
     expect(result).toEqual({
-      path: 'C:\\Users\\test\\notes\\today.txt',
+      path: 'C:/Users/test/notes/today.txt',
       outsideWorkspace: true,
     });
   });
@@ -278,18 +274,18 @@ describe('path access policy', () => {
     expect(isWithinWorkspace('/elsewhere/file', multi)).toBe(false);
   });
 
-  it('rejects a shared-prefix attack against an additionalDir entry', () => {
+  it('does not classify shared-prefix paths as additionalDir entries', () => {
     const cfg: WorkspaceConfig = {
       workspaceDir: '/workspace',
       additionalDirs: ['/lib'],
     };
     expect(isWithinWorkspace('/lib-evil/hack.py', cfg)).toBe(false);
-    expect(() =>
-      resolvePathAccess('/lib-evil/hack.py', '/workspace', cfg, {
-        operation: 'read',
-        policy: STRICT_WORKSPACE_ACCESS_POLICY,
-      }),
-    ).toThrow(PathSecurityError);
+
+    const result = resolvePathAccess('/lib-evil/hack.py', '/workspace', cfg, {
+      operation: 'read',
+      policy: DEFAULT_WORKSPACE_ACCESS_POLICY,
+    });
+    expect(result).toEqual({ path: '/lib-evil/hack.py', outsideWorkspace: true });
   });
 
   it('uses path-segment containment rather than naive startsWith for additionalDir entries', () => {
@@ -313,26 +309,26 @@ describe('path access policy', () => {
 
   describe('normalizeUserPath on win32', () => {
     it('rewrites MSYS-style drive paths to native form', () => {
-      expect(normalizeUserPath('/c/Users/foo/file.txt', 'win32')).toBe('C:\\Users\\foo\\file.txt');
+      expect(normalizeUserPath('/c/Users/foo/file.txt', 'win32')).toBe('C:/Users/foo/file.txt');
     });
 
     it('rewrites a bare MSYS drive root to native form', () => {
-      expect(normalizeUserPath('/c/', 'win32')).toBe('C:\\');
-      expect(normalizeUserPath('/c', 'win32')).toBe('C:\\');
+      expect(normalizeUserPath('/c/', 'win32')).toBe('C:/');
+      expect(normalizeUserPath('/c', 'win32')).toBe('C:/');
     });
 
     it('canonicalizes the drive letter to uppercase', () => {
-      expect(normalizeUserPath('/C/Users/foo', 'win32')).toBe('C:\\Users\\foo');
+      expect(normalizeUserPath('/C/Users/foo', 'win32')).toBe('C:/Users/foo');
     });
 
     it('rewrites cygdrive-style paths to native form', () => {
-      expect(normalizeUserPath('/cygdrive/c/Users/foo', 'win32')).toBe('C:\\Users\\foo');
-      expect(normalizeUserPath('/cygdrive/d/Projects', 'win32')).toBe('D:\\Projects');
+      expect(normalizeUserPath('/cygdrive/c/Users/foo', 'win32')).toBe('C:/Users/foo');
+      expect(normalizeUserPath('/cygdrive/d/Projects', 'win32')).toBe('D:/Projects');
     });
 
-    it('rewrites UNC paths by flipping every slash', () => {
-      expect(normalizeUserPath('//server/share/file', 'win32')).toBe('\\\\server\\share\\file');
-      expect(normalizeUserPath('//server/share', 'win32')).toBe('\\\\server\\share');
+    it('rewrites UNC paths to forward slashes', () => {
+      expect(normalizeUserPath('//server/share/file', 'win32')).toBe('//server/share/file');
+      expect(normalizeUserPath('//server/share', 'win32')).toBe('//server/share');
     });
 
     it('leaves already-native windows paths untouched', () => {
@@ -365,15 +361,15 @@ describe('path access policy', () => {
 
   describe('normalizeUserPath full posix-to-windows coverage', () => {
     const cases: ReadonlyArray<readonly [string, string]> = [
-      ['/c/Users/foo', 'C:\\Users\\foo'],
-      ['/d/Projects/kimi', 'D:\\Projects\\kimi'],
-      ['/C/Users/foo', 'C:\\Users\\foo'],
-      ['/c/', 'C:\\'],
-      ['/c', 'C:\\'],
-      ['/cygdrive/c/Users/foo', 'C:\\Users\\foo'],
-      ['/cygdrive/d/Projects', 'D:\\Projects'],
-      ['//server/share', '\\\\server\\share'],
-      ['//server/share/file.txt', '\\\\server\\share\\file.txt'],
+      ['/c/Users/foo', 'C:/Users/foo'],
+      ['/d/Projects/kimi', 'D:/Projects/kimi'],
+      ['/C/Users/foo', 'C:/Users/foo'],
+      ['/c/', 'C:/'],
+      ['/c', 'C:/'],
+      ['/cygdrive/c/Users/foo', 'C:/Users/foo'],
+      ['/cygdrive/d/Projects', 'D:/Projects'],
+      ['//server/share', '//server/share'],
+      ['//server/share/file.txt', '//server/share/file.txt'],
       ['relative/path/file.txt', 'relative/path/file.txt'],
       ['relative\\already\\windows', 'relative\\already\\windows'],
       ['filename.txt', 'filename.txt'],
@@ -388,10 +384,10 @@ describe('path access policy', () => {
 
   it('aggressively rewrites short-input forms on win32', () => {
     // Pathological short inputs: empty, lone slash, and a single character.
-    // Treated as a divergence lockdown — the bare "/" branch differs from
-    // the upstream raw helper which flips the slash.
+    // The bare "/" branch returns a forward slash so downstream pathe
+    // operations stay uniform.
     expect(normalizeUserPath('', 'win32')).toBe('');
-    expect(normalizeUserPath('/', 'win32')).toBe('\\');
+    expect(normalizeUserPath('/', 'win32')).toBe('/');
     expect(normalizeUserPath('a', 'win32')).toBe('a');
   });
 
@@ -400,11 +396,11 @@ describe('path access policy', () => {
 
     for (const key of keys) {
       it(`flags ${key} as sensitive by basename`, () => {
-        expect(isSensitiveFile(key, 'posix')).toBe(true);
+        expect(isSensitiveFile(key)).toBe(true);
       });
 
       it(`flags /home/user/.ssh/${key} as sensitive`, () => {
-        expect(isSensitiveFile(`/home/user/.ssh/${key}`, 'posix')).toBe(true);
+        expect(isSensitiveFile(`/home/user/.ssh/${key}`)).toBe(true);
       });
     }
   });

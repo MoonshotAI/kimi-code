@@ -1,0 +1,48 @@
+{
+  "name": "@moonshot-ai/acp-adapter",
+  "version": "0.2.2",
+  "private": true,
+  "description": "Agent Client Protocol adapter for kimi-code",
+  "license": "MIT",
+  "author": "Moonshot AI",
+  "type": "module",
+  "imports": {
+    "#/*": [
+      "./src/*.ts",
+      "./src/*/index.ts"
+    ]
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.mts",
+        "import": "./dist/index.mjs",
+        "default": "./dist/index.mjs"
+      }
+    },
+    "provenance": true
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.23.0",
+    "@moonshot-ai/agent-core": "workspace:^",
+    "@moonshot-ai/kaos": "workspace:^",
+    "@moonshot-ai/kimi-code-sdk": "workspace:^"
+  }
+}

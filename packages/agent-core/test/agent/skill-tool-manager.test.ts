@@ -1,26 +1,20 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join } from 'pathe';
 
-import { localKaos } from '@moonshot-ai/kaos';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Agent, type AgentRecord } from '../../src/agent';
-import { ProviderManager } from '../../src/providers/provider-manager';
+import { testKaos } from '../fixtures/test-kaos';
+import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
+import type { AgentRecordPersistence } from '../../src/agent/records';
+import { ProviderManager } from '../../src/session/provider-manager';
 import type { ApprovalResponse, SDKAgentRPC, SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { SkillRegistry, type SkillDefinition } from '../../src/skill';
 import { SkillTool } from '../../src/tools/builtin/collaboration/skill-tool';
-import type { Environment } from '../../src/utils/environment';
 import { executeTool } from '../tools/fixtures/execute-tool';
 
-const TEST_OS_ENV: Environment = {
-  osKind: 'Linux',
-  osArch: 'x86_64',
-  osVersion: 'test',
-  shellName: 'bash',
-  shellPath: '/bin/bash',
-};
 
 const MOCK_PROVIDER = {
   type: 'kimi',
@@ -40,7 +34,10 @@ function makeSkill(name: string, metadata: SkillDefinition['metadata'] = {}): Sk
   };
 }
 
-function makeAgent(skills?: SkillRegistry): Agent {
+function makeAgent(
+  skills?: SkillRegistry,
+  persistence?: AgentRecordPersistence,
+): Agent {
   const rpc = {
     emitEvent: vi.fn(),
     requestApproval: vi.fn(),
@@ -48,13 +45,11 @@ function makeAgent(skills?: SkillRegistry): Agent {
     toolCall: vi.fn(),
   } as unknown as SDKAgentRPC;
   const agent = new Agent({
-    runtime: {
-      kaos: localKaos,
-      osEnv: TEST_OS_ENV,
-    },
+    kaos: testKaos,
     rpc,
     skills,
-    providerManager: testProviderManager(),
+    persistence,
+    modelProvider: testProviderManager(),
   });
   agent.config.update({
     cwd: process.cwd(),
@@ -65,10 +60,9 @@ function makeAgent(skills?: SkillRegistry): Agent {
   return agent;
 }
 
-function runtime() {
+function runtime(cwd?: string) {
   return {
-    kaos: localKaos,
-    osEnv: TEST_OS_ENV,
+    kaos: cwd === undefined ? testKaos : testKaos.withCwd(cwd),
   };
 }
 
@@ -135,11 +129,11 @@ describe('ToolManager SkillTool registration', () => {
   it('persists model-invoked inline skill reminders through agent wire', async () => {
     const skills = new SkillRegistry();
     skills.register(makeSkill('review'));
-    const agent = makeAgent(skills);
     const wireRecords: AgentRecord[] = [];
-    agent.records.onRecord = (record) => {
-      wireRecords.push(record);
-    };
+    const persistence = new InMemoryAgentRecordPersistence([], {
+      onRecord: (record) => wireRecords.push(record),
+    });
+    const agent = makeAgent(skills, persistence);
     const skillTool = agent.tools.loopTools.find((tool) => tool.name === 'Skill');
     if (!(skillTool instanceof SkillTool)) {
       throw new Error('Expected SkillTool to be active');
@@ -193,15 +187,13 @@ describe('ToolManager SkillTool registration', () => {
 
       const session = new Session({
         id: 'test-skill-tool',
-        runtime: runtime(),
+        kaos: testKaos.withCwd(workDir),
         homedir: homeDir,
-        cwd: workDir,
         rpc: sessionRpc(),
         providerManager: testProviderManager(),
       });
       const mainAgent = await session.createMain();
       mainAgent.config.update({
-        cwd: workDir,
         modelAlias: MOCK_PROVIDER.model,
       });
       mainAgent.tools.initializeBuiltinTools();

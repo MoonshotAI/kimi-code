@@ -8,20 +8,24 @@
  * has been truncated to a tail.
  *
  * For terminal tasks the output also surfaces why the task ended:
- * `timed_out` when an agent task was aborted by its deadline, and
- * `stop_reason` when the task was explicitly stopped via `TaskStop`.
+ * `stop_reason` records the concrete reason; `terminal_reason` classifies
+ * timeout vs. explicit stop vs. failure for callers that need stable labels.
  */
 
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../agent/tool';
-import type { ExecutableToolResult, ToolExecution } from '../../loop/types';
 import {
+  type BackgroundManager,
   isBackgroundTaskTerminal,
-  type BackgroundProcessManager,
+  type BackgroundTaskInfo,
+  type BackgroundTaskOutputSnapshot,
   type BackgroundTaskStatus,
-} from './manager';
+} from '../../agent/background';
+import type { ExecutableToolResult, ToolExecution } from '../../loop/types';
 import { toInputJsonSchema } from '../support/input-schema';
+import { matchesGlobRuleSubject } from '../support/rule-match';
+import { formatPlainObject } from './format';
 import TASK_OUTPUT_DESCRIPTION from './task-output.md';
 
 /**
@@ -65,22 +69,48 @@ function retrievalStatus(
   return block ? 'timeout' : 'not_ready';
 }
 
+function terminalReason(info: BackgroundTaskInfo): 'timed_out' | 'stopped' | 'failed' | undefined {
+  if (info.status === 'timed_out') return 'timed_out';
+  if (info.status === 'killed' && info.stopReason !== undefined) return 'stopped';
+  if (info.status === 'failed' && info.stopReason !== undefined) return 'failed';
+  return undefined;
+}
+
+function fullOutputHint(output: BackgroundTaskOutputSnapshot): string | undefined {
+  if (!output.fullOutputAvailable || output.outputPath === undefined) return undefined;
+  if (output.truncated) {
+    return (
+      `Only the last ${String(OUTPUT_PREVIEW_BYTES)} bytes are shown above. ` +
+      'Use the Read tool with the output_path to page through the full log ' +
+      `(parameters: path, line_offset, n_lines; read about ${String(PAGING_HINT_LINES)} ` +
+      'lines per page).'
+    );
+  }
+  return (
+    'The preview above is the complete output. Use the Read tool with the output_path ' +
+    'if you need to re-read the full log later ' +
+    `(parameters: path, line_offset, n_lines; read about ${String(PAGING_HINT_LINES)} ` +
+    'lines per page).'
+  );
+}
+
 export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
   readonly name = 'TaskOutput' as const;
   readonly description: string = TASK_OUTPUT_DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(TaskOutputInputSchema);
 
-  constructor(private readonly manager: BackgroundProcessManager) {}
+  constructor(private readonly manager: BackgroundManager) {}
 
   resolveExecution(args: TaskOutputInput): ToolExecution {
     return {
       description: `Reading output of task ${args.task_id}`,
+      approvalRule: this.name,
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.task_id),
       execute: () => this.execute(args),
     };
   }
 
   private async execute(args: TaskOutputInput): Promise<ExecutableToolResult> {
-    await this.manager.settlePendingExits();
     const info = this.manager.getTask(args.task_id);
     if (!info) {
       return { isError: true, output: `Task not found: ${args.task_id}` };
@@ -102,61 +132,25 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
     const output = await this.manager.getOutputSnapshot(args.task_id, OUTPUT_PREVIEW_BYTES);
 
     const lines = [
-      `retrieval_status: ${retrievalStatus(current.status, args.block)}`,
-      `task_id: ${current.taskId}`,
-      `status: ${current.status}`,
-      `description: ${current.description}`,
-      `command: ${current.command}`,
+      formatPlainObject({
+        retrievalStatus: retrievalStatus(current.status, args.block),
+        ...current,
+        outputPath: output.outputPath,
+        terminalReason: terminalReason(current),
+        outputSizeBytes: output.outputSizeBytes,
+        outputPreviewBytes: output.previewBytes,
+        outputTruncated: output.truncated,
+        fullOutputAvailable: output.fullOutputAvailable,
+        fullOutputTool:
+          output.fullOutputAvailable && output.outputPath !== undefined ? 'Read' : undefined,
+        fullOutputHint: fullOutputHint(output),
+      }),
+      '',
     ];
-    if (output.outputPath !== undefined) {
-      lines.push(`output_path: ${output.outputPath}`);
-    }
-    if (current.exitCode !== null) {
-      lines.push(`exit_code: ${String(current.exitCode)}`);
-    }
-    // Surface why a terminal task ended. `terminal_reason` is a categorical
-    // label; `timed_out` / `stop_reason` carry the concrete detail.
-    //   - timed_out: an agent task aborted by its external deadline.
-    //   - stopped:   the task was explicitly cancelled via `TaskStop`
-    //                (`stop_reason` is the reason text supplied there).
-    // A task that ended on its own (completed / failed / lost) emits none
-    // of these so the absence is itself meaningful.
-    if (current.timedOut === true) {
-      lines.push('timed_out: true', 'terminal_reason: timed_out');
-    } else if (current.stopReason !== undefined) {
-      lines.push(`stop_reason: ${current.stopReason}`, 'terminal_reason: stopped');
-    }
-    lines.push(
-      `output_size_bytes: ${String(output.outputSizeBytes)}`,
-      `output_preview_bytes: ${String(output.previewBytes)}`,
-      `output_truncated: ${String(output.truncated)}`,
-    );
-    // The full, never-truncated log is readable from disk via the `Read`
-    // tool whenever it was persisted. Surface that guidance unconditionally
-    // — even when the preview already shows everything — so the model knows
-    // it can page the complete output. The hint text adapts to whether the
-    // preview was truncated. When no full log was persisted, say so instead.
-    if (output.fullOutputAvailable && output.outputPath !== undefined) {
-      lines.push('full_output_available: true', 'full_output_tool: Read');
-      lines.push(
-        output.truncated
-          ? `full_output_hint: Only the last ${String(OUTPUT_PREVIEW_BYTES)} bytes are shown ` +
-              'above. Use the Read tool with the output_path to page through the full log ' +
-              `(parameters: path, line_offset, n_lines; read about ${String(PAGING_HINT_LINES)} ` +
-              'lines per page).'
-          : 'full_output_hint: The preview above is the complete output. Use the Read tool ' +
-              'with the output_path if you need to re-read the full log later ' +
-              `(parameters: path, line_offset, n_lines; read about ${String(PAGING_HINT_LINES)} ` +
-              'lines per page).',
-      );
-    } else {
-      lines.push('full_output_available: false');
-    }
 
     // When the preview omits the head of the log, emit an explicit
     // banner just before the `[output]` marker so the model knows it is
     // looking at a tail, not the full output.
-    lines.push('');
     if (output.truncated) {
       lines.push(
         output.fullOutputAvailable && output.outputPath !== undefined

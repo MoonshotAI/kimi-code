@@ -21,6 +21,15 @@ const OPENAI_RESPONSES_DEVELOPER_ROLE_MODELS = new Set([
   'o4-mini',
 ]);
 
+// OpenAI models that document `xhigh` and keep `v1/chat/completions` enabled.
+// Pro/Codex xhigh models are Responses-only, so the Chat Completions adapter
+// must clamp them at `high`.
+const OPENAI_CHAT_COMPLETIONS_XHIGH_REASONING_MODELS = new Set([
+  'gpt-5.2',
+  'gpt-5.4',
+  'gpt-5.5',
+]);
+
 const OPENAI_VISION_TOOL_PREFIXES = [
   'gpt-4o',
   'gpt-4-turbo',
@@ -149,6 +158,10 @@ function normalizeModelName(modelName: string): string {
   return modelName.toLowerCase();
 }
 
+function modelIdLeaf(modelName: string): string {
+  return normalizeModelName(modelName).trim().split('/').at(-1) ?? '';
+}
+
 function hasPrefix(modelName: string, prefixes: readonly string[]): boolean {
   return prefixes.some((prefix) => modelName.startsWith(prefix));
 }
@@ -191,6 +204,10 @@ export function getGoogleGenAIModelCapability(modelName: string): ModelCapabilit
     return GEMINI_THINKING_MULTIMODAL_TOOL_CAPABILITY;
   }
   return GEMINI_MULTIMODAL_TOOL_CAPABILITY;
+}
+
+export function supportsOpenAIChatCompletionsXHighReasoning(modelName: string): boolean {
+  return OPENAI_CHAT_COMPLETIONS_XHIGH_REASONING_MODELS.has(modelIdLeaf(modelName));
 }
 
 export function usesOpenAIResponsesDeveloperRole(modelName: string): boolean {

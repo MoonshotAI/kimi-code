@@ -10,6 +10,12 @@ function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
 }
 
+// Collapse all whitespace runs so wrapped content can be matched against its
+// original (single-line) form without caring where the line break landed.
+function flatten(text: string): string {
+  return strip(text).replaceAll(/\s+/g, ' ').trim();
+}
+
 beforeAll(() => {
   chalk.level = 3;
 });
@@ -434,6 +440,97 @@ describe('QuestionDialogComponent', () => {
     dialog.handleInput('\u0005'); // Ctrl+E
     expect(planToggles).toBe(1);
     expect(collected).toEqual([]);
+  });
+
+  describe('long-content wrapping', () => {
+    const longQuestion =
+      'Please confirm whether this dangerous shell command should really be executed in the current workspace, including all of its side effects on the filesystem and the network.';
+    const longBody =
+      'This single-line body description is intentionally written without any embedded newlines so the renderer is forced to wrap it across multiple rows instead of truncating with an ellipsis.';
+    const longLabel =
+      'Apply changes to every file under the current workspace including nested submodules and lockfiles';
+    const longDescription =
+      'This option will rewrite history on the remote branch and force-push, so collaborators will need to re-sync their local checkouts before continuing any work.';
+
+    it('wraps the question text across multiple lines instead of truncating', () => {
+      const pending = makePending([
+        {
+          question: longQuestion,
+          multi_select: false,
+          options: [{ label: 'Yes' }, { label: 'No' }],
+        },
+      ]);
+      const { dialog } = makeDialog(pending);
+      const rendered = dialog.render(40);
+      const joined = rendered.map((line) => strip(line).trimEnd()).join('\n');
+      const flat = flatten(rendered.join('\n'));
+
+      expect(joined).not.toContain('…');
+      // Question text should span multiple physical lines.
+      expect(joined.split('\n').filter((l) => l.includes('?') || /Please|workspace|side/.test(l)).length).toBeGreaterThan(1);
+      // And the full content should still be reconstructable.
+      expect(flat).toContain(longQuestion);
+    });
+
+    it('wraps body lines that exceed the terminal width', () => {
+      const pending = makePending([
+        {
+          question: 'Q?',
+          body: longBody,
+          multi_select: false,
+          options: [{ label: 'A' }],
+        },
+      ]);
+      const { dialog } = makeDialog(pending);
+      const rendered = dialog.render(40);
+      const joined = rendered.map((line) => strip(line).trimEnd()).join('\n');
+      const flat = flatten(rendered.join('\n'));
+
+      expect(joined).not.toContain('…');
+      expect(flat).toContain(longBody);
+    });
+
+    it('wraps long option labels and descriptions', () => {
+      const pending = makePending([
+        {
+          question: 'Q?',
+          multi_select: false,
+          options: [
+            {
+              label: longLabel,
+              description: longDescription,
+            },
+          ],
+        },
+      ]);
+      const { dialog } = makeDialog(pending);
+      const rendered = dialog.render(40);
+      const joined = rendered.map((line) => strip(line).trimEnd()).join('\n');
+      const flat = flatten(rendered.join('\n'));
+
+      expect(joined).not.toContain('…');
+      expect(flat).toContain(longLabel);
+      expect(flat).toContain(longDescription);
+    });
+
+    it('wraps long questions in the submit-tab review', () => {
+      const pending = makePending([
+        {
+          question: longQuestion,
+          multi_select: false,
+          options: [{ label: 'Yes' }, { label: 'No' }],
+        },
+      ]);
+      const { dialog } = makeDialog(pending);
+      dialog.handleInput('1');
+      const rendered = dialog.render(40);
+      const joined = rendered.map((line) => strip(line).trimEnd()).join('\n');
+      const flat = flatten(rendered.join('\n'));
+
+      expect(joined).toContain('Review your answer before submit');
+      expect(joined).not.toContain('…');
+      expect(flat).toContain(longQuestion);
+    });
   });
 
 });

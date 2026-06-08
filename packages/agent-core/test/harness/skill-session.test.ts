@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join } from 'pathe';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -100,7 +100,7 @@ describe('HarnessAPI session skills', () => {
     expect(JSON.stringify(skills)).not.toContain('Your tool list contains one synthetic tool');
   });
 
-  it('uses the explicit core home as user skill home instead of the process home', async () => {
+  it('resolves user skills from the OS home directory, not from the kimi home', async () => {
     const processHome = join(tmp, 'process-home');
     vi.stubEnv('HOME', processHome);
     await writeUserSkill(processHome, 'real-home-only', 'Real home skill');
@@ -110,11 +110,11 @@ describe('HarnessAPI session skills', () => {
 
     const names = new Set((await rpc.listSkills({ sessionId: created.id })).map((skill) => skill.name));
 
-    expect(names.has('sandbox-only')).toBe(true);
-    expect(names.has('real-home-only')).toBe(false);
+    expect(names.has('real-home-only')).toBe(true);
+    expect(names.has('sandbox-only')).toBe(false);
   });
 
-  it('uses KIMI_CODE_HOME as user skill home when core home comes from env', async () => {
+  it('resolves user skills from the OS home directory even when KIMI_CODE_HOME is set', async () => {
     const processHome = join(tmp, 'env-process-home');
     vi.stubEnv('HOME', processHome);
     vi.stubEnv('KIMI_CODE_HOME', homeDir);
@@ -125,8 +125,8 @@ describe('HarnessAPI session skills', () => {
 
     const names = new Set((await rpc.listSkills({ sessionId: created.id })).map((skill) => skill.name));
 
-    expect(names.has('env-sandbox-only')).toBe(true);
-    expect(names.has('env-real-home-only')).toBe(false);
+    expect(names.has('env-real-home-only')).toBe(true);
+    expect(names.has('env-sandbox-only')).toBe(false);
   });
 
   it('activates an inline skill through core and records display origin metadata', async () => {
@@ -184,7 +184,9 @@ describe('HarnessAPI session skills', () => {
     const records = await readMainWire(created.sessionDir);
     const prompt = records.find((record) => record['type'] === 'turn.prompt');
     const userMessage = records.find((record) => record['type'] === 'context.append_message');
-    const expectedPrompt = 'Review the requested file.\n\nARGUMENTS: src/app.ts';
+    const expectedPrompt =
+      '<system-reminder>\n<kimi-skill-loaded name="phase-one-review" args="src/app.ts">\n' +
+      'Review the requested file.\n\nARGUMENTS: src/app.ts\n</kimi-skill-loaded>\n</system-reminder>';
     expect(prompt).toMatchObject({
       type: 'turn.prompt',
       input: [{ type: 'text', text: expectedPrompt }],
@@ -264,11 +266,15 @@ describe('HarnessAPI session skills', () => {
     const prompt = records.find((record) => record['type'] === 'turn.prompt');
     const skillDir = await realpath(join(workDir, '.kimi-code', 'skills', 'templated-review'));
     const expectedPrompt = [
+      '<system-reminder>',
+      '<kimi-skill-loaded name="templated-review" args="&quot;src/app.ts&quot; careful">',
       'Target: src/app.ts',
       'Mode: careful',
       'Raw: "src/app.ts" careful',
       `Dir: ${skillDir}`,
       'Session: ses_skill_template',
+      '</kimi-skill-loaded>',
+      '</system-reminder>',
     ].join('\n');
     expect(prompt).toMatchObject({
       type: 'turn.prompt',
@@ -354,7 +360,7 @@ describe('HarnessAPI session skills', () => {
         content: [
           {
             type: 'text',
-            text: 'Review the requested file.\n\nARGUMENTS: src/app.ts',
+            text: '<system-reminder>\n<kimi-skill-loaded name="phase-one-review" args="src/app.ts">\nReview the requested file.\n\nARGUMENTS: src/app.ts\n</kimi-skill-loaded>\n</system-reminder>',
           },
         ],
         origin: {

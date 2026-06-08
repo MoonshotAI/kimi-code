@@ -1,8 +1,8 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join } from 'pathe';
 
-import { localKaos } from '@moonshot-ai/kaos';
+import { testKaos } from '../fixtures/test-kaos';
 import type { ToolCall } from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,8 +13,10 @@ import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
 import { collectGitContext } from '../../src/session/git-context';
 import { SessionSubagentHost } from '../../src/session/subagent-host';
-import { testAgent } from '../agent/harness/agent';
+import { abortError, userCancellationReason } from '../../src/utils/abort';
+import { testAgent, type AgentTestContext } from '../agent/harness/agent';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
+import { executeTool } from '../tools/fixtures/execute-tool';
 
 // Git context collection is exercised in git-context.test.ts; here it is
 // mocked so subagent-host tests stay deterministic and assert only the
@@ -24,13 +26,6 @@ vi.mock('../../src/session/git-context', () => ({
 }));
 
 const signal = new AbortController().signal;
-const TEST_OS_ENV = {
-  osKind: 'Linux',
-  osArch: 'arm64',
-  osVersion: 'test',
-  shellPath: '/bin/bash',
-  shellName: 'bash',
-} as const;
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -146,13 +141,11 @@ describe('SessionSubagentHost', () => {
     const parent = testAgent({ telemetry: { track: telemetryTrack } });
     parent.configure();
     await parent.rpc.setPermission({ mode: 'yolo' });
-    parent.agent.permission.rules = [
-      {
-        decision: 'allow',
-        scope: 'session-runtime',
-        pattern: 'Read',
-      },
-    ];
+    parent.agent.permission.rules.splice(0, parent.agent.permission.rules.length, {
+      decision: 'allow',
+      scope: 'session-runtime',
+      pattern: 'Read',
+    });
     parent.newEvents();
 
     const child = testAgent({
@@ -229,6 +222,62 @@ describe('SessionSubagentHost', () => {
     ]);
   });
 
+  it('inherits active parent user tools when spawning a subagent', async () => {
+    const parent = testAgent();
+    parent.configure();
+    await parent.rpc.registerTool(lookupToolRegistration());
+    parent.newEvents();
+
+    const summary =
+      'Investigated the delegated task thoroughly, used the inherited custom lookup surface where appropriate, and returned a detailed summary that lets the parent agent continue without repeating the work. '.repeat(
+        2,
+      );
+    const child = testAgent();
+    child.mockNextResponse({
+      type: 'text',
+      text: summary,
+    });
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await host.spawn('coder', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Use the available lookup tool',
+      description: 'Use lookup',
+      runInBackground: false,
+      signal,
+    });
+
+    await expect(handle.completion).resolves.toMatchObject({
+      result: summary.trim(),
+    });
+    expect(child.llmCalls[0]?.tools.map((tool) => tool.name)).toContain('Lookup');
+    expect(child.agent.tools.data()).toContainEqual({
+      name: 'Lookup',
+      description: 'Look up a short test value.',
+      active: true,
+      source: 'user',
+    });
+
+    const lookupTool = child.agent.tools.loopTools.find((tool) => tool.name === 'Lookup');
+    expect(lookupTool).toBeDefined();
+
+    const execution = executeTool(lookupTool!, {
+      turnId: '0',
+      toolCallId: 'call_lookup',
+      args: { query: 'moon' },
+      signal,
+    });
+    const routedTo = await Promise.race([
+      child.untilToolCall({ output: 'moon-result' }).then(() => 'child'),
+      parent.untilToolCall({ output: 'moon-result' }).then(() => 'parent'),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 50)),
+    ]);
+
+    expect(routedTo).toBe('child');
+    await expect(execution).resolves.toMatchObject({ output: 'moon-result' });
+  });
+
   it('falls back to bundled subagent profiles when the parent profile is missing', async () => {
     const parent = testAgent();
     parent.configure();
@@ -276,6 +325,7 @@ describe('SessionSubagentHost', () => {
     const host = new SessionSubagentHost(
       {
         agents: new Map([['main', parent.agent]]),
+        ensureAgentResumed: vi.fn(async () => parent.agent),
         createAgent,
       } as never,
       'main',
@@ -290,6 +340,31 @@ describe('SessionSubagentHost', () => {
         signal,
       }),
     ).rejects.toThrow('Subagent profile "missing" was not found');
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('rejects unavailable subagent profiles even when a same-named fork label exists', async () => {
+    const parent = testAgent();
+    parent.configure();
+    const createAgent = vi.fn();
+    const host = new SessionSubagentHost(
+      {
+        agents: new Map([['main', parent.agent]]),
+        ensureAgentResumed: vi.fn(async () => parent.agent),
+        createAgent,
+      } as never,
+      'main',
+    );
+
+    await expect(
+      host.spawn('btw', {
+        parentToolCallId: 'call_agent',
+        prompt: 'Answer a side question',
+        description: 'Side question',
+        runInBackground: false,
+        signal,
+      }),
+    ).rejects.toThrow('Subagent profile "btw" was not found');
     expect(createAgent).not.toHaveBeenCalled();
   });
 
@@ -365,6 +440,69 @@ describe('SessionSubagentHost', () => {
         args: expect.objectContaining({ turnId: 0 }),
       }),
     );
+  });
+
+  it("tells a cancelled subagent's in-flight tools the user interrupted them", async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.newEvents();
+
+    const controller = new AbortController();
+    const child = testAgent();
+    child.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await host.spawn('explore', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Keep working',
+      description: 'Long task',
+      runInBackground: false,
+      signal: controller.signal,
+    });
+
+    await child.untilApprovalRequest();
+    // The parent turn signal aborts with a user-cancellation reason; linkAbortSignal
+    // forwards it to the child exactly as Turn.cancel does on a real ESC.
+    controller.abort(userCancellationReason());
+    await expect(handle.completion).rejects.toThrow();
+    await child.untilTurnEnd();
+
+    const output = childBashToolResultOutput(child);
+    expect(output).toContain('manually interrupted');
+    expect(output).toContain('not a system error');
+  });
+
+  it('does not mislabel a non-user subagent abort (e.g. a deadline) as a user interruption', async () => {
+    const parent = testAgent();
+    parent.configure();
+    parent.newEvents();
+
+    const controller = new AbortController();
+    const child = testAgent();
+    child.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    const session = fakeSession(parent.agent, child.agent);
+    const host = new SessionSubagentHost(session, 'main');
+
+    const handle = await host.spawn('explore', {
+      parentToolCallId: 'call_agent',
+      prompt: 'Keep working',
+      description: 'Long task',
+      runInBackground: false,
+      signal: controller.signal,
+    });
+
+    await child.untilApprovalRequest();
+    // A generic (non-user) abort — e.g. a foreground subagent's deadline timeout
+    // propagating through waitForCurrentTurn — must NOT be reported to the
+    // child's tools as a deliberate user interruption.
+    controller.abort(abortError());
+    await expect(handle.completion).rejects.toThrow();
+    await child.untilTurnEnd();
+
+    const output = childBashToolResultOutput(child);
+    expect(output).toBe('Tool "Bash" was aborted');
+    expect(output).not.toContain('manually interrupted');
   });
 
   it('cancelAll leaves background children running until their task signal aborts', async () => {
@@ -591,6 +729,7 @@ describe('SessionSubagentHost', () => {
       type: 'text',
       text: 'Resumed the subagent from its earlier context and carried the task through to completion, then reported a full and detailed technical summary so the parent agent can continue without repeating prior work.',
     });
+    vi.mocked(collectGitContext).mockReset().mockResolvedValue('');
 
     const session = fakeSession(parent.agent, child.agent, {
       'agent-0': {
@@ -624,7 +763,8 @@ describe('SessionSubagentHost', () => {
       system: "explore prompt"
       tools: Read
       messages:
-        user: text "Earlier context\\n\\nContinue from context"
+        user: text "Earlier context"
+        user: text "Continue from context"
     `);
     expect(parent.allEvents).toContainEqual(
       expect.objectContaining({
@@ -691,6 +831,7 @@ describe('Session resume permission parent chain', () => {
     const workDir = join(dir, 'work');
     const mainDir = join(sessionDir, 'agents', 'main');
     const childDir = join(sessionDir, 'agents', 'agent-0');
+    const sessionApprovalRule = 'Bash(printf parent)';
     await mkdir(workDir, { recursive: true });
     await mkdir(sessionDir, { recursive: true });
     await writeFile(
@@ -731,6 +872,7 @@ describe('Session resume permission parent chain', () => {
         toolCallId: 'call_parent_bash',
         toolName: 'Bash',
         action: 'run command',
+        sessionApprovalRule,
         result: {
           decision: 'approved',
           scope: 'session',
@@ -741,9 +883,8 @@ describe('Session resume permission parent chain', () => {
     await writeWire(childDir, []);
 
     const session = new Session({
-      runtime: { kaos: localKaos, osEnv: TEST_OS_ENV },
+      kaos: testKaos.withCwd(workDir),
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc(),
       initializeMainAgent: false,
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
@@ -752,15 +893,11 @@ describe('Session resume permission parent chain', () => {
     try {
       await session.resume();
 
-      const child = session.agents.get('agent-0');
+      const child = await session.ensureAgentResumed('agent-0');
       expect(child?.permission.mode).toBe('yolo');
       expect(child?.permission.rules).toEqual([]);
-      expect(child?.permission.data().rules).toContainEqual({
-        decision: 'allow',
-        scope: 'session-runtime',
-        pattern: 'Bash',
-        reason: 'approve_for_session: run command',
-      });
+      expect(child?.permission.data().rules).toEqual([]);
+      expect(child?.permission.sessionApprovalRulePatterns).toContain(sessionApprovalRule);
     } finally {
       await session.close();
     }
@@ -797,22 +934,13 @@ describe('Session.createAgent', () => {
     });
     const session = new Session({
       id: 'test-subagent-remote-context',
-      runtime: {
-        kaos,
-        osEnv: {
-          osKind: 'Linux',
-          osArch: 'arm64',
-          osVersion: 'test',
-          shellPath: '/bin/bash',
-          shellName: 'bash',
-        },
-      },
+      kaos,
       homedir: '/tmp/kimi-session',
       rpc: createSessionRpc(),
       initializeMainAgent: false,
     });
 
-    const created = await session.createAgent({ type: 'main' }, contextProfile());
+    const created = await session.createAgent({ type: 'main' }, { profile: contextProfile() });
 
     expect(created.agent.config.systemPrompt).toContain('cwd=/remote/project');
     expect(created.agent.config.systemPrompt).toContain('listing=└── README.md');
@@ -871,23 +999,13 @@ describe('Session.createAgent', () => {
     });
     const session = new Session({
       id: 'test-subagent-agents-md',
-      runtime: {
-        kaos,
-        osEnv: {
-          osKind: 'Linux',
-          osArch: 'arm64',
-          osVersion: 'test',
-          shellPath: '/bin/bash',
-          shellName: 'bash',
-        },
-      },
+      kaos: kaos.withCwd(workDir),
       homedir: '/tmp/kimi-session',
-      cwd: workDir,
       rpc: createSessionRpc(),
       initializeMainAgent: false,
     });
 
-    const created = await session.createAgent({ type: 'main' }, contextProfile());
+    const created = await session.createAgent({ type: 'main' }, { profile: contextProfile() });
 
     expect(created.agent.config.systemPrompt).toContain('cwd=/repo/packages/app');
     expect(created.agent.config.systemPrompt).toContain('listing=├── src/');
@@ -905,22 +1023,59 @@ describe('Session.createAgent', () => {
     expect(created.agent.config.systemPrompt).toContain('leaf instructions');
   });
 
+  it('inherits the parent agent cwd when creating a subagent', async () => {
+    const sessionWorkDir = '/session/work';
+    const parentWorkDir = '/parent/work';
+
+    const kaos = createFakeKaos({
+      mkdir: vi.fn().mockResolvedValue(undefined),
+      writeText: vi.fn().mockResolvedValue(0),
+      stat: vi.fn(async (path: string) => {
+        if ([sessionWorkDir, parentWorkDir].includes(path)) {
+          return stat('dir');
+        }
+        throw new Error(`ENOENT ${path}`);
+      }),
+      // oxlint-disable-next-line require-yield
+      iterdir: async function* () {
+        return;
+      },
+      getcwd: () => sessionWorkDir,
+    });
+
+    const session = new Session({
+      id: 'test-subagent-parent-cwd',
+      kaos,
+      homedir: '/tmp/kimi-session',
+      rpc: createSessionRpc(),
+      initializeMainAgent: false,
+    });
+
+    // Create a parent agent — it should start at the session workDir.
+    const parent = await session.createAgent({ type: 'main' }, { profile: contextProfile() });
+    expect(parent.agent.config.systemPrompt).toContain(`cwd=${sessionWorkDir}`);
+
+    // Move the parent agent to a different cwd (e.g. after a config.update replay).
+    parent.agent.config.update({ cwd: parentWorkDir });
+
+    // Create a subagent from the moved parent.
+    const child = await session.createAgent(
+      { type: 'sub' },
+      { profile: contextProfile(), parentAgentId: parent.id },
+    );
+
+    // The subagent should inherit the parent's current cwd, not the session default.
+    expect(child.agent.config.systemPrompt).toContain(`cwd=${parentWorkDir}`);
+    expect(child.agent.config.systemPrompt).not.toContain(`cwd=${sessionWorkDir}`);
+  });
+
   it('allocates the next unused generated agent id', async () => {
     const session = new Session({
       id: 'test-subagent-agent-id',
-      runtime: {
-        kaos: createFakeKaos({
-          mkdir: vi.fn().mockResolvedValue(undefined),
-          writeText: vi.fn().mockResolvedValue(0),
-        }),
-        osEnv: {
-          osKind: 'Linux',
-          osArch: 'arm64',
-          osVersion: 'test',
-          shellPath: '/bin/bash',
-          shellName: 'bash',
-        },
-      },
+      kaos: createFakeKaos({
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        writeText: vi.fn().mockResolvedValue(0),
+      }),
       homedir: '/tmp/kimi-session',
       rpc: createSessionRpc(),
       initializeMainAgent: false,
@@ -943,13 +1098,10 @@ describe('Session.createAgent', () => {
 
   it('shares the session McpConnectionManager with sub and main agents', async () => {
     const session = new Session({
-      runtime: {
-        kaos: createFakeKaos({
-          mkdir: vi.fn().mockResolvedValue(undefined),
-          writeText: vi.fn().mockResolvedValue(0),
-        }),
-        osEnv: TEST_OS_ENV,
-      },
+      kaos: createFakeKaos({
+        mkdir: vi.fn().mockResolvedValue(undefined),
+        writeText: vi.fn().mockResolvedValue(0),
+      }),
       homedir: '/tmp/kimi-session',
       rpc: createSessionRpc(),
       initializeMainAgent: false,
@@ -958,7 +1110,7 @@ describe('Session.createAgent', () => {
     const main = await session.createAgent({ type: 'main' });
     expect(main.agent.mcp).toBe(session.mcp);
 
-    const sub = await session.createAgent({ type: 'sub' }, undefined, main.id);
+    const sub = await session.createAgent({ type: 'sub' }, { parentAgentId: main.id });
     expect(sub.agent.mcp).toBe(session.mcp);
   });
 });
@@ -983,20 +1135,30 @@ function fakeSession(
       custom: {},
     },
     writeMetadata: vi.fn(async () => {}),
+    getReadyAgent: vi.fn((id: string) => agents.get(id)),
+    ensureAgentResumed: vi.fn(async (id: string) => {
+      const agent = agents.get(id);
+      if (agent === undefined) {
+        throw new Error(`Agent "${id}" was not found`);
+      }
+      return agent;
+    }),
     createAgent: vi.fn(
       async (
         config: Parameters<Session['createAgent']>[0],
-        profile?: ResolvedAgentProfile,
-        parentAgentId?: string,
+        options: Parameters<Session['createAgent']>[1] = {},
       ) => {
         agents.set('agent-0', child);
-        metadataAgents['agent-0'] = {
-          homedir: '/tmp/kimi-session/agents/agent-0',
-          type: config.type ?? 'main',
-          parentAgentId: parentAgentId ?? null,
-        };
-        if (profile !== undefined) {
-          child.useProfile(profile);
+        const parentAgentId = options.parentAgentId ?? null;
+        if (options.persistMetadata !== false) {
+          metadataAgents['agent-0'] = {
+            homedir: '/tmp/kimi-session/agents/agent-0',
+            type: config.type ?? 'main',
+            parentAgentId,
+          };
+        }
+        if (options.profile !== undefined) {
+          child.useProfile(options.profile);
         }
         return { id: 'agent-0', agent: child };
       },
@@ -1014,6 +1176,21 @@ function contextProfile(): ResolvedAgentProfile {
         `agents=${context.agentsMd ?? ''}`,
       ].join('\n'),
     tools: [],
+  };
+}
+
+function lookupToolRegistration() {
+  return {
+    name: 'Lookup',
+    description: 'Look up a short test value.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
   };
 }
 
@@ -1063,6 +1240,22 @@ async function writeWire(homedir: string, records: readonly Record<string, unkno
         ];
   const text = wireRecords.map((record) => JSON.stringify(record)).join('\n');
   await writeFile(join(homedir, 'wire.jsonl'), text.length === 0 ? '' : `${text}\n`, 'utf-8');
+}
+
+function childBashToolResultOutput(child: AgentTestContext): string | undefined {
+  for (const entry of child.allEvents) {
+    if (entry.type !== '[wire]' || entry.event !== 'context.append_loop_event') continue;
+    const loopEvent = (
+      entry.args as {
+        event?: { type?: string; toolCallId?: string; result?: { output?: unknown } };
+      }
+    ).event;
+    if (loopEvent?.type === 'tool.result' && loopEvent.toolCallId === 'call_bash') {
+      const output = loopEvent.result?.output;
+      return typeof output === 'string' ? output : undefined;
+    }
+  }
+  return undefined;
 }
 
 function bashCall(): ToolCall {

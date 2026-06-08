@@ -5,7 +5,7 @@ import { basename, dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { KimiHarness } from '#/index';
+import { createKimiHarness } from '#/index';
 import type { KimiError } from '#/index';
 
 import {
@@ -72,7 +72,7 @@ describe('SessionStore.list', () => {
     expect(indexRaw).toContain(`"workDir":"${workDir}"`);
   });
 
-  it('forks a session directory and rewrites fork metadata', async () => {
+  it('forks a session directory, rewrites metadata, and drops reserved goal state', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const store = new SessionStore(homeDir);
@@ -81,6 +81,11 @@ describe('SessionStore.list', () => {
     const sourceAgentDir = join(source.sessionDir, 'agents', 'main');
     await mkdir(sourceAgentDir, { recursive: true });
     await writeFile(join(sourceAgentDir, 'wire.jsonl'), '{"type":"context.clear"}\n', 'utf-8');
+    await writeFile(
+      join(source.sessionDir, 'upcoming-goals.json'),
+      `${JSON.stringify({ version: 1, goals: [{ id: 'queued-1', objective: 'source queued goal' }] })}\n`,
+      'utf-8',
+    );
     await writeSessionState(source.sessionDir, {
       createdAt: '2030-01-01T00:00:00.000Z',
       updatedAt: '2030-01-01T00:00:00.000Z',
@@ -94,6 +99,14 @@ describe('SessionStore.list', () => {
       },
       custom: {
         source: true,
+        goal: {
+          goalId: 'source-goal',
+          objective: 'source objective',
+          status: 'active',
+          turnsUsed: 0,
+          tokensUsed: 0,
+          budgetLimits: {},
+        },
       },
     });
 
@@ -101,7 +114,17 @@ describe('SessionStore.list', () => {
       sourceId: source.id,
       targetId: 'ses_fork_child',
       title: 'Fork title',
-      metadata: { child: true },
+      metadata: {
+        child: true,
+        goal: {
+          goalId: 'metadata-goal',
+          objective: 'metadata objective',
+          status: 'active',
+          turnsUsed: 0,
+          tokensUsed: 0,
+          budgetLimits: {},
+        },
+      },
     });
 
     const forkState = JSON.parse(await readFile(join(fork.sessionDir, 'state.json'), 'utf-8')) as {
@@ -116,6 +139,9 @@ describe('SessionStore.list', () => {
     expect(forkState.forkedFrom).toBe(source.id);
     expect(forkState.agents?.main?.homedir).toBe(join(fork.sessionDir, 'agents', 'main'));
     expect(forkState.custom).toMatchObject({ source: true, child: true });
+    expect(forkState.custom).not.toHaveProperty('goal');
+    expect(existsSync(join(fork.sessionDir, 'upcoming-goals.json'))).toBe(false);
+    expect(existsSync(join(source.sessionDir, 'upcoming-goals.json'))).toBe(true);
     await expect(readFile(join(fork.sessionDir, 'agents', 'main', 'wire.jsonl'), 'utf-8')).resolves.toBe(
       '{"type":"context.clear"}\n',
     );
@@ -142,6 +168,58 @@ describe('SessionStore.list', () => {
 
     const sessions = await store.list({ workDir });
     expect(sessions.map((session) => session.id)).toEqual(['ses_list_a']);
+  });
+
+  it('uses the workDir bucket before the session index when sessionId is provided', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const store = new SessionStore(homeDir);
+
+    const local = await store.create({ id: 'ses_bucket_hit', workDir });
+    await rm(sessionIndexPath(homeDir), { force: true });
+
+    const sessions = await store.list({ workDir, sessionId: local.id });
+    expect(sessions.map((session) => session.id)).toEqual([local.id]);
+  });
+
+  it('falls back to the session index when a workDir-scoped sessionId is not in that bucket', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const otherWorkDir = await makeTempDir();
+    const store = new SessionStore(homeDir);
+
+    await store.create({ id: 'ses_local', workDir });
+    const other = await store.create({ id: 'ses_index_fallback', workDir: otherWorkDir });
+
+    const sessions = await store.list({ workDir, sessionId: other.id });
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      id: other.id,
+      workDir: otherWorkDir,
+    });
+  });
+
+  it('lists every indexed session when no filters are provided', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const otherWorkDir = await makeTempDir();
+    const store = new SessionStore(homeDir);
+
+    await store.create({ id: 'ses_all_a', workDir });
+    await store.create({ id: 'ses_all_b', workDir: otherWorkDir });
+
+    const sessions = await store.list();
+    expect(sessions.map((session) => session.id).toSorted()).toEqual([
+      'ses_all_a',
+      'ses_all_b',
+    ]);
+  });
+
+  it('returns an empty array when a sessionId filter is unknown', async () => {
+    const homeDir = await makeTempDir();
+    const store = new SessionStore(homeDir);
+
+    await expect(store.list({ sessionId: 'ses_missing' })).resolves.toEqual([]);
   });
 
   it('reads title from customTitle before title', async () => {
@@ -221,7 +299,7 @@ describe('SessionStore.list', () => {
 describe('KimiHarness.listSessions', () => {
   it('rejects whitespace-only workDir with request.work_dir_required', async () => {
     const homeDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -236,18 +314,24 @@ describe('KimiHarness.listSessions', () => {
     }
   });
 
-  it('rejects undefined payload as KimiError(internal)', async () => {
+  it('lists all sessions when no payload is provided', async () => {
     const homeDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const workDir = await makeTempDir();
+    const otherWorkDir = await makeTempDir();
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
 
     try {
-      await expect(harness.listSessions(undefined as never)).rejects.toMatchObject({
-        name: 'KimiError',
-        code: 'internal',
-      } satisfies Partial<KimiError>);
+      await harness.createSession({ id: 'ses_harness_all_a', workDir });
+      await harness.createSession({ id: 'ses_harness_all_b', workDir: otherWorkDir });
+
+      const sessions = await harness.listSessions();
+      expect(sessions.map((session) => session.id).toSorted()).toEqual([
+        'ses_harness_all_a',
+        'ses_harness_all_b',
+      ]);
     } finally {
       await harness.close();
     }
@@ -256,7 +340,7 @@ describe('KimiHarness.listSessions', () => {
   it('resolves relative workDir inputs before filtering', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -277,7 +361,7 @@ describe('KimiHarness.listSessions', () => {
   it('lists persisted sessions after the active Session has been closed', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });

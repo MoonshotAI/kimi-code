@@ -1,6 +1,7 @@
-import { HOOK_EVENT_TYPES } from '#/agent/hooks/types';
-import { parsePattern } from '#/agent/permission/parse-pattern';
+import { HOOK_EVENT_TYPES } from '../session/hooks/types';
+import { parsePattern } from '#/agent/permission/matches-rule';
 import { ErrorCodes, KimiError } from '#/errors';
+import { FLAG_DEFINITIONS, type FlagId } from '#/flags/registry';
 import { z } from 'zod';
 
 export const ProviderTypeSchema = z.enum([
@@ -17,6 +18,7 @@ export type ProviderType = z.infer<typeof ProviderTypeSchema>;
 export const OAuthRefSchema = z.object({
   storage: z.enum(['file', 'keyring']),
   key: z.string().min(1),
+  oauthHost: z.string().min(1).optional(),
 });
 
 export type OAuthRef = z.infer<typeof OAuthRefSchema>;
@@ -31,6 +33,7 @@ export const ProviderConfigSchema = z.object({
   oauth: OAuthRefSchema.optional(),
   env: StringRecordSchema.optional(),
   customHeaders: StringRecordSchema.optional(),
+  source: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
@@ -42,6 +45,11 @@ export const ModelAliasSchema = z.object({
   maxOutputSize: z.number().int().min(1).optional(),
   capabilities: z.array(z.string()).optional(),
   displayName: z.string().optional(),
+  reasoningKey: z.string().optional(),
+  // Explicitly declare adaptive-thinking support, overriding the kosong
+  // model-name version inference. Needed for custom-named Anthropic endpoints
+  // whose model name does not encode a parseable Claude version.
+  adaptiveThinking: z.boolean().optional(),
 });
 
 export type ModelAlias = z.infer<typeof ModelAliasSchema>;
@@ -79,7 +87,7 @@ export const PermissionConfigSchema = z.object({
 export type PermissionConfig = z.infer<typeof PermissionConfigSchema>;
 
 export const LoopControlSchema = z.object({
-  maxStepsPerTurn: z.number().int().min(1).optional(),
+  maxStepsPerTurn: z.number().int().min(0).optional(),
   maxRetriesPerStep: z.number().int().min(0).optional(),
   maxRalphIterations: z.number().int().min(-1).optional(),
   reservedContextSize: z.number().int().min(0).optional(),
@@ -92,11 +100,27 @@ export const BackgroundConfigSchema = z.object({
   maxRunningTasks: z.number().int().min(1).optional(),
   keepAliveOnExit: z.boolean().optional(),
   killGracePeriodMs: z.number().int().min(0).optional(),
-  agentTaskTimeoutS: z.number().int().min(1).optional(),
   printWaitCeilingS: z.number().int().min(1).optional(),
 });
 
 export type BackgroundConfig = z.infer<typeof BackgroundConfigSchema>;
+
+const ExperimentalFlagIdSet = new Set<string>(FLAG_DEFINITIONS.map((def) => def.id));
+
+export const ExperimentalConfigSchema = z
+  .record(z.string(), z.boolean())
+  .superRefine((config, ctx) => {
+    for (const key of Object.keys(config)) {
+      if (ExperimentalFlagIdSet.has(key)) continue;
+      ctx.addIssue({
+        code: 'custom',
+        path: [key],
+        message: `Unknown experimental feature "${key}".`,
+      });
+    }
+  }) as z.ZodType<Partial<Record<FlagId, boolean>>>;
+
+export type ExperimentalConfig = z.infer<typeof ExperimentalConfigSchema>;
 
 export const HookDefSchema = z
   .object({
@@ -193,6 +217,7 @@ export const KimiConfigSchema = z.object({
   extraSkillDirs: z.array(z.string()).optional(),
   loopControl: LoopControlSchema.optional(),
   background: BackgroundConfigSchema.optional(),
+  experimental: ExperimentalConfigSchema.optional(),
   telemetry: z.boolean().optional(),
   raw: z.record(z.string(), z.unknown()).optional(),
 });
@@ -205,6 +230,7 @@ const ThinkingConfigPatchSchema = ThinkingConfigSchema.partial();
 const PermissionConfigPatchSchema = PermissionConfigSchema.partial();
 const LoopControlPatchSchema = LoopControlSchema.partial();
 const BackgroundConfigPatchSchema = BackgroundConfigSchema.partial();
+const ExperimentalConfigPatchSchema = ExperimentalConfigSchema;
 const MoonshotServiceConfigPatchSchema = MoonshotServiceConfigSchema.partial();
 const ServicesConfigPatchSchema = z.object({
   moonshotSearch: MoonshotServiceConfigPatchSchema.optional(),
@@ -230,6 +256,7 @@ export const KimiConfigPatchSchema = z
     extraSkillDirs: z.array(z.string()).optional(),
     loopControl: LoopControlPatchSchema.optional(),
     background: BackgroundConfigPatchSchema.optional(),
+    experimental: ExperimentalConfigPatchSchema.optional(),
     telemetry: z.boolean().optional(),
   })
   .strict();

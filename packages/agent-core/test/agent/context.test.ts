@@ -1,11 +1,10 @@
 import type { Message } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
-import { sliceCompleteMessages } from '../../src/agent/context/complete-slice';
 import { renderNotificationXml } from '../../src/agent/context/notification-xml';
 import { project } from '../../src/agent/context/projector';
+import type { ContextMessage } from '../../src/agent/context/types';
 import { estimateTokensForMessages } from '../../src/utils/tokens';
-import type { TestAgentContext } from './harness/agent';
 import { testAgent } from './harness/agent';
 
 describe('Agent context', () => {
@@ -81,7 +80,7 @@ describe('Agent context', () => {
     ]);
   });
 
-  it('keeps hook result transcript messages out of LLM projection', async () => {
+  it('projects hook result messages into LLM projection', async () => {
     const ctx = testAgent();
     ctx.configure();
 
@@ -119,19 +118,43 @@ describe('Agent context', () => {
     expect(ctx.agent.context.messages).toEqual([
       {
         role: 'user',
-        content: [{ type: 'text', text: 'hooked input\n\ncontinue from stop hook' }],
+        content: [{ type: 'text', text: 'hooked input' }],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nhook response\n</hook_result>',
+          },
+        ],
+        toolCalls: [],
+      },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nblocked reason\n</hook_result>',
+          },
+        ],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'continue from stop hook' }],
         toolCalls: [],
       },
     ]);
     await ctx.expectResumeMatches();
   });
 
-  it('keeps blocked UserPromptSubmit prompts out of LLM projection', async () => {
+  it('projects blocked UserPromptSubmit prompts into LLM projection', async () => {
     const ctx = testAgent();
     ctx.configure();
 
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'blocked prompt' }]);
-    ctx.agent.context.markLastUserPromptBlocked('UserPromptSubmit');
     ctx.agent.context.appendMessage({
       role: 'assistant',
       content: [
@@ -149,6 +172,21 @@ describe('Agent context', () => {
     expect(ctx.agent.context.messages).toEqual([
       {
         role: 'user',
+        content: [{ type: 'text', text: 'blocked prompt' }],
+        toolCalls: [],
+      },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nblocked reason\n</hook_result>',
+          },
+        ],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
         content: [{ type: 'text', text: 'safe followup' }],
         toolCalls: [],
       },
@@ -159,8 +197,8 @@ describe('Agent context', () => {
   it('projects user, assistant, tool call, and tool result records into LLM history', async () => {
     const ctx = testAgent();
     ctx.configure();
-    appendAssistantText(ctx, 1, 'earlier assistant');
-    appendToolExchange(ctx);
+    ctx.appendAssistantText(1, 'earlier assistant');
+    ctx.appendToolExchange();
 
     ctx.mockNextResponse({ type: 'text', text: 'done' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
@@ -302,7 +340,7 @@ describe('Agent context', () => {
     ctx.configure();
 
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'old prompt' }]);
-    appendPartiallyResolvedParallelToolExchange(ctx);
+    ctx.appendContextPartiallyResolvedParallelToolExchange();
 
     ctx.agent.context.appendSystemReminder('first reminder', {
       kind: 'injection',
@@ -403,14 +441,14 @@ describe('Agent context', () => {
   it('includes new user messages as pending until the next usage update', () => {
     const ctx = testAgent();
     ctx.configure();
-    appendAssistantTextWithUsage(ctx, 1, 'previous answer', 1_000);
+    ctx.appendAssistantTextWithUsage(1, 'previous answer', 1_000);
     expect(ctx.agent.context.tokenCountWithPending).toBe(1_000);
 
     ctx.agent.context.appendUserMessage([{ type: 'text', text: 'next user prompt'.repeat(20) }]);
 
     const pendingMessages = ctx.agent.context.history.slice(-1);
     expect(ctx.agent.context.tokenCountWithPending).toBe(
-      ctx.agent.context.tokenCount + estimateTokensForMessages([...pendingMessages]),
+      ctx.agent.context.tokenCount + estimateTokensForMessages(pendingMessages),
     );
   });
 
@@ -465,30 +503,153 @@ describe('Agent context', () => {
     const pendingMessages = ctx.agent.context.history.slice(-1);
     expect(ctx.agent.context.tokenCount).toBe(1_280);
     expect(ctx.agent.context.tokenCountWithPending).toBe(
-      1_280 + estimateTokensForMessages([...pendingMessages]),
+      1_280 + estimateTokensForMessages(pendingMessages),
     );
   });
 
-  it('normalizes message slice ends around tool exchanges', () => {
-    const messages: Message[] = [
-      userMessage('old prompt'),
-      assistantMessage('old answer'),
-      userMessage('run both tools'),
-      assistantToolCallMessage(['call_one', 'call_two']),
-      toolMessage('call_one', 'one result'),
-      toolMessage('call_two', 'two result'),
-      userMessage('recent prompt'),
-    ];
+  it('undo only counts real user prompts, skipping background notifications', () => {
+    const ctx = testAgent();
+    ctx.configure();
 
-    expect(sliceCompleteMessages(messages, 1)).toBe(1);
-    expect(sliceCompleteMessages(messages, 4)).toBe(2);
-    expect(sliceCompleteMessages(messages, 5)).toBe(2);
-    expect(sliceCompleteMessages(messages, 6)).toBe(6);
-    expect(sliceCompleteMessages(messages, 99)).toBe(7);
+    ctx.appendAssistantText(1, 'first response');
+    ctx.appendAssistantText(2, 'second response');
 
-    const incomplete = messages.slice(0, 5);
-    expect(sliceCompleteMessages(incomplete, 5)).toBe(2);
+    // Append a background task notification (role: 'user' but not a real prompt)
+    ctx.agent.context.appendMessage({
+      role: 'user',
+      content: [{ type: 'text', text: 'background task completed' }],
+      toolCalls: [],
+      origin: {
+        kind: 'background_task',
+        taskId: 'bash-001',
+        status: 'completed',
+        notificationId: 'task:bash-001:completed',
+      },
+    });
+
+    expect(ctx.agent.context.history.map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+      'user',
+    ]);
+
+    ctx.agent.context.undo(1);
+
+    // Should remove the background notification, the second assistant, and the second user prompt
+    expect(ctx.agent.context.history.map((m) => m.role)).toEqual(['user', 'assistant']);
   });
+
+  it('stops at compaction summary and records the requested undo count', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'old user message' }]);
+    ctx.agent.context.applyCompaction({
+      summary: 'summary of compacted context',
+      compactedCount: 1,
+      tokensBefore: 100,
+      tokensAfter: 20,
+    });
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'recent user message' }]);
+    ctx.agent.context.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'recent answer' }],
+      toolCalls: [],
+    });
+    ctx.newEvents();
+
+    expect(() => {
+      ctx.agent.context.undo(2);
+    }).toThrow('Nothing to undo in the active context.');
+
+    expect(ctx.agent.context.history).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        origin: { kind: 'compaction_summary' },
+        content: [{ type: 'text', text: 'summary of compacted context' }],
+      }),
+    ]);
+    expect(ctx.newEvents()).toContainEqual(
+      expect.objectContaining({
+        type: '[wire]',
+        event: 'context.undo',
+        args: expect.objectContaining({ count: 2 }),
+      }),
+    );
+  });
+
+  it('does not throw while restoring an undo that stops at compaction summary', () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'old user message' }]);
+    ctx.agent.context.applyCompaction({
+      summary: 'summary of compacted context',
+      compactedCount: 1,
+      tokensBefore: 100,
+      tokensAfter: 20,
+    });
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'recent user message' }]);
+    ctx.agent.context.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'recent answer' }],
+      toolCalls: [],
+    });
+
+    expect(() => {
+      ctx.agent.records.restore({ type: 'context.undo', count: 2 });
+    }).not.toThrow();
+    expect(ctx.agent.context.history).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        origin: { kind: 'compaction_summary' },
+        content: [{ type: 'text', text: 'summary of compacted context' }],
+      }),
+    ]);
+  });
+
+  it('preserves injection messages when undo removes the surrounding turn', () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('do the work', { kind: 'user' }),
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('Plan mode is active', {
+        kind: 'injection',
+        variant: 'plan_mode',
+      }),
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'work done' }],
+        toolCalls: [],
+      },
+    });
+
+    ctx.agent.context.undo(1);
+
+    expect(ctx.agent.context.history).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        origin: { kind: 'injection', variant: 'plan_mode' },
+      }),
+    ]);
+    expect(ctx.agent.replayBuilder.buildResult()).toEqual([
+      expect.objectContaining({
+        type: 'message',
+        message: expect.objectContaining({
+          origin: { kind: 'injection', variant: 'plan_mode' },
+        }),
+      }),
+    ]);
+  });
+
 });
 
 describe('Agent context notification projection', () => {
@@ -518,6 +679,42 @@ describe('Agent context notification projection', () => {
     expect(text.trimEnd()).toMatch(/<\/notification>$/);
   });
 
+  it('renders an agent_id attribute when the notification carries one', () => {
+    // Background agent tasks (taskId starts with `agent-`) own a separate
+    // `agent_id` for the spawned subagent. Surfacing it as a top-level XML
+    // attribute lets the LLM resume the right thing without having to dig
+    // it out of the body or cross-reference the spawn-success ToolResult.
+    const text = renderNotificationXml({
+      id: 'n_lost1',
+      category: 'task',
+      type: 'task.lost',
+      source_kind: 'background_task',
+      source_id: 'agent-w7gq3wwj',
+      agent_id: 'agent-0',
+      title: 'Background agent lost',
+      severity: 'warning',
+      body: 'Background agent 1 lost.',
+    });
+
+    expect(text).toContain('source_id="agent-w7gq3wwj"');
+    expect(text).toContain('agent_id="agent-0"');
+  });
+
+  it('omits the agent_id attribute when the notification does not carry one', () => {
+    const text = renderNotificationXml({
+      id: 'n_bash',
+      category: 'task',
+      type: 'task.completed',
+      source_kind: 'background_task',
+      source_id: 'bash-abcdef00',
+      title: 'Background task completed',
+      severity: 'info',
+      body: 'echo done completed.',
+    });
+
+    expect(text).not.toContain('agent_id=');
+  });
+
   it('does not render task output blocks for non-task notifications', () => {
     const text = renderNotificationXml({
       id: '',
@@ -531,223 +728,60 @@ describe('Agent context notification projection', () => {
     expect(text).not.toContain('should stay out of the XML');
   });
 
-  it('keeps pending notification injections separate from real user prompts', () => {
-    const messages = project(
-      [userMessage('Actual user prompt')],
-      [
-        {
-          kind: 'pending_notification',
-          content: {
-            id: 'n_1',
-            category: 'task',
-            type: 'task.done',
-            source_kind: 'background_task',
-            source_id: 'bg_1',
-            title: 'Task done',
-            severity: 'info',
-            body: 'Background task finished.',
-          },
-        },
-      ],
-    );
+  it('does not merge a cron-fire envelope into an adjacent user message', () => {
+    const cronEnvelope =
+      '<cron-fire jobId="deadbeef" cron="*/5 * * * *" recurring="true" coalescedCount="1" stale="false">\n<prompt>\ncheck the deploy\n</prompt>\n</cron-fire>';
+    const messages = project([
+      userMessage(cronEnvelope, {
+        kind: 'cron_job',
+        jobId: 'deadbeef',
+        cron: '*/5 * * * *',
+        recurring: true,
+        coalescedCount: 1,
+        stale: false,
+      }),
+      userMessage('Actual follow-up from the user', { kind: 'user' }),
+    ]);
+    expect(messages).toHaveLength(2);
+    expect(textOf(messages[0]!)).toBe(cronEnvelope);
+    expect(textOf(messages[1]!)).toBe('Actual follow-up from the user');
+  });
+
+  it('uses message origin to keep non-user-origin messages separate', () => {
+    const messages = project([
+      userMessage('Host reminder without an XML prefix', {
+        kind: 'injection',
+        variant: 'host',
+      }),
+      userMessage('Actual follow-up from the user', { kind: 'user' }),
+    ]);
 
     expect(messages).toHaveLength(2);
-    expect(textOf(messages[0]!)).toMatch(/^<notification /);
-    expect(textOf(messages[0]!)).toContain('Task done');
-    expect(textOf(messages[1]!)).toBe('Actual user prompt');
+    expect(textOf(messages[0]!)).toBe('Host reminder without an XML prefix');
+    expect(textOf(messages[1]!)).toBe('Actual follow-up from the user');
+  });
+
+  it('only merges user-role messages with user origin', () => {
+    const messages = project([
+      userMessage('First real prompt', { kind: 'user' }),
+      userMessage('Second real prompt', { kind: 'user' }),
+      userMessage('No origin prompt'),
+      userMessage('Third real prompt', { kind: 'user' }),
+    ]);
+
+    expect(messages).toHaveLength(3);
+    expect(textOf(messages[0]!)).toBe('First real prompt\n\nSecond real prompt');
+    expect(textOf(messages[1]!)).toBe('No origin prompt');
+    expect(textOf(messages[2]!)).toBe('Third real prompt');
   });
 });
 
-function appendAssistantText(ctx: TestAgentContext, step: number, text: string) {
-  appendAssistantTextWithUsage(ctx, step, text);
-}
-
-function appendAssistantTextWithUsage(
-  ctx: TestAgentContext,
-  step: number,
-  text: string,
-  tokenTotal?: number,
-) {
-  const stepUuid = `context-step-${String(step)}`;
-  const usage =
-    tokenTotal === undefined
-      ? undefined
-      : {
-          inputOther: tokenTotal - 1,
-          output: 1,
-          inputCacheRead: 0,
-          inputCacheCreation: 0,
-        };
-  ctx.agent.context.appendUserMessage([{ type: 'text', text: `user before step ${String(step)}` }]);
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: { type: 'step.begin', uuid: stepUuid, turnId: '', step },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'content.part',
-      uuid: `context-part-${String(step)}`,
-      turnId: '',
-      step,
-      stepUuid,
-      part: {
-        type: 'text',
-        text,
-      },
-    },
-  });
-  ctx.dispatch({
-      type: 'context.append_loop_event',
-      event: {
-        type: 'step.end',
-        uuid: stepUuid,
-        turnId: '',
-        step,
-        usage,
-        finishReason: 'end_turn',
-      },
-    });
-}
-
-function appendToolExchange(ctx: TestAgentContext) {
-  const stepUuid = 'context-tool-step';
-  ctx.agent.context.appendUserMessage([{ type: 'text', text: 'lookup something' }]);
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: 2 },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'content.part',
-      uuid: 'context-tool-part',
-      turnId: '',
-      step: 2,
-      stepUuid,
-      part: {
-        type: 'text',
-        text: 'I will call Lookup.',
-      },
-    },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'tool.call',
-      uuid: 'context-tool-call',
-      turnId: '',
-      step: 2,
-      stepUuid,
-      toolCallId: 'call_lookup',
-      name: 'Lookup',
-      args: {
-        query: 'moon',
-      },
-    },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'step.end',
-      uuid: stepUuid,
-      turnId: '',
-      step: 2,
-      finishReason: 'tool_use',
-    },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'tool.result',
-      parentUuid: 'context-tool-call',
-      toolCallId: 'call_lookup',
-      result: { output: 'lookup result' },
-    },
-  });
-}
-
-function appendPartiallyResolvedParallelToolExchange(ctx: TestAgentContext) {
-  const stepUuid = 'context-partial-tool-step';
-  ctx.agent.context.appendUserMessage([{ type: 'text', text: 'run both tools' }]);
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: 2 },
-  });
-  for (const [toolCallId, name] of [
-    ['call_open_one', 'LookupOne'],
-    ['call_open_two', 'LookupTwo'],
-  ] as const) {
-    ctx.dispatch({
-      type: 'context.append_loop_event',
-      event: {
-        type: 'tool.call',
-        uuid: toolCallId,
-        turnId: '',
-        step: 2,
-        stepUuid,
-        toolCallId,
-        name,
-        args: {},
-      },
-    });
-  }
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'step.end',
-      uuid: stepUuid,
-      turnId: '',
-      step: 2,
-      finishReason: 'tool_use',
-    },
-  });
-  ctx.dispatch({
-    type: 'context.append_loop_event',
-    event: {
-      type: 'tool.result',
-      parentUuid: 'call_open_one',
-      toolCallId: 'call_open_one',
-      result: { output: 'one result' },
-    },
-  });
-}
-
-function userMessage(text: string): Message {
+function userMessage(text: string, origin?: ContextMessage['origin']): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text }],
     toolCalls: [],
-  };
-}
-
-function assistantMessage(text: string): Message {
-  return {
-    role: 'assistant',
-    content: [{ type: 'text', text }],
-    toolCalls: [],
-  };
-}
-
-function assistantToolCallMessage(ids: readonly string[]): Message {
-  return {
-    role: 'assistant',
-    content: [],
-    toolCalls: ids.map((id) => ({
-      type: 'function',
-      id,
-      name: 'Lookup',
-      arguments: '{}',
-    })),
-  };
-}
-
-function toolMessage(toolCallId: string, text: string): Message {
-  return {
-    role: 'tool',
-    content: [{ type: 'text', text }],
-    toolCalls: [],
-    toolCallId,
+    origin,
   };
 }
 

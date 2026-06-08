@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { resolve } from 'pathe';
 
 import { ErrorCodes, KimiError } from '#/errors';
 import { resolveGlobalLogPath } from '#/logging/logger';
@@ -54,6 +54,8 @@ export async function exportSessionDirectory(input: {
     sessionScan,
     sessionLogPath: hasSessionLog ? SESSION_LOG_REL : undefined,
     globalLogPath: bundledGlobal ? GLOBAL_LOG_REL : undefined,
+    installSource: input.request.installSource,
+    shellEnv: input.request.shellEnv,
   });
 
   const outputPath =

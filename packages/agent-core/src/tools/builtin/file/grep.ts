@@ -20,6 +20,7 @@
 import type { Readable } from 'node:stream';
 
 import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
+import { normalize } from 'pathe';
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';
@@ -31,6 +32,7 @@ import type { PathClass } from '../../policies/path-access';
 import { isSensitiveFile, SENSITIVE_DOT_VARIANT_SUFFIXES } from '../../policies/sensitive';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { ensureRgPath, rgUnavailableMessage } from '../../support/rg-locator';
+import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';
 import type { WorkspaceConfig } from '../../support/workspace';
 import GREP_DESCRIPTION from './grep.md';
@@ -190,6 +192,9 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     return {
       accesses: ToolAccesses.searchTree(searchPaths[0]!),
       description: `Searching for '${args.pattern}' in ${searchPath}`,
+      display: { kind: 'file_io', operation: 'grep', path: searchPaths[0]! },
+      approvalRule: literalRulePattern(this.name, args.pattern),
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
       execute: ({ signal }) => this.execution(args, signal, searchPaths),
     };
   }
@@ -746,15 +751,16 @@ function formatDisplayLine(
  * canonical absolute paths in the active backend path class.
  */
 function relativizeIfUnder(candidate: string, base: string, pathClass: PathClass): string {
-  const sep = pathClass === 'win32' ? '\\' : '/';
-  const comparableCandidate = pathClass === 'win32' ? candidate.toLowerCase() : candidate;
-  const comparableBase = pathClass === 'win32' ? base.toLowerCase() : base;
+  const normCandidate = normalize(candidate);
+  const normBase = normalize(base);
+  const comparableCandidate = pathClass === 'win32' ? normCandidate.toLowerCase() : normCandidate;
+  const comparableBase = pathClass === 'win32' ? normBase.toLowerCase() : normBase;
   if (comparableCandidate === comparableBase) return '.';
-  const prefix = comparableBase.endsWith(sep) ? comparableBase : comparableBase + sep;
+  const prefix = comparableBase.endsWith('/') ? comparableBase : comparableBase + '/';
   if (comparableCandidate.startsWith(prefix)) {
-    return candidate.slice(prefix.length);
+    return normCandidate.slice(prefix.length);
   }
-  return candidate;
+  return normCandidate;
 }
 
 function omitIncompleteTrailingRecord(text: string, mode: GrepMode): string {
@@ -837,7 +843,7 @@ function filterSensitiveLines(
       continue;
     }
     const filePath = parsedFilePath(line, mode, pathClass);
-    if (filePath !== undefined && isSensitiveFile(filePath, pathClass)) {
+    if (filePath !== undefined && isSensitiveFile(filePath)) {
       filteredPaths.add(filePath);
       continue;
     }
@@ -868,23 +874,23 @@ function parsedFilePath(
   mode: GrepMode,
   pathClass: PathClass,
 ): string | undefined {
-  if (line.kind === 'record') return line.filePath;
+  if (line.kind === 'record') return normalize(line.filePath);
   if (line.kind === 'separator') return undefined;
   const text = line.text;
-  if (mode === 'files_with_matches') return text;
+  if (mode === 'files_with_matches') return normalize(text);
   if (mode === 'count_matches') {
     const idx = text.lastIndexOf(':');
-    return idx > 0 ? text.slice(0, idx) : text;
+    return idx > 0 ? normalize(text.slice(0, idx)) : normalize(text);
   }
   return extractContentFilePath(text, pathClass);
 }
 
 function extractContentFilePath(line: string, pathClass: PathClass): string | undefined {
   const m = CONTENT_LINE_RE.exec(line);
-  if (m?.[1] !== undefined) return m[1];
+  if (m?.[1] !== undefined) return normalize(m[1]);
 
   const separatorIndex = noLineNumberContentSeparatorIndex(line, pathClass);
-  return separatorIndex > 0 ? line.slice(0, separatorIndex) : undefined;
+  return separatorIndex > 0 ? normalize(line.slice(0, separatorIndex)) : undefined;
 }
 
 function noLineNumberContentSeparatorIndex(line: string, pathClass: PathClass): number {

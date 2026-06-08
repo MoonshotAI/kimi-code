@@ -34,7 +34,7 @@ export interface HelpPanelCommand {
 /** Static list — keep in sync with the global editor bindings. */
 export const DEFAULT_KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
   { keys: 'Shift-Tab', description: 'Toggle plan mode' },
-  // { keys: 'Ctrl-G', description: 'Edit in external editor ($VISUAL / $EDITOR)' },
+  { keys: 'Ctrl-G', description: 'Edit in external editor ($VISUAL / $EDITOR)' },
   { keys: 'Ctrl-O', description: 'Toggle tool output expansion' },
   { keys: 'Ctrl-S', description: 'Steer — inject a follow-up during streaming' },
   { keys: 'Shift-Enter / Ctrl-J', description: 'Insert newline' },
@@ -102,7 +102,7 @@ export class HelpPanelComponent extends Container implements Focusable {
 
     const shortcuts = this.opts.shortcuts ?? DEFAULT_KEYBOARD_SHORTCUTS;
     const kbdWidth = Math.max(8, ...shortcuts.map((s) => s.keys.length));
-    const sortedCmds = [...this.opts.commands].toSorted((a, b) => a.name.localeCompare(b.name));
+    const sortedCmds = [...this.opts.commands].toSorted(compareSlashCommandsForDisplay);
     const cmdLabels = sortedCmds.map((c) => {
       const aliases = c.aliases.length > 0 ? ` (${c.aliases.map((a) => '/' + a).join(', ')})` : '';
       return `/${c.name}${aliases}`;
@@ -110,7 +110,7 @@ export class HelpPanelComponent extends Container implements Focusable {
     const cmdWidth = Math.max(12, ...cmdLabels.map((l) => l.length));
     const lines: string[] = [
       accent('─'.repeat(width)),
-      accent.bold(' help ') + muted('· Esc / Enter / q to close · ↑↓ scroll'),
+      accent.bold(' help ') + muted('· Esc / Enter / q to cancel · ↑↓ scroll'),
       '',
       // Greeting
       `  ${dim('Sure, Kimi is ready to help! Just send a message to get started.')}`,
@@ -145,4 +145,15 @@ export class HelpPanelComponent extends Container implements Focusable {
     this.scrollTop = 0;
     return lines.map((line) => truncateToWidth(line, width));
   }
+}
+
+function compareSlashCommandsForDisplay(a: HelpPanelCommand, b: HelpPanelCommand): number {
+  return (
+    getSlashCommandDisplayGroup(a.name) - getSlashCommandDisplayGroup(b.name) ||
+    a.name.localeCompare(b.name)
+  );
+}
+
+function getSlashCommandDisplayGroup(name: string): number {
+  return name.startsWith('skill:') ? 1 : 0;
 }

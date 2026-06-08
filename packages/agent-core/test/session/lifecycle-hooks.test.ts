@@ -1,22 +1,18 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join } from 'pathe';
 import { Readable } from 'node:stream';
 import type { Writable } from 'node:stream';
 
-import { localKaos, type KaosProcess } from '@moonshot-ai/kaos';
+import type { KaosProcess } from '@moonshot-ai/kaos';
+
+import { testKaos } from '../fixtures/test-kaos';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SDKSessionRPC } from '../../src/rpc';
 import { Session } from '../../src/session';
+import { ProcessBackgroundTask } from '../../src/agent/background';
 
-const OS_ENV = {
-  osKind: 'Linux',
-  osArch: 'arm64',
-  osVersion: 'test',
-  shellPath: '/bin/bash',
-  shellName: 'bash',
-} as const;
 
 const tempDirs: string[] = [];
 
@@ -31,10 +27,9 @@ describe('Session lifecycle hooks', () => {
   it('fires SessionStart on startup and SessionEnd on close', async () => {
     const { command, logPath, sessionDir, workDir } = await hookFixture();
     const session = new Session({
-      runtime: { kaos: localKaos, osEnv: OS_ENV },
+      kaos: testKaos.withCwd(workDir),
       id: 'session-123',
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
       hooks: [
@@ -77,10 +72,9 @@ describe('Session lifecycle hooks', () => {
       'utf-8',
     );
     const session = new Session({
-      runtime: { kaos: localKaos, osEnv: OS_ENV },
+      kaos: testKaos.withCwd(workDir),
       id: 'session-456',
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
       hooks: [{ event: 'SessionStart', matcher: 'resume', command, timeout: 5 }],
@@ -101,10 +95,9 @@ describe('Session lifecycle hooks', () => {
   it('does not let failing SessionStart or SessionEnd hook commands interrupt startup or close', async () => {
     const { sessionDir, workDir } = await hookFixture();
     const session = new Session({
-      runtime: { kaos: localKaos, osEnv: OS_ENV },
+      kaos: testKaos.withCwd(workDir),
       id: 'session-reject',
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
       hooks: [
@@ -120,17 +113,18 @@ describe('Session lifecycle hooks', () => {
   it('stops background tasks on close when keepAliveOnExit is false', async () => {
     const { sessionDir, workDir } = await hookFixture();
     const session = new Session({
-      runtime: { kaos: localKaos, osEnv: OS_ENV },
+      kaos: testKaos.withCwd(workDir),
       id: 'session-bg-cleanup',
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
       background: { keepAliveOnExit: false },
     });
     const agent = await session.createMain();
     const { proc, killSpy } = pendingProcess();
-    const taskId = agent.background.register(proc, 'sleep 60', 'exit cleanup');
+    const taskId = agent.background.registerTask(
+      new ProcessBackgroundTask(proc, 'sleep 60', 'exit cleanup'),
+    );
 
     await session.close();
 
@@ -142,22 +136,59 @@ describe('Session lifecycle hooks', () => {
     vi.stubEnv('KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT', '0');
     const { sessionDir, workDir } = await hookFixture();
     const session = new Session({
-      runtime: { kaos: localKaos, osEnv: OS_ENV },
+      kaos: testKaos.withCwd(workDir),
       id: 'session-bg-env-cleanup',
       homedir: sessionDir,
-      cwd: workDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
       background: { keepAliveOnExit: true },
     });
     const agent = await session.createMain();
     const { proc, killSpy } = pendingProcess();
-    const taskId = agent.background.register(proc, 'sleep 60', 'env cleanup');
+    const taskId = agent.background.registerTask(
+      new ProcessBackgroundTask(proc, 'sleep 60', 'env cleanup'),
+    );
 
     await session.close();
 
     expect(killSpy).toHaveBeenCalledWith('SIGTERM');
     expect(agent.background.getTask(taskId)?.status).toBe('killed');
+  });
+
+  it('keeps background tasks alive and skips SessionEnd hooks when closing for reload', async () => {
+    const { command, logPath, sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-reload-close',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      background: { keepAliveOnExit: false },
+      hooks: [
+        { event: 'SessionStart', matcher: 'startup', command, timeout: 5 },
+        { event: 'SessionEnd', matcher: 'exit', command, timeout: 5 },
+      ],
+    });
+    const agent = await session.createMain();
+    const stopSpy = vi.spyOn(agent.cron!, 'stop');
+    const { proc, killSpy } = pendingProcess();
+    const taskId = agent.background.registerTask(
+      new ProcessBackgroundTask(proc, 'sleep 60', 'reload keeps alive'),
+    );
+
+    await session.closeForReload();
+
+    expect(stopSpy).toHaveBeenCalledOnce();
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(agent.background.getTask(taskId)?.status).toBe('running');
+    expect(await readHookPayloads(logPath)).toMatchObject([
+      {
+        hook_event_name: 'SessionStart',
+        session_id: 'session-reload-close',
+        cwd: workDir,
+        source: 'startup',
+      },
+    ]);
   });
 });
 

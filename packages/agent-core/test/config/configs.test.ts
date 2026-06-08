@@ -1,7 +1,7 @@
 import { mkdtempSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join } from 'pathe';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -99,7 +99,6 @@ compaction_trigger_ratio = 0.85
 max_running_tasks = 4
 keep_alive_on_exit = false
 kill_grace_period_ms = 2000
-agent_task_timeout_s = 900
 print_wait_ceiling_s = 3600
 
 [[hooks]]
@@ -173,7 +172,12 @@ describe('harness config TOML loader', () => {
       reservedContextSize: 50000,
       compactionTriggerRatio: 0.85,
     });
-    expect(config.background?.agentTaskTimeoutS).toBe(900);
+    expect(config.background).toMatchObject({
+      maxRunningTasks: 4,
+      keepAliveOnExit: false,
+      killGracePeriodMs: 2000,
+      printWaitCeilingS: 3600,
+    });
     expect(config.hooks).toEqual([
       {
         event: 'PreToolUse',
@@ -192,6 +196,107 @@ describe('harness config TOML loader', () => {
     expect('theme' in config).toBe(false);
     expect(config.raw?.['theme']).toBe('dark');
     expect(config.raw?.['notifications']).toEqual({ claim_stale_after_ms: 15000 });
+  });
+
+  it('round-trips a custom registry source field on a provider', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'round-trip.toml');
+    const toml = `
+[providers.custom]
+type = "openai"
+base_url = "https://custom.example/v1"
+api_key = "sk-test"
+source = { kind = "apiJson", url = "https://registry.example/api.json", apiKey = "sk-registry" }
+`;
+    const config = parseConfigString(toml, configPath);
+    expect(config.providers['custom']).toMatchObject({
+      type: 'openai',
+      baseUrl: 'https://custom.example/v1',
+      apiKey: 'sk-test',
+      source: { kind: 'apiJson', url: 'https://registry.example/api.json', apiKey: 'sk-registry' },
+    });
+
+    await writeConfigFile(configPath, config);
+    const text = await readFile(configPath, 'utf-8');
+    const roundTripped = parseConfigString(text, configPath);
+    expect(roundTripped.providers['custom']?.source).toEqual({
+      kind: 'apiJson',
+      url: 'https://registry.example/api.json',
+      apiKey: 'sk-registry',
+    });
+  });
+
+  it('round-trips OAuth refs with scoped OAuth hosts', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'oauth-ref.toml');
+    const toml = `
+[providers."managed:kimi-code"]
+type = "kimi"
+base_url = "https://coding.deva.msh.team/coding/v1"
+api_key = ""
+oauth = { storage = "file", key = "oauth/kimi-code-env-1234", oauth_host = "https://auth.dev.kimi.team" }
+
+[services.moonshot_search]
+base_url = "https://coding.deva.msh.team/coding/v1/search"
+api_key = ""
+oauth = { storage = "file", key = "oauth/kimi-code-env-1234", oauth_host = "https://auth.dev.kimi.team" }
+`;
+    const config = parseConfigString(toml, configPath);
+    expect(config.providers['managed:kimi-code']?.oauth).toEqual({
+      storage: 'file',
+      key: 'oauth/kimi-code-env-1234',
+      oauthHost: 'https://auth.dev.kimi.team',
+    });
+    expect(config.services?.moonshotSearch?.oauth?.oauthHost).toBe('https://auth.dev.kimi.team');
+
+    await writeConfigFile(configPath, config);
+    const text = await readFile(configPath, 'utf-8');
+    expect(text).toContain('oauth_host = "https://auth.dev.kimi.team"');
+    const roundTripped = parseConfigString(text, configPath);
+    expect(roundTripped.providers['managed:kimi-code']?.oauth?.oauthHost).toBe(
+      'https://auth.dev.kimi.team',
+    );
+  });
+
+  it('parses and round-trips experimental feature flags', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'experimental.toml');
+    const toml = `
+[experimental]
+goal_command = true
+micro_compaction = false
+background_ask = true
+`;
+    const config = parseConfigString(toml, configPath);
+
+    expect(config.experimental).toEqual({
+      'goal_command': true,
+      'micro_compaction': false,
+      'background_ask': true,
+    });
+
+    await writeConfigFile(configPath, config);
+    const text = await readFile(configPath, 'utf-8');
+
+    expect(text).toContain('[experimental]');
+    expect(text).toContain('goal_command = true');
+    expect(text).toContain('micro_compaction = false');
+    expect(text).toContain('background_ask = true');
+    expect(parseConfigString(text, configPath).experimental).toEqual(config.experimental);
+  });
+
+  it('rejects unknown experimental feature keys', () => {
+    expectKimiErrorCode(
+      () =>
+        parseConfigString(
+          `
+[experimental]
+not_registered = true
+`,
+          'unknown-experimental.toml',
+        ),
+      ErrorCodes.CONFIG_INVALID,
+    );
   });
 
   it('loads defaults for absent files and writes typed fields without dropping raw sections', async () => {
@@ -393,6 +498,25 @@ describe('harness config schema and patch merge', () => {
     expect(merged.thinking).toEqual({ mode: 'auto', effort: 'high' });
     expect(merged.hooks).toEqual(base.hooks);
     expect(merged.raw?.['theme']).toBe('dark');
+  });
+
+  it('deep-merges experimental config patches', () => {
+    const base = parseConfigString(`
+[experimental]
+goal_command = true
+micro_compaction = false
+`);
+
+    const merged = mergeConfigPatch(base, {
+      experimental: {
+        'micro_compaction': true,
+      },
+    });
+
+    expect(merged.experimental).toEqual({
+      'goal_command': true,
+      'micro_compaction': true,
+    });
   });
 
   it('rejects unknown fields in config patches', () => {

@@ -36,9 +36,9 @@ export interface TaskOutputViewerProps {
 
 const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
   running: 'running',
-  awaiting_approval: 'awaiting',
   completed: 'completed',
   failed: 'failed',
+  timed_out: 'timed out',
   killed: 'killed',
   lost: 'lost',
 };
@@ -47,11 +47,10 @@ function statusColor(colors: ColorPalette, status: BackgroundTaskStatus): string
   switch (status) {
     case 'running':
       return colors.success;
-    case 'awaiting_approval':
-      return colors.warning;
     case 'completed':
       return colors.textMuted;
     case 'failed':
+    case 'timed_out':
     case 'killed':
     case 'lost':
       return colors.error;
@@ -191,7 +190,7 @@ export class TaskOutputViewer extends Container implements Focusable {
     const segments: string[] = [];
     if (info !== undefined) {
       segments.push(chalk.hex(statusColor(colors, info.status))(STATUS_LABEL[info.status]));
-      if (info.exitCode !== null && info.exitCode !== undefined) {
+      if (info.kind === 'process' && info.exitCode !== null) {
         segments.push(chalk.hex(colors.textMuted)(`exit ${String(info.exitCode)}`));
       }
       if (info.description && info.description.length > 0) {
@@ -249,7 +248,7 @@ export class TaskOutputViewer extends Container implements Focusable {
       `${key('↑↓')} ${dim('line')}  ` +
       `${key('PgUp/PgDn')} ${dim('page')}  ` +
       `${key('g/G')} ${dim('top/bot')}  ` +
-      `${key('Q/Esc')} ${dim('back')}`;
+      `${key('Q/Esc')} ${dim('cancel')}`;
     const left = ` ${keys}`;
     const leftW = visibleWidth(left);
     const rightW = visibleWidth(position);

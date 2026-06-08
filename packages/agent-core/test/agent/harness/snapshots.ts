@@ -1,6 +1,8 @@
 import type { Message, Tool as LLMTool } from '@moonshot-ai/kosong';
 import { expect } from 'vitest';
 
+import { AGENT_WIRE_PROTOCOL_VERSION } from '../../../src/agent/records';
+
 const IS_EVENT_ARRAY = Symbol('isEventArray');
 const IS_GENERATE_INPUT_SNAPSHOT = Symbol('isGenerateInputSnapshot');
 const IS_GENERATE_INPUTS_SNAPSHOT = Symbol('isGenerateInputsSnapshot');
@@ -266,16 +268,29 @@ function normalizeValue(value: unknown, uuidLabels: Map<string, string>): unknow
 
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(
-      Object.entries(value).map(([key, nested]) => [
-        key,
-        key === 'time' && typeof nested === 'number'
-          ? '<time>'
-          : normalizeValue(nested, uuidLabels),
-      ]),
+      Object.entries(value)
+        .filter(([key]) => !isVolatileDurationKey(key))
+        .map(([key, nested]) => [
+          key,
+          normalizeObjectField(key, nested, uuidLabels),
+        ]),
     );
   }
 
   return value;
+}
+
+function normalizeObjectField(
+  key: string,
+  value: unknown,
+  uuidLabels: Map<string, string>,
+): unknown {
+  if ((key === 'time' || key === 'created_at') && typeof value === 'number') return '<time>';
+  if (key === 'protocol_version' && value === AGENT_WIRE_PROTOCOL_VERSION) {
+    return '<protocol-version>';
+  }
+  if (key === 'cwd' && typeof value === 'string') return '<cwd>';
+  return normalizeValue(value, uuidLabels);
 }
 
 function stripUndefined(value: unknown): unknown {
@@ -296,6 +311,10 @@ function stripUndefined(value: unknown): unknown {
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isVolatileDurationKey(key: string): boolean {
+  return key === 'llmFirstTokenLatencyMs' || key === 'llmStreamDurationMs';
 }
 
 function isPlanModeReminder(value: string): boolean {

@@ -25,6 +25,8 @@ curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash
 irm https://code.kimi.com/kimi-code/install.ps1 | iex
 ```
 
+> On Windows, install [Git for Windows](https://gitforwindows.org/) before first launch because Kimi Code CLI uses the bundled Git Bash as its shell environment. If Git Bash is installed in a custom location, set `KIMI_SHELL_PATH` to the absolute path of `bash.exe`.
+
 Then, run it with a new shell session:
 
 ```sh
@@ -52,17 +54,41 @@ Take a look at this project and explain its main directories.
 
 - **Single-binary distribution.** Install with one command: no Node.js setup, PATH gymnastics, or global module conflicts.
 - **Blazing-fast startup.** The TUI is ready in milliseconds, so starting a session never feels heavy.
-- **Purpose-built TUI.** A carefully tuned interface for long, focused agent sessions.
-- **Video input.** Drop a screen recording or demo clip into the chat, and let the agent watch what is hard to describe in words.
+- **Purpose-built TUI.** A carefully tuned interface, optimized end to end for long, focused agent sessions.
+- **Video input.** Drop a screen recording or demo clip into the chat and let the agent watch what is hard to describe in words — turn a reference clip into a LUT, a long video into a short, a screen recording into working code, and more.
 - **AI-native MCP configuration.** Add, edit, and authenticate Model Context Protocol servers conversationally with `/mcp-config`, without hand-editing JSON.
+- **Rich plugin ecosystem.** Install skills, MCP servers, and data sources from the marketplace or any GitHub repo, with each install's trust level surfaced up front.
 - **Subagents for focused, parallel work.** Dispatch built-in `coder`, `explore`, and `plan` subagents in isolated contexts while keeping the main conversation clean.
 - **Lifecycle hooks.** Run local commands at key points to gate risky tool calls, audit decisions, trigger desktop notifications, or connect to your own automation.
+- **Editor & IDE integration (ACP).** Drive a Kimi Code CLI session straight from Zed, JetBrains, or any [Agent Client Protocol](https://agentclientprotocol.com/) client with `kimi acp`.
+
+## Use it in your editor (ACP)
+
+Kimi Code CLI speaks the [Agent Client Protocol](https://agentclientprotocol.com/), so ACP-compatible editors and IDEs (Zed, JetBrains, …) can drive a session over stdio. Log in once, then point your editor at the `kimi acp` subcommand — no extra login needed.
+
+For Zed, add this to `~/.config/zed/settings.json`:
+
+```json
+{
+  "agent_servers": {
+    "Kimi Code CLI": {
+      "type": "custom",
+      "command": "kimi",
+      "args": ["acp"],
+      "env": {}
+    }
+  }
+}
+```
+
+Then open a new conversation in Zed's Agent panel. See [Using in IDEs](https://moonshotai.github.io/kimi-code/en/guides/ides) for JetBrains setup and troubleshooting, and the [`kimi acp` reference](https://moonshotai.github.io/kimi-code/en/reference/kimi-acp) for the full capability matrix.
 
 ## Docs
 
 - [Getting Started](https://moonshotai.github.io/kimi-code/en/guides/getting-started)
 - [Interaction and approvals](https://moonshotai.github.io/kimi-code/en/guides/interaction)
 - [Sessions](https://moonshotai.github.io/kimi-code/en/guides/sessions)
+- [Using in IDEs (ACP)](https://moonshotai.github.io/kimi-code/en/guides/ides)
 - [Configuration](https://moonshotai.github.io/kimi-code/en/configuration/config-files)
 - [Command reference](https://moonshotai.github.io/kimi-code/en/reference/kimi-command)
 

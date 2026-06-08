@@ -1,25 +1,22 @@
 export type ToolFileAccessOperation = 'read' | 'write' | 'readwrite' | 'search';
 
-export type ToolResourceAccess =
-  | {
-      readonly kind: 'file';
-      readonly operation: ToolFileAccessOperation;
-      /**
-       * Canonical file path when the access can be narrowed. Omitted means the
-       * operation may touch any file in the backend file namespace.
-       */
-      readonly path?: string;
-      readonly recursive?: boolean;
-    }
-  | {
-      /**
-       * Arbitrary side effects or resources that cannot be represented as a
-       * file access. This is intentionally operation-less and globally
-       * exclusive for concurrency.
-       */
-      readonly kind: 'all';
-    };
+export interface ToolFileAccess {
+  readonly kind: 'file';
+  readonly operation: ToolFileAccessOperation;
+  readonly path: string;
+  readonly recursive?: boolean;
+}
 
+export interface ToolResourceAccessAll {
+  /**
+   * Arbitrary side effects or resources that cannot be represented as a
+   * file access. This is intentionally operation-less and globally
+   * exclusive for concurrency.
+   */
+  readonly kind: 'all';
+}
+
+export type ToolResourceAccess = ToolFileAccess | ToolResourceAccessAll;
 export type ToolAccesses = readonly ToolResourceAccess[];
 
 export const ToolAccesses = {
@@ -33,18 +30,10 @@ export const ToolAccesses = {
 
   file(
     operation: ToolFileAccessOperation,
-    path?: string,
+    path: string,
     options: { readonly recursive?: boolean } = {},
   ): ToolAccesses {
-    const access: {
-      kind: 'file';
-      operation: ToolFileAccessOperation;
-      path?: string;
-      recursive?: boolean;
-    } = { kind: 'file', operation };
-    if (path !== undefined) access.path = path;
-    if (options.recursive !== undefined) access.recursive = options.recursive;
-    return [access];
+    return [{ kind: 'file', operation, path, recursive: options.recursive }];
   },
 
   readFile(path: string): ToolAccesses {
@@ -55,20 +44,12 @@ export const ToolAccesses = {
     return ToolAccesses.file('read', path, { recursive: true });
   },
 
-  readAnyFile(): ToolAccesses {
-    return ToolAccesses.file('read');
-  },
-
   writeFile(path: string): ToolAccesses {
     return ToolAccesses.file('write', path);
   },
 
   writeTree(path: string): ToolAccesses {
     return ToolAccesses.file('write', path, { recursive: true });
-  },
-
-  writeAnyFile(): ToolAccesses {
-    return ToolAccesses.file('write');
   },
 
   readWriteFile(path: string): ToolAccesses {
@@ -79,16 +60,8 @@ export const ToolAccesses = {
     return ToolAccesses.file('readwrite', path, { recursive: true });
   },
 
-  readWriteAnyFile(): ToolAccesses {
-    return ToolAccesses.file('readwrite');
-  },
-
   searchTree(path: string): ToolAccesses {
     return ToolAccesses.file('search', path, { recursive: true });
-  },
-
-  searchAnyFile(): ToolAccesses {
-    return ToolAccesses.file('search');
   },
 
   conflict(left: ToolAccesses, right: ToolAccesses): boolean {
@@ -122,12 +95,7 @@ function fileOperationWrites(operation: ToolFileAccessOperation): boolean {
   }
 }
 
-function fileAccessesOverlap(
-  left: Extract<ToolResourceAccess, { kind: 'file' }>,
-  right: Extract<ToolResourceAccess, { kind: 'file' }>,
-): boolean {
-  if (left.path === undefined || right.path === undefined) return true;
-
+function fileAccessesOverlap(left: ToolFileAccess, right: ToolFileAccess): boolean {
   const leftPath = normalizePath(left.path);
   const rightPath = normalizePath(right.path);
   if (leftPath === rightPath) return true;

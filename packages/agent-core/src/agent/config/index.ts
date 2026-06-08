@@ -6,33 +6,32 @@ import {
   type ProviderConfig,
 } from '@moonshot-ai/kosong';
 
+import { applyKimiEnvSamplingParams, applyKimiEnvThinkingKeep } from '../kimi-env-params';
+
 import type { Agent } from '..';
-import type { ResolvedRuntimeProvider } from '../../providers/runtime-provider';
+import { ErrorCodes, KimiError } from '../../errors';
 import type { AgentConfigData, AgentConfigUpdateData } from './types';
 import { resolveThinkingEffort, type ThinkingEffort } from './thinking';
+import type { ResolvedRuntimeProvider } from '../../session/provider-manager';
 
 export * from './types';
 export { resolveThinkingEffort, type ThinkingEffort } from './thinking';
 
 export class ConfigState {
-  private _cwd: string = '';
+  private _cwd: string;
   private _modelAlias: string | undefined;
   private _profileName: string | undefined;
   private _thinkingLevel: ThinkingEffort = 'off';
   private _systemPrompt: string = '';
 
-  constructor(protected readonly agent: Agent) {}
+  constructor(protected readonly agent: Agent) {
+    this._cwd = agent.kaos.getcwd();
+    this._modelAlias = agent.modelProvider?.defaultModel;
+  }
 
-  update(input: AgentConfigUpdateData): void {
-    const changed = { ...input };
+  update(changed: AgentConfigUpdateData): void {
     if (Object.keys(changed).length === 0) return;
 
-    if (changed.thinkingLevel !== undefined) {
-      changed.thinkingLevel = resolveThinkingEffort(
-        changed.thinkingLevel,
-        this.agent.providerManager?.config.thinking,
-      );
-    }
     this.agent.records.logRecord({
       type: 'config.update',
       ...changed,
@@ -41,15 +40,26 @@ export class ConfigState {
       type: 'config_updated',
       config: changed,
     });
-    if (changed.cwd !== undefined) this._cwd = changed.cwd;
-    if (Object.hasOwn(changed, 'modelAlias')) {
-      this._modelAlias = changed.modelAlias ?? undefined;
+    if (changed.cwd) {
+      this._cwd = changed.cwd;
+      void this.agent.kaos.chdir(changed.cwd);
     }
-    if (Object.hasOwn(changed, 'profileName')) this._profileName = changed.profileName;
-    if (changed.thinkingLevel !== undefined)
-      this._thinkingLevel = changed.thinkingLevel as ThinkingEffort;
-    if (changed.systemPrompt !== undefined) this._systemPrompt = changed.systemPrompt;
-    if (this.hasProvider && (changed.cwd !== undefined || Object.hasOwn(changed, 'modelAlias'))) {
+    if (changed.modelAlias) {
+      this._modelAlias = changed.modelAlias;
+    }
+    if (changed.profileName) {
+      this._profileName = changed.profileName;
+    }
+    if (changed.thinkingLevel !== undefined) {
+      this._thinkingLevel = resolveThinkingEffort(
+        changed.thinkingLevel,
+        this.agent.kimiConfig?.thinking,
+      );
+    }
+    if (changed.systemPrompt !== undefined) {
+      this._systemPrompt = changed.systemPrompt;
+    }
+    if (this.hasProvider && (changed.cwd !== undefined || changed.modelAlias)) {
       this.agent.tools.initializeBuiltinTools();
     }
     this.agent.emitStatusUpdated();
@@ -83,18 +93,24 @@ export class ConfigState {
   get providerConfig(): ProviderConfig {
     const provider = this.resolvedProviderConfig?.provider;
     if (provider === undefined) {
-      throw new Error('Provider not set');
+      throw new KimiError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Provider not set');
     }
     return provider;
   }
 
   get provider(): ChatProvider {
-    return createProvider(this.providerConfig);
+    // All provider-level request config is applied here so every request built
+    // from config.provider — the main loop AND full-history compaction — carries it:
+    //   - withThinking: preserve thinking during compaction (#464)
+    //   - sampling params: KIMI_MODEL_TEMPERATURE / KIMI_MODEL_TOP_P
+    //   - thinking.keep: KIMI_MODEL_THINKING_KEEP (only while thinking is on)
+    const provider = createProvider(this.providerConfig).withThinking(this.thinkingLevel);
+    return applyKimiEnvThinkingKeep(applyKimiEnvSamplingParams(provider), this.thinkingLevel);
   }
 
   get model(): string {
     if (this._modelAlias === undefined) {
-      throw new Error('Model not set');
+      throw new KimiError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
     }
     return this._modelAlias;
   }
@@ -119,9 +135,13 @@ export class ConfigState {
     return this.tryResolvedProviderConfig()?.modelCapabilities ?? UNKNOWN_CAPABILITY;
   }
 
+  get maxOutputSize(): number | undefined {
+    return this.tryResolvedProviderConfig()?.maxOutputSize;
+  }
+
   private get resolvedProviderConfig(): ResolvedRuntimeProvider | undefined {
     if (this._modelAlias === undefined) return undefined;
-    return this.agent.providerManager?.resolveProviderConfigForModel(this._modelAlias);
+    return this.agent.modelProvider?.resolveProviderConfig(this._modelAlias);
   }
 
   private tryResolvedProviderConfig(): ResolvedRuntimeProvider | undefined {

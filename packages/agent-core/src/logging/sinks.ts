@@ -1,6 +1,6 @@
 import { mkdir, open, rename, stat, unlink } from 'node:fs/promises';
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname } from 'pathe';
 
 import { syncDir } from '#/utils/fs';
 

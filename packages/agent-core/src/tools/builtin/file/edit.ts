@@ -16,6 +16,7 @@ import { ToolAccesses } from '../../../loop/tool-access';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { resolvePathAccessPath } from '../../policies/path-access';
 import { toInputJsonSchema } from '../../support/input-schema';
+import { literalRulePattern, matchesPathRuleSubject } from '../../support/rule-match';
 import type { WorkspaceConfig } from '../../support/workspace';
 import { materializeModelText, toModelTextView } from './line-endings';
 import EDIT_DESCRIPTION from './edit.md';
@@ -73,6 +74,20 @@ export class EditTool implements BuiltinTool<EditInput> {
     return {
       accesses: ToolAccesses.readWriteFile(path),
       description: `Editing ${args.path}`,
+      display: {
+        kind: 'file_io',
+        operation: 'edit',
+        path,
+        before: args.old_string,
+        after: args.new_string,
+      },
+      approvalRule: literalRulePattern(this.name, path),
+      matchesRule: (ruleArgs) =>
+        matchesPathRuleSubject(ruleArgs, path, {
+          cwd: this.workspace.workspaceDir,
+          pathClass: this.kaos.pathClass(),
+          homeDir: this.kaos.gethome(),
+        }),
       execute: () => this.execution(args, path),
     };
   }
@@ -102,7 +117,7 @@ export class EditTool implements BuiltinTool<EditInput> {
         }
 
         if (count === 0) {
-          return { isError: true, output: `old_string not found in ${args.path}, The file contents may be out of date. Please use the Read Tool to reload the content.
+          return { isError: true, output: `old_string not found in ${args.path}, the file contents may be out of date. Please use the Read Tool to reload the content.
 ` };
         }
         if (count > 1) {
@@ -125,7 +140,7 @@ export class EditTool implements BuiltinTool<EditInput> {
       const parts = content.split(args.old_string);
       const replacementCount = parts.length - 1;
       if (replacementCount === 0) {
-        return { isError: true, output: `old_string not found in ${args.path}, The file contents may be out of date. Please use the Read Tool to reload the content.
+        return { isError: true, output: `old_string not found in ${args.path}, the file contents may be out of date. Please use the Read Tool to reload the content.
 ` };
       }
 

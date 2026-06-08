@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { KimiError, KimiHarness, type Event } from '#/index';
+import { createKimiHarness, KimiError, type Event } from '#/index';
 
 import { SessionStore } from '../../agent-core/src/session/store';
 import { TEST_IDENTITY } from './test-identity';
@@ -125,7 +125,7 @@ describe('KimiHarness.renameSession', () => {
   it('persists titles through the public Harness API and emits an active session event', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -172,7 +172,7 @@ describe('KimiHarness.renameSession', () => {
   it('renames persisted sessions even when they are not active in memory', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -206,7 +206,7 @@ describe('KimiHarness.renameSession', () => {
 
   it('rejects missing session ids', async () => {
     const homeDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });

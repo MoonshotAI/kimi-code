@@ -1,6 +1,7 @@
 import type { Agent } from '..';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
+  isNewerWireVersion,
   migrateWireRecord,
   resolveWireMigrations,
   type WireMigration,
@@ -15,11 +16,20 @@ export {
   InMemoryAgentRecordPersistence,
 } from './persistence';
 export type { FileSystemAgentRecordPersistenceOptions } from './persistence';
+export { BlobStore, isBlobRef } from './blobref';
+export type { BlobStoreOptions } from './blobref';
 
-// Contract: restore MUST NOT emit UI events, call the LLM, execute tools, or
-// touch the filesystem in a way that triggers external side effects. Each case
-// should reproduce the in-memory state the live handler left behind, nothing more.
-export function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
+// Contract: restore MUST only rebuild in-memory state. It must not emit UI
+// events, call the LLM, execute tools, start background work, make network
+// requests, or touch the filesystem in a way that triggers external side effects.
+//
+// Prefer restoring by calling the same method that wrote the record, so live
+// execution and resume share one state mutation path. For example,
+// permission.set_mode replays through agent.permission.setMode(input.mode),
+// not by assigning modeOverride here. records.logRecord, emitEvent, and
+// emitStatusUpdated already gate on records.restoring, so those calls are safe
+// during resume.
+function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
   switch (input.type) {
     case 'metadata':
       return;
@@ -31,8 +41,6 @@ export function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
       return;
     case 'turn.cancel':
       agent.turn.cancel(input.turnId);
-      return;
-    case 'background.stop':
       return;
     case 'config.update':
       agent.config.update(input);
@@ -53,7 +61,10 @@ export function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
       agent.fullCompaction.cancel();
       return;
     case 'full_compaction.complete':
-      agent.fullCompaction.complete(input);
+      agent.fullCompaction.markCompleted();
+      return;
+    case 'micro_compaction.apply':
+      agent.microCompaction.apply(input.cutoff);
       return;
     case 'plan_mode.enter':
       agent.planMode.restoreEnter(input);
@@ -67,9 +78,6 @@ export function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'context.append_message':
       agent.context.appendMessage(input.message);
       return;
-    case 'context.mark_last_user_prompt_blocked':
-      agent.context.markLastUserPromptBlocked(input.hookEvent);
-      return;
     case 'context.append_loop_event':
       agent.context.appendLoopEvent(input.event);
       return;
@@ -78,6 +86,9 @@ export function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
       return;
     case 'context.apply_compaction':
       agent.context.applyCompaction(input);
+      return;
+    case 'context.undo':
+      agent.context.undo(input.count);
       return;
     case 'tools.register_user_tool':
       agent.tools.registerUserTool(input);
@@ -91,16 +102,28 @@ export function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
     case 'tools.update_store':
       agent.tools.updateStore(input.key, input.value);
       return;
+    // TODO: Move goal state transitions to real resume semantics. These records
+    // are currently audit-only, while goal state is restored from `state.json`
+    // (metadata.custom.goal) instead of being rebuilt from ordered records.
+    case 'goal.create':
+    case 'goal.update':
+    case 'goal.account_usage':
+    case 'goal.continuation':
+    case 'goal.clear':
+      return;
   }
 }
 
+export interface RestoringContext {
+  time?: number;
+}
+
 export class AgentRecords {
-  private _restoring = false;
+  private _restoring: RestoringContext | null = null;
   private metadataInitialized = false;
-  onRecord?: (record: AgentRecord) => void;
 
   constructor(
-    private readonly restoreRecord: (record: AgentRecord) => void,
+    private readonly agent: Agent,
     private readonly persistence?: AgentRecordPersistence,
   ) {}
 
@@ -109,7 +132,7 @@ export class AgentRecords {
   }
 
   logRecord(record: AgentRecord): void {
-    if (this._restoring) return;
+    if (this._restoring !== null) return;
     const stamped: AgentRecord =
       record.time !== undefined ? record : { ...record, time: Date.now() };
     if (
@@ -121,6 +144,7 @@ export class AgentRecords {
         type: 'metadata',
         protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
         created_at: Date.now(),
+        app_version: this.agent.appVersion,
       });
       this.metadataInitialized = true;
     }
@@ -128,23 +152,23 @@ export class AgentRecords {
       this.metadataInitialized = true;
     }
     this.persistence?.append(stamped);
-    this.onRecord?.(stamped);
   }
 
   restore(record: AgentRecord): void {
-    this._restoring = true;
+    this._restoring = { time: record.time ?? Date.now() };
     try {
-      this.restoreRecord(record);
+      restoreAgentRecord(this.agent, record);
     } finally {
-      this._restoring = false;
+      this._restoring = null;
     }
   }
 
-  async replay(): Promise<void> {
+  async replay(): Promise<{ warning?: string }> {
     if (!this.persistence) throw new Error('No persistence provided for AgentRecords');
     let migrations: readonly WireMigration[] = [];
     let hasMetadata = false;
     let shouldRewrite = false;
+    let warning: string | undefined;
     const replayedRecords: AgentRecord[] = [];
     for await (const record of this.persistence.read()) {
       if (!hasMetadata) {
@@ -154,8 +178,13 @@ export class AgentRecords {
         hasMetadata = true;
         this.metadataInitialized = true;
         const readVersion = record.protocol_version;
-        migrations = resolveWireMigrations(readVersion);
-        shouldRewrite = readVersion !== AGENT_WIRE_PROTOCOL_VERSION;
+        if (isNewerWireVersion(readVersion)) {
+          warning = `Session wire protocol version ${readVersion} is newer than the current version ${AGENT_WIRE_PROTOCOL_VERSION}. Records will be replayed without migration.`;
+          shouldRewrite = false;
+        } else {
+          migrations = resolveWireMigrations(readVersion);
+          shouldRewrite = readVersion !== AGENT_WIRE_PROTOCOL_VERSION;
+        }
       }
       let migratedRecord = migrateWireRecord(
         record as WireMigrationRecord,
@@ -174,6 +203,26 @@ export class AgentRecords {
       this.persistence.rewrite(replayedRecords);
       await this.persistence.flush();
     }
+    if (this.agent.blobStore !== undefined) {
+      for (const msg of this.agent.context.history) {
+        await this.agent.blobStore.rehydrateParts(msg.content);
+      }
+    }
+    const firstRecord = replayedRecords[0];
+    if (
+      firstRecord?.type === 'metadata' &&
+      firstRecord.app_version !== this.agent.appVersion
+    ) {
+      this.persistence.append({
+        type: 'metadata',
+        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        created_at: Date.now(),
+        app_version: this.agent.appVersion,
+        resumed: true,
+      });
+      await this.persistence.flush();
+    }
+    return { warning };
   }
 
   async flush(): Promise<void> {

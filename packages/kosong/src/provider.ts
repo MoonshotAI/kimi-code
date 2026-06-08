@@ -8,9 +8,9 @@ import type { TokenUsage } from './usage';
  *
  * Values above `high` are provider/model-specific and may be clamped by the
  * adapter when the native API has no matching level. OpenAI maps `max` to its
- * `xhigh` ceiling; Kimi and Gemini cap `xhigh`/`max` at `high`; Anthropic
- * supports `xhigh`/`max` only on selected models and otherwise clamps to
- * `high`.
+ * `xhigh` ceiling on Responses and selected Chat Completions models; Kimi and
+ * Gemini cap `xhigh`/`max` at `high`; Anthropic supports `xhigh`/`max` only
+ * on selected models and otherwise clamps to `high`.
  */
 export type ThinkingEffort = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
@@ -98,6 +98,16 @@ export interface GenerateOptions {
    * each request/retry so providers never retain mutable credential state.
    */
   auth?: ProviderRequestAuth;
+  /**
+   * Host-side instrumentation hook fired immediately before invoking the
+   * provider adapter's generate call.
+   */
+  onRequestStart?: () => void;
+  /**
+   * Host-side instrumentation hook fired after the provider stream is fully
+   * drained, before post-processing the assembled response.
+   */
+  onStreamEnd?: () => void;
 }
 
 /**

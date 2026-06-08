@@ -1,6 +1,6 @@
 import { createWriteStream } from 'node:fs';
 import { mkdir, readdir, readFile } from 'node:fs/promises';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative } from 'pathe';
 import type { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 

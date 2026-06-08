@@ -2,7 +2,14 @@ import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 
 import type { ColorPalette } from '#/tui/theme/colors';
 
-export type SettingsSelection = 'model' | 'theme' | 'editor' | 'permission' | 'usage';
+export type SettingsSelection =
+  | 'model'
+  | 'theme'
+  | 'editor'
+  | 'permission'
+  | 'experiments'
+  | 'upgrade'
+  | 'usage';
 
 const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
   {
@@ -26,6 +33,16 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     description: 'Set the external editor command.',
   },
   {
+    value: 'experiments',
+    label: 'Experiments',
+    description: 'Turn experimental features on or off.',
+  },
+  {
+    value: 'upgrade',
+    label: 'Automatic updates',
+    description: 'Turn automatic CLI updates on or off.',
+  },
+  {
     value: 'usage',
     label: 'Usage',
     description: 'Show session tokens, context window, and plan quotas.',
@@ -38,6 +55,8 @@ function isSettingsSelection(value: string): value is SettingsSelection {
     value === 'theme' ||
     value === 'editor' ||
     value === 'permission' ||
+    value === 'experiments' ||
+    value === 'upgrade' ||
     value === 'usage'
   );
 }

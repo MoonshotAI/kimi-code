@@ -1,4 +1,4 @@
-export type TelemetryPropertyValue = boolean | number | string | null;
+export type TelemetryPropertyValue = boolean | number | string | undefined | null;
 
 export type TelemetryProperties = Readonly<Record<string, TelemetryPropertyValue>>;
 

@@ -1,10 +1,48 @@
+import type { AutocompleteItem } from '@earendil-works/pi-tui';
+
+import { completeLeadingArg, type ArgCompletionSpec } from './complete-args';
 import type { KimiSlashCommand, SlashCommandAvailability } from './types';
+
+/** Subcommands offered when autocompleting `/goal <…>`. */
+const GOAL_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'status', description: 'Show the current goal' },
+  { value: 'pause', description: 'Pause the active goal' },
+  { value: 'resume', description: 'Resume a paused goal' },
+  { value: 'cancel', description: 'Cancel and remove the current goal' },
+  { value: 'replace', description: 'Replace the current goal with a new objective' },
+  { value: 'next', description: 'Queue an upcoming goal' },
+];
+
+const GOAL_NEXT_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'manage', description: 'Manage upcoming goals' },
+];
+
+/** Argument autocompletion for the `/goal` command (subcommands). */
+export function goalArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+  const nextMatch = argumentPrefix.match(/^next\s+(\S*)$/i);
+  if (nextMatch !== null) {
+    return (
+      completeLeadingArg(GOAL_NEXT_ARG_COMPLETIONS, nextMatch[1] ?? '')?.map((item) => ({
+        ...item,
+        value: `next ${item.value}`,
+      })) ?? null
+    );
+  }
+  return completeLeadingArg(GOAL_ARG_COMPLETIONS, argumentPrefix);
+}
 
 export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'yolo',
     aliases: ['yes'],
     description: 'Toggle auto-approve mode',
+    priority: 100,
+    availability: 'always',
+  },
+  {
+    name: 'auto',
+    aliases: [],
+    description: 'Toggle auto permission mode',
     priority: 100,
     availability: 'always',
   },
@@ -37,6 +75,20 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'provider',
+    aliases: ['providers'],
+    description: 'Manage AI providers (add / delete / refresh)',
+    priority: 95,
+    availability: 'always',
+  },
+  {
+    name: 'btw',
+    aliases: [],
+    description: 'Ask a forked side agent a question',
+    priority: 90,
+    availability: 'always',
+  },
+  {
     name: 'help',
     aliases: ['h', '?'],
     description: 'Show available commands and shortcuts',
@@ -54,7 +106,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: ['resume'],
     description: 'Browse and resume sessions',
     priority: 80,
-    availability: 'always',
   },
   {
     name: 'tasks',
@@ -71,10 +122,59 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'plugins',
+    aliases: [],
+    description: 'Manage plugins',
+    priority: 60,
+    availability: 'always',
+  },
+  {
+    name: 'experiments',
+    aliases: ['experimental'],
+    description: 'Manage experimental features',
+    priority: 60,
+    availability: 'idle-only',
+  },
+  {
+    name: 'reload',
+    aliases: [],
+    description: 'Reload session and apply config.toml settings plus tui.toml UI preferences',
+    priority: 60,
+    availability: 'idle-only',
+  },
+  {
+    name: 'reload-tui',
+    aliases: [],
+    description: 'Reload only tui.toml UI preferences',
+    priority: 60,
+    availability: 'always',
+  },
+  {
     name: 'compact',
     aliases: [],
     description: 'Compact the conversation context',
     priority: 80,
+  },
+  {
+    name: 'goal',
+    aliases: [],
+    description: 'Start or manage an autonomous goal',
+    priority: 80,
+    experimentalFlag: 'goal_command',
+    // No argumentHint: the menu description stays as short as every other
+    // command's. The subcommands (status/pause/resume/cancel/replace) surface in
+    // the argument autocomplete list once the user types `/goal ` (see
+    // completeArgs), so they don't need to be spelled out inline.
+    completeArgs: goalArgumentCompletions,
+    // status / pause / cancel are always available; creation, replacement, and
+    // resume start (or restart) a turn and so are idle-only.
+    availability: (args) => {
+      const trimmed = args.trim();
+      if (trimmed === 'next' || trimmed.startsWith('next ')) return 'always';
+      return trimmed === '' || trimmed === 'status' || trimmed === 'pause' || trimmed === 'cancel'
+        ? 'always'
+        : 'idle-only';
+    },
   },
   {
     name: 'init',
@@ -116,6 +216,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'undo',
+    aliases: [],
+    description: 'Withdraw the last prompt from the transcript',
+    priority: 80,
+    availability: 'idle-only',
+  },
+  {
     name: 'editor',
     aliases: [],
     description: 'Set the external editor for Ctrl-G',
@@ -131,8 +238,8 @@ export const BUILTIN_SLASH_COMMANDS = [
   },
   {
     name: 'logout',
-    aliases: [],
-    description: 'Clear credentials for the current platform',
+    aliases: ['disconnect'],
+    description: 'Log out of a configured provider',
     priority: 40,
   },
   {
@@ -142,9 +249,15 @@ export const BUILTIN_SLASH_COMMANDS = [
     priority: 40,
   },
   {
-    name: 'connect',
+    name: 'export-md',
+    aliases: ['export'],
+    description: 'Export current session as a Markdown file',
+    priority: 40,
+  },
+  {
+    name: 'export-debug-zip',
     aliases: [],
-    description: 'Connect a provider from a model catalog',
+    description: 'Export current session as a debug ZIP archive',
     priority: 40,
   },
   {

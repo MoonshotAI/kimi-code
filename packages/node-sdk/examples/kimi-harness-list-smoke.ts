@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { KimiHarness } from '@moonshot-ai/kimi-code-sdk';
+import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
 import { smokeIdentityFromEnv } from './runtime-smoke-helpers';
 
@@ -11,7 +11,7 @@ async function main(): Promise<void> {
   const homeDir = await mkdtemp(join(tmpdir(), 'kimi-harness-list-home-'));
   const workDirA = await mkdtemp(join(tmpdir(), 'kimi-harness-list-work-a-'));
   const workDirB = await mkdtemp(join(tmpdir(), 'kimi-harness-list-work-b-'));
-  const harness = new KimiHarness({
+  const harness = createKimiHarness({
     identity: smokeIdentityFromEnv(),
     homeDir,
   });

@@ -13,12 +13,13 @@ jobs:
     runs-on: ubuntu-latest
     if: github.repository_owner == 'MoonshotAI'
     outputs:
+      packages_published: ${{ steps.changesets.outputs.published }}
       kimi_native_release: ${{ steps.kimi-release.outputs.should_publish }}
       kimi_release_tag: ${{ steps.kimi-release.outputs.tag }}
     permissions:
       contents: write
       pull-requests: write
-      id-token: write  # Required for NPM Trusted Publishing (OIDC)
+      id-token: write # Required for NPM Trusted Publishing (OIDC)
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -32,8 +33,8 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
-          cache: 'pnpm'
-          registry-url: 'https://registry.npmjs.org'
+          cache: "pnpm"
+          registry-url: "https://registry.npmjs.org"
 
       - name: Upgrade npm for Trusted Publishing
         run: npm install -g npm@latest
@@ -56,9 +57,9 @@ jobs:
         uses: changesets/action@v1
         with:
           publish: pnpm changeset publish
-          version: pnpm changeset version
-          commit: 'ci: release packages'
-          title: 'ci: release packages'
+          version: pnpm run version:release
+          commit: "ci: release packages"
+          title: "ci: release packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # NPM_TOKEN is not needed with Trusted Publishing (OIDC)
@@ -69,6 +70,16 @@ jobs:
         run: node apps/kimi-code/scripts/native/resolve-release.mjs
         env:
           CHANGESETS_PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
+
+  deploy-docs:
+    name: Deploy docs
+    needs: release
+    if: needs.release.outputs.packages_published == 'true'
+    uses: ./.github/workflows/docs-deploy.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
 
   native-artifacts:
     name: Native release artifact

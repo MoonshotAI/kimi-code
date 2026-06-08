@@ -1,13 +1,15 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, open } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname } from 'pathe';
 
 import { ErrorCodes, KimiError } from '#/errors';
+import { applyEnvModelConfig, stripEnvModelConfig } from './env-model';
 import {
   KimiConfigSchema,
   formatConfigValidationError,
   getDefaultConfig,
   type BackgroundConfig,
+  type ExperimentalConfig,
   type HookDefConfig,
   type KimiConfig,
   type LoopControl,
@@ -68,6 +70,19 @@ export function readConfigFile(filePath: string): KimiConfig {
   return parseConfigString(text, filePath);
 }
 
+/**
+ * Load the config for runtime consumption: the on-disk config plus any model
+ * synthesized from `KIMI_MODEL_*` environment variables. Use this everywhere a
+ * value is assigned to the live runtime config; use the raw `readConfigFile`
+ * for write-back paths so the synthesized model is never persisted.
+ */
+export function loadRuntimeConfig(
+  filePath: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): KimiConfig {
+  return applyEnvModelConfig(readConfigFile(filePath), env);
+}
+
 export function parseConfigString(tomlText: string, filePath = 'config.toml'): KimiConfig {
   if (tomlText.trim().length === 0) {
     return getDefaultConfig();
@@ -118,6 +133,8 @@ export function transformTomlData(data: Record<string, unknown>): Record<string,
       result[targetKey] = transformLoopControlData(value);
     } else if (targetKey === 'background' && isPlainObject(value)) {
       result[targetKey] = transformPlainObject(value);
+    } else if (targetKey === 'experimental' && isPlainObject(value)) {
+      result[targetKey] = cloneRecord(value);
     } else if (!isPlainObject(value)) {
       result[targetKey] = value;
     }
@@ -249,7 +266,10 @@ function transformLoopControlData(data: Record<string, unknown>): Record<string,
 /* ------------------------------------------------------------------ */
 
 export async function writeConfigFile(filePath: string, config: KimiConfig): Promise<void> {
-  const validated = validateConfig(config);
+  // Final guard: never persist the env-synthesized model/provider to disk,
+  // even if a caller passes back the runtime config as a patch (see
+  // stripEnvModelConfig / the getConfig -> setConfig round-trip).
+  const validated = validateConfig(stripEnvModelConfig(config));
   await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
   await atomicWrite(filePath, `${stringifyToml(configToTomlData(validated))}\n`);
 }
@@ -285,6 +305,7 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
   setSection(out, 'services', config.services, servicesToToml);
   setSection(out, 'loop_control', config.loopControl, loopControlToToml);
   setSection(out, 'background', config.background, backgroundToToml);
+  setSection(out, 'experimental', config.experimental, experimentalToToml);
   setSection(out, 'permission', config.permission, permissionToToml);
   setHooks(out, config.hooks);
 
@@ -446,6 +467,17 @@ function backgroundToToml(
   return out;
 }
 
+function experimentalToToml(
+  experimental: ExperimentalConfig,
+  _rawExperimental: unknown,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(experimental)) {
+    setDefined(out, key, value);
+  }
+  return out;
+}
+
 function setHooks(out: Record<string, unknown>, hooks: readonly HookDefConfig[] | undefined): void {
   if (hooks === undefined) {
     delete out['hooks'];
@@ -465,7 +497,7 @@ function hookToToml(hook: HookDefConfig): Record<string, unknown> {
 function oauthToToml(oauth: OAuthRef): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(oauth)) {
-    out[camelToSnake(key)] = value;
+    setDefined(out, camelToSnake(key), value);
   }
   return out;
 }

@@ -90,16 +90,19 @@ After stripping, each entry should be only:
 
 Upstream language rule: `gen-changesets` requires changelog entries to be English. If the upstream CLI changelog contains a non-English entry, stop and report it to the user. Do not silently rewrite it while syncing docs.
 
+Public-text rule: do not copy real internal endpoints, key names, account names, or service names into docs changelogs. Replace examples with neutral placeholders such as `example.com`, `example.test`, or `YOUR_API_KEY` while preserving the user-visible meaning.
+
 ### 3. Classify Entries
 
-The docs changelog uses four section types:
+The docs changelog uses five section types:
 
 | English section | Chinese section | Meaning |
 |---|---|---|
-| `### Features` | `### 新功能` | New user-facing functionality |
+| `### Features` | `### 新功能` | New user-facing functionality, such as a new command, flag, mode, or capability that did not exist before |
 | `### Bug Fixes` | `### 修复` | Fixes for behavior that was broken |
+| `### Polish` | `### 优化` | User-visible improvements to existing functionality, including UX adjustments, behavior tweaks, and performance improvements that are not fixes or new capabilities |
 | `### Refactors` | `### 重构` | Internal changes with no user-visible behavior change, including build, CI, tests, dependency cleanup, and internal renames |
-| `### Other` | `### 其他` | Anything that does not fit above, such as user-visible adjustments that are not fixes or features, CDN/endpoint swaps, and docs-related artifacts |
+| `### Other` | `### 其他` | Anything that does not fit above, such as CDN/endpoint swaps and docs-related artifacts |
 
 Classification process:
 
@@ -109,20 +112,29 @@ Classification process:
    - Or use the PR number with `gh pr view <NNN>`.
 3. If it is still unclear, put it in `Other`. Do not guess or force entries into `Features`.
 
+Features vs. Polish: ask whether the entry introduces something the user could not do before. If yes (new command, flag, mode, viewer, or capability), use `Features`. If it only improves an existing surface (a UI panel that already existed, an existing prompt, an existing tool card, an existing payload pipeline), use `Polish`. Verbs like `Add` do not automatically mean `Features` — a small visual addition to an existing UI is still polish.
+
 Keyword hints:
 
-- **Features**: `Add`, `Introduce`, `Support`, `Allow`, `Enable`, `Implement`, `New ... command/flag/option`
+- **Features**: `Add ... command/flag/option/mode/viewer`, `Introduce`, `Support`, `Allow`, `Enable`, `Implement`, `New ... command/flag/option`
 - **Bug Fixes**: `Fix`, `Resolve`, `Correct`, `Address`, `Prevent ... from`, `Stop ... from`, `... no longer ...`
+- **Polish**: `Polish`, `Optimize`, `Improve`, `Enhance`, `Speed up`, `Reduce`, `Cap`, `Shorten`, `Wrap`, `Clarify`, `Tweak`, `Adjust`, `Offload`, `Show ... in existing surface`, performance and UX adjustments to existing features
 - **Refactors**: `Refactor`, `Rename`, `Clean up`, `Simplify`, `Remove unused`, `Migrate to`, `Unify`, `Restructure`, `Internal`, dependency bumps, pure CI/build/test changes
-- **Other**: docs artifacts, CDN/endpoint switches, or small user-visible adjustments that are not fixes or new features
+- **Other**: docs artifacts, CDN/endpoint switches, anything that genuinely fits no other section
 
 Within each version, section order is:
 
 ```text
-Features → Bug Fixes → Refactors → Other
+Features → Bug Fixes → Polish → Refactors → Other
 ```
 
-Omit empty sections. Preserve upstream entry order within each section.
+Omit empty sections. Within each section, order entries by reader value, not upstream order:
+
+1. Put the most valuable, obvious, and larger changes first.
+2. Prefer broad user-visible features, workflow-changing fixes, high-frequency bugs, and large cross-cutting improvements over small polish, narrow edge cases, and internal cleanup.
+3. If entries have similar value, preserve upstream order.
+
+Do not reword or exaggerate entries just to make them look more important; only reorder existing entries.
 
 ### 4. Write The English Page
 
@@ -136,10 +148,24 @@ This page documents the changes in each Kimi Code CLI release.
 
 Insert new version blocks immediately after the header paragraph and before the previous latest version.
 
+Every version heading must carry its release date in parentheses:
+
+```text
+## <version> (YYYY-MM-DD)
+```
+
+Take the date from the version's published GitHub Release tag, not from when you run the sync:
+
+```bash
+git log -1 --format=%cs "@moonshot-ai/kimi-code@<version>"
+```
+
+Use the half-width parenthesis form ` (YYYY-MM-DD)` on the English page. Never invent or guess a date; if the tag is missing, stop and confirm with the user.
+
 Example:
 
 ```markdown
-## 0.2.0
+## 0.2.0 (2026-05-26)
 
 ### Bug Fixes
 
@@ -167,14 +193,15 @@ Chinese page requirements:
   本页记录 Kimi Code CLI 每个版本的变更内容。
   ```
 
-- Preserve version headings exactly, such as `## 0.2.0`.
+- Preserve version headings including the release date, but use full-width parentheses on the Chinese page, such as `## 0.2.0（2026-05-26）`. The date must match the English page; only the parenthesis style differs (half-width `()` in English, full-width `（）` in Chinese).
 - Translate section headings exactly:
   - `### Features` → `### 新功能`
   - `### Bug Fixes` → `### 修复`
+  - `### Polish` → `### 优化`
   - `### Refactors` → `### 重构`
   - `### Other` → `### 其他`
-- The Chinese page must mirror the English page 1:1 for versions, sections, section order, and entry counts.
-- Keep the classification from the English page. Do not reclassify while translating.
+- The Chinese page must mirror the English page 1:1 for versions, sections, section order, entry order, and entry counts.
+- Keep the classification and entry order from the English page. Do not reclassify or reorder while translating.
 - Translate only entry body text. Do not add entries that are not present in English.
 - Follow `docs/AGENTS.md` for Chinese typography: full-width punctuation, spaces between Chinese and English, and the glossary.
 
@@ -189,9 +216,12 @@ git diff docs/en/release-notes/changelog.md docs/zh/release-notes/changelog.md
 Check:
 
 - Versions and version counts match between English and Chinese.
+- Every version heading carries its release date from the published tag, with half-width parentheses in English and full-width in Chinese.
 - Each version has the same section set and order on both pages.
 - Each section has the same number of entries on both pages.
+- Within each section, the most valuable, obvious, and larger entries appear before smaller or narrower entries.
 - PR links and commit hashes were stripped.
+- Real internal identifiers were replaced with neutral placeholders.
 - There are no empty sections.
 - Markdown indentation and blank lines are intact.
 
@@ -228,14 +258,18 @@ Do **not** create a changeset for changelog docs sync. Docs sync does not enter 
 | Leaving English text untranslated in the Chinese page | The Chinese page must be fully Chinese except preserved technical terms |
 | Editing upstream changelog text | Do not edit upstream |
 | Losing two-space indentation in multi-line list items | Restore indentation so Markdown lists stay valid |
-| Copying `### Patch Changes` into docs | Remove changesets headings and classify under Features / Bug Fixes / Refactors / Other |
+| Copying `### Patch Changes` into docs | Remove changesets headings and classify under Features / Bug Fixes / Polish / Refactors / Other |
 | Guessing unclear entries as Features | Inspect commit/PR; if still unclear, use Other |
+| Treating any `Add ...` line as Features | If the entry only adds a small element to an existing UI/surface, use Polish |
+| Filing UX or performance tweaks under Other | Use Polish for user-visible improvements to existing functionality |
+| Preserving upstream order when a small entry hides a larger change | Reorder within the section so the highest-value, most obvious items appear first |
 | Reclassifying entries while translating | Chinese classification must mirror English |
 | Leaving empty sections | Delete sections with no entries |
 | Putting everything under Other for convenience | Classify what can be classified first |
 | Translating tool names, command names, or config keys | Keep them as written |
 | Creating a changeset for docs sync | Do not create one |
 | Using curly quotes or half-width Chinese punctuation | Follow `docs/AGENTS.md` |
+| Omitting the release date from a version heading, or guessing it | Add ` (YYYY-MM-DD)` (full-width `（）` in Chinese) taken from the published tag |
 
 ## Stop Signals
 

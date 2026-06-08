@@ -24,12 +24,14 @@ import {
 } from '../tools/args-validator';
 import { PathSecurityError } from '../tools/policies/path-access';
 
+import { isUserCancellation } from '../utils/abort';
 import { errorMessage, isAbortError } from './errors';
 import type { LoopEventDispatcher, LoopToolCallEvent } from './events';
 import type { LLM, LLMChatResponse } from './llm';
 import { ToolAccesses } from './tool-access';
 import { ToolScheduler, type ToolCallTask } from './tool-scheduler';
 import type {
+  AuthorizeToolExecutionResult,
   ExecutableTool,
   LoopHooks,
   ToolCall,
@@ -44,6 +46,19 @@ const TOOL_OUTPUT_EMPTY = 'Tool output is empty.';
 const TOOL_OUTPUT_NON_TEXT = 'Tool returned non-text content.';
 
 const validators = new WeakMap<ExecutableTool, ToolArgsValidator>();
+
+/**
+ * Output for an aborted tool call. When the abort carries a user-cancellation
+ * reason (the user pressed stop), say so explicitly so the model treats it as a
+ * deliberate interruption instead of a system fault to theorise about or retry.
+ * Any other abort keeps the neutral wording.
+ */
+function abortedToolOutput(toolName: string, signal: AbortSignal): string {
+  if (isUserCancellation(signal.reason)) {
+    return `The user manually interrupted "${toolName}" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.`;
+  }
+  return `Tool "${toolName}" was aborted`;
+}
 
 export interface ToolCallStepContext {
   readonly tools?: readonly ExecutableTool[] | undefined;
@@ -223,45 +238,50 @@ async function prepareToolCall(
   step: ToolCallStepContext,
   call: PreflightedToolCall,
 ): Promise<PreparedToolCallTask> {
-  if (call.kind === 'rejected') {
-    await dispatchToolCall(step, call, call.args);
-    return { task: makeResolvedToolCallTask(makeErrorToolResult(call, call.args, call.output)) };
-  }
+  const settleError = async (
+    args: unknown,
+    output: string,
+    displayFields?: ToolCallDisplayFields,
+  ): Promise<PreparedToolCallTask> => {
+    await dispatchToolCall(step, call, args, displayFields);
+    return { task: makeResolvedToolCallTask(makeErrorToolResult(call, args, output)) };
+  };
+
+  const settleSynthetic = async (
+    args: unknown,
+    result: ExecutableToolResult,
+    displayFields?: ToolCallDisplayFields,
+  ): Promise<PreparedToolCallTask> => {
+    const coerced = coerceToolResult(result, call.toolName);
+    await dispatchToolCall(step, call, args, displayFields);
+    return {
+      task: makeResolvedToolCallTask(makeToolResult(call, args, coerced)),
+      stopBatchAfterThis: toolResultStopsTurn(coerced),
+    };
+  };
+
+  if (call.kind === 'rejected') return settleError(call.args, call.output);
 
   const decision = await runPrepareToolExecutionHook(step, call);
-  if (decision.kind === 'blocked') {
-    await dispatchToolCall(step, call, decision.args);
-    return {
-      task: makeResolvedToolCallTask(makeErrorToolResult(call, decision.args, decision.output)),
-    };
+  if (decision.kind === 'blocked' || decision.kind === 'hookFailed') {
+    return settleError(decision.args, decision.output);
   }
-
-  if (decision.kind === 'hookFailed') {
-    await dispatchToolCall(step, call, decision.args);
-    return {
-      task: makeResolvedToolCallTask(makeErrorToolResult(call, decision.args, decision.output)),
-    };
-  }
-
   if (decision.kind === 'synthetic') {
-    await dispatchToolCall(step, call, decision.args);
-    return {
-      task: makeResolvedToolCallTask(makeToolResult(call, decision.args, decision.result)),
-      stopBatchAfterThis: toolResultStopsTurn(decision.result),
-    };
+    return settleSynthetic(decision.args, decision.result);
   }
 
   const validationError = validateExecutableToolArgs(call.tool, decision.args);
   if (validationError !== null) {
-    await dispatchToolCall(step, call, decision.args);
-    const output = `Invalid args for tool "${call.toolName}" after prepareToolExecution hook: ${validationError}`;
-    return { task: makeResolvedToolCallTask(makeErrorToolResult(call, decision.args, output)) };
+    return settleError(
+      decision.args,
+      `Invalid args for tool "${call.toolName}" after prepareToolExecution hook: ${validationError}`,
+    );
   }
 
   const effectiveArgs = decision.args;
   let execution: ToolExecution;
   try {
-    execution = call.tool.resolveExecution(effectiveArgs);
+    execution = await call.tool.resolveExecution(effectiveArgs);
   } catch (error) {
     if (!(error instanceof PathSecurityError)) {
       step.log?.warn('tool execution setup failed', {
@@ -274,37 +294,44 @@ async function prepareToolCall(
       error instanceof PathSecurityError
         ? error.message
         : `Tool "${call.toolName}" failed to resolve execution: ${errorMessage(error)}`;
-    await dispatchToolCall(step, call, effectiveArgs);
-    return {
-      task: makeResolvedToolCallTask(makeErrorToolResult(call, effectiveArgs, output)),
-    };
+    return settleError(effectiveArgs, output);
   }
 
   const displayFields = toolCallDisplayFieldsFromExecution(execution);
-  await dispatchToolCall(step, call, effectiveArgs, displayFields);
+  const settleAborted = (): Promise<PreparedToolCallTask> =>
+    settleError(effectiveArgs, abortedToolOutput(call.toolName, step.signal), displayFields);
 
-  if (step.signal.aborted) {
-    return {
-      task: makeResolvedToolCallTask(
-        makeErrorToolResult(call, effectiveArgs, `Tool "${call.toolName}" was aborted`),
-      ),
-    };
-  }
+  if (step.signal.aborted) return settleAborted();
 
   if (execution.isError === true) {
-    return {
-      task: makeResolvedToolCallTask(makeToolResult(call, effectiveArgs, execution)),
-      stopBatchAfterThis: execution.stopTurn,
-    };
+    return settleSynthetic(effectiveArgs, execution, displayFields);
   }
 
+  const authorization = await runAuthorizeToolExecutionHook(step, call, effectiveArgs, execution);
+  if (step.signal.aborted) return settleAborted();
+
+  if (authorization?.block === true) {
+    return settleError(
+      effectiveArgs,
+      authorization.reason ?? `Tool call "${call.toolName}" was blocked`,
+      displayFields,
+    );
+  }
+
+  if (authorization?.syntheticResult !== undefined) {
+    return settleSynthetic(effectiveArgs, authorization.syntheticResult, displayFields);
+  }
+
+  const executionMetadata = authorization?.executionMetadata ?? decision.metadata;
+  await dispatchToolCall(step, call, effectiveArgs, displayFields);
   return {
     task: {
       accesses: execution.accesses ?? ToolAccesses.all(),
       start: async () => ({
-        result: runRunnableToolCall(step, call, effectiveArgs, decision.metadata, execution),
+        result: runRunnableToolCall(step, call, effectiveArgs, executionMetadata, execution),
       }),
     },
+    stopBatchAfterThis: execution.stopBatchAfterThis,
   };
 }
 
@@ -383,6 +410,40 @@ async function runPrepareToolExecutionHook(
   return { kind: 'allowed', args: effectiveArgs, metadata: hookResult?.executionMetadata };
 }
 
+async function runAuthorizeToolExecutionHook(
+  step: ToolCallStepContext,
+  call: RunnableToolCall,
+  args: unknown,
+  execution: RunnableToolExecution,
+): Promise<AuthorizeToolExecutionResult | undefined> {
+  const { hooks, signal, turnId, currentStep, llm } = step;
+  if (hooks?.authorizeToolExecution === undefined) return undefined;
+
+  try {
+    return await hooks.authorizeToolExecution({
+      toolCall: call.toolCall,
+      tool: call.tool,
+      args,
+      execution,
+      turnId,
+      stepNumber: currentStep,
+      signal,
+      llm,
+    });
+  } catch (error) {
+    if (isAbortError(error) || signal.aborted) {
+      return {
+        block: true,
+        reason: `Tool "${call.toolName}" was aborted during authorizeToolExecution hook`,
+      };
+    }
+    return {
+      block: true,
+      reason: `authorizeToolExecution hook failed for "${call.toolName}": ${errorMessage(error)}`,
+    };
+  }
+}
+
 function toolCallDisplayFieldsFromExecution(
   execution: ToolExecution,
 ): ToolCallDisplayFields | undefined {
@@ -406,12 +467,13 @@ async function runRunnableToolCall(
   const { toolCall, toolName } = call;
 
   if (signal.aborted) {
-    return makeErrorToolResult(call, effectiveArgs, `Tool "${toolName}" was aborted`);
+    return makeErrorToolResult(call, effectiveArgs, abortedToolOutput(toolName, signal));
   }
 
   let toolResult: ExecutableToolResult;
   try {
-    toolResult = await executeTool(step, execution, toolCall, toolName, metadata);
+    const raw = await executeTool(step, execution, toolCall, toolName, metadata);
+    toolResult = coerceToolResult(raw, toolName);
   } catch (error) {
     const aborted = isAbortError(error) || signal.aborted;
     if (!aborted) {
@@ -422,7 +484,7 @@ async function runRunnableToolCall(
       });
     }
     const output = aborted
-      ? `Tool "${toolName}" was aborted`
+      ? abortedToolOutput(toolName, signal)
       : `Tool "${toolName}" failed: ${errorMessage(error)}`;
     return makeErrorToolResult(call, effectiveArgs, output);
   }
@@ -449,7 +511,10 @@ async function finalizePendingToolResult(
       signal,
       llm,
     });
-    const effectiveResult = finalizedResult ?? pendingResult.result;
+    const effectiveResult = coerceToolResult(
+      finalizedResult ?? pendingResult.result,
+      pendingResult.toolName,
+    );
     return {
       ...pendingResult,
       stopTurn: pendingResult.stopTurn === true || toolResultStopsTurn(effectiveResult),
@@ -550,6 +615,33 @@ function isMediaContentPart(part: ContentPart): boolean {
   return part.type === 'image_url' || part.type === 'audio_url' || part.type === 'video_url';
 }
 
+/**
+ * Validate a tool's raw return against the {@link ExecutableToolResult} contract.
+ * A tool that returns `undefined`, a primitive, or an object without a valid
+ * `output` field is coerced into an `isError: true` result so the loop can still
+ * emit a paired `tool.result` event. This is the trust boundary between
+ * arbitrary tool implementations and the rest of the loop.
+ */
+function coerceToolResult(value: unknown, toolName: string): ExecutableToolResult {
+  if (value === null || value === undefined) {
+    return { output: `Tool "${toolName}" returned no result.`, isError: true };
+  }
+  if (typeof value !== 'object') {
+    return {
+      output: `Tool "${toolName}" returned a ${typeof value} instead of a tool result.`,
+      isError: true,
+    };
+  }
+  const candidate = value as { output?: unknown };
+  if (typeof candidate.output !== 'string' && !Array.isArray(candidate.output)) {
+    return {
+      output: `Tool "${toolName}" returned a result with a missing or malformed "output" field.`,
+      isError: true,
+    };
+  }
+  return value as ExecutableToolResult;
+}
+
 function normalizeToolResult(r: ExecutableToolResult): ExecutableToolResult {
   let output: ExecutableToolResult['output'];
   if (typeof r.output === 'string') {
@@ -589,7 +681,7 @@ function makeToolResult(
 }
 
 function toolResultStopsTurn(result: ExecutableToolResult): boolean {
-  return result.isError === true && result.stopTurn === true;
+  return result.stopTurn === true;
 }
 
 function makeErrorToolResult(

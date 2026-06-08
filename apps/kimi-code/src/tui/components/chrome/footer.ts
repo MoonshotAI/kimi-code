@@ -10,6 +10,7 @@ import type { Component } from '@earendil-works/pi-tui';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
+import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
 import {
@@ -22,43 +23,146 @@ import {
 import { safeUsageRatio } from '#/utils/usage/usage-format';
 
 const MAX_CWD_SEGMENTS = 3;
+const GOAL_TIMER_INTERVAL_MS = 1_000;
 
-// Toolbar tips — rotates every 30s, shows 2 tips joined by " | " when
-// space allows, falls back to 1.
-const TIP_ROTATE_INTERVAL_MS = 30_000;
+// Toolbar tips — rotates every 10s. Most tips are short and pair up (two
+// joined by " | ") when space allows; tips flagged `solo` are long or
+// important enough to take the whole slot on their own. A `priority` weight
+// makes a tip recur more often in the rotation (default 1). Width is always
+// the final arbiter (a pair that doesn't fit falls back to its first tip).
+//
+// This is deliberately code-level configuration: edit the interval and the
+// TOOLBAR_TIPS array below to change what the footer advertises.
+const TIP_ROTATE_INTERVAL_MS = 10_000;
 const TIP_SEPARATOR = ' | ';
-const TOOLBAR_TIPS: readonly string[] = [
-  'shift+tab: plan mode',
-  '/yolo: toggle yolo',
-  'ctrl+c: cancel',
-  '/help: show commands',
-  '/model: switch model',
-  '@: mention files',
+
+export interface ToolbarTip {
+  readonly text: string;
+  /**
+   * Long/important tips render on their own. They never pair with a
+   * neighbour and never appear as the second half of someone else's pair.
+   */
+  readonly solo?: boolean;
+  /**
+   * Rotation weight: a higher value makes the tip recur more often. Defaults
+   * to 1. Used to give newer/important features more airtime.
+   */
+  readonly priority?: number;
+}
+
+const TOOLBAR_TIPS: readonly ToolbarTip[] = [
+  { text: 'shift+tab: plan mode' },
+  { text: '/model: switch model' },
+  { text: 'ctrl+s: steer mid-turn', priority: 2 },
+  { text: '/compact: compact context', priority: 2 },
+  { text: 'ctrl+o: expand tool output' },
+  { text: '/tasks: background tasks' },
+  { text: 'shift+enter: newline' },
+  { text: '/init: generate AGENTS.md', priority: 2 },
+  { text: '@: mention files' },
+  { text: 'ctrl+c: cancel' },
+  { text: '/theme: switch theme' },
+  { text: '/auto: auto permission mode' },
+  { text: '/yolo: toggle yolo' },
+  { text: '/help: show commands' },
+  { text: '/dance: rainbow mode, because why not' },
+  { text: '/plugins: manage plugins — try the "superpowers" plugin', solo: true, priority: 3 },
+  { text: 'ask Kimi to schedule tasks, e.g. "remind me at 5pm"', solo: true, priority: 3 },
 ];
+
+/**
+ * Expand tips into a rotation sequence using smooth weighted round-robin
+ * (the nginx SWRR algorithm). Higher-`priority` tips appear more often while
+ * staying evenly spread, so a tip generally does not land next to its own
+ * duplicate. Deterministic and computed once at module load. Exported for
+ * unit testing.
+ */
+export function buildWeightedTips(tips: readonly ToolbarTip[]): readonly ToolbarTip[] {
+  const items = tips.map((t) => ({
+    tip: t,
+    weight: Math.max(1, Math.trunc(t.priority ?? 1)),
+    current: 0,
+  }));
+  const total = items.reduce((sum, it) => sum + it.weight, 0);
+  const seq: ToolbarTip[] = [];
+  for (let n = 0; n < total; n++) {
+    let best = items[0]!;
+    for (const it of items) {
+      it.current += it.weight;
+      if (it.current > best.current) best = it;
+    }
+    best.current -= total;
+    seq.push(best.tip);
+  }
+  return seq;
+}
+
+const ROTATION: readonly ToolbarTip[] = buildWeightedTips(TOOLBAR_TIPS);
 
 function currentTipIndex(): number {
   return Math.floor(Date.now() / TIP_ROTATE_INTERVAL_MS);
 }
 
-function twoRotatingTips(index: number): string {
-  const n = TOOLBAR_TIPS.length;
-  if (n === 0) return '';
-  if (n === 1) return TOOLBAR_TIPS[0]!;
+/**
+ * Pick the tip(s) for a rotation index over the weighted ROTATION sequence.
+ * `primary` is always shown when it fits; `pair` (primary + next tip joined
+ * by the separator) is offered for wide terminals. Pairing is skipped when
+ * the current/next tip is `solo` or when the neighbour is a duplicate of the
+ * current tip (which can happen at the wrap boundary), keeping long/important
+ * tips on their own and avoiding "X | X".
+ */
+function tipsForIndex(index: number): { primary: string; pair: string | null } {
+  const n = ROTATION.length;
+  if (n === 0) return { primary: '', pair: null };
   const offset = ((index % n) + n) % n;
-  return TOOLBAR_TIPS[offset]! + TIP_SEPARATOR + TOOLBAR_TIPS[(offset + 1) % n]!;
+  const current = ROTATION[offset]!;
+  if (n === 1 || current.solo) return { primary: current.text, pair: null };
+  const next = ROTATION[(offset + 1) % n]!;
+  if (next.solo || next.text === current.text) return { primary: current.text, pair: null };
+  return { primary: current.text, pair: current.text + TIP_SEPARATOR + next.text };
 }
 
-function oneRotatingTip(index: number): string {
-  const n = TOOLBAR_TIPS.length;
-  if (n === 0) return '';
-  const offset = ((index % n) + n) % n;
-  return TOOLBAR_TIPS[offset]!;
+/**
+ * Footer goal badge, e.g. `[goal ● active · 4m · 7 turns]`. Only shown for a
+ * live (active/paused) goal; terminal/no goal -> no badge. Turn count is a raw
+ * count unless an explicit turn budget is set, in which case it shows used/limit.
+ */
+function formatGoalBadge(
+  goal: AppState['goal'],
+  colors: ColorPalette,
+  wallClockMs?: number,
+): string | null {
+  if (goal === null || goal === undefined) return null;
+  // Show the badge for every persisted, resumable status. `complete` clears the
+  // goal, so it never reaches here; only the unset case returns null.
+  if (goal.status !== 'active' && goal.status !== 'paused' && goal.status !== 'blocked') {
+    return null;
+  }
+  const dotColor =
+    goal.status === 'active'
+      ? colors.primary
+      : goal.status === 'blocked'
+        ? colors.warning
+        : colors.textMuted;
+  const turns =
+    goal.budget.turnBudget !== null
+      ? `${goal.turnsUsed}/${goal.budget.turnBudget} turns`
+      : `${goal.turnsUsed} ${goal.turnsUsed === 1 ? 'turn' : 'turns'}`;
+  const label = `${goal.status} · ${formatBadgeElapsed(wallClockMs ?? goal.wallClockMs)} · ${turns}`;
+  return (
+    chalk.hex(colors.textMuted)('[goal ') +
+    chalk.hex(dotColor)('●') +
+    chalk.hex(colors.textMuted)(` ${label}]`)
+  );
 }
 
-function shortenModel(model: string): string {
-  if (!model) return model;
-  const slash = model.lastIndexOf('/');
-  return slash >= 0 ? model.slice(slash + 1) : model;
+function formatBadgeElapsed(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h${minutes % 60}m`;
 }
 
 function modelDisplayName(state: AppState): string {
@@ -114,10 +218,13 @@ export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): s
 export class FooterComponent implements Component {
   private state: AppState;
   private colors: ColorPalette;
-  private readonly onGitStatusChange: () => void;
+  private readonly onRefresh: () => void;
   private gitCache: GitStatusCache;
   private gitCacheWorkDir: string;
   private transientHint: string | null = null;
+  private goalSnapshotKey: string | null = null;
+  private goalObservedAtMs = Date.now();
+  private goalTimer: ReturnType<typeof setInterval> | null = null;
   /**
    * Non-terminal background-task counts split by kind so the footer can
    * render two distinct badges. `bashTasks` covers `bash-*` BPM tasks
@@ -128,19 +235,23 @@ export class FooterComponent implements Component {
   private backgroundBashTaskCount = 0;
   private backgroundAgentCount = 0;
 
-  constructor(state: AppState, colors: ColorPalette, onGitStatusChange: () => void = () => {}) {
+  constructor(state: AppState, colors: ColorPalette, onRefresh: () => void = () => {}) {
     this.state = state;
     this.colors = colors;
-    this.onGitStatusChange = onGitStatusChange;
+    this.onRefresh = onRefresh;
     this.gitCacheWorkDir = state.workDir;
-    this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onGitStatusChange });
+    this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onRefresh });
+    this.syncGoalClock(state.goal);
+    this.syncGoalTimer(state.goal);
   }
 
   setState(state: AppState): void {
     if (state.workDir !== this.gitCacheWorkDir) {
       this.gitCacheWorkDir = state.workDir;
-      this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onGitStatusChange });
+      this.gitCache = createGitStatusCache(state.workDir, { onChange: this.onRefresh });
     }
+    this.syncGoalClock(state.goal);
+    this.syncGoalTimer(state.goal);
     this.state = state;
   }
 
@@ -180,10 +291,18 @@ export class FooterComponent implements Component {
     if (state.permissionMode === 'yolo') left.push(chalk.hex(colors.warning).bold('yolo'));
     if (state.planMode) left.push(chalk.hex(colors.primary).bold('plan'));
 
-    const model = shortenModel(modelDisplayName(state));
+    const goalBadge = formatGoalBadge(state.goal, colors, this.goalWallClockMs(state.goal));
+    if (goalBadge !== null) left.push(goalBadge);
+
+    const model = modelDisplayName(state);
     if (model) {
       const thinkingLabel = state.thinking ? ' thinking' : '';
-      left.push(chalk.hex(colors.text)(`${model}${thinkingLabel}`));
+      const modelLabel = `${model}${thinkingLabel}`;
+      let renderedModelLabel = chalk.hex(colors.text)(modelLabel);
+      if (isRainbowDancing()) {
+        renderedModelLabel = renderDanceFooterModel(modelLabel, colors);
+      }
+      left.push(renderedModelLabel);
     }
 
     // Background-task badges sit immediately before cwd. `bash-*` tasks
@@ -214,16 +333,14 @@ export class FooterComponent implements Component {
     const leftWidth = visibleWidth(leftLine);
 
     // Rotating hint tips, fill remaining space on line 1.
-    const tipIndex = currentTipIndex();
-    const tipTwo = twoRotatingTips(tipIndex);
-    const tipOne = oneRotatingTip(tipIndex);
+    const { primary, pair } = tipsForIndex(currentTipIndex());
     const gap = 2;
     const remaining = Math.max(0, width - leftWidth - gap);
     let tipText = '';
-    if (tipTwo && visibleWidth(tipTwo) <= remaining) {
-      tipText = tipTwo;
-    } else if (tipOne && visibleWidth(tipOne) <= remaining) {
-      tipText = tipOne;
+    if (pair && visibleWidth(pair) <= remaining) {
+      tipText = pair;
+    } else if (primary && visibleWidth(primary) <= remaining) {
+      tipText = primary;
     }
 
     let line1: string;
@@ -263,4 +380,45 @@ export class FooterComponent implements Component {
 
     return [truncateToWidth(line1, width), truncateToWidth(line2, width)];
   }
+
+  private syncGoalClock(goal: AppState['goal']): void {
+    const key = goalSnapshotKey(goal);
+    if (key === this.goalSnapshotKey) return;
+    this.goalSnapshotKey = key;
+    this.goalObservedAtMs = Date.now();
+  }
+
+  private syncGoalTimer(goal: AppState['goal']): void {
+    if (goal?.status === 'active') {
+      if (this.goalTimer !== null) return;
+      this.goalTimer = setInterval(() => {
+        this.onRefresh();
+      }, GOAL_TIMER_INTERVAL_MS);
+      this.goalTimer.unref?.();
+      return;
+    }
+
+    if (this.goalTimer !== null) {
+      clearInterval(this.goalTimer);
+      this.goalTimer = null;
+    }
+  }
+
+  private goalWallClockMs(goal: AppState['goal']): number | undefined {
+    if (goal === null || goal === undefined) return undefined;
+    if (goal.status !== 'active') return goal.wallClockMs;
+    return goal.wallClockMs + Math.max(0, Date.now() - this.goalObservedAtMs);
+  }
+}
+
+function goalSnapshotKey(goal: AppState['goal']): string | null {
+  if (goal === null || goal === undefined) return null;
+  return [
+    goal.goalId,
+    goal.status,
+    String(goal.turnsUsed),
+    String(goal.tokensUsed),
+    String(goal.wallClockMs),
+    goal.updatedAt,
+  ].join('\u0000');
 }

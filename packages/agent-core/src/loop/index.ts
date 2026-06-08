@@ -7,6 +7,7 @@
 
 export type {
   AfterStepHook,
+  AfterStepResult,
   BeforeStepResult,
   BeforeStepHook,
   LoopHooks,
@@ -17,6 +18,7 @@ export type {
   LoopTerminalStepStopReason,
   LoopTurnStopReason,
   StopReason,
+  RecordStepUsageResult,
   ShouldContinueAfterStopHook,
   ShouldContinueAfterStopResult,
   LoopMessageBuilder,
@@ -25,7 +27,9 @@ export type {
   ToolCall,
   ExecutableToolContext,
   ToolExecutionHookContext,
+  ResolvedToolExecutionHookContext,
   PrepareToolExecutionHook,
+  AuthorizeToolExecutionHook,
   PrepareToolExecutionResult,
   ExecutableToolResult,
   FinalizeToolResultContext,
@@ -63,6 +67,7 @@ export type {
   LLMChatParams,
   LLMChatResponse,
   LLMRequestLogContext,
+  LLMStreamTiming,
   ToolCallDelta,
 } from './llm';
 

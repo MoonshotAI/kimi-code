@@ -47,13 +47,15 @@ function makeModelsResponse(): Response {
 describe('OPEN_PLATFORMS', () => {
   it('contains moonshot.cn and moonshot.ai', () => {
     expect(getOpenPlatformById('moonshot-cn')).toMatchObject({
-      name: 'Moonshot AI Open Platform (moonshot.cn)',
+      name: 'Kimi Platform (API key · platform.kimi.com)',
       baseUrl: 'https://api.moonshot.cn/v1',
+      consoleUrl: 'https://platform.kimi.com',
       allowedPrefixes: ['kimi-k'],
     });
     expect(getOpenPlatformById('moonshot-ai')).toMatchObject({
-      name: 'Moonshot AI Open Platform (moonshot.ai)',
+      name: 'Kimi Platform (API key · platform.kimi.ai)',
       baseUrl: 'https://api.moonshot.ai/v1',
+      consoleUrl: 'https://platform.kimi.ai',
       allowedPrefixes: ['kimi-k'],
     });
     expect(getOpenPlatformById('unknown')).toBeUndefined();

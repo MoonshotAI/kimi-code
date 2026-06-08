@@ -1,23 +1,19 @@
 import {
-  createRPC,
   ErrorCodes,
-  KimiCore,
   makeErrorPayload,
-  resolveKimiHome,
+  type AgentContextData,
   type ApprovalRequest,
   type ApprovalResponse,
   type CoreAPI,
   type Event,
-  type OAuthTokenProviderResolver,
+  type ExperimentalFeatureState,
   type QuestionRequest,
   type QuestionResult,
+  type RPCMethods,
   type SDKAPI,
-  type SDKRPCClient,
-  type TelemetryClient,
   type ToolCallRequest,
   type ToolCallResponse,
 } from '@moonshot-ai/agent-core';
-import { createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
 
 import type { ApprovalHandler, QuestionHandler } from '#/events';
 import type {
@@ -25,14 +21,20 @@ import type {
   CreateSessionOptions,
   ExportSessionInput,
   ExportSessionResult,
+  CreateGoalInput,
   ForkSessionInput,
   GetConfigOptions,
+  GoalSnapshot,
+  GoalToolResult,
   KimiConfig,
   KimiConfigPatch,
   ListSessionsOptions,
   McpServerInfo,
   McpStartupMetrics,
   PermissionMode,
+  PluginInfo,
+  PluginSummary,
+  ReloadSummary,
   CompactOptions,
   SessionPlan,
   SessionStatus,
@@ -44,19 +46,9 @@ import type {
   SessionSummary,
   SkillSummary,
   Unsubscribe,
-  KimiHostIdentity,
 } from '#/types';
 
 const MAIN_AGENT_ID = 'main';
-
-export interface SDKRpcClientOptions {
-  readonly homeDir?: string | undefined;
-  readonly configPath?: string | undefined;
-  readonly identity?: KimiHostIdentity | undefined;
-  readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
-  readonly skillDirs?: readonly string[];
-  readonly telemetry?: TelemetryClient | undefined;
-}
 
 export interface SessionPromptRpcInput {
   readonly sessionId: string;
@@ -97,44 +89,15 @@ export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
   readonly name: string;
 }
 
-type ResolvedCoreAPI = Awaited<ReturnType<SDKRPCClient>>;
+type ResolvedCoreAPI = RPCMethods<CoreAPI>;
 
-export class SDKRpcClient {
-  readonly core: KimiCore;
+export abstract class SDKRpcClientBase {
   interactiveAgentId = MAIN_AGENT_ID;
-  private readonly ready: Promise<void>;
-  private rpc: ResolvedCoreAPI | undefined;
   private readonly eventListeners = new Set<(event: Event) => void>();
   private readonly approvalHandlers = new Map<string, ApprovalHandler>();
   private readonly questionHandlers = new Map<string, QuestionHandler>();
 
-  constructor(options: SDKRpcClientOptions = {}) {
-    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
-    const homeDir = resolveKimiHome(options.homeDir);
-    const kimiRequestHeaders =
-      options.identity === undefined
-        ? undefined
-        : createKimiDefaultHeaders({ homeDir, ...options.identity });
-    this.core = new KimiCore(coreRpc, {
-      homeDir: options.homeDir,
-      configPath: options.configPath,
-      kimiRequestHeaders,
-      resolveOAuthTokenProvider: options.resolveOAuthTokenProvider,
-      skillDirs: options.skillDirs,
-      telemetry: options.telemetry,
-    });
-    this.ready = sdkRpc(new ClientAPI(this)).then((rpc) => {
-      this.rpc = rpc;
-    });
-  }
-
-  get homeDir(): string {
-    return this.core.homeDir;
-  }
-
-  get configPath(): string {
-    return this.core.configPath;
-  }
+  protected abstract getRpc(): Promise<ResolvedCoreAPI>;
 
   async createSession(input: CreateSessionOptions): Promise<SessionSummary> {
     const rpc = await this.getRpc();
@@ -145,7 +108,12 @@ export class SDKRpcClient {
 
   async resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary> {
     const rpc = await this.getRpc();
-    return rpc.resumeSession({ sessionId: input.id });
+    return rpc.resumeSession({ ...input, sessionId: input.id });
+  }
+
+  async reloadSession(input: SessionIdRpcInput): Promise<ResumedSessionSummary> {
+    const rpc = await this.getRpc();
+    return rpc.reloadSession({ sessionId: input.sessionId });
   }
 
   async forkSession(input: ForkSessionInput): Promise<SessionSummary> {
@@ -163,7 +131,7 @@ export class SDKRpcClient {
     return rpc.closeSession({ sessionId: input.sessionId });
   }
 
-  async listSessions(input: ListSessionsOptions): Promise<readonly SessionSummary[]> {
+  async listSessions(input: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
     const rpc = await this.getRpc();
     return rpc.listSessions(input);
   }
@@ -183,12 +151,19 @@ export class SDKRpcClient {
       outputPath: input.outputPath,
       includeGlobalLog: input.includeGlobalLog,
       version: input.version,
+      installSource: input.installSource,
+      shellEnv: input.shellEnv,
     });
   }
 
   async getConfig(input?: GetConfigOptions): Promise<KimiConfig> {
     const rpc = await this.getRpc();
     return rpc.getKimiConfig(input ?? {});
+  }
+
+  async getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]> {
+    const rpc = await this.getRpc();
+    return rpc.getExperimentalFeatures({});
   }
 
   async setConfig(input: KimiConfigPatch): Promise<KimiConfig> {
@@ -202,19 +177,21 @@ export class SDKRpcClient {
   }
 
   async prompt(input: SessionPromptRpcInput): Promise<void> {
+    const agentId = this.interactiveAgentId;
     const rpc = await this.getRpc();
     return rpc.prompt({
       sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
+      agentId,
       input: input.input,
     });
   }
 
   async steer(input: SessionPromptRpcInput): Promise<void> {
+    const agentId = this.interactiveAgentId;
     const rpc = await this.getRpc();
     return rpc.steer({
       sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
+      agentId,
       input: input.input,
     });
   }
@@ -224,11 +201,21 @@ export class SDKRpcClient {
     return rpc.generateAgentsMd({ sessionId: input.sessionId });
   }
 
+  async startBtw(input: SessionIdRpcInput): Promise<string> {
+    const agentId = this.interactiveAgentId;
+    const rpc = await this.getRpc();
+    return rpc.startBtw({
+      sessionId: input.sessionId,
+      agentId,
+    });
+  }
+
   async cancel(input: SessionIdRpcInput): Promise<void> {
+    const agentId = this.interactiveAgentId;
     const rpc = await this.getRpc();
     return rpc.cancel({
       sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
+      agentId,
     });
   }
 
@@ -301,6 +288,23 @@ export class SDKRpcClient {
   async cancelCompaction(input: SessionIdRpcInput): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.cancelCompaction({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
+  }
+
+  async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.undoHistory({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+      count: input.count,
+    });
+  }
+
+  async getContext(input: SessionIdRpcInput): Promise<AgentContextData> {
+    const rpc = await this.getRpc();
+    return rpc.getContext({
       sessionId: input.sessionId,
       agentId: this.interactiveAgentId,
     });
@@ -383,17 +387,6 @@ export class SDKRpcClient {
     });
   }
 
-  async getBackgroundTaskOutputPath(
-    input: SessionIdRpcInput & { taskId: string },
-  ): Promise<string | undefined> {
-    const rpc = await this.getRpc();
-    return rpc.getBackgroundOutputPath({
-      sessionId: input.sessionId,
-      agentId: this.interactiveAgentId,
-      taskId: input.taskId,
-    });
-  }
-
   async stopBackgroundTask(
     input: SessionIdRpcInput & { taskId: string; reason?: string },
   ): Promise<void> {
@@ -404,6 +397,37 @@ export class SDKRpcClient {
       taskId: input.taskId,
       reason: input.reason,
     });
+  }
+
+  async createGoal(input: SessionIdRpcInput & CreateGoalInput): Promise<GoalSnapshot> {
+    const rpc = await this.getRpc();
+    return rpc.createGoal({
+      sessionId: input.sessionId,
+      objective: input.objective,
+      completionCriterion: input.completionCriterion,
+      budgetLimits: input.budgetLimits,
+      replace: input.replace,
+    });
+  }
+
+  async getGoal(input: SessionIdRpcInput): Promise<GoalToolResult> {
+    const rpc = await this.getRpc();
+    return rpc.getGoal({ sessionId: input.sessionId });
+  }
+
+  async pauseGoal(input: SessionIdRpcInput & { reason?: string }): Promise<GoalSnapshot> {
+    const rpc = await this.getRpc();
+    return rpc.pauseGoal({ sessionId: input.sessionId, reason: input.reason });
+  }
+
+  async resumeGoal(input: SessionIdRpcInput & { reason?: string }): Promise<GoalSnapshot> {
+    const rpc = await this.getRpc();
+    return rpc.resumeGoal({ sessionId: input.sessionId, reason: input.reason });
+  }
+
+  async cancelGoal(input: SessionIdRpcInput & { reason?: string }): Promise<GoalSnapshot> {
+    const rpc = await this.getRpc();
+    return rpc.cancelGoal({ sessionId: input.sessionId, reason: input.reason });
   }
 
   async listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]> {
@@ -419,6 +443,45 @@ export class SDKRpcClient {
   async reconnectMcpServer(input: ReconnectMcpServerRpcInput): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.reconnectMcpServer({ sessionId: input.sessionId, name: input.name });
+  }
+
+  async listPlugins(): Promise<readonly PluginSummary[]> {
+    const rpc = await this.getRpc();
+    return rpc.listPlugins({});
+  }
+
+  async installPlugin(source: string): Promise<PluginSummary> {
+    const rpc = await this.getRpc();
+    return rpc.installPlugin({ source });
+  }
+
+  async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.setPluginEnabled({ id, enabled });
+  }
+
+  async setPluginMcpServerEnabled(
+    id: string,
+    server: string,
+    enabled: boolean,
+  ): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.setPluginMcpServerEnabled({ id, server, enabled });
+  }
+
+  async removePlugin(id: string): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.removePlugin({ id });
+  }
+
+  async reloadPlugins(): Promise<ReloadSummary> {
+    const rpc = await this.getRpc();
+    return rpc.reloadPlugins({});
+  }
+
+  async getPluginInfo(id: string): Promise<PluginInfo> {
+    const rpc = await this.getRpc();
+    return rpc.getPluginInfo({ id });
   }
 
   async activateSkill(input: ActivateSkillRpcInput): Promise<void> {
@@ -518,17 +581,10 @@ export class SDKRpcClient {
     };
   }
 
-  private async getRpc(): Promise<ResolvedCoreAPI> {
-    await this.ready;
-    if (this.rpc === undefined) {
-      throw new Error('SDK RPC client was not initialized.');
-    }
-    return this.rpc;
-  }
 }
 
 export class ClientAPI implements SDKAPI {
-  constructor(readonly client: SDKRpcClient) {}
+  constructor(readonly client: SDKRpcClientBase) {}
 
   emitEvent(event: Event): void {
     this.client.receiveEvent(event);

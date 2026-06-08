@@ -31,6 +31,7 @@ export {
   createKimiDeviceHeaders,
   createKimiDeviceId,
   createKimiUserAgent,
+  KIMI_CODE_PLATFORM,
 } from './identity';
 export type { KimiHostIdentity, KimiIdentityOptions } from './identity';
 
@@ -41,19 +42,31 @@ export {
   applyManagedKimiCodeConfig,
   clearManagedKimiCodeConfig,
   fetchManagedKimiCodeModels,
+  kimiCodeEnvBaseUrl,
+  kimiCodeEnvOAuthHost,
   KIMI_CODE_OAUTH_KEY,
   KIMI_CODE_PLATFORM_ID,
   KIMI_CODE_PROVIDER_NAME,
+  ManagedKimiCodeModelsAuthError,
   provisionManagedKimiCodeConfig,
+  resolveKimiCodeLoginAuth,
+  resolveKimiCodeOAuthKey,
+  resolveKimiCodeOAuthRef,
+  resolveKimiCodeRuntimeAuth,
 } from './managed-kimi-code';
 export type {
   FetchManagedKimiCodeModelsOptions,
   ManagedKimiCodeApplyResult,
   ManagedKimiCodeCleanupResult,
+  ManagedKimiEnv,
+  ManagedKimiLoginAuth,
   ManagedKimiCodeModelInfo,
   ManagedKimiCodeProvisionResult,
   ManagedKimiConfigAdapter,
   ManagedKimiConfigShape,
+  ManagedKimiOAuthRef,
+  ManagedKimiOAuthRefInput,
+  ManagedKimiRuntimeAuth,
   ProvisionManagedKimiCodeConfigOptions,
 } from './managed-kimi-code';
 
@@ -96,6 +109,23 @@ export type {
   ApplyOpenPlatformResult,
   OpenPlatformDefinition,
 } from './open-platform';
+
+export {
+  applyCustomRegistryEntries,
+  applyCustomRegistryProvider,
+  capabilitiesFromCustomEntry,
+  CustomRegistryApiError,
+  CUSTOM_REGISTRY_DEFAULT_CAPABILITIES,
+  CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT,
+  fetchCustomRegistry,
+  removeCustomRegistryProvider,
+} from './custom-registry';
+export type {
+  CustomRegistryModelEntry,
+  CustomRegistryProviderEntry,
+  CustomRegistryProviderType,
+  CustomRegistrySource,
+} from './custom-registry';
 
 export { KimiOAuthToolkit, resolveKimiTokenStorageName } from './toolkit';
 export type {

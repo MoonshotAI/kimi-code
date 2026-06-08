@@ -7,6 +7,7 @@ import type { Component } from '@earendil-works/pi-tui';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
+import { isRainbowDancing, renderDanceWelcomeHeader } from '#/tui/easter-eggs/dance';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState } from '#/tui/types';
 
@@ -27,7 +28,7 @@ export class WelcomeComponent implements Component {
     const pad = '  ';
 
     // Logo + side-by-side text.
-    const logo = ['▐█▛█▛█▌', '▐█████▌'];
+    const logo = ['▐█▛█▛█▌', '▐█████▌'] as const;
     const logoWidth = Math.max(...logo.map((row) => visibleWidth(row)));
     const gap = '  ';
     const textWidth = Math.max(4, innerWidth - logoWidth - gap.length);
@@ -41,19 +42,23 @@ export class WelcomeComponent implements Component {
     const dim = chalk.hex(this.colors.textDim);
     const labelStyle = chalk.bold.hex(this.colors.textDim);
     const rightRow1 = truncateToWidth(
-      dim(isLoggedOut ? 'Run /login or /connect to get started.' : 'Send /help for help information.'),
+      dim(isLoggedOut ? 'Run /login or /provider to get started.' : 'Send /help for help information.'),
       textWidth,
       '…',
     );
 
-    const headerLines = [
-      primary(logo[0]!.padEnd(logoWidth)) + gap + rightRow0,
-      primary(logo[1]!.padEnd(logoWidth)) + gap + rightRow1,
+    let renderedHeaderLines = [
+      primary(logo[0].padEnd(logoWidth)) + gap + rightRow0,
+      primary(logo[1].padEnd(logoWidth)) + gap + rightRow1,
     ];
+    if (isRainbowDancing()) {
+      renderedHeaderLines = renderDanceWelcomeHeader(this.colors, logo, textWidth, rightRow1);
+    }
 
+    const activeModel = this.state.availableModels[this.state.model];
     const modelValue = isLoggedOut
-      ? chalk.hex(this.colors.warning)('not set, run /login or /connect')
-      : this.state.model;
+      ? chalk.hex(this.colors.warning)('not set, run /login or /provider')
+      : (activeModel?.displayName ?? activeModel?.model ?? this.state.model);
 
     const infoLines = [
       labelStyle('Directory: ') + this.state.workDir,
@@ -62,7 +67,11 @@ export class WelcomeComponent implements Component {
       labelStyle('Version:   ') + this.state.version,
     ];
 
-    const contentLines: string[] = [...headerLines, '', ...infoLines];
+    if (this.state.mcpServersSummary) {
+      infoLines.push(labelStyle('MCP:       ') + this.state.mcpServersSummary);
+    }
+
+    const contentLines: string[] = [...renderedHeaderLines, '', ...infoLines];
 
     const lines: string[] = [
       '',

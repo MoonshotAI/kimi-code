@@ -21,9 +21,23 @@ describe('Event public types', () => {
     expectTypeOf<EventByType<'tool.call.started'>['args']>().toEqualTypeOf<unknown>();
   });
 
+  it('exposes LLM stream timing on step completion events', () => {
+    expectTypeOf<EventByType<'turn.step.completed'>['llmFirstTokenLatencyMs']>().toEqualTypeOf<
+      number | undefined
+    >();
+    expectTypeOf<EventByType<'turn.step.completed'>['llmStreamDurationMs']>().toEqualTypeOf<
+      number | undefined
+    >();
+  });
+
   it('narrows subagent lifecycle events by type', () => {
     expectTypeOf<EventByType<'subagent.spawned'>['subagentId']>().toEqualTypeOf<string>();
     expectTypeOf<EventByType<'subagent.spawned'>['runInBackground']>().toEqualTypeOf<boolean>();
+  });
+
+  it('narrows cron fired events by type', () => {
+    expectTypeOf<EventByType<'cron.fired'>['prompt']>().toEqualTypeOf<string>();
+    expectTypeOf<EventByType<'cron.fired'>['origin']['kind']>().toEqualTypeOf<'cron_job'>();
   });
 
   it('exposes approval and question reverse-RPC requests', () => {
@@ -41,8 +55,10 @@ describe('Event public types', () => {
       switch (event.type) {
         case 'agent.status.updated':
         case 'session.meta.updated':
+        case 'goal.updated':
         case 'skill.activated':
         case 'error':
+        case 'warning':
         case 'turn.started':
         case 'turn.ended':
         case 'turn.step.started':
@@ -66,8 +82,8 @@ describe('Event public types', () => {
         case 'compaction.cancelled':
         case 'compaction.completed':
         case 'background.task.started':
-        case 'background.task.updated':
         case 'background.task.terminated':
+        case 'cron.fired':
           return;
         default:
           assertNever(event);

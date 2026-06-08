@@ -245,6 +245,48 @@ describe('OpenAILegacyChatProvider', () => {
       ]);
     });
 
+    it('normalizes invalid historical tool call ids and matching tool results', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Run bash' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'Bash:7',
+              name: 'Bash',
+              arguments: '{"command":"pwd"}',
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: '/tmp' }],
+          toolCallId: 'Bash:7',
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['messages']).toEqual([
+        { role: 'user', content: 'Run bash' },
+        {
+          role: 'assistant',
+          tool_calls: [
+            {
+              type: 'function',
+              id: 'Bash_7',
+              function: { name: 'Bash', arguments: '{"command":"pwd"}' },
+            },
+          ],
+        },
+        { role: 'tool', content: '/tmp', tool_call_id: 'Bash_7' },
+      ]);
+    });
+
     it('tool call with image result flattens to text to satisfy API constraints', async () => {
       // OpenAI Chat Completions `tool` messages only accept text content.
       // Even when toolMessageConversion is unset, a tool result containing
@@ -423,6 +465,45 @@ describe('OpenAILegacyChatProvider', () => {
 
       expect(body['temperature']).toBe(0.7);
       expect(body['max_tokens']).toBe(2048);
+    });
+
+    it('withMaxCompletionTokens sets max_tokens on the cloned provider', async () => {
+      const original = createProvider();
+      const provider = original.withMaxCompletionTokens(1024);
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(provider).not.toBe(original);
+      expect(body['max_tokens']).toBe(1024);
+    });
+
+    it.each(['gpt-5', 'gpt-5-codex', 'o3'])(
+      'withMaxCompletionTokens sets max_completion_tokens for %s',
+      async (model) => {
+        const provider = createProvider({ model }).withMaxCompletionTokens(1024);
+        const history: Message[] = [
+          { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+        ];
+        const body = await captureRequestBody(provider, '', [], history);
+
+        expect(body['max_completion_tokens']).toBe(1024);
+        expect(body['max_tokens']).toBeUndefined();
+      },
+    );
+
+    it('keeps max_tokens for OpenAI-compatible non-OpenAI reasoning models', async () => {
+      const provider = createProvider({ model: 'deepseek-reasoner' }).withMaxCompletionTokens(
+        1024,
+      );
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['max_tokens']).toBe(1024);
+      expect(body['max_completion_tokens']).toBeUndefined();
     });
   });
 
@@ -636,6 +717,56 @@ describe('OpenAILegacyChatProvider', () => {
 
       expect(body['reasoning_effort']).toBe('high');
     });
+
+    it.each(['gpt-5.2', 'gpt-5.4', 'gpt-5.5', 'openai/gpt-5.5'])(
+      '.withThinking("xhigh") passes through for Chat Completions xhigh model %s',
+      async (model) => {
+        const provider = createProvider({ model }).withThinking('xhigh');
+        const history: Message[] = [
+          { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+        ];
+        const body = await captureRequestBody(provider, '', [], history);
+
+        expect(body['reasoning_effort']).toBe('xhigh');
+        expect(provider.thinkingEffort).toBe('xhigh');
+      },
+    );
+
+    it.each(['gpt-5.1', 'gpt-5.4-mini', 'gpt-5.4-pro', 'kimi-k2.6', 'some-model'])(
+      '.withThinking("xhigh") clamps to high for Chat Completions model %s',
+      async (model) => {
+        const provider = createProvider({ model }).withThinking('xhigh');
+        const history: Message[] = [
+          { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+        ];
+        const body = await captureRequestBody(provider, '', [], history);
+
+        expect(body['reasoning_effort']).toBe('high');
+        expect(provider.thinkingEffort).toBe('high');
+      },
+    );
+
+    it('.withThinking("max") uses xhigh only for Chat Completions xhigh models', async () => {
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+
+      const supported = await captureRequestBody(
+        createProvider({ model: 'gpt-5.5' }).withThinking('max'),
+        '',
+        [],
+        history,
+      );
+      const unsupported = await captureRequestBody(
+        createProvider({ model: 'gpt-5.5-pro' }).withThinking('max'),
+        '',
+        [],
+        history,
+      );
+
+      expect(supported['reasoning_effort']).toBe('xhigh');
+      expect(unsupported['reasoning_effort']).toBe('high');
+    });
   });
 
   describe('auto reasoning_effort', () => {
@@ -680,8 +811,11 @@ describe('OpenAILegacyChatProvider', () => {
       expect(body['reasoning_effort']).toBeUndefined();
     });
 
-    it('does not auto-inject reasoning_effort when reasoningKey is not set', async () => {
-      // No reasoningKey configured
+    it('auto-injects reasoning_effort when history has ThinkPart even without explicit reasoningKey', async () => {
+      // No reasoningKey configured — the provider should still treat ThinkPart in
+      // history as a signal to inject reasoning_effort, so OpenAI-compatible
+      // gateways (One API, DeepSeek) that demand a paired reasoning_effort
+      // don't reject the request with 400.
       const provider = createProvider({ model: 'some-model' });
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Hello' }], toolCalls: [] },
@@ -697,11 +831,174 @@ describe('OpenAILegacyChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
-      expect(body['reasoning_effort']).toBeUndefined();
+      expect(body['reasoning_effort']).toBe('medium');
+    });
+
+    it('does not overwrite reasoning_effort pinned via withGenerationKwargs', async () => {
+      // Auto-injection must yield to an explicit caller-set reasoning_effort,
+      // otherwise multi-turn requests silently downgrade a 'high' / 'low'
+      // setting back to 'medium' once the history contains ThinkPart.
+      const provider = createProvider({ model: 'some-model' }).withGenerationKwargs({
+        reasoning_effort: 'high',
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Hello' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'thinking' },
+            { type: 'text', text: 'Hi!' },
+          ],
+          toolCalls: [],
+        },
+        { role: 'user', content: [{ type: 'text', text: 'Again?' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['reasoning_effort']).toBe('high');
     });
   });
 
-  // OpenAI Chat Completions streams parallel tool calls with interleaved
+  describe('default reasoning protocol (no explicit reasoningKey)', () => {
+    it('serializes ThinkPart back to reasoning_content even without reasoningKey', async () => {
+      // The whole point of issue #69: a hand-written config.toml never sets
+      // reasoningKey, but the round-trip must still work against DeepSeek-style
+      // providers — otherwise the next turn sends the assistant message without
+      // any reasoning field and the server rejects it.
+      const provider = createProvider({ model: 'deepseek-reasoner' });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'q' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'inner monologue' },
+            { type: 'text', text: 'answer' },
+          ],
+          toolCalls: [],
+        },
+        { role: 'user', content: [{ type: 'text', text: 'next' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const messages = body['messages'] as Record<string, unknown>[];
+      expect(messages[1]).toEqual({
+        role: 'assistant',
+        content: 'answer',
+        reasoning_content: 'inner monologue',
+      });
+    });
+
+    it('explicit reasoningKey overrides the default outbound field', async () => {
+      const provider = createProvider({
+        model: 'oddball-reasoner',
+        reasoningKey: 'reasoning_details',
+      });
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'thinking' },
+            { type: 'text', text: 'reply' },
+          ],
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+      const messages = body['messages'] as Record<string, unknown>[];
+
+      expect(messages[0]).toEqual({
+        role: 'assistant',
+        content: 'reply',
+        reasoning_details: 'thinking',
+      });
+      expect(messages[0]).not.toHaveProperty('reasoning_content');
+    });
+
+    it('yields ThinkPart from streaming response even without explicit reasoningKey', async () => {
+      const provider = new OpenAILegacyChatProvider({
+        model: 'deepseek-reasoner',
+        apiKey: 'test-key',
+        stream: true,
+      });
+
+      async function* mockedStream(): AsyncIterable<Record<string, unknown>> {
+        yield { id: 'c1', choices: [{ index: 0, delta: { reasoning_content: 'think 1' } }] };
+        yield { id: 'c1', choices: [{ index: 0, delta: { reasoning_content: ' think 2' } }] };
+        yield { id: 'c1', choices: [{ index: 0, delta: { content: 'final' } }] };
+        yield { id: 'c1', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] };
+      }
+
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockResolvedValue(mockedStream());
+
+      const stream = await provider.generate(
+        '',
+        [],
+        [{ role: 'user', content: [{ type: 'text', text: 'q' }], toolCalls: [] }],
+      );
+      const parts: StreamedMessagePart[] = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts).toEqual([
+        { type: 'think', think: 'think 1' },
+        { type: 'think', think: ' think 2' },
+        { type: 'text', text: 'final' },
+      ]);
+    });
+
+    it('treats blank reasoning_key as unset so defaults still apply', async () => {
+      // ModelAliasSchema accepts `reasoning_key = ""` (z.string().optional()).
+      // A blank value must not route reads/writes through an empty property
+      // name — it should fall back to the default protocol behavior.
+      const provider = createProvider({ model: 'm', reasoningKey: '' });
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'thinking' },
+            { type: 'text', text: 'answer' },
+          ],
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+      const messages = body['messages'] as Record<string, unknown>[];
+
+      expect(messages[0]).toEqual({
+        role: 'assistant',
+        content: 'answer',
+        reasoning_content: 'thinking',
+      });
+      expect(Object.keys(messages[0] ?? {})).not.toContain('');
+    });
+
+    it('trims whitespace around explicit reasoning_key before use', async () => {
+      const provider = createProvider({
+        model: 'm',
+        reasoningKey: '  reasoning_details  ',
+      });
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'thinking' },
+            { type: 'text', text: 'answer' },
+          ],
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+      const messages = body['messages'] as Record<string, unknown>[];
+
+      expect(messages[0]).toEqual({
+        role: 'assistant',
+        content: 'answer',
+        reasoning_details: 'thinking',
+      });
+      expect(Object.keys(messages[0] ?? {})).not.toContain('  reasoning_details  ');
+    });
+  });
   // argument deltas. Each delta carries `index` to identify the owning
   // tool call. The provider must preserve `index` on the yielded
   // ToolCallPart (and `_streamIndex` on the ToolCall header) so that
@@ -1077,6 +1374,77 @@ describe('OpenAILegacyChatProvider — non-stream response parsing', () => {
       { type: 'think', think: 'Let me think step by step' },
       { type: 'text', text: 'Final answer' },
     ]);
+  });
+
+  it('yields ThinkPart from non-stream response even without explicit reasoningKey', async () => {
+    // Hand-written config path: provider has no reasoningKey, but the server
+    // (DeepSeek/Qwen/One API) returns reasoning_content. We must still surface
+    // the ThinkPart so users see the thinking and the next-turn round-trip
+    // serializes it back.
+    const provider = new OpenAILegacyChatProvider({
+      model: 'deepseek-reasoner',
+      apiKey: 'test-key',
+      stream: false,
+    });
+
+    const parts = await collectFromMockedResponse(
+      provider,
+      makeNonStreamResponse({
+        role: 'assistant',
+        content: 'Final answer',
+        reasoning_content: 'walking through it',
+      }),
+    );
+
+    expect(parts).toEqual([
+      { type: 'think', think: 'walking through it' },
+      { type: 'text', text: 'Final answer' },
+    ]);
+  });
+
+  it('reads reasoning_details when only that field is present and no reasoningKey is set', async () => {
+    const provider = new OpenAILegacyChatProvider({
+      model: 'oddball-reasoner',
+      apiKey: 'test-key',
+      stream: false,
+    });
+
+    const parts = await collectFromMockedResponse(
+      provider,
+      makeNonStreamResponse({
+        role: 'assistant',
+        content: 'answer',
+        reasoning_details: 'detail thinking',
+      }),
+    );
+
+    expect(parts).toEqual([
+      { type: 'think', think: 'detail thinking' },
+      { type: 'text', text: 'answer' },
+    ]);
+  });
+
+  it('explicit reasoningKey limits inbound scan to that single field', async () => {
+    // When the user/catalog pins reasoningKey, the provider must read only that
+    // field — no implicit fallback to other known field names. This is the
+    // escape hatch for non-standard gateways.
+    const provider = new OpenAILegacyChatProvider({
+      model: 'oddball',
+      apiKey: 'test-key',
+      stream: false,
+      reasoningKey: 'reasoning_details',
+    });
+
+    const parts = await collectFromMockedResponse(
+      provider,
+      makeNonStreamResponse({
+        role: 'assistant',
+        content: 'answer',
+        reasoning_content: 'should be ignored',
+      }),
+    );
+
+    expect(parts).toEqual([{ type: 'text', text: 'answer' }]);
   });
 });
 

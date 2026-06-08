@@ -1,5 +1,10 @@
 import type { ModelCapability } from '#/capability';
-import { ChatProviderError } from '#/errors';
+import {
+  APIContextOverflowError,
+  APIStatusError,
+  ChatProviderError,
+  isContextOverflowErrorCode,
+} from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import { extractText } from '#/message';
 import type {
@@ -29,6 +34,11 @@ import {
   requireProviderApiKey,
   resolveAuthBackedClient,
 } from './request-auth';
+import {
+  normalizeToolCallIdsForProvider,
+  sanitizeOpenAIResponsesCallId,
+  type ToolCallIdPolicy,
+} from './tool-call-id';
 
 /**
  * Normalize the Responses API status / incomplete_details into the unified
@@ -68,6 +78,10 @@ function normalizeResponsesFinishReason(
 }
 
 type RawObject = Record<string, unknown>;
+const OPENAI_RESPONSES_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
+  normalize: (id) => sanitizeOpenAIResponsesCallId(id, 64),
+  maxLength: 64,
+};
 
 type ResponseOutputItemView =
   | {
@@ -100,6 +114,10 @@ function asRawObject(value: unknown): RawObject | null {
 function readStringField(object: RawObject, key: string): string | undefined {
   const value = object[key];
   return typeof value === 'string' ? value : undefined;
+}
+
+function hasOwn(object: RawObject, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(object, key);
 }
 
 function readNullableStringField(object: RawObject, key: string): string | null | undefined {
@@ -217,12 +235,95 @@ function formatResponsesErrorEvent(
   return `${codeText}: ${message}${paramText}`;
 }
 
-function formatResponsesFailedResponse(response: RawObject): string {
+function errorFromOpenAIResponsesEvent(
+  prefix: string,
+  code: string | null,
+  message: string,
+  param: string | null,
+): ChatProviderError {
+  const formatted = formatResponsesErrorEvent(code, message, param);
+  const fullMessage = `${prefix}: ${formatted}`;
+  if (isContextOverflowErrorCode(code)) {
+    return new APIContextOverflowError(400, fullMessage);
+  }
+  if (code === 'rate_limit_exceeded') {
+    return new APIStatusError(429, fullMessage);
+  }
+  return new ChatProviderError(fullMessage);
+}
+
+function parseNestedGatewayStreamError(message: string):
+  | {
+      code: string | null;
+      message: string;
+      param: string | null;
+    }
+  | undefined {
+  const marker = 'received error while streaming:';
+  const markerIndex = message.indexOf(marker);
+  if (markerIndex === -1) return undefined;
+
+  const jsonText = message.slice(markerIndex + marker.length).trim();
+  if (jsonText.length === 0) return undefined;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    return undefined;
+  }
+
+  const error = asRawObject(parsed);
+  if (error === null) return undefined;
+
+  const nestedMessage = readStringField(error, 'message');
+  if (nestedMessage === undefined) return undefined;
+
+  return {
+    code: readNullableStringField(error, 'code') ?? null,
+    message: nestedMessage,
+    param: readNullableStringField(error, 'param') ?? null,
+  };
+}
+
+function malformedStreamErrorEvent(message: string): ChatProviderError {
+  const nested = parseNestedGatewayStreamError(message);
+  if (nested !== undefined) {
+    return errorFromOpenAIResponsesEvent(
+      'OpenAI Responses malformed stream error',
+      nested.code,
+      nested.message,
+      nested.param,
+    );
+  }
+
+  return errorFromOpenAIResponsesEvent(
+    'OpenAI Responses malformed stream error',
+    null,
+    message,
+    null,
+  );
+}
+
+function readResponsesFailedResponseError(response: RawObject):
+  | {
+      code: string | null;
+      message: string;
+    }
+  | undefined {
   const error = readObjectField(response, 'error');
   if (error !== undefined) {
     const code = readNullableStringField(error, 'code') ?? 'unknown';
     const message = readStringField(error, 'message') ?? 'no message';
-    return `${code}: ${message}`;
+    return { code, message };
+  }
+  return undefined;
+}
+
+function formatResponsesFailedResponse(response: RawObject): string {
+  const error = readResponsesFailedResponseError(response);
+  if (error !== undefined) {
+    return formatResponsesErrorEvent(error.code, error.message, null);
   }
 
   const incompleteDetails = readObjectField(response, 'incomplete_details');
@@ -663,7 +764,16 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
 
     try {
       for await (const chunk of response) {
-        const type = requireStringField(chunk, 'type', 'stream event');
+        const type = readStringField(chunk, 'type');
+        if (type === undefined) {
+          if (!hasOwn(chunk, 'type')) {
+            const message = readStringField(chunk, 'message');
+            if (message !== undefined) {
+              throw malformedStreamErrorEvent(message);
+            }
+          }
+          failResponsesDecode('stream event.type', 'must be a string.');
+        }
 
         switch (type) {
           case 'response.output_text.delta':
@@ -777,16 +887,24 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
           }
           case 'error': {
             const message = requireStringField(chunk, 'message', type);
-            throw new ChatProviderError(
-              `OpenAI Responses stream error: ${formatResponsesErrorEvent(
-                readNullableStringField(chunk, 'code') ?? null,
-                message,
-                readNullableStringField(chunk, 'param') ?? null,
-              )}`,
+            throw errorFromOpenAIResponsesEvent(
+              'OpenAI Responses stream error',
+              readNullableStringField(chunk, 'code') ?? null,
+              message,
+              readNullableStringField(chunk, 'param') ?? null,
             );
           }
           case 'response.failed': {
             const responseObject = requireObjectField(chunk, 'response', type);
+            const error = readResponsesFailedResponseError(responseObject);
+            if (error !== undefined) {
+              throw errorFromOpenAIResponsesEvent(
+                'OpenAI Responses response.failed',
+                error.code,
+                error.message,
+                null,
+              );
+            }
             throw new ChatProviderError(
               `OpenAI Responses response.failed: ${formatResponsesFailedResponse(responseObject)}`,
             );
@@ -869,7 +987,11 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
       input.push(sysItem);
     }
 
-    for (const msg of history) {
+    const normalizedHistory = normalizeToolCallIdsForProvider(
+      history,
+      OPENAI_RESPONSES_TOOL_CALL_ID_POLICY,
+    );
+    for (const msg of normalizedHistory) {
       input.push(...convertMessage(msg, this._model, this._toolMessageConversion));
     }
 
@@ -938,6 +1060,10 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     const clone = this._clone();
     clone._generationKwargs = { ...clone._generationKwargs, ...kwargs };
     return clone;
+  }
+
+  withMaxCompletionTokens(maxCompletionTokens: number): OpenAIResponsesChatProvider {
+    return this.withGenerationKwargs({ max_output_tokens: maxCompletionTokens });
   }
 
   private _clone(): OpenAIResponsesChatProvider {

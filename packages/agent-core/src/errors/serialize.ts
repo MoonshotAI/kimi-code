@@ -1,5 +1,6 @@
 import {
   APIConnectionError,
+  APIEmptyResponseError,
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
@@ -59,7 +60,6 @@ export function makeErrorPayload(
  * - `APIStatusError`: 429 -> rate_limit, 401 -> auth_error, otherwise -> api_error.
  * - `APIConnectionError` / `APITimeoutError`: connection_error.
  * - `ChatProviderError`: api_error.
- * - Heuristic "Model not set" / "Provider not set" messages: model.not_configured.
  *
  * Anything else collapses to `internal`. We never echo `cause` or stack on
  * the wire.
@@ -103,6 +103,19 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
     };
   }
 
+  if (error instanceof APIEmptyResponseError) {
+    return {
+      code: ErrorCodes.PROVIDER_API_ERROR,
+      message: error.message,
+      name: error.name,
+      details: {
+        finishReason: error.finishReason,
+        rawFinishReason: error.rawFinishReason,
+      },
+      retryable: KIMI_ERROR_INFO[ErrorCodes.PROVIDER_API_ERROR].retryable,
+    };
+  }
+
   if (error instanceof ChatProviderError) {
     return {
       code: ErrorCodes.PROVIDER_API_ERROR,
@@ -113,15 +126,6 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
   }
 
   if (error instanceof Error) {
-    if (error.message === 'Model not set' || error.message === 'Provider not set') {
-      return {
-        code: ErrorCodes.MODEL_NOT_CONFIGURED,
-        message: error.message,
-        name: error.name,
-        retryable: KIMI_ERROR_INFO[ErrorCodes.MODEL_NOT_CONFIGURED].retryable,
-      };
-    }
-
     return {
       code: ErrorCodes.INTERNAL,
       message: error.message,

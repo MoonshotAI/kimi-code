@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type * as KosongModule from '@moonshot-ai/kosong';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { KimiError, Event } from '#/index';
+import { createKimiHarness, type KimiError, type Event } from '#/index';
 
 import { makeTempDir, removeTempDirs, waitForSDKEvent } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
@@ -33,8 +33,6 @@ vi.mock('@moonshot-ai/kosong', async (importOriginal) => {
   };
 });
 
-const { KimiHarness } = await import('#/index');
-
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -46,7 +44,7 @@ describe('Session.cancel', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-cancel-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-cancel-work-');
     await writeFakeModelConfig(homeDir);
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_cancel_active_turn', workDir });
@@ -80,29 +78,19 @@ describe('Session.cancel', () => {
     }
   });
 
-  it('cancels an active manual compaction and emits compaction.cancelled', async () => {
+  it('rejects manual compaction on an empty session with compaction.unable', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-cancel-compact-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-cancel-compact-work-');
     await writeFakeModelConfig(homeDir);
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_cancel_compaction', workDir });
-      const started = waitForSDKEvent(session, (event) => event.type === 'compaction.started');
-      const cancelled = waitForSDKEvent(session, (event) => event.type === 'compaction.cancelled');
 
-      await session.compact({ instruction: 'Keep the compact test pending.' });
-      await expect(started).resolves.toMatchObject({
-        type: 'compaction.started',
-        sessionId: session.id,
-        trigger: 'manual',
-      });
-      await session.cancelCompaction();
-
-      await expect(cancelled).resolves.toMatchObject({
-        type: 'compaction.cancelled',
-        sessionId: session.id,
-      });
+      await expect(session.compact({ instruction: 'Keep the compact test pending.' })).rejects.toMatchObject({
+        name: 'KimiError',
+        code: 'compaction.unable',
+      } satisfies Partial<KimiError>);
     } finally {
       await harness.close();
     }
@@ -111,7 +99,7 @@ describe('Session.cancel', () => {
   it('rejects after the session is closed', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-cancel-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-cancel-work-');
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_cancel_closed', workDir });

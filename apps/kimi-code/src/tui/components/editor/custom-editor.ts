@@ -11,6 +11,10 @@ import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
 // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
 const ANSI_SGR = /\u001B\[[0-9;]*m/g;
 
+const PASTE_MARKER_RE = /\[paste #(\d+)(?: (?:\+\d+ lines|\d+ chars))?\]/g;
+const BRACKET_PASTE_START = '\u001B[200~';
+const BRACKET_PASTE_END = '\u001B[201~';
+
 // Kitty keyboard protocol CSI-u sequence: ESC [ keycode ; modifier[:eventType] u.
 // We intentionally match only the simple two-field form — enough to rewrite
 // `ctrl+<LETTER>` with caps_lock into `ctrl+<letter>` without caps_lock.
@@ -107,7 +111,10 @@ export class CustomEditor extends Editor {
    * through so pi-tui's built-in history navigation runs.
    */
   public onUpArrowEmpty?: () => boolean;
+  public onDownArrowEmpty?: () => boolean;
   public onShiftTab?: () => void;
+  public connectedAbove = false;
+  public borderHighlighted = false;
   /**
    * Called when the user triggers "paste image" (Ctrl-V on Unix,
    * Alt-V on Windows — Ctrl-V is terminal-reserved there). Return
@@ -117,6 +124,9 @@ export class CustomEditor extends Editor {
    * the next keystroke.
    */
   public onPasteImage?: () => Promise<boolean>;
+
+  private consumingPaste = false;
+  private consumeBuffer = '';
 
   /**
    * `colors` is the live `ColorPalette` reference — the host mutates it
@@ -138,6 +148,30 @@ export class CustomEditor extends Editor {
     // content. The right side mirrors with 3 padding columns and the right
     // border at the last column.
     super(tui, createEditorTheme(colors), { paddingX: 4 });
+  }
+
+  private expandPasteMarkerAtCursor(): boolean {
+    const { line, col } = this.getCursor();
+    const lines = this.getLines();
+    const currentLine = lines[line] ?? '';
+
+    for (const match of currentLine.matchAll(PASTE_MARKER_RE)) {
+      const start = match.index;
+      const end = start + match[0].length;
+      if (col < start || col > end) continue;
+
+      const pasteId = Number(match[1]);
+      const pastes = (this as unknown as { pastes: Map<number, string> }).pastes;
+      const content = pastes.get(pasteId);
+      if (content === undefined) return false;
+
+      const text = this.getText();
+      const offset = lines.slice(0, line).reduce((sum, l) => sum + l.length + 1, 0) + start;
+      const newText = text.slice(0, offset) + content + text.slice(offset + match[0].length);
+      this.setText(newText);
+      return true;
+    }
+    return false;
   }
 
   private hasAutocompleteActivity(): boolean {
@@ -182,7 +216,9 @@ export class CustomEditor extends Editor {
     // overwrite it (e.g. plan-mode / slash-context highlight via
     // `editor.borderColor = chalk.hex(primary)`), so we route corners and
     // side bars through the same hook to stay in sync.
-    return wrapWithSideBorders(lines, (s) => this.borderColor(s));
+    return wrapWithSideBorders(lines, (s) => this.borderColor(s), {
+      connectedAbove: this.connectedAbove && !this.borderHighlighted,
+    });
   }
 
   override handleInput(data: string): void {
@@ -190,6 +226,27 @@ export class CustomEditor extends Editor {
     if (isKeyRelease(normalized)) {
       return;
     }
+
+    // When a paste marker was just expanded, discard the trailing bracketed
+    // paste data that the terminal sends alongside the Ctrl-V keystroke.
+    if (this.consumingPaste) {
+      this.consumeBuffer += normalized;
+      if (this.consumeBuffer.includes(BRACKET_PASTE_END)) {
+        this.consumingPaste = false;
+        this.consumeBuffer = '';
+      }
+      return;
+    }
+
+    // If a bracketed paste arrives while the cursor sits on an existing
+    // paste marker, expand that marker instead of pasting new content.
+    if (normalized.includes(BRACKET_PASTE_START) && this.expandPasteMarkerAtCursor()) {
+      if (!normalized.includes(BRACKET_PASTE_END)) {
+        this.consumingPaste = true;
+      }
+      return;
+    }
+
     // Paste image binding — platform-aware:
     //   Windows terminals reserve Ctrl-V for their own paste handling
     //   (e.g. Windows Terminal's Ctrl+V shortcut), so we listen for
@@ -197,17 +254,20 @@ export class CustomEditor extends Editor {
     //   reports no image available, we fall through to pi-tui's
     //   normal paste path so text from the clipboard still works.
     const pasteKey = process.platform === 'win32' ? 'alt+v' : Key.ctrl('v');
-    if (matchesKey(normalized, pasteKey) && this.onPasteImage !== undefined) {
-      const handler = this.onPasteImage;
-      void handler().then((handled) => {
-        if (!handled) {
-          this.onTextPaste?.();
-          // No image on the clipboard — forward the original keystroke
-          // through the base handler so a textual clipboard still works.
-          super.handleInput.call(this, normalized);
-        }
-      });
-      return;
+    if (matchesKey(normalized, pasteKey)) {
+      if (this.expandPasteMarkerAtCursor()) {
+        return;
+      }
+      if (this.onPasteImage !== undefined) {
+        const handler = this.onPasteImage;
+        void handler().then((handled) => {
+          if (!handled) {
+            this.onTextPaste?.();
+            super.handleInput.call(this, normalized);
+          }
+        });
+        return;
+      }
     }
 
     if (matchesKey(normalized, Key.ctrl('d'))) {
@@ -265,6 +325,12 @@ export class CustomEditor extends Editor {
       }
     }
 
+    if (matchesKey(normalized, Key.down)) {
+      if (this.getText().length === 0 && this.onDownArrowEmpty) {
+        if (this.onDownArrowEmpty()) return;
+      }
+    }
+
     if (matchesKey(normalized, Key.escape)) {
       if (this.hasAutocompleteActivity()) {
         this.cancelAutocompleteActivity();
@@ -280,6 +346,7 @@ export class CustomEditor extends Editor {
 
 /**
  * Return a copy of `line` with the first `/token` coloured using `hex`.
+ * For `/goal next manage`, also colour the command-path tokens.
  * `line` may already contain SGR escapes (cursor inverse, etc.); we
  * locate `/` via visible-index math so ANSI pass-through survives.
  * Returns `undefined` if no token is found.
@@ -302,12 +369,60 @@ export function highlightFirstSlashToken(line: string, hex: string): string | un
   }
   const visibleToken = visible.slice(slashIdx, endVisible);
   if (visibleToken.slice(1).includes('/')) return undefined;
-  const rawStart = mapVisibleIdxToRaw(line, slashIdx);
-  const rawEnd = mapVisibleIdxToRaw(line, endVisible);
-  const before = line.slice(0, rawStart);
-  const token = line.slice(rawStart, rawEnd);
-  const after = line.slice(rawEnd);
-  return before + chalk.hex(hex).bold(token) + after;
+  const ranges = [{ start: slashIdx, end: endVisible }];
+  if (visibleToken === '/goal') {
+    ranges.push(...goalCommandPathRanges(visible, endVisible));
+  }
+  return highlightVisibleRanges(line, ranges, hex);
+}
+
+function goalCommandPathRanges(
+  visible: string,
+  commandEnd: number,
+): Array<{ start: number; end: number }> {
+  const nextRange = readTokenRange(visible, commandEnd);
+  if (nextRange === null || visible.slice(nextRange.start, nextRange.end) !== 'next') {
+    return [];
+  }
+  const ranges = [nextRange];
+  const manageRange = readTokenRange(visible, nextRange.end);
+  if (manageRange !== null && visible.slice(manageRange.start, manageRange.end) === 'manage') {
+    ranges.push(manageRange);
+  }
+  return ranges;
+}
+
+function readTokenRange(
+  visible: string,
+  start: number,
+): { start: number; end: number } | null {
+  let tokenStart = start;
+  while (tokenStart < visible.length && isTokenSpace(visible[tokenStart])) tokenStart++;
+  if (tokenStart >= visible.length) return null;
+  let tokenEnd = tokenStart;
+  while (tokenEnd < visible.length && !isTokenSpace(visible[tokenEnd])) tokenEnd++;
+  return { start: tokenStart, end: tokenEnd };
+}
+
+function isTokenSpace(ch: string | undefined): boolean {
+  return ch === ' ' || ch === '\t';
+}
+
+function highlightVisibleRanges(
+  line: string,
+  ranges: Array<{ start: number; end: number }>,
+  hex: string,
+): string {
+  let out = '';
+  let rawCursor = 0;
+  for (const range of ranges) {
+    const rawStart = mapVisibleIdxToRaw(line, range.start);
+    const rawEnd = mapVisibleIdxToRaw(line, range.end);
+    out += line.slice(rawCursor, rawStart);
+    out += chalk.hex(hex).bold(line.slice(rawStart, rawEnd));
+    rawCursor = rawEnd;
+  }
+  return out + line.slice(rawCursor);
 }
 
 /**
@@ -343,13 +458,14 @@ export function injectPromptSymbol(line: string): string | undefined {
 export function wrapWithSideBorders(
   lines: string[],
   paint: (s: string) => string,
+  options: { readonly connectedAbove?: boolean } = {},
 ): string[] {
   let seenTop = false;
   return lines.map((line) => {
     const plain = stripSgr(line);
     if (plain.length > 0 && plain[0] === '─') {
-      const leftCorner = seenTop ? '╰' : '╭';
-      const rightCorner = seenTop ? '╯' : '╮';
+      const leftCorner = seenTop ? '╰' : options.connectedAbove === true ? '├' : '╭';
+      const rightCorner = seenTop ? '╯' : options.connectedAbove === true ? '┤' : '╮';
       seenTop = true;
       if (plain.length === 1) return paint(leftCorner);
       const middle = plain.slice(1, -1);

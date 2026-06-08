@@ -1,4 +1,5 @@
 import type {
+  GoalSnapshot,
   ModelAlias,
   PermissionMode,
   ProviderConfig,
@@ -6,22 +7,21 @@ import type {
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import type { NotificationsConfig } from './config';
+import type { NotificationsConfig, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { Theme } from './theme';
+import type { ResolvedTheme } from './theme/colors';
 
 export interface AppState {
   model: string;
   workDir: string;
   sessionId: string;
-  yolo: boolean;
   permissionMode: PermissionMode;
   planMode: boolean;
   thinking: boolean;
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;
-  isStreaming: boolean;
   isCompacting: boolean;
   isReplaying: boolean;
   streamingPhase: 'idle' | 'waiting' | 'thinking' | 'composing';
@@ -30,9 +30,13 @@ export interface AppState {
   version: string;
   editorCommand: string | null;
   notifications: NotificationsConfig;
+  upgrade: UpgradePreferences;
   availableModels: Record<string, ModelAlias>;
   availableProviders: Record<string, ProviderConfig>;
   sessionTitle: string | null;
+  /** Current goal snapshot for the footer badge; null/undefined when no active goal. */
+  goal?: GoalSnapshot | null;
+  mcpServersSummary: string | null;
 }
 
 export interface ToolCallBlockData {
@@ -96,6 +100,15 @@ export interface CompactionTranscriptData {
   readonly instruction?: string;
 }
 
+export interface CronTranscriptData {
+  readonly jobId?: string;
+  readonly cron?: string;
+  readonly recurring?: boolean;
+  readonly coalescedCount?: number;
+  readonly stale?: boolean;
+  readonly missedCount?: number;
+}
+
 export type TranscriptEntryKind =
   | 'welcome'
   | 'user'
@@ -103,7 +116,10 @@ export type TranscriptEntryKind =
   | 'tool_call'
   | 'thinking'
   | 'status'
-  | 'skill_activation';
+  | 'skill_activation'
+  | 'cron';
+
+export type SkillActivationTrigger = 'user-slash' | 'model-tool' | 'nested-skill';
 
 export interface TranscriptEntry {
   id: string;
@@ -116,10 +132,12 @@ export interface TranscriptEntry {
   toolCallData?: ToolCallBlockData;
   backgroundAgentStatus?: BackgroundAgentStatusData;
   compactionData?: CompactionTranscriptData;
+  cronData?: CronTranscriptData;
   imageAttachmentIds?: readonly number[];
   skillActivationId?: string;
   skillName?: string;
   skillArgs?: string;
+  skillTrigger?: SkillActivationTrigger;
 }
 
 export type LivePaneMode =
@@ -147,3 +165,36 @@ export const INITIAL_LIVE_PANE: LivePaneState = {
   pendingApproval: null,
   pendingQuestion: null,
 };
+
+// ---------------------------------------------------------------------------
+// TUI startup / options types (extracted from kimi-tui.ts)
+// ---------------------------------------------------------------------------
+
+export interface TUIStartupOptions {
+  readonly sessionFlag?: string;
+  readonly continueLast: boolean;
+  readonly yolo: boolean;
+  readonly auto: boolean;
+  readonly plan: boolean;
+  readonly model?: string;
+  readonly startupNotice?: string;
+}
+
+export type TUIStartupState = 'pending' | 'ready' | 'picker';
+
+export interface KimiTUIOptions {
+  initialAppState: AppState;
+  startup: TUIStartupOptions;
+  resolvedTheme?: ResolvedTheme;
+}
+
+export interface PendingExit {
+  readonly kind: 'ctrl-c' | 'ctrl-d';
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+
+export interface LoginProgressSpinnerHandle {
+  stop(opts: { ok: boolean; label: string }): void;
+}
+
+export type ProgressSpinnerHandle = LoginProgressSpinnerHandle;

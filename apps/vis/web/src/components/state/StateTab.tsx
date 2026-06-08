@@ -1,217 +1,181 @@
-import { useState, type ReactNode } from 'react';
+import { useMemo } from 'react';
 
-import type { SessionState } from '../../types';
 import { formatAbsoluteTime, formatRelativeTime } from '../../util/time';
 import { CopyButton } from '../shared/CopyButton';
 import { JsonViewer } from '../shared/JsonViewer';
+import { Pill } from '../shared/Pill';
 
 interface StateTabProps {
-  state: SessionState;
-  protocolVersion: string | null;
+  state: unknown;
 }
 
-/** Keys whose values should be interpreted as epoch milliseconds and
- *  decorated with both an absolute time and "2h ago" style relative label.
- *  Matches the shape of state.json written by `@moonshot-ai/agent-core`. */
-const EPOCH_MS_KEYS = new Set(['created_at', 'updated_at', 'last_turn_time']);
+interface StateJsonShape {
+  title?: string;
+  isCustomTitle?: boolean;
+  lastPrompt?: string;
+  forkedFrom?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  agents?: Record<string, unknown>;
+  custom?: Record<string, unknown> & { imported_from_kimi_cli?: boolean };
+}
 
-/** Keys whose values tend to be long paths worth copying with one click. */
-const COPY_KEYS = new Set(['workspace_dir', 'plan_slug', 'session_id']);
+/** State tab — renders the raw `state.json` blob from session detail.
+ *  At the top, a handful of highlight cards surface the most-asked fields
+ *  (title / lastPrompt / created / updated / agent count). Below that, the
+ *  full JSON is shown via the shared JsonViewer so any custom fields the
+ *  upstream writer adds remain readable without code changes. */
+export function StateTab({ state }: StateTabProps) {
+  const s = useMemo<StateJsonShape>(() => {
+    return (state ?? {}) as StateJsonShape;
+  }, [state]);
 
-export function StateTab({ state, protocolVersion }: StateTabProps) {
-  const [showRaw, setShowRaw] = useState(false);
-  const entries = Object.entries(state);
+  const createdMs = parseIso(s.createdAt);
+  const updatedMs = parseIso(s.updatedAt);
+  const agentIds = s.agents !== undefined ? Object.keys(s.agents) : [];
+  const importedFromKimiCli = s.custom?.imported_from_kimi_cli === true;
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-4">
       <div className="flex items-center justify-between">
         <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-fg-3">
           state.json
-          {protocolVersion ? ` · wire protocol ${protocolVersion}` : ''}
         </div>
-        <div className="flex items-center gap-3">
-          <CopyButton value={JSON.stringify(state, null, 2)} label="copy json" />
-          <button
-            onClick={() =>{  setShowRaw((v) => !v); }}
-            className="font-mono text-[10px] text-fg-3 hover:text-fg-1"
-          >
-            {showRaw ? '[ hide raw ]' : '[ {…} raw json ]'}
-          </button>
-        </div>
+        <CopyButton value={JSON.stringify(s, null, 2)} label="copy json" />
       </div>
 
-      <DurationRow state={state} />
-
-      <div className="mt-4 border border-border bg-surface-0">
-        <table className="w-full font-mono text-[12px]">
-          <tbody>
-            {entries.map(([k, v]) => (
-              <StateRow key={k} keyName={k} value={v} />
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {showRaw ? (
-        <div className="mt-4 border border-border bg-surface-0 p-3">
-          <JsonViewer value={state} defaultOpenDepth={3} />
+      {importedFromKimiCli ? (
+        <div className="mt-3 border border-[var(--color-sev-warning)] bg-[color-mix(in_oklab,var(--color-sev-warning)_10%,transparent)] px-3 py-2 font-mono text-[11px] text-[var(--color-sev-warning)]">
+          warning · this session is marked
+          <code className="mx-1 px-1 bg-surface-0">imported_from_kimi_cli</code>
+          and would normally be filtered out of the list.
         </div>
       ) : null}
-    </div>
-  );
-}
 
-/** Derive a human duration from created_at + updated_at when both are
- *  valid epoch-ms numbers. Rendered just under the header as a single dim
- *  line — omitted silently when data is missing. */
-function DurationRow({ state }: { state: SessionState }) {
-  const created = state.created_at;
-  const updated = state.updated_at;
-  if (typeof created !== 'number' || typeof updated !== 'number') return null;
-  if (updated < created) return null;
-  const ms = updated - created;
-  return (
-    <div className="mt-2 font-mono text-[11px] text-fg-3">
-      duration <span className="text-fg-1">{formatDuration(ms)}</span>
-      {' · '}
-      from <span className="text-fg-1">{formatAbsoluteTime(created)}</span>
-      {' → '}
-      <span className="text-fg-1">{formatAbsoluteTime(updated)}</span>
-    </div>
-  );
-}
+      {/* Highlight cards */}
+      <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+        <Card label="title">
+          {s.title !== undefined && s.title !== '' ? (
+            <span className="font-mono text-[12px] text-fg-0">"{s.title}"</span>
+          ) : (
+            <span className="font-mono text-[12px] text-fg-3">(none)</span>
+          )}
+          {s.isCustomTitle === true ? (
+            <Pill tone="config" variant="outline">
+              custom
+            </Pill>
+          ) : null}
+        </Card>
 
-function StateRow({ keyName, value }: { keyName: string; value: unknown }) {
-  return (
-    <tr className="border-b border-border last:border-b-0 align-top">
-      <td className="w-[200px] border-r border-border bg-surface-1 px-3 py-1.5 text-right text-fg-2">
-        {keyName}
-      </td>
-      <td className="px-3 py-1.5 text-fg-0 break-words">
-        <ValueCell keyName={keyName} value={value} />
-      </td>
-    </tr>
-  );
-}
-
-function ValueCell({ keyName, value }: { keyName: string; value: unknown }) {
-  if (value === null || value === undefined) return <span className="text-fg-3">null</span>;
-
-  if (typeof value === 'boolean') {
-    return (
-      <span className={value ? 'text-[var(--color-sev-success)]' : 'text-fg-3'}>
-        {String(value)}
-      </span>
-    );
-  }
-
-  if (typeof value === 'number') {
-    if (EPOCH_MS_KEYS.has(keyName) && value > 1_000_000_000_000) {
-      return (
-        <span className="flex flex-wrap items-center gap-2">
-          <span className="text-[var(--color-sev-info)] tabular">{formatAbsoluteTime(value)}</span>
-          <span className="text-fg-3">·</span>
-          <span className="text-fg-2">{formatRelativeTime(value)}</span>
-          <span className="text-fg-3">·</span>
-          <span className="text-fg-3 tabular">{value}</span>
-        </span>
-      );
-    }
-    return <span className="text-[var(--color-sev-info)] tabular">{value}</span>;
-  }
-
-  if (typeof value === 'string') {
-    const withCopy = COPY_KEYS.has(keyName);
-    return (
-      <span className="flex flex-wrap items-center gap-2">
-        <span className="text-[var(--color-cat-ephemeral)] break-all">"{value}"</span>
-        {withCopy ? <CopyButton value={value} /> : null}
-      </span>
-    );
-  }
-
-  if (Array.isArray(value)) {
-    if (value.length === 0) return <span className="text-fg-3">[]</span>;
-    // Arrays of primitives render inline; arrays of objects use JsonViewer.
-    const allPrim = value.every((v) => typeof v !== 'object' || v === null);
-    if (allPrim) {
-      return (
-        <span className="flex flex-wrap items-center gap-1">
-          {(value as unknown[]).map((v, i) => (
-            <span
-              key={i}
-              className="border border-border bg-surface-1 px-1.5 py-0.5 text-[11px] text-fg-1"
-            >
-              {typeof v === 'string' ? v : String(v)}
+        <Card label="forkedFrom">
+          {s.forkedFrom !== undefined && s.forkedFrom !== '' ? (
+            <span className="font-mono text-[12px] text-fg-0 break-all">
+              {s.forkedFrom}
             </span>
-          ))}
-        </span>
-      );
-    }
-    return <JsonViewer value={value} defaultOpenDepth={2} />;
-  }
+          ) : (
+            <span className="font-mono text-[12px] text-fg-3">(none)</span>
+          )}
+        </Card>
 
-  // Nested object: render as a compact sub-table so fields like `producer`
-  // read as structured data instead of a JSON.stringify blob.
-  return <NestedObject value={value as Record<string, unknown>} />;
-}
+        <Card label="createdAt">
+          <TsValue ms={createdMs} raw={s.createdAt} />
+        </Card>
 
-function NestedObject({ value }: { value: Record<string, unknown> }) {
-  const entries = Object.entries(value);
-  if (entries.length === 0) return <span className="text-fg-3">{'{}'}</span>;
-  return (
-    <div className="inline-block border border-border bg-surface-1">
-      <table className="font-mono text-[11.5px]">
-        <tbody>
-          {entries.map(([k, v]) => (
-            <tr key={k} className="border-b border-border last:border-b-0 align-top">
-              <td className="border-r border-border px-2 py-0.5 text-right text-fg-3">{k}</td>
-              <td className="px-2 py-0.5 text-fg-0 break-all">
-                <NestedValue value={v} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+        <Card label="updatedAt">
+          <TsValue ms={updatedMs} raw={s.updatedAt} />
+        </Card>
+
+        <Card label="lastPrompt">
+          {s.lastPrompt !== undefined && s.lastPrompt !== '' ? (
+            <span
+              className="font-mono text-[12px] text-fg-0 line-clamp-3"
+              title={s.lastPrompt}
+            >
+              {s.lastPrompt}
+            </span>
+          ) : (
+            <span className="font-mono text-[12px] text-fg-3">(none)</span>
+          )}
+        </Card>
+
+        <Card label={`agents (${agentIds.length})`}>
+          {agentIds.length === 0 ? (
+            <span className="font-mono text-[12px] text-fg-3">(none)</span>
+          ) : (
+            <span className="flex flex-wrap items-center gap-1">
+              {agentIds.map((id) => (
+                <span
+                  key={id}
+                  className="border border-border bg-surface-1 px-1.5 py-0.5 font-mono text-[11px] text-fg-1"
+                >
+                  {id}
+                </span>
+              ))}
+            </span>
+          )}
+        </Card>
+      </div>
+
+      {/* Custom blob */}
+      <section className="mt-6">
+        <h3 className="font-mono text-[11px] uppercase tracking-[0.12em] text-fg-3">
+          custom
+        </h3>
+        <div className="mt-2 border border-border bg-surface-0 p-3">
+          {s.custom === undefined || Object.keys(s.custom).length === 0 ? (
+            <span className="font-mono text-[11px] text-fg-3">(empty)</span>
+          ) : (
+            <JsonViewer value={s.custom} defaultOpenDepth={2} />
+          )}
+        </div>
+      </section>
+
+      {/* Raw JSON */}
+      <section className="mt-6">
+        <h3 className="font-mono text-[11px] uppercase tracking-[0.12em] text-fg-3">
+          raw state.json
+        </h3>
+        <div className="mt-2 border border-border bg-surface-0 p-3">
+          <JsonViewer value={s} defaultOpenDepth={2} />
+        </div>
+      </section>
     </div>
   );
 }
 
-function NestedValue({ value }: { value: unknown }): ReactNode {
-  if (value === null || value === undefined) return <span className="text-fg-3">null</span>;
-  if (typeof value === 'boolean') {
-    return (
-      <span className={value ? 'text-[var(--color-sev-success)]' : 'text-fg-3'}>
-        {String(value)}
-      </span>
-    );
-  }
-  if (typeof value === 'number')
-    return <span className="text-[var(--color-sev-info)] tabular">{value}</span>;
-  if (typeof value === 'string')
-    return <span className="text-[var(--color-cat-ephemeral)]">"{value}"</span>;
-  if (Array.isArray(value)) {
-    return (
-      <span className="text-fg-1">
-        [{value.length} item{value.length === 1 ? '' : 's'}]
-      </span>
-    );
-  }
-  return <NestedObject value={value as Record<string, unknown>} />;
+function Card({ label, children }: { label: string; children: import('react').ReactNode }) {
+  return (
+    <div className="border border-border bg-surface-0 px-3 py-2">
+      <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-fg-3">
+        {label}
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-2">{children}</div>
+    </div>
+  );
 }
 
-/** Format a duration in ms as "3h 14m" / "12m 30s" / "45s". */
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const rs = s % 60;
-  if (m < 60) return rs > 0 ? `${m}m ${rs}s` : `${m}m`;
-  const h = Math.floor(m / 60);
-  const rm = m % 60;
-  if (h < 24) return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
-  const d = Math.floor(h / 24);
-  const rh = h % 24;
-  return rh > 0 ? `${d}d ${rh}h` : `${d}d`;
+function TsValue({ ms, raw }: { ms: number | null; raw: string | undefined }) {
+  if (ms === null) {
+    return raw !== undefined && raw !== '' ? (
+      <span className="font-mono text-[12px] text-fg-3 break-all">{raw}</span>
+    ) : (
+      <span className="font-mono text-[12px] text-fg-3">(none)</span>
+    );
+  }
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      <span className="font-mono text-[12px] text-fg-0 tabular">
+        {formatAbsoluteTime(ms)}
+      </span>
+      <span className="font-mono text-[11px] text-fg-3">
+        ({formatRelativeTime(ms)})
+      </span>
+    </span>
+  );
+}
+
+function parseIso(input: string | undefined): number | null {
+  if (input === undefined || input === '') return null;
+  const n = Date.parse(input);
+  return Number.isFinite(n) ? n : null;
 }

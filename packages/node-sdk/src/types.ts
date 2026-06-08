@@ -1,6 +1,7 @@
 import type {
   ExportSessionManifest,
   ResumeSessionResult,
+  ShellEnvironment,
   TelemetryClient,
   TelemetryContextPatch,
   TelemetryProperties,
@@ -16,12 +17,23 @@ export type Unsubscribe = () => void;
 
 export type {
   AgentReplayRecord,
+  AgentBackgroundTaskInfo,
   BackgroundConfig,
   BackgroundTaskInfo,
-  BackgroundTaskKind,
   BackgroundTaskStatus,
   ContextMessage,
+  CreateGoalInput,
+  ExperimentalFeatureState,
+  ExperimentalFlagMap,
+  ExperimentalFlagSource,
   ExportSessionManifest,
+  GoalBudgetLimits,
+  GoalBudgetReport,
+  GoalChange,
+  GoalChangeStats,
+  GoalSnapshot,
+  GoalStatus,
+  GoalToolResult,
   KimiConfig,
   KimiConfigPatch,
   LoopControl,
@@ -30,11 +42,21 @@ export type {
   ModelAlias,
   MoonshotServiceConfig,
   OAuthRef,
+  PluginGithubMetadata,
+  PluginGithubRef,
+  PluginInfo,
+  PluginMcpServerInfo,
+  PluginSource,
+  PluginSummary,
+  ProcessBackgroundTaskInfo,
   PromptOrigin,
   ProviderConfig,
   ProviderType,
+  QuestionBackgroundTaskInfo,
+  ReloadSummary,
   ResumedAgentState,
   ServicesConfig,
+  ShellEnvironment,
   SkillSummary,
   ThinkingConfig,
   ToolInfo,
@@ -94,6 +116,9 @@ export interface ExportSessionInput {
   readonly includeGlobalLog?: boolean | undefined;
   /** Host version to record in the export manifest. */
   readonly version: string;
+  /** How the CLI was installed (e.g. 'npm-global', 'native'). */
+  readonly installSource?: string | undefined;
+  readonly shellEnv?: ShellEnvironment | undefined;
 }
 
 export interface ExportSessionResult {
@@ -104,7 +129,8 @@ export interface ExportSessionResult {
 }
 
 export interface ListSessionsOptions {
-  readonly workDir: string;
+  readonly workDir?: string;
+  readonly sessionId?: string;
 }
 
 export interface GetConfigOptions {
@@ -159,6 +185,6 @@ export interface SessionSummary {
   readonly metadata?: JsonObject | undefined;
 }
 
-export type ResumedSessionState = Pick<ResumeSessionResult, 'sessionMetadata' | 'agents'>;
+export type ResumedSessionState = Pick<ResumeSessionResult, 'sessionMetadata' | 'agents' | 'warning'>;
 
 export interface ResumedSessionSummary extends SessionSummary, ResumedSessionState {}

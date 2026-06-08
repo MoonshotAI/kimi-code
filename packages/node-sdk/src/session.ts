@@ -1,14 +1,27 @@
-import { ErrorCodes, KimiError, type KimiErrorCode } from '@moonshot-ai/agent-core';
+import {
+  ErrorCodes,
+  KimiError,
+  type AgentContextData,
+  type KimiErrorCode,
+} from '@moonshot-ai/agent-core';
+
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
-import type { SDKRpcClient } from '#/rpc';
+import type { SDKRpcClientBase } from '#/rpc';
 import type {
   BackgroundTaskInfo,
   CompactOptions,
+  CreateGoalInput,
+  GoalSnapshot,
+  GoalToolResult,
   McpServerInfo,
   McpStartupMetrics,
   PermissionMode,
+  PluginInfo,
+  PluginSummary,
   PromptInput,
+  ReloadSummary,
   ResumedSessionState,
+  ResumedSessionSummary,
   SessionPlan,
   SessionStatus,
   SessionSummary,
@@ -24,17 +37,17 @@ export interface SessionOptions {
   readonly workDir: string;
   readonly summary?: SessionSummary | undefined;
   readonly resumeState?: ResumedSessionState | undefined;
-  readonly rpc: SDKRpcClient;
+  readonly rpc: SDKRpcClientBase;
   readonly onClose?: (() => void | Promise<void>) | undefined;
 }
 
 export class Session {
   readonly id: string;
   readonly workDir: string;
-  readonly summary?: SessionSummary | undefined;
-  private readonly resumeState: ResumedSessionState | undefined;
+  summary?: SessionSummary | undefined;
+  private resumeState: ResumedSessionState | undefined;
 
-  private readonly rpc: SDKRpcClient;
+  private readonly rpc: SDKRpcClientBase;
   private readonly onClose?: (() => void | Promise<void>) | undefined;
   private closed = false;
 
@@ -50,6 +63,14 @@ export class Session {
   getResumeState(): ResumedSessionState | undefined {
     this.ensureOpen();
     return this.resumeState;
+  }
+
+  async reloadSession(): Promise<ResumedSessionSummary> {
+    this.ensureOpen();
+    const summary = await this.rpc.reloadSession({ sessionId: this.id });
+    this.summary = summary;
+    this.resumeState = resumeStateFromSummary(summary);
+    return summary;
   }
 
   onEvent(listener: (event: Event) => void): Unsubscribe {
@@ -90,6 +111,11 @@ export class Session {
   async init(): Promise<void> {
     this.ensureOpen();
     await this.rpc.generateAgentsMd({ sessionId: this.id });
+  }
+
+  async startBtw(): Promise<string> {
+    this.ensureOpen();
+    return this.rpc.startBtw({ sessionId: this.id });
   }
 
   async cancel(): Promise<void> {
@@ -161,6 +187,16 @@ export class Session {
   async cancelCompaction(): Promise<void> {
     this.ensureOpen();
     await this.rpc.cancelCompaction({ sessionId: this.id });
+  }
+
+  async undoHistory(count: number = 1): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.undoHistory({ sessionId: this.id, count });
+  }
+
+  async getContext(): Promise<AgentContextData> {
+    this.ensureOpen();
+    return this.rpc.getContext({ sessionId: this.id });
   }
 
   async getUsage(): Promise<SessionUsage> {
@@ -242,22 +278,35 @@ export class Session {
     });
   }
 
-  /**
-   * Return the absolute path to the task's `output.log` on disk, or
-   * `undefined` when the task is unknown or has no persisted output.
-   * Callers can hand the path to an external pager.
-   */
-  async getBackgroundTaskOutputPath(taskId: string): Promise<string | undefined> {
+  // --- Goal lifecycle ---------------------------------------------------
+  // Deterministic user/host control surface. There is intentionally no
+  // `updateGoal`: the goal's terminal status is decided by the model via the
+  // in-conversation UpdateGoal tool (or the goal driver on budget/error), not
+  // by the host.
+
+  async createGoal(input: CreateGoalInput): Promise<GoalSnapshot> {
     this.ensureOpen();
-    const trimmedTaskId = normalizeRequiredString(
-      taskId,
-      'Task id cannot be empty',
-      ErrorCodes.BACKGROUND_TASK_ID_EMPTY,
-    );
-    return this.rpc.getBackgroundTaskOutputPath({
-      sessionId: this.id,
-      taskId: trimmedTaskId,
-    });
+    return this.rpc.createGoal({ sessionId: this.id, ...input });
+  }
+
+  async getGoal(): Promise<GoalToolResult> {
+    this.ensureOpen();
+    return this.rpc.getGoal({ sessionId: this.id });
+  }
+
+  async pauseGoal(input: { reason?: string } = {}): Promise<GoalSnapshot> {
+    this.ensureOpen();
+    return this.rpc.pauseGoal({ sessionId: this.id, reason: input.reason });
+  }
+
+  async resumeGoal(input: { reason?: string } = {}): Promise<GoalSnapshot> {
+    this.ensureOpen();
+    return this.rpc.resumeGoal({ sessionId: this.id, reason: input.reason });
+  }
+
+  async cancelGoal(input: { reason?: string } = {}): Promise<GoalSnapshot> {
+    this.ensureOpen();
+    return this.rpc.cancelGoal({ sessionId: this.id, reason: input.reason });
   }
 
   async listMcpServers(): Promise<readonly McpServerInfo[]> {
@@ -273,6 +322,45 @@ export class Session {
   async reconnectMcpServer(name: string): Promise<void> {
     this.ensureOpen();
     await this.rpc.reconnectMcpServer({ sessionId: this.id, name });
+  }
+
+  async listPlugins(): Promise<readonly PluginSummary[]> {
+    this.ensureOpen();
+    return this.rpc.listPlugins();
+  }
+
+  async installPlugin(source: string): Promise<PluginSummary> {
+    this.ensureOpen();
+    return this.rpc.installPlugin(source);
+  }
+
+  async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.setPluginEnabled(id, enabled);
+  }
+
+  async setPluginMcpServerEnabled(
+    id: string,
+    server: string,
+    enabled: boolean,
+  ): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.setPluginMcpServerEnabled(id, server, enabled);
+  }
+
+  async removePlugin(id: string): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.removePlugin(id);
+  }
+
+  async reloadPlugins(): Promise<ReloadSummary> {
+    this.ensureOpen();
+    return this.rpc.reloadPlugins();
+  }
+
+  async getPluginInfo(id: string): Promise<PluginInfo> {
+    this.ensureOpen();
+    return this.rpc.getPluginInfo(id);
   }
 
   async activateSkill(name: string, args?: string | undefined): Promise<void> {
@@ -395,6 +483,7 @@ function resumeStateFromSummary(
   return {
     sessionMetadata: summary.sessionMetadata,
     agents: summary.agents,
+    warning: summary.warning,
   };
 }
 

@@ -14,8 +14,10 @@ export { MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE } from '@moonshot-ai/agent-core
 export type {
   AgentStatusUpdatedEvent,
   SessionMetaUpdatedEvent,
+  GoalUpdatedEvent,
   SkillActivatedEvent,
   ErrorEvent,
+  WarningEvent,
   UsageStatus,
 } from '@moonshot-ai/agent-core';
 
@@ -97,9 +99,10 @@ export type {
 // bash (`bash-*`) and agent (`agent-*`) tasks under one wire format.
 export type {
   BackgroundTaskStartedEvent,
-  BackgroundTaskUpdatedEvent,
   BackgroundTaskTerminatedEvent,
 } from '@moonshot-ai/agent-core';
+
+export type { CronFiredEvent } from '@moonshot-ai/agent-core';
 
 export type MaybePromise<T> = T | Promise<T>;
 

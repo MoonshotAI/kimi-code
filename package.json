@@ -8,6 +8,7 @@
     "build": "pnpm -r run build",
     "build:packages": "pnpm -r --filter './packages/*' run build",
     "dev:cli": "pnpm -C apps/kimi-code run dev",
+    "build:plugin-marketplace": "pnpm -C apps/kimi-code run build:plugin-marketplace",
     "vis": "pnpm -C apps/vis run dev",
     "dev:docs": "pnpm -C docs install --ignore-workspace && pnpm -C docs run dev",
     "typecheck": "pnpm run build:packages && pnpm -r --filter './packages/*' run typecheck && pnpm --filter @moonshot-ai/kimi-code run typecheck",
@@ -21,6 +22,7 @@
     "clean": "pnpm -r run clean",
     "changeset": "changeset",
     "version": "changeset version",
+    "version:release": "changeset version",
     "publish": "pnpm run typecheck && pnpm run lint && pnpm run sherif && pnpm run test && pnpm run build && pnpm run lint:pkg && changeset publish",
     "prepare": "simple-git-hooks"
   },
@@ -34,6 +36,7 @@
     "lint-staged": "16.4.0",
     "oxlint": "1.59.0",
     "oxlint-tsgolint": "0.20.0",
+    "pkg-pr-new": "0.0.75",
     "publint": "0.3.18",
     "sherif": "1.11.1",
     "simple-git-hooks": "2.13.1",

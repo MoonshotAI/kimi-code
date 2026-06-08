@@ -1,3 +1,5 @@
+import type { FinishReason } from './provider';
+
 /**
  * Base error for all chat provider errors.
  */
@@ -58,10 +60,31 @@ export class APIContextOverflowError extends APIStatusError {
  * The API returned an empty response (no content, no tool calls).
  */
 export class APIEmptyResponseError extends ChatProviderError {
-  constructor(message: string) {
+  readonly finishReason: FinishReason | null;
+  readonly rawFinishReason: string | null;
+
+  constructor(
+    message: string,
+    options: {
+      readonly finishReason?: FinishReason | null;
+      readonly rawFinishReason?: string | null;
+    } = {},
+  ) {
     super(message);
     this.name = 'APIEmptyResponseError';
+    this.finishReason = options.finishReason ?? null;
+    this.rawFinishReason = options.rawFinishReason ?? null;
   }
+}
+
+export function isRetryableGenerateError(error: unknown): boolean {
+  if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
+    return true;
+  }
+  if (error instanceof APIEmptyResponseError) {
+    return true;
+  }
+  return error instanceof APIStatusError && [429, 500, 502, 503, 504].includes(error.statusCode);
 }
 
 const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
@@ -72,7 +95,12 @@ const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
   /(?:too many tokens.*(?:prompt|input|context)|(?:prompt|input|context).*too many tokens)/,
   /prompt is too long.*maximum/,
   /input token count.*exceeds?.*maximum number of tokens/,
+  /request.*exceed(?:ed|s|ing)?.*model token limit/,
 ] as const;
+
+export function isContextOverflowErrorCode(code: string | null | undefined): boolean {
+  return code === 'context_length_exceeded';
+}
 
 export function normalizeAPIStatusError(
   statusCode: number,
@@ -85,7 +113,7 @@ export function normalizeAPIStatusError(
   return new APIStatusError(statusCode, message, requestId);
 }
 
-function isContextOverflowStatusError(statusCode: number, message: string): boolean {
+export function isContextOverflowStatusError(statusCode: number, message: string): boolean {
   if (statusCode !== 400 && statusCode !== 413 && statusCode !== 422) return false;
   const lowerMessage = message.toLowerCase();
   return CONTEXT_OVERFLOW_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));

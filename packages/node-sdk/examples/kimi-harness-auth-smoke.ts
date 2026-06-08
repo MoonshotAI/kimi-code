@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { KimiHarness } from '@moonshot-ai/kimi-code-sdk';
+import { createKimiHarness, type KimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
 import { smokeIdentityFromEnv, runPromptToEnd } from './runtime-smoke-helpers';
 
@@ -17,7 +17,7 @@ async function main(): Promise<void> {
   const forceLogin = process.env['KIMI_SDK_AUTH_SMOKE_FORCE_LOGIN'] === '1';
   const prompt =
     process.env['KIMI_SDK_AUTH_SMOKE_PROMPT'] ?? 'Reply with exactly: Kimi SDK auth smoke ok';
-  const harness = new KimiHarness({ homeDir, identity: smokeIdentityFromEnv() });
+  const harness = createKimiHarness({ homeDir, identity: smokeIdentityFromEnv() });
 
   process.stdout.write(`home: ${homeDir}\n`);
   process.stdout.write(`workDir: ${workDir}\n`);

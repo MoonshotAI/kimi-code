@@ -5,6 +5,7 @@ import {
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
+  isRetryableGenerateError,
   normalizeAPIStatusError,
 } from '#/errors';
 import { describe, expect, it } from 'vitest';
@@ -70,6 +71,18 @@ describe('APIEmptyResponseError', () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe('APIEmptyResponseError');
     expect(err.message).toBe('empty response');
+    expect(err.finishReason).toBeNull();
+    expect(err.rawFinishReason).toBeNull();
+  });
+
+  it('preserves provider finish reason details', () => {
+    const err = new APIEmptyResponseError('empty response', {
+      finishReason: 'filtered',
+      rawFinishReason: 'content_filter',
+    });
+
+    expect(err.finishReason).toBe('filtered');
+    expect(err.rawFinishReason).toBe('content_filter');
   });
 });
 
@@ -81,6 +94,30 @@ describe('APIContextOverflowError', () => {
     expect(err.name).toBe('APIContextOverflowError');
     expect(err.statusCode).toBe(400);
     expect(err.requestId).toBe('req-context');
+  });
+});
+
+describe('isRetryableGenerateError', () => {
+  it('matches transient provider errors and empty generate responses', () => {
+    expect(isRetryableGenerateError(new APIConnectionError('conn'))).toBe(true);
+    expect(isRetryableGenerateError(new APITimeoutError('timeout'))).toBe(true);
+    expect(isRetryableGenerateError(new APIEmptyResponseError('empty'))).toBe(true);
+  });
+
+  it.each([429, 500, 502, 503, 504])('treats HTTP %i as retryable', (statusCode) => {
+    expect(isRetryableGenerateError(new APIStatusError(statusCode, 'retryable'))).toBe(true);
+  });
+
+  it.each([400, 401, 403, 404, 422])('treats HTTP %i as non-retryable', (statusCode) => {
+    expect(isRetryableGenerateError(new APIStatusError(statusCode, 'non-retryable'))).toBe(false);
+  });
+
+  it('does not retry context overflow or unknown errors', () => {
+    expect(
+      isRetryableGenerateError(new APIContextOverflowError(400, 'Context length exceeded')),
+    ).toBe(false);
+    expect(isRetryableGenerateError(new Error('boom'))).toBe(false);
+    expect(isRetryableGenerateError('boom')).toBe(false);
   });
 });
 
@@ -129,6 +166,7 @@ describe('normalizeAPIStatusError', () => {
     [422, 'Too many tokens in prompt'],
     [400, 'prompt is too long: 210000 tokens exceeds the maximum'],
     [400, 'input token count 131072 exceeds the maximum number of tokens allowed'],
+    [400, 'Invalid request: Your request exceeded model token limit: 262144 (requested: 274613)'],
   ])('normalizes %i "%s" to APIContextOverflowError', (statusCode, message) => {
     const error = normalizeAPIStatusError(statusCode, message, 'req-context');
     expect(error).toBeInstanceOf(APIContextOverflowError);

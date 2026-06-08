@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -258,7 +258,7 @@ reason = "no rm"
     expect((rpc as unknown as Record<string, unknown>)['setVersion']).toBeUndefined();
   });
 
-  it('clears a resumed model that no longer resolves and has no valid fallback', async () => {
+  it('keeps the resumed model alias visible when it no longer resolves', async () => {
     const rpc = await createTestRpc();
     const created = await rpc.createSession({ workDir, model: 'kimi-code/kimi-for-coding' });
     await rpc.closeSession({ sessionId: created.id });
@@ -270,9 +270,11 @@ reason = "no rm"
     const freshRpc = await createTestRpc();
     await freshRpc.resumeSession({ sessionId: created.id });
 
-    // The stale alias must be cleared, not left selected — a phantom model
-    // would fail on the next prompt instead of surfacing the no-model state.
-    expect(await freshRpc.getModel({ sessionId: created.id, agentId: 'main' })).toBe('');
+    // The stale alias stays visible so the UI can surface which model the
+    // user had selected. The next prompt will raise MODEL_NOT_CONFIGURED.
+    expect(await freshRpc.getModel({ sessionId: created.id, agentId: 'main' })).toBe(
+      'kimi-code/kimi-for-coding',
+    );
   });
 
   it('surfaces a config error when a resumed model is configured but unresolvable', async () => {

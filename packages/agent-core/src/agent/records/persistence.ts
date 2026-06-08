@@ -1,18 +1,27 @@
 import { createReadStream } from 'node:fs';
 import { mkdir, open } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname } from 'pathe';
 
 import { syncDir } from '../../utils/fs';
+import type { BlobStore } from './blobref';
 import { type AgentRecord, type AgentRecordPersistence } from './types';
 
 export interface FileSystemAgentRecordPersistenceOptions {
   readonly onError?: ((error: unknown) => void) | undefined;
+  readonly blobStore?: BlobStore | undefined;
+}
+
+export interface InMemoryAgentRecordPersistenceOptions {
+  readonly onRecord?: ((record: AgentRecord) => void) | undefined;
 }
 
 export class InMemoryAgentRecordPersistence implements AgentRecordPersistence {
   readonly records: AgentRecord[] = [];
 
-  constructor(records: readonly AgentRecord[] = []) {
+  constructor(
+    records: readonly AgentRecord[] = [],
+    private readonly options: InMemoryAgentRecordPersistenceOptions = {},
+  ) {
     this.records.push(...records);
   }
 
@@ -24,6 +33,7 @@ export class InMemoryAgentRecordPersistence implements AgentRecordPersistence {
 
   append(input: AgentRecord): void {
     this.records.push(input);
+    this.options.onRecord?.(input);
   }
 
   rewrite(records: readonly AgentRecord[]): void {
@@ -161,7 +171,13 @@ export class FileSystemAgentRecordPersistence implements AgentRecordPersistence 
     const batch = this.pendingRecords.splice(0);
     this.shouldClear = false;
 
-    const content = batch.map((e) => JSON.stringify(e) + '\n').join('');
+    const writable = this.options.blobStore !== undefined
+      ? await Promise.all(
+          batch.map((record) => this.options.blobStore!.offload(record)),
+        )
+      : batch;
+
+    const content = writable.map((e) => JSON.stringify(e) + '\n').join('');
     const directory = dirname(this.filePath);
     await mkdir(directory, { recursive: true });
 

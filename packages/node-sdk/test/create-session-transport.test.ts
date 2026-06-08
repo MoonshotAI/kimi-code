@@ -3,8 +3,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { KimiHarness } from '#/index';
-import type { KimiError } from '#/index';
+import { createKimiHarness } from '#/index';
+import type { KimiError, KimiHarness } from '#/index';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { waitForAgentWireEvent } from './session-runtime-helpers';
@@ -48,7 +48,7 @@ describe('KimiHarness.createSession transport link', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const records: TelemetryRecord[] = [];
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
       telemetry: recordingTelemetry(records),
@@ -106,7 +106,7 @@ describe('KimiHarness.createSession transport link', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const records: TelemetryRecord[] = [];
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
       telemetry: recordingTelemetry(records),
@@ -138,7 +138,7 @@ describe('KimiHarness.createSession transport link', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const records: TelemetryRecord[] = [];
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
       telemetry: recordingTelemetry(records),
@@ -180,7 +180,7 @@ describe('KimiHarness.createSession transport link', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const records: TelemetryRecord[] = [];
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       homeDir,
       telemetry: recordingTelemetry(records),
     });
@@ -210,7 +210,7 @@ describe('KimiHarness.createSession transport link', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     await writeTestModelConfig(homeDir);
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -244,6 +244,14 @@ describe('KimiHarness.createSession transport link', () => {
       expect(summary?.sessionDir).toContain(join(homeDir, 'sessions'));
       expect(existsSync(join(summary!.sessionDir, 'state.json'))).toBe(true);
       expect(await readFile(join(homeDir, 'session_index.jsonl'), 'utf-8')).toContain(session.id);
+
+      const summariesById = await harness.listSessions({ sessionId: session.id });
+      expect(summariesById).toHaveLength(1);
+      expect(summariesById[0]).toMatchObject({
+        id: session.id,
+        workDir,
+      });
+      await expect(harness.listSessions({ sessionId: 'ses_missing' })).resolves.toEqual([]);
     } finally {
       await harness.close();
     }
@@ -272,7 +280,7 @@ effort = "medium"
 `,
       'utf-8',
     );
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -301,7 +309,7 @@ effort = "medium"
   it('does not require provider config or API keys before prompt is implemented', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -318,7 +326,7 @@ effort = "medium"
 
   it('requires a non-empty workDir on createSession', async () => {
     const homeDir = await makeTempDir();
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       await expect(
@@ -344,7 +352,7 @@ effort = "medium"
     // Project-local mcp.json is intentionally ignored, so plant the malformed
     // file under the user home dir where the loader actually reads from.
     await writeFile(join(homeDir, 'mcp.json'), '{not json}', 'utf-8');
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -367,7 +375,7 @@ effort = "medium"
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     await writeTestModelConfig(homeDir);
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -397,30 +405,10 @@ effort = "medium"
     expect(coreSessionIds(harness)).toEqual([]);
   });
 
-  it('rejects explicitly empty model names', async () => {
-    const homeDir = await makeTempDir();
-    const workDir = await makeTempDir();
-    const harness = new KimiHarness({
-      identity: TEST_IDENTITY,
-      homeDir,
-    });
-
-    try {
-      await expect(
-        harness.createSession({ id: 'ses_empty_model', workDir, model: '   ' }),
-      ).rejects.toMatchObject({
-        name: 'KimiError',
-        code: 'model.config_invalid',
-      } satisfies Partial<KimiError>);
-    } finally {
-      await harness.close();
-    }
-  });
-
   it('applies initial thinking and permission runtime options', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });
@@ -464,7 +452,7 @@ effort = "medium"
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     await writeFile(join(homeDir, 'config.toml'), 'default_permission_mode = "auto"\n', 'utf-8');
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
     });

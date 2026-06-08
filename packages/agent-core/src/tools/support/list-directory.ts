@@ -11,15 +11,12 @@
  *   - Truncated levels show "... and N more" so the LLM knows more exists.
  */
 
-import * as posixPath from 'node:path/posix';
-import * as win32Path from 'node:path/win32';
+import { basename, join } from 'pathe';
 
 import type { Kaos } from '@moonshot-ai/kaos';
 
 export const LIST_DIR_ROOT_WIDTH = 30;
 export const LIST_DIR_CHILD_WIDTH = 10;
-
-type PathClass = 'posix' | 'win32';
 
 interface Entry {
   readonly name: string;
@@ -30,12 +27,11 @@ async function collectEntries(
   kaos: Kaos,
   dirPath: string,
   maxWidth: number,
-  pathClass: PathClass,
 ): Promise<{ entries: Entry[]; total: number; readable: boolean }> {
   const all: Entry[] = [];
   try {
     for await (const fullPath of kaos.iterdir(dirPath)) {
-      const name = basename(fullPath, pathClass);
+      const name = basename(fullPath);
       let isDir = false;
       try {
         const st = await kaos.stat(fullPath);
@@ -57,27 +53,17 @@ async function collectEntries(
   return { entries: all.slice(0, maxWidth), total: all.length, readable: true };
 }
 
-function pathMod(pathClass: PathClass): typeof posixPath {
-  return pathClass === 'win32' ? win32Path : posixPath;
-}
-
-function basename(p: string, pathClass: PathClass): string {
-  return pathMod(pathClass).basename(p);
-}
-
 /**
  * Return a 2-level tree listing of `workDir` suitable for inclusion in a
  * tool error message. Returns `"(empty directory)"` if the directory is
  * empty, or an error marker line if the directory itself is unreadable.
  */
-export async function listDirectory(kaos: Kaos, workDir: string): Promise<string> {
+export async function listDirectory(kaos: Kaos, workDir: string = kaos.getcwd()): Promise<string> {
   const lines: string[] = [];
-  const pathClass = kaos.pathClass();
   const { entries, total, readable } = await collectEntries(
     kaos,
     workDir,
     LIST_DIR_ROOT_WIDTH,
-    pathClass,
   );
   if (!readable) return '[not readable]';
   const remaining = total - entries.length;
@@ -92,8 +78,8 @@ export async function listDirectory(kaos: Kaos, workDir: string): Promise<string
     if (isDir) {
       lines.push(`${connector}${name}/`);
       const childPrefix = isLast ? '    ' : '│   ';
-      const childDir = joinPath(workDir, name, pathClass);
-      const child = await collectEntries(kaos, childDir, LIST_DIR_CHILD_WIDTH, pathClass);
+      const childDir = join(workDir, name);
+      const child = await collectEntries(kaos, childDir, LIST_DIR_CHILD_WIDTH);
       if (!child.readable) {
         lines.push(`${childPrefix}└── [not readable]`);
         continue;
@@ -122,6 +108,4 @@ export async function listDirectory(kaos: Kaos, workDir: string): Promise<string
   return lines.length > 0 ? lines.join('\n') : '(empty directory)';
 }
 
-function joinPath(parent: string, child: string, pathClass: PathClass): string {
-  return pathMod(pathClass).join(parent, child);
-}
+

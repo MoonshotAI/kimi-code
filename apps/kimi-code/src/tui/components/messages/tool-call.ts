@@ -19,6 +19,7 @@ import {
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
+import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
 
@@ -37,13 +38,6 @@ const PROGRESS_URL_RE = /https?:\/\/\S+/g;
 
 type SubagentTextKind = 'thinking' | 'text';
 
-interface SubagentTokenUsage {
-  readonly input?: number | undefined;
-  readonly inputOther?: number | undefined;
-  readonly inputCacheRead?: number | undefined;
-  readonly inputCacheCreation?: number | undefined;
-  readonly output: number;
-}
 
 interface FinishedSubCall {
   readonly name: string;
@@ -102,20 +96,45 @@ export interface ToolCallReadSnapshot {
   readonly lines: number;
 }
 
+function backgroundFailureMessage(
+  status: 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost' | undefined,
+): string | undefined {
+  switch (status) {
+    case 'lost':
+      return 'Background agent lost (session restarted before completion)';
+    case 'killed':
+      return 'Background agent killed';
+    case 'timed_out':
+      return 'Background agent timed out';
+    case 'failed':
+      return 'Background agent failed';
+    case 'completed':
+    case undefined:
+      return undefined;
+  }
+}
+
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
 
-function usageInputTotal(usage: SubagentTokenUsage): number {
-  return (
-    usage.input ??
-    (usage.inputOther ?? 0) + (usage.inputCacheRead ?? 0) + (usage.inputCacheCreation ?? 0)
-  );
+function formatSubagentContextTokens(contextTokens: number | undefined): string | undefined {
+  if (contextTokens === undefined || contextTokens <= 0) return undefined;
+  const formatted = contextTokens >= 1000 ? `${(contextTokens / 1000).toFixed(1)}k` : String(contextTokens);
+  return `${formatted} tok`;
 }
 
-function formatSubagentTokens(usage: SubagentTokenUsage | undefined): string | undefined {
-  if (usage === undefined) return undefined;
-  const total = usageInputTotal(usage) + usage.output;
+function usageInputTotal(usage: TokenUsage): number {
+  return (usage.inputOther ?? 0) + (usage.inputCacheRead ?? 0) + (usage.inputCacheCreation ?? 0);
+}
+
+function usageTotal(usage: TokenUsage | undefined): number {
+  if (usage === undefined) return 0;
+  return usageInputTotal(usage) + usage.output;
+}
+
+function formatSubagentTokens(usage: TokenUsage | undefined): string | undefined {
+  const total = usageTotal(usage);
   if (total <= 0) return undefined;
   const formatted = total >= 1000 ? `${(total / 1000).toFixed(1)}k` : String(total);
   return `${formatted} tok`;
@@ -188,6 +207,16 @@ function interpretExitPlanModeOutcome(output: string): ExitPlanModeOutcome {
       : { kind: 'approved', chosen: optionMatch[1] };
   }
   return path !== undefined && path.length > 0 ? { kind: 'approved', path } : { kind: 'approved' };
+}
+
+function isExitPlanModeOutcomeOutput(output: string): boolean {
+  return (
+    output.startsWith(REJECT_PREFIX) ||
+    output.startsWith(PLAN_REJECT_PREFIX) ||
+    output.startsWith('Exited plan mode.') ||
+    APPROVED_OPTION_RE.test(output) ||
+    output.includes(APPROVED_PLAN_MARKER)
+  );
 }
 
 function unescapeJsonString(s: string): string {
@@ -367,12 +396,30 @@ function extractKeyArgument(
     Agent: ['description', 'prompt'],
   };
 
+  // Glob: concatenate multiple args into a single summary so the header
+  // shows pattern, optional explicit path, and include_dirs override.
+  if (toolName === 'Glob') {
+    const pattern = args['pattern'];
+    if (typeof pattern !== 'string' || pattern.length === 0) return null;
+    let summary = pattern;
+    const path = args['path'];
+    if (typeof path === 'string' && path.length > 0) {
+      summary += ` · ${makeWorkspaceRelativePath(path, workspaceDir)}`;
+    }
+    if (args['include_dirs'] === false) {
+      summary += ' · no dirs';
+    }
+    return truncateArgValue('pattern', summary);
+  }
+
   const candidates = keyMap[toolName] ?? Object.keys(args);
   for (const key of candidates) {
     const val = args[key];
     if (typeof val === 'string' && val.length > 0) {
       const firstLine = val.split('\n')[0] ?? val;
-      return formatKeyArgument(toolName, key, firstLine, workspaceDir);
+      const displayValue =
+        toolName === 'Bash' && val.includes('\n') ? `${firstLine}…` : firstLine;
+      return formatKeyArgument(toolName, key, displayValue, workspaceDir);
     }
   }
   return null;
@@ -463,7 +510,19 @@ export class ToolCallComponent extends Container {
   private subagentThinkingText = '';
   // ── Subagent lifecycle state from subagent.spawned/completed/failed ──
   private subagentPhase: 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded' | undefined;
-  private subagentUsage: SubagentTokenUsage | undefined;
+  /**
+   * Authoritative terminal phase for a backgrounded subagent. Set from
+   * `BackgroundTaskInfo.status` via `setBackgroundTaskTerminalStatus` once
+   * the backing task reaches a terminal state — either live (a bg agent
+   * fails / is killed) or on resume (reconcile reclassifies a still-running
+   * task as `lost`). Beats the spawn-success ToolResult in both render
+   * paths (`getDerivedSubagentPhase` for standalone, `getSubagentSnapshot`
+   * for grouped), which would otherwise mislabel every terminated
+   * background agent — including lost ones — as `✓ Completed`.
+   */
+  private backgroundTaskTerminalPhase: 'done' | 'failed' | undefined;
+  private subagentContextTokens: number | undefined;
+  private subagentUsage: TokenUsage | undefined;
   private subagentResultSummary: string | undefined;
   private subagentError: string | undefined;
   private streamingProgressTimer: ReturnType<typeof setInterval> | undefined;
@@ -672,10 +731,11 @@ export class ToolCallComponent extends Container {
 
   getSubagentSnapshot(): ToolCallSubagentSnapshot {
     const finished = this.finishedSubCalls.length + this.hiddenSubCallCount;
+    const contextTokens = this.subagentContextTokens;
     const tokens =
-      this.subagentUsage === undefined
-        ? 0
-        : usageInputTotal(this.subagentUsage) + this.subagentUsage.output;
+      contextTokens && contextTokens > 0
+        ? contextTokens
+        : (this.subagentUsage === undefined ? 0 : usageTotal(this.subagentUsage));
     const latestActivity = computeLatestActivity(
       this.ongoingSubCalls,
       this.finishedSubCalls,
@@ -694,7 +754,14 @@ export class ToolCallComponent extends Container {
     // `backgrounded` has no result because background agents do not enter the
     // transcript.
     const derivedPhase: ToolCallSubagentSnapshot['phase'] =
-      this.result !== undefined ? (this.result.is_error ? 'failed' : 'done') : this.subagentPhase;
+      this.backgroundTaskTerminalPhase ??
+      (this.result !== undefined
+        ? this.result.is_error
+          ? 'failed'
+          : 'done'
+        : this.subagentPhase);
+    const errorText =
+      this.subagentError ?? (derivedPhase === 'failed' ? this.result?.output : undefined);
     return {
       toolCallId: this.toolCall.id,
       toolName: this.toolCall.name,
@@ -704,8 +771,7 @@ export class ToolCallComponent extends Container {
       toolCount: finished,
       tokens,
       isError: derivedPhase === 'failed',
-      errorText:
-        this.subagentError ?? (derivedPhase === 'failed' ? this.result?.output : undefined),
+      errorText,
       latestActivity,
     };
   }
@@ -870,11 +936,15 @@ export class ToolCallComponent extends Container {
    * token usage plus the result summary for the header chip and tail summary.
    */
   onSubagentCompleted(payload: {
-    usage?: SubagentTokenUsage | undefined;
+    contextTokens?: number | undefined;
+    usage?: TokenUsage | undefined;
     resultSummary: string;
   }): void {
     this.subagentPhase = 'done';
     this.subagentEndedAtMs ??= Date.now();
+    if (payload.contextTokens !== undefined && payload.contextTokens > 0) {
+      this.subagentContextTokens = payload.contextTokens;
+    }
     this.subagentUsage = payload.usage;
     this.subagentResultSummary =
       payload.resultSummary.length > 0 ? payload.resultSummary : undefined;
@@ -884,6 +954,23 @@ export class ToolCallComponent extends Container {
     this.syncSubagentElapsedTimer();
     this.headerText.setText(this.buildHeader());
     this.rebuildContent();
+    this.notifySnapshotChange();
+    this.ui?.requestRender();
+  }
+
+  /** Handles SDK `agent.status.updated` from the child agent. */
+  updateSubagentMetrics(payload: {
+    contextTokens?: number | undefined;
+    usage?: TokenUsage | undefined;
+  }): void {
+    if (payload.contextTokens !== undefined && payload.contextTokens > 0) {
+      this.subagentContextTokens = payload.contextTokens;
+    }
+    if (payload.usage !== undefined) {
+      this.subagentUsage = payload.usage;
+    }
+    this.headerText.setText(this.buildHeader());
+    this.invalidate();
     this.notifySnapshotChange();
     this.ui?.requestRender();
   }
@@ -898,6 +985,90 @@ export class ToolCallComponent extends Container {
     this.rebuildContent();
     this.notifySnapshotChange();
     this.ui?.requestRender();
+  }
+
+  /**
+   * Records the actual terminal status of the backing background task so
+   * the snapshot phase no longer relies on the spawn-success ToolResult.
+   * Called for `agent-*` background tasks both live (when the bg agent
+   * terminates non-successfully) and on resume (when reconcile
+   * reclassifies a previously-running task as `lost`).
+   */
+  setBackgroundTaskTerminalStatus(
+    status: 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost',
+    options: { errorText?: string | undefined } = {},
+  ): void {
+    const phase: 'done' | 'failed' = status === 'completed' ? 'done' : 'failed';
+    const { errorText } = options;
+    const phaseUnchanged = this.backgroundTaskTerminalPhase === phase;
+    let errorChanged = false;
+    if (phase === 'failed') {
+      // Surface the failure line through the same `subagentError` slot that
+      // `onSubagentFailed` writes. The standalone card reads this in
+      // `buildSingleSubagentBlock`; the group card reads it via `errorText`
+      // in `getSubagentSnapshot`. Priority:
+      //   1. Explicit `errorText` from the caller (the real message from a
+      //      live `subagent.failed` event) always wins — it is the most
+      //      informative.
+      //   2. Existing `subagentError` (could be from a prior
+      //      `onSubagentFailed` or an earlier explicit override) is kept.
+      //   3. Fall back to a friendly generic so the failure has SOME
+      //      visible explanation when no source has supplied one.
+      if (errorText !== undefined && this.subagentError !== errorText) {
+        this.subagentError = errorText;
+        errorChanged = true;
+      } else if (this.subagentError === undefined) {
+        const generic = backgroundFailureMessage(status);
+        if (generic !== undefined) {
+          this.subagentError = generic;
+          errorChanged = true;
+        }
+      }
+    }
+    if (phaseUnchanged && !errorChanged) return;
+    this.backgroundTaskTerminalPhase = phase;
+    this.subagentEndedAtMs ??= Date.now();
+    this.syncSubagentElapsedTimer();
+    this.headerText.setText(this.buildHeader());
+    this.rebuildContent();
+    this.notifySnapshotChange();
+  }
+
+  /**
+   * Subagent id for the backing AgentTool call, used by routing to find a
+   * tool call's backing subagent when reconciling background task lifecycle
+   * events.
+   *
+   * Two writers, in priority order:
+   *   1. In-memory `subagentAgentId` — wired by `setSubagentMeta` /
+   *      `onSubagentSpawned` for foreground agents. For backgrounded agents
+   *      this stays undefined: `handleSubagentSpawned` early-returns before
+   *      calling `tc.onSubagentSpawned`, and `applySubagentReplay` early-
+   *      returns when the wire payload omits the `subagent` block — which
+   *      it does for every replayed Agent call.
+   *   2. The spawn-success ToolResult body — AgentTool unconditionally
+   *      emits `agent_id: agent-N` for every Agent call (foreground and
+   *      background). Parsing it gives the stable identifier even when the
+   *      in-memory field is empty, which is the only way the resume path
+   *      can reliably route a `background.task.terminated` to the right
+   *      card and the only way the live path avoids matching by description
+   *      and accidentally updating an unrelated Agent card that happens to
+   *      share the same `args.description`.
+   */
+  getSubagentAgentId(): string | undefined {
+    if (this.subagentAgentId !== undefined) return this.subagentAgentId;
+    if (this.toolCall.name !== 'Agent' || this.result === undefined) return undefined;
+    const match = this.result.output.match(/^agent_id:\s*(agent-[A-Za-z0-9_-]+)/m);
+    return match?.[1];
+  }
+
+  /** `args.description` for `Agent` tool calls, used as a resume-path
+   *  fallback when the wire format pre-dates persisted subagent ids and
+   *  the only stable cross-restart identifier is the description string. */
+  getAgentToolDescription(): string | undefined {
+    if (this.toolCall.name !== 'Agent') return undefined;
+    const desc = this.toolCall.args['description'];
+    return typeof desc === 'string' ? desc : undefined;
   }
 
   appendSubagentText(text: string, kind: SubagentTextKind = 'text'): void {
@@ -1018,15 +1189,20 @@ export class ToolCallComponent extends Container {
             : 'Approved';
         return `${label}${chalk.hex(colors.success)(` · ${chipText}`)}`;
       }
-      return `${label}${chalk.hex(colors.error)(' · Rejected')}`;
+      return label;
     }
 
     if (toolCall.name === 'AskUserQuestion') {
+      const isBackgroundAsk = toolCall.args['background'] === true;
       const label = isFinished
         ? isError
           ? 'Could not collect your input'
+          : isBackgroundAsk
+            ? 'Started background question'
           : 'Collected your answers'
-        : 'Waiting for your input';
+        : isBackgroundAsk
+          ? 'Starting background question'
+          : 'Waiting for your input';
       const tone = isError ? chalk.hex(colors.error) : chalk.hex(colors.primary);
       return `${bullet}${tone.bold(label)}`;
     }
@@ -1116,7 +1292,8 @@ export class ToolCallComponent extends Container {
       this.ongoingSubCalls.size === 0 &&
       this.finishedSubCalls.length === 0 &&
       this.subagentText.length === 0 &&
-      this.subagentPhase === undefined
+      this.subagentPhase === undefined &&
+      this.backgroundTaskTerminalPhase === undefined
     ) {
       return;
     }
@@ -1210,7 +1387,9 @@ export class ToolCallComponent extends Container {
         parts.push(chalk.hex(this.colors.success)('✓ done'));
         const toolCount = this.finishedSubCalls.length + this.hiddenSubCallCount;
         if (toolCount > 0) parts.push(`${String(toolCount)} tool${toolCount > 1 ? 's' : ''}`);
-        const tokens = formatSubagentTokens(this.subagentUsage);
+        const tokens =
+          formatSubagentContextTokens(this.subagentContextTokens) ??
+          formatSubagentTokens(this.subagentUsage);
         if (tokens !== undefined) parts.push(tokens);
         break;
       }
@@ -1237,7 +1416,8 @@ export class ToolCallComponent extends Container {
       this.subToolActivities.size > 0 ||
       this.subagentText.length > 0 ||
       this.subagentThinkingText.length > 0 ||
-      this.subagentPhase !== undefined
+      this.subagentPhase !== undefined ||
+      this.backgroundTaskTerminalPhase !== undefined
     );
   }
 
@@ -1252,6 +1432,9 @@ export class ToolCallComponent extends Container {
     | 'failed'
     | 'backgrounded'
     | undefined {
+    if (this.backgroundTaskTerminalPhase !== undefined) {
+      return this.backgroundTaskTerminalPhase;
+    }
     if (this.result !== undefined) return this.result.is_error ? 'failed' : 'done';
     return this.subagentPhase;
   }
@@ -1304,6 +1487,13 @@ export class ToolCallComponent extends Container {
     ];
     const elapsed = this.getSubagentElapsedSeconds();
     if (elapsed !== undefined) parts.push(formatElapsed(elapsed));
+    const tokens =
+      this.subagentContextTokens && this.subagentContextTokens > 0
+        ? this.subagentContextTokens
+        : this.subagentUsage === undefined
+          ? 0
+          : usageTotal(this.subagentUsage);
+    if (tokens > 0) parts.push(formatTokens(tokens));
     return ` · ${parts.join(' · ')}`;
   }
 
@@ -1390,10 +1580,6 @@ export class ToolCallComponent extends Container {
       this.buildStreamingPreview(this.toolCall.streamingArguments);
       return;
     }
-    // Collapse only kicks in once the result lands (bullet turns
-    // green). Between args-finalize and result we may sit in approval
-    // for a while — keep the preview fully visible during that gap so
-    // the user reviews the full change in context.
     const shouldCap = this.result !== undefined && !this.expanded;
     if (name === 'Write') {
       const content = str(this.toolCall.args['content']);
@@ -1401,13 +1587,18 @@ export class ToolCallComponent extends Container {
       const filePath = str(this.toolCall.args['file_path'] ?? this.toolCall.args['path']);
       const lang = langFromPath(filePath);
       const allLines = highlightLines(content, lang);
-      const shown = shouldCap ? allLines.slice(0, COMMAND_PREVIEW_LINES) : allLines;
+      // Cap as soon as args finalize, not just when result lands. Otherwise the
+      // brief render tick between finalized args and result draws the full file,
+      // and the snap back to the collapsed cap triggers pi-tui's full-redraw
+      // path which wipes the terminal scrollback (pre-TUI history).
+      const writeShouldCap = !this.expanded;
+      const shown = writeShouldCap ? allLines.slice(0, COMMAND_PREVIEW_LINES) : allLines;
       const remaining = allLines.length - shown.length;
       for (const [i, line] of shown.entries()) {
         const lineNum = chalk.dim(String(i + 1).padStart(4) + '  ');
         this.addChild(new Text(lineNum + line, 2, 0));
       }
-      if (shouldCap && remaining > 0) {
+      if (writeShouldCap && remaining > 0) {
         this.addChild(
           new Text(
             chalk.dim(
@@ -1455,8 +1646,17 @@ export class ToolCallComponent extends Container {
         '';
       const lang = langFromPath(filePath);
       const allLines = highlightLines(content, lang);
-      for (const [i, line] of allLines.entries()) {
-        const lineNum = chalk.dim(String(i + 1).padStart(4) + '  ');
+      const maxLines = COMMAND_PREVIEW_LINES;
+      const scrollLines =
+        allLines.length > maxLines
+          ? allLines.slice(allLines.length - maxLines)
+          : allLines;
+      for (const [i, line] of scrollLines.entries()) {
+        const originalLineNumber =
+          allLines.length > maxLines
+            ? allLines.length - maxLines + i
+            : i;
+        const lineNum = chalk.dim(String(originalLineNumber + 1).padStart(4) + '  ');
         this.addChild(new Text(lineNum + line, 2, 0));
       }
       return;
@@ -1506,6 +1706,7 @@ export class ToolCallComponent extends Container {
         new PlanBoxComponent(plan, this.markdownTheme, this.colors.success, path, {
           maxContentLines: this.computePlanBoxMaxContentLines(),
           expanded: this.planExpanded,
+          status: this.resolvePlanBoxStatus(),
         }),
       );
     } else {
@@ -1539,6 +1740,15 @@ export class ToolCallComponent extends Container {
     return this.planPath;
   }
 
+  private resolvePlanBoxStatus(): { label: string; colorHex: string } | undefined {
+    const result = this.result;
+    if (this.toolCall.name !== 'ExitPlanMode' || result === undefined) return undefined;
+    if (!isExitPlanModeOutcomeOutput(result.output)) return undefined;
+    const outcome = interpretExitPlanModeOutcome(result.output);
+    if (outcome.kind !== 'rejected') return undefined;
+    return { label: 'Rejected', colorHex: this.colors.error };
+  }
+
   private buildContent(): void {
     const { result } = this;
     if (result === undefined || !result.output) return;
@@ -1554,7 +1764,7 @@ export class ToolCallComponent extends Container {
       return;
     }
 
-    if (this.toolCall.name === 'ExitPlanMode' && !result.is_error) {
+    if (this.toolCall.name === 'ExitPlanMode' && isExitPlanModeOutcomeOutput(result.output)) {
       // Approved plans are already rendered by buildCallPreview via
       // resolvePlanForPreview. Rejected or revise feedback uses a warning label
       // plus normal body text so it remains visible in the transcript.
@@ -1585,6 +1795,7 @@ export class ToolCallComponent extends Container {
 
     if (
       this.toolCall.name === 'AskUserQuestion' &&
+      this.toolCall.args['background'] !== true &&
       !result.is_error &&
       this.renderAskUserQuestionResult(result.output)
     ) {
@@ -1673,6 +1884,12 @@ function computeLatestActivity(
     if (tail !== undefined) return tail.trim();
   }
   return undefined;
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M tok`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k tok`;
+  return `${String(n)} tok`;
 }
 
 function formatActivityLine(

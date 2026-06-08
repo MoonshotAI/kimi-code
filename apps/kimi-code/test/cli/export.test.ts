@@ -36,30 +36,39 @@ const mocks = vi.hoisted(() => ({
   })),
   harnessGetCachedAccessToken: vi.fn(),
   harnessExportSession: vi.fn(),
+  harnessTrack: vi.fn(),
   createKimiDeviceId: vi.fn<CreateKimiDeviceId>(() => 'device-1'),
   initializeTelemetry: vi.fn(),
   shutdownTelemetry: vi.fn(),
   telemetryTrack: vi.fn(),
   setTelemetryContext: vi.fn(),
   withTelemetryContext: vi.fn(),
+  resolveKimiHome: vi.fn((homeDir?: string) => homeDir ?? '/tmp/kimi-export-home'),
+  harnessCreatesDeviceIdOnConstruction: false,
 }));
 
 vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();
   return {
     ...actual,
-    KimiHarness: class {
-      homeDir = '/tmp/kimi-export-home';
-      auth = {
-        getCachedAccessToken: mocks.harnessGetCachedAccessToken,
-      };
-      ensureConfigFile = mocks.harnessEnsureConfigFile;
-      getConfig = mocks.harnessGetConfig;
-      constructor(...args: unknown[]) {
-        mocks.kimiHarnessConstructor(...args);
+    resolveKimiHome: mocks.resolveKimiHome,
+    createKimiHarness: (...args: unknown[]) => {
+      const options = args[0] as { readonly homeDir?: string } | undefined;
+      const homeDir = options?.homeDir ?? '/tmp/kimi-export-home';
+      if (mocks.harnessCreatesDeviceIdOnConstruction) {
+        mocks.createKimiDeviceId(homeDir);
       }
-
-      exportSession = mocks.harnessExportSession;
+      mocks.kimiHarnessConstructor(...args);
+      return {
+        homeDir,
+        auth: {
+          getCachedAccessToken: mocks.harnessGetCachedAccessToken,
+        },
+        ensureConfigFile: mocks.harnessEnsureConfigFile,
+        getConfig: mocks.harnessGetConfig,
+        track: mocks.harnessTrack,
+        exportSession: mocks.harnessExportSession,
+      };
     },
   };
 });
@@ -95,6 +104,11 @@ afterEach(() => {
     defaultModel: 'k2',
     telemetry: true,
   });
+  mocks.createKimiDeviceId.mockImplementation(() => 'device-1');
+  mocks.resolveKimiHome.mockImplementation(
+    (homeDir?: string) => homeDir ?? '/tmp/kimi-export-home',
+  );
+  mocks.harnessCreatesDeviceIdOnConstruction = false;
 });
 
 function makeSummary(id: string, overrides: Partial<SessionSummary> = {}): SessionSummary {
@@ -149,6 +163,8 @@ function makeDeps(overrides: Partial<ExportDeps> = {}): {
       return makeResult(input.id, input.outputPath ?? join(tmp, `${input.id}.zip`));
     },
     confirmPreviousSession: async () => true,
+    getInstallSource: async () => 'npm-global',
+    getShellEnv: () => ({ term: 'xterm-256color', shell: '/bin/zsh' }),
     version: '1.0.0-test',
     cwd: () => tmp,
     stdout: {
@@ -208,7 +224,7 @@ describe('kimi export', () => {
     expect(exitCodes).toEqual([]);
     expect(stderr).toEqual([]);
     expect(listedWorkDirs).toEqual([]);
-    expect(exportInputs).toEqual([{ id: 'ses_test123456', outputPath: output, includeGlobalLog: true, version: '1.0.0-test' }]);
+    expect(exportInputs).toEqual([{ id: 'ses_test123456', outputPath: output, includeGlobalLog: true, version: '1.0.0-test', installSource: 'npm-global', shellEnv: { term: 'xterm-256color', shell: '/bin/zsh' } }]);
     expect(stdout.join('').trim()).toBe(output);
   });
 
@@ -217,7 +233,7 @@ describe('kimi export', () => {
 
     await runExport(deps, { sessionId: 'session_default_output' });
 
-    expect(exportInputs).toEqual([{ id: 'session_default_output', includeGlobalLog: true, version: '1.0.0-test' }]);
+    expect(exportInputs).toEqual([{ id: 'session_default_output', includeGlobalLog: true, version: '1.0.0-test', installSource: 'npm-global', shellEnv: { term: 'xterm-256color', shell: '/bin/zsh' } }]);
     expect(stdout.join('').trim()).toBe(join(tmp, 'session_default_output.zip'));
   });
 
@@ -255,7 +271,7 @@ describe('kimi export', () => {
     await runExport(deps, { output });
 
     expect(exitCodes).toEqual([]);
-    expect(exportInputs).toEqual([{ id: 'ses_fallback', outputPath: output, includeGlobalLog: true, version: '1.0.0-test' }]);
+    expect(exportInputs).toEqual([{ id: 'ses_fallback', outputPath: output, includeGlobalLog: true, version: '1.0.0-test', installSource: 'npm-global', shellEnv: { term: 'xterm-256color', shell: '/bin/zsh' } }]);
     expect(stdout.join('').trim()).toBe(output);
   });
 
@@ -297,7 +313,7 @@ describe('kimi export', () => {
     await runExport(deps, { output: join(tmp, 'yes.zip'), yes: true });
 
     expect(exitCodes).toEqual([]);
-    expect(exportInputs).toEqual([{ id: 'ses_yes', outputPath: join(tmp, 'yes.zip'), includeGlobalLog: true, version: '1.0.0-test' }]);
+    expect(exportInputs).toEqual([{ id: 'ses_yes', outputPath: join(tmp, 'yes.zip'), includeGlobalLog: true, version: '1.0.0-test', installSource: 'npm-global', shellEnv: { term: 'xterm-256color', shell: '/bin/zsh' } }]);
   });
 
   it('describes the user-facing command without implementation details', () => {
@@ -323,7 +339,7 @@ describe('kimi export', () => {
     await program.parseAsync(['node', 'kimi', 'export', '--no-include-global-log', '-y']);
 
     expect(exitCodes).toEqual([]);
-    expect(exportInputs).toEqual([{ id: 'ses_global_log', version: '1.0.0-test' }]);
+    expect(exportInputs).toEqual([{ id: 'ses_global_log', version: '1.0.0-test', installSource: 'npm-global', shellEnv: { term: 'xterm-256color', shell: '/bin/zsh' } }]);
     expect(stdout.join('').trim()).toBe(join(tmp, 'ses_global_log.zip'));
   });
 
@@ -346,7 +362,7 @@ describe('kimi export', () => {
 
     expect(exitCodes).toEqual([]);
     expect(exportInputs).toEqual([
-      { id: 'ses_after_id', outputPath: output, version: '1.0.0-test' },
+      { id: 'ses_after_id', outputPath: output, version: '1.0.0-test', installSource: 'npm-global', shellEnv: { term: 'xterm-256color', shell: '/bin/zsh' } },
     ]);
   });
 
@@ -383,7 +399,10 @@ describe('kimi export', () => {
     );
     expect(mocks.harnessEnsureConfigFile).toHaveBeenCalledOnce();
     expect(mocks.harnessGetConfig).toHaveBeenCalledOnce();
-    expect(mocks.createKimiDeviceId).toHaveBeenCalledWith('/tmp/kimi-export-home');
+    expect(mocks.createKimiDeviceId).toHaveBeenCalledWith(
+      '/tmp/kimi-export-home',
+      expect.objectContaining({ onFirstLaunch: expect.any(Function) }),
+    );
     expect(mocks.initializeTelemetry).toHaveBeenCalledWith({
       homeDir: '/tmp/kimi-export-home',
       deviceId: 'device-1',
@@ -402,6 +421,8 @@ describe('kimi export', () => {
       outputPath: output,
       version: expect.any(String),
       includeGlobalLog: true,
+      installSource: expect.any(String),
+      shellEnv: expect.objectContaining({ shell: expect.any(String) }),
     });
     expect(mocks.shutdownTelemetry).toHaveBeenCalledWith({ timeoutMs: 3000 });
     expect(mocks.harnessExportSession.mock.invocationCallOrder[0]).toBeLessThan(
@@ -442,5 +463,54 @@ describe('kimi export', () => {
       }),
     );
     expect(mocks.shutdownTelemetry).toHaveBeenCalledWith({ timeoutMs: 3000 });
+  });
+
+  it('tracks first launch around default export telemetry before harness construction can create the device id', async () => {
+    const program = new Command('kimi');
+    const output = join(tmp, 'telemetry-first-launch.zip');
+    mocks.harnessCreatesDeviceIdOnConstruction = true;
+    const createdHomes = new Set<string>();
+    mocks.createKimiDeviceId.mockImplementation((homeDir, options) => {
+      const deviceId = `device-for-${homeDir}`;
+      if (!createdHomes.has(homeDir)) {
+        createdHomes.add(homeDir);
+        options?.onFirstLaunch?.(deviceId);
+      }
+      return deviceId;
+    });
+    mocks.harnessExportSession.mockResolvedValue(makeResult('ses_first_launch', output));
+
+    registerExportCommand(program, {
+      cwd: () => tmp,
+      stdout: {
+        write: () => true,
+      },
+      stderr: {
+        write: () => true,
+      },
+      exit: ((code: number) => {
+        throw new ExitCalled(code);
+      }) as ExportDeps['exit'],
+    });
+
+    await program.parseAsync(['node', 'kimi', 'export', 'ses_first_launch', '--output', output], {
+      from: 'node',
+    });
+
+    expect(mocks.createKimiDeviceId).toHaveBeenNthCalledWith(
+      1,
+      '/tmp/kimi-export-home',
+      expect.objectContaining({ onFirstLaunch: expect.any(Function) }),
+    );
+    expect(mocks.createKimiDeviceId.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.kimiHarnessConstructor.mock.invocationCallOrder[0]!,
+    );
+    expect(mocks.kimiHarnessConstructor).toHaveBeenCalledWith(
+      expect.objectContaining({ homeDir: '/tmp/kimi-export-home' }),
+    );
+    expect(mocks.harnessTrack).toHaveBeenCalledWith('first_launch');
+    expect(mocks.initializeTelemetry.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.harnessTrack.mock.invocationCallOrder[0]!,
+    );
   });
 });

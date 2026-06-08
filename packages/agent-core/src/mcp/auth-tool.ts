@@ -158,6 +158,7 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     resolveExecution: () => {
       return {
         description: `Authenticating ${serverName}`,
+        approvalRule: name,
         execute,
       };
     },

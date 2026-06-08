@@ -1,7 +1,7 @@
 import type { ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
-import { HookEngine } from '../../src/agent/hooks';
+import { HookEngine } from '../../src/session/hooks';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 import { createCommandKaos, testAgent } from './harness/agent';
@@ -105,14 +105,16 @@ describe('Agent tools', () => {
   });
 
   it('continues after a foreground Agent tool returns a max_tokens failure', async () => {
+    const completion = Promise.reject(
+      new Error('Subagent turn failed before completing its final summary: reason=max_tokens.'),
+    );
+    void completion.catch(() => undefined);
     const subagentHost = {
       spawn: vi.fn().mockResolvedValue({
         agentId: 'agent-child',
         profileName: 'coder',
         resumed: false,
-        completion: Promise.reject(
-          new Error('Subagent turn failed before completing its final summary: reason=max_tokens.'),
-        ),
+        completion,
       }),
       resume: vi.fn(),
     } as unknown as SessionSubagentHost;

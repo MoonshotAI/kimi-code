@@ -143,6 +143,33 @@ describe('SkillTool execution', () => {
     );
   });
 
+  it('keeps plugin instructions adjacent to model-invoked skill content', async () => {
+    const methods = skillToolMethods();
+    const tool = skillTool(
+      registry([
+        {
+          ...skill('brainstorming', {}, 'brainstorm body'),
+          source: 'extra',
+          plugin: {
+            id: 'superpowers',
+            instructions: 'Use AskUserQuestion for clarifying questions.',
+          },
+        },
+      ]),
+      methods,
+    );
+
+    await execute(tool, { skill: 'brainstorming' });
+
+    expect(methods.recordSystemReminder.mock.calls[0]?.[0]).toContain(
+      '<kimi-skill-loaded name="brainstorming" args="">\n' +
+        '<kimi-plugin-instructions plugin="superpowers">\n' +
+        'Use AskUserQuestion for clarifying questions.\n' +
+        '</kimi-plugin-instructions>\n\nbrainstorm body\n' +
+        '</kimi-skill-loaded>',
+    );
+  });
+
   it('expands skill body placeholders for model-invoked inline skills', async () => {
     const methods = skillToolMethods();
     const tool = skillTool(
@@ -209,7 +236,7 @@ describe('SkillTool execution', () => {
     await execute(tool, { skill: 'a&b', args: '<raw "value">' });
 
     expect(methods.recordSystemReminder.mock.calls[0]?.[0]).toContain(
-      '<kimi-skill-loaded name="a&amp;b" args="&lt;raw &quot;value&quot;&gt;">\nbody of a&b\n\nARGUMENTS: <raw "value">\n</kimi-skill-loaded>',
+      '<kimi-skill-loaded name="a&amp;b" args="&lt;raw &quot;value&quot;&gt;">\nbody of a&b\n\nARGUMENTS: &lt;raw "value"&gt;\n</kimi-skill-loaded>',
     );
     expect(methods.recordSkillActivation).toHaveBeenCalledTimes(1);
   });

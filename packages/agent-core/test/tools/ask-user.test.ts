@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent } from '../../src/agent';
 import type { PermissionMode } from '../../src/agent/permission';
 import { ErrorCodes, KimiError } from '../../src/errors';
+import { FLAG_DEFINITIONS, FlagResolver, MASTER_ENV } from '../../src/flags';
 import type { QuestionRequest, QuestionResult } from '../../src/rpc';
 import {
   AskUserQuestionInputSchema,
@@ -10,6 +11,7 @@ import {
   type AskUserQuestionInput,
 } from '../../src/tools/builtin/collaboration/ask-user';
 import { executeTool } from './fixtures/execute-tool';
+import { createBackgroundManager } from '../agent/background/helpers';
 
 const signal = new AbortController().signal;
 
@@ -56,11 +58,16 @@ function makeTool(
     permission: { mode: options.mode ?? 'manual' },
     rpc: { requestQuestion },
     telemetry: { track: telemetryTrack },
+    experimentalFlags: new FlagResolver(),
   } as unknown as Agent;
   return { tool: new AskUserQuestionTool(agent), requestQuestion, telemetryTrack };
 }
 
 describe('AskUserQuestionTool', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('exposes current metadata and schema', () => {
     const { tool } = makeTool();
 
@@ -104,6 +111,34 @@ describe('AskUserQuestionTool', () => {
 
     const labelSchema = optionsSchema.items.properties.label;
     expect(labelSchema.description).toContain("append '(Recommended)'");
+  });
+
+  it('builds the background-question schema from the agent scoped resolver', () => {
+    vi.stubEnv(MASTER_ENV, '1');
+    const enabledAgent = {
+      rpc: { requestQuestion: vi.fn() },
+      telemetry: { track: vi.fn() },
+      background: createBackgroundManager().manager,
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, {
+        'background_ask': true,
+      }),
+    } as unknown as Agent;
+    const disabledAgent = {
+      rpc: { requestQuestion: vi.fn() },
+      telemetry: { track: vi.fn() },
+      background: createBackgroundManager().manager,
+      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, {
+        'background_ask': false,
+      }),
+    } as unknown as Agent;
+
+    const enabledTool = new AskUserQuestionTool(enabledAgent);
+    const disabledTool = new AskUserQuestionTool(disabledAgent);
+
+    expect(enabledTool.description).toContain('Set background=true');
+    expect(JSON.stringify(enabledTool.parameters)).toContain('background');
+    expect(disabledTool.description).not.toContain('Set background=true');
+    expect(JSON.stringify(disabledTool.parameters)).not.toContain('background');
   });
 
   it.each(['manual', 'yolo'] as const)(
@@ -165,6 +200,85 @@ describe('AskUserQuestionTool', () => {
       answered: 1,
       method: 'number_key',
     });
+  });
+
+  it('starts a background question task and stores the eventual answer in task output', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '1');
+
+    let resolveQuestion!: (result: QuestionResult) => void;
+    const questionResult = new Promise<QuestionResult>((resolve) => {
+      resolveQuestion = resolve;
+    });
+    const { manager } = createBackgroundManager();
+    const requestQuestion = vi.fn(async () => questionResult);
+    const telemetryTrack = vi.fn();
+    const agent = {
+      rpc: { requestQuestion },
+      telemetry: { track: telemetryTrack },
+      background: manager,
+      experimentalFlags: new FlagResolver(),
+    } as unknown as Agent;
+    const tool = new AskUserQuestionTool(agent);
+    expect(tool.description).toContain('Set background=true');
+
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_background_question',
+      args: { ...input(), background: true },
+      signal,
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain('task_id: question-');
+    const outputText = typeof result.output === 'string' ? result.output : '';
+    const taskId = /task_id: (?<taskId>question-[0-9a-z]{8})/.exec(outputText)?.groups?.['taskId'];
+    expect(taskId).toBeDefined();
+    expect(manager.getTask(taskId!)).toMatchObject({
+      kind: 'question',
+      status: 'running',
+      questionCount: 1,
+      toolCallId: 'call_background_question',
+    });
+
+    resolveQuestion({ answers: { 'Which database?': 'SQLite' }, method: 'enter' });
+    await manager.wait(taskId!);
+
+    expect(manager.getTask(taskId!)).toMatchObject({ status: 'completed' });
+    expect(await manager.readOutput(taskId!)).toBe(
+      JSON.stringify({ answers: { 'Which database?': 'SQLite' } }),
+    );
+    expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
+      answered: 1,
+      method: 'enter',
+    });
+  });
+
+  it('downgrades background=true to an inline question when the experimental flag is off', async () => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK', '0');
+
+    const { manager } = createBackgroundManager();
+    const requestQuestion = vi.fn(async () => ({ Postgres: true }));
+    const agent = {
+      rpc: { requestQuestion },
+      telemetry: { track: vi.fn() },
+      background: manager,
+      experimentalFlags: new FlagResolver(),
+    } as unknown as Agent;
+    const tool = new AskUserQuestionTool(agent);
+    expect(tool.description).not.toContain('Set background=true');
+
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_bg_disabled',
+      args: { ...input(), background: true },
+      signal,
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.output).toBe(JSON.stringify({ answers: { Postgres: true } }));
+    expect(requestQuestion).toHaveBeenCalled();
+    expect(manager.list()).toHaveLength(0);
   });
 
   it('returns a dismissed message when every question is dismissed', async () => {

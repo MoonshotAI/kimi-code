@@ -2,13 +2,13 @@ import { EventEmitter } from 'node:events';
 import { Readable, type Writable } from 'node:stream';
 
 import { createControlledPromise } from '@antfu/utils';
-import { localKaos, type Kaos, type KaosProcess } from '@moonshot-ai/kaos';
+import { type Environment, type Kaos, type KaosProcess } from '@moonshot-ai/kaos';
 import type { ModelCapability, ProviderConfig } from '@moonshot-ai/kosong';
-import { expect, vi } from 'vitest';
+import { expect, onTestFinished, vi } from 'vitest';
 
 import {
   Agent,
-  type AgentConfig,
+  type AgentOptions,
   type AgentRecord,
   type AgentRecordPersistence,
 } from '../../../src/agent';
@@ -21,14 +21,15 @@ import {
 import type { KimiConfig } from '../../../src/config';
 import type { ExecutableToolResult } from '../../../src/loop';
 import type { Logger } from '../../../src/logging';
-import { ProviderManager } from '../../../src/providers/provider-manager';
+import { ProviderManager } from '../../../src/session/provider-manager';
 import type { QuestionResult, RPCCallOptions, SDKAgentRPC } from '../../../src/rpc';
 import type { AgentAPI } from '../../../src/rpc/core-api';
-import type { RuntimeConfig } from '../../../src/runtime-types';
+import type { ToolServices } from '../../../src/tools/support/services';
 import type { TelemetryClient } from '../../../src/telemetry';
-import type { Environment } from '../../../src/utils/environment';
 import type { PromisifyMethods } from '../../../src/utils/types';
 import { createFakeKaos } from '../../tools/fixtures/fake-kaos';
+import { testKaos } from '../../fixtures/test-kaos';
+
 import { createScriptedGenerate } from './scripted-generate';
 import {
   DEFAULT_TEST_SYSTEM_PROMPT,
@@ -64,7 +65,7 @@ type RpcLogEntry = RpcSnapshotEntry & {
 };
 
 type PromiseAgentAPI = PromisifyMethods<AgentAPI>;
-type GenerateFn = NonNullable<AgentConfig['generate']>;
+type GenerateFn = NonNullable<AgentOptions['generate']>;
 
 type TestToolResult = ExecutableToolResult & {
   readonly content?: unknown;
@@ -87,21 +88,27 @@ interface ResumeStateSnapshot {
   readonly usage: ReturnType<Agent['usage']['data']>;
 }
 
-interface TestAgentOptions {
+export interface TestAgentOptions {
   readonly kaos?: Kaos | undefined;
-  readonly runtime?: RuntimeConfig | undefined;
+  readonly runtime?: ToolServices | undefined;
   readonly compactionStrategy?: CompactionStrategy | undefined;
+  readonly microCompaction?: AgentOptions['microCompaction'];
   readonly generate?: GenerateFn | undefined;
-  readonly hookEngine?: AgentConfig['hookEngine'];
-  readonly type?: AgentConfig['type'];
-  readonly permission?: AgentConfig['permission'];
+  readonly hookEngine?: AgentOptions['hookEngine'];
+  readonly type?: AgentOptions['type'];
+  readonly permission?: AgentOptions['permission'];
+  readonly goals?: AgentOptions['goals'];
   readonly providerManager?: ProviderManager;
+  readonly initialConfig?: KimiConfig;
+  readonly providerManagerOverrides?: Omit<ConstructorParameters<typeof ProviderManager>[0], 'config'>;
   readonly sessionId?: string;
-  readonly subagentHost?: AgentConfig['subagentHost'];
+  readonly subagentHost?: AgentOptions['subagentHost'];
   readonly onEvent?: ((event: AgentRecord) => AgentRecord | undefined) | undefined;
   readonly persistence?: AgentRecordPersistence | undefined;
+  readonly homedir?: AgentOptions['homedir'];
   readonly telemetry?: TelemetryClient | undefined;
   readonly log?: Logger;
+  readonly experimentalFlags?: AgentOptions['experimentalFlags'];
 }
 
 interface ConfigureOptions {
@@ -154,35 +161,54 @@ export class AgentTestContext {
   readonly mockNextResponse = this.scriptedGenerate.mockNextResponse;
   readonly mockNextProviderResponse = this.scriptedGenerate.mockNextProviderResponse;
 
+  private kimiConfig: KimiConfig;
+
   constructor(options: TestAgentOptions = {}) {
     this.options = options;
     this.emitter.on('error', () => {});
-    const providerManager = options.providerManager ?? new ProviderManager({ config: emptyConfig() });
+    this.kimiConfig = options.initialConfig ?? emptyConfig();
+    const providerManager = options.providerManager ?? new ProviderManager({
+      config: () => this.kimiConfig,
+      ...(options.sessionId !== undefined ? { promptCacheKey: options.sessionId } : {}),
+      ...options.providerManagerOverrides,
+    });
 
-    const runtime = options.runtime ?? {
-      kaos: options.kaos ?? localKaos,
-      osEnv: TEST_OS_ENV,
-    };
+    const kaos = options.kaos ?? testKaos;
+    const toolServices = options.runtime;
+    const persistence = this.wrapPersistence(
+      options.persistence ?? new InMemoryAgentRecordPersistence(),
+    );
     this.agent = new Agent({
-      runtime,
+      kaos,
+      toolServices,
+      config: this.kimiConfig,
       rpc: this.createRpcProxy(),
-      persistence:
-        options.persistence === undefined ? undefined : this.wrapPersistence(options.persistence),
+      homedir: options.homedir,
+      persistence,
       generate: options.generate ?? this.scriptedGenerate.generate,
       compactionStrategy: options.compactionStrategy,
-      providerManager,
-      sessionId: options.sessionId,
+      microCompaction: options.microCompaction,
+      modelProvider: providerManager,
       subagentHost: options.subagentHost,
+      goals: options.goals,
       type: options.type,
       permission: options.permission,
       hookEngine: options.hookEngine,
       telemetry: options.telemetry,
       log: options.log,
+      experimentalFlags: options.experimentalFlags,
     });
-    this.agent.records.onRecord = (event) => {
-      this.captureRecord(event);
-    };
     this.rpc = this.createPromiseAgentApi(this.agent);
+    // The Agent constructor now eagerly binds a SIGUSR1 listener via
+    // CronManager.start(). Without per-test cleanup, every Agent built
+    // by this harness leaks one listener — Node prints a
+    // MaxListenersExceededWarning once the suite crosses 10 agents.
+    // onTestFinished is a vitest API callable from non-hook scopes, so
+    // we register cleanup transparently without forcing every test to
+    // remember an afterEach.
+    onTestFinished(async () => {
+      await this.agent.cron?.stop();
+    });
   }
 
   configure({
@@ -209,9 +235,9 @@ export class AgentTestContext {
     provider: ProviderConfig,
     modelCapabilities?: ModelCapability | undefined,
   ): void {
-    this.agent.providerManager?.updateConfig(
-      configWithProvider(this.agent.providerManager.config, provider, modelCapabilities),
-    );
+    if (this.options.providerManager === undefined) {
+      this.kimiConfig = configWithProvider(this.kimiConfig, provider, modelCapabilities);
+    }
     this.agent.config.update({ modelAlias: provider.model });
   }
 
@@ -276,17 +302,449 @@ export class AgentTestContext {
     }
   }
 
+  once(type: string): Promise<void> {
+    return new Promise((resolve) => {
+      this.emitter.once(type, () => {
+        resolve();
+      });
+    });
+  }
+
+  onceAny(types: readonly string[]): Promise<string> {
+    return new Promise((resolve) => {
+      for (const type of types) {
+        this.emitter.once(type, () => {
+          resolve(type);
+        });
+      }
+    });
+  }
+
+  appendExchange(
+    step: number,
+    userText: string,
+    assistantText: string,
+    tokenTotal: number,
+  ): void {
+    const stepUuid = `step-${String(step)}`;
+    this.agent.context.appendUserMessage([{ type: 'text', text: userText }]);
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '', step },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'content.part',
+        uuid: `part-${String(step)}`,
+        turnId: '',
+        step,
+        stepUuid,
+        part: {
+          type: 'text',
+          text: assistantText,
+        },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '',
+        step,
+        usage: {
+          inputOther: tokenTotal - 1,
+          output: 1,
+          inputCacheRead: 0,
+          inputCacheCreation: 0,
+        },
+        finishReason: 'end_turn',
+      },
+    });
+  }
+
+  appendAssistantText(step: number, text: string): void {
+    this.appendAssistantTextWithUsage(step, text);
+  }
+
+  appendAssistantTextWithUsage(step: number, text: string, tokenTotal?: number): void {
+    const stepUuid = `context-step-${String(step)}`;
+    const usage =
+      tokenTotal === undefined
+        ? undefined
+        : {
+            inputOther: tokenTotal - 1,
+            output: 1,
+            inputCacheRead: 0,
+            inputCacheCreation: 0,
+          };
+    this.agent.context.appendUserMessage([
+      { type: 'text', text: `user before step ${String(step)}` },
+    ]);
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '', step },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'content.part',
+        uuid: `context-part-${String(step)}`,
+        turnId: '',
+        step,
+        stepUuid,
+        part: {
+          type: 'text',
+          text,
+        },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '',
+        step,
+        usage,
+        finishReason: 'end_turn',
+      },
+    });
+  }
+
+  appendAssistantTurn(step: number, text: string): void {
+    const stepUuid = `plan-injection-step-${String(step)}`;
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '', step },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'content.part',
+        uuid: `plan-injection-part-${String(step)}`,
+        turnId: '',
+        step,
+        stepUuid,
+        part: { type: 'text', text },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '',
+        step,
+        finishReason: 'end_turn',
+      },
+    });
+  }
+
+  appendToolExchange(): void {
+    const stepUuid = 'context-tool-step';
+    this.agent.context.appendUserMessage([{ type: 'text', text: 'lookup something' }]);
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: 2 },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'content.part',
+        uuid: 'context-tool-part',
+        turnId: '',
+        step: 2,
+        stepUuid,
+        part: {
+          type: 'text',
+          text: 'I will call Lookup.',
+        },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'context-tool-call',
+        turnId: '',
+        step: 2,
+        stepUuid,
+        toolCallId: 'call_lookup',
+        name: 'Lookup',
+        args: {
+          query: 'moon',
+        },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '',
+        step: 2,
+        finishReason: 'tool_use',
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'context-tool-call',
+        toolCallId: 'call_lookup',
+        result: { output: 'lookup result' },
+      },
+    });
+  }
+
+  appendUnresolvedToolExchange(resolvedToolResults: 0 | 1): void {
+    const stepUuid = `unresolved-tool-step-${String(resolvedToolResults)}`;
+    this.agent.context.appendUserMessage([{ type: 'text', text: 'run unresolved tools' }]);
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: 2 },
+    });
+    for (const [toolCallId, name] of [
+      ['call_unresolved_one', 'LookupOne'],
+      ['call_unresolved_two', 'LookupTwo'],
+    ] as const) {
+      this.dispatch({
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: toolCallId,
+          turnId: '',
+          step: 2,
+          stepUuid,
+          toolCallId,
+          name,
+          args: {},
+        },
+      });
+    }
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '',
+        step: 2,
+        finishReason: 'tool_use',
+      },
+    });
+    if (resolvedToolResults === 1) {
+      this.dispatch({
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.result',
+          parentUuid: 'call_unresolved_one',
+          toolCallId: 'call_unresolved_one',
+          result: { output: 'one result' },
+        },
+      });
+    }
+  }
+
+  appendRichToolExchange(): void {
+    const stepUuid = 'rich-step';
+    this.agent.context.appendUserMessage([
+      { type: 'text', text: 'inspect this image' },
+      { type: 'image_url', imageUrl: { url: 'ms://image-1', id: 'image-1' } },
+    ]);
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: 1 },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'content.part',
+        uuid: 'rich-think',
+        turnId: '',
+        step: 1,
+        stepUuid,
+        part: {
+          type: 'think',
+          think: 'checking metadata',
+        },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'content.part',
+        uuid: 'rich-text',
+        turnId: '',
+        step: 1,
+        stepUuid,
+        part: {
+          type: 'text',
+          text: 'I will call Lookup.',
+        },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'rich-tool-call',
+        turnId: '',
+        step: 1,
+        stepUuid,
+        toolCallId: 'call_lookup',
+        name: 'Lookup',
+        args: {
+          query: 'moon',
+          limit: 2,
+        },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '',
+        step: 1,
+        usage: {
+          inputOther: 50,
+          output: 10,
+          inputCacheRead: 0,
+          inputCacheCreation: 0,
+        },
+        finishReason: 'tool_use',
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'rich-tool-call',
+        toolCallId: 'call_lookup',
+        result: {
+          output: [
+            { type: 'text', text: 'lookup result' },
+            { type: 'video_url', videoUrl: { url: 'ms://video-1', id: 'video-1' } },
+          ],
+        },
+      },
+    });
+  }
+
+  appendContextPartiallyResolvedParallelToolExchange(): void {
+    const stepUuid = 'context-partial-tool-step';
+    this.agent.context.appendUserMessage([{ type: 'text', text: 'run both tools' }]);
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: 2 },
+    });
+    for (const [toolCallId, name] of [
+      ['call_open_one', 'LookupOne'],
+      ['call_open_two', 'LookupTwo'],
+    ] as const) {
+      this.dispatch({
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.call',
+          uuid: toolCallId,
+          turnId: '',
+          step: 2,
+          stepUuid,
+          toolCallId,
+          name,
+          args: {},
+        },
+      });
+    }
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'step.end',
+        uuid: stepUuid,
+        turnId: '',
+        step: 2,
+        finishReason: 'tool_use',
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'call_open_one',
+        toolCallId: 'call_open_one',
+        result: { output: 'one result' },
+      },
+    });
+  }
+
+  appendPartiallyResolvedParallelToolExchange(): void {
+    const stepUuid = 'partial-tool-step';
+    this.agent.context.appendUserMessage([{ type: 'text', text: 'run both tools' }]);
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepUuid, turnId: '', step: 2 },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'call_open_one',
+        turnId: '',
+        step: 2,
+        stepUuid,
+        toolCallId: 'call_open_one',
+        name: 'LookupOne',
+        args: { query: 'one' },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: 'call_open_two',
+        turnId: '',
+        step: 2,
+        stepUuid,
+        toolCallId: 'call_open_two',
+        name: 'LookupTwo',
+        args: { query: 'two' },
+      },
+    });
+    this.dispatch({
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.result',
+        parentUuid: 'call_open_one',
+        toolCallId: 'call_open_one',
+        result: {
+          output: 'one result',
+        },
+      },
+    });
+  }
+
+  compactHistory(): Array<{ readonly role: string; readonly text: string }> {
+    return this.agent.context.history.map((message) => ({
+      role: message.role,
+      text: message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''),
+    }));
+  }
+
   async expectResumeMatches(): Promise<void> {
     const resumed = testAgent({
+      kaos: createResumeNoSideEffectKaos(this.agent.config.cwd),
       runtime: {
-        kaos: createResumeNoSideEffectKaos(),
-        osEnv: this.agent.runtime.osEnv,
-        urlFetcher: this.agent.runtime.urlFetcher,
-        webSearcher: this.agent.runtime.webSearcher,
+        urlFetcher: this.agent.toolServices?.urlFetcher,
+        webSearcher: this.agent.toolServices?.webSearcher,
       },
-      providerManager: this.agent.providerManager,
+      providerManager: this.options.providerManager,
+      initialConfig: this.kimiConfig,
+      providerManagerOverrides: this.options.providerManagerOverrides,
       generate: failOnResumeGenerate,
       compactionStrategy: this.options.compactionStrategy,
+      microCompaction: this.options.microCompaction,
       persistence: new InMemoryAgentRecordPersistence(
         withMetadata(this.recordHistory.map(cloneRecord)),
       ),
@@ -445,6 +903,7 @@ export class AgentTestContext {
     return {
       read: () => this.readAndCapturePersistence(persistence),
       append: (event) => {
+        this.captureRecord(event);
         persistence.append(event);
       },
       rewrite: (records) => {
@@ -498,18 +957,26 @@ const failOnResumeGenerate: GenerateFn = async () => {
   throw new Error('Resume replay unexpectedly called the LLM');
 };
 
-function createResumeNoSideEffectKaos(): Kaos {
+function createResumeNoSideEffectKaos(initialCwd: string): Kaos {
   const fail = (method: string): never => {
     throw new Error(`Resume replay unexpectedly called kaos.${method}`);
   };
 
+  // Replay may carry `config.update({cwd})` events that route through
+  // `kaos.chdir(...)`; let those mutate an internal cwd field so replay
+  // succeeds. Actual fs I/O methods remain forbidden.
+  let cwd = initialCwd;
   return {
     name: 'resume-no-side-effects',
+    osEnv: TEST_OS_ENV,
     pathClass: () => 'posix',
     normpath: (p: string) => p,
     gethome: () => '/home/test',
-    getcwd: () => '/workspace',
-    chdir: () => fail('chdir'),
+    getcwd: () => cwd,
+    withCwd: (next: string) => createResumeNoSideEffectKaos(next),
+    chdir: async (next: string) => {
+      cwd = next;
+    },
     stat: () => fail('stat'),
     iterdir: () => fail('iterdir'),
     glob: () => fail('glob'),
@@ -537,7 +1004,7 @@ function resumeStateSnapshot(agent: Agent): ResumeStateSnapshot {
   };
 }
 
-function resumeContextSnapshot(agent: Agent): ReturnType<Agent['context']['data']> {
+function resumeContextSnapshot(agent: Agent) {
   const context = agent.context.data();
   return {
     ...context,

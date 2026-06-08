@@ -14,7 +14,7 @@ describe('e2e: concurrent operations', () => {
   let originalCwd: string;
 
   beforeEach(async () => {
-    kaos = new LocalKaos();
+    kaos = await LocalKaos.create();
     originalCwd = process.cwd();
     tempDir = await realpath(await mkdtemp(join(tmpdir(), 'kaos-concurrent-')));
     process.chdir(tempDir);

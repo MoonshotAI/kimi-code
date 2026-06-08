@@ -2,13 +2,13 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { KimiHarness } from '@moonshot-ai/kimi-code-sdk';
+import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
 
 import { smokeIdentityFromEnv } from './runtime-smoke-helpers';
 
 async function main(): Promise<void> {
   const homeDir = await mkdtemp(join(tmpdir(), 'kimi-harness-config-home-'));
-  const harness = new KimiHarness({ homeDir, identity: smokeIdentityFromEnv() });
+  const harness = createKimiHarness({ homeDir, identity: smokeIdentityFromEnv() });
 
   const initial = await harness.getConfig();
   if (Object.keys(initial.providers).length > 0) {
@@ -38,7 +38,6 @@ async function main(): Promise<void> {
       },
     },
     loopControl: {
-      maxStepsPerTurn: 1000,
       maxRetriesPerStep: 3,
       maxRalphIterations: 0,
       reservedContextSize: 50000,

@@ -16,12 +16,10 @@
  */
 
 import {
-  APIConnectionError,
-  APIEmptyResponseError,
-  APIStatusError,
-  APITimeoutError,
   emptyUsage,
   generate as kosongGenerate,
+  type GenerateOptions,
+  isRetryableGenerateError,
   type ChatProvider,
   type GenerateCallbacks,
   type Message,
@@ -29,7 +27,13 @@ import {
   type StreamedMessagePart,
 } from '@moonshot-ai/kosong';
 
-import type { LLM, LLMChatParams, LLMChatResponse, LLMRequestLogContext } from '../../loop';
+import type {
+  LLM,
+  LLMChatParams,
+  LLMChatResponse,
+  LLMRequestLogContext,
+  LLMStreamTiming,
+} from '../../loop';
 import {
   applyCompletionBudget,
   type CompletionBudgetConfig,
@@ -37,8 +41,7 @@ import {
 
 export const GENERATE_REQUEST_LOG_CONTEXT = '__kimiRequestLogContext';
 
-export type GenerateOptionsWithRequestLog = {
-  readonly signal?: AbortSignal;
+export type GenerateOptionsWithRequestLog = GenerateOptions & {
   readonly [GENERATE_REQUEST_LOG_CONTEXT]?: LLMRequestLogContext;
 };
 
@@ -57,7 +60,7 @@ export interface KosongLLMConfig {
   readonly generate?: GenerateFn | undefined;
   /**
    * Completion budget config resolved from agent/provider settings. The
-   * final cap is computed per request from the current messages and tools.
+   * final cap is applied to each request.
    */
   readonly completionBudgetConfig?: CompletionBudgetConfig | undefined;
 }
@@ -81,35 +84,42 @@ export class KosongLLM implements LLM {
   }
 
   async chat(params: LLMChatParams): Promise<LLMChatResponse> {
-    return this.chatOnce(params);
-  }
-
-  private async chatOnce(params: LLMChatParams): Promise<LLMChatResponse> {
-    const callbacks = buildKosongCallbacks(params);
+    let requestStartedAt = Date.now();
+    let firstChunkAt: number | undefined;
+    let streamEndedAt: number | undefined;
+    const markRequestStart = (): void => {
+      requestStartedAt = Date.now();
+    };
+    const markStreamEnd = (): void => {
+      streamEndedAt = Date.now();
+    };
+    const markStreamOutput = (): void => {
+      if (firstChunkAt === undefined) {
+        firstChunkAt = Date.now();
+      }
+    };
+    const callbacks = buildKosongCallbacks(params, markStreamOutput);
 
     // Compute and apply the per-request completion budget against a
     // throwaway shallow clone. `effectiveProvider` is local to this call
     // and never written back to `this.provider`, so retries (handled at
     // a higher layer) keep using the same long-lived provider/client.
-    // The clamp must see every input the provider will serialize on the
-    // wire — system prompt and tool schemas included — or a near-full
-    // context can still slip past the limit.
     const effectiveProvider = applyCompletionBudget({
       provider: this.provider,
       budget: this.completionBudgetConfig,
       capability: this.capability,
-      messages: params.messages,
-      systemPrompt: this.systemPrompt,
-      tools: params.tools,
     });
 
     const result = await this.generate(
       effectiveProvider,
       this.systemPrompt,
       [...params.tools],
-      [...params.messages],
+      params.messages,
       callbacks,
-      generateOptions(params),
+      generateOptions(params, {
+        onRequestStart: markRequestStart,
+        onStreamEnd: markStreamEnd,
+      }),
     );
 
     // Replay merged content parts onto loop per-block callbacks after the
@@ -127,39 +137,51 @@ export class KosongLLM implements LLM {
 
     const response: LLMChatResponse = {
       toolCalls: [...result.message.toolCalls],
-      ...(result.finishReason !== null ? { providerFinishReason: result.finishReason } : {}),
-      ...(result.rawFinishReason !== null ? { rawFinishReason: result.rawFinishReason } : {}),
+      providerFinishReason: result.finishReason ?? undefined,
+      rawFinishReason: result.rawFinishReason ?? undefined,
       usage: result.usage ?? emptyUsage(),
+      streamTiming:
+        firstChunkAt === undefined
+          ? undefined
+          : buildStreamTiming(requestStartedAt, firstChunkAt, streamEndedAt),
     };
 
     return response;
   }
 
   isRetryableError(error: unknown): boolean {
-    if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
-      return true;
-    }
-    if (error instanceof APIEmptyResponseError) {
-      return true;
-    }
-    return error instanceof APIStatusError && [429, 500, 502, 503, 504].includes(error.statusCode);
+    return isRetryableGenerateError(error);
   }
 }
 
-function generateOptions(params: LLMChatParams): GenerateOptionsWithRequestLog {
-  const options: GenerateOptionsWithRequestLog = {
-    signal: params.signal,
+function buildStreamTiming(
+  requestStartedAt: number,
+  firstChunkAt: number,
+  streamEndedAt: number | undefined,
+): LLMStreamTiming {
+  const outputEndedAt = streamEndedAt ?? Date.now();
+  return {
+    firstTokenLatencyMs: Math.max(0, firstChunkAt - requestStartedAt),
+    streamDurationMs: Math.max(0, outputEndedAt - firstChunkAt),
   };
-  if (params.requestLogContext !== undefined) {
-    return {
-      ...options,
-      [GENERATE_REQUEST_LOG_CONTEXT]: params.requestLogContext,
-    };
-  }
-  return options;
 }
 
-function buildKosongCallbacks(params: LLMChatParams): GenerateCallbacks {
+function generateOptions(
+  params: LLMChatParams,
+  hooks: Pick<GenerateOptions, 'onRequestStart' | 'onStreamEnd'>,
+): GenerateOptionsWithRequestLog {
+  return {
+    signal: params.signal,
+    onRequestStart: hooks.onRequestStart,
+    onStreamEnd: hooks.onStreamEnd,
+    [GENERATE_REQUEST_LOG_CONTEXT]: params.requestLogContext,
+  };
+}
+
+function buildKosongCallbacks(
+  params: LLMChatParams,
+  markStreamOutput: () => void,
+): GenerateCallbacks {
   type ToolCallIdentity = { readonly toolCallId: string; readonly name: string };
   type BufferedToolCallDelta = { readonly argumentsPart?: string | undefined };
 
@@ -178,6 +200,7 @@ function buildKosongCallbacks(params: LLMChatParams): GenerateCallbacks {
 
   return {
     onMessagePart: (part: StreamedMessagePart) => {
+      markStreamOutput();
       if (part.type === 'text') {
         if (params.onTextDelta === undefined) return;
         params.onTextDelta(part.text);

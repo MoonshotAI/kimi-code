@@ -21,7 +21,9 @@ import type { BuiltinTool } from '../../../agent/tool';
 import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { isInlineSkillType, type SkillDefinition } from '../../../skill';
 import { renderPrompt } from '../../../utils/render-prompt';
+import { escapeXml } from '../../../utils/xml-escape';
 import { toInputJsonSchema } from '../../support/input-schema';
+import { matchesGlobRuleSubject } from '../../support/rule-match';
 import skillDescriptionTemplate from './skill-tool.md';
 
 export const MAX_SKILL_QUERY_DEPTH = 3;
@@ -78,6 +80,9 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
   resolveExecution(args: SkillToolInput): ToolExecution {
     return {
       description: `Invoke skill ${args.skill}`,
+      display: { kind: 'skill_call', skill_name: args.skill, args: args.args },
+      approvalRule: this.name,
+      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.skill),
       execute: () => this.execution(args),
     };
   }
@@ -101,7 +106,7 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
     }
 
     const skills = this.agent.skills;
-    if (skills === undefined) {
+    if (skills === null) {
       return errorResult(`Skill "${args.skill}" not found in the current skill listing.`);
     }
     const skill = skills.registry.getSkill(args.skill);
@@ -157,12 +162,4 @@ function skillOrigin(
     skillPath: skill.path,
     skillSource: skill.source,
   };
-}
-
-function escapeXml(input: string): string {
-  return input
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
 }

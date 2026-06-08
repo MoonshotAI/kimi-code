@@ -1,19 +1,25 @@
+import { CLI_COMMAND_NAME } from '#/constant/app';
+import { registerMigrateCommand } from '#/migration/index';
 import { Command, Option } from 'commander';
 
-import { CLI_COMMAND_NAME } from '#/constant/app';
-
-import { registerMigrateCommand } from '#/migration/index';
-
 import type { CLIOptions } from './options';
+import { registerAcpCommand } from './sub/acp';
+import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
+import { registerLoginCommand } from './sub/login';
+import { registerProviderCommand } from './sub/provider';
 
 export type MainCommandHandler = (opts: CLIOptions) => void;
 export type MigrateCommandHandler = () => void;
+export type PluginNodeRunnerHandler = (entry: string, args: readonly string[]) => void;
+export type UpgradeCommandHandler = () => void | Promise<void>;
 
 export function createProgram(
   version: string,
   onMain: MainCommandHandler,
   onMigrate: MigrateCommandHandler,
+  onPluginNodeRunner: PluginNodeRunnerHandler = () => {},
+  onUpgrade: UpgradeCommandHandler = () => {},
 ): Command {
   const program = new Command(CLI_COMMAND_NAME)
     .description('The Starting Point for Next-Gen Agents')
@@ -21,10 +27,8 @@ export function createProgram(
     .allowUnknownOption(false)
     .configureHelp({ helpWidth: 100 })
     .helpOption('-h, --help', 'Show help.')
-    .addHelpText(
-      'after',
-      '\nDocumentation:        https://moonshotai.github.io/kimi-code/\n'
-    );
+    .usage('[options] [command]')
+    .addHelpText('after', '\nDocumentation:        https://moonshotai.github.io/kimi-code/\n');
 
   program
     .addOption(
@@ -40,6 +44,7 @@ export function createProgram(
     )
     .option('-C, --continue', 'Continue the previous session for the working directory.', false)
     .option('-y, --yolo', 'Automatically approve all actions.', false)
+    .option('--auto', 'Start in auto permission mode.', false)
     .addOption(
       new Option(
         '-m, --model <model>',
@@ -71,19 +76,44 @@ export function createProgram(
     .option('--plan', 'Start in plan mode.', false);
 
   registerExportCommand(program);
+  registerProviderCommand(program);
+  registerAcpCommand(program);
+  registerLoginCommand(program);
+  registerDoctorCommand(program);
   registerMigrateCommand(program, onMigrate);
+  program
+    .command('upgrade')
+    .description('Upgrade Kimi Code to the latest version.')
+    .action(async () => {
+      await onUpgrade();
+    });
 
-  program.action(() => {
+  program
+    .command('__plugin_run_node', { hidden: true })
+    .argument('<entry>')
+    .argument('[args...]')
+    .allowUnknownOption(true)
+    .action((entry: string, args: string[]) => {
+      onPluginNodeRunner(entry, args);
+    });
+
+  program.argument('[args...]').action((args: string[]) => {
+    if (args.length > 0) {
+      program.error(`unknown command '${args[0]}'. See '${CLI_COMMAND_NAME} --help'.`);
+    }
+
     const raw = program.opts<Record<string, unknown>>();
 
     const rawSession = raw['session'] ?? raw['resume'];
     const sessionValue = rawSession === true ? '' : (rawSession as string | undefined);
     const yoloValue = raw['yolo'] === true || raw['yes'] === true || raw['autoApprove'] === true;
+    const autoValue = raw['auto'] === true;
 
     const opts: CLIOptions = {
       session: sessionValue,
       continue: raw['continue'] as boolean,
       yolo: yoloValue,
+      auto: autoValue,
       plan: raw['plan'] as boolean,
       model: raw['model'] as string | undefined,
       outputFormat: raw['outputFormat'] as CLIOptions['outputFormat'],

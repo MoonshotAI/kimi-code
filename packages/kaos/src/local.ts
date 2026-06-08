@@ -11,9 +11,10 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join as pathJoin, normalize } from 'node:path';
+import { isAbsolute, join, normalize } from 'pathe';
 import type { Readable, Writable } from 'node:stream';
 
+import { detectEnvironmentFromNode, type Environment } from './environment';
 import { KaosFileExistsError } from './errors';
 import { BufferedReadable, decodeTextWithErrors, globPatternToRegex } from './internal';
 import type { Kaos } from './kaos';
@@ -146,18 +147,37 @@ class LocalProcess implements KaosProcess {
  */
 export class LocalKaos implements Kaos {
   readonly name: string = 'local';
+  readonly osEnv: Environment;
   private _cwd: string;
 
-  constructor() {
-    // Snapshot the process cwd at construction time. After this point we
-    // never touch process.cwd() / process.chdir() — all path resolution
-    // goes through this._cwd.
-    this._cwd = process.cwd();
+  private constructor(osEnv: Environment, cwd?: string) {
+    // After construction we never touch `process.cwd()` / `process.chdir()`
+    // — all path resolution goes through `this._cwd`. The default seeds
+    // from `process.cwd()` but callers can pin to anything via `withCwd`
+    // (or supplying `cwd` directly).
+    this._cwd = normalize(cwd ?? process.cwd());
+    this.osEnv = osEnv;
+  }
+
+  /**
+   * Construct a fresh `LocalKaos` after probing the host environment.
+   *
+   * Each call returns a new instance with its own `_cwd`; concurrent
+   * callers can therefore operate on independent working directories
+   * without polluting one another.
+   */
+  static async create(): Promise<LocalKaos> {
+    const osEnv = await detectEnvironmentFromNode();
+    return new LocalKaos(osEnv);
+  }
+
+  withCwd(cwd: string): LocalKaos {
+    return new LocalKaos(this.osEnv, cwd);
   }
 
   private _resolvePath(path: string): string {
-    if (isAbsolute(path)) return path;
-    return pathJoin(this._cwd, path);
+    if (isAbsolute(path)) return normalize(path);
+    return join(this._cwd, path);
   }
 
   pathClass(): 'posix' | 'win32' {
@@ -169,7 +189,7 @@ export class LocalKaos implements Kaos {
   }
 
   gethome(): string {
-    return homedir();
+    return normalize(homedir());
   }
 
   getcwd(): string {
@@ -216,9 +236,9 @@ export class LocalKaos implements Kaos {
     const resolved = this._resolvePath(path);
     const entries = await readdir(resolved);
     for (const entry of entries) {
-      // Use pathJoin so root paths like "/" or "C:\\" don't produce "//entry"
-      // or "C:\\\\entry" — pathJoin normalizes trailing separators correctly.
-      yield pathJoin(resolved, entry);
+      // Use join so root paths like "/" or "C:\\" don't produce "//entry"
+      // or "C:\\\\entry" — join normalizes trailing separators correctly.
+      yield join(resolved, entry);
     }
   }
 
@@ -310,8 +330,8 @@ export class LocalKaos implements Kaos {
       }
 
       for (const entry of entries) {
-        // Use pathJoin to avoid "//entry" when basePath is a filesystem root.
-        const fullPath = pathJoin(basePath, entry);
+        // Use join to avoid "//entry" when basePath is a filesystem root.
+        const fullPath = join(basePath, entry);
         let entryStat;
         try {
           entryStat = await stat(fullPath);
@@ -348,8 +368,8 @@ export class LocalKaos implements Kaos {
           continue;
         }
 
-        // Use pathJoin to avoid "//entry" when basePath is a filesystem root.
-        const fullPath = pathJoin(basePath, entry);
+        // Use join to avoid "//entry" when basePath is a filesystem root.
+        const fullPath = join(basePath, entry);
 
         if (remainingParts.length === 0) {
           yield fullPath;
@@ -555,6 +575,3 @@ function waitForSpawn(child: ChildProcess): Promise<void> {
     child.once('error', onError);
   });
 }
-
-/** The default local KAOS instance. */
-export const localKaos: LocalKaos = new LocalKaos();

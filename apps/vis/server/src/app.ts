@@ -4,11 +4,11 @@ import { join, resolve } from 'node:path';
 
 import { Hono } from 'hono';
 
+import { blobsRoute } from './routes/blobs';
 import { contextRoute } from './routes/context';
 import { sessionDetailRoute } from './routes/session-detail';
 import { sessionsRoute } from './routes/sessions';
 import { subagentsRoute } from './routes/subagents';
-import { toolResultsRoute } from './routes/tool-results';
 import { wireRoute } from './routes/wire';
 
 /** Resolve the SPA bundle directory next to the compiled server.mjs, if it
@@ -87,9 +87,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<Hono> {
   api.route('/sessions', sessionsRoute());
   api.route('/sessions', sessionDetailRoute());
   api.route('/sessions', wireRoute());
-  api.route('/sessions', contextRoute());
   api.route('/sessions', subagentsRoute());
-  api.route('/sessions', toolResultsRoute());
+  api.route('/sessions', blobsRoute());
+  // Mount contextRoute last because it currently uses a catch-all stub
+  // (Phase C scope) that would otherwise shadow more specific routes
+  // registered below it.
+  api.route('/sessions', contextRoute());
 
   app.route('/api', api);
 

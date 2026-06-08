@@ -5,12 +5,29 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { KimiConfig } from '@moonshot-ai/agent-core';
-import { createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
+import { createKimiDefaultHeaders, KIMI_CODE_PLATFORM } from '@moonshot-ai/kimi-code-oauth';
 
-import { resolveRuntimeProvider } from '../../agent-core/src/providers/runtime-provider';
+import { ProviderManager } from '../../agent-core/src/session/provider-manager';
+import { SDKRpcClient } from '#/index';
 import { TEST_IDENTITY } from './test-identity';
 
 const tempDirs: string[] = [];
+
+function resolveRuntimeProvider(options: {
+  readonly config: KimiConfig;
+  readonly model?: string;
+  readonly kimiRequestHeaders?: Record<string, string>;
+}) {
+  const manager = new ProviderManager({
+    config: options.config,
+    kimiRequestHeaders: options.kimiRequestHeaders,
+  });
+  const model = options.model ?? options.config.defaultModel;
+  if (model === undefined) {
+    throw new Error('No model selected');
+  }
+  return manager.resolveProviderConfig(model);
+}
 
 async function makeTempDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-provider-identity-'));
@@ -25,6 +42,29 @@ afterEach(async () => {
 });
 
 describe('runtime provider identity headers', () => {
+  it('preserves the host user agent suffix in SDK RPC headers', async () => {
+    const homeDir = await makeTempDir();
+    const client = new SDKRpcClient({
+      homeDir,
+      identity: {
+        ...TEST_IDENTITY,
+        userAgentSuffix: 'web-runtime',
+      },
+    });
+    const core = client.core as unknown as {
+      readonly kimiRequestHeaders?: Record<string, string>;
+    };
+
+    try {
+      expect(core.kimiRequestHeaders).toMatchObject({
+        'User-Agent': 'kimi-code-cli/0.0.0-test (web-runtime)',
+        'X-Msh-Version': '0.0.0-test',
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
   it('adds kimi-code-cli User-Agent and complete X-Msh headers to the default Kimi provider', async () => {
     const homeDir = await makeTempDir();
     const kimiRequestHeaders = createKimiDefaultHeaders({ homeDir, ...TEST_IDENTITY });
@@ -52,7 +92,7 @@ describe('runtime provider identity headers', () => {
       type: 'kimi',
       defaultHeaders: expect.objectContaining({
         'User-Agent': 'kimi-code-cli/0.0.0-test',
-        'X-Msh-Platform': 'kimi-code-cli',
+        'X-Msh-Platform': KIMI_CODE_PLATFORM,
         'X-Msh-Version': '0.0.0-test',
         'X-Msh-Device-Name': expect.any(String),
         'X-Msh-Device-Model': expect.any(String),
@@ -97,7 +137,7 @@ describe('runtime provider identity headers', () => {
       defaultHeaders: expect.objectContaining({
         'User-Agent': 'Custom/1',
         'X-Msh-Version': 'override-version',
-        'X-Msh-Platform': 'kimi-code-cli',
+        'X-Msh-Platform': KIMI_CODE_PLATFORM,
       }),
     });
   });

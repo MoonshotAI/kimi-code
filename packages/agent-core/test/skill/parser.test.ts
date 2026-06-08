@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import path from 'node:path';
+import path from 'pathe';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -29,6 +29,29 @@ describe('skill parser', () => {
     expect(skills).toHaveLength(1);
     expect(skills[0]?.name).toBe('my-thing');
     expect(skills[0]?.description).toBe('Something');
+  });
+
+  it('preserves plugin metadata from the skill root', async () => {
+    const root = await makeSkillsRoot();
+    await writeFlat(root, 'brainstorming.md', ['---', 'description: Brainstorm', '---', 'Body']);
+
+    const skills = await discoverSkills({
+      roots: [
+        {
+          path: root,
+          source: 'extra',
+          plugin: {
+            id: 'superpowers',
+            instructions: 'Use AskUserQuestion.',
+          },
+        },
+      ],
+    });
+
+    expect(skills[0]?.plugin).toEqual({
+      id: 'superpowers',
+      instructions: 'Use AskUserQuestion.',
+    });
   });
 
   it('falls back to the first non-empty body line as description when frontmatter is absent', async () => {
@@ -225,6 +248,25 @@ describe('SkillRegistry.renderSkillPrompt', () => {
 
     expect(rendered).toBe('Zero: first\nOne: second');
   });
+
+  it('prepends plugin instructions when a skill came from a plugin root', () => {
+    const rendered = new SkillRegistry().renderSkillPrompt(
+      testSkill({
+        content: 'Brainstorm body.',
+        plugin: {
+          id: 'superpowers',
+          instructions: 'Use AskUserQuestion for clarifying questions.',
+        },
+      }),
+      '',
+    );
+
+    expect(rendered).toBe(
+      '<kimi-plugin-instructions plugin="superpowers">\n' +
+        'Use AskUserQuestion for clarifying questions.\n' +
+        '</kimi-plugin-instructions>\n\nBrainstorm body.',
+    );
+  });
 });
 
 async function makeSkillsRoot(): Promise<string> {
@@ -257,6 +299,7 @@ async function writeFlatOrSubdirSkill(
 function testSkill(input: {
   readonly content: string;
   readonly metadata?: SkillDefinition['metadata'];
+  readonly plugin?: SkillDefinition['plugin'];
 }): SkillDefinition {
   return {
     name: 'review',
@@ -266,5 +309,6 @@ function testSkill(input: {
     content: input.content,
     metadata: input.metadata ?? {},
     source: 'user',
+    plugin: input.plugin,
   };
 }

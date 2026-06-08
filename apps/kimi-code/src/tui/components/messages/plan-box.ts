@@ -11,6 +11,8 @@ import type { Component, MarkdownTheme } from '@earendil-works/pi-tui';
 import { Markdown, visibleWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
+import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
+
 const LEFT_MARGIN = 2; // two-space indent matching other tool call children
 const SIDE_PADDING = 1; // space between the │ and the content on each side
 const TITLE_PREFIX = ' plan: ';
@@ -19,12 +21,17 @@ const TITLE_SUFFIX = ' ';
 export interface PlanBoxOptions {
   maxContentLines?: number;
   expanded?: boolean;
+  status?: {
+    readonly label: string;
+    readonly colorHex: string;
+  };
 }
 
 export class PlanBoxComponent implements Component {
   private readonly markdown: Markdown;
   private readonly maxContentLines: number | undefined;
   private readonly expanded: boolean;
+  private readonly status: PlanBoxOptions['status'];
   private cachedWidth: number | undefined;
   private cachedLines: string[] | undefined;
 
@@ -42,6 +49,7 @@ export class PlanBoxComponent implements Component {
     this.markdown = new Markdown(plan.trim(), 0, 0, markdownTheme);
     this.maxContentLines = opts?.maxContentLines;
     this.expanded = opts?.expanded ?? false;
+    this.status = opts?.status;
   }
 
   invalidate(): void {
@@ -105,20 +113,25 @@ export class PlanBoxComponent implements Component {
 
   private buildTitle(horzLen: number): string {
     const fallback = ' plan ';
-    const planPath = this.planPath;
-    if (planPath === undefined || planPath.length === 0) return fallback;
-    const basename = path.basename(planPath);
-    if (basename.length === 0) return fallback;
-    const wrapperLen = TITLE_PREFIX.length + TITLE_SUFFIX.length;
+    const statusSuffix = this.buildStatusSuffix();
+    const fallbackWithStatus = ` plan${statusSuffix} `;
     const budget = horzLen - 1;
-    if (wrapperLen + basename.length > budget) return fallback;
+    const fallbackTitle = visibleWidth(fallbackWithStatus) <= budget ? fallbackWithStatus : fallback;
+    const planPath = this.planPath;
+    if (planPath === undefined || planPath.length === 0) return fallbackTitle;
+    const basename = path.basename(planPath);
+    if (basename.length === 0) return fallbackTitle;
     const linked = path.isAbsolute(planPath)
       ? toTerminalHyperlink(basename, pathToFileURL(planPath).href)
       : basename;
-    return TITLE_PREFIX + linked + TITLE_SUFFIX;
+    const title = TITLE_PREFIX + linked + statusSuffix + TITLE_SUFFIX;
+    if (visibleWidth(title) > budget) return fallbackTitle;
+    return title;
   }
-}
 
-function toTerminalHyperlink(text: string, url: string): string {
-  return `\u001B]8;;${url}\u0007${text}\u001B]8;;\u0007`;
+  private buildStatusSuffix(): string {
+    const status = this.status;
+    if (status === undefined || status.label.length === 0) return '';
+    return ` · ${chalk.hex(status.colorHex)(status.label)}`;
+  }
 }

@@ -25,6 +25,7 @@ import {
 import type { BackgroundTaskInfo, BackgroundTaskStatus } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 
+import { SELECT_POINTER } from '@/tui/constant/symbols';
 import type { ColorPalette } from '@/tui/theme/colors';
 import { printableChar } from '@/tui/utils/printable-key';
 
@@ -54,9 +55,9 @@ export interface TasksBrowserProps {
 
 const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
   running: 'running',
-  awaiting_approval: 'awaiting',
   completed: 'completed',
   failed: 'failed',
+  timed_out: 'timed out',
   killed: 'killed',
   lost: 'lost',
 };
@@ -77,11 +78,10 @@ function statusColor(colors: ColorPalette, status: BackgroundTaskStatus): string
   switch (status) {
     case 'running':
       return colors.success;
-    case 'awaiting_approval':
-      return colors.warning;
     case 'completed':
       return colors.textMuted;
     case 'failed':
+    case 'timed_out':
     case 'killed':
     case 'lost':
       return colors.error;
@@ -90,7 +90,11 @@ function statusColor(colors: ColorPalette, status: BackgroundTaskStatus): string
 
 function isTerminal(status: BackgroundTaskStatus): boolean {
   return (
-    status === 'completed' || status === 'failed' || status === 'killed' || status === 'lost'
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'timed_out' ||
+    status === 'killed' ||
+    status === 'lost'
   );
 }
 
@@ -142,25 +146,22 @@ function compareTasks(a: BackgroundTaskInfo, b: BackgroundTaskInfo): number {
 
 interface StatusCounts {
   running: number;
-  awaiting: number;
   completed: number;
   terminalFailed: number;
 }
 
 function countByStatus(tasks: readonly BackgroundTaskInfo[]): StatusCounts {
-  const counts: StatusCounts = { running: 0, awaiting: 0, completed: 0, terminalFailed: 0 };
+  const counts: StatusCounts = { running: 0, completed: 0, terminalFailed: 0 };
   for (const t of tasks) {
     switch (t.status) {
       case 'running':
         counts.running += 1;
         break;
-      case 'awaiting_approval':
-        counts.awaiting += 1;
-        break;
       case 'completed':
         counts.completed += 1;
         break;
       case 'failed':
+      case 'timed_out':
       case 'killed':
       case 'lost':
         counts.terminalFailed += 1;
@@ -338,8 +339,6 @@ export class TasksBrowserApp extends Container implements Focusable {
     const countSegments: string[] = [];
     if (counts.running > 0)
       countSegments.push(chalk.hex(colors.success)(` ${String(counts.running)} running `));
-    if (counts.awaiting > 0)
-      countSegments.push(chalk.hex(colors.warning)(` ${String(counts.awaiting)} awaiting `));
     if (counts.completed > 0)
       countSegments.push(chalk.hex(colors.textDim)(` ${String(counts.completed)} completed `));
     if (counts.terminalFailed > 0)
@@ -361,7 +360,7 @@ export class TasksBrowserApp extends Container implements Focusable {
       const warn = (text: string): string => chalk.hex(colors.warning).bold(text);
       const line =
         ` ${warn('Stop')} ${chalk.hex(colors.text)(this.pendingStopTaskId)}? ` +
-        `${key('Y')} ${dim('confirm')}  ${key('N')} ${dim('cancel')} `;
+        `${key('Y')} ${dim('confirm')}  ${key('N')}${dim('/')}${key('esc')} ${dim('cancel')} `;
       return fitExactly(line, width);
     }
 
@@ -371,7 +370,7 @@ export class TasksBrowserApp extends Container implements Focusable {
       `${key('S')} ${dim('stop')}`,
       `${key('R')} ${dim('refresh')}`,
       `${key('Tab')} ${dim('filter')}`,
-      `${key('Q/Esc')} ${dim('exit')} `,
+      `${key('Q/Esc')} ${dim('cancel')} `,
     ];
     const left = parts.join('  ');
     const flash = this.props.flashMessage;
@@ -464,12 +463,16 @@ export class TasksBrowserApp extends Container implements Focusable {
 
   private renderListRow(task: BackgroundTaskInfo, selected: boolean, innerWidth: number): string {
     const colors = this.props.colors;
-    const pointer = selected ? '> ' : '  ';
+    const pointer = selected ? `${SELECT_POINTER} ` : '  ';
     const pointerStyled = chalk.hex(selected ? colors.primary : colors.textDim)(pointer);
 
-    const idColor = selected ? colors.primary : task.taskId.startsWith('agent-')
-      ? colors.success
-      : colors.accent;
+    const idColor = selected
+      ? colors.primary
+      : task.kind === 'agent'
+        ? colors.success
+        : task.kind === 'question'
+          ? colors.warning
+          : colors.accent;
     const idText = selected
       ? chalk.hex(idColor).bold(task.taskId)
       : chalk.hex(idColor)(task.taskId);
@@ -484,7 +487,9 @@ export class TasksBrowserApp extends Container implements Focusable {
     if (descBudget < 4) return fitExactly(prefix, innerWidth);
 
     const description =
-      singleLine(task.description) || singleLine(task.command) || '(no description)';
+      singleLine(task.description) ||
+      (task.kind === 'process' ? singleLine(task.command) : '') ||
+      '(no description)';
     const desc = truncateToWidth(description, descBudget, ELLIPSIS);
     return fitExactly(`${prefix} ${chalk.hex(colors.text)(desc)}`, innerWidth);
   }
@@ -536,32 +541,37 @@ export class TasksBrowserApp extends Container implements Focusable {
       `${label('Status:')}${chalk.hex(statusColor(colors, task.status))(STATUS_LABEL[task.status])}`,
       `${label('Description:')}${value(singleLine(task.description) || '—')}`,
     ];
-    if (task.command && task.command !== task.description) {
+    if (task.kind === 'process' && task.command && task.command !== task.description) {
       lines.push(`${label('Command:')}${value(singleLine(task.command))}`);
     }
+    if (task.kind === 'agent' && task.agentId !== undefined) {
+      lines.push(`${label('Agent ID:')}${value(task.agentId)}`);
+    }
+    if (task.kind === 'agent' && task.subagentType !== undefined) {
+      lines.push(`${label('Agent type:')}${value(task.subagentType)}`);
+    }
+    if (task.kind === 'question') {
+      lines.push(`${label('Questions:')}${chalk.hex(colors.textMuted)(String(task.questionCount))}`);
+      if (task.toolCallId !== undefined) {
+        lines.push(`${label('Tool call:')}${chalk.hex(colors.textMuted)(task.toolCallId)}`);
+      }
+    }
     const timing =
-      task.status === 'running' || task.status === 'awaiting_approval'
+      task.status === 'running'
         ? `running ${formatRelativeTime(task.startedAt)}`
         : task.endedAt !== null && task.endedAt !== undefined
           ? `finished ${formatRelativeTime(task.endedAt)}`
           : '';
     if (timing.length > 0) lines.push(`${label('Time:')}${chalk.hex(colors.textMuted)(timing)}`);
-    if (task.pid > 0) lines.push(`${label('Pid:')}${chalk.hex(colors.textMuted)(String(task.pid))}`);
-    if (task.exitCode !== null && task.exitCode !== undefined) {
+    if (task.kind === 'process' && task.pid > 0) {
+      lines.push(`${label('Pid:')}${chalk.hex(colors.textMuted)(String(task.pid))}`);
+    }
+    if (task.kind === 'process' && task.exitCode !== null) {
       lines.push(`${label('Exit code:')}${chalk.hex(colors.textMuted)(String(task.exitCode))}`);
     }
     if (task.stopReason !== undefined && task.stopReason.length > 0) {
-      lines.push(`${label('Stop reason:')}${chalk.hex(colors.textMuted)(task.stopReason)}`);
+      lines.push(`${label('Reason:')}${chalk.hex(colors.textMuted)(task.stopReason)}`);
     }
-    if (task.timedOut === true) {
-      lines.push(`${label('Timed out:')}${chalk.hex(colors.warning)('yes')}`);
-    }
-    if (task.approvalReason !== undefined && task.approvalReason.length > 0) {
-      lines.push(
-        `${label('Awaiting:')}${chalk.hex(colors.warning)(singleLine(task.approvalReason))}`,
-      );
-    }
-
     while (lines.length < innerHeight) lines.push('');
     return this.renderFrame('Detail', lines, width, height);
   }

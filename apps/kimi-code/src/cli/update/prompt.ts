@@ -14,6 +14,8 @@ import {
 
 import { type InstallSource, type UpdateTarget } from './types';
 
+export const CHANGELOG_URL = 'https://moonshotai.github.io/kimi-code/en/release-notes/changelog.html';
+
 export type InstallPromptChoiceValue = 'install' | 'skip';
 
 export interface InstallPromptChoice {
@@ -66,9 +68,11 @@ function renderInstallPrompt(
   const targetVersion = chalk.hex(UPDATE_PROMPT_SUCCESS).bold(options.target.version);
   const sourceLabel = chalk.hex(UPDATE_PROMPT_PRIMARY).bold(options.installSource);
   const command = chalk.hex(UPDATE_PROMPT_PRIMARY)(options.installCommand);
+  const changelogText = chalk.hex(UPDATE_PROMPT_PRIMARY).underline(`View changelog: ${CHANGELOG_URL}`);
   const lines = [
     chalk.hex(UPDATE_PROMPT_PRIMARY).bold('Kimi Code Update Available'),
     chalk.hex(UPDATE_PROMPT_MUTED)(`${PRODUCT_NAME} has a newer release ready.`),
+    `]8;;${CHANGELOG_URL}\\${changelogText}]8;;\\`,
     '',
     `${label('Current')}  ${currentVersion}`,
     `${label('Target ')}  ${targetVersion}`,
@@ -116,15 +120,15 @@ function writePromptFrame(
   return lines.length;
 }
 
-export async function promptForInstallConfirmation(
+export async function promptForInstallChoice(
   options: InstallPromptOptions,
-): Promise<boolean> {
+): Promise<InstallPromptChoiceValue> {
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
   const choices = createInstallPromptChoices(options.target);
   let selectedIndex = getDefaultInstallPromptSelection(choices);
 
-  return new Promise<boolean>((resolve) => {
+  return new Promise<InstallPromptChoiceValue>((resolve) => {
     let lineCount = 0;
     const hadRawMode = 'isRaw' in input ? input.isRaw : false;
     const canSetRawMode = typeof input.setRawMode === 'function';
@@ -140,7 +144,7 @@ export async function promptForInstallConfirmation(
 
     const finish = (choice: InstallPromptChoiceValue): void => {
       cleanup();
-      resolve(choice === 'install');
+      resolve(choice);
     };
 
     const render = (): void => {

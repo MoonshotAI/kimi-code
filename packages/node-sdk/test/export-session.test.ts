@@ -7,8 +7,8 @@ import * as zlib from 'node:zlib';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  createKimiHarness,
   KimiError,
-  KimiHarness,
   type SessionSummary,
 } from '#/index';
 import { resolveGlobalLogPath } from '../../agent-core/src/logging/logger';
@@ -266,7 +266,7 @@ describe('KimiHarness.exportSession', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const records: TelemetryRecord[] = [];
-    const harness = new KimiHarness({
+    const harness = createKimiHarness({
       identity: TEST_IDENTITY,
       homeDir,
       telemetry: recordingTelemetry(records),
@@ -301,7 +301,7 @@ describe('KimiHarness.exportSession', () => {
 
   it('rejects missing session ids', async () => {
     const homeDir = await makeTempDir();
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     const missingExport = harness.exportSession({ id: 'ses_missing', version: '1.0.0-test' });
     await expect(missingExport).rejects.toBeInstanceOf(KimiError);

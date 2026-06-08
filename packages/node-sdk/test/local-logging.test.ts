@@ -5,7 +5,7 @@ import * as zlib from 'node:zlib';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { KimiHarness, log } from '#/index';
+import { createKimiHarness, log } from '#/index';
 import { __resetRootLoggerForTest, getRootLogger } from '../../agent-core/src/logging/logger';
 import { TEST_IDENTITY } from './test-identity';
 
@@ -20,11 +20,13 @@ const LOG_ENV_KEYS = [
 ] as const;
 
 beforeEach(async () => {
+  process.env['KIMI_LOG_LEVEL'] = 'info';
   await __resetRootLoggerForTest();
 });
 
 afterEach(async () => {
   await __resetRootLoggerForTest();
+  process.env['KIMI_LOG_LEVEL'] = 'off';
   for (const dir of tempDirs.splice(0)) {
     await rm(dir, { recursive: true, force: true });
   }
@@ -98,11 +100,11 @@ function readZipEntries(buf: Buffer): Map<string, Buffer> {
 }
 
 describe('Local logging — harness integration', () => {
-  it('writes session-tagged entries to both global and session log files', async () => {
+  it('writes session-tagged entries to session log only and untagged entries to global', async () => {
     const homeDir = await makeTempDir('kimi-log-home-');
     const workDir = await makeTempDir('kimi-log-work-');
 
-    const harness = new KimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
     const session = await harness.createSession({
       id: 'ses_logging_int',
       workDir,
@@ -131,7 +133,7 @@ describe('Local logging — harness integration', () => {
 
     const global = await readFile(globalPath, 'utf-8');
     const sessionLog = await readFile(sessionLogPath, 'utf-8');
-    expect(global).toContain('session diagnostic');
+    expect(global).not.toContain('session diagnostic');
     expect(sessionLog).toContain('session diagnostic');
     expect(global).toContain('untagged event');
     expect(sessionLog).not.toContain('untagged event');
@@ -140,7 +142,7 @@ describe('Local logging — harness integration', () => {
   it('default export bundles session log only; no globalLogPath in manifest', async () => {
     const homeDir = await makeTempDir('kimi-log-home-');
     const workDir = await makeTempDir('kimi-log-work-');
-    const harness = new KimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
     const session = await harness.createSession({ id: 'ses_default_export', workDir });
     log.warn('session export marker', { sessionId: session.id });
 
@@ -168,7 +170,7 @@ describe('Local logging — harness integration', () => {
   it('default export works when no session log file exists', async () => {
     const homeDir = await makeTempDir('kimi-log-home-');
     const workDir = await makeTempDir('kimi-log-work-');
-    const harness = new KimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
     const session = await harness.createSession({ id: 'ses_no_session_log', workDir });
 
     const outputPath = join(workDir, 'no-log.zip');
@@ -193,7 +195,7 @@ describe('Local logging — harness integration', () => {
     try {
       const homeDir = await makeTempDir('kimi-log-home-');
       const workDir = await makeTempDir('kimi-log-work-');
-      const harness = new KimiHarness({ identity: TEST_IDENTITY, homeDir });
+      const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
       const session = await harness.createSession({ id: 'ses_rotated_export', workDir });
       for (let i = 0; i < 16; i++) {
         log.warn(`rotated session marker ${i}`, {
@@ -228,7 +230,7 @@ describe('Local logging — harness integration', () => {
   it('--include-global-log bundles global active and sets manifest field', async () => {
     const homeDir = await makeTempDir('kimi-log-home-');
     const workDir = await makeTempDir('kimi-log-work-');
-    const harness = new KimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
     const session = await harness.createSession({ id: 'ses_global_export', workDir });
     log.warn('untagged probe');
 
@@ -254,9 +256,9 @@ describe('Local logging — harness integration', () => {
     const firstHome = await makeTempDir('kimi-log-home-a-');
     const secondHome = await makeTempDir('kimi-log-home-b-');
     const workDir = await makeTempDir('kimi-log-work-');
-    const first = new KimiHarness({ identity: TEST_IDENTITY, homeDir: firstHome });
+    const first = createKimiHarness({ identity: TEST_IDENTITY, homeDir: firstHome });
     const firstSession = await first.createSession({ id: 'ses_first_global_export', workDir });
-    const second = new KimiHarness({ identity: TEST_IDENTITY, homeDir: secondHome });
+    const second = createKimiHarness({ identity: TEST_IDENTITY, homeDir: secondHome });
 
     log.warn('active-global-export-marker');
     await getRootLogger().flushGlobal();
@@ -281,9 +283,10 @@ describe('Local logging — harness integration', () => {
   it('logs export flush failures without failing the export', async () => {
     const homeDir = await makeTempDir('kimi-log-home-');
     const workDir = await makeTempDir('kimi-log-work-');
-    const harness = new KimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
     const session = await harness.createSession({ id: 'ses_flush_warning', workDir });
     log.warn('flush warning setup', { sessionId: session.id });
+    log.warn('global untagged marker');
 
     const root = getRootLogger();
     const flushSessionSpy = vi
@@ -305,7 +308,8 @@ describe('Local logging — harness integration', () => {
       const globalLog = entries.get('logs/global/kimi-code.log')!.toString('utf-8');
       expect(sessionLog).toContain('export session log flush failed');
       expect(sessionLog).toContain('export global log flush failed');
-      expect(globalLog).toContain('export global log flush failed');
+      expect(globalLog).toContain('global untagged marker');
+      expect(globalLog).not.toContain('export global log flush failed');
     } finally {
       flushSessionSpy.mockRestore();
       flushGlobalSpy.mockRestore();
@@ -314,16 +318,16 @@ describe('Local logging — harness integration', () => {
 
   it('multiple KimiHarness constructions in the same process do not throw', async () => {
     const homeDir = await makeTempDir('kimi-log-home-');
-    expect(() => new KimiHarness({ identity: TEST_IDENTITY, homeDir })).not.toThrow();
-    expect(() => new KimiHarness({ identity: TEST_IDENTITY, homeDir })).not.toThrow();
-    expect(() => new KimiHarness({ identity: TEST_IDENTITY, homeDir })).not.toThrow();
+    expect(() => createKimiHarness({ identity: TEST_IDENTITY, homeDir })).not.toThrow();
+    expect(() => createKimiHarness({ identity: TEST_IDENTITY, homeDir })).not.toThrow();
+    expect(() => createKimiHarness({ identity: TEST_IDENTITY, homeDir })).not.toThrow();
   });
 
   it('uses the latest harness homeDir for global diagnostic logging', async () => {
     const firstHome = await makeTempDir('kimi-log-home-a-');
     const secondHome = await makeTempDir('kimi-log-home-b-');
-    const first = new KimiHarness({ identity: TEST_IDENTITY, homeDir: firstHome });
-    const second = new KimiHarness({ identity: TEST_IDENTITY, homeDir: secondHome });
+    const first = createKimiHarness({ identity: TEST_IDENTITY, homeDir: firstHome });
+    const second = createKimiHarness({ identity: TEST_IDENTITY, homeDir: secondHome });
 
     log.warn('second-home-marker');
     await getRootLogger().flushGlobal();
@@ -359,7 +363,7 @@ describe('Local logging — harness integration', () => {
     try {
       const homeDir = await makeTempDir('kimi-log-home-');
       const workDir = await makeTempDir('kimi-log-work-');
-      const harness = new KimiHarness({ identity: TEST_IDENTITY, homeDir });
+      const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
       await harness.createSession({ id: 'ses_off', workDir });
       log.error('this should not write');
       let logsDir: string[] = [];
@@ -376,7 +380,7 @@ describe('Local logging — harness integration', () => {
 
   it('KimiHarness.close() flushes the global log', async () => {
     const homeDir = await makeTempDir('kimi-log-home-');
-    const harness = new KimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
     log.warn('untagged before close');
     // No `await flush()` here on purpose — close() must do it.
     await harness.close();

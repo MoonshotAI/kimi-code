@@ -122,27 +122,6 @@ describe('ToolScheduler', () => {
     expect(drained).toEqual(['tree-reader', 'child-writer']);
   });
 
-  it('treats pathless file access as covering the file namespace', async () => {
-    const started: string[] = [];
-    const drained: string[] = [];
-    const scheduler = makeScheduler(drained);
-    const writer = makeControlledTask('writer', ToolAccesses.writeAnyFile(), started);
-    const reader = makeControlledTask('reader', readPath('/repo/a.ts'), started);
-
-    scheduler.add(writer.task);
-    scheduler.add(reader.task);
-    await waitOneMacrotask();
-
-    expect(started).toEqual(['writer']);
-    writer.resolve();
-    await waitOneMacrotask();
-    expect(started).toEqual(['writer', 'reader']);
-
-    reader.resolve();
-    await scheduler.collectResults();
-    expect(drained).toEqual(['writer', 'reader']);
-  });
-
   it('releases conflicting accesses when a task result rejects', async () => {
     const started: string[] = [];
     const drained: string[] = [];
@@ -216,11 +195,11 @@ describe('ToolScheduler', () => {
     expect(drained).toEqual(['writer', 'exclusive', 'reader']);
   });
 
-  it('serializes all-resource access against read-any-file access', async () => {
+  it('serializes all-resource access against file access', async () => {
     const started: string[] = [];
     const drained: string[] = [];
     const scheduler = makeScheduler(drained);
-    const reader = makeControlledTask('reader', ToolAccesses.readAnyFile(), started);
+    const reader = makeControlledTask('reader', readPath('/repo/a.ts'), started);
     const exclusive = makeControlledTask('exclusive', ToolAccesses.all(), started);
 
     scheduler.add(reader.task);

@@ -4,6 +4,8 @@ import {
   applyManagedKimiCodeLogoutConfig,
   KIMI_CODE_PROVIDER_NAME,
   KimiOAuthToolkit,
+  resolveKimiCodeLoginAuth,
+  resolveKimiCodeRuntimeAuth,
   type AuthManagedUsageResult,
   type AuthStatus,
   type BearerTokenProvider,
@@ -68,14 +70,27 @@ export class KimiAuthFacade {
   }
 
   async status(providerName?: string | undefined): Promise<AuthStatus> {
-    return this.toolkit.status(providerName);
+    return this.toolkit.status(providerName, this.resolveRuntimeManagedAuth(providerName).oauthRef);
   }
 
   async login(
     providerName: string | undefined = KIMI_CODE_PROVIDER_NAME,
     options: KimiAuthLoginOptions = {},
   ): Promise<KimiAuthLoginResult> {
-    const result = await this.toolkit.login(providerName, { ...options, provisionConfig: true });
+    const auth = this.resolveManagedAuth(providerName);
+    const loginAuth = resolveKimiCodeLoginAuth({
+      configuredBaseUrl: auth.baseUrl,
+      configuredOAuthRef: auth.oauthRef,
+      requestedBaseUrl: options.baseUrl,
+      requestedOAuthHost: options.oauthHost,
+    });
+    const result = await this.toolkit.login(providerName, {
+      ...options,
+      baseUrl: loginAuth.baseUrl,
+      oauthHost: loginAuth.oauthHost,
+      oauthRef: options.oauthRef ?? loginAuth.oauthRef,
+      provisionConfig: true,
+    });
     if (result.provision === undefined) {
       throw new Error('Kimi auth login did not provision model config.');
     }
@@ -91,7 +106,10 @@ export class KimiAuthFacade {
   }
 
   async logout(providerName?: string | undefined): Promise<KimiAuthLogoutResult> {
-    const result = await this.toolkit.logout(providerName);
+    const result = await this.toolkit.logout(
+      providerName,
+      this.resolveRuntimeManagedAuth(providerName).oauthRef,
+    );
     const updated = readConfigFile(this.options.configPath);
     this.options.onConfigUpdated?.(updated);
     return {
@@ -101,13 +119,18 @@ export class KimiAuthFacade {
   }
 
   async getManagedUsage(providerName?: string | undefined): Promise<AuthManagedUsageResult> {
-    return this.toolkit.getManagedUsage(providerName);
+    const auth = this.resolveRuntimeManagedAuth(providerName);
+    return this.toolkit.getManagedUsage(providerName, {
+      oauthRef: auth.oauthRef,
+      baseUrl: auth.baseUrl,
+    });
   }
 
   async submitFeedback(
     input: KimiAuthSubmitFeedbackInput,
     providerName?: string | undefined,
   ): Promise<FetchSubmitFeedbackResult> {
+    const auth = this.resolveRuntimeManagedAuth(providerName);
     return this.toolkit.submitFeedback(
       {
         session_id: input.sessionId,
@@ -117,17 +140,63 @@ export class KimiAuthFacade {
         model: input.model,
       },
       providerName,
+      {
+        oauthRef: auth.oauthRef,
+        baseUrl: auth.baseUrl,
+      },
     );
   }
 
-  async getCachedAccessToken(providerName?: string): Promise<string | undefined> {
-    return this.toolkit.getCachedAccessToken(providerName);
+  async getCachedAccessToken(
+    providerName?: string,
+    oauthRef?: OAuthRef | undefined,
+  ): Promise<string | undefined> {
+    return this.toolkit.getCachedAccessToken(
+      providerName,
+      this.runtimeOAuthRef(providerName, oauthRef),
+    );
   }
 
   readonly resolveOAuthTokenProvider = (
     providerName: string,
     oauthRef?: OAuthRef | undefined,
   ): BearerTokenProvider => {
-    return this.toolkit.tokenProvider(providerName, oauthRef);
+    return this.toolkit.tokenProvider(providerName, this.runtimeOAuthRef(providerName, oauthRef));
   };
+
+  private resolveManagedAuth(providerName?: string | undefined): {
+    readonly oauthRef?: OAuthRef | undefined;
+    readonly baseUrl?: string | undefined;
+  } {
+    const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
+    const config = readConfigFile(this.options.configPath);
+    const provider = config.providers[name];
+    return {
+      oauthRef: provider?.oauth,
+      baseUrl: provider?.baseUrl,
+    };
+  }
+
+  private resolveRuntimeManagedAuth(providerName?: string | undefined): {
+    readonly oauthRef: OAuthRef;
+    readonly baseUrl?: string | undefined;
+  } {
+    const auth = this.resolveManagedAuth(providerName);
+    return resolveKimiCodeRuntimeAuth({
+      configuredBaseUrl: auth.baseUrl,
+      configuredOAuthRef: auth.oauthRef,
+    });
+  }
+
+  private runtimeOAuthRef(
+    providerName: string | undefined,
+    oauthRef?: OAuthRef | undefined,
+  ): OAuthRef | undefined {
+    if ((providerName ?? KIMI_CODE_PROVIDER_NAME) !== KIMI_CODE_PROVIDER_NAME) return oauthRef;
+    const auth = this.resolveManagedAuth(providerName);
+    return resolveKimiCodeRuntimeAuth({
+      configuredBaseUrl: auth.baseUrl,
+      configuredOAuthRef: oauthRef ?? auth.oauthRef,
+    }).oauthRef;
+  }
 }

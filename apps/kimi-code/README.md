@@ -24,6 +24,8 @@ curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash
 irm https://code.kimi.com/kimi-code/install.ps1 | iex
 ```
 
+> On Windows, install [Git for Windows](https://gitforwindows.org/) before first launch because Kimi Code CLI uses the bundled Git Bash as its shell environment. If Git Bash is installed in a custom location, set `KIMI_SHELL_PATH` to the absolute path of `bash.exe`.
+
 Then run it with a new Terminal session:
 
 ```sh
@@ -55,7 +57,7 @@ cd your-project
 kimi
 ```
 
-On first launch, run `/login` inside Kimi Code CLI and choose either Kimi Code OAuth or a Moonshot AI Open Platform API key. After login, try a first task:
+On first launch, run `/login` inside Kimi Code CLI and choose either Kimi Code OAuth or a Kimi Platform API key. After login, try a first task:
 
 ```
 Take a look at this project and explain the main directories.

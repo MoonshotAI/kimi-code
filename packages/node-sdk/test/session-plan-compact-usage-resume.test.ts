@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { KimiHarness, type Event, type KimiError } from '#/index';
+import { createKimiHarness, type Event, type KimiError } from '#/index';
 
 import { makeTempDir, removeTempDirs } from './session-runtime-helpers';
 import { TEST_IDENTITY } from './test-identity';
@@ -19,7 +19,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-plan-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-plan-work-');
     await writeTestConfig(homeDir);
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_plan_runtime', workDir });
@@ -58,7 +58,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-plan-toggle-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-plan-toggle-work-');
     await writeTestConfig(homeDir);
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_plan_toggle_runtime', workDir });
@@ -82,23 +82,19 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     }
   });
 
-  it('starts manual compaction with an optional instruction', async () => {
+  it('rejects manual compaction on an empty session with compaction.unable', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-compact-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-compact-work-');
     await writeTestConfig(homeDir);
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_compact_runtime', workDir });
 
-      const started = waitForSessionEvent(session, (event) => event.type === 'compaction.started');
-      await session.compact({ instruction: 'Keep important facts.' });
-
-      await expect(started).resolves.toMatchObject({
-        type: 'compaction.started',
-        trigger: 'manual',
-        instruction: 'Keep important facts.',
-      });
+      await expect(session.compact({ instruction: 'Keep important facts.' })).rejects.toMatchObject({
+        name: 'KimiError',
+        code: 'compaction.unable',
+      } satisfies Partial<KimiError>);
     } finally {
       await harness.close();
     }
@@ -108,7 +104,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-usage-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-usage-work-');
     await writeTestConfig(homeDir);
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const session = await harness.createSession({ id: 'ses_usage_runtime', workDir });
@@ -123,7 +119,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-work-');
     await writeTestConfig(homeDir);
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const created = await harness.createSession({
@@ -160,7 +156,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-legacy-plan-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-legacy-plan-work-');
     await writeTestConfig(homeDir);
-    const createdHarness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const createdHarness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
     let sessionId = '';
     let sessionDir = '';
 
@@ -181,7 +177,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
 
     await removeManualPlanIds(sessionDir);
 
-    const resumedHarness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const resumedHarness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
     try {
       const resumed = await resumedHarness.resumeSession({ id: sessionId });
 
@@ -194,18 +190,28 @@ describe('Session plan, compact, usage, and resume APIs', () => {
     }
   });
 
-  it('forks a session and returns an active fork session', async () => {
+  it('forks a session, drops goal state, and returns an active fork session', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-fork-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-fork-work-');
     await writeTestConfig(homeDir);
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       const source = await harness.createSession({
         id: 'ses_fork_runtime_source',
         workDir,
         model: 'test-model',
-        metadata: { source: true },
+        metadata: {
+          source: true,
+          goal: {
+            goalId: 'source-goal',
+            objective: 'source objective',
+            status: 'active',
+            turnsUsed: 0,
+            tokensUsed: 0,
+            budgetLimits: {},
+          },
+        },
       });
       await source.setPlanMode(true);
       const sourcePlan = await source.getPlan();
@@ -217,7 +223,17 @@ describe('Session plan, compact, usage, and resume APIs', () => {
         id: source.id,
         forkId: 'ses_fork_runtime_child',
         title: 'Forked runtime',
-        metadata: { child: true },
+        metadata: {
+          child: true,
+          goal: {
+            goalId: 'metadata-goal',
+            objective: 'metadata objective',
+            status: 'active',
+            turnsUsed: 0,
+            tokensUsed: 0,
+            budgetLimits: {},
+          },
+        },
       });
 
       expect(fork.id).toBe('ses_fork_runtime_child');
@@ -239,16 +255,22 @@ describe('Session plan, compact, usage, and resume APIs', () => {
         join(forkSummary!.sessionDir, 'agents', 'main', 'wire.jsonl'),
         'utf-8',
       );
-      const enterRecord = forkWire
+      const forkRecords = forkWire
         .trim()
         .split('\n')
-        .map((line) => JSON.parse(line) as Record<string, unknown>)
-        .find((record) => record['type'] === 'plan_mode.enter');
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const enterRecord = forkRecords.find((record) => record['type'] === 'plan_mode.enter');
       expect(enterRecord).toEqual({
         type: 'plan_mode.enter',
         id: sourcePlan.id,
         time: expect.any(Number),
       });
+      const goalReminder = forkRecords.find((record) => {
+        const message = record['message'] as { origin?: { name?: string } } | undefined;
+        return record['type'] === 'context.append_message' && message?.origin?.name === 'goal_fork_cleared';
+      });
+      expect(goalReminder).toBeDefined();
+      expect(JSON.stringify(goalReminder)).toContain('This fork does not have a current goal.');
       const forkState = JSON.parse(
         await readFile(join(forkSummary!.sessionDir, 'state.json'), 'utf-8'),
       ) as {
@@ -261,6 +283,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
       expect(forkState.forkedFrom).toBe(source.id);
       expect(forkState.agents?.main?.homedir).toBe(join(forkSummary!.sessionDir, 'agents', 'main'));
       expect(forkState.custom).toMatchObject({ source: true, child: true });
+      expect(forkState.custom).not.toHaveProperty('goal');
     } finally {
       await harness.close();
     }
@@ -268,7 +291,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
 
   it('rejects an empty resume id', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-resume-empty-home-');
-    const harness = new KimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     try {
       await expect(harness.resumeSession({ id: '   ' })).rejects.toMatchObject({

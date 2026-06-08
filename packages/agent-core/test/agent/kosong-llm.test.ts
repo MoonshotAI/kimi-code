@@ -1,6 +1,7 @@
 import {
   emptyUsage,
   type ChatProvider,
+  type ModelCapability,
   type StreamedMessagePart,
   type ToolCall,
 } from '@moonshot-ai/kosong';
@@ -83,6 +84,94 @@ describe('KosongLLM streaming tool-call deltas', () => {
   });
 });
 
+describe('KosongLLM stream timing', () => {
+  it('returns timing measured from provider request start to stream end', async () => {
+    const generate: GenerateFn = async (
+      _provider,
+      _systemPrompt,
+      _tools,
+      _history,
+      callbacks,
+      options,
+    ) => {
+      options?.onRequestStart?.();
+      await callbacks?.onMessagePart?.({ type: 'text', text: 'timed' });
+      options?.onStreamEnd?.();
+      return {
+        id: 'response-1',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'timed' }],
+          toolCalls: [],
+        },
+        usage: emptyUsage(),
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const llm = new KosongLLM({
+      provider,
+      modelName: 'test-model',
+      systemPrompt: 'system',
+      generate,
+    });
+
+    const response = await llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(response.streamTiming).toMatchObject({
+      firstTokenLatencyMs: expect.any(Number),
+      streamDurationMs: expect.any(Number),
+    });
+    expect(response.streamTiming?.firstTokenLatencyMs).toBeGreaterThanOrEqual(0);
+    expect(response.streamTiming?.streamDurationMs).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('KosongLLM completion budget', () => {
+  it('applies the model context window as the completion cap', async () => {
+    let appliedCap: number | undefined;
+    let generatedProvider: ChatProvider | undefined;
+    const providerWithBudget: ChatProvider = {
+      ...provider,
+      withMaxCompletionTokens(n: number) {
+        appliedCap = n;
+        return { ...this, withMaxCompletionTokens: this.withMaxCompletionTokens };
+      },
+    };
+    const generate: GenerateFn = async (nextProvider) => {
+      generatedProvider = nextProvider;
+      return {
+        id: 'response-1',
+        message: { role: 'assistant', content: [], toolCalls: [] },
+        usage: emptyUsage(),
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const llm = new KosongLLM({
+      provider: providerWithBudget,
+      modelName: 'test-model',
+      systemPrompt: 'system',
+      capability: makeCapability(10000),
+      completionBudgetConfig: { fallback: 32000 },
+      generate,
+    });
+
+    await llm.chat({
+      messages: [],
+      tools: [],
+      signal: new AbortController().signal,
+    });
+
+    expect(appliedCap).toBe(10000);
+    expect(generatedProvider).not.toBe(providerWithBudget);
+  });
+});
+
 async function collectToolCallDeltas(
   parts: readonly StreamedMessagePart[],
 ): Promise<ToolCallDelta[]> {
@@ -129,4 +218,15 @@ function isToolCall(part: StreamedMessagePart): part is ToolCall {
 function stripStreamIndex(toolCall: ToolCall): ToolCall {
   const { _streamIndex: _, ...rest } = toolCall;
   return rest;
+}
+
+function makeCapability(maxContextTokens: number): ModelCapability {
+  return {
+    image_in: false,
+    video_in: false,
+    audio_in: false,
+    thinking: false,
+    tool_use: true,
+    max_context_tokens: maxContextTokens,
+  };
 }

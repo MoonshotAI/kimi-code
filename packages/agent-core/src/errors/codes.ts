@@ -34,6 +34,14 @@ export const ErrorCodes = {
   AGENT_NOT_FOUND: 'agent.not_found',
   TURN_AGENT_BUSY: 'turn.agent_busy',
 
+  GOAL_ALREADY_EXISTS: 'goal.already_exists',
+  GOAL_NOT_FOUND: 'goal.not_found',
+  GOAL_OBJECTIVE_EMPTY: 'goal.objective_empty',
+  GOAL_OBJECTIVE_TOO_LONG: 'goal.objective_too_long',
+  GOAL_STATUS_INVALID: 'goal.status_invalid',
+  GOAL_METADATA_RESERVED: 'goal.metadata_reserved',
+  GOAL_NOT_RESUMABLE: 'goal.not_resumable',
+
   MODEL_NOT_CONFIGURED: 'model.not_configured',
   MODEL_CONFIG_INVALID: 'model.config_invalid',
   AUTH_LOGIN_REQUIRED: 'auth.login_required',
@@ -51,12 +59,16 @@ export const ErrorCodes = {
 
   RECORDS_WRITE_FAILED: 'records.write_failed',
   COMPACTION_FAILED: 'compaction.failed',
+  COMPACTION_UNABLE: 'compaction.unable',
 
   BACKGROUND_TASK_ID_EMPTY: 'background.task_id_empty',
   MCP_SERVER_NOT_FOUND: 'mcp.server_not_found',
   MCP_SERVER_DISABLED: 'mcp.server_disabled',
   MCP_STARTUP_FAILED: 'mcp.startup_failed',
   MCP_TOOL_NAME_COLLISION: 'mcp.tool_name_collision',
+
+  PLUGIN_NOT_FOUND: 'plugin.not_found',
+  PLUGIN_LOAD_FAILED: 'plugin.load_failed',
 
   REQUEST_INVALID: 'request.invalid',
   REQUEST_WORK_DIR_REQUIRED: 'request.work_dir_required',
@@ -217,6 +229,49 @@ export const KIMI_ERROR_INFO = {
     action: 'Wait for the current turn to finish or steer it.',
   },
 
+  'goal.already_exists': {
+    title: 'A goal is already active',
+    retryable: false,
+    public: true,
+    action: 'Use `/goal replace <objective>` to replace the current goal.',
+  },
+  'goal.not_found': {
+    title: 'No goal found',
+    retryable: false,
+    public: true,
+    action: 'Start a goal with `/goal <objective>` first.',
+  },
+  'goal.objective_empty': {
+    title: 'Goal objective is empty',
+    retryable: false,
+    public: true,
+    action: 'Provide a non-empty objective.',
+  },
+  'goal.objective_too_long': {
+    title: 'Goal objective is too long',
+    retryable: false,
+    public: true,
+    action: 'Keep the objective under 4000 characters; reference long details by file path.',
+  },
+  'goal.status_invalid': {
+    title: 'Invalid goal status transition',
+    retryable: false,
+    public: true,
+    action: 'Use a status allowed for this actor (complete, blocked, or impossible).',
+  },
+  'goal.metadata_reserved': {
+    title: 'Goal metadata is reserved',
+    retryable: false,
+    public: true,
+    action: 'Do not write metadata.custom.goal directly; use the goal lifecycle methods.',
+  },
+  'goal.not_resumable': {
+    title: 'Goal is not resumable',
+    retryable: false,
+    public: true,
+    action: 'Only paused goals can be resumed.',
+  },
+
   'model.not_configured': {
     title: 'No model configured',
     retryable: false,
@@ -304,6 +359,12 @@ export const KIMI_ERROR_INFO = {
     public: true,
     action: 'Inspect logs and consider increasing compaction limits.',
   },
+  'compaction.unable': {
+    title: 'Unable to compact',
+    retryable: false,
+    public: true,
+    action: 'The current history has no prefix that can be compacted (e.g. only a pending user message). Start a new turn or session instead.',
+  },
 
   'background.task_id_empty': {
     title: 'Background task id is empty',
@@ -334,6 +395,19 @@ export const KIMI_ERROR_INFO = {
     retryable: false,
     public: true,
     action: 'Rename one of the colliding MCP tools or servers so their qualified names are unique.',
+  },
+
+  'plugin.not_found': {
+    title: 'Plugin not found',
+    retryable: false,
+    public: true,
+    action: 'List installed plugins via /plugins and check the requested id.',
+  },
+  'plugin.load_failed': {
+    title: 'Plugin state failed to load',
+    retryable: true,
+    public: true,
+    action: 'Fix the installed.json file under $KIMI_CODE_HOME/plugins/ and run /plugins reload.',
   },
 
   'request.invalid': {

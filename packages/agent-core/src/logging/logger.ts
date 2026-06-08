@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join } from 'pathe';
 
 import { extractError, formatEntry, redactCtx } from './formatter';
 import { RotatingFileSink } from './sinks';
@@ -122,21 +122,19 @@ class RootLoggerImpl implements RootLogger {
     if (config === undefined || config.level === 'off') return;
     if (!levelEnabled(config.level, entry.level)) return;
 
-    const formatted = formatEntry(entry);
-    if (formatted.dropped) return;
-
-    this.globalSink?.enqueue(formatted.text + '\n');
-
     const session = this.resolveSessionEntry(entry);
     if (session !== undefined) {
-      const omitContextKeys =
-        entry.msg === 'llm request' ? llmRequestSessionLogOmittedKeys(entry) : undefined;
+      const omitContextKeys = llmRequestSessionLogOmittedKeys(entry);
       const sessionFormatted = formatEntry(entry, {
         omitContextKeys,
       });
       if (!sessionFormatted.dropped) {
         session.sink.enqueue(sessionFormatted.text + '\n');
       }
+    } else {
+      const formatted = formatEntry(entry);
+      if (formatted.dropped) return;
+      this.globalSink?.enqueue(formatted.text + '\n');
     }
   }
 

@@ -56,6 +56,8 @@ const mocks = vi.hoisted(() => {
     withTelemetryContext: vi.fn(() => ({
       track: lifecycleTrack,
     })),
+    resolveKimiHome: vi.fn((homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home'),
+    harnessCreatesDeviceIdOnConstruction: false,
     execSync: vi.fn(),
     TuiConfigParseError,
   };
@@ -65,19 +67,24 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();
   return {
     ...actual,
-    KimiHarness: class {
-      homeDir = '/tmp/kimi-code-test-home';
-      auth = {
-        getCachedAccessToken: mocks.harnessGetCachedAccessToken,
-      };
-      ensureConfigFile = mocks.harnessEnsureConfigFile;
-      getConfig = mocks.harnessGetConfig;
-      close = mocks.harnessClose;
-      track = mocks.harnessTrack;
-
-      constructor(...args: unknown[]) {
-        mocks.kimiHarnessConstructor(...args);
+    resolveKimiHome: mocks.resolveKimiHome,
+    createKimiHarness: (...args: unknown[]) => {
+      const options = args[0] as { readonly homeDir?: string } | undefined;
+      const homeDir = options?.homeDir ?? '/tmp/kimi-code-test-home';
+      if (mocks.harnessCreatesDeviceIdOnConstruction) {
+        mocks.createKimiDeviceId(homeDir);
       }
+      mocks.kimiHarnessConstructor(...args);
+      return {
+        homeDir,
+        auth: {
+          getCachedAccessToken: mocks.harnessGetCachedAccessToken,
+        },
+        ensureConfigFile: mocks.harnessEnsureConfigFile,
+        getConfig: mocks.harnessGetConfig,
+        close: mocks.harnessClose,
+        track: mocks.harnessTrack,
+      };
     },
   };
 });
@@ -145,6 +152,11 @@ describe('runShell', () => {
     mocks.tuiGetStartupMcpMs.mockResolvedValue(0);
     mocks.tuiGetCurrentSessionId.mockReturnValue('');
     mocks.tuiHasSessionContent.mockReturnValue(false);
+    mocks.createKimiDeviceId.mockImplementation(() => 'device-1');
+    mocks.resolveKimiHome.mockImplementation(
+      (homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home',
+    );
+    mocks.harnessCreatesDeviceIdOnConstruction = false;
   });
 
   it('constructs KimiHarness and KimiTUI with startup input', async () => {
@@ -161,6 +173,7 @@ describe('runShell', () => {
       session: undefined,
       continue: false,
       yolo: true,
+      auto: false,
       plan: true,
       model: undefined,
       outputFormat: undefined,
@@ -219,6 +232,7 @@ describe('runShell', () => {
     expect(mocks.lifecycleTrack).toHaveBeenCalledWith('started', {
       resumed: false,
       yolo: true,
+      auto: false,
       plan: true,
       afk: false,
     });
@@ -248,6 +262,7 @@ describe('runShell', () => {
         session: undefined,
         continue: false,
         yolo: false,
+        auto: false,
         plan: false,
         model: undefined,
         outputFormat: undefined,
@@ -260,6 +275,53 @@ describe('runShell', () => {
     expect(mocks.createKimiDeviceId).toHaveBeenCalledWith(
       '/tmp/kimi-code-test-home',
       expect.objectContaining({ onFirstLaunch: expect.any(Function) }),
+    );
+    expect(mocks.harnessTrack).toHaveBeenCalledWith('first_launch');
+  });
+
+  it('registers first launch before harness construction can create the device id', async () => {
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+    mocks.harnessCreatesDeviceIdOnConstruction = true;
+    const createdHomes = new Set<string>();
+    mocks.createKimiDeviceId.mockImplementation((homeDir, options) => {
+      const deviceId = `device-for-${homeDir}`;
+      if (!createdHomes.has(homeDir)) {
+        createdHomes.add(homeDir);
+        options?.onFirstLaunch?.(deviceId);
+      }
+      return deviceId;
+    });
+
+    await runShell(
+      {
+        session: undefined,
+        continue: false,
+        yolo: false,
+        auto: false,
+        plan: false,
+        model: undefined,
+        outputFormat: undefined,
+        prompt: undefined,
+        skillsDirs: [],
+      },
+      '1.2.3-test',
+    );
+
+    expect(mocks.createKimiDeviceId).toHaveBeenNthCalledWith(
+      1,
+      '/tmp/kimi-code-test-home',
+      expect.objectContaining({ onFirstLaunch: expect.any(Function) }),
+    );
+    expect(mocks.createKimiDeviceId.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.kimiHarnessConstructor.mock.invocationCallOrder[0]!,
+    );
+    expect(mocks.kimiHarnessConstructor).toHaveBeenCalledWith(
+      expect.objectContaining({ homeDir: '/tmp/kimi-code-test-home' }),
     );
     expect(mocks.harnessTrack).toHaveBeenCalledWith('first_launch');
   });
@@ -278,6 +340,7 @@ describe('runShell', () => {
         session: 'ses-1',
         continue: false,
         yolo: false,
+        auto: false,
         plan: false,
         model: undefined,
         outputFormat: undefined,
@@ -290,6 +353,7 @@ describe('runShell', () => {
     expect(mocks.lifecycleTrack).toHaveBeenCalledWith('started', {
       resumed: true,
       yolo: false,
+      auto: false,
       plan: false,
       afk: false,
     });
@@ -314,6 +378,7 @@ describe('runShell', () => {
         session: undefined,
         continue: false,
         yolo: false,
+        auto: false,
         plan: false,
         model: undefined,
         outputFormat: undefined,
@@ -346,6 +411,7 @@ describe('runShell', () => {
         session: undefined,
         continue: false,
         yolo: false,
+        auto: false,
         plan: false,
         model: undefined,
         outputFormat: undefined,
@@ -396,6 +462,7 @@ describe('runShell', () => {
         session: '',
         continue: false,
         yolo: false,
+        auto: false,
         plan: false,
         model: undefined,
         outputFormat: undefined,
@@ -432,6 +499,7 @@ describe('runShell', () => {
           session: undefined,
           continue: false,
           yolo: false,
+        auto: false,
           plan: false,
           model: undefined,
           outputFormat: undefined,
@@ -468,6 +536,7 @@ describe('runShell', () => {
           session: undefined,
           continue: false,
           yolo: false,
+        auto: false,
           plan: false,
           model: undefined,
           outputFormat: undefined,
@@ -520,6 +589,7 @@ describe('runShell', () => {
           session: undefined,
           continue: false,
           yolo: false,
+        auto: false,
           plan: false,
           model: undefined,
           outputFormat: undefined,

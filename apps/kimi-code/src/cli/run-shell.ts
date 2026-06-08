@@ -2,18 +2,21 @@ import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { createKimiDeviceId, KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import {
-  initializeTelemetry,
   setCrashPhase,
   setTelemetryContext,
   shutdownTelemetry,
   track,
   withTelemetryContext,
 } from '@moonshot-ai/kimi-telemetry';
-import { KimiHarness, log, type TelemetryClient } from '@moonshot-ai/kimi-code-sdk';
+import {
+  createKimiHarness,
+  log,
+  type KimiHarness,
+  type TelemetryClient,
+} from '@moonshot-ai/kimi-code-sdk';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
+import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
 import { detectPendingMigration } from '#/migration/index';
 import type { TuiConfig } from '#/tui/config';
 import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';
@@ -22,6 +25,7 @@ import { KimiTUI } from '#/tui/index';
 import { detectTerminalTheme } from '#/tui/theme/detect';
 
 import type { CLIOptions } from './options';
+import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
 import { createKimiCodeHostIdentity } from './version';
 
 export async function runShell(
@@ -46,12 +50,14 @@ export async function runShell(
   const resolvedTheme = tuiConfig.theme === 'auto' ? await detectTerminalTheme() : tuiConfig.theme;
 
   const workDir = process.cwd();
+  const telemetryBootstrap = createCliTelemetryBootstrap();
   const telemetryClient: TelemetryClient = {
     track,
     withContext: withTelemetryContext,
     setContext: setTelemetryContext,
   };
-  const harness = new KimiHarness({
+  const harness = createKimiHarness({
+    homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
     telemetry: telemetryClient,
     onOAuthRefresh: (outcome) => {
@@ -72,6 +78,7 @@ export async function runShell(
     platform: `${process.platform}/${process.arch}`,
     workDir,
   });
+
   await harness.ensureConfigFile();
   const migrationPlan = await detectPendingMigration({
     sourceHome: join(homedir(), '.kimi'),
@@ -96,28 +103,15 @@ export async function runShell(
     migrateOnly: runOptions.migrateOnly,
   });
 
-  let firstLaunch = false;
-  const deviceId = createKimiDeviceId(harness.homeDir, {
-    onFirstLaunch: () => {
-      firstLaunch = true;
-    },
-  });
-  initializeTelemetry({
-    homeDir: harness.homeDir,
-    deviceId,
-    enabled: config.telemetry !== false,
-    appName: CLI_USER_AGENT_PRODUCT,
+  initializeCliTelemetry({
+    harness,
+    bootstrap: telemetryBootstrap,
+    config,
     version,
     uiMode: CLI_UI_MODE,
-    model: config.defaultModel,
-    getAccessToken: async () =>
-      (await harness.auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
   });
   setCrashPhase('runtime');
 
-  if (firstLaunch) {
-    harness.track('first_launch');
-  }
   const resumed = opts.continue || opts.session !== undefined;
   const trackLifecycleForSession = (
     sessionId: string,
@@ -159,6 +153,7 @@ export async function runShell(
     trackLifecycle('started', {
       resumed,
       yolo: opts.yolo,
+      auto: opts.auto,
       plan: opts.plan,
       afk: false,
     });

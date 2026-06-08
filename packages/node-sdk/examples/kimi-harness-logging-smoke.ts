@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { KimiHarness, log } from '@moonshot-ai/kimi-code-sdk';
+import { createKimiHarness, log } from '@moonshot-ai/kimi-code-sdk';
 
 const SESSION_LOG = 'logs/kimi-code.log';
 const GLOBAL_LOG = 'logs/global/kimi-code.log';
@@ -72,7 +72,7 @@ async function main(): Promise<void> {
   const globalOnly = `SMOKE_GLOBAL_ONLY_${runId}`;
   const longEntry = `SMOKE_LONG_TRUNCATED_${runId}`;
   const finalEntry = `SMOKE_FINAL_AFTER_ROTATION_SHOULD_APPEAR_${runId}`;
-  const harness = new KimiHarness({
+  const harness = createKimiHarness({
     identity: { userAgentProduct: 'kimi-code-cli', version: '0.1.1' },
     homeDir: TEST_HOME,
   });

@@ -74,6 +74,41 @@ describe('CLI options parsing', () => {
     });
   });
 
+  describe('hidden plugin node runner', () => {
+    it('routes __plugin_run_node without calling the main action', () => {
+      const pluginRunnerCalls: Array<{ entry: string; args: readonly string[] }> = [];
+      const program = createProgram(
+        '0.0.0',
+        () => {
+          throw new Error('main action should not run');
+        },
+        () => {},
+        (entry, args) => {
+          pluginRunnerCalls.push({ entry, args });
+        },
+      );
+      program.exitOverride();
+      program.configureOutput({
+        writeOut: () => {},
+        writeErr: () => {},
+      });
+
+      program.parse([
+        'node',
+        'kimi',
+        '__plugin_run_node',
+        '/plugin/tool.mjs',
+        '--',
+        'query',
+        '--flag',
+      ]);
+
+      expect(pluginRunnerCalls).toEqual([
+        { entry: '/plugin/tool.mjs', args: ['query', '--flag'] },
+      ]);
+    });
+  });
+
   describe('--yolo family', () => {
     it('--yolo sets yolo to true', () => {
       expect(parse(['--yolo']).yolo).toBe(true);
@@ -221,10 +256,44 @@ describe('CLI options parsing', () => {
   });
 
   describe('sub-commands', () => {
-    it('registers the diagnostic sub-commands during alpha', () => {
+    it('routes upgrade without calling the main action', () => {
+      let upgradeCalls = 0;
+      const program = createProgram(
+        '0.0.0',
+        () => {
+          throw new Error('main action should not run');
+        },
+        () => {},
+        () => {},
+        () => {
+          upgradeCalls += 1;
+        },
+      );
+      program.exitOverride();
+      program.configureOutput({
+        writeOut: () => {},
+        writeErr: () => {},
+      });
+
+      program.parse(['node', 'kimi', 'upgrade']);
+
+      expect(upgradeCalls).toBe(1);
+    });
+
+    it('registers the visible sub-commands', () => {
       const program = createProgram('0.0.0', () => {}, () => {});
-      const commandNames: string[] = program.commands.map((command) => command.name());
-      expect(commandNames).toEqual(['export', 'migrate']);
+      const commandNames: string[] = program.commands
+        .filter((command) => !command.name().startsWith('__'))
+        .map((command) => command.name());
+      expect(commandNames).toEqual([
+        'export',
+        'provider',
+        'acp',
+        'login',
+        'doctor',
+        'migrate',
+        'upgrade',
+      ]);
     });
   });
 

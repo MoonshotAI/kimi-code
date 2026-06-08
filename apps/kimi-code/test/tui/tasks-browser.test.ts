@@ -44,6 +44,7 @@ function fakeTerminal(rows: number, columns = 120): Terminal {
 function task(overrides: Partial<BackgroundTaskInfo> = {}): BackgroundTaskInfo {
   return {
     taskId: 'bash-abcd1234',
+    kind: 'process',
     command: 'npm run dev',
     description: 'dev server',
     status: 'running',
@@ -52,7 +53,7 @@ function task(overrides: Partial<BackgroundTaskInfo> = {}): BackgroundTaskInfo {
     startedAt: Date.now() - 60_000,
     endedAt: null,
     ...overrides,
-  };
+  } as BackgroundTaskInfo;
 }
 
 function makeProps(overrides: Partial<TasksBrowserProps> = {}): TasksBrowserProps {
@@ -152,6 +153,30 @@ describe('TasksBrowserApp — full-screen rendering', () => {
     expect(out).toContain('long running task');
   });
 
+  it('shows question task details in the Detail pane', () => {
+    const out = strip(
+      makeApp({
+        tasks: [
+          task({
+            taskId: 'question-aaaaaaaa',
+            kind: 'question',
+            description: 'Which database?',
+            questionCount: 1,
+            toolCallId: 'call_question',
+          }),
+        ],
+        selectedTaskId: 'question-aaaaaaaa',
+      })
+        .render(120)
+        .join('\n'),
+    );
+    expect(out).toContain('question-aaaaaaaa');
+    expect(out).toContain('Questions:');
+    expect(out).toContain('1');
+    expect(out).toContain('Tool call:');
+    expect(out).toContain('call_question');
+  });
+
   it('renders tail output in the Preview Output pane', () => {
     const out = strip(
       makeApp({
@@ -197,7 +222,6 @@ describe('TasksBrowserApp — full-screen rendering', () => {
   it('renders without throwing for every BackgroundTaskStatus', () => {
     const statuses: BackgroundTaskStatus[] = [
       'running',
-      'awaiting_approval',
       'completed',
       'failed',
       'killed',

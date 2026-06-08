@@ -15,6 +15,9 @@ tools:
   - TaskList
   - TaskOutput
   - TaskStop
+  - CronCreate
+  - CronList
+  - CronDelete
   - ReadMediaFile
   - TodoList
   - Skill
@@ -24,6 +27,10 @@ tools:
   - AskUserQuestion
   - EnterPlanMode
   - ExitPlanMode
+  - CreateGoal
+  - GetGoal
+  - SetGoalBudget
+  - UpdateGoal
   - mcp__*
 
 subagents:
