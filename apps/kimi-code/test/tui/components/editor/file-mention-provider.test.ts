@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -121,6 +121,19 @@ describe('FileMentionProvider', () => {
 
     expect(result).not.toBeNull();
     expect(result!.items.map((item) => item.value)).toContain('@"my folder/"');
+  });
+
+  it('filesystem fallback does not recurse into symlinked directories', async () => {
+    writeFileSync(join(workDir, 'target.txt'), 'target');
+    symlinkSync('.', join(workDir, 'current'), 'dir');
+    const provider = new FileMentionProvider([], workDir, NO_FD);
+
+    const result = await provider.getSuggestions(['@target'], 0, 7, { signal: ctrl() });
+
+    expect(result).not.toBeNull();
+    const values = result!.items.map((item) => item.value);
+    expect(values).toContain('@target.txt');
+    expect(values.some((value) => value.startsWith('@current/'))).toBe(false);
   });
 
   it('delegates path suggestions to pi-tui for regular path completion', async () => {

@@ -144,8 +144,9 @@ function collectFsMentionCandidates(workDir: string, signal: AbortSignal): FsMen
       if (entry.name === '.git') continue;
 
       const relativePath = normalizePath(relativeDir.length === 0 ? entry.name : join(relativeDir, entry.name));
+      const isSymlink = entry.isSymbolicLink();
       let isDirectory = entry.isDirectory();
-      if (!isDirectory && entry.isSymbolicLink()) {
+      if (!isDirectory && isSymlink) {
         try {
           isDirectory = statSync(join(workDir, relativePath)).isDirectory();
         } catch {
@@ -154,7 +155,7 @@ function collectFsMentionCandidates(workDir: string, signal: AbortSignal): FsMen
       }
 
       result.push({ path: relativePath, isDirectory });
-      if (isDirectory) {
+      if (isDirectory && !isSymlink) {
         stack.push(relativePath);
       }
     }
