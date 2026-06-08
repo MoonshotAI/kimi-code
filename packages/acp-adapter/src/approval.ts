@@ -157,8 +157,16 @@ export function permissionResponseToApprovalResponse(
   }
   switch (optionId) {
     case APPROVE_ONCE_OPTION_ID:
+    // Legacy Python kimi-cli (< v0.9.0) used 'approve' as the
+    // allow-once optionId. Keep accepting it so custom ACP clients
+    // built against the old SDK are not silently rejected.
+    case 'approve':
       return { decision: 'approved' };
     case APPROVE_ALWAYS_OPTION_ID:
+    // Legacy Python kimi-cli (< v0.9.0) used 'approve_for_session' as
+    // the allow-always optionId. Same backward-compatibility rationale
+    // as the 'approve' branch above.
+    case 'approve_for_session':
       return { decision: 'approved', scope: 'session' };
     case REJECT_OPTION_ID:
       return { decision: 'rejected' };

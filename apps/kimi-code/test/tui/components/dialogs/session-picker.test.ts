@@ -17,6 +17,27 @@ describe('SessionPickerComponent', () => {
     vi.restoreAllMocks();
   });
 
+  it('forwards Ctrl-C and Ctrl-D to optional host shortcuts', () => {
+    const onCtrlC = vi.fn();
+    const onCtrlD = vi.fn();
+    const component = new SessionPickerComponent({
+      sessions: [],
+      loading: false,
+      currentSessionId: '',
+      colors: getColorPalette('dark'),
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+      onCtrlC,
+      onCtrlD,
+    });
+
+    component.handleInput('\u0003');
+    component.handleInput('\u0004');
+
+    expect(onCtrlC).toHaveBeenCalledOnce();
+    expect(onCtrlD).toHaveBeenCalledOnce();
+  });
+
   it('renders millisecond updated_at timestamps as relative times', () => {
     const now = new Date('2026-05-11T12:00:00.000Z').getTime();
     vi.spyOn(Date, 'now').mockReturnValue(now);

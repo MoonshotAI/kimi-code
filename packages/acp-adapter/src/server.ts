@@ -7,6 +7,7 @@
  */
 
 import { Readable, Writable } from 'node:stream';
+import { randomUUID } from 'node:crypto';
 
 import {
   AgentSideConnection,
@@ -16,6 +17,7 @@ import {
   type AgentCapabilities,
   type AuthenticateRequest,
   type AuthenticateResponse,
+  type AvailableCommand,
   type CancelNotification,
   type ClientCapabilities,
   type Implementation,
@@ -44,9 +46,11 @@ import {
 } from '@agentclientprotocol/sdk';
 import type { KimiHarness, Session, SessionSummary } from '@moonshot-ai/kimi-code-sdk';
 import { log } from '@moonshot-ai/kimi-code-sdk';
+import { LocalKaos, type Kaos } from '@moonshot-ai/kaos';
 
 import { TERMINAL_AUTH_METHOD, buildTerminalAuthMethod } from './auth-methods';
 import { redirectConsoleToStderr } from './log-guard';
+import { AcpKaos } from './kaos-acp';
 import { AcpSession, type TelemetryTrackFn } from './session';
 import { buildSessionConfigOptions } from './config-options';
 import { availableCommandsUpdateNotification } from './events-map';
@@ -54,6 +58,51 @@ import { acpMcpServersToConfigs } from './mcp';
 import { listModelsFromHarness } from './model-catalog';
 import { DEFAULT_MODE_ID } from './modes';
 import { negotiateVersion, type AcpVersionSpec } from './version';
+
+/**
+ * Per-session snapshot returned by the {@link AcpServer} caller's
+ * `slashCommands` resolver. Carries both what gets advertised in the
+ * `available_commands_update` push and the `skillCommandMap` that
+ * {@link AcpSession.prompt} consults to intercept `/skill:<name>`
+ * inputs and route them to {@link Session.activateSkill}.
+ *
+ * `skillCommandMap` is optional for backward compatibility: callers
+ * that pre-date slash-command routing (or that only advertise builtin
+ * commands) can omit it and get the previous "always passthrough"
+ * behavior.
+ */
+export interface SlashCommandsSnapshot {
+  readonly commands: ReadonlyArray<AvailableCommand>;
+  readonly skillCommandMap?: ReadonlyMap<string, string>;
+}
+
+type SlashCommandsResolver =
+  | ReadonlyArray<AvailableCommand>
+  | SlashCommandsSnapshot
+  | ((
+      session: Session,
+    ) =>
+      | Promise<ReadonlyArray<AvailableCommand> | SlashCommandsSnapshot>
+      | ReadonlyArray<AvailableCommand>
+      | SlashCommandsSnapshot);
+
+interface ResolvedSlashCommands {
+  readonly commands: ReadonlyArray<AvailableCommand>;
+  readonly skillCommandMap: ReadonlyMap<string, string>;
+}
+
+function toResolvedSlashCommands(
+  input: ReadonlyArray<AvailableCommand> | SlashCommandsSnapshot,
+): ResolvedSlashCommands {
+  if (Array.isArray(input)) {
+    return { commands: input, skillCommandMap: new Map() };
+  }
+  const snap = input as SlashCommandsSnapshot;
+  return {
+    commands: snap.commands,
+    skillCommandMap: snap.skillCommandMap ?? new Map(),
+  };
+}
 
 /**
  * Inline auth gate — moved out of `KimiAuthFacade.hasUsableToken()` so
@@ -85,6 +134,16 @@ export class AcpServer implements Agent {
   private readonly agentInfo: Implementation | undefined;
   private readonly terminalAuthEnv: Readonly<Record<string, string>> | undefined;
   private readonly terminalAuthLegacyCommand: string | undefined;
+  private readonly resolveSlashCommands: (
+    session: Session,
+  ) => Promise<ResolvedSlashCommands>;
+  /**
+   * Lazily-built inner {@link Kaos} (a {@link LocalKaos}) used as the
+   * delegate target for every {@link AcpKaos} this server hands out.
+   * One per server (not per session) so we don't re-probe the
+   * environment for every `session/new` call.
+   */
+  private innerKaos: Kaos | undefined = undefined;
 
   constructor(
     private readonly harness: KimiHarness,
@@ -107,11 +166,34 @@ export class AcpServer implements Agent {
        * directly. Defaults to undefined (the `_meta` fallback is omitted).
        */
       terminalAuthLegacyCommand?: string;
+      /**
+       * Slash commands to advertise in the one-shot
+       * `available_commands_update` pushed immediately after each
+       * `session/new`, `session/load`, and `session/resume`. Accepts
+       * either a static array, or a resolver called once per session
+       * (with the just-created `Session`) so per-session sources like
+       * `session.listSkills()` can be merged in. When omitted, the
+       * adapter falls back to an empty list.
+       *
+       * Returning a {@link SlashCommandsSnapshot} (`{ commands, skillCommandMap }`)
+       * additionally lets {@link AcpSession.prompt} intercept
+       * `/skill:<name> ...` inputs at the adapter boundary and route
+       * them to {@link Session.activateSkill} instead of forwarding the
+       * raw slash text — matching the TUI's slash-command behavior so
+       * skill activations don't fall back to model-driven Bash
+       * exploration of `~/.kimi-code/skills/`.
+       */
+      slashCommands?: SlashCommandsResolver;
     },
   ) {
     this.agentInfo = opts?.agentInfo;
     this.terminalAuthEnv = opts?.terminalAuthEnv;
     this.terminalAuthLegacyCommand = opts?.terminalAuthLegacyCommand;
+    const slash = opts?.slashCommands;
+    this.resolveSlashCommands =
+      typeof slash === 'function'
+        ? async (session) => toResolvedSlashCommands(await slash(session))
+        : async () => toResolvedSlashCommands(slash ?? []);
   }
 
   /** Returns the {@link AcpVersionSpec} chosen during `initialize`, if any. */
@@ -138,7 +220,7 @@ export class AcpServer implements Agent {
       promptCapabilities: {
         image: true,
         audio: false,
-        embeddedContext: false,
+        embeddedContext: true,
       },
       mcpCapabilities: {
         http: true,
@@ -184,13 +266,6 @@ export class AcpServer implements Agent {
     // if the SDK ever switches from spread-passthrough to explicit field
     // copy, this line breaks and we revisit the boundary.
     const mcpServers = acpMcpServersToConfigs(params.mcpServers);
-    const session = await this.harness.createSession({
-      workDir: params.cwd,
-      // @ts-expect-error — `mcpServers` is a kernel-side extension
-      // (agent-core `CreateSessionPayload`) the SDK transparently
-      // forwards via spread. See block comment above.
-      mcpServers,
-    });
     if (!this.conn) {
       // Defensive: every code path that constructs `AcpServer` (the
       // runners below, and any test that intends to drive `newSession`)
@@ -199,6 +274,25 @@ export class AcpServer implements Agent {
       // connection mid-stream.
       throw RequestError.internalError(undefined, 'AcpServer is missing its AgentSideConnection');
     }
+    // Pre-mint the session id so the optional `AcpKaos` (built when the
+    // client advertised `fs.readTextFile` / `fs.writeTextFile`) carries
+    // the correct reverse-RPC channel for the same session the kernel
+    // is about to construct. Boundary injection — the kaos is captured
+    // by the kernel `SessionImpl` ctor and every tool downstream sees
+    // the same reference, no AsyncLocalStorage needed.
+    const sessionId = `session_${randomUUID()}`;
+    const acpKaos = await this.maybeBuildAcpKaos(sessionId);
+    const persistenceKaos = acpKaos === undefined ? undefined : await this.ensureInnerKaos();
+    const session = await this.harness.createSession({
+      id: sessionId,
+      workDir: params.cwd,
+      kaos: acpKaos,
+      persistenceKaos,
+      // @ts-expect-error — `mcpServers` is a kernel-side extension
+      // (agent-core `CreateSessionPayload`) the SDK transparently
+      // forwards via spread. See block comment above.
+      mcpServers,
+    });
     const currentModelId = await this.resolveCurrentModelId();
     const currentThinkingEnabled = await this.resolveCurrentThinkingEnabled();
     const acpSession = new AcpSession(
@@ -216,7 +310,6 @@ export class AcpServer implements Agent {
     // property set is deliberately minimal: `mode` distinguishes
     // `newSession` from `loadSession`; no user content / PII.
     this.trackSessionStarted(session.id, 'new');
-    await this.emitAvailableCommandsUpdate(session.id);
     // Phase 14 (PLAN D11) advertises both the model and mode pickers as
     // a unified `configOptions: SessionConfigOption[]` surface. The
     // dedicated Phase 12 `modes:` field is gone — see
@@ -229,14 +322,16 @@ export class AcpServer implements Agent {
     // current model's catalog row advertises `thinkingSupported`;
     // Phase 16 reshaped that toggle from `boolean` to a 2-entry
     // `select` so Zed actually renders it.
+    const configOptions = await buildSessionConfigOptions(
+      this.harness,
+      currentModelId,
+      currentThinkingEnabled,
+      DEFAULT_MODE_ID,
+    );
+    this.scheduleAvailableCommandsUpdate(session.id);
     return {
       sessionId: session.id,
-      configOptions: await buildSessionConfigOptions(
-        this.harness,
-        currentModelId,
-        currentThinkingEnabled,
-        DEFAULT_MODE_ID,
-      ),
+      configOptions,
     };
   }
 
@@ -278,7 +373,7 @@ export class AcpServer implements Agent {
     // its own UI bootstrap. This is the ONE difference vs.
     // `resumeSession`, which intentionally omits this step.
     await acpSession.replayHistory();
-    await this.emitAvailableCommandsUpdate(session.id);
+    this.scheduleAvailableCommandsUpdate(session.id);
     return { configOptions };
   }
 
@@ -311,7 +406,7 @@ export class AcpServer implements Agent {
     // can observe which clients adopt the lighter-weight resume
     // surface vs the history-replaying load surface. No PII.
     this.trackSessionStarted(session.id, 'resume');
-    await this.emitAvailableCommandsUpdate(session.id);
+    this.scheduleAvailableCommandsUpdate(session.id);
     return { configOptions };
   }
 
@@ -363,10 +458,14 @@ export class AcpServer implements Agent {
     // `resumeSession` spreads `input` so unknown fields ride to the
     // kernel.
     const mcpServers = acpMcpServersToConfigs(params.mcpServers);
+    const acpKaos = await this.maybeBuildAcpKaos(params.sessionId);
+    const persistenceKaos = acpKaos === undefined ? undefined : await this.ensureInnerKaos();
     let session: Session;
     try {
       session = await this.harness.resumeSession({
         id: params.sessionId,
+        kaos: acpKaos,
+        persistenceKaos,
         // @ts-expect-error — see block comment above; mcpServers is a
         // kernel-only field that the SDK forwards via spread.
         mcpServers,
@@ -425,6 +524,38 @@ export class AcpServer implements Agent {
       DEFAULT_MODE_ID,
     );
     return { session, acpSession, configOptions };
+  }
+
+  /**
+   * Build an {@link AcpKaos} for a given session id if (and only if)
+   * the client advertised any FS reverse-RPC capability. Returns
+   * `undefined` otherwise — the caller then omits the `kaos` field
+   * from `harness.createSession`/`resumeSession`, leaving the kernel
+   * to fall back to its process-wide {@link LocalKaos}.
+   *
+   * The inner {@link LocalKaos} is built lazily on the first capable
+   * session and cached on `this.innerKaos`; subsequent sessions reuse
+   * it. The resulting {@link AcpKaos} is captured by the kernel
+   * `SessionImpl` ctor and every tool downstream sees the same
+   * reference — no AsyncLocalStorage involved.
+   */
+  private async maybeBuildAcpKaos(sessionId: string): Promise<AcpKaos | undefined> {
+    const fs = this.clientCapabilities?.fs;
+    if (!fs?.readTextFile && !fs?.writeTextFile) {
+      return undefined;
+    }
+    if (!this.conn) {
+      return undefined;
+    }
+    const innerKaos = await this.ensureInnerKaos();
+    return new AcpKaos(this.conn, sessionId, innerKaos);
+  }
+
+  private async ensureInnerKaos(): Promise<Kaos> {
+    if (!this.innerKaos) {
+      this.innerKaos = await LocalKaos.create();
+    }
+    return this.innerKaos;
   }
 
   /**
@@ -761,30 +892,34 @@ export class AcpServer implements Agent {
     };
   }
 
-  /**
-   * Push the one-shot `available_commands_update` session_update that
-   * ACP clients use to populate a slash-command palette. Called once
-   * per session, immediately after the {@link AcpSession} is
-   * registered (so the wire id is stable when the notification
-   * arrives) but before the public RPC reply is returned (so a client
-   * that synchronously sets up listeners on session creation cannot
-   * miss the event).
-   *
-   * The kimi-code slash-command registry lives in
-   * `apps/kimi-code/src/tui/commands/registry.ts` — i.e. an app-level
-   * concern that the acp-adapter (a `packages/` library) has no
-   * access to. We emit an empty list so the client sees a
-   * deterministic update; a richer surface is deferred to a future
-   * step (PLAN D9 / ext_method).
-   *
-   * Errors are caught and logged, never thrown: pushing
-   * `session/update` is a streaming concern, not load-bearing for
-   * the `session/new` (or `session/load`) reply.
-   */
+  private scheduleAvailableCommandsUpdate(sessionId: string): void {
+    setTimeout(() => {
+      void this.emitAvailableCommandsUpdate(sessionId);
+    }, 0);
+  }
+
   private async emitAvailableCommandsUpdate(sessionId: string): Promise<void> {
     if (!this.conn) return;
+    const acpSession = this.sessions.get(sessionId);
+    if (!acpSession) return;
     try {
-      await this.conn.sessionUpdate(availableCommandsUpdateNotification(sessionId));
+      const { commands, skillCommandMap } = await this.resolveSlashCommands(
+        acpSession.session,
+      );
+      // Seed the AcpSession's command catalog BEFORE the notification goes
+      // out. The resolver call already awaited the (async) `listSkills()`
+      // round trip, so the command list and skill map are the same snapshot
+      // the client sees in its palette — no race between "/skill:X is
+      // advertised" and "the adapter can intercept /skill:X". Intentionally
+      // tolerant of older AcpSession builds in adapter-level unit tests.
+      if (typeof acpSession.setAvailableCommands === 'function') {
+        acpSession.setAvailableCommands(commands, skillCommandMap);
+      } else if (typeof acpSession.setSkillCommandMap === 'function') {
+        acpSession.setSkillCommandMap(skillCommandMap);
+      }
+      await this.conn.sessionUpdate(
+        availableCommandsUpdateNotification(sessionId, commands),
+      );
     } catch (err) {
       log.warn('acp: failed to push available_commands_update', {
         sessionId,
@@ -833,6 +968,7 @@ export async function runAcpServerWithStream(
     agentInfo?: Implementation;
     terminalAuthEnv?: Readonly<Record<string, string>>;
     terminalAuthLegacyCommand?: string;
+    slashCommands?: SlashCommandsResolver;
   },
 ): Promise<void> {
   const conn = new AgentSideConnection((c) => new AcpServer(harness, c, opts), stream);
@@ -882,6 +1018,11 @@ export async function runAcpServer(
      * ctor for compatibility rationale.
      */
     terminalAuthLegacyCommand?: string;
+    /**
+     * Slash commands to advertise to ACP clients so their slash-command
+     * palette is populated. See {@link AcpServer} ctor for details.
+     */
+    slashCommands?: SlashCommandsResolver;
     /**
      * @internal Test seam — supply a fake `EventEmitter` (or a
      * subset that exposes `.once` / `.off`) to drive SIGINT / SIGTERM
@@ -937,6 +1078,7 @@ export async function runAcpServer(
       agentInfo: opts?.agentInfo,
       terminalAuthEnv: opts?.terminalAuthEnv,
       terminalAuthLegacyCommand: opts?.terminalAuthLegacyCommand,
+      slashCommands: opts?.slashCommands,
     });
   } finally {
     // Uninstall BEFORE the final cleanup so a second SIGINT (a user

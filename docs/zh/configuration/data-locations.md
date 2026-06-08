@@ -16,11 +16,11 @@ Kimi Code CLI 把所有运行时数据——配置文件、会话历史、登录
 export KIMI_CODE_HOME="$HOME/.config/kimi-code"
 ```
 
-设置后，配置、会话、日志、OAuth 凭据等**全部**数据都会落到新路径下。`KIMI_CODE_HOME` 的完整说明见[环境变量](./env-vars.md)。
+设置后，配置、会话、日志、OAuth 凭据、Kimi 专属用户级 Skills、全局 `AGENTS.md` 等 **Kimi Code 数据**都会落到新路径下。`KIMI_CODE_HOME` 的完整说明见[环境变量](./env-vars.md)。
 
-::: tip 一类数据不受 `KIMI_CODE_HOME` 影响
+::: tip 提示
 
-**Agent Skills** 的搜索路径是 `~/.kimi-code/skills` 和 `~/.agents/skills`（用户级），以及工作目录下的 `.kimi-code/skills` 和 `.agents/skills`（项目级）。详见 [Agent Skills](../customization/skills.md)。
+**通用 `.agents` 资源**仍放在真实 OS home 下，以便跨工具共享。例如，用户级通用 Skills 仍位于 `~/.agents/skills/`，而 Kimi 专属用户级 Skills 会随 `KIMI_CODE_HOME` 移动到 `$KIMI_CODE_HOME/skills/`。
 :::
 
 ## 目录结构
@@ -29,7 +29,9 @@ export KIMI_CODE_HOME="$HOME/.config/kimi-code"
 $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 ├── config.toml             # 用户配置
 ├── tui.toml                # 终端界面偏好（含自动更新开关）
+├── AGENTS.md               # 全局 Kimi 专属 Agent 指令（可选）
 ├── mcp.json                # 用户级 MCP server 声明（可选）
+├── skills/                 # Kimi 专属用户级 Skills（可选）
 ├── plugins/
 │   ├── installed.json      # 已安装 plugin 记录与启用状态
 │   └── managed/            # zip/本地路径安装的 plugin 副本
@@ -59,7 +61,9 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 
 - **`config.toml`**：主运行时配置，存放供应商、模型、循环控制等用户级设置。详见[配置文件](./config-files.md)。
 - **`tui.toml`**：终端界面客户端偏好，包括 `[upgrade].auto_install`（自动更新，默认开启）。可在 `/settings` 关闭，或手动设为 `auto_install = false`。
+- **`AGENTS.md`**：全局 Kimi 专属 Agent 指令。该文件会随 `KIMI_CODE_HOME` 移动；跨工具通用指令仍可放在 `~/.agents/AGENTS.md`。
 - **`mcp.json`**：用户级 MCP server 声明，启动时与项目内的 `.kimi-code/mcp.json` 合并加载。详见 [MCP](../customization/mcp.md)。
+- **`skills/`**：Kimi 专属用户级 Skills。该目录会随 `KIMI_CODE_HOME` 移动；跨工具通用 Skills 仍可放在 `~/.agents/skills/`。详见 [Agent Skills](../customization/skills.md)。
 - **`plugins/installed.json`**：记录已安装的 plugin、每个 plugin 的启用状态，以及通过 `/plugins` 或 `/plugins mcp disable|enable` 修改的 MCP server 能力状态。本地路径和 zip URL 安装的文件会复制到 `plugins/managed/<id>/`。详见 [Plugins](../customization/plugins.md)。
 - **`credentials/`**：OAuth 凭据目录，权限 `0o700`（目录）/ `0o600`（文件），仅当前用户可读写。托管供应商凭据存为 `credentials/<name>.json`，MCP server 凭据存在 `credentials/mcp/` 子目录下。凭据写入使用原子流程（tmp → fsync → rename）防止写损。
 
@@ -110,9 +114,10 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 | 强制重新下载托管 `rg` 和 `fd` | 删除 `~/.kimi-code/bin/` |
 | 清除供应商 OAuth 登录态 | 运行 `/logout`，或删除对应的 `credentials/<name>.json` |
 | 清除 MCP server OAuth 登录态 | 删除 `credentials/mcp/`（`/logout` 不会清理 MCP 凭据） |
-| 移除用户级 MCP 声明 | 删除 `~/.kimi-code/mcp.json` |
-| 清理 plugin 安装记录 | 删除 `~/.kimi-code/plugins/`（本地 plugin 源码不受影响） |
-| 清空用户级 Skills | 删除 `~/.kimi-code/skills/` |
+| 移除用户级 MCP 声明 | 删除 `$KIMI_CODE_HOME/mcp.json`（默认为 `~/.kimi-code/mcp.json`） |
+| 清理全局 Kimi 专属 Agent 指令 | 删除 `$KIMI_CODE_HOME/AGENTS.md`（默认为 `~/.kimi-code/AGENTS.md`） |
+| 清理 plugin 安装记录 | 删除 `$KIMI_CODE_HOME/plugins/`（本地 plugin 源码不受影响） |
+| 清空 Kimi 专属用户级 Skills | 删除 `$KIMI_CODE_HOME/skills/`（默认为 `~/.kimi-code/skills/`） |
 
 ## 下一步
 

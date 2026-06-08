@@ -175,6 +175,21 @@ describe('permissionResponseToApprovalResponse', () => {
     expect(result).toEqual({ decision: 'rejected' });
   });
 
+  it('maps legacy "approve" → { decision: approved } (Python kimi-cli compat)', () => {
+    const result = permissionResponseToApprovalResponse(undefined, {
+      outcome: { outcome: 'selected', optionId: 'approve' },
+    });
+    expect(result).toEqual({ decision: 'approved' });
+    expect(result.scope).toBeUndefined();
+  });
+
+  it('maps legacy "approve_for_session" → { decision: approved, scope: session } (Python kimi-cli compat)', () => {
+    const result = permissionResponseToApprovalResponse(undefined, {
+      outcome: { outcome: 'selected', optionId: 'approve_for_session' },
+    });
+    expect(result).toEqual({ decision: 'approved', scope: 'session' });
+  });
+
   it('defensively maps an unknown optionId to { decision: rejected }', () => {
     const result = permissionResponseToApprovalResponse(undefined, {
       outcome: { outcome: 'selected', optionId: 'unknown_option_id' },

@@ -14,6 +14,7 @@ import type {
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
+import { RequestError } from '@agentclientprotocol/sdk';
 import { KaosError, type Environment, type Kaos, type KaosProcess, type StatResult } from '@moonshot-ai/kaos';
 import { describe, expect, it } from 'vitest';
 
@@ -77,6 +78,7 @@ interface MockInnerKaos extends Kaos {
     execWithEnvCalls: Array<{ args: string[]; env?: Record<string, string> }>;
     readTextCalls: string[];
     writeTextCalls: Array<{ path: string; data: string }>;
+    readBytesCalls: Array<{ path: string; n?: number }>;
   };
 }
 
@@ -96,6 +98,7 @@ function makeMockInner(): MockInnerKaos {
     execWithEnvCalls: [] as Array<{ args: string[]; env?: Record<string, string> }>,
     readTextCalls: [] as string[],
     writeTextCalls: [] as Array<{ path: string; data: string }>,
+    readBytesCalls: [] as Array<{ path: string; n?: number }>,
   };
 
   const inner: MockInnerKaos = {
@@ -143,17 +146,17 @@ function makeMockInner(): MockInnerKaos {
         stCtime: 0,
       } as StatResult;
     },
-    // eslint-disable-next-line require-yield
     iterdir: async function* (path: string) {
       spy.iterdirCalls.push(path);
+      yield* [];
     },
-    // eslint-disable-next-line require-yield
     glob: async function* (
       path: string,
       pattern: string,
       options?: { caseSensitive?: boolean },
     ) {
       spy.globCalls.push({ path, pattern, options });
+      yield* [];
     },
     mkdir: async (path: string, options?: { parents?: boolean; existOk?: boolean }) => {
       spy.mkdirCalls.push({ path, options });
@@ -166,13 +169,19 @@ function makeMockInner(): MockInnerKaos {
       spy.execWithEnvCalls.push({ args, env });
       return {} as KaosProcess;
     },
-    readBytes: async () => Buffer.alloc(0),
+    readBytes: async (path: string, n?: number) => {
+      spy.readBytesCalls.push({ path, n });
+      const buf = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      return n !== undefined ? buf.subarray(0, n) : buf;
+    },
     readText: async (path: string) => {
       // Used to verify that AcpKaos.readText does NOT fall back to inner.
       spy.readTextCalls.push(path);
       return 'INNER';
     },
-    readLines: async function* () {},
+    readLines: async function* () {
+      yield* [];
+    },
     writeBytes: async () => 0,
     writeText: async (path: string, data: string) => {
       spy.writeTextCalls.push({ path, data });
@@ -225,25 +234,32 @@ describe('AcpKaos', () => {
   });
 
   describe('readBytes', () => {
-    it('returns the first N utf8 bytes of the file content', async () => {
+    it('delegates to inner.readBytes (binary reads bypass ACP text RPC)', async () => {
       const conn = makeMockConn({
-        readHandler: async () => ({ content: 'abcdef' }),
+        readHandler: async () => {
+          throw new Error('ACP readTextFile must NOT be called for binary reads');
+        },
       });
-      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
+      const inner = makeMockInner();
+      const kaos = new AcpKaos(conn.asConn(), 's1', inner);
 
-      const buf = await kaos.readBytes('/a.ts', 3);
+      const buf = await kaos.readBytes('/img.png', 4);
       expect(buf).toBeInstanceOf(Buffer);
-      expect(buf.toString('utf8')).toBe('abc');
+      // The inner stub returns the first 4 bytes of a PNG signature.
+      expect(Array.from(buf)).toEqual([0x89, 0x50, 0x4e, 0x47]);
+      expect(inner.__spy.readBytesCalls).toEqual([{ path: '/img.png', n: 4 }]);
+      // Crucially: nothing went over the ACP wire.
+      expect(conn.readCalls).toEqual([]);
     });
 
-    it('returns the full buffer when n is omitted', async () => {
-      const conn = makeMockConn({
-        readHandler: async () => ({ content: 'abcdef' }),
-      });
-      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
+    it('forwards omitted n to inner unchanged', async () => {
+      const conn = makeMockConn({});
+      const inner = makeMockInner();
+      const kaos = new AcpKaos(conn.asConn(), 's1', inner);
 
-      const buf = await kaos.readBytes('/a.ts');
-      expect(buf.toString('utf8')).toBe('abcdef');
+      const buf = await kaos.readBytes('/img.png');
+      expect(buf.byteLength).toBe(8);
+      expect(inner.__spy.readBytesCalls).toEqual([{ path: '/img.png', n: undefined }]);
     });
   });
 
@@ -254,23 +270,31 @@ describe('AcpKaos', () => {
       return out;
     }
 
-    it('yields each line of "a\\nb\\nc"', async () => {
+    it('yields each line of "a\\nb\\nc" with terminators preserved', async () => {
       const conn = makeMockConn({ readHandler: async () => ({ content: 'a\nb\nc' }) });
       const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
-      expect(await collect(kaos.readLines('/a.ts'))).toEqual(['a', 'b', 'c']);
+      expect(await collect(kaos.readLines('/a.ts'))).toEqual(['a\n', 'b\n', 'c']);
     });
 
     it('drops the trailing empty token when the file ends with a newline', async () => {
-      // "a\nb\n" → ['a', 'b'] (NOT ['a', 'b', ''])
+      // "a\nb\n" → ['a\n', 'b\n'] (NOT ['a\n', 'b\n', ''])
       const conn = makeMockConn({ readHandler: async () => ({ content: 'a\nb\n' }) });
       const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
-      expect(await collect(kaos.readLines('/a.ts'))).toEqual(['a', 'b']);
+      expect(await collect(kaos.readLines('/a.ts'))).toEqual(['a\n', 'b\n']);
     });
 
-    it('yields the final line without a trailing newline', async () => {
+    it('yields the final line without a trailing newline when missing', async () => {
       const conn = makeMockConn({ readHandler: async () => ({ content: 'a\nb' }) });
       const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
-      expect(await collect(kaos.readLines('/a.ts'))).toEqual(['a', 'b']);
+      expect(await collect(kaos.readLines('/a.ts'))).toEqual(['a\n', 'b']);
+    });
+
+    it('preserves CRLF carriage returns inside the line terminator', async () => {
+      // ReadTool depends on this — stripping \n would expose bare \r and
+      // render visible carriage returns.
+      const conn = makeMockConn({ readHandler: async () => ({ content: 'a\r\nb\r\n' }) });
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
+      expect(await collect(kaos.readLines('/a.ts'))).toEqual(['a\r\n', 'b\r\n']);
     });
 
     it('yields nothing for an empty file', async () => {
@@ -304,10 +328,10 @@ describe('AcpKaos', () => {
       ]);
     });
 
-    it('append mode treats a missing file (read error) as empty existing content', async () => {
+    it('append mode treats a resourceNotFound read error as empty existing content', async () => {
       const conn = makeMockConn({
         readHandler: async () => {
-          throw new Error('ENOENT');
+          throw RequestError.resourceNotFound('/missing.ts');
         },
       });
       const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
@@ -316,6 +340,39 @@ describe('AcpKaos', () => {
       expect(conn.writeCalls).toEqual([
         { sessionId: 's1', path: '/missing.ts', content: 'fresh' },
       ]);
+    });
+
+    it('append mode does not treat a loose "not found" message as missing file', async () => {
+      // ACP adapters should only trust structured not-found errors here; wrapper
+      // messages include the path, so path-only or permission failures can contain
+      // "not found" without meaning that the target is absent.
+      const conn = makeMockConn({
+        readHandler: async () => {
+          throw new Error('permission denied for /tmp/not found/file.txt');
+        },
+      });
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
+
+      await expect(kaos.writeText('/tmp/not found/file.txt', 'fresh', { mode: 'a' }))
+        .rejects.toBeInstanceOf(KaosError);
+      expect(conn.writeCalls).toEqual([]);
+    });
+
+    it('append mode rethrows non-not-found read errors and does NOT issue a write', async () => {
+      // Critical regression guard: a permission / transport / internal
+      // error must NOT be silently treated as "file is empty" — that
+      // would silently destroy the existing file content.
+      const conn = makeMockConn({
+        readHandler: async () => {
+          throw RequestError.internalError(undefined, 'transient transport blip');
+        },
+      });
+      const kaos = new AcpKaos(conn.asConn(), 's1', makeMockInner());
+      await expect(kaos.writeText('/a.ts', 'new', { mode: 'a' })).rejects.toBeInstanceOf(
+        KaosError,
+      );
+      // No write happened — the file was preserved on the client side.
+      expect(conn.writeCalls).toEqual([]);
     });
 
     it('wraps writeTextFile RPC errors in KaosError with cause set', async () => {

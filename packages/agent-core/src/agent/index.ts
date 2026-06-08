@@ -93,7 +93,12 @@ export interface AgentOptions {
 
 export class Agent {
   readonly type: AgentType;
-  readonly kaos: Kaos;
+  private _kaos: Kaos;
+
+  get kaos(): Kaos {
+    return this._kaos;
+  }
+
   readonly kimiConfig?: KimiConfig;
   readonly homedir?: string;
   readonly rpc?: Partial<SDKAgentRPC>;
@@ -132,7 +137,7 @@ export class Agent {
 
   constructor(options: AgentOptions) {
     this.type = options.type ?? 'main';
-    this.kaos = options.kaos;
+    this._kaos = options.kaos;
     this.kimiConfig = options.config;
     this.homedir = options.homedir;
     this.rpc = options.rpc;
@@ -182,6 +187,10 @@ export class Agent {
     );
     this.cron = this.type === 'sub' ? null : new CronManager(this);
     this.replayBuilder = new ReplayBuilder(this);
+  }
+
+  setKaos(kaos: Kaos) {
+    this._kaos = kaos;
   }
 
   get generate(): typeof generate {

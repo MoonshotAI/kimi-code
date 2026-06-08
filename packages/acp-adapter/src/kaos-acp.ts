@@ -19,6 +19,7 @@
 import { Buffer } from 'node:buffer';
 
 import type { AgentSideConnection } from '@agentclientprotocol/sdk';
+import { RequestError } from '@agentclientprotocol/sdk';
 import {
   KaosError,
   type Environment,
@@ -130,33 +131,32 @@ export class AcpKaos implements Kaos {
   }
 
   /**
-   * Read up to `n` bytes from the file. Implemented as
-   * `readText → utf8 encode → slice` because ACP only exposes string
-   * content. Callers that store non-text data through this path
-   * (uncommon) will get re-encoded bytes — acceptable per `Kaos.readBytes`
-   * which already permits encoding-dependent return values.
+   * Binary reads bypass the ACP text RPC by design: `fs/readTextFile`
+   * returns a decoded string and would corrupt or reject non-UTF-8
+   * payloads (images, video, archives — anything `ReadMediaFile` may
+   * touch). The ACP bridge only owns the *text* surface; raw bytes
+   * stay on the local filesystem via `inner`.
    */
-  async readBytes(path: string, n?: number): Promise<Buffer> {
-    const text = await this.readText(path);
-    const buf = Buffer.from(text, 'utf8');
-    return n !== undefined ? buf.subarray(0, n) : buf;
+  readBytes(path: string, n?: number): Promise<Buffer> {
+    return this.inner.readBytes(path, n);
   }
 
   /**
-   * Yield lines from the file. Emulates Python `splitlines(keepends=False)`:
-   * splits on `\n`, drops the trailing empty token if the file ended with
-   * a newline, and yields nothing for an empty file. Matches
-   * {@link LocalKaos.readLines}'s observable output for the trailing-newline
-   * case (the local version yields `'line\n'` chunks; here we yield without
-   * the `\n` — see below).
-   *
-   * Note on divergence from `LocalKaos.readLines`: the local impl yields
-   * `'a\n'`, `'b\n'`, `'c'` while this impl yields `'a'`, `'b'`, `'c'`.
-   * The interface JSDoc says only "Yield lines from the file at `path`
-   * one by one" without pinning trailing-newline semantics, so both
-   * shapes satisfy it. Tools that depend on the trailing-newline (rare)
-   * should adapt. The Python reference's ACP backend does not implement
-   * `readLines` separately either.
+   * Return a small UTF-8 header derived from the same ACP text source as
+   * `readText` / `readLines`, used only by text-read callers for sniffing.
+   * Keep `readBytes` local so binary callers such as ReadMediaFile stay safe.
+   */
+  async readTextPreview(path: string, n: number): Promise<Buffer> {
+    const text = await this.readText(path);
+    return Buffer.from(text.slice(0, n), 'utf8');
+  }
+
+  /**
+   * Yield lines from the file, each terminated by its `\n` (the final
+   * line has no terminator if the file did not end with `\n`). Matches
+   * {@link LocalKaos.readLines} so tools that depend on line terminators
+   * (e.g. {@link ReadTool}, which renders CRLF endings) behave identically
+   * whether the underlying Kaos is local or ACP-bridged.
    */
   async *readLines(
     path: string,
@@ -167,7 +167,7 @@ export class AcpKaos implements Kaos {
     let start = 0;
     for (let i = 0; i < text.length; i++) {
       if (text.charCodeAt(i) === 0x0a /* \n */) {
-        yield text.slice(start, i);
+        yield text.slice(start, i + 1);
         start = i + 1;
       }
     }
@@ -181,9 +181,11 @@ export class AcpKaos implements Kaos {
    * always UTF-8 string content. `mode: 'a'` (append) emulates with a
    * read-then-write fallback: ACP has no native append, and the
    * intended audience (unsaved-buffer scratchpads) rarely needs it.
-   * If the prior read fails (e.g. file missing), the write proceeds
-   * as if the existing content were empty — matching Python `open('a')`
-   * which also creates new files.
+   * If the prior read fails because the file does not exist, the write
+   * proceeds as if the existing content were empty — matching Python
+   * `open('a')` which creates new files. Any other read failure
+   * (permission, transport, internal) propagates so we never silently
+   * destroy existing content.
    *
    * Returns `data.length` (chars) to match {@link LocalKaos.writeText}'s
    * contract.
@@ -197,8 +199,8 @@ export class AcpKaos implements Kaos {
       let existing = '';
       try {
         existing = await this.readText(path);
-      } catch {
-        // ENOENT-style failure → treat as empty (mirrors Python open('a')).
+      } catch (err) {
+        if (!isNotFoundError(err)) throw err;
         existing = '';
       }
       await this.acpWrite(path, existing + data);
@@ -253,4 +255,28 @@ function wrapKaosError(prefix: string, cause: unknown): KaosError {
   // it without touching the kaos package (denylist forbids edits there).
   (err as Error & { cause?: unknown }).cause = cause;
   return err;
+}
+
+/**
+ * Return true iff `err` is a structured "file does not exist" failure on
+ * the read side of an ACP append-mode write. We only trust the ACP SDK's
+ * `RequestError.resourceNotFound` code (`-32002`), optionally wrapped in a
+ * `KaosError` by `readText` above. Message substring matching is intentionally
+ * avoided: wrapper messages include the path, so a path or non-ENOENT failure
+ * mentioning "not found" could otherwise be misclassified and cause append
+ * mode to overwrite existing content.
+ */
+function isNotFoundError(err: unknown): boolean {
+  const visited = new Set<unknown>();
+  let cur: unknown = err;
+  while (cur !== undefined && cur !== null && !visited.has(cur)) {
+    visited.add(cur);
+    if (cur instanceof RequestError && cur.code === -32002) return true;
+    if (cur instanceof Error) {
+      cur = (cur as Error & { cause?: unknown }).cause;
+      continue;
+    }
+    break;
+  }
+  return false;
 }
