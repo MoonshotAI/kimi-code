@@ -745,6 +745,8 @@ export class AgentTestContext {
       generate: failOnResumeGenerate,
       compactionStrategy: this.options.compactionStrategy,
       microCompaction: this.options.microCompaction,
+      subagentHost: this.options.subagentHost,
+      experimentalFlags: this.options.experimentalFlags,
       persistence: new InMemoryAgentRecordPersistence(
         withMetadata(this.recordHistory.map(cloneRecord)),
       ),

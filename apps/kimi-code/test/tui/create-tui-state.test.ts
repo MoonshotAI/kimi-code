@@ -11,6 +11,7 @@ function fakeInitialAppState(): AppState {
     sessionId: 'sess-1',
     permissionMode: 'manual',
     planMode: false,
+    swarmMode: false,
     thinking: false,
     contextUsage: 0,
     contextTokens: 0,

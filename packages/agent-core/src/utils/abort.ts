@@ -33,10 +33,10 @@ export function isUserCancellation(value: unknown): value is UserCancellationErr
 }
 
 export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  signal.throwIfAborted();
+  if (signal.aborted) return Promise.reject(abortReason(signal));
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => {
-      reject(abortError());
+      reject(abortReason(signal));
     };
     signal.addEventListener('abort', onAbort, { once: true });
     promise.then(resolve, reject).finally(() => {
@@ -57,6 +57,17 @@ export function linkAbortSignal(source: AbortSignal, target: AbortController): (
   return () => {
     source.removeEventListener('abort', onAbort);
   };
+}
+
+function abortReason(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error && !isDefaultAbortReason(signal.reason)) {
+    return signal.reason;
+  }
+  return abortError();
+}
+
+function isDefaultAbortReason(reason: Error): boolean {
+  return reason.name === 'AbortError' && reason.message === 'This operation was aborted';
 }
 
 export interface DeadlineAbortSignal {

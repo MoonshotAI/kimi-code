@@ -44,4 +44,16 @@ describe('DefaultToolApprovePermissionPolicy', () => {
   it('does not approve CronDelete', () => {
     expect(policy.evaluate(policyContext('CronDelete', { id: 'job_1' }))).toBeUndefined();
   });
+
+  it('does not approve AgentSwarm', () => {
+    expect(
+      policy.evaluate(
+        policyContext('AgentSwarm', {
+          description: 'Check files',
+          prompt_template: 'Check {{item}}',
+          items: ['a.ts', 'b.ts'],
+        }),
+      ),
+    ).toBeUndefined();
+  });
 });

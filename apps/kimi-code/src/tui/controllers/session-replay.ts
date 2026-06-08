@@ -1,6 +1,5 @@
 import type {
   AgentReplayRecord,
-  BackgroundTaskInfo,
   ContextMessage,
   PermissionMode,
   PromptOrigin,
@@ -139,10 +138,13 @@ export class SessionReplayRenderer {
   private hydrateBackgroundState(agent: ResumedAgentState): void {
     const { state, sessionEventHandler } = this.host;
     const projection = replayBackgroundProjection(agent.background);
-    sessionEventHandler.backgroundAgentMetadata = new Map(projection.backgroundAgentMetadata);
-    sessionEventHandler.backgroundTasks = new Map<string, BackgroundTaskInfo>(
-      agent.background.map((info) => [info.taskId, info]),
+    sessionEventHandler.subAgentEventHandler.backgroundAgentMetadata = new Map(
+      projection.backgroundAgentMetadata,
     );
+    sessionEventHandler.backgroundTasks.clear();
+    for (const info of agent.background) {
+      sessionEventHandler.backgroundTasks.set(info.taskId, info);
+    }
     sessionEventHandler.backgroundTaskTranscriptedTerminal.clear();
     for (const info of agent.background) {
       if (isTerminalBackgroundTask(info)) {
@@ -547,7 +549,7 @@ export class SessionReplayRenderer {
       detail: status.detail,
       backgroundAgentStatus: status,
     });
-    sessionEventHandler.backgroundAgentMetadata.delete(meta.agentId);
+    sessionEventHandler.subAgentEventHandler.backgroundAgentMetadata.delete(meta.agentId);
   }
 }
 

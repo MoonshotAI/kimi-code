@@ -40,6 +40,7 @@ export class ContextMemory {
     content: readonly ContentPart[],
     origin: PromptOrigin = USER_PROMPT_ORIGIN,
   ): void {
+    if (content.length === 0) return;
     this.appendMessage({
       role: 'user',
       content: [...content],
@@ -49,13 +50,26 @@ export class ContextMemory {
   }
 
   appendSystemReminder(content: string, origin: PromptOrigin): void {
-    const text = `<system-reminder>\n${content}\n</system-reminder>`;
+    const text = `<system-reminder>\n${content.trim()}\n</system-reminder>`;
     this.appendMessage({
       role: 'user',
       content: [{ type: 'text', text }],
       toolCalls: [],
       origin,
     });
+  }
+
+  popMatchedMessage(matcher: (origin: PromptOrigin | undefined) => boolean): boolean {
+    const lastDeferred = this.deferredMessages.at(-1);
+    const last = lastDeferred ?? this._history.at(-1);
+    if (last === undefined) return false;
+    if (!matcher(last.origin)) return false;
+    if (lastDeferred !== undefined) {
+      this.deferredMessages.pop();
+    } else {
+      this._history.pop();
+    }
+    return true;
   }
 
   clear(): void {
