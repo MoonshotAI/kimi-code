@@ -108,7 +108,7 @@ Kimi Code CLI 也会读取一些标准的系统环境变量，用于检测运行
 
 - `HOME`：用户主目录，用于解析默认数据路径。
 - `VISUAL`、`EDITOR`：调用外部编辑器时的可执行命令，`VISUAL` 优先。
-- `PATH`：定位 `rg`、`git` 等外部依赖。
+- `PATH`：定位 `rg`、`git` 等外部依赖；在 Windows 上，Git Bash 探测会检查 `PATH` 中找到的每个 `git.exe`，包括 Scoop 等包管理器提供的 shim。
 - `NO_COLOR`：设置且非空时，强制关闭颜色与主题检测，界面回退到深色主题。遵循 [no-color.org](https://no-color.org) 约定。
 - `FORCE_COLOR`：值为 `"0"` 时，同样关闭颜色与主题检测，界面回退到深色主题。
 - `CI`：非空且非 `"0"` 时，关闭主题检测并回退到深色主题；遥测模块也会读取此变量以标记 CI 环境。
@@ -120,6 +120,6 @@ Kimi Code CLI 也会读取一些标准的系统环境变量，用于检测运行
 - `DISPLAY`、`WAYLAND_DISPLAY`、`XDG_SESSION_TYPE`：检测 Linux 图形会话，用于剪贴板与图片相关功能。`XDG_SESSION_TYPE` 值为 `wayland` 时也判定为 Wayland 会话。
 - `WSL_DISTRO_NAME`、`WSLENV`：检测是否运行在 WSL 内，用于剪贴板的 PowerShell 桥接回退。
 - `TERMUX_VERSION`：检测是否运行在 Termux 中。
-- `LOCALAPPDATA`：Windows 上探测 Git Bash 安装路径时使用。
+- `LOCALAPPDATA`：Windows 上探测 Git Bash 安装路径时作为 fallback 使用。
 
 这些变量遵循各操作系统的常规约定，`kimi` 仅读取不修改。

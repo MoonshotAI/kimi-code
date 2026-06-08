@@ -107,7 +107,7 @@ Kimi Code CLI also reads a handful of standard system environment variables to d
 
 - `HOME`: the user's home directory, used to resolve the default data path.
 - `VISUAL`, `EDITOR`: the executable invoked as the external editor, with `VISUAL` taking precedence.
-- `PATH`: used to locate external dependencies such as `rg` and `git`.
+- `PATH`: used to locate external dependencies such as `rg` and `git`; on Windows, Git Bash detection checks each `git.exe` found on `PATH`, including package-manager shims such as Scoop.
 - `NO_COLOR`: when set and non-empty, forces color and theme detection off, falling back to the dark theme. Follows the [no-color.org](https://no-color.org) convention.
 - `FORCE_COLOR`: when set to `"0"`, also disables color and theme detection, falling back to the dark theme.
 - `CI`: when non-empty and not `"0"`, disables theme detection and falls back to the dark theme; the telemetry module also reads this variable to mark the CI environment.
@@ -119,6 +119,6 @@ Kimi Code CLI also reads a handful of standard system environment variables to d
 - `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_SESSION_TYPE`: detect a Linux graphical session, used by clipboard and image-related features. A `XDG_SESSION_TYPE` value of `wayland` is also treated as a Wayland session.
 - `WSL_DISTRO_NAME`, `WSLENV`: detect whether the CLI is running inside WSL, used for the PowerShell-bridged clipboard fallback.
 - `TERMUX_VERSION`: detects whether the CLI is running inside Termux.
-- `LOCALAPPDATA`: used on Windows when probing for the Git Bash installation path.
+- `LOCALAPPDATA`: used on Windows as a fallback when probing for the Git Bash installation path.
 
 These variables follow the usual conventions of each operating system; `kimi` only reads them and never modifies them.

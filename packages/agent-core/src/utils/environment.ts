@@ -2,9 +2,9 @@
  * Environment — cross-platform probe of OS / shell.
  *
  * Detection is a pure function of injected probes (`platform` / `arch` /
- * `release` / `env` / `isFile` / `findExecutable`) so the same suite runs
- * identically on any host OS. `detectEnvironmentFromNode()` bundles the
- * Node defaults for production callers.
+ * `release` / `env` / `isFile` / `execFileText`) so the same suite runs
+ * identically on any host OS. `detectEnvironmentFromNode()` bundles the Node
+ * defaults for production callers.
  *
  * On Windows the probe expects Git Bash (the canonical POSIX shell that
  * ships with Git for Windows). If it cannot be located the function
@@ -13,9 +13,11 @@
  * to override.
  */
 
+import { execFile as nodeExecFile } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { access } from 'node:fs/promises';
 import * as nodeOs from 'node:os';
+import * as nodePath from 'node:path';
 
 import { ErrorCodes, KimiError } from '#/errors';
 
@@ -33,6 +35,11 @@ export interface Environment {
   readonly shellPath: string;
 }
 
+export interface ExecFileTextResult {
+  readonly exitCode: number;
+  readonly stdout: string;
+}
+
 export interface EnvironmentDeps {
   // Accepts the full Node `Platform` enum plus arbitrary strings for
   // forward-compatible OS kinds.
@@ -41,8 +48,15 @@ export interface EnvironmentDeps {
   readonly release: string;
   readonly env: Record<string, string | undefined>;
   readonly isFile: (path: string) => Promise<boolean>;
-  readonly findExecutable: (name: string) => Promise<string | undefined>;
+  readonly execFileText: (
+    file: string,
+    args: readonly string[],
+    timeoutMs: number,
+  ) => Promise<ExecFileTextResult | undefined>;
 }
+
+const GIT_EXEC_PATH_TIMEOUT_MS = 5_000;
+const WHERE_GIT_TIMEOUT_MS = 5_000;
 
 function resolveOsKind(platform: string): OsKind {
   switch (platform) {
@@ -92,13 +106,21 @@ async function locateWindowsGitBash(deps: EnvironmentDeps): Promise<string> {
     }
   }
 
-  const gitExe = await deps.findExecutable('git.exe');
-  if (gitExe !== undefined) {
-    const inferred = inferGitBashFromGitExe(gitExe);
-    if (inferred !== undefined) {
-      checked.push(inferred);
-      if (await deps.isFile(inferred)) {
-        return inferred;
+  for (const gitExe of await findWindowsGitExecutables(deps)) {
+    const inferred = gitBashCandidateFromGitExe(gitExe);
+    checked.push(inferred);
+    if (await deps.isFile(inferred)) {
+      return inferred;
+    }
+
+    const gitExecPath = await readGitExecPath(deps, gitExe);
+    if (gitExecPath === undefined) {
+      continue;
+    }
+    for (const candidate of gitBashCandidatesFromGitExecPath(gitExecPath)) {
+      checked.push(candidate);
+      if (await deps.isFile(candidate)) {
+        return candidate;
       }
     }
   }
@@ -124,21 +146,92 @@ async function locateWindowsGitBash(deps: EnvironmentDeps): Promise<string> {
   );
 }
 
-// Most Git for Windows installs put `git.exe` in `<root>\cmd\git.exe`,
-// with bash at `<root>\bin\bash.exe`. Portable installs sometimes put
-// both in `<root>\bin\`. Walk back to the parent of `cmd` / `bin` and
-// re-anchor under `bin\bash.exe`.
-function inferGitBashFromGitExe(gitExe: string): string | undefined {
-  const sep = gitExe.includes('\\') ? '\\' : '/';
-  const parts = gitExe.split(sep);
-  for (let i = parts.length - 2; i >= 0; i -= 1) {
-    const segment = parts[i];
-    if (segment === 'cmd' || segment === 'bin') {
-      const root = parts.slice(0, i).join(sep);
-      return root.length === 0 ? `bin${sep}bash.exe` : `${root}${sep}bin${sep}bash.exe`;
+async function readGitExecPath(
+  deps: EnvironmentDeps,
+  gitExe: string,
+): Promise<string | undefined> {
+  const result = await deps.execFileText(gitExe, ['--exec-path'], GIT_EXEC_PATH_TIMEOUT_MS);
+  if (result === undefined || result.exitCode !== 0) return undefined;
+
+  for (const line of result.stdout.split(/\r?\n/)) {
+    const execPath = line.trim();
+    if (execPath.length > 0) {
+      return execPath;
     }
   }
   return undefined;
+}
+
+async function findWindowsGitExecutables(deps: EnvironmentDeps): Promise<readonly string[]> {
+  const whereResult = await deps.execFileText('where.exe', ['git'], WHERE_GIT_TIMEOUT_MS);
+  if (whereResult !== undefined && whereResult.exitCode === 0) {
+    const wherePaths = parseExecutableLines(whereResult.stdout).filter((path) =>
+      nodePath.win32.basename(path).toLowerCase() === 'git.exe'
+    );
+    if (wherePaths.length > 0) {
+      return dedupeWindowsPaths(wherePaths);
+    }
+  }
+
+  return findExecutablesOnPath('git.exe', deps.env['PATH'], deps.platform, deps.isFile);
+}
+
+function parseExecutableLines(stdout: string): readonly string[] {
+  const paths: string[] = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    const path = line.trim();
+    if (path.length > 0) {
+      paths.push(path);
+    }
+  }
+  return paths;
+}
+
+// Most Git for Windows installs put `git.exe` in `<root>\cmd\git.exe`,
+// with bash at `<root>\bin\bash.exe`. Portable installs sometimes put
+// both in `<root>\bin\`. Scoop shims live elsewhere, but this cheap
+// candidate is still checked before falling back to `git --exec-path`.
+function gitBashCandidateFromGitExe(gitExe: string): string {
+  return nodePath.win32.normalize(
+    nodePath.win32.join(
+      normalizeWindowsPath(nodePath.win32.dirname(gitExe)),
+      '..',
+      'bin',
+      'bash.exe',
+    ),
+  );
+}
+
+function gitBashCandidatesFromGitExecPath(execPath: string): readonly string[] {
+  const normalized = nodePath.win32.normalize(normalizeWindowsPath(execPath));
+  const parts = normalized.split('\\');
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    const segment = parts[i]?.toLowerCase();
+    if (segment === 'mingw32' || segment === 'mingw64') {
+      const root = parts.slice(0, i).join('\\');
+      if (root.length > 0) {
+        return [nodePath.win32.join(root, 'bin', 'bash.exe')];
+      }
+    }
+  }
+
+  return [nodePath.win32.normalize(nodePath.win32.join(normalized, '..', '..', 'bin', 'bash.exe'))];
+}
+
+function normalizeWindowsPath(path: string): string {
+  return path.replaceAll('/', '\\');
+}
+
+function dedupeWindowsPaths(paths: readonly string[]): readonly string[] {
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+  for (const path of paths) {
+    const key = normalizeWindowsPath(path).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(path);
+  }
+  return deduped;
 }
 
 /**
@@ -161,26 +254,48 @@ export async function detectEnvironmentFromNode(): Promise<Environment> {
     release: nodeOs.release(),
     env,
     isFile,
-    findExecutable: (name: string) => findExecutableOnPath(name, env['PATH'], platform, isFile),
+    execFileText,
   });
 }
 
-async function findExecutableOnPath(
+async function findExecutablesOnPath(
   name: string,
   pathEnv: string | undefined,
   platform: string,
   isFile: (p: string) => Promise<boolean>,
-): Promise<string | undefined> {
-  if (pathEnv === undefined || pathEnv.length === 0) return undefined;
+): Promise<readonly string[]> {
+  if (pathEnv === undefined || pathEnv.length === 0) return [];
   const listSep = platform === 'win32' ? ';' : ':';
   const dirSep = platform === 'win32' ? '\\' : '/';
+  const paths: string[] = [];
   for (const rawDir of pathEnv.split(listSep)) {
     const dir = rawDir.trim();
     if (dir.length === 0) continue;
     const candidate = dir.endsWith(dirSep) ? `${dir}${name}` : `${dir}${dirSep}${name}`;
     if (await isFile(candidate)) {
-      return candidate;
+      paths.push(candidate);
     }
   }
-  return undefined;
+  return platform === 'win32' ? dedupeWindowsPaths(paths) : paths;
+}
+
+async function execFileText(
+  file: string,
+  args: readonly string[],
+  timeoutMs: number,
+): Promise<ExecFileTextResult | undefined> {
+  return new Promise((resolve) => {
+    nodeExecFile(
+      file,
+      [...args],
+      { encoding: 'utf8', timeout: timeoutMs, windowsHide: true },
+      (error, stdout) => {
+        if (error !== null) {
+          resolve(undefined);
+          return;
+        }
+        resolve({ exitCode: 0, stdout });
+      },
+    );
+  });
 }
