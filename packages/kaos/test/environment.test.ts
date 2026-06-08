@@ -237,6 +237,49 @@ describe('detectEnvironment', () => {
     expect(env.shellPath).toBe('D:\\PortableGit\\bin\\bash.exe');
   });
 
+  it('keeps PATH order when an earlier shim resolves through git --exec-path', async () => {
+    const scoopGit = 'C:\\Users\\me\\scoop\\shims\\git.exe';
+    const portableGit = 'D:\\PortableGit\\cmd\\git.exe';
+    const env = await detectEnvironment(
+      stubDeps({
+        platform: 'win32',
+        env: { PATH: 'C:\\Users\\me\\scoop\\shims;D:\\PortableGit\\cmd' },
+        execFileResults: {
+          [execFileKey(scoopGit, ['--exec-path'])]:
+            'C:/Users/me/scoop/apps/git/current/mingw64/libexec/git-core\n',
+        },
+        existingPaths: [
+          scoopGit,
+          portableGit,
+          'C:\\Users\\me\\scoop\\apps\\git\\current\\bin\\bash.exe',
+          'D:\\PortableGit\\bin\\bash.exe',
+        ],
+      }),
+    );
+    expect(env.shellName).toBe('bash');
+    expect(env.shellPath).toBe('C:\\Users\\me\\scoop\\apps\\git\\current\\bin\\bash.exe');
+  });
+
+  it('skips relative Windows PATH entries before git --exec-path probing', async () => {
+    const relativeGit = 'tools\\git.exe';
+    const error = await detectEnvironment(
+      stubDeps({
+        platform: 'win32',
+        env: { PATH: 'tools' },
+        existingPaths: [relativeGit],
+        execFileText: async (file: string) => {
+          throw new Error(`unexpected execFileText call for ${file}`);
+        },
+      }),
+    ).then(
+      () => {
+        throw new Error('expected throw');
+      },
+      (error: unknown) => error,
+    );
+    expect(error).toBeInstanceOf(KaosShellNotFoundError);
+  });
+
   it('scans PATH directly for git.exe candidates', async () => {
     const env = await detectEnvironment(
       stubDeps({

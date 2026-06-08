@@ -116,6 +116,17 @@ async function locateWindowsGitBash(deps: EnvironmentDeps): Promise<string> {
         }
       }
     }
+
+    const gitExecPath = await readGitExecPath(deps, gitExe);
+    if (gitExecPath === undefined) {
+      continue;
+    }
+    for (const candidate of gitBashCandidatesFromGitExecPath(gitExecPath)) {
+      checked.push(candidate);
+      if (await deps.isFile(candidate)) {
+        return candidate;
+      }
+    }
   }
 
   const candidates: string[] = [
@@ -136,19 +147,6 @@ async function locateWindowsGitBash(deps: EnvironmentDeps): Promise<string> {
     }
   }
 
-  for (const gitExe of gitExecutables) {
-    const gitExecPath = await readGitExecPath(deps, gitExe);
-    if (gitExecPath === undefined) {
-      continue;
-    }
-    for (const candidate of gitBashCandidatesFromGitExecPath(gitExecPath)) {
-      checked.push(candidate);
-      if (await deps.isFile(candidate)) {
-        return candidate;
-      }
-    }
-  }
-
   throw new KaosShellNotFoundError(
     `Git Bash was not found on this Windows host. Install Git for Windows from https://gitforwindows.org/ or set KIMI_SHELL_PATH to a bash.exe. Checked: ${checked.join(', ')}.`,
   );
@@ -158,6 +156,8 @@ async function readGitExecPath(
   deps: EnvironmentDeps,
   gitExe: string,
 ): Promise<string | undefined> {
+  if (deps.platform === 'win32' && !isAbsoluteWindowsPath(gitExe)) return undefined;
+
   const stdout = await deps.execFileText(gitExe, ['--exec-path'], GIT_EXEC_PATH_TIMEOUT_MS);
   if (stdout === undefined) return undefined;
 
@@ -209,6 +209,10 @@ function gitBashCandidatesFromGitRoot(root: string): readonly string[] {
 
 function normalizeWindowsPath(path: string): string {
   return path.replaceAll('/', '\\');
+}
+
+function isAbsoluteWindowsPath(path: string): boolean {
+  return nodePath.win32.isAbsolute(normalizeWindowsPath(path));
 }
 
 function dedupeWindowsPaths(paths: readonly string[]): readonly string[] {
@@ -271,6 +275,7 @@ async function findExecutablesOnPath(
   for (const rawDir of pathEnv.split(listSep)) {
     const dir = rawDir.trim();
     if (dir.length === 0) continue;
+    if (platform === 'win32' && !isAbsoluteWindowsPath(dir)) continue;
     const candidate = dir.endsWith(dirSep) ? `${dir}${name}` : `${dir}${dirSep}${name}`;
     if (await isFile(candidate)) {
       paths.push(candidate);
