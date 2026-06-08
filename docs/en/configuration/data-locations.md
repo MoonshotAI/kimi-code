@@ -20,8 +20,6 @@ Once set, **all** Kimi Code data — config, sessions, logs, OAuth credentials, 
 
 ::: tip Note
 
-**Built-in tool cache** (ripgrep binary) uses `KIMI_CODE_CACHE_DIR` instead. When that is unset, the platform cache directory is used: `~/Library/Caches/kimi-code` on macOS, `~/.cache/kimi-code` on Linux, and `%LOCALAPPDATA%\kimi-code` on Windows.
-
 **Generic `.agents` resources** stay under the real OS home so they can be shared across tools. For example, user-level generic Skills remain at `~/.agents/skills/`, while Kimi-specific user Skills move with `KIMI_CODE_HOME` as `$KIMI_CODE_HOME/skills/`.
 :::
 
@@ -45,7 +43,8 @@ $KIMI_CODE_HOME  (default: ~/.kimi-code)
 ├── sessions/               # Session data (see below)
 │   └── <workDirKey>/<sessionId>/
 ├── bin/
-│   └── rg                  # ripgrep cache (rg.exe on Windows)
+│   ├── rg                  # managed ripgrep binary for Grep (rg.exe on Windows)
+│   └── fd                  # managed fd binary for file references (fd.exe on Windows)
 ├── logs/
 │   └── kimi-code.log       # Global diagnostic log
 ├── updates/
@@ -85,7 +84,7 @@ Inside each session directory:
 
 ## Built-in tool cache
 
-The first time the CLI needs ripgrep, it automatically downloads and caches it at `bin/rg` (`bin/rg.exe` on Windows); subsequent runs reuse the cached binary. If `rg` is already available on the system `PATH`, that version takes precedence. Deleting the `bin/` directory triggers a fresh download on the next use.
+The first time the `Grep` tool needs ripgrep, the CLI can automatically download `rg` and cache it at `bin/rg` (`bin/rg.exe` on Windows). File-reference completion in the terminal UI uses `fd`; the CLI downloads and caches it at `bin/fd` (`bin/fd.exe` on Windows) in the background when needed. Subsequent runs reuse the cached binaries. `rg` prefers the system `PATH` before the cache, while `fd` checks the managed cache before falling back to system `fd` / `fdfind`. Deleting the `bin/` directory triggers a fresh download on the next use.
 
 ## Logs and update state
 
@@ -112,7 +111,7 @@ Deleting the data root directory (`~/.kimi-code/` or the path set by `KIMI_CODE_
 | Clear diagnostic logs | Delete `~/.kimi-code/logs/` |
 | Clear input history | Delete `~/.kimi-code/user-history/` |
 | Reset update state | Delete `~/.kimi-code/updates/latest.json` |
-| Force re-download of ripgrep | Delete `~/.kimi-code/bin/` |
+| Force re-download of managed `rg` and `fd` | Delete `~/.kimi-code/bin/` |
 | Clear provider OAuth login state | Run `/logout`, or delete the corresponding `credentials/<name>.json` |
 | Clear MCP server OAuth login state | Delete `credentials/mcp/` (`/logout` does not clear MCP credentials) |
 | Remove user-level MCP declarations | Delete `$KIMI_CODE_HOME/mcp.json` (default `~/.kimi-code/mcp.json`) |

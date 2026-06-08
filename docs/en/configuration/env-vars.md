@@ -155,7 +155,7 @@ The CLI also reads several standard system variables to detect the runtime envir
 
 - `HOME`: used to resolve the default data path
 - `VISUAL`, `EDITOR`: external editor command (`VISUAL` takes precedence)
-- `PATH`: used to locate dependencies such as `rg` and `git`; on Windows, Git Bash detection checks each `git.exe` found on `PATH`, including package-manager shims such as Scoop
+- `PATH`: used to locate dependencies such as `rg`, `fd`, `fdfind`, and `git`; on Windows, Git Bash detection checks each `git.exe` found on `PATH`, including package-manager shims such as Scoop
 - `NO_COLOR`, `FORCE_COLOR`: control color output (following the [no-color.org](https://no-color.org) convention)
 - `CI`: when non-empty and not `"0"`, disables theme detection and falls back to the dark theme
 - `TERM_PROGRAM`, `TERM`, `TMUX`: detect terminal features and notification support
