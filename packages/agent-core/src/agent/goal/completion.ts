@@ -1,6 +1,7 @@
 import type { GoalSnapshot } from '../../session/goal';
 
 export const GOAL_COMPLETION_REMINDER_NAME = 'goal_completion';
+export const GOAL_BLOCKED_REMINDER_NAME = 'goal_blocked';
 
 /**
  * The deterministic goal-completion message. It is built from the final
@@ -20,6 +21,20 @@ export function buildGoalCompletionSummaryPrompt(goal: GoalSnapshot): string {
     '',
     'Now summarize how you completed the goal for the user. Mention the main work completed and any validation you ran. Do not call more goal tools.',
   ].join('\n');
+}
+
+export function buildGoalBlockedReasonPrompt(goal: GoalSnapshot): string {
+  return [
+    buildGoalBlockedMessage(goal),
+    '',
+    'Now explain why the goal is blocked for the user. Mention the concrete blocker and what input or change is needed before work can continue. Do not call more goal tools.',
+  ].join('\n');
+}
+
+function buildGoalBlockedMessage(goal: GoalSnapshot): string {
+  const turns = `${goal.turnsUsed} turn${goal.turnsUsed === 1 ? '' : 's'}`;
+  const stats = `Worked ${turns} over ${formatElapsed(goal.wallClockMs)}, using ${formatTokens(goal.tokensUsed)} tokens.`;
+  return `Goal blocked.\n${stats}`;
 }
 
 function formatElapsed(ms: number): string {

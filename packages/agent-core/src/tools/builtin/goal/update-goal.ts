@@ -14,7 +14,9 @@ import type { Agent } from '#/agent';
 import { z } from 'zod';
 
 import {
+  GOAL_BLOCKED_REMINDER_NAME,
   GOAL_COMPLETION_REMINDER_NAME,
+  buildGoalBlockedReasonPrompt,
   buildGoalCompletionSummaryPrompt,
 } from '../../../agent/goal/completion';
 import type { BuiltinTool } from '../../../agent/tool';
@@ -70,7 +72,13 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
             return { output: 'Goal marked complete.', stopTurn: true };
           }
           if (args.status === 'blocked') {
-            await store.markBlocked({ actor: 'model' });
+            const blocked = await store.markBlocked({ actor: 'model' });
+            if (blocked !== null) {
+              this.agent.context.appendSystemReminder(buildGoalBlockedReasonPrompt(blocked), {
+                kind: 'system_trigger',
+                name: GOAL_BLOCKED_REMINDER_NAME,
+              });
+            }
             return { output: 'Goal marked blocked.', stopTurn: true };
           }
           await store.pauseGoal({ actor: 'model' });

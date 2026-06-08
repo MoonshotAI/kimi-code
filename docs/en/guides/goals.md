@@ -108,7 +108,7 @@ A goal can stop in three ways:
 
 - **complete**: the objective is done, Kimi Code clears the goal, and the agent summarizes how it completed the work
 - **paused**: you paused it, interrupted the turn, resumed a session that had an active goal, or hit a model, provider, or runtime error
-- **blocked**: Kimi Code needs input, cannot complete the goal as stated, or reached a budget limit
+- **blocked**: Kimi Code needs input, cannot complete the goal as stated, or reached a budget limit. When the agent blocks a goal, it writes a short message explaining why.
 
 Write stop conditions into the objective. `/goal` does not have a separate stop-limit flag.
 

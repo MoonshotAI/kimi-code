@@ -236,6 +236,41 @@ describe('goal session end-to-end', () => {
     expect(api.getGoal({}).goal).toBeNull();
   });
 
+  it('asks the model to explain why it marked a goal blocked', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent, scripted } = await setupSession(sessionDir, events, ['GetGoal', 'UpdateGoal']);
+    const api = new SessionAPIImpl(session);
+    await api.createGoal({ objective: 'work' });
+
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'blocked',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'blocked' }),
+    });
+    scripted.mockNextResponse({
+      type: 'text',
+      text: 'I blocked the goal because credentials are required before I can continue.',
+    });
+
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    expect(scripted.calls).toHaveLength(2);
+    const reasonHistory = JSON.stringify(scripted.calls[1]?.history ?? []);
+    expect(reasonHistory).toContain('Goal blocked.');
+    expect(reasonHistory).toContain('explain why the goal is blocked');
+    const lastContextMessage = agent.context.history.at(-1);
+    expect(lastContextMessage?.role).toBe('assistant');
+    expect(JSON.stringify(lastContextMessage?.content)).toContain(
+      'I blocked the goal because credentials are required before I can continue.',
+    );
+    const goal = api.getGoal({}).goal;
+    expect(goal?.status).toBe('blocked');
+    expect(goal?.terminalReason).toBeUndefined();
+  });
+
   it('pauses the goal on provider rate limits', async () => {
     const sessionDir = await makeTempDir();
     const events: Array<Record<string, unknown>> = [];

@@ -217,8 +217,8 @@ describe('SetGoalBudgetTool', () => {
 });
 
 describe('UpdateGoalTool', () => {
-  // The complete path appends the completion line as a system reminder, so the
-  // agent needs a context exposing appendSystemReminder.
+  // Terminal paths append follow-up reminders, so the agent needs a context
+  // exposing appendSystemReminder.
   function agentWithContext(store: SessionGoalStore): Agent {
     return {
       type: 'main',
@@ -231,6 +231,7 @@ describe('UpdateGoalTool', () => {
     for (const status of ['active', 'complete', 'paused', 'blocked']) {
       expect(UpdateGoalToolInputSchema.safeParse({ status }).success).toBe(true);
     }
+    expect(UpdateGoalToolInputSchema.safeParse({ status: 'blocked', reason: 'x' }).success).toBe(false);
     for (const status of ['impossible', 'cancelled', '']) {
       expect(UpdateGoalToolInputSchema.safeParse({ status }).success).toBe(false);
     }
@@ -257,6 +258,7 @@ describe('UpdateGoalTool', () => {
     );
     expect(result.stopTurn).toBe(true);
     expect(store.getGoal().goal?.status).toBe('blocked');
+    expect(store.getGoal().goal?.terminalReason).toBeUndefined();
   });
 
   it('`paused` marks the goal paused', async () => {

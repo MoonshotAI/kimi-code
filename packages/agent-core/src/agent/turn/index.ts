@@ -37,7 +37,7 @@ import type { AgentEvent, TurnEndedEvent } from '../../rpc';
 import type { TelemetryPropertyValue } from '../../telemetry';
 import { abortable, userCancellationReason } from '../../utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
-import { GOAL_COMPLETION_REMINDER_NAME } from '../goal/completion';
+import { GOAL_BLOCKED_REMINDER_NAME, GOAL_COMPLETION_REMINDER_NAME } from '../goal/completion';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
 import { ToolCallDeduplicator } from './tool-dedup';
@@ -570,7 +570,7 @@ export class TurnFlow {
 
   private async runStepLoop(turnId: number, signal: AbortSignal): Promise<LoopTurnStopReason> {
     let stopHookContinuationUsed = false;
-    let goalCompletionSummaryContinuationUsed = false;
+    let goalOutcomeMessageContinuationUsed = false;
     const deduper = new ToolCallDeduplicator({ telemetry: this.agent.telemetry });
     await this.agent.mcp?.waitForInitialLoad(signal);
     // Surface the active goal at the start of the turn (append-only; no-op when
@@ -630,13 +630,13 @@ export class TurnFlow {
               if (this.flushSteerBuffer()) return { continue: true };
               signal.throwIfAborted();
 
-              // 2. After UpdateGoal marks a goal complete, ask the model for one
-              //    final user-facing summary before the turn ends.
+              // 2. After UpdateGoal marks a goal terminal, ask the model for one
+              //    final user-facing outcome message before the turn ends.
               if (
-                !goalCompletionSummaryContinuationUsed &&
-                isGoalCompletionReminder(this.agent.context.history.at(-1))
+                !goalOutcomeMessageContinuationUsed &&
+                isGoalOutcomeReminder(this.agent.context.history.at(-1))
               ) {
-                goalCompletionSummaryContinuationUsed = true;
+                goalOutcomeMessageContinuationUsed = true;
                 return { continue: true };
               }
 
@@ -874,10 +874,11 @@ export class TurnFlow {
   }
 }
 
-function isGoalCompletionReminder(message: { readonly origin?: PromptOrigin | undefined } | undefined): boolean {
+function isGoalOutcomeReminder(message: { readonly origin?: PromptOrigin | undefined } | undefined): boolean {
   return (
     message?.origin?.kind === 'system_trigger' &&
-    message.origin.name === GOAL_COMPLETION_REMINDER_NAME
+    (message.origin.name === GOAL_COMPLETION_REMINDER_NAME ||
+      message.origin.name === GOAL_BLOCKED_REMINDER_NAME)
   );
 }
 
