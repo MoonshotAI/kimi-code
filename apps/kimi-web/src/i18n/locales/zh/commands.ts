@@ -12,6 +12,7 @@ export default {
   auto: { desc: '自动批准安全的读写' },
   thinking: { desc: '设置思考强度' },
   compact: { desc: '压缩会话历史' },
+  fork: { desc: '把当前会话 fork 出一个新会话' },
   compactNotImplemented: '尚未接入 /compact',
   undoNotImplemented: 'daemon 尚未支持 /undo',
   status: { desc: '查看会话状态' },

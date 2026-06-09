@@ -67,7 +67,8 @@ function autosize(): void {
   const el = textareaRef.value;
   if (!el) return;
   el.style.height = 'auto';
-  const next = Math.max(40, Math.min(200, el.scrollHeight));
+  // Single-line by default (one row ≈ 24px); grows up to ~160px as the user types.
+  const next = Math.max(24, Math.min(160, el.scrollHeight));
   el.style.height = `${next}px`;
 }
 
@@ -871,68 +872,8 @@ const hasUpload = computed(() => !!props.uploadImage);
   }
 }
 
-/* ===================== Modern theme ===================== */
-/* Refined (NOT big-radius) inputs: a cleaner ~10px squared input + a rounded-rect
-   send, with restrained pill controls. Higher specificity than the mobile media
-   query so it wins at every width. Touch targets stay >=40px. */
-:global(html[data-theme="modern"]) .cin {
-  border-radius: 10px;
-  border-color: var(--line);
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(20, 23, 28, 0.04);
-  align-items: center;
-  padding: 8px 10px;
-  gap: 9px;
-}
-:global(html[data-theme="modern"]) .cin:focus-within {
-  border-color: var(--bd);
-  box-shadow: 0 0 0 3px rgba(21, 101, 192, 0.10);
-}
-/* Input itself: drop the mobile pill back to a clean squared field. */
-:global(html[data-theme="modern"]) .ph {
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  padding: 0;
-  min-height: 40px;
-  box-sizing: border-box;
-  /* Compact prose size; sans font-family is applied globally in style.css (a
-     scoped :global() rule didn't reliably win the cascade for font-family). */
-  font-size: 12.5px;
-}
-/* Attach → small rounded square (not a fat round). */
-:global(html[data-theme="modern"]) .attach-btn {
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border-radius: 9px;
-  align-self: center;
-}
-:global(html[data-theme="modern"]) .attach-btn:hover {
-  background: var(--soft);
-  color: var(--blue);
-}
-/* Send → rounded-rect, not a fat pill / not a big circle. Keep >=40px height. */
-:global(html[data-theme="modern"]) .send {
-  width: auto;
-  min-width: 0;
-  height: 40px;
-  padding: 0 16px;
-  border-radius: 10px;
-  font-size: 11.5px;
-  box-shadow: none;
-  align-self: center;
-}
-:global(html[data-theme="modern"]) .send::after { content: none; }
-:global(html[data-theme="modern"]) .send:hover { background: var(--blue2); }
-:global(html[data-theme="modern"]) .interrupt {
-  height: 40px;
-  border-radius: 10px;
-  align-self: center;
-}
-/* Queued strip + attach chips: gently squared, not pill. */
-:global(html[data-theme="modern"]) .queue-item,
-:global(html[data-theme="modern"]) .att-chip {
-  border-radius: 8px;
-}
+/* NOTE: Modern-theme composer overrides live in src/style.css (global), NOT here.
+   Scoped `:global(html[data-theme=modern]) .cin` rules did NOT reliably win the
+   cascade against the base `.cin` (the input stayed square + mono), so they were
+   moved to the global sheet where they apply. */
 </style>

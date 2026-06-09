@@ -80,11 +80,27 @@ export interface WireSession {
     system_prompt?: string;
     tools?: string[];
     mcp_servers?: string[];
+    // Runtime controls — optional on read (the daemon may not backfill them;
+    // live values come from GET /sessions/{id}/status).
+    thinking?: string;
+    permission_mode?: string;
+    plan_mode?: boolean;
   };
   usage: WireSessionUsage;
   permission_rules: WirePermissionRule[];
   message_count: number;
   last_seq: number;
+}
+
+// GET /sessions/{id}/status — live runtime state, aligned with TUI /status.
+export interface WireSessionRuntimeStatus {
+  model?: string;
+  thinking_level: string;
+  permission: string;
+  plan_mode: boolean;
+  context_tokens: number;
+  max_context_tokens: number;
+  context_usage: number;
 }
 
 // ---------------------------------------------------------------------------

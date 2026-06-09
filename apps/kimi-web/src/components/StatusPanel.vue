@@ -146,7 +146,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown));
   border: none;
   color: var(--faint);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   padding: 2px 4px;
   line-height: 1;
 }

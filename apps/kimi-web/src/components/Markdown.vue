@@ -159,19 +159,31 @@ function copyDiff(code: string, idx: number) {
    chip. Overrides target the markstream classes via :deep().
 --------------------------------------------------------------------------- */
 
-/* Base prose — matched to the sidebar session-title size (12px). */
+/* Base prose — matched to the sidebar session-title size (14px). */
 .md {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
   color: var(--text);
   word-break: break-word;
+  font-weight: 500;
 }
 .md :deep(.markdown-renderer) {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
   color: var(--text);
+  font-weight: 500;
+}
+/* Pin the prose text to the session-title size (14px) explicitly. markstream
+   sets no font-size of its own, so without this the rendered <p>/<li> can pick
+   up the (larger) UI base font instead of the .markdown-renderer size. */
+.md :deep(.markdown-renderer p),
+.md :deep(.markdown-renderer li),
+.md :deep(.markdown-renderer blockquote),
+.md :deep(.markdown-renderer td),
+.md :deep(.markdown-renderer th) {
+  font-size: 14px;
 }
 
 /* Headings */
@@ -184,10 +196,10 @@ function copyDiff(code: string, idx: number) {
   margin: 0.85em 0 0.35em;
   line-height: 1.3;
 }
-.md :deep(h1) { font-size: 15px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
-.md :deep(h2) { font-size: 14px; }
-.md :deep(h3) { font-size: 13px; }
-.md :deep(h4) { font-size: 12.5px; color: var(--dim); }
+.md :deep(h1) { font-size: 17px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.md :deep(h2) { font-size: 16px; }
+.md :deep(h3) { font-size: 15px; }
+.md :deep(h4) { font-size: 14px; color: var(--dim); }
 
 /* Paragraphs */
 .md :deep(p) {
@@ -208,7 +220,7 @@ function copyDiff(code: string, idx: number) {
 .md :deep(:not(pre) > code),
 .md :deep(.inline-code) {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13px;
   background: var(--panel2);
   color: var(--blue2);
   padding: 1px 5px;
@@ -260,11 +272,11 @@ function copyDiff(code: string, idx: number) {
   padding: 10px 12px;
   overflow-x: auto;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
 }
 .md :deep(.code-block-container pre code) {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   background: none;
   border: none;
   padding: 0;
@@ -298,7 +310,7 @@ function copyDiff(code: string, idx: number) {
 /* Tables */
 .md :deep(table) {
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 14px;
   margin: 0.5em 0;
 }
 .md :deep(th),
@@ -361,7 +373,7 @@ function copyDiff(code: string, idx: number) {
 }
 .diff-pre code {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
 }
 .diff-pre code span {
   display: block;

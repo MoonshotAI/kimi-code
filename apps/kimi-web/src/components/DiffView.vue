@@ -8,16 +8,28 @@ import type { DiffViewLine } from '../types';
 
 const { t } = useI18n();
 
-const props = defineProps<{
-  changes: { path: string; status: string }[];
-  gitInfo: { branch: string; ahead: number; behind: number } | null;
-  /** Parsed unified-diff lines for the selected file (empty until tapped). */
-  fileDiff?: DiffViewLine[];
-  /** The currently-open file path, or null when showing the file list. */
-  selectedDiffPath?: string | null;
-  /** True while the diff for the selected file is being fetched. */
-  fileDiffLoading?: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    changes: { path: string; status: string }[];
+    gitInfo: { branch: string; ahead: number; behind: number } | null;
+    /** Parsed unified-diff lines for the selected file (empty until tapped). */
+    fileDiff?: DiffViewLine[];
+    /** The currently-open file path, or null when showing the file list. */
+    selectedDiffPath?: string | null;
+    /** True while the diff for the selected file is being fetched. */
+    fileDiffLoading?: boolean;
+    /**
+     * Render mode. 'full' (default, standalone tab) switches list↔detail by
+     * selectedDiffPath. In the merged ~/files tab the list and the detail live in
+     * two different panes, so 'list' forces the changed-file list and 'detail'
+     * forces the line-by-line view.
+     */
+    mode?: 'full' | 'list' | 'detail';
+    /** Hide the in-panel Back button (the merged tab owns the back affordance). */
+    hideBack?: boolean;
+  }>(),
+  { mode: 'full', hideBack: false },
+);
 
 const emit = defineEmits<{
   /** Fired when the user taps a changed file → parent loads its diff. */
@@ -72,6 +84,11 @@ const hasChanges = computed(() => props.changes.length > 0);
 
 // When a file is selected we show the line-by-line panel instead of the list.
 const showingDiff = computed(() => (props.selectedDiffPath ?? null) !== null);
+// Which half to render: 'detail' forces the line view, 'list' forces the file
+// list, 'full' decides by whether a file is selected (legacy standalone tab).
+const renderDetail = computed(
+  () => props.mode === 'detail' || (props.mode === 'full' && showingDiff.value),
+);
 const diffLines = computed<DiffViewLine[]>(() => props.fileDiff ?? []);
 const loading = computed(() => props.fileDiffLoading === true);
 
@@ -98,9 +115,9 @@ function onBack(): void {
 <template>
   <div class="changes-pane">
     <!-- ===================== LINE-BY-LINE DIFF VIEW ===================== -->
-    <template v-if="showingDiff">
+    <template v-if="renderDetail">
       <div class="diff-head">
-        <button class="back-btn" type="button" @click="onBack" :title="t('diff.back')">
+        <button v-if="!hideBack" class="back-btn" type="button" @click="onBack" :title="t('diff.back')">
           <span aria-hidden="true">&#8592;</span>
           <span class="back-label">{{ t('diff.back') }}</span>
         </button>
@@ -209,7 +226,7 @@ function onBack(): void {
 .br-name {
   color: #1565C0;
   font-weight: 700;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .sync-info {
@@ -255,7 +272,7 @@ function onBack(): void {
   gap: 10px;
   padding: 6px 16px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
   /* reset button defaults so the row looks like the original div */
   width: 100%;
@@ -302,7 +319,7 @@ function onBack(): void {
 /* ---- File path ---- */
 .fpath {
   color: var(--ink);
-  font-size: 12px;
+  font-size: 14px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -315,7 +332,7 @@ function onBack(): void {
 .empty-state {
   padding: 32px 20px;
   color: var(--muted, #9098a0);
-  font-size: 12px;
+  font-size: 14px;
   text-align: center;
 }
 
@@ -361,7 +378,7 @@ function onBack(): void {
 
 .diff-path {
   color: var(--ink);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -374,7 +391,7 @@ function onBack(): void {
   flex: 1;
   overflow: auto;
   padding: 4px 0 12px;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
   -webkit-overflow-scrolling: touch;
 }
@@ -480,7 +497,7 @@ function onBack(): void {
   /* Line panel: horizontal scroll for long lines; keep the mono gutter intact. */
   .diff-lines {
     overflow-x: auto;
-    font-size: 12px;
+    font-size: 14px;
   }
 }
 </style>

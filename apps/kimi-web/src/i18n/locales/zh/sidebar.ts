@@ -18,4 +18,7 @@ export default {
   signIn: '登录',
   language: '语言',
   daemon: '后台',
+  tabChat: '对话',
+  tabFiles: '文件',
+  tabTasks: '任务',
 };

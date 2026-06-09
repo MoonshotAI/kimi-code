@@ -79,7 +79,7 @@ const isError = () => props.tool.status === 'error';
   padding: 6px 10px;
   background: var(--panel);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   border-radius: 3px;
 }
 .box.open .bh {
@@ -155,37 +155,7 @@ const isError = () => props.tool.status === 'error';
 .box.mob .bh { border-radius: 8px; }
 .box.mob.open .bh { border-radius: 8px 8px 0 0; }
 
-/* ===================== Modern theme ===================== */
-/* Tool cards: smooth fade/slide entrance, soft shadow + hover lift (float), an
-   animated checkmark on completion, and a subtle staggered reveal of output
-   lines. Reduced-motion is neutralized by the global guard in style.css. */
-:global(html[data-theme="modern"]) .box {
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: var(--shc);
-  animation: kimi-card-in 0.26s ease-out both;
-  transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
-}
-:global(html[data-theme="modern"]) .box:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(20, 23, 28, 0.10);
-}
-:global(html[data-theme="modern"]) .box .bh { border-radius: 12px; }
-:global(html[data-theme="modern"]) .box.open .bh { border-radius: 12px 12px 0 0; }
-/* Completion checkmark scales/fades in. */
-:global(html[data-theme="modern"]) .box .ok,
-:global(html[data-theme="modern"]) .box .er {
-  display: inline-block;
-  animation: kimi-check-in 0.2s ease-out both;
-}
-/* Output lines reveal with a subtle stagger (first 6 lines). */
-:global(html[data-theme="modern"]) .box.open .bb > div {
-  animation: kimi-line-in 0.2s ease-out both;
-}
-:global(html[data-theme="modern"]) .box.open .bb > div:nth-child(1) { animation-delay: 0ms; }
-:global(html[data-theme="modern"]) .box.open .bb > div:nth-child(2) { animation-delay: 30ms; }
-:global(html[data-theme="modern"]) .box.open .bb > div:nth-child(3) { animation-delay: 60ms; }
-:global(html[data-theme="modern"]) .box.open .bb > div:nth-child(4) { animation-delay: 90ms; }
-:global(html[data-theme="modern"]) .box.open .bb > div:nth-child(5) { animation-delay: 120ms; }
-:global(html[data-theme="modern"]) .box.open .bb > div:nth-child(6) { animation-delay: 150ms; }
+/* NOTE: Modern-theme tool-card styles live in src/style.css (global). Scoped
+   `:global(html[data-theme=modern]) .box` rules here did NOT win the cascade
+   (cards stayed square, no shadow), so they were moved to the global sheet. */
 </style>

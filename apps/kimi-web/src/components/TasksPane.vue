@@ -107,7 +107,7 @@ const summary = () => {
     border-radius: 6px;
     font-size: 12px;
   }
-  .meta { padding-left: 0; font-size: 12px; }
-  .out { margin-left: 0; font-size: 12px; }
+  .meta { padding-left: 0; font-size: 14px; }
+  .out { margin-left: 0; font-size: 14px; }
 }
 </style>

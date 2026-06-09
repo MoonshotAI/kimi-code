@@ -313,7 +313,7 @@ function statusLabel(status: AppProvider['status']): string {
   border: none;
   color: var(--faint);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   padding: 2px 4px;
   line-height: 1;
 }
@@ -332,13 +332,13 @@ function statusLabel(status: AppProvider['status']): string {
   gap: 8px;
   padding: 20px 14px;
   color: var(--dim);
-  font-size: 12px;
+  font-size: 14px;
 }
 .state-row.unavail { color: var(--warn); }
 .empty {
   padding: 20px 14px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
 }
 .prov-row {
   display: flex;
@@ -418,7 +418,7 @@ function statusLabel(status: AppProvider['status']): string {
   border-radius: 3px;
   color: var(--blue);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   padding: 5px 12px;
   cursor: pointer;
 }
@@ -432,7 +432,7 @@ function statusLabel(status: AppProvider['status']): string {
   border-radius: 3px;
   color: var(--dim);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   padding: 5px 12px;
   cursor: pointer;
 }
@@ -456,7 +456,7 @@ function statusLabel(status: AppProvider['status']): string {
 .finput {
   flex: 1;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   padding: 4px 8px;
   border: 1px solid var(--line);
   border-radius: 3px;

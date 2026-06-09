@@ -224,7 +224,7 @@ function flatIdx(m: AppModel): number {
   border: none;
   color: var(--faint);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   padding: 2px 4px;
   line-height: 1;
 }
@@ -324,14 +324,14 @@ function flatIdx(m: AppModel): number {
   gap: 8px;
   padding: 20px 14px;
   color: var(--dim);
-  font-size: 12px;
+  font-size: 14px;
 }
 .unavail-state { color: var(--warn); }
 
 .empty {
   padding: 20px 14px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 /* Footer */

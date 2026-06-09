@@ -224,7 +224,7 @@ function truncatePath(path: string, maxLen = 55): string {
   justify-content: center;
   gap: 10px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 /* ---- Header ---- */
@@ -248,7 +248,7 @@ function truncatePath(path: string, maxLen = 55): string {
   text-overflow: ellipsis;
   direction: rtl;
   text-align: left;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--ink);
   font-weight: 500;
 }
@@ -310,7 +310,7 @@ function truncatePath(path: string, maxLen = 55): string {
   display: table;
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
 }
 
@@ -376,7 +376,7 @@ function truncatePath(path: string, maxLen = 55): string {
   border-radius: 6px;
   background: var(--panel);
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
   margin: 32px auto;
   max-width: 480px;
 }

@@ -72,25 +72,26 @@ afterEach(() => {
 });
 
 describe('useKimiWebClient — theme', () => {
-  it('默认主题为 terminal（jsdom）', async () => {
+  it('默认主题为 modern（无存储时）', async () => {
     const client = await freshClient(makeFakeApi());
-    expect(client.theme.value).toBe('terminal');
+    expect(client.theme.value).toBe('modern');
   });
 
-  it('初始化即把 terminal 写到 <html data-theme>', async () => {
+  it('初始化即把 modern 写到 <html data-theme>', async () => {
     await freshClient(makeFakeApi());
     await nextTick();
-    expect(document.documentElement.dataset.theme).toBe('terminal');
+    expect(document.documentElement.dataset.theme).toBe('modern');
   });
 
-  it('toggleTheme 翻转 terminal ↔ modern 并持久化', async () => {
+  it('toggleTheme 翻转 modern ↔ terminal 并持久化', async () => {
     const client = await freshClient(makeFakeApi());
-    client.toggleTheme();
-    expect(client.theme.value).toBe('modern');
-    expect(localStorage.getItem('kimi-web.theme')).toBe('modern');
+    // Default is modern, so the first toggle goes to terminal.
     client.toggleTheme();
     expect(client.theme.value).toBe('terminal');
     expect(localStorage.getItem('kimi-web.theme')).toBe('terminal');
+    client.toggleTheme();
+    expect(client.theme.value).toBe('modern');
+    expect(localStorage.getItem('kimi-web.theme')).toBe('modern');
   });
 
   it('切换主题时同步更新 <html data-theme>', async () => {
@@ -113,6 +114,6 @@ describe('useKimiWebClient — theme', () => {
     const client = await freshClient(makeFakeApi());
     // @ts-expect-error — intentionally passing an invalid theme
     client.setTheme('neon');
-    expect(client.theme.value).toBe('terminal');
+    expect(client.theme.value).toBe('modern');
   });
 });

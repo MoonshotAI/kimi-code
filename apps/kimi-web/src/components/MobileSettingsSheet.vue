@@ -166,7 +166,7 @@ function onPickModel(): void {
 .srow-val {
   flex: none;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--blue2);
 }

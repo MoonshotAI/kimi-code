@@ -58,6 +58,15 @@ function cancelRename(): void {
   renaming.value = false;
 }
 
+// Copy session ID
+const copiedId = ref(false);
+function copySessionId(): void {
+  navigator.clipboard.writeText(props.session.id).then(() => {
+    copiedId.value = true;
+    setTimeout(() => { copiedId.value = false; }, 1200);
+  }).catch(() => {/* ignore */});
+}
+
 // Delete confirm
 const confirming = ref(false);
 function startDelete(): void {
@@ -128,6 +137,10 @@ defineExpose({ closeMenu, cancelDelete });
 
       <!-- Kebab dropdown -->
       <div v-if="menuOpen" class="menu" @click.stop>
+        <button class="menu-item copy-id" @click.stop="copySessionId">
+          {{ copiedId ? '已复制 ✓' : '复制 Session ID ⧉' }}
+        </button>
+        <div class="menu-divider" />
         <button class="menu-item" @click.stop="startRename">{{ t('sidebar.rename') }}</button>
         <button class="menu-item del" @click.stop="startDelete">{{ t('sidebar.delete') }}</button>
       </div>
@@ -159,14 +172,14 @@ defineExpose({ closeMenu, cancelDelete });
 
 .t {
   color: var(--ink);
-  font-size: 12px;
+  font-size: 14px;
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.se.on .t { font-weight: 600; }
+.se.on .t { font-weight: 500; }
 
 /* Attention pill — small Kimi-blue badge with count */
 .attn {
@@ -236,10 +249,16 @@ defineExpose({ closeMenu, cancelDelete });
 .menu-item:hover { background: var(--panel2); }
 .menu-item.del { color: var(--err); }
 
+.menu-divider {
+  height: 1px;
+  background: var(--line);
+  margin: 2px 0;
+}
+
 .rename-input {
   flex: 1;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--ink);
   background: var(--bg);
   border: 1px solid var(--blue);

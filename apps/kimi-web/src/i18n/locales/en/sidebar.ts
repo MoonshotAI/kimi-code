@@ -18,4 +18,7 @@ export default {
   signIn: 'Sign in',
   language: 'Language',
   daemon: 'Daemon',
+  tabChat: 'chat',
+  tabFiles: 'files',
+  tabTasks: 'tasks',
 } as const;

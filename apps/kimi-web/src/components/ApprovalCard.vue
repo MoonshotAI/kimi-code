@@ -213,7 +213,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: 14px;
   border-bottom: 1px solid var(--bd);
   border-radius: 3px 3px 0 0;
   flex-wrap: wrap;
@@ -241,7 +241,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 }
 
 /* Diff */
-.diff { padding: 6px 0; font-size: 12px; line-height: 1.85; }
+.diff { padding: 6px 0; font-size: 14px; line-height: 1.85; }
 .dl { display: flex; padding: 0 10px; }
 .dg { width: 30px; color: var(--faint); text-align: right; padding-right: 12px; user-select: none; }
 .dc { white-space: pre; font-family: var(--mono); }
@@ -254,7 +254,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 .body-shell { padding: 10px 12px; }
 .shell-cmd {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 3px;
@@ -296,7 +296,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  font-size: 12px;
+  font-size: 14px;
 }
 .chip-label {
   background: var(--panel2);
@@ -335,7 +335,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   width: 100%;
   box-sizing: border-box;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   padding: 6px 8px;
   border: 1px solid var(--bd);
   border-radius: 3px;

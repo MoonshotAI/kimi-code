@@ -33,8 +33,14 @@ const props = withDefaults(
      * smooth typewriter/fade reveal; all other turns render statically.
      */
     running?: boolean;
+    /**
+     * True immediately after the user hits send and before the assistant reply
+     * starts streaming. Renders a moon-spinner placeholder at the end of the
+     * transcript so the user knows the request is in flight.
+     */
+    sending?: boolean;
   }>(),
-  { approvals: () => [], bubble: false, mobile: false, running: false },
+  { approvals: () => [], bubble: false, mobile: false, running: false, sending: false },
 );
 
 // Bubble layout is active on phones AND on the Modern desktop theme. ThinkingBlock
@@ -100,6 +106,11 @@ function copyTurn(turn: ChatTurn) {
       :agent-name="a.agentName"
       @decide="(response) => emit('approvalDecide', a.approvalId, response)"
     />
+
+    <!-- Sending placeholder — moon spinner while the request is in flight -->
+    <div v-if="sending" class="sending-placeholder">
+      <span class="moon-spin" aria-label="Sending…"></span>
+    </div>
   </div>
 
   <!-- ===================== DESKTOP: line-turns ===================== -->
@@ -156,18 +167,38 @@ function copyTurn(turn: ChatTurn) {
       :agent-name="a.agentName"
       @decide="(response) => emit('approvalDecide', a.approvalId, response)"
     />
+
+    <!-- Sending placeholder — moon spinner while the request is in flight -->
+    <div v-if="sending" class="ln sending-line">
+      <span class="no">—</span>
+      <div class="tx">
+        <div class="role-row">
+          <span class="pr">kimi</span>
+          <span class="who"> &gt; </span>
+        </div>
+        <span class="moon-spin" aria-label="Sending…"></span>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.term { padding: 14px 18px 10px; }
+.term {
+  padding: 14px 18px 10px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .chat-empty {
+  /* Fills the chat area and centers the hint vertically (parent grows via flex). */
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  padding: 64px 16px;
+  padding: 24px 16px;
   color: var(--faint);
   text-align: center;
 }
@@ -223,6 +254,8 @@ function copyTurn(turn: ChatTurn) {
   flex-direction: column;
   gap: 15px;
   padding: 16px 14px 20px;
+  flex: 1;
+  min-height: 0;
 }
 .chat .chat-empty { align-self: stretch; }
 
@@ -235,7 +268,7 @@ function copyTurn(turn: ChatTurn) {
   color: var(--ink);
   border-radius: 16px 16px 5px 16px;
   padding: 10px 14px;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.55;
 }
 /* Markdown inside a user bubble: tighten margins + tint inline code. */
@@ -243,7 +276,7 @@ function copyTurn(turn: ChatTurn) {
 .u-bub :deep(p + p) { margin-top: 6px; }
 .u-bub :deep(code) {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 13px;
   background: rgba(21, 101, 192, 0.09);
   border: none;
   border-radius: 5px;
@@ -258,9 +291,10 @@ function copyTurn(turn: ChatTurn) {
   width: 94%;
 }
 .a-msg .msg {
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
   color: var(--ink);
+  font-weight: 500;
 }
 .a-msg .msg :deep(p) { margin: 0; }
 .a-msg .msg :deep(p + p) { margin-top: 8px; }
@@ -269,7 +303,7 @@ function copyTurn(turn: ChatTurn) {
 .a-msg > .msg:first-child { margin-top: 0; }
 .a-msg :deep(code) {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 13px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 5px;
@@ -277,28 +311,32 @@ function copyTurn(turn: ChatTurn) {
   color: var(--blue2);
 }
 
-/* ===================== Modern theme ===================== */
-/* Softer bubble palette + a subtle shadow, and a smooth fade+slide entrance for
-   each turn. The animation runs once on mount (replays only if the last item
-   re-renders, which is acceptable). Reduced-motion is disabled globally. */
-:global(html[data-theme="modern"]) .chat {
-  gap: 18px;
-  padding: 22px 20px 26px;
+/* NOTE: Modern-theme chat/bubble styles live in src/style.css (global). Scoped
+   `:global(html[data-theme=modern]) .u-bub` rules here did NOT win the cascade,
+   so they were moved to the global sheet. */
+
+/* ---- Moon spinner — shown while the prompt is in flight ---- */
+.moon-spin {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset -4px 0 0 0 var(--muted);
+  animation: moon-rotate 1.2s linear infinite;
 }
-/* User bubble → soft Kimi-blue chat bubble (the "your message" colour used
-   across the app), generous radius, lifts off the canvas with a faint shadow. */
-:global(html[data-theme="modern"]) .u-bub {
-  background: var(--bluebg);
-  border-color: var(--blueln);
-  border-radius: 18px 18px 6px 18px;
-  padding: 11px 15px;
-  box-shadow: var(--shc);
-  animation: kimi-bubble-in 0.24s ease-out both;
+@keyframes moon-rotate {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
-/* Assistant → plain column on the canvas (no card), just the smooth entrance. */
-:global(html[data-theme="modern"]) .a-msg {
-  max-width: 100%;
-  width: 100%;
-  animation: kimi-bubble-in 0.24s ease-out both;
+
+/* Mobile bubble layout sending placeholder */
+.sending-placeholder {
+  align-self: flex-start;
+  padding: 10px 14px;
+}
+
+/* Desktop line-turns sending placeholder */
+.sending-line .tx {
+  padding-top: 2px;
 }
 </style>

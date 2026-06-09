@@ -225,7 +225,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 .finput {
   flex: 1;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   padding: 5px 8px;
   border: 1px solid var(--line);
   border-radius: 3px;

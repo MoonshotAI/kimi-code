@@ -419,7 +419,7 @@ function formatSeconds(s: number): string {
   gap: 14px;
 }
 .dc-instruction {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text);
   line-height: 1.6;
 }
@@ -429,7 +429,7 @@ function formatSeconds(s: number): string {
   align-items: center;
   gap: 6px;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--blue);
   background: var(--soft);
   border: 1px solid var(--bd);
@@ -497,7 +497,7 @@ function formatSeconds(s: number): string {
   border-top: 1px solid var(--line2);
 }
 .dc-spinner { display: flex; align-items: center; }
-.dc-status-text { font-size: 12px; color: var(--dim); flex: 1; }
+.dc-status-text { font-size: 14px; color: var(--dim); flex: 1; }
 .dc-countdown {
   font-size: 11.5px;
   color: var(--muted);

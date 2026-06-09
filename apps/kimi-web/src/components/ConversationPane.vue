@@ -9,6 +9,7 @@ import type { FileData } from './FilePreview.vue';
 import TabBar from './TabBar.vue';
 import ChatPane from './ChatPane.vue';
 import DiffView from './DiffView.vue';
+import ChangedTree from './ChangedTree.vue';
 import TasksPane from './TasksPane.vue';
 import FileTree from './FileTree.vue';
 import FilePreview from './FilePreview.vue';
@@ -38,6 +39,7 @@ const props = defineProps<{
   uploadImage?: (file: Blob, name?: string) => Promise<{ fileId: string; name: string; mediaType: string } | null>;
   connection?: ConnectionState;
   activity?: ActivityState;
+  sending?: boolean;
   // File browser props
   loadDir?: (path: string) => Promise<FsEntry[]>;
   readFile?: (path: string) => Promise<FileData | null>;
@@ -149,9 +151,59 @@ async function handleFileSelect(entry: FsEntry): Promise<void> {
   }
 }
 
-/** Mobile: return from the file preview back to the tree. */
+// ---------------------------------------------------------------------------
+// Merged ~/files tab: a navigator (left/full-width) with a Changed|All toggle,
+// and an adaptive content pane (right/drill-down) — a changed file shows its
+// line-by-line diff, an unchanged file shows its content preview.
+// ---------------------------------------------------------------------------
+const changedView = ref<'changed' | 'all'>('changed');
+
+// The "Changed" navigator can show a flat list or a directory tree (persisted).
+const CHANGED_LAYOUT_KEY = 'kimi-web.changed-layout';
+function loadChangedLayout(): 'list' | 'tree' {
+  try {
+    return localStorage.getItem(CHANGED_LAYOUT_KEY) === 'tree' ? 'tree' : 'list';
+  } catch {
+    return 'list';
+  }
+}
+const changedLayout = ref<'list' | 'tree'>(loadChangedLayout());
+function toggleChangedLayout(): void {
+  changedLayout.value = changedLayout.value === 'tree' ? 'list' : 'tree';
+  try {
+    localStorage.setItem(CHANGED_LAYOUT_KEY, changedLayout.value);
+  } catch {
+    // ignore
+  }
+}
+
+function isChanged(path: string): boolean {
+  return props.changesByPath?.[path] !== undefined;
+}
+
+/** Pick a changed file → show its diff. Clears any file-content preview first. */
+function pickChanged(path: string): void {
+  selectedFile.value = null;
+  if (props.mobile) filesShowPreview.value = true;
+  void props.loadFileDiff?.(path);
+}
+
+/** Pick a tree entry → diff if it's a changed file, else its content preview. */
+async function pickEntry(entry: FsEntry): Promise<void> {
+  if (entry.kind === 'directory') return;
+  if (isChanged(entry.path)) {
+    pickChanged(entry.path);
+    return;
+  }
+  props.clearFileDiff?.();
+  await handleFileSelect(entry);
+}
+
+/** Mobile: return from the content pane back to the navigator; clear selections. */
 function handleFilesBack(): void {
   filesShowPreview.value = false;
+  props.clearFileDiff?.();
+  selectedFile.value = null;
 }
 
 // No-op loadDir fallback so FileTree never receives undefined
@@ -308,58 +360,102 @@ onUnmounted(() => {
           :bubble="bubble"
           :mobile="mobile"
           :running="running"
+          :sending="sending"
           @approval-decide="handleApprovalDecide"
         />
       </div>
-      <DiffView
-        v-else-if="active === 'diff'"
-        :changes="changes ?? []"
-        :git-info="gitInfo ?? null"
-        :file-diff="fileDiff ?? []"
-        :selected-diff-path="selectedDiffPath ?? null"
-        :file-diff-loading="fileDiffLoading ?? false"
-        @open="(path: string) => loadFileDiff?.(path)"
-        @back="() => clearFileDiff?.()"
-      />
       <TasksPane
         v-else-if="active === 'tasks'"
         :tasks="tasks"
         @cancel="emit('cancelTask', $event)"
       />
-      <!-- ~/files DESKTOP: horizontal split (tree | preview) -->
-      <template v-else-if="active === 'files' && !mobile">
-        <div class="files-tree-panel">
-          <FileTree
-            :load-dir="loadDir ?? defaultLoadDir"
-            :changes-by-path="changesByPath ?? {}"
-            :reload-key="fileReloadKey"
-            @select="handleFileSelect"
-          />
-        </div>
-        <div class="files-divider" aria-hidden="true"></div>
-        <div class="files-preview-panel">
-          <FilePreview :file="selectedFile" :loading="previewLoading" />
-        </div>
-      </template>
 
-      <!-- ~/files MOBILE: single-column drill-down. Tapping a file in the
-           full-width tree swaps to a full-width preview with a Back affordance
-           (instead of the desktop side-by-side split that won't fit a phone). -->
-      <template v-else-if="active === 'files' && mobile">
-        <div v-show="!filesShowPreview" class="files-tree-mobile">
-          <FileTree
-            :load-dir="loadDir ?? defaultLoadDir"
-            :changes-by-path="changesByPath ?? {}"
-            :reload-key="fileReloadKey"
-            @select="handleFileSelect"
-          />
+      <!-- Merged ~/files tab: a navigator (Changed-first list / full tree via the
+           Changed|All toggle) on the left, an adaptive content pane on the right
+           (diff for changed files, content preview for unchanged ones). Desktop =
+           side-by-side split; mobile = single-column drill-down (v-show gates which
+           half is visible; the divider only exists on desktop). -->
+      <template v-else-if="active === 'files'">
+        <div v-show="!mobile || !filesShowPreview" class="files-nav">
+          <div class="nav-seg">
+            <div class="seg-group" role="group" :aria-label="t('fileTree.segLabel')">
+              <button
+                type="button"
+                class="seg-btn"
+                :class="{ on: changedView === 'changed' }"
+                :aria-pressed="changedView === 'changed'"
+                @click="changedView = 'changed'"
+              >
+                {{ t('fileTree.changed') }}
+                <span v-if="(changesCount ?? 0) > 0" class="seg-n">{{ changesCount }}</span>
+              </button>
+              <button
+                type="button"
+                class="seg-btn"
+                :class="{ on: changedView === 'all' }"
+                :aria-pressed="changedView === 'all'"
+                @click="changedView = 'all'"
+              >{{ t('fileTree.all') }}</button>
+            </div>
+            <!-- list/tree layout toggle for the Changed view -->
+            <button
+              v-if="changedView === 'changed'"
+              type="button"
+              class="layout-toggle"
+              :title="changedLayout === 'tree' ? t('fileTree.listView') : t('fileTree.treeView')"
+              :aria-label="changedLayout === 'tree' ? t('fileTree.listView') : t('fileTree.treeView')"
+              @click="toggleChangedLayout"
+            >
+              <svg v-if="changedLayout === 'list'" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 4h2M3 8h2M3 12h2"/><path d="M7.5 4l1.5 1.5L7.5 7"/><path d="M9 5.5h4M9 9.5h3.5M9 12.5h3"/></svg>
+              <svg v-else viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 4h10M3 8h10M3 12h10"/></svg>
+            </button>
+          </div>
+          <div class="files-nav-body">
+            <template v-if="changedView === 'changed'">
+              <DiffView
+                v-if="changedLayout === 'list'"
+                mode="list"
+                :changes="changes ?? []"
+                :git-info="gitInfo ?? null"
+                @open="pickChanged"
+              />
+              <ChangedTree v-else :changes="changes ?? []" @open="pickChanged" />
+            </template>
+            <FileTree
+              v-else
+              :load-dir="loadDir ?? defaultLoadDir"
+              :changes-by-path="changesByPath ?? {}"
+              :reload-key="fileReloadKey"
+              @select="pickEntry"
+            />
+          </div>
         </div>
-        <div v-if="filesShowPreview" class="files-preview-mobile">
-          <button type="button" class="files-back" @click="handleFilesBack">
+
+        <div v-if="!mobile" class="files-divider" aria-hidden="true"></div>
+
+        <div v-show="!mobile || filesShowPreview" class="files-content">
+          <button v-if="mobile" type="button" class="files-back" @click="handleFilesBack">
             <span aria-hidden="true">&#8592;</span>
             <span class="files-back-label">{{ t('fileTree.backToTree') }}</span>
           </button>
-          <FilePreview :file="selectedFile" :loading="previewLoading" />
+          <DiffView
+            v-if="selectedDiffPath"
+            mode="detail"
+            :hide-back="true"
+            :changes="changes ?? []"
+            :git-info="gitInfo ?? null"
+            :file-diff="fileDiff ?? []"
+            :selected-diff-path="selectedDiffPath ?? null"
+            :file-diff-loading="fileDiffLoading ?? false"
+          />
+          <FilePreview
+            v-else-if="selectedFile || previewLoading"
+            :file="selectedFile"
+            :loading="previewLoading"
+          />
+          <div v-else class="files-empty">
+            {{ changedView === 'changed' ? t('fileTree.selectChanged') : t('fileTree.selectFile') }}
+          </div>
         </div>
       </template>
     </div>
@@ -389,23 +485,11 @@ onUnmounted(() => {
       </button>
     </Transition>
 
-    <!-- Bottom dock (status line + composer). Capped to the same reading-column
-         width as the chat so it doesn't stretch edge-to-edge on wide screens. -->
+    <!-- Bottom dock. Capped to the chat reading column so it doesn't stretch
+         edge-to-edge on wide screens. The composer/input sits on top; the status
+         line is a quiet footer BELOW it (model/thinking/plan/permission left,
+         ctx far right). -->
     <div class="dock" :class="[mobile ? 'align-mobile' : `align-${contentAlign}`]">
-      <StatusLine
-        v-if="!mobile"
-        :status="status"
-        :connection="connection"
-        :activity="activity"
-        :thinking="thinking"
-        :plan-mode="planMode"
-        @set-permission="emit('setPermission', $event)"
-        @set-thinking="emit('setThinking', $event)"
-        @toggle-plan="emit('togglePlan')"
-        @compact="emit('compact')"
-        @interrupt="emit('interrupt')"
-        @pick-model="emit('pickModel')"
-      />
       <!-- QuestionCard replaces Composer while a question is pending -->
       <QuestionCard
         v-if="pendingQuestion"
@@ -424,6 +508,20 @@ onUnmounted(() => {
         @interrupt="emit('interrupt')"
         @unqueue="emit('unqueue', $event)"
         @edit-queued="emit('editQueued', $event)"
+      />
+      <StatusLine
+        v-if="!mobile"
+        :status="status"
+        :connection="connection"
+        :activity="activity"
+        :thinking="thinking"
+        :plan-mode="planMode"
+        @set-permission="emit('setPermission', $event)"
+        @set-thinking="emit('setThinking', $event)"
+        @toggle-plan="emit('togglePlan')"
+        @compact="emit('compact')"
+        @interrupt="emit('interrupt')"
+        @pick-model="emit('pickModel')"
       />
     </div>
   </section>
@@ -444,6 +542,12 @@ onUnmounted(() => {
    modes; align-left hugs the left gutter, align-center centers in the pane. */
 .content-wrap {
   max-width: var(--read-max);
+  /* Fill the scroll viewport so an empty conversation can vertically center its
+     hint (ChatPane grows via flex:1). With messages it grows past 100% and the
+     .panes scrolls as usual. */
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 .content-wrap.align-center { margin-left: auto; margin-right: auto; }
 .content-wrap.align-left { margin-left: 0; margin-right: auto; }
@@ -464,21 +568,108 @@ onUnmounted(() => {
 .dock.align-left { margin-left: 0; margin-right: auto; }
 .dock.align-mobile { max-width: none; }
 
-/* Files pane: horizontal split, no outer scroll */
+/* Capped desktop dock (center/left): the composer/input box is the visual
+   anchor; the status line is a quiet footer below it. No panel border, no hard
+   dividers — the dock blends into the (white) chat surface and the rounded input
+   box defines the area. Mobile keeps its own flat full-width bar. */
+.dock:not(.align-mobile) :deep(.composer) {
+  border-top: none;
+  background: transparent;
+  /* Tight bottom gap so the status controls sit right under the input box. */
+  padding-bottom: 2px;
+}
+.dock:not(.align-mobile) :deep(.statusline) {
+  border-top: none;
+  background: transparent;
+}
+
+/* Merged files pane: horizontal split (navigator | divider | content), no outer scroll */
 .panes.files-layout {
   display: flex;
   flex-direction: row;
   overflow: hidden;
 }
 
-.files-tree-panel {
+/* Left navigator: the Changed|All toggle + (changed list / full tree). */
+.files-nav {
   width: 38%;
-  min-width: 160px;
-  max-width: 320px;
+  min-width: 180px;
+  max-width: 340px;
   flex: none;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
-  border-right: none;
 }
+.files-nav-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Changed | All segmented toggle (+ list/tree layout toggle on the right). */
+.nav-seg {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.seg-group {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+.layout-toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+}
+.layout-toggle:hover { color: var(--blue); border-color: var(--bd); }
+.seg-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s;
+}
+.seg-btn:first-child { border-radius: 6px 0 0 6px; border-right: none; }
+.seg-btn:last-child { border-radius: 0 6px 6px 0; }
+.seg-btn:hover { color: var(--ink); }
+.seg-btn.on {
+  background: var(--soft);
+  color: var(--blue2);
+  font-weight: 600;
+  border-color: var(--bd);
+}
+.seg-n {
+  font-size: 9.5px;
+  background: var(--blue);
+  color: #fff;
+  border-radius: 8px;
+  padding: 0 5px;
+  line-height: 1.5;
+}
+.seg-btn.on .seg-n { background: var(--blue); }
 
 .files-divider {
   width: 1px;
@@ -487,24 +678,47 @@ onUnmounted(() => {
   align-self: stretch;
 }
 
-.files-preview-panel {
+/* Right content: adaptive (diff detail / file preview / empty). */
+.files-content {
   flex: 1;
   min-width: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.files-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+/* Make the child components (DiffView list/detail, FileTree, FilePreview) fill
+   their pane and scroll internally. */
+.files-nav-body :deep(.changes-pane),
+.files-content :deep(.changes-pane),
+.files-content :deep(.file-preview) {
+  flex: 1;
+  min-height: 0;
 }
 
 /* ---------------------------------------------------------------------------
-   Files pane MOBILE drill-down: a single full-width column. The tree fills the
-   pane; selecting a file swaps to a full-width preview that has its own Back
-   row. No side-by-side split (it won't fit a phone). Desktop is untouched.
+   Merged files pane MOBILE drill-down: a single full-width column. The navigator
+   fills the pane; picking a file swaps to a full-width content pane with its own
+   Back row. v-show hides the inactive half. No side-by-side split.
    --------------------------------------------------------------------------- */
 @media (max-width: 640px) {
-  /* The mobile files branch lays its single child out as a full-height column. */
   .panes.files-layout {
     flex-direction: column;
   }
-  .files-tree-mobile,
-  .files-preview-mobile {
+  .files-nav,
+  .files-content {
+    width: 100%;
+    max-width: none;
     flex: 1;
     min-width: 0;
     min-height: 0;
@@ -512,11 +726,7 @@ onUnmounted(() => {
     flex-direction: column;
     overflow: hidden;
   }
-  /* FileTree fills + scrolls itself; bigger row taps come from FileTree's own
-     mobile rules. */
-  .files-tree-mobile { width: 100%; }
-  /* The preview column: Back row pinned on top, FilePreview scrolls below it. */
-  .files-preview-mobile :deep(.file-preview) { flex: 1; min-height: 0; }
+  .files-content :deep(.file-preview) { flex: 1; min-height: 0; }
 
   .files-back {
     flex: none;
@@ -553,7 +763,7 @@ onUnmounted(() => {
   color: #fff;
   border: none;
   border-radius: 20px;
-  font-size: 12px;
+  font-size: 14px;
   font-family: var(--mono);
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);

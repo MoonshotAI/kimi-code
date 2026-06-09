@@ -265,7 +265,7 @@ watch(
 <style scoped>
 .file-tree {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--ink);
   background: var(--panel);
   height: 100%;
@@ -280,7 +280,7 @@ watch(
   gap: 8px;
   padding: 20px 16px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .ft-loading-text {
@@ -290,7 +290,7 @@ watch(
 .ft-empty {
   padding: 24px 16px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
   text-align: center;
 }
 
