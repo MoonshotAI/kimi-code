@@ -862,7 +862,7 @@ function finalRunStateForContext(context: RunContext): HeadlessRunState {
     case 'blocked':
       return 'failed';
     default:
-      return 'completed';
+      return 'running';
   }
 }
 

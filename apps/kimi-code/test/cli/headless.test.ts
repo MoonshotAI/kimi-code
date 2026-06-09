@@ -1344,6 +1344,13 @@ describe('runHeadless prompt run command', () => {
         turnId: 7,
         reason: 'completed',
       });
+      await waitForAssertion(async () => {
+        await expect(readHeadlessRunStatus(statusFile)).resolves.toMatchObject({
+          state: 'running',
+          lastEvent: 'turn.ended',
+          turnId: 7,
+        });
+      });
       runtime.emit({
         type: 'turn.started',
         sessionId: 'ses_headless',
