@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -102,6 +102,25 @@ describe('acquireSessionRunLock', () => {
     });
 
     const raw = await readFile(join(sessionDir, 'run.lock'), 'utf-8');
+    expect(JSON.parse(raw)).toMatchObject({ runId: 'run_001' });
+    await lock.release();
+  });
+
+  it('removes a stale corrupt lock file', async () => {
+    const sessionDir = await makeSessionDir();
+    const lockPath = join(sessionDir, 'run.lock');
+    await writeFile(lockPath, '{"schemaVersion":', 'utf-8');
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lockPath, old, old);
+
+    const lock = await acquireSessionRunLock({
+      sessionDir,
+      runId: 'run_001',
+      pid: process.pid,
+      command: 'headless run',
+    });
+
+    const raw = await readFile(lockPath, 'utf-8');
     expect(JSON.parse(raw)).toMatchObject({ runId: 'run_001' });
     await lock.release();
   });

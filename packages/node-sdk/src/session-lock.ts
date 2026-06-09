@@ -1,16 +1,10 @@
-import { open, readFile, unlink } from 'node:fs/promises';
+import { open, readFile, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { ErrorCodes, KimiError } from '@moonshot-ai/agent-core';
 
 const SESSION_RUN_LOCK_FILE = 'run.lock';
-const LIVE_UNKNOWN_LOCK: SessionRunLockFile = {
-  schemaVersion: 1,
-  runId: '',
-  pid: process.pid,
-  createdAt: '',
-  command: '',
-};
+const CORRUPT_LOCK_STALE_MS = 30_000;
 
 export interface SessionRunLock {
   readonly sessionDir: string;
@@ -88,7 +82,7 @@ async function createSessionRunLock(
     runId: input.runId,
     release: async (): Promise<void> => {
       const existing = await readLockFile(lockPath);
-      if (existing?.runId !== input.runId) return;
+      if (existing === null || existing === 'corrupt' || existing.runId !== input.runId) return;
       await unlink(lockPath).catch((error: unknown) => {
         if (!isNotFound(error)) throw error;
       });
@@ -99,10 +93,11 @@ async function createSessionRunLock(
 async function isExistingLockLive(lockPath: string): Promise<boolean> {
   const existing = await readLockFile(lockPath);
   if (existing === null) return false;
+  if (existing === 'corrupt') return isCorruptLockFresh(lockPath);
   return isPidAlive(existing.pid);
 }
 
-async function readLockFile(lockPath: string): Promise<SessionRunLockFile | null> {
+async function readLockFile(lockPath: string): Promise<SessionRunLockFile | 'corrupt' | null> {
   let raw: string;
   try {
     raw = await readFile(lockPath, 'utf-8');
@@ -113,10 +108,20 @@ async function readLockFile(lockPath: string): Promise<SessionRunLockFile | null
 
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (!isLockFile(parsed)) return LIVE_UNKNOWN_LOCK;
+    if (!isLockFile(parsed)) return 'corrupt';
     return parsed;
   } catch {
-    return LIVE_UNKNOWN_LOCK;
+    return 'corrupt';
+  }
+}
+
+async function isCorruptLockFresh(lockPath: string): Promise<boolean> {
+  try {
+    const info = await stat(lockPath);
+    return Date.now() - info.mtimeMs < CORRUPT_LOCK_STALE_MS;
+  } catch (error) {
+    if (isNotFound(error)) return false;
+    throw error;
   }
 }
 
