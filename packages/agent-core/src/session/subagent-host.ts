@@ -377,9 +377,11 @@ export class SessionSubagentHost {
           thinkingLevel = 'off';
         }
       } catch {
-        // If the provider manager cannot resolve the model here, fall back
-        // to the parent's thinking level and let the first request fail
-        // loudly with the usual configuration error.
+        // If the provider manager cannot resolve the model here, default to
+        // 'off' rather than inheriting the parent's thinking level. Sending
+        // reasoning/thinking params to an unknown model is more likely to
+        // cause API errors than disabling them.
+        thinkingLevel = 'off';
       }
     }
 
