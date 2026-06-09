@@ -256,29 +256,6 @@ function parseHeadless(argv: string[]): HeadlessCommand {
 }
 
 function expectParseError(argv: string[], message: string): void {
-  const program = createProgram(
-    '0.1.0-test',
-    () => {
-      throw new Error('main action should not run');
-    },
-    () => {},
-    () => {},
-    () => {},
-    () => {
-      throw new Error('headless action should not run');
-    },
-  );
-
-  program.exitOverride();
-  program.configureOutput({
-    writeOut: () => {},
-    writeErr: () => {},
-  });
-
-  expect(() => program.parse(['node', 'kimi', ...argv])).toThrow(message);
-}
-
-function expectCommanderError(argv: string[], message: string): void {
   let stderr = '';
   const program = createProgram(
     '0.1.0-test',
@@ -303,6 +280,34 @@ function expectCommanderError(argv: string[], message: string): void {
 
   expect(() => program.parse(['node', 'kimi', ...argv])).toThrow();
   expect(stderr).toContain(message);
+}
+
+function expectCommanderError(argv: string[], message: string): string {
+  let stderr = '';
+  const program = createProgram(
+    '0.1.0-test',
+    () => {
+      throw new Error('main action should not run');
+    },
+    () => {},
+    () => {},
+    () => {},
+    () => {
+      throw new Error('headless action should not run');
+    },
+  );
+
+  program.exitOverride();
+  program.configureOutput({
+    writeOut: () => {},
+    writeErr: (value) => {
+      stderr += value;
+    },
+  });
+
+  expect(() => program.parse(['node', 'kimi', ...argv])).toThrow();
+  expect(stderr).toContain(message);
+  return stderr;
 }
 
 function helpFor(argv: string[]): string {
@@ -433,6 +438,17 @@ describe('headless command parsing', () => {
       ['headless', 'run', '--goal', 'raise coverage', '--replace-goal', 'raise coverage'],
       'Specify exactly one of --prompt, --goal, or --replace-goal.',
     );
+  });
+
+  it('shows headless help when no input source is provided', () => {
+    const stderr = expectCommanderError(
+      ['headless'],
+      'Specify exactly one of --prompt, --goal, or --replace-goal.',
+    );
+
+    expect(stderr).toContain('Usage: kimi headless');
+    expect(stderr).toContain('Headless mode runs without the TUI.');
+    expect(stderr).toContain('Examples:');
   });
 
   it('rejects conflicting plan flags', () => {

@@ -36,6 +36,10 @@ export type HeadlessCommand =
 
 export type HeadlessCommandHandler = (command: HeadlessCommand) => void;
 
+const HEADLESS_INPUT_SOURCE_ERROR =
+  'Specify exactly one of --prompt, --goal, or --replace-goal.';
+const HEADLESS_PLAN_FLAGS_ERROR = 'Cannot combine --approve-plan with --reject-plan.';
+
 interface RawHeadlessRunOptions {
   readonly prompt?: string;
   readonly goal?: string;
@@ -69,6 +73,7 @@ export function registerHeadlessCommand(
   const headless = program
     .command('headless')
     .description('Run and inspect non-interactive Kimi Code turns.')
+    .showHelpAfterError()
     .addHelpText(
       'after',
       [
@@ -106,7 +111,7 @@ export function registerHeadlessCommand(
   run.action((options: RawHeadlessRunOptions) => {
     onHeadless({
       kind: 'run',
-      options: buildRunOptions(options),
+      options: buildRunOptions(options, run),
     });
   });
 
@@ -130,7 +135,7 @@ export function registerHeadlessCommand(
   headless.action((options: RawHeadlessRunOptions) => {
     onHeadless({
       kind: 'run',
-      options: buildRunOptions(options),
+      options: buildRunOptions(options, headless),
     });
   });
 }
@@ -141,6 +146,7 @@ function addRootGoalOptions(command: Command): void {
 }
 
 function addRunOptions(command: Command, options: { readonly includePrompt: boolean }): void {
+  command.showHelpAfterError();
   if (options.includePrompt) {
     command.addOption(new Option('--prompt <prompt>', 'Prompt text.'));
   }
@@ -206,16 +212,16 @@ function getGoalControlDescription(action: HeadlessControlAction): string {
   }
 }
 
-function buildRunOptions(raw: RawHeadlessRunOptions): HeadlessRunOptions {
+function buildRunOptions(raw: RawHeadlessRunOptions, command: Command): HeadlessRunOptions {
   const prompt = normalizeOptionalString(raw.prompt);
   const goal = normalizeOptionalString(raw.goal);
   const replaceGoal = normalizeOptionalString(raw.replaceGoal);
   const inputCount = [prompt, goal, replaceGoal].filter((value) => value !== undefined).length;
   if (inputCount !== 1) {
-    throw new Error('Specify exactly one of --prompt, --goal, or --replace-goal.');
+    command.error(HEADLESS_INPUT_SOURCE_ERROR);
   }
   if (raw.approvePlan === true && raw.rejectPlan === true) {
-    throw new Error('Cannot combine --approve-plan with --reject-plan.');
+    command.error(HEADLESS_PLAN_FLAGS_ERROR);
   }
 
   return {
