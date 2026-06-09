@@ -99,7 +99,6 @@ import { KaosShellNotFoundError, LocalKaos, type Kaos } from '@moonshot-ai/kaos'
 import type { ToolServices } from '../tools/support/services';
 
 const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
-const KIMI_DATASOURCE_PLUGIN_MCP_SERVER = 'plugin-kimi-datasource:data';
 const KIMI_CODE_BASE_URL_ENV = 'KIMI_CODE_BASE_URL';
 const KIMI_CODE_OAUTH_HOST_ENV = 'KIMI_CODE_OAUTH_HOST';
 const KIMI_OAUTH_HOST_ENV = 'KIMI_OAUTH_HOST';
@@ -815,22 +814,17 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private withManagedKimiPluginEnv(
     pluginServers: Record<string, McpServerConfig>,
   ): Record<string, McpServerConfig> {
-    const datasource = pluginServers[KIMI_DATASOURCE_PLUGIN_MCP_SERVER];
-    if (datasource === undefined || datasource.transport !== 'stdio') return pluginServers;
-
     const managedEnv = this.managedKimiCodeEnvForPlugins();
     if (Object.keys(managedEnv).length === 0) return pluginServers;
 
-    return {
-      ...pluginServers,
-      [KIMI_DATASOURCE_PLUGIN_MCP_SERVER]: {
-        ...datasource,
-        env: {
-          ...datasource.env,
-          ...managedEnv,
-        },
-      },
-    };
+    const out: Record<string, McpServerConfig> = {};
+    for (const [name, server] of Object.entries(pluginServers)) {
+      out[name] =
+        server.transport === 'stdio'
+          ? { ...server, env: { ...server.env, ...managedEnv } }
+          : server;
+    }
+    return out;
   }
 
   private managedKimiCodeEnvForPlugins(): Record<string, string> {
