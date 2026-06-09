@@ -149,6 +149,96 @@ describe('git status cache', () => {
     });
   });
 
+  it('shows detached HEAD as the current commit without looking up a pull request', () => {
+    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('--is-inside-work-tree')) {
+        return { status: 0, stdout: 'true\n' };
+      }
+      if (args.includes('branch')) {
+        return { status: 0, stdout: '' };
+      }
+      if (args.includes('--short')) {
+        return { status: 0, stdout: '3a22346\n' };
+      }
+      if (args.includes('status')) {
+        return { status: 0, stdout: '## HEAD (no branch)\n' };
+      }
+      return { status: 1, stdout: '' };
+    });
+
+    const cache = createGitStatusCache('/tmp/repo');
+
+    expect(cache.getStatus()).toEqual({
+      branch: 'detached@3a22346',
+      dirty: false,
+      ahead: 0,
+      behind: 0,
+      diffAdded: 0,
+      diffDeleted: 0,
+      pullRequest: null,
+    });
+    expect(mocks.execFile).not.toHaveBeenCalled();
+  });
+
+  it('ignores stale pull request results after switching to detached HEAD', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-24T00:00:00Z'));
+
+    const onChange = vi.fn();
+    let branchReads = 0;
+    let prCallback:
+      | ((error: Error | null, stdout: string, stderr: string) => void)
+      | undefined;
+
+    mocks.execFile.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _options: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        prCallback = callback;
+      },
+    );
+    mocks.spawnSync.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.includes('--is-inside-work-tree')) {
+        return { status: 0, stdout: 'true\n' };
+      }
+      if (args.includes('branch')) {
+        branchReads += 1;
+        return { status: 0, stdout: branchReads === 1 ? 'feature/footer\n' : '' };
+      }
+      if (args.includes('--short')) {
+        return { status: 0, stdout: '3a22346\n' };
+      }
+      if (args.includes('status')) {
+        return { status: 0, stdout: '## HEAD (no branch)\n' };
+      }
+      return { status: 1, stdout: '' };
+    });
+
+    const cache = createGitStatusCache('/tmp/repo', { onChange });
+    expect(cache.getStatus()?.branch).toBe('feature/footer');
+    expect(mocks.execFile).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(new Date('2026-04-24T00:00:06Z'));
+    expect(cache.getStatus()?.branch).toBe('detached@3a22346');
+
+    prCallback?.(null, '{"number":12,"url":"https://github.com/acme/repo/pull/12"}\n', '');
+    await Promise.resolve();
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(cache.getStatus()).toEqual({
+      branch: 'detached@3a22346',
+      dirty: false,
+      ahead: 0,
+      behind: 0,
+      diffAdded: 0,
+      diffDeleted: 0,
+      pullRequest: null,
+    });
+  });
+
   it('keeps footer git status working when gh pull-request lookup throws synchronously', async () => {
     const onChange = vi.fn();
     mocks.execFile.mockImplementation(() => {
