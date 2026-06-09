@@ -2,6 +2,36 @@
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.12.0 (2026-06-09)
+
+### Features
+
+- Add the `/swarm` command for running agent swarms with live progress and rate-limit-aware retries.
+- Make goals, background questions, and sub-skill discovery available without experimental opt-ins.
+- Honor the standard `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY` environment variables, including SOCKS proxies, for all outbound traffic.
+- Support Homebrew installations.
+- Enable micro compaction by default. Disable via `/experiments`.
+
+### Bug Fixes
+
+- Fix ACP slash skill routing, bootstrap context reads, file and permission edge cases, subagent event handling, and stale-file edit messaging.
+- Fix goal resume behavior by restoring goal state from agent records.
+- Fix thinking text and tool output display for subagents.
+- Fix session workdir mismatch on Windows caused by inconsistent path separators.
+- Fix the `/mcp` status panel border being broken by multi-line MCP server errors, which are now folded onto a single row.
+- Detect Git Bash installed through Scoop and other Git shims on Windows.
+- Show the underlying error when migration fails.
+- Allow the startup session picker to exit with repeated Ctrl-C or Ctrl-D.
+
+### Polish
+
+- Remove the per-turn auto-compaction limit so long conversations can keep compacting instead of failing early.
+- Improve goal mode outcome handling with follow-up messages, safer error pauses, and clearer TUI transcript display.
+- Show full plan cards directly and remove the Plan card keyboard shortcut.
+- Wrap long single-line shell commands in approval prompts so the full command remains visible.
+- Rework file reference completion in the TUI.
+- Load Kimi-specific user Skills and global agent instructions from `KIMI_CODE_HOME` when it is set.
+
 ## 0.11.0 (2026-06-05)
 
 ### Features

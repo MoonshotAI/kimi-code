@@ -2,6 +2,36 @@
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.12.0（2026-06-09）
+
+### 新功能
+
+- 新增 `/swarm` 命令，用于运行 Agent Swarm，支持实时进度展示和速率限制感知重试。
+- goals、background questions 和 sub-skill discovery 不再需要实验性开关即可使用。
+- 支持标准环境变量 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`（包括 SOCKS 代理）用于所有出站流量。
+- 支持 Homebrew 安装。
+- 默认启用 micro compaction，可在 `/experiments` 中关闭。
+
+### 修复
+
+- 修复 ACP 斜杠 Skill 路由、bootstrap 上下文读取、文件与权限边界情况、子 Agent 事件处理以及过期文件编辑消息的问题。
+- 修复 goal 恢复行为，通过从 Agent 记录中恢复 goal 状态。
+- 修复子 Agent 的 thinking 文本和工具输出显示。
+- 修复 Windows 上由不一致的路径分隔符导致的会话工作目录不匹配问题。
+- 修复 `/mcp` 状态面板边框被多行 MCP server 错误破坏的问题，现在会折叠到单行显示。
+- 检测通过 Scoop 安装的 Git Bash 以及 Windows 上的其他 Git shim。
+- 在迁移失败时显示底层错误。
+- 允许通过重复按 Ctrl-C 或 Ctrl-D 退出启动会话选择器。
+
+### 优化
+
+- 移除每轮自动压缩上限，让长对话可以继续压缩而不是提前失败。
+- 改进 goal 模式的结果处理，包括后续消息、更安全的错误暂停和更清晰的 TUI 对话记录展示。
+- 直接展示完整 plan 卡片，并移除 Plan 卡片键盘快捷键。
+- 在审批提示中换行显示过长的单行 shell 命令，以便完整命令始终可见。
+- 重构 TUI 中的文件引用补全。
+- 当设置了 `KIMI_CODE_HOME` 时，从该路径加载 Kimi 特定的用户 Skills 和全局 Agent 指令。
+
 ## 0.11.0（2026-06-05）
 
 ### 新功能
