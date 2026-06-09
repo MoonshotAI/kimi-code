@@ -1548,4 +1548,83 @@ describe('runHeadless prompt run command', () => {
       },
     });
   });
+
+  it('reports interrupt control as interrupted instead of failed', async () => {
+    const dir = await createTempDir();
+    const statusFile = path.join(dir, 'status.json');
+    const outputDir = path.join(dir, 'out');
+    const controlFile = path.join(outputDir, 'control.json');
+    const runtime = createFakeHeadlessRuntime();
+    runtime.session.createGoal.mockResolvedValueOnce({});
+    runtime.session.pauseGoal.mockResolvedValueOnce({});
+    runtime.session.cancel.mockImplementationOnce(async () => {
+      runtime.emit({
+        type: 'turn.ended',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        turnId: 7,
+        reason: 'cancelled',
+      });
+    });
+    runtime.session.prompt.mockImplementationOnce(async () => {
+      runtime.emit({
+        type: 'turn.started',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        turnId: 7,
+        origin: { kind: 'user' },
+      });
+      await writeHeadlessControlRequest(controlFile, {
+        schemaVersion: 1,
+        runId: 'run_test',
+        commandId: 'cmd_interrupt',
+        action: 'interrupt',
+        requestedAt: '2026-06-05T00:00:05.000Z',
+      });
+      await waitForAssertion(() => {
+        expect(runtime.session.cancel).toHaveBeenCalledOnce();
+      });
+    });
+    const stdout = outputWriter();
+
+    await runHeadless(
+      {
+        kind: 'run',
+        options: {
+          goal: 'raise coverage',
+          cwd: '/repo',
+          continue: false,
+          statusFile,
+          outputDir,
+          metadataOnly: false,
+          approvePlan: false,
+          rejectPlan: false,
+          skillsDirs: [],
+        },
+      },
+      '1.2.3-test',
+      {
+        stdout,
+        createHarness: () => runtime.harness,
+        acquireSessionRunLock: runtime.acquireLock,
+      },
+    );
+
+    expect(JSON.parse(stdout.text())).toMatchObject({
+      state: 'interrupted',
+      responseFormat: 'files',
+    });
+    await expect(readHeadlessRunStatus(statusFile)).resolves.toMatchObject({
+      state: 'interrupted',
+      error: null,
+      control: {
+        lastRequest: { commandId: 'cmd_interrupt', action: 'interrupt' },
+        lastApplied: {
+          commandId: 'cmd_interrupt',
+          action: 'interrupt',
+          result: 'applied',
+        },
+      },
+    });
+  });
 });

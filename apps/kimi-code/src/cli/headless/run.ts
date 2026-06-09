@@ -554,6 +554,12 @@ async function runHeadlessPromptTurn(
           if (!context.goalMode || context.goalTerminal) finish();
           return;
         }
+        if (event.reason === 'cancelled' && context.status.state === 'interrupted') {
+          activeTurnId = null;
+          updateRunStatus(context, 'interrupted', event.type);
+          finish();
+          return;
+        }
         const error = new Error(formatTurnEndedFailure(event));
         updateRunStatus(context, 'failed', event.type, { error });
         finish(error);
@@ -594,6 +600,7 @@ async function applyControlRequest(
         await session.cancelGoal({ reason: 'headless control request' });
         break;
       case 'interrupt':
+        context.status = { ...context.status, state: 'interrupted' };
         await session.pauseGoal({ reason: 'headless control request' }).catch(() => {});
         await session.cancel();
         break;
