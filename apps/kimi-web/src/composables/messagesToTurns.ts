@@ -208,10 +208,24 @@ export function messagesToTurns(
 
   let pendingGroup: Group | null = null;
 
-  function flushGroup(): void {
+  function flushGroup(final = false): void {
     if (!pendingGroup) return;
     const g = pendingGroup;
     pendingGroup = null;
+    // A later message ended this turn, so a tool still 'running' simply never
+    // had its result persisted (e.g. an aborted turn in an old transcript) —
+    // render it settled instead of spinning forever. The FINAL group keeps
+    // 'running' so live in-flight tools show their spinner.
+    if (!final) {
+      for (let i = 0; i < g.tools.length; i++) {
+        const t = g.tools[i]!;
+        if (t.status !== 'running') continue;
+        const updated: ToolCall = { ...t, status: 'ok' };
+        g.tools[i] = updated;
+        const blk = g.blocks.find((b) => b.kind === 'tool' && b.tool.id === updated.id);
+        if (blk && blk.kind === 'tool') blk.tool = updated;
+      }
+    }
     turns.push({
       id: g.id,
       role: 'assistant',
@@ -244,7 +258,9 @@ export function messagesToTurns(
           id: c.toolCallId,
           name: c.toolName,
           arg: typeof c.input === 'string' ? c.input : JSON.stringify(c.input),
-          status: pendingApproval ? 'running' : 'ok',
+          // 'running' until the toolResult is absorbed (resolves to ok/error);
+          // flushGroup settles dangling tools of finished turns back to 'ok'.
+          status: 'running',
         };
         g.tools.push(toolCall);
         g.blocks.push({ kind: 'tool', tool: toolCall });
@@ -336,6 +352,6 @@ export function messagesToTurns(
     absorbContent(pendingGroup!, msg.content);
   }
 
-  flushGroup();
+  flushGroup(true);
   return turns;
 }
