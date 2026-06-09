@@ -269,7 +269,8 @@ export function toAppApprovalRequest(wire: WireApprovalRequest): AppApprovalRequ
     toolCallId: wire.tool_call_id,
     toolName: wire.tool_name,
     action: wire.action,
-    display: wire.display,
+    // The real daemon sends `tool_input_display`; the stub sends `display`.
+    display: wire.tool_input_display ?? wire.display,
     expiresAt: wire.expires_at,
     createdAt: wire.created_at,
   };

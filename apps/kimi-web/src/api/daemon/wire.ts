@@ -194,7 +194,11 @@ export interface WireApprovalRequest {
   tool_call_id: string;
   tool_name: string;
   action: string;
-  display: unknown; // ToolInputDisplay — 12 discriminated kinds; client falls back to generic
+  /** ToolInputDisplay — 12 discriminated kinds; client falls back to generic.
+      The daemon protocol field is `tool_input_display` (protocol/approval.ts);
+      `display` is the stub daemon's older shape, kept for compatibility. */
+  tool_input_display?: unknown;
+  display?: unknown;
   expires_at: string;
   created_at: string;
 }
