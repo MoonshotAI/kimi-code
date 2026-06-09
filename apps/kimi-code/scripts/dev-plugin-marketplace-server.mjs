@@ -7,6 +7,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import yazl from 'yazl';
 
+import { readPluginManifestVersion } from './plugin-manifest-version.mjs';
+
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(SCRIPT_DIR, '../../..');
 const DEFAULT_PLUGINS_ROOT = resolve(REPO_ROOT, 'plugins');
@@ -109,7 +111,10 @@ async function rewriteMarketplaceJson(raw, pluginsRoot) {
       if (!isLocalRelativeSource(entry.source)) return entry;
       const sourcePath = resolveInsideRoot(pluginsRoot, entry.source);
       if (!(await isDirectory(sourcePath))) return entry;
-      return { ...entry, source: withZipExtension(entry.source) };
+      // Stamp the version from the plugin's real manifest so "latest" stays truthful.
+      const version = await readPluginManifestVersion(sourcePath);
+      const withVersion = version !== undefined ? { ...entry, version } : entry;
+      return { ...withVersion, source: withZipExtension(withVersion.source) };
     }),
   );
 

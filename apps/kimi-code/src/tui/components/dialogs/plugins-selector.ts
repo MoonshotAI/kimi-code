@@ -12,7 +12,7 @@ import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { formatPluginSourceLabel, pluginTrustLabel } from '#/tui/utils/plugin-source-label';
 import { printableChar } from '#/tui/utils/printable-key';
-import type { PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
+import { computeUpdateStatus, type PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
 
 import { ChoicePickerComponent } from './choice-picker';
 
@@ -184,7 +184,7 @@ export type PluginMarketplaceSelection =
 
 export interface PluginMarketplaceSelectorOptions {
   readonly entries: readonly PluginMarketplaceEntry[];
-  readonly installedIds: ReadonlySet<string>;
+  readonly installed: ReadonlyMap<string, string | undefined>;
   readonly source: string;
   readonly onSelect: (selection: PluginMarketplaceSelection) => void;
   readonly onCancel: () => void;
@@ -200,7 +200,7 @@ export class PluginMarketplaceSelectorComponent extends Container implements Foc
   constructor(opts: PluginMarketplaceSelectorOptions) {
     super();
     this.opts = opts;
-    this.items = buildMarketplaceItems(opts.entries, opts.installedIds);
+    this.items = buildMarketplaceItems(opts.entries, opts.installed);
   }
 
   handleInput(data: string): void {
@@ -502,13 +502,13 @@ function overviewItemPluginId(item: PluginsOverviewItem): string | undefined {
 
 function buildMarketplaceItems(
   entries: readonly PluginMarketplaceEntry[],
-  installedIds: ReadonlySet<string>,
+  installed: ReadonlyMap<string, string | undefined>,
 ): PluginsOverviewItem[] {
   const items: PluginsOverviewItem[] = entries.map((entry) => ({
     value: entry.id,
     kind: 'plugin',
     label: entry.displayName,
-    status: installedIds.has(entry.id) ? 'installed' : installStatus(entry),
+    status: marketplaceItemStatus(entry, installed),
     description: marketplaceEntryDescription(entry),
   }));
   items.push({
@@ -556,13 +556,13 @@ function mcpItemServerName(item: PluginsOverviewItem): string | undefined {
 function marketplaceEntryDescription(entry: PluginMarketplaceEntry): string {
   const tier = marketplaceTierLabel(entry.tier);
   const description = entry.description ?? tier;
-  const version = entry.version !== undefined ? ` · v${entry.version}` : '';
   const keywords =
     entry.keywords !== undefined && entry.keywords.length > 0
       ? ` · ${entry.keywords.join(', ')}`
       : '';
   const tierSuffix = entry.description !== undefined ? ` · ${tier}` : '';
-  return `${description} · id ${entry.id}${version}${tierSuffix}${keywords}`;
+  // The version now lives in the status badge, so it is omitted here to avoid duplication.
+  return `${description} · id ${entry.id}${tierSuffix}${keywords}`;
 }
 
 function marketplaceTierLabel(tier: PluginMarketplaceEntry['tier']): string {
@@ -571,8 +571,19 @@ function marketplaceTierLabel(tier: PluginMarketplaceEntry['tier']): string {
   return 'Plugin';
 }
 
-function installStatus(entry: PluginMarketplaceEntry): string {
-  return entry.version === undefined ? 'install' : `install v${entry.version}`;
+function marketplaceItemStatus(
+  entry: PluginMarketplaceEntry,
+  installed: ReadonlyMap<string, string | undefined>,
+): string {
+  const status = computeUpdateStatus(entry.version, installed.get(entry.id), installed.has(entry.id));
+  switch (status.kind) {
+    case 'update':
+      return `update ${status.local} → ${status.latest}`;
+    case 'up-to-date':
+      return status.version === undefined ? 'installed' : `installed · v${status.version}`;
+    case 'not-installed':
+      return entry.version === undefined ? 'install' : `install v${entry.version}`;
+  }
 }
 
 function sectionLabel(label: string): string {
@@ -583,7 +594,8 @@ function statusStyle(
   item: PluginsOverviewItem,
 ): (text: string) => string {
   if (item.kind === 'action') return (text) => currentTheme.fg('textDim', text);
-  if (item.status === 'enabled' || item.status === 'installed') return (text) => currentTheme.fg('success', text);
+  if (item.status?.startsWith('update')) return (text) => currentTheme.fg('warning', text);
+  if (item.status === 'enabled' || item.status?.startsWith('installed')) return (text) => currentTheme.fg('success', text);
   if (item.status?.startsWith('install')) return (text) => currentTheme.fg('primary', text);
   if (item.status === 'disabled') return (text) => currentTheme.fg('textDim', text);
   if (item.status !== undefined && /^\d/.test(item.status)) return (text) => currentTheme.fg('textDim', text);

@@ -178,7 +178,9 @@ async function showPluginMarketplacePicker(host: SlashCommandHost, source?: stri
     host.mountEditorReplacement(
       new PluginMarketplaceSelectorComponent({
         entries: marketplace.plugins,
-        installedIds: new Set(installed.map((plugin) => plugin.id)),
+        installed: new Map(
+          installed.map((plugin): [string, string | undefined] => [plugin.id, plugin.version]),
+        ),
         source: marketplace.source,
         onSelect: (selection) => {
           // Every marketplace action re-mounts a picker, so let the handler do
