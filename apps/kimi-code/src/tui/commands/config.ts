@@ -207,12 +207,12 @@ export function handleModelCommand(host: SlashCommandHost, args: string): void {
 }
 
 export function handleSwarmModelCommand(host: SlashCommandHost, args: string): void {
-  const alias = args.trim().toLowerCase();
+  const alias = args.trim();
   if (alias.length === 0) {
     showSwarmModelPicker(host);
     return;
   }
-  if (alias === 'off') {
+  if (alias.toLowerCase() === 'off') {
     void clearSwarmModel(host);
     return;
   }
@@ -357,6 +357,11 @@ async function setSwarmModel(host: SlashCommandHost, alias: string): Promise<voi
 }
 
 async function clearSwarmModel(host: SlashCommandHost): Promise<void> {
+  if (host.state.appState.streamingPhase !== 'idle') {
+    host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
+    return;
+  }
+
   try {
     await host.harness.setConfig({ subAgentModel: null });
   } catch (error) {
