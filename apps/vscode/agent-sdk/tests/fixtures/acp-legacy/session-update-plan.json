@@ -1,0 +1,25 @@
+{
+  "name": "plan update normalizes status and priority",
+  "method": "session/update",
+  "params": {
+    "sessionId": "sess-plan",
+    "update": {
+      "sessionUpdate": "plan",
+      "entries": [
+        { "content": "One", "status": "active", "priority": "urgent" },
+        { "content": "Two", "status": "in_progress", "priority": "high" }
+      ]
+    }
+  },
+  "expectedEvents": [
+    {
+      "type": "Plan",
+      "payload": {
+        "entries": [
+          { "content": "One", "status": "pending" },
+          { "content": "Two", "status": "in_progress", "priority": "high" }
+        ]
+      }
+    }
+  ]
+}

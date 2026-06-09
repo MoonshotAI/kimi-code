@@ -1,0 +1,68 @@
+{
+  "name": "tool call lifecycle preserves cumulative args and rich result display",
+  "method": "session/update_sequence",
+  "params": {
+    "sessionId": "sess-tool-lifecycle",
+    "updates": [
+      {
+        "update": {
+          "sessionUpdate": "tool_call",
+          "toolCallId": "tool-1",
+          "title": "Shell",
+          "kind": "execute",
+          "status": "pending",
+          "rawInput": "pnpm test"
+        }
+      },
+      {
+        "update": {
+          "sessionUpdate": "tool_call_update",
+          "toolCallId": "tool-1",
+          "title": "Shell",
+          "status": "running",
+          "rawInput": "pnpm test --runInBand"
+        }
+      },
+      {
+        "update": {
+          "sessionUpdate": "tool_call_update",
+          "toolCallId": "tool-1",
+          "title": "Shell",
+          "status": "completed",
+          "content": [
+            { "type": "content", "content": { "type": "text", "text": "done" } },
+            { "type": "diff", "path": "src/index.ts", "oldText": "a", "newText": "b" }
+          ]
+        }
+      }
+    ]
+  },
+  "expectedEvents": [
+    {
+      "type": "ToolCall",
+      "payload": {
+        "type": "function",
+        "id": "tool-1",
+        "function": { "name": "Shell", "arguments": "pnpm test" },
+        "extras": { "kind": "execute", "status": "pending" }
+      }
+    },
+    { "type": "ToolCallPart", "payload": { "tool_call_id": "tool-1", "arguments_part": " --runInBand" } },
+    {
+      "type": "ToolResult",
+      "payload": {
+        "tool_call_id": "tool-1",
+        "return_value": {
+          "is_error": false,
+          "output": "done",
+          "message": "Shell",
+          "display": [
+            { "type": "brief", "text": "done" },
+            { "type": "diff", "path": "src/index.ts", "old_text": "a", "new_text": "b" }
+          ],
+          "extras": { "status": "completed" }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "kimi/step_interrupted -> StepInterrupted",
+  "method": "kimi/step_interrupted",
+  "params": {
+    "sessionId": "sess-1",
+    "turnId": 3,
+    "step": 2,
+    "reason": "aborted",
+    "message": "Interrupted by user"
+  },
+  "expectedEvents": [
+    {
+      "type": "StepInterrupted",
+      "payload": {}
+    }
+  ]
+}

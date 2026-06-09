@@ -1,0 +1,25 @@
+{
+  "name": "@moonshot-ai/kimi-code-vscode-display-model",
+  "version": "0.1.0",
+  "description": "VS Code display state reducer for Kimi agent events",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "imports": {
+    "#/*": [
+      "./src/*.ts",
+      "./src/*/index.ts"
+    ]
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  }
+}

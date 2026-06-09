@@ -1,0 +1,38 @@
+{
+  "name": "usage update maps context and current-turn token usage",
+  "method": "session/update",
+  "params": {
+    "sessionId": "sess-usage",
+    "update": {
+      "sessionUpdate": "usage_update",
+      "used": 12500,
+      "size": 200000,
+      "_meta": {
+        "contextUsage": 0.0625,
+        "currentTurn": {
+          "inputOther": 1000,
+          "output": 500,
+          "inputCacheRead": 100,
+          "inputCacheCreation": 50
+        }
+      }
+    }
+  },
+  "expectedEvents": [
+    {
+      "type": "StatusUpdate",
+      "payload": {
+        "context_usage": 0.0625,
+        "context_tokens": 12500,
+        "max_context_tokens": 200000,
+        "token_usage": {
+          "input_other": 1000,
+          "output": 500,
+          "input_cache_read": 100,
+          "input_cache_creation": 50
+        },
+        "message_id": null
+      }
+    }
+  ]
+}

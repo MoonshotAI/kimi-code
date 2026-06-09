@@ -1,0 +1,32 @@
+{
+  "name": "permission request preserves numeric id zero and dynamic options",
+  "method": "session/request_permission",
+  "id": 0,
+  "params": {
+    "sessionId": "sess-permission",
+    "toolCall": {
+      "toolCallId": "perm-1",
+      "title": "Edit",
+      "content": [{ "type": "diff", "path": "README.md", "oldText": "old", "newText": "new" }]
+    },
+    "options": [
+      { "optionId": "approve_once", "name": "Approve once", "kind": "allow" },
+      { "optionId": "reject", "name": "Reject", "kind": "deny" }
+    ]
+  },
+  "expectedEvent": {
+    "type": "ApprovalRequest",
+    "payload": {
+      "id": 0,
+      "tool_call_id": "perm-1",
+      "sender": "Edit",
+      "action": "allow, deny",
+      "description": "Modify README.md",
+      "display": [{ "type": "diff", "path": "README.md", "old_text": "old", "new_text": "new" }],
+      "options": [
+        { "optionId": "approve_once", "name": "Approve once", "kind": "allow" },
+        { "optionId": "reject", "name": "Reject", "kind": "deny" }
+      ]
+    }
+  }
+}

@@ -24,3 +24,11 @@ docker-compose.yml
 docs/superpowers/
 reports/
 .superpowers/
+superpowers
+
+# VS Code extension build artifacts
+apps/vscode/dist/
+apps/vscode/out/
+apps/vscode/.vscode-test/
+apps/vscode/.vscode-test-web/
+apps/vscode/*.vsix

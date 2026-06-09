@@ -21,6 +21,10 @@ import { AUTHED_STATUS } from './_helpers/harness-stubs';
 
 class CollectingClient implements Client {
   readonly updates: SessionNotification[] = [];
+  readonly extNotifications: Array<{ method: string; params: Record<string, unknown> }> = [];
+  async extNotification(method: string, params: Record<string, unknown>): Promise<void> {
+    this.extNotifications.push({ method, params });
+  }
   async requestPermission(_p: RequestPermissionRequest): Promise<RequestPermissionResponse> {
     throw new Error('requestPermission should not be called');
   }
@@ -255,11 +259,10 @@ describe('AcpSession slash routing', () => {
     await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
     await waitForAvailableCommands(collecting);
 
-    // Unknown slash (`/clear` is a TUI builtin not advertised by ACP):
-    // the adapter must NOT forward it to the model. It produces a local
-    // "unknown command" reply and returns `end_turn` without invoking
-    // Session.prompt.
-    await client.prompt({ sessionId, prompt: [textBlock('/clear')] });
+    // Unknown slash commands must NOT be forwarded to the model. The adapter
+    // produces a local "unknown command" reply and returns end_turn without
+    // invoking Session.prompt.
+    await client.prompt({ sessionId, prompt: [textBlock('/definitely-unknown')] });
     // Plain text: trivially passes through.
     await client.prompt({ sessionId, prompt: [textBlock('hello world')] });
 
@@ -370,5 +373,72 @@ describe('AcpSession slash routing', () => {
     expect(text).toContain('Session status:');
     expect(text).toContain('Model: mock-model');
     expect(text).toContain('Context: 1,234 / 200,000 (0.6%)');
+  });
+
+  it('routes built-in `/clear` to Session.clearContext and emits a reset event', async () => {
+    const sessionId = 'sess-slash-clear';
+    let clearCalls = 0;
+    let promptCalls = 0;
+    const session = {
+      id: sessionId,
+      prompt: async () => {
+        promptCalls += 1;
+      },
+      cancel: async () => undefined,
+      onEvent: (_fn: (event: Event) => void) => () => undefined,
+      clearContext: async () => {
+        clearCalls += 1;
+      },
+    } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+    await client.prompt({ sessionId, prompt: [textBlock('/clear')] });
+
+    expect(clearCalls).toBe(1);
+    expect(promptCalls).toBe(0);
+    expect(collecting.extNotifications).toContainEqual({
+      method: 'kimi/conversation_reset',
+      params: { sessionId },
+    });
+  });
+
+  it('routes built-in `/yolo` to mode toggling', async () => {
+    const sessionId = 'sess-slash-yolo';
+    const permissionCalls: string[] = [];
+    const session = {
+      id: sessionId,
+      prompt: async () => undefined,
+      cancel: async () => undefined,
+      onEvent: (_fn: (event: Event) => void) => () => undefined,
+      setPlanMode: async () => undefined,
+      setPermission: async (mode: string) => {
+        permissionCalls.push(mode);
+      },
+    } as unknown as Session;
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+    await client.prompt({ sessionId, prompt: [textBlock('/yolo')] });
+
+    expect(permissionCalls).toEqual(['yolo']);
   });
 });

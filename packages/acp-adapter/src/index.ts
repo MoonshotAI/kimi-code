@@ -5,6 +5,21 @@ export {
   isAcpBuiltinSlashCommand,
 } from './builtin-commands';
 export type { AcpBuiltinSlashCommandName } from './builtin-commands';
+export {
+  SLASH_COMMAND_REGISTRY,
+  findSlashCommand,
+  getSlashCommandsForSurface,
+  slashCommandNamesForSurface,
+  toAcpAvailableCommand,
+} from './slash-command-registry';
+export type {
+  SlashCommandAvailability,
+  SlashCommandDescriptor,
+  SlashCommandInputHint,
+  SlashCommandName,
+  SlashCommandNameOrAlias,
+  SlashCommandSurface,
+} from './slash-command-registry';
 export { CURRENT_VERSION, MIN_PROTOCOL_VERSION, negotiateVersion } from './version';
 export type { AcpVersionSpec } from './version';
 export { TERMINAL_AUTH_METHOD, buildTerminalAuthMethod } from './auth-methods';

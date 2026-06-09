@@ -1,0 +1,19 @@
+{
+  "name": "config option update filters non-object options",
+  "method": "session/update",
+  "params": {
+    "sessionId": "sess-config",
+    "update": {
+      "sessionUpdate": "config_option_update",
+      "configOptions": [{ "id": "model" }, null, "bad"]
+    }
+  },
+  "expectedEvents": [
+    {
+      "type": "ConfigOptionUpdate",
+      "payload": {
+        "configOptions": [{ "id": "model" }]
+      }
+    }
+  ]
+}

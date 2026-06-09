@@ -274,6 +274,11 @@ export class Session {
     return this.rpc.getContext({ sessionId: this.id });
   }
 
+  async clearContext(): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.clearContext({ sessionId: this.id });
+  }
+
   async getUsage(): Promise<SessionUsage> {
     this.ensureOpen();
     return this.rpc.getUsage({ sessionId: this.id });
