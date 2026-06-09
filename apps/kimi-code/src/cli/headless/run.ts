@@ -8,6 +8,7 @@ import {
 } from '@moonshot-ai/kimi-code-sdk';
 
 import type { HeadlessCommand, HeadlessRunOptions } from './commands';
+import { goalExitCode } from '../goal-prompt';
 import {
   readHeadlessControlRequest,
   waitForHeadlessControlApplied,
@@ -823,6 +824,13 @@ async function finalizeHeadlessRun(
   } satisfies Parameters<typeof formatHeadlessMetadataHeader>[0];
   stdout.write(formatHeadlessMetadataHeader(metadata));
   if (responseFormat === 'markdown') stdout.write(context.assistantMarkdown);
+  applyHeadlessGoalExitCode(context);
+}
+
+function applyHeadlessGoalExitCode(context: RunContext): void {
+  if (!context.goalMode) return;
+  const code = goalExitCode(context.status.goal?.status ?? undefined);
+  if (code !== 0) process.exitCode = code;
 }
 
 function requireConfiguredModel(...models: readonly (string | undefined)[]): string {

@@ -28,6 +28,7 @@ import {
   writeHeadlessRunStatus,
 } from '#/cli/headless/status-file';
 import { runHeadless } from '#/cli/headless/run';
+import { GOAL_EXIT_CODES } from '#/cli/goal-prompt';
 
 const tempDirs: string[] = [];
 
@@ -1546,6 +1547,89 @@ describe('runHeadless prompt run command', () => {
         },
       },
     });
+  });
+
+  it('sets a non-zero process exit code when a goal blocks', async () => {
+    const savedExitCode = process.exitCode;
+    process.exitCode = undefined;
+    const dir = await createTempDir();
+    const outputDir = path.join(dir, 'out');
+    const runtime = createFakeHeadlessRuntime();
+    runtime.session.createGoal.mockResolvedValueOnce({});
+    runtime.session.prompt.mockImplementationOnce(async () => {
+      runtime.emit({
+        type: 'turn.started',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        turnId: 7,
+        origin: { kind: 'user' },
+      });
+      runtime.emit({
+        type: 'assistant.delta',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        turnId: 7,
+        delta: 'Blocked.\n',
+      });
+      runtime.emit({
+        type: 'goal.updated',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        change: { kind: 'completion', status: 'blocked' },
+        snapshot: {
+          goalId: 'goal_123',
+          status: 'blocked',
+          objective: 'raise coverage',
+          terminalReason: 'Need user input.',
+          turnsUsed: 1,
+          tokensUsed: 1200,
+          wallClockMs: 5000,
+        },
+      });
+      runtime.emit({
+        type: 'turn.ended',
+        sessionId: 'ses_headless',
+        agentId: 'main',
+        turnId: 7,
+        reason: 'completed',
+      });
+    });
+    const stdout = outputWriter();
+
+    try {
+      await runHeadless(
+        {
+          kind: 'run',
+          options: {
+            goal: 'raise coverage',
+            cwd: '/repo',
+            continue: false,
+            outputDir,
+            metadataOnly: true,
+            approvePlan: false,
+            rejectPlan: false,
+            skillsDirs: [],
+          },
+        },
+        '1.2.3-test',
+        {
+          stdout,
+          createHarness: () => runtime.harness,
+          acquireSessionRunLock: runtime.acquireLock,
+        },
+      );
+
+      expect(JSON.parse(stdout.text())).toMatchObject({
+        state: 'failed',
+        goal: {
+          status: 'blocked',
+          reason: 'Need user input.',
+        },
+      });
+      expect(process.exitCode).toBe(GOAL_EXIT_CODES.blocked);
+    } finally {
+      process.exitCode = savedExitCode;
+    }
   });
 
   it('applies pause_goal without interrupting the active turn', async () => {
