@@ -123,7 +123,7 @@ For example, `/skill:code-style` loads the Skill named `code-style` and sends it
 
 For convenience, external Skill commands also support a shorthand form that omits the `skill:` prefix — `/<name>` — as long as the name is not taken by a system slash command. That is, `/code-style` falls back to matching `/skill:code-style`.
 
-Built-in Skills shipped with Kimi Code CLI, such as `mcp-config`, appear directly as `/<name>` in the slash command panel for cases like configuring MCP servers and handling MCP OAuth login.
+Built-in Skills shipped with Kimi Code CLI appear directly as `/<name>` in the slash command panel. For example, `/mcp-config` helps configure MCP servers and handle MCP OAuth login, and `/custom-theme [extra text]` invokes the custom-theme workflow to create or edit a TUI theme.
 
 ::: info
 All Skill commands are only available in the idle state. `flow`-type Skills are also exposed via `/skill:<name>` — there is no separate `/flow:` namespace.
