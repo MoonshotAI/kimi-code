@@ -366,23 +366,12 @@ export class SessionSubagentHost {
     const targetModel = effectiveModel ?? parent.config.modelAlias;
     let thinkingLevel = parent.config.thinkingLevel;
 
-    // If the subagent is using a different model, check whether that model
-    // actually supports thinking/reasoning. Inheriting a non-zero thinking
-    // level from the parent will cause API errors on models that do not
-    // expose a reasoning/thinking parameter (e.g. grok-build-0.1).
+    // If the subagent is using a different model from its parent, do not
+    // inherit the parent's thinking/reasoning level. Different models have
+    // different thinking support (e.g. grok-build-0.1 rejects reasoningEffort),
+    // and the safest default for a model switch is 'off'.
     if (targetModel !== undefined && targetModel !== parent.config.modelAlias) {
-      try {
-        const resolved = this.session.options.providerManager?.resolveProviderConfig(targetModel);
-        if (resolved !== undefined && !resolved.modelCapabilities.thinking) {
-          thinkingLevel = 'off';
-        }
-      } catch {
-        // If the provider manager cannot resolve the model here, default to
-        // 'off' rather than inheriting the parent's thinking level. Sending
-        // reasoning/thinking params to an unknown model is more likely to
-        // cause API errors than disabling them.
-        thinkingLevel = 'off';
-      }
+      thinkingLevel = 'off';
     }
 
     child.config.update({

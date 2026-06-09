@@ -1069,10 +1069,10 @@ export class AnthropicChatProvider implements ChatProvider {
         newBetas = newBetas.filter((b) => b !== INTERLEAVED_THINKING_BETA);
       }
       const clone = this._withGenerationKwargs({
-        thinking: { type: 'disabled' },
         betaFeatures: newBetas,
       });
       delete clone._generationKwargs.output_config;
+      delete clone._generationKwargs.thinking;
       return clone;
     }
 
