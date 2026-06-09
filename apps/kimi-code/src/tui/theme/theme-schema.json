@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/moonshot-ai/kimi-code/blob/main/apps/kimi-code/src/tui/theme/theme-schema.json",
+  "title": "Kimi Code Custom Theme",
+  "description": "Schema for Kimi Code TUI custom theme definitions",
+  "type": "object",
+  "required": ["name"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "URL to this JSON Schema"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Machine-readable theme identifier (kebab-case recommended)"
+    },
+    "displayName": {
+      "type": "string",
+      "description": "Human-readable theme name shown in UI"
+    },
+    "base": {
+      "type": "string",
+      "enum": ["dark", "light"],
+      "description": "Built-in palette that unspecified tokens fall back to (default: dark)"
+    },
+    "colors": {
+      "type": "object",
+      "description": "Color overrides. Omitted tokens fall back to the dark theme defaults.",
+      "properties": {
+        "primary": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Primary brand color" },
+        "accent": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Accent / highlight color" },
+        "text": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Default text color" },
+        "textStrong": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Bold / emphasized text" },
+        "textDim": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Secondary / muted text" },
+        "textMuted": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Most faded text; for counters, scroll info" },
+        "border": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Border color" },
+        "borderFocus": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Focused border color" },
+        "success": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Success state color" },
+        "warning": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Warning state color" },
+        "error": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Error state color" },
+        "diffAdded": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Diff added lines" },
+        "diffRemoved": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Diff removed lines" },
+        "diffAddedStrong": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Diff added lines (strong)" },
+        "diffRemovedStrong": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Diff removed lines (strong)" },
+        "diffGutter": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Diff gutter color" },
+        "diffMeta": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "Diff meta color" },
+        "roleUser": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "User message accent" }
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^#[0-9a-fA-F]{6}$",
+        "description": "Any valid ColorPalette token"
+      }
+    }
+  },
+  "additionalProperties": false
+}

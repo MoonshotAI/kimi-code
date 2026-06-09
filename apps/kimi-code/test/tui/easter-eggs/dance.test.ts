@@ -168,7 +168,7 @@ describe('installRainbowDance', () => {
     const dispose = installRainbowDance(requestRender);
     const host = {
       showStatus: vi.fn(),
-      state: { theme: { colors: darkColors } },
+      state: { theme: { palette: darkColors } },
     } as unknown as SlashCommandHost;
 
     tryHandleDanceCommand(host, { name: 'dance', args: 'on' });
@@ -202,7 +202,7 @@ function makeHost(): { host: SlashCommandHost; calls: DanceCall[]; status: strin
   setRainbowDance(rainbowDance);
   const host = {
     showStatus: (msg: string) => status.push(msg),
-    state: { theme: { colors: darkColors } },
+    state: { theme: { palette: darkColors } },
   } as unknown as SlashCommandHost;
   return { host, calls, status };
 }

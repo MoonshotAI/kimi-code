@@ -1,13 +1,11 @@
 import { Container, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
 import { SELECT_POINTER } from '../../constant/symbols';
 import type { QueuedMessage } from '../../types';
-import type { ColorPalette } from '../../theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 export interface QueuePaneOptions {
   readonly messages: readonly QueuedMessage[];
-  readonly colors: ColorPalette;
   readonly isCompacting: boolean;
   readonly isStreaming: boolean;
   readonly canSteerImmediately: boolean;
@@ -17,13 +15,11 @@ const ELLIPSIS = '…';
 
 export class QueuePaneComponent extends Container {
   private readonly messages: readonly QueuedMessage[];
-  private readonly colors: ColorPalette;
   private readonly hint: string | undefined;
 
   constructor(options: QueuePaneOptions) {
     super();
     this.messages = options.messages;
-    this.colors = options.colors;
 
     if (options.messages.length > 0) {
       this.hint =
@@ -36,8 +32,8 @@ export class QueuePaneComponent extends Container {
   }
 
   override render(width: number): string[] {
-    const accent = chalk.hex(this.colors.accent);
-    const dim = chalk.hex(this.colors.textDim);
+    const accent = (text: string) => currentTheme.fg('accent', text);
+    const dim = (text: string) => currentTheme.fg('textDim', text);
     const lines: string[] = [];
 
     for (const item of this.messages) {

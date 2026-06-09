@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { TruncatedOutputComponent } from '#/tui/components/messages/tool-renderers/truncated';
-import { darkColors } from '#/tui/theme/colors';
+
 
 function strip(text: string): string {
   return text.replaceAll(/\[[0-9;]*m/g, '');
@@ -12,7 +12,6 @@ describe('TruncatedOutputComponent', () => {
     const component = new TruncatedOutputComponent(['a', 'b', 'c', 'd', 'e'].join('\n'), {
       expanded: false,
       isError: false,
-      colors: darkColors,
       maxLines: 2,
       indent: 6,
     });
@@ -27,7 +26,6 @@ describe('TruncatedOutputComponent', () => {
     const component = new TruncatedOutputComponent('x\ny\nz', {
       expanded: false,
       isError: false,
-      colors: darkColors,
       maxLines: 1,
     });
 
@@ -40,7 +38,6 @@ describe('TruncatedOutputComponent', () => {
     const component = new TruncatedOutputComponent('a\nb\nc\nd', {
       expanded: false,
       isError: false,
-      colors: darkColors,
       maxLines: 2,
       indent: 4,
       expandHint: false,
@@ -54,7 +51,6 @@ describe('TruncatedOutputComponent', () => {
     const component = new TruncatedOutputComponent('a\nb\nc\nd', {
       expanded: true,
       isError: false,
-      colors: darkColors,
       maxLines: 2,
       indent: 4,
     });

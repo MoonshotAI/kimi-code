@@ -553,10 +553,7 @@ export class StreamingUIController {
       renderMode: 'markdown' as const,
       content: '',
     };
-    const component = new AssistantMessageComponent(
-      state.theme.markdownTheme,
-      state.theme.colors,
-    );
+    const component = new AssistantMessageComponent();
     this._streamingBlock = { component, entry };
     this.host.pushTranscriptEntry(entry);
     state.transcriptContainer.addChild(component);
@@ -584,7 +581,6 @@ export class StreamingUIController {
       this._pendingReadGroup = null;
       this._activeThinkingComponent = new ThinkingComponent(
         fullText,
-        state.theme.colors,
         true,
         'live',
         state.ui,
@@ -611,9 +607,7 @@ export class StreamingUIController {
     const tc = new ToolCallComponent(
       toolCall,
       undefined,
-      state.theme.colors,
       state.ui,
-      state.theme.markdownTheme,
       state.appState.workDir,
     );
     if (state.toolOutputExpanded) tc.setExpanded(true);
@@ -657,9 +651,7 @@ export class StreamingUIController {
       const completed = new ToolCallComponent(
         matchedCall,
         result,
-        state.theme.colors,
         state.ui,
-        state.theme.markdownTheme,
         state.appState.workDir,
       );
       if (state.toolOutputExpanded) completed.setExpanded(true);
@@ -684,7 +676,7 @@ export class StreamingUIController {
       this._activeCompactionBlock.markDone();
       this._activeCompactionBlock = undefined;
     }
-    const block = new CompactionComponent(state.theme.colors, state.ui, instruction);
+    const block = new CompactionComponent(state.ui, instruction);
     this._activeCompactionBlock = block;
     state.transcriptContainer.addChild(block);
     state.ui.requestRender();
@@ -780,7 +772,7 @@ export class StreamingUIController {
 
   private upgradeSoloAgentToGroup(solo: ToolCallComponent): AgentGroupComponent {
     const { state } = this.host;
-    const group = new AgentGroupComponent(state.theme.colors, state.ui);
+    const group = new AgentGroupComponent(state.ui);
     const children = state.transcriptContainer.children;
     const idx = children.indexOf(solo);
     if (idx >= 0) {
@@ -837,7 +829,7 @@ export class StreamingUIController {
 
   private upgradeSoloReadToGroup(solo: ToolCallComponent): ReadGroupComponent {
     const { state } = this.host;
-    const group = new ReadGroupComponent(state.theme.colors, state.ui);
+    const group = new ReadGroupComponent(state.ui);
     const children = state.transcriptContainer.children;
     const idx = children.indexOf(solo);
     if (idx >= 0) {

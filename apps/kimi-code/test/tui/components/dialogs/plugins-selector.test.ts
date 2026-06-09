@@ -109,7 +109,6 @@ describe('plugins selector dialogs', () => {
           source: 'local-path',
         },
       ],
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -148,7 +147,6 @@ describe('plugins selector dialogs', () => {
           source: 'local-path',
         },
       ],
-      colors: darkColors,
       onSelect,
       onCancel,
     });
@@ -175,7 +173,6 @@ describe('plugins selector dialogs', () => {
       ],
       installedIds: new Set(),
       source: '/tmp/marketplace.json',
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -214,7 +211,6 @@ describe('plugins selector dialogs', () => {
       ],
       installedIds: new Set(),
       source: '/tmp/marketplace.json',
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -244,7 +240,6 @@ describe('plugins selector dialogs', () => {
       ],
       installedIds: new Set(),
       source: '/tmp/marketplace.json',
-      colors: darkColors,
       onSelect: vi.fn(),
       onCancel,
     });
@@ -265,7 +260,6 @@ describe('plugins selector dialogs', () => {
       ],
       installedIds: new Set(['superpowers']),
       source: '/tmp/marketplace.json',
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -298,7 +292,6 @@ describe('plugins selector dialogs', () => {
           source: 'local-path',
         },
       ],
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -329,7 +322,6 @@ describe('plugins selector dialogs', () => {
           source: 'local-path',
         },
       ],
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -356,7 +348,6 @@ describe('plugins selector dialogs', () => {
           source: 'local-path',
         },
       ],
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -396,7 +387,6 @@ describe('plugins selector dialogs', () => {
         ],
         diagnostics: [],
       },
-      colors: darkColors,
       onSelect: (selection) => {
         selections.push(selection);
       },
@@ -434,7 +424,6 @@ describe('plugins selector dialogs', () => {
       ],
       selectedId: 'kimi-datasource',
       pluginHint: { id: 'kimi-datasource', text: 'pending /new' },
-      colors: darkColors,
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -449,7 +438,6 @@ describe('plugins selector dialogs', () => {
     const picker = new PluginRemoveConfirmComponent({
       id: 'kimi-datasource',
       displayName: 'Kimi Datasource',
-      colors: darkColors,
       onDone: (result) => {
         results.push(result);
       },
@@ -470,7 +458,6 @@ describe('plugins selector dialogs', () => {
     const picker = new PluginRemoveConfirmComponent({
       id: 'kimi-datasource',
       displayName: 'Kimi Datasource',
-      colors: darkColors,
       onDone: (result) => {
         results.push(result);
       },

@@ -6,10 +6,9 @@ import {
   type Component,
   type Focusable,
 } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 export type StartPermissionChoice = 'auto' | 'yolo' | 'manual' | 'cancel';
 
@@ -22,7 +21,6 @@ export interface StartPermissionOption<TChoice extends StartPermissionChoice = S
 export interface StartPermissionPromptOptions<
   TChoice extends StartPermissionChoice = StartPermissionChoice,
 > {
-  readonly colors: ColorPalette;
   readonly title: string;
   readonly noticeLines: readonly string[];
   readonly options: readonly StartPermissionOption<TChoice>[];
@@ -59,19 +57,18 @@ export class StartPermissionPromptComponent<TChoice extends StartPermissionChoic
   }
 
   render(width: number): string[] {
-    const { colors } = this.opts;
-    const rule = chalk.hex(colors.primary)('─'.repeat(width));
+    const rule = currentTheme.fg('primary', '─'.repeat(width));
     const lines = [
       rule,
-      chalk.hex(colors.primary).bold(` ${this.opts.title}`),
-      chalk.hex(colors.textMuted)(' ↑↓ navigate · Enter select · Esc cancel'),
+      currentTheme.boldFg('primary', ` ${this.opts.title}`),
+      currentTheme.fg('textMuted', ' ↑↓ navigate · Enter select · Esc cancel'),
       '',
     ];
 
     const textWidth = Math.max(20, width - 2);
     for (const paragraph of this.opts.noticeLines) {
       for (const line of wrapPlain(paragraph, textWidth)) {
-        lines.push(` ${styleModeNames(line, colors, colors.textMuted)}`);
+        lines.push(` ${styleModeNames(line, 'textMuted')}`);
       }
       lines.push('');
     }
@@ -81,11 +78,11 @@ export class StartPermissionPromptComponent<TChoice extends StartPermissionChoic
       const selected = i === this.selectedIndex;
       const pointer = selected ? SELECT_POINTER : ' ';
       lines.push(
-        chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `) +
-          styleLabel(option.label, selected, colors),
+        currentTheme.fg(selected ? 'primary' : 'textDim', `  ${pointer} `) +
+          styleLabel(option.label, selected),
       );
       for (const line of wrapPlain(option.description, Math.max(20, width - 4))) {
-        lines.push(`    ${styleModeNames(line, colors, colors.textMuted)}`);
+        lines.push(`    ${styleModeNames(line, 'textMuted')}`);
       }
       lines.push('');
     }
@@ -95,19 +92,17 @@ export class StartPermissionPromptComponent<TChoice extends StartPermissionChoic
   }
 }
 
-function styleLabel(label: string, selected: boolean, colors: ColorPalette): string {
-  if (selected) return chalk.hex(colors.primary).bold(label);
-  return styleModeNames(label, colors, colors.text);
+function styleLabel(label: string, selected: boolean): string {
+  if (selected) return currentTheme.boldFg('primary', label);
+  return styleModeNames(label, 'text');
 }
 
-function styleModeNames(text: string, colors: ColorPalette, baseHex: string): string {
-  const base = chalk.hex(baseHex);
-  const strong = chalk.hex(colors.textStrong).bold;
+function styleModeNames(text: string, baseToken: 'text' | 'textMuted'): string {
   return text
     .split(/(\b(?:Manual|Auto|YOLO)\b)/g)
     .map((part) => {
-      if (part === 'Manual' || part === 'Auto' || part === 'YOLO') return strong(part);
-      return base(part);
+      if (part === 'Manual' || part === 'Auto' || part === 'YOLO') return currentTheme.boldFg('textStrong', part);
+      return currentTheme.fg(baseToken, part);
     })
     .join('');
 }

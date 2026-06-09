@@ -57,7 +57,6 @@ function showSwarmStartPermissionPrompt(
   };
   host.mountEditorReplacement(
     new SwarmStartPermissionPromptComponent({
-      colors: host.state.theme.colors,
       onSelect: (choice) => {
         host.restoreEditor();
         void onSelect(choice);
@@ -149,7 +148,7 @@ function swarmModeSubcommand(input: string): boolean | undefined {
 
 function renderSwarmModeMarker(host: SlashCommandHost, state: SwarmModeMarkerState): void {
   host.state.transcriptContainer.addChild(
-    new SwarmModeMarkerComponent(state, host.state.theme.colors),
+    new SwarmModeMarkerComponent(state),
   );
   host.state.ui.requestRender();
 }

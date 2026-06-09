@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentGroupComponent } from '#/tui/components/messages/agent-group';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
-import { darkColors } from '#/tui/theme/colors';
 
 const ESC = String.fromCodePoint(0x1b);
 const BEL = String.fromCodePoint(0x07);
@@ -38,7 +37,6 @@ function createAgent(
       args: { description },
     },
     undefined,
-    darkColors,
     ui,
   );
   component.onSubagentSpawned({
@@ -66,7 +64,7 @@ describe('AgentGroupComponent', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const ui = stubTui();
-    const group = new AgentGroupComponent(darkColors, ui);
+    const group = new AgentGroupComponent(ui);
     const running = createAgent('call_agent_1', 'inspect project', 'explore', ui);
     const waiting = createAgent('call_agent_2', 'write tests', 'coder', ui);
 
@@ -97,7 +95,7 @@ describe('AgentGroupComponent', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const ui = stubTui();
-    const group = new AgentGroupComponent(darkColors, ui);
+    const group = new AgentGroupComponent(ui);
     const running = createAgent('call_agent_1', 'inspect project', 'explore', ui);
     const waiting = createAgent('call_agent_2', 'write tests', 'coder', ui);
 
@@ -119,7 +117,7 @@ describe('AgentGroupComponent', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const ui = stubTui();
-    const group = new AgentGroupComponent(darkColors, ui);
+    const group = new AgentGroupComponent(ui);
     const running = createAgent('call_agent_1', 'inspect project', 'explore', ui);
     const waiting = createAgent('call_agent_2', 'write tests', 'coder', ui);
 
@@ -145,7 +143,7 @@ describe('AgentGroupComponent', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const ui = stubTui();
-    const group = new AgentGroupComponent(darkColors, ui);
+    const group = new AgentGroupComponent(ui);
     const done = createAgent('call_agent_1', 'inspect project', 'explore', ui);
     const running = createAgent('call_agent_2', 'write tests', 'coder', ui);
 

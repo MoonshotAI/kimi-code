@@ -1,8 +1,7 @@
 import { Text } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import { formatTokenCount } from '#/utils/usage/usage-format';
 
@@ -50,24 +49,23 @@ export const goalSummary: ResultRenderer = (toolCall, result, ctx) => {
 export function buildGoalToolHeader(options: {
   readonly toolCall: ToolCallBlockData;
   readonly result: ToolResultBlockData | undefined;
-  readonly colors: ColorPalette;
   readonly bullet: string;
   readonly chip: string;
 }): string | undefined {
-  const { toolCall, result, colors, bullet, chip } = options;
+  const { toolCall, result, bullet, chip } = options;
   if (!isGoalToolName(toolCall.name)) return undefined;
 
-  const tone = result?.is_error === true ? colors.error : colors.primary;
-  const label = chalk.hex(tone).bold(goalToolLabel(toolCall.name, result, toolCall.args));
+  const tone = result?.is_error === true ? 'error' : 'primary';
+  const label = currentTheme.boldFg(tone, goalToolLabel(toolCall.name, result, toolCall.args));
   const marker =
     result !== undefined && result.is_error !== true
-      ? chalk.hex(colors.primary)(STATUS_BULLET)
+      ? currentTheme.fg('primary', STATUS_BULLET)
       : bullet;
   const arg =
     toolCall.name === 'UpdateGoal'
       ? undefined
       : formatGoalToolArgument(toolCall.name, toolCall.args);
-  const argText = arg === undefined ? '' : chalk.hex(colors.textDim)(` (${arg})`);
+  const argText = arg === undefined ? '' : currentTheme.dimFg('textDim', ` (${arg})`);
   return `${marker}${label}${argText}${chip}`;
 }
 
@@ -95,13 +93,13 @@ export function goalStatusChip(output: string): string {
 function renderGoalSnapshot(
   toolCall: ToolCallBlockData,
   result: ToolResultBlockData,
-  ctx: Parameters<ResultRenderer>[2],
+  _ctx: Parameters<ResultRenderer>[2],
 ) {
   const goal = parseGoalToolOutput(result.output);
-  if (goal === undefined) return renderTruncated(toolCall, result, ctx);
+  if (goal === undefined) return renderTruncated(toolCall, result, _ctx);
 
-  const muted = chalk.hex(ctx.colors.textDim);
-  const value = chalk.hex(ctx.colors.text);
+  const muted = (s: string) => currentTheme.dimFg('textDim', s);
+  const value = (s: string) => currentTheme.fg('text', s);
   if (goal === null) return [new Text(muted('  No current goal.'), 0, 0)];
 
   const lines = [

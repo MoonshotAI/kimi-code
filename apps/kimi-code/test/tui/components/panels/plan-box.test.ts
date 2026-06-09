@@ -15,7 +15,7 @@ function strip(text: string): string {
     .replaceAll(new RegExp(`${ESC}\\]8;;[^${BEL}]*${BEL}`, 'g'), '');
 }
 
-const theme = createMarkdownTheme(darkColors);
+const theme = createMarkdownTheme();
 
 describe('PlanBoxComponent', () => {
   it('falls back to bare " plan " title when no path is provided', () => {
@@ -77,7 +77,7 @@ describe('PlanBoxComponent', () => {
   it('skips the hyperlink for non-absolute paths but still shows the basename', () => {
     const box = new PlanBoxComponent('# Hello', theme, darkColors.success, 'relative/plan.md');
     const top = box.render(60)[0]!;
-    expect(top).not.toContain(`${ESC}]8;`);
+    expect(top).not.toContain(`${ESC}];`);
     expect(strip(top)).toContain(' plan: plan.md ');
   });
 
@@ -97,5 +97,4 @@ describe('PlanBoxComponent', () => {
     expect(out).toContain('step 30');
     expect(out).not.toContain('more lines');
   });
-
 });

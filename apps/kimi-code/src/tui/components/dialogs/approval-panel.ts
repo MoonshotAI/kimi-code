@@ -15,8 +15,7 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
-
+import { currentTheme } from '#/tui/theme';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
 import type {
@@ -26,7 +25,6 @@ import type {
   FileContentDisplayBlock,
   PendingApproval,
 } from '#/tui/reverse-rpc/types';
-import type { ColorPalette } from '#/tui/theme/colors';
 
 export interface ApprovalPanelResponse {
   readonly response: 'approved' | 'approved_for_session' | 'rejected' | 'cancelled';
@@ -50,13 +48,13 @@ interface BlockStyles {
   errorBold: (s: string) => string;
 }
 
-function makeBlockStyles(colors: ColorPalette): BlockStyles {
+function makeBlockStyles(): BlockStyles {
   return {
-    strong: (s) => chalk.hex(colors.textStrong)(s),
-    dim: (s) => chalk.hex(colors.textDim)(s),
-    accent: (s) => chalk.hex(colors.accent)(s),
-    gutter: (s) => chalk.hex(colors.diffGutter)(s),
-    errorBold: (s) => chalk.bold.hex(colors.error)(s),
+    strong: (s) => currentTheme.fg('textStrong', s),
+    dim: (s) => currentTheme.fg('textDim', s),
+    accent: (s) => currentTheme.fg('accent', s),
+    gutter: (s) => currentTheme.fg('diffGutter', s),
+    errorBold: (s) => currentTheme.boldFg('error', s),
   };
 }
 
@@ -105,12 +103,11 @@ function renderShellDisplayBlock(
 function renderDisplayBlock(
   block: DisplayBlock,
   s: BlockStyles,
-  colors: ColorPalette,
   contentWidth: number,
 ): string[] {
   switch (block.type) {
     case 'diff':
-      return renderDiffLinesClustered(block.old_text, block.new_text, block.path, colors, {
+      return renderDiffLinesClustered(block.old_text, block.new_text, block.path, {
         contextLines: 3,
         expandKeyHint: 'ctrl+e to preview',
         maxLines: DIFF_SUMMARY_MAX_LINES,
@@ -215,7 +212,6 @@ export class ApprovalPanelComponent extends Container implements Focusable {
   private readonly feedbackInput = new Input();
   private onResponse: (response: ApprovalPanelResponse) => void;
   private request: PendingApproval;
-  private readonly colors: ColorPalette;
   private readonly onToggleToolOutput: (() => void) | undefined;
   private readonly onOpenPreview:
     | ((block: DiffDisplayBlock | FileContentDisplayBlock) => void)
@@ -224,14 +220,12 @@ export class ApprovalPanelComponent extends Container implements Focusable {
   constructor(
     request: PendingApproval,
     onResponse: (response: ApprovalPanelResponse) => void,
-    colors: ColorPalette,
     onToggleToolOutput?: () => void,
     onOpenPreview?: (block: DiffDisplayBlock | FileContentDisplayBlock) => void,
   ) {
     super();
     this.request = request;
     this.onResponse = onResponse;
-    this.colors = colors;
     this.onToggleToolOutput = onToggleToolOutput;
     this.onOpenPreview = onOpenPreview;
     this.feedbackInput.onSubmit = (value) => {
@@ -328,12 +322,12 @@ export class ApprovalPanelComponent extends Container implements Focusable {
     this.ensureValidSelection();
     this.feedbackInput.focused = this.focused && this.feedbackMode;
     const { data } = this.request;
-    const blockStyles = makeBlockStyles(this.colors);
-    const borderColor = chalk.hex(this.colors.borderFocus);
-    const borderColorBold = chalk.bold.hex(this.colors.borderFocus);
-    const selectColorBold = chalk.bold.hex(this.colors.accent);
-    const dim = chalk.hex(this.colors.textDim);
-    const strong = chalk.hex(this.colors.textStrong);
+    const blockStyles = makeBlockStyles();
+    const borderColor = (text: string) => currentTheme.fg('borderFocus', text);
+    const borderColorBold = (text: string) => currentTheme.boldFg('borderFocus', text);
+    const selectColorBold = (text: string) => currentTheme.boldFg('accent', text);
+    const dim = (text: string) => currentTheme.fg('textDim', text);
+    const strong = (text: string) => currentTheme.fg('textStrong', text);
     const horizontalBar = borderColor('─'.repeat(width));
     const indent = (s: string): string => `  ${s}`;
 
@@ -357,7 +351,6 @@ export class ApprovalPanelComponent extends Container implements Focusable {
         const blockLines = renderDisplayBlock(
           block,
           blockStyles,
-          this.colors,
           Math.max(1, width - 2),
         );
         for (const line of blockLines) {
@@ -433,8 +426,7 @@ export class ApprovalPanelComponent extends Container implements Focusable {
   }
 
   private renderInlineFeedbackLine(width: number, labelWithNum: string): string {
-    const selectColorBold = chalk.bold.hex(this.colors.accent);
-    const prefix = `${selectColorBold('▶')} ${selectColorBold(labelWithNum)}  `;
+    const prefix = `${currentTheme.boldFg('accent', '▶')} ${currentTheme.boldFg('accent', labelWithNum)}  `;
     const inputWidth = Math.max(4, width - visibleWidth(prefix) + 2);
     const inputLine = this.feedbackInput.render(inputWidth)[0] ?? '> ';
     const inlineInput = inputLine.startsWith('> ') ? inputLine.slice(2) : inputLine;

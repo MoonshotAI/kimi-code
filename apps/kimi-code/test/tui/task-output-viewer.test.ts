@@ -63,7 +63,6 @@ function makeViewer(opts: {
       taskId: opts.taskInfo?.taskId ?? 'bash-aaaaaaaa',
       info: opts.taskInfo ?? info(),
       output: opts.output,
-      colors: darkColors,
       onClose: opts.onClose ?? (() => {}),
     },
     fakeTerminal(opts.rows ?? 30, opts.columns ?? 120),
@@ -219,7 +218,6 @@ describe('TaskOutputViewer — live tail via setProps', () => {
       taskId: 'bash-aaaaaaaa',
       info: info(),
       output: makeOutput(50),
-      colors: darkColors,
       onClose: () => {},
     });
     const out = strip(viewer.render(120).join('\n'));
@@ -235,7 +233,6 @@ describe('TaskOutputViewer — live tail via setProps', () => {
       taskId: 'bash-aaaaaaaa',
       info: info(),
       output: makeOutput(200),
-      colors: darkColors,
       onClose: () => {},
     });
     const out = strip(viewer.render(120).join('\n'));
@@ -252,7 +249,6 @@ describe('TaskOutputViewer — live tail via setProps', () => {
       taskId: 'bash-aaaaaaaa',
       info: info(),
       output: same,
-      colors: darkColors,
       onClose: () => {},
     });
     const after = strip(viewer.render(120).join('\n'));

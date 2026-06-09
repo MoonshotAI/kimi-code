@@ -243,7 +243,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `theme` | `string` | `auto` | 配色主题：`auto`（跟随终端）、`dark`、`light` |
+| `theme` | `string` | `auto` | 配色主题：`auto`（跟随终端）、`dark`、`light`，或[自定义主题](../customization/themes)的名字 |
 | `[editor].command` | `string` | `""` | 编写长输入用的外部编辑器命令；留空则回退到 `$VISUAL` / `$EDITOR` |
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
 | `[notifications].notification_condition` | `string` | `unfocused` | 何时通知：`unfocused`（仅终端失去焦点时）或 `always`（总是） |
@@ -251,7 +251,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 
 ```toml
 # ~/.kimi-code/tui.toml
-theme = "auto" # "auto" | "dark" | "light"
+theme = "auto" # "auto" | "dark" | "light" | 自定义主题名
 
 [editor]
 command = "" # 留空则使用 $VISUAL / $EDITOR

@@ -2,7 +2,6 @@ import { visibleWidth } from '@earendil-works/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionPickerComponent } from '#/tui/components/dialogs/session-picker';
-import { getColorPalette } from '#/tui/theme/colors';
 
 function stripAnsi(text: string): string {
   return text.replaceAll(/\[[0-?]*[ -/]*[@-~]/g, '');
@@ -24,7 +23,6 @@ describe('SessionPickerComponent', () => {
       sessions: [],
       loading: false,
       currentSessionId: '',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
       onCtrlC,
@@ -59,7 +57,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: 'ses_other',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -87,7 +84,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: 'ses_other',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -117,7 +113,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: 'ses_other',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -144,7 +139,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: 'ses_other',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -178,7 +172,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: 'ses_current',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -205,7 +198,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: 'ses_other',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -241,7 +233,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: 'ses_other',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -270,7 +261,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: 'ses_cjk_long_session_id_value',
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -305,7 +295,6 @@ describe('SessionPickerComponent', () => {
       ],
       loading: false,
       currentSessionId: id,
-      colors: getColorPalette('dark'),
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });

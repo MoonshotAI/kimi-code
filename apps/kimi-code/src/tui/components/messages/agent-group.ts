@@ -17,10 +17,9 @@
 
 import type { TUI } from '@earendil-works/pi-tui';
 import { Container, Spacer, Text } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 import type { ToolCallComponent, ToolCallSubagentSnapshot } from './tool-call';
 
@@ -47,11 +46,9 @@ export class AgentGroupComponent extends Container {
   private readonly bodyContainer: Container;
   private throttleTimer: ReturnType<typeof setTimeout> | null = null;
   private lastFlushPhases = new Map<string, ToolCallSubagentSnapshot['phase']>();
+  private _invalidating = false;
 
-  constructor(
-    private readonly colors: ColorPalette,
-    private readonly ui: TUI | undefined,
-  ) {
+  constructor(private readonly ui: TUI | undefined) {
     super();
     this.addChild(new Spacer(1));
     this.headerText = new Text('', 0, 0);
@@ -146,13 +143,12 @@ export class AgentGroupComponent extends Container {
   }
 
   private buildHeader(snapshots: readonly ToolCallSubagentSnapshot[]): string {
-    const colors = this.colors;
     const total = snapshots.length;
     const counts = countPhases(snapshots);
     const allDone = counts.terminal === total;
     const bullet = allDone
-      ? chalk.hex(colors.success)(STATUS_BULLET)
-      : chalk.hex(colors.roleAssistant)(STATUS_BULLET);
+      ? currentTheme.fg('success', STATUS_BULLET)
+      : currentTheme.fg('text', STATUS_BULLET);
     const elapsedSeconds = maxElapsedSeconds(snapshots);
 
     if (allDone) {
@@ -163,29 +159,29 @@ export class AgentGroupComponent extends Container {
           : `${String(total)} agents finished`;
       const totalTools = snapshots.reduce((acc, s) => acc + s.toolCount, 0);
       const totalTokens = snapshots.reduce((acc, s) => acc + s.tokens, 0);
-      const tail = formatHeaderTail({ toolCount: totalTools, tokens: totalTokens, elapsedSeconds }, colors);
-      return `${bullet}${chalk.hex(colors.primary).bold(headerLabel)}${tail}`;
+      const tail = formatHeaderTail({ toolCount: totalTools, tokens: totalTokens, elapsedSeconds });
+      return `${bullet}${currentTheme.boldFg('primary', headerLabel)}${tail}`;
     }
 
     const parts = formatBreakdownParts(counts);
     const headerText = parts.length > 0
       ? `Running ${String(total)} agents (${parts.join(', ')})`
       : `Running ${String(total)} agents`;
-    const tail = formatHeaderTail({ toolCount: 0, tokens: 0, elapsedSeconds }, colors);
-    return `${bullet}${chalk.hex(colors.primary).bold(headerText)}${tail}`;
+    const tail = formatHeaderTail({ toolCount: 0, tokens: 0, elapsedSeconds });
+    return `${bullet}${currentTheme.boldFg('primary', headerText)}${tail}`;
   }
 
   private appendLines(snap: ToolCallSubagentSnapshot, isLast: boolean): void {
-    const colors = this.colors;
+    const dim = (text: string) => currentTheme.dim(text);
 
     // First-level branch line.
     const branch1 = isLast ? '└─' : '├─';
     const agentType = snap.agentName ?? 'agent';
     const desc = snap.toolCallDescription || '(no description)';
-    const tail = formatLineTail(snap, colors);
-    const namePart = chalk.hex(colors.primary)(agentType);
-    const descPart = dimText(colors, `· ${desc}`);
-    const stats = formatStats(snap, colors);
+    const tail = formatLineTail(snap);
+    const namePart = currentTheme.fg('primary', agentType);
+    const descPart = dim(`· ${desc}`);
+    const stats = formatStats(snap);
     const line1 = `  ${branch1} ${namePart} ${descPart}${stats}${tail}`;
     this.bodyContainer.addChild(new Text(line1, 0, 0));
 
@@ -194,7 +190,7 @@ export class AgentGroupComponent extends Container {
     if (snap.phase === 'failed') {
       // Show one error line; error messages can be long.
       const errLine = (snap.errorText ?? 'Failed').split('\n').at(0) ?? 'Failed';
-      const errStr = chalk.hex(colors.error)(`Error: ${errLine}`);
+      const errStr = currentTheme.fg('error', `Error: ${errLine}`);
       this.bodyContainer.addChild(new Text(`  ${branch2}    ${errStr}`, 0, 0));
       return;
     }
@@ -204,10 +200,20 @@ export class AgentGroupComponent extends Container {
     }
     // Running or not-yet-started agents show latest activity, with a fallback.
     const activity = snap.latestActivity ?? fallbackActivityForPhase(snap.phase);
-    this.bodyContainer.addChild(new Text(`  ${branch2}    ${dimText(colors, activity)}`, 0, 0));
+    this.bodyContainer.addChild(new Text(`  ${branch2}    ${dim(activity)}`, 0, 0));
   }
 
   /** Releases throttle timers so destroyed components cannot refresh later. */
+  override invalidate(): void {
+    if (this._invalidating) {
+      super.invalidate();
+      return;
+    }
+    this._invalidating = true;
+    this.flushRender();
+    this._invalidating = false;
+  }
+
   dispose(): void {
     if (this.throttleTimer !== null) {
       clearTimeout(this.throttleTimer);
@@ -273,29 +279,29 @@ function formatBreakdownParts(counts: PhaseCounts): string[] {
   return parts;
 }
 
-function formatStats(snap: ToolCallSubagentSnapshot, colors: ColorPalette): string {
+function formatStats(snap: ToolCallSubagentSnapshot): string {
   const parts = [`${String(snap.toolCount)} tool${snap.toolCount === 1 ? '' : 's'}`];
   if (snap.elapsedSeconds !== undefined) parts.push(formatElapsed(snap.elapsedSeconds));
   if (snap.tokens > 0) parts.push(formatTokens(snap.tokens));
-  return dimText(colors, ` · ${parts.join(' · ')}`);
+  return currentTheme.dim(` · ${parts.join(' · ')}`);
 }
 
-function formatLineTail(snap: ToolCallSubagentSnapshot, colors: ColorPalette): string {
-  const separator = dimText(colors, ' · ');
+function formatLineTail(snap: ToolCallSubagentSnapshot): string {
+  const separator = currentTheme.dim(' · ');
   switch (snap.phase) {
     case 'done':
-      return separator + chalk.hex(colors.success)('✓ Completed');
+      return separator + currentTheme.fg('success', '✓ Completed');
     case 'failed':
-      return separator + chalk.hex(colors.error)('✗ Failed');
+      return separator + currentTheme.fg('error', '✗ Failed');
     case 'backgrounded':
-      return separator + dimText(colors, '◐ backgrounded');
+      return separator + currentTheme.dim('◐ backgrounded');
     case 'queued':
-      return separator + chalk.hex(colors.primary)('Waiting');
+      return separator + currentTheme.fg('primary', 'Waiting');
     case 'running':
-      return separator + chalk.hex(colors.primary)('Running');
+      return separator + currentTheme.fg('primary', 'Running');
     case 'spawning':
     case undefined:
-      return separator + chalk.hex(colors.primary)('Starting');
+      return separator + currentTheme.fg('primary', 'Starting');
   }
 }
 
@@ -315,19 +321,16 @@ function fallbackActivityForPhase(phase: ToolCallSubagentSnapshot['phase']): str
   }
 }
 
-function formatHeaderTail(
-  args: {
-    readonly toolCount: number;
-    readonly tokens: number;
-    readonly elapsedSeconds: number | undefined;
-  },
-  colors: ColorPalette,
-): string {
+function formatHeaderTail(args: {
+  readonly toolCount: number;
+  readonly tokens: number;
+  readonly elapsedSeconds: number | undefined;
+}): string {
   const parts: string[] = [];
   if (args.toolCount > 0) parts.push(`${String(args.toolCount)} tool${args.toolCount === 1 ? '' : 's'}`);
   if (args.tokens > 0) parts.push(formatTokens(args.tokens));
   if (args.elapsedSeconds !== undefined) parts.push(formatElapsed(args.elapsedSeconds));
-  return parts.length > 0 ? dimText(colors, ` · ${parts.join(' · ')}`) : '';
+  return parts.length > 0 ? currentTheme.dim(` · ${parts.join(' · ')}`) : '';
 }
 
 function maxElapsedSeconds(snapshots: readonly ToolCallSubagentSnapshot[]): number | undefined {
@@ -351,8 +354,4 @@ function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M tok`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k tok`;
   return `${String(n)} tok`;
-}
-
-function dimText(colors: ColorPalette, text: string): string {
-  return chalk.hex(colors.textDim)(text);
 }

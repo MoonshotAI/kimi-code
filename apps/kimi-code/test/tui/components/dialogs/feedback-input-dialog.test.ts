@@ -26,7 +26,7 @@ function makeDialog(): {
   const collected: FeedbackInputDialogResult[] = [];
   const dialog = new FeedbackInputDialogComponent((result) => {
     collected.push(result);
-  }, darkColors);
+  });
   dialog.focused = true;
   return { dialog, collected };
 }

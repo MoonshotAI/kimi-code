@@ -16,7 +16,7 @@ import {
   updateGoalQueueItem,
 } from '#/tui/goal-queue-store';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
-import { getColorPalette } from '#/tui/theme/colors';
+import { getBuiltInPalette } from '#/tui/theme';
 
 vi.mock('#/tui/goal-queue-store', () => ({
   appendGoalQueueItem: vi.fn(async () => ({
@@ -108,7 +108,7 @@ function makeHost(
       },
       transcriptContainer,
       ui: { requestRender: vi.fn() },
-      theme: { colors: getColorPalette('dark') },
+      theme: { palette: getBuiltInPalette('dark') },
     },
     session: hasSession ? session : undefined,
     skillCommandMap: new Map<string, string>(),

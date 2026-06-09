@@ -33,7 +33,6 @@ describe('ModelSelectorComponent', () => {
       models: { kimi: model('Kimi K2') },
       currentValue: 'kimi',
       currentThinking: true,
-      colors: darkColors,
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -51,7 +50,6 @@ describe('ModelSelectorComponent', () => {
       models: { kimi: model('Kimi K2', ['thinking']) },
       currentValue: 'kimi',
       currentThinking: true,
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -77,7 +75,6 @@ describe('ModelSelectorComponent', () => {
       models: { kimi: model('Kimi K2', ['thinking']) },
       currentValue: 'kimi',
       currentThinking: false,
-      colors: darkColors,
       onSelect: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -93,7 +90,6 @@ describe('ModelSelectorComponent', () => {
       },
       currentValue: 'always',
       currentThinking: false,
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -117,7 +113,6 @@ describe('ModelSelectorComponent', () => {
       },
       currentValue: 'plain',
       currentThinking: false,
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -140,7 +135,6 @@ describe('ModelSelectorComponent', () => {
       },
       currentValue: 'current',
       currentThinking: false, // thinking deliberately off on the active model
-      colors: darkColors,
       onSelect,
       onCancel: vi.fn(),
     });
@@ -160,7 +154,6 @@ describe('ModelSelectorComponent', () => {
       models: { k2: model('Kimi K2'), turbo: model('Kimi Turbo') },
       currentValue: 'k2',
       currentThinking: false,
-      colors: darkColors,
       searchable: true,
       onSelect: vi.fn(),
       onCancel,
@@ -188,7 +181,6 @@ describe('ModelSelectorComponent', () => {
       models,
       currentValue: 'm0',
       currentThinking: false,
-      colors: darkColors,
       searchable: true,
       onSelect: vi.fn(),
       onCancel: vi.fn(),
@@ -206,7 +198,6 @@ describe('ModelSelectorComponent', () => {
       },
       currentValue: 'long',
       currentThinking: false,
-      colors: darkColors,
       searchable: true,
       onSelect: vi.fn(),
       onCancel: vi.fn(),

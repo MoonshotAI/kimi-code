@@ -186,6 +186,6 @@ function renderWelcome(host: SlashCommandHost): void {
     return;
   }
   host.state.transcriptContainer.addChild(
-    new WelcomeComponent(host.state.appState, host.state.theme.colors),
+    new WelcomeComponent(host.state.appState),
   );
 }

@@ -16,9 +16,7 @@ import {
   visibleWidth,
   type Focusable,
 } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
-
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 export type FeedbackInputDialogResult =
   | { readonly kind: 'ok'; readonly value: string }
@@ -34,14 +32,12 @@ export class FeedbackInputDialogComponent extends Container implements Focusable
 
   private readonly input = new Input();
   private readonly onDone: (result: FeedbackInputDialogResult) => void;
-  private readonly colors: ColorPalette;
   private done = false;
   private emptyHinted = false;
 
-  constructor(onDone: (result: FeedbackInputDialogResult) => void, colors: ColorPalette) {
+  constructor(onDone: (result: FeedbackInputDialogResult) => void) {
     super();
     this.onDone = onDone;
-    this.colors = colors;
     this.input.onSubmit = (value) => {
       this.submit(value);
     };
@@ -75,11 +71,11 @@ export class FeedbackInputDialogComponent extends Container implements Focusable
     const innerWidth = Math.max(10, safeWidth - 4);
     const pad = '  ';
 
-    const border = (s: string): string => chalk.hex(this.colors.primary)(s);
-    const titleStyled = chalk.bold.hex(this.colors.textStrong)(TITLE);
+    const border = (s: string): string => currentTheme.fg('primary', s);
+    const titleStyled = currentTheme.boldFg('textStrong', TITLE);
     const subtitleText = this.emptyHinted ? SUBTITLE_EMPTY : SUBTITLE_DEFAULT;
-    const subtitleStyled = chalk.hex(this.colors.textDim)(subtitleText);
-    const footerStyled = chalk.hex(this.colors.textDim)(FOOTER);
+    const subtitleStyled = currentTheme.fg('textDim', subtitleText);
+    const footerStyled = currentTheme.fg('textDim', FOOTER);
 
     const titleLine = truncateToWidth(titleStyled, innerWidth, '…');
     const subtitleLine = truncateToWidth(subtitleStyled, innerWidth, '…');

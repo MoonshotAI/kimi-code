@@ -1,12 +1,10 @@
 import type { Component } from '@earendil-works/pi-tui';
 
 import { RESULT_PREVIEW_LINES } from '#/tui/constant/rendering';
-import type { ColorPalette } from '#/tui/theme/colors';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
 export interface RendererContext {
   readonly expanded: boolean;
-  readonly colors: ColorPalette;
 }
 
 export type ResultRenderer = (
