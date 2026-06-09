@@ -24,12 +24,57 @@ describe('KimiChatProvider.getCapability', () => {
     return new KimiChatProvider({ model, apiKey: 'test-key' });
   }
 
-  it('does not infer capabilities from Kimi model names', () => {
+  it('kimi-k2.6 → image_in + video_in + thinking + tool_use', () => {
+    const cap = make('kimi-k2.6').getCapability();
+    expect(cap.image_in).toBe(true);
+    expect(cap.video_in).toBe(true);
+    expect(cap.audio_in).toBe(false);
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+  });
+
+  it('kimi-k2.5 → image_in + thinking + tool_use, video_in=false', () => {
+    const cap = make('kimi-k2.5').getCapability();
+    expect(cap.image_in).toBe(true);
+    expect(cap.video_in).toBe(false);
+    expect(cap.audio_in).toBe(false);
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+  });
+
+  it('moonshot-v1 vision models → image_in + tool_use', () => {
+    for (const model of [
+      'moonshot-v1-8k-vision-preview',
+      'moonshot-v1-32k-vision-preview',
+      'moonshot-v1-128k-vision-preview',
+    ]) {
+      const cap = make(model).getCapability();
+      expect(cap.image_in).toBe(true);
+      expect(cap.video_in).toBe(false);
+      expect(cap.thinking).toBe(false);
+      expect(cap.tool_use).toBe(true);
+    }
+  });
+
+  it('moonshot-v1 text models → tool_use only', () => {
+    for (const model of ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k']) {
+      const cap = make(model).getCapability();
+      expect(cap.image_in).toBe(false);
+      expect(cap.video_in).toBe(false);
+      expect(cap.thinking).toBe(false);
+      expect(cap.tool_use).toBe(true);
+    }
+  });
+
+  it('does not infer capabilities from managed or retired Kimi model names', () => {
     for (const model of [
       'kimi-for-coding',
       'kimi-code',
+      'kimi-k2-0905-preview',
+      'kimi-k2-0711-preview',
       'kimi-k2-turbo-preview',
-      'kimi-k2.5',
+      'kimi-k2-thinking',
+      'kimi-k2-thinking-turbo',
       'kimi-thinking-preview',
     ]) {
       expect(make(model).getCapability()).toEqual(UNKNOWN_CAPABILITY);
@@ -38,7 +83,7 @@ describe('KimiChatProvider.getCapability', () => {
 
   it('explicit model arg overrides this.modelName', () => {
     const provider = make('kimi-k2-turbo-preview');
-    expect(provider.getCapability('kimi-for-coding')).toEqual(UNKNOWN_CAPABILITY);
+    expect(provider.getCapability('kimi-k2.6').video_in).toBe(true);
   });
 
   it('unknown Kimi model → UNKNOWN_CAPABILITY (no throw)', () => {
@@ -114,10 +159,106 @@ describe('AnthropicChatProvider.getCapability', () => {
     expect(cap.tool_use).toBe(true);
   });
 
+  it('mimo-v2.5-pro → thinking + tool_use, image_in=false', () => {
+    const cap = make('mimo-v2.5-pro').getCapability();
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+    expect(cap.image_in).toBe(false);
+  });
+
+  it('mimo-v2-pro → thinking + tool_use, image_in=false', () => {
+    const cap = make('mimo-v2-pro').getCapability();
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+    expect(cap.image_in).toBe(false);
+  });
+
+  it('mimo-v2.5 → image_in + thinking + tool_use', () => {
+    const cap = make('mimo-v2.5').getCapability();
+    expect(cap.image_in).toBe(true);
+    expect(cap.video_in).toBe(false);
+    expect(cap.audio_in).toBe(false);
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+  });
+
+  it('mimo-v2-omni → image_in + thinking + tool_use', () => {
+    const cap = make('mimo-v2-omni').getCapability();
+    expect(cap.image_in).toBe(true);
+    expect(cap.video_in).toBe(false);
+    expect(cap.audio_in).toBe(false);
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+  });
+
+  it('mimo-v2-flash → thinking + tool_use, image_in=false', () => {
+    const cap = make('mimo-v2-flash').getCapability();
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+    expect(cap.image_in).toBe(false);
+  });
+
+  it('MiMo speech models are not inferred as Anthropic chat models', () => {
+    for (const m of [
+      'mimo-v2.5-asr',
+      'mimo-v2.5-tts',
+      'mimo-v2.5-tts-voiceclone',
+      'mimo-v2.5-tts-voicedesign',
+      'mimo-v2-tts',
+    ]) {
+      expect(make(m).getCapability()).toEqual(UNKNOWN_CAPABILITY);
+    }
+  });
+
+  it('MiniMax-M3 → image_in + thinking + tool_use, video_in=false', () => {
+    const cap = make('MiniMax-M3').getCapability();
+    expect(cap.image_in).toBe(true);
+    expect(cap.video_in).toBe(false);
+    expect(cap.audio_in).toBe(false);
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+  });
+
+  it('MiniMax M2.x Anthropic models → tool_use only', () => {
+    for (const m of [
+      'MiniMax-M2.7',
+      'MiniMax-M2.7-highspeed',
+      'MiniMax-M2.5',
+      'MiniMax-M2.5-highspeed',
+      'MiniMax-M2.1',
+      'MiniMax-M2.1-highspeed',
+      'MiniMax-M2',
+    ]) {
+      const cap = make(m).getCapability();
+      expect(cap.tool_use).toBe(true);
+      expect(cap.image_in).toBe(false);
+      expect(cap.video_in).toBe(false);
+      expect(cap.audio_in).toBe(false);
+      expect(cap.thinking).toBe(false);
+    }
+  });
+
+  it('DeepSeek v4 Anthropic models → thinking + tool_use, no media', () => {
+    for (const m of ['deepseek-v4-pro', 'deepseek-v4-flash']) {
+      const cap = make(m).getCapability();
+      expect(cap.thinking).toBe(true);
+      expect(cap.tool_use).toBe(true);
+      expect(cap.image_in).toBe(false);
+      expect(cap.video_in).toBe(false);
+      expect(cap.audio_in).toBe(false);
+    }
+  });
+
   it('no Anthropic model supports audio_in', () => {
     // Sanity: Anthropic has no audio-input models today. If one ships later
     // and this fails, update the table — but make it a conscious decision.
-    for (const m of ['claude-3-5-sonnet', 'claude-3-haiku', 'claude-opus-4']) {
+    for (const m of [
+      'claude-3-5-sonnet',
+      'claude-3-haiku',
+      'claude-opus-4',
+      'MiniMax-M3',
+      'deepseek-v4-pro',
+    ]) {
       expect(make(m).getCapability().audio_in).toBe(false);
     }
   });

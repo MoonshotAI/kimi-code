@@ -40,6 +40,43 @@ import {
   sanitizeToolCallId,
   type ToolCallIdPolicy,
 } from './tool-call-id';
+
+const KIMI_K2_6_CAPABILITY: ModelCapability = Object.freeze({
+  image_in: true,
+  video_in: true,
+  audio_in: false,
+  thinking: true,
+  tool_use: true,
+  max_context_tokens: 0,
+});
+
+const KIMI_K2_5_CAPABILITY: ModelCapability = Object.freeze({
+  image_in: true,
+  video_in: false,
+  audio_in: false,
+  thinking: true,
+  tool_use: true,
+  max_context_tokens: 0,
+});
+
+const KIMI_VISION_TOOL_CAPABILITY: ModelCapability = Object.freeze({
+  image_in: true,
+  video_in: false,
+  audio_in: false,
+  thinking: false,
+  tool_use: true,
+  max_context_tokens: 0,
+});
+
+const KIMI_TEXT_TOOL_CAPABILITY: ModelCapability = Object.freeze({
+  image_in: false,
+  video_in: false,
+  audio_in: false,
+  thinking: false,
+  tool_use: true,
+  max_context_tokens: 0,
+});
+
 export interface KimiOptions {
   apiKey?: string | undefined;
   baseUrl?: string | undefined;
@@ -499,6 +536,15 @@ export class KimiChatProvider implements ChatProvider {
   }
 
   getCapability(_model?: string): ModelCapability {
+    const model = (_model ?? this._model).toLowerCase();
+    if (model === 'kimi-k2.6') return KIMI_K2_6_CAPABILITY;
+    if (model === 'kimi-k2.5') return KIMI_K2_5_CAPABILITY;
+    if (/^moonshot-v1-(?:8k|32k|128k)-vision-preview$/.test(model)) {
+      return KIMI_VISION_TOOL_CAPABILITY;
+    }
+    if (/^moonshot-v1-(?:8k|32k|128k)$/.test(model)) {
+      return KIMI_TEXT_TOOL_CAPABILITY;
+    }
     return UNKNOWN_CAPABILITY;
   }
 
