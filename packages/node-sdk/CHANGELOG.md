@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.9.1
+
+### Patch Changes
+
+- [#591](https://github.com/MoonshotAI/kimi-code/pull/591) [`e48234a`](https://github.com/MoonshotAI/kimi-code/commit/e48234af576e41e630736450c66b690226707bc3) - Fix Windows builds and development launches that could fail when package binaries resolve to command shims.
+
 ## 0.9.0
 
 ### Minor Changes

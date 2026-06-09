@@ -1,5 +1,25 @@
 # @moonshot-ai/kimi-code
 
+## 0.13.0
+
+### Minor Changes
+
+- [#484](https://github.com/MoonshotAI/kimi-code/pull/484) [`f863127`](https://github.com/MoonshotAI/kimi-code/commit/f863127ab7e8b8e2e9af11c54694c08900e3103a) - Add custom color themes. Define your own palette as a JSON file in `~/.kimi-code/themes/`, or generate one with the built-in `/custom-theme` skill command.
+
+- [#582](https://github.com/MoonshotAI/kimi-code/pull/582) [`d85dc0b`](https://github.com/MoonshotAI/kimi-code/commit/d85dc0b96a3c98c6951b8f6e6fa8b663d4c95360) - Add `/import-from-cc-codex` to import selected Claude Code and Codex instructions, Skills, and MCP settings.
+
+- [#593](https://github.com/MoonshotAI/kimi-code/pull/593) [`40506f4`](https://github.com/MoonshotAI/kimi-code/commit/40506f49d689aaf3e920c6bc9ae2b91219ee3f7f) - Show available plugin updates in the marketplace. An installed plugin whose marketplace version is newer than the local version now renders an `update <local> → <latest>` badge (and updates in place on Enter); up-to-date plugins show `installed · v<version>`. The marketplace `version` served in dev and written by the CDN build is now stamped from each plugin's manifest so "latest" stays accurate.
+
+### Patch Changes
+
+- [#587](https://github.com/MoonshotAI/kimi-code/pull/587) [`0abde86`](https://github.com/MoonshotAI/kimi-code/commit/0abde8662a531293fc8faa7cf9089c43ad8d6d76) - Clarify grouped subagent progress with active status breakdowns and elapsed time.
+
+- [#594](https://github.com/MoonshotAI/kimi-code/pull/594) [`f2863af`](https://github.com/MoonshotAI/kimi-code/commit/f2863af267b2e7d5ff5b99ff80c95c379a5b0272) - Fix device login to keep the URL and code visible when the browser cannot be opened.
+
+- [#591](https://github.com/MoonshotAI/kimi-code/pull/591) [`e48234a`](https://github.com/MoonshotAI/kimi-code/commit/e48234af576e41e630736450c66b690226707bc3) - Fix Windows builds and development launches that could fail when package binaries resolve to command shims.
+
+- [#586](https://github.com/MoonshotAI/kimi-code/pull/586) [`7cb4a23`](https://github.com/MoonshotAI/kimi-code/commit/7cb4a23e01dfaf0e049891b90a27b36000714151) - Truncate queued message display to a single line with ellipsis when it exceeds terminal width.
+
 ## 0.12.1
 
 ### Patch Changes
