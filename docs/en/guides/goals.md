@@ -2,14 +2,6 @@
 
 Goals keep Kimi Code working toward a defined outcome across turns. Unlike a normal prompt that says what to do next, a goal says what must become true. Use `/goal` when the task has a clear finish line, but the next useful step depends on what the agent learns while it works — for example, fixing a batch of failing tests or tracking down the root cause of a broken build.
 
-::: info
-`/goal` is still experimental. Start `kimi` with:
-
-```sh
-KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
-```
-:::
-
 ## Start a goal
 
 Write the objective after `/goal`:
@@ -145,7 +137,7 @@ In `manual` permission mode, goal work may pause for tool call approval. For una
 In non-interactive prompt mode, only goal creation is supported:
 
 ```sh
-KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi -p "/goal Fix the failing checkout test"
+kimi -p "/goal Fix the failing checkout test"
 ```
 
 Prompt mode exits with code `0` when the goal completes, `3` when it blocks, and `6` when it pauses. `/goal next` and other management commands are TUI controls.

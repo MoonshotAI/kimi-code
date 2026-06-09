@@ -90,6 +90,7 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return this.session.generateAgentsMd();
   }
 
+
   async prompt({ agentId, ...payload }: AgentScopedPayload<PromptPayload>) {
     if (agentId === 'main') {
       await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));

@@ -263,7 +263,7 @@ describe("KimiTUI startup", () => {
     });
     const harness = makeHarness(session, {
       listSessions: vi.fn(async () => [{ id: "ses-latest" }]),
-      getExperimentalFeatures: vi.fn(async () => [{ id: "goal_command", enabled: true }]),
+      getExperimentalFeatures: vi.fn(async () => [{ id: "micro_compaction", enabled: true }]),
     });
     const driver = makeDriver(harness, makeStartupInput({ continue: true }));
 
@@ -273,17 +273,18 @@ describe("KimiTUI startup", () => {
     expect(driver.state.appState.goal).toEqual(goal);
   });
 
-  it("does not sync goal state while the goal flag is disabled", async () => {
+  it("syncs goal state regardless of the goal flag", async () => {
+    const goal = goalSnapshot();
     const session = makeSession({
-      getGoal: vi.fn(async () => ({ goal: goalSnapshot() })),
+      getGoal: vi.fn(async () => ({ goal })),
     });
     const harness = makeHarness(session);
     const driver = makeDriver(harness, makeStartupInput());
 
     await expect(driver.init()).resolves.toBe(false);
 
-    expect(session.getGoal).not.toHaveBeenCalled();
-    expect(driver.state.appState.goal).toBeNull();
+    expect(session.getGoal).toHaveBeenCalledOnce();
+    expect(driver.state.appState.goal).toEqual(goal);
   });
 
   it("clears goal state when closing the current session", async () => {
@@ -292,7 +293,7 @@ describe("KimiTUI startup", () => {
       getGoal: vi.fn(async () => ({ goal })),
     });
     const harness = makeHarness(session, {
-      getExperimentalFeatures: vi.fn(async () => [{ id: "goal_command", enabled: true }]),
+      getExperimentalFeatures: vi.fn(async () => [{ id: "micro_compaction", enabled: true }]),
     });
     const driver = makeDriver(harness, makeStartupInput()) as unknown as RuntimeStateDriver;
 

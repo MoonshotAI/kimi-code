@@ -9,7 +9,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent, AgentOptions } from '../../src/agent';
 import { trimTrailingOpenToolExchange } from '../../src/agent/context/projector';
-import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
@@ -549,7 +548,7 @@ describe('AgentAPI.startBtw', () => {
     }
   });
 
-  it('uses session-scoped experimental flags for sub-skill discovery and builtins', async () => {
+  it('discovers sub-skills and builtins', async () => {
     const workDir = await makeTempDir();
     const sessionDir = await makeTempDir();
     const skillsRoot = join(workDir, 'skills');
@@ -577,14 +576,13 @@ describe('AgentAPI.startBtw', () => {
       homedir: sessionDir,
       rpc: createSessionRpc([]),
       skills: { explicitDirs: [skillsRoot] },
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': false }),
     });
 
     try {
       const disabledSkills = await disabledSession.listSkills();
       expect(disabledSkills.map((skill) => skill.name)).toContain('outer');
-      expect(disabledSkills.map((skill) => skill.name)).not.toContain('inner');
-      expect(disabledSkills.map((skill) => skill.name)).not.toContain('sub-skill.consolidate');
+      expect(disabledSkills.map((skill) => skill.name)).toContain('inner');
+      expect(disabledSkills.map((skill) => skill.name)).toContain('sub-skill.consolidate');
     } finally {
       await disabledSession.close();
     }
@@ -595,7 +593,6 @@ describe('AgentAPI.startBtw', () => {
       homedir: sessionDir,
       rpc: createSessionRpc([]),
       skills: { explicitDirs: [skillsRoot] },
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': true }),
     });
 
     try {

@@ -1,12 +1,10 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import type { Agent } from '../../../src/agent';
 import { GoalMode } from '../../../src/agent/goal';
 import { GoalInjector } from '../../../src/agent/injection/goal';
 import { InMemoryAgentRecordPersistence } from '../../../src/agent/records';
 import { testAgent } from '../harness/agent';
-
-const GOAL_FLAG = 'KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND';
 
 function makeStore() {
   const agent = {
@@ -191,12 +189,6 @@ describe('GoalInjector content', () => {
 });
 
 describe('InjectionManager goal integration', () => {
-  const original = process.env[GOAL_FLAG];
-  afterEach(() => {
-    if (original === undefined) delete process.env[GOAL_FLAG];
-    else process.env[GOAL_FLAG] = original;
-  });
-
   function goalReminderRecords(persistence: InMemoryAgentRecordPersistence) {
     return persistence.records.filter(
       (r) =>
@@ -206,7 +198,6 @@ describe('InjectionManager goal integration', () => {
   }
 
   it('main-agent injectGoal writes a context.append_message with origin.variant goal', async () => {
-    process.env[GOAL_FLAG] = 'true';
     const store = makeStore();
     await store.createGoal({ objective: 'Ship feature X' });
     const persistence = new InMemoryAgentRecordPersistence();
@@ -222,7 +213,6 @@ describe('InjectionManager goal integration', () => {
   });
 
   it('the per-step inject() loop does NOT add a goal reminder (boundary cadence)', async () => {
-    process.env[GOAL_FLAG] = 'true';
     const store = makeStore();
     await store.createGoal({ objective: 'Ship feature X' });
     const persistence = new InMemoryAgentRecordPersistence();
@@ -239,7 +229,6 @@ describe('InjectionManager goal integration', () => {
   });
 
   it('injectGoal is append-only across boundaries (one record per call, prefix untouched)', async () => {
-    process.env[GOAL_FLAG] = 'true';
     const store = makeStore();
     await store.createGoal({ objective: 'Ship feature X' });
     const persistence = new InMemoryAgentRecordPersistence();
@@ -255,7 +244,6 @@ describe('InjectionManager goal integration', () => {
   });
 
   it('writes no goal record when there is no active goal', async () => {
-    process.env[GOAL_FLAG] = 'true';
     const store = makeStore();
     const persistence = new InMemoryAgentRecordPersistence();
     const ctx = testAgent({ type: 'main', goal: store, persistence });
@@ -267,7 +255,6 @@ describe('InjectionManager goal integration', () => {
   });
 
   it('subagent injectGoal does not add a goal reminder', async () => {
-    process.env[GOAL_FLAG] = 'true';
     const store = makeStore();
     await store.createGoal({ objective: 'Ship feature X' });
     const persistence = new InMemoryAgentRecordPersistence();

@@ -690,7 +690,6 @@ describe('dispatchInput /goal integration', () => {
   });
 
   it('routes /goal through the real resolver, creates the goal, and sends the objective', async () => {
-    setExperimentalFeatures([{ id: 'goal_command', enabled: true }]);
     const { host, session } = makeHost();
 
     dispatchInput(host, '/goal Ship feature X');
@@ -702,18 +701,6 @@ describe('dispatchInput /goal integration', () => {
     });
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
     expect(host.sendNormalUserInput).not.toHaveBeenCalledWith('/goal Ship feature X');
-  });
-
-  it('treats /goal as a normal message when the flag is disabled', async () => {
-    setExperimentalFeatures([]);
-    const { host, session } = makeHost();
-
-    dispatchInput(host, '/goal Ship feature X');
-
-    await vi.waitFor(() => {
-      expect(host.sendNormalUserInput).toHaveBeenCalledWith('/goal Ship feature X');
-    });
-    expect(session.createGoal).not.toHaveBeenCalled();
   });
 });
 

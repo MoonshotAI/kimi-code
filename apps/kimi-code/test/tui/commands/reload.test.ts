@@ -79,7 +79,7 @@ auto_install = false
     expect(host.harness.getConfig).toHaveBeenCalledWith({ reload: true });
     expect(host.harness.getExperimentalFeatures).toHaveBeenCalledOnce();
     expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalledOnce();
-    expect(isExperimentalFlagEnabled('goal_command')).toBe(true);
+    expect(isExperimentalFlagEnabled('micro_compaction')).toBe(true);
     expect(host.state.appState.theme).toBe('light');
     expect(host.state.appState.availableModels).toEqual({
       fresh: { provider: 'test', model: 'fresh-model', maxContextSize: 1000 },
@@ -128,7 +128,7 @@ function makeHost({
           test: { type: 'kimi', apiKey: 'test-key' },
         },
       })),
-      getExperimentalFeatures: vi.fn(async () => [{ id: 'goal_command', enabled: true }]),
+      getExperimentalFeatures: vi.fn(async () => [{ id: 'micro_compaction', enabled: true }]),
     },
     setAppState: vi.fn((patch: Record<string, unknown>) => {
       Object.assign(state.appState, patch);

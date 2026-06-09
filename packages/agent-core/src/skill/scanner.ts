@@ -1,7 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'pathe';
 
-import { flags } from '../flags/resolver';
 import { SkillParseError, UnsupportedSkillTypeError, parseSkillFromFile } from './parser';
 import type { SkillDefinition, SkillRoot, SkillSource, SkippedSkill } from './types';
 import { normalizeSkillName } from './types';
@@ -12,10 +11,6 @@ const USER_BRAND_DIRS = ['skills'] as const;
 const USER_GENERIC_DIRS = ['.agents/skills'] as const;
 const PROJECT_BRAND_DIRS = ['.kimi-code/skills'] as const;
 const PROJECT_GENERIC_DIRS = ['.agents/skills'] as const;
-
-type SubSkillFlagResolver = {
-  enabled(id: 'sub_skill'): boolean;
-};
 
 // Bounds recursion so a directory symlink cycle inside a skill root cannot
 // loop forever. Real skill trees are 1-3 levels deep.
@@ -45,7 +40,6 @@ export interface ResolveSkillRootsOptions {
 
 export interface DiscoverSkillsOptions {
   readonly roots: readonly SkillRoot[];
-  readonly experimentalFlags?: SubSkillFlagResolver;
   readonly onWarning?: (message: string, cause?: unknown) => void;
   readonly onSkippedByPolicy?: (skill: SkippedSkill) => void;
   readonly onDiscoveredSkill?: (skill: SkillDefinition) => void;
@@ -142,7 +136,6 @@ export async function discoverSkills(
   const isFile = options.isFile ?? defaultIsFile;
   const isDir = options.isDir ?? defaultIsDir;
   const parse = options.parse ?? parseSkillFromFile;
-  const subSkillFlags = options.experimentalFlags ?? flags;
   const warn = options.onWarning ?? (() => {});
   const skip = options.onSkippedByPolicy ?? (() => {});
   const byName = new Map<string, SkillDefinition>();
@@ -190,7 +183,7 @@ export async function discoverSkills(
         warn,
         skip,
       });
-      if (skill !== undefined && hasSubSkillEnabled(skill, subSkillFlags)) {
+      if (skill !== undefined && hasSubSkillEnabled(skill)) {
         allowedSubSkillBundles.add(entry);
       }
     }
@@ -399,11 +392,7 @@ async function parseAndRegister(input: {
   }
 }
 
-function hasSubSkillEnabled(
-  skill: SkillDefinition,
-  experimentalFlags: SubSkillFlagResolver,
-): boolean {
-  if (!experimentalFlags.enabled('sub_skill')) return false;
+function hasSubSkillEnabled(skill: SkillDefinition): boolean {
   const nested = skill.metadata['metadata'];
   const nestedFlag =
     typeof nested === 'object' && nested !== null

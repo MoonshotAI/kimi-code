@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import type { Agent } from '../../src/agent';
 import { GoalMode } from '../../src/agent/goal';
 import { ErrorCodes } from '../../src/errors';
-import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { compileToolArgsValidator, validateToolArgs } from '../../src/tools/args-validator';
 import {
   CreateGoalTool,
@@ -288,12 +287,9 @@ describe('UpdateGoalTool', () => {
 });
 
 describe('ToolManager goal tool registration', () => {
-  function loopToolNames(type: 'main' | 'sub', goalEnabled: boolean): readonly string[] {
+  function loopToolNames(type: 'main' | 'sub'): readonly string[] {
     const ctxAgent = testAgent({
       type,
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, {
-        goal_command: goalEnabled,
-      }),
     });
     // configure() gives the agent a provider so builtin tools can initialize.
     ctxAgent.configure({ tools: ['Read', 'CreateGoal', 'GetGoal', 'SetGoalBudget'] });
@@ -302,21 +298,14 @@ describe('ToolManager goal tool registration', () => {
     return ctxAgent.agent.tools.loopTools.map((tool) => tool.name);
   }
 
-  it('omits goal tools when the flag is disabled', () => {
-    const names = loopToolNames('main', false);
-    expect(names).not.toContain('CreateGoal');
-    expect(names).not.toContain('GetGoal');
-    expect(names).not.toContain('SetGoalBudget');
-  });
-
-  it('exposes goal tools to the main agent when the flag is enabled', () => {
-    const names = loopToolNames('main', true);
+  it('exposes goal tools to the main agent', () => {
+    const names = loopToolNames('main');
     expect(names).toEqual(expect.arrayContaining(['CreateGoal', 'GetGoal']));
     expect(names).not.toContain('SetGoalBudget');
   });
 
   it('does not expose goal tools to subagents even when enabled', () => {
-    const names = loopToolNames('sub', true);
+    const names = loopToolNames('sub');
     expect(names).not.toContain('CreateGoal');
     expect(names).not.toContain('GetGoal');
     expect(names).not.toContain('SetGoalBudget');
@@ -327,9 +316,6 @@ describe('ToolManager goal tool registration', () => {
     const ctxAgent = testAgent({
       type: 'main',
       goal: store,
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, {
-        goal_command: true,
-      }),
     });
     ctxAgent.configure({ tools: ['Read', 'CreateGoal', 'GetGoal', 'SetGoalBudget', 'UpdateGoal'] });
     ctxAgent.agent.tools.initializeBuiltinTools();
