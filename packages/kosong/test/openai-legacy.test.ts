@@ -718,8 +718,8 @@ describe('OpenAILegacyChatProvider', () => {
       expect(body['reasoning_effort']).toBe('high');
     });
 
-    it.each(['gpt-5.2', 'gpt-5.4', 'gpt-5.5', 'openai/gpt-5.5'])(
-      '.withThinking("xhigh") passes through for Chat Completions xhigh model %s',
+    it.each(['deepseek/deepseek-v4-flash', 'gpt-5.4-pro', 'some-model'])(
+      '.withThinking("xhigh") passes through reasoning_effort for model %s',
       async (model) => {
         const provider = createProvider({ model }).withThinking('xhigh');
         const history: Message[] = [
@@ -732,40 +732,33 @@ describe('OpenAILegacyChatProvider', () => {
       },
     );
 
-    it.each(['gpt-5.1', 'gpt-5.4-mini', 'gpt-5.4-pro', 'kimi-k2.6', 'some-model'])(
-      '.withThinking("xhigh") clamps to high for Chat Completions model %s',
-      async (model) => {
-        const provider = createProvider({ model }).withThinking('xhigh');
-        const history: Message[] = [
-          { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
-        ];
-        const body = await captureRequestBody(provider, '', [], history);
-
-        expect(body['reasoning_effort']).toBe('high');
-        expect(provider.thinkingEffort).toBe('high');
-      },
-    );
-
-    it('.withThinking("max") uses xhigh only for Chat Completions xhigh models', async () => {
+    it('.withThinking("max") maps to xhigh without model-specific clamping', async () => {
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
       ];
 
-      const supported = await captureRequestBody(
+      const openAIChatModel = await captureRequestBody(
         createProvider({ model: 'gpt-5.5' }).withThinking('max'),
         '',
         [],
         history,
       );
-      const unsupported = await captureRequestBody(
+      const openAIProModel = await captureRequestBody(
         createProvider({ model: 'gpt-5.5-pro' }).withThinking('max'),
         '',
         [],
         history,
       );
+      const deepSeekModel = await captureRequestBody(
+        createProvider({ model: 'deepseek/deepseek-v4-pro' }).withThinking('max'),
+        '',
+        [],
+        history,
+      );
 
-      expect(supported['reasoning_effort']).toBe('xhigh');
-      expect(unsupported['reasoning_effort']).toBe('high');
+      expect(openAIChatModel['reasoning_effort']).toBe('xhigh');
+      expect(openAIProModel['reasoning_effort']).toBe('xhigh');
+      expect(deepSeekModel['reasoning_effort']).toBe('xhigh');
     });
   });
 
