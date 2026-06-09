@@ -1,4 +1,4 @@
-import { Container, Text } from '@earendil-works/pi-tui';
+import { Container, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
 import { SELECT_POINTER } from '../../constant/symbols';
@@ -13,25 +13,45 @@ export interface QueuePaneOptions {
   readonly canSteerImmediately: boolean;
 }
 
+const ELLIPSIS = '…';
+
 export class QueuePaneComponent extends Container {
+  private readonly messages: readonly QueuedMessage[];
+  private readonly colors: ColorPalette;
+  private readonly hint: string | undefined;
+
   constructor(options: QueuePaneOptions) {
     super();
-
-    const accent = chalk.hex(options.colors.accent);
-    const dim = chalk.hex(options.colors.textDim);
-
-    for (const item of options.messages) {
-      this.addChild(new Text(accent(`  ${SELECT_POINTER} ${item.text}`), 0, 0));
-    }
+    this.messages = options.messages;
+    this.colors = options.colors;
 
     if (options.messages.length > 0) {
-      const hint =
+      this.hint =
         options.isCompacting && !options.isStreaming
           ? '  ↑ to edit · will send after compaction'
           : !options.canSteerImmediately
             ? '  ↑ to edit · will send after current task'
-          : '  ↑ to edit · ctrl-s to steer immediately';
-      this.addChild(new Text(dim(hint), 0, 0));
+            : '  ↑ to edit · ctrl-s to steer immediately';
     }
+  }
+
+  override render(width: number): string[] {
+    const accent = chalk.hex(this.colors.accent);
+    const dim = chalk.hex(this.colors.textDim);
+    const lines: string[] = [];
+
+    for (const item of this.messages) {
+      const singleLine = item.text.replaceAll(/\s+/g, ' ').trim();
+      const prefix = `  ${SELECT_POINTER} `;
+      const availableWidth = Math.max(1, width - visibleWidth(prefix));
+      const truncated = truncateToWidth(singleLine, availableWidth, ELLIPSIS);
+      lines.push(accent(prefix + truncated));
+    }
+
+    if (this.hint !== undefined) {
+      lines.push(dim(truncateToWidth(this.hint, width, ELLIPSIS)));
+    }
+
+    return lines;
   }
 }
