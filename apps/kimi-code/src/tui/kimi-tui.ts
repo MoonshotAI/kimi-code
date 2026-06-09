@@ -69,7 +69,11 @@ import { FileMentionProvider } from './components/editor/file-mention-provider';
 import { AssistantMessageComponent } from './components/messages/assistant-message';
 import { BackgroundAgentStatusComponent } from './components/messages/background-agent-status';
 import { CronMessageComponent } from './components/messages/cron-message';
-import { GoalCompletionMessageComponent } from './components/messages/goal-panel';
+import { buildGoalMarker } from './components/messages/goal-markers';
+import {
+  GoalCompletionMessageComponent,
+  GoalSetMessageComponent,
+} from './components/messages/goal-panel';
 import { SkillActivationComponent } from './components/messages/skill-activation';
 import {
   NoticeMessageComponent,
@@ -1297,6 +1301,18 @@ export class KimiTUI {
           entry.cronData ?? {},
           this.state.theme.colors,
         );
+      case 'goal':
+        if (entry.goalData?.kind === 'created') {
+          return new GoalSetMessageComponent(this.state.theme.colors);
+        }
+        if (entry.goalData?.kind === 'lifecycle') {
+          return buildGoalMarker(
+            entry.goalData.change,
+            this.state.theme.colors,
+            this.state.toolOutputExpanded,
+          );
+        }
+        return null;
       case 'assistant': {
         if (entry.content.trimStart().startsWith('✓ Goal complete')) {
           return new GoalCompletionMessageComponent(entry.content, this.state.theme.colors);

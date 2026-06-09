@@ -51,7 +51,6 @@ import type {
   CreateSessionPayload,
   EmptyPayload,
   EnterSwarmPayload,
-  GoalControlPayload,
   GoalSnapshot,
   GoalToolResult,
   ExportSessionPayload,
@@ -62,7 +61,6 @@ import type {
   GetKimiConfigPayload,
   GetPluginInfoPayload,
   InstallPluginPayload,
-  JsonObject,
   ListSessionsPayload,
   McpServerInfo,
   McpStartupMetrics,
@@ -100,12 +98,6 @@ import { KaosShellNotFoundError, LocalKaos, type Kaos } from '@moonshot-ai/kaos'
 import type { ToolServices } from '../tools/support/services';
 
 const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
-const GOAL_FORK_CLEARED_REMINDER = [
-  'This fork does not have a current goal.',
-  'Ignore earlier active-goal reminders from the source session.',
-  'Handle requests normally unless the user starts a new goal.',
-].join(' ');
-
 type AgentScopedPayload<T> = T & { readonly agentId: string };
 type SessionScopedPayload<T> = T & { readonly sessionId: string };
 type SessionAgentPayload<T> = SessionScopedPayload<AgentScopedPayload<T>>;
@@ -383,10 +375,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   async forkSession(input: ForkSessionPayload): Promise<ResumeSessionResult> {
     const source = await this.sessionStore.get(input.sessionId);
     const active = this.sessions.get(source.id);
-    let sourceHadGoal = hasGoalMetadata(source.metadata) || hasGoalMetadata(input.metadata);
     if (active !== undefined) {
       await active.flushMetadata();
-      sourceHadGoal = sourceHadGoal || active.goals.getGoal().goal !== null;
     }
 
     const id = input.id ?? createSessionId();
@@ -396,19 +386,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       title: input.title,
       metadata: input.metadata,
     });
-    const resumed = await this.resumeSession({ sessionId: id });
-    if (sourceHadGoal) {
-      const forked = this.sessions.get(id);
-      if (forked !== undefined) {
-        const mainAgent = await forked.ensureAgentResumed('main');
-        mainAgent.context.appendSystemReminder(GOAL_FORK_CLEARED_REMINDER, {
-          kind: 'system_trigger',
-          name: 'goal_fork_cleared',
-        });
-        await forked.flushMetadata();
-      }
-    }
-    return resumed;
+    return this.resumeSession({ sessionId: id });
   }
 
   async listSessions(input: ListSessionsPayload = {}): Promise<readonly SessionSummary[]> {
@@ -673,32 +651,32 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   createGoal({
     sessionId,
     ...payload
-  }: SessionScopedPayload<CreateGoalPayload>): Promise<GoalSnapshot> {
+  }: SessionAgentPayload<CreateGoalPayload>): Promise<GoalSnapshot> {
     return Promise.resolve(this.sessionApi(sessionId).createGoal(payload));
   }
 
-  getGoal({ sessionId, ...payload }: SessionScopedPayload<EmptyPayload>): GoalToolResult {
-    return this.sessionApi(sessionId).getGoal(payload);
+  getGoal({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>): Promise<GoalToolResult> {
+    return Promise.resolve(this.sessionApi(sessionId).getGoal(payload));
   }
 
   pauseGoal({
     sessionId,
     ...payload
-  }: SessionScopedPayload<GoalControlPayload>): Promise<GoalSnapshot> {
+  }: SessionAgentPayload<EmptyPayload>): Promise<GoalSnapshot> {
     return Promise.resolve(this.sessionApi(sessionId).pauseGoal(payload));
   }
 
   resumeGoal({
     sessionId,
     ...payload
-  }: SessionScopedPayload<GoalControlPayload>): Promise<GoalSnapshot> {
+  }: SessionAgentPayload<EmptyPayload>): Promise<GoalSnapshot> {
     return Promise.resolve(this.sessionApi(sessionId).resumeGoal(payload));
   }
 
   cancelGoal({
     sessionId,
     ...payload
-  }: SessionScopedPayload<GoalControlPayload>): Promise<GoalSnapshot> {
+  }: SessionAgentPayload<EmptyPayload>): Promise<GoalSnapshot> {
     return Promise.resolve(this.sessionApi(sessionId).cancelGoal(payload));
   }
 
@@ -943,10 +921,6 @@ function serviceCredentials(
 function nonEmptyString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
-}
-
-function hasGoalMetadata(metadata: JsonObject | undefined): boolean {
-  return metadata !== undefined && 'goal' in metadata;
 }
 
 function requiredWorkDir(operation: string, value: string): string {

@@ -440,7 +440,7 @@ export class ToolManager {
     if (this.loopToolsOverride !== undefined) return this.loopToolsOverride;
     const mcpNames = [...this.mcpTools.keys()].filter((name) => this.isMcpToolEnabled(name));
     // Mutation goal tools are only offered to the model while a goal exists.
-    const hideGoalMutationTools = (this.agent.goals?.getGoal().goal ?? null) === null;
+    const hideGoalMutationTools = this.agent.goal.getGoal().goal === null;
     return uniq([...this.enabledTools, ...mcpNames])
       .toSorted((a, b) => a.localeCompare(b))
       .filter(

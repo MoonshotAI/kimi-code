@@ -419,9 +419,12 @@ function goalSnapshotKey(goal: AppState['goal']): string | null {
   return [
     goal.goalId,
     goal.status,
+    goal.terminalReason ?? '',
     String(goal.turnsUsed),
     String(goal.tokensUsed),
     String(goal.wallClockMs),
-    goal.updatedAt,
+    String(goal.budget.tokenBudget),
+    String(goal.budget.turnBudget),
+    String(goal.budget.wallClockBudgetMs),
   ].join('\u0000');
 }

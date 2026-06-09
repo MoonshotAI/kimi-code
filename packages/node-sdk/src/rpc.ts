@@ -463,31 +463,39 @@ export abstract class SDKRpcClientBase {
     const rpc = await this.getRpc();
     return rpc.createGoal({
       sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
       objective: input.objective,
-      completionCriterion: input.completionCriterion,
-      budgetLimits: input.budgetLimits,
       replace: input.replace,
     });
   }
 
   async getGoal(input: SessionIdRpcInput): Promise<GoalToolResult> {
     const rpc = await this.getRpc();
-    return rpc.getGoal({ sessionId: input.sessionId });
+    return rpc.getGoal({ sessionId: input.sessionId, agentId: this.interactiveAgentId });
   }
 
-  async pauseGoal(input: SessionIdRpcInput & { reason?: string }): Promise<GoalSnapshot> {
+  async pauseGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
     const rpc = await this.getRpc();
-    return rpc.pauseGoal({ sessionId: input.sessionId, reason: input.reason });
+    return rpc.pauseGoal({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
   }
 
-  async resumeGoal(input: SessionIdRpcInput & { reason?: string }): Promise<GoalSnapshot> {
+  async resumeGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
     const rpc = await this.getRpc();
-    return rpc.resumeGoal({ sessionId: input.sessionId, reason: input.reason });
+    return rpc.resumeGoal({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
   }
 
-  async cancelGoal(input: SessionIdRpcInput & { reason?: string }): Promise<GoalSnapshot> {
+  async cancelGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
     const rpc = await this.getRpc();
-    return rpc.cancelGoal({ sessionId: input.sessionId, reason: input.reason });
+    return rpc.cancelGoal({
+      sessionId: input.sessionId,
+      agentId: this.interactiveAgentId,
+    });
   }
 
   async listMcpServers(input: SessionIdRpcInput): Promise<readonly McpServerInfo[]> {

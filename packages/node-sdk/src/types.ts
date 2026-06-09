@@ -23,7 +23,6 @@ export type {
   BackgroundTaskInfo,
   BackgroundTaskStatus,
   ContextMessage,
-  CreateGoalInput,
   ExperimentalFeatureState,
   ExperimentalFlagMap,
   ExperimentalFlagSource,
@@ -68,6 +67,11 @@ export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
 export type { ContentPart, Role, ToolCall } from '@moonshot-ai/kosong';
 
 export type PermissionMode = 'yolo' | 'manual' | 'auto';
+
+export interface CreateGoalInput {
+  readonly objective: string;
+  readonly replace?: boolean;
+}
 
 export type TextPromptPart = Extract<ContentPart, { type: 'text' }>;
 export type PromptPart = Extract<ContentPart, { type: 'text' | 'image_url' | 'video_url' }>;

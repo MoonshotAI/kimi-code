@@ -23,16 +23,12 @@ export class GetGoalTool implements BuiltinTool<GetGoalToolInput> {
   constructor(private readonly agent: Agent) {}
 
   resolveExecution(_args: GetGoalToolInput): ToolExecution {
-    if (this.agent.type !== 'main') {
-      return { isError: true, output: `${this.name} is only available to the main agent.` };
-    }
-    const store = this.agent.goals;
+    const store = this.agent.goal;
     return {
       description: 'Reading the current goal',
       approvalRule: this.name,
       execute: async () => {
-        // No goal store (e.g. session without goal mode) reads as "no goal".
-        const result = store?.getGoal() ?? { goal: null };
+        const result = store.getGoal();
         return { output: JSON.stringify(result, null, 2) };
       },
     };

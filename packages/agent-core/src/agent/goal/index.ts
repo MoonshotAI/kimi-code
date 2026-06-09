@@ -1,28 +1,35 @@
 import { randomUUID } from 'node:crypto';
 
 import { ErrorCodes, KimiError } from '#/errors';
-import type { AgentRecord } from '../agent/records/types';
+import type { Agent } from '..';
+import type { AgentRecordOf } from '../records/types';
 import {
-  noopTelemetryClient,
-  type TelemetryClient,
   type TelemetryProperties,
-} from '../telemetry';
-
-/** Minimal audit sink the goal store writes `goal.*` records into. */
-export interface GoalAuditSink {
-  logRecord(record: AgentRecord): void;
-}
+} from '../../telemetry';
 
 /**
- * Durable goal-mode state owned by {@link SessionGoalStore}.
+ * Durable goal-mode state owned by {@link GoalMode}.
  *
- * The store keeps exactly one current goal in `Session.metadata.custom.goal`.
+ * Each agent keeps exactly one current goal, rebuilt from that agent's ordered
+ * record log.
  * It owns the lifecycle rules, budget math, and actor boundaries that the
  * slash command, model tools, and goal continuation driver depend on.
  */
 
 /** Maximum objective length in characters. */
-export const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
+const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
+
+const GOAL_CANCELLED_REMINDER = [
+  'The user cancelled the current goal.',
+  'Ignore earlier active-goal reminders for that goal.',
+  'Handle the next user request normally unless the user starts or resumes a goal.',
+].join(' ');
+
+const GOAL_FORK_CLEARED_REMINDER = [
+  'This fork does not have a current goal.',
+  'Ignore earlier active-goal reminders from the source session.',
+  'Handle requests normally unless the user starts a new goal.',
+].join(' ');
 
 /**
  * Lifecycle status of a goal — deliberately minimal. The durable record only
@@ -35,7 +42,7 @@ export const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
  * | `active`   | yes       | (running) | createGoal / resumeGoal         | The goal driver may run continuation turns.      |
  * | `paused`   | yes       | yes       | pauseGoal / pauseActiveGoal /   | User, interrupt, resume, or retryable runtime    |
  * |            |           |           | pauseOnInterrupt /              | stop parked it; intact.                          |
- * |            |           |           | normalizeMetadata               |                                                  |
+ * |            |           |           | normalizeAfterReplay            |                                                  |
  * | `blocked`  | yes       | yes       | markBlocked                     | The system stopped it for some `reason`.         |
  * | `complete` | no        | —         | markComplete                    | Success — announced in a message, then cleared.  |
  *
@@ -47,7 +54,7 @@ export const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
  * `impossible`, `budget_limited`, `error`, or `cancelled` status: an
  * unachievable goal, an exhausted budget, or a non-retryable runtime failure
  * becomes `blocked(+reason)`, retryable runtime stops become `paused(+reason)`,
- * and `cancelGoal` discards the record entirely. See {@link SessionGoalStore}
+ * and `cancelGoal` discards the record entirely. See {@link GoalMode}
  * for the setters and the per-status notes below.
  */
 export type GoalStatus =
@@ -62,8 +69,8 @@ export type GoalStatus =
    * The user stopped the goal but it is fully intact and resumable via
    * `/goal resume`. Reached three ways: the user pauses (`pauseGoal`); a live
    * turn is aborted mid-flight, e.g. Esc/shutdown (`pauseOnInterrupt`); or a
-   * session is resumed from disk, where an `active` goal cannot still be running
-   * and is demoted (`normalizeMetadata`); or a retryable runtime stop such as a
+   * agent is resumed from disk, where an `active` goal cannot still be running
+   * and is demoted (`normalizeAfterReplay`); or a retryable runtime stop such as a
    * provider rate limit parked it via `pauseActiveGoal`.
    */
   | 'paused'
@@ -83,14 +90,13 @@ export type GoalStatus =
   /**
    * Success: the model reported the objective met via `UpdateGoal('complete')`.
    * Set by `markComplete`. This status is **transient**
-   * — `markComplete` emits the completion, appends a completion message, and then
-   * clears the durable record, so the goal box disappears and `complete` never
-   * rests on disk (like the old `cancelled` pattern, but with an announcement).
+   * — `markComplete` emits the completion event and then clears the durable
+   * record, so the goal box disappears and `complete` never rests on disk.
    */
   | 'complete';
 
-/** Who performed a goal action. `cleared` is an audit action, not a status. */
-export type GoalActor = 'user' | 'model' | 'runtime' | 'system';
+/** Who performed a goal action. `cleared` is a record action, not a status. */
+type GoalActor = 'user' | 'model' | 'runtime' | 'system';
 
 export interface GoalBudgetLimits {
   readonly tokenBudget?: number;
@@ -98,16 +104,12 @@ export interface GoalBudgetLimits {
   readonly wallClockBudgetMs?: number;
 }
 
-/** The durable goal record persisted in `metadata.custom.goal`. */
-export interface SessionGoalState {
+/** In-memory goal state rebuilt from agent records. */
+interface GoalState {
   goalId: string;
   objective: string;
   completionCriterion?: string;
   status: GoalStatus;
-  createdAt: string;
-  updatedAt: string;
-  startedBy: GoalActor;
-  updatedBy: GoalActor;
   turnsUsed: number;
   tokensUsed: number;
   /** Accumulated active-pursuit time from completed `active` intervals. */
@@ -116,7 +118,7 @@ export interface SessionGoalState {
    * Epoch ms anchoring the current `active` interval (undefined when not active).
    * The live elapsed since this is added to `wallClockMs` when reporting, so the
    * timer is correct even when read mid-turn; the interval is folded into
-   * `wallClockMs` when the goal leaves `active`. Reset on session resume.
+   * `wallClockMs` when the goal leaves `active`. Reset on agent resume.
    */
   wallClockResumedAt?: number;
   budgetLimits: GoalBudgetLimits;
@@ -144,10 +146,6 @@ export interface GoalSnapshot {
   readonly objective: string;
   readonly completionCriterion?: string;
   readonly status: GoalStatus;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  readonly startedBy: GoalActor;
-  readonly updatedBy: GoalActor;
   readonly turnsUsed: number;
   readonly tokensUsed: number;
   readonly wallClockMs: number;
@@ -188,55 +186,14 @@ export interface GoalChange {
   readonly stats?: GoalChangeStats;
 }
 
-/**
- * Statuses a stopped goal can be resumed from via `resumeGoal` / `/goal resume`.
- * Both are non-`active` but intact: `paused` (user/interrupt) and `blocked`
- * (system). `active` is already running and `complete` is transient, so neither
- * is resumable.
- */
-const RESUMABLE_STATUSES: ReadonlySet<GoalStatus> = new Set<GoalStatus>(['paused', 'blocked']);
-
-export function isResumableGoalStatus(status: GoalStatus): boolean {
-  return RESUMABLE_STATUSES.has(status);
-}
-
 export interface CreateGoalInput {
   readonly objective: string;
   readonly completionCriterion?: string;
-  readonly budgetLimits?: GoalBudgetLimits;
   readonly replace?: boolean;
-  readonly actor?: GoalActor;
 }
 
-export interface GoalControlInput {
-  readonly actor?: GoalActor;
+interface GoalReasonInput {
   readonly reason?: string;
-}
-
-export interface SessionGoalStoreOptions {
-  readonly sessionId?: string | undefined;
-  /** Reads the current goal state from session metadata. */
-  readonly readState: () => SessionGoalState | undefined;
-  /** Writes (or clears, when `undefined`) the goal state and persists metadata. */
-  readonly writeState: (state: SessionGoalState | undefined) => Promise<void>;
-  /**
-   * Lazily resolves the main-agent audit sink. Goal audit records are written
-   * here once the sink exists, and queued in order until then.
-   */
-  readonly auditSink?: () => GoalAuditSink | undefined;
-  /**
-   * Notified with the current goal snapshot (or `null` when cleared) after each
-   * durable state change, so live UI (e.g. the footer badge) can update. A
-   * `change` accompanies lifecycle / verdict / terminal transitions so the UI can
-   * also render transcript markers; it is absent for snapshot-only refreshes
-   * (e.g. a turn increment). Not called for per-step token / wall-clock
-   * accounting, to avoid chatty updates.
-   */
-  readonly onGoalUpdated?: (snapshot: GoalSnapshot | null, change?: GoalChange) => void;
-  /** Remote usage telemetry. Goal content and reasons are never reported. */
-  readonly telemetry?: TelemetryClient | undefined;
-  /** Injectable clock (epoch ms) for the live wall-clock timer; tests override it. */
-  readonly now?: () => number;
 }
 
 /**
@@ -245,8 +202,8 @@ export interface SessionGoalStoreOptions {
  * Lifecycle rules (see the {@link GoalStatus} union for the full per-status map):
  * - Success: `markComplete` records success then clears the record (transient).
  *   The model marks completion via the `UpdateGoal('complete')` tool; the turn
- *   driver reads the status at the turn boundary. `markComplete` announces, then
- *   clears the record.
+ *   driver reads the status at the turn boundary. `markComplete` emits a final
+ *   snapshot event, then clears the record.
  * - System stop: `markBlocked(reason)` sets `blocked` for any reason the system
  *   stops pursuing — the model's `UpdateGoal('blocked')`, a hard budget, or a
  *   runtime error. `blocked` is resumable.
@@ -254,104 +211,133 @@ export interface SessionGoalStoreOptions {
  *   (resumable); `cancelGoal` discards the record entirely (no status — this is
  *   what `/goal cancel` does, the single remove action).
  * - An aborted turn (Esc / shutdown) is not terminal: it pauses the goal, so it
- *   stays resumable — mirroring how `normalizeMetadata` demotes an `active` goal
- *   to `paused` on session resume.
+ *   stays resumable — mirroring how `normalizeAfterReplay` demotes an `active`
+ *   goal to `paused` on agent resume.
  */
-export class SessionGoalStore {
-  /** Audit records queued until the main-agent sink becomes available. */
-  private readonly pending: AgentRecord[] = [];
-  private readonly telemetry: TelemetryClient;
+export class GoalMode {
+  private state: GoalState | undefined;
 
-  constructor(private readonly options: SessionGoalStoreOptions) {
-    this.telemetry = options.telemetry ?? noopTelemetryClient;
-  }
-
-  /** Current epoch ms from the injectable clock (defaults to `Date.now`). */
-  private nowMs(): number {
-    return this.options.now?.() ?? Date.now();
-  }
-
-  // --- Audit -------------------------------------------------------------
-
-  /**
-   * Writes an audit record to the main-agent sink, or queues it in order when
-   * the sink is not yet available (e.g. before the main agent exists).
-   */
-  private appendAudit(record: AgentRecord): void {
-    const sink = this.options.auditSink?.();
-    if (sink !== undefined) {
-      sink.logRecord(record);
-    } else {
-      this.pending.push(record);
-    }
-  }
-
-  /** Flushes queued audit records in original order once a sink is available. */
-  flushPendingRecords(): void {
-    const sink = this.options.auditSink?.();
-    if (sink === undefined) return;
-    const queued = this.pending.splice(0);
-    for (const record of queued) {
-      sink.logRecord(record);
-    }
+  constructor(private readonly agent: Agent) {
   }
 
   /**
-   * Reconciles persisted goal state with runtime reality on session resume.
+   * Reconciles replayed goal state with runtime reality on agent resume.
    *
    * An `active` goal cannot still be running after a process restart (goal
    * continuation only advances inside a live turn), so it is demoted to
    * `paused`, requiring `/goal resume` to restart work. `paused` and `blocked`
-   * goals are preserved (both resumable). Malformed records, and any stray
-   * `complete` (which should have been cleared on completion), are removed.
+   * goals are preserved (both resumable). Any stray `complete` (which should
+   * have been followed by `goal.clear`) is removed.
    */
-  async normalizeMetadata(): Promise<void> {
-    const state = this.options.readState();
+  normalizeAfterReplay(): void {
+    const state = this.state;
     if (state === undefined) return;
 
-    if (!isValidGoalState(state)) {
-      await this.persistState(undefined);
-      return;
-    }
-
-    // The wall-clock anchor is a runtime timestamp; a persisted one is stale
-    // (it predates the downtime). Drop it so resumed time isn't counted as
-    // pursuit — `resumeGoal` re-anchors a fresh interval.
     state.wallClockResumedAt = undefined;
 
-    // `complete` is transient and should never rest on disk; a persisted one
-    // means completion did not finish clearing. Drop it.
     if (state.status === 'complete') {
-      await this.persistState(undefined);
+      this.clearInternal('runtime', { emit: false, track: false });
       return;
     }
 
     if (state.status === 'active') {
-      this.applyStatus(state, 'paused', 'runtime', 'Paused after session resume');
-      await this.persistState(state);
-      this.appendStatusUpdate(state, 'runtime', 'Paused after session resume');
+      const reason = 'Paused after agent resume';
+      this.applyStatus(state, 'paused');
+      state.terminalReason = reason;
+      this.persistState(state, { silent: true });
+      this.appendStatusUpdate(state, 'runtime', reason);
       return;
     }
 
     // `paused` and `blocked` goals are left intact (both resumable).
   }
 
+  restoreCreate(record: AgentRecordOf<'goal.create'>): void {
+    const state: GoalState = {
+      goalId: record.goalId,
+      objective: record.objective,
+      completionCriterion: record.completionCriterion,
+      status: 'active',
+      turnsUsed: 0,
+      tokensUsed: 0,
+      wallClockMs: 0,
+      budgetLimits: {},
+    };
+    this.state = state;
+    this.agent.replayBuilder.push({
+      type: 'goal_updated',
+      snapshot: this.toSnapshot(state),
+      change: { kind: 'created' },
+    });
+  }
+
+  restoreUpdate(record: AgentRecordOf<'goal.update'>): void {
+    const state = this.state;
+    if (state === undefined) return;
+
+    const status = record.status;
+    if (status !== undefined) {
+      state.status = status;
+      state.wallClockResumedAt = undefined;
+      state.terminalReason = status === 'active' ? undefined : record.reason;
+    }
+    if (record.turnsUsed !== undefined) state.turnsUsed = record.turnsUsed;
+    if (record.tokensUsed !== undefined) state.tokensUsed = record.tokensUsed;
+    if (record.wallClockMs !== undefined) {
+      state.wallClockMs = record.wallClockMs;
+      state.wallClockResumedAt = undefined;
+    }
+    if (record.budgetLimits !== undefined) state.budgetLimits = record.budgetLimits;
+    if (status === undefined) return;
+
+    this.agent.replayBuilder.push({
+      type: 'goal_updated',
+      snapshot: this.toSnapshot(state),
+      change: status === 'complete'
+        ? {
+            kind: 'completion',
+            status,
+            reason: record.reason,
+            stats: this.statsOf(state),
+          }
+        : {
+            kind: 'lifecycle',
+            status,
+            reason: record.reason,
+          },
+    });
+  }
+
+  restoreClear(_record: AgentRecordOf<'goal.clear'>): void {
+    this.state = undefined;
+  }
+
+  restoreForked(_record: AgentRecordOf<'forked'>): void {
+    const hadGoal = this.state !== undefined;
+    this.state = undefined;
+    if (!hadGoal) return;
+    this.agent.context.appendSystemReminder(GOAL_FORK_CLEARED_REMINDER, {
+      kind: 'system_trigger',
+      name: 'goal_fork_cleared',
+    });
+  }
+
   // --- Reads -------------------------------------------------------------
 
   getGoal(): GoalToolResult {
-    const state = this.options.readState();
+    const state = this.state;
     return { goal: state === undefined ? null : this.toSnapshot(state) };
   }
 
   getActiveGoal(): GoalSnapshot | null {
-    const state = this.options.readState();
+    const state = this.state;
     if (state === undefined || state.status !== 'active') return null;
     return this.toSnapshot(state);
   }
 
   // --- Creation ----------------------------------------------------------
 
-  async createGoal(input: CreateGoalInput): Promise<GoalSnapshot> {
+  async createGoal(input: CreateGoalInput, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
     const objective = input.objective.trim();
     if (objective.length === 0) {
       throw new KimiError(ErrorCodes.GOAL_OBJECTIVE_EMPTY, 'Goal objective cannot be empty');
@@ -363,7 +349,7 @@ export class SessionGoalStore {
       );
     }
 
-    const existing = this.options.readState();
+    const existing = this.state;
     if (existing !== undefined) {
       // Any persisted goal (active / paused / blocked) is intact and blocks a
       // new one unless `replace` is set; `complete` never persists, so it is not
@@ -375,47 +361,38 @@ export class SessionGoalStore {
           'A goal already exists; use replace to start a new one',
         );
       }
-      // Clear the previous goal through the same internal clear path so audit
-      // and metadata stay consistent before storing the replacement.
-      await this.clearInternal('system', 'Replaced by a new goal');
+      // Clear the previous goal through the same internal clear path so records
+      // stay consistent before storing the replacement.
+      this.clearInternal('system');
     }
 
-    const now = new Date().toISOString();
-    const actor = input.actor ?? 'user';
-    const state: SessionGoalState = {
+    const completionCriterion = normalizeCompletionCriterion(input.completionCriterion);
+    const state: GoalState = {
       goalId: randomUUID(),
       objective,
+      completionCriterion,
       status: 'active',
-      createdAt: now,
-      updatedAt: now,
-      startedBy: actor,
-      updatedBy: actor,
       turnsUsed: 0,
       tokensUsed: 0,
       wallClockMs: 0,
-      wallClockResumedAt: this.nowMs(),
-      budgetLimits: input.budgetLimits ?? {},
+      wallClockResumedAt: Date.now(),
+      budgetLimits: {},
     };
-    if (input.completionCriterion !== undefined && input.completionCriterion.trim().length > 0) {
-      state.completionCriterion = input.completionCriterion.trim();
-    }
 
-    await this.persistState(state);
-    this.appendAudit({
+    this.persistState(state);
+    this.agent.records.logRecord({
       type: 'goal.create',
       goalId: state.goalId,
       objective: state.objective,
-      status: state.status,
-      actor,
-      budgetLimits: state.budgetLimits,
+      completionCriterion: state.completionCriterion,
     });
-    this.trackGoalCreated(state, actor, input.replace === true);
+    this.trackGoalCreated(actor, input.replace === true);
     return this.toSnapshot(state);
   }
 
   // --- User-owned lifecycle ---------------------------------------------
 
-  async pauseGoal(input: GoalControlInput = {}): Promise<GoalSnapshot> {
+  async pauseGoal(input: GoalReasonInput = {}, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
     const state = this.requireState();
     if (state.status === 'paused') return this.toSnapshot(state);
     if (state.status !== 'active') {
@@ -424,10 +401,9 @@ export class SessionGoalStore {
         `Cannot pause a goal in status "${state.status}"`,
       );
     }
-    const actor = input.actor ?? 'user';
-    this.applyStatus(state, 'paused', actor, input.reason);
+    this.applyStatus(state, 'paused');
     state.terminalReason = input.reason;
-    await this.persistState(state, {
+    this.persistState(state, {
       change: { kind: 'lifecycle', status: 'paused', reason: input.reason },
     });
     this.appendStatusUpdate(state, actor, input.reason);
@@ -440,52 +416,50 @@ export class SessionGoalStore {
    * paused, cleared, or otherwise changed the goal.
    */
   async pauseActiveGoal(
-    input: { actor?: GoalActor; reason?: string } = {},
+    input: GoalReasonInput = {},
+    actor: GoalActor = 'runtime',
   ): Promise<GoalSnapshot | null> {
-    const state = this.options.readState();
+    const state = this.state;
     if (state === undefined || state.status !== 'active') return null;
-    const actor = input.actor ?? 'runtime';
-    this.applyStatus(state, 'paused', actor, input.reason);
+    this.applyStatus(state, 'paused');
     state.terminalReason = input.reason;
-    await this.persistState(state, {
+    this.persistState(state, {
       change: { kind: 'lifecycle', status: 'paused', reason: input.reason },
     });
     this.appendStatusUpdate(state, actor, input.reason);
     return this.toSnapshot(state);
   }
 
-  async resumeGoal(input: GoalControlInput = {}): Promise<GoalSnapshot> {
+  async resumeGoal(input: GoalReasonInput = {}, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
     const state = this.requireState();
     if (state.status === 'active') return this.toSnapshot(state);
-    if (!isResumableGoalStatus(state.status)) {
+    if (state.status !== 'paused' && state.status !== 'blocked') {
       throw new KimiError(
         ErrorCodes.GOAL_NOT_RESUMABLE,
         `Cannot resume a goal in status "${state.status}"`,
       );
     }
-    const actor = input.actor ?? 'user';
     // Resuming is a fresh attempt: clear the stop reason so a re-activated goal
     // starts clean.
     state.terminalReason = undefined;
-    this.applyStatus(state, 'active', actor, input.reason);
-    await this.persistState(state, {
+    this.applyStatus(state, 'active');
+    this.persistState(state, {
       change: { kind: 'lifecycle', status: 'active', reason: input.reason },
     });
     this.appendStatusUpdate(state, actor, input.reason);
     return this.toSnapshot(state);
   }
 
-  async setBudgetLimits(input: {
-    budgetLimits: GoalBudgetLimits;
-    actor?: GoalActor;
-  }): Promise<GoalSnapshot> {
+  async setBudgetLimits(
+    input: { budgetLimits: GoalBudgetLimits },
+    actor: GoalActor = 'user',
+  ): Promise<GoalSnapshot> {
     const state = this.requireState();
     state.budgetLimits = { ...state.budgetLimits, ...input.budgetLimits };
-    state.updatedBy = input.actor ?? 'user';
-    state.updatedAt = new Date().toISOString();
-    await this.persistState(state);
+    this.persistState(state);
+    this.appendGoalUpdate({ budgetLimits: state.budgetLimits });
     this.track('goal_budget_set', {
-      actor: state.updatedBy,
+      actor,
       ...budgetTelemetryProperties(input.budgetLimits),
     });
     return this.toSnapshot(state);
@@ -499,10 +473,16 @@ export class SessionGoalStore {
    * without a return — e.g. `createGoal` replacing an existing goal — use the
    * private `clearInternal`.)
    */
-  async cancelGoal(input: GoalControlInput = {}): Promise<GoalSnapshot> {
+  async cancelGoal(actor: GoalActor = 'user'): Promise<GoalSnapshot> {
     const state = this.requireState();
     const snapshot = this.toSnapshot(state);
-    await this.clearInternal(input.actor ?? 'user', input.reason);
+    this.clearInternal(actor);
+    if (actor === 'user') {
+      this.agent.context.appendSystemReminder(GOAL_CANCELLED_REMINDER, {
+        kind: 'system_trigger',
+        name: 'goal_cancelled',
+      });
+    }
     return snapshot;
   }
 
@@ -518,14 +498,14 @@ export class SessionGoalStore {
    * user pause / clear is never overwritten.
    */
   async markBlocked(
-    input: { actor?: GoalActor; reason?: string } = {},
+    input: GoalReasonInput = {},
+    actor: GoalActor = 'runtime',
   ): Promise<GoalSnapshot | null> {
-    const state = this.options.readState();
+    const state = this.state;
     if (state === undefined || state.status !== 'active') return null;
-    const actor = input.actor ?? 'runtime';
-    this.applyStatus(state, 'blocked', actor, input.reason);
+    this.applyStatus(state, 'blocked');
     state.terminalReason = input.reason;
-    await this.persistState(state, {
+    this.persistState(state, {
       change: { kind: 'lifecycle', status: 'blocked', reason: input.reason },
     });
     this.appendStatusUpdate(state, actor, input.reason);
@@ -534,33 +514,30 @@ export class SessionGoalStore {
 
   /**
    * Records goal success, then clears the durable record. `complete` is
-   * transient: this emits a terminal `complete` change carrying the final stats
-   * (so the UI/caller can render the outcome) WITHOUT writing `complete` to disk,
-   * then clears the goal so the box disappears. The `UpdateGoal` tool is
-   * responsible for the user-facing completion message. Returns the final
-   * snapshot (status `complete`) so the caller can build that message. No-ops for
-   * a goal that is missing or not active.
+   * transient: this records and emits a terminal `complete` change carrying the
+   * final stats (so the UI/caller can render the outcome), then clears the goal
+   * so the box disappears. Returns the final snapshot (status `complete`). No-ops
+   * for a goal that is missing or not active.
    */
   async markComplete(
-    input: { actor?: GoalActor; reason?: string } = {},
+    input: GoalReasonInput = {},
+    actor: GoalActor = 'model',
   ): Promise<GoalSnapshot | null> {
-    const state = this.options.readState();
+    const state = this.state;
     if (state === undefined || state.status !== 'active') return null;
-    const actor = input.actor ?? 'model';
-    this.applyStatus(state, 'complete', actor, input.reason);
+    this.applyStatus(state, 'complete');
     state.terminalReason = input.reason;
     const snapshot = this.toSnapshot(state);
-    // Audit + notify the UI of completion (with final stats) directly, without
-    // persisting `complete` to disk...
+    // Record + notify the UI of completion (with final stats) before clearing.
     this.appendStatusUpdate(state, actor, input.reason);
-    this.options.onGoalUpdated?.(snapshot, {
+    this.emitGoalUpdated(snapshot, {
       kind: 'completion',
       status: 'complete',
       reason: input.reason,
       stats: this.statsOf(state),
     });
     // ...then clear the durable record (emits onGoalUpdated(null) → box clears).
-    await this.clearInternal(actor, input.reason);
+    this.clearInternal(actor);
     return snapshot;
   }
 
@@ -570,54 +547,32 @@ export class SessionGoalStore {
    * Parks an active goal when its live turn is aborted (Esc, shutdown, or any
    * other turn-level cancellation). This is **not** terminal: the goal becomes
    * `paused` and stays resumable via `/goal resume`, mirroring how
-   * `normalizeMetadata` demotes an `active` goal on session resume. No-ops for a
-   * goal that is missing or already non-active, so a user pause / clear or an
+   * `normalizeAfterReplay` demotes an `active` goal on agent resume. No-ops for
+   * a goal that is missing or already non-active, so a user pause / clear or an
    * already-stopped goal is never overwritten.
    */
   async pauseOnInterrupt(input: { reason?: string } = {}): Promise<GoalSnapshot | null> {
-    return this.pauseActiveGoal({ actor: 'user', reason: input.reason });
+    return this.pauseActiveGoal(input, 'user');
   }
 
   // --- Accounting & reporting -------------------------------------------
 
-  async recordTokenUsage(input: {
-    tokenDelta: number;
-    agentId: string;
-    agentType: string;
-    source: string;
-  }): Promise<GoalSnapshot | null> {
-    const state = this.options.readState();
+  async recordTokenUsage(tokenDelta: number): Promise<GoalSnapshot | null> {
+    const state = this.state;
     if (state === undefined || state.status !== 'active') return null;
-    const delta = Math.max(0, input.tokenDelta);
+    const delta = Math.max(0, tokenDelta);
     state.tokensUsed += delta;
-    state.updatedAt = new Date().toISOString();
-    await this.persistState(state, { silent: true }); // per-step: no UI update
-    this.appendAudit({
-      type: 'goal.account_usage',
-      goalId: state.goalId,
-      usageKind: 'token',
-      delta,
-      agentId: input.agentId,
-      agentType: input.agentType,
-      source: input.source,
-      tokensUsed: state.tokensUsed,
-      wallClockMs: state.wallClockMs,
-    });
+    this.persistState(state, { silent: true }); // per-step: no UI update
+    this.appendGoalUpdate({ tokensUsed: state.tokensUsed });
     return this.toSnapshot(state);
   }
 
-
   async incrementTurn(): Promise<GoalSnapshot | null> {
-    const state = this.options.readState();
+    const state = this.state;
     if (state === undefined || state.status !== 'active') return null;
     state.turnsUsed += 1;
-    state.updatedAt = new Date().toISOString();
-    await this.persistState(state);
-    this.appendAudit({
-      type: 'goal.continuation',
-      goalId: state.goalId,
-      turnsUsed: state.turnsUsed,
-    });
+    this.persistState(state);
+    this.appendGoalUpdate({ turnsUsed: state.turnsUsed });
     this.track('goal_continued', {
       turns_used: state.turnsUsed,
     });
@@ -626,63 +581,66 @@ export class SessionGoalStore {
 
   // --- Internals ---------------------------------------------------------
 
-  private async clearInternal(actor: GoalActor, reason?: string): Promise<void> {
-    const state = this.options.readState();
+  private clearInternal(
+    actor: GoalActor,
+    opts: { emit?: boolean; track?: boolean } = {},
+  ): void {
+    const state = this.state;
     if (state === undefined) return; // idempotent
-    const goalId = state.goalId;
-    await this.persistState(undefined);
-    this.appendAudit({ type: 'goal.clear', goalId, actor, reason });
-    this.track('goal_cleared', { actor });
+    this.persistState(undefined, { silent: opts.emit === false });
+    this.agent.records.logRecord({ type: 'goal.clear' });
+    if (opts.track !== false) {
+      this.track('goal_cleared', { actor });
+    }
   }
 
-  private appendStatusUpdate(state: SessionGoalState, actor: GoalActor, reason?: string): void {
-    this.appendAudit({
-      type: 'goal.update',
-      goalId: state.goalId,
+  private appendStatusUpdate(state: GoalState, actor: GoalActor, reason?: string): void {
+    this.appendGoalUpdate({
       status: state.status,
-      actor,
       reason,
-      turnsUsed: state.turnsUsed,
-      tokensUsed: state.tokensUsed,
-      wallClockMs: state.wallClockMs,
+      wallClockMs: liveWallClockMs(state, Date.now()),
     });
     this.track('goal_status_changed', {
       actor,
       status: state.status,
       turns_used: state.turnsUsed,
       tokens_used: state.tokensUsed,
-      wall_clock_ms: liveWallClockMs(state, this.nowMs()),
+      wall_clock_ms: liveWallClockMs(state, Date.now()),
       ...budgetTelemetryProperties(state.budgetLimits),
     });
   }
 
+  private appendGoalUpdate(
+    update: Omit<AgentRecordOf<'goal.update'>, 'type' | 'time'>,
+  ): void {
+    this.agent.records.logRecord({
+      type: 'goal.update',
+      ...update,
+    });
+  }
+
   private trackGoalCreated(
-    state: SessionGoalState,
     actor: GoalActor,
     replace: boolean,
   ): void {
     this.track('goal_created', {
       actor,
       replace,
-      has_completion_criterion: state.completionCriterion !== undefined,
-      ...budgetTelemetryProperties(state.budgetLimits),
     });
   }
 
   private track(event: string, properties: TelemetryProperties): void {
-    this.telemetry.track(event, properties);
+    this.agent.telemetry.track(event, properties);
   }
 
   private applyStatus(
-    state: SessionGoalState,
+    state: GoalState,
     status: GoalStatus,
-    actor: GoalActor,
-    _reason?: string,
   ): void {
     // Fold the live wall-clock interval into the running total when leaving
     // `active`, and anchor a fresh interval when entering it, so `wallClockMs`
     // stays a correct, persistable total across pause/resume/complete.
-    const now = this.nowMs();
+    const now = Date.now();
     if (state.status === 'active' && state.wallClockResumedAt !== undefined) {
       state.wallClockMs += Math.max(0, now - state.wallClockResumedAt);
       state.wallClockResumedAt = undefined;
@@ -691,12 +649,10 @@ export class SessionGoalStore {
       state.wallClockResumedAt = now;
     }
     state.status = status;
-    state.updatedBy = actor;
-    state.updatedAt = new Date().toISOString();
   }
 
-  private requireState(): SessionGoalState {
-    const state = this.options.readState();
+  private requireState(): GoalState {
+    const state = this.state;
     if (state === undefined) {
       throw new KimiError(ErrorCodes.GOAL_NOT_FOUND, 'No current goal');
     }
@@ -705,74 +661,46 @@ export class SessionGoalStore {
 
 
   /**
-   * Persists goal state and (unless `silent`) notifies `onGoalUpdated` with the
-   * resulting snapshot. `silent` is used for per-step token / wall-clock
-   * accounting so the UI is not updated on every step.
+   * Updates in-memory goal state and (unless `silent`) emits a `goal.updated`
+   * event with the resulting snapshot. `silent` is used for per-step token /
+   * wall-clock accounting so the UI is not updated on every step.
    */
-  private async persistState(
-    state: SessionGoalState | undefined,
+  private persistState(
+    state: GoalState | undefined,
     opts: { silent?: boolean; change?: GoalChange } = {},
-  ): Promise<void> {
-    await this.options.writeState(state);
+  ): void {
+    this.state = state;
     if (opts.silent !== true) {
-      this.options.onGoalUpdated?.(
-        state === undefined ? null : this.toSnapshot(state),
-        opts.change,
-      );
+      this.emitGoalUpdated(state === undefined ? null : this.toSnapshot(state), opts.change);
     }
   }
 
+  private emitGoalUpdated(snapshot: GoalSnapshot | null, change?: GoalChange): void {
+    this.agent.emitEvent({ type: 'goal.updated', snapshot, change });
+  }
+
   /** Counter snapshot for a {@link GoalChange}. */
-  private statsOf(state: SessionGoalState): GoalChangeStats {
+  private statsOf(state: GoalState): GoalChangeStats {
     return {
       turnsUsed: state.turnsUsed,
       tokensUsed: state.tokensUsed,
-      wallClockMs: liveWallClockMs(state, this.nowMs()),
+      wallClockMs: liveWallClockMs(state, Date.now()),
     };
   }
 
-  private toSnapshot(state: SessionGoalState): GoalSnapshot {
+  private toSnapshot(state: GoalState): GoalSnapshot {
     return {
       goalId: state.goalId,
       objective: state.objective,
       completionCriterion: state.completionCriterion,
       status: state.status,
-      createdAt: state.createdAt,
-      updatedAt: state.updatedAt,
-      startedBy: state.startedBy,
-      updatedBy: state.updatedBy,
       turnsUsed: state.turnsUsed,
       tokensUsed: state.tokensUsed,
-      wallClockMs: liveWallClockMs(state, this.nowMs()),
-      budget: computeBudgetReport(state, this.nowMs()),
+      wallClockMs: liveWallClockMs(state, Date.now()),
+      budget: computeBudgetReport(state, Date.now()),
       terminalReason: state.terminalReason,
     };
   }
-}
-
-const ALL_GOAL_STATUSES: ReadonlySet<string> = new Set<GoalStatus>([
-  'active',
-  'paused',
-  'blocked',
-  'complete',
-]);
-
-/** Structural validity check for a persisted goal record (used on resume). */
-export function isValidGoalState(value: unknown): value is SessionGoalState {
-  if (typeof value !== 'object' || value === null) return false;
-  const state = value as Partial<SessionGoalState>;
-  return (
-    typeof state.goalId === 'string' &&
-    state.goalId.length > 0 &&
-    typeof state.objective === 'string' &&
-    state.objective.length > 0 &&
-    typeof state.status === 'string' &&
-    ALL_GOAL_STATUSES.has(state.status) &&
-    typeof state.turnsUsed === 'number' &&
-    typeof state.tokensUsed === 'number' &&
-    typeof state.budgetLimits === 'object' &&
-    state.budgetLimits !== null
-  );
 }
 
 /**
@@ -780,15 +708,15 @@ export function isValidGoalState(value: unknown): value is SessionGoalState {
  * interval. Correct even when read mid-turn (the interval isn't folded into
  * `wallClockMs` until the goal leaves `active`).
  */
-export function liveWallClockMs(state: SessionGoalState, now: number = Date.now()): number {
+function liveWallClockMs(state: GoalState, now: number = Date.now()): number {
   if (state.status === 'active' && state.wallClockResumedAt !== undefined) {
     return state.wallClockMs + Math.max(0, now - state.wallClockResumedAt);
   }
   return state.wallClockMs;
 }
 
-export function computeBudgetReport(
-  state: SessionGoalState,
+function computeBudgetReport(
+  state: GoalState,
   now: number = Date.now(),
 ): GoalBudgetReport {
   const limits = state.budgetLimits;
@@ -823,4 +751,9 @@ function budgetTelemetryProperties(limits: GoalBudgetLimits): TelemetryPropertie
     has_turn_budget: limits.turnBudget !== undefined,
     has_wall_clock_budget: limits.wallClockBudgetMs !== undefined,
   };
+}
+
+function normalizeCompletionCriterion(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed?.length ? trimmed : undefined;
 }

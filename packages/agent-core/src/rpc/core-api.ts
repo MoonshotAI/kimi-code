@@ -1,6 +1,15 @@
 import type { AgentConfigData } from '#/agent/config';
 import type { AgentContextData } from '#/agent/context';
 import type { BackgroundTaskInfo } from '#/agent/background';
+import type {
+  GoalBudgetLimits,
+  GoalBudgetReport,
+  GoalChange,
+  GoalChangeStats,
+  GoalSnapshot,
+  GoalStatus,
+  GoalToolResult,
+} from '#/agent/goal';
 import type { PermissionData, PermissionMode } from '#/agent/permission';
 import type { PlanData } from '#/agent/plan';
 import type { SwarmModeTrigger } from '#/agent/swarm';
@@ -9,16 +18,6 @@ import type { KimiConfig, KimiConfigPatch, McpServerConfig } from '#/config';
 import type { ExperimentalFeatureState } from '#/flags';
 import type { ResumeSessionResult } from '#/rpc/resumed';
 import type { SessionMeta } from '#/session';
-import type {
-  CreateGoalInput,
-  GoalBudgetLimits,
-  GoalBudgetReport,
-  GoalChange,
-  GoalChangeStats,
-  GoalSnapshot,
-  GoalStatus,
-  GoalToolResult,
-} from '#/session/goal';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { PluginInfo, PluginSummary, ReloadSummary } from '#/plugin';
@@ -276,7 +275,6 @@ export interface UpdateSessionMetadataPayload {
 // by the model via the UpdateGoal tool (or the goal driver on budget/error),
 // not set through this API.
 export type {
-  CreateGoalInput,
   GoalBudgetLimits,
   GoalBudgetReport,
   GoalChange,
@@ -288,13 +286,7 @@ export type {
 
 export interface CreateGoalPayload {
   readonly objective: string;
-  readonly completionCriterion?: string;
-  readonly budgetLimits?: GoalBudgetLimits;
   readonly replace?: boolean;
-}
-
-export interface GoalControlPayload {
-  readonly reason?: string;
 }
 
 export interface GetKimiConfigPayload {
@@ -331,6 +323,11 @@ export interface AgentAPI {
   clearContext: (payload: EmptyPayload) => void;
   activateSkill: (payload: ActivateSkillPayload) => void;
   startBtw: (payload: EmptyPayload) => string;
+  createGoal: (payload: CreateGoalPayload) => GoalSnapshot;
+  getGoal: (payload: EmptyPayload) => GoalToolResult;
+  pauseGoal: (payload: EmptyPayload) => GoalSnapshot;
+  resumeGoal: (payload: EmptyPayload) => GoalSnapshot;
+  cancelGoal: (payload: EmptyPayload) => GoalSnapshot;
   getBackgroundOutput: (payload: GetBackgroundOutputPayload) => string;
   getContext: (payload: EmptyPayload) => AgentContextData;
   getConfig: (payload: EmptyPayload) => AgentConfigData;
@@ -352,12 +349,6 @@ export interface SessionAPI extends AgentAPIWithId {
   getMcpStartupMetrics: (payload: EmptyPayload) => McpStartupMetrics;
   reconnectMcpServer: (payload: ReconnectMcpServerPayload) => void;
   generateAgentsMd: (payload: EmptyPayload) => void;
-  // Goal lifecycle (session-scoped; no agentId required). CoreAPI adds sessionId.
-  createGoal: (payload: CreateGoalPayload) => GoalSnapshot;
-  getGoal: (payload: EmptyPayload) => GoalToolResult;
-  pauseGoal: (payload: GoalControlPayload) => GoalSnapshot;
-  resumeGoal: (payload: GoalControlPayload) => GoalSnapshot;
-  cancelGoal: (payload: GoalControlPayload) => GoalSnapshot;
 }
 
 type SessionAPIWithId = WithSessionId<SessionAPI>;

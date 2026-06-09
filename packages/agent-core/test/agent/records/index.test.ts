@@ -185,25 +185,120 @@ describe('AgentRecords persistence metadata', () => {
     await expect(records.replay()).rejects.toThrow('Missing wire migration for version 0.9');
   });
 
-  it('ignores goal.* records during replay, leaving agent state unchanged', async () => {
+  it('restores goal.* records during replay', async () => {
     const persistence = new InMemoryAgentRecordPersistence([
       { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
       {
         type: 'goal.create',
         goalId: 'g1',
         objective: 'do work',
-        status: 'active',
-        actor: 'user',
-        budgetLimits: { turnBudget: 20 },
+        completionCriterion: 'tests pass',
       },
-      { type: 'goal.account_usage', goalId: 'g1', usageKind: 'token', delta: 5, tokensUsed: 5, wallClockMs: 0 },
-      { type: 'goal.continuation', goalId: 'g1', turnsUsed: 1 },
-      { type: 'goal.update', goalId: 'g1', status: 'complete', actor: 'model' },
-      { type: 'goal.clear', goalId: 'g1', actor: 'user' },
+      { type: 'goal.update', budgetLimits: { turnBudget: 20 } },
+      { type: 'goal.update', tokensUsed: 5, wallClockMs: 0 },
+      { type: 'goal.update', turnsUsed: 1 },
+      { type: 'goal.update', status: 'blocked', reason: 'needs credentials' },
     ]);
     const { agent } = testAgent({ persistence });
 
     await expect(agent.records.replay()).resolves.toEqual({ warning: undefined });
+    expect(agent.context.history).toHaveLength(0);
+    expect(agent.goal.getGoal().goal).toMatchObject({
+      goalId: 'g1',
+      objective: 'do work',
+      completionCriterion: 'tests pass',
+      status: 'blocked',
+      terminalReason: 'needs credentials',
+      tokensUsed: 5,
+      turnsUsed: 1,
+      budget: expect.objectContaining({ turnBudget: 20 }),
+    });
+    expect(agent.replayBuilder.buildResult()).toEqual([
+      expect.objectContaining({
+        type: 'goal_updated',
+        snapshot: expect.objectContaining({ goalId: 'g1', status: 'active' }),
+        change: { kind: 'created' },
+      }),
+      expect.objectContaining({
+        type: 'goal_updated',
+        snapshot: expect.objectContaining({
+          goalId: 'g1',
+          status: 'blocked',
+          terminalReason: 'needs credentials',
+        }),
+        change: {
+          kind: 'lifecycle',
+          status: 'blocked',
+          reason: 'needs credentials',
+        },
+      }),
+    ]);
+  });
+
+  it('restores forked records as fork boundaries that clear copied goals', async () => {
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'goal.create',
+        goalId: 'source-goal',
+        objective: 'source work',
+      },
+      { type: 'forked', time: 2 },
+    ]);
+    const { agent } = testAgent({ persistence });
+
+    await expect(agent.records.replay()).resolves.toEqual({ warning: undefined });
+
+    expect(agent.goal.getGoal().goal).toBeNull();
+    expect(persistence.records.map((record) => record.type)).toEqual([
+      'metadata',
+      'goal.create',
+      'forked',
+    ]);
+    const reminder = agent.context.history.at(-1);
+    expect(reminder?.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });
+    expect(JSON.stringify(reminder?.content)).toContain('This fork does not have a current goal.');
+  });
+
+  it('keeps goals created after the forked boundary', async () => {
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'goal.create',
+        goalId: 'source-goal',
+        objective: 'source work',
+      },
+      { type: 'forked', time: 2 },
+      {
+        type: 'goal.create',
+        goalId: 'fork-goal',
+        objective: 'fork work',
+      },
+    ]);
+    const { agent } = testAgent({ persistence });
+
+    await expect(agent.records.replay()).resolves.toEqual({ warning: undefined });
+
+    expect(agent.goal.getGoal().goal).toMatchObject({
+      goalId: 'fork-goal',
+      objective: 'fork work',
+    });
+    expect(agent.context.history.at(-1)?.origin).toEqual({
+      kind: 'system_trigger',
+      name: 'goal_fork_cleared',
+    });
+  });
+
+  it('does not add a fork-cleared reminder when a forked record has no copied goal', async () => {
+    const persistence = new InMemoryAgentRecordPersistence([
+      { type: 'metadata', protocol_version: AGENT_WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'forked', time: 2 },
+    ]);
+    const { agent } = testAgent({ persistence });
+
+    await expect(agent.records.replay()).resolves.toEqual({ warning: undefined });
+
+    expect(agent.goal.getGoal().goal).toBeNull();
     expect(agent.context.history).toHaveLength(0);
   });
 });

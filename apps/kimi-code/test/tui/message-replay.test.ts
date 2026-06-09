@@ -2,6 +2,7 @@ import type {
   AgentReplayRecord,
   BackgroundTaskInfo,
   ContentPart,
+  GoalSnapshot,
   PromptOrigin,
   ResumedAgentState,
   Role,
@@ -17,6 +18,8 @@ import { AgentGroupComponent } from '#/tui/components/messages/agent-group';
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
+
+type GoalReplayRecord = Extract<AgentReplayRecord, { type: 'goal_updated' }>;
 
 function stripAnsi(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -84,6 +87,43 @@ function toolCall(id: string, name: string, args: Record<string, unknown>): Tool
     id,
     name,
     arguments: JSON.stringify(args),
+  };
+}
+
+function goalSnapshot(overrides: Partial<GoalSnapshot> = {}): GoalSnapshot {
+  const status = overrides.status ?? 'active';
+  return {
+    goalId: 'g1',
+    objective: 'Ship feature X',
+    completionCriterion: 'tests pass',
+    status,
+    turnsUsed: 0,
+    tokensUsed: 0,
+    wallClockMs: 0,
+    budget: {
+      tokenBudget: null,
+      turnBudget: null,
+      wallClockBudgetMs: null,
+      remainingTokens: null,
+      remainingTurns: null,
+      remainingWallClockMs: null,
+      tokenBudgetReached: false,
+      turnBudgetReached: false,
+      wallClockBudgetReached: false,
+      overBudget: false,
+    },
+    ...overrides,
+  };
+}
+
+function goalReplay(
+  snapshot: GoalSnapshot,
+  change: GoalReplayRecord['change'],
+): GoalReplayRecord {
+  return {
+    type: 'goal_updated',
+    snapshot,
+    change,
   };
 }
 
@@ -237,7 +277,7 @@ function backgroundTask(
 }
 
 describe('KimiTUI resume message replay', () => {
-  it('renders persisted goal completion reminders as assistant completion messages', async () => {
+  it('does not render legacy goal completion context reminders as transcript messages', async () => {
     const driver = await replayIntoDriver([
       message(
         'user',
@@ -251,14 +291,119 @@ describe('KimiTUI resume message replay', () => {
       ),
     ]);
 
-    const entry = driver.state.transcriptEntries.find((item) =>
-      item.content.includes('Goal complete'),
-    );
-    expect(entry).toMatchObject({
-      kind: 'assistant',
-      renderMode: 'markdown',
-      content: '✓ Goal complete.\nWorked 1 turn over 7m15s, using 4.3M tokens.',
-    });
+    expect(driver.state.transcriptEntries).toEqual([]);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).not.toContain('Goal complete');
+  });
+
+  it('does not render neutral goal completion context reminders as transcript messages', async () => {
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          {
+            type: 'text',
+            text:
+              '<system-reminder>\n' +
+              'The current goal was marked complete and cleared. ' +
+              'Handle the next user request normally unless the user starts or resumes a goal.\n' +
+              '</system-reminder>',
+          },
+        ],
+        { origin: { kind: 'system_trigger', name: 'goal_completion' } },
+      ),
+    ]);
+
+    expect(driver.state.transcriptEntries).toEqual([]);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).not.toContain('marked complete and cleared');
+  });
+
+  it('does not render fork-cleared goal context reminders as transcript messages', async () => {
+    const driver = await replayIntoDriver([
+      message(
+        'user',
+        [
+          {
+            type: 'text',
+            text:
+              '<system-reminder>\n' +
+              'This fork does not have a current goal. ' +
+              'Ignore earlier active-goal reminders from the source session. ' +
+              'Handle requests normally unless the user starts a new goal.\n' +
+              '</system-reminder>',
+          },
+        ],
+        { origin: { kind: 'system_trigger', name: 'goal_fork_cleared' } },
+      ),
+    ]);
+
+    expect(driver.state.transcriptEntries).toEqual([]);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).not.toContain('This fork does not have a current goal');
+  });
+
+  it('renders persisted goal replay records as goal transcript UI', async () => {
+    const driver = await replayIntoDriver([
+      goalReplay(goalSnapshot(), { kind: 'created' }),
+      goalReplay(
+        goalSnapshot({ status: 'paused', terminalReason: 'taking a break' }),
+        { kind: 'lifecycle', status: 'paused', reason: 'taking a break' },
+      ),
+      goalReplay(goalSnapshot({ status: 'active' }), { kind: 'lifecycle', status: 'active' }),
+      goalReplay(
+        goalSnapshot({ status: 'blocked', terminalReason: 'needs credentials' }),
+        { kind: 'lifecycle', status: 'blocked', reason: 'needs credentials' },
+      ),
+      goalReplay(
+        goalSnapshot({
+          status: 'complete',
+          terminalReason: 'done',
+          turnsUsed: 1,
+          tokensUsed: 4300,
+          wallClockMs: 435000,
+        }),
+        {
+          kind: 'completion',
+          status: 'complete',
+          reason: 'done',
+          stats: { turnsUsed: 1, tokensUsed: 4300, wallClockMs: 435000 },
+        },
+      ),
+    ]);
+
+    expect(
+      driver.state.transcriptEntries
+        .filter((entry) => entry.kind === 'goal')
+        .map((entry) => entry.content),
+    ).toEqual(['Goal set', 'Goal paused', 'Goal resumed', 'Goal blocked']);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('Goal set');
+    expect(transcript).toContain('Goal paused');
+    expect(transcript).toContain('Goal resumed');
+    expect(transcript).toContain('Goal blocked');
+    expect(transcript).toContain('Goal complete — done');
+    expect(transcript).toContain('Worked 1 turn over 7m15s, using 4.3k tokens.');
+  });
+
+  it('filters resume-normalization goal pause markers in TUI replay', async () => {
+    const driver = await replayIntoDriver([
+      goalReplay(goalSnapshot(), { kind: 'created' }),
+      goalReplay(
+        goalSnapshot({ status: 'paused', terminalReason: 'Paused after agent resume' }),
+        { kind: 'lifecycle', status: 'paused', reason: 'Paused after agent resume' },
+      ),
+    ]);
+
+    expect(
+      driver.state.transcriptEntries
+        .filter((entry) => entry.kind === 'goal')
+        .map((entry) => entry.content),
+    ).toEqual(['Goal set']);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).toContain('Goal set');
+    expect(transcript).not.toContain('Goal paused');
+    expect(transcript).not.toContain('Paused after agent resume');
   });
 
   it('groups replayed Agent calls from one assistant message using live grouping', async () => {

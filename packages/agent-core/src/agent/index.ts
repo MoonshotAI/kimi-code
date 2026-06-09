@@ -18,7 +18,6 @@ import type { McpConnectionManager } from '../mcp';
 import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 import type { PreparedSystemPromptContext, ResolvedAgentProfile } from '../profile';
 import type { ModelProvider } from '../session/provider-manager';
-import type { SessionGoalStore } from '../session/goal';
 import type { SessionSubagentHost } from '../session/subagent-host';
 import type { SkillRegistry } from '../skill';
 import { noopTelemetryClient, type TelemetryClient } from '../telemetry';
@@ -33,6 +32,7 @@ import {
 import { CronManager } from './cron';
 import { ConfigState } from './config';
 import { ContextMemory } from './context';
+import { GoalMode } from './goal';
 import { HookEngine } from '../session/hooks';
 import { InjectionManager } from './injection/manager';
 import { PermissionManager, type PermissionManagerOptions } from './permission';
@@ -62,7 +62,7 @@ import type { ToolServices } from '../tools/support/services';
 export type { AgentRecord, AgentRecordPersistence } from './records';
 export type { SwarmModeTrigger } from './swarm';
 export type { BuiltinTool, ToolInfo, ToolSource, UserToolRegistration } from './tool';
-export { buildGoalCompletionMessage } from './goal/completion';
+export * from './goal';
 
 export type AgentType = 'main' | 'sub' | 'independent';
 
@@ -81,7 +81,6 @@ export interface AgentOptions {
   readonly subagentHost?: SessionSubagentHost | undefined;
   readonly skills?: SkillRegistry;
   readonly mcp?: McpConnectionManager;
-  readonly goals?: SessionGoalStore | undefined;
   readonly hookEngine?: HookEngine;
   readonly permission?: PermissionManagerOptions | undefined;
   readonly log?: Logger;
@@ -108,7 +107,6 @@ export class Agent {
   readonly modelProvider?: ModelProvider;
   readonly subagentHost?: SessionSubagentHost;
   readonly mcp?: McpConnectionManager;
-  readonly goals?: SessionGoalStore;
   readonly hooks?: HookEngine;
   readonly log: Logger;
   readonly telemetry: TelemetryClient;
@@ -131,6 +129,7 @@ export class Agent {
   readonly tools: ToolManager;
   readonly background: BackgroundManager;
   readonly cron: CronManager | null;
+  readonly goal: GoalMode;
   readonly replayBuilder: ReplayBuilder;
 
   private lastLlmConfigLogSignature?: string;
@@ -147,7 +146,6 @@ export class Agent {
     this.modelProvider = options.modelProvider;
     this.subagentHost = options.subagentHost;
     this.mcp = options.mcp;
-    this.goals = options.goals;
     this.hooks = options.hookEngine;
     this.appVersion = options.appVersion;
     this.log = options.log ?? log;
@@ -186,6 +184,7 @@ export class Agent {
       this.homedir === undefined ? undefined : new BackgroundTaskPersistence(this.homedir),
     );
     this.cron = this.type === 'sub' ? null : new CronManager(this);
+    this.goal = new GoalMode(this);
     this.replayBuilder = new ReplayBuilder(this);
   }
 
@@ -297,6 +296,7 @@ export class Agent {
 
   async resume(): Promise<{ warning?: string }> {
     const result = await this.records.replay();
+    this.goal.normalizeAfterReplay();
     await this.background.loadFromDisk();
     await this.background.reconcile();
     await this.cron?.loadFromDisk();
@@ -407,6 +407,11 @@ export class Agent {
         this.skills.activate(payload);
       },
       startBtw: () => this.subagentHost!.startBtw(),
+      createGoal: (payload) => this.goal.createGoal(payload),
+      getGoal: () => this.goal.getGoal(),
+      pauseGoal: () => this.goal.pauseGoal(),
+      resumeGoal: () => this.goal.resumeGoal(),
+      cancelGoal: () => this.goal.cancelGoal(),
       getBackgroundOutput: (payload) => this.background.readOutput(payload.taskId, payload.tail),
       getContext: () => this.context.data(),
       getConfig: () => this.config.data(),

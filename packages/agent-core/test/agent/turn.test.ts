@@ -26,7 +26,6 @@ import type {
 } from '../../src/session/subagent-host';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
-import { SessionGoalStore, type SessionGoalState } from '../../src/session/goal';
 import { createCommandKaos, testAgent, type TestAgentOptions } from './harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
 

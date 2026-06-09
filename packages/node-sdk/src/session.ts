@@ -318,19 +318,19 @@ export class Session {
     return this.rpc.getGoal({ sessionId: this.id });
   }
 
-  async pauseGoal(input: { reason?: string } = {}): Promise<GoalSnapshot> {
+  async pauseGoal(): Promise<GoalSnapshot> {
     this.ensureOpen();
-    return this.rpc.pauseGoal({ sessionId: this.id, reason: input.reason });
+    return this.rpc.pauseGoal({ sessionId: this.id });
   }
 
-  async resumeGoal(input: { reason?: string } = {}): Promise<GoalSnapshot> {
+  async resumeGoal(): Promise<GoalSnapshot> {
     this.ensureOpen();
-    return this.rpc.resumeGoal({ sessionId: this.id, reason: input.reason });
+    return this.rpc.resumeGoal({ sessionId: this.id });
   }
 
-  async cancelGoal(input: { reason?: string } = {}): Promise<GoalSnapshot> {
+  async cancelGoal(): Promise<GoalSnapshot> {
     this.ensureOpen();
-    return this.rpc.cancelGoal({ sessionId: this.id, reason: input.reason });
+    return this.rpc.cancelGoal({ sessionId: this.id });
   }
 
   async listMcpServers(): Promise<readonly McpServerInfo[]> {
