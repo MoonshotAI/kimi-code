@@ -175,7 +175,7 @@ You can also switch models temporarily without touching the config file — by s
 
 ## `experimental`
 
-`experimental` stores persistent overrides for experimental-feature flags. Currently, `micro_compaction` is the only user-facing entry and defaults to `true`; set it to `false` only when you need to disable automatic trimming of older large tool results.
+`experimental` stores persistent overrides for experimental-feature flags. Currently, `micro_compaction` is the only user-facing entry and defaults to `true`; set it to `false` only when you need to disable automatic trimming of older large tool results. Unknown keys are accepted for compatibility with older configs: they are preserved when the file is written back, but only registered feature IDs affect runtime behavior.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
