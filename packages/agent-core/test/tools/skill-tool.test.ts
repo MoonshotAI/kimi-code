@@ -268,6 +268,9 @@ describe('SkillTool execution', () => {
         trigger: 'nested-skill',
       }),
     );
+    expect(methods.recordUserMessage.mock.calls[0]?.[0][0]?.text).toContain(
+      'trigger="nested-skill"',
+    );
   });
 });
 

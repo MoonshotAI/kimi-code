@@ -1,7 +1,7 @@
 import { escapeXml } from '#/utils/xml-escape';
 import type { SkillSource } from '../../skill';
 
-export type SkillPromptTrigger = 'user-slash' | 'model-tool';
+export type SkillPromptTrigger = 'user-slash' | 'model-tool' | 'nested-skill';
 
 export interface RenderSkillPromptInput {
   readonly skillName: string;
@@ -22,11 +22,15 @@ export function renderUserSlashSkillPrompt(input: RenderSkillPromptInput): strin
   ].join('\n');
 }
 
-export function renderModelToolSkillPrompt(input: RenderSkillPromptInput): string {
+export interface RenderModelToolSkillPromptInput extends RenderSkillPromptInput {
+  readonly trigger: Extract<SkillPromptTrigger, 'model-tool' | 'nested-skill'>;
+}
+
+export function renderModelToolSkillPrompt(input: RenderModelToolSkillPromptInput): string {
   return [
     'Skill tool loaded instructions for this request. Follow them.',
     '',
-    renderSkillLoadedBlock({ ...input, trigger: 'model-tool' }),
+    renderSkillLoadedBlock({ ...input, trigger: input.trigger }),
   ].join('\n');
 }
 

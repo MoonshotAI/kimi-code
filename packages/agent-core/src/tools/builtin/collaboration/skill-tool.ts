@@ -129,6 +129,7 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
     }
 
     const origin = skillOrigin(skill, skillArgs, currentDepth);
+    const promptTrigger = origin.trigger === 'nested-skill' ? 'nested-skill' : 'model-tool';
     skills.recordActivation(origin);
     const skillContent = skills.registry.renderSkillPrompt(skill, skillArgs);
     this.agent.context.appendUserMessage(
@@ -140,6 +141,7 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
             skillArgs,
             skillContent,
             skillSource: skill.source,
+            trigger: promptTrigger,
           }),
         },
       ],
