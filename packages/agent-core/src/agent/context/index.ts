@@ -47,6 +47,14 @@ export class ContextMemory {
       toolCalls: [],
       origin,
     });
+    // When the user message contains video file references, remind the model
+    // to use ReadMediaFile instead of writing Python scripts to extract frames.
+    if (hasVideoTag(content)) {
+      this.appendSystemReminder(
+        'The user provided a video file. Use the ReadMediaFile tool to read and analyze the video content directly. Do not write Python scripts or other code to extract frames from the video.',
+        { kind: 'injection', variant: 'host' },
+      );
+    }
   }
 
   appendSystemReminder(content: string, origin: PromptOrigin): void {
@@ -305,6 +313,14 @@ export class ContextMemory {
       });
     }
   }
+}
+
+function hasVideoTag(content: readonly ContentPart[]): boolean {
+  return content.some(
+    (part) =>
+      part.type === 'text' &&
+      /<video\s+path="[^"]+"\s*>\s*<\/video>/.test(part.text),
+  );
 }
 
 function toolResultOutputForModel(result: ExecutableToolResult): string | ContentPart[] {
