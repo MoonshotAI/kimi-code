@@ -40,8 +40,6 @@ export interface ResolveSkillRootsOptions {
 
 export interface DiscoverSkillsOptions {
   readonly roots: readonly SkillRoot[];
-  /** Kept for API compatibility; sub-skill discovery is no longer gated by this option. */
-  readonly experimentalFlags?: unknown;
   readonly onWarning?: (message: string, cause?: unknown) => void;
   readonly onSkippedByPolicy?: (skill: SkippedSkill) => void;
   readonly onDiscoveredSkill?: (skill: SkillDefinition) => void;

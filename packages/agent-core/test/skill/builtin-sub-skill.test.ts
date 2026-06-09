@@ -38,9 +38,9 @@ describe('builtin skill: sub-skill', () => {
     expect(registry.listSkills().some((skill) => skill.name === 'sub-skill')).toBe(true);
   });
 
-  it('registers sub-skill builtins even when an ignored scoped flag is disabled', () => {
+  it('registers every sub-skill builtin', () => {
     const registry = new SkillRegistry();
-    registerBuiltinSkills(registry, { experimentalFlags: { enabled: () => false } });
+    registerBuiltinSkills(registry);
 
     expect(registry.getSkill('sub-skill')).toBeDefined();
     expect(registry.getSkill('sub-skill.review')).toBeDefined();

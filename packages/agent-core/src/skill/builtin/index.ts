@@ -7,15 +7,7 @@ import {
 } from './sub-skill';
 import { UPDATE_CONFIG_SKILL } from './update-config';
 
-type RegisterBuiltinSkillsOptions = {
-  /** Kept for API compatibility; built-in skills are no longer gated by this option. */
-  readonly experimentalFlags?: unknown;
-};
-
-export function registerBuiltinSkills(
-  registry: SkillRegistry,
-  _options: RegisterBuiltinSkillsOptions = {},
-): void {
+export function registerBuiltinSkills(registry: SkillRegistry): void {
   registry.registerBuiltinSkill(MCP_CONFIG_SKILL);
   registry.registerBuiltinSkill(UPDATE_CONFIG_SKILL);
   registry.registerBuiltinSkill(SUB_SKILL_PARENT);
