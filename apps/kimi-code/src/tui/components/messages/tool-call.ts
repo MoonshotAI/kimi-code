@@ -88,6 +88,7 @@ export interface ToolCallSubagentSnapshot {
   readonly agentName: string | undefined;
   readonly phase: SubagentPhase | undefined;
   readonly toolCount: number;
+  readonly elapsedSeconds: number | undefined;
   readonly tokens: number;
   readonly isError: boolean;
   readonly errorText: string | undefined;
@@ -777,6 +778,7 @@ export class ToolCallComponent extends Container {
       agentName: this.subagentAgentName,
       phase: derivedPhase,
       toolCount: finished,
+      elapsedSeconds: this.getSubagentElapsedSeconds(),
       tokens,
       isError: derivedPhase === 'failed',
       errorText,
@@ -899,6 +901,7 @@ export class ToolCallComponent extends Container {
       }
       this.headerText.setText(this.buildHeader());
       this.invalidate();
+      this.notifySnapshotChange();
       this.ui?.requestRender();
     }, SUBAGENT_ELAPSED_INTERVAL_MS);
   }
