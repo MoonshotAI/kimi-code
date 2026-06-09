@@ -51,5 +51,6 @@ function applyRuntimeConfig(host: SlashCommandHost, config: KimiConfig): void {
   host.setAppState({
     availableModels: config.models ?? {},
     availableProviders: config.providers ?? {},
+    subAgentModel: config.subAgentModel ?? undefined,
   });
 }

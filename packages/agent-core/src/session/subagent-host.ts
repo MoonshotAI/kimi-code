@@ -143,7 +143,7 @@ export class SessionSubagentHost {
     const completion = this.runWithActiveChild(agentId, options, async (runOptions) => {
       this.emitSubagentSpawned(parent, agentId, profileName, runOptions);
       try {
-        child.config.update({ modelAlias: parent.config.modelAlias });
+        child.config.update({ modelAlias: parent.kimiConfig?.subAgentModel ?? parent.config.modelAlias });
         return await this.runPromptTurn(parent, agentId, child, profileName, runOptions);
       } catch (error) {
         this.emitSubagentFailed(parent, agentId, runOptions, error);
@@ -159,7 +159,7 @@ export class SessionSubagentHost {
     const completion = this.runWithActiveChild(agentId, options, async (runOptions) => {
       try {
         runOptions.signal.throwIfAborted();
-        child.config.update({ modelAlias: parent.config.modelAlias });
+        child.config.update({ modelAlias: parent.kimiConfig?.subAgentModel ?? parent.config.modelAlias });
         this.emitSubagentStarted(parent, agentId);
         const turnId = child.turn.retry('agent-host');
         if (turnId === null) {
@@ -220,7 +220,7 @@ export class SessionSubagentHost {
     );
 
     child.config.update({
-      modelAlias: parent.config.modelAlias,
+      modelAlias: parent.kimiConfig?.subAgentModel ?? parent.config.modelAlias,
       thinkingLevel: parent.config.thinkingLevel,
       systemPrompt: parent.config.systemPrompt,
     });
@@ -355,10 +355,10 @@ export class SessionSubagentHost {
     child: Agent,
     profile: ResolvedAgentProfile,
   ): Promise<void> {
-    // A subagent always inherits the parent agent's model.
+    // A subagent uses the configured sub-agent model if set, otherwise inherits the parent agent's model.
     child.config.update({
       cwd: parent.config.cwd,
-      modelAlias: parent.config.modelAlias,
+      modelAlias: parent.kimiConfig?.subAgentModel ?? parent.config.modelAlias,
       thinkingLevel: parent.config.thinkingLevel,
     });
 

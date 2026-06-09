@@ -20,6 +20,7 @@ export interface AppState {
   permissionMode: PermissionMode;
   planMode: boolean;
   swarmMode: boolean;
+  subAgentModel?: string;
   thinking: boolean;
   contextUsage: number;
   contextTokens: number;

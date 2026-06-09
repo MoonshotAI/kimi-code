@@ -24,6 +24,7 @@ TOML 字段名一律用下划线（snake_case），如 `default_model`、`max_co
 
 ```toml
 default_model = "kimi-code/kimi-for-coding"
+# sub_agent_model = "kimi-code/kimi-for-coding"
 default_thinking = true
 default_permission_mode = "manual"
 default_plan_mode = false
@@ -76,6 +77,7 @@ timeout = 5
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | 默认模型别名，必须在 `models` 中定义 |
+| `sub_agent_model` | `string` | — | Agent 和 AgentSwarm 工具生成的子智能体所使用的模型别名；设置后子智能体将使用此模型而非继承主模型。设为 `null` 或不填可关闭此设置 |
 | `default_thinking` | `boolean` | `false` | 新会话是否默认开启 Thinking（深度推理）模式；可在会话内从模型菜单切换。即使设为 `true`，`[thinking].mode = "off"` 也会强制关闭 |
 | `default_permission_mode` | `string` | `manual` | 新会话的默认权限模式，可选 `manual`（逐次询问）、`auto`（自动批准读操作）、`yolo`（全部自动批准） |
 | `default_plan_mode` | `boolean` | `false` | 新会话是否默认以 Plan 模式（先出计划再执行）启动 |

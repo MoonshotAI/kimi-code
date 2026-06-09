@@ -352,6 +352,39 @@ not_registered = true
     expect(config.defaultThinking).toBeUndefined();
   });
 
+  it('round-trips sub_agent_model through config file', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'config.toml');
+
+    await writeConfigFile(configPath, {
+      providers: {},
+      defaultModel: 'claude-sonnet',
+      subAgentModel: 'gpt-4o-mini',
+    });
+
+    const text = await readFile(configPath, 'utf-8');
+    expect(text).toContain('sub_agent_model = "gpt-4o-mini"');
+    expect(text).toContain('default_model = "claude-sonnet"');
+
+    const reloaded = readConfigFile(configPath);
+    expect(reloaded.subAgentModel).toBe('gpt-4o-mini');
+    expect(reloaded.defaultModel).toBe('claude-sonnet');
+
+    // Clear and verify it becomes null
+    await writeConfigFile(configPath, {
+      providers: {},
+      defaultModel: 'claude-sonnet',
+      subAgentModel: null,
+    });
+
+    const cleared = readConfigFile(configPath);
+    expect(cleared.subAgentModel).toBeUndefined();
+    expect(cleared.defaultModel).toBe('claude-sonnet');
+
+    const clearedText = await readFile(configPath, 'utf-8');
+    expect(clearedText).not.toContain('sub_agent_model');
+  });
+
   it('does not overwrite an existing config file', async () => {
     const dir = makeTempDir();
     const configPath = join(dir, 'config.toml');

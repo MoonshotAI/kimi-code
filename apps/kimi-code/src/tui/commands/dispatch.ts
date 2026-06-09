@@ -30,6 +30,7 @@ import {
   handleEditorCommand,
   handleModelCommand,
   handlePlanCommand,
+  handleSwarmModelCommand,
   handleThemeCommand,
   handleYoloCommand,
   showExperimentsPanel,
@@ -67,6 +68,7 @@ export {
   handleEditorCommand,
   handleModelCommand,
   handlePlanCommand,
+  handleSwarmModelCommand,
   handleThemeCommand,
   handleYoloCommand,
   showModelPicker,
@@ -304,6 +306,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'swarm':
       await handleSwarmCommand(host, args);
+      return;
+    case 'swarm-model':
+      handleSwarmModelCommand(host, args);
       return;
     case 'compact':
       await handleCompactCommand(host, args);

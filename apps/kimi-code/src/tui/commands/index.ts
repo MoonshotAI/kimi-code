@@ -16,6 +16,7 @@ export {
   handleEditorCommand,
   handleModelCommand,
   handlePlanCommand,
+  handleSwarmModelCommand,
   handleThemeCommand,
   handleYoloCommand,
   showExperimentsPanel,

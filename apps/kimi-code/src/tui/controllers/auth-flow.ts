@@ -116,6 +116,7 @@ export class AuthFlowController {
       availableProviders,
       model: defaultModel,
       maxContextTokens: selected.maxContextSize,
+      subAgentModel: config.subAgentModel ?? undefined,
     };
     if (config.defaultThinking !== undefined) {
       appStatePatch.thinking = config.defaultThinking;
@@ -130,6 +131,7 @@ export class AuthFlowController {
       availableProviders: config.providers ?? {},
       model: '',
       thinking: false,
+      subAgentModel: undefined,
       maxContextTokens: 0,
       contextUsage: 0,
       contextTokens: 0,

@@ -46,6 +46,7 @@
 | `/plan clear` | — | 清除当前 plan 方案 | 否 |
 | `/swarm on\|off` | — | 开启或关闭 swarm mode，但不发送提示词。 | 是 |
 | `/swarm <task>` | — | 先开启 swarm mode，再把 `<task>` 作为普通提示词发送。如果该轮次正常完成，swarm mode 会自动关闭。若当前是 `manual` 权限模式，启动前会提示是否切换到 `auto`。 | 否 |
+| `/swarm-model [alias\|off]` | — | 设置 swarm 子智能体使用的模型。不带参数时打开模型选择器；使用 `off` 清除设置，让子智能体继承主模型。 | 是 |
 | `/goal [...]` | — | 开始或管理目标模式 | 见下文 |
 
 ::: warning 注意

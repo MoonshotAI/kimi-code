@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { handleSwarmCommand } from '#/tui/commands/index';
+import { handleSwarmCommand, handleSwarmModelCommand } from '#/tui/commands/index';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { getColorPalette } from '#/tui/theme/colors';
 
@@ -314,5 +314,87 @@ describe('handleSwarmCommand', () => {
     );
     expect(markerAddChild(host)).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /swarm-model tests
+// ---------------------------------------------------------------------------
+
+describe('/swarm-model', () => {
+  const MODEL_ALIAS = 'gpt-4o-mini';
+  const availableModels = {
+    [MODEL_ALIAS]: { provider: 'openai', model: MODEL_ALIAS, maxContextSize: 100_000 },
+    'claude-sonnet': { provider: 'anthropic', model: 'claude-sonnet', maxContextSize: 200_000 },
+  };
+
+  function makeSwarmModelHost(overrides: { subAgentModel?: string } = {}) {
+    const harness = {
+      setConfig: vi.fn(async () => ({})),
+      getConfig: vi.fn(async () => ({})),
+    };
+    const host = {
+      state: {
+        appState: {
+          model: 'claude-sonnet',
+          availableModels,
+          subAgentModel: overrides.subAgentModel,
+          swarmMode: false,
+          permissionMode: 'auto' as const,
+          streamingPhase: 'idle' as const,
+          thinking: false,
+        },
+        theme: { colors: getColorPalette('dark') },
+        transcriptContainer: { addChild: vi.fn() },
+        ui: { requestRender: vi.fn() },
+      },
+      session: undefined,
+      harness,
+      setAppState: vi.fn((patch: Record<string, unknown>) => Object.assign(host.state.appState, patch)),
+      showError: vi.fn(),
+      showStatus: vi.fn(),
+      showNotice: vi.fn(),
+      mountEditorReplacement: vi.fn(),
+      restoreEditor: vi.fn(),
+      track: vi.fn(),
+    } as unknown as SlashCommandHost;
+    return { host, harness };
+  }
+
+  it('opens the model picker when no args given', () => {
+    const { host } = makeSwarmModelHost();
+    handleSwarmModelCommand(host, '');
+    expect(host.mountEditorReplacement).toHaveBeenCalled();
+  });
+
+  it('opens the model picker with a valid alias pre-selected', () => {
+    const { host } = makeSwarmModelHost();
+    handleSwarmModelCommand(host, MODEL_ALIAS);
+    expect(host.mountEditorReplacement).toHaveBeenCalled();
+  });
+
+  it('shows error for unknown model alias', () => {
+    const { host } = makeSwarmModelHost();
+    handleSwarmModelCommand(host, 'nonexistent-model');
+    expect(host.showError).toHaveBeenCalledWith(
+      expect.stringContaining('Unknown model alias'),
+    );
+    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
+  });
+
+  it('clears the override with "off"', async () => {
+    const { host, harness } = makeSwarmModelHost({ subAgentModel: MODEL_ALIAS });
+    handleSwarmModelCommand(host, 'off');
+
+    await vi.waitFor(() => {
+      expect(harness.setConfig).toHaveBeenCalledWith({ subAgentModel: null });
+    });
+    expect(host.setAppState).toHaveBeenCalledWith(
+      expect.objectContaining({ subAgentModel: undefined }),
+    );
+    expect(host.showStatus).toHaveBeenCalledWith(
+      expect.stringContaining('inherit the main model'),
+      expect.any(String),
+    );
   });
 });
