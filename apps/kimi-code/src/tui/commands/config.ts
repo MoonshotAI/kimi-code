@@ -342,6 +342,12 @@ async function setSwarmModel(host: SlashCommandHost, alias: string): Promise<voi
     return;
   }
 
+  // Push the updated config to the live session so active agents pick it up
+  const session = host.session;
+  if (session !== undefined) {
+    await session.reloadSession();
+  }
+
   host.setAppState({ subAgentModel: alias });
   host.showStatus(
     `Swarm subagents will use ${alias}.`,
@@ -356,6 +362,12 @@ async function clearSwarmModel(host: SlashCommandHost): Promise<void> {
   } catch (error) {
     host.showError(`Failed to clear sub-agent model: ${formatErrorMessage(error)}`);
     return;
+  }
+
+  // Push the updated config to the live session so active agents pick it up
+  const session = host.session;
+  if (session !== undefined) {
+    await session.reloadSession();
   }
 
   host.setAppState({ subAgentModel: undefined });
