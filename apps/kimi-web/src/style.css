@@ -15,6 +15,7 @@
   --blue2: #0d4f9e;
   --soft: #e9f0fa;
   --bd: #cfe0f6;
+  --logo: #1e8fff;
   /* Soft-blue bubble fill + border (mobile user message bubble). */
   --bluebg: #eef4fc;
   --blueln: #cfe0f7;
@@ -28,11 +29,24 @@
   --r-sm: 8px;
   --r-md: 12px;
   --r-lg: 16px;
-  --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
   /* Both themes are light. Declared here (and in index.html) so the browser and
      dark-mode extensions never force-darken the page. */
   color-scheme: light;
 }
+
+/* Accent: black/white (Vercel-style) — remaps the blue tokens to grayscale.
+   Orthogonal to the terminal/modern theme (only recolours the accent). */
+html[data-accent="mono"] {
+  --blue: #171717;
+  --blue2: #383838;
+  --soft: #f1f1f2;
+  --bd: #d4d4d8;
+  --bluebg: #f4f4f5;
+  --blueln: #e4e4e7;
+  --logo: #171717;
+}
+
 
 html,
 body,
@@ -62,6 +76,10 @@ body {
   font-size: 14px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-synthesis: none;
+  text-size-adjust: 100%;
 }
 
 /* ---------------------------------------------------------------------------
@@ -108,8 +126,8 @@ html[data-theme="modern"] {
      Shadow tokens are shared by the per-element card rules below. */
   --line: #e9edf3;
   --line2: #f1f4f8;
-  --sans: -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei",
-    sans-serif;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto,
+    "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
   --canvas: #f4f6fa;
   --sh: 0 1px 3px rgba(28, 40, 66, 0.05), 0 6px 18px rgba(28, 40, 66, 0.06);
   --shc: 0 1px 2px rgba(28, 40, 66, 0.05);
@@ -184,7 +202,7 @@ html[data-theme="modern"] .se {
   margin: 1px 6px;
   border-radius: var(--r-sm);
 }
-html[data-theme="modern"] .se:hover { background: #eef1f6; }
+html[data-theme="modern"] .se:hover { background: #f0f0f0; }
 html[data-theme="modern"] .se.on {
   background: var(--soft);
   box-shadow: inset 0 0 0 1px var(--bd);
@@ -212,20 +230,17 @@ html[data-theme="modern"] .ph {
 }
 
 /* ---- Modern composer (global, NOT in Composer.vue) ---------------------------
-   These MUST live here: scoped `:global(html[data-theme=modern]) .cin` rules in
-   Composer.vue did not win the cascade against the base `.cin`, so the input box
-   stayed square (4px) + mono. Here they apply reliably. The chat surface is white,
-   so the input reads as a rounded card via a soft shadow + hairline border. */
-html[data-theme="modern"] .cin {
+   These MUST live here: scoped `:global(html[data-theme=modern])` rules in
+   Composer.vue did not win the cascade against the base rules, so they are moved
+   to the global sheet where they apply reliably. The chat surface is white, so
+   the composer card reads as a rounded card via a soft shadow + hairline border. */
+html[data-theme="modern"] .composer-card {
   border-radius: var(--r-md);
   border: 1px solid var(--line);
   background: #fff;
   box-shadow: 0 1px 2px rgba(20, 23, 28, 0.04), 0 6px 18px rgba(20, 23, 28, 0.06);
-  align-items: flex-end;
-  padding: 6px 6px 6px 14px;
-  gap: 6px;
 }
-html[data-theme="modern"] .cin:focus-within {
+html[data-theme="modern"] .composer-card.focused {
   border-color: var(--bd);
   box-shadow: 0 1px 2px rgba(20, 23, 28, 0.04), 0 6px 18px rgba(20, 23, 28, 0.08),
     0 0 0 3px rgba(21, 101, 192, 0.1);
@@ -235,41 +250,68 @@ html[data-theme="modern"] .ph {
   border: none;
   border-radius: 0;
   padding: 4px 0;
-  min-height: 22px;
+  min-height: 40px;
   box-sizing: border-box;
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.5;
 }
-html[data-theme="modern"] .attach-btn {
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border-radius: var(--r-sm);
-  align-self: flex-end;
-}
-html[data-theme="modern"] .attach-btn:hover {
-  background: var(--soft);
-  color: var(--blue);
+html[data-theme="modern"] .ctx-group {
+  padding-bottom: 2px;
 }
 html[data-theme="modern"] .send {
-  width: auto;
-  min-width: 0;
+  width: 30px;
+  min-width: 30px;
   height: 30px;
-  padding: 0 13px;
-  border-radius: var(--r-sm);
-  font-family: var(--sans);
-  font-size: 12px;
-  font-weight: 600;
+  padding: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   box-shadow: 0 1px 2px rgba(20, 23, 28, 0.1);
   align-self: flex-end;
 }
-html[data-theme="modern"] .send::after { content: none; }
 html[data-theme="modern"] .send:hover { background: var(--blue2); }
 html[data-theme="modern"] .interrupt {
   height: 30px;
   border-radius: var(--r-sm);
   font-family: var(--sans);
   align-self: flex-end;
+}
+html[data-theme="modern"] .toolbar {
+  background: var(--panel);
+}
+html[data-theme="modern"] .attach-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: var(--r-sm);
+}
+html[data-theme="modern"] .attach-btn:hover {
+  background: var(--soft);
+  color: var(--blue);
+}
+html[data-theme="modern"] .model-pill {
+  font-family: var(--sans);
+  border-radius: var(--r-sm);
+}
+html[data-theme="modern"] .toggle-pill {
+  font-family: var(--sans);
+  border-radius: var(--r-sm);
+  font-size: 10.5px;
+}
+html[data-theme="modern"] .toggle-pill.on {
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+html[data-theme="modern"] .model-dropdown,
+html[data-theme="modern"] .perm-dropdown {
+  border-radius: var(--r-md);
+}
+html[data-theme="modern"] .pd-name {
+  font-family: var(--sans);
+}
+html[data-theme="modern"] .pd-desc {
+  font-family: var(--sans);
 }
 html[data-theme="modern"] .queue-item,
 html[data-theme="modern"] .att-chip {
@@ -402,4 +444,66 @@ html[data-theme="modern"] .backdrop .dialog {
     animation-delay: 0ms !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* ---- Kimi Code logo (sidebar header): lively eyes — glance left/right + the
+   occasional blink. The two bars are mask cutouts, so animating them moves /
+   squishes the transparent holes (adapts to whatever's behind the logo). The
+   look (6s) and blink (5.4s) run on different periods so they drift in and out
+   of sync, which reads as more organic. ---- */
+.ch-eyes {
+  animation: kimi-eye-look 16s ease-in-out infinite;
+}
+.ch-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: kimi-eye-blink 11s ease-in-out infinite;
+}
+@keyframes kimi-eye-look {
+  /* Rest centered most of the time; a quick glance right (~7.5s) then a glance
+     left (~13.5s), with long still holds between — calm, not busy. */
+  0%, 42% { transform: translateX(0); }
+  47%, 53% { transform: translateX(2px); }
+  58%, 80% { transform: translateX(0); }
+  84%, 90% { transform: translateX(-2px); }
+  95%, 100% { transform: translateX(0); }
+}
+@keyframes kimi-eye-blink {
+  /* one quick blink per cycle (~10.6s) */
+  0%, 94%, 100% { transform: scaleY(1); }
+  96.5%, 98% { transform: scaleY(0.12); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ch-eyes,
+  .ch-eye { animation: none; }
+}
+
+/* Click-to-blink: a single quick blink on click (overrides the idle 11s blink
+   while the .blink-now class is present, ~300ms). */
+.ch-logo.blink-now .ch-eye {
+  animation: kimi-eye-blink-once 0.24s ease-in-out;
+}
+@keyframes kimi-eye-blink-once {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.1); }
+}
+
+/* Font switcher (site-wide): each option sets BOTH --mono AND --sans, so the
+   chosen font applies across the WHOLE site — code/chrome and Modern prose
+   alike. Placed at the end so its --sans overrides the Modern theme's default
+   sans (equal specificity, later in source). */
+html[data-code-font="fira-code"] { --mono: "Fira Code", ui-monospace, Menlo, Consolas, monospace; --sans: "Fira Code", ui-monospace, Menlo, Consolas, monospace; }
+html[data-code-font="jetbrains-mono"] { --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace; --sans: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace; }
+html[data-code-font="source-code-pro"] { --mono: "Source Code Pro", ui-monospace, Menlo, Consolas, monospace; --sans: "Source Code Pro", ui-monospace, Menlo, Consolas, monospace; }
+html[data-code-font="ibm-plex-mono"] { --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace; --sans: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace; }
+html[data-code-font="space-mono"] { --mono: "Space Mono", ui-monospace, Menlo, Consolas, monospace; --sans: "Space Mono", ui-monospace, Menlo, Consolas, monospace; }
+html[data-code-font="ubuntu-mono"] { --mono: "Ubuntu Mono", ui-monospace, Menlo, Consolas, monospace; --sans: "Ubuntu Mono", ui-monospace, Menlo, Consolas, monospace; }
+
+/* Markdown images at natural size. markstream enforces a min-width/min-height
+   floor (--ms-size-image-*, ~33px) that scales small inline images UP — README
+   shields.io badges (78×20) were rendered at 128×33. Higher specificity than
+   markstream's `.image-node__img[data-v]` (0,2,0) so the floor is removed. */
+.md .markdown-renderer img {
+  min-width: 0;
+  min-height: 0;
 }

@@ -12,14 +12,20 @@ const props = withDefaults(
      * to open (matching the prototype). Desktop keeps the collapsed line style.
      */
     mobile?: boolean;
+    /** When true the thinking text is still streaming in. */
+    streaming?: boolean;
   }>(),
-  { mobile: false },
+  { mobile: false, streaming: false },
 );
 
 const { t } = useI18n();
 
-// Mobile starts open (prototype shows the reasoning expanded); desktop collapsed.
-const open = ref(props.mobile);
+// Expanded only while a turn is ACTIVELY streaming on the mobile / Modern bubble
+// layout, so you can watch the reasoning arrive; it collapses when streaming
+// finishes (see the watch below). Historical blocks (streaming=false — e.g. every
+// block in a reopened session) and the desktop terminal layout start collapsed;
+// click to expand.
+const open = ref(props.mobile && props.streaming);
 
 function toggle() {
   open.value = !open.value;
@@ -49,13 +55,26 @@ watch(
   },
   { immediate: true },
 );
+
+// Follow streaming transitions: collapse to a label when streaming finishes, and
+// (on the mobile / Modern bubble layout) expand when a fresh turn starts streaming
+// so the live reasoning is visible even if this block mounted before streaming began.
+watch(
+  () => props.streaming,
+  (next, prev) => {
+    if (prev === true && next === false) {
+      open.value = false;
+    } else if (next === true && prev === false && props.mobile) {
+      open.value = true;
+    }
+  },
+);
 </script>
 
 <template>
   <!-- Mobile / Codex style: gray collapsible header + plain gray body -->
   <div v-if="mobile" class="think mthink" :class="{ open }">
     <button class="h" @click="toggle" :aria-expanded="open">
-      <span class="cv"></span>
       <span class="hl">{{ t('thinking.label') }}</span>
     </button>
     <div ref="bodyEl" class="c">{{ text }}</div>
@@ -64,7 +83,6 @@ watch(
   <!-- Desktop: collapsed italic line with inline preview -->
   <div v-else class="think" :class="{ open }">
     <button class="th" @click="toggle" :aria-expanded="open">
-      <span class="car"></span>
       <span class="label">{{ t('thinking.label') }}</span>
       <span v-if="!open" class="prev">{{ preview }}</span>
     </button>
@@ -76,7 +94,7 @@ watch(
 
 <style scoped>
 .think {
-  margin: 4px 0 6px 0;
+  margin: 6px 0 10px 0;
 }
 
 .th {
@@ -97,22 +115,6 @@ watch(
 
 .th:hover {
   color: var(--text);
-}
-
-.car {
-  flex: none;
-  width: 0;
-  height: 0;
-  border-left: 5px solid var(--muted);
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  transition: transform 0.18s ease, border-color 0.18s ease;
-}
-.think.open .car {
-  transform: rotate(90deg);
-}
-.th:hover .car {
-  border-left-color: var(--text);
 }
 
 .label {
@@ -144,8 +146,8 @@ watch(
   word-break: break-word;
   margin: 0;
   line-height: 1.7;
-  /* Show at most ~3.5 lines; older reasoning scrolls up (pinned to latest). */
-  max-height: calc(1.7em * 3.5);
+  /* Show at most ~9.5 lines; older reasoning scrolls up (pinned to latest). */
+  max-height: calc(1.7em * 9.5);
   overflow-y: auto;
 }
 
@@ -167,21 +169,6 @@ watch(
   color: var(--muted);
   text-align: left;
 }
-.mthink .h .cv {
-  flex: none;
-  width: 0;
-  height: 0;
-  border-left: 5px solid var(--muted);
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  transition: transform 0.18s ease, border-color 0.18s ease;
-}
-.mthink.open .h .cv {
-  transform: rotate(90deg);
-}
-.mthink .h:hover .cv {
-  border-left-color: var(--text);
-}
 .mthink .hl {
   color: var(--muted);
 }
@@ -194,8 +181,8 @@ watch(
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
-  /* Show at most ~3.5 lines; older reasoning scrolls up (pinned to latest). */
-  max-height: calc(1.6em * 3.5);
+  /* Show at most ~9.5 lines; older reasoning scrolls up (pinned to latest). */
+  max-height: calc(1.6em * 9.5);
   overflow-y: auto;
 }
 .mthink.open .c {

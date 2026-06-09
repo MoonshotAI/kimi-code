@@ -31,6 +31,7 @@ const tabs: { key: PaneKey; labelKey: string }[] = [
 
     <!-- Content alignment toggle (right side): left-aligned vs centered.
          Hidden on mobile — the strip is full-width and alignment is desktop-only. -->
+
     <div v-if="!mobile" class="align" role="group" :aria-label="t('layout.alignLabel')">
       <button
         type="button"

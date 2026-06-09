@@ -28,7 +28,6 @@ const emit = defineEmits<{
   setPermission: [mode: PermissionMode];
 }>();
 
-const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'xhigh', 'max'];
 const PERM_MODES: PermissionMode[] = ['manual', 'auto', 'yolo'];
 
 const thinkingLevel = computed<ThinkingLevel>(() => props.thinking ?? 'high');
@@ -56,9 +55,8 @@ const ctxValue = computed<string>(() =>
 );
 
 function cycleThinking(): void {
-  const idx = THINKING_LEVELS.indexOf(thinkingLevel.value);
-  const next = THINKING_LEVELS[(idx + 1) % THINKING_LEVELS.length]!;
-  emit('setThinking', next);
+  // On/off toggle (TUI parity). 'high' = the backend default effort.
+  emit('setThinking', thinkingLevel.value === 'off' ? 'high' : 'off');
 }
 
 function cyclePermission(): void {
@@ -93,7 +91,7 @@ function onPickModel(): void {
       <span class="srow-main">
         <span class="srow-label">{{ t('status.statusThinking') }}</span>
       </span>
-      <span class="srow-val">{{ thinkingLevel }}</span>
+      <span class="srow-val">{{ thinkingLevel === 'off' ? t('status.planOff') : t('status.planOn') }}</span>
       <span class="chev">›</span>
     </button>
 

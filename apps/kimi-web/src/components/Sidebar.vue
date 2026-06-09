@@ -1,48 +1,50 @@
 <!-- apps/kimi-web/src/components/Sidebar.vue -->
-<!-- Variant B left region: a narrow workspace rail + the session column, side -->
-<!-- by side, inside one App.vue grid cell. The rail does workspace switching + -->
-<!-- account; the column shows the active workspace's sessions (flat in -->
-<!-- 'current' scope, grouped in 'all' scope). -->
+<!-- Unified sidebar: session groups with collapsible workspace headers.
+     The old workspace rail and workspace tabs have been removed;
+     workspace switching, folding and renaming all live in the group header. -->
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { Session, WorkspaceGroup, WorkspaceScope, WorkspaceView } from '../types';
-import type { Theme } from '../composables/useKimiWebClient';
-import WorkspaceRail from './WorkspaceRail.vue';
+import type { Session, WorkspaceGroup, WorkspaceView } from '../types';
+import type { Accent, CodeFont, Theme } from '../composables/useKimiWebClient';
+import { daemonEndpointLabel } from '../api/config';
+import LanguageSwitcher from './LanguageSwitcher.vue';
 import SessionRow from './SessionRow.vue';
 
 const { t } = useI18n();
 
+/** Address of the real daemon this client connects to (shown in the settings popover). */
+const daemonEndpoint = daemonEndpointLabel();
+
 const props = withDefaults(
   defineProps<{
-    workspaces: WorkspaceView[];
     activeWorkspace: WorkspaceView | null;
     activeWorkspaceId: string | null;
-    scope: WorkspaceScope;
     sessions: Session[];
     groups: WorkspaceGroup[];
     activeId: string;
     attentionBySession?: Record<string, number>;
-    attentionByWorkspace?: Record<string, number>;
     authReady?: boolean;
     accountModel?: string | null;
     /** Width (px) of the session column, driven by the App resize handle. */
     colWidth?: number;
-    /** Whether the workspace rail is in its wide (named) mode. */
-    railExpanded?: boolean;
-    /** Active UI theme — forwarded to the rail's bottom-left toggle. */
+    /** Active UI theme — forwarded to the settings popover. */
     theme?: Theme;
+    /** Active code font — forwarded to the settings popover. */
+    codeFont?: CodeFont;
+    /** Accent / colour scheme — forwarded to the settings popover. */
+    accent?: Accent;
   }>(),
   {
     activeWorkspace: null,
     activeWorkspaceId: null,
     attentionBySession: () => ({}),
-    attentionByWorkspace: () => ({}),
     authReady: false,
     accountModel: null,
     colWidth: 196,
-    railExpanded: false,
     theme: 'terminal',
+    codeFont: 'sf-mono',
+    accent: 'blue',
   },
 );
 
@@ -51,167 +53,524 @@ const emit = defineEmits<{
   create: [];
   createInWorkspace: [workspaceId: string];
   selectWorkspace: [workspaceId: string];
-  setScope: [scope: WorkspaceScope];
+  selectWorkspaces: [ids: string[]];
   addWorkspace: [];
   rename: [id: string, title: string];
   delete: [id: string];
+  renameWorkspace: [id: string, name: string];
   login: [];
   logout: [];
-  toggleRailExpand: [];
   setTheme: [theme: Theme];
+  setCodeFont: [font: CodeFont];
+  setAccent: [accent: Accent];
   openOnboarding: [];
 }>();
 
-// ---------------------------------------------------------------------------
-// Search
-// ---------------------------------------------------------------------------
-const searchQuery = ref('');
-
-function matchQuery(list: Session[]): Session[] {
-  const q = searchQuery.value.trim().toLowerCase();
-  if (!q) return list;
-  return list.filter((s) => s.title.toLowerCase().includes(q));
-}
-
-const filteredSessions = computed(() => matchQuery(props.sessions));
-
-const filteredGroups = computed<WorkspaceGroup[]>(() =>
-  props.groups
-    .map((g) => ({ workspace: g.workspace, sessions: matchQuery(g.sessions) }))
-    .filter((g) => g.sessions.length > 0),
-);
-
 const totalSessionCount = computed(() => props.sessions.length);
 
-// ---------------------------------------------------------------------------
-// Column header: read-only active-workspace name + branch + scope toggle
-// ---------------------------------------------------------------------------
-const isAllScope = computed(() => props.scope === 'all');
+const CODE_FONT_OPTIONS: { value: CodeFont; labelKey: string; family: string }[] = [
+  { value: 'sf-mono', labelKey: 'theme.codeFontSfMono', family: 'var(--mono)' },
+  { value: 'fira-code', labelKey: 'theme.codeFontFiraCode', family: '"Fira Code", monospace' },
+  { value: 'jetbrains-mono', labelKey: 'theme.codeFontJetBrainsMono', family: '"JetBrains Mono", monospace' },
+  { value: 'source-code-pro', labelKey: 'theme.codeFontSourceCodePro', family: '"Source Code Pro", monospace' },
+  { value: 'ibm-plex-mono', labelKey: 'theme.codeFontIbmPlexMono', family: '"IBM Plex Mono", monospace' },
+  { value: 'space-mono', labelKey: 'theme.codeFontSpaceMono', family: '"Space Mono", monospace' },
+  { value: 'ubuntu-mono', labelKey: 'theme.codeFontUbuntuMono', family: '"Ubuntu Mono", monospace' },
+];
 
-function toggleScope(): void {
-  emit('setScope', isAllScope.value ? 'current' : 'all');
+// ---------------------------------------------------------------------------
+// Collapse groups
+// ---------------------------------------------------------------------------
+const collapsedIds = ref<Set<string>>(new Set());
+
+function isCollapsed(id: string): boolean {
+  return collapsedIds.value.has(id);
 }
 
-const railRef = ref<InstanceType<typeof WorkspaceRail> | null>(null);
+function toggleCollapse(id: string): void {
+  const next = new Set(collapsedIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  collapsedIds.value = next;
+}
 
-function closeMenus(): void {
-  railRef.value?.close();
+// ---------------------------------------------------------------------------
+// Shift-multi-select workspaces
+// ---------------------------------------------------------------------------
+const selectedIds = ref<Set<string>>(new Set());
+
+function handleGhClick(wsId: string, e: MouseEvent): void {
+  if (e.shiftKey) {
+    e.stopPropagation();
+    const next = new Set(selectedIds.value);
+    if (next.has(wsId)) next.delete(wsId);
+    else next.add(wsId);
+    selectedIds.value = next;
+    emit('selectWorkspaces', Array.from(next));
+    return;
+  }
+  // Normal click: clear multi-selection then toggle collapse
+  selectedIds.value = new Set();
+  emit('selectWorkspaces', []);
+  toggleCollapse(wsId);
+}
+
+function onSelectSession(sessionId: string): void {
+  selectedIds.value = new Set();
+  emit('selectWorkspaces', []);
+  emit('select', sessionId);
+}
+
+// ---------------------------------------------------------------------------
+// Rename workspace (inline, like SessionRow)
+// ---------------------------------------------------------------------------
+const renamingId = ref<string | null>(null);
+const renameValue = ref('');
+const renameInputRef = ref<HTMLInputElement | null>(null);
+
+function startRenameWorkspace(id: string, name: string): void {
+  renamingId.value = id;
+  renameValue.value = name;
+  void nextTick().then(() => renameInputRef.value?.focus());
+}
+
+function confirmRenameWorkspace(): void {
+  const id = renamingId.value;
+  const name = renameValue.value.trim();
+  if (id && name) {
+    emit('renameWorkspace', id, name);
+  }
+  renamingId.value = null;
+}
+
+function cancelRenameWorkspace(): void {
+  renamingId.value = null;
+}
+
+// ---------------------------------------------------------------------------
+// Workspace right-click menu (copy path, rename)
+// ---------------------------------------------------------------------------
+const ghMenuOpen = ref(false);
+const ghMenuTarget = ref<WorkspaceView | null>(null);
+const ghMenuStyle = ref<Record<string, string>>({});
+const ghMenuRef = ref<HTMLElement | null>(null);
+
+function onGhMenuDocClick(e: MouseEvent): void {
+  if (ghMenuRef.value && !ghMenuRef.value.contains(e.target as Node)) {
+    closeGhMenu();
+  }
+}
+
+function openGhMenu(ws: WorkspaceView, e: MouseEvent): void {
+  if (e.shiftKey) {
+    // shift+right-click = multi-select (same as shift+click)
+    e.stopPropagation();
+    const next = new Set(selectedIds.value);
+    if (next.has(ws.id)) next.delete(ws.id);
+    else next.add(ws.id);
+    selectedIds.value = next;
+    emit('selectWorkspaces', Array.from(next));
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+  ghMenuTarget.value = ws;
+  ghMenuStyle.value = {
+    top: `${e.clientY}px`,
+    left: `${e.clientX}px`,
+  };
+  ghMenuOpen.value = true;
+  document.addEventListener('mousedown', onGhMenuDocClick, true);
+}
+
+function closeGhMenu(): void {
+  ghMenuOpen.value = false;
+  document.removeEventListener('mousedown', onGhMenuDocClick, true);
+  ghMenuTarget.value = null;
+}
+
+function copyPathFromMenu(): void {
+  if (ghMenuTarget.value) {
+    void navigator.clipboard.writeText(ghMenuTarget.value.root);
+  }
+  closeGhMenu();
+}
+
+function startRenameFromMenu(): void {
+  if (ghMenuTarget.value) {
+    startRenameWorkspace(ghMenuTarget.value.id, ghMenuTarget.value.name);
+  }
+  closeGhMenu();
+}
+
+// ---------------------------------------------------------------------------
+// Account popover (top-right of the column header)
+// ---------------------------------------------------------------------------
+const acctMenuOpen = ref(false);
+const triggerRef = ref<HTMLElement | null>(null);
+const menuRef = ref<HTMLElement | null>(null);
+const menuStyle = ref<Record<string, string>>({});
+
+function positionMenu(): void {
+  const trig = triggerRef.value;
+  const menu = menuRef.value;
+  if (!trig || !menu) return;
+  const r = trig.getBoundingClientRect();
+  const gap = 8;
+  const margin = 8;
+  const menuH = menu.offsetHeight;
+  const menuW = menu.offsetWidth;
+  let top = r.bottom + gap;
+  if (top + menuH > window.innerHeight - margin) {
+    top = Math.max(margin, r.top - menuH - gap);
+  }
+  let left = r.right - menuW;
+  if (left < margin) left = margin;
+  menuStyle.value = {
+    top: `${Math.round(top)}px`,
+    left: `${Math.round(left)}px`,
+  };
+}
+
+async function openAccount(): Promise<void> {
+  acctMenuOpen.value = true;
+  await nextTick();
+  positionMenu();
+  window.addEventListener('resize', positionMenu);
+}
+
+function toggleAccount(): void {
+  if (acctMenuOpen.value) closeAccount();
+  else void openAccount();
+}
+
+function closeAccount(): void {
+  acctMenuOpen.value = false;
+  window.removeEventListener('resize', positionMenu);
+}
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', positionMenu);
+  document.removeEventListener('mousedown', onGhMenuDocClick, true);
+});
+
+function onLogin(): void {
+  acctMenuOpen.value = false;
+  emit('login');
+}
+
+function onLogout(): void {
+  acctMenuOpen.value = false;
+  emit('logout');
+}
+
+function onOpenOnboarding(): void {
+  acctMenuOpen.value = false;
+  emit('openOnboarding');
+}
+
+// Logo easter-egg: clicking the Kimi mark plays one quick blink. It's a one-shot
+// animation — force a reflow so rapid clicks restart it, then drop the class so
+// the idle look/blink loop resumes.
+const logoRef = ref<SVGSVGElement | null>(null);
+let blinkTimer: ReturnType<typeof setTimeout> | undefined;
+function blinkOnce(): void {
+  const el = logoRef.value;
+  if (!el) return;
+  el.classList.remove('blink-now');
+  void el.getBoundingClientRect();
+  el.classList.add('blink-now');
+  clearTimeout(blinkTimer);
+  blinkTimer = setTimeout(() => el.classList.remove('blink-now'), 300);
 }
 </script>
 
 <template>
-  <!-- clicking anywhere outside the rail popover closes it -->
-  <aside class="side" @click="closeMenus">
-    <WorkspaceRail
-      ref="railRef"
-      :workspaces="workspaces"
-      :active-id="activeWorkspaceId"
-      :attention-by-workspace="attentionByWorkspace"
-      :auth-ready="authReady"
-      :account-model="accountModel"
-      :expanded="railExpanded"
-      :theme="theme"
-      @select="emit('selectWorkspace', $event)"
-      @add-workspace="emit('addWorkspace')"
-      @login="emit('login')"
-      @logout="emit('logout')"
-      @toggle-expand="emit('toggleRailExpand')"
-      @set-theme="emit('setTheme', $event)"
-      @open-onboarding="emit('openOnboarding')"
-    />
-
+  <aside class="side" @click="closeAccount">
     <!-- Session column -->
     <div class="col" :style="{ width: colWidth + 'px' }">
-      <!-- Column header: active workspace name + branch (read-only) + scope + New -->
+      <!-- Header: logo + settings (no hard border — flows into workspace list) -->
       <div class="ch">
-        <div class="ch-ws">
-          <span class="ch-name" :title="activeWorkspace ? activeWorkspace.root : ''">
-            {{ activeWorkspace ? activeWorkspace.name : t('workspace.noWorkspace') }}
-          </span>
-          <span v-if="activeWorkspace && activeWorkspace.branch" class="ch-branch">{{ activeWorkspace.branch }}</span>
-        </div>
+        <svg ref="logoRef" class="ch-logo" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="blinkOnce">
+          <defs>
+            <mask id="kimiEyes" maskUnits="userSpaceOnUse">
+              <rect x="0" y="0" width="32" height="22" fill="#fff" />
+              <g class="ch-eyes" fill="#000">
+                <rect class="ch-eye" x="11.8" y="7" width="2.8" height="8" rx="1.4" />
+                <rect class="ch-eye" x="17.4" y="7" width="2.8" height="8" rx="1.4" />
+              </g>
+            </mask>
+          </defs>
+          <rect x="1" y="1" width="30" height="20" rx="6" fill="var(--logo)" mask="url(#kimiEyes)" />
+        </svg>
         <button
+          ref="triggerRef"
           type="button"
-          class="ch-scope"
-          :class="{ on: isAllScope }"
-          :title="isAllScope ? t('workspace.currentWorkspace') : t('workspace.allWorkspaces')"
-          @click.stop="toggleScope"
+          class="settings-btn"
+          :title="authReady ? t('sidebar.signedIn') : t('sidebar.notSignedIn')"
+          :aria-label="authReady ? t('sidebar.signedIn') : t('sidebar.notSignedIn')"
+          @click.stop="toggleAccount"
         >
-          {{ isAllScope ? t('workspace.scopeAll') : t('workspace.scopeCurrent') }}
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l-.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z" />
+          </svg>
         </button>
       </div>
 
-      <div class="sh">
-        {{ t('sidebar.sessionsHeader') }}
-        <span class="new" @click.stop="emit('create')">{{ t('sidebar.newSession') }}</span>
+      <!-- New workspace button -->
+      <div class="btn-wrap">
+        <button class="btn-new-ws" @click.stop="emit('addWorkspace')">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <path d="M8 3v10M3 8h10"/>
+          </svg>
+          <span>{{ t('sidebar.newWorkspace') }}</span>
+        </button>
       </div>
 
-      <!-- Search box -->
-      <div class="search-wrap">
-        <input
-          v-model="searchQuery"
-          class="search-input"
-          :placeholder="t('sidebar.searchPlaceholder')"
-          type="text"
-          @click.stop
-        />
-      </div>
-
-      <!-- Session list -->
+      <!-- Session list — grouped by workspace -->
       <div class="sessions">
         <!-- Empty state -->
         <div v-if="totalSessionCount === 0" class="empty">
           {{ t('sidebar.emptyState') }}
         </div>
 
-        <!-- 'all' scope: per-workspace collapsible groups -->
-        <template v-else-if="scope === 'all'">
-          <div v-for="g in filteredGroups" :key="g.workspace.id" class="group">
-            <div class="gh">
-              <span class="gh-name">{{ g.workspace.name }}</span>
-              <span class="gh-path" :title="g.workspace.root">{{ g.workspace.shortPath }}</span>
-              <span class="gh-count">{{ g.sessions.length }}</span>
-              <button
-                class="gh-add"
-                :title="t('workspace.newInGroup')"
-                @click.stop="emit('createInWorkspace', g.workspace.id)"
-              >+</button>
+        <template v-else>
+          <div v-for="g in groups" :key="g.workspace.id" class="group">
+            <div
+              class="gh"
+              :class="{ on: g.workspace.id === activeWorkspaceId, sel: selectedIds.has(g.workspace.id) }"
+              @click.stop="handleGhClick(g.workspace.id, $event)"
+              @contextmenu="openGhMenu(g.workspace, $event)"
+            >
+              <div class="gh-top">
+                <!-- Folder icon -->
+                <svg
+                  class="gh-folder"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.2"
+                  aria-hidden="true"
+                >
+                  <template v-if="isCollapsed(g.workspace.id)">
+                    <rect x="1" y="3.5" width="12" height="8.5" rx="1"/>
+                    <path d="M1 5V3.5A1 1 0 0 1 2 2.5h3.5l1.3 2"/>
+                  </template>
+                  <template v-else>
+                    <path d="M1 3.5V2.5A1 1 0 0 1 2 1.5h3.5l1.3 2h5.2a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z"/>
+                    <path d="M1 5.5h12"/>
+                  </template>
+                </svg>
+
+                <!-- Workspace name -->
+                <span
+                  v-if="renamingId !== g.workspace.id"
+                  class="gh-name"
+                >{{ g.workspace.name }}</span>
+                <input
+                  v-else
+                  ref="renameInputRef"
+                  v-model="renameValue"
+                  class="gh-rename"
+                  type="text"
+                  @keydown.enter="confirmRenameWorkspace"
+                  @keydown.esc="cancelRenameWorkspace"
+                  @blur="cancelRenameWorkspace"
+                  @click.stop
+                />
+
+                <button
+                  class="gh-add"
+                  :title="t('workspace.newInGroup')"
+                  @click.stop="emit('createInWorkspace', g.workspace.id)"
+                >+</button>
+              </div>
+              <div class="gh-path" :title="g.workspace.root">{{ g.workspace.branch || g.workspace.shortPath }}</div>
             </div>
-            <div class="group-sessions">
+            <div v-show="!isCollapsed(g.workspace.id)" class="group-sessions">
               <SessionRow
                 v-for="s in g.sessions"
                 :key="s.id"
                 :session="s"
                 :active="s.id === activeId"
                 :attention="attentionBySession[s.id] ?? 0"
-                @select="emit('select', $event)"
+                @select="onSelectSession($event)"
                 @rename="(id, title) => emit('rename', id, title)"
                 @delete="emit('delete', $event)"
               />
             </div>
           </div>
-          <div v-if="filteredGroups.length === 0" class="empty">
-            {{ t('sidebar.noMatches') }}
-          </div>
-        </template>
-
-        <!-- 'current' scope: flat list of the active workspace's sessions -->
-        <template v-else>
-          <SessionRow
-            v-for="s in filteredSessions"
-            :key="s.id"
-            :session="s"
-            :active="s.id === activeId"
-            :attention="attentionBySession[s.id] ?? 0"
-            @select="emit('select', $event)"
-            @rename="(id, title) => emit('rename', id, title)"
-            @delete="emit('delete', $event)"
-          />
-          <div v-if="filteredSessions.length === 0" class="empty">
-            {{ t('sidebar.noMatches') }}
-          </div>
         </template>
       </div>
+    </div>
+
+    <!-- Account popover (position:fixed, anchored to the settings button) -->
+    <div
+      v-if="acctMenuOpen"
+      ref="menuRef"
+      class="acct-menu"
+      :style="menuStyle"
+      @click.stop
+    >
+      <template v-if="authReady">
+        <div class="am-head">
+          <div class="am-prov">managed:kimi-code</div>
+          <div v-if="accountModel" class="am-model" :title="accountModel">{{ accountModel }}</div>
+        </div>
+        <div class="am-lang">
+          <span class="am-lang-label">{{ t('theme.label') }}</span>
+          <div class="theme-seg" role="group" :aria-label="t('theme.label')">
+            <button
+              type="button"
+              class="theme-opt"
+              :class="{ on: theme === 'modern' }"
+              :aria-pressed="theme === 'modern'"
+              @click="emit('setTheme', 'modern')"
+            >{{ t('theme.modern') }}</button>
+            <button
+              type="button"
+              class="theme-opt"
+              :class="{ on: theme === 'terminal' }"
+              :aria-pressed="theme === 'terminal'"
+              @click="emit('setTheme', 'terminal')"
+            >{{ t('theme.terminal') }}</button>
+          </div>
+        </div>
+        <div class="am-lang">
+          <span class="am-lang-label">{{ t('theme.accentLabel') }}</span>
+          <div class="theme-seg" role="group" :aria-label="t('theme.accentLabel')">
+            <button
+              type="button"
+              class="theme-opt"
+              :class="{ on: accent === 'blue' }"
+              :aria-pressed="accent === 'blue'"
+              @click="emit('setAccent', 'blue')"
+            >{{ t('theme.accentBlue') }}</button>
+            <button
+              type="button"
+              class="theme-opt"
+              :class="{ on: accent === 'mono' }"
+              :aria-pressed="accent === 'mono'"
+              @click="emit('setAccent', 'mono')"
+            >{{ t('theme.accentMono') }}</button>
+          </div>
+        </div>
+        <div class="am-lang">
+          <span class="am-lang-label">{{ t('theme.codeFontLabel') }}</span>
+          <div class="font-grid" role="group" :aria-label="t('theme.codeFontLabel')">
+            <button
+              v-for="f in CODE_FONT_OPTIONS"
+              :key="f.value"
+              type="button"
+              class="font-opt"
+              :class="{ on: codeFont === f.value }"
+              :aria-pressed="codeFont === f.value"
+              :style="{ fontFamily: f.family }"
+              @click="emit('setCodeFont', f.value)"
+            >{{ t(f.labelKey) }}</button>
+          </div>
+        </div>
+        <div class="am-lang">
+          <span class="am-lang-label">{{ t('sidebar.language') }}</span>
+          <LanguageSwitcher />
+        </div>
+        <button type="button" class="am-item" @click="emit('addWorkspace'); closeAccount()">
+          {{ t('workspace.addWorkspace') }}
+        </button>
+        <button type="button" class="am-item danger" @click="onLogout">{{ t('sidebar.signOut') }}</button>
+      </template>
+      <template v-else>
+        <div class="am-head">
+          <div class="am-prov">{{ t('sidebar.notSignedIn') }}</div>
+        </div>
+        <div class="am-lang">
+          <span class="am-lang-label">{{ t('theme.label') }}</span>
+          <div class="theme-seg" role="group" :aria-label="t('theme.label')">
+            <button
+              type="button"
+              class="theme-opt"
+              :class="{ on: theme === 'modern' }"
+              :aria-pressed="theme === 'modern'"
+              @click="emit('setTheme', 'modern')"
+            >{{ t('theme.modern') }}</button>
+            <button
+              type="button"
+              class="theme-opt"
+              :class="{ on: theme === 'terminal' }"
+              :aria-pressed="theme === 'terminal'"
+              @click="emit('setTheme', 'terminal')"
+            >{{ t('theme.terminal') }}</button>
+          </div>
+        </div>
+        <div class="am-lang">
+          <span class="am-lang-label">{{ t('theme.accentLabel') }}</span>
+          <div class="theme-seg" role="group" :aria-label="t('theme.accentLabel')">
+            <button
+              type="button"
+              class="theme-opt"
+              :class="{ on: accent === 'blue' }"
+              :aria-pressed="accent === 'blue'"
+              @click="emit('setAccent', 'blue')"
+            >{{ t('theme.accentBlue') }}</button>
+            <button
+              type="button"
+              class="theme-opt"
+              :class="{ on: accent === 'mono' }"
+              :aria-pressed="accent === 'mono'"
+              @click="emit('setAccent', 'mono')"
+            >{{ t('theme.accentMono') }}</button>
+          </div>
+        </div>
+        <div class="am-lang">
+          <span class="am-lang-label">{{ t('theme.codeFontLabel') }}</span>
+          <div class="font-grid" role="group" :aria-label="t('theme.codeFontLabel')">
+            <button
+              v-for="f in CODE_FONT_OPTIONS"
+              :key="f.value"
+              type="button"
+              class="font-opt"
+              :class="{ on: codeFont === f.value }"
+              :aria-pressed="codeFont === f.value"
+              :style="{ fontFamily: f.family }"
+              @click="emit('setCodeFont', f.value)"
+            >{{ t(f.labelKey) }}</button>
+          </div>
+        </div>
+        <div class="am-lang">
+          <span class="am-lang-label">{{ t('sidebar.language') }}</span>
+          <LanguageSwitcher />
+        </div>
+        <button type="button" class="am-item" @click="emit('addWorkspace'); closeAccount()">
+          {{ t('workspace.addWorkspace') }}
+        </button>
+        <button type="button" class="am-item signin" @click="onLogin">{{ t('sidebar.signIn') }}</button>
+      </template>
+
+      <button type="button" class="am-item" @click="onOpenOnboarding">{{ t('onboarding.reopen') }}</button>
+
+      <div class="am-daemon">
+        <span class="am-daemon-label">{{ t('sidebar.daemon') }}</span>
+        <span class="am-daemon-url">{{ daemonEndpoint }}</span>
+      </div>
+    </div>
+
+    <!-- Workspace right-click menu (position:fixed) -->
+    <div
+      v-if="ghMenuOpen"
+      ref="ghMenuRef"
+      class="gh-menu"
+      :style="ghMenuStyle"
+      @click.stop
+    >
+      <button type="button" class="ghm-item" @click="copyPathFromMenu">
+        {{ t('sidebar.copyPath') }}
+      </button>
+      <button type="button" class="ghm-item" @click="startRenameFromMenu">
+        {{ t('sidebar.rename') }}
+      </button>
     </div>
   </aside>
 </template>
@@ -226,31 +585,31 @@ function closeMenus(): void {
   height: 100%;
 }
 
-/* Session column (everything right of the rail). Width is set inline from the
-   App resize handle; flex: none so that explicit width wins. */
+/* Session column. Width is set inline from the App resize handle. */
 .col {
   flex: none;
   min-width: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  width: 100%;
 }
 
-/* Column header: read-only active workspace + scope toggle */
+/* Header: logo + settings (no border — flows into the workspace list). */
 .ch {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  padding: 9px 12px 8px;
-  border-bottom: 1px solid var(--line);
+  padding: 8px 12px 4px;
+  width: 100%;
+  box-sizing: border-box;
 }
-.ch-ws {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
+.ch-logo {
+  height: 22px;
+  width: auto;
+  display: block;
+  cursor: pointer;
 }
 .ch-name {
   font-size: 12.5px;
@@ -260,68 +619,64 @@ function closeMenus(): void {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ch-branch {
-  font-size: 10.5px;
-  color: var(--muted);
+.settings-btn {
   flex: none;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ch-scope {
-  flex: none;
-  border: 1px solid var(--line);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
   background: none;
-  font: inherit;
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 2px 7px;
-  border-radius: 9px;
-  white-space: nowrap;
-}
-.ch-scope:hover { color: var(--ink); border-color: var(--bd); }
-.ch-scope.on {
-  color: var(--blue2);
-  border-color: var(--bd);
-  background: var(--soft);
-}
-
-.sh {
-  padding: 9px 12px 6px;
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
+  border: none;
   color: var(--muted);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
 }
-.new { color: var(--blue2); cursor: pointer; text-transform: none; letter-spacing: 0; font-size: 11px; }
-.new:hover { text-decoration: underline; }
+.settings-btn:hover { background: var(--soft); color: var(--ink); }
 
-/* Search */
-.search-wrap { padding: 0 10px 6px; }
-.search-input {
-  width: 100%;
-  box-sizing: border-box;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--ink);
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  padding: 4px 7px;
-  outline: none;
-  transition: border-color 0.15s;
+/* Action buttons */
+ .btn-wrap {
+  padding: 10px 12px;
 }
-.search-input:focus { border-color: var(--blue); }
-.search-input::placeholder { color: var(--faint); }
+.btn-new-ws {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 9px 12px;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--dim);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.btn-new-ws:hover {
+  background: var(--panel);
+  border-color: var(--bd);
+  color: var(--ink);
+}
 
 /* Sessions */
-.sessions { flex: 1; overflow-y: auto; padding: 0 0 8px; min-height: 0; }
+.sessions {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 0 8px;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.sessions::-webkit-scrollbar { width: 4px; }
+.sessions::-webkit-scrollbar-track { background: transparent; }
+.sessions::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 2px;
+}
+.sessions::-webkit-scrollbar-thumb:hover { background: var(--bd); }
 
 .empty {
   padding: 24px 12px;
@@ -331,46 +686,243 @@ function closeMenus(): void {
   line-height: 1.6;
 }
 
-/* Workspace group (all-workspaces scope) — reuses the .sh header look */
-.group { padding-bottom: 2px; }
+/* Workspace group */
+.group { padding-bottom: 6px; }
 .gh {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 8px 12px 4px;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0px 12px 4px 12px;
   font-size: 10.5px;
+  user-select: none;
 }
-.gh-name {
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--muted);
-  font-weight: 600;
+.gh-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.gh.sel {
+  background: var(--soft);
+  border-radius: 4px;
+}
+
+.gh-folder {
   flex: none;
-  max-width: 45%;
+  color: var(--muted);
+  margin-right: 2px;
+}
+
+.gh-name {
+  font-size: 14px;
+  font-weight: 400;
+  color: #000;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
 }
 .gh-path {
   color: var(--faint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  min-width: 0;
-  flex: 1;
+  padding-left: 24px;
+  font-size: 12px;
 }
-.gh-count { color: var(--faint); flex: none; }
 .gh-add {
-  background: none;
+  background: transparent;
   border: none;
-  color: var(--blue2);
+  color: #bbb;
   cursor: pointer;
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 18px;
   line-height: 1;
-  padding: 0 2px;
+  padding: 2px 7px;
   flex: none;
 }
-.gh-add:hover { color: var(--blue); }
-.group-sessions :deep(.se) { padding-left: 18px; }
+.gh-add:hover { color: #666; }
+
+/* Inline workspace rename input */
+.gh-rename {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--blue);
+  border-radius: 3px;
+  padding: 2px 5px;
+  outline: none;
+}
+
+
+
+/* ---------------------------------------------------------------------------
+   Workspace right-click menu (position:fixed)
+   --------------------------------------------------------------------------- */
+.gh-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  min-width: 140px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  z-index: 200;
+}
+.ghm-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.ghm-item:hover {
+  background: var(--soft);
+}
+
+/* ---------------------------------------------------------------------------
+   Account popover (position:fixed, anchored to the settings button)
+   --------------------------------------------------------------------------- */
+.acct-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 220px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  z-index: 200;
+}
+.am-head {
+  padding: 6px 8px 7px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+.am-prov { color: var(--ink); font-size: 11.5px; }
+.am-model {
+  color: var(--muted);
+  font-size: 10.5px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.am-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 5px;
+}
+.am-item:hover { background: var(--hover, rgba(0, 0, 0, 0.04)); }
+.am-item.danger { color: #c0392b; }
+.am-item.danger:hover { background: rgba(192, 57, 43, 0.08); }
+.am-item.signin { color: var(--blue2); }
+.am-item.signin:hover { background: var(--soft); }
+
+.am-lang {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+}
+.am-lang-label { color: var(--muted); font-size: 11px; }
+
+.am-daemon {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 8px 5px;
+  margin-top: 2px;
+  border-top: 1px solid var(--line);
+}
+.am-daemon-label { color: var(--muted); font-size: 10.5px; flex: none; }
+.am-daemon-url {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  min-width: 0;
+  word-break: break-all;
+}
+
+/* Theme segmented toggle */
+.theme-seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.theme-opt {
+  border: none;
+  background: none;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 3px 9px;
+  line-height: 1.4;
+  transition: background 0.15s, color 0.15s;
+}
+.theme-opt + .theme-opt { border-left: 1px solid var(--line); }
+.theme-opt:hover { color: var(--ink); }
+.theme-opt.on {
+  background: var(--soft);
+  color: var(--blue2);
+  font-weight: 600;
+}
+
+/* Code font grid */
+.font-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+.font-opt {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--bg);
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 3px 6px;
+  line-height: 1.4;
+  text-align: center;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.font-opt:hover {
+  color: var(--ink);
+  border-color: var(--line2);
+}
+.font-opt.on {
+  background: var(--soft);
+  border-color: var(--bd);
+  color: var(--blue2);
+  font-weight: 600;
+}
 </style>

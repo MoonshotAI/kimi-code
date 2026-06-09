@@ -65,7 +65,7 @@ const isError = () => props.tool.status === 'error';
 <style scoped>
 .box {
   border: 1px solid var(--line);
-  margin: 7px 0 7px 33px;
+  margin: 10px 0;
   background: #fff;
   border-radius: 3px;
 }

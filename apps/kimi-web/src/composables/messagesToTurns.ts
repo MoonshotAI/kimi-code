@@ -11,7 +11,7 @@
 // incoming message they are NOT merged (one turn per message, old behaviour).
 
 import type { AppMessage, AppApprovalRequest } from '../api/types';
-import type { ApprovalBlock, ChatTurn, DiffLine, ToolCall } from '../types';
+import type { ApprovalBlock, ChatTurn, DiffLine, ToolCall, TurnBlock } from '../types';
 
 /**
  * Tool output is `string | ContentPart[]` (agent-core). A string splits into
@@ -159,6 +159,8 @@ interface Group {
   textParts: string[];
   thinkingParts: string[];
   tools: ToolCall[];
+  /** Ordered text/tool blocks (preserve call order for inline rendering). */
+  blocks: TurnBlock[];
   approval: ApprovalBlock | undefined;
   approvalId: string | undefined;
   /**
@@ -174,6 +176,22 @@ interface Group {
 // ---------------------------------------------------------------------------
 // messagesToTurns
 // ---------------------------------------------------------------------------
+
+/**
+ * Whether a USER-role message should be shown. Mirrors the TUI's
+ * isReplayUserTurnRecord: only real user input (origin `user`/absent, or a
+ * user-typed slash command) is displayed; system-injected user turns
+ * (compaction summaries, injections, hook results, retries, system triggers,
+ * background tasks, cron) are hidden. The origin arrives via message metadata
+ * (see toProtocolMessage in @moonshot-ai/services).
+ */
+function isDisplayableUserMessage(msg: AppMessage): boolean {
+  const origin = msg.metadata?.['origin'] as { kind?: string; trigger?: string } | undefined;
+  const kind = origin?.kind;
+  if (kind === undefined || kind === 'user') return true;
+  if (kind === 'skill_activation') return origin?.trigger === 'user-slash';
+  return false;
+}
 
 export function messagesToTurns(
   messages: AppMessage[],
@@ -201,6 +219,7 @@ export function messagesToTurns(
       text: g.textParts.join('\n'),
       thinking: g.thinkingParts.length > 0 ? g.thinkingParts.join('\n') : undefined,
       tools: g.tools.length > 0 ? g.tools : undefined,
+      blocks: g.blocks.length > 0 ? g.blocks : undefined,
       approval: g.approval,
       approvalId: g.approvalId,
     });
@@ -209,7 +228,14 @@ export function messagesToTurns(
   function absorbContent(g: Group, content: AppMessage['content']): void {
     for (const c of content) {
       if (c.type === 'text') {
-        if (c.text) g.textParts.push(c.text);
+        if (c.text) {
+          g.textParts.push(c.text);
+          // Append to a trailing text block, else open a new one — so a tool
+          // call between two text segments splits them into separate blocks.
+          const last = g.blocks[g.blocks.length - 1];
+          if (last && last.kind === 'text') last.text += '\n' + c.text;
+          else g.blocks.push({ kind: 'text', text: c.text });
+        }
       } else if (c.type === 'thinking') {
         if (c.thinking) g.thinkingParts.push(c.thinking);
       } else if (c.type === 'toolUse') {
@@ -221,20 +247,24 @@ export function messagesToTurns(
           status: pendingApproval ? 'running' : 'ok',
         };
         g.tools.push(toolCall);
+        g.blocks.push({ kind: 'tool', tool: toolCall });
         if (pendingApproval) {
           g.approval = buildApprovalBlock(pendingApproval);
           g.approvalId = pendingApproval.approvalId;
         }
       } else if (c.type === 'toolResult') {
-        // Update the matching tool call status within this group
+        // Update the matching tool call status within this group (both the flat
+        // tools[] and the ordered block that renders it).
         const idx = g.tools.findIndex((t) => t.id === c.toolCallId);
         if (idx !== -1) {
-          const existing = g.tools[idx]!;
-          g.tools[idx] = {
-            ...existing,
+          const updated: ToolCall = {
+            ...g.tools[idx]!,
             status: c.isError ? 'error' : 'ok',
             output: normalizeToolOutput(c.output),
           };
+          g.tools[idx] = updated;
+          const blk = g.blocks.find((b) => b.kind === 'tool' && b.tool.id === c.toolCallId);
+          if (blk && blk.kind === 'tool') blk.tool = updated;
         }
       }
     }
@@ -246,6 +276,9 @@ export function messagesToTurns(
     // User messages flush the pending group and start a new user turn
     if (msg.role === 'user') {
       flushGroup();
+      // Hide system-injected user turns (TUI parity) — they end the previous
+      // assistant turn but aren't rendered as a user bubble.
+      if (!isDisplayableUserMessage(msg)) continue;
       const textParts: string[] = [];
       for (const c of msg.content) {
         if (c.type === 'text') textParts.push(c.text);
@@ -286,6 +319,7 @@ export function messagesToTurns(
         textParts: [],
         thinkingParts: [],
         tools: [],
+        blocks: [],
         approval: undefined,
         approvalId: undefined,
         seenSigs: new Set<string>(),

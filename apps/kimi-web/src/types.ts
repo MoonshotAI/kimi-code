@@ -100,6 +100,13 @@ export type ApprovalBlock =
 
 export type TurnRole = 'user' | 'assistant';
 
+/** One ordered piece of an assistant turn: a text segment OR a tool card. Built
+ * in call order so tool cards render inline where they were invoked (not dumped
+ * after all the text). */
+export type TurnBlock =
+  | { kind: 'text'; text: string }
+  | { kind: 'tool'; tool: ToolCall };
+
 export interface ChatTurn {
   id: string;
   role: TurnRole;
@@ -107,6 +114,8 @@ export interface ChatTurn {
   text: string;
   thinking?: string; // extended-thinking content; rendered as ThinkingBlock in Phase 2
   tools?: ToolCall[];
+  /** Text + tool cards in original call order (assistant turns). */
+  blocks?: TurnBlock[];
   approval?: ApprovalBlock;
   approvalId?: string; // daemon approval id — present when approval needs a decision
 }

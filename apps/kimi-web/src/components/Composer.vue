@@ -7,6 +7,8 @@ import MentionMenu from './MentionMenu.vue';
 import type { SlashCommand } from '../lib/slashCommands';
 import { filterCommands, parseSlash } from '../lib/slashCommands';
 import type { FileItem } from './MentionMenu.vue';
+import type { ConversationStatus, PermissionMode } from '../types';
+import type { AppModel, ThinkingLevel } from '../api/types';
 
 // ---------------------------------------------------------------------------
 // Attachment state
@@ -37,11 +39,18 @@ const props = withDefaults(defineProps<{
   searchFiles?: (q: string) => Promise<FileItem[]>;
   /** If undefined, attach button is hidden and paste/drag are no-ops. */
   uploadImage?: (file: Blob, name?: string) => Promise<{ fileId: string; name: string; mediaType: string } | null>;
+  /** Status data (model, context, permission) — drives the bottom toolbar. */
+  status?: ConversationStatus;
+  thinking?: ThinkingLevel;
+  planMode?: boolean;
+  /** Available models for the quick-switch dropdown. */
+  models?: AppModel[];
 }>(), {
   running: false,
   queued: () => [],
   searchFiles: undefined,
   uploadImage: undefined,
+  models: () => [],
 });
 
 const placeholder = computed(() => t('composer.placeholder'));
@@ -52,6 +61,12 @@ const emit = defineEmits<{
   interrupt: [];
   unqueue: [index: number];
   editQueued: [index: number];
+  setPermission: [mode: PermissionMode];
+  setThinking: [level: ThinkingLevel];
+  togglePlan: [];
+  compact: [];
+  pickModel: [];
+  selectModel: [modelId: string];
 }>();
 
 const { t } = useI18n();
@@ -62,13 +77,14 @@ const { t } = useI18n();
 
 const text = ref('');
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
+const isFocused = ref(false);
 
 function autosize(): void {
   const el = textareaRef.value;
   if (!el) return;
   el.style.height = 'auto';
-  // Single-line by default (one row ≈ 24px); grows up to ~160px as the user types.
-  const next = Math.max(24, Math.min(160, el.scrollHeight));
+  // Two lines tall by default (~48px); grows up to ~180px as the user types.
+  const next = Math.max(48, Math.min(180, el.scrollHeight));
   el.style.height = `${next}px`;
 }
 
@@ -373,6 +389,20 @@ function handleSubmit(): void {
 }
 
 function handleKeydown(e: KeyboardEvent): void {
+  // Close dropdowns on Escape
+  if (e.key === 'Escape') {
+    if (dropdownOpen.value) {
+      e.preventDefault();
+      closeDropdown();
+      return;
+    }
+    if (permDropdownOpen.value) {
+      e.preventDefault();
+      closePermDropdown();
+      return;
+    }
+  }
+
   // Slash menu navigation
   if (slashOpen.value) {
     if (e.key === 'ArrowDown') {
@@ -436,6 +466,117 @@ function handleKeydown(e: KeyboardEvent): void {
 
 const sendLabel = computed(() => props.running ? t('composer.queue') : t('composer.send'));
 const hasUpload = computed(() => !!props.uploadImage);
+
+// ---------------------------------------------------------------------------
+// Bottom toolbar — split into individual controls
+// ---------------------------------------------------------------------------
+
+const dropdownOpen = ref(false);
+const permDropdownOpen = ref(false);
+const toolbarRef = ref<HTMLElement | null>(null);
+
+function toggleDropdown(): void {
+  dropdownOpen.value = !dropdownOpen.value;
+  if (dropdownOpen.value) {
+    permDropdownOpen.value = false;
+    document.addEventListener('click', onDocClick, true);
+  } else {
+    document.removeEventListener('click', onDocClick, true);
+  }
+}
+
+function closeDropdown(): void {
+  dropdownOpen.value = false;
+  if (!permDropdownOpen.value) {
+    document.removeEventListener('click', onDocClick, true);
+  }
+}
+
+function togglePermDropdown(): void {
+  permDropdownOpen.value = !permDropdownOpen.value;
+  if (permDropdownOpen.value) {
+    dropdownOpen.value = false;
+    document.addEventListener('click', onDocClick, true);
+  } else {
+    document.removeEventListener('click', onDocClick, true);
+  }
+}
+
+function closePermDropdown(): void {
+  permDropdownOpen.value = false;
+  if (!dropdownOpen.value) {
+    document.removeEventListener('click', onDocClick, true);
+  }
+}
+
+function onDocClick(e: MouseEvent): void {
+  if (toolbarRef.value && !toolbarRef.value.contains(e.target as Node)) {
+    closeDropdown();
+    closePermDropdown();
+  }
+}
+
+onUnmounted(() => {
+  document.removeEventListener('click', onDocClick, true);
+});
+
+// Context formatting
+const kFmt = (n: number) => `${Math.round(n / 1000)}k`;
+const pct = computed(() => Math.round(((props.status?.ctxUsed ?? 0) / (props.status?.ctxMax ?? 1)) * 100) || 0);
+
+const ctxTooltip = computed(() => {
+  const used = (props.status?.ctxUsed ?? 0).toLocaleString();
+  const max = (props.status?.ctxMax ?? 0).toLocaleString();
+  return t('status.ctxTooltip', { used, max, pct: pct.value });
+});
+
+const showCompact = computed(() => pct.value >= 80);
+
+// Thinking toggle
+const thinkingOn = computed(() => (props.thinking ?? 'off') !== 'off');
+function toggleThinking(): void {
+  emit('setThinking', thinkingOn.value ? 'off' : 'high');
+}
+
+// Plan toggle
+const planOn = computed(() => props.planMode === true);
+
+// Permission modes
+const PERM_MODES: { mode: PermissionMode; color: string; labelKey: string; descKey: string }[] = [
+  { mode: 'manual', color: 'var(--dim)', labelKey: 'status.permissionManual', descKey: 'status.permissionManualDesc' },
+  { mode: 'yolo', color: 'var(--warn)', labelKey: 'status.permissionYolo', descKey: 'status.permissionYoloDesc' },
+  { mode: 'auto', color: 'var(--err)', labelKey: 'status.permissionAuto', descKey: 'status.permissionAutoDesc' },
+];
+
+function choosePermission(mode: PermissionMode): void {
+  emit('setPermission', mode);
+  closePermDropdown();
+}
+
+const permInfo = computed(() => PERM_MODES.find((p) => p.mode === props.status?.permission));
+const permLabel = computed(() => (permInfo.value ? t(permInfo.value.labelKey) : ''));
+
+// ---------------------------------------------------------------------------
+// Model dropdown — current provider models + thinking + more
+// ---------------------------------------------------------------------------
+
+const currentProvider = computed(() => {
+  const name = props.status?.model ?? '';
+  const match = props.models?.find(
+    (m) => m.id === name || m.model === name || m.displayName === name,
+  );
+  return match?.provider ?? '';
+});
+
+const providerModels = computed(() => {
+  if (!currentProvider.value || !props.models?.length) return [];
+  return props.models.filter((m) => m.provider === currentProvider.value);
+});
+
+function selectModel(modelId: string): void {
+  emit('selectModel', modelId);
+  closeDropdown();
+}
 </script>
 
 <template>
@@ -493,83 +634,228 @@ const hasUpload = computed(() => !!props.uploadImage);
       </div>
     </div>
 
-    <!-- Input row with popup menus -->
-    <div class="cin-wrap">
-      <!-- Slash menu (above textarea) -->
-      <SlashMenu
-        v-if="slashOpen"
-        :items="slashItems"
-        :active-index="slashActive"
-        @select="selectSlashCommand"
-        @hover="slashActive = $event"
-      />
-
-      <!-- Mention menu (above textarea) -->
-      <MentionMenu
-        v-if="mentionOpen"
-        :items="mentionItems"
-        :active-index="mentionActive"
-        :loading="mentionLoading"
-        @select="selectMentionItem"
-        @hover="mentionActive = $event"
-      />
-
-      <div class="cin">
-        <textarea
-          ref="textareaRef"
-          v-model="text"
-          class="ph"
-          :placeholder="placeholder"
-          rows="1"
-          @keydown="handleKeydown"
-          @input="handleInput"
+    <!-- Main composer card -->
+    <div class="composer-card" :class="{ focused: isFocused }">
+      <!-- Input row with popup menus -->
+      <div class="cin-wrap">
+        <!-- Slash menu (above textarea) -->
+        <SlashMenu
+          v-if="slashOpen"
+          :items="slashItems"
+          :active-index="slashActive"
+          @select="selectSlashCommand"
+          @hover="slashActive = $event"
         />
 
-        <!-- Hidden file input -->
-        <input
-          v-if="hasUpload"
-          ref="fileInputRef"
-          type="file"
-          accept="image/*"
-          multiple
-          class="file-input-hidden"
-          @change="handleFileInputChange"
+        <!-- Mention menu (above textarea) -->
+        <MentionMenu
+          v-if="mentionOpen"
+          :items="mentionItems"
+          :active-index="mentionActive"
+          :loading="mentionLoading"
+          @select="selectMentionItem"
+          @hover="mentionActive = $event"
         />
 
-        <!-- Attach button (paperclip icon) -->
-        <button
-          v-if="hasUpload"
-          class="attach-btn"
-          :title="t('composer.attachImage')"
-          type="button"
-          @click="openFilePicker"
-        >
-          <!-- Line-SVG paperclip / image glyph -->
-          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
-            <rect x="2" y="3" width="12" height="10" rx="1.5"/>
-            <circle cx="5.5" cy="6.5" r="1"/>
-            <polyline points="2,13 5.5,9 8,11.5 10.5,8.5 14,13"/>
-          </svg>
-        </button>
+        <div class="input-row">
+          <textarea
+            ref="textareaRef"
+            v-model="text"
+            class="ph"
+            :placeholder="placeholder"
+            rows="1"
+            @keydown="handleKeydown"
+            @input="handleInput"
+            @focus="isFocused = true"
+            @blur="isFocused = false"
+          />
 
-        <button v-if="running" class="interrupt" :title="t('composer.interruptTitle')" @click="emit('interrupt')">{{ t('composer.interrupt') }}</button>
-        <button class="send" @click="handleSubmit">{{ sendLabel }}</button>
+          <!-- Interrupt button when running -->
+          <button v-if="running" class="interrupt" :title="t('composer.interruptTitle')" @click="emit('interrupt')">{{ t('composer.interrupt') }}</button>
+
+          <button class="send" :aria-label="sendLabel" @click="handleSubmit">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M8 3l6 5.5M8 3L2 8.5M8 3v10"/>
+            </svg>
+          </button>
+        </div>
       </div>
-    </div>
+
+      <!-- Hidden file input -->
+      <input
+        v-if="hasUpload"
+        ref="fileInputRef"
+        type="file"
+        accept="image/*"
+        multiple
+        class="file-input-hidden"
+        @change="handleFileInputChange"
+      />
+
+      <!-- Bottom toolbar — split into individual controls -->
+      <div ref="toolbarRef" class="toolbar">
+        <!-- Left: attach + permission + plan -->
+        <div class="toolbar-left">
+          <button
+            v-if="hasUpload"
+            class="attach-btn"
+            :title="t('composer.attachImage')"
+            type="button"
+            @click="openFilePicker"
+          >
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+              <rect x="2" y="3" width="12" height="10" rx="1.5"/>
+              <circle cx="5.5" cy="6.5" r="1"/>
+              <polyline points="2,13 5.5,9 8,11.5 10.5,8.5 14,13"/>
+            </svg>
+          </button>
+
+          <!-- Permission pill — click to open dropdown -->
+          <span
+            v-if="status"
+            class="perm-pill"
+            :class="['perm-' + status.permission, { open: permDropdownOpen }]"
+            role="button"
+            tabindex="0"
+            :title="t('status.permissionTooltip')"
+            @click.stop="togglePermDropdown"
+            @keydown.enter="togglePermDropdown"
+            @keydown.space.prevent="togglePermDropdown"
+          >{{ permLabel }}</span>
+
+          <!-- Permission dropdown — anchored to the toolbar left side -->
+          <div v-if="permDropdownOpen && status" class="perm-dropdown" role="menu" @click.stop>
+            <button
+              v-for="opt in PERM_MODES"
+              :key="opt.mode"
+              class="pd-row"
+              :class="{ 'is-current': opt.mode === status.permission }"
+              role="menuitem"
+              @click="choosePermission(opt.mode)"
+            >
+              <span class="pd-check">{{ opt.mode === status.permission ? '✓' : '' }}</span>
+              <span class="pd-info">
+                <span class="pd-name" :style="{ color: opt.color }">{{ t(opt.labelKey) }}</span>
+                <span class="pd-desc">{{ t(opt.descKey) }}</span>
+              </span>
+            </button>
+          </div>
+
+          <!-- Plan toggle pill -->
+          <span
+            v-if="status"
+            class="toggle-pill"
+            :class="{ on: planOn }"
+            role="button"
+            tabindex="0"
+            :title="t('status.planTooltip')"
+            @click="emit('togglePlan')"
+            @keydown.enter="emit('togglePlan')"
+            @keydown.space.prevent="emit('togglePlan')"
+          >{{ t('status.planLabel') }}</span>
+        </div>
+
+        <!-- Right: ctx + model -->
+        <div class="toolbar-right">
+          <!-- Compact chip when context is high -->
+          <button v-if="showCompact" class="compact-chip" @click.stop="emit('compact')">/compact</button>
+
+          <!-- Context meter — horizontal bar + token count -->
+          <span v-if="status" class="ctx-group" :title="ctxTooltip">
+            <span class="ctx-bar-track">
+              <span
+                class="ctx-bar-fill"
+                :style="{
+                  width: pct + '%',
+                  background: pct >= 80 ? 'var(--err)' : pct >= 50 ? 'var(--warn)' : 'var(--blue)',
+                }"
+              />
+            </span>
+            <span class="ctx-num">{{ kFmt(status.ctxUsed) }} / {{ kFmt(status.ctxMax) }}</span>
+          </span>
+
+          <!-- Model pill — click to open quick-switch dropdown -->
+          <span
+            v-if="status"
+            class="model-pill"
+            :class="{ open: dropdownOpen }"
+            role="button"
+            tabindex="0"
+            :title="t('status.modelTooltip')"
+            @click.stop="toggleDropdown"
+            @keydown.enter="toggleDropdown"
+            @keydown.space.prevent="toggleDropdown"
+          >
+            <b>{{ status.model }}</b>
+            <span v-if="thinkingOn" class="think-suffix">{{ t('composer.thinkingSuffix') }}</span>
+            <svg class="cv" viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>
+          </span>
+        </div>
+
+        <!-- Model dropdown — current provider models + thinking + more -->
+        <div v-if="dropdownOpen && status" class="model-dropdown" role="menu" @click.stop>
+          <!-- Current provider models -->
+          <div v-if="providerModels.length > 0" class="md-section">{{ currentProvider }}</div>
+          <button
+            v-for="m in providerModels"
+            :key="m.id"
+            class="md-row"
+            :class="{ 'is-current': m.id === status.model || m.model === status.model || m.displayName === status.model }"
+            role="menuitem"
+            @click="selectModel(m.id)"
+          >
+            <span class="md-check">{{ (m.id === status.model || m.model === status.model || m.displayName === status.model) ? '✓' : '' }}</span>
+            <span class="md-name">{{ m.displayName ?? m.model }}</span>
+          </button>
+
+          <div v-if="providerModels.length > 0" class="md-divider" />
+
+          <!-- Thinking toggle -->
+          <button
+            class="md-row md-row-toggle"
+            role="menuitem"
+            :class="{ 'is-on': thinkingOn }"
+            @click="toggleThinking()"
+          >
+            <span class="md-check">{{ thinkingOn ? '✓' : '' }}</span>
+            <span class="md-name">{{ t('status.thinkingLabel') }}</span>
+          </button>
+
+          <div class="md-divider" />
+
+          <!-- More models → open full picker -->
+          <button class="md-row md-row-more" role="menuitem" @click="closeDropdown(); emit('pickModel');">
+            <span class="md-name">{{ t('status.moreModels') }}</span>
+          </button>
+        </div>
+      </div>
   </div>
+</div>
 </template>
 
 <style scoped>
 .composer {
-  border-top: 1px solid var(--line);
   padding: 8px 16px 12px;
-  background: #fff;
+  background: transparent;
   transition: background 0.12s;
 }
 
 .composer.drag-over {
   background: var(--soft);
-  border-top-color: var(--bd);
+}
+
+/* Main composer card */
+.composer-card {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.composer-card.focused {
+  border-color: var(--bd);
+  box-shadow: 0 2px 12px rgba(21,101,192,0.08), 0 0 0 1px rgba(21,101,192,0.05);
 }
 
 /* Queued strip */
@@ -721,25 +1007,18 @@ const hasUpload = computed(() => !!props.uploadImage);
 /* Wrapper that establishes a positioning context for the popup menus */
 .cin-wrap {
   position: relative;
+  padding: 10px 12px 8px;
 }
 
-.cin {
+/* Input row */
+.input-row {
   display: flex;
-  align-items: center;
-  gap: 9px;
-  border: 1px solid var(--line);
-  background: #fff;
-  padding: 9px 11px;
-  border-radius: 4px;
+  align-items: flex-end;
+  gap: 8px;
 }
-
-.cin:focus-within {
-  border-color: var(--bd);
-}
-
 
 .ph {
-  color: var(--muted);
+  color: var(--faint);
   flex: 1;
   border: none;
   outline: none;
@@ -757,25 +1036,23 @@ const hasUpload = computed(() => !!props.uploadImage);
   color: var(--ink);
 }
 
-/* Attach button */
-.attach-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+/* /compact chip */
+.compact-chip {
   background: none;
-  border: none;
-  padding: 4px;
-  cursor: pointer;
-  color: var(--muted);
+  border: 1px solid var(--line);
   border-radius: 3px;
-  flex-shrink: 0;
+  color: var(--warn);
+  font-family: var(--mono);
+  font-size: 9px;
+  padding: 0 4px;
+  cursor: pointer;
+  height: 15px;
+  line-height: 13px;
+  flex: none;
 }
+.compact-chip:hover { background: var(--panel2); }
 
-.attach-btn:hover {
-  color: var(--blue);
-  background: var(--soft);
-}
-
+/* Interrupt button */
 .interrupt {
   background: none;
   color: var(--err);
@@ -792,20 +1069,332 @@ const hasUpload = computed(() => !!props.uploadImage);
   background: #fef2f2;
 }
 
+/* Send button — circular icon */
 .send {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
   background: var(--blue);
   color: #fff;
   border: none;
-  padding: 5px 13px;
-  font-family: var(--mono);
-  font-size: 11.5px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  border-radius: 3px;
   flex-shrink: 0;
+  transition: background 0.12s;
 }
 
 .send:hover {
   background: var(--blue2);
+}
+
+.send svg {
+  flex: none;
+}
+
+/* Bottom toolbar */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px 6px;
+  background: var(--panel2);
+  position: relative;
+  border-radius: 0 0 15px 15px;
+}
+
+.toolbar-left,
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Attach button (in toolbar) */
+.attach-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--muted);
+  border-radius: 5px;
+  flex-shrink: 0;
+  transition: all 0.1s;
+}
+
+.attach-btn:hover {
+  color: var(--blue);
+  background: var(--soft);
+}
+
+/* Permission pill */
+.perm-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  font-family: var(--mono);
+  cursor: pointer;
+  user-select: none;
+  height: 18px;
+  line-height: 1;
+  transition: opacity 0.1s;
+}
+.perm-pill:hover {
+  opacity: 0.85;
+}
+.perm-pill.open {
+  opacity: 0.85;
+}
+.perm-pill.perm-manual {
+  color: var(--dim);
+  background: transparent;
+}
+.perm-pill.perm-yolo {
+  color: var(--warn);
+  background: #fbf1dd;
+}
+.perm-pill.perm-auto {
+  color: var(--err);
+  background: #fcebea;
+}
+
+/* Context group — horizontal bar + num */
+.ctx-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 3px 2px;
+  cursor: help;
+}
+
+.ctx-bar-track {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  flex: none;
+  overflow: hidden;
+}
+
+.ctx-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.ctx-num {
+  font-size: 10px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+/* Model pill */
+.model-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  color: var(--dim);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s;
+  position: relative;
+}
+.model-pill:hover {
+  background: var(--soft);
+  color: var(--blue2);
+}
+.model-pill.open {
+  background: var(--soft);
+}
+.model-pill b {
+  font-weight: 500;
+  color: var(--ink);
+}
+.model-pill .think-suffix {
+  color: var(--blue);
+  font-weight: 500;
+}
+.model-pill .cv {
+  color: var(--faint);
+  flex: none;
+}
+.model-pill:hover .cv,
+.model-pill.open .cv {
+  color: var(--blue2);
+}
+
+/* Model dropdown — anchored to the toolbar right edge */
+.model-dropdown {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  right: 10px;
+  z-index: 60;
+  min-width: 200px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.md-section {
+  padding: 4px 7px 2px;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+}
+
+.md-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+  padding: 5px 7px;
+  border-radius: 6px;
+  text-align: left;
+}
+.md-row:hover { background: var(--soft); }
+.md-row.is-current { color: var(--ink); }
+.md-row.is-on { color: var(--blue); }
+
+.md-row-more {
+  color: var(--blue);
+  font-weight: 500;
+}
+.md-row-more:hover {
+  background: var(--blue-soft);
+}
+
+.md-check {
+  width: 14px;
+  flex: none;
+  color: var(--blue);
+  font-weight: 700;
+  display: flex;
+  justify-content: center;
+}
+
+.md-name {
+  flex: 1;
+}
+
+.md-divider {
+  height: 1px;
+  background: var(--line);
+  margin: 3px 0;
+}
+
+/* Permission dropdown — anchored to the toolbar left side */
+.perm-dropdown {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 10px;
+  z-index: 60;
+  min-width: 220px;
+  max-width: 280px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.pd-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px 7px;
+  border-radius: 6px;
+  text-align: left;
+}
+.pd-row:hover { background: var(--soft); }
+.pd-row.is-current { background: var(--blue-soft); }
+
+.pd-check {
+  width: 14px;
+  flex: none;
+  color: var(--blue);
+  font-weight: 700;
+  display: flex;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.pd-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.pd-name {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.pd-desc {
+  font-family: var(--sans);
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+/* Toggle pills (Thinking / Plan) */
+.toggle-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  color: var(--dim);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s, color 0.15s;
+  font-family: var(--sans);
+}
+.toggle-pill:hover {
+  background: var(--soft);
+}
+.toggle-pill.on {
+  background: var(--blue-soft);
+  color: var(--blue2);
+}
+.toggle-pill.on:hover {
+  background: var(--blue-soft-hover, var(--blue-soft));
 }
 
 /* ---- Mobile composer (prototype): round attach + rounded panel input +
@@ -815,47 +1404,21 @@ const hasUpload = computed(() => !!props.uploadImage);
   .composer {
     padding: 9px 12px max(24px, env(safe-area-inset-bottom));
   }
-  .cin {
-    gap: 9px;
-    padding: 0;
-    border: none;
-    background: none;
-    align-items: flex-end;
+  .composer-card {
+    border-radius: 14px;
   }
-  .cin:focus-within { border: none; }
-
-  /* Attach → 40px round */
-  .attach-btn {
-    width: 40px;
-    height: 40px;
-    padding: 0;
-    border-radius: 50%;
-    color: var(--muted);
-    align-self: flex-end;
-  }
-  .attach-btn:hover { background: none; }
-
-  /* Input → rounded panel pill */
-  .ph {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 22px;
-    padding: 10px 15px;
-    min-height: 42px;
-    box-sizing: border-box;
-    line-height: 1.4;
+  .input-row {
+    gap: 6px;
   }
 
-  /* Send → 42px round blue with shadow */
+  /* Send → 36px round */
   .send {
-    width: 42px;
-    height: 42px;
-    min-width: 42px;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
     padding: 0;
     border-radius: 50%;
-    font-size: 0; /* hide the text label; the arrow glyph below shows instead */
-    background: var(--blue);
-    box-shadow: 0 3px 10px rgba(21, 101, 192, 0.28);
+    font-size: 0;
     align-self: flex-end;
     position: relative;
   }
@@ -866,9 +1429,24 @@ const hasUpload = computed(() => !!props.uploadImage);
     color: #fff;
   }
   .interrupt {
-    min-height: 42px;
+    min-height: 36px;
     padding: 8px 12px;
     align-self: flex-end;
+  }
+
+  /* Model dropdown on mobile → anchored right with padding */
+  .model-dropdown {
+    right: 10px;
+    left: auto;
+    min-width: 180px;
+  }
+
+  /* Permission dropdown on mobile → anchored left with padding */
+  .perm-dropdown {
+    left: 10px;
+    right: auto;
+    min-width: 200px;
+    max-width: calc(100vw - 40px);
   }
 }
 

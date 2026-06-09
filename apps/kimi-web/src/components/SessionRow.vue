@@ -2,7 +2,7 @@
 <!-- A single session row: status dot + title + time + attention pill + kebab. -->
 <!-- Inline rename (dblclick) and delete-confirm live here. -->
 <script setup lang="ts">
-import { nextTick, ref } from 'vue';
+import { nextTick, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../types';
 
@@ -25,13 +25,31 @@ const emit = defineEmits<{
 
 // Kebab menu
 const menuOpen = ref(false);
+const kebabRef = ref<HTMLButtonElement | null>(null);
+const menuRef = ref<HTMLElement | null>(null);
+
+function onDocClick(e: MouseEvent): void {
+  const target = e.target as Node;
+  if (menuRef.value?.contains(target) || kebabRef.value?.contains(target)) return;
+  closeMenu();
+}
+
 function toggleMenu(e: Event): void {
   e.stopPropagation();
-  menuOpen.value = !menuOpen.value;
+  if (!menuOpen.value) {
+    menuOpen.value = true;
+    // Defer so the current click doesn't immediately close the menu.
+    setTimeout(() => document.addEventListener('mousedown', onDocClick), 0);
+  } else {
+    closeMenu();
+  }
 }
 function closeMenu(): void {
   menuOpen.value = false;
+  document.removeEventListener('mousedown', onDocClick);
 }
+
+onUnmounted(() => document.removeEventListener('mousedown', onDocClick));
 
 // Inline rename
 const renaming = ref(false);
@@ -96,10 +114,6 @@ defineExpose({ closeMenu, cancelDelete });
 
     <template v-else>
       <div class="row">
-        <span class="pre" :class="{ run: session.status === 'running' }">
-          {{ session.status === 'running' ? '●' : '○' }}
-        </span>
-
         <!-- Inline rename input -->
         <input
           v-if="renaming"
@@ -127,16 +141,25 @@ defineExpose({ closeMenu, cancelDelete });
 
         <!-- Kebab button (visible on hover) -->
         <button
+          ref="kebabRef"
           v-if="!renaming"
           class="kebab"
           :class="{ open: menuOpen }"
           :title="t('sidebar.options')"
           @click.stop="toggleMenu($event)"
-        >⋯</button>
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
+            <circle cx="8" cy="3" r="1.3" />
+            <circle cx="8" cy="8" r="1.3" />
+            <circle cx="8" cy="13" r="1.3" />
+          </svg>
+        </button>
+
+        <span class="ts">{{ session.time }}</span>
       </div>
 
       <!-- Kebab dropdown -->
-      <div v-if="menuOpen" class="menu" @click.stop>
+      <div ref="menuRef" v-if="menuOpen" class="menu" @click.stop>
         <button class="menu-item copy-id" @click.stop="copySessionId">
           {{ copiedId ? '已复制 ✓' : '复制 Session ID ⧉' }}
         </button>
@@ -144,31 +167,42 @@ defineExpose({ closeMenu, cancelDelete });
         <button class="menu-item" @click.stop="startRename">{{ t('sidebar.rename') }}</button>
         <button class="menu-item del" @click.stop="startDelete">{{ t('sidebar.delete') }}</button>
       </div>
-
-      <div class="ts">{{ session.time }}</div>
     </template>
   </div>
 </template>
 
 <style scoped>
+:root {
+  /* Sidebar alignment — session rows sit 5px left of the workspace name
+     (workspace: folder icon 14px + mr 2px + gap 6px = 22px;
+      session: spacer 9px + mr 2px + gap 6px = 17px → 5px left). */
+  --session-indent: calc(9px + 2px + 6px);
+}
+
 .se {
   display: block;
   padding: 7px 12px;
   cursor: pointer;
   position: relative;
 }
-.se:hover { background: var(--panel2); }
+.se:hover { background: #f2f2f2; }
 .se.on { background: rgba(21, 101, 192, 0.07); }
 
 .row {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
 }
-.pre { color: var(--faint); flex: none; }
-.pre.run { color: var(--ok); }
-.se.on .pre { color: var(--blue); }
+
+/* Spacer sits 5px left of the workspace name (9px vs 14px folder icon). */
+.row::before {
+  content: '';
+  display: block;
+  width: 9px;
+  margin-right: 2px;
+  flex: none;
+}
 
 .t {
   color: var(--ink);
@@ -202,23 +236,19 @@ defineExpose({ closeMenu, cancelDelete });
 .kebab {
   display: none;
   flex: none;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   cursor: pointer;
-  padding: 0 3px;
+  padding: 2px;
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1;
-  font-family: var(--mono);
-  border-radius: 3px;
-  margin-left: auto;
+  border-radius: 4px;
 }
 .se:hover .kebab,
 .kebab.open {
   display: inline-flex;
-  align-items: center;
 }
-.attn + .kebab { margin-left: 0; }
 .kebab:hover,
 .kebab.open { color: var(--ink); background: var(--line2); }
 
@@ -299,5 +329,5 @@ defineExpose({ closeMenu, cancelDelete });
 .btn-confirm:hover { opacity: 0.85; }
 .btn-cancel:hover { background: var(--panel2); }
 
-.ts { color: var(--muted); font-size: 10.5px; padding-left: 15px; margin-top: 1px; }
+.ts { color: var(--muted); font-size: 10.5px; flex: none; }
 </style>

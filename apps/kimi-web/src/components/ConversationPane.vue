@@ -3,7 +3,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ActivityState, ApprovalBlock, ChatTurn, ConnectionState, ContentAlign, ConversationStatus, DiffViewLine, PaneKey, PermissionMode, TaskItem, UIQuestion } from '../types';
-import type { ApprovalDecision, FsEntry, QuestionResponse, ThinkingLevel } from '../api/types';
+import type { AppModel, ApprovalDecision, FsEntry, QuestionResponse, ThinkingLevel } from '../api/types';
 import type { FileItem } from './MentionMenu.vue';
 import type { FileData } from './FilePreview.vue';
 import TabBar from './TabBar.vue';
@@ -13,7 +13,6 @@ import ChangedTree from './ChangedTree.vue';
 import TasksPane from './TasksPane.vue';
 import FileTree from './FileTree.vue';
 import FilePreview from './FilePreview.vue';
-import StatusLine from './StatusLine.vue';
 import Composer from './Composer.vue';
 import QuestionCard from './QuestionCard.vue';
 
@@ -49,6 +48,10 @@ const props = defineProps<{
   mobile?: boolean;
   /** Modern theme: render chat bubbles at all widths (desktop included). */
   modern?: boolean;
+  /** True while switching sessions and the turns array is not yet loaded. */
+  sessionLoading?: boolean;
+  /** Available models for the quick-switch dropdown in the composer toolbar. */
+  models?: AppModel[];
 }>();
 
 const emit = defineEmits<{
@@ -66,6 +69,7 @@ const emit = defineEmits<{
   togglePlan: [];
   compact: [];
   pickModel: [];
+  selectModel: [modelId: string];
 }>();
 
 const { t } = useI18n();
@@ -162,10 +166,12 @@ const changedView = ref<'changed' | 'all'>('changed');
 const CHANGED_LAYOUT_KEY = 'kimi-web.changed-layout';
 function loadChangedLayout(): 'list' | 'tree' {
   try {
-    return localStorage.getItem(CHANGED_LAYOUT_KEY) === 'tree' ? 'tree' : 'list';
+    const v = localStorage.getItem(CHANGED_LAYOUT_KEY);
+    if (v === 'tree' || v === 'list') return v;
   } catch {
-    return 'list';
+    // ignore
   }
+  return 'tree';
 }
 const changedLayout = ref<'list' | 'tree'>(loadChangedLayout());
 function toggleChangedLayout(): void {
@@ -252,8 +258,11 @@ function scrollToBottom(smooth = false): void {
 // stopped following during the thinking phase).
 const scrollKey = computed(() => {
   if (active.value !== 'chat') return '';
+  // Include approvals so the view scrolls when a new approval card appears
+  // (e.g. a tool call waiting for user confirmation at the end of the stream).
+  const approvalIds = (props.approvals ?? []).map((a) => a.approvalId).join(',');
   const t = props.turns;
-  if (t.length === 0) return '0';
+  if (t.length === 0) return `0|${approvalIds}`;
   const last = t[t.length - 1]!;
   const thinkingLen = last.thinking?.length ?? 0;
   const toolsLen =
@@ -261,12 +270,34 @@ const scrollKey = computed(() => {
       (n, tool) => n + tool.name.length + (tool.arg?.length ?? 0) + (tool.output?.join('').length ?? 0),
       0,
     ) ?? 0;
-  return `${t.length}:${last.text.length}:${thinkingLen}:${toolsLen}`;
+  return `${t.length}:${last.text.length}:${thinkingLen}:${toolsLen}|${approvalIds}`;
 });
+
+// Stick-to-bottom window: after a session's messages load, markstream/shiki keep
+// growing the content for a short while (code highlighting, images), so a single
+// scrollToBottom lands short of the end. While the window is open we force-follow
+// the bottom on every content change; a user scroll (wheel/touch) cancels it.
+const STICK_WINDOW_MS = 1200;
+let stickBottom = false;
+let stickTimer: ReturnType<typeof setTimeout> | undefined;
+function stickToBottomFor(ms: number): void {
+  stickBottom = true;
+  if (stickTimer) clearTimeout(stickTimer);
+  stickTimer = setTimeout(() => {
+    stickBottom = false;
+  }, ms);
+}
+function cancelStick(): void {
+  stickBottom = false;
+}
 
 watch(scrollKey, async () => {
   if (active.value !== 'chat') return;
   await nextTick();
+  if (stickBottom) {
+    scrollToBottom(false);
+    return;
+  }
   if (atBottom.value) {
     scrollToBottom(false);
   } else {
@@ -279,18 +310,47 @@ watch(scrollKey, async () => {
 // never lands on a stale preview.
 watch(active, async (tab) => {
   if (tab !== 'files') filesShowPreview.value = false;
-  if (tab !== 'chat') return;
+  if (tab !== 'chat') {
+    cancelStick(); // leaving chat: drop any stale stick window so it can't lock the pill on return
+    return;
+  }
   await nextTick();
   scrollToBottom(false);
 });
 
 // New session (reload key changes): reset the mobile files drill-down + clear
-// any previously-opened preview.
+// any previously-opened preview, and scroll chat to bottom so the user lands
+// at the end of the newly-selected historical session.
 watch(
   () => props.fileReloadKey,
-  () => {
+  async () => {
     filesShowPreview.value = false;
     selectedFile.value = null;
+    // Arm the stick window on every session switch (fires synchronously here).
+    // This survives rapid A->B->C switching, where overlapping async loads can
+    // collapse sessionLoading's true->false edge into a single transition (the
+    // watch below would then only fire once and later sessions land short).
+    stickToBottomFor(STICK_WINDOW_MS);
+    await nextTick();
+    scrollToBottom(false);
+  },
+);
+
+// Land at the bottom of a freshly-opened historical session. The fileReloadKey
+// watch above fires the instant activeSessionId changes — BEFORE the messages
+// finish their async REST load — so it scrolls an empty view, and the markdown
+// then renders tall (markstream/shiki) which the atBottom-gated watchers won't
+// follow. `sessionLoading` brackets the async load in selectSession (true ->
+// load -> false); on its true->false edge the turns have rendered, so we scroll
+// AND open a stick window to keep following until the tall markdown settles.
+watch(
+  () => props.sessionLoading,
+  async (loading, was) => {
+    if (loading || !was) return; // only on the load-finished (true -> false) edge
+    if (active.value !== 'chat') return;
+    stickToBottomFor(STICK_WINDOW_MS);
+    await nextTick();
+    scrollToBottom(false);
   },
 );
 
@@ -308,6 +368,10 @@ function onContentMutated(): void {
   const schedule = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb: () => void) => setTimeout(cb, 16) as unknown as number;
   scrollRaf = schedule(() => {
     scrollRaf = 0;
+    if (stickBottom) {
+      scrollToBottom(false);
+      return;
+    }
     if (atBottom.value) scrollToBottom(false);
     else showPill.value = true;
   }) as unknown as number;
@@ -325,12 +389,23 @@ onMounted(() => {
         characterData: true,
       });
     }
+    // A real user scroll cancels the stick-to-bottom window so we never fight
+    // someone who scrolls up right after opening a session.
+    if (panesRef.value) {
+      panesRef.value.addEventListener('wheel', cancelStick, { passive: true });
+      panesRef.value.addEventListener('touchstart', cancelStick, { passive: true });
+    }
   });
 });
 
 onUnmounted(() => {
   if (contentObserver) contentObserver.disconnect();
   if (scrollRaf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(scrollRaf);
+  if (stickTimer) clearTimeout(stickTimer);
+  if (panesRef.value) {
+    panesRef.value.removeEventListener('wheel', cancelStick);
+    panesRef.value.removeEventListener('touchstart', cancelStick);
+  }
 });
 </script>
 
@@ -355,12 +430,14 @@ onUnmounted(() => {
            aligned left or centered within the pane. -->
       <div v-if="active === 'chat'" class="content-wrap" :class="[mobile ? 'align-mobile' : `align-${contentAlign}`]">
         <ChatPane
+          :key="fileReloadKey ?? 'no-session'"
           :turns="turns"
           :approvals="approvals"
           :bubble="bubble"
           :mobile="mobile"
           :running="running"
           :sending="sending"
+          :session-loading="sessionLoading"
           @approval-decide="handleApprovalDecide"
         />
       </div>
@@ -397,9 +474,10 @@ onUnmounted(() => {
                 @click="changedView = 'all'"
               >{{ t('fileTree.all') }}</button>
             </div>
-            <!-- list/tree layout toggle for the Changed view -->
+          </div>
+          <!-- list/tree layout toggle for the Changed view -->
+          <div v-if="changedView === 'changed'" class="nav-tools">
             <button
-              v-if="changedView === 'changed'"
               type="button"
               class="layout-toggle"
               :title="changedLayout === 'tree' ? t('fileTree.listView') : t('fileTree.treeView')"
@@ -416,7 +494,7 @@ onUnmounted(() => {
                 v-if="changedLayout === 'list'"
                 mode="list"
                 :changes="changes ?? []"
-                :git-info="gitInfo ?? null"
+                :git-info="null"
                 @open="pickChanged"
               />
               <ChangedTree v-else :changes="changes ?? []" @open="pickChanged" />
@@ -503,25 +581,21 @@ onUnmounted(() => {
         :queued="queued"
         :search-files="searchFiles"
         :upload-image="uploadImage"
+        :status="status"
+        :thinking="thinking"
+        :plan-mode="planMode"
+        :models="models"
         @submit="emit('submit', $event)"
         @command="emit('command', $event)"
         @interrupt="emit('interrupt')"
         @unqueue="emit('unqueue', $event)"
         @edit-queued="emit('editQueued', $event)"
-      />
-      <StatusLine
-        v-if="!mobile"
-        :status="status"
-        :connection="connection"
-        :activity="activity"
-        :thinking="thinking"
-        :plan-mode="planMode"
         @set-permission="emit('setPermission', $event)"
         @set-thinking="emit('setThinking', $event)"
         @toggle-plan="emit('togglePlan')"
         @compact="emit('compact')"
-        @interrupt="emit('interrupt')"
         @pick-model="emit('pickModel')"
+        @select-model="emit('selectModel', $event)"
       />
     </div>
   </section>
@@ -568,19 +642,14 @@ onUnmounted(() => {
 .dock.align-left { margin-left: 0; margin-right: auto; }
 .dock.align-mobile { max-width: none; }
 
-/* Capped desktop dock (center/left): the composer/input box is the visual
-   anchor; the status line is a quiet footer below it. No panel border, no hard
-   dividers — the dock blends into the (white) chat surface and the rounded input
-   box defines the area. Mobile keeps its own flat full-width bar. */
+/* Capped desktop dock (center/left): the fused composer card is the visual
+   anchor. No panel border, no hard dividers — the dock blends into the (white)
+   chat surface and the rounded composer card defines the area. Mobile keeps its
+   own flat full-width bar. */
 .dock:not(.align-mobile) :deep(.composer) {
   border-top: none;
   background: transparent;
-  /* Tight bottom gap so the status controls sit right under the input box. */
-  padding-bottom: 2px;
-}
-.dock:not(.align-mobile) :deep(.statusline) {
-  border-top: none;
-  background: transparent;
+  padding-bottom: 4px;
 }
 
 /* Merged files pane: horizontal split (navigator | divider | content), no outer scroll */
@@ -670,6 +739,17 @@ onUnmounted(() => {
   line-height: 1.5;
 }
 .seg-btn.on .seg-n { background: var(--blue); }
+
+/* Layout toggle bar (tree/list) sits on its own row below the Changed|All toggle. */
+.nav-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
 
 .files-divider {
   width: 1px;

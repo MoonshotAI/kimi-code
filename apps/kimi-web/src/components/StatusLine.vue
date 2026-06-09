@@ -68,13 +68,6 @@ onUnmounted(() => document.removeEventListener('click', onDocClick, true));
 // Permission
 // ---------------------------------------------------------------------------
 
-const permColor = computed(() => {
-  const p = props.status.permission;
-  if (p === 'yolo') return 'var(--err)';
-  if (p === 'auto') return 'var(--warn)';
-  return 'var(--dim)';
-});
-
 function permLabelFor(p: PermissionMode): string {
   if (p === 'yolo') return t('status.permissionYolo');
   if (p === 'auto') return t('status.permissionAuto');
@@ -97,12 +90,13 @@ function choosePermission(mode: PermissionMode): void {
 // Thinking
 // ---------------------------------------------------------------------------
 
-const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'xhigh', 'max'];
 const thinkingLevel = computed<ThinkingLevel>(() => props.thinking ?? 'high');
-
-function chooseThinking(level: ThinkingLevel): void {
-  emit('setThinking', level);
-  closePopover();
+// Thinking is a simple on/off toggle (TUI parity — the TUI treats thinking as a
+// boolean and lets the backend pick the effort, default 'high'). We intentionally
+// don't expose the 6 effort levels here.
+const thinkingOn = computed(() => thinkingLevel.value !== 'off');
+function toggleThinking(): void {
+  emit('setThinking', thinkingOn.value ? 'off' : 'high');
 }
 
 // ---------------------------------------------------------------------------
@@ -110,7 +104,6 @@ function chooseThinking(level: ThinkingLevel): void {
 // ---------------------------------------------------------------------------
 
 const planOn = computed(() => props.planMode === true);
-const planValue = computed(() => (planOn.value ? t('status.planOn') : t('status.planOff')));
 
 // ---------------------------------------------------------------------------
 // Connection / activity
@@ -145,62 +138,11 @@ const isRunning = computed(() => (props.activity ?? 'idle') === 'running');
       :title="connTitle"
     >{{ connTitle }}</span>
 
-    <!-- Model pill — clickable -->
-    <span
-      class="kv model-kv"
-      :class="{ 'kv-first': isConnected }"
-      role="button"
-      tabindex="0"
-      :title="t('status.modelTooltip')"
-      @click="emit('pickModel')"
-      @keydown.enter="emit('pickModel')"
-      @keydown.space.prevent="emit('pickModel')"
-    >{{ t('status.modelLabel') }} <b>{{ status.model }}</b></span>
+    <!-- LEFT — per-message mode controls, as icon + value pills (no verbose
+         "label: value" text). Permission is colour-coded by mode. -->
 
-    <!-- Thinking selector — clickable pill + popover -->
-    <span class="kv think-kv" :class="{ open: openPopover === 'thinking' }">
-      <span
-        class="kv-btn"
-        role="button"
-        tabindex="0"
-        :title="t('status.thinkingTooltip')"
-        @click.stop="toggle('thinking')"
-        @keydown.enter="toggle('thinking')"
-        @keydown.space.prevent="toggle('thinking')"
-      >{{ t('status.thinkingLabel') }} <b>{{ thinkingLevel }}</b></span>
-
-      <div v-if="openPopover === 'thinking'" class="popover think-popover" role="listbox">
-        <button
-          v-for="lvl in THINKING_LEVELS"
-          :key="lvl"
-          class="pop-row"
-          :class="{ 'is-current': lvl === thinkingLevel }"
-          role="option"
-          :aria-selected="lvl === thinkingLevel"
-          @click.stop="chooseThinking(lvl)"
-        >
-          <span class="pop-check">{{ lvl === thinkingLevel ? '✓' : '' }}</span>
-          <span class="pop-name">{{ lvl }}</span>
-        </button>
-      </div>
-    </span>
-
-    <!-- Plan mode pill — clickable toggle -->
-    <span
-      class="kv plan-kv"
-      :class="{ 'plan-on': planOn }"
-      role="button"
-      tabindex="0"
-      :title="t('status.planTooltip')"
-      @click="emit('togglePlan')"
-      @keydown.enter="emit('togglePlan')"
-      @keydown.space.prevent="emit('togglePlan')"
-    >
-      {{ t('status.planLabel') }} <b class="plan-val">{{ planValue }}</b>
-    </span>
-
-    <!-- Permission selector — clickable pill + popover with descriptions -->
-    <span class="kv perm-kv" :class="{ open: openPopover === 'perm' }">
+    <!-- Permission selector — colored pill + popover with descriptions -->
+    <span class="kv perm-kv" :class="['perm-' + status.permission, { open: openPopover === 'perm' }]">
       <span
         class="kv-btn"
         role="button"
@@ -209,7 +151,9 @@ const isRunning = computed(() => (props.activity ?? 'idle') === 'running');
         @click.stop="toggle('perm')"
         @keydown.enter="toggle('perm')"
         @keydown.space.prevent="toggle('perm')"
-      >{{ t('status.permissionLabel') }} <b class="perm-val" :style="{ color: permColor }">{{ permLabel }}</b></span>
+      >
+        <b class="perm-val">{{ permLabel }}</b>
+      </span>
 
       <div v-if="openPopover === 'perm'" class="popover perm-popover" role="listbox">
         <button
@@ -230,8 +174,33 @@ const isRunning = computed(() => (props.activity ?? 'idle') === 'running');
       </div>
     </span>
 
-    <!-- Working directory + branch now live in the workspace switcher (sidebar
-         top), so they're intentionally not duplicated here. -->
+    <!-- Thinking — on/off toggle (TUI parity; no effort-level menu) -->
+    <span
+      class="kv think-kv"
+      :class="{ 'think-on': thinkingOn }"
+      role="button"
+      tabindex="0"
+      :title="t('status.thinkingTooltip')"
+      @click="toggleThinking"
+      @keydown.enter="toggleThinking"
+      @keydown.space.prevent="toggleThinking"
+    >
+      <span class="plan-lbl">{{ t('status.thinkingLabel') }}</span>
+    </span>
+
+    <!-- Plan mode — list icon toggle (blue when on) -->
+    <span
+      class="kv plan-kv"
+      :class="{ 'plan-on': planOn }"
+      role="button"
+      tabindex="0"
+      :title="t('status.planTooltip')"
+      @click="emit('togglePlan')"
+      @keydown.enter="emit('togglePlan')"
+      @keydown.space.prevent="emit('togglePlan')"
+    >
+      <span class="plan-lbl">{{ t('status.planLabel') }}</span>
+    </span>
 
     <!-- Activity indicator -->
     <span v-if="activityText" class="kv activity">
@@ -239,10 +208,24 @@ const isRunning = computed(() => (props.activity ?? 'idle') === 'running');
       <button v-if="isRunning" class="interrupt-btn" @click.stop="emit('interrupt')">{{ t('status.interrupt') }}</button>
     </span>
 
-    <!-- Context meter — pushed to the far right. -->
+    <!-- RIGHT — model (compact, with chevron) + context ring. -->
+    <span
+      class="kv model-kv"
+      role="button"
+      tabindex="0"
+      :title="t('status.modelTooltip')"
+      @click="emit('pickModel')"
+      @keydown.enter="emit('pickModel')"
+      @keydown.space.prevent="emit('pickModel')"
+    >
+      <b class="model-name">{{ status.model }}</b>
+      <svg class="cv" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>
+    </span>
+
+    <!-- Context meter — compact ring (filled by % used). -->
     <span class="kv ctx-kv" :title="ctxTooltip">
-      ctx <b>{{ kFmt(status.ctxUsed) }}/{{ kFmt(status.ctxMax) }}</b>
-      <span class="bar"><i :style="{ width: pct + '%' }"></i></span>
+      <span class="ring" :style="{ background: `conic-gradient(var(--blue) ${pct * 3.6}deg, var(--line2) 0)` }"></span>
+      <span class="ctx-num">{{ kFmt(status.ctxUsed) }}</span>
       <button v-if="showCompact" class="compact-chip" @click.stop="emit('compact')">/compact</button>
     </span>
   </div>
@@ -289,11 +272,12 @@ const isRunning = computed(() => (props.activity ?? 'idle') === 'running');
   padding-left: 4px;
 }
 /* Context meter pushed to the far right. */
-.ctx-kv { margin-left: auto; }
+/* right-hand group (model + ctx) is pushed right via .model-kv below */
 .kv b {
   color: var(--ink);
-  font-weight: 600;
+  font-weight: 500;
 }
+.kvl { color: var(--muted); font-weight: 400; }
 
 .kv-icon {
   flex: none;
@@ -355,22 +339,66 @@ const isRunning = computed(() => (props.activity ?? 'idle') === 'running');
   user-select: none;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.model-kv:hover,
+/* icon inside a control pill — inherits the pill's text colour */
+.kv .ic { flex: none; }
+
+/* model + ctx are the right-hand group; model starts it. */
+.model-kv { margin-left: auto; gap: 4px; }
+.model-name {
+  display: inline-block;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.kv .cv { color: var(--faint); flex: none; }
+.model-kv:hover { background: var(--soft); color: var(--blue2); }
+.kv:hover .cv,
+.kv.open .cv { color: var(--blue2); }
+
+/* thinking + plan: soft-blue on hover/open */
 .think-kv:hover,
 .think-kv.open,
-.plan-kv:hover,
-.perm-kv:hover,
-.perm-kv.open {
+.plan-kv:hover {
   background: var(--soft);
   color: var(--blue2);
 }
-.plan-val { font-weight: 600; }
-.plan-kv.plan-on {
-  background: var(--soft);
+.plan-kv { color: var(--muted); }
+.plan-lbl { font-weight: 500; }
+.plan-kv.plan-on { background: var(--soft); color: var(--blue); }
+.think-kv { color: var(--muted); }
+.think-kv.think-on { background: var(--soft); color: var(--blue); }
+
+/* permission: colour-coded pill by mode (manual ghost / auto amber / yolo red) */
+.perm-val { font-weight: 500; }
+.perm-manual { color: var(--dim); }
+.perm-manual:hover,
+.perm-manual.open { background: var(--soft); color: var(--blue2); }
+.perm-auto { background: #fbf1dd; color: var(--warn); }
+.perm-auto:hover,
+.perm-auto.open { background: #f6e8c8; }
+.perm-yolo { background: #fcebea; color: var(--err); }
+.perm-yolo:hover,
+.perm-yolo.open { background: #f8dcda; }
+
+/* context ring — conic fill by % used, white centre makes it a ring */
+.ctx-kv { gap: 6px; cursor: default; }
+.ring {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  flex: none;
+  position: relative;
 }
-.plan-kv.plan-on .plan-val { color: var(--blue); }
-.plan-kv.plan-on b { color: var(--blue); }
-.perm-val { font-weight: 600; }
+.ring::after {
+  content: "";
+  position: absolute;
+  inset: 3.5px;
+  border-radius: 50%;
+  background: var(--bg);
+}
+.ctx-num { color: var(--muted); font-family: var(--mono); font-size: 11px; }
 
 /* Popover (shared look for thinking + permission) */
 .popover {

@@ -40,7 +40,6 @@ import type {
   UIQuestion,
   Workspace,
   WorkspaceGroup,
-  WorkspaceScope,
   WorkspaceView,
 } from '../types';
 
@@ -58,6 +57,71 @@ const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'low', 'medium', 'high
 
 /** UI theme: 'terminal' = today's default line look, 'modern' = bubbles everywhere. */
 export type Theme = 'terminal' | 'modern';
+
+/** Code font choices (all free / open-source). */
+export type CodeFont =
+  | 'sf-mono'
+  | 'fira-code'
+  | 'jetbrains-mono'
+  | 'source-code-pro'
+  | 'ibm-plex-mono'
+  | 'space-mono'
+  | 'ubuntu-mono';
+
+const CODE_FONT_STORAGE_KEY = 'kimi-web.code-font';
+const CODE_FONT_VALUES: readonly string[] = [
+  'sf-mono',
+  'fira-code',
+  'jetbrains-mono',
+  'source-code-pro',
+  'ibm-plex-mono',
+  'space-mono',
+  'ubuntu-mono',
+];
+
+function loadCodeFontFromStorage(): CodeFont {
+  try {
+    const v = localStorage.getItem(CODE_FONT_STORAGE_KEY);
+    if (v && CODE_FONT_VALUES.includes(v)) return v as CodeFont;
+  } catch {
+    // ignore
+  }
+  return 'sf-mono';
+}
+
+function saveCodeFontToStorage(v: CodeFont): void {
+  try {
+    localStorage.setItem(CODE_FONT_STORAGE_KEY, v);
+  } catch {
+    // ignore
+  }
+}
+
+/** Reflect the chosen code font onto <html data-code-font>. jsdom-safe. */
+function applyCodeFontToDocument(f: CodeFont): void {
+  if (typeof document === 'undefined' || !document.documentElement) return;
+  document.documentElement.dataset.codeFont = f;
+}
+
+// Accent / colour scheme: 'blue' (Kimi blue, default) or 'mono' (black/white,
+// Vercel-style). Reflected onto <html data-accent>; style.css remaps the blue
+// tokens to grayscale for 'mono'. Orthogonal to the terminal/modern theme.
+export type Accent = 'blue' | 'mono';
+const ACCENT_STORAGE_KEY = 'kimi-web.accent';
+const ACCENT_VALUES: readonly string[] = ['blue', 'mono'];
+function loadAccentFromStorage(): Accent {
+  try {
+    const v = localStorage.getItem(ACCENT_STORAGE_KEY);
+    if (v && ACCENT_VALUES.includes(v)) return v as Accent;
+  } catch {
+    // ignore
+  }
+  return 'blue';
+}
+function applyAccentToDocument(a: Accent): void {
+  if (typeof document === 'undefined' || !document.documentElement) return;
+  document.documentElement.dataset.accent = a;
+}
 
 function loadPermissionFromStorage(): PermissionMode {
   try {
@@ -181,6 +245,7 @@ interface ExtendedState extends KimiClientState {
   thinking: ThinkingLevel;
   planMode: boolean;
   loading: boolean;
+  sessionLoading: boolean;
   queuedBySession: Record<string, string[]>;
   gitStatusBySession: Record<string, GitStatusEntry>;
   // Real daemon prompt_id of the last submitted prompt, per session. This is the
@@ -196,7 +261,6 @@ interface ExtendedState extends KimiClientState {
   // Workspace state
   workspaces: AppWorkspace[];
   activeWorkspaceId: string | null;
-  workspaceScope: WorkspaceScope;
   fsHome: string | null;
   recentRoots: string[];
 }
@@ -211,6 +275,7 @@ const rawState: ExtendedState = reactive({
   thinking: loadThinkingFromStorage(),
   planMode: loadPlanModeFromStorage(),
   loading: false,
+  sessionLoading: false,
   queuedBySession: {},
   gitStatusBySession: {},
   promptIdBySession: {},
@@ -220,7 +285,6 @@ const rawState: ExtendedState = reactive({
   managedProviderStatus: null,
   workspaces: [],
   activeWorkspaceId: loadActiveWorkspaceFromStorage(),
-  workspaceScope: 'current',
   fsHome: null,
   recentRoots: [],
 });
@@ -306,6 +370,34 @@ function setTheme(t: Theme): void {
 /** Flip Terminal ↔ Modern. */
 function toggleTheme(): void {
   setTheme(theme.value === 'modern' ? 'terminal' : 'modern');
+}
+
+// ---------------------------------------------------------------------------
+// Code font (free/OFL options loaded from Google Fonts). Persisted and mirrored
+// onto <html data-code-font> so every --mono consumer picks it up.
+// ---------------------------------------------------------------------------
+const codeFont = ref<CodeFont>(loadCodeFontFromStorage());
+
+// Sync on every change AND immediately.
+watch(codeFont, applyCodeFontToDocument, { immediate: true });
+
+/** Set the code font and persist it. */
+function setCodeFont(f: CodeFont): void {
+  if (!CODE_FONT_VALUES.includes(f)) return;
+  codeFont.value = f;
+  saveCodeFontToStorage(f);
+}
+
+const accent = ref<Accent>(loadAccentFromStorage());
+watch(accent, applyAccentToDocument, { immediate: true });
+function setAccent(a: Accent): void {
+  if (!ACCENT_VALUES.includes(a)) return;
+  accent.value = a;
+  try {
+    localStorage.setItem(ACCENT_STORAGE_KEY, a);
+  } catch {
+    // ignore
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -704,6 +796,7 @@ const tasks = computed<TaskItem[]>(() => {
 const connection = computed<ConnectionState>(() => rawState.connection);
 
 const loading = computed<boolean>(() => rawState.loading);
+const sessionLoading = computed<boolean>(() => rawState.sessionLoading);
 
 const permission = computed<PermissionMode>(() => rawState.permission);
 const thinking = computed<ThinkingLevel>(() => rawState.thinking);
@@ -881,8 +974,16 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() => {
   }
   const activeGit = gitInfo.value;
   const activeRoot = rawState.sessions.find((s) => s.id === rawState.activeSessionId)?.cwd;
+
+  // Order: real workspaces in listWorkspaces order, then derived workspaces
+  // sorted by root path so the order is stable (not tied to session activity).
+  const realRoots = rawState.workspaces.map((w) => w.root);
+  const derivedRoots = [...byRoot.keys()].filter((r) => !realRoots.includes(r));
+  derivedRoots.sort((a, b) => a.localeCompare(b));
+
   const result: AppWorkspace[] = [];
-  for (const w of byRoot.values()) {
+  for (const root of [...realRoots, ...derivedRoots]) {
+    const w = byRoot.get(root)!;
     // Match count by either id or root (derived id === root).
     const count = counts.get(w.id) ?? counts.get(w.root) ?? w.sessionCount;
     let branch = w.branch;
@@ -919,30 +1020,17 @@ const visibleWorkspace = computed<WorkspaceView | null>(() => {
   return workspacesView.value.find((w) => w.id === id) ?? null;
 });
 
-const workspaceScope = computed<WorkspaceScope>(() => rawState.workspaceScope);
-
 /**
- * Sessions to show in the sidebar given the current scope.
- * - 'current': only sessions in the active workspace (flat list).
- * - 'all': every session (the sidebar renders workspaceGroups for grouping).
+ * All sessions for the sidebar (grouped by workspace via workspaceGroups).
  */
-const sessionsForView = computed<Session[]>(() => {
-  const mapped = rawState.sessions.map((s) => ({
+const sessionsForView = computed<Session[]>(() =>
+  rawState.sessions.map((s) => ({
     id: s.id,
     title: s.title,
     time: formatTime(s.updatedAt, s.status),
     status: toUiSessionStatus(s.status),
-  }));
-  if (rawState.workspaceScope === 'all') return mapped;
-  const wid = activeWorkspaceId.value;
-  if (!wid) return mapped;
-  const allowed = new Set(
-    rawState.sessions
-      .filter((s) => workspaceIdForSession(s) === wid)
-      .map((s) => s.id),
-  );
-  return mapped.filter((s) => allowed.has(s.id));
-});
+  })),
+);
 
 /** Per-workspace groups for the 'all workspaces' scope. */
 const workspaceGroups = computed<WorkspaceGroup[]>(() => {
@@ -959,9 +1047,10 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
     list.push(view);
     byId.set(wid, list);
   }
-  return workspacesView.value
-    .filter((w) => byId.has(w.id))
-    .map((w) => ({ workspace: w, sessions: byId.get(w.id) ?? [] }));
+  return workspacesView.value.map((w) => ({
+    workspace: w,
+    sessions: byId.get(w.id) ?? [],
+  }));
 });
 
 /**
@@ -1178,12 +1267,8 @@ function selectWorkspace(id: string): void {
   saveActiveWorkspaceToStorage(id);
 }
 
-/** Switch the sidebar session-list scope. */
-function setWorkspaceScope(scope: WorkspaceScope): void {
-  rawState.workspaceScope = scope;
-}
-
 /**
+ * Create a session in a workspace — the one-click path (no cwd typing).
  * Create a session in a workspace — the one-click path (no cwd typing).
  * Resolves the workspace root → createSession({ workspaceId, cwd: root }).
  */
@@ -1278,6 +1363,7 @@ async function getFsHome(): Promise<{ home: string; recentRoots: string[] }> {
 
 async function selectSession(sessionId: string): Promise<void> {
   try {
+    rawState.sessionLoading = true;
     rawState.activeSessionId = sessionId;
     // A diff belongs to the session it was loaded from — drop it on switch.
     clearFileDiff();
@@ -1321,6 +1407,8 @@ async function selectSession(sessionId: string): Promise<void> {
     }
   } catch (err) {
     rawState.warnings = [...rawState.warnings, `selectSession failed: ${String(err)}`];
+  } finally {
+    rawState.sessionLoading = false;
   }
 }
 
@@ -1616,6 +1704,13 @@ async function renameSession(id: string, title: string): Promise<void> {
   } catch (err) {
     rawState.warnings = [...rawState.warnings, `renameSession failed: ${String(err)}`];
   }
+}
+
+/** Rename a workspace — local-only until the daemon ships a workspace update API. */
+function renameWorkspace(id: string, name: string): void {
+  rawState.workspaces = rawState.workspaces.map((w) =>
+    w.id === id ? { ...w, name } : w,
+  );
 }
 
 /** Delete a session — calls API, removes locally, picks another active session or none */
@@ -1914,7 +2009,6 @@ export function useKimiWebClient() {
     workspacesView,
     visibleWorkspace,
     activeWorkspaceId,
-    workspaceScope,
     sessionsForView,
     workspaceGroups,
     attentionBySession,
@@ -1937,6 +2031,7 @@ export function useKimiWebClient() {
     // New Phase 1 computed
     connection,
     loading,
+    sessionLoading,
     initialized,
     permission,
     thinking,
@@ -1955,6 +2050,12 @@ export function useKimiWebClient() {
     theme,
     setTheme,
     toggleTheme,
+
+    // Code font
+    codeFont,
+    setCodeFont,
+    accent,
+    setAccent,
     onboarded,
     setOnboarded,
 
@@ -1966,7 +2067,6 @@ export function useKimiWebClient() {
     // Workspace actions
     loadWorkspaces,
     selectWorkspace,
-    setWorkspaceScope,
     createSessionInWorkspace,
     addWorkspaceByPath,
     browseFs,
@@ -1988,6 +2088,7 @@ export function useKimiWebClient() {
     enqueue,
     dismissWarning,
     renameSession,
+    renameWorkspace,
     deleteSession,
     compact,
     forkSession,

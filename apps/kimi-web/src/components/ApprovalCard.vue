@@ -201,7 +201,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 <style scoped>
 .appr {
   border: 1px solid var(--bd);
-  margin: 8px 0 8px 33px;
+  margin: 10px 0;
   background: #fff;
   border-radius: 3px;
 }

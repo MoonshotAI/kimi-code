@@ -1,4 +1,6 @@
 <!-- apps/kimi-web/src/components/TasksPane.vue -->
+<!-- TUI-inspired todo list: clean rows with status glyphs, strikethrough done,
+     compact output, minimal chrome. Matches the terminal todo-panel style. -->
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -10,96 +12,209 @@ const emit = defineEmits<{ cancel: [taskId: string] }>();
 
 const { t } = useI18n();
 
-const stopLabel = computed(() => t('tasks.stop'));
+const MAX_VISIBLE = 5;
 
-const summary = () => {
-  const run = props.tasks.filter((t) => t.state === 'run').length;
-  const done = props.tasks.filter((t) => t.state === 'done').length;
-  return t('tasks.summary', { run, done });
-};
+const visibleTasks = computed(() => {
+  if (props.tasks.length <= MAX_VISIBLE) return props.tasks;
+  return props.tasks.slice(0, MAX_VISIBLE);
+});
+
+const hiddenCount = computed(() => props.tasks.length - visibleTasks.value.length);
+
+function statusGlyph(state: string): string {
+  switch (state) {
+    case 'run': return '●';
+    case 'done': return '✓';
+    case 'fail': return '✗';
+    default: return '○';
+  }
+}
+
+function statusClass(state: string): string {
+  switch (state) {
+    case 'run': return 's-run';
+    case 'done': return 's-done';
+    case 'fail': return 's-fail';
+    default: return 's-pending';
+  }
+}
 </script>
 
 <template>
   <div class="taskspane">
-    <div class="pvhead"><span class="tag">{{ t('tasks.tag') }}</span><span class="f">{{ summary() }}</span></div>
-    <div class="tfull">
-      <div v-for="t in tasks" :key="t.id" class="trow">
-        <div class="top">
-          <span class="tdot" :class="t.state"></span>
-          <span class="tn">{{ t.name }}</span>
-          <span class="badge">{{ t.kind }}</span>
-          <span class="ts">{{ t.timing }}</span>
-          <span v-if="t.state === 'run'" class="stop" @click="emit('cancel', t.id)">{{ stopLabel }}</span>
+    <!-- TUI-style header: border line + title -->
+    <div class="tp-head">
+      <span class="tp-title">{{ t('tasks.tag') }}</span>
+      <span class="tp-count">{{ tasks.length }}</span>
+    </div>
+
+    <div class="tp-list">
+      <div
+        v-for="task in visibleTasks"
+        :key="task.id"
+        class="tp-row"
+        :class="{ done: task.state === 'done', fail: task.state === 'fail' }"
+      >
+        <div class="tp-main">
+          <span class="tp-glyph" :class="statusClass(task.state)">{{ statusGlyph(task.state) }}</span>
+          <span class="tp-name">{{ task.name }}</span>
+          <span class="tp-kind">{{ task.kind }}</span>
+          <span class="tp-time">{{ task.timing }}</span>
+          <button
+            v-if="task.state === 'run'"
+            class="tp-stop"
+            @click="emit('cancel', task.id)"
+          >{{ t('tasks.stop') }}</button>
         </div>
-        <div v-if="t.meta" class="meta">{{ t.meta }}</div>
-        <div v-if="t.output" class="out">
-          <div v-for="(line, i) in t.output" :key="i">{{ line }}</div>
+        <div v-if="task.meta" class="tp-meta">{{ task.meta }}</div>
+        <div v-if="task.output" class="tp-out">
+          <div v-for="(line, i) in task.output" :key="i">{{ line }}</div>
         </div>
+      </div>
+
+      <div v-if="hiddenCount > 0" class="tp-more">
+        … +{{ hiddenCount }} more
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.pvhead {
+.taskspane {
+  padding: 14px 18px 10px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* TUI-style header: top border + bold title */
+.tp-head {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.tp-title {
+  color: var(--blue2);
+  font-weight: 700;
+  font-size: 12.5px;
+  text-transform: capitalize;
+}
+.tp-count {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* List: no cards, just clean rows */
+.tp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tp-row {
+  padding: 4px 0;
+}
+.tp-row.done .tp-name {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.tp-row.fail .tp-name {
+  color: var(--err);
+}
+
+.tp-main {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 9px 16px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-  font-size: 11.5px;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+/* Status glyph */
+.tp-glyph {
+  flex: none;
+  font-size: 11px;
+  width: 14px;
+  text-align: center;
+  user-select: none;
+}
+.tp-glyph.s-run   { color: var(--blue); font-weight: 700; }
+.tp-glyph.s-done  { color: var(--ok); }
+.tp-glyph.s-fail  { color: var(--err); }
+.tp-glyph.s-pending { color: var(--faint); }
+
+.tp-name {
+  color: var(--ink);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tp-kind {
+  flex: none;
+  font-size: 10px;
   color: var(--dim);
-}
-.tag { color: var(--blue2); font-weight: 700; }
-.f { color: var(--ink); font-weight: 600; }
-.tfull { padding: 8px 10px; }
-.trow {
-  padding: 9px 10px;
   border: 1px solid var(--line);
-  border-radius: 4px;
-  margin-bottom: 6px;
-  background: #fff;
+  border-radius: 3px;
+  padding: 0 5px;
 }
-.top { display: flex; align-items: center; gap: 9px; }
-.tdot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-.tdot.run { background: var(--blue); box-shadow: 0 0 0 3px var(--soft); }
-.tdot.done { background: var(--ok); }
-.tdot.fail { background: var(--err); }
-.tn { color: var(--ink); font-size: 12.5px; font-weight: 600; }
-.badge { font-size: 10.5px; color: var(--dim); border: 1px solid var(--line); border-radius: 3px; padding: 0 6px; }
-.ts { margin-left: auto; color: var(--muted); font-size: 11px; }
-.stop { margin-left: 8px; color: var(--err); border: 1px solid #f0c9c9; border-radius: 3px; padding: 1px 8px; font-size: 10.5px; cursor: pointer; }
-.meta { padding-left: 18px; margin-top: 5px; color: var(--muted); font-size: 11px; }
-.out {
-  margin: 6px 0 0 18px;
-  padding: 7px 9px;
+
+.tp-time {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.tp-stop {
+  flex: none;
+  background: none;
+  border: 1px solid #f0c9c9;
+  border-radius: 3px;
+  color: var(--err);
+  font-size: 10.5px;
+  padding: 1px 8px;
+  cursor: pointer;
+  font-family: var(--mono);
+}
+.tp-stop:hover { background: var(--panel); }
+
+.tp-meta {
+  margin-top: 3px;
+  padding-left: 22px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.tp-out {
+  margin: 4px 0 0 22px;
+  padding: 5px 8px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 3px;
   color: var(--dim);
   font-size: 11px;
-  line-height: 1.6;
+  line-height: 1.55;
   overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
 }
-.out > div { white-space: pre; }
+.tp-out > div { white-space: pre; }
 
-/* ---- Mobile: full-width rows, comfortable padding, ≥44px Stop tap target,
-        long task output scrolls horizontally instead of breaking the layout. ---- */
+.tp-more {
+  padding: 4px 0 4px 22px;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* Mobile */
 @media (max-width: 640px) {
-  .tfull { padding: 10px 12px 16px; }
-  .trow {
-    padding: 12px 12px;
-    border-radius: 8px;
-    margin-bottom: 8px;
-  }
-  .top { flex-wrap: wrap; row-gap: 6px; }
-  .tn { font-size: 13px; }
-  .ts { font-size: 11px; }
-  /* Stop → a real tap target: pulled to a new line if the row wraps, ≥44px tall. */
-  .stop {
-    margin-left: auto;
+  .taskspane { padding: 14px 14px 16px; }
+  .tp-main { flex-wrap: wrap; row-gap: 4px; }
+  .tp-name { font-size: 13px; }
+  .tp-stop {
     min-height: 32px;
     display: inline-flex;
     align-items: center;
@@ -107,7 +222,7 @@ const summary = () => {
     border-radius: 6px;
     font-size: 12px;
   }
-  .meta { padding-left: 0; font-size: 14px; }
-  .out { margin-left: 0; font-size: 14px; }
+  .tp-meta { padding-left: 0; font-size: 12px; }
+  .tp-out { margin-left: 0; font-size: 12px; }
 }
 </style>

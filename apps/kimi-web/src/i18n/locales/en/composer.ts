@@ -12,4 +12,6 @@ export default {
   interrupt: 'Interrupt',
   interruptTitle: 'Interrupt current operation',
   emptyConversation: 'No messages yet — type below to start the conversation.',
+  thinkingSuffix: ' · thinking',
+
 } as const;

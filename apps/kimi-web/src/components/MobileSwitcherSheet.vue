@@ -170,7 +170,13 @@ function onDelete(id: string): void {
           class="kb"
           :title="t('sidebar.options')"
           @click.stop="toggleMenu(s.id)"
-        >⋯</button>
+        >
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
+            <circle cx="8" cy="3" r="1.3" />
+            <circle cx="8" cy="8" r="1.3" />
+            <circle cx="8" cy="13" r="1.3" />
+          </svg>
+        </button>
 
         <!-- Kebab menu -->
         <div v-if="menuFor === s.id" class="kmenu" @click.stop>
@@ -340,14 +346,14 @@ function onDelete(id: string): void {
 }
 .srow .kb {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   cursor: pointer;
   color: var(--faint);
-  font-size: 18px;
-  line-height: 1;
-  padding: 6px 4px;
-  font-family: var(--mono);
+  padding: 4px;
 }
 .srow .kb:active { color: var(--ink); }
 

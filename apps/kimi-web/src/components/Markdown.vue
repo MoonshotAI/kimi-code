@@ -15,11 +15,13 @@ const props = withDefaults(
   defineProps<{
     text: string;
     /**
-     * True only for the assistant turn that is actively streaming. It drives
-     * `final` (= !streaming). Combined with `smooth-streaming="auto"`, markstream
-     * animates the typewriter/fade reveal ONLY while a turn is live (final=false);
-     * a DONE turn (final=true) — including every message in a reopened historical
-     * session — renders statically with no re-stream animation.
+     * True only for the assistant turn that is actively streaming. Drives BOTH
+     * `final` (= !streaming) AND markstream's `smooth-streaming`. We bind
+     * smooth-streaming to this (not the hardcoded "auto") because "auto" still
+     * plays a one-time typewriter/fade reveal when the full content is set on
+     * mount — so reopening a historical session re-streamed every message.
+     * With smooth-streaming = false for done turns, markstream snaps the text
+     * in immediately; only a genuinely live turn (streaming=true) animates.
      */
     streaming?: boolean;
   }>(),
@@ -127,7 +129,7 @@ function copyDiff(code: string, idx: number) {
         :themes="[CODE_LIGHT_THEME]"
         :code-block-props="codeBlockProps"
         :final="final"
-        smooth-streaming="auto"
+        :smooth-streaming="streaming"
       />
 
       <!-- ```diff fence → local renderer (preserves +/- markers + colours) -->

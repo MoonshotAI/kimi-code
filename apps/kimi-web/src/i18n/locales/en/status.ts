@@ -9,10 +9,10 @@ export default {
   permissionManual: 'Manual',
   permissionAuto: 'Auto',
   permissionYolo: 'YOLO',
-  permissionTooltip: 'Click to choose approval mode',
-  permissionManualDesc: 'Approve each tool before it runs',
-  permissionAutoDesc: 'Auto-approve safe edits/reads, prompt for risky ones',
-  permissionYoloDesc: 'Auto-approve everything (no prompts)',
+  permissionTooltip: 'Click to cycle permission mode',
+  permissionManualDesc: 'Ask for approval on every tool action',
+  permissionAutoDesc: 'Fully autonomous — agent decides everything without asking',
+  permissionYoloDesc: 'Auto-approve tool actions, but agent may still ask questions',
   // Plan mode pill
   planLabel: 'Plan',
   planOn: 'on',
@@ -20,7 +20,8 @@ export default {
   planTooltip: 'Toggle plan mode (research before editing)',
   // Thinking selector
   thinkingLabel: 'thinking',
-  thinkingTooltip: 'Click to set thinking level',
+  thinkingTooltip: 'Toggle thinking mode',
+  moreModels: 'More models…',
   // Status panel
   statusPanelTitle: 'Session status',
   statusPanelClose: 'Close',

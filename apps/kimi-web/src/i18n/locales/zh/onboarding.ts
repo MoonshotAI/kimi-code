@@ -6,5 +6,6 @@ export default {
   terminalDesc: '紧凑、等宽、行式。',
   modernDesc: '气泡、sans、更柔和。',
   start: '开始使用',
+  skip: '跳过',
   reopen: '偏好 / 引导',
 };

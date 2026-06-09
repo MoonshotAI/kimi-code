@@ -44,12 +44,10 @@ const activeWorkspaceSessionCount = computed<number>(
   () => client.sessionsForView.value.length,
 );
 
-// Cycle through thinking levels for the /thinking slash command (no popover
-// anchor when invoked from the composer).
-const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'xhigh', 'max'];
+// Thinking is on/off (TUI parity — no effort-level cycling). The /thinking
+// command flips between off and the backend default effort ('high').
 function nextThinkingLevel(current: ThinkingLevel): ThinkingLevel {
-  const idx = THINKING_LEVELS.indexOf(current);
-  return THINKING_LEVELS[(idx + 1) % THINKING_LEVELS.length]!;
+  return current === 'off' ? 'high' : 'off';
 }
 
 // First-run onboarding (theme / language / welcome greeting). Shown until the
@@ -68,41 +66,16 @@ onMounted(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Layout: resizable session column. The left grid cell = fixed rail (52px) +
-// the user-resizable session column. ResizeHandle owns the column width (with
+// Layout: resizable session column. ResizeHandle owns the column width (with
 // localStorage persistence); we mirror it here to drive the App grid.
 // ---------------------------------------------------------------------------
-const RAIL_WIDTH = 52;
-const RAIL_EXPANDED_WIDTH = 190;
-const RAIL_EXPANDED_KEY = 'kimi-web.rail-expanded';
 const SIDEBAR_WIDTH_KEY = 'kimi-web.sidebar-width';
 const SIDEBAR_DEFAULT = 196;
 const SIDEBAR_MIN = 170;
 const SIDEBAR_MAX = 420;
 
-// Rail mode: collapsed (52px icon rail, default) vs expanded (named rows).
-// Restored from localStorage on load; the toggle persists each flip.
-function readRailExpanded(): boolean {
-  try {
-    return localStorage.getItem(RAIL_EXPANDED_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-const railExpanded = ref(readRailExpanded());
-const railWidth = computed(() => (railExpanded.value ? RAIL_EXPANDED_WIDTH : RAIL_WIDTH));
-
-function toggleRailExpand(): void {
-  railExpanded.value = !railExpanded.value;
-  try {
-    localStorage.setItem(RAIL_EXPANDED_KEY, String(railExpanded.value));
-  } catch {
-    // localStorage unavailable (e.g. private mode) — mode still works in-memory
-  }
-}
-
 const sessionColWidth = ref(SIDEBAR_DEFAULT);
-const sideWidth = computed(() => railWidth.value + sessionColWidth.value);
+const sideWidth = computed(() => sessionColWidth.value);
 
 // Reference to ConversationPane so we can imperatively switch tabs
 const conversationPaneRef = ref<InstanceType<typeof ConversationPane> | null>(null);
@@ -112,6 +85,15 @@ const running = computed(() => client.activity.value !== 'idle');
 
 // Auth readiness — drives onboarding banner
 const authReady = computed(() => client.authReady.value);
+
+// Shift-multi-selected workspace ids; when >1 are selected the main pane
+// shows a "coming soon" placeholder instead of the conversation.
+const selectedWorkspaceIds = ref<string[]>([]);
+const hasMultiSelect = computed(() => selectedWorkspaceIds.value.length > 1);
+
+function handleSelectWorkspaces(ids: string[]): void {
+  selectedWorkspaceIds.value = ids;
+}
 
 // Dialog visibility refs
 const showModelPicker = ref(false);
@@ -290,31 +272,31 @@ function handleCreateSession(): void {
     <template v-if="!isMobile">
       <Sidebar
         :col-width="sessionColWidth"
-        :rail-expanded="railExpanded"
-        :workspaces="client.workspacesView.value"
         :active-workspace="client.visibleWorkspace.value"
         :active-workspace-id="client.activeWorkspaceId.value"
-        :scope="client.workspaceScope.value"
         :sessions="client.sessionsForView.value"
         :groups="client.workspaceGroups.value"
         :active-id="client.activeSessionId.value"
         :attention-by-session="client.attentionBySession.value"
-        :attention-by-workspace="client.attentionByWorkspace.value"
         :auth-ready="client.authReady.value"
         :account-model="client.defaultModel.value"
         :theme="client.theme.value"
+        :code-font="client.codeFont.value"
+        :accent="client.accent.value"
         @select="client.selectSession($event)"
         @create="handleCreateSession"
         @create-in-workspace="client.createSessionInWorkspace($event)"
         @select-workspace="client.selectWorkspace($event)"
-        @set-scope="client.setWorkspaceScope($event)"
         @add-workspace="showAddWorkspace = true"
         @rename="(id, title) => client.renameSession(id, title)"
         @delete="(id) => client.deleteSession(id)"
+        @rename-workspace="(id, name) => client.renameWorkspace(id, name)"
+        @select-workspaces="handleSelectWorkspaces"
         @login="openLogin"
         @logout="client.logout"
-        @toggle-rail-expand="toggleRailExpand"
         @set-theme="client.setTheme($event)"
+        @set-code-font="client.setCodeFont($event)"
+        @set-accent="client.setAccent($event)"
         @open-onboarding="openOnboarding"
       />
       <ResizeHandle
@@ -339,6 +321,7 @@ function handleCreateSession(): void {
     />
 
     <ConversationPane
+      v-if="!hasMultiSelect"
       ref="conversationPaneRef"
       :mobile="isMobile"
       :modern="client.theme.value === 'modern'"
@@ -355,6 +338,7 @@ function handleCreateSession(): void {
       :status="client.status.value"
       :thinking="client.thinking.value"
       :plan-mode="client.planMode.value"
+      :models="client.models.value"
       :questions="client.questions.value"
       :running="running"
       :queued="client.queued.value"
@@ -367,6 +351,7 @@ function handleCreateSession(): void {
       :read-file="client.readFileContent"
       :changes-by-path="client.changesByPath.value"
       :file-reload-key="client.activeSessionId.value"
+      :session-loading="client.sessionLoading.value"
       @submit="handleSubmit($event)"
       @approval="(approvalId, response) => client.respondApproval(approvalId, response)"
       @cancel-task="client.cancelTask($event)"
@@ -381,7 +366,14 @@ function handleCreateSession(): void {
       @toggle-plan="client.togglePlanMode()"
       @compact="client.compact()"
       @pick-model="openModelPicker()"
+      @select-model="client.setModel($event)"
     />
+
+    <!-- Multi-workspace selection placeholder -->
+    <div v-else class="coming-soon">
+      <span class="cs-icon">🚧</span>
+      <span class="cs-text">{{ t('app.comingSoon') }}</span>
+    </div>
 
     <!-- Model Picker overlay -->
     <ModelPicker
@@ -480,8 +472,11 @@ function handleCreateSession(): void {
     <Onboarding
       v-if="showOnboarding"
       :theme="client.theme.value"
+      :accent="client.accent.value"
       @set-theme="client.setTheme($event)"
+      @set-accent="client.setAccent($event)"
       @complete="completeOnboarding"
+      @skip="completeOnboarding"
     />
 
     <!-- Floating warnings / agent errors (e.g. a 403 from the model provider) -->
@@ -589,4 +584,18 @@ function handleCreateSession(): void {
   flex: none;
 }
 .auth-banner-btn:hover { background: var(--blue2); }
+
+/* Multi-workspace selection placeholder */
+.coming-soon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+.cs-icon { font-size: 32px; }
+.cs-text { font-size: 14px; }
 </style>
