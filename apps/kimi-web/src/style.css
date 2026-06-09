@@ -208,9 +208,10 @@ html[data-theme="modern"] .se.on {
   box-shadow: inset 0 0 0 1px var(--bd);
 }
 
-/* Tab bar + column header → clean white strips with a single hairline. */
-html[data-theme="modern"] .tabs,
-html[data-theme="modern"] .ch {
+/* Tab bar → clean white strip with a single hairline.
+   Sidebar header (.ch) keeps the sidebar body color so the right border
+   extends seamlessly from top to bottom. */
+html[data-theme="modern"] .tabs {
   background: #fff;
 }
 
