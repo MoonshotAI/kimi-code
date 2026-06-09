@@ -1,5 +1,14 @@
 # @moonshot-ai/agent-core
 
+## 0.11.1
+
+### Patch Changes
+
+- [#584](https://github.com/MoonshotAI/kimi-code/pull/584) [`11bb62c`](https://github.com/MoonshotAI/kimi-code/commit/11bb62c12f38d380a0ca1bb89ee2df67f93300e1) - Allow obsolete experimental config entries to remain without blocking startup.
+
+- Updated dependencies [[`aa3471f`](https://github.com/MoonshotAI/kimi-code/commit/aa3471f5d3d2960834ba3239c0b8459144bc79fa)]:
+  - @moonshot-ai/kosong@0.4.1
+
 ## 0.11.0
 
 ### Minor Changes

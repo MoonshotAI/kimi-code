@@ -1,7 +1,6 @@
 import { HOOK_EVENT_TYPES } from '../session/hooks/types';
 import { parsePattern } from '#/agent/permission/matches-rule';
 import { ErrorCodes, KimiError } from '#/errors';
-import { FLAG_DEFINITIONS, type FlagId } from '#/flags/registry';
 import { z } from 'zod';
 
 export const ProviderTypeSchema = z.enum([
@@ -105,20 +104,7 @@ export const BackgroundConfigSchema = z.object({
 
 export type BackgroundConfig = z.infer<typeof BackgroundConfigSchema>;
 
-const ExperimentalFlagIdSet = new Set<string>(FLAG_DEFINITIONS.map((def) => def.id));
-
-export const ExperimentalConfigSchema = z
-  .record(z.string(), z.boolean())
-  .superRefine((config, ctx) => {
-    for (const key of Object.keys(config)) {
-      if (ExperimentalFlagIdSet.has(key)) continue;
-      ctx.addIssue({
-        code: 'custom',
-        path: [key],
-        message: `Unknown experimental feature "${key}".`,
-      });
-    }
-  }) as z.ZodType<Partial<Record<FlagId, boolean>>>;
+export const ExperimentalConfigSchema = z.record(z.string(), z.boolean());
 
 export type ExperimentalConfig = z.infer<typeof ExperimentalConfigSchema>;
 

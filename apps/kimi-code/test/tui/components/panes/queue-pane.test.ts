@@ -51,4 +51,35 @@ describe('QueuePaneComponent', () => {
     expect(output).toContain('will send after current task');
     expect(output).not.toContain('ctrl-s to steer immediately');
   });
+
+  it('truncates long messages to a single line', () => {
+    const longText = 'a'.repeat(200);
+    const component = new QueuePaneComponent({
+      isCompacting: false,
+      isStreaming: true,
+      canSteerImmediately: true,
+      messages: [{ text: longText }],
+    });
+
+    const lines = component.render(30);
+    expect(lines).toHaveLength(2); // message + hint
+    const messageLine = stripAnsi(lines[0] as string);
+    expect(messageLine).not.toContain('a'.repeat(30));
+    expect(messageLine.endsWith('…')).toBe(true);
+  });
+
+  it('collapses multiline text into a single line', () => {
+    const component = new QueuePaneComponent({
+      isCompacting: false,
+      isStreaming: true,
+      canSteerImmediately: true,
+      messages: [{ text: 'line one\nline two\nline three' }],
+    });
+
+    const lines = component.render(120);
+    expect(lines).toHaveLength(2); // message + hint
+    const messageLine = stripAnsi(lines[0] as string);
+    expect(messageLine).toContain('line one line two line three');
+    expect(messageLine).not.toContain('\n');
+  });
 });
