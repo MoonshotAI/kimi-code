@@ -130,15 +130,11 @@ async function bootDaemon(stub: StubOAuth): Promise<RunningDaemon> {
     coreProcessOptions: { homeDir: bridgeHome },
   });
   // Override the IOAuthService in the container post-boot. The container's
-  // `ServiceCollection` is public; we re-set the slot and also clear the
-  // `_instances` cache so per-request `accessor.get(IOAuthService)` returns
-  // the stub instead of the cached real impl.
+  // `ServiceCollection` is live, so subsequent requests resolve the stub.
   const ix = daemon.services as unknown as {
     services: { set: (id: unknown, v: unknown) => void };
-    _instances: Map<unknown, unknown>;
   };
   ix.services.set(IOAuthService, stub);
-  ix._instances.set(IOAuthService, stub);
   return daemon;
 }
 

@@ -2,28 +2,10 @@
  * Runtime container for the DI subsystem. See `./README.md` for usage.
  * Modelled after VSCode's `InstantiationService`.
  *
- * History:
- * - W2.2: basic single-level container.
- * - W2.3: `createChild` scopes + `dispose` lifecycle.
- * - W2.4: cyclic dependency detection across the parent chain
- *         (linear `_inProgress` tree-stack).
- * - P0.2: `Trace` class + `_enableTracing` flag installed (not yet wired).
- * - P0.5: `IInstantiationService` self-registers in every container.
- * - P1.1: `_util.getServiceDependencies` is now consumed — `@IFoo`-decorated
- *         constructor parameters auto-inject from the container; Graph-based
- *         dependency-subtree resolution catches cycles that the linear
- *         `_inProgress` stack would miss (e.g. detected statically before
- *         any ctor body runs). Both defensive layers are preserved per
- *         PLAN D3: `_inProgress` still catches ctor-body re-entry where a
- *         ctor synchronously calls `accessor.get(self)`. LIFO dispose order
- *         via `_constructionOrder` is preserved per PLAN D8.
- * - P1.2: `SyncDescriptor.supportsDelayedInstantiation === true` now returns
- *         a `Proxy` that defers real construction until the first non-event
- *         property access. `onDid*`/`onWill*` subscriptions made BEFORE
- *         materialisation are parked in a `LinkedList` and rebound to the
- *         real event when the proxy resolves. Proxy-materialised instances
- *         join `_servicesToMaybeDispose` so dispose() tears them down in
- *         addition to the eager `_constructionOrder` set.
+ * It follows VS Code's service-collection-as-source-of-truth model:
+ * descriptors are replaced with constructed instances in the owning
+ * collection, parent-owned services are constructed in the parent scope, and
+ * delayed services materialise through a child scope.
  */
 
 import { SyncDescriptor } from './descriptors';
@@ -33,11 +15,10 @@ import {
   IInstantiationService as IInstantiationServiceDecorator,
   _util,
   type IInstantiationService,
-  type ServiceCollectionLike,
   type ServiceIdentifier,
   type ServicesAccessor,
 } from './instantiation';
-import type { IDisposable } from './lifecycle';
+import { toDisposable, type DisposableStore, type IDisposable } from './lifecycle';
 import { ServiceCollection } from './serviceCollection';
 import { GlobalIdleValue } from './util/idleValue';
 import { LinkedList } from './util/linkedList';
@@ -46,7 +27,7 @@ import { LinkedList } from './util/linkedList';
 //
 // `Trace` is vendored verbatim from krow
 // `packages/core/src/platform/instantiation/instantiationService.ts:7-83`
-// (which in turn is the VSCode original). P1.1 wires the call sites:
+// (which in turn is the VSCode original). The call sites are wired so:
 // `invokeFunction` opens an Invocation trace; `createInstance` opens a
 // Creation trace; `_safeCreateAndCacheServiceInstance` opens a Creation
 // trace per-service; and `_getOrCreateServiceInstance` calls
@@ -141,30 +122,14 @@ export class InstantiationService implements IInstantiationService {
   /** Phantom brand so the class satisfies the `IInstantiationService` interface. */
   declare readonly _serviceBrand: undefined;
 
+  readonly _globalGraph?: Graph<string>;
+  private _globalGraphImplicitDependency?: string;
+
   /** Parent container in the scope chain (root container has no parent). */
-  protected readonly _parent: InstantiationService | null;
+  protected readonly _parent?: InstantiationService;
 
-  /**
-   * Cached instances per identifier. First `get(id)` constructs and caches;
-   * subsequent calls return the same reference (singleton-per-container).
-   *
-   * Note: as of P1.1 the "constructed instance" for a registration lives
-   * inside `services` itself (the SyncDescriptor entry is replaced with the
-   * built instance once construction completes) — this is the krow shape.
-   * `_instances` is kept as a lookup fast path AND remains the source of
-   * truth for the LIFO `_constructionOrder` (PLAN D8); `_setCreatedServiceInstance`
-   * writes BOTH so dispose() can walk the construction order without
-   * re-querying `services`.
-   */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  protected readonly _instances = new Map<ServiceIdentifier<any>, any>();
-
-  /**
-   * Order in which identifiers were first constructed in this container.
-   * Used to teardown in reverse order on `dispose`. Preserved per PLAN D8.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  protected readonly _constructionOrder: ServiceIdentifier<any>[] = [];
+  protected readonly _constructionOrder: any[] = [];
 
   /** Live children created via `createChild`. Disposed transitively. */
   protected readonly _children = new Set<InstantiationService>();
@@ -203,8 +168,7 @@ export class InstantiationService implements IInstantiationService {
    * container by `_setCreatedServiceInstance`), but the underlying real
    * instance lives behind `idle.value` and is not part of
    * `_constructionOrder`. We add it here so `dispose()` can still tear it
-   * down — see `dispose()` for the LIFO-first / set-second order (PLAN D8
-   * preserves the kimi LIFO order; krow ONLY has this set).
+   * down — see `dispose()` for the LIFO-first / set-second order.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private readonly _servicesToMaybeDispose = new Set<any>();
@@ -213,31 +177,48 @@ export class InstantiationService implements IInstantiationService {
 
   constructor(
     public readonly services: ServiceCollection = new ServiceCollection(),
-    parent: InstantiationService | null = null,
+    private readonly _strict: boolean = false,
+    parent?: InstantiationService,
     protected readonly _enableTracing: boolean = false,
   ) {
     this._parent = parent;
+    this._globalGraph = _enableTracing ? parent?._globalGraph ?? new Graph(e => e) : undefined;
     // Self-register so `@IInstantiationService`-decorated ctor params resolve
-    // to the live container that constructed them (krow / VSCode parity:
-    // `instantiationService.ts:110`). Each container — root and every child
-    // — stamps its OWN slot, so `child.invokeFunction(a => a.get(I)) === child`
-    // even when the parent already registered itself. The Graph rewrite
-    // preserves this invariant per Phase-0 reviewer note #4: the
-    // self-registration lives in the local `services` map, so
+    // to the live container that constructed them. Each container — root and
+    // every child — stamps its OWN slot, so
+    // `child.invokeFunction(a => a.get(I)) === child`
+    // even when the parent already registered itself. The self-registration
+    // lives in the local `services` map, so
     // `_getServiceInstanceOrDescriptor(IInstantiationService)` in the child
     // finds the child's own slot before walking to the parent.
     this.services.set(IInstantiationServiceDecorator, this);
   }
 
-  invokeFunction<R>(fn: (accessor: ServicesAccessor) => R): R {
+  invokeFunction<R, TS extends any[] = []>(
+    fn: (accessor: ServicesAccessor, ...args: TS) => R,
+    ...args: TS
+  ): R {
     this._assertNotDisposed();
     const _trace = Trace.traceInvocation(this._enableTracing, fn);
+    let done = false;
     try {
       const accessor: ServicesAccessor = {
-        get: <T>(id: ServiceIdentifier<T>): T => this._getOrCreateServiceInstance(id, _trace),
+        get: <T>(id: ServiceIdentifier<T>): T => {
+          if (done) {
+            throw new Error(
+              'service accessor is only valid during the invocation of its target method',
+            );
+          }
+          const result = this._getOrCreateServiceInstance(id, _trace);
+          if (!result) {
+            this._throwIfStrict(`[invokeFunction] unknown service '${id}'`, false);
+          }
+          return result;
+        },
       };
-      return fn(accessor);
+      return fn(accessor, ...args);
     } finally {
+      done = true;
       _trace.stop();
     }
   }
@@ -285,24 +266,24 @@ export class InstantiationService implements IInstantiationService {
    * Tracing flag is inherited from the parent so a deep child can't
    * accidentally suppress tracing the parent enabled.
    */
-  createChild(services: ServiceCollectionLike): IInstantiationService {
+  createChild(services: ServiceCollection, store?: DisposableStore): IInstantiationService {
     this._assertNotDisposed();
     // Defensive: only accept real ServiceCollection instances. The
-    // `ServiceCollectionLike` alias exists for the interface surface to avoid
-    // a circular type import, but at runtime the child needs a real Map.
+    // child creation needs a real map-backed collection.
     if (!(services instanceof ServiceCollection)) {
       throw new TypeError(
         'createChild requires a ServiceCollection instance (got something else)',
       );
     }
-    const child = new InstantiationService(services, this, this._enableTracing);
+    const child = new InstantiationService(services, this._strict, this, this._enableTracing);
     this._children.add(child);
+    store?.add(child);
     return child;
   }
 
   /**
    * Tear down this container and all children. Disposes any cached instance
-   * with a `dispose()` method, in REVERSE construction order (PLAN D8).
+   * with a `dispose()` method, in reverse construction order.
    * Idempotent: a second call is a no-op. Also notifies parent if any (so
    * parent can drop its back-reference) and disposes children transitively.
    */
@@ -327,8 +308,7 @@ export class InstantiationService implements IInstantiationService {
     // 2) Dispose own instances in reverse construction order, duck-typed
     //    against the `IDisposable` shape.
     for (let i = this._constructionOrder.length - 1; i >= 0; i--) {
-      const id = this._constructionOrder[i]!;
-      const instance = this._instances.get(id);
+      const instance = this._constructionOrder[i]!;
       if (instance && typeof (instance as Partial<IDisposable>).dispose === 'function') {
         try {
           (instance as IDisposable).dispose();
@@ -338,19 +318,10 @@ export class InstantiationService implements IInstantiationService {
         this._servicesToMaybeDispose.delete(instance);
       }
     }
-    this._instances.clear();
     this._constructionOrder.length = 0;
 
-    // 3) Dispose any Proxy-materialised instances that were NOT seen by the
-    //    LIFO `_constructionOrder` loop (P1.2). Eager services are written
-    //    to `_constructionOrder` via `_setCreatedServiceInstance` and are
-    //    therefore covered above; the lazy Proxy path adds the real instance
-    //    to `_servicesToMaybeDispose` from inside the `GlobalIdleValue`
-    //    executor, but the Proxy itself doesn't carry a `dispose` method —
-    //    so this set is the only handle to the underlying instance. Order
-    //    among Proxy-materialised instances is insertion order; the LIFO
-    //    invariant is intentionally not extended here (PLAN D8 ties LIFO to
-    //    `_constructionOrder`, which only tracks eager construction).
+    // 3) Dispose any materialised instances that were not seen by the LIFO
+    //    `_constructionOrder` loop.
     for (const candidate of this._servicesToMaybeDispose) {
       if (candidate && typeof (candidate as Partial<IDisposable>).dispose === 'function') {
         try {
@@ -362,7 +333,7 @@ export class InstantiationService implements IInstantiationService {
     }
     this._servicesToMaybeDispose.clear();
 
-    // 3) Drop our back-reference from parent so parent doesn't double-dispose
+    // 4) Drop our back-reference from parent so parent doesn't double-dispose
     //    us later.
     if (this._parent) {
       this._parent._children.delete(this);
@@ -386,6 +357,12 @@ export class InstantiationService implements IInstantiationService {
     const serviceArgs: unknown[] = [];
     for (const dependency of serviceDependencies) {
       const service = this._getOrCreateServiceInstance(dependency.id, _trace);
+      if (!service) {
+        this._throwIfStrict(
+          `[createInstance] ${ctor.name} depends on UNKNOWN service ${dependency.id}.`,
+          false,
+        );
+      }
       serviceArgs.push(service);
     }
 
@@ -413,32 +390,26 @@ export class InstantiationService implements IInstantiationService {
    * chain if not registered locally. Construction happens in the OWNING
    * container so its cache holds the singleton.
    *
-   * P1.1 makes this a thin router that delegates to the Graph-based
+   * This is a thin router that delegates to the Graph-based
    * `_safeCreateAndCacheServiceInstance` whenever the resolved entry is a
-   * `SyncDescriptor`. The Graph walk is the PRIMARY cycle-detection path —
+   * `SyncDescriptor`. The Graph walk is the primary cycle-detection path —
    * it builds the entire dependency subtree before constructing anything,
    * so cycles expressed via `@IFoo` decorator metadata are caught
    * statically (no ctor body need run).
    *
-   * The legacy linear `_inProgress` stack (mutated below) is preserved as
-   * the SECONDARY defensive layer per PLAN D3: it catches the case where a
+   * The linear `_inProgress` stack (mutated below) is preserved as
+   * a secondary defensive layer: it catches the case where a
    * ctor body synchronously calls `accessor.get(peer)` — a ctor-time
    * dynamic edge that the Graph walk cannot predict.
    */
   protected _getOrCreateServiceInstance<T>(id: ServiceIdentifier<T>, _trace: Trace): T {
-    const cached = this._instances.get(id);
-    if (cached !== undefined) {
-      _trace.branch(id, false);
-      return cached as T;
+    if (this._globalGraph && this._globalGraphImplicitDependency) {
+      this._globalGraph.insertEdge(this._globalGraphImplicitDependency, String(id));
     }
-
     const entry = this._getServiceInstanceOrDescriptor(id);
-    if (entry === undefined) {
-      throw new Error(`No service registered for identifier '${String(id)}'`);
-    }
 
     if (entry instanceof SyncDescriptor) {
-      // Linear tree-wide cycle check (PLAN D3, second defensive layer):
+      // Linear tree-wide cycle check as a second defensive layer:
       // a ctor body calling `accessor.get(peer)` synchronously will reach
       // here while `peer` is mid-construction. The Graph walk inside
       // `_createAndCacheServiceInstance` cannot predict ctor-body edges
@@ -462,9 +433,8 @@ export class InstantiationService implements IInstantiationService {
       // begins.
       return this._safeCreateAndCacheServiceInstance(id, entry, _trace.branch(id, true));
     }
-    // Pre-built instance shorthand — cache locally and return.
+
     _trace.branch(id, false);
-    this._setCreatedServiceInstance(id, entry as T);
     return entry as T;
   }
 
@@ -496,9 +466,8 @@ export class InstantiationService implements IInstantiationService {
    * (leaves first) so each node is constructed AFTER all of its dependencies
    * are cached. If `graph.roots()` becomes empty while the graph is
    * non-empty, a cycle exists — throw `CyclicDependencyError(graph)`. The
-   * legacy `_inProgress` stack also catches ctor-body-induced cycles
-   * directly inside `_getOrCreateServiceInstance` below; both layers are
-   * preserved per PLAN D3.
+   * `_inProgress` stack also catches ctor-body-induced cycles directly
+   * inside `_getOrCreateServiceInstance` below.
    *
    * Mirrors krow `instantiationService.ts:266-323`.
    */
@@ -530,15 +499,14 @@ export class InstantiationService implements IInstantiationService {
 
       for (const dependency of _util.getServiceDependencies(item.desc.ctor)) {
         const instanceOrDesc = this._getServiceInstanceOrDescriptor(dependency.id);
-        if (instanceOrDesc === undefined) {
-          // Mirror krow: warn but don't throw — the constructor will get
-          // `undefined` for that arg and either crash with a more useful
-          // message or work if the dependency is optional.
-          // eslint-disable-next-line no-console
-          globalThis.console.warn(
+        if (!instanceOrDesc) {
+          this._throwIfStrict(
             `[createInstance] ${String(item.id)} depends on ${String(dependency.id)} which is NOT registered.`,
+            true,
           );
         }
+
+        this._globalGraph?.insertEdge(String(item.id), String(dependency.id));
 
         if (instanceOrDesc instanceof SyncDescriptor) {
           const d: Triple = {
@@ -568,19 +536,14 @@ export class InstantiationService implements IInstantiationService {
         // identifier across nested subgraphs).
         const instanceOrDesc = this._getServiceInstanceOrDescriptor(data.id);
         if (instanceOrDesc instanceof SyncDescriptor) {
-          const lazy = data.desc.supportsDelayedInstantiation;
-          const instance = this._createServiceInstance(
+          const instance = this._createServiceInstanceWithOwner(
             data.id,
-            data.desc,
-            lazy,
+            data.desc.ctor,
+            data.desc.staticArguments,
+            data.desc.supportsDelayedInstantiation,
             data._trace,
           );
-          // For lazy services, the returned value is a Proxy; the real
-          // instance lands in `_servicesToMaybeDispose` only after
-          // materialisation. We deposit the Proxy without touching
-          // `_constructionOrder` so dispose() does not accidentally trigger
-          // materialisation just to call a non-existent `.dispose()`.
-          this._setCreatedServiceInstance(data.id, instance, lazy);
+          this._setCreatedServiceInstance(data.id, instance);
         }
         graph.removeNode(data);
       }
@@ -591,14 +554,12 @@ export class InstantiationService implements IInstantiationService {
   /**
    * Construct a service instance — either eagerly (the default) or wrapped
    * in a `Proxy` that defers real construction until the first non-event
-   * property access (P1.2).
+   * property access.
    *
    * Eager path: pushes `id` onto the root-tree `_inProgress` stack so a ctor
    * body calling `accessor.get(self)` synchronously is caught by
-   * `_getOrCreateServiceInstance` as a cycle (PLAN D3 second defensive
-   * layer). Returns the real instance immediately; the caller writes it
-   * into the owning container via `_setCreatedServiceInstance` which also
-   * stamps `_constructionOrder` for LIFO dispose (PLAN D8).
+   * `_getOrCreateServiceInstance` as a cycle. Returns the real instance immediately; the caller writes it
+   * into the owning container via `_setCreatedServiceInstance`.
    *
    * Lazy path (`supportsDelayedInstantiation: true`): returns a `Proxy`
    * over `Object.create(null)` whose `get` trap:
@@ -619,17 +580,54 @@ export class InstantiationService implements IInstantiationService {
    *
    * Mirrors krow `instantiationService.ts:335-421`.
    */
-  private _createServiceInstance<T>(
+  private _createServiceInstanceWithOwner<T>(
     id: ServiceIdentifier<T>,
-    desc: SyncDescriptor<T>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ctor: any,
+    args: ReadonlyArray<unknown> = [],
     supportsDelayedInstantiation: boolean,
     _trace: Trace,
+  ): T {
+    if (this.services.get(id) instanceof SyncDescriptor) {
+      return this._createServiceInstance(
+        id,
+        ctor,
+        args,
+        supportsDelayedInstantiation,
+        _trace,
+        this._servicesToMaybeDispose,
+      );
+    } else if (this._parent) {
+      return this._parent._createServiceInstanceWithOwner(
+        id,
+        ctor,
+        args,
+        supportsDelayedInstantiation,
+        _trace,
+      );
+    } else {
+      throw new Error(`illegalState - creating UNKNOWN service instance ${ctor.name}`);
+    }
+  }
+
+  private _createServiceInstance<T>(
+    id: ServiceIdentifier<T>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ctor: any,
+    args: ReadonlyArray<unknown> = [],
+    supportsDelayedInstantiation: boolean,
+    _trace: Trace,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    disposeBucket: Set<any>,
   ): T {
     if (!supportsDelayedInstantiation) {
       const root = this._root();
       root._inProgress.push(id);
       try {
-        return this._createInstance<T>(desc.ctor, desc.staticArguments.slice(), _trace);
+        const result = this._createInstance<T>(ctor, args.slice(), _trace);
+        disposeBucket.add(result);
+        this._constructionOrder.push(result);
+        return result;
       } finally {
         const popIdx = root._inProgress.lastIndexOf(id);
         if (popIdx >= 0) {
@@ -647,23 +645,12 @@ export class InstantiationService implements IInstantiationService {
       disposable?: IDisposable;
     };
     const earlyListeners = new Map<string, LinkedList<EarlyListenerData>>();
-    const _ctor = desc.ctor;
-    const _args = desc.staticArguments.slice();
-    // Capture references the executor needs.
-    // eslint-disable-next-line @typescript-eslint/no-this-alias
-    const self = this;
+    const child = new InstantiationService(undefined, this._strict, this, this._enableTracing);
+    child._globalGraphImplicitDependency = String(id);
+    const _ctor = ctor;
+    const _args = args.slice();
     const idle = new GlobalIdleValue<T>(() => {
-      const root = self._root();
-      root._inProgress.push(id);
-      let result: T;
-      try {
-        result = self._createInstance<T>(_ctor, _args.slice(), _trace);
-      } finally {
-        const popIdx = root._inProgress.lastIndexOf(id);
-        if (popIdx >= 0) {
-          root._inProgress.splice(popIdx, 1);
-        }
-      }
+      const result = child._createInstance<T>(_ctor, _args.slice(), _trace);
       // Replay parked event subscriptions against the real instance.
       for (const [key, values] of earlyListeners) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -675,7 +662,8 @@ export class InstantiationService implements IInstantiationService {
         }
       }
       earlyListeners.clear();
-      self._servicesToMaybeDispose.add(result);
+      disposeBucket.add(result);
+      this._constructionOrder.push(result);
       return result;
     });
 
@@ -704,12 +692,10 @@ export class InstantiationService implements IInstantiationService {
                 disposable: undefined,
               };
               const rm = list!.push(entry);
-              return {
-                dispose() {
-                  rm();
-                  entry.disposable?.dispose();
-                },
-              };
+              return toDisposable(() => {
+                rm();
+                entry.disposable?.dispose();
+              });
             };
             return event;
           }
@@ -750,36 +736,15 @@ export class InstantiationService implements IInstantiationService {
    * parent chain so a child can deposit a parent-owned service back into the
    * parent's cache. Mirrors krow `instantiationService.ts:220-228`.
    *
-   * Also stamps the local `_instances` + (eager path only) `_constructionOrder`
-   * so dispose() can walk teardown in reverse construction order (PLAN D8).
-   * Lazy (Proxy-wrapped) services are intentionally NOT added to
-   * `_constructionOrder` — disposing them would require reading a property
-   * of the Proxy, which would force materialisation. Lazy disposal is
-   * handled by `_servicesToMaybeDispose` once the Proxy materialises.
+   * Construction order is tracked when services are created, not when they
+   * are deposited into the collection. Pre-built instances are therefore not
+   * container-owned for disposal.
    */
-  private _setCreatedServiceInstance<T>(
-    id: ServiceIdentifier<T>,
-    instance: T,
-    lazy: boolean = false,
-  ): void {
+  private _setCreatedServiceInstance<T>(id: ServiceIdentifier<T>, instance: T): void {
     if (this.services.get(id) instanceof SyncDescriptor) {
-      // Replace the descriptor in-place with the constructed instance so a
-      // second lookup short-circuits via the `_instances` cache OR the
-      // services map directly.
       this.services.set(id, instance);
-      this._instances.set(id, instance);
-      if (!lazy) {
-        this._constructionOrder.push(id);
-      }
-    } else if (this.services.has(id)) {
-      // Pre-built instance shorthand — already cached locally.
-      this._instances.set(id, instance);
-      // Don't add to `_constructionOrder` again if it was already pushed.
-      if (!lazy && !this._constructionOrder.includes(id)) {
-        this._constructionOrder.push(id);
-      }
     } else if (this._parent) {
-      this._parent._setCreatedServiceInstance(id, instance, lazy);
+      this._parent._setCreatedServiceInstance(id, instance);
     } else {
       throw new Error(
         `illegal state - setting UNKNOWN service instance '${String(id)}'`,
@@ -801,6 +766,16 @@ export class InstantiationService implements IInstantiationService {
       return this._parent._getServiceInstanceOrDescriptor(id);
     }
     return instanceOrDesc as T | SyncDescriptor<T> | undefined;
+  }
+
+  private _throwIfStrict(msg: string, printWarning: boolean): void {
+    if (printWarning) {
+      // eslint-disable-next-line no-console
+      globalThis.console.warn(msg);
+    }
+    if (this._strict) {
+      throw new Error(msg);
+    }
   }
 
   /** Walk up to the tree root. Used for the shared in-progress stack. */

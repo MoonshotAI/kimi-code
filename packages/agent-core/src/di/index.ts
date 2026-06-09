@@ -2,8 +2,7 @@
  * Barrel for `@moonshot-ai/agent-core` DI subsystem. This file is the only
  * surface that should be imported from outside the `di/` directory.
  *
- * Modelled after VSCode's `vs/platform/instantiation`. See `./README.md` for
- * usage (lands in W2.5).
+ * Modelled after VSCode's `vs/platform/instantiation`.
  */
 
 export type {
@@ -23,7 +22,8 @@ export {
   // or `accessor.get(IInstantiationService)`.
   IInstantiationService,
 } from './instantiation';
-export { InstantiationType, SyncDescriptor, SyncDescriptor0 } from './descriptors';
+export { SyncDescriptor } from './descriptors';
+export type { SyncDescriptor0 } from './descriptors';
 export { ServiceCollection } from './serviceCollection';
 export { InstantiationService } from './instantiationService';
 export {
@@ -36,6 +36,7 @@ export {
 export type { IDisposable } from './lifecycle';
 export { CyclicDependencyError } from './errors';
 export {
+  InstantiationType,
   registerSingleton,
   getSingletonServiceDescriptors,
   _clearRegistryForTests,

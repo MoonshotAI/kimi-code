@@ -4,14 +4,6 @@
  * `SyncDescriptor`.
  */
 
-/** How a service is instantiated. Delayed support lands in a later phase. */
-export enum InstantiationType {
-  /** Construct immediately on first `get`. */
-  Eager = 0,
-  /** Construct lazily via a Proxy when a method is actually called. */
-  Delayed = 1,
-}
-
 /**
  * Wraps a constructor plus optional static arguments. The container picks up
  * a `SyncDescriptor` from the `ServiceCollection` (rather than an already-
@@ -34,14 +26,6 @@ export class SyncDescriptor<T> {
   }
 }
 
-/**
- * `SyncDescriptor0<T>` is the no-static-args specialisation used by the
- * `createInstance(descriptor)` overload at the type level so a zero-arg ctor
- * descriptor type-checks with no extra rest args. Mirrors krow
- * `descriptors.ts:13-17`.
- */
-export class SyncDescriptor0<T> extends SyncDescriptor<T> {
-  constructor(ctor: new () => T) {
-    super(ctor, []);
-  }
+export interface SyncDescriptor0<T> {
+  readonly ctor: new () => T;
 }

@@ -509,7 +509,7 @@ export async function startDaemon(opts: DaemonStartOptions): Promise<RunningDaem
       const built = a.get(ICoreProcessService);
 
       // Construction order: [..., ICoreProcessService, ISessionService, ...]
-      a.get(ISessionService);
+      const sessionService = a.get(ISessionService);
       a.get(IMessageService);
 
       // IAuthSummaryService. Powers `GET /v1/auth` +
@@ -586,7 +586,7 @@ export async function startDaemon(opts: DaemonStartOptions): Promise<RunningDaem
       const fsWatchHandler = {
         async add(sessionId: string, connectionId: string, wirePaths: readonly string[]) {
           try {
-            const session = await a.get(ISessionService).get(sessionId);
+            const session = await sessionService.get(sessionId);
             // `resolveSafePath` realpath's the cwd internally; we must use
             // the SAME realpath here for the absolute→POSIX-relative
             // conversion (macOS routes `/tmp` to `/private/tmp`, etc).
@@ -613,7 +613,7 @@ export async function startDaemon(opts: DaemonStartOptions): Promise<RunningDaem
         },
         async remove(sessionId: string, connectionId: string, wirePaths: readonly string[]) {
           try {
-            const session = await a.get(ISessionService).get(sessionId);
+            const session = await sessionService.get(sessionId);
             const realCwd = await fspPromises.realpath(session.metadata.cwd);
             const absPaths: string[] = [];
             for (const p of wirePaths) {

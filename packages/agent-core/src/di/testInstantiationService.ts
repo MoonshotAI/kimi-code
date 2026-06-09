@@ -7,12 +7,8 @@
  * Adapted from krow `testInstantiationService.ts` (in turn the VSCode
  * original). Two divergences from krow:
  *
- *   1. **Ctor signature**: kimi's `InstantiationService` constructor is
- *      `(services, parent, _enableTracing)` (parent second, no `_strict`
- *      mode); krow's is `(services, strict, parent, _enableTracing)`.
- *      The `strict` boolean does not exist in kimi yet — `_throwIfStrict`
- *      was not ported because the daemon never enables it. If a future
- *      phase adds strict mode, surface a 2nd ctor param here.
+ *   1. **Ctor signature**: follows the runtime container's VS Code order
+ *      `(services, strict, parent, _enableTracing)`.
  *   2. **`createServices` factory**: krow uses `DisposableStore` /
  *      `toDisposable` from `base/`. kimi's `Disposable` class is a
  *      different shape (LIFO subdisposable owner, not a Set). The factory
@@ -60,10 +56,11 @@ export class TestInstantiationService extends InstantiationService implements Se
 
   constructor(
     serviceCollection: ServiceCollection = new ServiceCollection(),
-    parent: InstantiationService | null = null,
+    strict: boolean = false,
+    parent?: InstantiationService,
     enableTracing: boolean = false,
   ) {
-    super(serviceCollection, parent, enableTracing);
+    super(serviceCollection, strict, parent, enableTracing);
     this._serviceCollection = serviceCollection;
   }
 
@@ -120,7 +117,7 @@ export class TestInstantiationService extends InstantiationService implements Se
         'createChild requires a ServiceCollection instance (got something else)',
       );
     }
-    const child = new TestInstantiationService(services, this);
+    const child = new TestInstantiationService(services, false, this);
     // The base class tracks children for cascade-dispose via its private
     // `_children` set; we mirror by relying on the parent's `_children`
     // being populated through the base ctor's parent reference. But the

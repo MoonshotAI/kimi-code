@@ -4,10 +4,9 @@ import { InstantiationService, Trace } from '#/di/instantiationService';
 import { ServiceCollection } from '#/di/serviceCollection';
 
 /**
- * P0.2: `Trace` class + `_enableTracing` ctor param installed but not yet
- * consumed by any code path inside `InstantiationService`. These assertions
- * only verify the class is reachable and the ctor signature is backward
- * compatible (third param defaults to `false`).
+ * P0.2: `Trace` class + `_enableTracing` ctor param installed. These
+ * assertions verify the class is reachable and the constructor follows the
+ * VS Code argument order `(services, strict, parent, enableTracing)`.
  */
 
 class ExposedInstantiationService extends InstantiationService {
@@ -23,10 +22,9 @@ describe('InstantiationService Trace installation (P0.2)', () => {
     expect(ix).toBeInstanceOf(InstantiationService);
   });
 
-  it('constructs with explicit null parent and accepts the 3rd tracing arg = true', () => {
+  it('constructs with strict=false, undefined parent, and tracing=true', () => {
     const coll = new ServiceCollection();
-    // `parent: null` mirrors the no-parent case; `_enableTracing: true` opts in.
-    const ix = new ExposedInstantiationService(coll, null, true);
+    const ix = new ExposedInstantiationService(coll, false, undefined, true);
     expect(ix).toBeInstanceOf(InstantiationService);
     expect(ix.tracingEnabled).toBe(true);
   });

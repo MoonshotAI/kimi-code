@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/di/descriptors';
 import { InstantiationService } from '#/di/instantiationService';
-import { createDecorator } from '#/di/instantiation';
+import { IInstantiationService, createDecorator, type IInstantiationService as IInstantiationServiceType } from '#/di/instantiation';
 import { Disposable, type IDisposable } from '#/di/lifecycle';
 import { ServiceCollection } from '#/di/serviceCollection';
 
@@ -52,6 +52,66 @@ describe('InstantiationService.createChild', () => {
     expect(fromChild).not.toBe(fromParent);
   });
 
+  it('constructs parent-owned descriptors in the parent scope when resolved from a child', () => {
+    interface IDep {
+      tag: string;
+    }
+    class ParentDep implements IDep {
+      tag = 'parent';
+    }
+    class ChildDep implements IDep {
+      tag = 'child';
+    }
+    class ParentOwned {
+      constructor(public readonly dep: IDep) {}
+    }
+
+    const IDep = createDecorator<IDep>('owner-scope-dep');
+    const IParentOwned = createDecorator<ParentOwned>('owner-scope-parent-owned');
+    (IDep as unknown as (t: unknown, k: string, i: number) => void)(
+      ParentOwned,
+      '',
+      0,
+    );
+
+    const parent = new InstantiationService(
+      new ServiceCollection(
+        [IDep, new SyncDescriptor(ParentDep)],
+        [IParentOwned, new SyncDescriptor(ParentOwned)],
+      ),
+    );
+    const child = parent.createChild(
+      new ServiceCollection([IDep, new SyncDescriptor(ChildDep)]),
+    );
+
+    const fromChild = child.invokeFunction((a) => a.get(IParentOwned));
+    const fromParent = parent.invokeFunction((a) => a.get(IParentOwned));
+    expect(fromChild).toBe(fromParent);
+    expect(fromChild.dep).toBeInstanceOf(ParentDep);
+    expect(fromChild.dep.tag).toBe('parent');
+  });
+
+  it('injects the parent instantiation service into parent-owned services resolved from a child', () => {
+    class ParentOwned {
+      constructor(public readonly ix: IInstantiationServiceType) {}
+    }
+    const IParentOwned = createDecorator<ParentOwned>('owner-scope-parent-ix');
+    (IInstantiationService as unknown as (t: unknown, k: string, i: number) => void)(
+      ParentOwned,
+      '',
+      0,
+    );
+
+    const parent = new InstantiationService(
+      new ServiceCollection([IParentOwned, new SyncDescriptor(ParentOwned)]),
+    );
+    const child = parent.createChild(new ServiceCollection());
+
+    const instance = child.invokeFunction((a) => a.get(IParentOwned));
+    expect(instance.ix).toBe(parent);
+    expect(instance.ix).not.toBe(child);
+  });
+
   it('sibling isolation: two children of the same parent do not share scoped services', () => {
     interface IScoped {
       tag: string;
@@ -74,10 +134,9 @@ describe('InstantiationService.createChild', () => {
 
     expect(childA.invokeFunction((a) => a.get(IScoped).tag)).toBe('A');
     expect(childB.invokeFunction((a) => a.get(IScoped).tag)).toBe('B');
-    // Parent has no registration; resolution from parent must throw.
-    expect(() => parent.invokeFunction((a) => a.get(IScoped))).toThrowError(
-      /No service registered/,
-    );
+    // Parent has no registration; non-strict resolution follows VS Code and
+    // returns undefined.
+    expect(parent.invokeFunction((a) => a.get(IScoped))).toBeUndefined();
   });
 
   it('dispose order: A→B→C construction yields C→B→A teardown', () => {
@@ -120,6 +179,25 @@ describe('InstantiationService.createChild', () => {
     });
     ix.dispose();
     expect(events).toEqual(['disposed C', 'disposed B', 'disposed A']);
+  });
+
+  it('does not dispose pre-built service instances from the ServiceCollection', () => {
+    const events: string[] = [];
+    interface IFoo {
+      tag: string;
+    }
+    const IFoo = createDecorator<IFoo>('prebuilt-not-disposed');
+    class Foo implements IFoo, IDisposable {
+      tag = 'foo';
+      dispose(): void {
+        events.push('disposed');
+      }
+    }
+    const instance = new Foo();
+    const ix = new InstantiationService(new ServiceCollection([IFoo, instance]));
+    expect(ix.invokeFunction((a) => a.get(IFoo))).toBe(instance);
+    ix.dispose();
+    expect(events).toEqual([]);
   });
 
   it('idempotent dispose: second call is a no-op', () => {

@@ -115,10 +115,8 @@ function overridePromptService(
   const replacement = { ...defaultImpl, ...stub };
   const ix = r.services as unknown as {
     services: { set: (id: unknown, impl: unknown) => void };
-    _instances: Map<unknown, unknown>;
   };
   ix.services.set(IPromptService, replacement);
-  ix._instances.set(IPromptService, replacement);
 }
 
 function buildMultipart(parts: {

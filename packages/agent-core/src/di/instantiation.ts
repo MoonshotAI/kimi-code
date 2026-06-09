@@ -7,28 +7,14 @@
  * defines the brands and contracts so `serviceCollection.ts` can stay free of
  * container code.
  *
- * P0.3 alignment with krow / VSCode:
- *  - `createDecorator(name)` is now singleton-per-name: calling it twice with
- *    the same `name` returns the same identifier. (Previously every call
- *    minted a fresh callable.)
- *  - Decorator body actually stashes `{ id, index }` on the ctor as
- *    `$di$dependencies` own-property metadata (instead of being a no-op).
- *    `InstantiationService._createInstance` does not yet consume this — that
- *    wiring lands in P1.1 — so the daemon's existing
- *    `ix.createInstance(Impl, a.get(IDepA), ...)` call sites remain
- *    bytewise unchanged.
- *  - `ServiceIdentifier<T>` exposes `_serviceBrand` (krow naming) instead of
- *    the prior internal `$serviceMarker`.
- *
- * P0.4 alignment:
- *  - `BrandedService` + `GetLeadingNonServiceArgs` type tools added so the
- *    `createInstance(ctor, ...rest)` signature can trim trailing service
- *    parameters once `@IFoo` auto-injection lands in P1.1.
- *  - `IInstantiationService.createInstance` gains a `SyncDescriptor0<T>`
- *    overload mirroring krow.
+ * `createDecorator(name)` is singleton-per-name, decorator application stores
+ * constructor dependency metadata, and `InstantiationService.createInstance`
+ * consumes that metadata for service auto-injection.
  */
 
 import type { SyncDescriptor0 } from './descriptors';
+import type { DisposableStore } from './lifecycle';
+import type { ServiceCollection } from './serviceCollection';
 
 /**
  * Internal metadata utilities shared with `instantiationService.ts`. Not
@@ -65,8 +51,8 @@ export type BrandedService = { _serviceBrand: undefined };
  * Type-level slicer that retains only the leading non-`BrandedService` args
  * of a constructor parameter list. Used by `createInstance(ctor, ...args)`
  * so callers can omit any trailing `@IFoo`-decorated service parameters
- * (those are auto-injected by the container in a later phase). Mirrors krow
- * `instantiation.ts:32-35`.
+ * (those are auto-injected by the container). Mirrors VS Code
+ * `instantiation.ts`.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type GetLeadingNonServiceArgs<TArgs extends any[]> =
@@ -89,8 +75,8 @@ export interface ServiceIdentifier<T> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (target: any, key: string | symbol | undefined, index: number): void;
 
-  /** Phantom marker so two decorators with different `T` are not assignable. */
-  readonly _serviceBrand: { readonly _: T };
+  /** Phantom marker matching VS Code's `ServiceIdentifier<T>` surface. */
+  readonly type: T;
 
   toString(): string;
 }
@@ -183,7 +169,10 @@ export interface ServicesAccessor {
 export interface IInstantiationService {
   readonly _serviceBrand: undefined;
 
-  invokeFunction<R>(fn: (accessor: ServicesAccessor) => R): R;
+  invokeFunction<R, TS extends any[] = []>(
+    fn: (accessor: ServicesAccessor, ...args: TS) => R,
+    ...args: TS
+  ): R;
   /**
    * Construct a class via a `SyncDescriptor` packaging its ctor + static args.
    * Mirrors the krow / VSCode `createInstance(descriptor)` overload — useful
@@ -195,8 +184,7 @@ export interface IInstantiationService {
    * Construct a class with positional arguments. `GetLeadingNonServiceArgs`
    * trims any trailing `@IFoo`-decorated service parameters off the inferred
    * signature so callers only have to supply the non-service prefix; the
-   * container auto-injects the service tail (auto-injection itself lands in
-   * P1.1 — this commit only widens the type).
+   * container auto-injects the service tail.
    */
   createInstance<
     Ctor extends new (
@@ -208,7 +196,7 @@ export interface IInstantiationService {
     ctor: Ctor,
     ...args: GetLeadingNonServiceArgs<ConstructorParameters<Ctor>>
   ): R;
-  createChild(services: ServiceCollectionLike): IInstantiationService;
+  createChild(services: ServiceCollection, store?: DisposableStore): IInstantiationService;
   dispose(): void;
 }
 
@@ -222,11 +210,11 @@ export interface IInstantiationService {
  * so child containers see their own slot, not the parent's.
  */
 export const IInstantiationService: ServiceIdentifier<IInstantiationService> =
-  createDecorator<IInstantiationService>('IInstantiationService');
+  createDecorator<IInstantiationService>('instantiationService');
 
 /**
- * Structural alias to avoid a circular import with `./serviceCollection.ts`.
- * Anything `ServiceCollection`-shaped (set/get/has/forEach) satisfies this.
+ * Structural alias kept for callers that type against the collection shape.
+ * The runtime `createChild` API requires a real `ServiceCollection`.
  */
 export interface ServiceCollectionLike {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

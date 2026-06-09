@@ -193,12 +193,12 @@ describe('@moonshot-ai/services · interfaces', () => {
     }
   });
 
-  it('looking up an unregistered service throws with the decorator diagnostic name', () => {
+  it('looking up an unregistered service returns undefined in non-strict mode', () => {
     const ix = new InstantiationService(new ServiceCollection());
     try {
-      expect(() => ix.invokeFunction((a) => a.get(IEventService))).toThrow(/eventService/);
-      expect(() => ix.invokeFunction((a) => a.get(IApprovalService))).toThrow(/approvalService/);
-      expect(() => ix.invokeFunction((a) => a.get(IQuestionService))).toThrow(/questionService/);
+      expect(ix.invokeFunction((a) => a.get(IEventService))).toBeUndefined();
+      expect(ix.invokeFunction((a) => a.get(IApprovalService))).toBeUndefined();
+      expect(ix.invokeFunction((a) => a.get(IQuestionService))).toBeUndefined();
     } finally {
       ix.dispose();
     }

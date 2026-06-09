@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SyncDescriptor, InstantiationType } from '#/di/descriptors';
+import { SyncDescriptor } from '#/di/descriptors';
 import {
+  InstantiationType,
   _clearRegistryForTests,
   getSingletonServiceDescriptors,
   registerSingleton,
@@ -70,7 +71,7 @@ describe('registerSingleton / getSingletonServiceDescriptors', () => {
     expect(map.get('bar')).toBe(true);
   });
 
-  it('re-registering the same id overwrites the previous entry (VS Code semantics)', () => {
+  it('re-registering the same id appends another registry entry', () => {
     interface ILogger {
       log(m: string): void;
     }
@@ -88,12 +89,10 @@ describe('registerSingleton / getSingletonServiceDescriptors', () => {
     registerSingleton(ILogger, A);
     registerSingleton(ILogger, B);
 
-    // Snapshot length stays at 1; the entry wraps B's ctor.
     const snapshot = getSingletonServiceDescriptors();
-    expect(snapshot).toHaveLength(1);
-    const [id, descriptor] = snapshot[0]!;
-    expect(id).toBe(ILogger);
-    expect(descriptor.ctor).toBe(B);
+    expect(snapshot).toHaveLength(2);
+    expect(snapshot.map(([id]) => id)).toEqual([ILogger, ILogger]);
+    expect(snapshot.map(([, descriptor]) => descriptor.ctor)).toEqual([A, B]);
   });
 
   it('accepts a SyncDescriptor overload directly', () => {
@@ -192,7 +191,7 @@ describe('registerSingleton / getSingletonServiceDescriptors', () => {
     logSpy.mockRestore();
   });
 
-  it('snapshot is independent of subsequent registrations (returns a fresh array)', () => {
+  it('getSingletonServiceDescriptors returns the live registry array', () => {
     interface IFoo {
       a: number;
     }
@@ -214,10 +213,11 @@ describe('registerSingleton / getSingletonServiceDescriptors', () => {
     }
     registerSingleton(IBar, Bar);
 
-    // Prior snapshot must not have been mutated retroactively.
-    expect(snap1).toHaveLength(1);
+    expect(snap1).toHaveLength(2);
+    expect(snap1).toBe(getSingletonServiceDescriptors());
 
     const snap2 = getSingletonServiceDescriptors();
     expect(snap2).toHaveLength(2);
+    expect(snap2).toBe(snap1);
   });
 });

@@ -119,11 +119,8 @@ async function createSession(r: RunningDaemon): Promise<string> {
  * 40904 / 40406 envelope mapping paths without seeding real background
  * tasks.
  *
- * The InstantiationService caches resolved instances in `_instances` after
- * the first `a.get(...)`. The daemon's `start.ts` warms the cache for every
- * registered identifier, so a `services.set(...)` would not be observed by
- * subsequent route requests. We mutate both the registration map and the
- * instance cache.
+ * The InstantiationService reads from the live `ServiceCollection`, so a
+ * post-boot `services.set(...)` is observed by subsequent route requests.
  */
 function overrideTaskService(
   r: RunningDaemon,
@@ -140,10 +137,8 @@ function overrideTaskService(
   const replacement = { ...defaultImpl, ...stub };
   const ix = r.services as unknown as {
     services: { set: (id: unknown, impl: unknown) => void };
-    _instances: Map<unknown, unknown>;
   };
   ix.services.set(ITaskService, replacement);
-  ix._instances.set(ITaskService, replacement);
 }
 
 describe('GET /api/v1/sessions/{sid}/tasks', () => {

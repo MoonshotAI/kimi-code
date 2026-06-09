@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/di/descriptors';
 import { InstantiationService } from '#/di/instantiationService';
-import { createDecorator } from '#/di/instantiation';
+import { IInstantiationService, createDecorator, type IInstantiationService as IInstantiationServiceType } from '#/di/instantiation';
 import { ServiceCollection } from '#/di/serviceCollection';
 
 /**
@@ -129,5 +129,79 @@ describe('Delayed instantiation Proxy (P1.2)', () => {
     expect(proxy.describe()).toBe('materialised');
     proxy.fire('hello-world');
     expect(received).toEqual(['hello-world']);
+  });
+
+  it('materialises delayed services in a child scope and records implicit dependency cycles', () => {
+    interface IA {
+      _serviceBrand: undefined;
+      doIt(): boolean;
+    }
+    interface IB {
+      _serviceBrand: undefined;
+      b(): boolean;
+    }
+    const IA = createDecorator<IA>('delayed-graph-A');
+    const IB = createDecorator<IB>('delayed-graph-B');
+
+    class BConsumer {
+      constructor(private readonly b: IB) {}
+      doIt(): boolean {
+        return this.b.b();
+      }
+    }
+    (IB as unknown as (t: unknown, k: string, i: number) => void)(
+      BConsumer,
+      '',
+      0,
+    );
+
+    class AService implements IA {
+      _serviceBrand: undefined;
+      private readonly consumer: BConsumer;
+      constructor(ix: IInstantiationServiceType) {
+        this.consumer = ix.createInstance(BConsumer);
+      }
+      doIt(): boolean {
+        return this.consumer.doIt();
+      }
+    }
+    (IInstantiationService as unknown as (t: unknown, k: string, i: number) => void)(
+      AService,
+      '',
+      0,
+    );
+
+    class BService implements IB {
+      _serviceBrand: undefined;
+      constructor(public readonly a: IA) {}
+      b(): boolean {
+        return true;
+      }
+    }
+    (IA as unknown as (t: unknown, k: string, i: number) => void)(
+      BService,
+      '',
+      0,
+    );
+
+    class ExposedInstantiationService extends InstantiationService {
+      cycle(): string | undefined {
+        return this._globalGraph?.findCycleSlow();
+      }
+    }
+
+    const ix = new ExposedInstantiationService(
+      new ServiceCollection(
+        [IA, new SyncDescriptor(AService, [], true)],
+        [IB, new SyncDescriptor(BService)],
+      ),
+      true,
+      undefined,
+      true,
+    );
+
+    const a = ix.invokeFunction((accessor) => accessor.get(IA));
+    expect(a.doIt()).toBe(true);
+    expect(ix.cycle()).toBe('delayed-graph-A -> delayed-graph-B -> delayed-graph-A');
   });
 });

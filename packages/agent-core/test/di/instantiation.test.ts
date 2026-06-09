@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/di/descriptors';
 import { InstantiationService } from '#/di/instantiationService';
-import { createDecorator } from '#/di/instantiation';
+import { createDecorator, type ServicesAccessor } from '#/di/instantiation';
 import { ServiceCollection } from '#/di/serviceCollection';
 
 interface ILogger {
@@ -146,9 +146,66 @@ describe('InstantiationService (basic)', () => {
     expect(ix.invokeFunction((a) => a.get(ILogger))).toBe(inst);
   });
 
-  it('throws when getting an unregistered id', () => {
+  it('non-strict mode returns undefined for an unregistered id', () => {
     const ix = new InstantiationService();
-    expect(() => ix.invokeFunction((a) => a.get(ILogger))).toThrowError(/No service registered/);
+    expect(ix.invokeFunction((a) => a.get(ILogger))).toBeUndefined();
+  });
+
+  it('strict mode throws when getting an unregistered id', () => {
+    const ix = new InstantiationService(new ServiceCollection(), true);
+    expect(() => ix.invokeFunction((a) => a.get(ILogger))).toThrowError(
+      /unknown service 'logger'/,
+    );
+  });
+
+  it('invokeFunction forwards additional arguments to the callback', () => {
+    const ix = new InstantiationService();
+    expect(
+      ix.invokeFunction(
+        (_a, prefix: string, count: number) => `${prefix}:${count}`,
+        'req',
+        7,
+      ),
+    ).toBe('req:7');
+  });
+
+  it('invokeFunction accessor is invalid after the callback returns', () => {
+    class AccessorLogger implements ILogger {
+      log(_m: string): void {
+        /* noop */
+      }
+    }
+    const ix = new InstantiationService(
+      new ServiceCollection([ILogger, new SyncDescriptor(AccessorLogger)]),
+    );
+    let captured: ServicesAccessor | undefined;
+    ix.invokeFunction((a) => {
+      captured = a;
+      expect(a.get(ILogger)).toBeInstanceOf(AccessorLogger);
+    });
+    expect(() => captured!.get(ILogger)).toThrowError(
+      /service accessor is only valid/,
+    );
+  });
+
+  it('uses the live ServiceCollection entry instead of a stale instance cache', () => {
+    class InitialLogger implements ILogger {
+      log(_m: string): void {
+        /* noop */
+      }
+    }
+    class ReplacementLogger implements ILogger {
+      log(_m: string): void {
+        /* noop */
+      }
+    }
+    const first = new InitialLogger();
+    const second = new ReplacementLogger();
+    const services = new ServiceCollection([ILogger, first]);
+    const ix = new InstantiationService(services);
+    expect(ix.invokeFunction((a) => a.get(ILogger))).toBe(first);
+    services.set(ILogger, second);
+    expect(ix.invokeFunction((a) => a.get(ILogger))).toBe(second);
   });
 
   it('createChild returns a child container, dispose tears down', () => {

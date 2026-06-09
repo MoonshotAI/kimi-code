@@ -9,20 +9,17 @@ import type { Graph } from './graph';
  *
  * Two construction forms are supported:
  *
- *  1. **Legacy `path: string[]` form** — used by the linear `_inProgress`
+ *  1. **`path: string[]` form** — used by the linear `_inProgress`
  *     tree-stack check inside `_getOrCreateInstance`. This was the only form
- *     in P0; it is retained because that defensive layer is preserved per
- *     PLAN D3 (it catches same-id reentrancy from a ctor body even before
- *     the Graph traversal would discover it). The path is the construction
- *     stack at the moment the cycle was detected, in construction order
- *     (root → ... → repeated-id). The repeated id appears at both ends so
- *     the cycle is visually obvious.
+ *     stack check. The path is the construction stack at the moment the
+ *     cycle was detected, in construction order (root → ... → repeated-id).
+ *     The repeated id appears at both ends so the cycle is visually obvious.
  *
  *  2. **`Graph<any>` form** — used by the Graph-based
- *     `_createAndCacheServiceInstance` introduced in P1.1. The path is
- *     computed lazily via `graph.findCycleSlow()` when the message is built.
- *     If the cycle finder returns `undefined` we fall back to dumping the
- *     entire graph so the failure is still diagnosable.
+ *     `_createAndCacheServiceInstance`. The path is computed lazily via
+ *     `graph.findCycleSlow()` when the message is built. If the cycle finder
+ *     returns `undefined` we fall back to dumping the entire graph so the
+ *     failure is still diagnosable.
  *
  * Both forms expose `path: ReadonlyArray<string>` so existing call sites
  * (and tests) keep working. For the Graph form the `path` array is

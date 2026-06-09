@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { InstantiationType, SyncDescriptor, SyncDescriptor0 } from '#/di/descriptors';
+import * as descriptorsModule from '#/di/descriptors';
+import { SyncDescriptor, type SyncDescriptor0 } from '#/di/descriptors';
+import { InstantiationType } from '#/di/extensions';
 
 class MyClass {
   constructor(
@@ -37,14 +39,16 @@ describe('SyncDescriptor', () => {
 });
 
 describe('SyncDescriptor0 (P0.4)', () => {
-  it('is a SyncDescriptor with empty staticArguments', () => {
+  it('is a type-only zero-argument descriptor shape', () => {
     class Zero {
       constructor() {}
     }
-    const d = new SyncDescriptor0(Zero);
-    expect(d).toBeInstanceOf(SyncDescriptor);
+    const d: SyncDescriptor0<Zero> = { ctor: Zero };
     expect(d.ctor).toBe(Zero);
-    expect(d.staticArguments).toEqual([]);
+  });
+
+  it('is not exported as a runtime value from descriptors', () => {
+    expect('SyncDescriptor0' in descriptorsModule).toBe(false);
   });
 });
 
@@ -52,5 +56,9 @@ describe('InstantiationType', () => {
   it('Eager === 0, Delayed === 1', () => {
     expect(InstantiationType.Eager).toBe(0);
     expect(InstantiationType.Delayed).toBe(1);
+  });
+
+  it('is not exported as a runtime value from descriptors', () => {
+    expect('InstantiationType' in descriptorsModule).toBe(false);
   });
 });

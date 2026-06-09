@@ -12,6 +12,10 @@ import { ServiceCollection } from '#/di/serviceCollection';
  * having to thread the container through manually.
  */
 describe('IInstantiationService self-registration (P0.5)', () => {
+  it('uses the VS Code diagnostic service id', () => {
+    expect(String(IInstantiationService)).toBe('instantiationService');
+  });
+
   it('root container exposes itself via accessor.get(IInstantiationService)', () => {
     const ix = new InstantiationService();
     const resolved = ix.invokeFunction((a) => a.get(IInstantiationService));
