@@ -499,7 +499,7 @@ function handleCreateSession(): void {
       @delete="(id) => client.deleteSession(id)"
     />
 
-    <!-- Mobile settings bottom-sheet: StatusLine controls + app prefs + auth -->
+    <!-- Mobile settings bottom-sheet: session controls + app prefs + auth -->
     <MobileSettingsSheet
       v-if="isMobile"
       v-model="showMobileSettings"

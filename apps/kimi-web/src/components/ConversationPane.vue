@@ -44,7 +44,7 @@ const props = defineProps<{
   readFile?: (path: string) => Promise<FileData | null>;
   changesByPath?: Record<string, string>;
   fileReloadKey?: string | number;
-  /** Mobile shell: hide the desktop StatusLine + give the TabBar bigger taps. */
+  /** Mobile shell: compact chrome + give the TabBar bigger taps. */
   mobile?: boolean;
   /** Modern theme: render chat bubbles at all widths (desktop included). */
   modern?: boolean;
@@ -832,7 +832,7 @@ onUnmounted(() => {
 /* "New messages" floating pill */
 .newmsg-pill {
   position: absolute;
-  bottom: 112px; /* above StatusLine + Composer */
+  bottom: 112px; /* above the Composer toolbar */
   left: 50%;
   transform: translateX(-50%);
   display: flex;

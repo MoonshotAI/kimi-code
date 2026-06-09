@@ -10,12 +10,6 @@ export default {
   currentWorkspace: '仅当前工作区',
   addWorkspace: '添加工作区…',
   noWorkspace: '暂无工作区',
-  // Workspace rail
-  railLabel: '工作区',
-  title: '工作区',
-  expand: '展开',
-  collapse: '收起',
-  settings: '设置',
   // Column-header scope toggle
   scopeCurrent: '当前工作区',
   scopeAll: '全部工作区',

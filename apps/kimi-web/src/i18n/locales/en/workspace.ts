@@ -10,12 +10,6 @@ export default {
   currentWorkspace: 'Current workspace only',
   addWorkspace: 'Add workspace…',
   noWorkspace: 'No workspace',
-  // Workspace rail
-  railLabel: 'Workspaces',
-  title: 'Workspace',
-  expand: 'Expand',
-  collapse: 'Collapse',
-  settings: 'Settings',
   // Column-header scope toggle
   scopeCurrent: 'this workspace',
   scopeAll: 'all workspaces',
