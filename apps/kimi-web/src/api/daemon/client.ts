@@ -901,8 +901,11 @@ export class DaemonKimiWebApi implements KimiWebApi {
 
     return {
       subscribe(sessionId: string, lastSeq?: number): void {
-        // Reset projector state when (re-)subscribing a session
-        projector.reset(sessionId);
+        // Do NOT reset projector state here: every sidebar click re-subscribes
+        // the (possibly running) session, and a reset wipes the turn/prompt
+        // bindings — the remainder of an in-flight turn would be dropped on
+        // the floor. The projector starts sessions fresh on first sight, and
+        // onResync (below) resets explicitly before messages are reloaded.
         socket.subscribe(sessionId, lastSeq ?? 0);
       },
       unsubscribe(sessionId: string): void {

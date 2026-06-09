@@ -105,6 +105,17 @@ function createSessionState(): SessionState {
 // Message-log helpers (inlined; mirrors message-log.ts)
 // ---------------------------------------------------------------------------
 
+/**
+ * Decouple an emitted message from the projector's internal log. The reducer
+ * stores emitted messages by reference; the projector keeps mutating its own
+ * copy in place (`slot.text += delta`), so sharing the content objects makes
+ * the reducer's delta-append run on already-appended text — the first streamed
+ * chunk of every text/thinking block rendered twice.
+ */
+function cloneMessage(msg: AppMessage): AppMessage {
+  return { ...msg, content: msg.content.map((c) => ({ ...c })) };
+}
+
 function startAssistantMessage(state: SessionState, sessionId: string, promptId: string): AppMessage {
   const msg: AppMessage = {
     id: ulid('msg_'),
@@ -295,8 +306,15 @@ export function createAgentProjector(): AgentProjector {
       // -----------------------------------------------------------------------
       case 'turn.step.started': {
         const turnId: number = p?.turnId;
-        const promptId = s.turnPromptId.get(turnId) ?? s.currentPromptId;
-        if (!promptId) break;
+        let promptId = s.turnPromptId.get(turnId) ?? s.currentPromptId;
+        if (!promptId) {
+          // Joined mid-turn (reconnect/resync wiped the binding): synthesize a
+          // promptId like turn.started does, so the REST of the turn still
+          // renders instead of every following event being dropped.
+          promptId = ulid('pr_');
+          s.currentPromptId = promptId;
+          if (turnId !== undefined) s.turnPromptId.set(turnId, promptId);
+        }
 
         // Create a new pending assistant message
         const msg = startAssistantMessage(s, sessionId, promptId);
@@ -305,7 +323,7 @@ export function createAgentProjector(): AgentProjector {
         s.thinkingContentIndex = 0;
         s.textContentIndex = 0;
 
-        out.push({ type: 'messageCreated', message: msg });
+        out.push({ type: 'messageCreated', message: cloneMessage(msg) });
         break;
       }
 
@@ -379,7 +397,7 @@ export function createAgentProjector(): AgentProjector {
             type: 'messageUpdated',
             sessionId,
             messageId: msgId,
-            content: [...msg.content],
+            content: msg.content.map((c) => ({ ...c })),
             status: 'pending',
           });
         }
@@ -402,8 +420,13 @@ export function createAgentProjector(): AgentProjector {
       // -----------------------------------------------------------------------
       case 'tool.result': {
         const turnId: number = p?.turnId;
-        const promptId = s.turnPromptId.get(turnId) ?? s.currentPromptId;
-        if (!promptId) break;
+        let promptId = s.turnPromptId.get(turnId) ?? s.currentPromptId;
+        if (!promptId) {
+          // Same mid-turn-join fallback as turn.step.started.
+          promptId = ulid('pr_');
+          s.currentPromptId = promptId;
+          if (turnId !== undefined) s.turnPromptId.set(turnId, promptId);
+        }
 
         const toolCallId: string = p?.toolCallId;
         const output = p?.output;
@@ -414,7 +437,7 @@ export function createAgentProjector(): AgentProjector {
         void (Date.now() - startTime); // duration — unused at client level
 
         const resultMsg = appendToolResultMessage(s, sessionId, toolCallId, output, isError, promptId);
-        out.push({ type: 'messageCreated', message: resultMsg });
+        out.push({ type: 'messageCreated', message: cloneMessage(resultMsg) });
 
         // Reset assistant message tracking — next step.started will create a fresh one
         s.currentAssistantMsgId = undefined;
@@ -443,7 +466,7 @@ export function createAgentProjector(): AgentProjector {
               type: 'messageUpdated',
               sessionId,
               messageId: msgId,
-              content: [...msg.content],
+              content: msg.content.map((c) => ({ ...c })),
               status: 'completed',
             });
           }
@@ -481,7 +504,7 @@ export function createAgentProjector(): AgentProjector {
               type: 'messageUpdated',
               sessionId,
               messageId: msgId,
-              content: [...msg.content],
+              content: msg.content.map((c) => ({ ...c })),
               status: reason === 'failed' ? 'error' : 'completed',
             });
           }
