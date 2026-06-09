@@ -1,5 +1,11 @@
 # @moonshot-ai/kosong
 
+## 0.4.1
+
+### Patch Changes
+
+- [#581](https://github.com/MoonshotAI/kimi-code/pull/581) [`aa3471f`](https://github.com/MoonshotAI/kimi-code/commit/aa3471f5d3d2960834ba3239c0b8459144bc79fa) - Pass through xhigh reasoning effort for OpenAI-compatible chat completions requests.
+
 ## 0.4.0
 
 ### Minor Changes
