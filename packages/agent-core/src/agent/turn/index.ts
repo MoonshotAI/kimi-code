@@ -110,11 +110,6 @@ export class TurnFlow {
     return this.agent.homedir ? basename(this.agent.homedir) : this.agent.type;
   }
 
-  /** Whether goal-mode runtime behavior (continuation, abnormal-end marking) applies. */
-  private get goalRuntimeEnabled(): boolean {
-    return true;
-  }
-
   // Returns the new turnId, or null if the turn was marked as resuming.
   prompt(input: readonly ContentPart[], origin: PromptOrigin = USER_PROMPT_ORIGIN): number | null {
     this.agent.records.logRecord({
@@ -295,7 +290,7 @@ export class TurnFlow {
       this.activeTurn.controller.signal === signal;
     try {
       const initialGoalStatus = this.agent.goal.getGoal().goal?.status;
-      if (this.goalRuntimeEnabled && initialGoalStatus === 'active') {
+      if (initialGoalStatus === 'active') {
         return await this.driveGoal(firstTurnId, input, origin, signal);
       }
       const end = await this.runOneTurn(firstTurnId, input, origin, signal, true);
@@ -303,7 +298,6 @@ export class TurnFlow {
         initialGoalStatus === 'paused' || initialGoalStatus === 'blocked';
       const currentGoalStatus = this.agent.goal.getGoal().goal?.status;
       if (
-        this.goalRuntimeEnabled &&
         resumedFromPausedOrBlocked &&
         currentGoalStatus === 'active' &&
         end.event.reason !== 'cancelled' &&
