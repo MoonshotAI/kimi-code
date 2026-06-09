@@ -43,12 +43,17 @@ function registry(
 interface SkillToolMethods {
   readonly recordSkillActivation: (origin: SkillActivationOrigin) => void;
   readonly recordSystemReminder: (content: string, origin: SkillActivationOrigin) => void;
+  readonly recordUserMessage: (
+    content: readonly [{ readonly type: 'text'; readonly text: string }],
+    origin: SkillActivationOrigin,
+  ) => void;
 }
 
 function skillToolMethods() {
   return {
     recordSkillActivation: vi.fn<SkillToolMethods['recordSkillActivation']>(),
     recordSystemReminder: vi.fn<SkillToolMethods['recordSystemReminder']>(),
+    recordUserMessage: vi.fn<SkillToolMethods['recordUserMessage']>(),
   } satisfies SkillToolMethods;
 }
 
@@ -60,6 +65,7 @@ function skillToolAgent(skills: SkillRegistry, methods: SkillToolMethods): Agent
     },
     context: {
       appendSystemReminder: methods.recordSystemReminder,
+      appendUserMessage: methods.recordUserMessage,
     },
   } as unknown as Agent;
 }
@@ -127,7 +133,7 @@ describe('SkillTool execution', () => {
     expect(methods.recordSkillActivation).not.toHaveBeenCalled();
   });
 
-  it('records inline skill content as a system reminder', async () => {
+  it('records inline skill content as a loaded skill message', async () => {
     const methods = skillToolMethods();
     const tool = skillTool(registry([skill('commit')]), methods);
 
@@ -137,9 +143,13 @@ describe('SkillTool execution', () => {
     expect(result.output).toContain('loaded inline');
     expect(result.output).not.toContain('body of commit');
     expect(methods.recordSkillActivation).toHaveBeenCalledTimes(1);
-    expect(methods.recordSystemReminder).toHaveBeenCalledTimes(1);
-    expect(methods.recordSystemReminder.mock.calls[0]?.[0]).toContain(
-      '<kimi-skill-loaded name="commit" args="message text">\nbody of commit\n\nARGUMENTS: message text\n</kimi-skill-loaded>',
+    expect(methods.recordUserMessage).toHaveBeenCalledTimes(1);
+    expect(methods.recordUserMessage.mock.calls[0]?.[0][0]?.text).toBe(
+      'Skill tool loaded instructions for this request. Follow them.\n\n' +
+        '<kimi-skill-loaded name="commit" trigger="model-tool" source="user" args="message text">\nbody of commit\n\nARGUMENTS: message text\n</kimi-skill-loaded>',
+    );
+    expect(methods.recordUserMessage.mock.calls[0]?.[0][0]?.text).not.toContain(
+      '<system-reminder>',
     );
   });
 
@@ -161,8 +171,9 @@ describe('SkillTool execution', () => {
 
     await execute(tool, { skill: 'brainstorming' });
 
-    expect(methods.recordSystemReminder.mock.calls[0]?.[0]).toContain(
-      '<kimi-skill-loaded name="brainstorming" args="">\n' +
+    expect(methods.recordUserMessage.mock.calls[0]?.[0][0]?.text).toBe(
+      'Skill tool loaded instructions for this request. Follow them.\n\n' +
+        '<kimi-skill-loaded name="brainstorming" trigger="model-tool" source="extra" args="">\n' +
         '<kimi-plugin-instructions plugin="superpowers">\n' +
         'Use AskUserQuestion for clarifying questions.\n' +
         '</kimi-plugin-instructions>\n\nbrainstorm body\n' +
@@ -185,10 +196,11 @@ describe('SkillTool execution', () => {
 
     await execute(tool, { skill: 'commit', args: '-m "fix login"' });
 
-    expect(methods.recordSystemReminder.mock.calls[0]?.[0]).toContain(
-      '<kimi-skill-loaded name="commit" args="-m &quot;fix login&quot;">\nFlag: -m\nCommit message: fix login\nRaw: -m "fix login"\n</kimi-skill-loaded>',
+    expect(methods.recordUserMessage.mock.calls[0]?.[0][0]?.text).toBe(
+      'Skill tool loaded instructions for this request. Follow them.\n\n' +
+        '<kimi-skill-loaded name="commit" trigger="model-tool" source="user" args="-m &quot;fix login&quot;">\nFlag: -m\nCommit message: fix login\nRaw: -m "fix login"\n</kimi-skill-loaded>',
     );
-    expect(methods.recordSystemReminder.mock.calls[0]?.[0]).not.toContain('ARGUMENTS:');
+    expect(methods.recordUserMessage.mock.calls[0]?.[0][0]?.text).not.toContain('ARGUMENTS:');
   });
 
   it('expands session id from the skill registry for model-invoked skills', async () => {
@@ -202,8 +214,9 @@ describe('SkillTool execution', () => {
 
     await execute(tool, { skill: 'session-aware' });
 
-    expect(methods.recordSystemReminder.mock.calls[0]?.[0]).toContain(
-      '<kimi-skill-loaded name="session-aware" args="">\nSession: ses_model_skill\n</kimi-skill-loaded>',
+    expect(methods.recordUserMessage.mock.calls[0]?.[0][0]?.text).toBe(
+      'Skill tool loaded instructions for this request. Follow them.\n\n' +
+        '<kimi-skill-loaded name="session-aware" trigger="model-tool" source="user" args="">\nSession: ses_model_skill\n</kimi-skill-loaded>',
     );
   });
 
@@ -235,8 +248,9 @@ describe('SkillTool execution', () => {
 
     await execute(tool, { skill: 'a&b', args: '<raw "value">' });
 
-    expect(methods.recordSystemReminder.mock.calls[0]?.[0]).toContain(
-      '<kimi-skill-loaded name="a&amp;b" args="&lt;raw &quot;value&quot;&gt;">\nbody of a&b\n\nARGUMENTS: &lt;raw "value"&gt;\n</kimi-skill-loaded>',
+    expect(methods.recordUserMessage.mock.calls[0]?.[0][0]?.text).toBe(
+      'Skill tool loaded instructions for this request. Follow them.\n\n' +
+        '<kimi-skill-loaded name="a&amp;b" trigger="model-tool" source="user" args="&lt;raw &quot;value&quot;&gt;">\nbody of a&b\n\nARGUMENTS: &lt;raw "value"&gt;\n</kimi-skill-loaded>',
     );
     expect(methods.recordSkillActivation).toHaveBeenCalledTimes(1);
   });
