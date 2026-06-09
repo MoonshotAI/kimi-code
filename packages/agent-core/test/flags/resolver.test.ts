@@ -106,6 +106,25 @@ describe('FlagResolver', () => {
     expect(resolver.enabled('b-off-default' as FlagId)).toBe(true);
   });
 
+  it('ignores obsolete config override ids outside the registry', () => {
+    const resolver = new FlagResolver({}, DEFS, {
+      'a-on-default': false,
+      'legacy_feature': true,
+    } as never);
+
+    expect(resolver.enabled('a-on-default' as FlagId)).toBe(false);
+    expect(resolver.enabled('legacy_feature' as FlagId)).toBe(false);
+    expect(resolver.snapshot()).toEqual({
+      'a-on-default': false,
+      'b-off-default': false,
+    });
+    expect(resolver.enabledIds()).toEqual([]);
+    expect(resolver.explainAll().map((feature) => feature.id)).toEqual([
+      'a-on-default',
+      'b-off-default',
+    ]);
+  });
+
   it('keeps env precedence above config overrides', () => {
     const resolver = new FlagResolver(
       {
