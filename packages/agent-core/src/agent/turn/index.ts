@@ -112,7 +112,7 @@ export class TurnFlow {
 
   /** Whether goal-mode runtime behavior (continuation, abnormal-end marking) applies. */
   private get goalRuntimeEnabled(): boolean {
-    return this.agent.experimentalFlags.enabled('goal_command') && this.agent.type === 'main';
+    return this.agent.type === 'main';
   }
 
   // Returns the new turnId, or null if the turn was marked as resuming.
@@ -571,8 +571,8 @@ export class TurnFlow {
     const deduper = new ToolCallDeduplicator({ telemetry: this.agent.telemetry });
     await this.agent.mcp?.waitForInitialLoad(signal);
     // Surface the active goal at the start of the turn (append-only; no-op when
-    // goal mode is off). Each goal continuation is its own turn, so this re-injects
-    // the reminder once per turn rather than per step, preserving prompt caching.
+    // there is no active goal). Each goal continuation is its own turn, so this
+    // re-injects the reminder once per turn rather than per step, preserving prompt caching.
     await this.agent.injection.injectGoal();
     while (true) {
       signal.throwIfAborted();

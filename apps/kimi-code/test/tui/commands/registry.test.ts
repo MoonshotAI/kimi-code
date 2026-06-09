@@ -51,7 +51,7 @@ describe('built-in slash command registry', () => {
   it('keeps swarm mode changes and swarm tasks idle-only', () => {
     const swarm = findBuiltInSlashCommand('swarm');
     expect(swarm).toBeDefined();
-    expect((swarm as KimiSlashCommand).experimentalFlag).toBe('agent_swarm');
+    expect((swarm as KimiSlashCommand).experimentalFlag).toBeUndefined();
     expect(resolveSlashCommandAvailability(swarm!, 'on')).toBe('idle-only');
     expect(resolveSlashCommandAvailability(swarm!, 'off')).toBe('idle-only');
     expect(resolveSlashCommandAvailability(swarm!, 'Ship feature X')).toBe('idle-only');
@@ -99,10 +99,10 @@ describe('built-in slash command registry', () => {
     ]);
   });
 
-  it('registers goal behind the goal_command flag with subcommand-aware availability', () => {
+  it('registers goal with subcommand-aware availability', () => {
     const goal = findBuiltInSlashCommand('goal');
     expect(goal).toBeDefined();
-    expect((goal as KimiSlashCommand).experimentalFlag).toBe('goal_command');
+    expect((goal as KimiSlashCommand).experimentalFlag).toBeUndefined();
     expect(resolveSlashCommandAvailability(goal!, '')).toBe('always');
     expect(resolveSlashCommandAvailability(goal!, 'status')).toBe('always');
     expect(resolveSlashCommandAvailability(goal!, 'pause')).toBe('always');

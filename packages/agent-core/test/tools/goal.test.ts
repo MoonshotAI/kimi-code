@@ -310,14 +310,13 @@ describe('ToolManager goal tool registration', () => {
     return ctxAgent.agent.tools.loopTools.map((tool) => tool.name);
   }
 
-  it('omits goal tools when the flag is disabled', () => {
+  it('exposes goal tools to the main agent even when the flag is disabled', () => {
     const names = loopToolNames('main', false);
-    expect(names).not.toContain('CreateGoal');
-    expect(names).not.toContain('GetGoal');
+    expect(names).toEqual(expect.arrayContaining(['CreateGoal', 'GetGoal']));
     expect(names).not.toContain('SetGoalBudget');
   });
 
-  it('exposes goal tools to the main agent when the flag is enabled', () => {
+  it('exposes goal tools to the main agent when the scoped flag is enabled', () => {
     const names = loopToolNames('main', true);
     expect(names).toEqual(expect.arrayContaining(['CreateGoal', 'GetGoal']));
     expect(names).not.toContain('SetGoalBudget');

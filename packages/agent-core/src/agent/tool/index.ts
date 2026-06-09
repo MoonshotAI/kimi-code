@@ -375,9 +375,7 @@ export class ToolManager {
       this.enabledTools.has('TaskList') &&
       this.enabledTools.has('TaskOutput') &&
       this.enabledTools.has('TaskStop');
-    const goalCommandEnabled =
-      this.agent.experimentalFlags.enabled('goal_command') && this.agent.type === 'main';
-    const agentSwarmEnabled = this.agent.experimentalFlags.enabled('agent_swarm');
+    const goalToolsEnabled = this.agent.type === 'main';
     this.builtinTools = new Map(
       [
         new b.ReadTool(kaos, workspace),
@@ -392,11 +390,11 @@ export class ToolManager {
           new b.ReadMediaFileTool(kaos, workspace, modelCapabilities, videoUploader),
         new b.EnterPlanModeTool(this.agent),
         new b.ExitPlanModeTool(this.agent),
-        // Goal tools are main-agent-only and gated by the goal_command flag.
-        goalCommandEnabled && new b.CreateGoalTool(this.agent),
-        goalCommandEnabled && new b.GetGoalTool(this.agent),
-        goalCommandEnabled && new b.SetGoalBudgetTool(this.agent),
-        goalCommandEnabled && new b.UpdateGoalTool(this.agent),
+        // Goal tools are main-agent-only.
+        goalToolsEnabled && new b.CreateGoalTool(this.agent),
+        goalToolsEnabled && new b.GetGoalTool(this.agent),
+        goalToolsEnabled && new b.SetGoalBudgetTool(this.agent),
+        goalToolsEnabled && new b.UpdateGoalTool(this.agent),
         this.agent.rpc?.requestQuestion && new b.AskUserQuestionTool(this.agent),
         new b.TodoListTool(this.toolStore),
         new b.TaskListTool(background),
@@ -417,7 +415,6 @@ export class ToolManager {
             },
           ),
         this.agent.subagentHost &&
-          agentSwarmEnabled &&
           new b.AgentSwarmTool(this.agent.subagentHost, this.agent.swarmMode),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),

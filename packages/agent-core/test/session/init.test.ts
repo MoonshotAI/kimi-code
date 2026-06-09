@@ -549,7 +549,7 @@ describe('AgentAPI.startBtw', () => {
     }
   });
 
-  it('uses session-scoped experimental flags for sub-skill discovery and builtins', async () => {
+  it('discovers sub-skills and builtins regardless of session-scoped experimental flags', async () => {
     const workDir = await makeTempDir();
     const sessionDir = await makeTempDir();
     const skillsRoot = join(workDir, 'skills');
@@ -583,8 +583,8 @@ describe('AgentAPI.startBtw', () => {
     try {
       const disabledSkills = await disabledSession.listSkills();
       expect(disabledSkills.map((skill) => skill.name)).toContain('outer');
-      expect(disabledSkills.map((skill) => skill.name)).not.toContain('inner');
-      expect(disabledSkills.map((skill) => skill.name)).not.toContain('sub-skill.consolidate');
+      expect(disabledSkills.map((skill) => skill.name)).toContain('inner');
+      expect(disabledSkills.map((skill) => skill.name)).toContain('sub-skill.consolidate');
     } finally {
       await disabledSession.close();
     }

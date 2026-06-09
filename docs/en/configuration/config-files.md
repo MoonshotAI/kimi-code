@@ -51,11 +51,6 @@ reserved_context_size = 50000
 max_running_tasks = 4
 keep_alive_on_exit = false
 
-[experimental]
-goal_command = false
-micro_compaction = false
-background_ask = false
-
 [[permission.rules]]
 decision = "allow"
 pattern = "Read"
@@ -89,7 +84,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `thinking` | `table` | — | Default parameters for Thinking mode → [`thinking`](#thinking) |
 | `loop_control` | `table` | — | Agent loop control parameters → [`loop_control`](#loop_control) |
 | `background` | `table` | — | Background task runtime parameters → [`background`](#background) |
-| `experimental` | `table` | — | Persistent experimental feature toggles → [`experimental`](#experimental) |
+| `experimental` | `table` | — | Reserved experimental feature opt-ins → [`experimental`](#experimental) |
 | `services` | `table` | — | Built-in external service configuration → [`services`](#services) |
 | `permission` | `table` | — | Initial permission rules → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | Lifecycle hooks; see [Hooks](../customization/hooks.md) |
@@ -177,15 +172,7 @@ You can also switch models temporarily without touching the config file — by s
 
 ## `experimental`
 
-`experimental` stores persistent opt-ins for features that are not public by default yet. You can edit this table directly or run `/experiments` in the TUI. The TUI panel stages changes locally until you confirm them, then writes `config.toml` and reloads the current session. Each TOML key is the experimental flag ID, for example `goal_command`.
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `goal_command` | `boolean` | `false` | Enable `/goal` and goal-management tools |
-| `micro_compaction` | `boolean` | `false` | Trim older large tool results from context while preserving recent conversation |
-| `background_ask` | `boolean` | `false` | Allow `AskUserQuestion` to start a background question task when the Agent can continue working |
-
-Environment variables take priority over this table. `KIMI_CODE_EXPERIMENTAL_<NAME>` overrides one feature, and `KIMI_CODE_EXPERIMENTAL_FLAG=1` enables all experimental features for that process — see the full list in [Environment variables → Runtime switches](./env-vars.md#runtime-switches). When a feature is controlled by the environment, `/experiments` shows it as locked.
+`experimental` is reserved for persistent opt-ins to features that are not public by default. There are currently no user-facing experimental features, so you can omit this table or leave it empty.
 
 ## `services`
 

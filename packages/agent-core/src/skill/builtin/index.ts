@@ -1,4 +1,3 @@
-import { flags } from '../../flags/resolver';
 import type { SkillRegistry } from '../registry';
 import { MCP_CONFIG_SKILL } from './mcp-config';
 import {
@@ -8,22 +7,20 @@ import {
 } from './sub-skill';
 import { UPDATE_CONFIG_SKILL } from './update-config';
 
-type SubSkillFlagResolver = {
-  enabled(id: 'sub_skill'): boolean;
+type RegisterBuiltinSkillsOptions = {
+  /** Kept for API compatibility; built-in skills are no longer gated by this option. */
+  readonly experimentalFlags?: unknown;
 };
 
 export function registerBuiltinSkills(
   registry: SkillRegistry,
-  options: { readonly experimentalFlags?: SubSkillFlagResolver } = {},
+  _options: RegisterBuiltinSkillsOptions = {},
 ): void {
-  const experimentalFlags = options.experimentalFlags ?? flags;
   registry.registerBuiltinSkill(MCP_CONFIG_SKILL);
   registry.registerBuiltinSkill(UPDATE_CONFIG_SKILL);
-  if (experimentalFlags.enabled('sub_skill')) {
-    registry.registerBuiltinSkill(SUB_SKILL_PARENT);
-    registry.registerBuiltinSkill(SUB_SKILL_REVIEW);
-    registry.registerBuiltinSkill(SUB_SKILL_CONSOLIDATE);
-  }
+  registry.registerBuiltinSkill(SUB_SKILL_PARENT);
+  registry.registerBuiltinSkill(SUB_SKILL_REVIEW);
+  registry.registerBuiltinSkill(SUB_SKILL_CONSOLIDATE);
 }
 
 export {

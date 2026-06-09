@@ -113,7 +113,7 @@ describe('AskUserQuestionTool', () => {
     expect(labelSchema.description).toContain("append '(Recommended)'");
   });
 
-  it('builds the background-question schema from the agent scoped resolver', () => {
+  it('always builds the background-question schema', () => {
     vi.stubEnv(MASTER_ENV, '1');
     const enabledAgent = {
       rpc: { requestQuestion: vi.fn() },
@@ -137,8 +137,8 @@ describe('AskUserQuestionTool', () => {
 
     expect(enabledTool.description).toContain('Set background=true');
     expect(JSON.stringify(enabledTool.parameters)).toContain('background');
-    expect(disabledTool.description).not.toContain('Set background=true');
-    expect(JSON.stringify(disabledTool.parameters)).not.toContain('background');
+    expect(disabledTool.description).toContain('Set background=true');
+    expect(JSON.stringify(disabledTool.parameters)).toContain('background');
   });
 
   it.each(['manual', 'yolo'] as const)(
@@ -253,12 +253,16 @@ describe('AskUserQuestionTool', () => {
     });
   });
 
-  it('downgrades background=true to an inline question when the experimental flag is off', async () => {
+  it('starts background questions even when experimental env is off', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK', '0');
 
+    let resolveQuestion!: (result: QuestionResult) => void;
+    const questionResult = new Promise<QuestionResult>((resolve) => {
+      resolveQuestion = resolve;
+    });
     const { manager } = createBackgroundManager();
-    const requestQuestion = vi.fn(async () => ({ Postgres: true }));
+    const requestQuestion = vi.fn(async () => questionResult);
     const agent = {
       rpc: { requestQuestion },
       telemetry: { track: vi.fn() },
@@ -266,19 +270,24 @@ describe('AskUserQuestionTool', () => {
       experimentalFlags: new FlagResolver(),
     } as unknown as Agent;
     const tool = new AskUserQuestionTool(agent);
-    expect(tool.description).not.toContain('Set background=true');
+    expect(tool.description).toContain('Set background=true');
 
     const result = await executeTool(tool, {
       turnId: '0',
-      toolCallId: 'call_bg_disabled',
+      toolCallId: 'call_bg_enabled',
       args: { ...input(), background: true },
       signal,
     });
 
     expect(result.isError).toBe(false);
-    expect(result.output).toBe(JSON.stringify({ answers: { Postgres: true } }));
-    expect(requestQuestion).toHaveBeenCalled();
-    expect(manager.list()).toHaveLength(0);
+    expect(result.output).toContain('task_id: question-');
+    const outputText = typeof result.output === 'string' ? result.output : '';
+    const taskId = /task_id: (?<taskId>question-[0-9a-z]{8})/.exec(outputText)?.groups?.['taskId'];
+    expect(taskId).toBeDefined();
+    expect(manager.getTask(taskId!)).toMatchObject({ status: 'running' });
+
+    resolveQuestion({ answers: { Postgres: true } });
+    await manager.wait(taskId!);
   });
 
   it('returns a dismissed message when every question is dismissed', async () => {

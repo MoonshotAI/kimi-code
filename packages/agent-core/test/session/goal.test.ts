@@ -714,7 +714,7 @@ describe('SessionAPIImpl.updateSessionMetadata goal reservation', () => {
   });
 });
 
-describe('SessionAPIImpl goal flag gating', () => {
+describe('SessionAPIImpl goal lifecycle', () => {
   function makeSession(sessionDir: string, goalEnabled: boolean): Session {
     return new Session({
       id: 'goal-rpc-flag',
@@ -728,22 +728,18 @@ describe('SessionAPIImpl goal flag gating', () => {
     });
   }
 
-  it('rejects SDK goal creation when the flag is disabled', async () => {
+  it('allows SDK goal creation regardless of the scoped flag value', async () => {
     const sessionDir = await makeTempDir();
     const session = makeSession(sessionDir, false);
     const api = new SessionAPIImpl(session);
 
-    let thrown: unknown;
-    try {
-      void api.createGoal({ objective: 'work' });
-    } catch (error) {
-      thrown = error;
-    }
-    expect(thrown).toMatchObject({ code: ErrorCodes.NOT_IMPLEMENTED });
-    expect(session.goals.getGoal().goal).toBeNull();
+    const snapshot = await api.createGoal({ objective: 'work' });
+
+    expect(snapshot.objective).toBe('work');
+    expect(api.getGoal({}).goal?.status).toBe('active');
   });
 
-  it('allows SDK goal creation when the flag is enabled', async () => {
+  it('allows SDK goal creation when the scoped flag is enabled', async () => {
     const sessionDir = await makeTempDir();
     const session = makeSession(sessionDir, true);
     const api = new SessionAPIImpl(session);

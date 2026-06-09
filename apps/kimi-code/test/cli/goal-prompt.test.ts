@@ -40,19 +40,15 @@ describe('goalExitCode', () => {
 });
 
 describe('parseHeadlessGoalCreate', () => {
-  it('returns undefined when the flag is disabled', () => {
-    expect(parseHeadlessGoalCreate('/goal Ship feature X', false)).toBeUndefined();
-  });
-
   it('parses a create command into objective + replace', () => {
-    const result = parseHeadlessGoalCreate('/goal Ship feature X', true);
+    const result = parseHeadlessGoalCreate('/goal Ship feature X');
     expect(result).toEqual({ objective: 'Ship feature X', replace: false });
   });
 
   it('returns undefined for non-goal prompts and non-create subcommands', () => {
-    expect(parseHeadlessGoalCreate('say hello', true)).toBeUndefined();
-    expect(parseHeadlessGoalCreate('/goal status', true)).toBeUndefined();
-    expect(parseHeadlessGoalCreate('/goal pause', true)).toBeUndefined();
+    expect(parseHeadlessGoalCreate('say hello')).toBeUndefined();
+    expect(parseHeadlessGoalCreate('/goal status')).toBeUndefined();
+    expect(parseHeadlessGoalCreate('/goal pause')).toBeUndefined();
   });
 });
 
@@ -237,7 +233,7 @@ describe('runPrompt headless goal mode', () => {
     expect(stdout.text()).not.toContain('"goalId":null');
   });
 
-  it('treats /goal as a normal prompt when the flag is disabled', async () => {
+  it('creates a headless goal without reading experimental features', async () => {
     mocks.experimentalFeatures = [];
     const stdout = writer();
     const stderr = writer();
@@ -246,8 +242,8 @@ describe('runPrompt headless goal mode', () => {
       stderr,
       process: { once: () => {}, off: () => {}, exit: () => undefined as never },
     });
-    expect(mocks.session.createGoal).not.toHaveBeenCalled();
-    expect(mocks.session.prompt).toHaveBeenCalled();
+    expect(mocks.session.createGoal).toHaveBeenCalled();
+    expect(mocks.session.prompt).toHaveBeenCalledWith('Ship feature X');
   });
 
   it('validates the resumed session model before creating a headless goal', async () => {

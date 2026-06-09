@@ -485,7 +485,7 @@ describe('MicroCompaction', () => {
     expect(records.filter((record) => record.event === 'micro_compaction_applied')).toHaveLength(1);
   });
 
-  it('leaves context unchanged when the micro_compaction flag is disabled', () => {
+  it('applies micro compaction even when the micro_compaction flag is disabled', () => {
     vi.stubEnv(MICRO_COMPACTION_FLAG_ENV, '0');
     vi.useFakeTimers();
     const persistence = new InMemoryAgentRecordPersistence();
@@ -494,6 +494,7 @@ describe('MicroCompaction', () => {
         keepRecentMessages: 0,
         minContentTokens: 1,
         cacheMissedThresholdMs: 60 * MINUTE,
+        minContextUsageRatio: 0,
       },
       persistence,
     });
@@ -502,9 +503,10 @@ describe('MicroCompaction', () => {
     appendMicroToolExchange(ctx, 1, { output: 'result one' });
 
     vi.setSystemTime(61 * MINUTE);
+    ctx.agent.microCompaction.detect();
 
-    expect(toolTexts(ctx.agent.context.messages)).toEqual(['result one']);
-    expect(lastMicroCompactionCutoff(persistence.records)).toBeUndefined();
+    expect(toolTexts(ctx.agent.context.messages)).toEqual([DEFAULT_MARKER]);
+    expect(lastMicroCompactionCutoff(persistence.records)).toBe(3);
   });
 
   it('uses the custom marker at the minContentTokens boundary', () => {

@@ -277,17 +277,18 @@ describe("KimiTUI startup", () => {
     expect(driver.state.appState.goal).toEqual(goal);
   });
 
-  it("does not sync goal state while the goal flag is disabled", async () => {
+  it("syncs goal state regardless of the goal flag", async () => {
+    const goal = goalSnapshot();
     const session = makeSession({
-      getGoal: vi.fn(async () => ({ goal: goalSnapshot() })),
+      getGoal: vi.fn(async () => ({ goal })),
     });
     const harness = makeHarness(session);
     const driver = makeDriver(harness, makeStartupInput());
 
     await expect(driver.init()).resolves.toBe(false);
 
-    expect(session.getGoal).not.toHaveBeenCalled();
-    expect(driver.state.appState.goal).toBeNull();
+    expect(session.getGoal).toHaveBeenCalledOnce();
+    expect(driver.state.appState.goal).toEqual(goal);
   });
 
   it("clears goal state when closing the current session", async () => {

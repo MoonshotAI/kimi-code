@@ -82,7 +82,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Toggle swarm mode or run one task in swarm mode',
     priority: 100,
-    experimentalFlag: 'agent_swarm',
     completeArgs: swarmArgumentCompletions,
     availability: 'idle-only',
   },
@@ -179,7 +178,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Start or manage an autonomous goal',
     priority: 80,
-    experimentalFlag: 'goal_command',
     // No argumentHint: the menu description stays as short as every other
     // command's. The subcommands (status/pause/resume/cancel/replace) surface in
     // the argument autocomplete list once the user types `/goal ` (see

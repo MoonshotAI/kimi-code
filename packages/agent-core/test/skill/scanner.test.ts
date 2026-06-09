@@ -337,8 +337,7 @@ describe('discoverSkills shape and ordering', () => {
     expect(skills.map((s) => s.name)).toEqual(['alpha', 'beta', 'top']);
   });
 
-  it('discovers nested SKILL.md files inside a skill bundle when has-sub-skill is enabled', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SUB_SKILL', '1');
+  it('discovers nested SKILL.md files inside a skill bundle when has-sub-skill is declared', async () => {
     const { repoDir } = await makeWorkspace();
     const root = path.join(repoDir, '.kimi-code', 'skills');
     await writeSkill(root, path.join('outer', 'SKILL.md'), [
@@ -368,7 +367,7 @@ describe('discoverSkills shape and ordering', () => {
     expect(skills.map((s) => s.name)).toEqual(['inner', 'outer']);
   });
 
-  it('discovers nested SKILL.md files when sub-skill is enabled by scoped config', async () => {
+  it('discovers nested SKILL.md files even when scoped config is passed', async () => {
     const { repoDir } = await makeWorkspace();
     const root = path.join(repoDir, '.kimi-code', 'skills');
     await writeSkill(root, path.join('outer', 'SKILL.md'), [
@@ -423,7 +422,6 @@ describe('discoverSkills shape and ordering', () => {
   });
 
   it('discovers nested SKILL.md files when has-sub-skill is nested under metadata', async () => {
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SUB_SKILL', '1');
     const { repoDir } = await makeWorkspace();
     const root = path.join(repoDir, '.kimi-code', 'skills');
     await writeSkill(root, path.join('outer', 'SKILL.md'), [
@@ -450,7 +448,7 @@ describe('discoverSkills shape and ordering', () => {
     expect(skills.map((s) => s.name)).toEqual(['outer', 'outer.inner']);
   });
 
-  it('treats sub-skill discovery as opt-in via the KIMI_CODE_EXPERIMENTAL_SUB_SKILL flag', async () => {
+  it('ignores disabled experimental flags for declared sub-skill discovery', async () => {
     const { repoDir } = await makeWorkspace();
     const root = path.join(repoDir, '.kimi-code', 'skills');
     await writeSkill(root, path.join('outer', 'SKILL.md'), [
@@ -476,7 +474,7 @@ describe('discoverSkills shape and ordering', () => {
       experimentalFlags: new FlagResolver({ KIMI_CODE_EXPERIMENTAL_SUB_SKILL: '0' }),
     });
 
-    expect(skills.map((s) => s.name)).toEqual(['outer']);
+    expect(skills.map((s) => s.name)).toEqual(['outer', 'outer.inner']);
   });
 
   it('skips node_modules when scanning nested directories', async () => {

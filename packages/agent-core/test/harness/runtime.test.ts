@@ -145,7 +145,7 @@ goal_command = false
     expect(experimentalFeatureEnabled(core, 'goal_command')).toBe(true);
   });
 
-  it('updates the shared experimental resolver without hot-refreshing materialized tools', async () => {
+  it('updates the shared experimental resolver while goal tools stay available', async () => {
     tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
     const homeDir = join(tmp, 'home');
     const workDir = join(tmp, 'work');
@@ -179,7 +179,7 @@ goal_command = false
 
     expect(session?.experimentalFlags.enabled('goal_command')).toBe(false);
     expect(mainAgent?.experimentalFlags.enabled('goal_command')).toBe(false);
-    expect(mainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(false);
+    expect(mainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(true);
 
     await core.setKimiConfig({
       experimental: {
@@ -189,7 +189,7 @@ goal_command = false
 
     expect(session?.experimentalFlags.enabled('goal_command')).toBe(true);
     expect(mainAgent?.experimentalFlags.enabled('goal_command')).toBe(true);
-    expect(mainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(false);
+    expect(mainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(true);
 
     await rpc.reloadSession({ sessionId: created.id });
     const reloadedMainAgent = core.sessions.get(created.id)?.getReadyAgent('main');

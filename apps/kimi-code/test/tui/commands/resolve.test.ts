@@ -220,15 +220,7 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
-  it('treats /swarm as a normal message when agent_swarm is disabled', () => {
-    expect(resolve('/swarm on')).toEqual({
-      kind: 'message',
-      input: '/swarm on',
-    });
-  });
-
-  it('resolves /swarm when agent_swarm is enabled', () => {
-    setExperimentalFeatures([{ id: 'agent_swarm', enabled: true }]);
+  it('resolves /swarm without an experimental flag', () => {
     expect(resolve('/swarm Ship feature X')).toMatchObject({
       kind: 'builtin',
       name: 'swarm',
@@ -243,8 +235,7 @@ describe('goal command resolution', () => {
     setExperimentalFeatures([]);
   });
 
-  it('resolves /goal to the builtin command when goal_command is enabled', () => {
-    setExperimentalFeatures([{ id: 'goal_command', enabled: true }]);
+  it('resolves /goal to the builtin command without an experimental flag', () => {
     expect(resolve('/goal Ship feature X')).toMatchObject({
       kind: 'builtin',
       name: 'goal',
@@ -252,16 +243,7 @@ describe('goal command resolution', () => {
     });
   });
 
-  it('treats /goal as a normal message when goal_command is disabled', () => {
-    setExperimentalFeatures([]);
-    expect(resolve('/goal Ship feature X')).toEqual({
-      kind: 'message',
-      input: '/goal Ship feature X',
-    });
-  });
-
   it('blocks goal creation while streaming', () => {
-    setExperimentalFeatures([{ id: 'goal_command', enabled: true }]);
     expect(resolve('/goal Ship feature X', { isStreaming: true })).toEqual({
       kind: 'blocked',
       commandName: 'goal',
@@ -270,7 +252,6 @@ describe('goal command resolution', () => {
   });
 
   it('does not block status/pause/cancel/bare goal while streaming', () => {
-    setExperimentalFeatures([{ id: 'goal_command', enabled: true }]);
     for (const sub of ['status', 'pause', 'cancel']) {
       expect(resolve(`/goal ${sub}`, { isStreaming: true })).toMatchObject({
         kind: 'builtin',

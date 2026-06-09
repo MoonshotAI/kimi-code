@@ -98,18 +98,14 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
   readonly name = 'AskUserQuestion' as const;
   readonly description: string;
   readonly parameters: Record<string, unknown>;
-  private readonly backgroundEnabled: boolean;
 
   constructor(private readonly agent: Agent) {
-    this.backgroundEnabled = agent.experimentalFlags.enabled('background_ask');
-    this.description = this.backgroundEnabled
-      ? `${DESCRIPTION}- Set background=true when you can keep working without the answer. This starts a background question task and returns a task_id immediately. The answer arrives automatically in a later turn — you do not need to poll, sleep, or check on it. Continue with other work; never fabricate or predict the answer.`
-      : DESCRIPTION;
+    this.description = `${DESCRIPTION}- Set background=true when you can keep working without the answer. This starts a background question task and returns a task_id immediately. The answer arrives automatically in a later turn — you do not need to poll, sleep, or check on it. Continue with other work; never fabricate or predict the answer.`;
     this.parameters = toInputJsonSchema(this.inputSchema());
   }
 
   resolveExecution(args: AskUserQuestionInput): ToolExecution {
-    const isBackground = args.background === true && this.backgroundEnabled;
+    const isBackground = args.background === true;
     return {
       description: isBackground
         ? `Starting background question: ${questionDescription(args.questions)}`
@@ -127,7 +123,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       turnId,
     }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
-    if (args.background === true && this.backgroundEnabled) {
+    if (args.background === true) {
       return this.executeInBackground(args, { toolCallId, turnId, signal });
     }
 
@@ -135,9 +131,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
   }
 
   private inputSchema(): z.ZodType<AskUserQuestionInput> {
-    return this.backgroundEnabled
-      ? AskUserQuestionInputSchemaWithBackground
-      : AskUserQuestionInputBaseSchema;
+    return AskUserQuestionInputSchemaWithBackground;
   }
 
   private async executeQuestion(

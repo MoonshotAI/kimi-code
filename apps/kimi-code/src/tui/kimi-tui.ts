@@ -1041,9 +1041,7 @@ export class KimiTUI {
   async syncRuntimeState(session: Session = this.requireSession()): Promise<void> {
     const [status, goalResult] = await Promise.all([
       session.getStatus(),
-      isExperimentalFlagEnabled('goal_command')
-        ? session.getGoal()
-        : Promise.resolve({ goal: null }),
+      session.getGoal(),
     ]);
     this.setAppState({
       sessionId: session.id,
