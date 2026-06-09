@@ -418,7 +418,7 @@ describe('discoverSkills shape and ordering', () => {
     expect(skills.map((s) => s.name)).toEqual(['outer', 'outer.inner']);
   });
 
-  it('ignores disabled experimental env for declared sub-skill discovery', async () => {
+  it('discovers declared sub-skills without a feature flag', async () => {
     const { repoDir } = await makeWorkspace();
     const root = path.join(repoDir, '.kimi-code', 'skills');
     await writeSkill(root, path.join('outer', 'SKILL.md'), [
@@ -438,8 +438,6 @@ describe('discoverSkills shape and ordering', () => {
       '',
       'Inner body.',
     ]);
-
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_SUB_SKILL', '0');
 
     const skills = await discoverSkills({
       roots: [{ path: root, source: 'user' }],

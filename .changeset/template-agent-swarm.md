@@ -5,4 +5,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Add swarm agent runs with SDK/TUI controls, live progress, and rate-limit-aware retries.
+Add the `/swarm` command for running agent swarms with live progress and rate-limit-aware retries.

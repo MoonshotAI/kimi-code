@@ -9,7 +9,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Agent, AgentOptions } from '../../src/agent';
 import { trimTrailingOpenToolExchange } from '../../src/agent/context/projector';
-import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { ResolvedAgentProfile } from '../../src/profile';
 import type { SDKSessionRPC } from '../../src/rpc';
@@ -549,7 +548,7 @@ describe('AgentAPI.startBtw', () => {
     }
   });
 
-  it('discovers sub-skills and builtins regardless of session-scoped experimental flags', async () => {
+  it('discovers sub-skills and builtins', async () => {
     const workDir = await makeTempDir();
     const sessionDir = await makeTempDir();
     const skillsRoot = join(workDir, 'skills');
@@ -577,7 +576,6 @@ describe('AgentAPI.startBtw', () => {
       homedir: sessionDir,
       rpc: createSessionRpc([]),
       skills: { explicitDirs: [skillsRoot] },
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': false }),
     });
 
     try {
@@ -595,7 +593,6 @@ describe('AgentAPI.startBtw', () => {
       homedir: sessionDir,
       rpc: createSessionRpc([]),
       skills: { explicitDirs: [skillsRoot] },
-      experimentalFlags: new FlagResolver({}, FLAG_DEFINITIONS, { 'sub_skill': true }),
     });
 
     try {

@@ -263,25 +263,19 @@ oauth = { storage = "file", key = "oauth/kimi-code-env-1234", oauth_host = "http
     const configPath = join(dir, 'experimental.toml');
     const toml = `
 [experimental]
-goal_command = true
 micro_compaction = false
-background_ask = true
 `;
     const config = parseConfigString(toml, configPath);
 
     expect(config.experimental).toEqual({
-      'goal_command': true,
       'micro_compaction': false,
-      'background_ask': true,
     });
 
     await writeConfigFile(configPath, config);
     const text = await readFile(configPath, 'utf-8');
 
     expect(text).toContain('[experimental]');
-    expect(text).toContain('goal_command = true');
     expect(text).toContain('micro_compaction = false');
-    expect(text).toContain('background_ask = true');
     expect(parseConfigString(text, configPath).experimental).toEqual(config.experimental);
   });
 
@@ -503,7 +497,6 @@ describe('harness config schema and patch merge', () => {
   it('deep-merges experimental config patches', () => {
     const base = parseConfigString(`
 [experimental]
-goal_command = true
 micro_compaction = false
 `);
 
@@ -514,7 +507,6 @@ micro_compaction = false
     });
 
     expect(merged.experimental).toEqual({
-      'goal_command': true,
       'micro_compaction': true,
     });
   });

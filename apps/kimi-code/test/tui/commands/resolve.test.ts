@@ -58,7 +58,6 @@ describe('resolveSlashCommandInput', () => {
   });
 
   it('blocks idle-only built-ins while streaming', () => {
-    setExperimentalFeatures([{ id: 'agent_swarm', enabled: true }]);
     expect(resolve('/new', { isStreaming: true })).toEqual({
       kind: 'blocked',
       commandName: 'new',
@@ -107,7 +106,6 @@ describe('resolveSlashCommandInput', () => {
   });
 
   it('blocks model and session pickers while compacting', () => {
-    setExperimentalFeatures([{ id: 'agent_swarm', enabled: true }]);
     expect(resolve('/sessions', { isCompacting: true })).toEqual({
       kind: 'blocked',
       commandName: 'sessions',

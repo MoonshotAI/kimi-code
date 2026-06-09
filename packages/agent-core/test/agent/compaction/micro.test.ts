@@ -6,7 +6,7 @@ import {
   AGENT_WIRE_PROTOCOL_VERSION,
   InMemoryAgentRecordPersistence,
 } from '../../../src/agent/records';
-import { FLAG_DEFINITIONS, MASTER_ENV } from '../../../src/flags';
+import { FLAG_DEFINITIONS, FlagResolver, MASTER_ENV } from '../../../src/flags';
 import { estimateTokensForMessages } from '../../../src/utils/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../fixtures/telemetry';
 import { testAgent, type TestAgentContext } from '../harness/agent';
@@ -33,6 +33,10 @@ describe('MicroCompaction', () => {
   beforeEach(() => {
     vi.stubEnv(MASTER_ENV, '0');
     vi.stubEnv(MICRO_COMPACTION_FLAG_ENV, '1');
+  });
+
+  it('defaults the micro_compaction flag on', () => {
+    expect(new FlagResolver({}, FLAG_DEFINITIONS).enabled('micro_compaction')).toBe(true);
   });
 
   it('truncates old tool results after cache miss', () => {
@@ -485,7 +489,7 @@ describe('MicroCompaction', () => {
     expect(records.filter((record) => record.event === 'micro_compaction_applied')).toHaveLength(1);
   });
 
-  it('applies micro compaction even when the micro_compaction flag is disabled', () => {
+  it('leaves context unchanged when the micro_compaction flag is disabled', () => {
     vi.stubEnv(MICRO_COMPACTION_FLAG_ENV, '0');
     vi.useFakeTimers();
     const persistence = new InMemoryAgentRecordPersistence();
@@ -505,8 +509,8 @@ describe('MicroCompaction', () => {
     vi.setSystemTime(61 * MINUTE);
     ctx.agent.microCompaction.detect();
 
-    expect(toolTexts(ctx.agent.context.messages)).toEqual([DEFAULT_MARKER]);
-    expect(lastMicroCompactionCutoff(persistence.records)).toBe(3);
+    expect(toolTexts(ctx.agent.context.messages)).toEqual(['result one']);
+    expect(lastMicroCompactionCutoff(persistence.records)).toBeUndefined();
   });
 
   it('uses the custom marker at the minContentTokens boundary', () => {

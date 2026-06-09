@@ -102,7 +102,7 @@ const mocks = vi.hoisted(() => {
     session,
     eventHandlers,
     mainEvent,
-    experimentalFeatures: [{ id: 'goal_command', enabled: true }],
+    experimentalFeatures: [{ id: 'micro_compaction', enabled: true }],
     sessions: [] as Array<{ readonly id: string; readonly workDir: string }>,
   };
 });
@@ -160,7 +160,7 @@ describe('runPrompt headless goal mode', () => {
 
   beforeEach(() => {
     savedExitCode = process.exitCode;
-    mocks.experimentalFeatures = [{ id: 'goal_command', enabled: true }];
+    mocks.experimentalFeatures = [{ id: 'micro_compaction', enabled: true }];
     mocks.sessions = [];
     mocks.session.createGoal.mockClear();
     mocks.session.getStatus.mockResolvedValue({ permission: 'auto', model: 'k2' } as never);

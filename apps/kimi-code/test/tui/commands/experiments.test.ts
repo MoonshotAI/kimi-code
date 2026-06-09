@@ -15,13 +15,13 @@ function feature(
   overrides: Partial<ExperimentalFeatureState> = {},
 ): ExperimentalFeatureState {
   return {
-    id: 'goal_command',
-    title: 'Goal command',
-    description: 'Enable goal mode.',
-    surface: 'both',
-    env: 'KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND',
-    defaultEnabled: false,
-    enabled: false,
+    id: 'micro_compaction',
+    title: 'Micro compaction',
+    description: 'Trim older tool results.',
+    surface: 'core',
+    env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
+    defaultEnabled: true,
+    enabled: true,
     source: 'default',
     ...overrides,
   };
@@ -40,7 +40,7 @@ function makeHost() {
     harness: {
       setConfig: vi.fn(async () => ({ providers: {} })),
       getExperimentalFeatures: vi.fn(async () => [
-        feature({ enabled: true, source: 'config', configValue: true }),
+        feature({ enabled: false, source: 'config', configValue: false }),
       ]),
     },
     session,
@@ -77,14 +77,14 @@ describe('experimental feature command handlers', () => {
     const host = makeHost();
 
     await applyExperimentalFeatureChanges(host, [
-      { id: 'goal_command', enabled: true },
+      { id: 'micro_compaction', enabled: false },
     ]);
 
     expect(host.harness.setConfig).toHaveBeenCalledWith({
-      experimental: { 'goal_command': true },
+      experimental: { 'micro_compaction': false },
     });
     expect(host.harness.getExperimentalFeatures).toHaveBeenCalledOnce();
-    expect(isExperimentalFlagEnabled('goal_command')).toBe(true);
+    expect(isExperimentalFlagEnabled('micro_compaction')).toBe(false);
     expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalled();
     expect(host.restoreEditor).toHaveBeenCalled();
     expect(host.session.reloadSession).toHaveBeenCalledOnce();

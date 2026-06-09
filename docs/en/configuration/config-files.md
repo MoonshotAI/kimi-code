@@ -51,6 +51,9 @@ reserved_context_size = 50000
 max_running_tasks = 4
 keep_alive_on_exit = false
 
+[experimental]
+micro_compaction = true
+
 [[permission.rules]]
 decision = "allow"
 pattern = "Read"
@@ -84,7 +87,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `thinking` | `table` | — | Default parameters for Thinking mode → [`thinking`](#thinking) |
 | `loop_control` | `table` | — | Agent loop control parameters → [`loop_control`](#loop_control) |
 | `background` | `table` | — | Background task runtime parameters → [`background`](#background) |
-| `experimental` | `table` | — | Reserved experimental feature opt-ins → [`experimental`](#experimental) |
+| `experimental` | `table` | — | Experimental feature overrides → [`experimental`](#experimental) |
 | `services` | `table` | — | Built-in external service configuration → [`services`](#services) |
 | `permission` | `table` | — | Initial permission rules → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | Lifecycle hooks; see [Hooks](../customization/hooks.md) |
@@ -172,7 +175,11 @@ You can also switch models temporarily without touching the config file — by s
 
 ## `experimental`
 
-`experimental` is reserved for persistent opt-ins to features that are not public by default. There are currently no user-facing experimental features, so you can omit this table or leave it empty.
+`experimental` stores persistent overrides for experimental-feature flags. Currently, `micro_compaction` is the only user-facing entry and defaults to `true`; set it to `false` only when you need to disable automatic trimming of older large tool results.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `micro_compaction` | `boolean` | `true` | Trim older large tool results from context while preserving recent conversation |
 
 ## `services`
 

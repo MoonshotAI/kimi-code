@@ -51,6 +51,9 @@ reserved_context_size = 50000
 max_running_tasks = 4
 keep_alive_on_exit = false
 
+[experimental]
+micro_compaction = true
+
 [[permission.rules]]
 decision = "allow"
 pattern = "Read"
@@ -84,7 +87,7 @@ timeout = 5
 | `thinking` | `table` | — | Thinking 模式默认参数 → [`thinking`](#thinking) |
 | `loop_control` | `table` | — | Agent 循环控制参数 → [`loop_control`](#loop_control) |
 | `background` | `table` | — | 后台任务运行参数 → [`background`](#background) |
-| `experimental` | `table` | — | 预留的实验功能 opt-in → [`experimental`](#experimental) |
+| `experimental` | `table` | — | 实验功能覆盖 → [`experimental`](#experimental) |
 | `services` | `table` | — | 内置外部服务配置 → [`services`](#services) |
 | `permission` | `table` | — | 初始权限规则 → [`permission`](#permission) |
 | `hooks` | `array<table>` | — | 生命周期 hook，详见 [Hooks](../customization/hooks.md) |
@@ -172,7 +175,11 @@ max_context_size = 1047576
 
 ## `experimental`
 
-`experimental` 预留给尚未默认公开功能的持久化 opt-in。目前没有用户可见的实验功能，因此可以省略这个表，或保留为空表。
+`experimental` 存放实验功能 flag 的持久化覆盖。目前 `micro_compaction` 是唯一用户可见的字段，默认值为 `true`；只有在需要关闭自动清理较旧的大型工具结果时，才需要把它设为 `false`。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `micro_compaction` | `boolean` | `true` | 清理较旧的大型工具结果内容，同时保留最近对话 |
 
 ## `services`
 

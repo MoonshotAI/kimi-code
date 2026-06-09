@@ -3,4 +3,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Make goals, swarm mode, background questions, micro compaction, and sub-skill discovery available without experimental opt-ins.
+Make goals, background questions, and sub-skill discovery available without experimental opt-ins.

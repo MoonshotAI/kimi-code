@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { APIStatusError, type ProviderConfig } from '@moonshot-ai/kosong';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ProviderManager } from '../../src/session/provider-manager';
 import type { AgentOptions } from '../../src/agent';
@@ -15,7 +15,6 @@ import { SessionAPIImpl } from '../../src/session/rpc';
 import { createScriptedGenerate } from '../agent/harness/scripted-generate';
 import { testKaos } from '../fixtures/test-kaos';
 
-const GOAL_FLAG = 'KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND';
 const MOCK_PROVIDER = { type: 'kimi', apiKey: 'test-key', model: 'mock-model' } as const satisfies ProviderConfig;
 
 const tempDirs: string[] = [];
@@ -26,12 +25,7 @@ function track(session: Session): Session {
   return session;
 }
 
-beforeEach(() => {
-  process.env[GOAL_FLAG] = 'true';
-});
-
 afterEach(async () => {
-  delete process.env[GOAL_FLAG];
   // Close sessions first so their async metadata/wire writes settle before the
   // temp dirs are removed (otherwise rm races with a write -> ENOTEMPTY).
   await Promise.allSettled(openSessions.splice(0).map((s) => s.close()));

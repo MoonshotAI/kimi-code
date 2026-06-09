@@ -263,7 +263,7 @@ describe("KimiTUI startup", () => {
     });
     const harness = makeHarness(session, {
       listSessions: vi.fn(async () => [{ id: "ses-latest" }]),
-      getExperimentalFeatures: vi.fn(async () => [{ id: "goal_command", enabled: true }]),
+      getExperimentalFeatures: vi.fn(async () => [{ id: "micro_compaction", enabled: true }]),
     });
     const driver = makeDriver(harness, makeStartupInput({ continue: true }));
 
@@ -293,7 +293,7 @@ describe("KimiTUI startup", () => {
       getGoal: vi.fn(async () => ({ goal })),
     });
     const harness = makeHarness(session, {
-      getExperimentalFeatures: vi.fn(async () => [{ id: "goal_command", enabled: true }]),
+      getExperimentalFeatures: vi.fn(async () => [{ id: "micro_compaction", enabled: true }]),
     });
     const driver = makeDriver(harness, makeStartupInput()) as unknown as RuntimeStateDriver;
 

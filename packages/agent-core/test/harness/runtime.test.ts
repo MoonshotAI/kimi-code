@@ -74,16 +74,14 @@ describe('KimiCore runtime config', () => {
     for (const def of FLAG_DEFINITIONS) {
       vi.stubEnv(def.env, '0');
     }
-    vi.stubEnv(requiredFlagEnv('goal_command'), '1');
-    vi.stubEnv(requiredFlagEnv('background_ask'), '1');
+    vi.stubEnv(requiredFlagEnv('micro_compaction'), '1');
 
     void new KimiCore(async () => ({}) as never, { homeDir });
     await getRootLogger().flushGlobal();
 
     const text = await readFile(resolveGlobalLogPath(homeDir), 'utf-8');
     expect(text).toContain('experimental flags enabled');
-    expect(text).toContain('goal_command');
-    expect(text).toContain('background_ask');
+    expect(text).toContain('micro_compaction');
     expect(text.match(/experimental flags enabled/g)).toHaveLength(1);
   });
 
@@ -97,16 +95,14 @@ describe('KimiCore runtime config', () => {
       join(firstHome, 'config.toml'),
       `
 [experimental]
-goal_command = true
-background_ask = false
+micro_compaction = true
 `,
     );
     await writeFile(
       join(secondHome, 'config.toml'),
       `
 [experimental]
-goal_command = false
-background_ask = true
+micro_compaction = false
 `,
     );
     clearExperimentalEnv();
@@ -114,10 +110,8 @@ background_ask = true
     const first = new KimiCore(async () => ({}) as never, { homeDir: firstHome });
     const second = new KimiCore(async () => ({}) as never, { homeDir: secondHome });
 
-    expect(experimentalFeatureEnabled(first, 'goal_command')).toBe(true);
-    expect(experimentalFeatureEnabled(first, 'background_ask')).toBe(false);
-    expect(experimentalFeatureEnabled(second, 'goal_command')).toBe(false);
-    expect(experimentalFeatureEnabled(second, 'background_ask')).toBe(true);
+    expect(experimentalFeatureEnabled(first, 'micro_compaction')).toBe(true);
+    expect(experimentalFeatureEnabled(second, 'micro_compaction')).toBe(false);
   });
 
   it('updates the scoped experimental resolver after setKimiConfig', async () => {
@@ -128,21 +122,21 @@ background_ask = true
       join(homeDir, 'config.toml'),
       `
 [experimental]
-goal_command = false
+micro_compaction = false
 `,
     );
     clearExperimentalEnv();
 
     const core = new KimiCore(async () => ({}) as never, { homeDir });
-    expect(experimentalFeatureEnabled(core, 'goal_command')).toBe(false);
+    expect(experimentalFeatureEnabled(core, 'micro_compaction')).toBe(false);
 
     await core.setKimiConfig({
       experimental: {
-        'goal_command': true,
+        'micro_compaction': true,
       },
     });
 
-    expect(experimentalFeatureEnabled(core, 'goal_command')).toBe(true);
+    expect(experimentalFeatureEnabled(core, 'micro_compaction')).toBe(true);
   });
 
   it('updates the shared experimental resolver while goal tools stay available', async () => {
@@ -155,7 +149,7 @@ goal_command = false
       join(homeDir, 'config.toml'),
       `${baseModelConfig()}
 [experimental]
-goal_command = false
+micro_compaction = false
 `,
     );
     clearExperimentalEnv();
@@ -177,18 +171,18 @@ goal_command = false
     const session = core.sessions.get(created.id);
     const mainAgent = session?.getReadyAgent('main');
 
-    expect(session?.experimentalFlags.enabled('goal_command')).toBe(false);
-    expect(mainAgent?.experimentalFlags.enabled('goal_command')).toBe(false);
+    expect(session?.experimentalFlags.enabled('micro_compaction')).toBe(false);
+    expect(mainAgent?.experimentalFlags.enabled('micro_compaction')).toBe(false);
     expect(mainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(true);
 
     await core.setKimiConfig({
       experimental: {
-        'goal_command': true,
+        'micro_compaction': true,
       },
     });
 
-    expect(session?.experimentalFlags.enabled('goal_command')).toBe(true);
-    expect(mainAgent?.experimentalFlags.enabled('goal_command')).toBe(true);
+    expect(session?.experimentalFlags.enabled('micro_compaction')).toBe(true);
+    expect(mainAgent?.experimentalFlags.enabled('micro_compaction')).toBe(true);
     expect(mainAgent?.tools.data().some((tool) => tool.name === 'CreateGoal')).toBe(true);
 
     await rpc.reloadSession({ sessionId: created.id });
