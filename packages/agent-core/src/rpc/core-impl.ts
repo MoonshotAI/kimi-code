@@ -537,6 +537,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return this.sessionApi(sessionId).getSwarmMode(payload);
   }
 
+  getSwarmModeTrigger({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
+    return this.sessionApi(sessionId).getSwarmModeTrigger(payload);
+  }
+
   beginCompaction({ sessionId, ...payload }: SessionAgentPayload<BeginCompactionPayload>) {
     return this.sessionApi(sessionId).beginCompaction(payload);
   }
@@ -955,6 +959,7 @@ async function resumeSessionResult(
     const permission = await api.getPermission({ agentId });
     const plan = await api.getPlan({ agentId });
     const swarmMode = await api.getSwarmMode({ agentId });
+    const swarmModeTrigger = await api.getSwarmModeTrigger({ agentId });
     const usage = await api.getUsage({ agentId });
     agents[agentId] = {
       type: agent.type,
@@ -964,6 +969,7 @@ async function resumeSessionResult(
       permission,
       plan,
       swarmMode,
+      swarmModeTrigger,
       usage,
       tools: await api.getTools({ agentId }),
       toolStore: agent.tools.storeData(),

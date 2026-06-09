@@ -3,7 +3,7 @@ import type { Component } from '@earendil-works/pi-tui';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 
-export type SwarmModeMarkerState = 'active' | 'inactive' | 'ended';
+export type SwarmModeMarkerState = 'active' | 'inactive' | 'ended' | 'ultra-active';
 
 export class SwarmModeMarkerComponent implements Component {
   constructor(private readonly state: SwarmModeMarkerState) {}
@@ -22,6 +22,8 @@ function swarmMarkerLabel(state: SwarmModeMarkerState): string {
   switch (state) {
     case 'active':
       return 'Swarm activated';
+    case 'ultra-active':
+      return 'Ultra swarm activated';
     case 'inactive':
       return 'Swarm deactivated';
     case 'ended':

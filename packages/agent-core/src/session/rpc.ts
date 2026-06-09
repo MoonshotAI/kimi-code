@@ -150,6 +150,10 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
     return (await this.getAgent(agentId)).getSwarmMode(payload);
   }
 
+  async getSwarmModeTrigger({ agentId, ...payload }: AgentScopedPayload<EmptyPayload>) {
+    return (await this.getAgent(agentId)).getSwarmModeTrigger(payload);
+  }
+
   async beginCompaction({ agentId, ...payload }: AgentScopedPayload<BeginCompactionPayload>) {
     return (await this.getAgent(agentId)).beginCompaction(payload);
   }

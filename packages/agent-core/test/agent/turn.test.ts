@@ -291,6 +291,49 @@ describe('Agent turn flow', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('keeps persistent Ultra swarm mode active after a turn completes normally', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'ultra swarm done' });
+
+    await ctx.rpc.enterSwarm({ trigger: 'ultra' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run an Ultra swarm task' }] });
+    await ctx.untilTurnEnd();
+
+    const ultraReminder = ctx.agent.context.history.find(
+      (message) => message.origin?.kind === 'injection' && message.origin.variant === 'ultra_swarm_mode',
+    );
+
+    expect(ctx.agent.swarmMode.isActive).toBe(true);
+    expect(ctx.agent.swarmMode.trigger).toBe('ultra');
+    expect(await ctx.rpc.getSwarmModeTrigger({})).toBe('ultra');
+    expect(ultraReminder?.content[0]?.type).toBe('text');
+    expect(ultraReminder?.content[0]?.type === 'text' ? ultraReminder.content[0].text : '').toContain(
+      'Ultra swarm mode',
+    );
+    expect(eventIndex(ctx, '[wire]', 'swarm_mode.exit')).toBe(-1);
+  });
+
+  it('exits one-shot Ultra swarm mode after a turn completes normally', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'ultra swarm done' });
+
+    await ctx.rpc.enterSwarm({ trigger: 'ultra_task' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run an Ultra swarm task' }] });
+    await ctx.untilTurnEnd();
+
+    const turnEndedIndex = eventIndex(ctx, '[rpc]', 'turn.ended');
+    const swarmExitIndex = eventIndex(ctx, '[wire]', 'swarm_mode.exit');
+
+    expect(ctx.agent.swarmMode.isActive).toBe(false);
+    expect(swarmExitIndex).toBeGreaterThan(turnEndedIndex);
+    expect(ctx.agent.context.history.at(-1)?.origin).toEqual({
+      kind: 'injection',
+      variant: 'swarm_mode_exit',
+    });
+  });
+
   it('exits task swarm mode when the swarm turn fails', async () => {
     const ctx = testAgent();
     ctx.configure();

@@ -37,6 +37,7 @@ import {
   SwarmModeMarkerComponent,
   type SwarmModeMarkerState,
 } from '../components/messages/swarm-markers';
+import type { AgentSwarmProgressMapSnapshot } from '../components/messages/agent-swarm-progress';
 import {
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
@@ -85,6 +86,8 @@ import type {
 } from '../types';
 import type { TUIState } from '../tui-state';
 import { createGoal as startGoalCommand } from '../commands/goal';
+
+type RestorableSwarmModeEntry = 'manual' | 'ultra';
 
 export interface SessionEventHost {
   state: TUIState;
@@ -166,6 +169,10 @@ export class SessionEventHandler {
 
   hasActiveAgentSwarmToolCall(): boolean {
     return this.subAgentEventHandler.hasActiveAgentSwarmToolCall();
+  }
+
+  getAgentSwarmMapSnapshots(): readonly AgentSwarmProgressMapSnapshot[] {
+    return this.subAgentEventHandler.getAgentSwarmMapSnapshots();
   }
 
   syncAgentSwarmActivitySpinner(spinner: MoonLoader | undefined): void {
@@ -553,10 +560,14 @@ export class SessionEventHandler {
   }
 
   private handleStatusUpdate(event: AgentStatusUpdatedEvent): void {
+    const restoreSwarmModeEntry =
+      event.swarmMode === false && isOneShotSwarmEntry(this.host.state.swarmModeEntry)
+        ? this.host.state.swarmModeRestoreEntry
+        : undefined;
     const shouldRenderSwarmEnded =
       event.swarmMode === false &&
       this.host.state.appState.swarmMode &&
-      this.host.state.swarmModeEntry === 'task';
+      isOneShotSwarmEntry(this.host.state.swarmModeEntry);
     const patch: Partial<AppState> = {};
     if (event.contextUsage !== undefined) patch.contextUsage = event.contextUsage;
     if (event.contextTokens !== undefined) patch.contextTokens = event.contextTokens;
@@ -568,12 +579,34 @@ export class SessionEventHandler {
     }
     if (event.model !== undefined) patch.model = event.model;
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
+    if (event.swarmMode === true) {
+      const entry = swarmModeEntryFromTrigger(event.swarmModeTrigger);
+      if (entry !== undefined) {
+        this.host.state.swarmModeEntry = entry;
+      }
+    }
     if (event.swarmMode === false) {
       this.host.state.swarmModeEntry = undefined;
+      this.host.state.swarmModeRestoreEntry = undefined;
       if (shouldRenderSwarmEnded) {
         this.renderSwarmModeMarker('ended');
       }
+      if (restoreSwarmModeEntry !== undefined) {
+        void this.restoreSwarmMode(restoreSwarmModeEntry);
+      }
     }
+  }
+
+  private async restoreSwarmMode(entry: RestorableSwarmModeEntry): Promise<void> {
+    try {
+      await this.host.requireSession().setSwarmMode(true, entry);
+    } catch (error) {
+      this.host.showError(`Failed to restore swarm mode: ${formatErrorMessage(error)}`);
+      return;
+    }
+    this.host.setAppState({ swarmMode: true });
+    this.host.state.swarmModeEntry = entry;
+    this.renderSwarmModeMarker(entry === 'ultra' ? 'ultra-active' : 'active');
   }
 
   private renderSwarmModeMarker(state: SwarmModeMarkerState): void {
@@ -1057,4 +1090,20 @@ export class SessionEventHandler {
     state.footer.setBackgroundCounts({ bashTasks, agentTasks });
     state.ui.requestRender();
   }
+}
+
+function isOneShotSwarmEntry(entry: unknown): boolean {
+  return entry === 'task' || entry === 'ultra_task';
+}
+
+function swarmModeEntryFromTrigger(trigger: unknown): TUIState['swarmModeEntry'] {
+  if (
+    trigger === 'manual' ||
+    trigger === 'task' ||
+    trigger === 'ultra' ||
+    trigger === 'ultra_task'
+  ) {
+    return trigger;
+  }
+  return undefined;
 }

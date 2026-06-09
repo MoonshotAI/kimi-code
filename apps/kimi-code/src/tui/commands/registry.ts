@@ -1,6 +1,7 @@
 import type { AutocompleteItem } from '@earendil-works/pi-tui';
 
 import { completeLeadingArg, type ArgCompletionSpec } from './complete-args';
+import { isExperimentalFlagEnabled } from './experimental-flags';
 import type { KimiSlashCommand, SlashCommandAvailability } from './types';
 
 /** Subcommands offered when autocompleting `/goal <…>`. */
@@ -20,6 +21,12 @@ const GOAL_NEXT_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
 const SWARM_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
   { value: 'on', description: 'Turn swarm mode on' },
   { value: 'off', description: 'Turn swarm mode off' },
+  { value: 'ultra', description: 'Run or toggle Ultra swarm mode' },
+];
+
+const ULTRA_MODE_ARG_COMPLETIONS: readonly ArgCompletionSpec[] = [
+  { value: 'on', description: 'Turn Ultra swarm mode on' },
+  { value: 'off', description: 'Turn swarm mode off' },
 ];
 
 /** Argument autocompletion for the `/goal` command (subcommands). */
@@ -38,7 +45,15 @@ export function goalArgumentCompletions(argumentPrefix: string): AutocompleteIte
 
 /** Argument autocompletion for the `/swarm` command (subcommands). */
 export function swarmArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
-  return completeLeadingArg(SWARM_ARG_COMPLETIONS, argumentPrefix);
+  const completions = isExperimentalFlagEnabled('ultra_swarm')
+    ? SWARM_ARG_COMPLETIONS
+    : SWARM_ARG_COMPLETIONS.filter((item) => item.value !== 'ultra');
+  return completeLeadingArg(completions, argumentPrefix);
+}
+
+/** Argument autocompletion for the `/ultramode` command (subcommands). */
+export function ultraModeArgumentCompletions(argumentPrefix: string): AutocompleteItem[] | null {
+  return completeLeadingArg(ULTRA_MODE_ARG_COMPLETIONS, argumentPrefix);
 }
 
 export const BUILTIN_SLASH_COMMANDS = [
@@ -84,6 +99,15 @@ export const BUILTIN_SLASH_COMMANDS = [
     priority: 100,
     completeArgs: swarmArgumentCompletions,
     availability: 'idle-only',
+  },
+  {
+    name: 'ultramode',
+    aliases: ['ultra'],
+    description: 'Run or toggle Ultra swarm orchestration',
+    priority: 100,
+    completeArgs: ultraModeArgumentCompletions,
+    availability: 'idle-only',
+    experimentalFlag: 'ultra_swarm',
   },
   {
     name: 'model',

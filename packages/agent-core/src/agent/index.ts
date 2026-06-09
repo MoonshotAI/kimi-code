@@ -376,6 +376,9 @@ export class Agent {
       getSwarmMode: () => {
         return this.swarmMode.isActive;
       },
+      getSwarmModeTrigger: () => {
+        return this.swarmMode.trigger;
+      },
       beginCompaction: (payload) => {
         this.fullCompaction.begin({ source: 'manual', instruction: payload.instruction });
       },
@@ -449,6 +452,7 @@ export class Agent {
       contextUsage,
       planMode: this.planMode.isActive,
       swarmMode: this.swarmMode.isActive,
+      swarmModeTrigger: this.swarmMode.trigger,
       permission: this.permission.mode,
       usage,
     });

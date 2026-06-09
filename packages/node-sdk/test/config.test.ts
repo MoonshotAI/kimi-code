@@ -334,6 +334,7 @@ micro_compaction = false
 
     const features = await harness.getExperimentalFeatures();
     const microCompaction = features.find((feature) => feature.id === 'micro_compaction');
+    const ultraSwarm = features.find((feature) => feature.id === 'ultra_swarm');
 
     expect(microCompaction).toMatchObject({
       id: 'micro_compaction',
@@ -343,9 +344,17 @@ micro_compaction = false
       configValue: false,
       env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
     });
-    expect(features).toEqual([
+    expect(ultraSwarm).toMatchObject({
+      id: 'ultra_swarm',
+      title: 'Ultra swarm',
+      enabled: false,
+      source: 'default',
+      env: 'KIMI_CODE_EXPERIMENTAL_ULTRA_SWARM',
+    });
+    expect(features).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'micro_compaction', enabled: false }),
-    ]);
+      expect.objectContaining({ id: 'ultra_swarm', enabled: false }),
+    ]));
   });
 
   it('can create the default config scaffold without selecting a model', async () => {

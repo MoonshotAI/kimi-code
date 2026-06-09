@@ -5,9 +5,11 @@ import {
   resolveSlashCommandAvailability,
   sortSlashCommands,
   swarmArgumentCompletions,
+  ultraModeArgumentCompletions,
   type KimiSlashCommand,
 } from '#/tui/commands/index';
-import { describe, expect, it } from 'vitest';
+import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
+import { afterEach, describe, expect, it } from 'vitest';
 
 describe('parseSlashInput', () => {
   it('parses command names and trimmed args', () => {
@@ -28,6 +30,10 @@ describe('parseSlashInput', () => {
 });
 
 describe('built-in slash command registry', () => {
+  afterEach(() => {
+    setExperimentalFeatures([]);
+  });
+
   it('finds built-ins by name or alias', () => {
     expect(findBuiltInSlashCommand('exit')?.name).toBe('exit');
     expect(findBuiltInSlashCommand('quit')?.name).toBe('exit');
@@ -71,6 +77,28 @@ describe('built-in slash command registry', () => {
     expect(values('on')).toBeNull();
     expect(values('off')).toBeNull();
     expect(values('Ship feature X')).toBeNull();
+  });
+
+  it('offers Ultra swarm completions only when the experiment is enabled', () => {
+    expect(swarmArgumentCompletions('u')).toBeNull();
+
+    setExperimentalFeatures([{ id: 'ultra_swarm', enabled: true }]);
+
+    expect(swarmArgumentCompletions('u')).toEqual([
+      { value: 'ultra', label: 'ultra', description: 'Run or toggle Ultra swarm mode' },
+    ]);
+    expect(ultraModeArgumentCompletions('')).toEqual([
+      { value: 'on', label: 'on', description: 'Turn Ultra swarm mode on' },
+      { value: 'off', label: 'off', description: 'Turn swarm mode off' },
+    ]);
+  });
+
+  it('registers ultramode behind the Ultra swarm experiment', () => {
+    const ultramode = findBuiltInSlashCommand('ultramode');
+    expect(ultramode).toBeDefined();
+    expect(findBuiltInSlashCommand('ultra')?.name).toBe('ultramode');
+    expect((ultramode as KimiSlashCommand).experimentalFlag).toBe('ultra_swarm');
+    expect(resolveSlashCommandAvailability(ultramode!, 'Ship feature X')).toBe('idle-only');
   });
 
   it('defaults commands without explicit availability to idle-only', () => {

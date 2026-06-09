@@ -6,6 +6,7 @@ import type { Component } from '@earendil-works/pi-tui';
 
 import {
   AgentSwarmProgressComponent,
+  type AgentSwarmProgressMapSnapshot,
   agentSwarmDescriptionFromArgs,
   agentSwarmGridHeightForTerminalRows,
 } from '../components/messages/agent-swarm-progress';
@@ -51,9 +52,14 @@ function renderedRowsAfterChild(
     .reduce((sum, component) => sum + component.render(width).length, 0);
 }
 
+function isUltraSwarmEntry(entry: unknown): boolean {
+  return entry === 'ultra' || entry === 'ultra_task';
+}
+
 export class SubAgentEventHandler {
   readonly subagentInfo: Map<string, SubagentInfo> = new Map();
   private readonly agentSwarmProgress: Map<string, AgentSwarmProgressComponent> = new Map();
+  private readonly ultraMapToolCallIds: Set<string> = new Set();
   backgroundAgentMetadata: Map<string, BackgroundAgentMetadata> = new Map();
 
   constructor(
@@ -149,6 +155,7 @@ export class SubAgentEventHandler {
       progress.dispose();
     }
     this.agentSwarmProgress.clear();
+    this.ultraMapToolCallIds.clear();
     this.host.updateActivityPane();
   }
 
@@ -160,6 +167,14 @@ export class SubAgentEventHandler {
     return Array.from(this.agentSwarmProgress.values()).some((progress) =>
       progress.isToolCallActive()
     );
+  }
+
+  getAgentSwarmMapSnapshots(): readonly AgentSwarmProgressMapSnapshot[] {
+    return Array.from(this.ultraMapToolCallIds)
+      .map((toolCallId) => this.agentSwarmProgress.get(toolCallId))
+      .filter((progress): progress is AgentSwarmProgressComponent => progress !== undefined)
+      .map((progress) => progress.getMapSnapshot())
+      .filter((snapshot) => snapshot.toolCallActive || snapshot.members.length > 0);
   }
 
   syncAgentSwarmActivitySpinner(
@@ -176,6 +191,7 @@ export class SubAgentEventHandler {
     toolCallId: string,
     args: Record<string, unknown>,
   ): void {
+    this.trackUltraMapToolCall(toolCallId);
     const progress = this.ensureAgentSwarmProgress(toolCallId, args);
     progress.markInputComplete();
     this.requestRender();
@@ -186,6 +202,7 @@ export class SubAgentEventHandler {
     args: Record<string, unknown>,
     options: { readonly streamingArguments?: string | undefined },
   ): void {
+    this.trackUltraMapToolCall(toolCallId);
     this.ensureAgentSwarmProgress(toolCallId, args, options);
     this.requestRender();
   }
@@ -214,6 +231,7 @@ export class SubAgentEventHandler {
       progress.markToolCallEnded();
       progress.applyResult(resultData.output);
     }
+    this.ultraMapToolCallIds.delete(toolCallId);
     this.host.updateActivityPane();
     this.requestRender();
   }
@@ -542,6 +560,7 @@ export class SubAgentEventHandler {
     progress: AgentSwarmProgressComponent,
   ): void {
     this.agentSwarmProgress.delete(toolCallId);
+    this.ultraMapToolCallIds.delete(toolCallId);
     progress.dispose();
     const children = this.host.state.transcriptContainer.children;
     const index = children.indexOf(progress);
@@ -567,6 +586,12 @@ export class SubAgentEventHandler {
       width,
     );
     return agentSwarmGridHeightForTerminalRows(terminalRows, rowsAfterSwarm);
+  }
+
+  private trackUltraMapToolCall(toolCallId: string): void {
+    if (isUltraSwarmEntry(this.host.state.swarmModeEntry)) {
+      this.ultraMapToolCallIds.add(toolCallId);
+    }
   }
 
   private markAgentSwarmFailedOrCancelled(

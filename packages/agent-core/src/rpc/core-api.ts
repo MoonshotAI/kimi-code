@@ -314,6 +314,7 @@ export interface AgentAPI {
   enterSwarm: (payload: EnterSwarmPayload) => void;
   exitSwarm: (payload: EmptyPayload) => void;
   getSwarmMode: (payload: EmptyPayload) => boolean;
+  getSwarmModeTrigger: (payload: EmptyPayload) => SwarmModeTrigger | undefined;
   beginCompaction: (payload: BeginCompactionPayload) => void;
   cancelCompaction: (payload: EmptyPayload) => void;
   registerTool: (payload: RegisterToolPayload) => void;

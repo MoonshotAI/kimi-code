@@ -50,28 +50,50 @@ function makeDriverWithTerminalProgress(): {
   return { driver, state: driver.state, setProgress };
 }
 
-function startSwarmProgress(driver: ActivityDriver, state: TUIState): AgentSwarmProgressComponent {
-  const handler = driver.sessionEventHandler.subAgentEventHandler;
-  handler.handleAgentSwarmToolCallStarted('call_swarm', {
-    description: 'Review changed files',
-  });
-  handler.handleLifecycleEvent({
-    type: 'subagent.spawned',
-    subagentId: 'agent-1',
-    subagentName: 'coder',
-    parentToolCallId: 'call_swarm',
-    description: 'Review changed files #1 (coder)',
-    swarmIndex: 1,
-    runInBackground: false,
-  } as Parameters<typeof handler.handleLifecycleEvent>[0]);
-  handler.handleLifecycleEvent({
-    type: 'subagent.started',
-    subagentId: 'agent-1',
-  } as Parameters<typeof handler.handleLifecycleEvent>[0]);
+interface StartSwarmProgressOptions {
+  readonly toolCallId?: string;
+  readonly description?: string;
+  readonly items?: readonly string[];
+  readonly runningIndexes?: readonly number[];
+}
 
-  const progress = state.transcriptContainer.children.find(
-    (child): child is AgentSwarmProgressComponent => child instanceof AgentSwarmProgressComponent,
-  );
+function startSwarmProgress(
+  driver: ActivityDriver,
+  state: TUIState,
+  options: StartSwarmProgressOptions = {},
+): AgentSwarmProgressComponent {
+  const handler = driver.sessionEventHandler.subAgentEventHandler;
+  const toolCallId = options.toolCallId ?? 'call_swarm';
+  const description = options.description ?? 'Review changed files';
+  const items = options.items ?? ['Review changed files #1 (coder)'];
+  const runningIndexes = new Set(options.runningIndexes ?? [1]);
+
+  handler.handleAgentSwarmToolCallStarted(toolCallId, {
+    description,
+    items,
+  });
+  items.forEach((item, itemIndex) => {
+    const swarmIndex = itemIndex + 1;
+    const subagentId = `agent-${String(swarmIndex)}`;
+    handler.handleLifecycleEvent({
+      type: 'subagent.spawned',
+      subagentId,
+      subagentName: 'coder',
+      parentToolCallId: toolCallId,
+      description: item,
+      swarmIndex,
+      runInBackground: false,
+    } as Parameters<typeof handler.handleLifecycleEvent>[0]);
+    if (!runningIndexes.has(swarmIndex)) return;
+    handler.handleLifecycleEvent({
+      type: 'subagent.started',
+      subagentId,
+    } as Parameters<typeof handler.handleLifecycleEvent>[0]);
+  });
+
+  const progress = state.transcriptContainer.children
+    .toReversed()
+    .find((child): child is AgentSwarmProgressComponent => child instanceof AgentSwarmProgressComponent);
   if (progress === undefined) throw new Error('expected AgentSwarm progress');
   return progress;
 }
@@ -189,6 +211,130 @@ describe('updateActivityPane terminal progress', () => {
       const output = strip(progress.render(80).join('\n'));
       expect(output).toContain('  Working...');
       expect(output).not.toContain('🌑 Working...');
+
+      state.activitySpinner?.instance.stop();
+      driver.sessionEventHandler.clearAgentSwarmProgress();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows the live Ultra swarm map for active Ultra AgentSwarm progress', () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, state } = makeDriverWithTerminalProgress();
+      state.swarmModeEntry = 'ultra_task';
+      state.appState.swarmMode = true;
+      startSwarmProgress(driver, state, {
+        description: 'Platoon One: migration planning',
+        items: [
+          'Squad Alpha: dependency analysis',
+          'Squad Bravo: build pipeline review',
+          'Squad Charlie: verification baseline',
+        ],
+        runningIndexes: [1, 3],
+      });
+      state.livePane = { ...state.livePane, mode: 'tool' };
+
+      driver.updateActivityPane();
+
+      const output = strip(state.activityContainer.render(120).join('\n'));
+      expect(output).toContain('Ultra Swarm Map');
+      expect(output).toContain('Platoon One: migration planning');
+      expect(output).toContain('Squad Alpha: dependency analysis');
+      expect(output).toContain('Squad Bravo: build pipeline review');
+      expect(output).toContain('running');
+      expect(output).toContain('queued');
+
+      state.activitySpinner?.instance.stop();
+      driver.sessionEventHandler.clearAgentSwarmProgress();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not show the Ultra swarm map for regular swarm progress', () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, state } = makeDriverWithTerminalProgress();
+      state.swarmModeEntry = 'task';
+      state.appState.swarmMode = true;
+      startSwarmProgress(driver, state, {
+        description: 'Regular swarm',
+        items: ['Inspect command handling'],
+      });
+      state.livePane = { ...state.livePane, mode: 'tool' };
+
+      driver.updateActivityPane();
+
+      const output = strip(state.activityContainer.render(120).join('\n'));
+      expect(output).not.toContain('Ultra Swarm Map');
+
+      state.activitySpinner?.instance.stop();
+      driver.sessionEventHandler.clearAgentSwarmProgress();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('scopes the Ultra swarm map to active Ultra AgentSwarm progress', () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, state } = makeDriverWithTerminalProgress();
+      const handler = driver.sessionEventHandler.subAgentEventHandler;
+
+      state.swarmModeEntry = 'task';
+      state.appState.swarmMode = true;
+      startSwarmProgress(driver, state, {
+        toolCallId: 'old_regular_swarm',
+        description: 'Old regular swarm',
+        items: ['Historical regular worker'],
+      });
+      handler.handleAgentSwarmToolResult(
+        'old_regular_swarm',
+        {
+          tool_call_id: 'old_regular_swarm',
+          output: 'Done',
+          is_error: false,
+        },
+        false,
+      );
+
+      state.swarmModeEntry = 'ultra';
+      state.livePane = { ...state.livePane, mode: 'tool' };
+      driver.updateActivityPane();
+
+      let output = strip(state.activityContainer.render(120).join('\n'));
+      expect(output).not.toContain('Ultra Swarm Map');
+      expect(output).not.toContain('Old regular swarm');
+
+      startSwarmProgress(driver, state, {
+        toolCallId: 'current_ultra_swarm',
+        description: 'Current Ultra swarm',
+        items: ['Current Ultra worker'],
+      });
+      driver.updateActivityPane();
+
+      output = strip(state.activityContainer.render(120).join('\n'));
+      expect(output).toContain('Ultra Swarm Map');
+      expect(output).toContain('Current Ultra swarm');
+      expect(output).toContain('Current Ultra worker');
+      expect(output).not.toContain('Old regular swarm');
+
+      handler.handleAgentSwarmToolResult(
+        'current_ultra_swarm',
+        {
+          tool_call_id: 'current_ultra_swarm',
+          output: 'Done',
+          is_error: false,
+        },
+        false,
+      );
+      driver.updateActivityPane();
+
+      output = strip(state.activityContainer.render(120).join('\n'));
+      expect(output).not.toContain('Ultra Swarm Map');
+      expect(output).not.toContain('Current Ultra swarm');
 
       state.activitySpinner?.instance.stop();
       driver.sessionEventHandler.clearAgentSwarmProgress();

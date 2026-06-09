@@ -226,6 +226,26 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
+  it('gates /ultramode behind the Ultra swarm experiment', () => {
+    expect(resolve('/ultramode Ship feature X')).toEqual({
+      kind: 'message',
+      input: '/ultramode Ship feature X',
+    });
+
+    setExperimentalFeatures([{ id: 'ultra_swarm', enabled: true }]);
+
+    expect(resolve('/ultramode Ship feature X')).toMatchObject({
+      kind: 'builtin',
+      name: 'ultramode',
+      args: 'Ship feature X',
+    });
+    expect(resolve('/ultra Ship feature X')).toMatchObject({
+      kind: 'builtin',
+      name: 'ultramode',
+      args: 'Ship feature X',
+    });
+  });
+
 });
 
 describe('goal command resolution', () => {

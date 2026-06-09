@@ -20,6 +20,14 @@ export const FLAG_DEFINITIONS = [
     default: true,
     surface: 'core',
   },
+  {
+    id: 'ultra_swarm',
+    title: 'Ultra swarm',
+    description: 'Enable Ultra swarm orchestration with advisor-style routing, hierarchy limits, and snapshot discipline.',
+    env: 'KIMI_CODE_EXPERIMENTAL_ULTRA_SWARM',
+    default: false,
+    surface: 'both',
+  },
 ] as const satisfies readonly FlagDefinitionInput[];
 
 /** Literal union of registered flag ids. */

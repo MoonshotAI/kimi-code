@@ -2,13 +2,16 @@ import type { Agent } from '..';
 
 import SWARM_MODE_ENTER_REMINDER from './enter-reminder.md';
 import SWARM_MODE_EXIT_REMINDER from './exit-reminder.md';
+import ULTRA_SWARM_MODE_ENTER_REMINDER from './ultra-enter-reminder.md';
 
 /**
  * manual = persistent toggle (/swarm on);
  * task = one-shot /swarm prompt;
+ * ultra = persistent Ultra swarm toggle (/ultramode on);
+ * ultra_task = one-shot /ultramode prompt;
  * tool = AgentSwarm entry.
  */
-export type SwarmModeTrigger = 'manual' | 'task' | 'tool';
+export type SwarmModeTrigger = 'manual' | 'task' | 'ultra' | 'ultra_task' | 'tool';
 
 export class SwarmMode {
   protected active: SwarmModeTrigger | null = null;
@@ -20,9 +23,9 @@ export class SwarmMode {
     this.agent.records.logRecord({ type: 'swarm_mode.enter', trigger });
     this.active = trigger;
     if (trigger !== 'tool') {
-      this.agent.context.appendSystemReminder(SWARM_MODE_ENTER_REMINDER, {
+      this.agent.context.appendSystemReminder(enterReminderForTrigger(trigger), {
         kind: 'injection',
-        variant: 'swarm_mode',
+        variant: injectionVariantForTrigger(trigger),
       });
     }
     this.agent.emitStatusUpdated();
@@ -39,7 +42,8 @@ export class SwarmMode {
     this.active = null;
     this.agent.emitStatusUpdated();
     if (trigger === 'tool') return;
-    if (this.agent.context.popMatchedMessage((origin) => origin?.kind === 'injection' && origin.variant === 'swarm_mode')) {
+    const variant = injectionVariantForTrigger(trigger);
+    if (this.agent.context.popMatchedMessage((origin) => origin?.kind === 'injection' && origin.variant === variant)) {
       return;
     }
     if (!this.agent.records.restoring) {
@@ -54,7 +58,23 @@ export class SwarmMode {
     return this.active !== null;
   }
 
-  get shouldAutoExit(): boolean {
-    return this.active === 'task' || this.active === 'tool';
+  get trigger(): SwarmModeTrigger | undefined {
+    return this.active ?? undefined;
   }
+
+  get shouldAutoExit(): boolean {
+    return this.active === 'task' || this.active === 'ultra_task' || this.active === 'tool';
+  }
+}
+
+function enterReminderForTrigger(trigger: SwarmModeTrigger): string {
+  return trigger === 'ultra' || trigger === 'ultra_task'
+    ? ULTRA_SWARM_MODE_ENTER_REMINDER
+    : SWARM_MODE_ENTER_REMINDER;
+}
+
+function injectionVariantForTrigger(
+  trigger: Exclude<SwarmModeTrigger, 'tool'>,
+): 'swarm_mode' | 'ultra_swarm_mode' {
+  return trigger === 'ultra' || trigger === 'ultra_task' ? 'ultra_swarm_mode' : 'swarm_mode';
 }

@@ -396,6 +396,10 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId,
     });
+    const swarmModeTrigger = await rpc.getSwarmModeTrigger({
+      sessionId: input.sessionId,
+      agentId,
+    });
     const usage = await rpc.getUsage({
       sessionId: input.sessionId,
       agentId,
@@ -411,6 +415,7 @@ export abstract class SDKRpcClientBase {
       permission: permission.mode,
       planMode: plan !== null,
       swarmMode,
+      swarmModeTrigger,
       contextTokens,
       maxContextTokens,
       contextUsage,

@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { handleSwarmCommand } from '#/tui/commands/index';
+import { handleSwarmCommand, handleUltraModeCommand } from '#/tui/commands/index';
+import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { currentTheme } from '#/tui/theme';
 
@@ -22,6 +23,8 @@ function makeHost(
     hasSession?: boolean;
     permissionMode?: 'manual' | 'auto' | 'yolo';
     swarmMode?: boolean;
+    swarmModeEntry?: 'manual' | 'task' | 'ultra' | 'ultra_task';
+    swarmModeRestoreEntry?: 'manual' | 'ultra';
   } = {},
 ) {
   const session = {
@@ -36,6 +39,8 @@ function makeHost(
         permissionMode: overrides.permissionMode ?? 'auto',
         swarmMode: overrides.swarmMode ?? false,
       },
+      swarmModeEntry: overrides.swarmModeEntry,
+      swarmModeRestoreEntry: overrides.swarmModeRestoreEntry,
       theme: currentTheme,
       transcriptContainer: { addChild: vi.fn() },
       ui: { requestRender: vi.fn() },
@@ -74,6 +79,10 @@ function expectSwarmMarker(host: SlashCommandHost, text: string): void {
 }
 
 describe('handleSwarmCommand', () => {
+  afterEach(() => {
+    setExperimentalFeatures([]);
+  });
+
   it('sends the swarm prompt as a normal prompt after enabling swarm mode', async () => {
     const { host, session } = makeHost({ permissionMode: 'auto' });
 
@@ -313,6 +322,94 @@ describe('handleSwarmCommand', () => {
       expect.stringContaining('Failed to enable swarm mode'),
     );
     expect(markerAddChild(host)).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+  });
+
+  it('rejects /swarm ultra when the Ultra swarm experiment is disabled', async () => {
+    const { host, session } = makeHost({ permissionMode: 'auto' });
+
+    await handleSwarmCommand(host, 'ultra Ship feature X');
+
+    expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('Ultra swarm is experimental'));
+    expect(session.setSwarmMode).not.toHaveBeenCalled();
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+  });
+
+  it('starts an Ultra swarm task through /swarm ultra', async () => {
+    setExperimentalFeatures([{ id: 'ultra_swarm', enabled: true }]);
+    const { host, session } = makeHost({ permissionMode: 'auto' });
+
+    await handleSwarmCommand(host, 'ultra Ship feature X');
+
+    expect(session.setSwarmMode).toHaveBeenCalledWith(true, 'ultra_task');
+    expect(host.state.swarmModeEntry).toBe('ultra_task');
+    expectSwarmMarker(host, 'Ultra swarm activated');
+    expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
+  });
+
+  it('starts an Ultra swarm task through /ultramode', async () => {
+    setExperimentalFeatures([{ id: 'ultra_swarm', enabled: true }]);
+    const { host, session } = makeHost({ permissionMode: 'auto' });
+
+    await handleUltraModeCommand(host, 'Ship feature X');
+
+    expect(session.setSwarmMode).toHaveBeenCalledWith(true, 'ultra_task');
+    expect(host.state.swarmModeEntry).toBe('ultra_task');
+    expectSwarmMarker(host, 'Ultra swarm activated');
+    expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
+  });
+
+  it('records persistent swarm restoration after a one-shot Ultra task', async () => {
+    setExperimentalFeatures([{ id: 'ultra_swarm', enabled: true }]);
+    const { host, session } = makeHost({
+      permissionMode: 'auto',
+      swarmMode: true,
+      swarmModeEntry: 'manual',
+    });
+
+    await handleUltraModeCommand(host, 'Ship feature X');
+
+    expect(session.setSwarmMode).toHaveBeenNthCalledWith(1, false, 'manual');
+    expect(session.setSwarmMode).toHaveBeenNthCalledWith(2, true, 'ultra_task');
+    expect(host.state.swarmModeEntry).toBe('ultra_task');
+    expect(host.state.swarmModeRestoreEntry).toBe('manual');
+    expectSwarmMarker(host, 'Ultra swarm activated');
+    expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
+  });
+
+  it('switches an active regular swarm session to persistent Ultra swarm mode', async () => {
+    setExperimentalFeatures([{ id: 'ultra_swarm', enabled: true }]);
+    const { host, session } = makeHost({
+      permissionMode: 'auto',
+      swarmMode: true,
+      swarmModeEntry: 'manual',
+    });
+
+    await handleUltraModeCommand(host, 'on');
+
+    expect(session.setSwarmMode).toHaveBeenNthCalledWith(1, false, 'manual');
+    expect(session.setSwarmMode).toHaveBeenNthCalledWith(2, true, 'ultra');
+    expect(host.state.swarmModeEntry).toBe('ultra');
+    expect(host.state.swarmModeRestoreEntry).toBeUndefined();
+    expectSwarmMarker(host, 'Ultra swarm activated');
+    expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+  });
+
+  it('does not disable regular swarm mode when /ultramode off is used while Ultra is already off', async () => {
+    setExperimentalFeatures([{ id: 'ultra_swarm', enabled: true }]);
+    const { host, session } = makeHost({
+      permissionMode: 'auto',
+      swarmMode: true,
+      swarmModeEntry: 'manual',
+    });
+
+    await handleUltraModeCommand(host, 'off');
+
+    expect(session.setSwarmMode).not.toHaveBeenCalled();
+    expect(host.state.appState.swarmMode).toBe(true);
+    expect(host.state.swarmModeEntry).toBe('manual');
+    expect(markerAddChild(host)).not.toHaveBeenCalled();
+    expect(host.showStatus).toHaveBeenCalledWith('Ultra swarm mode is already off.');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 });

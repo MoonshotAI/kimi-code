@@ -145,6 +145,22 @@ export interface AgentSwarmResultSummary {
   readonly parsed: boolean;
 }
 
+export type AgentSwarmProgressPhase = AgentSwarmPhase;
+
+export interface AgentSwarmProgressMemberSnapshot {
+  readonly id: string;
+  readonly agentId?: string;
+  readonly phase: AgentSwarmProgressPhase;
+  readonly itemText: string;
+  readonly latestModelText: string;
+}
+
+export interface AgentSwarmProgressMapSnapshot {
+  readonly description: string;
+  readonly toolCallActive: boolean;
+  readonly members: readonly AgentSwarmProgressMemberSnapshot[];
+}
+
 interface AgentSwarmSummary {
   readonly active: number;
   readonly completed: number;
@@ -235,6 +251,20 @@ export class AgentSwarmProgressComponent implements Component {
 
   isRequestStreaming(): boolean {
     return !this.inputComplete;
+  }
+
+  getMapSnapshot(): AgentSwarmProgressMapSnapshot {
+    return {
+      description: this.description,
+      toolCallActive: this.toolCallActive,
+      members: this.members.map((member) => ({
+        id: member.id,
+        agentId: member.agentId,
+        phase: member.phase,
+        itemText: member.itemText,
+        latestModelText: member.latestModelText,
+      })),
+    };
   }
 
   updateArgs(

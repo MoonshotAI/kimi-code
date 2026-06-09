@@ -83,6 +83,7 @@ import { ToolCallComponent } from './components/messages/tool-call';
 import { UserMessageComponent } from './components/messages/user-message';
 import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes/activity-pane';
 import { QueuePaneComponent } from './components/panes/queue-pane';
+import { UltraSwarmMapComponent } from './components/panes/ultra-swarm-map';
 import type { TuiConfig } from './config';
 import {
   LLM_NOT_SET_MESSAGE,
@@ -1056,6 +1057,11 @@ export class KimiTUI {
       sessionTitle: session.summary?.title ?? null,
       goal: goalResult.goal,
     });
+    this.state.swarmModeEntry =
+      status.swarmMode === true
+        ? swarmModeEntryFromTrigger(status.swarmModeTrigger)
+        : undefined;
+    this.state.swarmModeRestoreEntry = undefined;
   }
 
   // Plan mode is set by createSession — do not re-enter it here.
@@ -1081,6 +1087,7 @@ export class KimiTUI {
     this.questionController.cancelAll(reason);
     this.session = undefined;
     this.state.swarmModeEntry = undefined;
+    this.state.swarmModeRestoreEntry = undefined;
     this.harness.setTelemetryContext({ sessionId: null });
     this.setAppState({ goal: null });
     return previous;
@@ -1128,6 +1135,7 @@ export class KimiTUI {
     this.streamingUI.discardPending();
     this.state.queuedMessages = [];
     this.state.swarmModeEntry = undefined;
+    this.state.swarmModeRestoreEntry = undefined;
     this.harness.interactiveAgentId = MAIN_AGENT_ID;
     this.streamingUI.resetToolCallState();
     this.streamingUI.resetToolUi();
@@ -1474,7 +1482,12 @@ export class KimiTUI {
     const effectiveMode = this.resolveActivityPaneMode();
     this.syncTerminalProgress(this.shouldShowTerminalProgress(effectiveMode));
     const placeSpinnerInAgentSwarm = this.shouldPlaceActivitySpinnerInAgentSwarm(effectiveMode);
-    const activityModeKey = `${effectiveMode}:${placeSpinnerInAgentSwarm ? 'swarm' : 'pane'}`;
+    const showUltraSwarmMap = this.shouldShowUltraSwarmMap(effectiveMode);
+    const activityModeKey = [
+      effectiveMode,
+      placeSpinnerInAgentSwarm ? 'swarm' : 'pane',
+      showUltraSwarmMap ? 'ultra-map' : 'plain',
+    ].join(':');
 
     if (
       activityModeKey === this.lastActivityMode &&
@@ -1488,6 +1501,13 @@ export class KimiTUI {
 
     this.lastActivityMode = activityModeKey;
     this.state.activityContainer.clear();
+    if (showUltraSwarmMap) {
+      this.state.activityContainer.addChild(
+        new UltraSwarmMapComponent({
+          getWaves: () => this.sessionEventHandler.getAgentSwarmMapSnapshots(),
+        }),
+      );
+    }
 
     switch (effectiveMode) {
       case 'hidden':
@@ -1651,6 +1671,12 @@ export class KimiTUI {
       this.sessionEventHandler.hasActiveAgentSwarmToolCall() &&
       (effectiveMode === 'waiting' || effectiveMode === 'tool')
     );
+  }
+
+  private shouldShowUltraSwarmMap(effectiveMode: EffectiveActivityPaneMode): boolean {
+    if (!isUltraSwarmEntry(this.state.swarmModeEntry)) return false;
+    if (effectiveMode !== 'waiting' && effectiveMode !== 'tool') return false;
+    return this.sessionEventHandler.getAgentSwarmMapSnapshots().length > 0;
   }
 
   private syncAgentSwarmActivitySpinner(spinner: MoonLoader | undefined): void {
@@ -1913,4 +1939,20 @@ export class KimiTUI {
     this.restoreEditor();
   }
 
+}
+
+function isUltraSwarmEntry(entry: TUIState['swarmModeEntry']): boolean {
+  return entry === 'ultra' || entry === 'ultra_task';
+}
+
+function swarmModeEntryFromTrigger(trigger: unknown): TUIState['swarmModeEntry'] {
+  if (
+    trigger === 'manual' ||
+    trigger === 'task' ||
+    trigger === 'ultra' ||
+    trigger === 'ultra_task'
+  ) {
+    return trigger;
+  }
+  return undefined;
 }

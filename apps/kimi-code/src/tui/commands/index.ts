@@ -23,7 +23,7 @@ export {
   showPermissionPicker,
   showSettingsSelector,
 } from './config';
-export { handleSwarmCommand } from './swarm';
+export { handleSwarmCommand, handleUltraModeCommand } from './swarm';
 export {
   handleFeedbackCommand,
   showMcpServers,
@@ -33,7 +33,7 @@ export {
 export { handlePluginsCommand } from './plugins';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
 export { handleGoalCommand, parseGoalCommand } from './goal';
-export { goalArgumentCompletions } from './registry';
+export { goalArgumentCompletions, ultraModeArgumentCompletions } from './registry';
 export {
   handleForkCommand,
   handleInitCommand,

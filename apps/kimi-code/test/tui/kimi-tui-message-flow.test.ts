@@ -29,6 +29,7 @@ import {
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import type { StreamingUIController } from '#/tui/controllers/streaming-ui';
 import { handleFeedbackCommand } from '#/tui/commands/info';
+import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import {
   promptFeedbackInput,
   runModelSelector,
@@ -310,6 +311,7 @@ async function makeTempHome(): Promise<string> {
 
 afterEach(async () => {
   resetCapabilitiesCache();
+  setExperimentalFeatures([]);
   for (const dir of tempDirs.splice(0)) {
     await rm(dir, { recursive: true, force: true });
   }
@@ -2088,11 +2090,13 @@ command = "vim"
         agentId: 'main',
         sessionId: 'ses-1',
         swarmMode: true,
+        swarmModeTrigger: 'ultra',
       } as Event,
       vi.fn(),
     );
 
     expect(driver.state.appState.swarmMode).toBe(true);
+    expect(driver.state.swarmModeEntry).toBe('ultra');
     expect(stripSgr(renderTranscript(driver))).not.toContain('Swarm activated');
 
     let transcript = stripSgr(renderTranscript(driver));
@@ -2109,6 +2113,7 @@ command = "vim"
     );
 
     expect(driver.state.appState.swarmMode).toBe(false);
+    expect(driver.state.swarmModeEntry).toBeUndefined();
     transcript = stripSgr(renderTranscript(driver));
     expect(transcript).not.toContain('Swarm deactivated');
     expect(transcript).not.toContain('Swarm ended');
@@ -2116,6 +2121,28 @@ command = "vim"
     expect(countOccurrences(transcript, 'Swarm activated')).toBe(0);
     expect(countOccurrences(transcript, 'Swarm deactivated')).toBe(0);
     expect(countOccurrences(transcript, 'Swarm ended')).toBe(0);
+  });
+
+  it('hydrates Ultra swarm mode entry from session status', async () => {
+    const session = makeSession({
+      getStatus: vi.fn(async () => ({
+        model: 'k2',
+        thinkingLevel: 'off',
+        permission: 'manual',
+        planMode: false,
+        swarmMode: true,
+        swarmModeTrigger: 'ultra',
+        contextTokens: 0,
+        maxContextTokens: 100,
+        contextUsage: 0,
+      })),
+    });
+
+    const { driver } = await makeDriver(session);
+
+    expect(driver.state.appState.swarmMode).toBe(true);
+    expect(driver.state.swarmModeEntry).toBe('ultra');
+    expect(driver.state.swarmModeRestoreEntry).toBeUndefined();
   });
 
   it('renders an ended marker when a one-shot /swarm task exits', async () => {
@@ -2149,6 +2176,78 @@ command = "vim"
     expect(countOccurrences(transcript, 'Swarm activated')).toBe(1);
     expect(countOccurrences(transcript, 'Swarm ended')).toBe(1);
     expect(transcript).not.toContain('Swarm deactivated');
+  });
+
+  it('renders an ended marker when a one-shot /ultramode task exits', async () => {
+    const { driver, session } = await makeDriver(undefined);
+    driver.state.appState.permissionMode = 'auto';
+    setExperimentalFeatures([{ id: 'ultra_swarm', enabled: true }]);
+
+    driver.handleUserInput('/ultramode Ship feature X');
+
+    await vi.waitFor(() => {
+      expect(session.setSwarmMode).toHaveBeenCalledWith(true, 'ultra_task');
+    });
+    await vi.waitFor(() => {
+      expect(countOccurrences(stripSgr(renderTranscript(driver)), 'Ultra swarm activated')).toBe(1);
+    });
+    let transcript = stripSgr(renderTranscript(driver));
+    expect(countOccurrences(transcript, 'Ultra swarm activated')).toBe(1);
+    expect(transcript).not.toContain('Swarm ended');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        swarmMode: false,
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.swarmMode).toBe(false);
+    transcript = stripSgr(renderTranscript(driver));
+    expect(countOccurrences(transcript, 'Ultra swarm activated')).toBe(1);
+    expect(countOccurrences(transcript, 'Swarm ended')).toBe(1);
+    expect(transcript).not.toContain('Swarm deactivated');
+  });
+
+  it('restores persistent swarm after a one-shot /ultramode task exits', async () => {
+    const { driver, session } = await makeDriver(undefined);
+    driver.state.appState.permissionMode = 'auto';
+    driver.state.appState.swarmMode = true;
+    driver.state.swarmModeEntry = 'manual';
+    setExperimentalFeatures([{ id: 'ultra_swarm', enabled: true }]);
+
+    driver.handleUserInput('/ultramode Ship feature X');
+
+    await vi.waitFor(() => {
+      expect(session.setSwarmMode).toHaveBeenNthCalledWith(1, false, 'manual');
+      expect(session.setSwarmMode).toHaveBeenNthCalledWith(2, true, 'ultra_task');
+    });
+    expect(driver.state.swarmModeEntry).toBe('ultra_task');
+    expect(driver.state.swarmModeRestoreEntry).toBe('manual');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        swarmMode: false,
+      } as Event,
+      vi.fn(),
+    );
+
+    await vi.waitFor(() => {
+      expect(session.setSwarmMode).toHaveBeenNthCalledWith(3, true, 'manual');
+    });
+    expect(driver.state.appState.swarmMode).toBe(true);
+    expect(driver.state.swarmModeEntry).toBe('manual');
+    expect(driver.state.swarmModeRestoreEntry).toBeUndefined();
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(countOccurrences(transcript, 'Ultra swarm activated')).toBe(1);
+    expect(countOccurrences(transcript, 'Swarm ended')).toBe(1);
+    expect(countOccurrences(transcript, 'Swarm activated')).toBe(1);
   });
 
   it('queues Ctrl-S input instead of steering while /init is running', async () => {

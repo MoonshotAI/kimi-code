@@ -2,6 +2,7 @@ import type {
   ExportSessionManifest,
   ResumeSessionResult,
   ShellEnvironment,
+  SwarmModeTrigger,
   TelemetryClient,
   TelemetryContextPatch,
   TelemetryProperties,
@@ -58,6 +59,7 @@ export type {
   ServicesConfig,
   ShellEnvironment,
   SkillSummary,
+  SwarmModeTrigger,
   ThinkingConfig,
   ToolInfo,
 } from '@moonshot-ai/agent-core';
@@ -177,6 +179,7 @@ export interface SessionStatus {
   readonly permission: PermissionMode;
   readonly planMode: boolean;
   readonly swarmMode?: boolean | undefined;
+  readonly swarmModeTrigger?: SwarmModeTrigger;
   readonly contextTokens: number;
   readonly maxContextTokens: number;
   readonly contextUsage: number;

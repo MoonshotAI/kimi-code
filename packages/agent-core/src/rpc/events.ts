@@ -4,6 +4,7 @@ import type { GoalChange, GoalSnapshot } from '../agent/goal';
 import type { CronJobOrigin, PromptOrigin } from '../agent/context';
 import type { KimiErrorPayload } from '../errors';
 import type { PermissionMode } from '../agent/permission';
+import type { SwarmModeTrigger } from '../agent/swarm';
 import type { SkillSource } from '../skill';
 import type { BackgroundTaskInfo } from '../agent/background';
 import type { ToolInputDisplay } from '../tools/display';
@@ -49,6 +50,7 @@ export interface AgentStatusUpdatedEvent {
   readonly contextUsage?: number | undefined;
   readonly planMode?: boolean | undefined;
   readonly swarmMode?: boolean | undefined;
+  readonly swarmModeTrigger?: SwarmModeTrigger;
   readonly permission?: PermissionMode | undefined;
   readonly usage?: UsageStatus | undefined;
 }
