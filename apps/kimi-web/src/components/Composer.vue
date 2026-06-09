@@ -744,7 +744,7 @@ const hasUpload = computed(() => !!props.uploadImage);
   outline: none;
   resize: none;
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 12.5px;
   background: transparent;
   min-height: 40px;
   max-height: 200px;
@@ -805,5 +805,134 @@ const hasUpload = computed(() => !!props.uploadImage);
 
 .send:hover {
   background: var(--blue2);
+}
+
+/* ---- Mobile composer (prototype): round attach + rounded panel input +
+       round blue send with a soft shadow. The .cin container loses its border
+       and acts as a flex row; the textarea itself becomes the pill input. ---- */
+@media (max-width: 640px) {
+  .composer {
+    padding: 9px 12px max(24px, env(safe-area-inset-bottom));
+  }
+  .cin {
+    gap: 9px;
+    padding: 0;
+    border: none;
+    background: none;
+    align-items: flex-end;
+  }
+  .cin:focus-within { border: none; }
+
+  /* Attach → 40px round */
+  .attach-btn {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border-radius: 50%;
+    color: var(--muted);
+    align-self: flex-end;
+  }
+  .attach-btn:hover { background: none; }
+
+  /* Input → rounded panel pill */
+  .ph {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    padding: 10px 15px;
+    min-height: 42px;
+    box-sizing: border-box;
+    line-height: 1.4;
+  }
+
+  /* Send → 42px round blue with shadow */
+  .send {
+    width: 42px;
+    height: 42px;
+    min-width: 42px;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 0; /* hide the text label; the arrow glyph below shows instead */
+    background: var(--blue);
+    box-shadow: 0 3px 10px rgba(21, 101, 192, 0.28);
+    align-self: flex-end;
+    position: relative;
+  }
+  .send::after {
+    content: "↑";
+    font-size: 17px;
+    line-height: 1;
+    color: #fff;
+  }
+  .interrupt {
+    min-height: 42px;
+    padding: 8px 12px;
+    align-self: flex-end;
+  }
+}
+
+/* ===================== Modern theme ===================== */
+/* Refined (NOT big-radius) inputs: a cleaner ~10px squared input + a rounded-rect
+   send, with restrained pill controls. Higher specificity than the mobile media
+   query so it wins at every width. Touch targets stay >=40px. */
+:global(html[data-theme="modern"]) .cin {
+  border-radius: 10px;
+  border-color: var(--line);
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(20, 23, 28, 0.04);
+  align-items: center;
+  padding: 8px 10px;
+  gap: 9px;
+}
+:global(html[data-theme="modern"]) .cin:focus-within {
+  border-color: var(--bd);
+  box-shadow: 0 0 0 3px rgba(21, 101, 192, 0.10);
+}
+/* Input itself: drop the mobile pill back to a clean squared field. */
+:global(html[data-theme="modern"]) .ph {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  min-height: 40px;
+  box-sizing: border-box;
+  /* Compact prose size; sans font-family is applied globally in style.css (a
+     scoped :global() rule didn't reliably win the cascade for font-family). */
+  font-size: 12.5px;
+}
+/* Attach → small rounded square (not a fat round). */
+:global(html[data-theme="modern"]) .attach-btn {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 9px;
+  align-self: center;
+}
+:global(html[data-theme="modern"]) .attach-btn:hover {
+  background: var(--soft);
+  color: var(--blue);
+}
+/* Send → rounded-rect, not a fat pill / not a big circle. Keep >=40px height. */
+:global(html[data-theme="modern"]) .send {
+  width: auto;
+  min-width: 0;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 10px;
+  font-size: 11.5px;
+  box-shadow: none;
+  align-self: center;
+}
+:global(html[data-theme="modern"]) .send::after { content: none; }
+:global(html[data-theme="modern"]) .send:hover { background: var(--blue2); }
+:global(html[data-theme="modern"]) .interrupt {
+  height: 40px;
+  border-radius: 10px;
+  align-self: center;
+}
+/* Queued strip + attach chips: gently squared, not pill. */
+:global(html[data-theme="modern"]) .queue-item,
+:global(html[data-theme="modern"]) .att-chip {
+  border-radius: 8px;
 }
 </style>

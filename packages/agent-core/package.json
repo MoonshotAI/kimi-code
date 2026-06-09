@@ -45,6 +45,10 @@
       "types": "./src/di/test.ts",
       "default": "./src/di/test.ts"
     },
+    "./base/common/event": {
+      "types": "./src/base/common/event.ts",
+      "default": "./src/base/common/event.ts"
+    },
     "./session/store": {
       "types": "./src/session/store/index.ts",
       "default": "./src/session/store/index.ts"

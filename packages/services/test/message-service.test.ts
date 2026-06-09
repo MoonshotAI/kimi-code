@@ -1,7 +1,7 @@
 /**
- * `MessageServiceImpl` (Chain 3 / P1.3, W7.1) unit tests.
+ * `MessageService` (Chain 3 / P1.3, W7.1) unit tests.
  *
- * Hermetic: a fake `IHarnessBridge` returns canned `SessionSummary[]` from
+ * Hermetic: a fake `ICoreProcessService` returns canned `SessionSummary[]` from
  * `listSessions` and a canned `AgentContextData.history` from `getContext`.
  *
  * Coverage:
@@ -22,14 +22,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   AgentContextData,
   ContextMessage,
+  CoreRPC,
   SessionSummary,
 } from '@moonshot-ai/agent-core';
 
 import {
-  type IHarnessBridge,
-  type HarnessRPC,
+  type ICoreProcessService,
   MessageNotFoundError,
-  MessageServiceImpl,
+  MessageService,
   SessionNotFoundError,
   deriveMessageId,
   parseMessageId,
@@ -42,17 +42,19 @@ const SESSION_CREATED_AT = 1_700_000_000_000;
 function makeFakeBridge(
   sessions: SessionSummary[],
   history: ContextMessage[],
-): IHarnessBridge {
-  const rpc: Partial<HarnessRPC> = {
+): ICoreProcessService {
+  const rpc: Partial<CoreRPC> = {
     listSessions: vi.fn().mockImplementation(async () => sessions),
+    resumeSession: vi.fn().mockResolvedValue(undefined as unknown as never),
     getContext: vi.fn().mockImplementation(async (): Promise<AgentContextData> => {
       return { history, tokenCount: 0 };
     }),
   };
   return {
-    rpc: rpc as HarnessRPC,
+    rpc: rpc as CoreRPC,
     ready: vi.fn().mockResolvedValue(undefined),
     dispose: vi.fn(),
+    _serviceBrand: undefined,
   };
 }
 
@@ -209,9 +211,9 @@ describe('toProtocolMessage content adapter', () => {
   });
 });
 
-describe('MessageServiceImpl', () => {
-  let impl: MessageServiceImpl;
-  let bridge: IHarnessBridge;
+describe('MessageService', () => {
+  let impl: MessageService;
+  let bridge: ICoreProcessService;
 
   beforeEach(() => {
     bridge = makeFakeBridge(
@@ -224,7 +226,7 @@ describe('MessageServiceImpl', () => {
         mkUserMessage('five'),
       ],
     );
-    impl = new MessageServiceImpl(bridge);
+    impl = new MessageService(bridge);
   });
 
   afterEach(() => {
@@ -323,5 +325,37 @@ describe('MessageServiceImpl', () => {
     // than divide-by-zero or return nothing for an empty page.
     const page = await impl.list(SESSION_ID, { page_size: 0 });
     expect(page.items).toHaveLength(1);
+  });
+
+  it('list calls resumeSession before getContext so cross-restart sessions resolve', async () => {
+    await impl.list(SESSION_ID, {});
+    const resumeMock = bridge.rpc.resumeSession as ReturnType<typeof vi.fn>;
+    const getContextMock = bridge.rpc.getContext as ReturnType<typeof vi.fn>;
+    expect(resumeMock).toHaveBeenCalledWith({ sessionId: SESSION_ID });
+    const resumeOrder = resumeMock.mock.invocationCallOrder[0];
+    const getContextOrder = getContextMock.mock.invocationCallOrder[0];
+    expect(resumeOrder).toBeDefined();
+    expect(getContextOrder).toBeDefined();
+    expect(resumeOrder!).toBeLessThan(getContextOrder!);
+  });
+
+  it('maps resumeSession failure to SessionNotFoundError (wire-compat 40401)', async () => {
+    const sessions = [mkSummary()];
+    const rpc: Partial<CoreRPC> = {
+      listSessions: vi.fn().mockResolvedValue(sessions),
+      resumeSession: vi.fn().mockRejectedValue(new Error('state.json corrupted')),
+      getContext: vi.fn(),
+    };
+    const failingBridge: ICoreProcessService = {
+      rpc: rpc as CoreRPC,
+      ready: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn(),
+      _serviceBrand: undefined,
+    };
+    const failingImpl = new MessageService(failingBridge);
+    await expect(failingImpl.list(SESSION_ID, {})).rejects.toBeInstanceOf(
+      SessionNotFoundError,
+    );
+    failingImpl.dispose();
   });
 });

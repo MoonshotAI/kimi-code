@@ -14,7 +14,7 @@
  *
  * We don't drive a REAL prompt through agent-core in this test because:
  *   - prompt execution requires provider credentials + network IO.
- *   - the architecture under test is the daemon's event-bus synthesis +
+ *   - the architecture under test is the daemon's event-service synthesis +
  *     fan-out path, not the model's behavior.
  *   - the services-layer unit tests at
  *     `packages/services/test/prompt-service.test.ts` exercise the protocol
@@ -29,8 +29,8 @@ import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
-import type { Event } from '@moonshot-ai/protocol';
-import { IEventBus, IPromptService, PromptServiceImpl } from '@moonshot-ai/services';
+import type { Event, PromptSubmission } from '@moonshot-ai/protocol';
+import { IEventService, IPromptService, PromptService } from '@moonshot-ai/services';
 
 import { IRestGateway, startDaemon, type RunningDaemon } from '../src';
 
@@ -62,7 +62,7 @@ async function bootDaemon(): Promise<RunningDaemon> {
     port: 0,
     lockPath,
     logger: pino({ level: 'silent' }),
-    bridgeOptions: { homeDir: bridgeHome },
+    coreProcessOptions: { homeDir: bridgeHome },
     wsGatewayOptions: { pingIntervalMs: 5_000, pongTimeoutMs: 5_000 },
   });
   return daemon;
@@ -94,6 +94,74 @@ function envelopeOf<T>(body: unknown): {
     details?: unknown;
   };
 }
+
+function overridePromptService(
+  r: RunningDaemon,
+  stub: Partial<IPromptService>,
+): void {
+  const noopComplete = (() => ({ dispose: () => undefined })) as IPromptService['onDidComplete'];
+  const noopAbort = (() => ({ dispose: () => undefined })) as IPromptService['onDidAbort'];
+  const defaultImpl: IPromptService = {
+    _serviceBrand: undefined,
+    submit: async () => ({
+      prompt_id: 'prompt_test',
+      user_message_id: 'msg_test',
+    }),
+    abort: async () => ({ aborted: true }),
+    applyAgentState: async () => undefined,
+    onDidComplete: noopComplete,
+    onDidAbort: noopAbort,
+  };
+  const replacement = { ...defaultImpl, ...stub };
+  const ix = r.services as unknown as {
+    services: { set: (id: unknown, impl: unknown) => void };
+    _instances: Map<unknown, unknown>;
+  };
+  ix.services.set(IPromptService, replacement);
+  ix._instances.set(IPromptService, replacement);
+}
+
+function buildMultipart(parts: {
+  file: { fieldName: string; filename: string; contentType: string; data: Buffer };
+  fields?: Array<{ name: string; value: string }>;
+}): { body: Buffer; contentType: string } {
+  const boundary = '------WebKitFormBoundaryKimiDaemonPromptTest';
+  const lines: Array<Buffer | string> = [];
+  if (parts.fields) {
+    for (const field of parts.fields) {
+      lines.push(`--${boundary}\r\n`);
+      lines.push(
+        `Content-Disposition: form-data; name="${field.name}"\r\n\r\n${field.value}\r\n`,
+      );
+    }
+  }
+  lines.push(`--${boundary}\r\n`);
+  lines.push(
+    `Content-Disposition: form-data; name="${parts.file.fieldName}"; filename="${parts.file.filename}"\r\n`,
+  );
+  lines.push(`Content-Type: ${parts.file.contentType}\r\n\r\n`);
+  lines.push(parts.file.data);
+  lines.push(`\r\n--${boundary}--\r\n`);
+
+  return {
+    body: Buffer.concat(
+      lines.map((line) => (typeof line === 'string' ? Buffer.from(line, 'utf8') : line)),
+    ),
+    contentType: `multipart/form-data; boundary=${boundary}`,
+  };
+}
+
+function wsDataToString(data: unknown): string {
+  if (typeof data === 'string') return data;
+  if (Buffer.isBuffer(data)) return data.toString('utf8');
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString('utf8');
+  return JSON.stringify(data);
+}
+
+const ONE_BY_ONE_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+  'base64',
+);
 
 async function createSession(r: RunningDaemon): Promise<string> {
   const res = await appOf(r).inject({
@@ -129,7 +197,7 @@ async function openSubscriber(
     const sock = new WebSocket(wsUrl);
     sock.on('message', (data) => {
       try {
-        received.push(JSON.parse(String(data)) as Record<string, unknown>);
+        received.push(JSON.parse(wsDataToString(data)) as Record<string, unknown>);
       } catch {
         // ignore
       }
@@ -186,7 +254,13 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     const res = await appOf(r).inject({
       method: 'POST',
       url: '/api/v1/sessions/sess_missing/prompts',
-      payload: { content: [{ type: 'text', text: 'hello' }] },
+      payload: {
+        content: [{ type: 'text', text: 'hello' }],
+        model: 'x',
+        thinking: 'off',
+        permission_mode: 'manual',
+        plan_mode: false,
+      },
     });
     const env = envelopeOf<unknown>(res.json());
     expect(env.code).toBe(40401);
@@ -202,6 +276,192 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     });
     const env = envelopeOf<unknown>(res.json());
     expect(env.code).toBe(40001);
+  });
+
+  it('submits image URL content without a file upload step', async () => {
+    const r = await bootDaemon();
+    const sid = await createSession(r);
+    let submittedSid: string | undefined;
+    let submitted: PromptSubmission | undefined;
+    overridePromptService(r, {
+      submit: async (sessionId, body) => {
+        submittedSid = sessionId;
+        submitted = body;
+        return {
+          prompt_id: 'prompt_from_stub',
+          user_message_id: 'msg_from_stub',
+        };
+      },
+    });
+
+    const imageUrl = 'https://example.com/images/sample.png?size=full#frame';
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          { type: 'text', text: 'describe this image' },
+          {
+            type: 'image',
+            source: { kind: 'url', url: imageUrl },
+          },
+        ],
+      },
+    });
+    const env = envelopeOf(res.json());
+    expect(env.code).toBe(0);
+    expect(submittedSid).toBe(sid);
+    expect(submitted?.content).toEqual([
+      { type: 'text', text: 'describe this image' },
+      {
+        type: 'image',
+        source: { kind: 'url', url: imageUrl },
+      },
+    ]);
+  });
+
+  it('uploads a real PNG image file and resolves it before submitting the prompt', async () => {
+    const r = await bootDaemon();
+    const sid = await createSession(r);
+    let submitted: PromptSubmission | undefined;
+    overridePromptService(r, {
+      submit: async (_sid, body) => {
+        submitted = body;
+        return {
+          prompt_id: 'prompt_from_stub',
+          user_message_id: 'msg_from_stub',
+        };
+      },
+    });
+
+    const upload = buildMultipart({
+      file: {
+        fieldName: 'file',
+        filename: 'tiny.png',
+        contentType: 'image/png',
+        data: ONE_BY_ONE_PNG,
+      },
+    });
+    const uploadRes = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/files',
+      payload: upload.body,
+      headers: { 'content-type': upload.contentType },
+    });
+    const uploadEnv = envelopeOf<{ id: string; media_type: string; size: number }>(
+      uploadRes.json(),
+    );
+    expect(uploadEnv.code).toBe(0);
+    expect(uploadEnv.data).not.toBeNull();
+    expect(uploadEnv.data?.media_type).toBe('image/png');
+    expect(uploadEnv.data?.size).toBe(ONE_BY_ONE_PNG.length);
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          { type: 'text', text: 'what is this?' },
+          {
+            type: 'image',
+            source: { kind: 'file', file_id: uploadEnv.data!.id },
+          },
+        ],
+      },
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(0);
+    expect(submitted?.content).toEqual([
+      { type: 'text', text: 'what is this?' },
+      {
+        type: 'image',
+        source: {
+          kind: 'base64',
+          media_type: 'image/png',
+          data: ONE_BY_ONE_PNG.toString('base64'),
+        },
+      },
+    ]);
+  });
+
+  it('returns 40407 when prompt image file_id is unknown', async () => {
+    const r = await bootDaemon();
+    const sid = await createSession(r);
+    let submitted = false;
+    overridePromptService(r, {
+      submit: async () => {
+        submitted = true;
+        return {
+          prompt_id: 'prompt_from_stub',
+          user_message_id: 'msg_from_stub',
+        };
+      },
+    });
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          {
+            type: 'image',
+            source: { kind: 'file', file_id: 'f_missing' },
+          },
+        ],
+      },
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(40407);
+    expect(submitted).toBe(false);
+  });
+
+  it('rejects non-image file_id content before submitting the prompt', async () => {
+    const r = await bootDaemon();
+    const sid = await createSession(r);
+    let submitted = false;
+    overridePromptService(r, {
+      submit: async () => {
+        submitted = true;
+        return {
+          prompt_id: 'prompt_from_stub',
+          user_message_id: 'msg_from_stub',
+        };
+      },
+    });
+
+    const upload = buildMultipart({
+      file: {
+        fieldName: 'file',
+        filename: 'note.txt',
+        contentType: 'text/plain',
+        data: Buffer.from('not an image'),
+      },
+    });
+    const uploadRes = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/files',
+      payload: upload.body,
+      headers: { 'content-type': upload.contentType },
+    });
+    const uploadEnv = envelopeOf<{ id: string }>(uploadRes.json());
+    expect(uploadEnv.code).toBe(0);
+    expect(uploadEnv.data).not.toBeNull();
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          {
+            type: 'image',
+            source: { kind: 'file', file_id: uploadEnv.data!.id },
+          },
+        ],
+      },
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(40001);
+    expect(submitted).toBe(false);
   });
 });
 
@@ -219,13 +479,13 @@ describe('Prompt lifecycle: WS receives events + synthesized prompt.completed (W
     // a real `bridge.rpc.prompt(...)` call because it would require provider
     // credentials + a fully-loaded agent.
     const impl = r.services.invokeFunction(
-      (a) => a.get(IPromptService) as PromptServiceImpl,
+      (a) => a.get(IPromptService) as PromptService,
     );
-    expect(impl).toBeInstanceOf(PromptServiceImpl);
+    expect(impl).toBeInstanceOf(PromptService);
     impl._injectActiveForTest(sid, promptId, null);
 
     // Publish the agent-core event stream directly through the bus.
-    const eventBus = r.services.invokeFunction((a) => a.get(IEventBus));
+    const eventBus = r.services.invokeFunction((a) => a.get(IEventService));
     eventBus.publish({
       type: 'turn.started',
       turnId,
@@ -292,11 +552,11 @@ describe('Prompt lifecycle: WS receives events + synthesized prompt.completed (W
     const turnId = 7;
 
     const impl = r.services.invokeFunction(
-      (a) => a.get(IPromptService) as PromptServiceImpl,
+      (a) => a.get(IPromptService) as PromptService,
     );
     impl._injectActiveForTest(sid, promptId, null);
 
-    const eventBus = r.services.invokeFunction((a) => a.get(IEventBus));
+    const eventBus = r.services.invokeFunction((a) => a.get(IEventService));
     eventBus.publish({
       type: 'turn.started',
       turnId,

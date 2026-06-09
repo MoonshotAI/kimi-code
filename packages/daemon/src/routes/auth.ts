@@ -1,5 +1,5 @@
 /**
- * `GET /v1/auth` — readiness probe (P2.1 D2 / REST.md §3).
+ * `GET /v1/auth` — readiness probe (REST.md §3).
  *
  * Single权威 readiness signal that web/IDE clients hit on first paint to
  * decide between onboarding vs. chat UI. Returns 200 + envelope regardless
@@ -19,8 +19,8 @@ import { authSummarySchema } from '@moonshot-ai/protocol';
 import { IAuthSummaryService } from '@moonshot-ai/services';
 import type { IInstantiationService } from '@moonshot-ai/agent-core';
 
-import { okEnvelope } from '../envelope.js';
-import { buildRouteSchema } from '../middleware/schema.js';
+import { okEnvelope } from '../envelope';
+import { defineRoute } from '../middleware/defineRoute';
 
 interface RouteHost {
   get(
@@ -34,14 +34,13 @@ interface RouteHost {
 }
 
 export function registerAuthRoute(app: RouteHost, ix: IInstantiationService): void {
-  app.get(
-    '/auth',
+  const route = defineRoute(
     {
-      schema: buildRouteSchema({
-        description: 'Get daemon auth readiness snapshot',
-        tags: ['auth'],
-        response: { 200: authSummarySchema },
-      }),
+      method: 'GET',
+      path: '/auth',
+      success: { data: authSummarySchema },
+      description: 'Get daemon auth readiness snapshot',
+      tags: ['auth'],
     },
     async (req, reply) => {
       const summary = await ix.invokeFunction((a) =>
@@ -50,4 +49,5 @@ export function registerAuthRoute(app: RouteHost, ix: IInstantiationService): vo
       reply.send(okEnvelope(summary, req.id));
     },
   );
+  app.get(route.path, route.options, route.handler as Parameters<RouteHost['get']>[2]);
 }

@@ -7,6 +7,7 @@
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session, WorkspaceGroup, WorkspaceScope, WorkspaceView } from '../types';
+import type { Theme } from '../composables/useKimiWebClient';
 import WorkspaceRail from './WorkspaceRail.vue';
 import SessionRow from './SessionRow.vue';
 
@@ -29,6 +30,8 @@ const props = withDefaults(
     colWidth?: number;
     /** Whether the workspace rail is in its wide (named) mode. */
     railExpanded?: boolean;
+    /** Active UI theme — forwarded to the rail's bottom-left toggle. */
+    theme?: Theme;
   }>(),
   {
     activeWorkspace: null,
@@ -39,6 +42,7 @@ const props = withDefaults(
     accountModel: null,
     colWidth: 196,
     railExpanded: false,
+    theme: 'terminal',
   },
 );
 
@@ -54,6 +58,7 @@ const emit = defineEmits<{
   login: [];
   logout: [];
   toggleRailExpand: [];
+  setTheme: [theme: Theme];
 }>();
 
 // ---------------------------------------------------------------------------
@@ -104,11 +109,13 @@ function closeMenus(): void {
       :auth-ready="authReady"
       :account-model="accountModel"
       :expanded="railExpanded"
+      :theme="theme"
       @select="emit('selectWorkspace', $event)"
       @add-workspace="emit('addWorkspace')"
       @login="emit('login')"
       @logout="emit('logout')"
       @toggle-expand="emit('toggleRailExpand')"
+      @set-theme="emit('setTheme', $event)"
     />
 
     <!-- Session column -->

@@ -10,6 +10,12 @@ const daemonTarget = process.env.KIMI_DAEMON_URL || 'http://127.0.0.1:7878';
 
 export default defineConfig({
   plugins: [vue(), tailwindcss()],
+  // Expose the dev proxy's upstream daemon target to the client so the UI can
+  // show which daemon it is connected to (the browser otherwise only sees its
+  // own same-origin URL). Unused by the same-origin production build.
+  define: {
+    __KIMI_DEV_PROXY_TARGET__: JSON.stringify(daemonTarget),
+  },
   server: {
     port: webPort,
     strictPort: false,

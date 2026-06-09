@@ -1,6 +1,7 @@
 export default {
   help: { desc: 'Show the list of available commands' },
   new: { desc: 'Create a new session' },
+  sessions: { desc: 'Browse & switch sessions' },
   clear: { desc: 'Clear and start a new session' },
   model: { desc: 'Switch model' },
   provider: { desc: 'Manage providers (add / remove / refresh)' },

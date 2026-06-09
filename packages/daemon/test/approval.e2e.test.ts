@@ -2,7 +2,7 @@
  * Approval end-to-end tests (W8.1 / Chain 5 / P1.5).
  *
  * Covers the reverse-RPC path: agent-core → BridgeClientAPI.requestApproval
- * → IApprovalBroker.request → WS `event.approval.requested` → REST
+ * → IApprovalService.request → WS `event.approval.requested` → REST
  * `POST /api/v1/sessions/{sid}/approvals/{aid}` → Promise resolves with agent-core
  * `ApprovalResponse`.
  *
@@ -10,7 +10,7 @@
  * skip the `bridge.rpc.prompt(...)` path (requires provider creds), and drive
  * the broker DIRECTLY via the DI accessor. This exercises:
  *   - Adapter (in-process SDK shape → snake_case wire shape)
- *   - WS broadcast through `IEventBus.publish` → subscriber receives frame
+ *   - WS broadcast through `IEventService.publish` → subscriber receives frame
  *     with `payload.approval_id` + 12-arm `tool_input_display` preserved
  *   - REST `POST` resolves → broker Promise settles → response converts back
  *     to in-process SDK shape
@@ -28,7 +28,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
 import {
-  IApprovalBroker,
+  IApprovalService,
   type ApprovalRequest,
   type ApprovalResponse,
 } from '@moonshot-ai/services';
@@ -36,8 +36,8 @@ import {
 import { IRestGateway, startDaemon, type RunningDaemon } from '../src';
 import {
   ApprovalExpiredError,
-  DaemonApprovalBroker,
-} from '../src/services/approval-broker';
+  ApprovalService,
+} from '#/services/approval/approvalService';
 
 let tmpDir: string;
 let lockPath: string;
@@ -67,7 +67,7 @@ async function bootDaemon(): Promise<RunningDaemon> {
     port: 0,
     lockPath,
     logger: pino({ level: 'silent' }),
-    bridgeOptions: { homeDir: bridgeHome },
+    coreProcessOptions: { homeDir: bridgeHome },
     wsGatewayOptions: { pingIntervalMs: 5_000, pongTimeoutMs: 5_000 },
   });
   return daemon;
@@ -162,6 +162,12 @@ async function waitFor(
   );
 }
 
+function firstPendingApprovalId(broker: ApprovalService): string | undefined {
+  return (broker as unknown as {
+    _pending: Map<string, { approvalId: string }>;
+  })._pending.values().next().value?.approvalId;
+}
+
 // --- Tests -----------------------------------------------------------------
 
 describe('Approval reverse-RPC: WS broadcast → REST resolve → Promise settle (W8.1)', () => {
@@ -171,7 +177,7 @@ describe('Approval reverse-RPC: WS broadcast → REST resolve → Promise settle
     const { ws, received } = await openSubscriber(r, sid);
 
     const broker = r.services.invokeFunction(
-      (a) => a.get(IApprovalBroker) as DaemonApprovalBroker,
+      (a) => a.get(IApprovalService) as ApprovalService,
     );
 
     const inProcReq: ApprovalRequest = {
@@ -260,6 +266,98 @@ describe('Approval reverse-RPC: WS broadcast → REST resolve → Promise settle
     ws.close();
   });
 
+  it('GET pending approvals lists recoverable requests and omits resolved ones', async () => {
+    const r = await bootDaemon();
+    const sid = await createSession(r);
+
+    const broker = r.services.invokeFunction(
+      (a) => a.get(IApprovalService) as ApprovalService,
+    );
+
+    const pending = broker.request({
+      sessionId: sid,
+      agentId: 'main',
+      turnId: 12,
+      toolCallId: 'tc_approval_recovery',
+      toolName: 'shell.run',
+      action: 'Run `pwd`',
+      display: { kind: 'command', command: 'pwd', summary: 'pwd' } as never,
+    });
+
+    let approvalId: string | undefined;
+    try {
+      const res = await appOf(r).inject({
+        method: 'GET',
+        url: `/api/v1/sessions/${sid}/approvals?status=pending`,
+      });
+      const env = envelopeOf<{
+        items: Array<{
+          approval_id: string;
+          session_id: string;
+          turn_id?: number;
+          tool_call_id: string;
+          tool_name: string;
+          action: string;
+          tool_input_display: unknown;
+          created_at: string;
+          expires_at: string;
+        }>;
+      }>(res.json());
+      expect(env.code).toBe(0);
+      expect(env.data?.items).toHaveLength(1);
+
+      const item = env.data?.items[0];
+      expect(item).toBeDefined();
+      approvalId = item?.approval_id;
+      expect(item?.session_id).toBe(sid);
+      expect(item?.turn_id).toBe(12);
+      expect(item?.tool_call_id).toBe('tc_approval_recovery');
+      expect(item?.tool_name).toBe('shell.run');
+      expect(item?.action).toBe('Run `pwd`');
+      expect(item?.tool_input_display).toEqual({
+        kind: 'command',
+        command: 'pwd',
+        summary: 'pwd',
+      });
+      expect(item?.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(item?.expires_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+      const ok = await appOf(r).inject({
+        method: 'POST',
+        url: `/api/v1/sessions/${sid}/approvals/${approvalId}`,
+        payload: { decision: 'approved' },
+      });
+      expect(envelopeOf<{ resolved: boolean }>(ok.json()).code).toBe(0);
+      await pending;
+
+      const after = await appOf(r).inject({
+        method: 'GET',
+        url: `/api/v1/sessions/${sid}/approvals?status=pending`,
+      });
+      const afterEnv = envelopeOf<{ items: unknown[] }>(after.json());
+      expect(afterEnv.code).toBe(0);
+      expect(afterEnv.data?.items).toEqual([]);
+    } finally {
+      const cleanupId = approvalId ?? firstPendingApprovalId(broker);
+      if (cleanupId !== undefined && broker.isPending(cleanupId)) {
+        broker.resolve(cleanupId, { decision: 'cancelled' });
+      }
+      await pending.catch(() => undefined);
+    }
+  });
+
+  it('GET pending approvals rejects unsupported status', async () => {
+    const r = await bootDaemon();
+    const sid = await createSession(r);
+
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${sid}/approvals?status=resolved`,
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(40001);
+  });
+
   it('60s timeout broadcasts event.approval.expired + rejects with ApprovalExpiredError', async () => {
     const r = await bootDaemon();
     const sid = await createSession(r);
@@ -269,7 +367,7 @@ describe('Approval reverse-RPC: WS broadcast → REST resolve → Promise settle
     // the container, since startDaemon doesn't expose a broker-options
     // override yet.
     const broker = r.services.invokeFunction(
-      (a) => a.get(IApprovalBroker) as DaemonApprovalBroker,
+      (a) => a.get(IApprovalService) as ApprovalService,
     );
     // Stamp the timeout via a private field hack — the test already
     // co-owns the impl. (In a fuller world we'd thread a `brokerOptions`
@@ -323,7 +421,7 @@ describe('Approval reverse-RPC: WS broadcast → REST resolve → Promise settle
     const sid = await createSession(r);
 
     const broker = r.services.invokeFunction(
-      (a) => a.get(IApprovalBroker) as DaemonApprovalBroker,
+      (a) => a.get(IApprovalService) as ApprovalService,
     );
     const pending = broker.request({
       sessionId: sid,
@@ -372,7 +470,7 @@ describe('Approval reverse-RPC: WS broadcast → REST resolve → Promise settle
     const sid = await createSession(r);
 
     const broker = r.services.invokeFunction(
-      (a) => a.get(IApprovalBroker) as DaemonApprovalBroker,
+      (a) => a.get(IApprovalService) as ApprovalService,
     );
     const _pending = broker.request({
       sessionId: sid,

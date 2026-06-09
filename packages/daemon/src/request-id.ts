@@ -1,21 +1,11 @@
 /**
- * `request_id` resolution at the daemon's REST boundary (W4.3 / P0.13).
+ * `request_id` resolution at the daemon's REST boundary.
  *
  * Delegates to `parseOrGenerateRequestId` from `@moonshot-ai/protocol`, which:
- *   - returns a bare 26-char ULID per PLAN §P7 (no `req_` prefix);
+ *   - returns a bare 26-char ULID (no `req_` prefix);
  *   - validates client-supplied `X-Request-Id` is a real ULID and regenerates
- *     a fresh one on malformed input (log hygiene + DoS surface — operator
- *     log files would otherwise carry attacker-controlled strings verbatim).
- *
- * Wire format change vs. the pre-W4 walking-skeleton daemon:
- *   - OLD: `req_${ulid()}` minted; client-supplied header echoed verbatim
- *     regardless of format.
- *   - NEW: bare ULID minted; client-supplied header echoed ONLY if it
- *     passes `ulid.isValid`.
- *
- * Existing clients that relied on the `req_…` echo will see a freshly-minted
- * bare ULID instead. This is the W1 reviewer's recommendation and is
- * documented in W4 STATUS §Decisions.
+ *     a fresh one on malformed input so operator logs do not carry
+ *     attacker-controlled strings verbatim.
  */
 
 import { parseOrGenerateRequestId } from '@moonshot-ai/protocol';

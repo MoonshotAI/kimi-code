@@ -8,8 +8,7 @@
  */
 
 import { envelopeSchema } from '@moonshot-ai/protocol';
-import { zodToJsonSchema } from 'zod-to-json-schema';
-import type { z } from 'zod';
+import { z } from 'zod';
 
 /**
  * Convert a Zod schema to a plain JSON Schema object suitable for
@@ -19,25 +18,43 @@ import type { z } from 'zod';
  * schemas don't need it.
  */
 export function jsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
-  const converted = zodToJsonSchema(schema as never, {
-    target: 'openApi3',
-    name: 'Schema',
+  return jsonSchemaForTarget(schema, 'input', 'draft-7');
+}
+
+/**
+ * Convert a Zod schema to a response-side Fastify JSON Schema object.
+ */
+export function outputJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
+  return jsonSchemaForTarget(schema, 'output', 'draft-7');
+}
+
+/**
+ * Convert a Zod schema directly to an OpenAPI 3 schema object.
+ *
+ * Fastify route schemas use draft-7 because Fastify validates/serializes with
+ * AJV; `@fastify/swagger` converts those schemas to OpenAPI. Post-processing
+ * hooks run after that conversion, so schemas inserted there must already use
+ * OpenAPI 3 semantics.
+ */
+export function openApiDocumentJsonSchema(
+  schema: z.ZodTypeAny,
+  io: 'input' | 'output' = 'input',
+): Record<string, unknown> {
+  return jsonSchemaForTarget(schema, io, 'openapi-3.0');
+}
+
+function jsonSchemaForTarget(
+  schema: z.ZodTypeAny,
+  io: 'input' | 'output',
+  target: 'draft-7' | 'openapi-3.0',
+): Record<string, unknown> {
+  const converted = z.toJSONSchema(schema, {
+    target,
+    io,
+    unrepresentable: 'any',
   }) as Record<string, unknown>;
-  // The wrapper adds a `$schema` and `additionalProperties` when a name
-  // is given; we only want the inner object shape.
   if (converted['$schema'] !== undefined) {
     delete converted['$schema'];
-  }
-  if (converted['additionalProperties'] !== undefined) {
-    delete converted['additionalProperties'];
-  }
-  // When using `name`, zod-to-json-schema wraps in `definitions.Schema`.
-  // We prefer the inline shape.
-  if (converted['definitions'] !== undefined) {
-    const definitions = converted['definitions'] as Record<string, unknown>;
-    if (definitions['Schema'] !== undefined) {
-      return definitions['Schema'] as Record<string, unknown>;
-    }
   }
   return converted;
 }
@@ -49,7 +66,13 @@ export function jsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
 export function envelopeJsonSchema(
   dataSchema: z.ZodTypeAny,
 ): Record<string, unknown> {
-  return jsonSchema(envelopeSchema(dataSchema));
+  return outputJsonSchema(envelopeSchema(dataSchema));
+}
+
+export function openApiDocumentEnvelopeJsonSchema(
+  dataSchema: z.ZodTypeAny,
+): Record<string, unknown> {
+  return openApiDocumentJsonSchema(envelopeSchema(dataSchema), 'output');
 }
 
 /**

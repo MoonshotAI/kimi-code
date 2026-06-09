@@ -17,4 +17,5 @@ export default {
   notSignedIn: 'Not signed in',
   signIn: 'Sign in',
   language: 'Language',
+  daemon: 'Daemon',
 } as const;

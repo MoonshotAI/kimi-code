@@ -15,10 +15,16 @@
   --blue2: #0d4f9e;
   --soft: #e9f0fa;
   --bd: #cfe0f6;
+  /* Soft-blue bubble fill + border (mobile user message bubble). */
+  --bluebg: #eef4fc;
+  --blueln: #cfe0f7;
   --ok: #0e7a38;
   --warn: #92660a;
   --err: #b91c1c;
   --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  /* Both themes are light. Declared here (and in index.html) so the browser and
+     dark-mode extensions never force-darken the page. */
+  color-scheme: light;
 }
 
 html,
@@ -26,6 +32,18 @@ body,
 #app {
   height: 100%;
   margin: 0;
+  /* Explicit light background on the root: a transparent <html> gets sampled as
+     "dark" by some extensions, which then repaint it. Keep it solid white. */
+  background: var(--bg);
+}
+
+/* Pin the app to the viewport so it always fills the screen even if a dark-mode
+   browser extension collapses <html>'s height — the opaque app then fully covers
+   any colour the extension paints on the root, and child height:100% resolves
+   against the viewport-sized app rather than the (possibly broken) document. */
+#app {
+  position: fixed;
+  inset: 0;
 }
 
 body {
@@ -35,4 +53,147 @@ body {
   font-size: 12.5px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+}
+
+/* ---------------------------------------------------------------------------
+   Mobile dialogs → bottom sheets.
+   On narrow viewports the centered modal overlays used by ModelPicker,
+   NewSessionDialog, StatusPanel, AddWorkspaceDialog, ProviderManager and
+   LoginDialog become bottom-anchored full-width sheets (rounded top, slides up).
+   The selectors are compound (`.backdrop .dialog`, specificity 0,2,0) so they
+   win over each component's scoped `.dialog` rule regardless of injection order.
+   Desktop (>640px) keeps the existing centered modal untouched.
+   --------------------------------------------------------------------------- */
+@media (max-width: 640px) {
+  .backdrop {
+    align-items: flex-end;
+    justify-content: stretch;
+  }
+  .backdrop .dialog {
+    width: 100%;
+    max-width: 100%;
+    max-height: 88vh;
+    border-radius: 16px 16px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.18);
+    animation: kimi-sheet-up 0.26s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
+@keyframes kimi-sheet-up {
+  from { transform: translateY(101%); }
+  to { transform: translateY(0); }
+}
+
+/* ===========================================================================
+   MODERN THEME (html[data-theme="modern"])
+   Bubbles-everywhere look with a softer palette and smooth ("丝滑")
+   micro-animations. Terminal (default, no data-theme override) is untouched.
+   All Modern rules live under html[data-theme="modern"]; component-scoped
+   overrides use :global(html[data-theme=modern]) so they share the hook.
+   =========================================================================== */
+html[data-theme="modern"] {
+  /* Softer hairlines + a soft neutral canvas the white cards/bubbles lift off.
+     Shadow tokens are shared by the per-element card rules below. */
+  --line: #e9edf3;
+  --line2: #f1f4f8;
+  --sans: -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei",
+    sans-serif;
+  --canvas: #f4f6fa;
+  --sh: 0 1px 3px rgba(28, 40, 66, 0.05), 0 6px 18px rgba(28, 40, 66, 0.06);
+  --shc: 0 1px 2px rgba(28, 40, 66, 0.05);
+}
+
+/* De-terminalize: content text (messages, titles, descriptions, buttons) uses a
+   real UI sans. Paths, code, tab labels, timestamps and badges keep --mono
+   because they set it per-element — so chrome stays crisp and code-like, content
+   reads soft. This single switch is what makes Modern feel unlike the terminal. */
+html[data-theme="modern"] body {
+  font-family: var(--sans);
+  line-height: 1.6;
+}
+
+/* Smooth theme switching + general interaction fluidity. Scoped to common
+   surfaces so we never animate layout-affecting properties (no layout shift). */
+html[data-theme="modern"] button,
+html[data-theme="modern"] .cin,
+html[data-theme="modern"] textarea,
+html[data-theme="modern"] input {
+  transition: background-color 0.18s ease, border-color 0.18s ease,
+    color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+/* ---- Soft canvas: the conversation pane is a faint neutral so white tool
+   cards and the user bubble lift off it with a gentle shadow. Side panels stay
+   as-is; only the reading surface softens. ---- */
+html[data-theme="modern"] .con { background: var(--canvas); }
+html[data-theme="modern"] .chat { background: transparent; }
+
+/* Session rows → rounded, inset pills with a soft active state (cards, not a
+   full-bleed tint bar). Keeps the mono timestamp/badges. */
+html[data-theme="modern"] .se {
+  margin: 1px 6px;
+  border-radius: 10px;
+}
+html[data-theme="modern"] .se:hover { background: #eef1f6; }
+html[data-theme="modern"] .se.on {
+  background: var(--soft);
+  box-shadow: inset 0 0 0 1px var(--bd);
+}
+
+/* Tab bar + column header → clean white strips with a single hairline. */
+html[data-theme="modern"] .tabs,
+html[data-theme="modern"] .ch {
+  background: #fff;
+}
+
+/* Chat prose → UI sans (THIS is what makes the conversation read like a chat
+   app instead of a terminal). Markdown.vue renders message text inside
+   .md/.markdown-renderer with --mono; override to --sans here. Code blocks,
+   inline code and file paths keep --mono via their own per-element rules, so
+   only the prose changes. Global (not scoped) so it reliably wins the cascade. */
+html[data-theme="modern"] .md,
+html[data-theme="modern"] .md .markdown-renderer {
+  font-family: var(--sans);
+}
+
+/* Composer input also types in sans under Modern (matches the chat prose). */
+html[data-theme="modern"] .ph {
+  font-family: var(--sans);
+}
+
+/* Modern dialogs/sheets: soften the centered-modal shadow on desktop too. The
+   data-theme hook is on <html>, so teleported/fixed dialogs inherit it. */
+html[data-theme="modern"] .backdrop .dialog {
+  box-shadow: 0 8px 30px rgba(20, 23, 28, 0.16);
+}
+
+/* ---- Modern keyframes (shared by component-scoped rules) ---- */
+@keyframes kimi-bubble-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes kimi-card-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.995); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes kimi-check-in {
+  from { opacity: 0; transform: scale(0.4); }
+  60% { opacity: 1; transform: scale(1.15); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes kimi-line-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---- Reduced-motion: disable ALL Modern entrance/micro animations ---- */
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme="modern"] * {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.001ms !important;
+  }
 }

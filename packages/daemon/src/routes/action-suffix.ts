@@ -3,13 +3,6 @@
  * (REST.md §1.6) introduced because Fastify's path syntax cannot disambiguate
  * `:resource_id` from `:resource_id:action` on the same path prefix.
  *
- * History:
- *   - W7.2 prompts route added the `:abort` suffix inline.
- *   - W8.2 questions route reused the same `lastIndexOf(':')` snippet for
- *     `:dismiss`.
- *   - W9.1 mcp restart is the 4th call site (`:restart`); W8 handoff flagged
- *     extraction. This module is the result.
- *
  * Pattern: routes register a path `/...prefix/:tail` and pass the captured
  * `tail` segment to this helper along with the list of allowed actions. The
  * helper returns one of:

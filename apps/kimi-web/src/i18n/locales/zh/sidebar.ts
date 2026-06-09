@@ -17,4 +17,5 @@ export default {
   notSignedIn: '未登录',
   signIn: '登录',
   language: '语言',
+  daemon: '后台',
 };

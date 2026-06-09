@@ -26,7 +26,13 @@ export {
 export { InstantiationType, SyncDescriptor, SyncDescriptor0 } from './descriptors';
 export { ServiceCollection } from './serviceCollection';
 export { InstantiationService } from './instantiationService';
-export { Disposable } from './lifecycle';
+export {
+  Disposable,
+  DisposableStore,
+  MutableDisposable,
+  combinedDisposable,
+  toDisposable,
+} from './lifecycle';
 export type { IDisposable } from './lifecycle';
 export { CyclicDependencyError } from './errors';
 export {

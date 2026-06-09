@@ -14,7 +14,7 @@
  *
  * **Bootstrap**: each test seeds `<bridgeHome>/config.toml` BEFORE calling
  * `startDaemon` so KimiCore loads it on construction. The `homeDir` we pass
- * via `bridgeOptions.homeDir` is also what `AuthSummaryServiceImpl` uses to
+ * via `coreProcessOptions.homeDir` is also what `AuthSummaryServiceImpl` uses to
  * locate the credential dir — keeping the file paths in lockstep with prod.
  *
  * **Anti-corruption**: tests only use the public REST surface + `RunningDaemon`
@@ -61,7 +61,7 @@ async function bootDaemon(): Promise<RunningDaemon> {
     port: 0,
     lockPath,
     logger: pino({ level: 'silent' }),
-    bridgeOptions: { homeDir: bridgeHome },
+    coreProcessOptions: { homeDir: bridgeHome },
   });
   return daemon;
 }
@@ -223,7 +223,13 @@ describe('POST /api/v1/sessions/{sid}/prompts — readiness gate (P2.1 D1)', () 
     const res = await appOf(r).inject({
       method: 'POST',
       url: `/api/v1/sessions/${sid}/prompts`,
-      payload: { content: [{ type: 'text', text: 'hello' }] },
+      payload: {
+        content: [{ type: 'text', text: 'hello' }],
+        model: 'x',
+        thinking: 'off',
+        permission_mode: 'manual',
+        plan_mode: false,
+      },
     });
     const env = envelopeOf<unknown>(res.json());
     expect(env.code).toBe(40110);
@@ -252,7 +258,13 @@ describe('POST /api/v1/sessions/{sid}/prompts — readiness gate (P2.1 D1)', () 
     const res = await appOf(r).inject({
       method: 'POST',
       url: `/api/v1/sessions/${sid}/prompts`,
-      payload: { content: [{ type: 'text', text: 'hello' }] },
+      payload: {
+        content: [{ type: 'text', text: 'hello' }],
+        model: 'x',
+        thinking: 'off',
+        permission_mode: 'manual',
+        plan_mode: false,
+      },
     });
     const env = envelopeOf<unknown>(res.json());
     expect(env.code).toBe(40111);
@@ -281,7 +293,13 @@ describe('POST /api/v1/sessions/{sid}/prompts — readiness gate (P2.1 D1)', () 
     const res = await appOf(r).inject({
       method: 'POST',
       url: `/api/v1/sessions/${sid}/prompts`,
-      payload: { content: [{ type: 'text', text: 'hello' }] },
+      payload: {
+        content: [{ type: 'text', text: 'hello' }],
+        model: 'x',
+        thinking: 'off',
+        permission_mode: 'manual',
+        plan_mode: false,
+      },
     });
     const env = envelopeOf<unknown>(res.json());
     expect(env.code).toBe(40113);
@@ -308,7 +326,13 @@ describe('POST /api/v1/sessions/{sid}/prompts — readiness gate (P2.1 D1)', () 
     const res = await appOf(r).inject({
       method: 'POST',
       url: `/api/v1/sessions/${sid}/prompts`,
-      payload: { content: [{ type: 'text', text: 'hello' }] },
+      payload: {
+        content: [{ type: 'text', text: 'hello' }],
+        model: 'x',
+        thinking: 'off',
+        permission_mode: 'manual',
+        plan_mode: false,
+      },
     });
     const env = envelopeOf<unknown>(res.json());
     expect(env.code).toBe(40113);
@@ -338,7 +362,13 @@ describe('POST /api/v1/sessions/{sid}/prompts — readiness gate (P2.1 D1)', () 
     const res = await appOf(r).inject({
       method: 'POST',
       url: `/api/v1/sessions/${sid}/prompts`,
-      payload: { content: [{ type: 'text', text: 'hello' }] },
+      payload: {
+        content: [{ type: 'text', text: 'hello' }],
+        model: 'x',
+        thinking: 'off',
+        permission_mode: 'manual',
+        plan_mode: false,
+      },
     });
     const env = envelopeOf<unknown>(res.json());
     // The gate passes; bridge.rpc.prompt then runs against the test fixture

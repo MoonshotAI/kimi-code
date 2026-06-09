@@ -1,6 +1,7 @@
 export default {
   help: { desc: '显示可用命令列表' },
   new: { desc: '创建新会话' },
+  sessions: { desc: '浏览/切换会话' },
   clear: { desc: '清空并新建会话' },
   model: { desc: '切换模型' },
   provider: { desc: '管理提供商 (添加/删除/刷新)' },

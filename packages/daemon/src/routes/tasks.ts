@@ -1,5 +1,5 @@
 /**
- * `/sessions/{sid}/tasks*` REST routes (Chain 8 / P1.8, W9.2).
+ * `/sessions/{sid}/tasks*` REST routes.
  *
  * 3 endpoints (REST.md §3.7):
  *
@@ -12,8 +12,8 @@
  *   - `SessionNotFoundError`     → envelope `code: 40401`
  *   - `TaskNotFoundError`        → envelope `code: 40406`
  *   - `TaskAlreadyFinishedError` → envelope `code: 40904` with custom
- *     `data:{cancelled:false}` (mirrors W7's 40903/W8's 40902 precedent).
- *   - Other errors → 50001 via W4 `installErrorHandler`.
+ *     `data:{cancelled:false}` for idempotent cancellation conflicts.
+ *   - Other errors → 50001 via the global `installErrorHandler`.
  *
  * **Action suffix**: `:cancel` uses the shared `parseActionSuffix` helper
  * (5th call site after prompts:abort, questions:resolve|dismiss, mcp:restart).
@@ -29,7 +29,6 @@ import {
   getTaskResponseSchema,
   listTasksQuerySchema,
   listTasksResponseSchema,
-  type ListTasksQuery,
 } from '@moonshot-ai/protocol';
 import {
   ITaskService,
@@ -41,10 +40,9 @@ import { z } from 'zod';
 
 import type { IInstantiationService } from '@moonshot-ai/agent-core';
 
-import { errEnvelope, okEnvelope } from '../envelope.js';
-import { buildRouteSchema } from '../middleware/schema.js';
-import { validateParams, validateQuery } from '../middleware/validate.js';
-import { parseActionSuffix } from './action-suffix.js';
+import { errEnvelope, okEnvelope } from '../envelope';
+import { defineRoute } from '../middleware/defineRoute';
+import { parseActionSuffix } from './action-suffix';
 
 interface TasksRouteHost {
   get(
@@ -74,30 +72,31 @@ const sessionAndTaskIdParamSchema = z.object({
   task_id: z.string().min(1),
 });
 
+const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
+
 export function registerTasksRoutes(
   app: TasksRouteHost,
   ix: IInstantiationService,
 ): void {
   // GET /sessions/{session_id}/tasks ------------------------------------
-  app.get(
-    '/sessions/:session_id/tasks',
+  const listRoute = defineRoute(
     {
-      preHandler: [
-        validateParams(sessionIdParamSchema),
-        validateQuery(listTasksQuerySchema),
-      ],
-      schema: buildRouteSchema({
-        description: 'List background tasks for a session',
-        tags: ['tasks'],
-        params: sessionIdParamSchema,
-        querystring: listTasksQuerySchema,
-        response: { 200: listTasksResponseSchema },
-      }),
+      method: 'GET',
+      path: '/sessions/{session_id}/tasks',
+      params: sessionIdParamSchema,
+      querystring: listTasksQuerySchema,
+      success: { data: listTasksResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+      },
+      description: 'List background tasks for a session',
+      tags: ['tasks'],
     },
     async (req, reply) => {
       try {
-        const { session_id } = req.params as { session_id: string };
-        const query = req.query as ListTasksQuery;
+        const { session_id } = req.params;
+        const query = req.query;
         const items = await ix.invokeFunction((a) =>
           a.get(ITaskService).list(session_id, query),
         );
@@ -107,29 +106,27 @@ export function registerTasksRoutes(
       }
     },
   );
+  app.get(listRoute.path, listRoute.options, listRoute.handler as Parameters<TasksRouteHost['get']>[2]);
 
   // GET /sessions/{session_id}/tasks/{task_id} --------------------------
-  app.get(
-    '/sessions/:session_id/tasks/:task_id',
+  const getRoute = defineRoute(
     {
-      preHandler: [
-        validateParams(sessionAndTaskIdParamSchema),
-        validateQuery(getTaskQuerySchema),
-      ],
-      schema: buildRouteSchema({
-        description: 'Get a background task by ID',
-        tags: ['tasks'],
-        params: sessionAndTaskIdParamSchema,
-        querystring: getTaskQuerySchema,
-        response: { 200: getTaskResponseSchema },
-      }),
+      method: 'GET',
+      path: '/sessions/{session_id}/tasks/{task_id}',
+      params: sessionAndTaskIdParamSchema,
+      querystring: getTaskQuerySchema,
+      success: { data: getTaskResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.TASK_NOT_FOUND]: {},
+      },
+      description: 'Get a background task by ID',
+      tags: ['tasks'],
     },
     async (req, reply) => {
       try {
-        const { session_id, task_id } = req.params as {
-          session_id: string;
-          task_id: string;
-        };
+        const { session_id, task_id } = req.params;
         const task = await ix.invokeFunction((a) =>
           a.get(ITaskService).get(session_id, task_id),
         );
@@ -139,22 +136,30 @@ export function registerTasksRoutes(
       }
     },
   );
+  app.get(getRoute.path, getRoute.options, getRoute.handler as Parameters<TasksRouteHost['get']>[2]);
 
   // POST /sessions/{session_id}/tasks/{task_id}:cancel ------------------
   //
   // Fastify routes the GET `/:task_id` and the POST `/:tail` against the
   // same Trie prefix. Using `/:task_id:cancel`-style would collide; we
   // capture `:tail` and demand the `:cancel` suffix via the shared parser.
-  app.post(
-    '/sessions/:session_id/tasks/:tail',
+  const cancelRoute = defineRoute(
     {
-      preHandler: [],
-      schema: buildRouteSchema({
-        description: 'Cancel a background task',
-        tags: ['tasks'],
-        operationId: 'cancelTask',
-        response: { 200: cancelTaskResultSchema },
-      }),
+      method: 'POST',
+      path: '/sessions/{session_id}/tasks/{tail}',
+      success: { data: cancelTaskResultSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.TASK_NOT_FOUND]: {},
+        [ErrorCode.TASK_ALREADY_FINISHED]: {
+          dataSchema: z.object({ cancelled: z.literal(false) }),
+          detailsSchema: z.object({ current_status: z.string() }),
+        },
+      },
+      description: 'Cancel a background task',
+      tags: ['tasks'],
+      operationId: 'cancelTask',
     },
     async (req, reply) => {
       try {
@@ -201,14 +206,15 @@ export function registerTasksRoutes(
       }
     },
   );
+  app.post(cancelRoute.path, cancelRoute.options, cancelRoute.handler as Parameters<TasksRouteHost['post']>[2]);
 }
 
 /**
  * Map a thrown error to the right envelope. See module header for the table.
  *
  * `TaskAlreadyFinishedError` is a SPECIAL case — REST.md §3.7 mandates
- * envelope `code: 40904` + `data: {cancelled: false}`. Mirrors the W7 40903
- * + W8 40902 idempotent shape.
+ * envelope `code: 40904` + `data: {cancelled: false}` for the idempotent
+ * cancellation shape.
  */
 function sendMappedError(
   reply: { send(payload: unknown): unknown },

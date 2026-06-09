@@ -405,4 +405,23 @@ watch(
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
+
+/* ---- Mobile (≤640px): bigger, finger-friendly rows (≥44px tall) and a larger
+        name/icon so the full-width tree is easy to tap. ---- */
+@media (max-width: 640px) {
+  .file-tree { font-size: 13.5px; }
+  .ft-row {
+    min-height: 44px;
+    gap: 8px;
+    padding-top: 0;
+    padding-bottom: 0;
+    padding-right: 12px;
+    border-radius: 0;
+    border-bottom: 1px solid var(--line2);
+  }
+  .ft-row:active { background: var(--panel2); }
+  .ft-toggle { width: 18px; font-size: 11px; }
+  .ft-name { font-size: 13.5px; }
+  .ft-badge { width: 18px; height: 18px; font-size: 10px; }
+}
 </style>

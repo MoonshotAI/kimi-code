@@ -1,5 +1,5 @@
 /**
- * Filesystem lock for single-instance daemon enforcement (ROADMAP P0.12).
+ * Filesystem lock for single-instance daemon enforcement.
  *
  * The lock is a small JSON file at `<KIMI_CODE_HOME>/daemon/lock` (defaults
  * to `~/.kimi-code/daemon/lock`; overridable via `KIMI_CODE_HOME` env or
@@ -73,8 +73,8 @@ export class DaemonLockedError extends Error {
   override readonly name = 'DaemonLockedError';
   readonly code = 'EDAEMON_LOCKED' as const;
   /**
-   * Process exit code preferred by CLI consumers. ROADMAP §P0.12 AC mandates
-   * `2` (distinct from generic failure `1`) so operators can scriptly distinguish
+   * Process exit code preferred by CLI consumers. `2` is distinct from generic
+   * failure `1` so operators can scriptly distinguish
    * "another daemon is running" from "daemon crashed". Commander reads this if
    * present; library callers can ignore it.
    */

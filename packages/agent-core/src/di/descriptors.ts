@@ -18,13 +18,20 @@ export enum InstantiationType {
  * built instance) and constructs it on first `get`.
  */
 export class SyncDescriptor<T> {
+  // Match VSCode: the constructor argument is typed for callers, while the
+  // stored ctor is runtime metadata-bearing and consumed by DI internals.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  public readonly ctor: any;
+
   constructor(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    public readonly ctor: new (...args: any[]) => T,
+    ctor: new (...args: any[]) => T,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     public readonly staticArguments: ReadonlyArray<any> = [],
     public readonly supportsDelayedInstantiation: boolean = false,
-  ) {}
+  ) {
+    this.ctor = ctor;
+  }
 }
 
 /**

@@ -1,5 +1,5 @@
 /**
- * Generic Zod body / query / params validators for Fastify routes (Chain 2).
+ * Generic Zod body / query / params validators for Fastify routes.
  *
  * On validation success: the parsed value replaces the raw input on the
  * request object so handlers operate on a `T`-typed payload (no need to
@@ -14,9 +14,8 @@
  * than reshape it — this is the single error code that carries structured
  * details so a one-off shape is acceptable.
  *
- * Note: this is the FIRST 40001 producer in the daemon. The W4
- * `installErrorHandler` only emits 50001; route-level Zod failures land
- * here at the preHandler stage and never reach the error hook.
+ * Note: route-level Zod failures land here at the preHandler stage and never
+ * reach the generic error hook, which only emits 50001 for unknown exceptions.
  */
 
 import { ErrorCode } from '@moonshot-ai/protocol';

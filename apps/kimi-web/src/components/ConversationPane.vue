@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ActivityState, ApprovalBlock, ChatTurn, ConnectionState, ContentAlign, ConversationStatus, PaneKey, PermissionMode, TaskItem, UIQuestion } from '../types';
+import type { ActivityState, ApprovalBlock, ChatTurn, ConnectionState, ContentAlign, ConversationStatus, DiffViewLine, PaneKey, PermissionMode, TaskItem, UIQuestion } from '../types';
 import type { ApprovalDecision, FsEntry, QuestionResponse, ThinkingLevel } from '../api/types';
 import type { FileItem } from './MentionMenu.vue';
 import type { FileData } from './FilePreview.vue';
@@ -21,6 +21,12 @@ const props = defineProps<{
   approvals?: { approvalId: string; block: ApprovalBlock; agentName?: string }[];
   changes?: { path: string; status: string }[];
   gitInfo?: { branch: string; ahead: number; behind: number } | null;
+  // ~/diff line-by-line view
+  fileDiff?: DiffViewLine[];
+  selectedDiffPath?: string | null;
+  fileDiffLoading?: boolean;
+  loadFileDiff?: (path: string) => Promise<void> | void;
+  clearFileDiff?: () => void;
   tasks: TaskItem[];
   status: ConversationStatus;
   thinking?: ThinkingLevel;
@@ -37,6 +43,10 @@ const props = defineProps<{
   readFile?: (path: string) => Promise<FileData | null>;
   changesByPath?: Record<string, string>;
   fileReloadKey?: string | number;
+  /** Mobile shell: hide the desktop StatusLine + give the TabBar bigger taps. */
+  mobile?: boolean;
+  /** Modern theme: render chat bubbles at all widths (desktop included). */
+  modern?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -94,6 +104,9 @@ function switchTab(tab: PaneKey): void {
 }
 defineExpose({ switchTab });
 
+// Bubble chat layout: always on mobile, and on desktop under the Modern theme.
+const bubble = computed(() => props.mobile === true || props.modern === true);
+
 const runningTasks = computed(() => props.tasks.filter((t) => t.state === 'run').length);
 const changesCount = computed(() => props.changes?.length ?? 0);
 
@@ -116,9 +129,14 @@ function handleApprovalDecide(
 
 const selectedFile = ref<FileData | null>(null);
 const previewLoading = ref(false);
+// Mobile drill-down: false = showing the tree, true = showing the preview with a
+// Back affordance. Desktop ignores this (the split shows both at once).
+const filesShowPreview = ref(false);
 
 async function handleFileSelect(entry: FsEntry): Promise<void> {
   if (!props.readFile) return;
+  // On mobile, drill into the preview view immediately (even while loading).
+  if (props.mobile) filesShowPreview.value = true;
   previewLoading.value = true;
   selectedFile.value = null;
   try {
@@ -129,6 +147,11 @@ async function handleFileSelect(entry: FsEntry): Promise<void> {
   } finally {
     previewLoading.value = false;
   }
+}
+
+/** Mobile: return from the file preview back to the tree. */
+function handleFilesBack(): void {
+  filesShowPreview.value = false;
 }
 
 // No-op loadDir fallback so FileTree never receives undefined
@@ -199,12 +222,25 @@ watch(scrollKey, async () => {
   }
 });
 
-// When switching to the chat tab, scroll to bottom immediately.
+// When switching to the chat tab, scroll to bottom immediately. Leaving the
+// files tab resets the mobile drill-down back to the tree so re-entering it
+// never lands on a stale preview.
 watch(active, async (tab) => {
+  if (tab !== 'files') filesShowPreview.value = false;
   if (tab !== 'chat') return;
   await nextTick();
   scrollToBottom(false);
 });
+
+// New session (reload key changes): reset the mobile files drill-down + clear
+// any previously-opened preview.
+watch(
+  () => props.fileReloadKey,
+  () => {
+    filesShowPreview.value = false;
+    selectedFile.value = null;
+  },
+);
 
 // Robust follow-to-bottom: a MutationObserver catches EVERY content change in
 // the chat area — streaming text, thinking deltas (even while collapsed), tool
@@ -247,12 +283,13 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="con">
+  <section class="con" :class="{ mobile }">
     <TabBar
       :active="active"
       :running-tasks="runningTasks"
       :changes-count="changesCount"
       :align="contentAlign"
+      :mobile="mobile"
       @select="active = $event"
       @set-align="setAlign"
     />
@@ -264,10 +301,13 @@ onUnmounted(() => {
     >
       <!-- Chat reading column: constrained to a comfortable max width and
            aligned left or centered within the pane. -->
-      <div v-if="active === 'chat'" class="content-wrap" :class="`align-${contentAlign}`">
+      <div v-if="active === 'chat'" class="content-wrap" :class="[mobile ? 'align-mobile' : `align-${contentAlign}`]">
         <ChatPane
           :turns="turns"
           :approvals="approvals"
+          :bubble="bubble"
+          :mobile="mobile"
+          :running="running"
           @approval-decide="handleApprovalDecide"
         />
       </div>
@@ -275,14 +315,19 @@ onUnmounted(() => {
         v-else-if="active === 'diff'"
         :changes="changes ?? []"
         :git-info="gitInfo ?? null"
+        :file-diff="fileDiff ?? []"
+        :selected-diff-path="selectedDiffPath ?? null"
+        :file-diff-loading="fileDiffLoading ?? false"
+        @open="(path: string) => loadFileDiff?.(path)"
+        @back="() => clearFileDiff?.()"
       />
       <TasksPane
         v-else-if="active === 'tasks'"
         :tasks="tasks"
         @cancel="emit('cancelTask', $event)"
       />
-      <!-- ~/files: horizontal split (tree | preview) -->
-      <template v-else-if="active === 'files'">
+      <!-- ~/files DESKTOP: horizontal split (tree | preview) -->
+      <template v-else-if="active === 'files' && !mobile">
         <div class="files-tree-panel">
           <FileTree
             :load-dir="loadDir ?? defaultLoadDir"
@@ -293,6 +338,27 @@ onUnmounted(() => {
         </div>
         <div class="files-divider" aria-hidden="true"></div>
         <div class="files-preview-panel">
+          <FilePreview :file="selectedFile" :loading="previewLoading" />
+        </div>
+      </template>
+
+      <!-- ~/files MOBILE: single-column drill-down. Tapping a file in the
+           full-width tree swaps to a full-width preview with a Back affordance
+           (instead of the desktop side-by-side split that won't fit a phone). -->
+      <template v-else-if="active === 'files' && mobile">
+        <div v-show="!filesShowPreview" class="files-tree-mobile">
+          <FileTree
+            :load-dir="loadDir ?? defaultLoadDir"
+            :changes-by-path="changesByPath ?? {}"
+            :reload-key="fileReloadKey"
+            @select="handleFileSelect"
+          />
+        </div>
+        <div v-if="filesShowPreview" class="files-preview-mobile">
+          <button type="button" class="files-back" @click="handleFilesBack">
+            <span aria-hidden="true">&#8592;</span>
+            <span class="files-back-label">{{ t('fileTree.backToTree') }}</span>
+          </button>
           <FilePreview :file="selectedFile" :loading="previewLoading" />
         </div>
       </template>
@@ -323,53 +389,80 @@ onUnmounted(() => {
       </button>
     </Transition>
 
-    <StatusLine
-      :status="status"
-      :connection="connection"
-      :activity="activity"
-      :thinking="thinking"
-      :plan-mode="planMode"
-      @set-permission="emit('setPermission', $event)"
-      @set-thinking="emit('setThinking', $event)"
-      @toggle-plan="emit('togglePlan')"
-      @compact="emit('compact')"
-      @interrupt="emit('interrupt')"
-      @pick-model="emit('pickModel')"
-    />
-    <!-- QuestionCard replaces Composer while a question is pending -->
-    <QuestionCard
-      v-if="pendingQuestion"
-      :question="pendingQuestion"
-      @answer="(qid, resp) => emit('answer', qid, resp)"
-      @dismiss="(qid) => emit('dismiss', qid)"
-    />
-    <Composer
-      v-else
-      :running="running"
-      :queued="queued"
-      :search-files="searchFiles"
-      :upload-image="uploadImage"
-      @submit="emit('submit', $event)"
-      @command="emit('command', $event)"
-      @interrupt="emit('interrupt')"
-      @unqueue="emit('unqueue', $event)"
-      @edit-queued="emit('editQueued', $event)"
-    />
+    <!-- Bottom dock (status line + composer). Capped to the same reading-column
+         width as the chat so it doesn't stretch edge-to-edge on wide screens. -->
+    <div class="dock" :class="[mobile ? 'align-mobile' : `align-${contentAlign}`]">
+      <StatusLine
+        v-if="!mobile"
+        :status="status"
+        :connection="connection"
+        :activity="activity"
+        :thinking="thinking"
+        :plan-mode="planMode"
+        @set-permission="emit('setPermission', $event)"
+        @set-thinking="emit('setThinking', $event)"
+        @toggle-plan="emit('togglePlan')"
+        @compact="emit('compact')"
+        @interrupt="emit('interrupt')"
+        @pick-model="emit('pickModel')"
+      />
+      <!-- QuestionCard replaces Composer while a question is pending -->
+      <QuestionCard
+        v-if="pendingQuestion"
+        :question="pendingQuestion"
+        @answer="(qid, resp) => emit('answer', qid, resp)"
+        @dismiss="(qid) => emit('dismiss', qid)"
+      />
+      <Composer
+        v-else
+        :running="running"
+        :queued="queued"
+        :search-files="searchFiles"
+        :upload-image="uploadImage"
+        @submit="emit('submit', $event)"
+        @command="emit('command', $event)"
+        @interrupt="emit('interrupt')"
+        @unqueue="emit('unqueue', $event)"
+        @edit-queued="emit('editQueued', $event)"
+      />
+    </div>
   </section>
 </template>
 
 <style scoped>
-.con { display: flex; flex-direction: column; min-width: 0; height: 100%; position: relative; }
+.con {
+  --read-max: 760px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  position: relative;
+}
 .panes { flex: 1; min-height: 0; overflow-y: auto; }
 
 /* Chat reading column max-width + alignment. The max-width applies in both
    modes; align-left hugs the left gutter, align-center centers in the pane. */
 .content-wrap {
-  --read-max: 760px;
   max-width: var(--read-max);
 }
 .content-wrap.align-center { margin-left: auto; margin-right: auto; }
 .content-wrap.align-left { margin-left: 0; margin-right: auto; }
+/* Mobile: bubbles span the full pane width; no reading-column constraint. */
+.content-wrap.align-mobile { max-width: none; }
+
+/* Bottom dock (status line + composer): capped to the same reading column as
+   the chat and aligned the same way, so it doesn't stretch the full pane width
+   on wide screens. Full-width on mobile. */
+.dock {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: var(--read-max);
+}
+.dock.align-center { margin-left: auto; margin-right: auto; }
+.dock.align-left { margin-left: 0; margin-right: auto; }
+.dock.align-mobile { max-width: none; }
 
 /* Files pane: horizontal split, no outer scroll */
 .panes.files-layout {
@@ -398,6 +491,52 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   overflow: hidden;
+}
+
+/* ---------------------------------------------------------------------------
+   Files pane MOBILE drill-down: a single full-width column. The tree fills the
+   pane; selecting a file swaps to a full-width preview that has its own Back
+   row. No side-by-side split (it won't fit a phone). Desktop is untouched.
+   --------------------------------------------------------------------------- */
+@media (max-width: 640px) {
+  /* The mobile files branch lays its single child out as a full-height column. */
+  .panes.files-layout {
+    flex-direction: column;
+  }
+  .files-tree-mobile,
+  .files-preview-mobile {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  /* FileTree fills + scrolls itself; bigger row taps come from FileTree's own
+     mobile rules. */
+  .files-tree-mobile { width: 100%; }
+  /* The preview column: Back row pinned on top, FilePreview scrolls below it. */
+  .files-preview-mobile :deep(.file-preview) { flex: 1; min-height: 0; }
+
+  .files-back {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 14px;
+    background: var(--panel);
+    border: none;
+    border-bottom: 1px solid var(--line);
+    color: var(--dim);
+    font-family: var(--mono);
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .files-back:active { background: var(--panel2); }
+  .files-back-label { font-weight: 600; }
 }
 
 /* "New messages" floating pill */

@@ -1,11 +1,10 @@
 /**
- * WS envelope helpers (W5.1+W5.2+W5.3 / P0.15+P0.16+P0.17) — thin builders
- * around the `@moonshot-ai/protocol` schemas so `WsConnection` and
- * `DaemonEventBus` don't both re-implement the wire shape (WS.md §2).
+ * WS envelope helpers — thin builders around the `@moonshot-ai/protocol`
+ * schemas so `WsConnection` and `EventService` don't both re-implement the wire
+ * shape (WS.md §2).
  *
- * **W5.1**: `server_hello`, `ping`, `ack`.
- * **W5.2**: + `event` envelope helper.
- * **W5.3**: + `resync_required` helper.
+ * Includes `server_hello`, `ping`, `ack`, `event`, and `resync_required`
+ * helpers.
  *
  * Per WS.md §3.5: `ping` is server-pushed, carries `timestamp` + `payload.nonce`.
  * Per WS.md §3.1: `server_hello` carries `timestamp` + canonical capability set.
@@ -17,7 +16,7 @@
  *                  ('buffer_overflow' | 'session_recreated'), and `current_seq`.
  *
  * Outbound payloads go straight to `JSON.stringify` — no Zod re-validation on
- * the outbound path (PLAN D3: high-frequency events are unchecked).
+ * the outbound path.
  */
 
 import type { Event } from '@moonshot-ai/protocol';
@@ -25,7 +24,7 @@ import { ulid } from 'ulid';
 
 /** WS.md §3.1: `server_hello.payload`. */
 export interface ServerHelloPayload {
-  server_id: string;
+  ws_connection_id: string;
   heartbeat_ms: number;
   max_event_buffer_size: number;
   capabilities: {
@@ -82,17 +81,14 @@ export function buildAck<P>(id: string, code: number, msg: string, payload: P): 
  * increasing starting at 1; non-event frames use a different outer shape
  * (`server_hello` / `ping` / `ack` / `resync_required`).
  *
- * Stage 1: `payload` is the raw `Event` (camelCase per
- * `packages/agent-core/src/rpc/events.ts:320`). WS.md §7.5 documents a
- * future `toWire` snake_case mapping — punted to a later phase (PLAN
- * §non-goals); for now the daemon sends the camelCase payload as-is and only
- * the outer envelope (`type`, `seq`, `session_id`, `timestamp`, `payload`) is
- * snake_case.
+ * `payload` is the raw `Event` (camelCase per
+ * `packages/agent-core/src/rpc/events.ts:320`). The daemon sends the camelCase
+ * payload as-is; only the outer envelope (`type`, `seq`, `session_id`,
+ * `timestamp`, `payload`) is snake_case.
  *
  * The `type` on the envelope is the agent-core event type string (e.g.
- * `event.assistant.delta`) — WS.md §8 specifies a future renaming layer
- * (also Phase 2). For Stage 1 unit tests we'll usually publish stub events
- * with arbitrary `type` strings.
+ * `event.assistant.delta`). Tests usually publish stub events with arbitrary
+ * `type` strings.
  */
 export interface EventEnvelope<P = Event> {
   type: string;
@@ -124,9 +120,8 @@ export function buildEventEnvelope(
  * cache for that session and `GET /sessions/{id}/messages` to rebuild,
  * then re-`subscribe` with `last_seq_by_session[sid] = current_seq`.
  *
- * `reason` is always `'buffer_overflow'` in Stage 1; `'session_recreated'`
- * is reserved for a later phase that handles session deletion / re-creation
- * with the same id.
+ * `reason` is `'buffer_overflow'` unless session deletion / re-creation with
+ * the same id requires `'session_recreated'`.
  */
 export interface ResyncRequiredFrame {
   type: 'resync_required';

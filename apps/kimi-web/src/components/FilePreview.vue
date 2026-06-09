@@ -398,4 +398,22 @@ function truncatePath(path: string, maxLen = 55): string {
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
+
+/* ---- Mobile (≤640px): a comfier header (copy is a real tap target), and the
+        code body keeps its line-number gutter while scrolling sideways for long
+        lines. Markdown/images fit the full width. ---- */
+@media (max-width: 640px) {
+  .fp-header { padding: 8px 12px; gap: 8px; }
+  .fp-copy {
+    min-height: 32px;
+    padding: 5px 12px;
+    font-size: 12px;
+    border-radius: 6px;
+  }
+  /* Hide the line-count chip on the narrowest screens to keep the header tidy;
+     the size chip + copy stay. */
+  .fp-lines { display: none; }
+  .fp-markdown { padding: 14px 16px; }
+  .fp-body.fp-code { -webkit-overflow-scrolling: touch; }
+}
 </style>

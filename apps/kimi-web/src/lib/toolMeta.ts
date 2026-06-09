@@ -13,15 +13,59 @@ const TOOL_LABEL_KEYS: Record<string, string> = {
   read: 'tools.label.read',
   bash: 'tools.label.bash',
   edit: 'tools.label.edit',
+  multi_edit: 'tools.label.edit',
   write: 'tools.label.write',
   grep: 'tools.label.grep',
   glob: 'tools.label.glob',
+  ls: 'tools.label.ls',
   web_fetch: 'tools.label.web_fetch',
   search: 'tools.label.search',
+  todo: 'tools.label.todo',
+  task: 'tools.label.task',
 };
 
+// ---------------------------------------------------------------------------
+// normalizeToolName: fold the many real-world spellings of a tool name into the
+// canonical lowercase kind used by the maps below. Daemon tool names arrive
+// verbatim and may be CamelCase (`Read`, `MultiEdit`, `WebFetch`, `TodoWrite`)
+// or aliased (`shell`, `fetch`). Without this, those names silently fall through
+// to the default glyph / raw-arg summary.
+// ---------------------------------------------------------------------------
+
+const NAME_ALIASES: Record<string, string> = {
+  multiedit: 'multi_edit',
+  multiedits: 'multi_edit',
+  shell: 'bash',
+  run: 'bash',
+  exec: 'bash',
+  ripgrep: 'grep',
+  rg: 'grep',
+  find: 'glob',
+  fetch: 'web_fetch',
+  webfetch: 'web_fetch',
+  url_fetch: 'web_fetch',
+  urlfetch: 'web_fetch',
+  list: 'ls',
+  listdir: 'ls',
+  list_dir: 'ls',
+  todowrite: 'todo',
+  todo_write: 'todo',
+  todoread: 'todo',
+  todolist: 'todo',
+  todo_list: 'todo',
+  agent: 'task',
+  subagent: 'task',
+  websearch: 'search',
+  web_search: 'search',
+};
+
+export function normalizeToolName(name: string): string {
+  const lower = (name ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return NAME_ALIASES[lower] ?? lower;
+}
+
 export function toolLabel(name: string): string {
-  const key = TOOL_LABEL_KEYS[name];
+  const key = TOOL_LABEL_KEYS[normalizeToolName(name)];
   return key ? t(key) : name;
 }
 
@@ -31,26 +75,42 @@ export function toolLabel(name: string): string {
 // OR a plain Unicode glyph string when SVG would be excessive.
 // ---------------------------------------------------------------------------
 
+// read → plain document with text lines.
 const GLYPH_READ = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" xmlns="http://www.w3.org/2000/svg"><rect x="2.5" y="1.5" width="9" height="13" rx="1"/><line x1="5" y1="5" x2="9" y2="5"/><line x1="5" y1="7.5" x2="11" y2="7.5"/><line x1="5" y1="10" x2="10" y2="10"/></svg>`;
+// bash → terminal window with a chevron prompt.
 const GLYPH_BASH = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" xmlns="http://www.w3.org/2000/svg"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><polyline points="4,6 6.5,8 4,10"/><line x1="8" y1="10" x2="12" y2="10"/></svg>`;
+// edit → pencil.
 const GLYPH_EDIT = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" xmlns="http://www.w3.org/2000/svg"><path d="M10.5 2.5l3 3-8 8H2.5v-3l8-8z"/><line x1="8.5" y1="4.5" x2="11.5" y2="7.5"/></svg>`;
+// write → document with a plus.
 const GLYPH_WRITE = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" xmlns="http://www.w3.org/2000/svg"><path d="M3 12V4.5L8 2l5 2.5V12H3z"/><line x1="6" y1="7" x2="10" y2="7"/><line x1="8" y1="5" x2="8" y2="9"/></svg>`;
+// grep / search → magnifier.
 const GLYPH_GREP = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" xmlns="http://www.w3.org/2000/svg"><circle cx="6.5" cy="6.5" r="4"/><line x1="9.5" y1="9.5" x2="13.5" y2="13.5"/></svg>`;
-const GLYPH_GLOB = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" xmlns="http://www.w3.org/2000/svg"><circle cx="6.5" cy="6.5" r="4"/><path d="M10 10l3 3"/><line x1="4" y1="6.5" x2="9" y2="6.5"/><line x1="6.5" y1="4" x2="6.5" y2="9"/></svg>`;
+// glob → asterisk between braces (filename pattern).
+const GLYPH_GLOB = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" xmlns="http://www.w3.org/2000/svg"><path d="M5 2.5C3.5 2.5 3.5 5 3.5 6.5S2.5 8 2.5 8s1 0 1 1.5S3.5 13.5 5 13.5"/><path d="M11 2.5c1.5 0 1.5 2.5 1.5 4S13.5 8 13.5 8s-1 0-1 1.5.5 4-1.5 4"/><line x1="8" y1="6" x2="8" y2="10"/><line x1="6.3" y1="6.8" x2="9.7" y2="9.2"/><line x1="9.7" y1="6.8" x2="6.3" y2="9.2"/></svg>`;
+// ls → folder.
+const GLYPH_LS = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" xmlns="http://www.w3.org/2000/svg"><path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.2 1.4H13a1 1 0 0 1 1 1v6.1a1 1 0 0 1-1 1H2.5a1 1 0 0 1-1-1V4.5z"/></svg>`;
+// web_fetch → globe.
 const GLYPH_WEB = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="6"/><path d="M8 2c-2 2-3 3.6-3 6s1 4 3 6"/><path d="M8 2c2 2 3 3.6 3 6s-1 4-3 6"/><line x1="2" y1="8" x2="14" y2="8"/></svg>`;
-const GLYPH_DEFAULT = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" xmlns="http://www.w3.org/2000/svg"><polygon points="5,2 11,8 5,14"/></svg>`;
+// todo / task → checklist.
+const GLYPH_TODO = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" xmlns="http://www.w3.org/2000/svg"><polyline points="2,4.5 3.5,6 5.5,3"/><polyline points="2,11 3.5,12.5 5.5,9.5"/><line x1="8" y1="4.5" x2="14" y2="4.5"/><line x1="8" y1="11" x2="14" y2="11"/></svg>`;
+// default → dot.
+const GLYPH_DEFAULT = `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="2.5" fill="currentColor" stroke="none"/></svg>`;
 
 export function toolGlyph(name: string): string {
-  switch (name) {
-    case 'read':      return GLYPH_READ;
-    case 'bash':      return GLYPH_BASH;
-    case 'edit':      return GLYPH_EDIT;
-    case 'write':     return GLYPH_WRITE;
-    case 'grep':      return GLYPH_GREP;
-    case 'glob':      return GLYPH_GLOB;
-    case 'web_fetch': return GLYPH_WEB;
-    case 'search':    return GLYPH_GREP;
-    default:          return GLYPH_DEFAULT;
+  switch (normalizeToolName(name)) {
+    case 'read':       return GLYPH_READ;
+    case 'bash':       return GLYPH_BASH;
+    case 'edit':       return GLYPH_EDIT;
+    case 'multi_edit': return GLYPH_EDIT;
+    case 'write':      return GLYPH_WRITE;
+    case 'grep':       return GLYPH_GREP;
+    case 'search':     return GLYPH_GREP;
+    case 'glob':       return GLYPH_GLOB;
+    case 'ls':         return GLYPH_LS;
+    case 'web_fetch':  return GLYPH_WEB;
+    case 'todo':       return GLYPH_TODO;
+    case 'task':       return GLYPH_TODO;
+    default:           return GLYPH_DEFAULT;
   }
 }
 
@@ -113,6 +173,13 @@ function urlHost(url: string): string {
   }
 }
 
+/** Take a tool input's file path, regardless of which key the tool used. */
+function filePath(d: Record<string, unknown>): string | undefined {
+  return str(d.path) ?? str(d.file_path) ?? str(d.filePath) ?? str(d.filename);
+}
+
+const BASH_MAX = 64;
+
 export function toolSummary(name: string, arg: string): string {
   try {
     const d = parseArg(arg);
@@ -120,9 +187,9 @@ export function toolSummary(name: string, arg: string): string {
     const fallback = () => clip(arg.replace(/^·\s*/, ''));
     if (!d) return fallback();
 
-    switch (name) {
+    switch (normalizeToolName(name)) {
       case 'read': {
-        const path = str(d.path) ?? str(d.file_path);
+        const path = filePath(d);
         if (!path) return fallback();
         const start = num(d.offset) ?? num(d.line_start) ?? num(d.start_line);
         const len = num(d.limit) ?? num(d.length);
@@ -131,29 +198,48 @@ export function toolSummary(name: string, arg: string): string {
         if (start !== undefined) return clip(`${path}:${start}`);
         return clip(path);
       }
-      case 'write':
-      case 'edit': {
-        const path = str(d.path) ?? str(d.file_path);
+      case 'write': {
+        const path = filePath(d);
+        return path ? clip(`${path}  ${t('tools.chip.created')}`) : fallback();
+      }
+      case 'edit':
+      case 'multi_edit': {
+        const path = filePath(d);
         return path ? clip(path) : fallback();
       }
       case 'bash': {
-        const cmd = str(d.command) ?? str(d.cmd);
-        return cmd ? clip(cmd) : fallback();
+        const cmd = str(d.command) ?? str(d.cmd) ?? str(d.script);
+        return cmd ? clip(cmd, BASH_MAX) : fallback();
       }
       case 'grep':
       case 'search': {
         const pattern = str(d.pattern) ?? str(d.query) ?? str(d.regex);
-        const path = str(d.path) ?? str(d.glob);
+        const path = str(d.path) ?? str(d.glob) ?? str(d.include);
         if (pattern && path) return clip(`${pattern}  in ${path}`);
         return pattern ? clip(pattern) : fallback();
       }
       case 'glob': {
-        const pattern = str(d.pattern) ?? str(d.glob) ?? str(d.path);
-        return pattern ? clip(pattern) : fallback();
+        const pattern = str(d.pattern) ?? str(d.glob) ?? str(d.query);
+        const path = str(d.path) ?? str(d.cwd);
+        if (pattern && path) return clip(`${pattern}  in ${path}`);
+        return pattern ? clip(pattern) : (str(d.path) ? clip(str(d.path)!) : fallback());
+      }
+      case 'ls': {
+        const dir = str(d.path) ?? str(d.dir) ?? str(d.directory) ?? str(d.cwd);
+        return dir ? clip(dir) : fallback();
       }
       case 'web_fetch': {
-        const url = str(d.url);
+        const url = str(d.url) ?? str(d.uri);
         return url ? clip(urlHost(url)) : fallback();
+      }
+      case 'todo':
+      case 'task': {
+        const label =
+          str(d.description) ?? str(d.title) ?? str(d.prompt) ?? str(d.name) ?? str(d.subagent_type);
+        if (label) return clip(label);
+        const items = Array.isArray(d.todos) ? d.todos : Array.isArray(d.items) ? d.items : undefined;
+        if (items) return clip(t('tools.chip.todos', { count: items.length }));
+        return fallback();
       }
       default:
         return fallback();
@@ -165,7 +251,7 @@ export function toolSummary(name: string, arg: string): string {
 
 export function toolChip(tool: ToolChipInput): string {
   try {
-    switch (tool.name) {
+    switch (normalizeToolName(tool.name)) {
       case 'bash': {
         // Prefer timing if present
         if (tool.timing) return tool.timing;
@@ -180,6 +266,7 @@ export function toolChip(tool: ToolChipInput): string {
         return '';
       }
       case 'edit':
+      case 'multi_edit':
       case 'write': {
         // Try to parse +A −B from output (unified diff summary)
         if (tool.output) {

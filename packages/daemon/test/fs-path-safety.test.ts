@@ -22,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   FsPathEscapesError,
   resolveSafePath,
-} from '../src/services/fs-path-safety.js';
+} from '#/services/fs/fsPathSafety';
 
 let tmpDir: string;
 let cwd: string;

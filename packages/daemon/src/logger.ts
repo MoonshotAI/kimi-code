@@ -18,6 +18,7 @@ export function createDaemonLogger(opts: CreateLoggerOptions): DaemonLogger {
   const base: LoggerOptions = {
     level: opts.level,
     base: { name: 'kimi-daemon' },
+    timestamp: pino.stdTimeFunctions.isoTime,
   };
   if (pretty) {
     return pino({
@@ -26,7 +27,7 @@ export function createDaemonLogger(opts: CreateLoggerOptions): DaemonLogger {
         target: 'pino-pretty',
         options: {
           colorize: true,
-          translateTime: 'HH:MM:ss.l',
+          translateTime: 'SYS:HH:MM:ss.l o',
           ignore: 'pid,hostname',
           singleLine: false,
         },

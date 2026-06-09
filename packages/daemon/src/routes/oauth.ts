@@ -1,5 +1,5 @@
 /**
- * `/v1/oauth/*` REST routes (P2.7).
+ * `/v1/oauth/*` REST routes.
  *
  *   POST   /v1/oauth/login   start a device-code flow → OAuthFlowStart
  *   GET    /v1/oauth/login   poll current flow state  → OAuthFlowSnapshot | null
@@ -11,7 +11,7 @@
  * returned in the start response. When `status` flips to `'authenticated'`,
  * stop polling and hit `GET /v1/auth` to see `ready: true`.
  *
- * **No bare flow_id in URL**: PLAN D6.4 says one in-flight per provider. The
+ * **No bare flow_id in URL**: only one flow is in-flight per provider. The
  * frontend has the flow_id from the start response — it uses it client-side
  * to detect "the flow I started got superseded" (matching the snapshot's
  * flow_id against its own captured value).
@@ -27,17 +27,11 @@ import {
   oauthLogoutResponseSchema,
 } from '@moonshot-ai/protocol';
 import { IOAuthService } from '@moonshot-ai/services';
-import type {
-  OAuthLoginStartRequest,
-  OAuthLoginQuery,
-  OAuthLogoutRequest,
-} from '@moonshot-ai/protocol';
 import type { IInstantiationService } from '@moonshot-ai/agent-core';
 import { z } from 'zod';
 
-import { okEnvelope } from '../envelope.js';
-import { buildRouteSchema } from '../middleware/schema.js';
-import { validateBody, validateQuery } from '../middleware/validate.js';
+import { okEnvelope } from '../envelope';
+import { defineRoute } from '../middleware/defineRoute';
 
 /**
  * Structural Fastify subset — same shape as `meta.ts` / `auth.ts` so the
@@ -82,86 +76,98 @@ const oauthFlowSnapshotOrNullSchema = z.union([
 
 export function registerOAuthRoutes(app: RouteHost, ix: IInstantiationService): void {
   // POST /oauth/login — start device flow ----------------------------------
-  app.post(
-    '/oauth/login',
+  const loginStartRoute = defineRoute(
     {
-      preHandler: [validateBody(oauthLoginStartRequestSchema)],
-      schema: buildRouteSchema({
-        description: 'Start an OAuth device-code flow',
-        tags: ['auth'],
-        body: oauthLoginStartRequestSchema,
-        response: { 200: oauthFlowStartSchema },
-      }),
+      method: 'POST',
+      path: '/oauth/login',
+      body: oauthLoginStartRequestSchema,
+      success: { data: oauthFlowStartSchema },
+      description: 'Start an OAuth device-code flow',
+      tags: ['auth'],
     },
     async (req, reply) => {
-      const body = req.body as OAuthLoginStartRequest;
       const result = await ix.invokeFunction((a) =>
-        a.get(IOAuthService).startLogin(body.provider),
+        a.get(IOAuthService).startLogin(req.body.provider),
       );
       reply.send(okEnvelope(result, req.id));
     },
   );
 
+  app.post(
+    loginStartRoute.path,
+    loginStartRoute.options,
+    loginStartRoute.handler as Parameters<RouteHost['post']>[2],
+  );
+
   // GET /oauth/login — poll current flow state -----------------------------
-  app.get(
-    '/oauth/login',
+  const loginPollRoute = defineRoute(
     {
-      preHandler: [validateQuery(oauthLoginQuerySchema)],
-      schema: buildRouteSchema({
-        description: 'Poll the current OAuth device-code flow',
-        tags: ['auth'],
-        querystring: oauthLoginQuerySchema,
-        response: { 200: oauthFlowSnapshotOrNullSchema },
-      }),
+      method: 'GET',
+      path: '/oauth/login',
+      querystring: oauthLoginQuerySchema,
+      success: { data: oauthFlowSnapshotOrNullSchema },
+      description: 'Poll the current OAuth device-code flow',
+      tags: ['auth'],
     },
     async (req, reply) => {
-      const query = req.query as OAuthLoginQuery;
       const snapshot = ix.invokeFunction((a) =>
-        a.get(IOAuthService).getFlow(query.provider),
+        a.get(IOAuthService).getFlow(req.query.provider),
       );
       reply.send(okEnvelope(snapshot ?? null, req.id));
     },
   );
 
+  app.get(
+    loginPollRoute.path,
+    loginPollRoute.options,
+    loginPollRoute.handler as Parameters<RouteHost['get']>[2],
+  );
+
   // DELETE /oauth/login — cancel pending flow ------------------------------
-  app.delete(
-    '/oauth/login',
+  const loginCancelRoute = defineRoute(
     {
-      preHandler: [validateQuery(oauthLoginQuerySchema)],
-      schema: buildRouteSchema({
-        description: 'Cancel the current OAuth device-code flow',
-        tags: ['auth'],
-        querystring: oauthLoginQuerySchema,
-        response: { 200: oauthLoginCancelResponseSchema },
-      }),
+      method: 'DELETE',
+      path: '/oauth/login',
+      querystring: oauthLoginQuerySchema,
+      success: { data: oauthLoginCancelResponseSchema },
+      description: 'Cancel the current OAuth device-code flow',
+      tags: ['auth'],
     },
     async (req, reply) => {
-      const query = req.query as OAuthLoginQuery;
       const result = await ix.invokeFunction((a) =>
-        a.get(IOAuthService).cancelLogin(query.provider),
+        a.get(IOAuthService).cancelLogin(req.query.provider),
       );
       reply.send(okEnvelope(result, req.id));
     },
   );
 
+  app.delete(
+    loginCancelRoute.path,
+    loginCancelRoute.options,
+    loginCancelRoute.handler as Parameters<RouteHost['delete']>[2],
+  );
+
   // POST /oauth/logout -----------------------------------------------------
-  app.post(
-    '/oauth/logout',
+  const logoutRoute = defineRoute(
     {
-      preHandler: [validateBody(oauthLogoutRequestSchema)],
-      schema: buildRouteSchema({
-        description: 'Logout the managed OAuth provider',
-        tags: ['auth'],
-        body: oauthLogoutRequestSchema,
-        response: { 200: oauthLogoutResponseSchema },
-      }),
+      method: 'POST',
+      path: '/oauth/logout',
+      body: oauthLogoutRequestSchema,
+      success: { data: oauthLogoutResponseSchema },
+      description: 'Logout the managed OAuth provider',
+      tags: ['auth'],
     },
     async (req, reply) => {
-      const body = req.body as OAuthLogoutRequest;
       const result = await ix.invokeFunction((a) =>
-        a.get(IOAuthService).logout(body.provider),
+        a.get(IOAuthService).logout(req.body.provider),
       );
       reply.send(okEnvelope(result, req.id));
     },
+  );
+
+  app.post(
+    logoutRoute.path,
+    logoutRoute.options,
+    logoutRoute.handler as Parameters<RouteHost['post']>[2],
   );
 }

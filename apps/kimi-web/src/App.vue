@@ -9,14 +9,38 @@ import ModelPicker from './components/ModelPicker.vue';
 import ProviderManager from './components/ProviderManager.vue';
 import LoginDialog from './components/LoginDialog.vue';
 import NewSessionDialog from './components/NewSessionDialog.vue';
+import SessionsDialog from './components/SessionsDialog.vue';
 import AddWorkspaceDialog from './components/AddWorkspaceDialog.vue';
 import StatusPanel from './components/StatusPanel.vue';
 import WarningToasts from './components/WarningToasts.vue';
+import MobileTopBar from './components/MobileTopBar.vue';
+import MobileSwitcherSheet from './components/MobileSwitcherSheet.vue';
+import MobileSettingsSheet from './components/MobileSettingsSheet.vue';
 import { useKimiWebClient } from './composables/useKimiWebClient';
+import { useIsMobile } from './composables/useIsMobile';
 import type { ThinkingLevel } from './api/types';
 
 const client = useKimiWebClient();
 const { t } = useI18n();
+
+// Narrow viewports (≤640px) render the single-column mobile shell; desktop is
+// unchanged. jsdom defaults to false (desktop) so component tests are unaffected.
+const isMobile = useIsMobile();
+
+// Mobile sheet visibility
+const showMobileSwitcher = ref(false);
+const showMobileSettings = ref(false);
+
+// Active session title for the mobile top bar.
+const activeSessionTitle = computed<string>(() => {
+  const id = client.activeSessionId.value;
+  return client.sessions.value.find((s) => s.id === id)?.title ?? '';
+});
+
+// Number of sessions in the active workspace (mobile top-bar sub-line).
+const activeWorkspaceSessionCount = computed<number>(
+  () => client.sessionsForView.value.length,
+);
 
 // Cycle through thinking levels for the /thinking slash command (no popover
 // anchor when invoked from the composer).
@@ -81,6 +105,7 @@ const showModelPicker = ref(false);
 const showProviders = ref(false);
 const showLogin = ref(false);
 const showNewSession = ref(false);
+const showSessions = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
 
@@ -164,6 +189,9 @@ function handleCommand(cmd: string): void {
     case '/clear':
       showNewSession.value = true;
       break;
+    case '/sessions':
+      showSessions.value = true;
+      break;
     case '/compact':
       client.compact();
       break;
@@ -241,46 +269,71 @@ function handleCreateSession(): void {
 </script>
 
 <template>
-  <div class="app" :style="{ '--side-w': sideWidth + 'px' }">
-    <Sidebar
-      :col-width="sessionColWidth"
-      :rail-expanded="railExpanded"
-      :workspaces="client.workspacesView.value"
-      :active-workspace="client.visibleWorkspace.value"
-      :active-workspace-id="client.activeWorkspaceId.value"
-      :scope="client.workspaceScope.value"
-      :sessions="client.sessionsForView.value"
-      :groups="client.workspaceGroups.value"
-      :active-id="client.activeSessionId.value"
-      :attention-by-session="client.attentionBySession.value"
-      :attention-by-workspace="client.attentionByWorkspace.value"
-      :auth-ready="client.authReady.value"
-      :account-model="client.defaultModel.value"
-      @select="client.selectSession($event)"
-      @create="handleCreateSession"
-      @create-in-workspace="client.createSessionInWorkspace($event)"
-      @select-workspace="client.selectWorkspace($event)"
-      @set-scope="client.setWorkspaceScope($event)"
-      @add-workspace="showAddWorkspace = true"
-      @rename="(id, title) => client.renameSession(id, title)"
-      @delete="(id) => client.deleteSession(id)"
-      @login="openLogin"
-      @logout="client.logout"
-      @toggle-rail-expand="toggleRailExpand"
+  <div class="app" :class="{ mobile: isMobile }" :style="{ '--side-w': sideWidth + 'px' }">
+    <!-- Desktop navigation: workspace rail + resizable session column. -->
+    <template v-if="!isMobile">
+      <Sidebar
+        :col-width="sessionColWidth"
+        :rail-expanded="railExpanded"
+        :workspaces="client.workspacesView.value"
+        :active-workspace="client.visibleWorkspace.value"
+        :active-workspace-id="client.activeWorkspaceId.value"
+        :scope="client.workspaceScope.value"
+        :sessions="client.sessionsForView.value"
+        :groups="client.workspaceGroups.value"
+        :active-id="client.activeSessionId.value"
+        :attention-by-session="client.attentionBySession.value"
+        :attention-by-workspace="client.attentionByWorkspace.value"
+        :auth-ready="client.authReady.value"
+        :account-model="client.defaultModel.value"
+        :theme="client.theme.value"
+        @select="client.selectSession($event)"
+        @create="handleCreateSession"
+        @create-in-workspace="client.createSessionInWorkspace($event)"
+        @select-workspace="client.selectWorkspace($event)"
+        @set-scope="client.setWorkspaceScope($event)"
+        @add-workspace="showAddWorkspace = true"
+        @rename="(id, title) => client.renameSession(id, title)"
+        @delete="(id) => client.deleteSession(id)"
+        @login="openLogin"
+        @logout="client.logout"
+        @toggle-rail-expand="toggleRailExpand"
+        @set-theme="client.setTheme($event)"
+      />
+      <ResizeHandle
+        :storage-key="SIDEBAR_WIDTH_KEY"
+        :default-width="SIDEBAR_DEFAULT"
+        :min="SIDEBAR_MIN"
+        :max="SIDEBAR_MAX"
+        @update:width="sessionColWidth = $event"
+      />
+    </template>
+
+    <!-- Mobile navigation: slim top bar (switcher + settings sheets). -->
+    <MobileTopBar
+      v-else
+      :workspace="client.visibleWorkspace.value"
+      :session-title="activeSessionTitle"
+      :running="running"
+      :branch="client.status.value.branch"
+      :session-count="activeWorkspaceSessionCount"
+      @open-switcher="showMobileSwitcher = true"
+      @open-settings="showMobileSettings = true"
     />
-    <ResizeHandle
-      :storage-key="SIDEBAR_WIDTH_KEY"
-      :default-width="SIDEBAR_DEFAULT"
-      :min="SIDEBAR_MIN"
-      :max="SIDEBAR_MAX"
-      @update:width="sessionColWidth = $event"
-    />
+
     <ConversationPane
       ref="conversationPaneRef"
+      :mobile="isMobile"
+      :modern="client.theme.value === 'modern'"
       :turns="client.turns.value"
       :approvals="client.pendingApprovals.value"
       :changes="client.changes.value"
       :git-info="client.gitInfo.value"
+      :file-diff="client.fileDiff.value"
+      :selected-diff-path="client.selectedDiffPath.value"
+      :file-diff-loading="client.fileDiffLoading.value"
+      :load-file-diff="client.loadFileDiff"
+      :clear-file-diff="client.clearFileDiff"
       :tasks="client.tasks.value"
       :status="client.status.value"
       :thinking="client.thinking.value"
@@ -354,6 +407,17 @@ function handleCreateSession(): void {
       @close="showNewSession = false"
     />
 
+    <!-- Sessions browser overlay (/sessions) — client-side list, click to switch -->
+    <SessionsDialog
+      v-if="showSessions"
+      :sessions="client.sessions.value"
+      :workspace-groups="client.workspaceGroups.value"
+      :attention-by-session="client.attentionBySession.value"
+      :active-id="client.activeSessionId.value"
+      @select="(id) => { void client.selectSession(id); showSessions = false; }"
+      @close="showSessions = false"
+    />
+
     <!-- Status panel overlay (/status) — renders current client state, no daemon call -->
     <StatusPanel
       v-if="showStatusPanel"
@@ -391,6 +455,38 @@ function handleCreateSession(): void {
 
     <!-- Floating warnings / agent errors (e.g. a 403 from the model provider) -->
     <WarningToasts :warnings="client.warnings.value" @dismiss="client.dismissWarning" />
+
+    <!-- Mobile switcher bottom-sheet: workspaces + sessions + new/add -->
+    <MobileSwitcherSheet
+      v-if="isMobile"
+      v-model="showMobileSwitcher"
+      :workspaces="client.workspacesView.value"
+      :active-workspace="client.visibleWorkspace.value"
+      :active-workspace-id="client.activeWorkspaceId.value"
+      :sessions="client.sessionsForView.value"
+      :active-id="client.activeSessionId.value"
+      :attention-by-session="client.attentionBySession.value"
+      :attention-by-workspace="client.attentionByWorkspace.value"
+      @select="client.selectSession($event)"
+      @select-workspace="client.selectWorkspace($event)"
+      @create="handleCreateSession"
+      @add-workspace="showAddWorkspace = true"
+      @rename="(id, title) => client.renameSession(id, title)"
+      @delete="(id) => client.deleteSession(id)"
+    />
+
+    <!-- Mobile session-settings bottom-sheet: the StatusLine controls -->
+    <MobileSettingsSheet
+      v-if="isMobile"
+      v-model="showMobileSettings"
+      :status="client.status.value"
+      :thinking="client.thinking.value"
+      :plan-mode="client.planMode.value"
+      @pick-model="openModelPicker()"
+      @set-thinking="client.setThinking($event)"
+      @toggle-plan="client.togglePlanMode()"
+      @set-permission="client.setPermission($event)"
+    />
   </div>
 </template>
 
@@ -417,6 +513,13 @@ function handleCreateSession(): void {
   min-width: 0;
 }
 
+/* Mobile single-column shell: slim top bar (auto) over the full-width
+   conversation pane (1fr). No rail, no session column, no resize handle. */
+.app.mobile {
+  grid-template-columns: 1fr;
+  grid-template-rows: auto 1fr;
+}
+
 /* Auth onboarding banner */
 .auth-banner {
   position: fixed;
@@ -427,6 +530,8 @@ function handleCreateSession(): void {
   background: var(--soft);
   border-bottom: 1px solid var(--bd);
 }
+/* Mobile: the banner spans the full width (no sidebar to clear). */
+.app.mobile .auth-banner { left: 0; }
 .auth-banner-inner {
   display: flex;
   align-items: center;

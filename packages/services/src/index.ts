@@ -1,74 +1,174 @@
 /**
  * `@moonshot-ai/services` — in-process service container for the kimi-code
- * daemon. Houses broker interfaces (reverse-RPC: KimiCore → daemon) and the
- * `HarnessBridge` that owns the in-process `KimiCore` instance.
+ * daemon. Houses every `IXxxService` decorator (per-domain folder), the
+ * `CoreProcessService` that owns the in-process `KimiCore` instance, and the
+ * adapters that translate `KimiCore` shapes into protocol-shaped data.
  *
- * Positive `IXxxService` interfaces (e.g. `ISessionService`) land per Chain
- * in Phase 1; W3 ships only the broker (reverse) side + the bridge shell.
+ * Naming convention is encoded in `packages/services/AGENTS.md` — every
+ * injectable uses the `Service` suffix, contracts live in `<domain>.ts`,
+ * impl lives in `<domain>Service.ts`, folder names are camelCase.
+ *
+ * Per-domain layout:
+ *   coreProcess/coreProcess.ts          — ICoreProcessService + CoreProcessServiceOptions
+ *   coreProcess/coreProcessService.ts   — CoreProcessService (self-registers via registerSingleton)
+ *   coreProcess/coreProcessClient.ts    — BridgeClientAPI (SDK-side of the RPC pair)
+ *   event/event.ts                      — IEventService
+ *   event/eventService.ts               — EventService (pure in-process Emitter wrapper)
+ *   approval/approval.ts                — IApprovalService + protocol adapter
+ *   question/question.ts                — IQuestionService + protocol adapter
+ *   environment/environment.ts          — IEnvironmentService
+ *   session/session.ts                  — ISessionService + toProtocolSession
+ *   session/sessionService.ts           — SessionService
+ *   message/message.ts                  — IMessageService + toProtocolMessage
+ *   message/messageService.ts           — MessageService
+ *   prompt/prompt.ts                    — IPromptService + SyntheticPrompt* events
+ *   prompt/promptService.ts             — PromptService
+ *   tool/tool.ts                        — IToolService + toProtocolTool
+ *   tool/toolService.ts                 — ToolService
+ *   mcp/mcp.ts                          — IMcpService + toProtocolMcpServer
+ *   mcp/mcpService.ts                   — McpService
+ *   task/task.ts                        — ITaskService + toProtocolTask
+ *   task/taskService.ts                 — TaskService
+ *   oauth/oauth.ts                      — IOAuthService
+ *   oauth/oauthService.ts               — OAuthService
+ *   authSummary/authSummary.ts          — IAuthSummaryService + sentinel errors
+ *   authSummary/authSummaryService.ts   — AuthSummaryService
+ *   modelCatalog/modelCatalog.ts        — IModelCatalogService + config adapters
+ *   modelCatalog/modelCatalogService.ts — ModelCatalogService
  */
 
-export * from './interfaces';
-export { BridgeClientAPI } from './bridge/bridge-client-api';
-export type { BridgeClientAPIDeps } from './bridge/bridge-client-api';
+export { BridgeClientAPI } from './coreProcess/coreProcessClient';
+export type { CoreProcessClientDeps } from './coreProcess/coreProcessClient';
 export {
-  HarnessBridge,
-  IHarnessBridge,
-  type HarnessBridgeOptions,
-  type HarnessRPC,
-} from './bridge/harness-bridge';
+  ICoreProcessService,
+  type CoreProcessServiceOptions,
+} from './coreProcess/coreProcess';
+export { CoreProcessService } from './coreProcess/coreProcessService';
 export {
   defaultServicesModule,
   type ServiceModuleEntry,
 } from './module';
-export {
-  SessionServiceImpl,
-  toProtocolSession,
-} from './impls/session-service-impl';
-export {
-  MessageServiceImpl,
-  deriveMessageId,
-  parseMessageId,
-  toProtocolMessage,
-} from './impls/message-service-impl';
-export { PromptServiceImpl } from './impls/prompt-service-impl';
-export type {
-  SyntheticPromptAbortedEvent,
-  SyntheticPromptCompletedEvent,
-} from './impls/prompt-service-impl';
-export {
-  AuthSummaryServiceImpl,
-  type AuthSummaryServiceOptions,
-} from './impls/auth-summary-service-impl';
-export {
-  OAuthServiceImpl,
-  type OAuthServiceOptions,
-} from './impls/oauth-service-impl';
-export { ToolServiceImpl } from './impls/tool-service-impl';
-export { McpServiceImpl } from './impls/mcp-service-impl';
-export { TaskServiceImpl } from './impls/task-service-impl';
 
-// Adapter helpers (protocol wire shape ↔ in-process SDK shape). One file per
-// reverse-RPC interaction (W8.1: approval, W8.2: question). Daemon REST
-// handlers + brokers consume these.
+// --- per-domain exports ---------------------------------------------------
+
+// event service
+export { IEventService } from './event/event';
+export { EventService } from './event/eventService';
+
+// approval service + adapter
+export { IApprovalService } from './approval/approval';
+export type { ApprovalRequest, ApprovalResponse } from './approval/approval';
 export {
   toAgentCoreResponse as approvalToAgentCoreResponse,
   toBrokerRequest as approvalToBrokerRequest,
   type ToBrokerRequestParams as ApprovalToBrokerRequestParams,
-} from './adapter/approval-adapter';
+} from './approval/approval';
+
+// question service + adapter
+export { IQuestionService } from './question/question';
+export type { QuestionRequest, QuestionResult } from './question/question';
 export {
   toAgentCoreResponse as questionToAgentCoreResponse,
   toBrokerRequest as questionToBrokerRequest,
   dismissedResult as questionDismissedResult,
   type QuestionToBrokerRequestParams,
-} from './adapter/question-adapter';
-// W9.1 / Chain 7 — Tool + MCP adapter.
+} from './question/question';
+
+// environment service
+export { IEnvironmentService } from './environment/environment';
+
+// authSummary service
 export {
+  IAuthSummaryService,
+  AuthProvisioningRequiredError,
+  AuthTokenMissingError,
+  AuthTokenUnauthorizedError,
+  AuthModelNotResolvedError,
+} from './authSummary/authSummary';
+export { AuthSummaryService } from './authSummary/authSummaryService';
+
+// oauth service
+export { IOAuthService } from './oauth/oauth';
+export { OAuthService } from './oauth/oauthService';
+
+// model catalog service + adapter
+export {
+  IModelCatalogService,
+  ModelNotFoundError,
+  ProviderNotFoundError,
+  modelIdsForProvider,
+  toProtocolModel,
+  toProtocolProvider,
+} from './modelCatalog/modelCatalog';
+export type { ProviderCredentialState } from './modelCatalog/modelCatalog';
+export { ModelCatalogService } from './modelCatalog/modelCatalogService';
+
+// session service + adapter
+export {
+  ISessionService,
+  SessionNotFoundError,
+  toProtocolSession,
+} from './session/session';
+export type { SessionListQuery } from './session/session';
+export { SessionService } from './session/sessionService';
+
+// message service + adapter
+export {
+  IMessageService,
+  MessageNotFoundError,
+  deriveMessageId,
+  parseMessageId,
+  toProtocolMessage,
+} from './message/message';
+export type { MessageListQuery } from './message/message';
+export { MessageService } from './message/messageService';
+
+// prompt service
+export {
+  IPromptService,
+  PromptAlreadyCompletedError,
+  PromptNotFoundError,
+  SessionBusyError,
+} from './prompt/prompt';
+export type {
+  AgentStateSnapshot,
+  PromptAbortResult,
+  PromptDispatchLogEntry,
+  SyntheticPromptAbortedEvent,
+  SyntheticPromptCompletedEvent,
+} from './prompt/prompt';
+export { PromptService } from './prompt/promptService';
+
+// tool service + adapter
+export {
+  IToolService,
   toProtocolTool,
-  toProtocolMcpServer,
   type AgentCoreToolInfoLike,
-} from './adapter/tool-adapter';
-// W9.2 / Chain 8 — Background Task adapter.
-export { toProtocolTask, isTerminalStatus } from './adapter/task-adapter';
-// NOTE: `registerHarnessBridge` (./bridge/lifecycle.ts) is intentionally not
-// re-exported. `defaultServicesModule()` is the canonical wiring path; the
-// registry-style helper exists only for legacy side-effect-on-import contexts.
+} from './tool/tool';
+export { ToolService } from './tool/toolService';
+
+// mcp service + adapter
+export {
+  IMcpService,
+  McpServerNotFoundError,
+  toProtocolMcpServer,
+} from './mcp/mcp';
+export { McpService } from './mcp/mcpService';
+
+// task service + adapter
+export {
+  ITaskService,
+  TaskAlreadyFinishedError,
+  TaskNotFoundError,
+  toProtocolTask,
+  isTerminalStatus,
+} from './task/task';
+export type { TaskListQuery } from './task/task';
+export { TaskService } from './task/taskService';
+
+// NOTE: every `<X>Service.ts` impl file self-registers at the bottom via
+// `registerSingleton(IXxx, XxxService, InstantiationType.Delayed)` (or the
+// descriptor overload when a leading options bag is required, e.g.
+// `CoreProcessService`). `defaultServicesModule()` is a thin projection of
+// that global registry. Consumers override entries with `services.set(...)`
+// for runtime static args or prebuilt instances.

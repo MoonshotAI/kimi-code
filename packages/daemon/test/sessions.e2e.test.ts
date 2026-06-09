@@ -12,7 +12,8 @@
  *   - POST /api/v1/sessions               → envelope code 0 + Session payload
  *   - GET  /api/v1/sessions               → Page<Session> + has_more
  *   - GET  /api/v1/sessions/{id}          → Session (40401 on unknown id)
- *   - PATCH /api/v1/sessions/{id}         → Session (40401 on unknown id)
+ *   - GET  /api/v1/sessions/{id}/profile  → Session (40401 on unknown id)
+ *   - POST /api/v1/sessions/{id}/profile  → Session (40401 on unknown id)
  *   - DELETE /api/v1/sessions/{id}        → { deleted: true } (40401 on unknown)
  *
  * Plus the validation matrix:
@@ -29,7 +30,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { pino } from 'pino';
-import { sessionSchema } from '@moonshot-ai/protocol';
+import { ErrorCode, sessionSchema } from '@moonshot-ai/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IRestGateway, startDaemon, type RunningDaemon } from '../src';
@@ -62,7 +63,7 @@ async function bootDaemon(): Promise<RunningDaemon> {
     port: 0,
     lockPath,
     logger: pino({ level: 'silent' }),
-    bridgeOptions: { homeDir: bridgeHome },
+    coreProcessOptions: { homeDir: bridgeHome },
   });
   return daemon;
 }
@@ -210,10 +211,43 @@ describe('GET /api/v1/sessions/{session_id} — fetch single', () => {
   });
 });
 
-describe('PATCH /api/v1/sessions/{session_id} — update', () => {
+describe('GET /api/v1/sessions/{session_id}/profile — fetch profile', () => {
+  it('returns the matching Session profile', async () => {
+    const r = await bootDaemon();
+    const cwd = join(tmpDir, 'workspace-profile-get');
+    const createRes = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/sessions',
+      payload: { metadata: { cwd } },
+    });
+    const created = envelopeOf<{ id: string }>(createRes.json()).data!;
+
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${created.id}/profile`,
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(0);
+    const session = sessionSchema.parse(env.data);
+    expect(session.id).toBe(created.id);
+    expect(session.metadata.cwd).toBe(cwd);
+  });
+
+  it('returns 40401 for unknown id', async () => {
+    const r = await bootDaemon();
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: '/api/v1/sessions/sess_missing/profile',
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(40401);
+  });
+});
+
+describe('POST /api/v1/sessions/{session_id}/profile — update profile', () => {
   it('updates the title and returns the post-update Session', async () => {
     const r = await bootDaemon();
-    const cwd = join(tmpDir, 'workspace-patch');
+    const cwd = join(tmpDir, 'workspace-profile-update');
     const created = envelopeOf<{ id: string }>(
       (await appOf(r).inject({
         method: 'POST',
@@ -223,8 +257,8 @@ describe('PATCH /api/v1/sessions/{session_id} — update', () => {
     ).data!;
 
     const res = await appOf(r).inject({
-      method: 'PATCH',
-      url: `/api/v1/sessions/${created.id}`,
+      method: 'POST',
+      url: `/api/v1/sessions/${created.id}/profile`,
       payload: { title: 'Renamed' },
     });
     const env = envelopeOf<unknown>(res.json());
@@ -238,12 +272,174 @@ describe('PATCH /api/v1/sessions/{session_id} — update', () => {
   it('returns 40401 for unknown id', async () => {
     const r = await bootDaemon();
     const res = await appOf(r).inject({
-      method: 'PATCH',
-      url: '/api/v1/sessions/sess_missing',
+      method: 'POST',
+      url: '/api/v1/sessions/sess_missing/profile',
       payload: { title: 'x' },
     });
     const env = envelopeOf<unknown>(res.json());
     expect(env.code).toBe(40401);
+  });
+});
+
+describe('POST /api/v1/sessions/{session_id}:fork — fork', () => {
+  it('forks the session, defaults the title from the source, and returns the fork', async () => {
+    const r = await bootDaemon();
+    const cwd = join(tmpDir, 'workspace-fork');
+    const source = envelopeOf<{ id: string }>(
+      (await appOf(r).inject({
+        method: 'POST',
+        url: '/api/v1/sessions',
+        payload: {
+          title: 'Source session',
+          metadata: { cwd, source: true },
+        },
+      })).json(),
+    ).data!;
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${source.id}:fork`,
+      payload: { metadata: { child: true } },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(0);
+    const fork = sessionSchema.parse(env.data);
+    expect(fork.id).not.toBe(source.id);
+    expect(fork.title).toBe('Fork: Source session');
+    expect(fork.metadata).toMatchObject({
+      cwd,
+      source: true,
+      child: true,
+    });
+
+    const forkGet = envelopeOf<unknown>(
+      (await appOf(r).inject({
+        method: 'GET',
+        url: `/api/v1/sessions/${fork.id}`,
+      })).json(),
+    );
+    expect(forkGet.code).toBe(0);
+    expect(sessionSchema.parse(forkGet.data).id).toBe(fork.id);
+  });
+
+  it('returns 40401 for an unknown source session', async () => {
+    const r = await bootDaemon();
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/sessions/sess_missing:fork',
+      payload: {},
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(40401);
+    expect(env.data).toBeNull();
+  });
+});
+
+describe('POST /api/v1/sessions/{session_id}:compact — begin compaction', () => {
+  it('returns 40401 for unknown id', async () => {
+    const r = await bootDaemon();
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/sessions/sess_missing:compact',
+      payload: {},
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(ErrorCode.SESSION_NOT_FOUND);
+    expect(env.data).toBeNull();
+  });
+
+  it('maps an empty-history compaction attempt to compaction.unable', async () => {
+    const r = await bootDaemon();
+    const created = envelopeOf<{ id: string }>(
+      (await appOf(r).inject({
+        method: 'POST',
+        url: '/api/v1/sessions',
+        payload: { metadata: { cwd: join(tmpDir, 'workspace-compact') } },
+      })).json(),
+    ).data!;
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${created.id}:compact`,
+      payload: { instruction: '  focus on decisions  ' },
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(ErrorCode.COMPACTION_UNABLE);
+    expect(env.data).toBeNull();
+    expect(env.msg).toMatch(/No prefix/);
+  });
+});
+
+describe('POST and GET /api/v1/sessions/{session_id}/children', () => {
+  it('creates a child session and lists it under the parent', async () => {
+    const r = await bootDaemon();
+    const cwd = join(tmpDir, 'workspace-children');
+    const parent = envelopeOf<{ id: string }>(
+      (await appOf(r).inject({
+        method: 'POST',
+        url: '/api/v1/sessions',
+        payload: {
+          title: 'Parent session',
+          metadata: { cwd, source: true },
+        },
+      })).json(),
+    ).data!;
+
+    const createChild = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${parent.id}/children`,
+      payload: {
+        metadata: {
+          parent_session_id: 'spoofed-parent',
+          child_session_kind: 'spoofed-kind',
+          topic: 'btw',
+        },
+      },
+    });
+
+    expect(createChild.statusCode).toBe(200);
+    const createEnv = envelopeOf(createChild.json());
+    expect(createEnv.code).toBe(0);
+    const child = sessionSchema.parse(createEnv.data);
+    expect(child.id).not.toBe(parent.id);
+    expect(child.title).toBe('Child: Parent session');
+    expect(child.metadata).toMatchObject({
+      cwd,
+      source: true,
+      parent_session_id: parent.id,
+      child_session_kind: 'child',
+      topic: 'btw',
+    });
+
+    await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${parent.id}:fork`,
+      payload: { metadata: { ordinary_fork: true } },
+    });
+
+    const listChildren = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${parent.id}/children`,
+    });
+    const listEnv = envelopeOf<{ items: unknown[]; has_more: boolean }>(listChildren.json());
+    expect(listEnv.code).toBe(0);
+    expect(listEnv.data?.has_more).toBe(false);
+    const children = listEnv.data!.items.map((item) => sessionSchema.parse(item));
+    expect(children.map((item) => item.id)).toEqual([child.id]);
+  });
+
+  it('returns 40401 for a missing parent session', async () => {
+    const r = await bootDaemon();
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/sessions/sess_missing/children',
+      payload: {},
+    });
+    const env = envelopeOf(res.json());
+    expect(env.code).toBe(40401);
+    expect(env.data).toBeNull();
   });
 });
 

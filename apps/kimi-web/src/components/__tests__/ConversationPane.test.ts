@@ -1,8 +1,10 @@
 // apps/kimi-web/src/components/__tests__/ConversationPane.test.ts
-import { mount } from '@vue/test-utils';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { flushPromises, mount } from '@vue/test-utils';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ConversationPane from '../ConversationPane.vue';
 import type { ChatTurn, ConversationStatus, TaskItem } from '../../types';
+import type { FsEntry } from '../../api/types';
+import type { FileData } from '../FilePreview.vue';
 import i18n from '../../i18n';
 
 // ConversationPane (and its child Composer) use vue-i18n.
@@ -147,6 +149,70 @@ describe('ConversationPane', () => {
       await w.findAll('.align-btn')[1]!.trigger('click');
       expect(w.find('.content-wrap').classes()).toContain('align-center');
       expect(localStorage.getItem('kimi-web.content-align')).toBe('center');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Mobile ~/files drill-down: tree → preview (full-width) → Back → tree.
+  // On a phone the desktop side-by-side split is replaced by a single-column
+  // drill-down so a tapped file fills the width with a Back affordance.
+  // -------------------------------------------------------------------------
+  describe('mobile files drill-down', () => {
+    const fileEntry: FsEntry = {
+      path: 'src/main.ts', name: 'main.ts', kind: 'file', modifiedAt: '2026-01-01T00:00:00Z',
+    };
+    const fileData: FileData = {
+      path: 'src/main.ts', content: 'export const x = 1;\n', encoding: 'utf-8',
+      mime: 'text/typescript', languageId: 'typescript', isBinary: false, size: 20, lineCount: 1,
+    };
+
+    function mountMobileFiles() {
+      const loadDir = vi.fn().mockResolvedValue([fileEntry]);
+      const readFile = vi.fn().mockResolvedValue(fileData);
+      const w = mount(ConversationPane, {
+        props: { ...props, mobile: true, loadDir, readFile },
+        global,
+      });
+      return { w, loadDir, readFile };
+    }
+
+    it('mobile 下 files 标签先显示文件树（FileTree），不显示侧边分栏', async () => {
+      const { w } = mountMobileFiles();
+      // 4th tab = ~/files
+      await w.findAll('.tb')[3]!.trigger('click');
+      await flushPromises();
+      expect(w.findComponent({ name: 'FileTree' }).exists()).toBe(true);
+      // No desktop split divider on mobile
+      expect(w.find('.files-divider').exists()).toBe(false);
+      // Not yet drilled into a preview
+      expect(w.find('.files-preview-mobile').exists()).toBe(false);
+    });
+
+    it('点击文件后下钻到全宽预览，并显示返回按钮', async () => {
+      const { w, readFile } = mountMobileFiles();
+      await w.findAll('.tb')[3]!.trigger('click');
+      await flushPromises();
+      // Tap the file row in the tree
+      await w.findComponent({ name: 'FileTree' }).find('.ft-row').trigger('click');
+      await flushPromises();
+      expect(readFile).toHaveBeenCalledWith('src/main.ts');
+      // Preview column + FilePreview + Back button are now shown
+      expect(w.find('.files-preview-mobile').exists()).toBe(true);
+      expect(w.findComponent({ name: 'FilePreview' }).exists()).toBe(true);
+      expect(w.find('.files-back').exists()).toBe(true);
+    });
+
+    it('点击返回按钮回到文件树', async () => {
+      const { w } = mountMobileFiles();
+      await w.findAll('.tb')[3]!.trigger('click');
+      await flushPromises();
+      await w.findComponent({ name: 'FileTree' }).find('.ft-row').trigger('click');
+      await flushPromises();
+      expect(w.find('.files-preview-mobile').exists()).toBe(true);
+      // Back → tree
+      await w.find('.files-back').trigger('click');
+      expect(w.find('.files-preview-mobile').exists()).toBe(false);
+      expect(w.findComponent({ name: 'FileTree' }).exists()).toBe(true);
     });
   });
 });

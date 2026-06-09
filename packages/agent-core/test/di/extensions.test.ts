@@ -32,14 +32,15 @@ describe('registerSingleton / getSingletonServiceDescriptors', () => {
 
     const snapshot = getSingletonServiceDescriptors();
     expect(snapshot).toHaveLength(1);
-    const [id, descriptor, type] = snapshot[0]!;
+    const [id, descriptor] = snapshot[0]!;
     expect(id).toBe(ILogger);
     expect(descriptor).toBeInstanceOf(SyncDescriptor);
     expect(descriptor.ctor).toBe(ConsoleLogger);
-    expect(type).toBe(InstantiationType.Eager);
+    // Eager (the default) maps to supportsDelayedInstantiation === false.
+    expect(descriptor.supportsDelayedInstantiation).toBe(false);
   });
 
-  it('defaults instantiationType to Eager but accepts Delayed', () => {
+  it('maps InstantiationType to descriptor.supportsDelayedInstantiation', () => {
     interface IFoo {
       a: number;
     }
@@ -57,14 +58,19 @@ describe('registerSingleton / getSingletonServiceDescriptors', () => {
     registerSingleton(IFoo, Foo);
     registerSingleton(IBar, Bar, InstantiationType.Delayed);
 
-    const map = new Map<string, InstantiationType>(
-      getSingletonServiceDescriptors().map(([id, , t]) => [String(id), t]),
+    // After the VS Code alignment the registry no longer stores
+    // `InstantiationType` separately — the flag lives on the descriptor.
+    const map = new Map<string, boolean>(
+      getSingletonServiceDescriptors().map(([id, descriptor]) => [
+        String(id),
+        descriptor.supportsDelayedInstantiation,
+      ]),
     );
-    expect(map.get('foo')).toBe(InstantiationType.Eager);
-    expect(map.get('bar')).toBe(InstantiationType.Delayed);
+    expect(map.get('foo')).toBe(false);
+    expect(map.get('bar')).toBe(true);
   });
 
-  it('re-registering the same id throws', () => {
+  it('re-registering the same id overwrites the previous entry (VS Code semantics)', () => {
     interface ILogger {
       log(m: string): void;
     }
@@ -80,7 +86,32 @@ describe('registerSingleton / getSingletonServiceDescriptors', () => {
       }
     }
     registerSingleton(ILogger, A);
-    expect(() => registerSingleton(ILogger, B)).toThrowError(/already registered/);
+    registerSingleton(ILogger, B);
+
+    // Snapshot length stays at 1; the entry wraps B's ctor.
+    const snapshot = getSingletonServiceDescriptors();
+    expect(snapshot).toHaveLength(1);
+    const [id, descriptor] = snapshot[0]!;
+    expect(id).toBe(ILogger);
+    expect(descriptor.ctor).toBe(B);
+  });
+
+  it('accepts a SyncDescriptor overload directly', () => {
+    interface IFoo {
+      a: number;
+    }
+    const IFoo = createDecorator<IFoo>('foo');
+    class Foo implements IFoo {
+      constructor(public readonly a: number) {}
+    }
+    registerSingleton(IFoo, new SyncDescriptor(Foo, [42], true));
+
+    const snapshot = getSingletonServiceDescriptors();
+    expect(snapshot).toHaveLength(1);
+    const [, descriptor] = snapshot[0]!;
+    expect(descriptor.ctor).toBe(Foo);
+    expect(descriptor.staticArguments).toEqual([42]);
+    expect(descriptor.supportsDelayedInstantiation).toBe(true);
   });
 
   it('_clearRegistryForTests empties the registry', () => {

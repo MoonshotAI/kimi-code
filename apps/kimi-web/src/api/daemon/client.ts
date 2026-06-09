@@ -162,6 +162,11 @@ interface WireGitStatusResult {
   entries: Record<string, string>;
 }
 
+interface WireDiffResult {
+  path: string;
+  diff: string;
+}
+
 // ---------------------------------------------------------------------------
 // DaemonKimiWebApi
 // ---------------------------------------------------------------------------
@@ -548,6 +553,19 @@ export class DaemonKimiWebApi implements KimiWebApi {
       behind: data.behind,
       entries: data.entries,
     };
+  }
+
+  async getFileDiff(
+    sessionId: string,
+    path?: string,
+  ): Promise<{ path: string; diff: string }> {
+    const body: Record<string, unknown> = {};
+    if (path !== undefined) body['path'] = path;
+    const data = await this.http.post<WireDiffResult>(
+      `/sessions/${encodeURIComponent(sessionId)}/fs:diff`,
+      body,
+    );
+    return { path: data.path, diff: data.diff };
   }
 
   // -------------------------------------------------------------------------

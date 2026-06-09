@@ -1,7 +1,9 @@
 /**
- * W3.1 acceptance: the three broker decorators are typed correctly, can be
- * registered in a `ServiceCollection`, resolved through `InstantiationService`,
- * and surface their diagnostic names in not-registered errors.
+ * Acceptance: the three peer-service decorators (`IEventService`,
+ * `IApprovalService`, `IQuestionService`) are typed correctly, can be
+ * registered in a `ServiceCollection`, resolved through
+ * `InstantiationService`, and surface their diagnostic names in
+ * not-registered errors.
  */
 
 import { describe, expect, it, vi } from 'vitest';
@@ -9,25 +11,33 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   InstantiationService,
   ServiceCollection,
+  Emitter,
 } from '@moonshot-ai/agent-core';
 import type { ApprovalRequest, Event, QuestionRequest } from '@moonshot-ai/agent-core';
 
 import {
-  IApprovalBroker,
-  IEventBus,
-  IQuestionBroker,
+  IApprovalService,
+  IEventService,
+  IQuestionService,
   type ApprovalResponse,
   type QuestionResult,
 } from '../src';
 
-class FakeEventBus implements IEventBus {
+class FakeEventService implements IEventService {
+  readonly _serviceBrand: undefined;
+
   readonly events: Event[] = [];
+  private readonly _emitter = new Emitter<Event>();
+  readonly onDidPublish = this._emitter.event;
   publish(event: Event): void {
     this.events.push(event);
+    this._emitter.fire(event);
   }
 }
 
-class FakeApprovalBroker implements IApprovalBroker {
+class FakeApprovalService implements IApprovalService {
+  readonly _serviceBrand: undefined;
+
   readonly received: ApprovalRequest[] = [];
   resolveCalls: Array<{ id: string; response: ApprovalResponse }> = [];
   async request(
@@ -41,7 +51,9 @@ class FakeApprovalBroker implements IApprovalBroker {
   }
 }
 
-class FakeQuestionBroker implements IQuestionBroker {
+class FakeQuestionService implements IQuestionService {
+  readonly _serviceBrand: undefined;
+
   readonly received: QuestionRequest[] = [];
   resolveCalls: Array<{ id: string; response: QuestionResult }> = [];
   dismissCalls: string[] = [];
@@ -93,57 +105,57 @@ function makeFakeQuestion(): QuestionRequest & { sessionId: string; agentId: str
   };
 }
 
-describe('@moonshot-ai/services · interfaces (W3.1)', () => {
-  it('registers all three brokers in a ServiceCollection and resolves them through InstantiationService', () => {
-    const bus = new FakeEventBus();
-    const approvals = new FakeApprovalBroker();
-    const questions = new FakeQuestionBroker();
+describe('@moonshot-ai/services · interfaces', () => {
+  it('registers all three peer services in a ServiceCollection and resolves them through InstantiationService', () => {
+    const events = new FakeEventService();
+    const approvals = new FakeApprovalService();
+    const questions = new FakeQuestionService();
 
     const services = new ServiceCollection(
-      [IEventBus, bus],
-      [IApprovalBroker, approvals],
-      [IQuestionBroker, questions],
+      [IEventService, events],
+      [IApprovalService, approvals],
+      [IQuestionService, questions],
     );
     const ix = new InstantiationService(services);
 
     try {
       ix.invokeFunction((accessor) => {
-        expect(accessor.get(IEventBus)).toBe(bus);
-        expect(accessor.get(IApprovalBroker)).toBe(approvals);
-        expect(accessor.get(IQuestionBroker)).toBe(questions);
+        expect(accessor.get(IEventService)).toBe(events);
+        expect(accessor.get(IApprovalService)).toBe(approvals);
+        expect(accessor.get(IQuestionService)).toBe(questions);
       });
     } finally {
       ix.dispose();
     }
   });
 
-  it('end-to-end smoke: invokes broker methods via the accessor', async () => {
-    const bus = new FakeEventBus();
-    const approvals = new FakeApprovalBroker();
-    const questions = new FakeQuestionBroker();
+  it('end-to-end smoke: invokes service methods via the accessor', async () => {
+    const events = new FakeEventService();
+    const approvals = new FakeApprovalService();
+    const questions = new FakeQuestionService();
 
     const services = new ServiceCollection(
-      [IEventBus, bus],
-      [IApprovalBroker, approvals],
-      [IQuestionBroker, questions],
+      [IEventService, events],
+      [IApprovalService, approvals],
+      [IQuestionService, questions],
     );
     const ix = new InstantiationService(services);
 
     try {
       const event = makeFakeEvent();
-      ix.invokeFunction((a) => a.get(IEventBus).publish(event));
-      expect(bus.events).toEqual([event]);
+      ix.invokeFunction((a) => a.get(IEventService).publish(event));
+      expect(events.events).toEqual([event]);
 
       const approval = makeFakeApproval();
       const approvalResp = await ix.invokeFunction((a) =>
-        a.get(IApprovalBroker).request(approval),
+        a.get(IApprovalService).request(approval),
       );
       expect(approvalResp).toEqual({ decision: 'approved' });
       expect(approvals.received).toHaveLength(1);
 
       const question = makeFakeQuestion();
       const questionResp = await ix.invokeFunction((a) =>
-        a.get(IQuestionBroker).request(question),
+        a.get(IQuestionService).request(question),
       );
       expect(questionResp).toBeNull();
       expect(questions.received).toHaveLength(1);
@@ -152,21 +164,21 @@ describe('@moonshot-ai/services · interfaces (W3.1)', () => {
     }
   });
 
-  it('resolve/dismiss broker methods are wired through the same DI value', () => {
-    const approvals = new FakeApprovalBroker();
-    const questions = new FakeQuestionBroker();
+  it('resolve/dismiss service methods are wired through the same DI value', () => {
+    const approvals = new FakeApprovalService();
+    const questions = new FakeQuestionService();
 
     const services = new ServiceCollection(
-      [IApprovalBroker, approvals],
-      [IQuestionBroker, questions],
+      [IApprovalService, approvals],
+      [IQuestionService, questions],
     );
     const ix = new InstantiationService(services);
 
     try {
       ix.invokeFunction((a) => {
-        a.get(IApprovalBroker).resolve('tc-1', { decision: 'rejected', feedback: 'no' });
-        a.get(IQuestionBroker).resolve('q-1', { answers: { q_1: 'A' } });
-        a.get(IQuestionBroker).dismiss('q-2');
+        a.get(IApprovalService).resolve('tc-1', { decision: 'rejected', feedback: 'no' });
+        a.get(IQuestionService).resolve('q-1', { answers: { q_1: 'A' } });
+        a.get(IQuestionService).dismiss('q-2');
       });
 
       expect(approvals.resolveCalls).toEqual([
@@ -181,24 +193,24 @@ describe('@moonshot-ai/services · interfaces (W3.1)', () => {
     }
   });
 
-  it('looking up an unregistered broker throws with the decorator diagnostic name', () => {
+  it('looking up an unregistered service throws with the decorator diagnostic name', () => {
     const ix = new InstantiationService(new ServiceCollection());
     try {
-      expect(() => ix.invokeFunction((a) => a.get(IEventBus))).toThrow(/IEventBus/);
-      expect(() => ix.invokeFunction((a) => a.get(IApprovalBroker))).toThrow(/IApprovalBroker/);
-      expect(() => ix.invokeFunction((a) => a.get(IQuestionBroker))).toThrow(/IQuestionBroker/);
+      expect(() => ix.invokeFunction((a) => a.get(IEventService))).toThrow(/eventService/);
+      expect(() => ix.invokeFunction((a) => a.get(IApprovalService))).toThrow(/approvalService/);
+      expect(() => ix.invokeFunction((a) => a.get(IQuestionService))).toThrow(/questionService/);
     } finally {
       ix.dispose();
     }
   });
 
-  it('IEventBus / IApprovalBroker / IQuestionBroker are callable ServiceIdentifiers (compile-time guard)', () => {
-    // The const half of the dual export must be usable as a ServiceCollection key
-    // and as a `createDecorator` brand value. We exercise both at runtime to
-    // also catch any accidental swap of the value with the type.
-    expect(typeof IEventBus).toBe('function');
-    expect(typeof IApprovalBroker).toBe('function');
-    expect(typeof IQuestionBroker).toBe('function');
+  it('IEventService / IApprovalService / IQuestionService are callable ServiceIdentifiers (compile-time guard)', () => {
+    // The const half of the dual export must be usable as a ServiceCollection
+    // key and as a `createDecorator` brand value. We exercise both at runtime
+    // to also catch any accidental swap of the value with the type.
+    expect(typeof IEventService).toBe('function');
+    expect(typeof IApprovalService).toBe('function');
+    expect(typeof IQuestionService).toBe('function');
 
     // Avoid an unused-import warning on the type-only re-export.
     const _typeProbe: ApprovalResponse | QuestionResult = null;

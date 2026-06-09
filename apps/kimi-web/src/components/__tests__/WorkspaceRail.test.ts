@@ -153,6 +153,51 @@ describe('WorkspaceRail', () => {
     expect(w.emitted('toggleExpand')).toBeTruthy();
   });
 
+  // -------------------------------------------------------------------------
+  // Theme toggle (bottom-left account popover)
+  // -------------------------------------------------------------------------
+
+  it('账户弹层展示 Terminal | Modern 主题切换，当前主题高亮', async () => {
+    const w = mount(WorkspaceRail, {
+      props: { workspaces: [wsA], activeId: wsA.id, authReady: true, theme: 'terminal' },
+      global,
+    });
+    await w.find('.avachip').trigger('click');
+    const opts = w.findAll('.theme-opt');
+    expect(opts).toHaveLength(2);
+    expect(opts[0]!.text()).toBe('Terminal');
+    expect(opts[1]!.text()).toBe('Modern');
+    // terminal is active → first option carries .on
+    expect(opts[0]!.classes()).toContain('on');
+    expect(opts[1]!.classes()).not.toContain('on');
+  });
+
+  it('点击 Modern 选项发出 setTheme=modern', async () => {
+    const w = mount(WorkspaceRail, {
+      props: { workspaces: [wsA], activeId: wsA.id, authReady: true, theme: 'terminal' },
+      global,
+    });
+    await w.find('.avachip').trigger('click');
+    const opts = w.findAll('.theme-opt');
+    await opts[1]!.trigger('click');
+    expect(w.emitted('setTheme')).toBeTruthy();
+    expect(w.emitted('setTheme')![0]).toEqual(['modern']);
+  });
+
+  it('未登录时主题切换仍可用（弹层在两种登录态都展示）', async () => {
+    const w = mount(WorkspaceRail, {
+      props: { workspaces: [wsA], activeId: wsA.id, authReady: false, theme: 'modern' },
+      global,
+    });
+    await w.find('.avachip').trigger('click');
+    const opts = w.findAll('.theme-opt');
+    expect(opts).toHaveLength(2);
+    // modern is active → second option carries .on
+    expect(opts[1]!.classes()).toContain('on');
+    await opts[0]!.trigger('click');
+    expect(w.emitted('setTheme')![0]).toEqual(['terminal']);
+  });
+
   it('展开态仍渲染工作区徽标', () => {
     const w = mount(WorkspaceRail, {
       props: {

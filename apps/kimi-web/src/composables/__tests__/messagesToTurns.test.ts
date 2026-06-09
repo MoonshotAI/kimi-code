@@ -50,6 +50,23 @@ describe('messagesToTurns', () => {
     expect(turns[0]!.tools![0]!.name).toBe('read');
   });
 
+  it('duplicate assistant copies (same promptId, identical content, different ids) render once', () => {
+    // The streamed copy + the persisted copy of the same reply both reach us with
+    // the same promptId but different ids; the turn must show the text + tool once.
+    const content: AppMessage['content'] = [
+      { type: 'toolUse', toolCallId: 'tc_1', toolName: 'bash', input: { command: 'echo hi' } },
+      { type: 'text', text: 'The exact output was hi.' },
+    ];
+    const msgs: AppMessage[] = [
+      makeMsg('a_stream', 'assistant', 'pr_1', content),
+      makeMsg('a_persisted', 'assistant', 'pr_1', content),
+    ];
+    const turns = messagesToTurns(msgs, []);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]!.text).toBe('The exact output was hi.');
+    expect(turns[0]!.tools).toHaveLength(1);
+  });
+
   it('two assistant messages with DIFFERENT promptId → TWO turns', () => {
     const msgs: AppMessage[] = [
       makeMsg('a1', 'assistant', 'pr_1', [{ type: 'text', text: 'first' }]),

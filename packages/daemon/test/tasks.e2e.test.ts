@@ -69,7 +69,7 @@ async function bootDaemon(): Promise<RunningDaemon> {
     port: 0,
     lockPath,
     logger: pino({ level: 'silent' }),
-    bridgeOptions: { homeDir: bridgeHome },
+    coreProcessOptions: { homeDir: bridgeHome },
   });
   return daemon;
 }
@@ -130,6 +130,7 @@ function overrideTaskService(
   stub: Partial<ITaskService>,
 ): void {
   const defaultImpl: ITaskService = {
+    _serviceBrand: undefined,
     list: async () => [],
     get: async () => {
       throw new TaskNotFoundError('s', 't');

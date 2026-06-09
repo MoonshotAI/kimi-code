@@ -6,8 +6,8 @@
  * and vanishes on close, and that a second startDaemon raises DaemonLockedError.
  *
  * The DI graph end-to-end is exercised implicitly: every startDaemon call
- * constructs ILogger, IRestGateway, IEventBus, IApprovalBroker,
- * IQuestionBroker, and IHarnessBridge in order. Failure modes there (missing
+ * constructs ILogService, IRestGateway, IEventService, IApprovalService,
+ * IQuestionService, and ICoreProcessService in order. Failure modes there (missing
  * service, wrong ctor args) would surface as a startDaemon reject.
  */
 
@@ -21,14 +21,15 @@ import { pino } from 'pino';
 
 import {
   DaemonLockedError,
-  IApprovalBroker,
+  IApprovalService,
   IConnectionRegistry,
-  IEventBus,
-  IHarnessBridge,
-  ILogger,
-  IQuestionBroker,
+  IEventService,
+  ICoreProcessService,
+  ILogService,
+  IQuestionService,
   IRestGateway,
   ISessionClientsService,
+  IWSBroadcastService,
   IWSGateway,
   startDaemon,
   type LockContents,
@@ -70,7 +71,7 @@ async function spawn(): Promise<RunningDaemon> {
     port: 0,
     lockPath,
     logger: silentLogger(),
-    bridgeOptions: { homeDir: bridgeHome },
+    coreProcessOptions: { homeDir: bridgeHome },
   });
   running.push(r);
   return r;
@@ -105,31 +106,32 @@ describe('startDaemon — lock + healthz smoke', () => {
 });
 
 describe('startDaemon — DI container wiring', () => {
-  it('exposes all 9 DI services through running.services', async () => {
+  it('exposes all DI services through running.services', async () => {
     const r = await spawn();
     // Every decorator should resolve. .get() would throw "No service registered"
     // if any were missing.
     r.services.invokeFunction((a) => {
-      expect(a.get(ILogger)).toBeDefined();
+      expect(a.get(ILogService)).toBeDefined();
       expect(a.get(IRestGateway)).toBeDefined();
       expect(a.get(IConnectionRegistry)).toBeDefined();
       expect(a.get(ISessionClientsService)).toBeDefined();
-      expect(a.get(IEventBus)).toBeDefined();
-      expect(a.get(IApprovalBroker)).toBeDefined();
-      expect(a.get(IQuestionBroker)).toBeDefined();
+      expect(a.get(IEventService)).toBeDefined();
+      expect(a.get(IWSBroadcastService)).toBeDefined();
+      expect(a.get(IApprovalService)).toBeDefined();
+      expect(a.get(IQuestionService)).toBeDefined();
       expect(a.get(IWSGateway)).toBeDefined();
-      const bridge = a.get(IHarnessBridge);
+      const bridge = a.get(ICoreProcessService);
       expect(bridge).toBeDefined();
       expect(typeof bridge.rpc).toBe('object');
       expect(typeof bridge.dispose).toBe('function');
     });
   });
 
-  it('HarnessBridge.rpc rejects after the daemon is closed (dispose cascade)', async () => {
+  it('CoreProcessService.rpc rejects after the daemon is closed (dispose cascade)', async () => {
     const r = await spawn();
     // Grab a bridge reference BEFORE close — after close the container is disposed
-    // and a.get(IHarnessBridge) would throw on the dead InstantiationService.
-    const bridge = r.services.invokeFunction((a) => a.get(IHarnessBridge));
+    // and a.get(ICoreProcessService) would throw on the dead InstantiationService.
+    const bridge = r.services.invokeFunction((a) => a.get(ICoreProcessService));
     await r.close();
     await expect(bridge.rpc.getCoreInfo({})).rejects.toThrow(/disposed/);
   });

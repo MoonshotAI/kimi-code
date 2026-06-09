@@ -1,5 +1,5 @@
 /**
- * `/tools` + `/mcp/servers*` REST routes (Chain 7 / P1.7, W9.1).
+ * `/tools` + `/mcp/servers*` REST routes.
  *
  * 3 endpoints (REST.md §3.8):
  *
@@ -9,11 +9,10 @@
  *
  * **Error mapping**:
  *   - `McpServerNotFoundError` → envelope `code: 40408 mcp.server_not_found`.
- *   - Other errors → 50001 via W4 `installErrorHandler`.
+ *   - Other errors → 50001 via the global `installErrorHandler`.
  *
  * **Action suffix**: the `:restart` POST endpoint uses the shared
- * `parseActionSuffix` helper (extracted W9.1, 4th call site after prompts:abort,
- * questions:resolve, questions:dismiss).
+ * `parseActionSuffix` helper.
  *
  * **Anti-corruption**: route resolves `IToolService` / `IMcpService` via the
  * accessor; no SDK imports.
@@ -25,17 +24,14 @@ import {
   listToolsQuerySchema,
   listToolsResponseSchema,
   restartMcpServerResultSchema,
-  type ListToolsQuery,
 } from '@moonshot-ai/protocol';
 import { IMcpService, IToolService, McpServerNotFoundError } from '@moonshot-ai/services';
-import { z } from 'zod';
 
 import type { IInstantiationService } from '@moonshot-ai/agent-core';
 
-import { errEnvelope, okEnvelope } from '../envelope.js';
-import { buildRouteSchema } from '../middleware/schema.js';
-import { validateQuery } from '../middleware/validate.js';
-import { parseActionSuffix } from './action-suffix.js';
+import { errEnvelope, okEnvelope } from '../envelope';
+import { defineRoute } from '../middleware/defineRoute';
+import { parseActionSuffix } from './action-suffix';
 
 interface ToolsRouteHost {
   get(
@@ -61,22 +57,19 @@ export function registerToolsRoutes(
   ix: IInstantiationService,
 ): void {
   // GET /tools ----------------------------------------------------------
-  app.get(
-    '/tools',
+  const listToolsRoute = defineRoute(
     {
-      preHandler: [validateQuery(listToolsQuerySchema)],
-      schema: buildRouteSchema({
-        description: 'List available tools',
-        tags: ['tools'],
-        querystring: listToolsQuerySchema,
-        response: { 200: listToolsResponseSchema },
-      }),
+      method: 'GET',
+      path: '/tools',
+      querystring: listToolsQuerySchema,
+      success: { data: listToolsResponseSchema },
+      description: 'List available tools',
+      tags: ['tools'],
     },
     async (req, reply) => {
       try {
-        const query = req.query as ListToolsQuery;
         const tools = await ix.invokeFunction((a) =>
-          a.get(IToolService).list(query.session_id),
+          a.get(IToolService).list(req.query.session_id),
         );
         reply.send(okEnvelope({ tools }, req.id));
       } catch (err) {
@@ -84,35 +77,48 @@ export function registerToolsRoutes(
       }
     },
   );
+  app.get(
+    listToolsRoute.path,
+    listToolsRoute.options,
+    listToolsRoute.handler as Parameters<ToolsRouteHost['get']>[2],
+  );
 
   // GET /mcp/servers ----------------------------------------------------
-  app.get('/mcp/servers', {
-    preHandler: [],
-    schema: buildRouteSchema({
+  const listMcpServersRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/mcp/servers',
+      success: { data: listMcpServersResponseSchema },
       description: 'List configured MCP servers',
       tags: ['tools'],
-      response: { 200: listMcpServersResponseSchema },
-    }),
-  }, async (req, reply) => {
-    try {
-      const servers = await ix.invokeFunction((a) => a.get(IMcpService).list());
-      reply.send(okEnvelope({ servers }, req.id));
-    } catch (err) {
-      sendMappedError(reply, req.id, err);
-    }
-  });
+    },
+    async (req, reply) => {
+      try {
+        const servers = await ix.invokeFunction((a) => a.get(IMcpService).list());
+        reply.send(okEnvelope({ servers }, req.id));
+      } catch (err) {
+        sendMappedError(reply, req.id, err);
+      }
+    },
+  );
+  app.get(
+    listMcpServersRoute.path,
+    listMcpServersRoute.options,
+    listMcpServersRoute.handler as Parameters<ToolsRouteHost['get']>[2],
+  );
 
   // POST /mcp/servers/{mcp_server_id}:restart ---------------------------
-  app.post(
-    '/mcp/servers/:tail',
+  const restartMcpServerRoute = defineRoute(
     {
-      preHandler: [],
-      schema: buildRouteSchema({
-        description: 'Restart an MCP server by ID',
-        tags: ['tools'],
-        operationId: 'restartMcpServer',
-        response: { 200: restartMcpServerResultSchema },
-      }),
+      method: 'POST',
+      path: '/mcp/servers/{tail}',
+      success: { data: restartMcpServerResultSchema },
+      errors: {
+        [ErrorCode.MCP_SERVER_NOT_FOUND]: {},
+      },
+      description: 'Restart an MCP server by ID',
+      tags: ['tools'],
+      operationId: 'restartMcpServer',
     },
     async (req, reply) => {
       try {
@@ -148,6 +154,11 @@ export function registerToolsRoutes(
       }
     },
   );
+  app.post(
+    restartMcpServerRoute.path,
+    restartMcpServerRoute.options,
+    restartMcpServerRoute.handler as Parameters<ToolsRouteHost['post']>[2],
+  );
 }
 
 /**
@@ -164,7 +175,3 @@ function sendMappedError(
   }
   throw err;
 }
-
-// Reference `z` so eslint doesn't flag the import — currently unused beyond
-// the schema's downstream consumers, but kept for future params validation.
-void z;

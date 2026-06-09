@@ -3,7 +3,7 @@
 import { useI18n } from 'vue-i18n';
 import type { ContentAlign, PaneKey } from '../types';
 
-defineProps<{ active: PaneKey; runningTasks: number; changesCount?: number; align?: ContentAlign }>();
+defineProps<{ active: PaneKey; runningTasks: number; changesCount?: number; align?: ContentAlign; mobile?: boolean }>();
 const emit = defineEmits<{ select: [pane: PaneKey]; setAlign: [align: ContentAlign] }>();
 
 const { t } = useI18n();
@@ -17,7 +17,7 @@ const tabs: { key: PaneKey; label: string }[] = [
 </script>
 
 <template>
-  <div class="tabs">
+  <div class="tabs" :class="{ mobile }">
     <div
       v-for="t in tabs"
       :key="t.key"
@@ -30,8 +30,9 @@ const tabs: { key: PaneKey; label: string }[] = [
       <span v-if="t.key === 'tasks'" class="cnt">{{ runningTasks }}</span>
     </div>
 
-    <!-- Content alignment toggle (right side): left-aligned vs centered -->
-    <div class="align" role="group" :aria-label="t('layout.alignLabel')">
+    <!-- Content alignment toggle (right side): left-aligned vs centered.
+         Hidden on mobile — the strip is full-width and alignment is desktop-only. -->
+    <div v-if="!mobile" class="align" role="group" :aria-label="t('layout.alignLabel')">
       <button
         type="button"
         class="align-btn"
@@ -130,5 +131,49 @@ const tabs: { key: PaneKey; label: string }[] = [
   border-color: var(--bd);
   background: var(--soft);
   z-index: 1;
+}
+
+/* ---- Mobile swap-strip: full-width mono tabs, 46px tall (≥44px tap) ---- */
+.tabs.mobile {
+  height: 46px;
+  background: var(--bg);
+}
+.tabs.mobile .tb {
+  flex: 1;
+  justify-content: center;
+  gap: 5px;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--muted);
+  border-right: none;
+  border-bottom: 2px solid transparent;
+}
+.tabs.mobile .tb:hover { background: var(--bg); }
+.tabs.mobile .tb.on {
+  background: var(--bg);
+  color: var(--blue);
+  font-weight: 600;
+  border-bottom-color: var(--blue);
+}
+/* Tasks → solid blue count pill (prototype .bdg). */
+.tabs.mobile .cnt {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--blue);
+  color: #fff;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 600;
+}
+/* Diff → small warn dot (prototype .dt). */
+.tabs.mobile .d {
+  width: 6px;
+  height: 6px;
+  background: var(--warn);
 }
 </style>

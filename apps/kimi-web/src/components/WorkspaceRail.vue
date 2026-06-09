@@ -3,12 +3,17 @@
 <!-- chips, an add-workspace button, and (at the bottom) the account avatar with -->
 <!-- its popover. Light only, monospace-forward, Kimi blue #1565C0, no emoji. -->
 <script setup lang="ts">
-import { ref } from 'vue';
+import { nextTick, onBeforeUnmount, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { WorkspaceView } from '../types';
+import type { Theme } from '../composables/useKimiWebClient';
+import { daemonEndpointLabel } from '../api/config';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 
 const { t } = useI18n();
+
+/** Address of the real daemon this client connects to (shown in the settings popover). */
+const daemonEndpoint = daemonEndpointLabel();
 
 const props = withDefaults(
   defineProps<{
@@ -19,6 +24,8 @@ const props = withDefaults(
     accountModel?: string | null;
     /** Expanded (wide, named) rail vs collapsed (52px icon) rail. */
     expanded?: boolean;
+    /** Active UI theme — drives the bottom-left Theme segmented toggle. */
+    theme?: Theme;
   }>(),
   {
     activeId: null,
@@ -26,6 +33,7 @@ const props = withDefaults(
     authReady: false,
     accountModel: null,
     expanded: false,
+    theme: 'terminal',
   },
 );
 
@@ -35,6 +43,7 @@ const emit = defineEmits<{
   login: [];
   logout: [];
   toggleExpand: [];
+  setTheme: [theme: Theme];
 }>();
 
 /** First letter of a workspace name, uppercased, for the chip glyph. */
@@ -57,13 +66,50 @@ function attentionFor(id: string): number {
 // ---------------------------------------------------------------------------
 const acctMenuOpen = ref(false);
 
+// The popover is position:fixed so it escapes the rail's overflow clip. We anchor
+// it with a JS-computed top/left from the gear button rather than CSS `bottom`,
+// so it stays put even if a page-level transform (e.g. a dark-mode browser
+// extension) shifts the fixed containing block.
+const triggerRef = ref<HTMLElement | null>(null);
+const menuRef = ref<HTMLElement | null>(null);
+const menuStyle = ref<Record<string, string>>({});
+
+function positionMenu(): void {
+  const trig = triggerRef.value;
+  const menu = menuRef.value;
+  if (!trig || !menu) return;
+  const r = trig.getBoundingClientRect();
+  const gap = 8;
+  const margin = 8;
+  const menuH = menu.offsetHeight;
+  const menuW = menu.offsetWidth;
+  // Open upward from the gear; fall back to downward if there isn't room above.
+  let top = r.top - menuH - gap;
+  if (top < margin) top = Math.min(r.bottom + gap, window.innerHeight - menuH - margin);
+  // Expanded rail: align to the gear's left edge; collapsed: sit to its right.
+  let left = props.expanded ? r.left : r.right + 6;
+  left = Math.min(left, window.innerWidth - menuW - margin);
+  menuStyle.value = { top: `${Math.round(Math.max(margin, top))}px`, left: `${Math.round(left)}px` };
+}
+
+async function openAccount(): Promise<void> {
+  acctMenuOpen.value = true;
+  await nextTick();
+  positionMenu();
+  window.addEventListener('resize', positionMenu);
+}
+
 function toggleAccount(): void {
-  acctMenuOpen.value = !acctMenuOpen.value;
+  if (acctMenuOpen.value) close();
+  else void openAccount();
 }
 
 function close(): void {
   acctMenuOpen.value = false;
+  window.removeEventListener('resize', positionMenu);
 }
+
+onBeforeUnmount(() => window.removeEventListener('resize', positionMenu));
 
 function onLogin(): void {
   acctMenuOpen.value = false;
@@ -151,6 +197,7 @@ defineExpose({ close });
     <!-- Account avatar + popover -->
     <div class="acct-wrap">
       <button
+        ref="triggerRef"
         type="button"
         class="avachip"
         :class="{ off: !authReady }"
@@ -168,11 +215,37 @@ defineExpose({ close });
         <span v-if="expanded" class="chip-name">{{ t('workspace.settings') }}</span>
       </button>
 
-      <div v-if="acctMenuOpen" class="acct-menu" :class="{ expanded }" @click.stop>
+      <div
+        v-if="acctMenuOpen"
+        ref="menuRef"
+        class="acct-menu"
+        :class="{ expanded }"
+        :style="menuStyle"
+        @click.stop
+      >
         <template v-if="authReady">
           <div class="am-head">
             <div class="am-prov">managed:kimi-code</div>
             <div v-if="accountModel" class="am-model" :title="accountModel">{{ accountModel }}</div>
+          </div>
+          <div class="am-lang">
+            <span class="am-lang-label">{{ t('theme.label') }}</span>
+            <div class="theme-seg" role="group" :aria-label="t('theme.label')">
+              <button
+                type="button"
+                class="theme-opt"
+                :class="{ on: theme === 'terminal' }"
+                :aria-pressed="theme === 'terminal'"
+                @click="emit('setTheme', 'terminal')"
+              >{{ t('theme.terminal') }}</button>
+              <button
+                type="button"
+                class="theme-opt"
+                :class="{ on: theme === 'modern' }"
+                :aria-pressed="theme === 'modern'"
+                @click="emit('setTheme', 'modern')"
+              >{{ t('theme.modern') }}</button>
+            </div>
           </div>
           <div class="am-lang">
             <span class="am-lang-label">{{ t('sidebar.language') }}</span>
@@ -185,11 +258,36 @@ defineExpose({ close });
             <div class="am-prov">{{ t('sidebar.notSignedIn') }}</div>
           </div>
           <div class="am-lang">
+            <span class="am-lang-label">{{ t('theme.label') }}</span>
+            <div class="theme-seg" role="group" :aria-label="t('theme.label')">
+              <button
+                type="button"
+                class="theme-opt"
+                :class="{ on: theme === 'terminal' }"
+                :aria-pressed="theme === 'terminal'"
+                @click="emit('setTheme', 'terminal')"
+              >{{ t('theme.terminal') }}</button>
+              <button
+                type="button"
+                class="theme-opt"
+                :class="{ on: theme === 'modern' }"
+                :aria-pressed="theme === 'modern'"
+                @click="emit('setTheme', 'modern')"
+              >{{ t('theme.modern') }}</button>
+            </div>
+          </div>
+          <div class="am-lang">
             <span class="am-lang-label">{{ t('sidebar.language') }}</span>
             <LanguageSwitcher />
           </div>
           <button type="button" class="am-item signin" @click="onLogin">{{ t('sidebar.signIn') }}</button>
         </template>
+
+        <!-- Connected daemon — the real daemon address, shown in full. -->
+        <div class="am-daemon">
+          <span class="am-daemon-label">{{ t('sidebar.daemon') }}</span>
+          <span class="am-daemon-url">{{ daemonEndpoint }}</span>
+        </div>
       </div>
     </div>
   </nav>
@@ -412,11 +510,12 @@ defineExpose({ close });
 }
 
 /* Popover anchored at the rail account avatar. position:fixed so it escapes the
-   rail's overflow-y:auto clip and floats above the session column. */
+   rail's overflow-y:auto clip; its top/left are set inline from the gear's rect
+   (see positionMenu) so it never drifts under a page-level transform. */
 .acct-menu {
   position: fixed;
-  left: 58px;
-  bottom: 10px;
+  top: 0;
+  left: 0;
   width: 220px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -424,12 +523,6 @@ defineExpose({ close });
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
   padding: 4px;
   z-index: 200;
-}
-/* Expanded rail: the gear row sits at the bottom of a 190px column, so anchor
-   the popover near the rail's left edge and let it open above the gear. */
-.acct-menu.expanded {
-  left: 12px;
-  bottom: 52px;
 }
 .am-head {
   padding: 6px 8px 7px;
@@ -472,4 +565,50 @@ defineExpose({ close });
   padding: 6px 8px;
 }
 .am-lang-label { color: var(--muted); font-size: 11px; }
+
+/* Connected daemon row — real daemon address in full (wraps, never truncated). */
+.am-daemon {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 8px 5px;
+  margin-top: 2px;
+  border-top: 1px solid var(--line);
+}
+.am-daemon-label { color: var(--muted); font-size: 10.5px; flex: none; }
+.am-daemon-url {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  min-width: 0;
+  word-break: break-all;
+}
+
+/* Theme segmented toggle (Terminal | Modern) */
+.theme-seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.theme-opt {
+  border: none;
+  background: none;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 3px 9px;
+  line-height: 1.4;
+  transition: background 0.15s, color 0.15s;
+}
+.theme-opt + .theme-opt { border-left: 1px solid var(--line); }
+.theme-opt:hover { color: var(--ink); }
+.theme-opt.on {
+  background: var(--soft);
+  color: var(--blue2);
+  font-weight: 600;
+}
 </style>

@@ -84,8 +84,10 @@ export type GetLeadingNonServiceArgs<TArgs extends any[]> =
 export interface ServiceIdentifier<T> {
   // Parameter-decorator callable signature. Now consumed:
   // `storeServiceDependency(id, target, index)` is called on application.
+  // `key` is `undefined` for constructor-parameter decorators (TS calls
+  // parameter decorators on constructors with no property key).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (target: any, key: string | symbol, index: number): void;
+  (target: any, key: string | symbol | undefined, index: number): void;
 
   /** Phantom marker so two decorators with different `T` are not assignable. */
   readonly _serviceBrand: { readonly _: T };
@@ -131,7 +133,7 @@ export function createDecorator<T>(name: string): ServiceIdentifier<T> {
   const id = function serviceDecorator(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     target: any,
-    _key: string | symbol,
+    _key: string | symbol | undefined,
     index: number,
   ): void {
     if (arguments.length !== 3) {

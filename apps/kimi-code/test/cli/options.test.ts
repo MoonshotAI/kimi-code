@@ -289,6 +289,7 @@ describe('CLI options parsing', () => {
         'export',
         'provider',
         'acp',
+        'daemon',
         'login',
         'doctor',
         'migrate',

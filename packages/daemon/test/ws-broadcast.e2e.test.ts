@@ -2,7 +2,7 @@
  * WS subscribe + broadcast e2e (W5.2 / P0.16).
  *
  * Boots `startDaemon`, connects 2 real WS clients, asks them to subscribe to
- * the same session, then publishes events via `IEventBus.publish` from
+ * the same session, then publishes events via `IEventService.publish` from
  * INSIDE the daemon (using `RunningDaemon.services` to reach the bus).
  *
  * Assertions:
@@ -24,7 +24,7 @@ import { pino } from 'pino';
 import { WebSocket } from 'ws';
 
 import type { Event } from '@moonshot-ai/protocol';
-import { IEventBus } from '@moonshot-ai/services';
+import { IEventService } from '@moonshot-ai/services';
 
 import {
   ISessionClientsService,
@@ -61,7 +61,7 @@ async function spawn(): Promise<RunningDaemon> {
     port: 0,
     lockPath,
     logger: pino({ level: 'silent' }),
-    bridgeOptions: { homeDir: bridgeHome },
+    coreProcessOptions: { homeDir: bridgeHome },
     wsGatewayOptions: { pingIntervalMs: 5_000, pongTimeoutMs: 5_000 },
   });
   running.push(r);
@@ -174,7 +174,7 @@ describe('WS broadcast + per-session seq (W5.2)', () => {
     );
 
     r.services.invokeFunction((acc) =>
-      acc.get(IEventBus).publish({ type: 'evt.x', sessionId: 'sid_shared' } as unknown as Event),
+      acc.get(IEventService).publish({ type: 'evt.x', sessionId: 'sid_shared' } as unknown as Event),
     );
 
     const e1a = await receiveType(a, 'evt.x', 1000);
@@ -184,7 +184,7 @@ describe('WS broadcast + per-session seq (W5.2)', () => {
     expect(e1a.session_id).toBe('sid_shared');
 
     r.services.invokeFunction((acc) =>
-      acc.get(IEventBus).publish({ type: 'evt.y', sessionId: 'sid_shared' } as unknown as Event),
+      acc.get(IEventService).publish({ type: 'evt.y', sessionId: 'sid_shared' } as unknown as Event),
     );
     const e2a = await receiveType(a, 'evt.y', 1000);
     const e2b = await receiveType(b, 'evt.y', 1000);
@@ -207,10 +207,10 @@ describe('WS broadcast + per-session seq (W5.2)', () => {
     );
 
     r.services.invokeFunction((acc) =>
-      acc.get(IEventBus).publish({ type: 'evt', sessionId: 'sid_other' } as unknown as Event),
+      acc.get(IEventService).publish({ type: 'evt', sessionId: 'sid_other' } as unknown as Event),
     );
     r.services.invokeFunction((acc) =>
-      acc.get(IEventBus).publish({ type: 'evt.delivered', sessionId: 'sid_x' } as unknown as Event),
+      acc.get(IEventService).publish({ type: 'evt.delivered', sessionId: 'sid_x' } as unknown as Event),
     );
 
     const ev = await receiveType(a, 'evt.delivered', 1000);
@@ -233,7 +233,7 @@ describe('WS broadcast + per-session seq (W5.2)', () => {
       }),
     );
 
-    const bus = r.services.invokeFunction((acc) => acc.get(IEventBus));
+    const bus = r.services.invokeFunction((acc) => acc.get(IEventService));
     bus.publish({ type: 'a1', sessionId: 'sid_alpha' } as unknown as Event);
     bus.publish({ type: 'b1', sessionId: 'sid_beta' } as unknown as Event);
     bus.publish({ type: 'a2', sessionId: 'sid_alpha' } as unknown as Event);
@@ -279,7 +279,7 @@ describe('WS broadcast + per-session seq (W5.2)', () => {
 
     // Publish a new event; only B should see it.
     r.services.invokeFunction((acc) =>
-      acc.get(IEventBus).publish({ type: 'after_unsub', sessionId: 'sid_share' } as unknown as Event),
+      acc.get(IEventService).publish({ type: 'after_unsub', sessionId: 'sid_share' } as unknown as Event),
     );
 
     const ev = await receiveType(b, 'after_unsub', 1000);

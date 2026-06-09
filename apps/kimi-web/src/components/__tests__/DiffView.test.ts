@@ -70,4 +70,70 @@ describe('DiffView (ChangesView)', () => {
     expect(w.find('.ahead').exists()).toBe(true);
     expect(w.find('.behind').exists()).toBe(true);
   });
+
+  it('点击改动文件会 emit open(path)', async () => {
+    const w = mount(DiffView, { props: { changes, gitInfo }, global });
+    const rows = w.findAll('.ch-row');
+    await rows[0]!.trigger('click');
+    const open = w.emitted('open');
+    expect(open).toBeTruthy();
+    expect(open![0]).toEqual(['apps/kimi-code/package.json']);
+  });
+
+  it('selectedDiffPath 设置后渲染 line-by-line diff（含 add/del/context/hunk 着色）', () => {
+    const fileDiff = [
+      { type: 'hunk' as const, text: '@@ -1,3 +1,3 @@' },
+      { type: 'context' as const, text: 'const a = 1;', oldNo: 1, newNo: 1 },
+      { type: 'del' as const, text: 'const b = 2;', oldNo: 2 },
+      { type: 'add' as const, text: 'const b = 3;', newNo: 2 },
+    ];
+    const w = mount(DiffView, {
+      props: {
+        changes,
+        gitInfo,
+        selectedDiffPath: 'apps/kimi-code/package.json',
+        fileDiff,
+        fileDiffLoading: false,
+      },
+      global,
+    });
+    // The file list is replaced by the diff panel.
+    expect(w.findAll('.ch-row')).toHaveLength(0);
+    const lines = w.findAll('.diff-lines .dl');
+    expect(lines).toHaveLength(4);
+    expect(w.find('.dl-hunk').exists()).toBe(true);
+    expect(w.find('.dl-add').exists()).toBe(true);
+    expect(w.find('.dl-del').exists()).toBe(true);
+    expect(w.text()).toContain('const b = 3;');
+    expect(w.text()).toContain('const b = 2;');
+  });
+
+  it('diff 面板的返回按钮会 emit back', async () => {
+    const w = mount(DiffView, {
+      props: {
+        changes,
+        gitInfo,
+        selectedDiffPath: 'apps/kimi-code/package.json',
+        fileDiff: [],
+        fileDiffLoading: false,
+      },
+      global,
+    });
+    await w.find('.back-btn').trigger('click');
+    expect(w.emitted('back')).toBeTruthy();
+  });
+
+  it('加载中显示 loading 文案', () => {
+    const w = mount(DiffView, {
+      props: {
+        changes,
+        gitInfo,
+        selectedDiffPath: 'apps/kimi-code/package.json',
+        fileDiff: [],
+        fileDiffLoading: true,
+      },
+      global,
+    });
+    expect(w.text()).toContain('Loading diff');
+  });
 });

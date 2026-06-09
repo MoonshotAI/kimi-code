@@ -372,6 +372,7 @@ export interface KimiWebApi {
   searchFiles(sessionId: string, input: { query: string; limit?: number }): Promise<{ items: Array<{ path: string; name: string; kind: FsKind; score: number; matchPositions: number[] }>; truncated: boolean }>;
   grepFiles(sessionId: string, input: { pattern: string; regex?: boolean; caseSensitive?: boolean }): Promise<{ files: Array<{ path: string; matches: Array<{ line: number; col: number; text: string; before: string[]; after: string[] }> }>; filesScanned: number; truncated: boolean; elapsedMs: number }>;
   getGitStatus(sessionId: string, paths?: string[]): Promise<{ branch: string; ahead: number; behind: number; entries: Record<string, string> }>;
+  getFileDiff(sessionId: string, path?: string): Promise<{ path: string; diff: string }>;
   connectEvents(handlers: KimiEventHandlers): KimiEventConnection;
 
   // Workspaces + daemon folder browser

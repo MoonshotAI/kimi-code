@@ -5,7 +5,7 @@
  * or use any of its concrete classes (KimiHarness / createRPC / SDKRpcClient).
  * The bridge layer in `@moonshot-ai/services` owns the in-process KimiCore +
  * RPC pair; daemon-side code crosses that boundary only via the broker
- * interfaces and `HarnessBridge.rpc`.
+ * interfaces and `CoreProcessService.rpc`.
  *
  * This test is a guard rail — a single bad import here would re-couple the
  * daemon to the SDK shape we're explicitly migrating away from.

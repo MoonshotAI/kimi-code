@@ -16,11 +16,12 @@
  *      no replay events arrive on the first frames (only the normal ack +
  *      empty `resync_required`).
  *
- * `maxBufferSize` is reachable via direct `DaemonEventBus` access from
- * within the test (no need to override globally). To keep test runtime sane
- * the resync flow uses a SMALLER buffer cap injected via direct EventBus
- * construction — not via daemon options (no production knob needed). For
- * the spec-faithful 1000-cap path we publish 1005 events.
+ * `maxBufferSize` is the default 1000 baked into `WSBroadcastService`. The
+ * resync flow publishes 1005 events to trigger eviction; the buffer keeps
+ * the last 1000. Publishes go through `IEventService.publish(...)`; ring
+ * buffer state and replay queries are read off the daemon-local
+ * `IWSBroadcastService` (cast to the concrete class for `_*ForTest`
+ * helpers).
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -33,14 +34,15 @@ import { pino } from 'pino';
 import { WebSocket } from 'ws';
 
 import type { Event } from '@moonshot-ai/protocol';
-import { IEventBus } from '@moonshot-ai/services';
+import { IEventService } from '@moonshot-ai/services';
 
 import {
   ISessionClientsService,
+  IWSBroadcastService,
   startDaemon,
   type RunningDaemon,
 } from '../src';
-import { DaemonEventBus } from '../src/services/event-bus';
+import { WSBroadcastService } from '#/services/gateway/wsBroadcastService';
 
 let tmpDir: string;
 let lockPath: string;
@@ -71,7 +73,7 @@ async function spawn(): Promise<RunningDaemon> {
     port: 0,
     lockPath,
     logger: pino({ level: 'silent' }),
-    bridgeOptions: { homeDir: bridgeHome },
+    coreProcessOptions: { homeDir: bridgeHome },
     wsGatewayOptions: { pingIntervalMs: 5_000, pongTimeoutMs: 5_000 },
   });
   running.push(r);
@@ -181,7 +183,7 @@ describe('WS ring buffer + resync_required (W5.3)', () => {
       ),
     );
 
-    const bus = r.services.invokeFunction((acc) => acc.get(IEventBus));
+    const bus = r.services.invokeFunction((acc) => acc.get(IEventService));
     for (let i = 1; i <= 5; i++) {
       bus.publish({ type: `evt.${i}`, sessionId: 'sid_test' } as unknown as Event);
     }
@@ -239,13 +241,16 @@ describe('WS ring buffer + resync_required (W5.3)', () => {
 
     // Force the buffer to overflow. With the spec-faithful 1000-cap, we
     // publish 1005 events. After that, oldestSeq is 6 (events 1..5 evicted).
-    const bus = r.services.invokeFunction((acc) => acc.get(IEventBus)) as DaemonEventBus;
+    const bus = r.services.invokeFunction((acc) => acc.get(IEventService));
+    const broadcast = r.services.invokeFunction(
+      (acc) => acc.get(IWSBroadcastService),
+    ) as WSBroadcastService;
     for (let i = 1; i <= 1005; i++) {
       bus.publish({ type: 'evt', sessionId: 'sid_test' } as unknown as Event);
     }
-    expect(bus._currentSeqForTest('sid_test')).toBe(1005);
-    expect(bus._bufferLengthForTest('sid_test')).toBe(1000);
-    expect(bus._oldestSeqForTest('sid_test')).toBe(6);
+    expect(broadcast._currentSeqForTest('sid_test')).toBe(1005);
+    expect(broadcast._bufferLengthForTest('sid_test')).toBe(1000);
+    expect(broadcast._oldestSeqForTest('sid_test')).toBe(6);
 
     // Client connects with last_seq=3 — gap is too big (events 4, 5 are gone).
     const conn = await openConn(wsUrl(r.address));
@@ -281,7 +286,7 @@ describe('WS ring buffer + resync_required (W5.3)', () => {
 
   it('caught-up client (last_seq == current_seq) gets no replay, just empty ack', async () => {
     const r = await spawn();
-    const bus = r.services.invokeFunction((acc) => acc.get(IEventBus));
+    const bus = r.services.invokeFunction((acc) => acc.get(IEventService));
     bus.publish({ type: 'evt.a', sessionId: 'sid_test' } as unknown as Event);
     bus.publish({ type: 'evt.b', sessionId: 'sid_test' } as unknown as Event);
     bus.publish({ type: 'evt.c', sessionId: 'sid_test' } as unknown as Event);
@@ -319,24 +324,27 @@ describe('WS ring buffer + resync_required (W5.3)', () => {
 
   it('ring buffer evicts oldest event when capacity is exceeded', async () => {
     const r = await spawn();
-    const bus = r.services.invokeFunction((acc) => acc.get(IEventBus)) as DaemonEventBus;
+    const bus = r.services.invokeFunction((acc) => acc.get(IEventService));
+    const broadcast = r.services.invokeFunction(
+      (acc) => acc.get(IWSBroadcastService),
+    ) as WSBroadcastService;
     // Publish 1002 — buffer should retain seq 3..1002, oldestSeq=3.
     for (let i = 1; i <= 1002; i++) {
       bus.publish({ type: 'evt', sessionId: 'sid_evict' } as unknown as Event);
     }
-    expect(bus._currentSeqForTest('sid_evict')).toBe(1002);
-    expect(bus._bufferLengthForTest('sid_evict')).toBe(1000);
-    expect(bus._oldestSeqForTest('sid_evict')).toBe(3);
+    expect(broadcast._currentSeqForTest('sid_evict')).toBe(1002);
+    expect(broadcast._bufferLengthForTest('sid_evict')).toBe(1000);
+    expect(broadcast._oldestSeqForTest('sid_evict')).toBe(3);
 
     // getBufferedSince(sid, 2) → resyncRequired (lastSeq+1=3, oldestSeq=3 → NOT resync;
     // lastSeq+1=3 == oldestSeq=3 → NOT resync). Verify boundary.
-    const replay = bus.getBufferedSince('sid_evict', 2);
+    const replay = broadcast.getBufferedSince('sid_evict', 2);
     expect(replay.resyncRequired).toBe(false);
     expect(replay.events[0]?.seq).toBe(3);
     expect(replay.events.length).toBe(1000);
 
     // lastSeq=1 → lastSeq+1=2 < oldestSeq=3 → resync.
-    const replay2 = bus.getBufferedSince('sid_evict', 1);
+    const replay2 = broadcast.getBufferedSince('sid_evict', 1);
     expect(replay2.resyncRequired).toBe(true);
     expect(replay2.events.length).toBe(0);
   });

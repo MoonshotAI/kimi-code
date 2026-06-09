@@ -2,7 +2,7 @@
  * Question end-to-end tests (W8.2 / Chain 6 / P1.6).
  *
  * Covers the reverse-RPC path: agent-core → BridgeClientAPI.requestQuestion →
- * IQuestionBroker.request → WS `event.question.requested` → REST
+ * IQuestionService.request → WS `event.question.requested` → REST
  * `POST /api/v1/sessions/{sid}/questions/{qid}` (or `:dismiss`) → Promise
  * resolves with `Record<string, string | true>` (or `null` for dismiss).
  *
@@ -19,16 +19,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
 import {
-  IQuestionBroker,
+  IQuestionService,
   type QuestionRequest,
   type QuestionResult,
 } from '@moonshot-ai/services';
 
 import { IRestGateway, startDaemon, type RunningDaemon } from '../src';
 import {
-  DaemonQuestionBroker,
+  QuestionService,
   QuestionExpiredError,
-} from '../src/services/question-broker';
+} from '#/services/question/questionService';
 
 let tmpDir: string;
 let lockPath: string;
@@ -58,7 +58,7 @@ async function bootDaemon(): Promise<RunningDaemon> {
     port: 0,
     lockPath,
     logger: pino({ level: 'silent' }),
-    bridgeOptions: { homeDir: bridgeHome },
+    coreProcessOptions: { homeDir: bridgeHome },
     wsGatewayOptions: { pingIntervalMs: 5_000, pongTimeoutMs: 5_000 },
   });
   return daemon;
@@ -153,6 +153,12 @@ async function waitFor(
   );
 }
 
+function firstPendingQuestionId(broker: QuestionService): string | undefined {
+  return (broker as unknown as {
+    _pending: Map<string, { questionId: string }>;
+  })._pending.values().next().value?.questionId;
+}
+
 // --- Tests -----------------------------------------------------------------
 
 describe('Question reverse-RPC: WS broadcast → REST resolve → Promise settle (W8.2)', () => {
@@ -162,7 +168,7 @@ describe('Question reverse-RPC: WS broadcast → REST resolve → Promise settle
     const { ws, received } = await openSubscriber(r, sid);
 
     const broker = r.services.invokeFunction(
-      (a) => a.get(IQuestionBroker) as DaemonQuestionBroker,
+      (a) => a.get(IQuestionService) as QuestionService,
     );
 
     const inProcReq: QuestionRequest = {
@@ -249,6 +255,108 @@ describe('Question reverse-RPC: WS broadcast → REST resolve → Promise settle
     ws.close();
   });
 
+  it('GET pending questions lists recoverable requests and omits dismissed ones', async () => {
+    const r = await bootDaemon();
+    const sid = await createSession(r);
+
+    const broker = r.services.invokeFunction(
+      (a) => a.get(IQuestionService) as QuestionService,
+    );
+    const pending = broker.request({
+      sessionId: sid,
+      agentId: 'main',
+      turnId: 2,
+      toolCallId: 'tc_question_recovery',
+      questions: [
+        {
+          question: 'Continue?',
+          options: [{ label: 'Yes' }, { label: 'No' }],
+          otherLabel: 'Other',
+        },
+      ],
+    });
+
+    let questionId: string | undefined;
+    try {
+      const res = await appOf(r).inject({
+        method: 'GET',
+        url: `/api/v1/sessions/${sid}/questions?status=pending`,
+      });
+      const env = envelopeOf<{
+        items: Array<{
+          question_id: string;
+          session_id: string;
+          turn_id?: number;
+          tool_call_id?: string;
+          questions: Array<{
+            id: string;
+            question: string;
+            options: Array<{ id: string; label: string }>;
+            allow_other?: boolean;
+            other_label?: string;
+          }>;
+          created_at: string;
+          expires_at: string;
+        }>;
+      }>(res.json());
+      expect(env.code).toBe(0);
+      expect(env.data?.items).toHaveLength(1);
+
+      const item = env.data?.items[0];
+      expect(item).toBeDefined();
+      questionId = item?.question_id;
+      expect(item?.session_id).toBe(sid);
+      expect(item?.turn_id).toBe(2);
+      expect(item?.tool_call_id).toBe('tc_question_recovery');
+      expect(item?.questions[0]).toMatchObject({
+        id: 'q_0',
+        question: 'Continue?',
+        allow_other: true,
+        other_label: 'Other',
+      });
+      expect(item?.questions[0]?.options).toEqual([
+        { id: 'opt_0_0', label: 'Yes' },
+        { id: 'opt_0_1', label: 'No' },
+      ]);
+      expect(item?.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(item?.expires_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+      const dismissed = await appOf(r).inject({
+        method: 'POST',
+        url: `/api/v1/sessions/${sid}/questions/${questionId}:dismiss`,
+        payload: {},
+      });
+      expect(envelopeOf<{ dismissed: boolean }>(dismissed.json()).code).toBe(40909);
+      await pending;
+
+      const after = await appOf(r).inject({
+        method: 'GET',
+        url: `/api/v1/sessions/${sid}/questions?status=pending`,
+      });
+      const afterEnv = envelopeOf<{ items: unknown[] }>(after.json());
+      expect(afterEnv.code).toBe(0);
+      expect(afterEnv.data?.items).toEqual([]);
+    } finally {
+      const cleanupId = questionId ?? firstPendingQuestionId(broker);
+      if (cleanupId !== undefined && broker.isPending(cleanupId)) {
+        broker.dismiss(cleanupId);
+      }
+      await pending.catch(() => undefined);
+    }
+  });
+
+  it('GET pending questions rejects unsupported status', async () => {
+    const r = await bootDaemon();
+    const sid = await createSession(r);
+
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${sid}/questions?status=answered`,
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(40001);
+  });
+
   it.each([
     [
       'single kind',
@@ -293,7 +401,7 @@ describe('Question reverse-RPC: WS broadcast → REST resolve → Promise settle
       const sid = await createSession(r);
 
       const broker = r.services.invokeFunction(
-        (a) => a.get(IQuestionBroker) as DaemonQuestionBroker,
+        (a) => a.get(IQuestionService) as QuestionService,
       );
       const pending = broker.request({
         sessionId: sid,
@@ -332,7 +440,7 @@ describe('Question reverse-RPC: WS broadcast → REST resolve → Promise settle
     const { ws, received } = await openSubscriber(r, sid);
 
     const broker = r.services.invokeFunction(
-      (a) => a.get(IQuestionBroker) as DaemonQuestionBroker,
+      (a) => a.get(IQuestionService) as QuestionService,
     );
     const pending = broker.request({
       sessionId: sid,
@@ -405,7 +513,7 @@ describe('Question reverse-RPC: WS broadcast → REST resolve → Promise settle
     const sid = await createSession(r);
 
     const broker = r.services.invokeFunction(
-      (a) => a.get(IQuestionBroker) as DaemonQuestionBroker,
+      (a) => a.get(IQuestionService) as QuestionService,
     );
     const pending = broker.request({
       sessionId: sid,
@@ -447,7 +555,7 @@ describe('Question reverse-RPC: WS broadcast → REST resolve → Promise settle
     const sid = await createSession(r);
 
     const broker = r.services.invokeFunction(
-      (a) => a.get(IQuestionBroker) as DaemonQuestionBroker,
+      (a) => a.get(IQuestionService) as QuestionService,
     );
     const _pending = broker.request({
       sessionId: sid,
@@ -484,7 +592,7 @@ describe('Question reverse-RPC: WS broadcast → REST resolve → Promise settle
     const { ws, received } = await openSubscriber(r, sid);
 
     const broker = r.services.invokeFunction(
-      (a) => a.get(IQuestionBroker) as DaemonQuestionBroker,
+      (a) => a.get(IQuestionService) as QuestionService,
     );
     (broker as unknown as { _timeoutMs: number })._timeoutMs = 40;
 

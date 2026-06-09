@@ -372,4 +372,37 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 }
 .qbtn.pri:hover:not(:disabled) { background: var(--blue2); }
 .qbtn:disabled { opacity: 0.45; cursor: default; }
+
+/* =========================================================================
+   MOBILE (≤640px): bigger option taps, comfortable nav, and full-width footer
+   buttons that are ≥44px tall so Submit/Dismiss are easy to hit. The card is
+   already full-width inside ConversationPane; we only resize controls.
+   ========================================================================= */
+@media (max-width: 640px) {
+  .qh { padding: 9px 12px; flex-wrap: wrap; row-gap: 6px; }
+  .qnav { min-height: 34px; padding: 5px 12px; font-size: 12px; border-radius: 6px; }
+
+  .qbody { padding: 14px; }
+  .qtext { font-size: 14px; }
+
+  /* Options → taller, finger-friendly rows; long descriptions wrap below. */
+  .qopt {
+    min-height: 44px;
+    padding: 10px 12px;
+    font-size: 13.5px;
+    border-radius: 8px;
+    flex-wrap: wrap;
+  }
+  .qopt-desc { flex-basis: 100%; padding-left: 28px; }
+  .other-input { flex-basis: 100%; min-height: 28px; }
+
+  /* Footer → full-width stacked buttons, Submit on top. */
+  .qfooter { flex-direction: column; gap: 8px; padding: 12px 14px max(14px, env(safe-area-inset-bottom)); }
+  .qbtn {
+    width: 100%;
+    min-height: 46px;
+    font-size: 14px;
+    border-radius: 8px;
+  }
+}
 </style>

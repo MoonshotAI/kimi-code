@@ -83,3 +83,14 @@ export type {
 
 // ─── Dependency injection container ────────────────────────────────────────
 export * from './di';
+
+// ─── Base — Event<T> / Emitter<T> ──────────────────────────────────────────
+// NOTE: only `Emitter` is re-exported from the top-level barrel — the new
+// VSCode-style `Event<T>` symbol collides with `./rpc`'s `Event` (agent-core
+// protocol Event union, exported via `export * from './rpc'` above). Callers
+// that need the emitter `Event<T>` type import it from the explicit sub-path
+// `@moonshot-ai/agent-core/base/common/event` (declared in `package.json`
+// `exports`). This keeps the existing top-level `Event` semantics stable for
+// consumers like `services/src/event/event.ts` while letting new code reach
+// for the emitter type without naming clashes.
+export { Emitter } from './base/common/event';

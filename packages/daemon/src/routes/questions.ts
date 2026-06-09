@@ -1,11 +1,14 @@
 /**
- * `/sessions/{sid}/questions/{qid}*` REST routes (Chain 6 / P1.6, W8.2).
+ * `/sessions/{sid}/questions*` REST routes.
  *
- * 2 endpoints (REST.md §3.6), both serviced by a SINGLE Fastify route handler
+ * 3 endpoints (REST.md §3.6), with the POST endpoints serviced by a SINGLE
+ * Fastify route handler
  * because Fastify cannot disambiguate `:question_id` vs `:question_id:dismiss`
- * on the same path prefix (the W7 prompts `:abort` worked because it was the
- * sole tail; questions has both a bare resolve and a `:dismiss` so we MUST
- * use the tail-parser for both):
+ * on the same path prefix. Questions has both a bare resolve and a `:dismiss`,
+ * so we use the tail parser for both:
+ *
+ *   GET    /sessions/{sid}/questions?status=pending
+ *     data: { items: QuestionRequest[] }
  *
  *   POST   /sessions/{sid}/questions/{qid}             (resolve)
  *     body: QuestionResponse (5-kind answers map + method?+ note?)
@@ -15,10 +18,9 @@
  *     body: empty                                          dismiss)
  *     envelope: code: 40909, data: { dismissed: true, dismissed_at }
  *
- * **Fastify `:dismiss` action-suffix workaround** (W7 `:abort` precedent):
- * we capture the tail segment as `:tail` and parse via `lastIndexOf(':')`.
- * The pattern is now in use by 3 callers (prompts:abort + questions:resolve +
- * questions:dismiss); W9 may want to extract a helper.
+ * **Fastify `:dismiss` action-suffix workaround**: we capture the tail segment
+ * as `:tail` and parse via `lastIndexOf(':')`. This keeps bare resolve and
+ * `:dismiss` on one route without ambiguous Fastify path syntax.
  *
  * Error mapping (REST.md §3.6):
  *   - 40404 (question.not_found)
@@ -26,32 +28,39 @@
  *   - 40001 (validation.failed)         — bad body via Zod
  *   - 40909 (question.dismissed)        — successful dismiss envelope
  *
- * **Anti-corruption**: route resolves `IQuestionBroker` via the accessor;
+ * **Anti-corruption**: route resolves `IQuestionService` via the accessor;
  * no SDK imports.
  */
 
 import {
   ErrorCode,
+  listPendingQuestionsQuerySchema,
+  listPendingQuestionsResponseSchema,
   questionResolveRequestSchema,
   questionResolveResultSchema,
-  type QuestionResolveRequest,
-  type QuestionResolveResult,
 } from '@moonshot-ai/protocol';
 import {
-  IQuestionBroker,
+  IQuestionService,
   questionToAgentCoreResponse,
 } from '@moonshot-ai/services';
 import { z } from 'zod';
 
 import type { IInstantiationService } from '@moonshot-ai/agent-core';
 
-import { errEnvelope, okEnvelope } from '../envelope.js';
-import { buildRouteSchema } from '../middleware/schema.js';
-import { validateParams } from '../middleware/validate.js';
-import { parseActionSuffix } from './action-suffix.js';
-import { DaemonQuestionBroker } from '../services/question-broker.js';
+import { errEnvelope, okEnvelope } from '../envelope';
+import { defineRoute } from '../middleware/defineRoute';
+import { parseActionSuffix } from './action-suffix';
+import { QuestionService } from '#/services/question';
 
 interface QuestionRouteHost {
+  get(
+    path: string,
+    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
+    handler: (
+      req: { id: string; query: unknown; params: unknown },
+      reply: { send(payload: unknown): unknown },
+    ) => Promise<void> | void,
+  ): unknown;
   post(
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> },
@@ -62,6 +71,10 @@ interface QuestionRouteHost {
   ): unknown;
 }
 
+const sessionIdParamSchema = z.object({
+  session_id: z.string().min(1),
+});
+
 const tailParamsSchema = z.object({
   session_id: z.string().min(1),
   tail: z.string().min(1),
@@ -71,22 +84,63 @@ export function registerQuestionsRoutes(
   app: QuestionRouteHost,
   ix: IInstantiationService,
 ): void {
-  // Single route capturing both the resolve and dismiss paths via `:tail`.
-  app.post(
-    '/sessions/:session_id/questions/:tail',
+  const listRoute = defineRoute(
     {
-      preHandler: [validateParams(tailParamsSchema)],
-      schema: buildRouteSchema({
-        description: 'Resolve or dismiss a question',
-        tags: ['questions'],
-        operationId: 'resolveOrDismissQuestion',
-        params: tailParamsSchema,
-        body: questionResolveRequestSchema,
-        response: { 200: questionResolveResultSchema },
-      }),
+      method: 'GET',
+      path: '/sessions/{session_id}/questions',
+      params: sessionIdParamSchema,
+      querystring: listPendingQuestionsQuerySchema,
+      success: { data: listPendingQuestionsResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {
+          detailsSchema: z.array(
+            z.object({ path: z.string(), message: z.string() }),
+          ),
+        },
+      },
+      description: 'List pending questions for a session',
+      tags: ['questions'],
     },
     async (req, reply) => {
-      const { tail } = req.params as { session_id: string; tail: string };
+      const { session_id } = req.params;
+      const broker = ix.invokeFunction((a) =>
+        a.get(IQuestionService) as QuestionService,
+      );
+      reply.send(okEnvelope({ items: broker.listPending(session_id) }, req.id));
+    },
+  );
+  app.get(
+    listRoute.path,
+    listRoute.options,
+    listRoute.handler as Parameters<QuestionRouteHost['get']>[2],
+  );
+
+  const route = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/{session_id}/questions/{tail}',
+      params: tailParamsSchema,
+      success: { data: questionResolveResultSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {
+          detailsSchema: z.array(
+            z.object({ path: z.string(), message: z.string() }),
+          ),
+        },
+        [ErrorCode.QUESTION_NOT_FOUND]: {},
+        [ErrorCode.APPROVAL_ALREADY_RESOLVED]: { dataSchema: z.object({ resolved: z.literal(false) }) },
+        [ErrorCode.QUESTION_DISMISSED]: {
+          dataSchema: z.object({
+            dismissed: z.boolean(),
+            dismissed_at: z.string(),
+          }),
+        },
+      },
+      description: 'Resolve or dismiss a question',
+      tags: ['questions'],
+    },
+    async (req, reply) => {
+      const { tail } = req.params;
       const parsed = parseActionSuffix({
         tail,
         allowedActions: ['dismiss'] as const,
@@ -115,7 +169,7 @@ export function registerQuestionsRoutes(
       }
 
       const broker = ix.invokeFunction((a) =>
-        a.get(IQuestionBroker) as DaemonQuestionBroker,
+        a.get(IQuestionService) as QuestionService,
       );
 
       if (!broker.isPending(questionId)) {
@@ -159,11 +213,12 @@ export function registerQuestionsRoutes(
           message: issue.message,
         }));
         const first = details[0];
-        const msg = first === undefined
-          ? 'validation failed'
-          : first.path === ''
-            ? first.message
-            : `${first.path}: ${first.message}`;
+        const msg =
+          first === undefined
+            ? 'validation failed'
+            : first.path === ''
+              ? first.message
+              : `${first.path}: ${first.message}`;
         reply.send({
           code: ErrorCode.VALIDATION_FAILED,
           msg,
@@ -174,16 +229,22 @@ export function registerQuestionsRoutes(
         return;
       }
 
-      const body = bodyParse.data as QuestionResolveRequest;
+      const body = bodyParse.data;
       const inProc = questionToAgentCoreResponse(body);
       broker.resolve(questionId, inProc);
       broker.markResolved(questionId);
 
-      const result: QuestionResolveResult = {
+      const result = {
         resolved: true,
         resolved_at: new Date().toISOString(),
       };
       reply.send(okEnvelope(result, req.id));
     },
+  );
+
+  app.post(
+    route.path,
+    route.options,
+    route.handler as Parameters<QuestionRouteHost['post']>[2],
   );
 }

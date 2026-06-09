@@ -22,6 +22,7 @@ import type {
 import { createInitialState, reduceAppEvent } from '../api/daemon/eventReducer';
 import type { KimiClientState } from '../api/daemon/eventReducer';
 import { toAppEvent } from '../api/daemon/mappers';
+import { parseDiff } from '../lib/parseDiff';
 import { messagesToTurns } from './messagesToTurns';
 import type {
   ActivityState,
@@ -30,6 +31,7 @@ import type {
   ConnectionState,
   ConversationStatus,
   DiffLine,
+  DiffViewLine,
   PermissionMode,
   Session,
   TaskItem,
@@ -49,7 +51,11 @@ const PERMISSION_STORAGE_KEY = 'kimi-web.permission';
 const ACTIVE_WORKSPACE_KEY = 'kimi-active-workspace';
 const THINKING_STORAGE_KEY = 'kimi-web.thinking';
 const PLAN_MODE_STORAGE_KEY = 'kimi-web.plan-mode';
+const THEME_STORAGE_KEY = 'kimi-web.theme';
 const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+/** UI theme: 'terminal' = today's default line look, 'modern' = bubbles everywhere. */
+export type Theme = 'terminal' | 'modern';
 
 function loadPermissionFromStorage(): PermissionMode {
   try {
@@ -98,6 +104,24 @@ function loadPlanModeFromStorage(): boolean {
 function savePlanModeToStorage(v: boolean): void {
   try {
     localStorage.setItem(PLAN_MODE_STORAGE_KEY, v ? 'true' : 'false');
+  } catch {
+    // ignore
+  }
+}
+
+function loadThemeFromStorage(): Theme {
+  try {
+    const v = localStorage.getItem(THEME_STORAGE_KEY);
+    if (v === 'terminal' || v === 'modern') return v;
+  } catch {
+    // ignore
+  }
+  return 'terminal';
+}
+
+function saveThemeToStorage(v: Theme): void {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, v);
   } catch {
     // ignore
   }
@@ -197,6 +221,39 @@ const rawState: ExtendedState = reactive({
 // Models + Providers reactive state (lazy-loaded, cached)
 const models = ref<AppModel[]>([]);
 const providers = ref<AppProvider[]>([]);
+
+// ~/diff line-by-line view: the file the user tapped + its parsed unified diff.
+// Loaded on demand via loadFileDiff(); cleared when the file list is shown.
+const selectedDiffPath = ref<string | null>(null);
+const fileDiffLines = ref<DiffViewLine[]>([]);
+const fileDiffLoading = ref(false);
+
+// ---------------------------------------------------------------------------
+// Theme (Terminal default vs Modern bubbles). Persisted to localStorage and
+// mirrored onto <html data-theme> so fixed/teleported dialogs + sheets inherit.
+// ---------------------------------------------------------------------------
+const theme = ref<Theme>(loadThemeFromStorage());
+
+/** Reflect the active theme onto <html data-theme>. jsdom-safe. */
+function applyThemeToDocument(t: Theme): void {
+  if (typeof document === 'undefined' || !document.documentElement) return;
+  document.documentElement.dataset.theme = t;
+}
+
+// Sync on every change AND immediately (so the very first paint is themed).
+watch(theme, applyThemeToDocument, { immediate: true });
+
+/** Set the active theme and persist it. */
+function setTheme(t: Theme): void {
+  if (t !== 'terminal' && t !== 'modern') return;
+  theme.value = t;
+  saveThemeToStorage(t);
+}
+
+/** Flip Terminal ↔ Modern. */
+function toggleTheme(): void {
+  setTheme(theme.value === 'modern' ? 'terminal' : 'modern');
+}
 
 // Singleton WS connection
 let eventConn: KimiEventConnection | null = null;
@@ -672,7 +729,8 @@ const status = computed<ConversationStatus>(() => {
   };
 });
 
-const fileDiff = computed<DiffLine[]>(() => []);
+/** Parsed unified-diff lines for the file selected in the ~/diff tab. */
+const fileDiff = computed<DiffViewLine[]>(() => fileDiffLines.value);
 
 /** Cumulative cost (USD) for the active session, from daemon usage. 0 if unknown. */
 const sessionCost = computed<number>(() => {
@@ -909,6 +967,39 @@ watch(activity, (act) => {
 // Actions
 // ---------------------------------------------------------------------------
 
+/**
+ * Load + parse the unified diff for one changed file in the active session,
+ * storing the result for the ~/diff line-by-line view. Defensive: on error
+ * (or no active session) it leaves the diff empty but still records the path
+ * so the panel opens with an empty state instead of silently doing nothing.
+ */
+async function loadFileDiff(path: string): Promise<void> {
+  const sid = rawState.activeSessionId;
+  if (!sid) return;
+  selectedDiffPath.value = path;
+  fileDiffLines.value = [];
+  fileDiffLoading.value = true;
+  try {
+    const api = getKimiWebApi();
+    const result = await api.getFileDiff(sid, path);
+    // Guard against a stale response when the user tapped another file.
+    if (selectedDiffPath.value !== path) return;
+    fileDiffLines.value = parseDiff(result.diff);
+  } catch (err) {
+    if (selectedDiffPath.value === path) fileDiffLines.value = [];
+    rawState.warnings = [...rawState.warnings, `loadFileDiff failed: ${String(err)}`];
+  } finally {
+    if (selectedDiffPath.value === path) fileDiffLoading.value = false;
+  }
+}
+
+/** Close the ~/diff line-by-line view and return to the changed-file list. */
+function clearFileDiff(): void {
+  selectedDiffPath.value = null;
+  fileDiffLines.value = [];
+  fileDiffLoading.value = false;
+}
+
 /** Load git status for a session — defensive, never throws */
 async function loadGitStatus(sessionId: string): Promise<void> {
   try {
@@ -1100,6 +1191,8 @@ async function getFsHome(): Promise<{ home: string; recentRoots: string[] }> {
 async function selectSession(sessionId: string): Promise<void> {
   try {
     rawState.activeSessionId = sessionId;
+    // A diff belongs to the session it was loaded from — drop it on switch.
+    clearFileDiff();
 
     // NOTE: persisted sessions are directly promptable on the current daemon —
     // selecting one and sending a message just works, no re-activation needed.
@@ -1716,6 +1809,8 @@ export function useKimiWebClient() {
     status,
     sessionCost,
     fileDiff,
+    selectedDiffPath,
+    fileDiffLoading,
     changes,
     gitInfo,
     changesByPath,
@@ -1736,6 +1831,11 @@ export function useKimiWebClient() {
     // Model + Provider reactive state
     models,
     providers,
+
+    // Theme
+    theme,
+    setTheme,
+    toggleTheme,
 
     // Actions
     load,
@@ -1775,6 +1875,8 @@ export function useKimiWebClient() {
     unqueue,
     searchFiles,
     loadGitStatus,
+    loadFileDiff,
+    clearFileDiff,
 
     // File system actions
     listDir,

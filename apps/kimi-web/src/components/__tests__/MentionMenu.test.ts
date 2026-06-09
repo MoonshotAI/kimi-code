@@ -50,4 +50,63 @@ describe('MentionMenu', () => {
     const distinct = new Set(svgs);
     expect(distinct.size).toBeGreaterThanOrEqual(4);
   });
+
+  it('renders one consistently-sized inline SVG per row', () => {
+    const w = render();
+    for (const icon of w.findAll('.mention-icon')) {
+      const svg = icon.find('svg');
+      expect(svg.exists()).toBe(true);
+      expect(svg.attributes('viewBox')).toBe('0 0 16 16');
+    }
+  });
+
+  // Each extension category should map to its own glyph. We assert by rendering
+  // representative rows and grouping rows that share an identical icon SVG.
+  it('maps every extension category to the correct icon', () => {
+    // [path, expected category key] — rows in the same category share one SVG.
+    const cases: Array<[string, string]> = [
+      ['src/api/client.ts', 'code'],
+      ['app.vue', 'code'],
+      ['main.py', 'code'],
+      ['lib.rs', 'code'],
+      ['data.json', 'code'],
+      ['style.css', 'code'],
+      ['index.html', 'code'],
+      ['schema.sql', 'code'],
+      ['config.yaml', 'code'],
+      ['run.sh', 'code'],
+      ['README.md', 'doc'],
+      ['notes.txt', 'doc'],
+      ['spec.pdf', 'doc'],
+      ['logo.png', 'image'],
+      ['photo.jpg', 'image'],
+      ['icon.svg', 'image'],
+      ['anim.gif', 'image'],
+      ['pic.webp', 'image'],
+      ['src/components/', 'folder'],
+      ['LICENSE', 'generic'],
+      ['Makefile', 'generic'],
+    ];
+    const rowItems: FileItem[] = cases.map(([path]) => ({
+      path,
+      name: path.replace(/\/$/, '').split('/').pop() || path,
+    }));
+    const w = render({ items: rowItems });
+    const icons = w.findAll('.mention-icon').map((i) => i.html());
+
+    // Build category → set-of-SVGs. Each category must use exactly one glyph,
+    // and the glyphs across categories must all differ.
+    const byCat = new Map<string, Set<string>>();
+    cases.forEach(([, cat], i) => {
+      const set = byCat.get(cat) ?? new Set<string>();
+      set.add(icons[i]!);
+      byCat.set(cat, set);
+    });
+
+    for (const [cat, set] of byCat) {
+      expect(set.size, `category "${cat}" should use a single glyph`).toBe(1);
+    }
+    const perCategoryGlyph = [...byCat.values()].map((s) => [...s][0]!);
+    expect(new Set(perCategoryGlyph).size, 'each category needs a distinct glyph').toBe(byCat.size);
+  });
 });

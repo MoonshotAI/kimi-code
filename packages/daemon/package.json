@@ -15,10 +15,21 @@
   },
   "type": "module",
   "imports": {
-    "#/*": [
-      "./src/*.ts",
-      "./src/*/index.ts"
-    ]
+    "#/services/approval": "./src/services/approval/index.ts",
+    "#/services/approval/*": "./src/services/approval/*.ts",
+    "#/services/fileStore": "./src/services/fileStore/index.ts",
+    "#/services/fileStore/*": "./src/services/fileStore/*.ts",
+    "#/services/fs": "./src/services/fs/index.ts",
+    "#/services/fs/*": "./src/services/fs/*.ts",
+    "#/services/gateway": "./src/services/gateway/index.ts",
+    "#/services/gateway/*": "./src/services/gateway/*.ts",
+    "#/services/logger": "./src/services/logger/index.ts",
+    "#/services/logger/*": "./src/services/logger/*.ts",
+    "#/services/question": "./src/services/question/index.ts",
+    "#/services/question/*": "./src/services/question/*.ts",
+    "#/services/workspace": "./src/services/workspace/index.ts",
+    "#/services/workspace/*": "./src/services/workspace/*.ts",
+    "#/*": "./src/*.ts"
   },
   "exports": {
     ".": {

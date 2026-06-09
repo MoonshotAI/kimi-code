@@ -80,5 +80,34 @@ const summary = () => {
   color: var(--dim);
   font-size: 11px;
   line-height: 1.6;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.out > div { white-space: pre; }
+
+/* ---- Mobile: full-width rows, comfortable padding, ≥44px Stop tap target,
+        long task output scrolls horizontally instead of breaking the layout. ---- */
+@media (max-width: 640px) {
+  .tfull { padding: 10px 12px 16px; }
+  .trow {
+    padding: 12px 12px;
+    border-radius: 8px;
+    margin-bottom: 8px;
+  }
+  .top { flex-wrap: wrap; row-gap: 6px; }
+  .tn { font-size: 13px; }
+  .ts { font-size: 11px; }
+  /* Stop → a real tap target: pulled to a new line if the row wraps, ≥44px tall. */
+  .stop {
+    margin-left: auto;
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+  }
+  .meta { padding-left: 0; font-size: 12px; }
+  .out { margin-left: 0; font-size: 12px; }
 }
 </style>

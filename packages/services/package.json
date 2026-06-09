@@ -2,7 +2,7 @@
   "name": "@moonshot-ai/services",
   "version": "0.1.0",
   "private": true,
-  "description": "In-process service container: DI broker interfaces + HarnessBridge for the kimi-code daemon.",
+  "description": "In-process service container for the kimi-code daemon: typed DI services + CoreProcessService in-process RPC adapter.",
   "license": "MIT",
   "author": "Moonshot AI",
   "repository": {

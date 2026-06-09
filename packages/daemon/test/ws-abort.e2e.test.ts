@@ -2,7 +2,7 @@
  * WS abort + REST/WS abort symmetry e2e (W7.3 / Chain 4b / P1.4b).
  *
  * **Bootstrap strategy**: spawn the real daemon, register an active prompt
- * via `PromptServiceImpl._injectActiveForTest` (avoids running a real
+ * via `PromptService._injectActiveForTest` (avoids running a real
  * agent-core prompt), then exercise:
  *   1. WS `abort` control message → server publishes `prompt.aborted`
  *      synthetic event + sends ack with `aborted: true`.
@@ -17,7 +17,7 @@
  *      handler (`IPromptService.abort`). After a REST abort, a WS abort
  *      with the SAME prompt id returns idempotent success. And vice versa.
  *
- * The synthesized `prompt.aborted` event flows through IEventBus → WS
+ * The synthesized `prompt.aborted` event flows through IEventService → WS
  * broadcast so subscribers see it.
  */
 
@@ -29,7 +29,7 @@ import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
-import { IPromptService, PromptServiceImpl } from '@moonshot-ai/services';
+import { IPromptService, PromptService } from '@moonshot-ai/services';
 
 import { IRestGateway, startDaemon, type RunningDaemon } from '../src';
 
@@ -61,7 +61,7 @@ async function bootDaemon(): Promise<RunningDaemon> {
     port: 0,
     lockPath,
     logger: pino({ level: 'silent' }),
-    bridgeOptions: { homeDir: bridgeHome },
+    coreProcessOptions: { homeDir: bridgeHome },
     wsGatewayOptions: { pingIntervalMs: 5_000, pongTimeoutMs: 5_000 },
   });
   return daemon;
@@ -114,7 +114,7 @@ function injectActivePrompt(
   turnId: number | null,
 ): void {
   const impl = r.services.invokeFunction(
-    (a) => a.get(IPromptService) as PromptServiceImpl,
+    (a) => a.get(IPromptService) as PromptService,
   );
   impl._injectActiveForTest(sid, promptId, turnId);
 }

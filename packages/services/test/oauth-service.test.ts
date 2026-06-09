@@ -1,5 +1,5 @@
 /**
- * `OAuthServiceImpl` (P2.7) unit tests.
+ * `OAuthService` (P2.7) unit tests.
  *
  * Hermetic: a mock `KimiAuthFacade` is injected so we don't need a real
  * OAuth host on the network. The mock's `login()` exposes a deferred device
@@ -34,7 +34,8 @@ import {
 } from '@moonshot-ai/kimi-code-oauth';
 import type { KimiAuthFacade } from '@moonshot-ai/kimi-code-sdk';
 
-import { OAuthServiceImpl } from '../src/impls/oauth-service-impl';
+import { IEnvironmentService } from '../src/environment/environment';
+import { OAuthService } from '../src/oauth/oauthService';
 
 interface LoginCall {
   providerName: string | undefined;
@@ -99,22 +100,23 @@ function fakeDeviceAuth(overrides: Partial<DeviceAuthorization> = {}): DeviceAut
 
 async function flushMicrotasks(): Promise<void> {
   // Two ticks is enough to settle the .then / .catch chain inside
-  // OAuthServiceImpl.startLogin.
+  // OAuthService.startLogin.
   await Promise.resolve();
   await Promise.resolve();
 }
 
-function makeImpl(): { impl: OAuthServiceImpl; mock: MockFacade } {
+function makeImpl(): { impl: OAuthService; mock: MockFacade } {
   const mock = makeMockFacade();
-  const impl = new OAuthServiceImpl({
+  const env: IEnvironmentService = {
+    _serviceBrand: undefined,
     homeDir: '/tmp/oauth-test',
     configPath: '/tmp/oauth-test/config.toml',
-    authFacade: mock.facade,
-  });
+  };
+  const impl = OAuthService._createForTest(env, mock.facade);
   return { impl, mock };
 }
 
-describe('OAuthServiceImpl.startLogin', () => {
+describe('OAuthService.startLogin', () => {
   it('returns flow_id + verification URLs once the facade fires onDeviceCode', async () => {
     const { impl, mock } = makeImpl();
 
@@ -149,7 +151,7 @@ describe('OAuthServiceImpl.startLogin', () => {
   });
 });
 
-describe('OAuthServiceImpl.getFlow', () => {
+describe('OAuthService.getFlow', () => {
   it('returns undefined before any flow is started', () => {
     const { impl } = makeImpl();
     expect(impl.getFlow()).toBeUndefined();
@@ -181,7 +183,7 @@ describe('OAuthServiceImpl.getFlow', () => {
   });
 });
 
-describe('OAuthServiceImpl — terminal transitions', () => {
+describe('OAuthService — terminal transitions', () => {
   it("'authenticated' on facade.login resolve", async () => {
     const { impl, mock } = makeImpl();
     const startPromise = impl.startLogin();
@@ -252,7 +254,7 @@ describe('OAuthServiceImpl — terminal transitions', () => {
   });
 });
 
-describe('OAuthServiceImpl.cancelLogin', () => {
+describe('OAuthService.cancelLogin', () => {
   it('cancels a pending flow and fires the AbortController', async () => {
     const { impl, mock } = makeImpl();
     const startPromise = impl.startLogin();
@@ -290,7 +292,7 @@ describe('OAuthServiceImpl.cancelLogin', () => {
   });
 });
 
-describe('OAuthServiceImpl — supersede (PLAN D6.4)', () => {
+describe('OAuthService — supersede (PLAN D6.4)', () => {
   it("flips the previous pending flow to 'cancelled' and mints a new flow_id", async () => {
     const { impl, mock } = makeImpl();
 
@@ -313,7 +315,7 @@ describe('OAuthServiceImpl — supersede (PLAN D6.4)', () => {
   });
 });
 
-describe('OAuthServiceImpl.logout', () => {
+describe('OAuthService.logout', () => {
   it('delegates to facade.logout and returns logged_out=true', async () => {
     const { impl, mock } = makeImpl();
     const result = await impl.logout();

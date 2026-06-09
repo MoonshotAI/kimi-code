@@ -243,7 +243,7 @@ export class InstantiationService implements IInstantiationService {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  createInstance<T>(descriptor: SyncDescriptor<T>): T;
+  createInstance<T>(descriptor: SyncDescriptor<T>, ...rest: any[]): T;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   createInstance<T>(ctor: new (...args: any[]) => T, ...rest: any[]): T;
   // Implementation. Two-way overload: either a `SyncDescriptor` packaging

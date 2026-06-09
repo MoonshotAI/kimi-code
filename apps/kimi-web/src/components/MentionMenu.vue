@@ -125,8 +125,18 @@ function fileIcon(item: FileItem): string {
 .mention-icon {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
   color: var(--faint);
   flex-shrink: 0;
+}
+
+/* Pin every glyph to the same 14px box so rows line up regardless of icon kind. */
+.mention-icon :deep(svg) {
+  width: 13px;
+  height: 13px;
+  display: block;
 }
 
 .mention-item:hover .mention-icon,

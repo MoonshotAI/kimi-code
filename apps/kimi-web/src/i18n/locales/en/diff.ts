@@ -5,4 +5,7 @@ export default {
   changeCount: '{count} changes',
   empty: 'No git changes / not provided by daemon',
   clean: 'Working tree clean, no changes',
+  back: 'Back',
+  loading: 'Loading diff…',
+  noDiff: 'No line changes for this file',
 } as const;

@@ -2,12 +2,15 @@ import { fileURLToPath } from 'node:url';
 
 import { defineConfig } from 'tsdown';
 
+import { rawTextPlugin } from '../../build/raw-text-plugin.mjs';
+
 export default defineConfig({
   entry: ['./src/index.ts'],
   format: ['esm'],
   dts: false,
   outDir: 'dist',
   clean: true,
+  plugins: [rawTextPlugin()],
   alias: {
     '@moonshot-ai/kimi-code-sdk': fileURLToPath(
       new URL('../node-sdk/src/index.ts', import.meta.url),

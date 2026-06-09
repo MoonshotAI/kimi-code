@@ -83,7 +83,7 @@ describe('TestInstantiationService (P1.3)', () => {
   it('main barrel `#/di/index` does NOT re-export `TestInstantiationService`', () => {
     // Subpath-only export contract: production code that imports the
     // package entry should not accidentally pull test scaffolding.
-    expect((mainBarrel as Record<string, unknown>).TestInstantiationService).toBeUndefined();
+    expect((mainBarrel as Record<string, unknown>)['TestInstantiationService']).toBeUndefined();
   });
 
   it('`createChild` returns a `TestInstantiationService` (narrowed from base)', () => {

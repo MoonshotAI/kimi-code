@@ -64,6 +64,24 @@ export interface DiffLine {
 }
 
 /**
+ * One row of a parsed UNIFIED diff (from the daemon's `fs:diff` action),
+ * rendered line-by-line in the ~/diff tab.
+ *
+ *   - `add`     — an added line (`+...`); has `newNo`.
+ *   - `del`     — a removed line (`-...`); has `oldNo`.
+ *   - `context` — an unchanged line; has both `oldNo` + `newNo`.
+ *   - `hunk`    — a `@@ -a,b +c,d @@` hunk header (no line numbers).
+ *
+ * `text` is the line content WITHOUT the leading +/-/space marker.
+ */
+export interface DiffViewLine {
+  type: 'add' | 'del' | 'context' | 'hunk';
+  text: string;
+  oldNo?: number;
+  newNo?: number;
+}
+
+/**
  * Discriminated ApprovalBlock union.
  *
  * Phase 3 will render each kind differently; for now ApprovalCard.vue handles

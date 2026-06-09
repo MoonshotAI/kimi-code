@@ -366,4 +366,48 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 .kbtn.pri:hover { background: var(--blue2); }
 .k { color: var(--faint); margin-left: 6px; font-size: 10px; }
 .kbtn.pri .k { color: rgba(255, 255, 255, 0.6); }
+
+/* =========================================================================
+   MOBILE (≤640px): the card spans the full chat column (no 33px left gutter),
+   inner previews scroll horizontally instead of overflowing the page, and the
+   action buttons become a 2-up grid of ≥44px tall, easily-tappable targets.
+   ========================================================================= */
+@media (max-width: 640px) {
+  .appr {
+    margin: 8px 0;
+    border-radius: 10px;
+  }
+  .ah { padding: 9px 12px; }
+
+  /* Diff / file code blocks: scroll sideways for long lines (mono stays pre). */
+  .diff,
+  .file-content {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .file-content { max-height: 50vh; }
+
+  /* Shell command wraps (already break-all) — give it room. */
+  .body-shell,
+  .body-chip,
+  .body-todo,
+  .body-generic { padding: 11px 12px; }
+
+  /* Actions → full-width stacked rows, each a tall ≥44px tap target. The
+     primary Approve sits on top; the rest stack below, separated by hairlines.
+     Stacking (vs. a cramped 4-up row) keeps every label legible at 360px. */
+  .abtn { flex-direction: column; }
+  .kbtn {
+    min-height: 46px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 12px;
+    font-size: 13px;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+  .kbtn:last-child { border-bottom: none; }
+  .k { font-size: 11px; }
+}
 </style>

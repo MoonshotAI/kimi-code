@@ -93,4 +93,28 @@ function isError(w: string): boolean {
   color: var(--ink);
   background: var(--hover, rgba(0, 0, 0, 0.05));
 }
+
+/* ---- Mobile: full-width stack with side margins, just above the composer. ----
+   The desktop corner card (min(380px, …)) is too narrow + right-anchored for a
+   phone; here we stretch edge-to-edge (minus 12px gutters) and bump the bottom
+   offset above the composer + its safe-area inset. Dismiss tap target grows. */
+@media (max-width: 640px) {
+  .toasts {
+    left: 12px;
+    right: 12px;
+    bottom: calc(76px + env(safe-area-inset-bottom));
+    width: auto;
+    max-height: 50vh;
+  }
+  .toast {
+    padding: 11px 11px 11px 13px;
+    border-radius: 10px;
+  }
+  .x {
+    width: 28px;
+    height: 28px;
+    margin: -4px -4px -4px 0;
+    justify-content: center;
+  }
+}
 </style>

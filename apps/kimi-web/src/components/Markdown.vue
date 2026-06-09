@@ -1,211 +1,177 @@
 <!-- apps/kimi-web/src/components/Markdown.vue -->
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { marked, Renderer } from 'marked';
-import type { Tokens } from 'marked';
 import { useI18n } from 'vue-i18n';
-import hljs from 'highlight.js/lib/core';
-import typescript from 'highlight.js/lib/languages/typescript';
-import javascript from 'highlight.js/lib/languages/javascript';
-import json from 'highlight.js/lib/languages/json';
-import python from 'highlight.js/lib/languages/python';
-import bash from 'highlight.js/lib/languages/bash';
-import shell from 'highlight.js/lib/languages/shell';
-import go from 'highlight.js/lib/languages/go';
-import rust from 'highlight.js/lib/languages/rust';
-import xml from 'highlight.js/lib/languages/xml';
-import css from 'highlight.js/lib/languages/css';
-import yaml from 'highlight.js/lib/languages/yaml';
-import markdownLang from 'highlight.js/lib/languages/markdown';
-import sql from 'highlight.js/lib/languages/sql';
-import diff from 'highlight.js/lib/languages/diff';
+import { MarkdownRender } from 'markstream-vue';
+// px-based CSS build (our app is px, not rem). Imported here so the styles
+// load wherever Markdown is used; scoped overrides below re-skin it to
+// Terminal Pro. Importing the same file from multiple components is a no-op
+// after the first (Vite dedups the CSS import).
+import 'markstream-vue/index.px.css';
 
 const { t } = useI18n();
 
-const props = defineProps<{ text: string }>();
+const props = withDefaults(
+  defineProps<{
+    text: string;
+    /**
+     * True only for the assistant turn that is actively streaming. It drives
+     * `final` (= !streaming). Combined with `smooth-streaming="auto"`, markstream
+     * animates the typewriter/fade reveal ONLY while a turn is live (final=false);
+     * a DONE turn (final=true) — including every message in a reopened historical
+     * session — renders statically with no re-stream animation.
+     */
+    streaming?: boolean;
+  }>(),
+  { streaming: false },
+);
+
+const final = computed(() => !props.streaming);
+
+// Light Shiki theme for code blocks. `github-light` matches Terminal Pro's
+// light surface (markstream's default is vitesse-dark/light; we force a light
+// theme and isDark=false so code never renders on a dark surface).
+const CODE_LIGHT_THEME = 'github-light';
+
+// Props forwarded to each code block. markstream's CodeBlock ships its own
+// header with a copy button + language label, so we keep the header + copy
+// button (preserving our previous per-block copy affordance) and turn off the
+// monaco-only buttons (expand / preview / font-size) that don't fit a chat.
+const codeBlockProps = {
+  showHeader: true,
+  showCopyButton: true,
+  showExpandButton: false,
+  showPreviewButton: false,
+  showCollapseButton: false,
+  showFontSizeButtons: false,
+};
 
 // ---------------------------------------------------------------------------
-// highlight.js: register only a curated set of common languages to keep the
-// bundle reasonable. tsx/jsx/html/vue are mapped onto existing grammars.
-// Registration runs once at module load (idempotent across instances).
+// ```diff fences are handled locally, NOT by markstream.
+//
+// markstream's parser treats a ```diff fence as a unified diff to *apply*: it
+// strips the +/- markers and DROPS deletion lines, rendering only the post-apply
+// result. For a chat where we want to *read* the diff (red/green +/- lines),
+// that is content loss. So we split the text into diff fences vs. everything
+// else: diff fences render with the local renderer below (markers + colours
+// preserved), all other markdown goes through markstream.
 // ---------------------------------------------------------------------------
 
-hljs.registerLanguage('typescript', typescript);
-hljs.registerLanguage('javascript', javascript);
-hljs.registerLanguage('json', json);
-hljs.registerLanguage('python', python);
-hljs.registerLanguage('bash', bash);
-hljs.registerLanguage('shell', shell);
-hljs.registerLanguage('go', go);
-hljs.registerLanguage('rust', rust);
-hljs.registerLanguage('xml', xml);
-hljs.registerLanguage('css', css);
-hljs.registerLanguage('yaml', yaml);
-hljs.registerLanguage('markdown', markdownLang);
-hljs.registerLanguage('sql', sql);
-hljs.registerLanguage('diff', diff);
+type Segment =
+  | { kind: 'md'; text: string }
+  | { kind: 'diff'; code: string };
 
-// Aliases for fence languages our chats commonly use.
-hljs.registerAliases(['ts', 'tsx'], { languageName: 'typescript' });
-hljs.registerAliases(['js', 'jsx', 'mjs', 'cjs'], { languageName: 'javascript' });
-hljs.registerAliases(['sh', 'zsh'], { languageName: 'bash' });
-hljs.registerAliases(['py'], { languageName: 'python' });
-hljs.registerAliases(['rs'], { languageName: 'rust' });
-hljs.registerAliases(['html', 'vue', 'htm'], { languageName: 'xml' });
-hljs.registerAliases(['yml'], { languageName: 'yaml' });
-hljs.registerAliases(['md', 'markdown'], { languageName: 'markdown' });
+// Match a fenced ```diff block (``` or ~~~, optional info after `diff`). The
+// closing fence must use the same marker. Capture group 2 is the body.
+const DIFF_FENCE_RE = /(^|\n)(?:```|~~~)diff\b[^\n]*\n([\s\S]*?)(?:\n)?(?:```|~~~)(?=\n|$)/g;
 
-// ---------------------------------------------------------------------------
-// Configure marked: GFM on, raw HTML escaped (sanitized)
-// ---------------------------------------------------------------------------
-
-// Create a custom renderer that escapes raw HTML blocks/inline
-const safeRenderer = new Renderer();
-
-// HTML-escape helper (used for plain/unknown code blocks)
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-// Custom code-block renderer: syntax-highlight known languages via hljs, and
-// special-case ```diff so added/removed lines get coloured gutters.
-// hljs operates on the raw (un-escaped) code text and returns escaped, safe
-// markup; unknown/plain blocks fall back to manual escaping.
-safeRenderer.code = function (token: Tokens.Code): string {
-  const raw = token.text ?? '';
-  const lang = (token.lang ?? '').trim().split(/\s+/)[0] ?? '';
-  const langClass = lang ? ` class="language-${escapeHtml(lang)}"` : '';
-
-  if (lang === 'diff') {
-    return `<pre><code${langClass}>${renderDiff(raw)}</code></pre>\n`;
+const segments = computed<Segment[]>(() => {
+  const text = props.text ?? '';
+  const out: Segment[] = [];
+  let lastIndex = 0;
+  DIFF_FENCE_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = DIFF_FENCE_RE.exec(text)) !== null) {
+    // Text before this diff fence (keep the leading newline the regex consumed
+    // as a boundary out of the markdown segment).
+    const lead = m[1] ?? '';
+    const before = text.slice(lastIndex, m.index) + (lead ? lead : '');
+    if (before.trim()) out.push({ kind: 'md', text: before });
+    out.push({ kind: 'diff', code: m[2] ?? '' });
+    lastIndex = DIFF_FENCE_RE.lastIndex;
   }
-
-  if (lang && hljs.getLanguage(lang)) {
-    try {
-      const out = hljs.highlight(raw, { language: lang, ignoreIllegals: true });
-      return `<pre><code${langClass}>${out.value}</code></pre>\n`;
-    } catch {
-      /* fall through to plain escaping */
-    }
-  }
-
-  return `<pre><code${langClass}>${escapeHtml(raw)}</code></pre>\n`;
-};
-
-// Render a ```diff block: wrap each line in a span keyed by +/- so CSS can
-// colour added/removed lines with a subtle left gutter. Content is escaped.
-function renderDiff(code: string): string {
-  return code
-    .split('\n')
-    .map((line) => {
-      const escaped = escapeHtml(line);
-      if (/^\+(?!\+\+)/.test(line)) return `<span class="diff-add">${escaped}</span>`;
-      if (/^-(?!--)/.test(line)) return `<span class="diff-del">${escaped}</span>`;
-      if (/^@@/.test(line)) return `<span class="diff-hunk">${escaped}</span>`;
-      return `<span class="diff-ctx">${escaped}</span>`;
-    })
-    .join('\n');
-}
-
-// Escape raw HTML blocks
-safeRenderer.html = function (token: Tokens.HTML) {
-  return token.text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-};
-
-// Open all links in new tab
-safeRenderer.link = function (token: Tokens.Link) {
-  const href = token.href ?? '';
-  const title = token.title ? ` title="${token.title}"` : '';
-  // token.text is the plain text representation of the link label
-  const text = token.text ?? href;
-  return `<a href="${href}"${title} target="_blank" rel="noopener noreferrer" class="md-link">${text}</a>`;
-};
-
-marked.use({ renderer: safeRenderer, gfm: true, breaks: true });
-
-// ---------------------------------------------------------------------------
-// Copy-button state per code block (keyed by index)
-// ---------------------------------------------------------------------------
-
-const copiedIndex = ref<number | null>(null);
-
-function copyCode(code: string, idx: number) {
-  navigator.clipboard.writeText(code).then(() => {
-    copiedIndex.value = idx;
-    setTimeout(() => { copiedIndex.value = null; }, 1400);
-  }).catch(() => {/* ignore */});
-}
-
-// ---------------------------------------------------------------------------
-// Render: parse markdown, then inject copy buttons into <pre><code> blocks
-// ---------------------------------------------------------------------------
-
-const rendered = computed<{ html: string; codeBlocks: string[] }>(() => {
-  const html = marked.parse(props.text, { gfm: true, breaks: true }) as string;
-
-  // Extract raw code content from pre>code blocks for copy buttons
-  const codeBlocks: string[] = [];
-  const injected = html.replace(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g, (_match, attrs, content) => {
-    const idx = codeBlocks.length;
-    // Strip hljs/diff token <span> wrappers, then decode HTML entities to
-    // recover the raw code text for the clipboard. &amp; is decoded last so
-    // sequences like "&amp;lt;" are not double-decoded.
-    const raw = content
-      .replace(/<[^>]+>/g, '')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .replace(/&amp;/g, '&');
-    codeBlocks.push(raw);
-
-    // Detect language from class e.g. class="language-ts"
-    const langMatch = attrs.match(/class="language-([^"]+)"/);
-    const lang = langMatch ? langMatch[1] : '';
-    const langLabel = lang ? `<span class="cb-lang">${lang}</span>` : '';
-
-    return `<div class="cb-wrap"><div class="cb-bar">${langLabel}<button class="cb-copy" data-idx="${idx}" title="${t('filePreview.copyCode')}">⧉</button></div><pre><code${attrs}>${content}</code></pre></div>`;
-  });
-
-  return { html: injected, codeBlocks };
+  const tail = text.slice(lastIndex);
+  if (tail.trim() || out.length === 0) out.push({ kind: 'md', text: tail });
+  return out;
 });
 
-// Handle copy-button clicks via event delegation on the root element
-function handleClick(e: MouseEvent) {
-  const btn = (e.target as Element).closest('[data-idx]') as HTMLElement | null;
-  if (!btn) return;
-  const idx = parseInt(btn.dataset.idx ?? '', 10);
-  if (!isNaN(idx) && rendered.value.codeBlocks[idx] !== undefined) {
-    copyCode(rendered.value.codeBlocks[idx]!, idx);
-    btn.textContent = '✓';
-    setTimeout(() => { btn.textContent = '⧉'; }, 1400);
-  }
+// Lines of a diff block, classed by +/- for colouring (escaped by Vue's text
+// interpolation in the template).
+function diffLines(code: string): { cls: string; text: string }[] {
+  return code.split('\n').map((line) => {
+    if (/^\+(?!\+\+)/.test(line)) return { cls: 'diff-add', text: line };
+    if (/^-(?!--)/.test(line)) return { cls: 'diff-del', text: line };
+    if (/^@@/.test(line)) return { cls: 'diff-hunk', text: line };
+    return { cls: 'diff-ctx', text: line };
+  });
+}
+
+// Copy state for local diff blocks (keyed by segment index).
+const copiedDiff = ref<number | null>(null);
+function copyDiff(code: string, idx: number) {
+  navigator.clipboard
+    .writeText(code)
+    .then(() => {
+      copiedDiff.value = idx;
+      setTimeout(() => {
+        copiedDiff.value = null;
+      }, 1400);
+    })
+    .catch(() => {
+      /* ignore */
+    });
 }
 </script>
 
 <template>
-  <!-- eslint-disable-next-line vue/no-v-html -->
-  <div class="md" v-html="rendered.html" @click="handleClick" />
+  <div class="md">
+    <template v-for="(seg, i) in segments" :key="i">
+      <!-- Non-diff markdown → markstream (smooth streaming + shiki) -->
+      <MarkdownRender
+        v-if="seg.kind === 'md'"
+        :content="seg.text"
+        mode="chat"
+        code-renderer="shiki"
+        :is-dark="false"
+        :code-block-light-theme="CODE_LIGHT_THEME"
+        :themes="[CODE_LIGHT_THEME]"
+        :code-block-props="codeBlockProps"
+        :final="final"
+        smooth-streaming="auto"
+      />
+
+      <!-- ```diff fence → local renderer (preserves +/- markers + colours) -->
+      <div v-else class="diff-wrap">
+        <div class="diff-bar">
+          <span class="diff-lang">diff</span>
+          <button class="diff-copy" :title="t('filePreview.copyCode')" @click="copyDiff(seg.code, i)">
+            {{ copiedDiff === i ? '✓' : '⧉' }}
+          </button>
+        </div>
+        <pre class="diff-pre"><code><span
+          v-for="(ln, j) in diffLines(seg.code)"
+          :key="j"
+          :class="ln.cls"
+        >{{ ln.text }}</span></code></pre>
+      </div>
+    </template>
+  </div>
 </template>
 
 <style scoped>
-/* Base prose */
+/* ---------------------------------------------------------------------------
+   Terminal Pro skin over markstream-vue.
+
+   markstream's CSS is namespaced under `.markstream-vue` / `.markdown-renderer`
+   so it does not leak globally; here we override those classes (scoped under
+   our `.md` container) to match the rest of the app: mono font, --ink text,
+   our spacing, a light --line-bordered code block, and the blue inline-code
+   chip. Overrides target the markstream classes via :deep().
+--------------------------------------------------------------------------- */
+
+/* Base prose — matched to the sidebar session-title size (12px). */
 .md {
   font-family: var(--mono);
-  font-size: 13px;
-  line-height: 1.65;
+  font-size: 12px;
+  line-height: 1.6;
   color: var(--text);
   word-break: break-word;
+}
+.md :deep(.markdown-renderer) {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
 }
 
 /* Headings */
@@ -238,8 +204,9 @@ function handleClick(e: MouseEvent) {
   margin: 0.15em 0;
 }
 
-/* Inline code */
-.md :deep(code) {
+/* Inline code — small blue chip (matches the old marked output) */
+.md :deep(:not(pre) > code),
+.md :deep(.inline-code) {
   font-family: var(--mono);
   font-size: 12px;
   background: var(--panel2);
@@ -249,141 +216,67 @@ function handleClick(e: MouseEvent) {
   border: 1px solid var(--line);
 }
 
-/* Code block wrapper injected by JS */
-.md :deep(.cb-wrap) {
-  position: relative;
+/* ---------------------------------------------------------------------------
+   Code blocks — light surface, 1px --line border, rounded, our language label
+   + copy button (markstream's built-in header).
+--------------------------------------------------------------------------- */
+.md :deep(.code-block-container) {
   margin: 0.6em 0;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: var(--panel);
   overflow: hidden;
 }
-
-.md :deep(.cb-bar) {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  padding: 3px 8px;
+.md :deep(.code-block-header) {
   background: var(--panel2);
   border-bottom: 1px solid var(--line);
-}
-
-.md :deep(.cb-lang) {
-  font-size: 10px;
+  padding: 3px 8px;
+  min-height: 0;
   color: var(--muted);
-  margin-right: auto;
+  font-size: 10px;
   letter-spacing: 0.04em;
 }
-
-.md :deep(.cb-copy) {
+.md :deep(.code-block-header *) {
+  color: var(--muted);
+  font-size: 10px;
+}
+/* Copy button in the header */
+.md :deep(.copy-button) {
+  color: var(--muted);
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--muted);
-  font-size: 13px;
-  padding: 0 2px;
-  line-height: 1;
-  font-family: var(--mono);
 }
-.md :deep(.cb-copy:hover) {
+.md :deep(.copy-button:hover) {
   color: var(--blue);
 }
-
-/* Fenced code blocks: pre>code inside cb-wrap */
-.md :deep(.cb-wrap pre) {
+.md :deep(.code-block-content),
+.md :deep(.markstream-pre) {
+  background: var(--panel);
+}
+.md :deep(.code-block-container pre),
+.md :deep(.markstream-pre) {
   margin: 0;
   padding: 10px 12px;
   overflow-x: auto;
-  background: var(--panel);
-}
-.md :deep(.cb-wrap pre code) {
   font-family: var(--mono);
   font-size: 12px;
-  color: var(--ink);
+}
+.md :deep(.code-block-container pre code) {
+  font-family: var(--mono);
+  font-size: 12px;
   background: none;
   border: none;
   padding: 0;
   border-radius: 0;
 }
 
-/* ---------------------------------------------------------------------------
-   highlight.js — LIGHT token palette (github-light-ish), Terminal Pro tones.
-   Tokens lean muted with Kimi-blue keywords; never a dark code theme.
---------------------------------------------------------------------------- */
-.md :deep(.hljs-comment),
-.md :deep(.hljs-quote) { color: var(--muted); font-style: italic; }
-
-.md :deep(.hljs-keyword),
-.md :deep(.hljs-selector-tag),
-.md :deep(.hljs-built_in),
-.md :deep(.hljs-literal),
-.md :deep(.hljs-doctag),
-.md :deep(.hljs-meta-keyword) { color: var(--blue); }
-
-.md :deep(.hljs-name),
-.md :deep(.hljs-section),
-.md :deep(.hljs-selector-id),
-.md :deep(.hljs-selector-class),
-.md :deep(.hljs-title) { color: var(--blue2); }
-
-.md :deep(.hljs-string),
-.md :deep(.hljs-regexp),
-.md :deep(.hljs-symbol),
-.md :deep(.hljs-meta .hljs-string) { color: var(--ok); }
-
-.md :deep(.hljs-number),
-.md :deep(.hljs-bullet),
-.md :deep(.hljs-attr),
-.md :deep(.hljs-attribute),
-.md :deep(.hljs-variable),
-.md :deep(.hljs-template-variable),
-.md :deep(.hljs-type),
-.md :deep(.hljs-class .hljs-title) { color: var(--warn); }
-
-.md :deep(.hljs-tag),
-.md :deep(.hljs-punctuation),
-.md :deep(.hljs-meta) { color: var(--dim); }
-
-.md :deep(.hljs-deletion) { color: var(--err); }
-.md :deep(.hljs-addition) { color: var(--ok); }
-.md :deep(.hljs-emphasis) { font-style: italic; }
-.md :deep(.hljs-strong) { font-weight: 700; }
-
-/* ```diff fences — coloured +/- lines with a subtle left gutter */
-.md :deep(.cb-wrap pre code .diff-add),
-.md :deep(.cb-wrap pre code .diff-del),
-.md :deep(.cb-wrap pre code .diff-ctx),
-.md :deep(.cb-wrap pre code .diff-hunk) {
-  display: block;
-  padding-left: 8px;
-  border-left: 2px solid transparent;
-  margin-left: -12px;
-  padding-right: 12px;
-}
-.md :deep(.cb-wrap pre code .diff-add) {
-  color: var(--ok);
-  background: rgba(14, 122, 56, 0.07);
-  border-left-color: var(--ok);
-}
-.md :deep(.cb-wrap pre code .diff-del) {
-  color: var(--err);
-  background: rgba(185, 28, 28, 0.06);
-  border-left-color: var(--err);
-}
-.md :deep(.cb-wrap pre code .diff-hunk) {
-  color: var(--blue);
-}
-.md :deep(.cb-wrap pre code .diff-ctx) {
-  color: var(--dim);
-}
-
-/* Links */
-.md :deep(.md-link) {
+/* Links — open in a new tab (markstream handles target/rel) */
+.md :deep(a) {
   color: var(--blue);
   text-decoration: none;
 }
-.md :deep(.md-link:hover) {
+.md :deep(a:hover) {
   text-decoration: underline;
 }
 
@@ -418,5 +311,79 @@ function handleClick(e: MouseEvent) {
   background: var(--panel2);
   color: var(--ink);
   font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+   Local ```diff renderer — same look as the code blocks above, with the
+   original +/- line colouring (green additions, red deletions). markstream
+   would strip the markers + drop deletions, so we render diffs ourselves.
+--------------------------------------------------------------------------- */
+.diff-wrap {
+  margin: 0.6em 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.diff-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 3px 8px;
+  background: var(--panel2);
+  border-bottom: 1px solid var(--line);
+}
+.diff-lang {
+  font-size: 10px;
+  color: var(--muted);
+  margin-right: auto;
+  letter-spacing: 0.04em;
+}
+.diff-copy {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 0 2px;
+  line-height: 1;
+  font-family: var(--mono);
+}
+.diff-copy:hover {
+  color: var(--blue);
+}
+.diff-pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  background: var(--panel);
+}
+.diff-pre code {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.diff-pre code span {
+  display: block;
+  padding-left: 8px;
+  border-left: 2px solid transparent;
+  margin-left: -12px;
+  padding-right: 12px;
+}
+.diff-add {
+  color: var(--ok);
+  background: rgba(14, 122, 56, 0.07);
+  border-left-color: var(--ok) !important;
+}
+.diff-del {
+  color: var(--err);
+  background: rgba(185, 28, 28, 0.06);
+  border-left-color: var(--err) !important;
+}
+.diff-hunk {
+  color: var(--blue);
+}
+.diff-ctx {
+  color: var(--dim);
 }
 </style>

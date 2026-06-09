@@ -1,13 +1,16 @@
 /**
- * `/sessions/{sid}/fs:*` REST routes (W10 / Chains 9 + 10).
+ * `/sessions/{sid}/fs:*` REST routes.
  *
- * Endpoints landed in W10.1 (Chain 9):
+ * Supported POST actions:
  *
- *   POST /sessions/{sid}/fs:list       → FsListResponse
- *   POST /sessions/{sid}/fs:read       → FsReadResponse
- *
- * W10.2 (Chain 10) extends this module with `:list_many`, `:stat`, and
- * `:stat_many` — same dispatch shape, different per-action handlers.
+ *   POST /sessions/{sid}/fs:list        → FsListResponse
+ *   POST /sessions/{sid}/fs:read        → FsReadResponse
+ *   POST /sessions/{sid}/fs:list_many   → FsListManyResponse
+ *   POST /sessions/{sid}/fs:stat        → FsEntry
+ *   POST /sessions/{sid}/fs:stat_many   → FsStatManyResponse
+ *   POST /sessions/{sid}/fs:search      → FsSearchResponse
+ *   POST /sessions/{sid}/fs:grep        → FsGrepResponse
+ *   POST /sessions/{sid}/fs:git_status  → FsGitStatusResponse
  *
  * **URL convention**: Fastify can't disambiguate `:resource_id` from a
  * `:action` suffix at the same path prefix. find-my-way's `::` colon
@@ -23,7 +26,7 @@
  * would have 404'd otherwise (which is fine; either path tells the client
  * the route is wrong).
  *
- * **Error mapping** (see also `services/fs-service.ts`):
+ * **Error mapping** (see also `services/fs/fs.ts`):
  *
  *   FsPathEscapesError      → 41304 fs.path_escapes_session
  *   FsPathNotFoundError     → 40409 fs.path_not_found
@@ -63,9 +66,8 @@ import { z } from 'zod';
 
 import type { IInstantiationService } from '@moonshot-ai/agent-core';
 
-import { errEnvelope, okEnvelope } from '../envelope.js';
-import { buildRouteSchema } from '../middleware/schema.js';
-import { validateParams } from '../middleware/validate.js';
+import { errEnvelope, okEnvelope } from '../envelope';
+import { defineRoute } from '../middleware/defineRoute';
 import {
   FsIsBinaryError,
   FsIsDirectoryError,
@@ -73,16 +75,16 @@ import {
   FsTooLargeError,
   FsTooManyResultsError,
   IFsService,
-} from '../services/fs-service.js';
+} from '#/services/fs';
 import {
   FsGrepTimeoutError,
   IFsSearchService,
-} from '../services/fs-search.js';
+} from '#/services/fs';
 import {
   FsGitUnavailableError,
   IFsGitService,
-} from '../services/fs-git.js';
-import { FsPathEscapesError } from '../services/fs-path-safety.js';
+} from '#/services/fs';
+import { FsPathEscapesError } from '#/services/fs';
 
 interface FsRouteHost {
   post(
@@ -150,29 +152,36 @@ export function registerFsRoutes(
   // Fastify path: `/sessions/:session_id/:tail`. We capture the FULL
   // final segment (`fs:list`, `fs:read`, ...) and split locally — Fastify's
   // `::` colon-escape collapses both colons into a literal `:` STATIC
-  // path, NOT a literal `:` followed by a param, so we can't isolate the
-  // action with the route syntax (see W10 STATUS).
+  // path, NOT a literal `:` followed by a param, so we isolate the action
+  // after Fastify routes the request here.
   //
   // The tail's `fs:` prefix is enforced here; non-`fs:` tails 404 from
   // this route — sibling routes (`messages`, `prompts`, `tasks`, etc.)
   // claim the bare-segment paths.
-  app.post(
-    '/sessions/:session_id/:tail',
+  const fsActionRoute = defineRoute(
     {
-      preHandler: [validateParams(sessionIdAndTailParamSchema)],
-      schema: buildRouteSchema({
-        description:
-          'Filesystem action dispatcher. Supported actions: list, read, list_many, stat, stat_many, search, grep, git_status.',
-        tags: ['fs'],
-        operationId: 'fsAction',
-        params: sessionIdAndTailParamSchema,
-      }),
+      method: 'POST',
+      path: '/sessions/{session_id}/{tail}',
+      params: sessionIdAndTailParamSchema,
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.FS_IS_DIRECTORY]: {},
+        [ErrorCode.FS_IS_BINARY]: {},
+        [ErrorCode.FS_TOO_LARGE]: {},
+        [ErrorCode.FS_TOO_MANY_RESULTS]: {},
+        [ErrorCode.FS_PATH_ESCAPES_SESSION]: {},
+        [ErrorCode.FS_GREP_TIMEOUT]: {},
+        [ErrorCode.FS_GIT_UNAVAILABLE]: {},
+      },
+      description:
+        'Filesystem action dispatcher. Supported actions: list, read, list_many, stat, stat_many, search, grep, git_status.',
+      tags: ['fs'],
+      operationId: 'fsAction',
     },
     async (req, reply) => {
-      const { session_id, tail } = req.params as {
-        session_id: string;
-        tail: string;
-      };
+      const { session_id, tail } = req.params;
 
       // Sibling routes use the same prefix; this handler is only valid for
       // `fs:<action>` tails. Forward all others by failing as 40001 — the
@@ -238,9 +247,14 @@ export function registerFsRoutes(
       }
     },
   );
+  app.post(
+    fsActionRoute.path,
+    fsActionRoute.options,
+    fsActionRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
+  );
 
   // ---------------------------------------------------------------------
-  // GET /sessions/{sid}/fs/*  — Chain 13 (W11.3) streaming download.
+  // GET /sessions/{sid}/fs/*  — streaming download.
   //
   // **Architectural exception**: REST.md §3.9 line 558 — the ONLY GET in
   // the daemon's REST surface with a verb in the URL (`:download`
@@ -264,126 +278,141 @@ export function registerFsRoutes(
   // Error paths return HTTP 200 + `application/json` envelope (the
   // documented one-way escape hatch per REST.md §3.9 line 571).
   // ---------------------------------------------------------------------
-  app.get(
-    '/sessions/:session_id/fs/*',
-    {
-      preHandler: [],
-      schema: buildRouteSchema({
-        description: 'Download a file from the session workspace',
-        tags: ['fs'],
-        operationId: 'downloadFile',
-      }),
-    },
-    async (req, reply) => {
-      const { session_id, '*': wildcard } = req.params as {
-        session_id: string;
-        '*': string;
-      };
+  const downloadHandler: Parameters<FsRouteHost['get']>[2] = async (
+    req,
+    reply,
+  ) => {
+    const { session_id } = req.params as { session_id: string };
+    const wildcard = (req.params as Record<string, unknown>)['*'] as string;
 
-      // Strip the `:download` suffix (the only verb we support on this
-      // route). Anything else is a 40001.
-      const DOWNLOAD_SUFFIX = ':download';
-      if (!wildcard.endsWith(DOWNLOAD_SUFFIX)) {
-        return reply.send(
-          errEnvelope(
-            ErrorCode.VALIDATION_FAILED,
-            `unsupported action: ${wildcard}`,
-            req.id,
-          ),
-        );
-      }
-      const relPath = wildcard.slice(0, -DOWNLOAD_SUFFIX.length);
-      if (relPath.length === 0) {
-        return reply.send(
-          errEnvelope(
-            ErrorCode.VALIDATION_FAILED,
-            'path is empty',
-            req.id,
-          ),
-        );
-      }
-
-      // Resolve through IFsService. Surfaced errors go through the
-      // central sendMappedError (which writes a JSON envelope per the
-      // download exception). Success path leaves the response body free
-      // for the stream.
-      let resolved: import('../services/fs-service.js').FsDownloadResolved;
-      try {
-        resolved = await ix.invokeFunction((a) =>
-          a.get(IFsService).resolveDownload(session_id, relPath),
-        );
-      } catch (err) {
-        sendMappedError(reply, req.id, err);
-        return reply;
-      }
-
-      // If-None-Match negotiation (REST.md §3.9 line 567).
-      const ifNoneMatch = pickHeader(req.headers, 'if-none-match');
-      if (ifNoneMatch !== undefined && ifNoneMatch === resolved.etag) {
-        return reply.code(304).header('etag', resolved.etag).send('');
-      }
-
-      reply.header('etag', resolved.etag);
-      reply.header(
-        'last-modified',
-        resolved.modifiedAt.toUTCString(),
+    // Strip the `:download` suffix (the only verb we support on this
+    // route). Anything else is a 40001.
+    const DOWNLOAD_SUFFIX = ':download';
+    if (!wildcard.endsWith(DOWNLOAD_SUFFIX)) {
+      return reply.send(
+        errEnvelope(
+          ErrorCode.VALIDATION_FAILED,
+          `unsupported action: ${wildcard}`,
+          req.id,
+        ),
       );
-      reply.header(
-        'content-disposition',
-        `attachment; filename="${sanitizeFilename(resolved.relative)}"`,
+    }
+    const relPath = wildcard.slice(0, -DOWNLOAD_SUFFIX.length);
+    if (relPath.length === 0) {
+      return reply.send(
+        errEnvelope(
+          ErrorCode.VALIDATION_FAILED,
+          'path is empty',
+          req.id,
+        ),
       );
-      reply.type(resolved.mime);
+    }
 
-      // Range negotiation (REST.md §3.9 line 565).
-      const rangeHeader = pickHeader(req.headers, 'range');
-      const range = parseRangeHeader(rangeHeader, resolved.size);
-      if (range !== null) {
-        reply
-          .code(206)
-          .header('content-length', String(range.length))
-          .header(
-            'content-range',
-            `bytes ${range.start}-${range.end}/${resolved.size}`,
-          );
-        const stream = createReadStream(resolved.absolute, {
-          start: range.start,
-          end: range.end,
-        });
-        // Fastify's reply.send(stream) handles backpressure + client
-        // abort. We additionally attach an explicit error handler so a
-        // mid-stream EIO surfaces in daemon logs instead of crashing
-        // the worker.
-        stream.on('error', () => {
-          // Already-started stream can't be replaced with an envelope;
-          // best we can do is close cleanly.
-          try {
-            stream.destroy();
-          } catch {
-            // ignore
-          }
-        });
-        return reply.send(stream);
-      }
+    // Resolve through IFsService. Surfaced errors go through the
+    // central sendMappedError (which writes a JSON envelope per the
+    // download exception). Success path leaves the response body free
+    // for the stream.
+    let resolved: import('#/services/fs').FsDownloadResolved;
+    try {
+      resolved = await ix.invokeFunction((a) =>
+        a.get(IFsService).resolveDownload(session_id, relPath),
+      );
+    } catch (err) {
+      sendMappedError(reply, req.id, err);
+      return reply;
+    }
 
-      // Full-file path. Set content-length explicitly so HTTP keep-alive
-      // can frame the response without chunked encoding (Fastify would
-      // pick chunked otherwise for streams).
-      reply.code(200).header('content-length', String(resolved.size));
-      const stream = createReadStream(resolved.absolute);
+    // If-None-Match negotiation (REST.md §3.9 line 567).
+    const ifNoneMatch = pickHeader(req.headers, 'if-none-match');
+    if (ifNoneMatch !== undefined && ifNoneMatch === resolved.etag) {
+      return reply.code(304).header('etag', resolved.etag).send('');
+    }
+
+    reply.header('etag', resolved.etag);
+    reply.header(
+      'last-modified',
+      resolved.modifiedAt.toUTCString(),
+    );
+    reply.header(
+      'content-disposition',
+      `attachment; filename="${sanitizeFilename(resolved.relative)}"`,
+    );
+    reply.type(resolved.mime);
+
+    // Range negotiation (REST.md §3.9 line 565).
+    const rangeHeader = pickHeader(req.headers, 'range');
+    const range = parseRangeHeader(rangeHeader, resolved.size);
+    if (range !== null) {
+      reply
+        .code(206)
+        .header('content-length', String(range.length))
+        .header(
+          'content-range',
+          `bytes ${range.start}-${range.end}/${resolved.size}`,
+        );
+      const stream = createReadStream(resolved.absolute, {
+        start: range.start,
+        end: range.end,
+      });
+      // Fastify's reply.send(stream) handles backpressure + client
+      // abort. We additionally attach an explicit error handler so a
+      // mid-stream EIO surfaces in daemon logs instead of crashing
+      // the worker.
       stream.on('error', () => {
+        // Already-started stream can't be replaced with an envelope;
+        // best we can do is close cleanly.
         try {
           stream.destroy();
         } catch {
           // ignore
         }
       });
-      // CRITICAL: return reply.send(stream). Fastify v5 async handlers
-      // that fall off the end (returning undefined) will OVERWRITE the
-      // already-piped stream body with the undefined return — content-length
-      // collapses to 0. Returning the reply (after calling send) keeps the
-      // stream as the response body. Same pattern as Fastify docs §"Streams".
       return reply.send(stream);
+    }
+
+    // Full-file path. Set content-length explicitly so HTTP keep-alive
+    // can frame the response without chunked encoding (Fastify would
+    // pick chunked otherwise for streams).
+    reply.code(200).header('content-length', String(resolved.size));
+    const stream = createReadStream(resolved.absolute);
+    stream.on('error', () => {
+      try {
+        stream.destroy();
+      } catch {
+        // ignore
+      }
+    });
+    // CRITICAL: return reply.send(stream). Fastify v5 async handlers
+    // that fall off the end (returning undefined) will OVERWRITE the
+    // already-piped stream body with the undefined return — content-length
+    // collapses to 0. Returning the reply (after calling send) keeps the
+    // stream as the response body. Same pattern as Fastify docs §"Streams".
+    return reply.send(stream);
+  };
+
+  const downloadRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/sessions/{session_id}/fs/*',
+      rawResponse: {
+        200: { type: 'string', format: 'binary' },
+      },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.FS_PATH_ESCAPES_SESSION]: {},
+      },
+      description: 'Download a file from the session workspace',
+      tags: ['fs'],
+      operationId: 'downloadFile',
     },
+    downloadHandler as unknown as Parameters<typeof defineRoute>[1],
+  );
+  app.get(
+    downloadRoute.path,
+    downloadRoute.options,
+    downloadRoute.handler as unknown as Parameters<FsRouteHost['get']>[2],
   );
 }
 
@@ -614,7 +643,7 @@ function buildValidationEnvelope(
 }
 
 // ---------------------------------------------------------------------------
-// :download helpers (Chain 13 / W11.3)
+// :download helpers
 // ---------------------------------------------------------------------------
 
 /**

@@ -1,7 +1,7 @@
 /**
- * `ToolServiceImpl` + `McpServiceImpl` (Chain 7 / P1.7, W9.1) unit tests.
+ * `ToolService` + `McpService` (Chain 7 / P1.7, W9.1) unit tests.
  *
- * Hermetic: mocks `IHarnessBridge` with an in-memory `rpc` proxy. Exercises:
+ * Hermetic: mocks `ICoreProcessService` with an in-memory `rpc` proxy. Exercises:
  *   - tool source mapping: 'builtin' / 'user'→'skill' / 'mcp' + mcp_server_id parse
  *   - mcp server status mapping (all 5 agent-core literals → 4 wire literals)
  *   - transport pass-through
@@ -13,6 +13,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  CoreRPC,
   EmptyPayload,
   McpServerInfo,
   ReconnectMcpServerPayload,
@@ -20,11 +21,10 @@ import type {
 } from '@moonshot-ai/agent-core';
 
 import {
-  type IHarnessBridge,
-  type HarnessRPC,
+  type ICoreProcessService,
   McpServerNotFoundError,
-  McpServiceImpl,
-  ToolServiceImpl,
+  McpService,
+  ToolService,
   toProtocolMcpServer,
   toProtocolTool,
 } from '../src';
@@ -37,8 +37,8 @@ interface FakeBridgeState {
   reconnectCalls: ReconnectMcpServerPayload[];
 }
 
-function makeFakeBridge(state: FakeBridgeState): IHarnessBridge {
-  const rpc: Partial<HarnessRPC> = {
+function makeFakeBridge(state: FakeBridgeState): ICoreProcessService {
+  const rpc: Partial<CoreRPC> = {
     listSessions: async () => state.sessions,
     getTools: async (_p: unknown) => state.tools as unknown as readonly never[],
     listMcpServers: async (_p: EmptyPayload & { sessionId: string }) => state.mcpServers,
@@ -49,9 +49,10 @@ function makeFakeBridge(state: FakeBridgeState): IHarnessBridge {
     },
   };
   return {
-    rpc: rpc as HarnessRPC,
+    rpc: rpc as CoreRPC,
     ready: async () => undefined,
     dispose: () => undefined,
+    _serviceBrand: undefined,
   };
 }
 
@@ -148,9 +149,9 @@ describe('toProtocolMcpServer adapter', () => {
 
 // --- Service impl tests -----------------------------------------------------
 
-describe('ToolServiceImpl.list', () => {
+describe('ToolService.list', () => {
   it('returns [] when no sessions exist (CoreAPI gap)', async () => {
-    const svc = new ToolServiceImpl(makeFakeBridge(freshState()));
+    const svc = new ToolService(makeFakeBridge(freshState()));
     const out = await svc.list();
     expect(out).toEqual([]);
   });
@@ -163,7 +164,7 @@ describe('ToolServiceImpl.list', () => {
       { name: 'Bash', description: 'b', source: 'builtin' },
       { name: 'mcp:lark:search', description: 'l', source: 'mcp' },
     );
-    const svc = new ToolServiceImpl(makeFakeBridge(state));
+    const svc = new ToolService(makeFakeBridge(state));
     const out = await svc.list();
     expect(out).toHaveLength(2);
     expect(out[0]!.source).toBe('builtin');
@@ -175,17 +176,17 @@ describe('ToolServiceImpl.list', () => {
     const state = freshState();
     state.sessions.push(fakeSession('s', 1));
     const bridge = makeFakeBridge(state);
-    (bridge.rpc as HarnessRPC).getTools = async () => {
+    (bridge.rpc as CoreRPC).getTools = async () => {
       throw new Error('session not loaded');
     };
-    const svc = new ToolServiceImpl(bridge);
+    const svc = new ToolService(bridge);
     expect(await svc.list()).toEqual([]);
   });
 });
 
-describe('McpServiceImpl.list', () => {
+describe('McpService.list', () => {
   it('returns [] when no sessions exist (registrar not reachable)', async () => {
-    const svc = new McpServiceImpl(makeFakeBridge(freshState()));
+    const svc = new McpService(makeFakeBridge(freshState()));
     expect(await svc.list()).toEqual([]);
   });
 
@@ -198,7 +199,7 @@ describe('McpServiceImpl.list', () => {
       status: 'connected',
       toolCount: 7,
     });
-    const svc = new McpServiceImpl(makeFakeBridge(state));
+    const svc = new McpService(makeFakeBridge(state));
     const out = await svc.list();
     expect(out).toHaveLength(1);
     expect(out[0]!.id).toBe('lark');
@@ -206,9 +207,9 @@ describe('McpServiceImpl.list', () => {
   });
 });
 
-describe('McpServiceImpl.restart', () => {
+describe('McpService.restart', () => {
   it('throws McpServerNotFoundError when no sessions exist', async () => {
-    const svc = new McpServiceImpl(makeFakeBridge(freshState()));
+    const svc = new McpService(makeFakeBridge(freshState()));
     await expect(svc.restart('lark')).rejects.toBeInstanceOf(McpServerNotFoundError);
   });
 
@@ -221,7 +222,7 @@ describe('McpServiceImpl.restart', () => {
       status: 'connected',
       toolCount: 1,
     });
-    const svc = new McpServiceImpl(makeFakeBridge(state));
+    const svc = new McpService(makeFakeBridge(state));
     await expect(svc.restart('unknown')).rejects.toBeInstanceOf(McpServerNotFoundError);
   });
 
@@ -234,7 +235,7 @@ describe('McpServiceImpl.restart', () => {
       status: 'connected',
       toolCount: 1,
     });
-    const svc = new McpServiceImpl(makeFakeBridge(state));
+    const svc = new McpService(makeFakeBridge(state));
     const result = await svc.restart('lark');
     expect(result).toEqual({ restarting: true });
     expect(state.reconnectCalls).toHaveLength(1);

@@ -10,6 +10,7 @@ export interface SlashCommand {
 export const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/help',       desc: 'commands.help.desc' },
   { name: '/new',        desc: 'commands.new.desc' },
+  { name: '/sessions',   desc: 'commands.sessions.desc' },
   { name: '/clear',      desc: 'commands.clear.desc' },
   { name: '/model',      desc: 'commands.model.desc' },
   { name: '/provider',   desc: 'commands.provider.desc' },

@@ -1,18 +1,18 @@
 /**
- * `GET /meta` route handler — Chain 1 / P1.1.
+ * `GET /meta` route handler.
  *
  * Returns the daemon's `daemon_version`, declared `capabilities` literal map,
- * a per-process `server_id` (ULID minted at boot — reset on every restart so
+ * a per-process `daemon_id` (ULID minted at boot — reset on every restart so
  * clients can detect a daemon restart and resync), and `started_at` ISO time.
  *
- * **No DI**: this route doesn't touch services — it's pure daemon-self info
- * per ROADMAP Chain 1 ("不经过 services 包"). The `MetaRouteOptions` payload
+ * **No DI**: this route doesn't touch services — it's pure daemon-self info.
+ * The `MetaRouteOptions` payload
  * is provided by `start.ts` at registration time and frozen for the daemon's
  * lifetime.
  *
  * **Wire shape**: matches `metaResponseSchema` (REST.md §3.1) exactly. The
  * envelope wrap is `okEnvelope(data, req.id)` — `req.id` is the bare 26-char
- * ULID set by Fastify's `genReqId` via `resolveRequestId` (W4.3).
+ * ULID set by Fastify's `genReqId` via `resolveRequestId`.
  *
  * **Anti-corruption**: no SDK package import, no broker / bridge access. The
  * version source is the daemon's own `package.json` read via
@@ -21,8 +21,8 @@
 
 import { metaResponseSchema } from '@moonshot-ai/protocol';
 
-import { okEnvelope } from '../envelope.js';
-import { buildRouteSchema } from '../middleware/schema.js';
+import { okEnvelope } from '../envelope';
+import { defineRoute } from '../middleware/defineRoute';
 import type { MetaResponse } from '@moonshot-ai/protocol';
 
 /**
@@ -47,7 +47,7 @@ export interface MetaRouteOptions {
   /** Daemon `package.json` version. Cached at startup. */
   readonly daemonVersion: string;
   /** Per-process ULID. Minted once at boot in `start.ts`. */
-  readonly serverId: string;
+  readonly daemonId: string;
   /** ISO 8601 UTC timestamp the daemon went live at. */
   readonly startedAt: string;
 }
@@ -64,21 +64,21 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
       mcp: true as const,
       background_tasks: true as const,
     }),
-    server_id: opts.serverId,
+    daemon_id: opts.daemonId,
     started_at: opts.startedAt,
   });
 
-  app.get(
-    '/meta',
+  const route = defineRoute(
     {
-      schema: buildRouteSchema({
-        description: 'Get daemon metadata',
-        tags: ['meta'],
-        response: { 200: metaResponseSchema },
-      }),
+      method: 'GET',
+      path: '/meta',
+      success: { data: metaResponseSchema },
+      description: 'Get daemon metadata',
+      tags: ['meta'],
     },
     async (req, reply) => {
       reply.send(okEnvelope(data, req.id));
     },
   );
+  app.get(route.path, route.options, route.handler as Parameters<RouteHost['get']>[2]);
 }

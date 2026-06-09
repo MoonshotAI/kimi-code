@@ -1,16 +1,15 @@
 /**
- * Fastify error hook (W4.3 / P0.13).
+ * Fastify error hook for unhandled daemon exceptions.
  *
- * Wraps unhandled exceptions in the Feishu-style envelope per PLAN §P1:
+ * Wraps unhandled exceptions in the Feishu-style envelope:
  *   - HTTP status ALWAYS 200 (business outcome lives in `code`);
  *   - `code: 50001` (`internal.error`) for unknown exceptions;
  *   - `request_id` echoes the inbound request id (set by Fastify's
  *     `genReqId` via `resolveRequestId`);
  *   - `data: null`.
  *
- * Formal validation-error mapping (Fastify-AJV → 40001 `validation.failed`)
- * lands in W7 alongside the route-schema middleware; W4's handler is the
- * catch-all unknown-exception path.
+ * Validation failures are handled by route-level middleware as 40001
+ * `validation.failed`; this handler remains the catch-all unknown-exception path.
  *
  * The handler logs `err` + the resolved `request_id` so operators can
  * correlate log lines with the envelope returned to the client. This is the

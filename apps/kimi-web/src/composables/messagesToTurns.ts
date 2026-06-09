@@ -161,6 +161,14 @@ interface Group {
   tools: ToolCall[];
   approval: ApprovalBlock | undefined;
   approvalId: string | undefined;
+  /**
+   * Content signatures already folded into this group, used to drop a duplicate
+   * assistant message. The same logical reply can reach us under two different
+   * ids — e.g. the streamed copy plus the persisted copy after a reload — and
+   * since both share the promptId they'd otherwise merge and render the text +
+   * tool cards twice. Dedupe by exact content so a turn shows each reply once.
+   */
+  seenSigs: Set<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -280,8 +288,16 @@ export function messagesToTurns(
         tools: [],
         approval: undefined,
         approvalId: undefined,
+        seenSigs: new Set<string>(),
       };
     }
+
+    // Drop an assistant message whose content was already folded into this group
+    // (a duplicate streamed-vs-persisted copy sharing the promptId), so the turn
+    // doesn't render the same text + tools twice.
+    const sig = JSON.stringify(msg.content);
+    if (pendingGroup!.seenSigs.has(sig)) continue;
+    pendingGroup!.seenSigs.add(sig);
 
     absorbContent(pendingGroup!, msg.content);
   }

@@ -6,8 +6,8 @@
  * asserts:
  *   1. Envelope shape (`code: 0`, `msg: success`, `request_id`, `data`).
  *   2. `data` matches `metaResponseSchema` — daemon_version + capabilities
- *      literals + server_id ULID + started_at ISO `Z`.
- *   3. `server_id` is stable across multiple calls to the same daemon
+ *      literals + daemon_id ULID + started_at ISO `Z`.
+ *   3. `daemon_id` is stable across multiple calls to the same daemon
  *      (it's process-scoped, not per-request).
  *   4. `started_at` is the daemon's boot time — within a generous window of
  *      `Date.now()` at test start.
@@ -63,7 +63,7 @@ async function bootDaemon(): Promise<RunningDaemon> {
     port: 0,
     lockPath,
     logger: pino({ level: 'silent' }),
-    bridgeOptions: { homeDir: bridgeHome },
+    coreProcessOptions: { homeDir: bridgeHome },
   });
   return daemon;
 }
@@ -109,7 +109,7 @@ describe('GET /api/v1/meta — envelope + metaResponseSchema', () => {
       mcp: true,
       background_tasks: true,
     });
-    expect(ulidRegex.test(parsed.server_id)).toBe(true);
+    expect(ulidRegex.test(parsed.daemon_id)).toBe(true);
     // started_at is ISO 8601 UTC `Z` per isoDateTimeSchema's normalization.
     expect(parsed.started_at).toMatch(/Z$/);
     const startedMs = Date.parse(parsed.started_at);
@@ -119,17 +119,17 @@ describe('GET /api/v1/meta — envelope + metaResponseSchema', () => {
     expect(startedMs).toBeLessThanOrEqual(Date.now() + 1_000);
   });
 
-  it('server_id is stable across multiple calls (process-scoped)', async () => {
+  it('daemon_id is stable across multiple calls (process-scoped)', async () => {
     const r = await bootDaemon();
     const app = appOf(r);
     const a = await app.inject({ method: 'GET', url: '/api/v1/meta' });
     const b = await app.inject({ method: 'GET', url: '/api/v1/meta' });
-    const aData = (a.json() as { data: { server_id: string } }).data;
-    const bData = (b.json() as { data: { server_id: string } }).data;
-    expect(aData.server_id).toBe(bData.server_id);
+    const aData = (a.json() as { data: { daemon_id: string } }).data;
+    const bData = (b.json() as { data: { daemon_id: string } }).data;
+    expect(aData.daemon_id).toBe(bData.daemon_id);
   });
 
-  it('two independent daemons get distinct server_ids', async () => {
+  it('two independent daemons get distinct daemon_ids', async () => {
     // Use distinct lock paths so both can coexist for the duration of the test.
     const lockA = join(tmpDir, 'lock-a');
     const lockB = join(tmpDir, 'lock-b');
@@ -140,21 +140,21 @@ describe('GET /api/v1/meta — envelope + metaResponseSchema', () => {
       port: 0,
       lockPath: lockA,
       logger: pino({ level: 'silent' }),
-      bridgeOptions: { homeDir: homeA },
+      coreProcessOptions: { homeDir: homeA },
     });
     const r2 = await startDaemon({
       host: '127.0.0.1',
       port: 0,
       lockPath: lockB,
       logger: pino({ level: 'silent' }),
-      bridgeOptions: { homeDir: homeB },
+      coreProcessOptions: { homeDir: homeB },
     });
     try {
       const a = await appOf(r1).inject({ method: 'GET', url: '/api/v1/meta' });
       const b = await appOf(r2).inject({ method: 'GET', url: '/api/v1/meta' });
-      const aData = (a.json() as { data: { server_id: string } }).data;
-      const bData = (b.json() as { data: { server_id: string } }).data;
-      expect(aData.server_id).not.toBe(bData.server_id);
+      const aData = (a.json() as { data: { daemon_id: string } }).data;
+      const bData = (b.json() as { data: { daemon_id: string } }).data;
+      expect(aData.daemon_id).not.toBe(bData.daemon_id);
     } finally {
       await r1.close();
       await r2.close();

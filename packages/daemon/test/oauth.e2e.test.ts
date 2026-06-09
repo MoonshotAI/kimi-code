@@ -127,7 +127,7 @@ async function bootDaemon(stub: StubOAuth): Promise<RunningDaemon> {
     port: 0,
     lockPath,
     logger: pino({ level: 'silent' }),
-    bridgeOptions: { homeDir: bridgeHome },
+    coreProcessOptions: { homeDir: bridgeHome },
   });
   // Override the IOAuthService in the container post-boot. The container's
   // `ServiceCollection` is public; we re-set the slot and also clear the

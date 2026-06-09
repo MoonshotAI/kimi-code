@@ -53,11 +53,52 @@ describe('ToolCall', () => {
     expect(w.find('.p').text()).toContain('pnpm --filter @kimi-code/api test --run');
   });
 
+  it('Grep 工具表头展示模式与路径（解析 JSON arg）', () => {
+    const tool: ToolCallData = {
+      id: 'g', name: 'grep', status: 'ok',
+      arg: JSON.stringify({ pattern: 'toolSummary', path: 'src/lib' }),
+    };
+    const w = mount(ToolCall, { props: { tool } });
+    const text = w.find('.p').text();
+    expect(text).toContain('toolSummary');
+    expect(text).toContain('src/lib');
+  });
+
+  it('Write 工具表头展示文件路径与 created', () => {
+    const tool: ToolCallData = {
+      id: 'wr', name: 'write', status: 'ok',
+      arg: JSON.stringify({ file_path: 'src/new-file.ts', content: 'x' }),
+    };
+    const w = mount(ToolCall, { props: { tool } });
+    const text = w.find('.p').text();
+    expect(text).toContain('src/new-file.ts');
+    expect(text).toContain('created');
+  });
+
   it('未知工具回退到原始 arg 文本', () => {
     const tool: ToolCallData = {
       id: 'u', name: 'mystery_tool', status: 'ok', arg: 'some raw argument',
     };
     const w = mount(ToolCall, { props: { tool } });
     expect(w.find('.p').text()).toContain('some raw argument');
+  });
+
+  it('CamelCase 工具名也能识别（Read → 路径+行范围）', () => {
+    const tool: ToolCallData = {
+      id: 'cc', name: 'Read', status: 'ok',
+      arg: JSON.stringify({ path: 'a.ts', offset: 5, limit: 10 }),
+    };
+    const w = mount(ToolCall, { props: { tool } });
+    expect(w.find('.p').text()).toContain('a.ts:5-15');
+  });
+
+  it('运行中状态显示 spinner 而非对勾', () => {
+    const tool: ToolCallData = {
+      id: 'rn', name: 'bash', status: 'running',
+      arg: JSON.stringify({ command: 'sleep 1' }),
+    };
+    const w = mount(ToolCall, { props: { tool } });
+    expect(w.find('.spin').exists()).toBe(true);
+    expect(w.find('.ok').exists()).toBe(false);
   });
 });
