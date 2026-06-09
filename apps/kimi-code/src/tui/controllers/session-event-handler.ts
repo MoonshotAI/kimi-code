@@ -11,6 +11,7 @@ import type {
   CronFiredEvent,
   ErrorEvent,
   Event,
+  GoalChange,
   GoalUpdatedEvent,
   HookResultEvent,
   Session,
@@ -28,7 +29,6 @@ import type {
   TurnStepStartedEvent,
   WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
-import { buildGoalCompletionMessage } from '@moonshot-ai/kimi-code-sdk';
 
 import { MoonLoader } from '../components/chrome/moon-loader';
 import { buildGoalMarker } from '../components/messages/goal-markers';
@@ -41,6 +41,7 @@ import {
   OAUTH_LOGIN_REQUIRED_CODE,
   OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
 } from '../constant/kimi-tui';
+import { buildGoalCompletionMessage } from '../utils/goal-completion';
 import {
   argsRecord,
   formatErrorPayload,
@@ -136,6 +137,8 @@ export class SessionEventHandler {
   mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
   private goalCompletionAwaitingClear = false;
   private goalCompletionTurnEnded = false;
+  private currentTurnHasAssistantText = false;
+  private pendingModelBlockedFallback: GoalChange | undefined;
   private queuedGoalPromotionPending = false;
   private queuedGoalPromotionInFlight = false;
   private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
@@ -149,6 +152,8 @@ export class SessionEventHandler {
     this.mcpServers.clear();
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
+    this.currentTurnHasAssistantText = false;
+    this.pendingModelBlockedFallback = undefined;
     this.queuedGoalPromotionPending = false;
     this.queuedGoalPromotionInFlight = false;
     this.clearQueuedGoalPromotionTimer();
@@ -282,6 +287,7 @@ export class SessionEventHandler {
 
   private handleTurnBegin(_event: TurnStartedEvent): void {
     void _event;
+    this.currentTurnHasAssistantText = false;
     this.clearAgentSwarmProgress();
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.setStep(0);
@@ -325,6 +331,8 @@ export class SessionEventHandler {
     }
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeTurn(sendQueued);
+    this.renderPendingModelBlockedFallback();
+    this.currentTurnHasAssistantText = false;
     this.goalCompletionTurnEnded = true;
     this.scheduleQueuedGoalPromotion();
   }
@@ -416,6 +424,10 @@ export class SessionEventHandler {
       streamingUI.flushThinkingToTranscript('idle');
     }
 
+    if (event.delta.trim().length > 0) {
+      this.currentTurnHasAssistantText = true;
+      this.pendingModelBlockedFallback = undefined;
+    }
     streamingUI.appendAssistantDelta(event.delta);
 
     this.host.patchLivePane({
@@ -435,6 +447,10 @@ export class SessionEventHandler {
       this.host.streamingUI.flushThinkingToTranscript('idle');
     }
     this.host.streamingUI.finalizeAssistantStream();
+    if (event.content.trim().length > 0) {
+      this.currentTurnHasAssistantText = true;
+      this.pendingModelBlockedFallback = undefined;
+    }
     this.host.appendTranscriptEntry({
       id: nextTranscriptId(),
       kind: 'assistant',
@@ -574,15 +590,19 @@ export class SessionEventHandler {
       this.queuedGoalPromotionPending = true;
       this.scheduleQueuedGoalPromotion();
     }
+    if (event.snapshot === null) {
+      this.pendingModelBlockedFallback = undefined;
+    }
     const change = event.change;
     if (change === undefined) return;
     const { state } = this.host;
 
     // Completion -> the box disappears (snapshot cleared on the follow-up null
     // update) and a deterministic completion message lands in the transcript.
-    // The same text is appended to the conversation by the continuation
-    // controller, so it persists and renders identically on resume.
+    // Resume renders the same text from the durable goal completion replay
+    // record, so live and replayed completion cards stay identical.
     if (change.kind === 'completion' && event.snapshot !== null) {
+      this.pendingModelBlockedFallback = undefined;
       this.goalCompletionAwaitingClear = true;
       this.goalCompletionTurnEnded = false;
       this.host.appendTranscriptEntry({
@@ -599,8 +619,29 @@ export class SessionEventHandler {
     // ctrl+o-expandable marker.
     if (change.kind === 'lifecycle' && change.status === 'blocked') {
       void this.notifyQueuedGoalWaitingOnBlocked();
+      if (change.actor === 'model' || change.reason === undefined) {
+        this.pendingModelBlockedFallback = this.currentTurnHasAssistantText
+          ? undefined
+          : change;
+        return;
+      }
+      this.pendingModelBlockedFallback = undefined;
+    } else if (change.kind === 'lifecycle') {
+      this.pendingModelBlockedFallback = undefined;
     }
-    const marker = buildGoalMarker(change, state.toolOutputExpanded);
+    const marker = buildGoalMarker(change, state.toolOutputExpanded, change.actor);
+    if (marker !== null) {
+      state.transcriptContainer.addChild(marker);
+      state.ui.requestRender();
+    }
+  }
+
+  private renderPendingModelBlockedFallback(): void {
+    const change = this.pendingModelBlockedFallback;
+    if (change === undefined) return;
+    this.pendingModelBlockedFallback = undefined;
+    const { state } = this.host;
+    const marker = buildGoalMarker(change, state.toolOutputExpanded, 'model');
     if (marker !== null) {
       state.transcriptContainer.addChild(marker);
       state.ui.requestRender();

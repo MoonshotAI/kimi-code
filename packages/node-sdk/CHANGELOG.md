@@ -1,5 +1,19 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.9.0
+
+### Minor Changes
+
+- [#487](https://github.com/MoonshotAI/kimi-code/pull/487) [`4d11394`](https://github.com/MoonshotAI/kimi-code/commit/4d113949c8e906c20c7188817926f44786653923) - Honor the standard `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY` environment variables, including SOCKS proxies, for all outbound traffic.
+
+- [#424](https://github.com/MoonshotAI/kimi-code/pull/424) [`72c4b0a`](https://github.com/MoonshotAI/kimi-code/commit/72c4b0adaa6ae0466875cd8e4066c42456195f21) - Add the `/swarm` command for running agent swarms with live progress and rate-limit-aware retries.
+
+### Patch Changes
+
+- [#395](https://github.com/MoonshotAI/kimi-code/pull/395) [`879a7ee`](https://github.com/MoonshotAI/kimi-code/commit/879a7eeb33a8bedf18779d74a00d78369dae3db5) - Fix ACP slash skill routing, bootstrap context reads, file and permission edge cases, subagent event handling, and stale-file edit messaging.
+
+- [#552](https://github.com/MoonshotAI/kimi-code/pull/552) [`db82e33`](https://github.com/MoonshotAI/kimi-code/commit/db82e33a20fd1ec204672df4ba5bc38800ce8dea) - Fix goal resume behavior by restoring goal state from agent records.
+
 ## 0.8.0
 
 ### Minor Changes

@@ -55,10 +55,6 @@ function fakeSnapshot() {
     goalId: 'g1',
     objective: 'obj',
     status: 'active' as const,
-    createdAt: '',
-    updatedAt: '',
-    startedBy: 'user' as const,
-    updatedBy: 'user' as const,
     turnsUsed: 0,
     tokensUsed: 0,
     wallClockMs: 0,
@@ -616,6 +612,7 @@ describe('handleGoalCommand', () => {
     await handleGoalCommand(host, 'resume');
     expect(session.resumeGoal).toHaveBeenCalledOnce();
     expect(host.track).toHaveBeenCalledWith('goal_resume');
+    expect(host.showStatus).not.toHaveBeenCalledWith('Goal resumed.');
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('Resume the active goal.');
   });
 
@@ -623,6 +620,8 @@ describe('handleGoalCommand', () => {
     await handleGoalCommand(host, 'cancel');
     expect(session.cancelGoal).toHaveBeenCalledOnce();
     expect(host.track).toHaveBeenCalledWith('goal_cancel');
+    expect(host.showNotice).toHaveBeenCalledWith('Goal cancelled.');
+    expect(host.showStatus).not.toHaveBeenCalledWith('Goal cancelled.');
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
@@ -694,7 +693,6 @@ describe('dispatchInput /goal integration', () => {
   });
 
   it('routes /goal through the real resolver, creates the goal, and sends the objective', async () => {
-    setExperimentalFeatures([{ id: 'goal_command', enabled: true }]);
     const { host, session } = makeHost();
 
     dispatchInput(host, '/goal Ship feature X');
@@ -706,18 +704,6 @@ describe('dispatchInput /goal integration', () => {
     });
     expect(host.sendNormalUserInput).toHaveBeenCalledWith('Ship feature X');
     expect(host.sendNormalUserInput).not.toHaveBeenCalledWith('/goal Ship feature X');
-  });
-
-  it('treats /goal as a normal message when the flag is disabled', async () => {
-    setExperimentalFeatures([]);
-    const { host, session } = makeHost();
-
-    dispatchInput(host, '/goal Ship feature X');
-
-    await vi.waitFor(() => {
-      expect(host.sendNormalUserInput).toHaveBeenCalledWith('/goal Ship feature X');
-    });
-    expect(session.createGoal).not.toHaveBeenCalled();
   });
 });
 

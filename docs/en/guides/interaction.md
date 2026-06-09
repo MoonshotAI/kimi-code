@@ -31,9 +31,9 @@ Some commands are only available when the agent is idle — you need to press `E
 
 ## File references
 
-Type `@` to trigger file-path completion. Selecting a path inserts its relative form into your message; the agent loads the file content directly when it reads the message. Directories beginning with a dot are hidden by default — type the prefix explicitly (e.g. `@.github/`) to access them.
+Type `@` to trigger file-path completion. Selecting a path inserts its relative form into your message; the agent loads the file content directly when it reads the message. File references work in both git and non-git directories, and folder suggestions end with `/` so you can keep completing paths inside them. If the fast search helper is still downloading, Kimi Code falls back to a basic filesystem scan. Hidden paths are available, but `.git` is excluded from suggestions.
 
-> `@` references and slash commands are two separate mechanisms: `@` gives the agent file context, while `/` invokes built-in features or Skills.
+> `@` references and slash commands are two separate mechanisms: `@` gives the agent file context, while `/` invokes built-in features or Skills. A `/` typed after leading whitespace is treated as normal text, not as the slash-command menu.
 
 ## Approval flow
 

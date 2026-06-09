@@ -1,19 +1,16 @@
 import { promises as fs } from 'node:fs';
 import path from 'pathe';
 
-import { flags } from '../flags/resolver';
 import { SkillParseError, UnsupportedSkillTypeError, parseSkillFromFile } from './parser';
 import type { SkillDefinition, SkillRoot, SkillSource, SkippedSkill } from './types';
 import { normalizeSkillName } from './types';
 
-const USER_BRAND_DIRS = ['.kimi-code/skills'] as const;
+// Relative to brandHomeDir, which already IS the brand data dir (~/.kimi-code or
+// $KIMI_CODE_HOME) — no '.kimi-code' segment here, or it would nest twice.
+const USER_BRAND_DIRS = ['skills'] as const;
 const USER_GENERIC_DIRS = ['.agents/skills'] as const;
 const PROJECT_BRAND_DIRS = ['.kimi-code/skills'] as const;
 const PROJECT_GENERIC_DIRS = ['.agents/skills'] as const;
-
-type SubSkillFlagResolver = {
-  enabled(id: 'sub_skill'): boolean;
-};
 
 // Bounds recursion so a directory symlink cycle inside a skill root cannot
 // loop forever. Real skill trees are 1-3 levels deep.
@@ -21,6 +18,12 @@ const MAX_SKILL_SCAN_DEPTH = 8;
 
 export interface SkillPathContext {
   readonly userHomeDir: string;
+  /**
+   * Brand data dir — `KIMI_CODE_HOME`, or `<userHomeDir>/.kimi-code` by default.
+   * User brand skills live directly under here as `skills/`, so this path
+   * carries no `.kimi-code` segment of its own (that would double the prefix).
+   */
+  readonly brandHomeDir?: string;
   readonly workDir: string;
 }
 
@@ -37,7 +40,6 @@ export interface ResolveSkillRootsOptions {
 
 export interface DiscoverSkillsOptions {
   readonly roots: readonly SkillRoot[];
-  readonly experimentalFlags?: SubSkillFlagResolver;
   readonly onWarning?: (message: string, cause?: unknown) => void;
   readonly onSkippedByPolicy?: (skill: SkippedSkill) => void;
   readonly onDiscoveredSkill?: (skill: SkillDefinition) => void;
@@ -66,6 +68,7 @@ export async function resolveSkillRoots(
   const roots: SkillRoot[] = [];
   const mergeAllAvailableSkills = options.mergeAllAvailableSkills ?? true;
   const { userHomeDir, workDir } = options.paths;
+  const brandHomeDir = options.paths.brandHomeDir ?? path.join(userHomeDir, '.kimi-code');
   const projectRoot = await findProjectRoot(workDir);
 
   if (options.explicitDirs !== undefined && options.explicitDirs.length > 0) {
@@ -92,7 +95,7 @@ export async function resolveSkillRoots(
     await pushBrandGroup(
       roots,
       USER_BRAND_DIRS,
-      userHomeDir,
+      brandHomeDir,
       'user',
       mergeAllAvailableSkills,
       isDir,
@@ -133,7 +136,6 @@ export async function discoverSkills(
   const isFile = options.isFile ?? defaultIsFile;
   const isDir = options.isDir ?? defaultIsDir;
   const parse = options.parse ?? parseSkillFromFile;
-  const subSkillFlags = options.experimentalFlags ?? flags;
   const warn = options.onWarning ?? (() => {});
   const skip = options.onSkippedByPolicy ?? (() => {});
   const byName = new Map<string, SkillDefinition>();
@@ -181,7 +183,7 @@ export async function discoverSkills(
         warn,
         skip,
       });
-      if (skill !== undefined && hasSubSkillEnabled(skill, subSkillFlags)) {
+      if (skill !== undefined && hasSubSkillEnabled(skill)) {
         allowedSubSkillBundles.add(entry);
       }
     }
@@ -390,11 +392,7 @@ async function parseAndRegister(input: {
   }
 }
 
-function hasSubSkillEnabled(
-  skill: SkillDefinition,
-  experimentalFlags: SubSkillFlagResolver,
-): boolean {
-  if (!experimentalFlags.enabled('sub_skill')) return false;
+function hasSubSkillEnabled(skill: SkillDefinition): boolean {
   const nested = skill.metadata['metadata'];
   const nestedFlag =
     typeof nested === 'object' && nested !== null

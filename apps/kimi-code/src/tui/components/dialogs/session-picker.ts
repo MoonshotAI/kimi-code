@@ -90,6 +90,8 @@ export class SessionPickerComponent extends Container implements Focusable {
     currentSessionId: string;
     onSelect: (sessionId: string) => void;
     onCancel: () => void;
+    onCtrlC?: () => void;
+    onCtrlD?: () => void;
     maxVisibleSessions?: number;
   }) {
     super();
@@ -99,9 +101,22 @@ export class SessionPickerComponent extends Container implements Focusable {
     this.onSelect = opts.onSelect;
     this.onCancel = opts.onCancel;
     this.maxVisibleSessions = opts.maxVisibleSessions ?? 4;
+    this.onCtrlC = opts.onCtrlC;
+    this.onCtrlD = opts.onCtrlD;
   }
 
+  private readonly onCtrlC?: () => void;
+  private readonly onCtrlD?: () => void;
+
   handleInput(data: string): void {
+    if (matchesKey(data, Key.ctrl('c'))) {
+      this.onCtrlC?.();
+      return;
+    }
+    if (matchesKey(data, Key.ctrl('d'))) {
+      this.onCtrlD?.();
+      return;
+    }
     if (matchesKey(data, Key.escape)) {
       this.onCancel();
       return;

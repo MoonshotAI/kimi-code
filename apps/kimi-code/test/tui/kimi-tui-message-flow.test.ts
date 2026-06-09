@@ -2119,9 +2119,7 @@ command = "vim"
   });
 
   it('renders an ended marker when a one-shot /swarm task exits', async () => {
-    const { driver, session } = await makeDriver(undefined, {
-      getExperimentalFeatures: vi.fn(async () => [{ id: 'agent_swarm', enabled: true }]),
-    });
+    const { driver, session } = await makeDriver(undefined);
     driver.state.appState.permissionMode = 'auto';
 
     driver.handleUserInput('/swarm Ship feature X');

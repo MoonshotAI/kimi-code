@@ -1,5 +1,49 @@
 # @moonshot-ai/kimi-code
 
+## 0.12.0
+
+### Minor Changes
+
+- [#569](https://github.com/MoonshotAI/kimi-code/pull/569) [`d7407b0`](https://github.com/MoonshotAI/kimi-code/commit/d7407b0ecfc87a3840e26ddaddb69e7f52383699) - Enable micro compaction by default while keeping its opt-out flag.
+
+- [#531](https://github.com/MoonshotAI/kimi-code/pull/531) [`b47734c`](https://github.com/MoonshotAI/kimi-code/commit/b47734ca0bac84e0b2c4ff50cd3d5eedb9e0c7c1) - Detect Homebrew installations and use `brew upgrade kimi-code` for updates instead of falling back to npm.
+
+- [#487](https://github.com/MoonshotAI/kimi-code/pull/487) [`4d11394`](https://github.com/MoonshotAI/kimi-code/commit/4d113949c8e906c20c7188817926f44786653923) - Honor the standard `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY` environment variables, including SOCKS proxies, for all outbound traffic.
+
+- [#569](https://github.com/MoonshotAI/kimi-code/pull/569) [`d7407b0`](https://github.com/MoonshotAI/kimi-code/commit/d7407b0ecfc87a3840e26ddaddb69e7f52383699) - Make goals, background questions, and sub-skill discovery available without experimental opt-ins.
+
+- [#424](https://github.com/MoonshotAI/kimi-code/pull/424) [`72c4b0a`](https://github.com/MoonshotAI/kimi-code/commit/72c4b0adaa6ae0466875cd8e4066c42456195f21) - Add the `/swarm` command for running agent swarms with live progress and rate-limit-aware retries.
+
+### Patch Changes
+
+- [#395](https://github.com/MoonshotAI/kimi-code/pull/395) [`879a7ee`](https://github.com/MoonshotAI/kimi-code/commit/879a7eeb33a8bedf18779d74a00d78369dae3db5) - Fix ACP slash skill routing, bootstrap context reads, file and permission edge cases, subagent event handling, and stale-file edit messaging.
+
+- [#529](https://github.com/MoonshotAI/kimi-code/pull/529) [`3b62b12`](https://github.com/MoonshotAI/kimi-code/commit/3b62b123e68cc4543bfa8fa376c7e8a24fee0afb) - Detect Git Bash installed through Scoop and other Git shims on Windows.
+
+- [#547](https://github.com/MoonshotAI/kimi-code/pull/547) [`3765a49`](https://github.com/MoonshotAI/kimi-code/commit/3765a491636a57c0f84ba409c325df10f7613a49) - Rework file reference completion in the TUI.
+
+- [#537](https://github.com/MoonshotAI/kimi-code/pull/537) [`8d0c91f`](https://github.com/MoonshotAI/kimi-code/commit/8d0c91faa1c878e395bffe9bafa89e10736c2384) - Wrap long single-line shell commands in approval prompts so the full command remains visible.
+
+- [#552](https://github.com/MoonshotAI/kimi-code/pull/552) [`db82e33`](https://github.com/MoonshotAI/kimi-code/commit/db82e33a20fd1ec204672df4ba5bc38800ce8dea) - Fix goal resume behavior by restoring goal state from agent records.
+
+- [#521](https://github.com/MoonshotAI/kimi-code/pull/521) [`9aba465`](https://github.com/MoonshotAI/kimi-code/commit/9aba465fd8689be998fa8581d04792b3c7c54359) - Fix the `/mcp` status panel border being broken by multi-line MCP server errors, which are now folded onto a single row.
+
+- [#543](https://github.com/MoonshotAI/kimi-code/pull/543) [`0c3d556`](https://github.com/MoonshotAI/kimi-code/commit/0c3d556778f969b3c99e69e07ecba27af8bd6c29) - Fix session workdir mismatch on Windows caused by inconsistent path separators.
+
+- [#544](https://github.com/MoonshotAI/kimi-code/pull/544) [`5cff6d6`](https://github.com/MoonshotAI/kimi-code/commit/5cff6d60273a6145ee38539b9c1306adddc66510) - Load Kimi-specific user Skills and global agent instructions from `KIMI_CODE_HOME` when it is set.
+
+- [#536](https://github.com/MoonshotAI/kimi-code/pull/536) [`b785e26`](https://github.com/MoonshotAI/kimi-code/commit/b785e2698a2da7adc9ef10251a2aed9b243e3b5f) - Show full plan cards directly and remove the Plan card keyboard shortcut.
+
+- [#555](https://github.com/MoonshotAI/kimi-code/pull/555) [`41ebe9f`](https://github.com/MoonshotAI/kimi-code/commit/41ebe9fb9f403e2ee6a8721640a79faa64e9210a) - Improve goal mode outcome handling with follow-up messages, safer error pauses, and clearer TUI transcript display.
+
+- [#506](https://github.com/MoonshotAI/kimi-code/pull/506) [`f09ec7b`](https://github.com/MoonshotAI/kimi-code/commit/f09ec7bbb59af42805a93df2993301dbd317ff2d) - Remove the per-turn auto-compaction limit so long conversations can keep compacting instead of failing early.
+
+- [#473](https://github.com/MoonshotAI/kimi-code/pull/473) [`3787c30`](https://github.com/MoonshotAI/kimi-code/commit/3787c3016a12af3434072da1cb6fd0c95821ea45) - Allow the startup session picker to exit with repeated Ctrl-C or Ctrl-D.
+
+- [#210](https://github.com/MoonshotAI/kimi-code/pull/210) [`d995928`](https://github.com/MoonshotAI/kimi-code/commit/d995928681fa2446902a0164919cf893b81efd75) - Show the underlying error when migration fails.
+
+- [#541](https://github.com/MoonshotAI/kimi-code/pull/541) [`2db1bd9`](https://github.com/MoonshotAI/kimi-code/commit/2db1bd9675ef3b6adf3833f05b7b6d87a137c6eb) - Fix thinking text and tool output display for subagents.
+
 ## 0.11.0
 
 ### Minor Changes

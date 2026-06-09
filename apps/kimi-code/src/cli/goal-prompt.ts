@@ -48,11 +48,7 @@ const GOAL_PREFIX = /^\/goal(\s|$)/;
  * prompt). Non-create goal subcommands are not supported headless and fall
  * through to normal prompt handling.
  */
-export function parseHeadlessGoalCreate(
-  prompt: string,
-  flagEnabled: boolean,
-): HeadlessGoalCreate | undefined {
-  if (!flagEnabled) return undefined;
+export function parseHeadlessGoalCreate(prompt: string): HeadlessGoalCreate | undefined {
   const trimmed = prompt.trim();
   if (!GOAL_PREFIX.test(trimmed)) return undefined;
   const args = trimmed.replace(/^\/goal/, '').trim();

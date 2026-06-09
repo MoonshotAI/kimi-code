@@ -1,15 +1,22 @@
-import type { GoalSnapshot } from '../../session/goal';
+import type { GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
+
+interface GoalCompletionStats {
+  readonly terminalReason?: string | undefined;
+  readonly turnsUsed: number;
+  readonly tokensUsed: number;
+  readonly wallClockMs: number;
+}
 
 /**
- * The deterministic goal-completion message. When the model marks a goal
- * `complete` via UpdateGoal, the tool stores this verbatim inside a
- * `<system-reminder>` (so it persists in the conversation without creating an
- * assistant prefill), and the TUI renders the same text live off the completion
- * event. It is built from the
- * final snapshot — not the model — so the figures (turns / tokens / time) are
- * guaranteed exact.
+ * Deterministic goal-completion text rendered by the TUI when the model marks a
+ * goal `complete`. It is built from the final snapshot, so the figures
+ * (turns / tokens / time) are exact and do not depend on model prose.
  */
 export function buildGoalCompletionMessage(goal: GoalSnapshot): string {
+  return buildGoalCompletionMessageFromStats(goal);
+}
+
+export function buildGoalCompletionMessageFromStats(goal: GoalCompletionStats): string {
   const head = `✓ Goal complete${goal.terminalReason ? ` — ${goal.terminalReason}` : ''}.`;
   const turns = `${goal.turnsUsed} turn${goal.turnsUsed === 1 ? '' : 's'}`;
   const stats = `Worked ${turns} over ${formatElapsed(goal.wallClockMs)}, using ${formatTokens(goal.tokensUsed)} tokens.`;

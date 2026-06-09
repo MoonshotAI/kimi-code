@@ -210,7 +210,11 @@ describe('AcpServer tool.result → tool_call_update', () => {
     await client.prompt({ sessionId, prompt: [textBlock('go')] });
     await flushNdjson();
 
-    const last = collecting.updates.at(-1)?.update as { sessionUpdate: string; status: string };
+    const toolUpdates = collecting.updates.filter(
+      (u) => (u.update as { sessionUpdate?: string }).sessionUpdate !==
+        'available_commands_update',
+    );
+    const last = toolUpdates.at(-1)?.update as { sessionUpdate: string; status: string };
     expect(last.sessionUpdate).toBe('tool_call_update');
     expect(last.status).toBe('failed');
   });
@@ -253,7 +257,11 @@ describe('AcpServer tool.result → tool_call_update', () => {
     await client.prompt({ sessionId, prompt: [textBlock('go')] });
     await flushNdjson();
 
-    const last = collecting.updates.at(-1)?.update as {
+    const toolUpdates = collecting.updates.filter(
+      (u) => (u.update as { sessionUpdate?: string }).sessionUpdate !==
+        'available_commands_update',
+    );
+    const last = toolUpdates.at(-1)?.update as {
       sessionUpdate: string;
       status: string;
       content: unknown[];

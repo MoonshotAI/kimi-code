@@ -1,4 +1,3 @@
-import { flags } from '../flags/resolver';
 import { expandSkillParameters, skillArgumentNames } from './parser';
 import { discoverSkills, type DiscoverSkillsOptions } from './scanner';
 import type { SkillDefinition, SkillRoot, SkillSource, SkippedSkill } from './types';
@@ -6,10 +5,6 @@ import { isInlineSkillType, normalizeSkillName } from './types';
 import { escapeXmlAttr } from '../utils/xml-escape';
 
 const LISTING_DESC_MAX = 250;
-
-type SubSkillFlagResolver = {
-  enabled(id: 'sub_skill'): boolean;
-};
 
 export class SkillNotFoundError extends Error {
   readonly skillName: string;
@@ -23,7 +18,6 @@ export class SkillNotFoundError extends Error {
 
 export interface SkillRegistryOptions {
   readonly discover?: typeof discoverSkills;
-  readonly experimentalFlags?: SubSkillFlagResolver;
   readonly onWarning?: (message: string, cause?: unknown) => void;
   readonly sessionId?: string;
 }
@@ -34,13 +28,11 @@ export class SkillRegistry {
   private readonly roots: string[] = [];
   private readonly skipped: SkippedSkill[] = [];
   private readonly discoverImpl: typeof discoverSkills;
-  private readonly experimentalFlags: SubSkillFlagResolver;
   private readonly onWarning: (message: string, cause?: unknown) => void;
   readonly sessionId?: string;
 
   constructor(options: SkillRegistryOptions = {}) {
     this.discoverImpl = options.discover ?? discoverSkills;
-    this.experimentalFlags = options.experimentalFlags ?? flags;
     this.onWarning = options.onWarning ?? (() => {});
     this.sessionId = options.sessionId;
   }
@@ -52,7 +44,6 @@ export class SkillRegistry {
 
     const skills = await this.discoverImpl({
       roots,
-      experimentalFlags: this.experimentalFlags,
       onWarning: this.onWarning,
       onSkippedByPolicy: (skill) => this.skipped.push(skill),
       onDiscoveredSkill: (skill) => {

@@ -13,43 +13,11 @@ import type { FlagDefinitionInput } from './types';
  */
 export const FLAG_DEFINITIONS = [
   {
-    id: 'goal_command',
-    title: 'Goal command',
-    description: 'Enable /goal and goal-management tools for longer autonomous tasks.',
-    env: 'KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND',
-    default: false,
-    surface: 'both',
-  },
-  {
     id: 'micro_compaction',
     title: 'Micro compaction',
     description: 'Trim older large tool results from context while keeping recent conversation intact.',
     env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
-    default: false,
-    surface: 'core',
-  },
-  {
-    id: 'background_ask',
-    title: 'Background questions',
-    description: 'Allow AskUserQuestion to return a background task when the agent can continue working.',
-    env: 'KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK',
-    default: false,
-    surface: 'core',
-  },
-  {
-    id: 'agent_swarm',
-    title: 'Agent swarm',
-    description: 'Enable the AgentSwarm tool and /swarm command.',
-    env: 'KIMI_CODE_EXPERIMENTAL_AGENT_SWARM',
-    default: false,
-    surface: 'both',
-  },
-  {
-    id: 'sub_skill',
-    title: 'Sub-skill',
-    description: 'Enable discovery of nested skills inside skill bundles that declare has-sub-skill.',
-    env: 'KIMI_CODE_EXPERIMENTAL_SUB_SKILL',
-    default: false,
+    default: true,
     surface: 'core',
   },
 ] as const satisfies readonly FlagDefinitionInput[];

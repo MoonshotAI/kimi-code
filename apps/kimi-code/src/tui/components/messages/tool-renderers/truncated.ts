@@ -6,6 +6,8 @@ import { currentTheme } from '#/tui/theme';
 import type { ResultRenderer } from './types';
 import { PREVIEW_LINES } from './types';
 
+const DEFAULT_INDENT = 2;
+
 export function trimTrailingEmptyLines(lines: string[]): string[] {
   let end = lines.length;
   while (end > 0) {
@@ -26,8 +28,8 @@ export class TruncatedOutputComponent implements Component {
   private textComponent: Text;
   private readonly expanded: boolean;
   private readonly maxLines: number;
-  private readonly output: string;
-  private readonly isError: boolean | undefined;
+  private readonly indent: number;
+  private readonly expandHint: boolean;
 
   constructor(
     output: string,
@@ -35,25 +37,26 @@ export class TruncatedOutputComponent implements Component {
       expanded: boolean;
       isError: boolean | undefined;
       maxLines?: number;
+      indent?: number;
+      // When false, the truncation footer omits the "ctrl+o to expand" promise
+      // (for contexts whose output is fixed-truncated and never expands).
+      expandHint?: boolean;
     },
   ) {
     this.expanded = options.expanded;
     this.maxLines = options.maxLines ?? PREVIEW_LINES;
-    this.output = output;
-    this.isError = options.isError;
+    this.indent = options.indent ?? DEFAULT_INDENT;
+    this.expandHint = options.expandHint ?? true;
     const cleaned = trimTrailingEmptyLines(output.split('\n')).join('\n');
     this.textComponent = new Text(
       options.isError ? currentTheme.fg('error', cleaned) : currentTheme.dim(cleaned),
-      2,
+      this.indent,
       0,
     );
   }
 
   invalidate(): void {
-    const cleaned = trimTrailingEmptyLines(this.output.split('\n')).join('\n');
-    this.textComponent.setText(
-      this.isError ? currentTheme.fg('error', cleaned) : currentTheme.dim(cleaned),
-    );
+    // Text component caches wrapped lines; invalidate on terminal resize.
     this.textComponent.invalidate();
   }
 
@@ -66,10 +69,10 @@ export class TruncatedOutputComponent implements Component {
 
     const shown = contentLines.slice(0, this.maxLines);
     const remaining = contentLines.length - this.maxLines;
-    return [
-      ...shown,
-      currentTheme.dim(`... (${String(remaining)} more lines, ctrl+o to expand)`),
-    ];
+    const hint = this.expandHint
+      ? `... (${String(remaining)} more lines, ctrl+o to expand)`
+      : `... (${String(remaining)} more lines)`;
+    return [...shown, ' '.repeat(this.indent) + currentTheme.dim(hint)];
   }
 }
 

@@ -1,252 +1,192 @@
 /**
- * Tests that {@link AcpSession.prompt} activates an {@link AcpKaos}
- * (visible to tools via {@link getCurrentKaos}) when, and only when,
- * the client advertises `fs.readTextFile` or `fs.writeTextFile`.
+ * Tests that {@link AcpServer.newSession} / `setupSessionFromExisting`
+ * passes an {@link AcpKaos} to {@link KimiHarness.createSession} /
+ * `resumeSession` when, and only when, the client advertises
+ * `fs.readTextFile` or `fs.writeTextFile`.
  *
- * Uses scripted `Session` stubs whose `prompt(parts)` synchronously
- * calls `getCurrentKaos()` *inside* its body — this is the moment a
- * real tool would resolve its Kaos handle, so it's the right place
- * to assert the binding propagated through `runWithKaos`.
+ * Boundary-injection model: the kaos is captured by the kernel
+ * `SessionImpl` ctor at session-creation time so every tool downstream
+ * sees the same reference — no AsyncLocalStorage, no per-prompt
+ * wrapping. The right surface to assert is therefore the
+ * `harness.createSession({ kaos })` boundary, not in-flight tool calls.
  */
 
-import type { AgentSideConnection, ClientCapabilities } from '@agentclientprotocol/sdk';
-import { getCurrentKaos, LocalKaos, runWithKaos } from '@moonshot-ai/kaos';
-import type { Event, Session } from '@moonshot-ai/kimi-code-sdk';
+import {
+  AgentSideConnection,
+  ClientSideConnection,
+  ndJsonStream,
+  type Client,
+  type ReadTextFileRequest,
+  type ReadTextFileResponse,
+  type RequestPermissionRequest,
+  type RequestPermissionResponse,
+  type SessionNotification,
+  type WriteTextFileRequest,
+  type WriteTextFileResponse,
+} from '@agentclientprotocol/sdk';
+import type { Kaos } from '@moonshot-ai/kaos';
+import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it } from 'vitest';
 
 import { AcpKaos } from '../src/kaos-acp';
-import { AcpSession } from '../src/session';
+import { AcpServer } from '../src/server';
+import { AUTHED_STATUS } from './_helpers/harness-stubs';
 
-/**
- * Build a minimal {@link AgentSideConnection} stub whose
- * `readTextFile` / `writeTextFile` return canned content. The stub
- * also captures the calls so tests can verify the bridging path.
- */
-function makeFakeConn(opts: { readContent?: string } = {}): {
-  conn: AgentSideConnection;
-  readCalls: Array<{ sessionId: string; path: string }>;
-  writeCalls: Array<{ sessionId: string; path: string; content: string }>;
+class StubClient implements Client {
+  async requestPermission(_p: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+    throw new Error('StubClient.requestPermission should not be called in kaos-activation test');
+  }
+  async sessionUpdate(_n: SessionNotification): Promise<void> {
+    // no-op — the server may push available_commands_update etc.
+  }
+  async writeTextFile(_p: WriteTextFileRequest): Promise<WriteTextFileResponse> {
+    return {};
+  }
+  async readTextFile(_p: ReadTextFileRequest): Promise<ReadTextFileResponse> {
+    return { content: 'STUB' };
+  }
+}
+
+function makeInMemoryStreamPair(): {
+  agentStream: ReturnType<typeof ndJsonStream>;
+  clientStream: ReturnType<typeof ndJsonStream>;
 } {
-  const readCalls: Array<{ sessionId: string; path: string }> = [];
-  const writeCalls: Array<{ sessionId: string; path: string; content: string }> = [];
-  const conn = {
-    readTextFile: async (req: { sessionId: string; path: string }) => {
-      readCalls.push({ sessionId: req.sessionId, path: req.path });
-      return { content: opts.readContent ?? 'STUB' };
-    },
-    writeTextFile: async (req: { sessionId: string; path: string; content: string }) => {
-      writeCalls.push({ sessionId: req.sessionId, path: req.path, content: req.content });
-      return {};
-    },
-    sessionUpdate: async () => undefined,
-    requestPermission: async () => {
-      throw new Error('requestPermission should not be called');
-    },
-  } as unknown as AgentSideConnection;
-  return { conn, readCalls, writeCalls };
+  const clientToAgent = new TransformStream<Uint8Array, Uint8Array>();
+  const agentToClient = new TransformStream<Uint8Array, Uint8Array>();
+  const agentStream = ndJsonStream(agentToClient.writable, clientToAgent.readable);
+  const clientStream = ndJsonStream(clientToAgent.writable, agentToClient.readable);
+  return { agentStream, clientStream };
 }
 
-/**
- * Build a `Session` whose `prompt(parts)` calls the supplied probe
- * synchronously and then fires `turn.ended` so the outer
- * `AcpSession.prompt` resolves promptly.
- */
-function makeProbingSession(
-  sessionId: string,
-  probe: () => void | Promise<void>,
-): Session {
-  const listeners = new Set<(event: Event) => void>();
+interface CapturedCreate {
+  options: { id?: string; workDir: string; kaos?: Kaos; persistenceKaos?: Kaos };
+}
+
+function makeHarness(captured: CapturedCreate[]): KimiHarness {
+  const fakeSession = (id: string): Session =>
+    ({
+      id,
+      prompt: async () => undefined,
+      cancel: async () => undefined,
+      onEvent: () => () => undefined,
+    }) as unknown as Session;
   return {
-    id: sessionId,
-    prompt: async (_input: unknown) => {
-      // Run the probe inside the (potentially) runWithKaos-bound async
-      // subtree — this is exactly where a real tool would observe its
-      // current Kaos.
-      await probe();
-      for (const fn of listeners) {
-        fn({ type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'completed' } as Event);
-      }
+    auth: { status: async () => AUTHED_STATUS },
+    createSession: async (options: { id?: string; workDir: string; kaos?: Kaos; persistenceKaos?: Kaos }) => {
+      captured.push({ options });
+      return fakeSession(options.id ?? 'fallback');
     },
-    cancel: async () => undefined,
-    onEvent: (fn: (event: Event) => void) => {
-      listeners.add(fn);
-      return () => {
-        listeners.delete(fn);
-      };
-    },
-  } as unknown as Session;
+    getConfig: async () => ({ providers: {}, models: {} }),
+  } as unknown as KimiHarness;
 }
 
-describe('AcpSession FS-capability activation', () => {
-  it('binds an AcpKaos as the current Kaos when the client advertises fs.readTextFile', async () => {
-    const { conn, readCalls } = makeFakeConn({ readContent: 'UNSAVED' });
+describe('AcpServer FS-capability activation (boundary injection)', () => {
+  it('passes an AcpKaos to createSession when the client advertises fs.readTextFile', async () => {
+    const captured: CapturedCreate[] = [];
+    const harness = makeHarness(captured);
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
 
-    let observedKaosName: string | undefined;
-    let observedRead: string | undefined;
-    const session = makeProbingSession('s-fs', async () => {
-      const current = getCurrentKaos();
-      observedKaosName = current.name;
-      observedRead = await current.readText('/abs/path.ts');
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
+
+    await client.initialize({
+      protocolVersion: 1,
+      clientCapabilities: { fs: { readTextFile: true, writeTextFile: false } },
     });
+    await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
 
-    // Activation needs a baseline Kaos in the *outer* async context
-    // (otherwise getCurrentKaos throws when the AsyncLocalStorage store
-    // is undefined). Real `kimi acp` wires this at startup; tests must
-    // emulate. Note we deliberately use `runWithKaos` rather than
-    // `setCurrentKaos` so the outer binding stays test-local.
-    const outer = await LocalKaos.create();
-    const result = await runWithKaos(outer, async () => {
-      const caps: ClientCapabilities = { fs: { readTextFile: true } };
-      const acpSession = new AcpSession(conn, session, caps);
-      return acpSession.prompt([]);
-    });
-
-    expect(result.stopReason).toBe('end_turn');
-    // Name probe confirms `runWithKaos` rebound to AcpKaos within the
-    // scripted prompt body.
-    expect(observedKaosName).toBe('acp(local)');
-    // Read probe confirms the bridge actually routes through the conn.
-    expect(observedRead).toBe('UNSAVED');
-    expect(readCalls).toEqual([{ sessionId: 's-fs', path: '/abs/path.ts' }]);
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.options.kaos).toBeInstanceOf(AcpKaos);
+    expect(captured[0]?.options.kaos?.name).toBe('acp(local)');
+    expect(captured[0]?.options.persistenceKaos).toBeDefined();
+    expect(captured[0]?.options.persistenceKaos).not.toBe(captured[0]?.options.kaos);
   });
 
-  it('binds an AcpKaos when only fs.writeTextFile is advertised', async () => {
-    const { conn, writeCalls } = makeFakeConn();
-    let probedName: string | undefined;
-    const session = makeProbingSession('s-write', async () => {
-      const current = getCurrentKaos();
-      probedName = current.name;
-      await current.writeText('/abs/out.ts', 'data');
-    });
+  it('passes an AcpKaos when only fs.writeTextFile is advertised', async () => {
+    const captured: CapturedCreate[] = [];
+    const harness = makeHarness(captured);
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
 
-    const outer = await LocalKaos.create();
-    await runWithKaos(outer, async () => {
-      const caps: ClientCapabilities = { fs: { writeTextFile: true } };
-      const acpSession = new AcpSession(conn, session, caps);
-      await acpSession.prompt([]);
-    });
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
 
-    expect(probedName).toBe('acp(local)');
-    expect(writeCalls).toEqual([{ sessionId: 's-write', path: '/abs/out.ts', content: 'data' }]);
+    await client.initialize({
+      protocolVersion: 1,
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: true } },
+    });
+    await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.options.kaos).toBeInstanceOf(AcpKaos);
+    expect(captured[0]?.options.persistenceKaos).toBeDefined();
+    expect(captured[0]?.options.persistenceKaos).not.toBe(captured[0]?.options.kaos);
   });
 
-  it('does NOT wrap when the client advertises no FS capability — current Kaos stays the outer one', async () => {
-    const { conn, readCalls } = makeFakeConn();
-    let observedKaosName: string | undefined;
-    const session = makeProbingSession('s-nofs', () => {
-      observedKaosName = getCurrentKaos().name;
-    });
+  it('passes persistenceKaos only when tool AcpKaos is active and omits both when no FS capability', async () => {
+    const captured: CapturedCreate[] = [];
+    const harness = makeHarness(captured);
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
 
-    const outer = await LocalKaos.create();
-    await runWithKaos(outer, async () => {
-      // No clientCapabilities — equivalent to "client didn't advertise FS"
-      const acpSession = new AcpSession(conn, session);
-      await acpSession.prompt([]);
-    });
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
 
-    // Pass-through: tool sees the outer LocalKaos, not an AcpKaos.
-    expect(observedKaosName).toBe('local');
-    expect(readCalls).toEqual([]);
+    await client.initialize({
+      protocolVersion: 1,
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
+    });
+    await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.options.kaos).toBeUndefined();
+    expect(captured[0]?.options.persistenceKaos).toBeUndefined();
   });
 
-  it('does NOT wrap when the FS capability flags are present-but-false', async () => {
-    const { conn } = makeFakeConn();
-    let observedKaosName: string | undefined;
-    const session = makeProbingSession('s-falseflags', () => {
-      observedKaosName = getCurrentKaos().name;
-    });
+  it('omits kaos when the FS capability flags are both false', async () => {
+    const captured: CapturedCreate[] = [];
+    const harness = makeHarness(captured);
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
 
-    const outer = await LocalKaos.create();
-    await runWithKaos(outer, async () => {
-      const caps: ClientCapabilities = { fs: { readTextFile: false, writeTextFile: false } };
-      const acpSession = new AcpSession(conn, session, caps);
-      await acpSession.prompt([]);
-    });
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new StubClient(), clientStream);
 
-    expect(observedKaosName).toBe('local');
+    await client.initialize({
+      protocolVersion: 1,
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
+    });
+    await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.options.kaos).toBeUndefined();
+    expect(captured[0]?.options.persistenceKaos).toBeUndefined();
   });
 
-  it('isolates concurrent prompts on different AcpSessions — each sees its own AcpKaos', async () => {
-    const { conn: connA } = makeFakeConn({ readContent: 'A-CONTENT' });
-    const { conn: connB } = makeFakeConn({ readContent: 'B-CONTENT' });
+  it('threads the per-session id into the AcpKaos so reverse-RPC calls route to the right session', async () => {
+    const captured: CapturedCreate[] = [];
+    const harness = makeHarness(captured);
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
 
-    let observedA: string | undefined;
-    let observedB: string | undefined;
+    let observedSessionId: string | undefined;
+    class CapturingClient extends StubClient {
+      override async readTextFile(p: ReadTextFileRequest): Promise<ReadTextFileResponse> {
+        observedSessionId = p.sessionId;
+        return { content: 'STUB' };
+      }
+    }
 
-    // Use a manual gate so both prompts overlap — A's probe blocks until
-    // B has had a chance to enter its scope. This forces the
-    // AsyncLocalStorage isolation invariant to be exercised: if
-    // `enterWith` were used naively, B's binding would leak into A.
-    let resolveA: () => void = () => undefined;
-    const aGate = new Promise<void>((r) => {
-      resolveA = r;
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection((_a) => new CapturingClient(), clientStream);
+
+    await client.initialize({
+      protocolVersion: 1,
+      clientCapabilities: { fs: { readTextFile: true } },
     });
+    const response = await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
 
-    const sessionA = makeProbingSession('s-A', async () => {
-      // Resolve A's probe AFTER we observe — see comment above.
-      await new Promise<void>((r) => setTimeout(r, 5));
-      observedA = await getCurrentKaos().readText('/file');
-      resolveA();
-    });
-    const sessionB = makeProbingSession('s-B', async () => {
-      observedB = await getCurrentKaos().readText('/file');
-      await aGate;
-    });
-
-    const outer = await LocalKaos.create();
-    await runWithKaos(outer, async () => {
-      const acpA = new AcpSession(connA, sessionA, { fs: { readTextFile: true } });
-      const acpB = new AcpSession(connB, sessionB, { fs: { readTextFile: true } });
-      await Promise.all([acpA.prompt([]), acpB.prompt([])]);
-    });
-
-    expect(observedA).toBe('A-CONTENT');
-    expect(observedB).toBe('B-CONTENT');
-  });
-
-  it('reuses the inner LocalKaos across multiple prompts on the same AcpSession', async () => {
-    const { conn } = makeFakeConn({ readContent: 'X' });
-    let firstInner: import('@moonshot-ai/kaos').Kaos | undefined;
-    let secondInner: import('@moonshot-ai/kaos').Kaos | undefined;
-    const session = makeProbingSession('s-reuse', () => {
-      // Tunnel: AcpKaos wraps an inner Kaos and exposes it indirectly
-      // via getcwd() (which delegates). For this assertion it's enough
-      // that the AcpKaos's `name` stays stable AND we observe the
-      // session through two distinct prompts without errors.
-      const k = getCurrentKaos();
-      if (!firstInner) firstInner = k;
-      else secondInner = k;
-    });
-
-    const outer = await LocalKaos.create();
-    await runWithKaos(outer, async () => {
-      const acpSession = new AcpSession(conn, session, { fs: { readTextFile: true } });
-      await acpSession.prompt([]);
-      await acpSession.prompt([]);
-    });
-
-    expect(firstInner).toBeDefined();
-    expect(secondInner).toBeDefined();
-    // Each prompt produces its own AcpKaos wrapper, but the inner
-    // LocalKaos is reused — we can't directly read the private field,
-    // but the visible name should stay stable.
-    expect(firstInner?.name).toBe('acp(local)');
-    expect(secondInner?.name).toBe('acp(local)');
-  });
-
-  it('returns an AcpKaos instance from maybeBuildAcpKaos when capable (verified via name + instanceof through prompt path)', async () => {
-    const { conn } = makeFakeConn();
-    let observed: unknown;
-    const session = makeProbingSession('s-instance', () => {
-      observed = getCurrentKaos();
-    });
-
-    const outer = await LocalKaos.create();
-    await runWithKaos(outer, async () => {
-      const acpSession = new AcpSession(conn, session, { fs: { readTextFile: true } });
-      await acpSession.prompt([]);
-    });
-
-    expect(observed).toBeInstanceOf(AcpKaos);
+    const kaos = captured[0]?.options.kaos;
+    expect(kaos).toBeInstanceOf(AcpKaos);
+    // Drive a reverse-RPC read through the AcpKaos and verify the
+    // sessionId on the wire matches the one returned by newSession.
+    await kaos!.readText('/abs/file.ts');
+    expect(observedSessionId).toBe(response.sessionId);
   });
 });

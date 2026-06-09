@@ -7,12 +7,10 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { Component } from '@earendil-works/pi-tui';
+import type { Component, MarkdownTheme } from '@earendil-works/pi-tui';
 import { Markdown, visibleWidth } from '@earendil-works/pi-tui';
+import chalk from 'chalk';
 
-import { currentTheme } from '#/tui/theme';
-import type { ColorToken } from '#/tui/theme';
-import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
 
 const LEFT_MARGIN = 2; // two-space indent matching other tool call children
@@ -21,25 +19,22 @@ const TITLE_PREFIX = ' plan: ';
 const TITLE_SUFFIX = ' ';
 
 export interface PlanBoxOptions {
-  maxContentLines?: number;
-  expanded?: boolean;
   status?: {
     readonly label: string;
-    readonly colorToken: ColorToken;
+    readonly colorHex: string;
   };
 }
 
 export class PlanBoxComponent implements Component {
   private readonly markdown: Markdown;
-  private readonly maxContentLines: number | undefined;
-  private readonly expanded: boolean;
   private readonly status: PlanBoxOptions['status'];
   private cachedWidth: number | undefined;
   private cachedLines: string[] | undefined;
 
   constructor(
     plan: string,
-    private readonly borderToken: ColorToken,
+    markdownTheme: MarkdownTheme,
+    private readonly borderHex: string,
     private readonly planPath?: string,
     opts?: PlanBoxOptions,
   ) {
@@ -47,9 +42,7 @@ export class PlanBoxComponent implements Component {
     // parse + wrap output keyed on (text, width), so reusing the same
     // instance means repeated render() calls from the parent Container
     // hit the cache instead of re-parsing on every frame.
-    this.markdown = new Markdown(plan.trim(), 0, 0, createMarkdownTheme());
-    this.maxContentLines = opts?.maxContentLines;
-    this.expanded = opts?.expanded ?? false;
+    this.markdown = new Markdown(plan.trim(), 0, 0, markdownTheme);
     this.status = opts?.status;
   }
 
@@ -72,7 +65,7 @@ export class PlanBoxComponent implements Component {
     const horzLen = Math.max(2, width - LEFT_MARGIN - 2);
     const contentWidth = Math.max(1, horzLen - 2 * SIDE_PADDING);
 
-    const paint = (s: string): string => currentTheme.fg(this.borderToken, s);
+    const paint = (s: string): string => chalk.hex(this.borderHex)(s);
     const indent = ' '.repeat(LEFT_MARGIN);
 
     const title = this.buildTitle(horzLen);
@@ -82,34 +75,17 @@ export class PlanBoxComponent implements Component {
     const bottom = indent + paint('└' + '─'.repeat(horzLen) + '┘');
 
     const rawLines = this.markdown.render(contentWidth);
-    const { shown, hiddenCount } = this.capContentLines(rawLines);
 
     const lines: string[] = [top];
-    for (const raw of shown) {
+    for (const raw of rawLines) {
       const pad = Math.max(0, contentWidth - visibleWidth(raw));
       lines.push(indent + paint('│') + ' ' + raw + ' '.repeat(pad) + ' ' + paint('│'));
-    }
-    if (hiddenCount > 0) {
-      const footer = currentTheme.dim(
-        `... (${String(hiddenCount)} more line${hiddenCount === 1 ? '' : 's'}, ctrl+e to expand)`,
-      );
-      const pad = Math.max(0, contentWidth - visibleWidth(footer));
-      lines.push(indent + paint('│') + ' ' + footer + ' '.repeat(pad) + ' ' + paint('│'));
     }
     lines.push(bottom);
 
     this.cachedWidth = width;
     this.cachedLines = lines;
     return lines;
-  }
-
-  private capContentLines(rawLines: string[]): { shown: string[]; hiddenCount: number } {
-    const cap = this.maxContentLines;
-    if (this.expanded || cap === undefined || rawLines.length <= cap) {
-      return { shown: rawLines, hiddenCount: 0 };
-    }
-    const shownCount = Math.max(0, cap - 1);
-    return { shown: rawLines.slice(0, shownCount), hiddenCount: rawLines.length - shownCount };
   }
 
   private buildTitle(horzLen: number): string {
@@ -133,6 +109,6 @@ export class PlanBoxComponent implements Component {
   private buildStatusSuffix(): string {
     const status = this.status;
     if (status === undefined || status.label.length === 0) return '';
-    return ` · ${currentTheme.fg(status.colorToken, status.label)}`;
+    return ` · ${chalk.hex(status.colorHex)(status.label)}`;
   }
 }

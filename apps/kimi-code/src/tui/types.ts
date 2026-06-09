@@ -1,4 +1,5 @@
 import type {
+  GoalChange,
   GoalSnapshot,
   ModelAlias,
   PermissionMode,
@@ -109,6 +110,10 @@ export interface CronTranscriptData {
   readonly missedCount?: number;
 }
 
+export type GoalTranscriptData =
+  | { readonly kind: 'created' }
+  | { readonly kind: 'lifecycle'; readonly change: GoalChange };
+
 export type TranscriptEntryKind =
   | 'welcome'
   | 'user'
@@ -117,7 +122,8 @@ export type TranscriptEntryKind =
   | 'thinking'
   | 'status'
   | 'skill_activation'
-  | 'cron';
+  | 'cron'
+  | 'goal';
 
 export type SkillActivationTrigger = 'user-slash' | 'model-tool' | 'nested-skill';
 
@@ -133,6 +139,7 @@ export interface TranscriptEntry {
   backgroundAgentStatus?: BackgroundAgentStatusData;
   compactionData?: CompactionTranscriptData;
   cronData?: CronTranscriptData;
+  goalData?: GoalTranscriptData;
   imageAttachmentIds?: readonly number[];
   skillActivationId?: string;
   skillName?: string;

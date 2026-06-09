@@ -97,21 +97,18 @@ export class QuestionDialogComponent extends Container implements Focusable {
   private readonly answers: (string | undefined)[];
 
   private readonly onToggleToolOutput: (() => void) | undefined;
-  private readonly onTogglePlanExpand: (() => void) | undefined;
 
   constructor(
     request: PendingQuestion,
     onAnswer: (response: QuestionPanelResponse) => void,
     maxVisibleOptions = 6,
     onToggleToolOutput?: () => void,
-    onTogglePlanExpand?: () => void,
   ) {
     super();
     this.request = request;
     this.onAnswer = onAnswer;
     this.maxVisibleOptions = maxVisibleOptions;
     this.onToggleToolOutput = onToggleToolOutput;
-    this.onTogglePlanExpand = onTogglePlanExpand;
     this.otherInput.onSubmit = (value) => {
       this.commitOtherInput(value, 'enter');
     };
@@ -140,11 +137,6 @@ export class QuestionDialogComponent extends Container implements Focusable {
 
     if (matchesKey(data, Key.ctrl('o'))) {
       this.onToggleToolOutput?.();
-      return;
-    }
-
-    if (matchesKey(data, Key.ctrl('e'))) {
-      this.onTogglePlanExpand?.();
       return;
     }
 

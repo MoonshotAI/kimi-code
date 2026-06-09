@@ -9,13 +9,18 @@ import { Container, Text, Spacer, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, TUI } from '@earendil-works/pi-tui';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
-import { COMMAND_PREVIEW_LINES } from '#/tui/constant/rendering';
+import {
+  COMMAND_PREVIEW_LINES,
+  RESULT_PREVIEW_LINES,
+  THINKING_PREVIEW_LINES,
+} from '#/tui/constant/rendering';
 import {
   STREAMING_ARGS_FIELD_RE,
   STREAMING_ARGS_PREVIEW_MAX_CHARS,
 } from '#/tui/constant/streaming';
 import { FAILURE_MARK, STATUS_BULLET, SUCCESS_MARK } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
@@ -25,11 +30,15 @@ import { agentSwarmResultSummaryFromOutput } from './agent-swarm-progress';
 import { PlanBoxComponent } from './plan-box';
 import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
-import { pickResultRenderer } from './tool-renderers/registry';
+import { buildGoalToolHeader } from './tool-renderers/goal';
+import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
+import { TruncatedOutputComponent } from './tool-renderers/truncated';
 
 const MAX_ARG_LENGTH = 60;
 const MAX_SUB_TOOL_CALLS_SHOWN = 4;
 const MAX_SINGLE_SUBAGENT_TOOL_ROWS = 4;
+// Hanging indent for a sub-tool's previewed output, nested under its activity row.
+const SUBAGENT_SUBTOOL_OUTPUT_INDENT = 6;
 const APPROVED_PLAN_MARKER = '## Approved Plan:';
 const STREAMING_PROGRESS_INTERVAL_MS = 1000;
 const SUBAGENT_ELAPSED_INTERVAL_MS = 1000;
@@ -57,6 +66,7 @@ interface SubToolActivity {
   name: string;
   args: Record<string, unknown>;
   phase: 'ongoing' | 'done' | 'failed';
+  output?: string;
   readonly orderSeq: number;
 }
 
@@ -451,6 +461,10 @@ class PrefixedWrappedLine implements Component {
     private readonly firstPrefix: string,
     private readonly continuationPrefix: string,
     private readonly text: string,
+    // When set, only the last N wrapped display rows are kept, so a long
+    // unwrapped paragraph scrolls within a fixed window instead of growing
+    // unbounded. The first kept row still gets `firstPrefix`.
+    private readonly tailLines?: number,
   ) { }
 
   invalidate(): void { }
@@ -461,7 +475,11 @@ class PrefixedWrappedLine implements Component {
       visibleWidth(this.continuationPrefix),
     );
     const contentWidth = Math.max(1, width - prefixWidth);
-    const lines = new Text(this.text, 0, 0).render(contentWidth);
+    const wrapped = new Text(this.text, 0, 0).render(contentWidth);
+    const lines =
+      this.tailLines !== undefined && wrapped.length > this.tailLines
+        ? wrapped.slice(wrapped.length - this.tailLines)
+        : wrapped;
     return lines.map((line, index) =>
       index === 0 ? `${this.firstPrefix}${line}` : `${this.continuationPrefix}${line}`,
     );
@@ -470,8 +488,8 @@ class PrefixedWrappedLine implements Component {
 
 export class ToolCallComponent extends Container {
   private expanded = false;
-  private planExpanded = false;
   private toolCall: ToolCallBlockData;
+  private readonly markdownTheme = createMarkdownTheme();
   private result: ToolResultBlockData | undefined;
   private ui: TUI | undefined;
   private planPath: string | undefined;
@@ -590,17 +608,6 @@ export class ToolCallComponent extends Container {
     this.rebuildBody();
   }
 
-  // Toggle the plan box's expanded state independently from tool-output
-  // expansion. Returns true iff this card actually owns a plan preview
-  // (ExitPlanMode), so the caller can decide whether to consume the keystroke.
-  setPlanExpanded(expanded: boolean): boolean {
-    if (this.toolCall.name !== 'ExitPlanMode') return false;
-    if (this.planExpanded === expanded) return true;
-    this.planExpanded = expanded;
-    this.rebuildBody();
-    return true;
-  }
-
   setResult(result: ToolResultBlockData): void {
     this.result = result;
     // Result supersedes any live progress chatter; the result body is the
@@ -698,6 +705,7 @@ export class ToolCallComponent extends Container {
         call.name,
         call.args,
         call.result.is_error === true ? 'failed' : 'done',
+        call.result.output,
       );
     }
     while (this.finishedSubCalls.length > MAX_SUB_TOOL_CALLS_SHOWN) {
@@ -818,12 +826,14 @@ export class ToolCallComponent extends Container {
     name: string,
     args: Record<string, unknown>,
     phase: SubToolActivity['phase'],
+    output?: string,
   ): void {
     const existing = this.subToolActivities.get(id);
     if (existing !== undefined) {
       existing.name = name;
       existing.args = args;
       existing.phase = phase;
+      if (output !== undefined) existing.output = output;
       return;
     }
     this.subToolActivities.set(id, {
@@ -831,6 +841,7 @@ export class ToolCallComponent extends Container {
       name,
       args,
       phase,
+      ...(output !== undefined ? { output } : {}),
       orderSeq: ++this.subToolOrderSeq,
     });
   }
@@ -1184,6 +1195,7 @@ export class ToolCallComponent extends Container {
       ongoing.name,
       ongoing.args,
       result.is_error === true ? 'failed' : 'done',
+      result.output,
     );
     while (this.finishedSubCalls.length > MAX_SUB_TOOL_CALLS_SHOWN) {
       this.finishedSubCalls.shift();
@@ -1242,6 +1254,14 @@ export class ToolCallComponent extends Container {
       const tone = isError ? 'error' : 'primary';
       return `${bullet}${currentTheme.boldFg(tone, label)}`;
     }
+
+    const goalHeader = buildGoalToolHeader({
+      toolCall,
+      result,
+      bullet,
+      chip: isFinished && result !== undefined ? this.buildHeaderChip(result) : '',
+    });
+    if (goalHeader !== undefined) return goalHeader;
 
     if (this.isSingleSubagentView()) {
       return this.buildSingleSubagentHeader();
@@ -1544,6 +1564,7 @@ export class ToolCallComponent extends Container {
             : currentTheme.fg('text', '•');
       const verb = activity.phase === 'ongoing' ? 'Using' : 'Used';
       this.addChild(new Text(`  ${mark} ${this.formatSubToolActivity(verb, activity)}`, 0, 0));
+      this.addSubToolOutputPreview(activity);
     }
 
     if (this.getDerivedSubagentPhase() === 'failed' && this.subagentError !== undefined) {
@@ -1561,10 +1582,19 @@ export class ToolCallComponent extends Container {
     }
 
     const outputLine = tailNonEmptyLines(this.subagentText, 1).at(-1);
-    const thinkingLine = tailNonEmptyLines(this.subagentThinkingText, 1).at(-1);
-    if (this.getDerivedSubagentPhase() !== 'done' && thinkingLine !== undefined) {
+    if (
+      this.getDerivedSubagentPhase() !== 'done' &&
+      this.subagentThinkingText.trim().length > 0
+    ) {
+      // Scroll thinking within a fixed two-row window (width-aware), matching
+      // the main agent's live thinking instead of growing without bound.
       this.addChild(
-        new PrefixedWrappedLine(`  ${currentTheme.dim('◌')} `, '    ', currentTheme.dim(thinkingLine)),
+        new PrefixedWrappedLine(
+          `  ${currentTheme.dim('◌')} `,
+          '    ',
+          currentTheme.dim(this.subagentThinkingText.trimEnd()),
+          THINKING_PREVIEW_LINES,
+        ),
       );
     }
     if (outputLine !== undefined) {
@@ -1576,6 +1606,27 @@ export class ToolCallComponent extends Container {
         ),
       );
     }
+  }
+
+  private addSubToolOutputPreview(activity: SubToolActivity): void {
+    if (activity.phase === 'ongoing') return;
+    const output = activity.output;
+    if (output === undefined || output.trim().length === 0) return;
+    // Mirror the main agent: Bash and any tool without a dedicated renderer
+    // (every MCP tool included) get a truncated output preview. Recognized
+    // tools keep their compact activity row only.
+    if (activity.name !== 'Bash' && !isGenericToolResult(activity.name)) return;
+    this.addChild(
+      new TruncatedOutputComponent(output, {
+        // Subagent output is always fixed-truncated; it does not take part in
+        // the ctrl+o expand toggle, so don't advertise it either.
+        expanded: false,
+        expandHint: false,
+        isError: activity.phase === 'failed',
+        maxLines: RESULT_PREVIEW_LINES,
+        indent: SUBAGENT_SUBTOOL_OUTPUT_INDENT,
+      }),
+    );
   }
 
   private getRecentSubToolActivities(): SubToolActivity[] {
@@ -1726,24 +1777,15 @@ export class ToolCallComponent extends Container {
   private buildPlanPreview(): void {
     // Priority: inline `args.plan`, approved plan parsed from result, then
     // asynchronously injected currentPlan used while approval is in flight.
-    // Once a plan is found, PlanBoxComponent renders it. Without markdownTheme
-    // (unit tests), fall back to indented dim text so it remains visible.
+    // Once a plan is found, PlanBoxComponent renders it.
     const plan = this.resolvePlanForPreview();
     if (plan.length === 0) return;
     const path = this.resolvePlanPath();
     this.addChild(
-      new PlanBoxComponent(plan, 'success', path, {
-        maxContentLines: this.computePlanBoxMaxContentLines(),
-        expanded: this.planExpanded,
+      new PlanBoxComponent(plan, this.markdownTheme, currentTheme.color('success'), path, {
         status: this.resolvePlanBoxStatus(),
       }),
     );
-  }
-
-  private computePlanBoxMaxContentLines(): number | undefined {
-    const rows = this.ui?.terminal.rows;
-    if (rows === undefined || !Number.isFinite(rows) || rows <= 0) return undefined;
-    return Math.max(8, Math.floor(rows * 0.6) - 4);
   }
 
   private resolvePlanForPreview(): string {
@@ -1766,13 +1808,13 @@ export class ToolCallComponent extends Container {
     return this.planPath;
   }
 
-  private resolvePlanBoxStatus(): { label: string; colorToken: 'error' } | undefined {
+  private resolvePlanBoxStatus(): { label: string; colorHex: string } | undefined {
     const result = this.result;
     if (this.toolCall.name !== 'ExitPlanMode' || result === undefined) return undefined;
     if (!isExitPlanModeOutcomeOutput(result.output)) return undefined;
     const outcome = interpretExitPlanModeOutcome(result.output);
     if (outcome.kind !== 'rejected') return undefined;
-    return { label: 'Rejected', colorToken: 'error' };
+    return { label: 'Rejected', colorHex: currentTheme.color('error') };
   }
 
   private buildContent(): void {

@@ -16,6 +16,10 @@ Kimi Code CLI 是一个运行在终端中的 AI Agent，帮助你完成软件开
 
 提供两种安装方式：官方安装脚本（推荐，无需预装 Node.js）和 npm 全局安装。
 
+::: tip 安装之前
+Kimi Code CLI 为全交互式 TUI 应用，推荐在支持真彩色与连字的现代终端中运行以获得最佳体验，例如 [Kitty](https://sw.kovidgoyal.net/kitty/) 或 [Ghostty](https://ghostty.org/)。
+:::
+
 ### 脚本安装（推荐）
 
 - **macOS / Linux**：

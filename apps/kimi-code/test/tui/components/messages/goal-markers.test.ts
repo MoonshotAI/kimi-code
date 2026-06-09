@@ -18,6 +18,51 @@ describe('buildGoalMarker', () => {
     expect(strip(blocked!.render(80))).toContain('Goal blocked');
   });
 
+  it('renders user interruption pause and user resume as prominent markers', () => {
+    const paused = buildGoalMarker(
+      { kind: 'lifecycle', status: 'paused', reason: 'Paused after interruption' } as GoalChange,
+      false,
+      'runtime',
+    );
+    const resumed = buildGoalMarker(
+      { kind: 'lifecycle', status: 'active' } as GoalChange,
+      false,
+      'user',
+    );
+
+    expect(strip(paused!.render(80))).toBe("\n● Goal paused due to user's interruption");
+    expect(strip(resumed!.render(80))).toBe('\n● Goal resumed by the user.');
+    expect(strip([...paused!.render(80), ...resumed!.render(80)])).toBe(
+      "\n● Goal paused due to user's interruption\n\n● Goal resumed by the user.",
+    );
+  });
+
+  it('does not repeat paused for runtime pause reasons', () => {
+    const marker = buildGoalMarker(
+      { kind: 'lifecycle', status: 'paused', reason: 'Paused after runtime error: socket hang up' } as GoalChange,
+      false,
+      'runtime',
+    );
+
+    expect(strip(marker!.render(80))).toBe('\n● Goal paused after runtime error: socket hang up');
+  });
+
+  it('attributes model pause and resume markers to the agent', () => {
+    const paused = buildGoalMarker(
+      { kind: 'lifecycle', status: 'paused' } as GoalChange,
+      false,
+      'model',
+    );
+    const resumed = buildGoalMarker(
+      { kind: 'lifecycle', status: 'active' } as GoalChange,
+      false,
+      'model',
+    );
+
+    expect(strip(paused!.render(80))).toBe('\n● Goal paused by the agent.');
+    expect(strip(resumed!.render(80))).toBe('\n● Goal resumed by the agent.');
+  });
+
   it('returns null for a completion change (it posts its own message)', () => {
     expect(
       buildGoalMarker({ kind: 'completion', status: 'complete' } as GoalChange, false),
