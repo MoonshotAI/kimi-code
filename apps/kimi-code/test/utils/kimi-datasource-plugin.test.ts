@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -114,12 +115,98 @@ describe('kimi-datasource MCP server', () => {
       await expect(readFile(blockedFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
       expect(requests).toEqual([
         {
+          authorization: 'Bearer test-token',
           method: 'call_data_source_tool',
           params: {
             data_source_name: 'world_bank_open_data',
             api_name: 'world_bank_open_data',
             params: { filepath: textFile },
           },
+          url: '/',
+        },
+      ]);
+    } finally {
+      child?.stdin.end();
+      child?.kill();
+      await closeServer(server);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses env-scoped credentials and derives the datasource URL from KIMI_CODE_BASE_URL', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'kimi-datasource-plugin-'));
+    const kimiHome = join(tempDir, 'kimi-home');
+    const requests: unknown[] = [];
+    let child: ChildProcessWithoutNullStreams | undefined;
+
+    const server = createServer((request, response) => {
+      void handleMockDatasourceRequest(request, response, {
+        requests,
+        textFile: join(tempDir, 'unused.csv'),
+        binaryFile: join(tempDir, 'unused_payload.csv'),
+        blockedFile: join(tempDir, 'blocked.csv'),
+      });
+    });
+
+    try {
+      await listen(server);
+      const address = server.address();
+      if (address === null || typeof address === 'string') {
+        throw new Error('Expected an ephemeral TCP port for the test server.');
+      }
+
+      const baseUrl = `http://127.0.0.1:${address.port}/coding/v1`;
+      const oauthHost = 'https://auth.dev.kimi.team';
+      const scopedCredential = kimiCodeEnvCredentialName({ oauthHost, baseUrl });
+
+      await mkdir(join(kimiHome, 'credentials'), { recursive: true });
+      await writeFile(
+        join(kimiHome, 'credentials', 'kimi-code.json'),
+        JSON.stringify({ access_token: 'expired-prod-token', expires_at: 1 }),
+        'utf8',
+      );
+      await writeFile(
+        join(kimiHome, 'credentials', `${scopedCredential}.json`),
+        JSON.stringify({ access_token: 'scoped-token', expires_at: 4_102_444_800 }),
+        'utf8',
+      );
+
+      child = spawn(process.execPath, [SERVER_ENTRY], {
+        cwd: REPO_ROOT,
+        env: {
+          ...process.env,
+          KIMI_CODE_HOME: kimiHome,
+          KIMI_CODE_BASE_URL: baseUrl,
+          KIMI_CODE_OAUTH_HOST: oauthHost,
+          KIMI_DATASOURCE_API_URL: undefined,
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      const client = createRpcClient(child);
+
+      await client.request('initialize', {});
+      const result = await client.request('tools/call', {
+        name: 'get_data_source_desc',
+        arguments: {
+          name: 'arxiv',
+        },
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.result).toEqual({
+        content: [
+          {
+            type: 'text',
+            text: expect.stringContaining('assistant complete result'),
+          },
+        ],
+      });
+      expect(requests).toEqual([
+        {
+          authorization: 'Bearer scoped-token',
+          method: 'get_data_source_desc',
+          params: { name: 'arxiv' },
+          url: '/coding/v1/tools',
         },
       ]);
     } finally {
@@ -130,6 +217,19 @@ describe('kimi-datasource MCP server', () => {
     }
   });
 });
+
+function kimiCodeEnvCredentialName(options: {
+  readonly oauthHost: string;
+  readonly baseUrl: string;
+}): string {
+  const oauthHost = options.oauthHost.replace(/\/+$/, '');
+  const baseUrl = options.baseUrl.replace(/\/+$/, '');
+  const digest = createHash('sha256')
+    .update(JSON.stringify({ oauthHost, baseUrl }))
+    .digest('hex')
+    .slice(0, 16);
+  return `kimi-code-env-${digest}`;
+}
 
 async function readJson(request: IncomingMessage): Promise<unknown> {
   let body = '';
@@ -150,7 +250,11 @@ async function handleMockDatasourceRequest(
   },
 ): Promise<void> {
   try {
-    options.requests.push(await readJson(request));
+    options.requests.push({
+      ...(await readJson(request) as Record<string, unknown>),
+      authorization: request.headers.authorization,
+      url: request.url,
+    });
     response.setHeader('Content-Type', 'application/json');
     response.end(
       JSON.stringify({

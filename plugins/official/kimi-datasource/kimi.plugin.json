@@ -1,6 +1,6 @@
 {
   "name": "kimi-datasource",
-  "version": "3.1.1",
+  "version": "3.1.2",
   "description": "Finance, macro, enterprise, and academic data tools for Kimi Code.",
   "keywords": ["finance", "data-source", "mcp"],
   "mcpServers": {
