@@ -8,14 +8,14 @@ import i18n from '../../i18n';
 const global = { plugins: [i18n] };
 
 describe('TabBar', () => {
-  it('渲染四个标签且默认 chat 选中', () => {
+  it('渲染三个标签（diff 已并入 files）且默认 chat 选中', () => {
     const w = mount(TabBar, { props: { active: 'chat', runningTasks: 2 }, global });
     const tabs = w.findAll('.tb');
-    expect(tabs).toHaveLength(4);
-    expect(w.text()).toContain('~/chat');
-    expect(w.text()).toContain('~/diff');
-    expect(w.text()).toContain('~/tasks');
-    expect(w.text()).toContain('~/files');
+    expect(tabs).toHaveLength(3);
+    expect(w.text()).toContain('chat');
+    expect(w.text()).toContain('files');
+    expect(w.text()).toContain('tasks');
+    expect(w.text()).not.toContain('diff');
     expect(tabs[0]!.classes()).toContain('on');
   });
 
@@ -27,20 +27,20 @@ describe('TabBar', () => {
   it('点击标签 emit select 事件', async () => {
     const w = mount(TabBar, { props: { active: 'chat', runningTasks: 2 }, global });
     await w.findAll('.tb')[1]!.trigger('click');
-    expect(w.emitted('select')?.[0]).toEqual(['diff']);
+    expect(w.emitted('select')?.[0]).toEqual(['files']);
   });
 
-  it('changesCount > 0 时 ~/diff 显示指示点', () => {
+  it('changesCount > 0 时 files 显示指示点', () => {
     const w = mount(TabBar, { props: { active: 'chat', runningTasks: 0, changesCount: 3 }, global });
     expect(w.find('.d').exists()).toBe(true);
   });
 
-  it('changesCount = 0 时 ~/diff 不显示指示点', () => {
+  it('changesCount = 0 时 ~/files 不显示指示点', () => {
     const w = mount(TabBar, { props: { active: 'chat', runningTasks: 0, changesCount: 0 }, global });
     expect(w.find('.d').exists()).toBe(false);
   });
 
-  it('不传 changesCount 时 ~/diff 不显示指示点', () => {
+  it('不传 changesCount 时 files 不显示指示点', () => {
     const w = mount(TabBar, { props: { active: 'chat', runningTasks: 0 }, global });
     expect(w.find('.d').exists()).toBe(false);
   });

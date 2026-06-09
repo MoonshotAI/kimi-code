@@ -11,6 +11,7 @@ import type {
   AppModel,
   AppProvider,
   AppQuestionRequest,
+  AppSessionRuntimeStatus,
   AppWorkspace,
   ApprovalDecision,
   ApprovalResponse,
@@ -52,6 +53,7 @@ const ACTIVE_WORKSPACE_KEY = 'kimi-active-workspace';
 const THINKING_STORAGE_KEY = 'kimi-web.thinking';
 const PLAN_MODE_STORAGE_KEY = 'kimi-web.plan-mode';
 const THEME_STORAGE_KEY = 'kimi-web.theme';
+const ONBOARDED_STORAGE_KEY = 'kimi-web.onboarded';
 const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 /** UI theme: 'terminal' = today's default line look, 'modern' = bubbles everywhere. */
@@ -116,7 +118,9 @@ function loadThemeFromStorage(): Theme {
   } catch {
     // ignore
   }
-  return 'terminal';
+  // Modern is the default for new users (no stored choice); the onboarding screen
+  // confirms/changes it. Existing users keep whatever they persisted.
+  return 'modern';
 }
 
 function saveThemeToStorage(v: Theme): void {
@@ -183,6 +187,8 @@ interface ExtendedState extends KimiClientState {
   // AUTHORITATIVE id for :abort — the event projector synthesizes a `pr_…` id
   // when turn.started races ahead of binding, which the daemon rejects.
   promptIdBySession: Record<string, string>;
+  // True while a prompt is in flight but the assistant reply hasn't started yet.
+  sendingBySession: Record<string, boolean>;
   // Auth state (real daemon)
   authReady: boolean;
   defaultModel: string | null;
@@ -208,6 +214,7 @@ const rawState: ExtendedState = reactive({
   queuedBySession: {},
   gitStatusBySession: {},
   promptIdBySession: {},
+  sendingBySession: {},
   authReady: false,
   defaultModel: null,
   managedProviderStatus: null,
@@ -227,6 +234,52 @@ const providers = ref<AppProvider[]>([]);
 const selectedDiffPath = ref<string | null>(null);
 const fileDiffLines = ref<DiffViewLine[]>([]);
 const fileDiffLoading = ref(false);
+
+/**
+ * Fetch GET /sessions/{id}/status and fold the live model + context usage back
+ * into the cached session, so the status line and the WS `agent.status.updated`
+ * path share ONE source of truth (the session). Never throws — an old daemon
+ * without /status just keeps the previously-known values.
+ */
+async function refreshSessionStatus(sessionId: string): Promise<void> {
+  let st: AppSessionRuntimeStatus;
+  try {
+    st = await getKimiWebApi().getSessionStatus(sessionId);
+  } catch {
+    return; // status endpoint missing/unreachable — keep what we have.
+  }
+  rawState.sessions = rawState.sessions.map((s) =>
+    s.id === sessionId
+      ? {
+          ...s,
+          model: st.model ?? s.model,
+          usage: {
+            ...s.usage,
+            contextTokens: st.contextTokens,
+            contextLimit: st.maxContextTokens,
+          },
+        }
+      : s,
+  );
+}
+
+/** Persist runtime controls to the active session via POST /profile, then
+ *  re-read /status. Fire-and-forget: the UI already updated optimistically. */
+function persistSessionProfile(patch: {
+  model?: string;
+  permissionMode?: string;
+  planMode?: boolean;
+  thinking?: string;
+}): void {
+  const sid = rawState.activeSessionId;
+  if (!sid) return;
+  // Promise.resolve wrap: tolerate a sync/undefined return (e.g. test mocks).
+  void Promise.resolve(getKimiWebApi().updateSession(sid, patch))
+    .then(() => refreshSessionStatus(sid))
+    .catch(() => {
+      /* ignore — local state already reflects the change */
+    });
+}
 
 // ---------------------------------------------------------------------------
 // Theme (Terminal default vs Modern bubbles). Persisted to localStorage and
@@ -253,6 +306,28 @@ function setTheme(t: Theme): void {
 /** Flip Terminal ↔ Modern. */
 function toggleTheme(): void {
   setTheme(theme.value === 'modern' ? 'terminal' : 'modern');
+}
+
+// ---------------------------------------------------------------------------
+// Onboarding: a "has the user been onboarded" flag that gates the first-run
+// onboarding screen (preferences: language + theme). Persisted; can be reset to
+// re-open the screen from the settings popover.
+// ---------------------------------------------------------------------------
+function loadStringFromStorage(key: string): string {
+  try {
+    return localStorage.getItem(key) ?? '';
+  } catch {
+    return '';
+  }
+}
+const onboarded = ref<boolean>(loadStringFromStorage(ONBOARDED_STORAGE_KEY) === '1');
+function setOnboarded(done: boolean): void {
+  onboarded.value = done;
+  try {
+    localStorage.setItem(ONBOARDED_STORAGE_KEY, done ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
 }
 
 // Singleton WS connection
@@ -606,6 +681,12 @@ const sessions = computed<Session[]>(() =>
 
 const activeSessionId = computed<string>(() => rawState.activeSessionId ?? '');
 
+const isSending = computed<boolean>(() => {
+  const sid = rawState.activeSessionId;
+  if (!sid) return false;
+  return rawState.sendingBySession[sid] ?? false;
+});
+
 const turns = computed<ChatTurn[]>(() => {
   const sid = rawState.activeSessionId;
   if (!sid) return [];
@@ -710,9 +791,8 @@ const status = computed<ConversationStatus>(() => {
   const branch =
     gitInfo.value?.branch ??
     (activeSession ? activeSession.cwd.split('/').pop() ?? activeSession.cwd : 'main');
-  // Known backend limitation: Session.agent_config.model is ALWAYS '' in
-  // responses, so fall back to the daemon's default_model (from GET /auth) for
-  // display when the session model is empty.
+  // session.model is kept live by GET /status (on select/idle) and the WS
+  // agent.status.updated event during a turn; fall back to the daemon default.
   const displayModel =
     (activeSession?.model && activeSession.model.length > 0
       ? activeSession.model
@@ -948,9 +1028,12 @@ watch(activity, (act) => {
 
   // The turn finished — this session no longer has a prompt in flight.
   inFlightPromptSessions.delete(sid);
+  rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
 
   // Refresh git status so edits the agent just made are reflected
   void loadGitStatus(sid);
+  // Refresh runtime status (model/context usage may have changed this turn).
+  void refreshSessionStatus(sid);
 
   const queue = rawState.queuedBySession[sid] ?? [];
   if (queue.length === 0) return;
@@ -1027,6 +1110,10 @@ async function checkAuth(): Promise<void> {
   }
 }
 
+// False until the very first load() settles (success OR failure). Gates the
+// global connecting-splash so a page refresh doesn't flash a half-empty app.
+const initialized = ref(false);
+
 async function load(): Promise<void> {
   rawState.loading = true;
   try {
@@ -1065,6 +1152,7 @@ async function load(): Promise<void> {
     // Do not re-throw — app stays mounted with empty sessions
   } finally {
     rawState.loading = false;
+    initialized.value = true;
   }
 }
 
@@ -1222,6 +1310,8 @@ async function selectSession(sessionId: string): Promise<void> {
 
     // Load git status (defensive — catch in loadGitStatus)
     void loadGitStatus(sessionId);
+    // Load live runtime status (real model + context usage) for the status line.
+    void refreshSessionStatus(sessionId);
 
     // Subscribe to WS events for this session (lazy connect)
     connectEventsIfNeeded();
@@ -1250,6 +1340,7 @@ async function submitPromptInternal(sid: string, text: string, attachments?: { f
   // Mark this session as having a prompt in flight BEFORE any await, so a racing
   // sendPrompt sees it and enqueues. Cleared when activity returns to idle.
   inFlightPromptSessions.add(sid);
+  rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: true };
   try {
     const api = getKimiWebApi();
     const content: import('../api/types').AppMessageContent[] = [];
@@ -1259,6 +1350,7 @@ async function submitPromptInternal(sid: string, text: string, attachments?: { f
     }
     if (content.length === 0) {
       inFlightPromptSessions.delete(sid);
+      rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
       return;
     }
 
@@ -1325,6 +1417,7 @@ async function submitPromptInternal(sid: string, text: string, attachments?: { f
     // Submit failed — clear the in-flight flag so the next prompt isn't stuck
     // queued forever (turn.ended will never arrive).
     inFlightPromptSessions.delete(sid);
+    rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
     rawState.warnings = [...rawState.warnings, `sendPrompt failed: ${String(err)}`];
   }
 }
@@ -1464,16 +1557,19 @@ async function cancelTask(taskId: string): Promise<void> {
   }
 }
 
-/** Persist and apply a new extended-thinking level (sent on every prompt). */
+/** Persist and apply a new extended-thinking level (also pushed to the active
+ *  session profile so the daemon's /status reflects it; still sent per-prompt). */
 function setThinking(level: ThinkingLevel): void {
   rawState.thinking = level;
   saveThinkingToStorage(level);
+  persistSessionProfile({ thinking: level });
 }
 
-/** Persist and apply plan mode (sent on every prompt as planMode). */
+/** Persist and apply plan mode (pushed to the session profile + sent per-prompt). */
 function setPlanMode(on: boolean): void {
   rawState.planMode = on;
   savePlanModeToStorage(on);
+  persistSessionProfile({ planMode: on });
 }
 
 /** Flip plan mode on/off. */
@@ -1485,6 +1581,7 @@ function togglePlanMode(): void {
 function setPermission(mode: PermissionMode): void {
   rawState.permission = mode;
   savePermissionToStorage(mode);
+  persistSessionProfile({ permissionMode: mode });
 
   // If switching to auto/yolo, auto-approve any currently-pending approvals for the active session
   if (mode === 'auto' || mode === 'yolo') {
@@ -1567,24 +1664,22 @@ async function loadProviders(): Promise<void> {
 }
 
 /**
- * Switch model for the active session. Calls PATCH /sessions/{id} but does NOT
- * assume it took effect: the real daemon silently ignores agent_config.model
- * (it always returns model ''), so model switching is a no-op there. We update
- * local state optimistically to `modelId`, falling back to whatever the daemon
- * returns only when it is non-empty. Never crashes.
+ * Switch model for the active session via POST /sessions/{id}/profile (the
+ * daemon dispatches agent_config.model to core.rpc.setModel). The profile echo
+ * can return model '', so the authoritative current model comes from
+ * GET /sessions/{id}/status, which we re-read right after. Optimistically show
+ * the chosen id meanwhile. Never crashes.
  */
 async function setModel(modelId: string): Promise<void> {
   const sid = rawState.activeSessionId;
   if (!sid) return;
+  // Optimistic: show the chosen model immediately.
+  rawState.sessions = rawState.sessions.map((s) => (s.id === sid ? { ...s, model: modelId } : s));
   try {
-    const api = getKimiWebApi();
-    const updated = await api.updateSession(sid, { model: modelId });
-    // Daemon returns '' for model (limitation) → keep the user's chosen id for
-    // display rather than blanking it out.
-    const effectiveModel = updated.model && updated.model.length > 0 ? updated.model : modelId;
-    rawState.sessions = rawState.sessions.map((s) =>
-      s.id === sid ? { ...s, model: effectiveModel } : s,
-    );
+    await getKimiWebApi().updateSession(sid, { model: modelId });
+    // refreshSessionStatus folds the authoritative current model from /status
+    // back into the session (the profile echo can return '').
+    await refreshSessionStatus(sid);
   } catch (err) {
     rawState.warnings = [...rawState.warnings, `setModel failed: ${String(err)}`];
   }
@@ -1685,12 +1780,34 @@ async function logout(): Promise<void> {
 }
 
 /**
- * compact() — request history compaction.
- * TODO: wire to a real /compact endpoint once the daemon exposes it.
- * For now, push an info warning so the user knows it's not yet implemented.
+ * compact() — request history compaction via POST /sessions/{id}:compact. The
+ * compacted history is delivered asynchronously through the WS
+ * history_compacted → onResync reload, so we just fire the request.
  */
 function compact(): void {
-  rawState.warnings = [...rawState.warnings, i18n.global.t('commands.compactNotImplemented')];
+  const sid = rawState.activeSessionId;
+  if (!sid) return;
+  void getKimiWebApi()
+    .compactSession(sid)
+    .catch((err) => {
+      rawState.warnings = [...rawState.warnings, `compact failed: ${String(err)}`];
+    });
+}
+
+/**
+ * forkSession() — fork the active session into a new child session via
+ * POST /sessions/{id}:fork, then add it to the list and select it.
+ */
+async function forkSession(): Promise<void> {
+  const sid = rawState.activeSessionId;
+  if (!sid) return;
+  try {
+    const forked = await getKimiWebApi().forkSession(sid);
+    rawState.sessions = [forked, ...rawState.sessions.filter((s) => s.id !== forked.id)];
+    await selectSession(forked.id);
+  } catch (err) {
+    rawState.warnings = [...rawState.warnings, `fork failed: ${String(err)}`];
+  }
 }
 
 /**
@@ -1820,6 +1937,7 @@ export function useKimiWebClient() {
     // New Phase 1 computed
     connection,
     loading,
+    initialized,
     permission,
     thinking,
     planMode,
@@ -1827,6 +1945,7 @@ export function useKimiWebClient() {
     warnings,
     questions,
     activity,
+    isSending,
 
     // Model + Provider reactive state
     models,
@@ -1836,6 +1955,8 @@ export function useKimiWebClient() {
     theme,
     setTheme,
     toggleTheme,
+    onboarded,
+    setOnboarded,
 
     // Actions
     load,
@@ -1869,6 +1990,7 @@ export function useKimiWebClient() {
     renameSession,
     deleteSession,
     compact,
+    forkSession,
     undo,
 
     // New Phase 4 actions

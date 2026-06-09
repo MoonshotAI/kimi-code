@@ -12,6 +12,7 @@ export default {
   noWorkspace: '暂无工作区',
   // Workspace rail
   railLabel: '工作区',
+  title: '工作区',
   expand: '展开',
   collapse: '收起',
   settings: '设置',

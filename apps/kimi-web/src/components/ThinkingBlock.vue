@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/components/ThinkingBlock.vue -->
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 const props = withDefaults(
@@ -31,27 +31,45 @@ const preview = computed(() => {
   if (firstLine.length > 72) return firstLine.slice(0, 72) + '…';
   return firstLine;
 });
+
+// The thinking body is capped to ~3.5 lines (see CSS) and scrolls internally.
+// Keep it pinned to the LATEST text as it streams — but only if the user is
+// already at the bottom, so scrolling up to re-read isn't yanked back down.
+const bodyEl = ref<HTMLElement | null>(null);
+watch(
+  () => props.text,
+  () => {
+    const el = bodyEl.value;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    if (!atBottom) return;
+    void nextTick(() => {
+      if (bodyEl.value) bodyEl.value.scrollTop = bodyEl.value.scrollHeight;
+    });
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
   <!-- Mobile / Codex style: gray collapsible header + plain gray body -->
   <div v-if="mobile" class="think mthink" :class="{ open }">
     <button class="h" @click="toggle" :aria-expanded="open">
-      <span class="cv">▸</span>
+      <span class="cv"></span>
       <span class="hl">{{ t('thinking.label') }}</span>
     </button>
-    <div class="c">{{ text }}</div>
+    <div ref="bodyEl" class="c">{{ text }}</div>
   </div>
 
   <!-- Desktop: collapsed italic line with inline preview -->
   <div v-else class="think" :class="{ open }">
     <button class="th" @click="toggle" :aria-expanded="open">
-      <span class="car">{{ open ? '▾' : '▸' }}</span>
+      <span class="car"></span>
       <span class="label">{{ t('thinking.label') }}</span>
       <span v-if="!open" class="prev">{{ preview }}</span>
     </button>
     <div v-if="open" class="tb">
-      <pre class="tc">{{ text }}</pre>
+      <pre ref="bodyEl" class="tc">{{ text }}</pre>
     </div>
   </div>
 </template>
@@ -71,7 +89,7 @@ const preview = computed(() => {
   padding: 4px 8px;
   cursor: pointer;
   color: var(--dim);
-  font-size: 12px;
+  font-size: 14px;
   font-family: var(--mono);
   font-style: italic;
   text-align: left;
@@ -82,9 +100,19 @@ const preview = computed(() => {
 }
 
 .car {
-  color: var(--faint);
-  font-style: normal;
   flex: none;
+  width: 0;
+  height: 0;
+  border-left: 5px solid var(--muted);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+.think.open .car {
+  transform: rotate(90deg);
+}
+.th:hover .car {
+  border-left-color: var(--text);
 }
 
 .label {
@@ -116,6 +144,9 @@ const preview = computed(() => {
   word-break: break-word;
   margin: 0;
   line-height: 1.7;
+  /* Show at most ~3.5 lines; older reasoning scrolls up (pinned to latest). */
+  max-height: calc(1.7em * 3.5);
+  overflow-y: auto;
 }
 
 /* ===================== Mobile / Codex style ===================== */
@@ -132,18 +163,24 @@ const preview = computed(() => {
   cursor: pointer;
   user-select: none;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--muted);
   text-align: left;
 }
 .mthink .h .cv {
   flex: none;
-  font-size: 9px;
-  color: var(--faint);
-  transition: transform 0.15s;
+  width: 0;
+  height: 0;
+  border-left: 5px solid var(--muted);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 0.18s ease, border-color 0.18s ease;
 }
 .mthink.open .h .cv {
   transform: rotate(90deg);
+}
+.mthink .h:hover .cv {
+  border-left-color: var(--text);
 }
 .mthink .hl {
   color: var(--muted);
@@ -157,6 +194,9 @@ const preview = computed(() => {
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+  /* Show at most ~3.5 lines; older reasoning scrolls up (pinned to latest). */
+  max-height: calc(1.6em * 3.5);
+  overflow-y: auto;
 }
 .mthink.open .c {
   display: block;

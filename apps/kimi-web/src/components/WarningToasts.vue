@@ -51,7 +51,7 @@ function isError(w: string): boolean {
   border-radius: 8px;
   padding: 9px 9px 9px 11px;
   box-shadow: 0 6px 22px rgba(0, 0, 0, 0.12);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
 }
 /* Error toasts: a subtle red-tinted border (no left accent bar); the red dot

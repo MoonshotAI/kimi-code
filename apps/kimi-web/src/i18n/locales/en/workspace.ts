@@ -12,6 +12,7 @@ export default {
   noWorkspace: 'No workspace',
   // Workspace rail
   railLabel: 'Workspaces',
+  title: 'Workspace',
   expand: 'Expand',
   collapse: 'Collapse',
   settings: 'Settings',

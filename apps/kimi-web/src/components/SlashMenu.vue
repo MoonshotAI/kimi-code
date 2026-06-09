@@ -57,7 +57,7 @@ const emit = defineEmits<{
   padding: 5px 12px;
   cursor: pointer;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   border-bottom: 1px solid var(--line2);
 }
 

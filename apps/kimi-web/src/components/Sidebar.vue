@@ -59,6 +59,7 @@ const emit = defineEmits<{
   logout: [];
   toggleRailExpand: [];
   setTheme: [theme: Theme];
+  openOnboarding: [];
 }>();
 
 // ---------------------------------------------------------------------------
@@ -116,6 +117,7 @@ function closeMenus(): void {
       @logout="emit('logout')"
       @toggle-expand="emit('toggleRailExpand')"
       @set-theme="emit('setTheme', $event)"
+      @open-onboarding="emit('openOnboarding')"
     />
 
     <!-- Session column -->
@@ -244,8 +246,9 @@ function closeMenus(): void {
 }
 .ch-ws {
   display: flex;
-  align-items: baseline;
-  gap: 7px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   min-width: 0;
   flex: 1;
 }
@@ -261,6 +264,10 @@ function closeMenus(): void {
   font-size: 10.5px;
   color: var(--muted);
   flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ch-scope {
   flex: none;

@@ -291,7 +291,7 @@ function onDelete(id: string): void {
   padding: 24px 16px;
   text-align: center;
   color: var(--faint);
-  font-size: 12px;
+  font-size: 14px;
 }
 .srow {
   display: flex;

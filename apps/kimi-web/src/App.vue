@@ -16,6 +16,8 @@ import WarningToasts from './components/WarningToasts.vue';
 import MobileTopBar from './components/MobileTopBar.vue';
 import MobileSwitcherSheet from './components/MobileSwitcherSheet.vue';
 import MobileSettingsSheet from './components/MobileSettingsSheet.vue';
+import Onboarding from './components/Onboarding.vue';
+import GlobalLoading from './components/GlobalLoading.vue';
 import { useKimiWebClient } from './composables/useKimiWebClient';
 import { useIsMobile } from './composables/useIsMobile';
 import type { ThinkingLevel } from './api/types';
@@ -48,6 +50,17 @@ const THINKING_LEVELS: ThinkingLevel[] = ['off', 'low', 'medium', 'high', 'xhigh
 function nextThinkingLevel(current: ThinkingLevel): ThinkingLevel {
   const idx = THINKING_LEVELS.indexOf(current);
   return THINKING_LEVELS[(idx + 1) % THINKING_LEVELS.length]!;
+}
+
+// First-run onboarding (theme / language / welcome greeting). Shown until the
+// user finishes it once; re-openable from the settings popover.
+const showOnboarding = ref(!client.onboarded.value);
+function completeOnboarding(): void {
+  client.setOnboarded(true);
+  showOnboarding.value = false;
+}
+function openOnboarding(): void {
+  showOnboarding.value = true;
 }
 
 onMounted(() => {
@@ -195,6 +208,9 @@ function handleCommand(cmd: string): void {
     case '/compact':
       client.compact();
       break;
+    case '/fork':
+      void client.forkSession();
+      break;
     case '/permission': {
       // Cycle manual → auto → yolo → manual
       const current = client.permission.value;
@@ -299,6 +315,7 @@ function handleCreateSession(): void {
         @logout="client.logout"
         @toggle-rail-expand="toggleRailExpand"
         @set-theme="client.setTheme($event)"
+        @open-onboarding="openOnboarding"
       />
       <ResizeHandle
         :storage-key="SIDEBAR_WIDTH_KEY"
@@ -345,6 +362,7 @@ function handleCreateSession(): void {
       :upload-image="client.uploadImage"
       :connection="client.connection.value"
       :activity="client.activity.value"
+      :sending="client.isSending.value"
       :load-dir="client.listDir"
       :read-file="client.readFileContent"
       :changes-by-path="client.changesByPath.value"
@@ -453,6 +471,19 @@ function handleCreateSession(): void {
       </div>
     </div>
 
+    <!-- Global connecting splash on first load (until the daemon round-trips) -->
+    <Transition name="gload-fade">
+      <GlobalLoading v-if="!client.initialized.value" />
+    </Transition>
+
+    <!-- First-run onboarding overlay (theme / language / welcome greeting) -->
+    <Onboarding
+      v-if="showOnboarding"
+      :theme="client.theme.value"
+      @set-theme="client.setTheme($event)"
+      @complete="completeOnboarding"
+    />
+
     <!-- Floating warnings / agent errors (e.g. a 403 from the model provider) -->
     <WarningToasts :warnings="client.warnings.value" @dismiss="client.dismissWarning" />
 
@@ -491,6 +522,10 @@ function handleCreateSession(): void {
 </template>
 
 <style scoped>
+/* Global connecting splash fade-out (only the leave matters; it mounts instantly). */
+.gload-fade-leave-active { transition: opacity 0.28s ease; }
+.gload-fade-leave-to { opacity: 0; }
+
 .app {
   --side-w: 248px;
   height: 100vh;
@@ -538,7 +573,7 @@ function handleCreateSession(): void {
   gap: 10px;
   padding: 8px 16px;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
 }
 .auth-banner-icon { display: flex; align-items: center; flex: none; }
 .auth-banner-msg { flex: 1; color: var(--text); }

@@ -259,7 +259,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   background: var(--soft);
   border-bottom: 1px solid var(--bd);
   border-radius: 3px 3px 0 0;
-  font-size: 12px;
+  font-size: 14px;
 }
 .qtitle { color: var(--blue2); font-weight: 700; }
 .qstep { color: var(--muted); font-size: 11px; margin-left: 4px; }
@@ -336,7 +336,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 .other-input {
   flex: 1;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   border: none;
   border-bottom: 1px solid var(--line);
   outline: none;

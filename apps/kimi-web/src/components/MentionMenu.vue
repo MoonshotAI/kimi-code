@@ -104,7 +104,7 @@ function fileIcon(item: FileItem): string {
 .mention-state {
   padding: 8px 12px;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .dim {
@@ -118,7 +118,7 @@ function fileIcon(item: FileItem): string {
   padding: 5px 12px;
   cursor: pointer;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   border-bottom: 1px solid var(--line2);
 }
 

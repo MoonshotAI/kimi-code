@@ -8,26 +8,25 @@ const emit = defineEmits<{ select: [pane: PaneKey]; setAlign: [align: ContentAli
 
 const { t } = useI18n();
 
-const tabs: { key: PaneKey; label: string }[] = [
-  { key: 'chat', label: '~/chat' },
-  { key: 'diff', label: '~/diff' },
-  { key: 'tasks', label: '~/tasks' },
-  { key: 'files', label: '~/files' },
+const tabs: { key: PaneKey; labelKey: string }[] = [
+  { key: 'chat', labelKey: 'sidebar.tabChat' },
+  { key: 'files', labelKey: 'sidebar.tabFiles' },
+  { key: 'tasks', labelKey: 'sidebar.tabTasks' },
 ];
 </script>
 
 <template>
   <div class="tabs" :class="{ mobile }">
     <div
-      v-for="t in tabs"
-      :key="t.key"
+      v-for="tab in tabs"
+      :key="tab.key"
       class="tb"
-      :class="{ on: active === t.key }"
-      @click="emit('select', t.key)"
+      :class="{ on: active === tab.key }"
+      @click="emit('select', tab.key)"
     >
-      {{ t.label }}
-      <span v-if="t.key === 'diff' && (changesCount ?? 0) > 0" class="d"></span>
-      <span v-if="t.key === 'tasks'" class="cnt">{{ runningTasks }}</span>
+      {{ t(tab.labelKey) }}
+      <span v-if="tab.key === 'files' && (changesCount ?? 0) > 0" class="d"></span>
+      <span v-if="tab.key === 'tasks'" class="cnt">{{ runningTasks }}</span>
     </div>
 
     <!-- Content alignment toggle (right side): left-aligned vs centered.
@@ -76,7 +75,7 @@ const tabs: { key: PaneKey; label: string }[] = [
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--dim);
   border-right: 1px solid var(--line);
   cursor: pointer;
@@ -176,4 +175,8 @@ const tabs: { key: PaneKey; label: string }[] = [
   height: 6px;
   background: var(--warn);
 }
+
+/* NOTE: Modern-theme tab styles live in src/style.css (global). Scoped
+   `:global(html[data-theme=modern]) .tb` rules here did NOT win the cascade
+   (tabs stayed square + bordered), so they were moved to the global sheet. */
 </style>

@@ -59,6 +59,21 @@ export interface AppSession {
   workspaceId?: string;
 }
 
+/**
+ * Live runtime state from GET /sessions/{id}/status — the source of truth for
+ * the current model + context usage (Session.agent_config.model can be "").
+ */
+export interface AppSessionRuntimeStatus {
+  /** Current model alias, or null if the daemon couldn't resolve it. */
+  model: string | null;
+  thinkingLevel: string;
+  permission: string;
+  planMode: boolean;
+  contextTokens: number;
+  maxContextTokens: number;
+  contextUsage: number;
+}
+
 // ---------------------------------------------------------------------------
 // Workspace — a real folder the client organizes sessions by.
 // 1 Workspace : N Sessions. A session inherits the workspace's root as its cwd.
@@ -356,11 +371,14 @@ export interface KimiWebApi {
   getMeta(): Promise<{ daemonVersion: string; serverId: string; startedAt: string; capabilities: Record<string, boolean> }>;
   listSessions(input?: PageRequest & { status?: AppSessionStatus; workspaceId?: string }): Promise<Page<AppSession>>;
   createSession(input: { title?: string; cwd?: string; model?: string; workspaceId?: string }): Promise<AppSession>;
-  updateSession(sessionId: string, input: { title?: string; cwd?: string; model?: string }): Promise<AppSession>;
+  updateSession(sessionId: string, input: { title?: string; cwd?: string; model?: string; permissionMode?: string; planMode?: boolean; thinking?: string }): Promise<AppSession>;
+  getSessionStatus(sessionId: string): Promise<AppSessionRuntimeStatus>;
   deleteSession(sessionId: string): Promise<{ deleted: true }>;
   listMessages(sessionId: string, input?: PageRequest & { role?: AppMessageRole }): Promise<Page<AppMessage>>;
   submitPrompt(sessionId: string, input: PromptSubmission): Promise<PromptSubmitResult>;
   abortPrompt(sessionId: string, promptId: string): Promise<{ aborted: boolean; atSeq?: number }>;
+  compactSession(sessionId: string, instruction?: string): Promise<void>;
+  forkSession(sessionId: string, input?: { title?: string }): Promise<AppSession>;
   respondApproval(sessionId: string, approvalId: string, response: ApprovalResponse): Promise<{ resolved: true; resolvedAt: string }>;
   respondQuestion(sessionId: string, questionId: string, response: QuestionResponse): Promise<{ resolved: true; resolvedAt: string }>;
   dismissQuestion(sessionId: string, questionId: string): Promise<{ dismissed: true; dismissedAt: string }>;

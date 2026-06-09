@@ -21,6 +21,13 @@
   --ok: #0e7a38;
   --warn: #92660a;
   --err: #b91c1c;
+  /* Radius scale (Modern). A regular 8 / 12 / 16 progression: list items + pill
+     controls use --r-sm, the input box + cards use --r-md, dialogs use --r-lg.
+     The Terminal theme keeps its own sharper 3–4px corners. */
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
   --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
   /* Both themes are light. Declared here (and in index.html) so the browser and
      dark-mode extensions never force-darken the page. */
@@ -50,7 +57,9 @@ body {
   font-family: var(--mono);
   color: var(--text);
   background: var(--bg);
-  font-size: 12.5px;
+  /* Overall UI chrome a notch larger; the chat content + session list stay at
+     their explicit 14px (compact, aligned) so reading text doesn't grow with it. */
+  font-size: 14px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
@@ -106,6 +115,42 @@ html[data-theme="modern"] {
   --shc: 0 1px 2px rgba(28, 40, 66, 0.05);
 }
 
+/* ---------------------------------------------------------------------------
+   Overlay stability: every floating surface (dialog backdrops, the onboarding
+   overlay, bottom sheets, the settings popover) is position:fixed and MUST
+   resolve against the viewport. If anything ever leaves a transform/filter/
+   perspective on <html> or <body> — e.g. a residual animation, or a dark-mode
+   browser extension that wraps the page when it treats Modern as "dark" — that
+   element becomes the containing block for fixed descendants and every overlay
+   drifts. `!important` author declarations beat both animations and the page's
+   own styles, so forbid those properties on the root in Modern. Harmless: the
+   root never needs a transform of its own.
+   --------------------------------------------------------------------------- */
+html[data-theme="modern"],
+html[data-theme="modern"] body,
+html[data-theme="modern"] #app,
+html[data-theme="modern"] .app {
+  transform: none !important;
+  filter: none !important;
+  perspective: none !important;
+  will-change: auto !important;
+}
+
+/* Belt-and-suspenders for the same problem (works even if a transform can't be
+   reset because an extension set it inline-!important): every full-screen
+   overlay is position:fixed with `inset: 0`, which sizes against the fixed
+   containing block. If that block is a collapsed/transformed <html>, `inset: 0`
+   shrinks the overlay and its centered card drifts. Viewport-unit min-size is
+   measured against the VIEWPORT, not the containing block, so the overlay always
+   fills the screen and its card re-centers. No-op in a normal browser. Global
+   (not scoped) with !important so it wins over each dialog's scoped .backdrop. */
+.backdrop,
+.ob-backdrop {
+  min-width: 100vw !important;
+  min-height: 100vh !important;
+  min-height: 100dvh !important;
+}
+
 /* De-terminalize: content text (messages, titles, descriptions, buttons) uses a
    real UI sans. Paths, code, tab labels, timestamps and badges keep --mono
    because they set it per-element — so chrome stays crisp and code-like, content
@@ -128,14 +173,16 @@ html[data-theme="modern"] input {
 /* ---- Soft canvas: the conversation pane is a faint neutral so white tool
    cards and the user bubble lift off it with a gentle shadow. Side panels stay
    as-is; only the reading surface softens. ---- */
-html[data-theme="modern"] .con { background: var(--canvas); }
+/* Chat surface is white (the user prefers a white reading area over the soft
+   canvas). Bubbles/tool cards still read fine via their own borders + shadows. */
+html[data-theme="modern"] .con { background: var(--bg); }
 html[data-theme="modern"] .chat { background: transparent; }
 
 /* Session rows → rounded, inset pills with a soft active state (cards, not a
    full-bleed tint bar). Keeps the mono timestamp/badges. */
 html[data-theme="modern"] .se {
   margin: 1px 6px;
-  border-radius: 10px;
+  border-radius: var(--r-sm);
 }
 html[data-theme="modern"] .se:hover { background: #eef1f6; }
 html[data-theme="modern"] .se.on {
@@ -163,6 +210,165 @@ html[data-theme="modern"] .md .markdown-renderer {
 html[data-theme="modern"] .ph {
   font-family: var(--sans);
 }
+
+/* ---- Modern composer (global, NOT in Composer.vue) ---------------------------
+   These MUST live here: scoped `:global(html[data-theme=modern]) .cin` rules in
+   Composer.vue did not win the cascade against the base `.cin`, so the input box
+   stayed square (4px) + mono. Here they apply reliably. The chat surface is white,
+   so the input reads as a rounded card via a soft shadow + hairline border. */
+html[data-theme="modern"] .cin {
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(20, 23, 28, 0.04), 0 6px 18px rgba(20, 23, 28, 0.06);
+  align-items: flex-end;
+  padding: 6px 6px 6px 14px;
+  gap: 6px;
+}
+html[data-theme="modern"] .cin:focus-within {
+  border-color: var(--bd);
+  box-shadow: 0 1px 2px rgba(20, 23, 28, 0.04), 0 6px 18px rgba(20, 23, 28, 0.08),
+    0 0 0 3px rgba(21, 101, 192, 0.1);
+}
+html[data-theme="modern"] .ph {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 4px 0;
+  min-height: 22px;
+  box-sizing: border-box;
+  font-size: 13px;
+  line-height: 1.45;
+}
+html[data-theme="modern"] .attach-btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: var(--r-sm);
+  align-self: flex-end;
+}
+html[data-theme="modern"] .attach-btn:hover {
+  background: var(--soft);
+  color: var(--blue);
+}
+html[data-theme="modern"] .send {
+  width: auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 13px;
+  border-radius: var(--r-sm);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(20, 23, 28, 0.1);
+  align-self: flex-end;
+}
+html[data-theme="modern"] .send::after { content: none; }
+html[data-theme="modern"] .send:hover { background: var(--blue2); }
+html[data-theme="modern"] .interrupt {
+  height: 30px;
+  border-radius: var(--r-sm);
+  font-family: var(--sans);
+  align-self: flex-end;
+}
+html[data-theme="modern"] .queue-item,
+html[data-theme="modern"] .att-chip {
+  border-radius: var(--r-sm);
+}
+
+/* ---- TabBar (moved out of TabBar.vue — scoped :global() didn't apply) --------
+   Soft pill tabs on a white strip: no hard cell borders, active tab is a rounded
+   soft-blue pill. */
+html[data-theme="modern"] .tabs {
+  height: 40px;
+  background: #fff;
+  padding: 0 8px;
+  gap: 2px;
+}
+html[data-theme="modern"] .tb {
+  border-right: none;
+  border-radius: var(--r-sm);
+  margin: 5px 0;
+  padding: 0 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+html[data-theme="modern"] .tb:hover {
+  background: var(--canvas);
+  color: var(--ink);
+}
+html[data-theme="modern"] .tb.on {
+  background: var(--soft);
+  color: var(--blue2);
+}
+html[data-theme="modern"] .tabs .cnt {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--blue);
+  color: #fff;
+}
+html[data-theme="modern"] .align-btn {
+  border-color: transparent;
+  border-radius: 7px;
+  width: 26px;
+  height: 24px;
+}
+html[data-theme="modern"] .align-btn:first-child { border-radius: 7px; }
+html[data-theme="modern"] .align-btn:last-child { border-radius: 7px; margin-left: 2px; }
+html[data-theme="modern"] .align-btn:hover { background: var(--canvas); border-color: transparent; }
+html[data-theme="modern"] .align-btn.on { background: var(--soft); border-color: var(--bd); }
+
+/* ---- Chat bubbles (moved out of ChatPane.vue) ---- */
+html[data-theme="modern"] .chat {
+  gap: 18px;
+  padding: 22px 20px 26px;
+}
+html[data-theme="modern"] .u-bub {
+  background: var(--bluebg);
+  border-color: var(--blueln);
+  border-radius: 18px 18px 6px 18px;
+  padding: 11px 15px;
+  box-shadow: var(--shc);
+  animation: kimi-bubble-in 0.24s ease-out both;
+}
+html[data-theme="modern"] .a-msg {
+  max-width: 100%;
+  width: 100%;
+  animation: kimi-bubble-in 0.24s ease-out both;
+}
+
+/* ---- Tool cards (moved out of ToolCall.vue) ---- */
+html[data-theme="modern"] .box {
+  background: #fff;
+  border-radius: var(--r-md);
+  box-shadow: var(--shc);
+  animation: kimi-card-in 0.26s ease-out both;
+  transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+}
+html[data-theme="modern"] .box:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(20, 23, 28, 0.1);
+}
+html[data-theme="modern"] .box .bh { border-radius: var(--r-md); }
+html[data-theme="modern"] .box.open .bh { border-radius: var(--r-md) var(--r-md) 0 0; }
+html[data-theme="modern"] .box .ok,
+html[data-theme="modern"] .box .er {
+  display: inline-block;
+  animation: kimi-check-in 0.2s ease-out both;
+}
+html[data-theme="modern"] .box.open .bb > div {
+  animation: kimi-line-in 0.2s ease-out both;
+}
+html[data-theme="modern"] .box.open .bb > div:nth-child(1) { animation-delay: 0ms; }
+html[data-theme="modern"] .box.open .bb > div:nth-child(2) { animation-delay: 30ms; }
+html[data-theme="modern"] .box.open .bb > div:nth-child(3) { animation-delay: 60ms; }
+html[data-theme="modern"] .box.open .bb > div:nth-child(4) { animation-delay: 90ms; }
+html[data-theme="modern"] .box.open .bb > div:nth-child(5) { animation-delay: 120ms; }
+html[data-theme="modern"] .box.open .bb > div:nth-child(6) { animation-delay: 150ms; }
 
 /* Modern dialogs/sheets: soften the centered-modal shadow on desktop too. The
    data-theme hook is on <html>, so teleported/fixed dialogs inherit it. */

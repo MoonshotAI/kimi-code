@@ -157,13 +157,6 @@ const isRunning = computed(() => (props.activity ?? 'idle') === 'running');
       @keydown.space.prevent="emit('pickModel')"
     >{{ t('status.modelLabel') }} <b>{{ status.model }}</b></span>
 
-    <!-- Context meter with tooltip -->
-    <span class="kv ctx-kv" :title="ctxTooltip">
-      ctx <b>{{ kFmt(status.ctxUsed) }}/{{ kFmt(status.ctxMax) }}</b>
-      <span class="bar"><i :style="{ width: pct + '%' }"></i></span>
-      <button v-if="showCompact" class="compact-chip" @click.stop="emit('compact')">/compact</button>
-    </span>
-
     <!-- Thinking selector — clickable pill + popover -->
     <span class="kv think-kv" :class="{ open: openPopover === 'thinking' }">
       <span
@@ -245,6 +238,13 @@ const isRunning = computed(() => (props.activity ?? 'idle') === 'running');
       <span class="act-text">{{ activityText }}</span>
       <button v-if="isRunning" class="interrupt-btn" @click.stop="emit('interrupt')">{{ t('status.interrupt') }}</button>
     </span>
+
+    <!-- Context meter — pushed to the far right. -->
+    <span class="kv ctx-kv" :title="ctxTooltip">
+      ctx <b>{{ kFmt(status.ctxUsed) }}/{{ kFmt(status.ctxMax) }}</b>
+      <span class="bar"><i :style="{ width: pct + '%' }"></i></span>
+      <button v-if="showCompact" class="compact-chip" @click.stop="emit('compact')">/compact</button>
+    </span>
   </div>
 </template>
 
@@ -254,7 +254,7 @@ const isRunning = computed(() => (props.activity ?? 'idle') === 'running');
   align-items: center;
   border-top: 1px solid var(--line);
   background: var(--panel);
-  font-size: 11px;
+  font-size: 14px;
   color: var(--dim);
   /* Align the left edge with the composer's input box (16px gutter). */
   padding: 0 14px;
@@ -274,12 +274,13 @@ const isRunning = computed(() => (props.activity ?? 'idle') === 'running');
 }
 
 .kv {
-  padding: 0 11px;
+  padding: 0 9px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   height: 100%;
-  border-right: 1px solid var(--line);
+  /* Footer look: no cell dividers, just spacing (the bars sit under the input). */
+  border-right: none;
   flex: none;
   position: relative;
 }
@@ -287,6 +288,8 @@ const isRunning = computed(() => (props.activity ?? 'idle') === 'running');
 .kv:first-child {
   padding-left: 4px;
 }
+/* Context meter pushed to the far right. */
+.ctx-kv { margin-left: auto; }
 .kv b {
   color: var(--ink);
   font-weight: 600;
@@ -338,33 +341,35 @@ const isRunning = computed(() => (props.activity ?? 'idle') === 'running');
 }
 .compact-chip:hover { background: var(--panel2); }
 
-/* Model pill — clickable */
-.model-kv {
+/* Interactive status controls are functional pill-buttons that serve the input
+   box right above them: inset (shorter than the bar), rounded, soft-blue on
+   hover/open. The ctx meter stays a plain indicator (not a button). */
+.model-kv,
+.think-kv,
+.plan-kv,
+.perm-kv {
+  height: 22px;
+  align-self: center;
+  border-radius: 8px;
   cursor: pointer;
   user-select: none;
+  transition: background 0.12s ease, color 0.12s ease;
 }
-.model-kv:hover { background: var(--panel2); }
-
-/* Thinking pill */
+.model-kv:hover,
 .think-kv:hover,
-.think-kv.open { background: var(--panel2); }
-
-/* Plan mode pill */
-.plan-kv {
-  cursor: pointer;
-  user-select: none;
+.think-kv.open,
+.plan-kv:hover,
+.perm-kv:hover,
+.perm-kv.open {
+  background: var(--soft);
+  color: var(--blue2);
 }
-.plan-kv:hover { background: var(--panel2); }
 .plan-val { font-weight: 600; }
 .plan-kv.plan-on {
   background: var(--soft);
 }
 .plan-kv.plan-on .plan-val { color: var(--blue); }
 .plan-kv.plan-on b { color: var(--blue); }
-
-/* Permission pill */
-.perm-kv:hover,
-.perm-kv.open { background: var(--panel2); }
 .perm-val { font-weight: 600; }
 
 /* Popover (shared look for thinking + permission) */
@@ -430,7 +435,7 @@ const isRunning = computed(() => (props.activity ?? 'idle') === 'running');
 .activity {
   margin-left: auto;
   border-right: none;
-  border-left: 1px solid var(--line);
+  border-left: none;
   gap: 8px;
 }
 .act-text { color: var(--warn); font-size: 10.5px; }

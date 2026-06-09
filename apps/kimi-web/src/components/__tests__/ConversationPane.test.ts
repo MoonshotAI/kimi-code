@@ -76,14 +76,14 @@ describe('ConversationPane', () => {
     expect(w.findComponent({ name: 'DiffView' }).exists()).toBe(false);
   });
 
-  it('点击 ~/diff 切到 diff 面板', async () => {
+  it('点击 ~/files 切到合并面板（默认改动列表 DiffView）', async () => {
     const w = mount(ConversationPane, { props, global });
     await w.findAll('.tb')[1]!.trigger('click');
     expect(w.findComponent({ name: 'DiffView' }).exists()).toBe(true);
     expect(w.findComponent({ name: 'ChatPane' }).exists()).toBe(false);
   });
 
-  it('diff 面板显示改动文件列表', async () => {
+  it('合并面板默认显示改动文件列表', async () => {
     const w = mount(ConversationPane, { props, global });
     await w.findAll('.tb')[1]!.trigger('click');
     expect(w.text()).toContain('client.ts');
@@ -102,13 +102,13 @@ describe('ConversationPane', () => {
     expect(w.findComponent({ name: 'Composer' }).exists()).toBe(true);
   });
 
-  it('有改动时 ~/diff 标签显示指示点', () => {
+  it('有改动时 ~/files 标签显示指示点', () => {
     const w = mount(ConversationPane, { props, global });
     // The dot element should exist because changesCount > 0
     expect(w.find('.d').exists()).toBe(true);
   });
 
-  it('无改动时 ~/diff 标签不显示指示点', () => {
+  it('无改动时 ~/files 标签不显示指示点', () => {
     const w = mount(ConversationPane, { props: { ...props, changes: [] }, global });
     expect(w.find('.d').exists()).toBe(false);
   });
@@ -176,43 +176,56 @@ describe('ConversationPane', () => {
       return { w, loadDir, readFile };
     }
 
-    it('mobile 下 files 标签先显示文件树（FileTree），不显示侧边分栏', async () => {
+    it('mobile 下 files 标签默认显示改动列表，切到「全部」显示文件树，不显示侧边分栏', async () => {
       const { w } = mountMobileFiles();
-      // 4th tab = ~/files
-      await w.findAll('.tb')[3]!.trigger('click');
+      // 2nd tab = ~/files (merged); default sub-view = Changed → DiffView list
+      await w.findAll('.tb')[1]!.trigger('click');
       await flushPromises();
-      expect(w.findComponent({ name: 'FileTree' }).exists()).toBe(true);
+      expect(w.findComponent({ name: 'DiffView' }).exists()).toBe(true);
       // No desktop split divider on mobile
       expect(w.find('.files-divider').exists()).toBe(false);
-      // Not yet drilled into a preview
-      expect(w.find('.files-preview-mobile').exists()).toBe(false);
+      // Flip to "All" → the full FileTree, no preview yet
+      await w.findAll('.seg-btn')[1]!.trigger('click');
+      await flushPromises();
+      expect(w.findComponent({ name: 'FileTree' }).exists()).toBe(true);
+      expect(w.findComponent({ name: 'FilePreview' }).exists()).toBe(false);
+      // Navigator visible, content drilled-down pane hidden (v-show)
+      expect(w.find('.files-nav').isVisible()).toBe(true);
+      expect(w.find('.files-content').isVisible()).toBe(false);
     });
 
-    it('点击文件后下钻到全宽预览，并显示返回按钮', async () => {
+    it('在「全部」里点击未改动文件后下钻到全宽预览，并显示返回按钮', async () => {
       const { w, readFile } = mountMobileFiles();
-      await w.findAll('.tb')[3]!.trigger('click');
+      await w.findAll('.tb')[1]!.trigger('click');
       await flushPromises();
-      // Tap the file row in the tree
+      await w.findAll('.seg-btn')[1]!.trigger('click'); // All → tree
+      await flushPromises();
       await w.findComponent({ name: 'FileTree' }).find('.ft-row').trigger('click');
       await flushPromises();
+      // src/main.ts isn't in changesByPath → content preview, not diff
       expect(readFile).toHaveBeenCalledWith('src/main.ts');
-      // Preview column + FilePreview + Back button are now shown
-      expect(w.find('.files-preview-mobile').exists()).toBe(true);
       expect(w.findComponent({ name: 'FilePreview' }).exists()).toBe(true);
       expect(w.find('.files-back').exists()).toBe(true);
+      // Drilled in: content visible, navigator hidden
+      expect(w.find('.files-content').isVisible()).toBe(true);
+      expect(w.find('.files-nav').isVisible()).toBe(false);
     });
 
-    it('点击返回按钮回到文件树', async () => {
+    it('点击返回按钮回到导航', async () => {
       const { w } = mountMobileFiles();
-      await w.findAll('.tb')[3]!.trigger('click');
+      await w.findAll('.tb')[1]!.trigger('click');
+      await flushPromises();
+      await w.findAll('.seg-btn')[1]!.trigger('click');
       await flushPromises();
       await w.findComponent({ name: 'FileTree' }).find('.ft-row').trigger('click');
       await flushPromises();
-      expect(w.find('.files-preview-mobile').exists()).toBe(true);
-      // Back → tree
+      expect(w.findComponent({ name: 'FilePreview' }).exists()).toBe(true);
+      // Back → navigator (preview cleared, tree visible again)
       await w.find('.files-back').trigger('click');
-      expect(w.find('.files-preview-mobile').exists()).toBe(false);
+      await flushPromises();
+      expect(w.findComponent({ name: 'FilePreview' }).exists()).toBe(false);
       expect(w.findComponent({ name: 'FileTree' }).exists()).toBe(true);
+      expect(w.find('.files-nav').isVisible()).toBe(true);
     });
   });
 });

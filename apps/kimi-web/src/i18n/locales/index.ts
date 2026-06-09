@@ -51,6 +51,8 @@ import zh_tools from './zh/tools';
 import zh_layout from './zh/layout';
 import zh_mobile from './zh/mobile';
 import zh_theme from './zh/theme';
+import en_onboarding from './en/onboarding';
+import zh_onboarding from './zh/onboarding';
 
 export const messages = {
   en: {
@@ -80,6 +82,7 @@ export const messages = {
     layout: en_layout,
     mobile: en_mobile,
     theme: en_theme,
+    onboarding: en_onboarding,
   },
   zh: {
     common: zh_common,
@@ -108,6 +111,7 @@ export const messages = {
     layout: zh_layout,
     mobile: zh_mobile,
     theme: zh_theme,
+    onboarding: zh_onboarding,
   },
 } as const;
 

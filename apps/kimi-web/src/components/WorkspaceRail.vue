@@ -44,6 +44,7 @@ const emit = defineEmits<{
   logout: [];
   toggleExpand: [];
   setTheme: [theme: Theme];
+  openOnboarding: [];
 }>();
 
 /** First letter of a workspace name, uppercased, for the chip glyph. */
@@ -121,6 +122,11 @@ function onLogout(): void {
   emit('logout');
 }
 
+function onOpenOnboarding(): void {
+  acctMenuOpen.value = false;
+  emit('openOnboarding');
+}
+
 defineExpose({ close });
 </script>
 
@@ -131,26 +137,30 @@ defineExpose({ close });
     :aria-label="t('workspace.railLabel')"
     @click.stop
   >
-    <!-- Expand / collapse toggle (rail top) -->
-    <button
-      type="button"
-      class="railtoggle"
-      :title="expanded ? t('workspace.collapse') : t('workspace.expand')"
-      :aria-label="expanded ? t('workspace.collapse') : t('workspace.expand')"
-      :aria-expanded="expanded"
-      @click="emit('toggleExpand')"
-    >
-      <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <template v-if="expanded">
-          <path d="M9.5 4 5.5 8l4 4" />
-          <path d="M12.5 4 8.5 8l4 4" />
-        </template>
-        <template v-else>
-          <path d="M6.5 4l4 4-4 4" />
-          <path d="M3.5 4l4 4-4 4" />
-        </template>
-      </svg>
-    </button>
+    <!-- Rail header: expand/collapse toggle, plus a "Workspace" title when
+         expanded. (A brand logo will be added here later by design.) -->
+    <div class="railhead">
+      <button
+        type="button"
+        class="railtoggle"
+        :title="expanded ? t('workspace.collapse') : t('workspace.expand')"
+        :aria-label="expanded ? t('workspace.collapse') : t('workspace.expand')"
+        :aria-expanded="expanded"
+        @click="emit('toggleExpand')"
+      >
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <template v-if="expanded">
+            <path d="M9.5 4 5.5 8l4 4" />
+            <path d="M12.5 4 8.5 8l4 4" />
+          </template>
+          <template v-else>
+            <path d="M6.5 4l4 4-4 4" />
+            <path d="M3.5 4l4 4-4 4" />
+          </template>
+        </svg>
+      </button>
+      <span v-if="expanded" class="railtitle">{{ t('workspace.title') }}</span>
+    </div>
 
     <!-- Workspace chips -->
     <button
@@ -283,6 +293,9 @@ defineExpose({ close });
           <button type="button" class="am-item signin" @click="onLogin">{{ t('sidebar.signIn') }}</button>
         </template>
 
+        <!-- Re-run the first-run onboarding (theme / language / welcome). -->
+        <button type="button" class="am-item" @click="onOpenOnboarding">{{ t('onboarding.reopen') }}</button>
+
         <!-- Connected daemon — the real daemon address, shown in full. -->
         <div class="am-daemon">
           <span class="am-daemon-label">{{ t('sidebar.daemon') }}</span>
@@ -317,26 +330,48 @@ defineExpose({ close });
 }
 
 /* Expand/collapse toggle — chevron line glyph at the rail top */
+/* Rail header. Collapsed: just the centered expand/collapse toggle. Expanded:
+   the toggle + a clear "Workspace" title. */
+.railhead {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin-bottom: 2px;
+}
+.rail.expanded .railhead {
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0 2px;
+}
 .railtoggle {
   flex: none;
   width: 34px;
-  height: 28px;
+  height: 30px;
   border-radius: 8px;
   background: none;
   border: none;
-  color: var(--faint);
+  color: var(--muted);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   padding: 0;
-  align-self: center;
-}
-.rail.expanded .railtoggle {
-  align-self: flex-end;
-  width: 28px;
 }
 .railtoggle:hover { background: var(--soft); color: var(--blue); }
+.railtitle {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Shared glyph cell — the 34px square that holds the initial/icon. Stays a
    fixed square so collapsed and expanded modes line up. */
@@ -491,7 +526,7 @@ defineExpose({ close });
   flex: 1;
   min-width: 0;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--ink);
   text-align: left;

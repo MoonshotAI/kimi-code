@@ -135,7 +135,10 @@ export interface ConversationStatus {
   isGitRepo: boolean;
 }
 
-export type PaneKey = 'chat' | 'diff' | 'tasks' | 'files';
+// ~/diff and ~/files were merged into a single ~/files tab (changed-first list +
+// a Changed|All toggle + an adaptive content pane: diff for changed files, content
+// preview for unchanged ones). 'diff' is gone; 'files' is the merged key.
+export type PaneKey = 'chat' | 'files' | 'tasks';
 
 /** Horizontal alignment of the conversation reading column within the pane. */
 export type ContentAlign = 'left' | 'center';

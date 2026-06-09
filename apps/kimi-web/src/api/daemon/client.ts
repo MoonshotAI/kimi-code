@@ -9,6 +9,7 @@ import type {
   AppModel,
   AppProvider,
   AppSession,
+  AppSessionRuntimeStatus,
   AppSessionStatus,
   AppTask,
   AppTaskStatus,
@@ -60,6 +61,7 @@ import type {
   WirePromptSubmitResult,
   WireProvider,
   WireSession,
+  WireSessionRuntimeStatus,
   WireWorkspace,
   WireLogoutResult,
 } from './wire';
@@ -249,19 +251,58 @@ export class DaemonKimiWebApi implements KimiWebApi {
     return toAppSession(data);
   }
 
+  // The daemon has no PATCH on sessions; mutating title/metadata/agent_config
+  // (model + runtime controls) goes through POST /sessions/{id}/profile with a
+  // SessionUpdate body { title?, metadata?, agent_config? }. Runtime controls in
+  // agent_config are dispatched to the matching core RPCs (setModel/setThinking/
+  // setPermission/enterPlan|cancelPlan); the live values are read back from
+  // GET /sessions/{id}/status (the profile echo's agent_config can be stale/"").
   async updateSession(
     sessionId: string,
-    input: { title?: string; cwd?: string; model?: string },
+    input: {
+      title?: string;
+      cwd?: string;
+      model?: string;
+      permissionMode?: string;
+      planMode?: boolean;
+      thinking?: string;
+    },
   ): Promise<AppSession> {
     const body: Record<string, unknown> = {};
     if (input.title !== undefined) body['title'] = input.title;
     if (input.cwd !== undefined) body['metadata'] = { cwd: input.cwd };
-    if (input.model !== undefined) body['agent_config'] = { model: input.model };
-    const data = await this.http.patch<WireSession>(
-      `/sessions/${encodeURIComponent(sessionId)}`,
+    const agentConfig: Record<string, unknown> = {};
+    if (input.model !== undefined) agentConfig['model'] = input.model;
+    if (input.permissionMode !== undefined) agentConfig['permission_mode'] = input.permissionMode;
+    if (input.planMode !== undefined) agentConfig['plan_mode'] = input.planMode;
+    if (input.thinking !== undefined) agentConfig['thinking'] = input.thinking;
+    if (Object.keys(agentConfig).length > 0) body['agent_config'] = agentConfig;
+    const data = await this.http.post<WireSession>(
+      `/sessions/${encodeURIComponent(sessionId)}/profile`,
       body,
     );
     return toAppSession(data);
+  }
+
+  /**
+   * GET /sessions/{id}/status — the session's live runtime state (current model,
+   * thinking level, permission mode, plan flag, and context-window usage). This
+   * is the source of truth for the status line; Session.agent_config.model can
+   * be "" on the read path.
+   */
+  async getSessionStatus(sessionId: string): Promise<AppSessionRuntimeStatus> {
+    const data = await this.http.get<WireSessionRuntimeStatus>(
+      `/sessions/${encodeURIComponent(sessionId)}/status`,
+    );
+    return {
+      model: data.model && data.model.length > 0 ? data.model : null,
+      thinkingLevel: data.thinking_level,
+      permission: data.permission,
+      planMode: data.plan_mode === true,
+      contextTokens: data.context_tokens ?? 0,
+      maxContextTokens: data.max_context_tokens ?? 0,
+      contextUsage: data.context_usage ?? 0,
+    };
   }
 
   async deleteSession(sessionId: string): Promise<{ deleted: true }> {
@@ -324,6 +365,26 @@ export class DaemonKimiWebApi implements KimiWebApi {
     );
     // data.aborted is false when 40903 (prompt already completed) — that's correct
     return { aborted: data.aborted, atSeq: data.at_seq };
+  }
+
+  // POST /sessions/{id}:compact — request history compaction. Returns {}; the
+  // compacted history arrives via the WS history_compacted → onResync reload.
+  async compactSession(sessionId: string, instruction?: string): Promise<void> {
+    await this.http.post(
+      `/sessions/${encodeURIComponent(sessionId)}:compact`,
+      instruction ? { instruction } : {},
+    );
+  }
+
+  // POST /sessions/{id}:fork — fork the session into a new child session.
+  async forkSession(sessionId: string, input?: { title?: string }): Promise<AppSession> {
+    const body: Record<string, unknown> = {};
+    if (input?.title !== undefined) body['title'] = input.title;
+    const data = await this.http.post<WireSession>(
+      `/sessions/${encodeURIComponent(sessionId)}:fork`,
+      body,
+    );
+    return toAppSession(data);
   }
 
   // -------------------------------------------------------------------------

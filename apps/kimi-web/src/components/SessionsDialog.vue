@@ -338,7 +338,7 @@ onUnmounted(() => {
   padding: 24px 14px;
   text-align: center;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 /* Footer */
