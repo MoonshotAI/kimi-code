@@ -152,6 +152,25 @@ Identify the skills that are likely to be useful for the tasks you are currently
 
 Only read skill details when needed to conserve the context window.
 
+## Skill format
+
+A directory skill (e.g. `my-skill/SKILL.md`) may begin with an optional YAML frontmatter block:
+
+```yaml
+---
+name: my-skill
+description: What this skill does and when to use it.
+type: prompt
+whenToUse: When the user asks for ...
+---
+```
+
+- `name` defaults to the directory name if omitted.
+- `description` defaults to the first non-empty line of the body if omitted.
+- `type` defaults to `prompt`; other valid values are `inline` and `flow`.
+- `whenToUse` helps the model decide when to invoke the skill automatically.
+- `disableModelInvocation: true` prevents the model from auto-invoking the skill.
+
 # Ultimate Reminders
 
 At any time, you should be HELPFUL, CONCISE, and ACCURATE. Be thorough in your actions — test what you build, verify what you change — not in your explanations.
