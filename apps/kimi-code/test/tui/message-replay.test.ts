@@ -471,6 +471,64 @@ describe('KimiTUI resume message replay', () => {
     expect(content).not.toContain('Write a concise final message for the user');
   });
 
+  it('does not replay the model-blocked lifecycle marker when the follow-up is replayed', async () => {
+    const driver = await replayIntoDriver([
+      goalReplay(
+        goalSnapshot({ status: 'blocked' }),
+        { kind: 'lifecycle', status: 'blocked', actor: 'model' },
+      ),
+      message(
+        'user',
+        [
+          {
+            type: 'text',
+            text: '<system-reminder>\nGoal blocked.\nWorked 1 turn over 7m15s, using 4.3M tokens.\n\nWrite a concise final message for the user.\n</system-reminder>',
+          },
+        ],
+        { origin: { kind: 'system_trigger', name: 'goal_blocked' } },
+      ),
+      message(
+        'assistant',
+        [{ type: 'text', text: 'I am blocked because I need credentials.' }],
+      ),
+    ]);
+
+    expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'goal')).toEqual([]);
+    const content = driver.state.transcriptEntries.map((item) => item.content).join('\n');
+    expect(content).not.toContain('Goal blocked');
+    expect(content).toContain('I am blocked because I need credentials.');
+  });
+
+  it('renders a replayed model-blocked fallback when no follow-up is replayed', async () => {
+    const driver = await replayIntoDriver([
+      goalReplay(
+        goalSnapshot({ status: 'blocked' }),
+        { kind: 'lifecycle', status: 'blocked', actor: 'model' },
+      ),
+    ]);
+
+    expect(
+      driver.state.transcriptEntries
+        .filter((entry) => entry.kind === 'goal')
+        .map((entry) => entry.content),
+    ).toEqual(['Goal blocked']);
+  });
+
+  it('keeps replayed blocked lifecycle markers when actor is unavailable', async () => {
+    const driver = await replayIntoDriver([
+      goalReplay(
+        goalSnapshot({ status: 'blocked' }),
+        { kind: 'lifecycle', status: 'blocked' },
+      ),
+    ]);
+
+    expect(
+      driver.state.transcriptEntries
+        .filter((entry) => entry.kind === 'goal')
+        .map((entry) => entry.content),
+    ).toEqual(['Goal blocked']);
+  });
+
   it('groups replayed Agent calls from one assistant message using live grouping', async () => {
     const replay: AgentReplayRecord[] = [
       message('user', [{ type: 'text', text: 'run two agents' }]),

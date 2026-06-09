@@ -279,6 +279,7 @@ describe('GoalMode records', () => {
         type: 'goal.update',
         status: 'blocked',
         reason: 'stuck',
+        actor: 'runtime',
       }),
       expect.objectContaining({ type: 'goal.clear' }),
     ]);
@@ -328,9 +329,19 @@ describe('GoalMode records', () => {
     });
     goals.restoreUpdate({ type: 'goal.update', tokensUsed: 5 });
     goals.restoreUpdate({ type: 'goal.update', turnsUsed: 1 });
-    goals.restoreUpdate({ type: 'goal.update', status: 'paused', reason: 'break' });
-    goals.restoreUpdate({ type: 'goal.update', status: 'active' });
-    goals.restoreUpdate({ type: 'goal.update', status: 'complete', reason: 'done' });
+    goals.restoreUpdate({
+      type: 'goal.update',
+      status: 'paused',
+      reason: 'break',
+      actor: 'runtime',
+    });
+    goals.restoreUpdate({ type: 'goal.update', status: 'active', actor: 'user' });
+    goals.restoreUpdate({
+      type: 'goal.update',
+      status: 'complete',
+      reason: 'done',
+      actor: 'model',
+    });
 
     expect(replay).toEqual([
       expect.objectContaining({
@@ -341,12 +352,12 @@ describe('GoalMode records', () => {
       expect.objectContaining({
         type: 'goal_updated',
         snapshot: expect.objectContaining({ status: 'paused', terminalReason: 'break' }),
-        change: { kind: 'lifecycle', status: 'paused', reason: 'break' },
+        change: { kind: 'lifecycle', status: 'paused', reason: 'break', actor: 'runtime' },
       }),
       expect.objectContaining({
         type: 'goal_updated',
         snapshot: expect.objectContaining({ status: 'active' }),
-        change: { kind: 'lifecycle', status: 'active', reason: undefined },
+        change: { kind: 'lifecycle', status: 'active', reason: undefined, actor: 'user' },
       }),
       expect.objectContaining({
         type: 'goal_updated',
@@ -361,6 +372,7 @@ describe('GoalMode records', () => {
           status: 'complete',
           reason: 'done',
           stats: { turnsUsed: 1, tokensUsed: 5, wallClockMs: 0 },
+          actor: 'model',
         },
       }),
     ]);
@@ -388,6 +400,7 @@ describe('GoalMode records', () => {
         kind: 'lifecycle',
         status: 'paused',
         reason: 'Paused after agent resume',
+        actor: undefined,
       },
     });
   });

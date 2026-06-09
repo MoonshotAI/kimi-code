@@ -197,7 +197,7 @@ describe('AgentRecords persistence metadata', () => {
       { type: 'goal.update', budgetLimits: { turnBudget: 20 } },
       { type: 'goal.update', tokensUsed: 5, wallClockMs: 0 },
       { type: 'goal.update', turnsUsed: 1 },
-      { type: 'goal.update', status: 'blocked', reason: 'needs credentials' },
+      { type: 'goal.update', status: 'blocked', reason: 'needs credentials', actor: 'model' },
     ]);
     const { agent } = testAgent({ persistence });
 
@@ -230,6 +230,7 @@ describe('AgentRecords persistence metadata', () => {
           kind: 'lifecycle',
           status: 'blocked',
           reason: 'needs credentials',
+          actor: 'model',
         },
       }),
     ]);

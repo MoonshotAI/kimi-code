@@ -68,7 +68,7 @@ describe('1.3 to 1.4', () => {
       [wire] goal.create   { "goalId": "goal-1", "objective": "ship the feature", "completionCriterion": "tests pass", "time": "<time>" }
       [wire] goal.update   { "tokensUsed": 5, "wallClockMs": 0, "time": "<time>" }
       [wire] goal.update   { "turnsUsed": 1, "time": "<time>" }
-      [wire] goal.update   { "status": "paused", "reason": "Paused after session resume", "turnsUsed": 1, "tokensUsed": 5, "wallClockMs": 0, "time": "<time>" }
+      [wire] goal.update   { "status": "paused", "reason": "Paused after session resume", "turnsUsed": 1, "tokensUsed": 5, "wallClockMs": 0, "actor": "runtime", "time": "<time>" }
       [wire] goal.clear    { "time": "<time>" }
       [wire] forked        { "time": "<time>" }
     `);

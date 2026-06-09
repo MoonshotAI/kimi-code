@@ -300,11 +300,13 @@ export class GoalMode {
             status,
             reason: record.reason,
             stats: this.statsOf(state),
+            actor: record.actor,
           }
         : {
             kind: 'lifecycle',
             status,
             reason: record.reason,
+            actor: record.actor,
           },
     });
   }
@@ -601,6 +603,7 @@ export class GoalMode {
       status: state.status,
       reason,
       wallClockMs: liveWallClockMs(state, Date.now()),
+      actor,
     });
     this.track('goal_status_changed', {
       actor,

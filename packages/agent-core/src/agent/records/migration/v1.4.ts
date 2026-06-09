@@ -1,6 +1,7 @@
 import type { WireMigration, WireMigrationRecord } from './index';
 
 type V1_3GoalStatus = 'active' | 'paused' | 'blocked' | 'complete';
+type V1_3GoalActor = 'user' | 'model' | 'runtime' | 'system';
 
 interface TimedWireMigrationRecord extends WireMigrationRecord {
   readonly time?: number;
@@ -21,6 +22,7 @@ interface V1_3GoalUpdateRecord extends TimedWireMigrationRecord {
   readonly turnsUsed?: number;
   readonly tokensUsed?: number;
   readonly wallClockMs?: number;
+  readonly actor?: V1_3GoalActor;
 }
 
 interface V1_3GoalAccountUsageRecord extends TimedWireMigrationRecord {
@@ -80,6 +82,7 @@ function migrateGoalUpdate(record: V1_3GoalUpdateRecord): WireMigrationRecord {
     turnsUsed: record.turnsUsed,
     tokensUsed: record.tokensUsed,
     wallClockMs: record.wallClockMs,
+    actor: record.actor,
     time: record.time,
   };
 }

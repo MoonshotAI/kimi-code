@@ -337,6 +337,7 @@ describe('Agent resume', () => {
         turnsUsed: 2,
         tokensUsed: 1200,
         wallClockMs: 65_000,
+        actor: 'model',
       },
     ]);
     const ctx = testAgent({ persistence });
@@ -359,6 +360,7 @@ describe('Agent resume', () => {
           status: 'complete',
           reason: 'all tests passed',
           stats: { turnsUsed: 2, tokensUsed: 1200, wallClockMs: 65_000 },
+          actor: 'model',
         },
       }),
     );

@@ -1,7 +1,7 @@
 import type { ContentPart, TokenUsage } from '@moonshot-ai/kosong';
 
 import type { LoopRecordedEvent } from '../../loop';
-import type { GoalBudgetLimits, GoalStatus } from '../goal';
+import type { GoalActor, GoalBudgetLimits, GoalStatus } from '../goal';
 import type { ToolStoreUpdate } from '../../tools/store';
 import type { CompactionBeginData, CompactionResult } from '../compaction';
 import type { AgentConfigUpdateData } from '../config';
@@ -97,6 +97,7 @@ export interface AgentRecordEvents {
     wallClockMs?: number;
     budgetLimits?: GoalBudgetLimits;
     reason?: string;
+    actor?: GoalActor;
   };
   'goal.clear': {};
 }
