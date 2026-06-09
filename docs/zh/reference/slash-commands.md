@@ -109,6 +109,20 @@ Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `
 | --- | --- | --- | --- |
 | `/exit` | `/quit`、`/q` | 退出 Kimi Code CLI | 否 |
 
+## 内置 Skill 命令
+
+Kimi Code CLI 随包内置了一组 Skill，直接以 `/<name>` 形式出现在斜杠命令面板中。与外部 Skill 不同，它们不需要 `skill:` 前缀，开箱即用。
+
+| 命令 | 说明 |
+| --- | --- |
+| `/mcp-config` | 配置 MCP server 并处理 MCP OAuth 登录。详见 [MCP](../customization/mcp.md) |
+| `/custom-theme [<text>]` | 创建或编辑自定义 TUI 配色主题。详见 [主题](../customization/themes.md) |
+| `/update-config` | 查看或编辑 `config.toml`（模型、供应商、权限、hooks）和 `tui.toml`（主题、编辑器、通知、自动更新） |
+| `/import-from-cc-codex` | 从 Claude Code 和 Codex 导入 instructions、skills 和 MCP 设置 |
+| `/sub-skill` | 发现并将本地 skill 库存重组为分层子 skill 包。包含 `/sub-skill.review`（只读提案）和 `/sub-skill.consolidate`（执行重组） |
+
+所有内置 Skill 命令仅在空闲状态下可用。
+
 ## Skill 动态命令
 
 已激活的外部 Skill 会自动注册为斜杠命令，并以 `skill:` 作为命名空间前缀：
