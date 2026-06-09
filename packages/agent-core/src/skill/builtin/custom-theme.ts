@@ -18,5 +18,6 @@ export const CUSTOM_THEME_SKILL: SkillDefinition = {
   metadata: {
     ...parsed.metadata,
     type: parsed.metadata.type ?? 'inline',
+    disableModelInvocation: true,
   },
 };

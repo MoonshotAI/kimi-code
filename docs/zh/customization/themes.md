@@ -27,19 +27,17 @@ Kimi Code CLI 可以使用内置配色，也可以使用自定义 JSON 主题文
 | `diffMeta` | `#888888` | `#5F5F5F` | diff 元信息 / hunk 头 |
 | `roleUser` | `#FFCB6B` | `#9A4A00` | 用户消息的子弹头与文字、技能激活名 |
 
-## 让 Kimi 帮你制作主题
+## 使用 custom-theme skill
 
-你不需要手写 JSON。直接在 Kimi Code CLI 里让 Kimi 创建或调整主题，它可以帮你选颜色，把文件写到 `~/.kimi-code/themes/`，校验十六进制色值，并告诉你如何应用。
+你不需要手写 JSON。运行内置 `/custom-theme [附加文本]` skill 命令进入自定义主题流程；这个 skill 可以帮你选颜色，把文件写到 `~/.kimi-code/themes/`，校验十六进制色值，并告诉你如何应用。
 
-如果你想明确让 Kimi 进入自定义主题流程，也可以手动执行内置 skill：`/custom-theme`。
+调用示例：
 
-可以这样提需求：
+- `/custom-theme Create a warm dark theme with amber accents.`
+- `/custom-theme Make a light theme based on Solarized, but keep errors easy to see.`
+- `/custom-theme Tweak my ember theme so diffs have higher contrast.`
 
-- "Create a warm dark theme with amber accents."
-- "Make a light theme based on Solarized, but keep errors easy to see."
-- "Tweak my `ember` theme so diffs have higher contrast."
-
-Kimi 通常会先问你想用浅色还是深色基准、偏好的风格或调色板，以及是否有必须包含的精确颜色。如果你让它编辑已有主题，请确保它先读取并备份文件，再覆盖写入。
+激活后，skill 通常会先问你想用浅色还是深色基准、偏好的风格或调色板，以及是否有必须包含的精确颜色。如果你用它编辑已有主题，请确保它先读取并备份文件，再覆盖写入。
 
 ## 创建一个主题
 

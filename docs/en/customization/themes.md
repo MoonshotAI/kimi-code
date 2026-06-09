@@ -27,19 +27,17 @@ Custom themes can override the tokens below. The `dark` and `light` columns show
 | `diffMeta` | `#888888` | `#5F5F5F` | Diff meta / hunk headers |
 | `roleUser` | `#FFCB6B` | `#9A4A00` | User message bullet and text, skill-activation name |
 
-## Ask Kimi to make a theme for you
+## Use the custom-theme skill
 
-You do not need to write the JSON by hand. Ask Kimi in Kimi Code CLI to create or tweak a theme, and it can choose colors, write the file under `~/.kimi-code/themes/`, validate the hex values, and tell you how to apply it.
+You do not need to write the JSON by hand. Run the built-in `/custom-theme [extra text]` skill command to enter the custom-theme workflow; the skill can choose colors, write the file under `~/.kimi-code/themes/`, validate the hex values, and tell you how to apply it.
 
-You can also invoke the built-in skill directly with `/custom-theme` when you want Kimi to enter the custom-theme workflow explicitly.
+Example invocations:
 
-Useful prompts include:
+- `/custom-theme Create a warm dark theme with amber accents.`
+- `/custom-theme Make a light theme based on Solarized, but keep errors easy to see.`
+- `/custom-theme Tweak my ember theme so diffs have higher contrast.`
 
-- "Create a warm dark theme with amber accents."
-- "Make a light theme based on Solarized, but keep errors easy to see."
-- "Tweak my `ember` theme so diffs have higher contrast."
-
-Kimi will usually ask whether you want a light or dark base, what mood or palette you prefer, and whether you have exact colors to include. If you ask it to edit an existing theme, make sure it reads and backs up the file before overwriting it.
+After activation, the skill usually asks whether you want a light or dark base, what mood or palette you prefer, and whether you have exact colors to include. If you use it to edit an existing theme, make sure it reads and backs up the file before overwriting it.
 
 ## Create a theme
 

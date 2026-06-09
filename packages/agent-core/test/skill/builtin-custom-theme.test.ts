@@ -10,8 +10,8 @@ describe('builtin skill: custom-theme', () => {
     expect(CUSTOM_THEME_SKILL.metadata.type).toBe('inline');
   });
 
-  it('is model-invocable (does not disable model invocation)', () => {
-    expect(CUSTOM_THEME_SKILL.metadata.disableModelInvocation).not.toBe(true);
+  it('is user-triggered only and hidden from model invocation', () => {
+    expect(CUSTOM_THEME_SKILL.metadata.disableModelInvocation).toBe(true);
   });
 
   it('pins the docs token reference and points users at ~/.kimi-code/themes and /theme', () => {
@@ -45,13 +45,15 @@ describe('builtin skill: custom-theme', () => {
     }
   });
 
-  it('registers through registerBuiltinSkills and shows up as model-invocable', () => {
+  it('registers through registerBuiltinSkills but stays out of the model skill listing', () => {
     const registry = new SkillRegistry();
     registerBuiltinSkills(registry);
 
     expect(registry.getSkill('custom-theme')).toBeDefined();
     expect(
       registry.listInvocableSkills().some((skill) => skill.name === 'custom-theme'),
-    ).toBe(true);
+    ).toBe(false);
+    expect(registry.getKimiSkillsDescription()).toContain('custom-theme');
+    expect(registry.getModelSkillListing()).not.toContain('custom-theme');
   });
 });
