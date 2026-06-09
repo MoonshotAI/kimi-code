@@ -1,5 +1,11 @@
 # @moonshot-ai/kaos
 
+## 0.1.4
+
+### Patch Changes
+
+- [#529](https://github.com/MoonshotAI/kimi-code/pull/529) [`3b62b12`](https://github.com/MoonshotAI/kimi-code/commit/3b62b123e68cc4543bfa8fa376c7e8a24fee0afb) - Detect Git Bash installed through Scoop and other Git shims on Windows.
+
 ## 0.1.3
 
 ### Patch Changes

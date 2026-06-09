@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/acp-adapter",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "Agent Client Protocol adapter for kimi-code",
   "license": "MIT",

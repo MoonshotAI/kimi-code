@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/kaos",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "Execution environment abstraction for AI agent applications",
   "license": "MIT",

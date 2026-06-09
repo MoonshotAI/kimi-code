@@ -1,5 +1,11 @@
 # @moonshot-ai/kosong
 
+## 0.4.0
+
+### Minor Changes
+
+- [#424](https://github.com/MoonshotAI/kimi-code/pull/424) [`72c4b0a`](https://github.com/MoonshotAI/kimi-code/commit/72c4b0adaa6ae0466875cd8e4066c42456195f21) - Add the `/swarm` command for running agent swarms with live progress and rate-limit-aware retries.
+
 ## 0.3.4
 
 ### Patch Changes
