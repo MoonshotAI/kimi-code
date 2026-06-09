@@ -77,23 +77,22 @@ describe('slash', () => {
     });
 
     it('reports unknown slash commands instead of passing them to the model', () => {
-      // TUI builtins like /clear are not ACP-executable. Report them as
-      // unknown so the adapter can render a local error instead of sending
-      // the literal command to the model.
-      expect(detectSlashIntent('/clear', map)).toEqual({
+      expect(detectSlashIntent('/definitely-unknown', map)).toEqual({
         kind: 'unknown',
-        name: 'clear',
+        name: 'definitely-unknown',
         args: '',
       });
     });
 
-    it('routes ACP built-in commands', () => {
+    it('routes ACP built-in commands and aliases from the shared registry', () => {
       expect(detectSlashIntent('/compact summarize aggressively', map)).toEqual({
         kind: 'builtin',
         name: 'compact',
         args: 'summarize aggressively',
       });
       expect(detectSlashIntent('/status', map)).toEqual({ kind: 'builtin', name: 'status', args: '' });
+      expect(detectSlashIntent('/clear', map)).toEqual({ kind: 'builtin', name: 'clear', args: '' });
+      expect(detectSlashIntent('/yolo', map)).toEqual({ kind: 'builtin', name: 'yolo', args: '' });
     });
 
     it('falls back to passthrough for non-slash text', () => {

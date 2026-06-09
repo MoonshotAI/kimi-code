@@ -148,6 +148,7 @@
     "dist/",
     "coverage/",
     "node_modules/",
+    "apps/vscode/",
     "apps/*/scripts/",
     "docs/smoke-archive/",
     "plugins/curated/superpowers/",

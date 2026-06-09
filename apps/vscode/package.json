@@ -1,0 +1,235 @@
+{
+  "name": "kimi-code",
+  "publisher": "kimi",
+  "displayName": "Kimi Code",
+  "description": "AI-powered coding assistant with Kimi Code",
+  "private": true,
+  "version": "0.0.3",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MoonshotAI/kimi-code.git",
+    "directory": "apps/vscode"
+  },
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": false
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onView:kimi.webview"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Kimi Code",
+      "properties": {
+        "kimi.yoloMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically approve all tool calls without prompting"
+        },
+        "kimi.autosave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically save files before Kimi reads or writes them"
+        },
+        "kimi.executablePath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Kimi Code executable"
+        },
+        "kimi.enableNewConversationShortcut": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use Cmd/Ctrl+N to start a new conversation when Kimi is focused"
+        },
+        "kimi.useCtrlEnterToSend": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use Ctrl/Cmd+Enter to send prompts instead of Enter"
+        },
+        "kimi.environmentVariables": {
+          "type": "object",
+          "default": {},
+          "description": "Environment variables passed to Kimi Code CLI. Useful for Kimi Code 0.14.0+ options such as KIMI_MODEL_TEMPERATURE, KIMI_MODEL_TOP_P, KIMI_MODEL_THINKING_KEEP, KIMI_CODE_NO_AUTO_UPDATE, and KIMI_CODE_EXPERIMENTAL_SUB_SKILL (experimental).",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "kimi.clearAllState",
+        "title": "Kimi Code: [DEBUG] Clear All State"
+      },
+      {
+        "command": "kimi.openInTab",
+        "title": "Kimi Code: Open in New Tab",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "kimi.openInSideBar",
+        "title": "Kimi Code: Open in Side Panel",
+        "icon": "$(layout-sidebar-left)"
+      },
+      {
+        "command": "kimi.focusInput",
+        "title": "Kimi Code: Focus Input",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "kimi.insertMention",
+        "title": "Kimi Code: Insert Current File",
+        "icon": "$(mention)"
+      },
+      {
+        "command": "kimi.newConversation",
+        "title": "Kimi Code: New Conversation",
+        "icon": "$(add)"
+      },
+      {
+        "command": "kimi.showLogs",
+        "title": "Kimi Code: Show Logs",
+        "icon": "$(output)"
+      },
+      {
+        "command": "kimi.login",
+        "title": "Kimi Code: Login",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "kimi.logout",
+        "title": "Kimi Code: Logout",
+        "icon": "$(sign-out)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "kimi.focusInput",
+        "key": "ctrl+shift+k",
+        "mac": "cmd+shift+k"
+      },
+      {
+        "command": "kimi.insertMention",
+        "key": "alt+k",
+        "mac": "alt+k",
+        "when": "editorTextFocus"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "kimi-sidebar",
+          "title": "Kimi Code",
+          "icon": "resources/kimi-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "kimi-sidebar": [
+        {
+          "type": "webview",
+          "id": "kimi.webview",
+          "name": "Kimi Code"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "kimi.openInTab",
+          "when": "view == kimi.webview",
+          "group": "navigation"
+        },
+        {
+          "command": "kimi.newConversation",
+          "when": "view == kimi.webview",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "kimi.clearAllState",
+          "when": "isDevelopment"
+        },
+        {
+          "command": "kimi.openInTab",
+          "when": "true"
+        },
+        {
+          "command": "kimi.openInSideBar",
+          "when": "true"
+        },
+        {
+          "command": "kimi.focusInput",
+          "when": "true"
+        },
+        {
+          "command": "kimi.insertMention",
+          "when": "true"
+        },
+        {
+          "command": "kimi.newConversation",
+          "when": "true"
+        },
+        {
+          "command": "kimi.showLogs",
+          "when": "true"
+        },
+        {
+          "command": "kimi.login",
+          "when": "!kimi.isLoggedIn"
+        },
+        {
+          "command": "kimi.logout",
+          "when": "kimi.isLoggedIn"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "kimi.insertMention",
+          "group": "kimi-code",
+          "when": "editorTextFocus"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm run build",
+    "dev": "node dev.js",
+    "lint": "eslint src shared agent-sdk agent-display-model/src agent-display-model/test webview-ui/src",
+    "check:boundaries": "node scripts/check-vscode-runtime-boundaries.mjs",
+    "typecheck": "pnpm run build:sdk && pnpm -C ./agent-display-model run typecheck && pnpm run check:boundaries && tsc --noEmit -p tsconfig.json",
+    "build": "pnpm run typecheck && pnpm run build:webview && pnpm run build:extension",
+    "build:sdk": "pnpm -C ./agent-sdk run build",
+    "build:webview": "pnpm -C ./webview-ui run build",
+    "build:extension": "node esbuild.js --production",
+    "package": "vsce package --no-dependencies && node scripts/check-vsix-contents.mjs"
+  },
+  "dependencies": {
+    "@moonshot-ai/kimi-code-vscode-agent-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/vscode": "^1.70.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.27.1",
+    "eslint": "^9.39.1",
+    "typescript": "6.0.2",
+    "typescript-eslint": "^8.48.1"
+  }
+}

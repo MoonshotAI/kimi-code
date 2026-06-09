@@ -8,6 +8,7 @@ import type {
   ToolKind,
 } from '@agentclientprotocol/sdk';
 import type {
+  AgentStatusUpdatedEvent,
   AssistantDeltaEvent,
   ThinkingDeltaEvent,
   ToolCallDeltaEvent,
@@ -348,6 +349,54 @@ export function thinkingDeltaToSessionUpdate(
       sessionUpdate: 'agent_thought_chunk',
       content: { type: 'text', text: event.delta },
     },
+  };
+}
+
+/**
+ * Map an SDK `agent.status.updated` event to ACP's experimental `usage_update`.
+ *
+ * ACP `UsageUpdate` carries the live context window occupancy (`used` / `size`),
+ * which is what clients need to render "context: 12.3% (12.4k / 200k)".
+ * Kimi-specific details stay in `_meta` so standard clients can still consume
+ * the stable `used`/`size` shape without understanding Kimi's status payload.
+ */
+export function statusUpdatedToUsageUpdate(
+  sessionId: string,
+  event: AgentStatusUpdatedEvent,
+): SessionNotification | null {
+  const used = event.contextTokens ?? 0;
+  const size = event.maxContextTokens ?? 0;
+  if (!Number.isFinite(used) || used < 0 || !Number.isFinite(size) || size <= 0) {
+    return null;
+  }
+
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: 'usage_update',
+      used,
+      size,
+      _meta: {
+        contextUsage: event.contextUsage ?? used / size,
+        model: event.model,
+        permission: event.permission,
+        planMode: event.planMode,
+        swarmMode: event.swarmMode,
+        currentTurn: tokenUsageToMeta(event.usage?.currentTurn),
+      },
+    },
+  };
+}
+
+function tokenUsageToMeta(
+  usage: NonNullable<AgentStatusUpdatedEvent['usage']>['currentTurn'],
+): Record<string, number> | undefined {
+  if (!usage) return undefined;
+  return {
+    input_other: usage.inputOther,
+    output: usage.output,
+    input_cache_read: usage.inputCacheRead,
+    input_cache_creation: usage.inputCacheCreation,
   };
 }
 

@@ -1,6 +1,6 @@
 # Using Kimi Code CLI in IDEs
 
-Kimi Code CLI supports integration into IDEs via the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/), letting you use AI-assisted coding directly inside your editor.
+Kimi Code supports editor workflows through Kimi Code for VS Code and through IDEs that launch Kimi Code CLI via the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/). Both paths reuse the same local authentication state, so you can sign in once and keep coding inside your editor.
 
 ## Prerequisites
 
@@ -11,6 +11,25 @@ The ACP adapter is exposed as the `kimi acp` subcommand. The IDE launches it as 
 ::: tip Path note
 Child processes launched from an IDE GUI on macOS typically do **not** inherit the terminal shell's `PATH`. If `kimi` is not in a system directory like `/usr/local/bin`, use the absolute path in your IDE configuration. Run `which kimi` in a terminal to find the active path.
 :::
+
+## Using Kimi Code for VS Code
+
+Kimi Code for VS Code provides a native sidebar view, editor commands, and a webview chat surface backed by the local Kimi Code CLI. It is the most direct option for VS Code users because the extension manages the ACP subprocess, session loading, file mentions, approvals, and file-change review inside VS Code.
+
+After installing the extension, open the **Kimi Code** view from the Activity Bar. The extension checks whether the `kimi` executable is available and reuses the same login state as the terminal CLI. If VS Code cannot find `kimi`, set **Kimi Code: Executable Path** to the absolute path returned by:
+
+```sh
+which kimi
+```
+
+The extension contributes these common commands:
+
+- **Kimi Code: Focus Input**: focus the chat input from anywhere in VS Code.
+- **Kimi Code: Insert Current File**: mention the active editor file in the current prompt.
+- **Kimi Code: New Conversation**: start a fresh Kimi Code session.
+- **Kimi Code: Show Logs**: open extension logs for debugging CLI startup and ACP messages.
+
+Kimi Code for VS Code reads MCP server configuration from the CLI side. Use `/mcp-config` in the CLI to add or edit MCP servers, then reopen or refresh the VS Code view if the server list looks stale.
 
 ## Using Kimi Code CLI in Zed
 

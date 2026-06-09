@@ -63,6 +63,7 @@
       # -------------------------------------------------------------------
       workspacePaths = [
         ./packages/acp-adapter
+        ./apps/vscode/agent-display-model
         ./packages/agent-core
         ./packages/kaos
         ./packages/kosong
@@ -72,6 +73,9 @@
         ./packages/protocol
         ./packages/telemetry
         ./apps/kimi-code
+        ./apps/vscode
+        ./apps/vscode/agent-sdk
+        ./apps/vscode/webview-ui
         ./apps/vis
         ./apps/vis/server
         ./apps/vis/web
@@ -80,6 +84,7 @@
 
       workspaceNames = [
         "@moonshot-ai/acp-adapter"
+        "@moonshot-ai/kimi-code-vscode-display-model"
         "@moonshot-ai/agent-core"
         "@moonshot-ai/kaos"
         "@moonshot-ai/kosong"
@@ -89,6 +94,9 @@
         "@moonshot-ai/protocol"
         "@moonshot-ai/kimi-telemetry"
         "@moonshot-ai/kimi-code"
+        "kimi-code"
+        "@moonshot-ai/kimi-code-vscode-agent-sdk"
+        "@moonshot-ai/kimi-code-vscode-webview"
         "@moonshot-ai/vis"
         "@moonshot-ai/vis-server"
         "@moonshot-ai/vis-web"

@@ -1,0 +1,30 @@
+# Source files
+src/**
+shared/**
+agent-sdk/**
+agent-display-model/**
+webview-ui/**
+webview-ui/src/**
+webview-ui/public/**
+
+# Node modules
+node_modules/**
+webview-ui/node_modules/**
+
+# Build configs and scripts
+tsconfig.json
+esbuild.js
+dev.js
+eslint.config.mjs
+scripts/**
+webview-ui/tsconfig.json
+webview-ui/vite.config.ts
+webview-ui/components.json
+
+# Other
+AGENTS.md
+docs/**
+.vscode-test.mjs
+.gitignore
+**/*.map
+*.vsix

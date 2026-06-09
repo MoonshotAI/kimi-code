@@ -1,0 +1,32 @@
+{
+  "name": "kimi/compaction completed -> CompactionEnd",
+  "method": "kimi/compaction",
+  "params": {
+    "sessionId": "sess-1",
+    "phase": "completed",
+    "trigger": "manual",
+    "instruction": "Keep important facts",
+    "message": "Compaction complete",
+    "result": {
+      "summary": "Compacted context",
+      "compactedCount": 12,
+      "tokensBefore": 12000,
+      "tokensAfter": 3000
+    }
+  },
+  "expectedEvents": [
+    {
+      "type": "CompactionEnd",
+      "payload": {
+        "status": "completed",
+        "trigger": "manual",
+        "instruction": "Keep important facts",
+        "summary": "Compacted context",
+        "compactedCount": 12,
+        "tokensBefore": 12000,
+        "tokensAfter": 3000,
+        "message": "Compaction complete"
+      }
+    }
+  ]
+}

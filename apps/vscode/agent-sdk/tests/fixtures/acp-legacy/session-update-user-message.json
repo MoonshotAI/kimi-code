@@ -1,0 +1,18 @@
+{
+  "name": "user message chunk cleans system tags and supports live echo suppression",
+  "method": "session/update",
+  "params": {
+    "sessionId": "sess-user-message",
+    "update": {
+      "sessionUpdate": "user_message_chunk",
+      "content": { "type": "text", "text": "<system>hidden</system>Hello" }
+    }
+  },
+  "options": { "suppressUserEcho": false },
+  "expectedEvents": [
+    { "type": "TurnBegin", "payload": { "user_input": "Hello" } },
+    { "type": "StepBegin", "payload": { "n": 1 } }
+  ],
+  "suppressedOptions": { "suppressUserEcho": true },
+  "expectedSuppressedEvents": []
+}
