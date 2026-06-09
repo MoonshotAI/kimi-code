@@ -89,15 +89,24 @@ describe('HarnessAPI session skills', () => {
     const created = await rpc.createSession({ id: 'ses_builtin_skill_list', workDir });
 
     const skills = await rpc.listSkills({ sessionId: created.id });
-    const listed = skills.find((skill) => skill.name === 'mcp-config');
+    const mcpConfig = skills.find((skill) => skill.name === 'mcp-config');
+    const importer = skills.find((skill) => skill.name === 'import-from-cc-codex');
 
-    expect(listed).toMatchObject({
+    expect(mcpConfig).toMatchObject({
       name: 'mcp-config',
       description: 'Configure MCP servers and handle MCP OAuth login.',
       source: 'builtin',
     });
-    expect(listed?.path).toBe('builtin://mcp-config');
+    expect(mcpConfig?.path).toBe('builtin://mcp-config');
+    expect(importer).toMatchObject({
+      name: 'import-from-cc-codex',
+      description: 'Import Claude Code and Codex instructions, skills, and MCP settings into Kimi Code.',
+      source: 'builtin',
+      disableModelInvocation: true,
+    });
+    expect(importer?.path).toBe('builtin://import-from-cc-codex');
     expect(JSON.stringify(skills)).not.toContain('Your tool list contains one synthetic tool');
+    expect(JSON.stringify(skills)).not.toContain('Do not migrate Claude custom commands');
   });
 
   it('resolves user brand skills from the kimi home, not the OS home', async () => {

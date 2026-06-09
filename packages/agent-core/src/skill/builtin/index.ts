@@ -1,5 +1,6 @@
 import type { SkillRegistry } from '../registry';
 import { CUSTOM_THEME_SKILL } from './custom-theme';
+import { IMPORT_FROM_CC_CODEX_SKILL } from './import-from-cc-codex';
 import { MCP_CONFIG_SKILL } from './mcp-config';
 import {
   SUB_SKILL_CONSOLIDATE,
@@ -10,6 +11,7 @@ import { UPDATE_CONFIG_SKILL } from './update-config';
 
 export function registerBuiltinSkills(registry: SkillRegistry): void {
   registry.registerBuiltinSkill(MCP_CONFIG_SKILL);
+  registry.registerBuiltinSkill(IMPORT_FROM_CC_CODEX_SKILL);
   registry.registerBuiltinSkill(UPDATE_CONFIG_SKILL);
   registry.registerBuiltinSkill(CUSTOM_THEME_SKILL);
   registry.registerBuiltinSkill(SUB_SKILL_PARENT);
@@ -19,6 +21,7 @@ export function registerBuiltinSkills(registry: SkillRegistry): void {
 
 export {
   CUSTOM_THEME_SKILL,
+  IMPORT_FROM_CC_CODEX_SKILL,
   MCP_CONFIG_SKILL,
   SUB_SKILL_CONSOLIDATE,
   SUB_SKILL_PARENT,
