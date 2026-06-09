@@ -122,6 +122,46 @@ describe('kimi login', () => {
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
+  it('still prints device code prompt when opening the browser fails', async () => {
+    vi.mocked(openUrl).mockImplementation(() => {
+      throw new Error('no browser');
+    });
+    mockLogin.mockImplementation(
+      async (
+        _providerName: string | undefined,
+        options: {
+          onDeviceCode?: (data: {
+            userCode: string;
+            verificationUri: string;
+            verificationUriComplete: string;
+            expiresIn: number | null;
+          }) => void | Promise<void>;
+        },
+      ) => {
+        await options.onDeviceCode?.({
+          userCode: 'ABCD-EFGH',
+          verificationUri: 'https://example.com/v',
+          verificationUriComplete: 'https://example.com/v?code=ABCD-EFGH',
+          expiresIn: 600,
+        });
+        return { providerName: 'kimi-code', ok: true };
+      },
+    );
+
+    const program = new Command('kimi').exitOverride();
+    registerLoginCommand(program);
+
+    await expect(program.parseAsync(['node', 'kimi', 'login'])).rejects.toThrow(ExitCalled);
+
+    const writtenChunks = stderrSpy.mock.calls.map((call: unknown[]) => String(call[0]));
+    expect(writtenChunks.some((chunk: string) => chunk.includes('ABCD-EFGH'))).toBe(true);
+    expect(writtenChunks.some((chunk: string) => chunk.includes('https://example.com/v'))).toBe(
+      true,
+    );
+    expect(openUrl).toHaveBeenCalledWith('https://example.com/v?code=ABCD-EFGH');
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
   it('exits 1 when auth.login throws', async () => {
     mockLogin.mockRejectedValue(new Error('boom'));
 
