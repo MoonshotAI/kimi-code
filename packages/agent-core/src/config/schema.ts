@@ -106,19 +106,30 @@ export const BackgroundConfigSchema = z.object({
 export type BackgroundConfig = z.infer<typeof BackgroundConfigSchema>;
 
 const ExperimentalFlagIdSet = new Set<string>(FLAG_DEFINITIONS.map((def) => def.id));
+const RetiredExperimentalFlagIdSet = new Set<string>([
+  'goal_command',
+  'background_ask',
+  'agent_swarm',
+  'sub_skill',
+]);
 
 export const ExperimentalConfigSchema = z
   .record(z.string(), z.boolean())
   .superRefine((config, ctx) => {
     for (const key of Object.keys(config)) {
-      if (ExperimentalFlagIdSet.has(key)) continue;
+      if (ExperimentalFlagIdSet.has(key) || RetiredExperimentalFlagIdSet.has(key)) continue;
       ctx.addIssue({
         code: 'custom',
         path: [key],
         message: `Unknown experimental feature "${key}".`,
       });
     }
-  }) as z.ZodType<Partial<Record<FlagId, boolean>>>;
+  })
+  .transform((config) =>
+    Object.fromEntries(
+      Object.entries(config).filter(([key]) => !RetiredExperimentalFlagIdSet.has(key)),
+    ),
+  ) as z.ZodType<Partial<Record<FlagId, boolean>>>;
 
 export type ExperimentalConfig = z.infer<typeof ExperimentalConfigSchema>;
 

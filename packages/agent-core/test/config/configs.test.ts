@@ -279,6 +279,18 @@ micro_compaction = false
     expect(parseConfigString(text, configPath).experimental).toEqual(config.experimental);
   });
 
+  it('ignores retired experimental feature flags from older configs', () => {
+    const config = parseConfigString(`
+[experimental]
+goal_command = true
+background_ask = true
+agent_swarm = true
+sub_skill = true
+`);
+
+    expect(config.experimental).toEqual({});
+  });
+
   it('rejects unknown experimental feature keys', () => {
     expectKimiErrorCode(
       () =>
