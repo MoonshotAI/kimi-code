@@ -5,7 +5,7 @@ import {
   ExperimentsSelectorComponent,
   type ExperimentalFeatureDraftChange,
 } from '#/tui/components/dialogs/experiments-selector';
-import { darkColors } from '#/tui/theme/colors';
+
 
 const ANSI = /\u001B\[[0-9;]*m/g;
 const ESC = String.fromCodePoint(27);
@@ -41,7 +41,6 @@ describe('ExperimentsSelectorComponent', () => {
       features: [
         feature({ enabled: true, source: 'config', configValue: true }),
       ],
-      colors: darkColors,
       onApply: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -61,7 +60,6 @@ describe('ExperimentsSelectorComponent', () => {
     const first = feature();
     const selector = new ExperimentsSelectorComponent({
       features: [first],
-      colors: darkColors,
       onApply,
       onCancel: vi.fn(),
     });
@@ -91,7 +89,6 @@ describe('ExperimentsSelectorComponent', () => {
           source: 'env',
         }),
       ],
-      colors: darkColors,
       onApply,
       onCancel: vi.fn(),
     });
@@ -108,7 +105,6 @@ describe('ExperimentsSelectorComponent', () => {
     const onCancel = vi.fn();
     const selector = new ExperimentsSelectorComponent({
       features: [feature()],
-      colors: darkColors,
       onApply: vi.fn(),
       onCancel,
     });

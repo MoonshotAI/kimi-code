@@ -5,10 +5,6 @@ import {
   ApprovalPreviewViewer,
   type ApprovalPreviewBlock,
 } from '#/tui/components/dialogs/approval-preview';
-import { getColorPalette } from '#/tui/theme/colors';
-
-const COLORS = getColorPalette('dark');
-
 const ANSI_SGR = /\[[0-9;]*m/g;
 function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '');
@@ -49,7 +45,6 @@ function makeViewer(opts: {
   return new ApprovalPreviewViewer(
     {
       block: opts.block,
-      colors: COLORS,
       onClose: opts.onClose ?? (() => {}),
     },
     fakeTerminal(opts.rows ?? 24, opts.columns ?? 100),

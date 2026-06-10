@@ -5,7 +5,6 @@ import {
   selectVisibleTodos,
   type TodoItem,
 } from '#/tui/components/chrome/todo-panel';
-import { darkColors } from '#/tui/theme/colors';
 
 function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -13,13 +12,13 @@ function strip(text: string): string {
 
 describe('TodoPanelComponent', () => {
   it('returns no lines when empty (so the layout slot collapses)', () => {
-    const panel = new TodoPanelComponent(darkColors);
+    const panel = new TodoPanelComponent();
     expect(panel.render(80)).toEqual([]);
     expect(panel.isEmpty()).toBe(true);
   });
 
   it('renders a Todo header + one row per entry', () => {
-    const panel = new TodoPanelComponent(darkColors);
+    const panel = new TodoPanelComponent();
     panel.setTodos([
       { title: 'Investigate parser', status: 'done' },
       { title: 'Add tests', status: 'in_progress' },
@@ -34,7 +33,7 @@ describe('TodoPanelComponent', () => {
   });
 
   it('setTodos replaces the list (not appends)', () => {
-    const panel = new TodoPanelComponent(darkColors);
+    const panel = new TodoPanelComponent();
     panel.setTodos([{ title: 'old', status: 'pending' }]);
     panel.setTodos([{ title: 'new', status: 'in_progress' }]);
     const out = strip(panel.render(80).join('\n'));
@@ -43,7 +42,7 @@ describe('TodoPanelComponent', () => {
   });
 
   it('clear() wipes the list and reverts to empty', () => {
-    const panel = new TodoPanelComponent(darkColors);
+    const panel = new TodoPanelComponent();
     panel.setTodos([{ title: 'x', status: 'pending' }]);
     panel.clear();
     expect(panel.isEmpty()).toBe(true);
@@ -51,7 +50,7 @@ describe('TodoPanelComponent', () => {
   });
 
   it('defensive copy: external mutation does not leak into the panel', () => {
-    const panel = new TodoPanelComponent(darkColors);
+    const panel = new TodoPanelComponent();
     const source: TodoItem[] = [{ title: 'foo', status: 'pending' }];
     panel.setTodos(source);
     source[0] = { title: 'hacked', status: 'done' };
@@ -61,7 +60,7 @@ describe('TodoPanelComponent', () => {
   });
 
   it('renders all todos and no overflow footer when count <= 5', () => {
-    const panel = new TodoPanelComponent(darkColors);
+    const panel = new TodoPanelComponent();
     panel.setTodos([
       { title: 'a', status: 'done' },
       { title: 'b', status: 'in_progress' },
@@ -76,7 +75,7 @@ describe('TodoPanelComponent', () => {
   });
 
   it('appends "+N more" footer when count > 5', () => {
-    const panel = new TodoPanelComponent(darkColors);
+    const panel = new TodoPanelComponent();
     panel.setTodos([
       { title: 't0', status: 'done' },
       { title: 't1', status: 'in_progress' },

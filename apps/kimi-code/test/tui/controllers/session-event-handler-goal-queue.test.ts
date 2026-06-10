@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 import { SessionEventHandler } from '#/tui/controllers/session-event-handler';
-import { getColorPalette } from '#/tui/theme/colors';
+import { getBuiltInPalette } from '#/tui/theme';
 import { readGoalQueue, removeGoalQueueItem, restoreGoalQueueItem } from '#/tui/goal-queue-store';
 
 vi.mock('#/tui/goal-queue-store', () => ({
@@ -54,7 +54,7 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
         permissionMode: 'auto',
       },
       queuedMessages: [],
-      theme: { colors: getColorPalette('dark') },
+      theme: { palette: getBuiltInPalette('dark') },
       toolOutputExpanded: false,
       todoPanel: { getTodos: vi.fn(() => []) },
       transcriptContainer: { addChild: vi.fn() },

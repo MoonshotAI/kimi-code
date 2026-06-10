@@ -111,6 +111,20 @@ Prompt mode exits with code `0` when the goal completes, `3` when it blocks, and
 | --- | --- | --- | --- |
 | `/exit` | `/quit`, `/q` | Exit Kimi Code CLI | No |
 
+## Built-in skill commands
+
+Kimi Code CLI ships with a set of built-in Skills that appear directly as `/<name>` slash commands. Unlike external Skills, they do not require the `skill:` prefix and are available out of the box.
+
+| Command | Description |
+| --- | --- |
+| `/mcp-config` | Configure MCP servers and handle MCP OAuth login. See [MCP](../customization/mcp.md) |
+| `/custom-theme [<text>]` | Create or edit a custom TUI color theme. See [Themes](../customization/themes.md) |
+| `/update-config` | Inspect or edit `config.toml` (model, provider, permission, hooks) and `tui.toml` (theme, editor, notifications, auto-update) |
+| `/import-from-cc-codex` | Import Claude Code and Codex instructions, skills, and MCP settings into Kimi Code |
+| `/sub-skill` | Discover and reorganize the local skill inventory into hierarchical sub-skill bundles. Includes `/sub-skill.review` (read-only proposal) and `/sub-skill.consolidate` (apply the reorganization) |
+
+All built-in Skill commands are only available in the idle state.
+
 ## Skill Dynamic Commands
 
 Activated external Skills are automatically registered as slash commands with the `skill:` namespace prefix:
@@ -123,7 +137,7 @@ For example, `/skill:code-style` loads the Skill named `code-style` and sends it
 
 For convenience, external Skill commands also support a shorthand form that omits the `skill:` prefix — `/<name>` — as long as the name is not taken by a system slash command. That is, `/code-style` falls back to matching `/skill:code-style`.
 
-Built-in Skills shipped with Kimi Code CLI, such as `mcp-config`, appear directly as `/<name>` in the slash command panel for cases like configuring MCP servers and handling MCP OAuth login.
+Built-in Skills shipped with Kimi Code CLI appear directly as `/<name>` in the slash command panel. For example, `/mcp-config` helps configure MCP servers and handle MCP OAuth login, and `/custom-theme [extra text]` invokes the custom-theme workflow to create or edit a TUI theme.
 
 ::: info
 All Skill commands are only available in the idle state. `flow`-type Skills are also exposed via `/skill:<name>` — there is no separate `/flow:` namespace.

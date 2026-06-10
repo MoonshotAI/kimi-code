@@ -7,11 +7,10 @@ import {
   visibleWidth,
   type Focusable,
 } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '#/constant/app';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
 import type { ChoiceOption } from './choice-picker';
@@ -58,7 +57,6 @@ export interface ModelSelectorOptions {
   readonly currentValue: string;
   readonly selectedValue?: string;
   readonly currentThinking: boolean;
-  readonly colors: ColorPalette;
   /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
   readonly searchable?: boolean;
   /** Items per page. Lists longer than this paginate (PgUp/PgDn). */
@@ -166,14 +164,13 @@ export class ModelSelectorComponent extends Container implements Focusable {
   }
 
   override render(width: number): string[] {
-    const { colors } = this.opts;
     const searchable = this.opts.searchable === true;
     const view = this.list.view();
     const totalCount = Object.keys(this.opts.models).length;
 
     const titleSuffix =
       searchable && view.query.length === 0
-        ? chalk.hex(colors.textMuted)('  (type to search)')
+        ? currentTheme.fg('textMuted', '  (type to search)')
         : '';
 
     // "type to search" already lives in the title suffix, so the hint only
@@ -185,18 +182,18 @@ export class ModelSelectorComponent extends Container implements Focusable {
     hintParts.push('Enter select', 'Esc cancel');
 
     const lines: string[] = [
-      chalk.hex(colors.primary)('─'.repeat(width)),
-      chalk.hex(colors.primary).bold(' Select a model') + titleSuffix,
-      chalk.hex(colors.textMuted)(' ' + hintParts.join(' · ')),
+      currentTheme.fg('primary', '─'.repeat(width)),
+      currentTheme.boldFg('primary', ' Select a model') + titleSuffix,
+      currentTheme.fg('textMuted', ' ' + hintParts.join(' · ')),
       '',
     ];
 
     if (searchable && view.query.length > 0) {
-      lines.push(chalk.hex(colors.primary)(' Search: ') + chalk.hex(colors.text)(view.query));
+      lines.push(currentTheme.fg('primary', ' Search: ') + currentTheme.fg('text', view.query));
     }
 
     if (view.items.length === 0) {
-      lines.push(chalk.hex(colors.textMuted)('   No matches'));
+      lines.push(currentTheme.fg('textMuted', '   No matches'));
     } else {
       // Column width for model names so the provider column lines up. Capped so
       // the provider + "← current" marker still fit on normal terminal widths.
@@ -214,14 +211,13 @@ export class ModelSelectorComponent extends Container implements Focusable {
         const isSelected = i === view.selectedIndex;
         const isCurrent = choice.alias === this.opts.currentValue;
         const pointer = isSelected ? SELECT_POINTER : ' ';
-        const nameStyle = isSelected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
         const truncatedName = truncateToWidth(choice.name, nameWidth, '…');
         const namePad = ' '.repeat(Math.max(0, nameWidth - visibleWidth(truncatedName)));
-        let line = chalk.hex(isSelected ? colors.primary : colors.textDim)(`  ${pointer} `);
-        line += nameStyle(truncatedName) + namePad;
-        line += '  ' + chalk.hex(colors.textMuted)(choice.provider);
+        let line = currentTheme.fg(isSelected ? 'primary' : 'textDim', `  ${pointer} `);
+        line += (isSelected ? currentTheme.boldFg('primary', truncatedName) : currentTheme.fg('text', truncatedName)) + namePad;
+        line += '  ' + currentTheme.fg('textMuted', choice.provider);
         if (isCurrent) {
-          line += ' ' + chalk.hex(colors.success)(CURRENT_MARK);
+          line += ' ' + currentTheme.fg('success', CURRENT_MARK);
         }
         lines.push(line);
       }
@@ -231,13 +227,13 @@ export class ModelSelectorComponent extends Container implements Focusable {
     if (view.query.length > 0) {
       lines.push('');
       lines.push(
-        chalk.hex(colors.textMuted)(` ${String(view.items.length)} / ${String(totalCount)}`),
+        currentTheme.fg('textMuted', ` ${String(view.items.length)} / ${String(totalCount)}`),
       );
     } else {
       const below = view.items.length - view.page.end;
       if (below > 0) {
         lines.push('');
-        lines.push(chalk.hex(colors.textMuted)(` ▼ ${String(below)} more`));
+        lines.push(currentTheme.fg('textMuted', ` ▼ ${String(below)} more`));
       }
     }
 
@@ -246,11 +242,11 @@ export class ModelSelectorComponent extends Container implements Focusable {
     if (selected !== undefined) {
       const availability = thinkingAvailability(selected.model);
       const thinkingHeader = availability === 'toggle' ? ' Thinking  (←→ to switch)' : ' Thinking';
-      lines.push(chalk.hex(colors.textMuted)(thinkingHeader));
+      lines.push(currentTheme.fg('textMuted', thinkingHeader));
       lines.push(this.renderThinkingControl(selected));
     }
     lines.push('');
-    lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
+    lines.push(currentTheme.fg('primary', '─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width));
   }
 
@@ -259,18 +255,17 @@ export class ModelSelectorComponent extends Container implements Focusable {
   }
 
   private renderThinkingControl(choice: ModelChoice): string {
-    const { colors } = this.opts;
     const segment = (label: string, active: boolean): string =>
       active
-        ? chalk.hex(colors.primary).bold(`[ ${label} ]`)
-        : chalk.hex(colors.text)(`  ${label}  `);
+        ? currentTheme.boldFg('primary', `[ ${label} ]`)
+        : currentTheme.fg('text', `  ${label}  `);
 
     const availability = thinkingAvailability(choice.model);
     if (availability === 'always-on') {
       return `  ${segment('Always on', true)}`;
     }
     if (availability === 'unsupported') {
-      return `  ${segment('Off', true)} ${chalk.hex(colors.textMuted)('unsupported')}`;
+      return `  ${segment('Off', true)} ${currentTheme.fg('textMuted', 'unsupported')}`;
     }
     const draft = this.draftFor(choice);
     return `  ${segment('On', draft)}  ${segment('Off', !draft)}`;

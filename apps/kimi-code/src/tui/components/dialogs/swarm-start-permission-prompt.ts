@@ -1,5 +1,3 @@
-import type { ColorPalette } from '#/tui/theme/colors';
-
 import {
   StartPermissionPromptComponent,
   type StartPermissionOption,
@@ -8,7 +6,6 @@ import {
 export type SwarmStartPermissionChoice = 'auto' | 'manual';
 
 export interface SwarmStartPermissionPromptOptions {
-  readonly colors: ColorPalette;
   readonly onSelect: (choice: SwarmStartPermissionChoice) => void;
   readonly onCancel: () => void;
 }
@@ -37,7 +34,6 @@ const NOTICE_LINES = [
 export class SwarmStartPermissionPromptComponent extends StartPermissionPromptComponent<SwarmStartPermissionChoice> {
   constructor(opts: SwarmStartPermissionPromptOptions) {
     super({
-      colors: opts.colors,
       title: 'Start a swarm task with approvals on?',
       noticeLines: NOTICE_LINES,
       options: OPTIONS,

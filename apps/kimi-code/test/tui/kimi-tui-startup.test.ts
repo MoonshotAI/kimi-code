@@ -64,7 +64,6 @@ const MIGRATION_PLAN: MigrationPlan = {
 function makeStartupInput(
   cliOptions: Partial<KimiTUIStartupInput["cliOptions"]> = {},
   tuiConfig: Partial<KimiTUIStartupInput["tuiConfig"]> = {},
-  resolvedTheme: KimiTUIStartupInput["resolvedTheme"] = "dark",
 ): KimiTUIStartupInput {
   return {
     cliOptions: {
@@ -88,7 +87,6 @@ function makeStartupInput(
     },
     version: "0.0.0-test",
     workDir: "/tmp/proj-a",
-    resolvedTheme,
   };
 }
 
@@ -392,7 +390,7 @@ describe("KimiTUI startup", () => {
     const harness = makeHarness();
     const driver = makeDriver(
       harness,
-      makeStartupInput({}, { theme: "auto" }, "dark"),
+      makeStartupInput({}, { theme: "auto" }),
     ) as unknown as ThemeTrackingDriver;
     const { listeners, write, addInputListener } = captureInputListeners(driver);
 
@@ -408,17 +406,14 @@ describe("KimiTUI startup", () => {
     expect(listeners[0]?.(TERMINAL_THEME_LIGHT)).toEqual({ consume: true });
     expect(write).toHaveBeenCalledWith(OSC11_QUERY);
     expect(driver.state.appState.theme).toBe("auto");
-    expect(driver.state.theme.resolvedTheme).toBe("dark");
     expect(driver.state.ui.requestRender).not.toHaveBeenCalled();
 
     expect(listeners[0]?.(DARK_OSC11_REPORT)).toEqual({ consume: true });
     expect(driver.state.appState.theme).toBe("auto");
-    expect(driver.state.theme.resolvedTheme).toBe("dark");
     expect(driver.state.ui.requestRender).not.toHaveBeenCalled();
 
     expect(listeners[0]?.(LIGHT_OSC11_REPORT)).toEqual({ consume: true });
     expect(driver.state.appState.theme).toBe("auto");
-    expect(driver.state.theme.resolvedTheme).toBe("light");
     expect(driver.state.ui.requestRender).toHaveBeenCalled();
   });
 
@@ -437,7 +432,7 @@ describe("KimiTUI startup", () => {
     const harness = makeHarness();
     const driver = makeDriver(
       harness,
-      makeStartupInput({}, { theme: "auto" }, "dark"),
+      makeStartupInput({}, { theme: "auto" }),
     ) as unknown as ThemeTrackingDriver;
     const { write, removeInputListener } = captureInputListeners(driver);
 

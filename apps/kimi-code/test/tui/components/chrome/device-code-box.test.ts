@@ -19,7 +19,6 @@ describe('DeviceCodeBoxComponent', () => {
       url,
       code,
       hint,
-      colors: darkColors,
     });
 
     const lines = component.render(80).map(strip);
@@ -42,7 +41,6 @@ describe('DeviceCodeBoxComponent', () => {
       title,
       url,
       code,
-      colors: darkColors,
     });
 
     const lines = component.render(40).map(strip);
@@ -57,7 +55,6 @@ describe('DeviceCodeBoxComponent', () => {
       title,
       url,
       code,
-      colors: darkColors,
     });
 
     const joined = component.render(80).map(strip).join('\n');

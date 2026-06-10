@@ -23,7 +23,6 @@ function makeDialog(defaultUrl = 'https://example.com/api.json'): {
   const onDone = vi.fn();
   const dialog = new CustomRegistryImportDialogComponent(
     onDone as unknown as (r: CustomRegistryImportResult) => void,
-    darkColors,
     defaultUrl,
   );
   dialog.focused = true;

@@ -16,10 +16,8 @@ import {
   visibleWidth,
   type Focusable,
 } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
-
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
@@ -37,11 +35,10 @@ export interface ChoiceOption {
 export interface ChoicePickerOptions {
   readonly title: string;
   readonly hint?: string;
-  readonly formatHint?: (text: string, colors: ColorPalette) => string;
+  readonly formatHint?: (text: string) => string;
   readonly notice?: string;
   readonly options: readonly ChoiceOption[];
   readonly currentValue?: string;
-  readonly colors: ColorPalette;
   /** When true, typed characters filter the list (fuzzy) and a search line is shown. */
   readonly searchable?: boolean;
   /** Items per page. Lists longer than this paginate. */
@@ -118,7 +115,6 @@ export class ChoicePickerComponent extends Container implements Focusable {
   }
 
   override render(width: number): string[] {
-    const { colors } = this.opts;
     const searchable = this.opts.searchable === true;
     const view = this.list.view();
     const options = view.items;
@@ -132,41 +128,41 @@ export class ChoicePickerComponent extends Container implements Focusable {
     const hint = this.opts.hint ?? navParts.join(' · ');
 
     const titleSuffix =
-      searchable && view.query.length === 0 ? chalk.hex(colors.textMuted)('  (type to search)') : '';
+      searchable && view.query.length === 0 ? currentTheme.fg('textMuted', '  (type to search)') : '';
     const lines: string[] = [
-      chalk.hex(colors.primary)('─'.repeat(width)),
-      chalk.hex(colors.primary).bold(` ${this.opts.title}`) + titleSuffix,
+      currentTheme.fg('primary', '─'.repeat(width)),
+      currentTheme.boldFg('primary', ` ${this.opts.title}`) + titleSuffix,
       this.opts.formatHint === undefined
-        ? chalk.hex(colors.textMuted)(` ${hint}`)
-        : this.opts.formatHint(` ${hint}`, colors),
+        ? currentTheme.fg('textMuted', ` ${hint}`)
+        : this.opts.formatHint(` ${hint}`),
     ];
     if (this.opts.notice !== undefined) {
-      lines.push(chalk.hex(colors.success)(` ${this.opts.notice}`));
+      lines.push(currentTheme.fg('success', ` ${this.opts.notice}`));
     }
     lines.push('');
     if (searchable && view.query.length > 0) {
-      lines.push(chalk.hex(colors.primary)(` Search: `) + chalk.hex(colors.text)(view.query));
+      lines.push(currentTheme.fg('primary', ` Search: `) + currentTheme.fg('text', view.query));
     }
 
     if (options.length === 0) {
-      lines.push(chalk.hex(colors.textMuted)('   No matches'));
+      lines.push(currentTheme.fg('textMuted', '   No matches'));
     }
     for (let i = view.page.start; i < view.page.end; i++) {
       const opt = options[i]!;
       const isSelected = i === view.selectedIndex;
       const isCurrent = opt.value === this.opts.currentValue;
       const pointer = isSelected ? SELECT_POINTER : ' ';
-      const labelStyle = optionLabelStyle(opt, isSelected, colors);
-      let line = chalk.hex(isSelected ? colors.primary : colors.textDim)(`  ${pointer} `);
+      const labelStyle = optionLabelStyle(opt, isSelected);
+      let line = currentTheme.fg(isSelected ? 'primary' : 'textDim', `  ${pointer} `);
       line += labelStyle(opt.label);
       if (isCurrent) {
-        line += ' ' + chalk.hex(colors.success)(CURRENT_MARK);
+        line += ' ' + currentTheme.fg('success', CURRENT_MARK);
       }
       lines.push(line);
       if (opt.description !== undefined && opt.description.length > 0) {
         const descriptionWidth = Math.max(1, width - 4);
         for (const descLine of wrapDescription(opt.description, descriptionWidth)) {
-          lines.push(chalk.hex(colors.textMuted)(`    ${descLine}`));
+          lines.push(currentTheme.fg('textMuted', `    ${descLine}`));
         }
       }
     }
@@ -174,12 +170,12 @@ export class ChoicePickerComponent extends Container implements Focusable {
     lines.push('');
     if (view.page.pageCount > 1) {
       lines.push(
-        chalk.hex(colors.textMuted)(
+        currentTheme.fg('textMuted',
           ` Page ${String(view.page.page + 1)}/${String(view.page.pageCount)}`,
         ),
       );
     }
-    lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
+    lines.push(currentTheme.fg('primary', '─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width));
   }
 }
@@ -187,10 +183,13 @@ export class ChoicePickerComponent extends Container implements Focusable {
 function optionLabelStyle(
   option: ChoiceOption,
   selected: boolean,
-  colors: ColorPalette,
 ): (text: string) => string {
   if (option.tone === 'danger') {
-    return selected ? chalk.hex(colors.error).bold : chalk.hex(colors.error);
+    return selected
+      ? (text) => currentTheme.boldFg('error', text)
+      : (text) => currentTheme.fg('error', text);
   }
-  return selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
+  return selected
+    ? (text) => currentTheme.boldFg('primary', text)
+    : (text) => currentTheme.fg('text', text);
 }

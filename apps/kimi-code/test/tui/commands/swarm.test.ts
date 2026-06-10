@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { handleSwarmCommand } from '#/tui/commands/index';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
-import { getColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 const ENTER = '\r';
 const ESCAPE = '\u001B';
@@ -36,7 +36,7 @@ function makeHost(
         permissionMode: overrides.permissionMode ?? 'auto',
         swarmMode: overrides.swarmMode ?? false,
       },
-      theme: { colors: getColorPalette('dark') },
+      theme: currentTheme,
       transcriptContainer: { addChild: vi.fn() },
       ui: { requestRender: vi.fn() },
     },

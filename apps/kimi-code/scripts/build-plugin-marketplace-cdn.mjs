@@ -6,6 +6,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import yazl from 'yazl';
 
+import { readPluginManifestVersion } from './plugin-manifest-version.mjs';
+
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(SCRIPT_DIR, '../../..');
 const DEFAULT_PLUGINS_ROOT = resolve(REPO_ROOT, 'plugins');
@@ -46,7 +48,13 @@ export async function buildPluginMarketplaceCdn({ pluginsRoot, outDir }) {
       continue;
     }
     const result = await materializeEntrySource(entry.source, pluginsRoot, outDir);
-    plugins.push({ ...entry, source: result.source });
+    let stamped = { ...entry, source: result.source };
+    if (isLocalRelativeSource(entry.source)) {
+      // Stamp the version from the plugin's real manifest so "latest" stays truthful.
+      const version = await readPluginManifestVersion(resolveInsideRoot(pluginsRoot, entry.source));
+      if (version !== undefined) stamped = { ...stamped, version };
+    }
+    plugins.push(stamped);
     if (result.archive !== undefined) archives.push(result.archive);
   }
 

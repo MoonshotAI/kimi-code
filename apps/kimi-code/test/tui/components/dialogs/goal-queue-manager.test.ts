@@ -6,7 +6,6 @@ import {
   GoalQueueManagerComponent,
   type GoalQueueManagerAction,
 } from '#/tui/components/dialogs/goal-queue-manager';
-import { darkColors } from '#/tui/theme/colors';
 import type { GoalQueueSnapshot, UpcomingGoal } from '#/tui/goal-queue-store';
 
 const ANSI = /\u001B\[[0-9;]*m/g;
@@ -39,7 +38,6 @@ describe('GoalQueueManagerComponent', () => {
   it('renders the upcoming goals and the management hint', () => {
     const manager = new GoalQueueManagerComponent({
       goals: [goal('g1', 'Ship queued goal')],
-      colors: darkColors,
       onAction: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -59,7 +57,6 @@ describe('GoalQueueManagerComponent', () => {
     });
     const manager = new GoalQueueManagerComponent({
       goals: [first, second],
-      colors: darkColors,
       onAction,
       onCancel: vi.fn(),
     });
@@ -85,7 +82,6 @@ describe('GoalQueueManagerComponent', () => {
     });
     const manager = new GoalQueueManagerComponent({
       goals: [first, second],
-      colors: darkColors,
       onAction,
       onCancel: vi.fn(),
     });
@@ -112,7 +108,6 @@ describe('GoalQueueManagerComponent', () => {
     );
     const manager = new GoalQueueManagerComponent({
       goals: [first, second],
-      colors: darkColors,
       onAction,
       onCancel: vi.fn(),
     });
@@ -130,7 +125,6 @@ describe('GoalQueueManagerComponent', () => {
     const onAction = vi.fn();
     const manager = new GoalQueueManagerComponent({
       goals: [goal('g1', 'First queued goal')],
-      colors: darkColors,
       onAction,
       onCancel: vi.fn(),
     });
@@ -144,7 +138,6 @@ describe('GoalQueueManagerComponent', () => {
     const onCancel = vi.fn();
     const manager = new GoalQueueManagerComponent({
       goals: [],
-      colors: darkColors,
       onAction: vi.fn(),
       onCancel,
     });
@@ -157,7 +150,6 @@ describe('GoalQueueManagerComponent', () => {
   it('never renders a line wider than the terminal', () => {
     const manager = new GoalQueueManagerComponent({
       goals: [goal('g1', 'A very long queued goal objective that should be truncated cleanly')],
-      colors: darkColors,
       onAction: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -172,7 +164,6 @@ describe('GoalQueueManagerComponent', () => {
   it('renders multiline objectives as a single selectable row', () => {
     const manager = new GoalQueueManagerComponent({
       goals: [goal('g1', 'First line\nSecond line')],
-      colors: darkColors,
       onAction: vi.fn(),
       onCancel: vi.fn(),
     });
@@ -189,7 +180,6 @@ describe('GoalQueueEditDialogComponent', () => {
     const onDone = vi.fn();
     const dialog = new GoalQueueEditDialogComponent({
       goal: goal('g1', 'Ship queued goal'),
-      colors: darkColors,
       onDone,
     });
 
@@ -207,7 +197,6 @@ describe('GoalQueueEditDialogComponent', () => {
     const onDone = vi.fn();
     const dialog = new GoalQueueEditDialogComponent({
       goal: goal('g1', 'Ship queued goal'),
-      colors: darkColors,
       onDone,
     });
 
@@ -226,7 +215,6 @@ describe('GoalQueueEditDialogComponent', () => {
     const onDone = vi.fn();
     const dialog = new GoalQueueEditDialogComponent({
       goal: goal('g1', 'Ship queued goal'),
-      colors: darkColors,
       onDone,
     });
 
@@ -245,7 +233,6 @@ describe('GoalQueueEditDialogComponent', () => {
   it('renders multiline edits inside the dialog width', () => {
     const dialog = new GoalQueueEditDialogComponent({
       goal: goal('g1', 'First line\nSecond line'),
-      colors: darkColors,
       onDone: vi.fn(),
     });
 
@@ -262,7 +249,6 @@ describe('GoalQueueEditDialogComponent', () => {
     const onDone = vi.fn();
     const dialog = new GoalQueueEditDialogComponent({
       goal: goal('g1', 'Ship queued goal'),
-      colors: darkColors,
       onDone,
     });
 
@@ -276,7 +262,6 @@ describe('GoalQueueEditDialogComponent', () => {
     const onDone = vi.fn();
     const dialog = new GoalQueueEditDialogComponent({
       goal: goal('g1', ''),
-      colors: darkColors,
       onDone,
     });
 

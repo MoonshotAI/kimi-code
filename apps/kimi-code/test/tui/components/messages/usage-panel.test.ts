@@ -1,8 +1,12 @@
 import { visibleWidth } from '@earendil-works/pi-tui';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { buildUsageReportLines, UsagePanelComponent } from '#/tui/components/messages/usage-panel';
-import { darkColors } from '#/tui/theme/colors';
+import { currentTheme, darkColors, lightColors } from '#/tui/theme';
+
+afterEach(() => {
+  currentTheme.setPalette(darkColors);
+});
 
 function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -11,7 +15,6 @@ function strip(text: string): string {
 describe('UsagePanelComponent', () => {
   it('formats session, context, and managed usage sections', () => {
     const lines = buildUsageReportLines({
-      colors: darkColors,
       sessionUsage: {
         byModel: {
           kimi: {
@@ -46,7 +49,7 @@ describe('UsagePanelComponent', () => {
   });
 
   it('wraps preformatted usage lines in a bordered panel', () => {
-    const component = new UsagePanelComponent(['Session usage'], darkColors.primary);
+    const component = new UsagePanelComponent(() => ['Session usage'], 'primary');
     const output = component.render(80).map(strip);
 
     expect(output[0]).toContain(' Usage ');
@@ -55,7 +58,7 @@ describe('UsagePanelComponent', () => {
 
   it('truncates lines wider than the terminal so the panel never overflows', () => {
     const longLine = 'error: ' + 'x'.repeat(200);
-    const component = new UsagePanelComponent([longLine], darkColors.primary);
+    const component = new UsagePanelComponent(() => [longLine], 'primary');
     const width = 60;
 
     const output = component.render(width);
@@ -63,5 +66,21 @@ describe('UsagePanelComponent', () => {
     for (const line of output) {
       expect(visibleWidth(line)).toBeLessThanOrEqual(width);
     }
+  });
+
+  it('rebuilds its body from the active palette on invalidate', () => {
+    // Emit the resolved palette value as visible text so the assertion holds
+    // regardless of chalk's colour level in the test environment.
+    const component = new UsagePanelComponent(() => [`text=${currentTheme.color('text')}`], 'primary');
+    const bodyOf = (): string => {
+      const line = component.render(80).map(strip).find((l) => l.includes('text='));
+      if (line === undefined) throw new Error('body line not found');
+      return line;
+    };
+
+    expect(bodyOf()).toContain(darkColors.text);
+    currentTheme.setPalette(lightColors);
+    component.invalidate();
+    expect(bodyOf()).toContain(lightColors.text);
   });
 });

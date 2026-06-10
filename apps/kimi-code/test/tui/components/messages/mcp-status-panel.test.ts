@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildMcpStatusReportLines } from '#/tui/components/messages/mcp-status-panel';
-import { darkColors } from '#/tui/theme/colors';
 
 function strip(text: string): string {
   return text.replaceAll(/\[[0-9;]*m/g, '');
@@ -10,7 +9,6 @@ function strip(text: string): string {
 describe('buildMcpStatusReportLines', () => {
   it('folds a multi-line server error onto one row so the panel box stays intact', () => {
     const lines = buildMcpStatusReportLines({
-      colors: darkColors,
       servers: [
         {
           name: 'ghidra',
@@ -37,7 +35,6 @@ describe('buildMcpStatusReportLines', () => {
 
   it('trims and keeps a single-line error intact', () => {
     const lines = buildMcpStatusReportLines({
-      colors: darkColors,
       servers: [
         {
           name: 'ida',

@@ -523,7 +523,6 @@ export class SubAgentEventHandler {
 
     const progress = new AgentSwarmProgressComponent({
       description: agentSwarmDescriptionFromArgs(args),
-      colors: this.host.state.theme.colors,
       availableGridHeight: () => this.agentSwarmGridHeight(),
       requestRender: () => {
         this.requestRender();

@@ -54,7 +54,6 @@ function makeStartupInput(): KimiTUIStartupInput {
     },
     version: '0.0.0-test',
     workDir: '/tmp/proj-a',
-    resolvedTheme: 'dark',
   };
 }
 
@@ -574,6 +573,10 @@ describe('KimiTUI resume message replay', () => {
 
     expect(group).toBeInstanceOf(AgentGroupComponent);
     expect((group as AgentGroupComponent).size()).toBe(2);
+    const output = stripAnsi((group as AgentGroupComponent).render(120).join('\n'));
+    expect(output).toContain('2 agents finished');
+    expect(output).not.toContain('Still working…');
+    expect(output).not.toContain('Waiting to start…');
     expect(driver.streamingUI.hasPendingAgentGroup()).toBe(false);
     expect(driver.streamingUI.getToolComponent('call_agent_1')).toBeUndefined();
     expect(driver.streamingUI.getToolComponent('call_agent_2')).toBeUndefined();

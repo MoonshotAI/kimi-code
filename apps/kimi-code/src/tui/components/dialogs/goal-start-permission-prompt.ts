@@ -1,5 +1,3 @@
-import type { ColorPalette } from '#/tui/theme/colors';
-
 import {
   StartPermissionPromptComponent,
   type StartPermissionOption,
@@ -8,7 +6,6 @@ import {
 export type GoalStartPermissionChoice = 'auto' | 'yolo' | 'manual' | 'cancel';
 
 export interface GoalStartPermissionPromptOptions {
-  readonly colors: ColorPalette;
   readonly mode: 'manual' | 'yolo';
   readonly onSelect: (choice: GoalStartPermissionChoice) => void;
   readonly onCancel: () => void;
@@ -75,7 +72,6 @@ const YOLO_NOTICE_LINES = [
 export class GoalStartPermissionPromptComponent extends StartPermissionPromptComponent {
   constructor(opts: GoalStartPermissionPromptOptions) {
     super({
-      colors: opts.colors,
       title:
         opts.mode === 'yolo'
           ? 'Start a goal in YOLO mode?'

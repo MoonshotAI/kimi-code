@@ -4,7 +4,6 @@ import {
   ShellExecutionComponent,
   shellExecutionResultRenderer,
 } from '#/tui/components/messages/shell-execution';
-import { darkColors } from '#/tui/theme/colors';
 
 function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -14,7 +13,6 @@ describe('ShellExecutionComponent', () => {
   it('renders shell command previews with prompt indentation', () => {
     const component = new ShellExecutionComponent({
       command: 'printf hello\nprintf world',
-      colors: darkColors,
       showCommand: true,
     });
 
@@ -31,7 +29,6 @@ describe('ShellExecutionComponent', () => {
         output: ['line1', 'line2', 'line3', 'line4', 'line5'].join('\n'),
         is_error: false,
       },
-      colors: darkColors,
     });
 
     const collapsedOutput = collapsed.render(100).map(strip).join('\n');
@@ -46,7 +43,6 @@ describe('ShellExecutionComponent', () => {
         output: ['line1', 'line2', 'line3', 'line4', 'line5'].join('\n'),
         is_error: false,
       },
-      colors: darkColors,
       expanded: true,
     });
 
@@ -60,7 +56,6 @@ describe('ShellExecutionComponent', () => {
     const cmd = Array.from({ length: 20 }, (_, i) => `step${String(i + 1)}`).join('\n');
     const component = new ShellExecutionComponent({
       command: cmd,
-      colors: darkColors,
       showCommand: true,
       commandPreviewLines: undefined,
     });
@@ -77,7 +72,6 @@ describe('ShellExecutionComponent', () => {
         output: 'hello\n\n\n', // 1 content line + 2 trailing empty lines
         is_error: false,
       },
-      colors: darkColors,
     });
 
     const output = component.render(100).map(strip).join('\n');
@@ -92,7 +86,6 @@ describe('ShellExecutionComponent', () => {
         output: 'a\n\nb\n\n\n', // 1 internal empty line + 2 trailing empty lines
         is_error: false,
       },
-      colors: darkColors,
     });
 
     const output = component.render(100).map(strip).join('\n');
@@ -108,7 +101,6 @@ describe('ShellExecutionComponent', () => {
         output: 'x'.repeat(500),
         is_error: false,
       },
-      colors: darkColors,
     });
 
     const out = strip(component.render(20).join('\n'));
@@ -132,7 +124,7 @@ describe('ShellExecutionComponent', () => {
           output: 'ok',
           is_error: false,
         },
-        { expanded: false, colors: darkColors },
+        { expanded: false },
       );
 
       const rendered = components
@@ -155,7 +147,7 @@ describe('ShellExecutionComponent', () => {
           output: 'ok',
           is_error: false,
         },
-        { expanded: true, colors: darkColors },
+        { expanded: true },
       );
 
       const rendered = components

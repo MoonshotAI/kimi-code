@@ -1,5 +1,11 @@
 # @moonshot-ai/agent-core
 
+## 0.12.0
+
+### Minor Changes
+
+- [#582](https://github.com/MoonshotAI/kimi-code/pull/582) [`d85dc0b`](https://github.com/MoonshotAI/kimi-code/commit/d85dc0b96a3c98c6951b8f6e6fa8b663d4c95360) - Add `/import-from-cc-codex` to import selected Claude Code and Codex instructions, Skills, and MCP settings.
+
 ## 0.11.1
 
 ### Patch Changes

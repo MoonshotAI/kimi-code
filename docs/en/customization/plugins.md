@@ -15,6 +15,8 @@ Run `/plugins` in the TUI to open the plugin manager, where you can perform all 
 | `M` | Manage MCP servers for the selected plugin |
 | `←` or `Esc` | Go back to the previous level |
 
+In the marketplace list, an installed plugin with a newer version available shows `update <local> → <latest>`, an up-to-date one shows `installed · v<version>`, and an uninstalled one shows `install v<version>`. Select an updatable entry and press `Enter` to update.
+
 You can also use slash commands directly:
 
 | Command | Description |

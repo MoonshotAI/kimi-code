@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
-import { darkColors } from '#/tui/theme/colors';
 import type { GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
 import type { AppState } from '#/tui/types';
 
@@ -57,12 +56,12 @@ describe('FooterComponent — goal badge', () => {
   });
 
   it('omits the badge when there is no goal', () => {
-    const footer = new FooterComponent(baseState({ goal: null }), darkColors);
+    const footer = new FooterComponent(baseState({ goal: null }));
     expect(strip(footer.render(160)[0]!)).not.toMatch(/goal/);
   });
 
   it('shows status, elapsed, and a raw turn count for an unbounded active goal', () => {
-    const footer = new FooterComponent(baseState({ goal: goal() }), darkColors);
+    const footer = new FooterComponent(baseState({ goal: goal() }));
     const out = strip(footer.render(160)[0]!);
     expect(out).toContain('[goal');
     expect(out).toContain('active');
@@ -78,7 +77,6 @@ describe('FooterComponent — goal badge', () => {
 
     const footer = new FooterComponent(
       baseState({ goal: goal({ wallClockMs: 0, turnsUsed: 0 }) }),
-      darkColors,
     );
 
     expect(strip(footer.render(160)[0]!)).toContain('0s');
@@ -90,7 +88,7 @@ describe('FooterComponent — goal badge', () => {
     vi.useFakeTimers();
     const onRefresh = vi.fn();
 
-    new FooterComponent(baseState({ goal: goal({ wallClockMs: 0 }) }), darkColors, onRefresh);
+    new FooterComponent(baseState({ goal: goal({ wallClockMs: 0 }) }), onRefresh);
 
     vi.advanceTimersByTime(1_000);
     expect(onRefresh).toHaveBeenCalledTimes(1);
@@ -99,30 +97,29 @@ describe('FooterComponent — goal badge', () => {
   it('shows used/limit turns only when a turn budget is set', () => {
     const footer = new FooterComponent(
       baseState({ goal: goal({ budget: { turnBudget: 20, tokenBudget: null, wallClockBudgetMs: null } } as Partial<GoalSnapshot>) }),
-      darkColors,
     );
     expect(strip(footer.render(160)[0]!)).toContain('7/20 turns');
   });
 
   it('shows a paused badge', () => {
-    const footer = new FooterComponent(baseState({ goal: goal({ status: 'paused' }) }), darkColors);
+    const footer = new FooterComponent(baseState({ goal: goal({ status: 'paused' }) }));
     expect(strip(footer.render(160)[0]!)).toContain('paused');
   });
 
   it('shows a blocked badge (resumable, still present)', () => {
-    const footer = new FooterComponent(baseState({ goal: goal({ status: 'blocked' }) }), darkColors);
+    const footer = new FooterComponent(baseState({ goal: goal({ status: 'blocked' }) }));
     const out = strip(footer.render(160)[0]!);
     expect(out).toContain('[goal');
     expect(out).toContain('blocked');
   });
 
   it('hides the badge for a completed goal', () => {
-    const footer = new FooterComponent(baseState({ goal: goal({ status: 'complete' }) }), darkColors);
+    const footer = new FooterComponent(baseState({ goal: goal({ status: 'complete' }) }));
     expect(strip(footer.render(160)[0]!)).not.toMatch(/goal/);
   });
 
   it('singularizes a single turn', () => {
-    const footer = new FooterComponent(baseState({ goal: goal({ turnsUsed: 1 }) }), darkColors);
+    const footer = new FooterComponent(baseState({ goal: goal({ turnsUsed: 1 }) }));
     const out = strip(footer.render(160)[0]!);
     expect(out).toContain('1 turn');
     expect(out).not.toContain('1 turns');

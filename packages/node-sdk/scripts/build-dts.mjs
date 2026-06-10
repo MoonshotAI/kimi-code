@@ -1,12 +1,16 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
+const require = createRequire(import.meta.url);
 const packageRoot = path.resolve(import.meta.dirname, '..');
 const tempDir = path.join(packageRoot, '.tmp-api-extractor');
 const dtsRoot = path.join(tempDir, 'dts');
 const providerClientShimPath = path.join(dtsRoot, 'provider-clients.d.ts');
+const tscBinPath = packageBinPath('typescript', 'bin/tsc');
+const apiExtractorBinPath = packageBinPath('@microsoft/api-extractor', 'bin/api-extractor');
 
 const packageDirs = new Set(['agent-core', 'kaos', 'kosong', 'node-sdk', 'oauth']);
 const workspacePackages = new Map([
@@ -18,19 +22,21 @@ const workspacePackages = new Map([
 
 try {
   await rm(tempDir, { recursive: true, force: true });
-  await run('tsc', ['-p', 'tsconfig.dts.json']);
+  await run('tsc', tscBinPath, ['-p', 'tsconfig.dts.json']);
   await writeProviderClientShim();
   await rewriteWorkspaceSpecifiers();
-  await run('api-extractor', ['run', '--local']);
+  await run('api-extractor', apiExtractorBinPath, ['run', '--local']);
 } finally {
   await rm(tempDir, { recursive: true, force: true });
 }
 
-function run(command, args) {
-  const executable = process.platform === 'win32' ? `${command}.cmd` : command;
+function packageBinPath(packageName, binPath) {
+  return path.join(path.dirname(require.resolve(`${packageName}/package.json`)), binPath);
+}
 
+function run(command, binPath, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, args, {
+    const child = spawn(process.execPath, [binPath, ...args], {
       cwd: packageRoot,
       stdio: 'inherit',
     });

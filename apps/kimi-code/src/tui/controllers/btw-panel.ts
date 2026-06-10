@@ -10,6 +10,7 @@ import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { BtwPanelComponent } from '../components/panes/btw-panel';
 import { formatErrorMessage } from '../utils/event-payload';
 import { formatHookResultPlain } from '../utils/hook-result-format';
+import { createMarkdownTheme } from '../theme/pi-tui-theme';
 import type { TUIState } from '../tui-state';
 
 const BTW_BUSY_NOTICE = 'Wait for /btw to finish before sending another question.';
@@ -36,8 +37,7 @@ export class BtwPanelController {
   open(agentId: string, initialPrompt: string): void {
     let panel: BtwPanelComponent;
     panel = new BtwPanelComponent({
-      colors: this.host.state.theme.colors,
-      markdownTheme: this.host.state.theme.markdownTheme,
+      markdownTheme: createMarkdownTheme(),
       canUseScrollKeys: () => this.host.state.editor.getText().length === 0,
       terminalRows: () => this.host.state.terminal.rows,
       onPrompt: (prompt) => {

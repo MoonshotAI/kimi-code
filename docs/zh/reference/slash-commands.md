@@ -109,6 +109,20 @@ Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `
 | --- | --- | --- | --- |
 | `/exit` | `/quit`、`/q` | 退出 Kimi Code CLI | 否 |
 
+## 内置 Skill 命令
+
+Kimi Code CLI 随包内置了一组 Skill，直接以 `/<name>` 形式出现在斜杠命令面板中。与外部 Skill 不同，它们不需要 `skill:` 前缀，开箱即用。
+
+| 命令 | 说明 |
+| --- | --- |
+| `/mcp-config` | 配置 MCP server 并处理 MCP OAuth 登录。详见 [MCP](../customization/mcp.md) |
+| `/custom-theme [<text>]` | 创建或编辑自定义 TUI 配色主题。详见 [主题](../customization/themes.md) |
+| `/update-config` | 查看或编辑 `config.toml`（模型、供应商、权限、hooks）和 `tui.toml`（主题、编辑器、通知、自动更新） |
+| `/import-from-cc-codex` | 从 Claude Code 和 Codex 导入 instructions、skills 和 MCP 设置 |
+| `/sub-skill` | 发现并将本地 skill 库存重组为分层子 skill 包。包含 `/sub-skill.review`（只读提案）和 `/sub-skill.consolidate`（执行重组） |
+
+所有内置 Skill 命令仅在空闲状态下可用。
+
 ## Skill 动态命令
 
 已激活的外部 Skill 会自动注册为斜杠命令，并以 `skill:` 作为命名空间前缀：
@@ -121,7 +135,7 @@ Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `
 
 为方便输入，外部 Skill 命令同时支持省略 `skill:` 前缀的简写形式 `/<name>`，前提是该名称未被系统斜杠命令占用——即 `/code-style` 会回退匹配到 `/skill:code-style`。
 
-Kimi Code CLI 随包内置的 Skill（例如 `mcp-config`）会直接以 `/<name>` 形式出现在斜杠命令面板中，用于配置 MCP server 和处理 MCP OAuth 登录等场景。
+Kimi Code CLI 随包内置的 Skill 会直接以 `/<name>` 形式出现在斜杠命令面板中。例如，`/mcp-config` 用于配置 MCP server 和处理 MCP OAuth 登录，`/custom-theme [附加文本]` 用于进入自定义主题流程，创建或编辑 TUI 主题。
 
 ::: info 说明
 所有 Skill 命令仅在空闲状态下可用。`flow` 类型的 Skill 同样通过 `/skill:<name>` 暴露，没有独立的 `/flow:` 命名空间。
