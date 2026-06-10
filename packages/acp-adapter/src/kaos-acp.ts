@@ -122,11 +122,12 @@ export class AcpKaos implements Kaos {
     path: string,
     _options?: { encoding?: BufferEncoding; errors?: 'strict' | 'replace' | 'ignore' },
   ): Promise<string> {
+    const rpcPath = this.toClientPath(path);
     try {
-      const resp = await this.conn.readTextFile({ sessionId: this.sessionId, path });
+      const resp = await this.conn.readTextFile({ sessionId: this.sessionId, path: rpcPath });
       return resp.content;
     } catch (err) {
-      throw wrapKaosError(`acp: readTextFile failed for ${path}`, err);
+      throw wrapKaosError(`acp: readTextFile failed for ${rpcPath}`, err);
     }
   }
 
@@ -221,11 +222,17 @@ export class AcpKaos implements Kaos {
   }
 
   private async acpWrite(path: string, content: string): Promise<void> {
+    const rpcPath = this.toClientPath(path);
     try {
-      await this.conn.writeTextFile({ sessionId: this.sessionId, path, content });
+      await this.conn.writeTextFile({ sessionId: this.sessionId, path: rpcPath, content });
     } catch (err) {
-      throw wrapKaosError(`acp: writeTextFile failed for ${path}`, err);
+      throw wrapKaosError(`acp: writeTextFile failed for ${rpcPath}`, err);
     }
+  }
+
+  private toClientPath(path: string): string {
+    if (this.inner.pathClass() !== 'win32') return path;
+    return path.replaceAll('/', '\\');
   }
 
   // ── process execution: delegate to inner ───────────────────────────

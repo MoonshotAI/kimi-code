@@ -9,6 +9,7 @@ export const HOOK_EVENT_TYPES = [
   'UserPromptSubmit',
   'Stop',
   'StopFailure',
+  'Interrupt',
   'SessionStart',
   'SessionEnd',
   'SubagentStart',

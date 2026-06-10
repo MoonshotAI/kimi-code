@@ -126,6 +126,29 @@ function processThatNeverExits(): KaosProcess {
   };
 }
 
+function processWithOpenStreamsThatExitOnKill(): KaosProcess {
+  let currentExitCode: number | null = null;
+  let resolveWait: (code: number) => void = () => {};
+  const waitPromise = new Promise<number>((resolve) => {
+    resolveWait = resolve;
+  });
+
+  return {
+    stdin: { end: vi.fn(), write: vi.fn() } as unknown as Writable,
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    pid: 127,
+    get exitCode(): number | null {
+      return currentExitCode;
+    },
+    wait: vi.fn(async () => waitPromise),
+    kill: vi.fn(async () => {
+      currentExitCode = 143;
+      resolveWait(143);
+    }),
+  };
+}
+
 function context(args: BashInput, signal = new AbortController().signal) {
   return { turnId: '0', toolCallId: 'call_bash', args, signal };
 }
@@ -755,6 +778,31 @@ describe('BashTool', () => {
         brief: 'Killed by timeout (1s)',
       });
       expect(result.output).toContain('Command killed by timeout (1s)');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports timeout instead of premature close when cleanup destroys open output streams', async () => {
+    vi.useFakeTimers();
+    try {
+      const proc = processWithOpenStreamsThatExitOnKill();
+      const tool = new BashTool(
+        createFakeKaos({ execWithEnv: vi.fn().mockResolvedValue(proc), osEnv: posixEnv }),
+        '/workspace',
+      );
+
+      const running = executeTool(tool, context({ command: 'sleep 2', timeout: 1 }));
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await running;
+
+      expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(result).toMatchObject({
+        isError: true,
+        brief: 'Killed by timeout (1s)',
+      });
+      expect(result.output).toContain('Command killed by timeout (1s)');
+      expect(result.output).not.toContain('Premature close');
     } finally {
       vi.useRealTimers();
     }
