@@ -57,7 +57,7 @@ export function makeErrorPayload(
  *
  * Recognized errors:
  * - `KimiError`: passthrough.
- * - `APIStatusError`: 429 -> rate_limit, 401 -> auth_error, otherwise -> api_error.
+ * - `APIStatusError`: 429 -> rate_limit, 401/403 -> auth_error, otherwise -> api_error.
  * - `APIConnectionError` / `APITimeoutError`: connection_error.
  * - `ChatProviderError`: api_error.
  *
@@ -79,7 +79,7 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
     const code: KimiErrorCode =
       error.statusCode === 429
         ? ErrorCodes.PROVIDER_RATE_LIMIT
-        : error.statusCode === 401
+        : error.statusCode === 401 || error.statusCode === 403
           ? ErrorCodes.PROVIDER_AUTH_ERROR
           : ErrorCodes.PROVIDER_API_ERROR;
     return {
