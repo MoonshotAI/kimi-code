@@ -404,20 +404,16 @@ describe('Permission auto mode', () => {
     },
   );
 
-  it.each(
-    (['manual', 'yolo'] as const).flatMap((mode) =>
-      [
-        [mode, 'Write', { path: '/tmp/notes.md', content: 'x' }, 'write', 'write file'],
-        [mode, 'Edit', { path: '/tmp/notes.md', old_string: 'a', new_string: 'b' }, 'edit', 'edit file'],
-      ] as const,
-    ),
-  )(
-    'requests approval in %s mode for %s outside the cwd',
-    async (mode, toolName, args, operation, action) => {
-      const { manager, requestApproval } = makePermissionManager(async () => ({
+  it.each([
+    ['Write', { path: '/tmp/notes.md', content: 'x' }, 'write', 'write file'],
+    ['Edit', { path: '/tmp/notes.md', old_string: 'a', new_string: 'b' }, 'edit', 'edit file'],
+  ] as const)(
+    'requests approval in manual mode for %s outside the cwd',
+    async (toolName, args, operation, action) => {
+      const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
         decision: 'approved',
       }));
-      manager.setMode(mode);
+      manager.setMode('manual');
 
       await expect(
         manager.beforeToolCall(hookContext({ id: `call_${toolName}`, toolName, args })),
@@ -435,8 +431,42 @@ describe('Permission auto mode', () => {
         }),
         expect.any(Object),
       );
+      expect(telemetryTrack).toHaveBeenCalledWith(
+        'permission_policy_decision',
+        expect.objectContaining({
+          policy_name: 'fallback-ask',
+          tool_name: toolName,
+          permission_mode: 'manual',
+          decision: 'ask',
+        }),
+      );
     },
   );
+
+  it.each([
+    ['Write', { path: '/tmp/notes.md', content: 'x' }],
+    ['Edit', { path: '/tmp/notes.md', old_string: 'a', new_string: 'b' }],
+  ] as const)('approves %s outside the cwd in yolo mode', async (toolName, args) => {
+    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
+      decision: 'approved',
+    }));
+    manager.setMode('yolo');
+
+    await expect(
+      manager.beforeToolCall(hookContext({ id: `call_${toolName}_yolo_outside`, toolName, args })),
+    ).resolves.toBeUndefined();
+
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'permission_policy_decision',
+      expect.objectContaining({
+        policy_name: 'yolo-mode-approve',
+        tool_name: toolName,
+        permission_mode: 'yolo',
+        decision: 'approve',
+      }),
+    );
+  });
 
   it.each(
     (['manual', 'yolo'] as const).flatMap((mode) =>
@@ -638,7 +668,7 @@ describe('Permission auto mode', () => {
     );
   });
 
-  it('reuses approve-for-session for repeated outside-workspace writes in yolo mode', async () => {
+  it('approves repeated outside-workspace writes in yolo mode without session approval', async () => {
     const { manager, requestApproval } = makePermissionManager(async () => ({
       decision: 'approved',
       scope: 'session',
@@ -657,8 +687,8 @@ describe('Permission auto mode', () => {
     await expect(call()).resolves.toBeUndefined();
     await expect(call()).resolves.toBeUndefined();
 
-    expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(manager.sessionApprovalRulePatterns).toEqual(['Write(/tmp/notes.md)']);
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(manager.sessionApprovalRulePatterns).toEqual([]);
     expect(manager.data().rules).toEqual([]);
   });
 });
@@ -678,7 +708,6 @@ describe('Permission policy chain', () => {
       'plan-mode-tool-approve',
       'sensitive-file-access-ask',
       'git-control-path-access-ask',
-      'cwd-outside-file-write-ask',
       'yolo-mode-approve',
       'swarm-mode-agent-swarm-approve',
       'default-tool-approve',
@@ -3301,7 +3330,7 @@ describe('Default git CWD Write/Edit permission', () => {
     expect(requestApproval).toHaveBeenCalledTimes(1);
     expect(telemetryTrack).toHaveBeenCalledWith(
       'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'cwd-outside-file-write-ask' }),
+      expect.objectContaining({ policy_name: 'fallback-ask' }),
     );
     expect(telemetryTrack).not.toHaveBeenCalledWith(
       'permission_policy_decision',
@@ -3354,146 +3383,6 @@ describe('Default git CWD Write/Edit permission', () => {
     expect(requestApproval).not.toHaveBeenCalled();
     const markerCalls = stat.mock.calls.filter(([path]) => path === '/workspace/.git');
     expect(markerCalls).toHaveLength(4);
-  });
-});
-
-describe('CWD outside file write permission policy', () => {
-  it('falls through when cwd is empty', async () => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(
-      async () => ({ decision: 'approved' }),
-      { cwd: '' },
-    );
-
-    await expect(
-      manager.beforeToolCall(
-        hookContext({
-          id: 'call_empty_cwd_write',
-          toolName: 'Write',
-          args: { path: '/tmp/outside.ts', content: 'x' },
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'fallback-ask' }),
-    );
-  });
-
-  it('falls through when there are no file write accesses', async () => {
-    const args = { path: '/tmp/outside.ts', content: 'x' };
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
-      decision: 'approved',
-    }));
-
-    await expect(
-      manager.beforeToolCall(
-        hookContext({
-          id: 'call_no_write_accesses',
-          toolName: 'Write',
-          args,
-          execution: {
-            ...testExecution('Write', args),
-            accesses: ToolAccesses.none(),
-          },
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'fallback-ask' }),
-    );
-  });
-
-  it('asks when any write access is outside the cwd', async () => {
-    const args = { path: '/workspace/src/a.ts', content: 'x' };
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
-      decision: 'approved',
-    }));
-
-    await expect(
-      manager.beforeToolCall(
-        hookContext({
-          id: 'call_mixed_write_accesses',
-          toolName: 'Write',
-          args,
-          execution: {
-            ...testExecution('Write', args),
-            accesses: [
-              { kind: 'file', operation: 'write', path: '/workspace/src/a.ts' },
-              { kind: 'file', operation: 'readwrite', path: '/tmp/outside.ts' },
-            ],
-          },
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(requestApproval).toHaveBeenCalledTimes(1);
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({
-        policy_name: 'cwd-outside-file-write-ask',
-        decision: 'ask',
-        cwd_outside: true,
-        file_access_operation: 'readwrite',
-      }),
-    );
-  });
-
-  it.each([
-    ['Read', { path: '/tmp/outside.ts' }],
-    ['Grep', { pattern: 'TODO', path: '/tmp' }],
-  ] as const)('does not ask for %s access outside cwd', async (toolName, args) => {
-    const { manager, requestApproval, telemetryTrack } = makePermissionManager(async () => ({
-      decision: 'approved',
-    }));
-
-    await expect(
-      manager.beforeToolCall(
-        hookContext({
-          id: `call_${toolName}_outside_cwd`,
-          toolName,
-          args,
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(requestApproval).not.toHaveBeenCalled();
-    expect(telemetryTrack).toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'default-tool-approve' }),
-    );
-  });
-
-  it('uses Win32 path semantics for cwd containment', async () => {
-    const kaos = createFakeKaos({ pathClass: () => 'win32' });
-    const args = { path: 'c:\\repo\\src\\a.ts', content: 'x' };
-    const { manager, telemetryTrack } = makePermissionManager(
-      async () => ({ decision: 'approved' }),
-      { cwd: 'C:\\Repo', kaos },
-    );
-
-    await expect(
-      manager.beforeToolCall(
-        hookContext({
-          id: 'call_win_inside_cwd',
-          toolName: 'Write',
-          args,
-          execution: {
-            ...testExecution('Write', args),
-            accesses: ToolAccesses.writeFile('c:\\repo\\src\\a.ts'),
-          },
-        }),
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(telemetryTrack).not.toHaveBeenCalledWith(
-      'permission_policy_decision',
-      expect.objectContaining({ policy_name: 'cwd-outside-file-write-ask' }),
-    );
   });
 });
 

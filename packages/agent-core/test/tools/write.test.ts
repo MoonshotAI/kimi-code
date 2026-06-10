@@ -18,9 +18,11 @@ describe('WriteTool', () => {
     const tool = new WriteTool(createFakeKaos(), PERMISSIVE_WORKSPACE);
 
     expect(tool.name).toBe('Write');
-    expect(tool.description).toContain('exactly as provided');
-    expect(tool.description).toContain('append adds content to the end without adding a newline');
-    expect(tool.description).toContain('does not preserve or infer the previous line-ending style');
+    expect(tool.description).toContain('append adds content at EOF without adding a newline');
+    expect(tool.description).toContain('\\n stays LF, \\r\\n stays CRLF');
+    // The prompt steers the agent toward Edit for partial changes to an
+    // existing file. Pin the prohibition so accidental weakening is caught.
+    expect(tool.description).toContain('Write is NOT ALLOWED for incremental changes');
     expect(tool.parameters).toMatchObject({
       type: 'object',
       properties: {
@@ -93,11 +95,11 @@ describe('WriteTool', () => {
   it('guides batching large content across multiple write calls', () => {
     const tool = new WriteTool(createFakeKaos(), PERMISSIVE_WORKSPACE);
 
-    // The guidance must mention splitting large content across multiple calls,
-    // and spell out the first-overwrite-then-append ordering.
+    // The guidance must mention that a file too large for one call should be
+    // chunked, and spell out the first-overwrite-then-append ordering.
     expect(tool.description).toMatch(/large/i);
-    expect(tool.description).toMatch(/split[^.]*multiple calls/i);
-    expect(tool.description).toMatch(/first[^.]*overwrite[^.]*then[^.]*append/i);
+    expect(tool.description).toContain('content too large for one call');
+    expect(tool.description).toMatch(/overwrite[^.]*first chunk[^.]*then[^.]*append/i);
   });
 
   it('writes content through kaos and reports bytes written', async () => {

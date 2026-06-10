@@ -6,7 +6,6 @@ import { DefaultToolApprovePermissionPolicy } from './default-tool-approve';
 import { ExitPlanModeReviewAskPermissionPolicy } from './exit-plan-mode-review-ask';
 import { FallbackAskPermissionPolicy } from './fallback-ask';
 import {
-  CwdOutsideFileWriteAskPermissionPolicy,
   GitControlPathAccessAskPermissionPolicy,
   SensitiveFileAccessAskPermissionPolicy,
 } from './file-access-ask';
@@ -50,8 +49,6 @@ export function createPermissionDecisionPolicies(agent: Agent): PermissionPolicy
     new SensitiveFileAccessAskPermissionPolicy(agent),
     // Access touches .git or a git control-dir path → ask.
     new GitControlPathAccessAskPermissionPolicy(agent),
-    // Write target is outside cwd → ask. Reads and searches outside cwd are allowed without prompting.
-    new CwdOutsideFileWriteAskPermissionPolicy(agent),
     // yolo mode → approve.
     new YoloModeApprovePermissionPolicy(agent),
     // Swarm mode keeps AgentSwarm available without making it a globally default-approved tool.
