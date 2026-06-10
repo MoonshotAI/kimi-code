@@ -66,13 +66,14 @@ describe('catalogModelToAlias', () => {
     });
   });
 
-  it('materializes always_thinking instead of thinking for always-reasoning models', () => {
+  it('materializes always_thinking alongside thinking for always-reasoning models', () => {
     const alwaysThinking: CatalogModel = {
       ...model,
       capability: { ...model.capability, always_thinking: true },
     };
     expect(catalogModelToAlias('kimi', alwaysThinking).capabilities).toEqual([
       'image_in',
+      'thinking',
       'always_thinking',
       'tool_use',
     ]);

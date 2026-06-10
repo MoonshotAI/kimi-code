@@ -16,6 +16,7 @@ import {
   loadRuntimeConfig,
   mergeConfigPatch,
   readConfigFile,
+  stripDetectedModelCapabilities,
   resolveConfigPath,
   resolveKimiHome,
   writeConfigFile,
@@ -445,7 +446,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   async setKimiConfig(input: SetKimiConfigPayload): Promise<KimiConfig> {
-    const config = mergeConfigPatch(readConfigFile(this.configPath), input);
+    const onDisk = readConfigFile(this.configPath);
+    // Callers often write back models obtained from getConfig(), whose
+    // capabilities were enriched at load time — strip those so runtime
+    // detection never becomes a persisted declaration.
+    const config = mergeConfigPatch(onDisk, stripDetectedModelCapabilities(input, onDisk));
     await writeConfigFile(this.configPath, config);
     return this.setRuntimeConfig(loadRuntimeConfig(this.configPath));
   }

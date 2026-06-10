@@ -1,3 +1,4 @@
+export * from './detected-capabilities';
 export * from './merge';
 export * from './path';
 export * from './resolve';

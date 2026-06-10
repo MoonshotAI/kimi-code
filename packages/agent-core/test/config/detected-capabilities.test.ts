@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { join } from 'pathe';
 
-import { applyDetectedModelCapabilities } from '../../src/config/detected-capabilities';
+import {
+  applyDetectedModelCapabilities,
+  stripDetectedModelCapabilities,
+} from '../../src/config/detected-capabilities';
 import { getDefaultConfig, loadRuntimeConfig } from '../../src/config';
 import type { KimiConfig, ModelAlias } from '../../src/config';
 
@@ -20,20 +23,24 @@ function configWith(model: Partial<ModelAlias> & { model: string }): KimiConfig 
 }
 
 describe('applyDetectedModelCapabilities', () => {
-  it('injects always_thinking for models kosong knows cannot turn thinking off', () => {
+  it('injects thinking + always_thinking for models kosong knows cannot turn thinking off', () => {
     const result = applyDetectedModelCapabilities(configWith({ model: 'claude-fable-5' }));
-    expect(result.models?.['main']?.capabilities).toEqual(['always_thinking']);
+    expect(result.models?.['main']?.capabilities).toEqual(['thinking', 'always_thinking']);
   });
 
-  it('appends to declared capabilities without duplicating', () => {
+  it('appends only the missing capabilities without duplicating', () => {
     const appended = applyDetectedModelCapabilities(
-      configWith({ model: 'claude-fable-5', capabilities: ['image_in'] }),
+      configWith({ model: 'claude-fable-5', capabilities: ['image_in', 'thinking'] }),
     );
-    expect(appended.models?.['main']?.capabilities).toEqual(['image_in', 'always_thinking']);
+    expect(appended.models?.['main']?.capabilities).toEqual([
+      'image_in',
+      'thinking',
+      'always_thinking',
+    ]);
 
     const declared = configWith({
       model: 'claude-fable-5',
-      capabilities: ['always_thinking'],
+      capabilities: ['thinking', 'always_thinking'],
     });
     expect(applyDetectedModelCapabilities(declared)).toBe(declared);
   });
@@ -51,8 +58,80 @@ describe('applyDetectedModelCapabilities', () => {
   });
 });
 
+describe('stripDetectedModelCapabilities', () => {
+  it('strips detected capabilities written back from an enriched getConfig snapshot', () => {
+    const disk = configWith({ model: 'claude-fable-5' });
+    const runtime = applyDetectedModelCapabilities(disk);
+
+    const stripped = stripDetectedModelCapabilities({ models: runtime.models }, disk);
+    // The whole capabilities array came from detection — it must not persist.
+    expect(stripped.models?.['main']?.capabilities).toBeUndefined();
+  });
+
+  it('preserves capabilities the user declared on disk, even detected ones', () => {
+    const disk = configWith({
+      model: 'claude-fable-5',
+      capabilities: ['thinking', 'always_thinking'],
+    });
+    const patch = { models: applyDetectedModelCapabilities(disk).models };
+    expect(stripDetectedModelCapabilities(patch, disk)).toBe(patch);
+  });
+
+  it('preserves declarations detection cannot reproduce (catalog-declared kimi models)', () => {
+    const disk: KimiConfig = {
+      ...getDefaultConfig(),
+      providers: { kimi: { type: 'kimi', apiKey: 'sk-test' } },
+      models: {},
+    };
+    // A catalog-added always-reasoning kimi model lands as a brand-new alias
+    // in the patch; kosong has no built-in knowledge for kimi models, so the
+    // declaration must survive verbatim.
+    const patch = {
+      models: {
+        'kimi-next': {
+          provider: 'kimi',
+          model: 'kimi-next-thinking',
+          maxContextSize: 262144,
+          capabilities: ['thinking', 'always_thinking'],
+        },
+      },
+    };
+    expect(stripDetectedModelCapabilities(patch, disk)).toBe(patch);
+  });
+
+  it('strips only the detected entries from a mixed declared + detected array', () => {
+    const disk = configWith({ model: 'claude-fable-5', capabilities: ['image_in'] });
+    const runtime = applyDetectedModelCapabilities(disk);
+    expect(runtime.models?.['main']?.capabilities).toEqual([
+      'image_in',
+      'thinking',
+      'always_thinking',
+    ]);
+
+    const stripped = stripDetectedModelCapabilities({ models: runtime.models }, disk);
+    expect(stripped.models?.['main']?.capabilities).toEqual(['image_in']);
+  });
+
+  it('resolves the provider from the patch when the alias is new', () => {
+    const disk: KimiConfig = { ...getDefaultConfig(), providers: {}, models: {} };
+    const patch = {
+      providers: { anthropic: { type: 'anthropic' as const, apiKey: 'sk' } },
+      models: {
+        fable: {
+          provider: 'anthropic',
+          model: 'claude-fable-5',
+          maxContextSize: 1000000,
+          capabilities: ['thinking', 'always_thinking'],
+        },
+      },
+    };
+    const stripped = stripDetectedModelCapabilities(patch, disk);
+    expect(stripped.models?.['fable']?.capabilities).toBeUndefined();
+  });
+});
+
 describe('loadRuntimeConfig capability detection', () => {
-  it('exposes detected always_thinking on runtime config loaded from disk', () => {
+  it('exposes detected capabilities on runtime config loaded from disk', () => {
     const dir = mkdtempSync(join(tmpdir(), 'kimi-detected-caps-'));
     try {
       const file = join(dir, 'config.toml');
@@ -72,7 +151,7 @@ describe('loadRuntimeConfig capability detection', () => {
         ].join('\n'),
       );
       const config = loadRuntimeConfig(file, {});
-      expect(config.models?.['main']?.capabilities).toEqual(['always_thinking']);
+      expect(config.models?.['main']?.capabilities).toEqual(['thinking', 'always_thinking']);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
