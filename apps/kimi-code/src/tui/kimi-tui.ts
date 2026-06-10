@@ -6,7 +6,6 @@ import {
   type Component,
   type Focusable,
   getCapabilities,
-  type SlashCommand,
   Spacer,
 } from '@earendil-works/pi-tui';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
@@ -64,7 +63,10 @@ import { SessionReplayRenderer } from './controllers/session-replay';
 import { StreamingUIController } from './controllers/streaming-ui';
 import { TasksBrowserController } from './controllers/tasks-browser';
 import { installRainbowDance } from './easter-eggs/dance';
-import { FileMentionProvider } from './components/editor/file-mention-provider';
+import {
+  FileMentionProvider,
+  type SlashAutocompleteCommand,
+} from './components/editor/file-mention-provider';
 import { AssistantMessageComponent } from './components/messages/assistant-message';
 import { BackgroundAgentStatusComponent } from './components/messages/background-agent-status';
 import { CronMessageComponent } from './components/messages/cron-message';
@@ -310,10 +312,11 @@ export class KimiTUI {
   }
 
   private setupAutocomplete(): void {
-    const slashCommands: SlashCommand[] = this.getSlashCommands().map((cmd) => {
+    const slashCommands: SlashAutocompleteCommand[] = this.getSlashCommands().map((cmd) => {
       const completer = cmd.completeArgs;
       return {
         name: cmd.name,
+        aliases: cmd.aliases,
         description: cmd.description,
         ...(cmd.argumentHint !== undefined ? { argumentHint: cmd.argumentHint } : {}),
         ...(completer !== undefined

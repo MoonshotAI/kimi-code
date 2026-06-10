@@ -50,6 +50,8 @@ const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
   maxLength: 64,
 };
+const TOOL_RESULT_IMAGE_PROMPT = 'Attached image(s) from tool result:';
+const TOOL_RESULT_IMAGE_PLACEHOLDER = '(see attached image)';
 
 function extractReasoningContent(
   source: unknown,
@@ -165,7 +167,7 @@ function convertMessage(
       : toolMessageConversion;
 
     if (effectiveConversion !== null) {
-      result.content = convertToolMessageContent(message, effectiveConversion);
+      result.content = convertToolMessageContentForChat(message, effectiveConversion);
     } else {
       // Pure-text tool result with no conversion configured: serialize via the
       // generic content-part path so single-text messages become a plain string.
@@ -216,6 +218,70 @@ function convertMessage(
   }
 
   return result;
+}
+
+function convertToolMessageContentForChat(
+  message: Message,
+  conversion: ToolMessageConversion,
+): string | OpenAIContentPart[] {
+  const content = convertToolMessageContent(message, conversion);
+  if (
+    typeof content === 'string' &&
+    content.length === 0 &&
+    message.content.some((part) => part.type === 'image_url')
+  ) {
+    return TOOL_RESULT_IMAGE_PLACEHOLDER;
+  }
+  return content;
+}
+
+function toolResultImageParts(message: Message): OpenAIContentPart[] {
+  const images: OpenAIContentPart[] = [];
+  for (const part of message.content) {
+    if (part.type !== 'image_url') continue;
+    images.push({
+      type: 'image_url',
+      image_url:
+        part.imageUrl.id === undefined
+          ? { url: part.imageUrl.url }
+          : { url: part.imageUrl.url, id: part.imageUrl.id },
+    });
+  }
+  return images;
+}
+
+function appendToolResultImagesMessage(
+  messages: OpenAIMessage[],
+  pendingToolResultImages: OpenAIContentPart[],
+): void {
+  if (pendingToolResultImages.length === 0) return;
+  messages.push({
+    role: 'user',
+    content: [{ type: 'text', text: TOOL_RESULT_IMAGE_PROMPT }, ...pendingToolResultImages],
+  });
+  pendingToolResultImages.length = 0;
+}
+
+function convertHistoryMessages(
+  history: readonly Message[],
+  reasoningKey: string | undefined,
+  toolMessageConversion: ToolMessageConversion,
+): OpenAIMessage[] {
+  const messages: OpenAIMessage[] = [];
+  const pendingToolResultImages: OpenAIContentPart[] = [];
+
+  for (const msg of history) {
+    if (msg.role !== 'tool') {
+      appendToolResultImagesMessage(messages, pendingToolResultImages);
+    }
+    messages.push(convertMessage(msg, reasoningKey, toolMessageConversion));
+    if (msg.role === 'tool') {
+      pendingToolResultImages.push(...toolResultImageParts(msg));
+    }
+  }
+
+  appendToolResultImagesMessage(messages, pendingToolResultImages);
+  return messages;
 }
 export class OpenAILegacyStreamedMessage implements StreamedMessage {
   private _id: string | null = null;
@@ -437,9 +503,9 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       history,
       OPENAI_CHAT_TOOL_CALL_ID_POLICY,
     );
-    for (const msg of normalizedHistory) {
-      messages.push(convertMessage(msg, this._reasoningKey, this._toolMessageConversion));
-    }
+    messages.push(
+      ...convertHistoryMessages(normalizedHistory, this._reasoningKey, this._toolMessageConversion),
+    );
 
     const kwargs: Record<string, unknown> = normalizeGenerationKwargs(
       this._model,

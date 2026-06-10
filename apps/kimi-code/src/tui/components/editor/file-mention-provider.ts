@@ -3,6 +3,7 @@ import { basename, join } from 'node:path';
 
 import {
   CombinedAutocompleteProvider,
+  fuzzyMatch,
   type AutocompleteItem,
   type AutocompleteProvider,
   type AutocompleteSuggestions,
@@ -12,6 +13,10 @@ import {
 const PATH_DELIMITERS = new Set([' ', '\t', '"', "'", '=']);
 const MAX_FALLBACK_SCAN = 2000;
 const MAX_FALLBACK_SUGGESTIONS = 50;
+
+export interface SlashAutocompleteCommand extends SlashCommand {
+  readonly aliases?: readonly string[];
+}
 
 interface FsMentionCandidate {
   readonly path: string;
@@ -31,11 +36,20 @@ export class FileMentionProvider implements AutocompleteProvider {
   private readonly inner: CombinedAutocompleteProvider;
 
   constructor(
-    slashCommands: SlashCommand[],
+    private readonly slashCommands: SlashAutocompleteCommand[],
     private readonly workDir: string,
     private readonly fdPath: string | null,
   ) {
-    this.inner = new CombinedAutocompleteProvider(slashCommands, workDir, fdPath);
+    // Build an expanded list that includes alias entries so that
+    // inner's argument completion can find commands by alias too.
+    const expanded: SlashAutocompleteCommand[] = [];
+    for (const cmd of slashCommands) {
+      expanded.push(cmd);
+      for (const alias of cmd.aliases ?? []) {
+        expanded.push({ ...cmd, name: alias });
+      }
+    }
+    this.inner = new CombinedAutocompleteProvider(expanded, workDir, fdPath);
   }
 
   async getSuggestions(
@@ -71,6 +85,66 @@ export class FileMentionProvider implements AutocompleteProvider {
       } catch {
         // If fd fails to spawn unexpectedly, keep @ completion usable.
         return getFsMentionSuggestions(this.workDir, atPrefix, options.signal);
+      }
+    }
+
+    // Handle slash-command name completion ourselves so that aliases are
+    // searchable and visible in the label.
+    if (!options.force && textBeforeCursor.startsWith('/')) {
+      const spaceIndex = textBeforeCursor.indexOf(' ');
+      if (spaceIndex === -1) {
+        const tokens = textBeforeCursor
+          .slice(1)
+          .trim()
+          .split(/\s+/)
+          .filter((t) => t.length > 0);
+
+        type SlashMatch = {
+          cmd: SlashAutocompleteCommand;
+          score: number;
+          viaAlias: boolean;
+          label: string;
+        };
+        const matches: SlashMatch[] = [];
+
+        for (const cmd of this.slashCommands) {
+          const nameScore = scoreTokens(tokens, cmd.name);
+          if (nameScore !== null) {
+            matches.push({ cmd, score: nameScore, viaAlias: false, label: cmd.name });
+            continue;
+          }
+          // Aliases only count when the primary name missed; the label then
+          // lists them so the user can see why the command matched.
+          const aliases = cmd.aliases ?? [];
+          let bestAliasScore: number | null = null;
+          for (const alias of aliases) {
+            const aliasScore = scoreTokens(tokens, alias);
+            if (aliasScore !== null && (bestAliasScore === null || aliasScore < bestAliasScore)) {
+              bestAliasScore = aliasScore;
+            }
+          }
+          if (bestAliasScore !== null) {
+            matches.push({
+              cmd,
+              score: bestAliasScore,
+              viaAlias: true,
+              label: `${cmd.name} (${aliases.join(', ')})`,
+            });
+          }
+        }
+
+        // Primary-name matches outrank alias matches on score ties.
+        matches.sort((a, b) => a.score - b.score || Number(a.viaAlias) - Number(b.viaAlias));
+
+        if (matches.length === 0) return null;
+        return {
+          items: matches.map((m) => ({
+            value: m.cmd.name,
+            label: m.label,
+            description: formatSlashCommandDescription(m.cmd),
+          })),
+          prefix: textBeforeCursor,
+        };
       }
     }
 
@@ -237,4 +311,33 @@ function shouldSuppressSlashArgumentCompletion(
   if (!textBeforeCursor.startsWith('/')) return false;
   if (!textBeforeCursor.includes(' ')) return false;
   return textAfterCursor.trimStart().length > 0;
+}
+
+/**
+ * All tokens must fuzzy-match `text`; returns the summed score, or null when
+ * any token misses. An empty token list matches everything with score 0.
+ * Mirrors pi-tui fuzzyFilter's token semantics — keep in sync if it changes.
+ */
+function scoreTokens(tokens: readonly string[], text: string): number | null {
+  let score = 0;
+  for (const token of tokens) {
+    const m = fuzzyMatch(token, text);
+    if (!m.matches) return null;
+    score += m.score;
+  }
+  return score;
+}
+
+/**
+ * Mirrors CombinedAutocompleteProvider's description rendering so the
+ * intercepted name completion keeps showing the argument hint.
+ */
+function formatSlashCommandDescription(cmd: SlashAutocompleteCommand): string | undefined {
+  const desc = cmd.description ?? '';
+  const full = cmd.argumentHint
+    ? desc
+      ? `${cmd.argumentHint} — ${desc}`
+      : cmd.argumentHint
+    : desc;
+  return full || undefined;
 }
