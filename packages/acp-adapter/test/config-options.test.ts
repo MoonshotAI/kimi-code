@@ -160,6 +160,19 @@ describe('buildSessionConfigOptions', () => {
     expect(result.map((o) => o.id)).toEqual(['model', 'mode']);
   });
 
+  it('omits the thinking toggle for always-thinking models — off would be a no-op', async () => {
+    // Same dynamic-visibility rule as non-thinking models: ACP's select arm
+    // has no read-only entry, and showing Off/On for a model whose thinking
+    // cannot be turned off would misreport what actually runs.
+    const { harness } = makeHarnessWithModels([
+      { id: 'fable', model: 'claude-fable-5', capabilities: ['always_thinking'] },
+    ]);
+
+    const result = await buildSessionConfigOptions(harness, 'fable', false, 'default');
+
+    expect(result.map((o) => o.id)).toEqual(['model', 'mode']);
+  });
+
   it('reflects the thinking toggle currentValue from the explicit argument', async () => {
     const { harness } = makeHarnessWithModels([
       { id: 'kimi-coder', model: 'kimi-for-coding', displayName: 'Kimi Coder' },

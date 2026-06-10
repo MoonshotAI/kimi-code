@@ -93,9 +93,10 @@ export function buildModelOption(
  * only the wire encoding is `'on'` / `'off'` strings.
  *
  * The caller decides whether to include this option at all — when the
- * currently-selected model has `thinkingSupported === false`, the
- * snapshot omits it entirely (dynamic visibility), so the client never
- * shows a toggle that wouldn't do anything.
+ * currently-selected model has `thinkingSupported === false`, or is
+ * `alwaysThinking` (the off entry would silently run thinking anyway),
+ * the snapshot omits it entirely (dynamic visibility), so the client
+ * never shows a toggle that wouldn't do anything.
  */
 export function buildThinkingOption(enabled: boolean): SessionConfigOption {
   return {
@@ -170,7 +171,11 @@ export async function buildSessionConfigOptions(
 ): Promise<SessionConfigOption[]> {
   const models = await listModelsFromHarness(harness);
   const currentModelEntry = models.find((m) => m.id === currentBaseModelId);
-  const showThinking = currentModelEntry?.thinkingSupported === true;
+  // Always-thinking models get no toggle: ACP's select arm has no read-only
+  // entry, and an "off" choice would misreport a model that reasons (and
+  // bills thinking tokens) regardless.
+  const showThinking =
+    currentModelEntry?.thinkingSupported === true && !currentModelEntry.alwaysThinking;
   const out: SessionConfigOption[] = [buildModelOption(models, currentBaseModelId)];
   if (showThinking) {
     out.push(buildThinkingOption(currentThinkingEnabled));

@@ -23,6 +23,12 @@
  *      (always-thinking variants), or
  *   3. the underlying model name is on the {@link TOGGLEABLE_THINKING_MODELS}
  *      allow-list (mirrors `kimi-cli/src/kimi_cli/llm.py:derive_model_capabilities`).
+ *
+ * `alwaysThinking` is set only by route 1 (capability resolution): the
+ * name-regex route cannot tell an always-on variant from a toggleable one,
+ * so it stays a plain `thinkingSupported`. Consumers use it to suppress
+ * thinking-off controls — offering "off" on such a model would silently
+ * run (and bill) thinking anyway.
  */
 
 import {
@@ -43,6 +49,13 @@ export interface AcpModelEntry {
   readonly name: string;
   readonly description?: string | undefined;
   readonly thinkingSupported: boolean;
+  /**
+   * The model always reasons and cannot run with thinking turned off
+   * (kosong's `always_thinking`, e.g. `claude-fable-5`). Implies
+   * `thinkingSupported`. Consumers must not offer a thinking-off control
+   * when this is set.
+   */
+  readonly alwaysThinking?: true;
 }
 
 /**
@@ -53,15 +66,17 @@ export interface AcpModelEntry {
  */
 const TOGGLEABLE_THINKING_MODELS = new Set(['kimi-for-coding', 'kimi-code']);
 
-export function deriveThinkingSupported(
+export function deriveThinking(
   alias: ModelAlias,
   providerType?: ProviderConfig['type'],
-): boolean {
-  if (resolveAliasCapabilities(providerType, alias).thinking) return true;
+): Pick<AcpModelEntry, 'thinkingSupported' | 'alwaysThinking'> {
+  const resolved = resolveAliasCapabilities(providerType, alias);
+  if (resolved.always_thinking) return { thinkingSupported: true, alwaysThinking: true };
+  if (resolved.thinking) return { thinkingSupported: true };
   const lower = alias.model.toLowerCase();
-  if (lower.includes('thinking') || lower.includes('reason')) return true;
-  if (TOGGLEABLE_THINKING_MODELS.has(alias.model)) return true;
-  return false;
+  if (lower.includes('thinking') || lower.includes('reason')) return { thinkingSupported: true };
+  if (TOGGLEABLE_THINKING_MODELS.has(alias.model)) return { thinkingSupported: true };
+  return { thinkingSupported: false };
 }
 
 /**
@@ -91,7 +106,7 @@ export async function listModelsFromHarness(
     out.push({
       id,
       name: alias.displayName ?? alias.model ?? id,
-      thinkingSupported: deriveThinkingSupported(alias, providers[alias.provider]?.type),
+      ...deriveThinking(alias, providers[alias.provider]?.type),
     });
   }
   return out;
