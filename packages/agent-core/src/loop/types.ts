@@ -85,6 +85,11 @@ export interface ExecutableToolErrorResult {
   readonly isError: true;
   /** See {@link ExecutableToolSuccessResult.message}. */
   readonly message?: string | undefined;
+  /**
+   * Internal telemetry-only hint. Tool result events may carry this field;
+   * it is not projected into model-facing tool messages.
+   */
+  readonly cancelledByUser?: true | undefined;
   /** See {@link ExecutableToolSuccessResult.stopTurn}. */
   readonly stopTurn?: boolean | undefined;
 }

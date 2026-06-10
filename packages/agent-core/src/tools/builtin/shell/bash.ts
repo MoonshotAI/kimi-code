@@ -31,8 +31,9 @@ import { z } from 'zod';
 
 import { ProcessBackgroundTask, type BackgroundManager } from '../../../agent/background';
 import type { BuiltinTool } from '../../../agent/tool';
-import type { ExecutableToolResult, ToolExecution } from '../../../loop/types';
+import type { ExecutableToolErrorResult, ExecutableToolResult, ToolExecution } from '../../../loop/types';
 import { renderPrompt } from '../../../utils/render-prompt';
+import { isUserCancellation } from '../../../utils/abort';
 import { toInputJsonSchema } from '../../support/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '../../support/rule-match';
 import { ToolResultBuilder } from '../../support/result-builder';
@@ -325,7 +326,15 @@ export class BashTool implements BuiltinTool<BashInput> {
         });
       }
       if (aborted) {
-        return builder.error('Interrupted by user', { brief: 'Interrupted by user' });
+        const built = builder.error('Interrupted by user', { brief: 'Interrupted by user' });
+        const errorResult: ExecutableToolErrorResult = {
+          output: built.output,
+          isError: true,
+          message: built.message,
+        };
+        return isUserCancellation(signal.reason)
+          ? { ...errorResult, cancelledByUser: true }
+          : errorResult;
       }
 
       const isError = exitCode !== 0;
