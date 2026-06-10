@@ -28,7 +28,7 @@ function glyph(status: TodoView['status']): string {
 </script>
 
 <template>
-  <div v-if="todos.length > 0" class="todo-card" :class="{ mobile, 'tab-mode': inline }">
+  <div class="todo-card" :class="{ mobile, 'tab-mode': inline }">
     <button class="tc-head" type="button" @click="collapsed = !collapsed">
       <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
         <polyline points="2,4.5 3.5,6 5.5,3" />
@@ -37,13 +37,14 @@ function glyph(status: TodoView['status']): string {
         <line x1="8" y1="11" x2="14" y2="11" />
       </svg>
       <span class="tc-title">{{ t('tasks.todoTag') }}</span>
-      <span class="tc-count">{{ doneCount }}/{{ todos.length }}</span>
-      <svg class="tc-chev" :class="{ open: !collapsed }" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <span v-if="todos.length > 0" class="tc-count">{{ doneCount }}/{{ todos.length }}</span>
+      <svg v-if="todos.length > 0" class="tc-chev" :class="{ open: !collapsed }" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <polyline points="4,6 8,10 12,6" />
       </svg>
     </button>
 
     <div v-if="!collapsed" class="tc-list">
+      <div v-if="todos.length === 0" class="tc-empty">{{ t('tasks.emptyTodo') }}</div>
       <div v-for="(td, i) in todos" :key="i" class="tc-row" :class="`s-${td.status}`">
         <span class="tc-glyph">{{ glyph(td.status) }}</span>
         <span class="tc-name">{{ td.title }}</span>
@@ -129,6 +130,12 @@ function glyph(status: TodoView['status']): string {
 .tc-glyph { flex: none; font-family: var(--mono); }
 .tc-name { min-width: 0; overflow-wrap: anywhere; color: var(--ink); }
 
+.tc-empty {
+  padding: 18px 0;
+  text-align: center;
+  color: var(--faint);
+  font-size: 13px;
+}
 .tc-row.s-pending .tc-glyph { color: var(--faint); }
 .tc-row.s-pending .tc-name { color: var(--muted); }
 .tc-row.s-in_progress .tc-glyph { color: var(--blue); }

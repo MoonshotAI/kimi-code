@@ -49,32 +49,36 @@ function statusClass(state: string): string {
     </div>
 
     <div class="tp-list">
-      <div
-        v-for="task in visibleTasks"
-        :key="task.id"
-        class="tp-row"
-        :class="{ done: task.state === 'done', fail: task.state === 'fail' }"
-      >
-        <div class="tp-main">
-          <span class="tp-glyph" :class="statusClass(task.state)">{{ statusGlyph(task.state) }}</span>
-          <span class="tp-name">{{ task.name }}</span>
-          <span class="tp-kind">{{ task.kind }}</span>
-          <span class="tp-time">{{ task.timing }}</span>
-          <button
-            v-if="task.state === 'run'"
-            class="tp-stop"
-            @click="emit('cancel', task.id)"
-          >{{ t('tasks.stop') }}</button>
-        </div>
-        <div v-if="task.meta" class="tp-meta">{{ task.meta }}</div>
-        <div v-if="task.output" class="tp-out">
-          <div v-for="(line, i) in task.output" :key="i">{{ line }}</div>
-        </div>
-      </div>
+      <div v-if="tasks.length === 0" class="tp-empty">{{ t('tasks.emptyTasks') }}</div>
 
-      <div v-if="hiddenCount > 0" class="tp-more">
-        … +{{ hiddenCount }} more
-      </div>
+      <template v-else>
+        <div
+          v-for="task in visibleTasks"
+          :key="task.id"
+          class="tp-row"
+          :class="{ done: task.state === 'done', fail: task.state === 'fail' }"
+        >
+          <div class="tp-main">
+            <span class="tp-glyph" :class="statusClass(task.state)">{{ statusGlyph(task.state) }}</span>
+            <span class="tp-name">{{ task.name }}</span>
+            <span class="tp-kind">{{ task.kind }}</span>
+            <span class="tp-time">{{ task.timing }}</span>
+            <button
+              v-if="task.state === 'run'"
+              class="tp-stop"
+              @click="emit('cancel', task.id)"
+            >{{ t('tasks.stop') }}</button>
+          </div>
+          <div v-if="task.meta" class="tp-meta">{{ task.meta }}</div>
+          <div v-if="task.output" class="tp-out">
+            <div v-for="(line, i) in task.output" :key="i">{{ line }}</div>
+          </div>
+        </div>
+
+        <div v-if="hiddenCount > 0" class="tp-more">
+          … +{{ hiddenCount }} more
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -207,6 +211,12 @@ function statusClass(state: string): string {
   padding: 4px 0 4px 22px;
   font-size: 11px;
   color: var(--faint);
+}
+.tp-empty {
+  padding: 24px 0;
+  text-align: center;
+  color: var(--faint);
+  font-size: 13px;
 }
 
 /* Mobile */

@@ -6,4 +6,6 @@ export default {
   timingRunning: '运行中 · {time}',
   timingDone: '完成 · {sec}s',
   todoTag: '待办',
+  emptyTasks: '暂无后台任务',
+  emptyTodo: '暂无待办事项',
 };
