@@ -2,6 +2,22 @@
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.13.1 (2026-06-10)
+
+### Bug Fixes
+
+- Prevent forking sessions during active turns and consolidate wire protocol definitions into a shared internal package.
+- Fix Kimi Datasource to use the matching OAuth credentials and service endpoint for the active Kimi Code environment.
+- Fix goal marker text overflowing terminal width.
+
+### Polish
+
+- Add Claude Fable 5 support to the Anthropic provider.
+- Add an interactive undo selector and clearer undo-limit messages.
+- YOLO mode no longer asks before writing or editing files outside the working directory.
+- Clarify active skill prompts so loaded skills are no longer represented as system reminders.
+- Tighten file tool guidance to route incremental edits through Edit.
+
 ## 0.13.0 (2026-06-10)
 
 ### Features
