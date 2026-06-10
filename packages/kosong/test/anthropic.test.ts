@@ -1005,6 +1005,31 @@ describe('AnthropicChatProvider', () => {
       expect(body['output_config']).toEqual({ effort: 'xhigh' });
     });
 
+    it('claude-fable-5: uses adaptive thinking with xhigh effort', async () => {
+      const provider = createProvider('claude-fable-5').withThinking('xhigh');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' });
+      expect(body['output_config']).toEqual({ effort: 'xhigh' });
+      // Adaptive should remove interleaved-thinking beta
+      const headers = body['_extra_headers'] as Record<string, string> | undefined;
+      if (headers !== undefined && headers['anthropic-beta'] !== undefined) {
+        expect(headers['anthropic-beta']).not.toContain('interleaved-thinking-2025-05-14');
+      }
+    });
+
+    it('claude-fable-5 with thinking off omits the thinking field entirely', async () => {
+      // Fable 400s on an explicit `disabled` thinking config (unlike Opus
+      // 4.7/4.8); the provider must drop the field from the request while
+      // still reporting `off` to callers.
+      const provider = createProvider('claude-fable-5').withThinking('off');
+      expect(provider.thinkingEffort).toBe('off');
+
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+      expect('thinking' in body).toBe(false);
+      expect(body['output_config']).toBeUndefined();
+    });
+
     it.each([
       'claude-sonnet-4-6',
       'anthropic.claude-opus-4-7-v1:0',
@@ -1289,6 +1314,9 @@ describe('AnthropicChatProvider', () => {
         'claude-sonnet-5-0',
         'claude-haiku-4-6',
         'claude-haiku-5-0',
+        // Fable (major-only version, no minor)
+        'claude-fable-5',
+        'anthropic.claude-fable-5-v1:0',
         // Bedrock / Vertex / proxy prefixes
         'anthropic.claude-opus-4-7-v1:0',
         'aws/claude-opus-4-7',
@@ -1352,6 +1380,9 @@ describe('AnthropicChatProvider', () => {
         ['claude-sonnet-4-6', 'xhigh', 'high'],
         // low/medium/high passthrough
         ['claude-opus-4-6', 'medium', 'medium'],
+        // Fable 5: full range including xhigh and max
+        ['claude-fable-5', 'xhigh', 'xhigh'],
+        ['claude-fable-5', 'max', 'max'],
         // Future 4.8+: inherits max but xhigh clamps to high
         ['claude-opus-4-8', 'xhigh', 'high'],
         ['claude-opus-4-8', 'max', 'max'],
@@ -2108,6 +2139,7 @@ describe('AnthropicChatProvider', () => {
 
 describe('resolveDefaultMaxTokens', () => {
   it('returns per-version Messages-API caps for known Claude 4 models', () => {
+    expect(resolveDefaultMaxTokens('claude-fable-5')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-7')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-6')).toBe(128000);
     expect(resolveDefaultMaxTokens('claude-opus-4-5-20251101')).toBe(64000);

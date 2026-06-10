@@ -114,6 +114,13 @@ describe('AnthropicChatProvider.getCapability', () => {
     expect(cap.tool_use).toBe(true);
   });
 
+  it('claude-fable-5 → image_in + thinking + tool_use', () => {
+    const cap = make('claude-fable-5').getCapability();
+    expect(cap.image_in).toBe(true);
+    expect(cap.thinking).toBe(true);
+    expect(cap.tool_use).toBe(true);
+  });
+
   it('no Anthropic model supports audio_in', () => {
     // Sanity: Anthropic has no audio-input models today. If one ships later
     // and this fails, update the table — but make it a conscious decision.
