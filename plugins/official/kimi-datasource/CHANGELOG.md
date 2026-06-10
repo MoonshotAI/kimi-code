@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.1.2 - 2026-06-09
+
+- Use OAuth credentials and datasource endpoints that match the active Kimi Code environment.
+
 ## 3.1.1 - 2026-06-02
 
 - Refine skill activation wording and answer-language guidance.

@@ -16,7 +16,7 @@ description: |
 
 这两个工具由 Kimi Code 托管执行，参数直接按 tool schema 传 JSON。
 
-工具会读取 `$KIMI_CODE_HOME/credentials/kimi-code.json`。如果没有登录凭据，让用户先在 Kimi Code 里执行 `/login`。
+工具会读取当前 Kimi Code 环境对应的本地 OAuth 登录凭据；当设置了 `KIMI_CODE_OAUTH_HOST` / `KIMI_CODE_BASE_URL` 时，会使用对应环境的隔离凭据。如果没有登录凭据，让用户先在 Kimi Code 里执行 `/login`。
 
 ## 1. 这个 skill 提供什么能力
 

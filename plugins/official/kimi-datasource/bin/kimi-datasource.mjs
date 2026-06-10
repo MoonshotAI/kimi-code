@@ -9,17 +9,19 @@
 //   - tools/call
 //   - ping
 //
-// Business logic (API call, credentials, headers) is unchanged from the
-// previous one-shot CLI; only the transport changed.
+// Business logic is kept self-contained so the plugin can run from a zipped
+// marketplace install without workspace package dependencies.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { arch, homedir, hostname, release, type } from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 
-const VERSION = '3.1.1';
-const API_URL = process.env.KIMI_DATASOURCE_API_URL ?? 'https://api.kimi.com/coding/v1/tools';
+const VERSION = '3.1.2';
+const DEFAULT_KIMI_CODE_OAUTH_HOST = 'https://auth.kimi.com';
+const DEFAULT_KIMI_CODE_BASE_URL = 'https://api.kimi.com/coding/v1';
+const API_URL = datasourceApiUrl();
 const REQUEST_TIMEOUT_MS = 30_000;
 const PROTOCOL_VERSION = '2025-06-18';
 
@@ -209,9 +211,53 @@ function resolveKimiHome() {
   return explicit && explicit.length > 0 ? explicit : path.join(homedir(), '.kimi-code');
 }
 
+function datasourceApiUrl() {
+  const explicit = process.env.KIMI_DATASOURCE_API_URL?.trim();
+  if (explicit !== undefined && explicit.length > 0) return explicit;
+  return `${kimiCodeBaseUrl()}/tools`;
+}
+
+function kimiCodeBaseUrl() {
+  return (process.env.KIMI_CODE_BASE_URL ?? DEFAULT_KIMI_CODE_BASE_URL).replace(/\/+$/, '');
+}
+
+function kimiCodeOAuthHost() {
+  return normalizeEndpoint(
+    process.env.KIMI_CODE_OAUTH_HOST ??
+      process.env.KIMI_OAUTH_HOST ??
+      DEFAULT_KIMI_CODE_OAUTH_HOST,
+  );
+}
+
+function normalizeEndpoint(value) {
+  return value.trim().replace(/\/+$/, '');
+}
+
+function resolveKimiCodeCredentialName() {
+  const oauthHost = kimiCodeOAuthHost();
+  const baseUrl = kimiCodeBaseUrl();
+  if (
+    oauthHost === normalizeEndpoint(DEFAULT_KIMI_CODE_OAUTH_HOST) &&
+    baseUrl === DEFAULT_KIMI_CODE_BASE_URL
+  ) {
+    return 'kimi-code';
+  }
+
+  // Keep this in sync with packages/oauth/src/managed-kimi-code.ts.
+  const digest = createHash('sha256')
+    .update(JSON.stringify({ oauthHost, baseUrl }))
+    .digest('hex')
+    .slice(0, 16);
+  return `kimi-code-env-${digest}`;
+}
+
 async function loadAccessToken() {
   const kimiHome = resolveKimiHome();
-  const credentialsFile = path.join(kimiHome, 'credentials', 'kimi-code.json');
+  const credentialsFile = path.join(
+    kimiHome,
+    'credentials',
+    `${resolveKimiCodeCredentialName()}.json`,
+  );
   let parsed;
   try {
     parsed = JSON.parse(await readFile(credentialsFile, 'utf8'));
