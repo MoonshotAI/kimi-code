@@ -110,6 +110,7 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 | `SubagentStart` | Sub-agent name | — | Triggered before a sub-agent starts running |
 | `SubagentStop` | Sub-agent name | — | Triggered after a sub-agent completes successfully (observation only) |
 | `StopFailure` | Error type | — | Triggered after the current turn fails due to an error (observation only) |
+| `Interrupt` | Empty string | — | Triggered when the user interrupts the current turn (e.g. pressing Esc); not fired for timeouts or other programmatic aborts. `Stop` does not fire on interrupts, so this event fires instead. The payload includes a `reason` field (observation only) |
 | `PreCompact` | `manual` or `auto` | — | Triggered before context compaction begins; return values are completely ignored |
 | `PostCompact` | `manual` or `auto` | — | Triggered after context compaction completes (observation only) |
 | `Notification` | Notification type (e.g. `task.completed`) | — | Triggered when a background task status changes (observation only) |

@@ -16,6 +16,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { HookEngine } from '../../src/session/hooks';
+import { abortError } from '../../src/utils/abort';
 import type { AgentOptions } from '../../src/agent';
 import type { Logger, LogPayload } from '../../src/logging';
 import {
@@ -631,6 +632,71 @@ describe('Agent turn flow', () => {
     await ctx.untilTurnEnd();
 
     expect(triggered).toEqual([['StopFailure', 'Error', 1]]);
+  });
+
+  it('fires Interrupt when the user cancels an active turn', async () => {
+    const triggered: Array<[string, string, number]> = [];
+    const hookEngine = new HookEngine(
+      [
+        {
+          event: 'Interrupt',
+          command: 'exit 0',
+        },
+      ],
+      {
+        onTriggered: (event, target, count) => {
+          triggered.push([event, target, count]);
+        },
+      },
+    );
+    const ctx = testAgent({
+      hookEngine,
+      kaos: createCommandKaos('should-not-run'),
+    });
+    ctx.configure({ tools: ['Bash'] });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a command' }] });
+    await ctx.untilApprovalRequest();
+
+    await ctx.rpc.cancel({ turnId: 0 });
+    await ctx.untilTurnEnd();
+
+    expect(triggered).toEqual([['Interrupt', '', 1]]);
+  });
+
+  it('does not fire Interrupt for a non-user (programmatic) abort', async () => {
+    const triggered: Array<[string, string, number]> = [];
+    const hookEngine = new HookEngine(
+      [
+        {
+          event: 'Interrupt',
+          command: 'exit 0',
+        },
+      ],
+      {
+        onTriggered: (event, target, count) => {
+          triggered.push([event, target, count]);
+        },
+      },
+    );
+    const ctx = testAgent({
+      hookEngine,
+      kaos: createCommandKaos('should-not-run'),
+    });
+    ctx.configure({ tools: ['Bash'] });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will run Bash.' }, bashCall());
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Run a command' }] });
+    await ctx.untilApprovalRequest();
+
+    // A programmatic abort (e.g. a subagent deadline timeout) carries a plain
+    // AbortError as its reason, not a UserCancellationError, so it must not be
+    // reported as a user interrupt.
+    ctx.agent.turn.cancel(0, abortError());
+    await ctx.untilTurnEnd();
+
+    expect(triggered).toEqual([]);
   });
 
   it('resolves the latest request-scoped OAuth auth before each generation', async () => {

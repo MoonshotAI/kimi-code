@@ -35,7 +35,7 @@ import {
 } from '../../loop/index';
 import type { AgentEvent, TurnEndedEvent } from '../../rpc';
 import type { TelemetryPropertyValue } from '../../telemetry';
-import { abortable, userCancellationReason } from '../../utils/abort';
+import { abortable, isUserCancellation, userCancellationReason } from '../../utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
@@ -471,6 +471,17 @@ export class TurnFlow {
     // is false for those).
     if (this.currentId === turnId) {
       this.agent.usage.endTurn();
+    }
+    // A user interrupt (e.g. Esc) aborts the turn without the normal Stop hook
+    // firing, so external tooling that tracks status from hooks would otherwise
+    // never see the turn stop. Emit an observation-only Interrupt event for it.
+    // Gate on isUserCancellation: a `cancelled` turn can also come from a
+    // programmatic abort (e.g. a subagent deadline timeout, which shares this
+    // hook engine), and those must not be misreported as a user interrupt.
+    if (ended.reason === 'cancelled' && isUserCancellation(signal.reason)) {
+      void this.agent.hooks?.fireAndForgetTrigger('Interrupt', {
+        inputData: { turnId, reason: 'cancelled' },
+      });
     }
     this.agent.emitEvent(ended);
     if (standalone && this.currentId === turnId) {
