@@ -1,6 +1,6 @@
 ---
-"@moonshot-ai/agent-core": minor
-"@moonshot-ai/kimi-code": minor
+"@moonshot-ai/agent-core": patch
+"@moonshot-ai/kimi-code": patch
 ---
 
 Add an interactive undo selector and clearer undo-limit messages.
