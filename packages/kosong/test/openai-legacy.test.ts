@@ -287,7 +287,7 @@ describe('OpenAILegacyChatProvider', () => {
       ]);
     });
 
-    it('tool call with image result flattens to text to satisfy API constraints', async () => {
+    it('tool call with image result keeps the tool result textual and reattaches images as user input', async () => {
       // OpenAI Chat Completions `tool` messages only accept text content.
       // Even when toolMessageConversion is unset, a tool result containing
       // image_url / audio_url / video_url parts must not be serialized as a
@@ -319,15 +319,86 @@ describe('OpenAILegacyChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
-      const toolMsg = (body['messages'] as Record<string, unknown>[])[2]!;
+      const messages = body['messages'] as Record<string, unknown>[];
+      const toolMsg = messages[2]!;
       expect(toolMsg['role']).toBe('tool');
       expect(toolMsg['tool_call_id']).toBe('call_abc123');
       // Content must be a plain string, not a content-part array.
       expect(typeof toolMsg['content']).toBe('string');
       // The text segment must survive; the image must not appear as a
-      // structured image_url part anywhere in the serialized content.
+      // structured image_url part inside the tool message.
       expect(toolMsg['content']).toContain('5');
       expect(Array.isArray(toolMsg['content'])).toBe(false);
+      expect(messages[3]).toEqual({
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Attached image(s) from tool result:' },
+          { type: 'image_url', image_url: { url: 'https://example.com/image.png' } },
+        ],
+      });
+    });
+
+    it('groups consecutive tool result images after all matching tool messages', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Fetch both images' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'ok' }],
+          toolCalls: [
+            { type: 'function', id: 'call_first', name: 'first_image', arguments: '{}' },
+            { type: 'function', id: 'call_second', name: 'second_image', arguments: '{}' },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            { type: 'image_url', imageUrl: { url: 'https://example.com/first.png' } },
+          ],
+          toolCallId: 'call_first',
+          toolCalls: [],
+        },
+        {
+          role: 'tool',
+          content: [
+            { type: 'text', text: 'second' },
+            { type: 'image_url', imageUrl: { url: 'https://example.com/second.png' } },
+          ],
+          toolCallId: 'call_second',
+          toolCalls: [],
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['messages']).toEqual([
+        { role: 'user', content: 'Fetch both images' },
+        {
+          role: 'assistant',
+          content: 'ok',
+          tool_calls: [
+            {
+              type: 'function',
+              id: 'call_first',
+              function: { name: 'first_image', arguments: '{}' },
+            },
+            {
+              type: 'function',
+              id: 'call_second',
+              function: { name: 'second_image', arguments: '{}' },
+            },
+          ],
+        },
+        { role: 'tool', content: '(see attached image)', tool_call_id: 'call_first' },
+        { role: 'tool', content: 'second', tool_call_id: 'call_second' },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Attached image(s) from tool result:' },
+            { type: 'image_url', image_url: { url: 'https://example.com/first.png' } },
+            { type: 'image_url', image_url: { url: 'https://example.com/second.png' } },
+          ],
+        },
+      ]);
     });
 
     it('parallel tool calls', async () => {
