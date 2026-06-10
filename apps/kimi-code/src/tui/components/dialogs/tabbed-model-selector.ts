@@ -13,7 +13,7 @@
  * AskUserQuestion dialog's tab strip) — see .agents/skills/write-tui/DESIGN.md.
  */
 
-import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
+import type { ModelAlias, ProviderConfig } from '@moonshot-ai/kimi-code-sdk';
 import {
   Container,
   Key,
@@ -37,6 +37,8 @@ const ALL_TAB_LABEL = 'All';
 
 export interface TabbedModelSelectorOptions {
   readonly models: Record<string, ModelAlias>;
+  /** Passed through to the inner selectors — see {@link ModelSelectorOptions}. */
+  readonly providers?: Record<string, ProviderConfig>;
   readonly currentValue: string;
   readonly selectedValue?: string;
   readonly currentThinking: boolean;
@@ -244,6 +246,7 @@ function makeSelector(
   const selectedValue = subset[candidate] !== undefined ? candidate : undefined;
   const inner: ModelSelectorOptions = {
     models: subset,
+    providers: opts.providers,
     currentValue: opts.currentValue,
     ...(selectedValue !== undefined ? { selectedValue } : {}),
     currentThinking: opts.currentThinking,

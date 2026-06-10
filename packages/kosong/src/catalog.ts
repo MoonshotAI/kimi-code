@@ -139,7 +139,7 @@ export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel
       video_in: inputs.includes('video'),
       audio_in: inputs.includes('audio'),
       thinking: Boolean(model.reasoning) || model.always_reasoning === true,
-      ...(model.always_reasoning === true ? { always_thinking: true } : {}),
+      always_thinking: model.always_reasoning === true ? true : undefined,
       tool_use: model.tool_call ?? true,
       max_context_tokens: context,
     },

@@ -1,4 +1,5 @@
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/capability';
+import { isFableModel } from './claude-version';
 
 type CapabilityMatcher = (normalizedModelName: string) => boolean;
 
@@ -42,10 +43,6 @@ const CLAUDE_THINKING_VISION_TOOL_PREFIXES = [
   'claude-haiku-4',
 ] as const;
 
-// Vision + tool use + thinking that cannot be turned off
-// (-> ANTHROPIC_ALWAYS_THINKING_VISION_TOOL_CAPABILITY).
-const CLAUDE_ALWAYS_THINKING_VISION_TOOL_PREFIXES = ['claude-fable'] as const;
-
 const GEMINI_CATALOGUED_PREFIXES = [
   'gemini-1.5-pro',
   'gemini-1.5-flash',
@@ -55,11 +52,16 @@ const GEMINI_CATALOGUED_PREFIXES = [
   'gemini-2.5-flash',
 ] as const;
 
+// OpenAI o-series reasoning cannot be turned off: `withThinking('off')` omits
+// `reasoning_effort`, and pre-gpt-5.1 reasoning models do not support `none` —
+// the server still reasons at its default effort. Surface that as
+// always_thinking so UIs don't offer a no-op off toggle.
 const OPENAI_REASONING_CAPABILITY: ModelCapability = Object.freeze({
   image_in: false,
   video_in: false,
   audio_in: false,
   thinking: true,
+  always_thinking: true,
   tool_use: true,
   max_context_tokens: 0,
 });
@@ -128,6 +130,20 @@ const GEMINI_THINKING_MULTIMODAL_TOOL_CAPABILITY: ModelCapability = Object.freez
   max_context_tokens: 0,
 });
 
+// Gemini 2.5 Pro cannot disable thinking: the API enforces a minimum thinking
+// budget (128), so the provider's `withThinking('off')` → `thinking_budget: 0`
+// is rejected with a 400. 2.5 Flash / Flash-Lite accept budget 0 and stay in
+// the toggleable group.
+const GEMINI_ALWAYS_THINKING_MULTIMODAL_TOOL_CAPABILITY: ModelCapability = Object.freeze({
+  image_in: true,
+  video_in: true,
+  audio_in: true,
+  thinking: true,
+  always_thinking: true,
+  tool_use: true,
+  max_context_tokens: 0,
+});
+
 const OPENAI_LEGACY_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
   {
     matches: isOpenAIReasoningModel,
@@ -164,7 +180,12 @@ const ANTHROPIC_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
     capability: ANTHROPIC_THINKING_VISION_TOOL_CAPABILITY,
   },
   {
-    matches: (name) => hasPrefix(name, CLAUDE_ALWAYS_THINKING_VISION_TOOL_PREFIXES),
+    // Any id the anthropic wire layer treats as Fable — vendor prefixes
+    // ("us.anthropic.claude-fable-5-v1:0"), suffixes, bare "fable-5" — via
+    // the same parser generate() uses to omit `thinking: disabled`, so the
+    // advertised capability and the wire behavior cannot drift. The literal
+    // prefix keeps matching ids the parser needs a version for.
+    matches: (name) => name.startsWith('claude-fable') || isFableModel(name),
     capability: ANTHROPIC_ALWAYS_THINKING_VISION_TOOL_CAPABILITY,
   },
 ];
@@ -211,6 +232,9 @@ export function getGoogleGenAIModelCapability(modelName: string): ModelCapabilit
   if (!normalized.startsWith('gemini-')) return UNKNOWN_CAPABILITY;
   if (!hasPrefix(normalized, GEMINI_CATALOGUED_PREFIXES)) return UNKNOWN_CAPABILITY;
 
+  if (normalized.startsWith('gemini-2.5-pro')) {
+    return GEMINI_ALWAYS_THINKING_MULTIMODAL_TOOL_CAPABILITY;
+  }
   if (normalized.startsWith('gemini-2.5-') || normalized.includes('thinking')) {
     return GEMINI_THINKING_MULTIMODAL_TOOL_CAPABILITY;
   }

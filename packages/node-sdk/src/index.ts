@@ -66,6 +66,11 @@ export type { LogContext, LogLevel, LogPayload, Logger } from '@moonshot-ai/agen
 // outbound fetch honors HTTP_PROXY / HTTPS_PROXY / NO_PROXY.
 export { installGlobalProxyDispatcher } from '@moonshot-ai/agent-core';
 
+// Model-alias capability resolution — declared capability strings merged with
+// kosong's built-in model knowledge. UIs call this instead of interpreting
+// raw `models.<alias>.capabilities` strings themselves.
+export { resolveAliasCapabilities } from '@moonshot-ai/agent-core';
+
 // Experimental feature flags — types only. Resolved values come from
 // `KimiHarness.getExperimentalFeatures()` over RPC, not from a re-exported runtime value.
 export type {

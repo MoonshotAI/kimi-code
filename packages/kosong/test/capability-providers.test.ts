@@ -80,6 +80,17 @@ describe('GoogleGenAIChatProvider.getCapability', () => {
     expect(cap).toEqual(UNKNOWN_CAPABILITY);
   });
 
+  it('gemini-2.5-pro cannot disable thinking → always_thinking; 2.5-flash stays toggleable', () => {
+    // 2.5 Pro enforces a minimum thinking budget (128) and rejects
+    // thinking_budget: 0; 2.5 Flash accepts budget 0.
+    const pro = make('gemini-2.5-pro').getCapability();
+    expect(pro.thinking).toBe(true);
+    expect(pro.always_thinking).toBe(true);
+    const flash = make('gemini-2.5-flash').getCapability();
+    expect(flash.thinking).toBe(true);
+    expect(flash.always_thinking).toBeUndefined();
+  });
+
   it('non-gemini model name → UNKNOWN_CAPABILITY', () => {
     const cap = make('claude-3-5-sonnet').getCapability();
     expect(cap).toEqual(UNKNOWN_CAPABILITY);
@@ -127,6 +138,21 @@ describe('AnthropicChatProvider.getCapability', () => {
     expect(make('claude-opus-4').getCapability().always_thinking).toBeUndefined();
   });
 
+  it('vendor-prefixed Fable ids detect always_thinking like the wire layer', () => {
+    // The capability row is driven by the same parser generate() uses to omit
+    // `thinking: disabled`, so every id that runs always-on also advertises it.
+    for (const id of [
+      'anthropic.claude-fable-5-v1:0',
+      'us.anthropic.claude-fable-5-20251101-v1:0',
+      'openrouter/anthropic/claude-fable-5',
+      'fable-5',
+    ]) {
+      const cap = make(id).getCapability();
+      expect(cap.always_thinking, id).toBe(true);
+      expect(cap.thinking, id).toBe(true);
+    }
+  });
+
   it('no Anthropic model supports audio_in', () => {
     // Sanity: Anthropic has no audio-input models today. If one ships later
     // and this fails, update the table — but make it a conscious decision.
@@ -163,6 +189,13 @@ describe('OpenAILegacyChatProvider.getCapability', () => {
     expect(cap.tool_use).toBe(true);
   });
 
+  it('o-series reasoning cannot be turned off → always_thinking', () => {
+    // 'off' omits reasoning_effort and pre-gpt-5.1 reasoning models do not
+    // support 'none' — the server still reasons at its default effort.
+    expect(make('o3').getCapability().always_thinking).toBe(true);
+    expect(make('gpt-4o').getCapability().always_thinking).toBeUndefined();
+  });
+
   it('unknown OpenAI-legacy model → UNKNOWN_CAPABILITY', () => {
     const cap = make('gpt-mystery').getCapability();
     expect(cap).toEqual(UNKNOWN_CAPABILITY);
@@ -188,6 +221,7 @@ describe('OpenAIResponsesChatProvider.getCapability', () => {
   it('o3-mini → thinking=true', () => {
     const cap = make('o3-mini').getCapability();
     expect(cap.thinking).toBe(true);
+    expect(cap.always_thinking).toBe(true);
   });
 
   it('unknown Responses model → UNKNOWN_CAPABILITY', () => {

@@ -753,6 +753,10 @@ export class KimiTUI {
     return true;
   }
 
+  // Deliberately NOT resolveAliasCapabilities: this gate is permissive when
+  // nothing is declared, while the resolver reports `false` for modalities of
+  // models kosong has no built-in knowledge of — which would wrongly reject
+  // media on undeclared (e.g. kimi) models.
   private supportsCurrentModelCapability(capability: string): boolean {
     const capabilities =
       this.state.appState.availableModels[this.state.appState.model]?.capabilities;
