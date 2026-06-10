@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Enable searching slash command aliases in autocomplete and show aliases in command labels.
+Find slash commands by their aliases in autocomplete — typing `/clear` now suggests `new (clear)`.
