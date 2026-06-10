@@ -1,5 +1,11 @@
 # @moonshot-ai/kosong
 
+## 0.4.3
+
+### Patch Changes
+
+- [#626](https://github.com/MoonshotAI/kimi-code/pull/626) [`856ec00`](https://github.com/MoonshotAI/kimi-code/commit/856ec002906f4964086915ceb9aa616b89ab6594) - Preserve image outputs from tools when using OpenAI-compatible chat completions.
+
 ## 0.4.2
 
 ### Patch Changes
