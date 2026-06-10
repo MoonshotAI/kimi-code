@@ -69,6 +69,7 @@
         ./packages/migration-legacy
         ./packages/node-sdk
         ./packages/oauth
+        ./packages/protocol
         ./packages/telemetry
         ./apps/kimi-code
         ./apps/vis
@@ -85,6 +86,7 @@
         "@moonshot-ai/migration-legacy"
         "@moonshot-ai/kimi-code-sdk"
         "@moonshot-ai/kimi-code-oauth"
+        "@moonshot-ai/protocol"
         "@moonshot-ai/kimi-telemetry"
         "@moonshot-ai/kimi-code"
         "@moonshot-ai/vis"

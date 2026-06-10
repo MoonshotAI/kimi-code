@@ -241,6 +241,9 @@ importers:
       '@moonshot-ai/kosong':
         specifier: workspace:^
         version: link:../kosong
+      '@moonshot-ai/protocol':
+        specifier: workspace:^
+        version: link:../protocol
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
@@ -421,6 +424,15 @@ importers:
       '@types/proper-lockfile':
         specifier: ^4.1.4
         version: 4.1.4
+
+  packages/protocol:
+    dependencies:
+      ulid:
+        specifier: ^3.0.1
+        version: 3.0.2
+      zod:
+        specifier: 'catalog:'
+        version: 4.3.6
 
   packages/telemetry: {}
 
@@ -5154,6 +5166,10 @@ packages:
 
   uhyphen@0.2.0:
     resolution: {integrity: sha512-qz3o9CHXmJJPGBdqzab7qAYuW8kQGKNEuoHFYrBwV6hWIMcpAmxDLXojcHfFr9US1Pe6zUswEIJIbLI610fuqA==}
+
+  ulid@3.0.2:
+    resolution: {integrity: sha512-yu26mwteFYzBAot7KVMqFGCVpsF6g8wXfJzQUHvu1no3+rRRSFcSV2nKeYvNPLD2J4b08jYBDhHUjeH0ygIl9w==}
+    hasBin: true
 
   unbox-primitive@1.1.0:
     resolution: {integrity: sha512-nWJ91DjeOkej/TA8pXQ3myruKpKEYgqvpw9lz4OPHj/NWFNluYrjbz9j01CJ8yKQd2g4jFoOkINCTW2I5LEEyw==}
@@ -10363,6 +10379,8 @@ snapshots:
   uc.micro@2.1.0: {}
 
   uhyphen@0.2.0: {}
+
+  ulid@3.0.2: {}
 
   unbox-primitive@1.1.0:
     dependencies:
