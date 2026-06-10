@@ -143,12 +143,9 @@ export class FullCompaction {
   }
 
   private markCanceled(): void {
-    if (this.agent.records.restoring) {
-      this.agent.replayBuilder.patchLast('compaction', {
-        result: 'cancelled',
-      });
-      return;
-    }
+    this.agent.replayBuilder.patchLast('compaction', {
+      result: 'cancelled',
+    });
     if (!this.compacting) return;
     this.agent.records.logRecord({
       type: 'full_compaction.cancel',
@@ -156,9 +153,6 @@ export class FullCompaction {
     this.compacting.abortController.abort();
     this.compacting = null;
     this.agent.emitEvent({ type: 'compaction.cancelled' });
-    this.agent.replayBuilder.patchLast('compaction', {
-      result: 'cancelled',
-    });
   }
 
   markCompleted() {
