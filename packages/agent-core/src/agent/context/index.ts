@@ -133,7 +133,15 @@ export class ContextMemory {
     ) {
       throw new KimiError(
         ErrorCodes.REQUEST_INVALID,
-        'Nothing to undo in the active context.',
+        formatUndoUnavailableMessage(count, removedUserCount, stoppedAtBoundary),
+        {
+          details: {
+            reason: 'undo_limit',
+            requestedCount: count,
+            undoableCount: removedUserCount,
+            stoppedAtCompaction: stoppedAtBoundary,
+          },
+        },
       );
     }
   }
@@ -344,4 +352,17 @@ function isRealUserPrompt(message: ContextMessage): boolean {
     return origin.trigger === 'user-slash';
   }
   return false;
+}
+
+function formatUndoUnavailableMessage(
+  requestedCount: number,
+  undoableCount: number,
+  stoppedAtCompaction: boolean,
+): string {
+  const reason = stoppedAtCompaction ? ' after the last compaction' : '';
+  return `Cannot undo ${formatPromptCount(requestedCount)}; only ${formatPromptCount(undoableCount)} can be undone in the active context${reason}.`;
+
+  function formatPromptCount(count: number): string {
+    return `${String(count)} ${count === 1 ? 'prompt' : 'prompts'}`;
+  }
 }
