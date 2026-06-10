@@ -32,6 +32,9 @@
 | `/fork` | — | 基于当前会话 fork 一份新会话，保留完整对话历史 | 否 |
 | `/title [<text>]` | `/rename` | 不带参数时显示当前会话标题；带参数时设置为新标题（最长 200 字符） | 是 |
 | `/compact [<instruction>]` | — | 压缩当前对话上下文，释放 token 占用；可附带自定义指令，提示模型压缩时保留哪些信息 | 否 |
+| `/undo [<count>]` | — | 从对话历史中撤回上一条提示词，连同其后的回复一并撤回；可传入正整数一次撤回多条 | 否 |
+| `/reload` | — | 重载当前会话并应用最新的 `config.toml` 配置（供应商、模型等）以及 `tui.toml` UI 偏好，无需重启 CLI | 否 |
+| `/reload-tui` | — | 仅重载 `tui.toml` UI 偏好（主题、编辑器、通知等），不重建会话 | 是 |
 | `/init` | — | 分析当前代码库并生成 `AGENTS.md` | 否 |
 | `/export-md [<path>]` | `/export` | 将当前会话导出为 Markdown 文件 | 否 |
 | `/export-debug-zip` | — | 将当前会话导出为调试用 ZIP 压缩包（与 [`kimi export`](./kimi-command.md#kimi-export) 行为一致） | 否 |
