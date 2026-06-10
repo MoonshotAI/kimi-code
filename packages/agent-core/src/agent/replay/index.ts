@@ -13,6 +13,18 @@ export class ReplayBuilder {
     }
   }
 
+  patchLast<T extends AgentReplayRecord['type']>(
+    type: T,
+    patch: Partial<Extract<AgentReplayRecord, { type: T }>>,
+  ): void {
+    if (this.agent.records.restoring) {
+      const last = this.records.at(-1);
+      if (last && last.type === type) {
+        Object.assign(last, patch);
+      }
+    }
+  }
+
   removeLastMessages(removedMessages: ReadonlySet<ContextMessage>): void {
     if (removedMessages.size === 0) return;
     for (let i = this.records.length - 1; i >= 0; i--) {

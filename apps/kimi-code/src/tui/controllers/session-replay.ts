@@ -45,6 +45,7 @@ import type { SessionEventHandler } from './session-event-handler';
 import type { TUIState } from '../tui-state';
 
 type GoalReplayRecord = Extract<AgentReplayRecord, { type: 'goal_updated' }>;
+type CompactionReplayRecord = Extract<AgentReplayRecord, { type: 'compaction' }>;
 type GoalReplayLifecycleChange = GoalChange & { readonly kind: 'lifecycle' };
 
 export interface SessionReplayHost {
@@ -177,6 +178,9 @@ export class SessionReplayRenderer {
     switch (record.type) {
       case 'message':
         this.renderMessage(context, record.message);
+        return;
+      case 'compaction':
+        this.renderCompaction(context, record);
         return;
       case 'goal_updated':
         this.renderGoalReplayRecord(context, record);
@@ -370,6 +374,30 @@ export class SessionReplayRenderer {
       skillName: skill.skillName,
       skillArgs: skill.skillArgs,
       skillTrigger: skill.trigger,
+    });
+  }
+
+  private renderCompaction(context: ReplayRenderContext, record: CompactionReplayRecord): void {
+    this.flushAssistant(context);
+    if (record.result === undefined) return;
+    if (record.result === 'cancelled') {
+      this.host.appendTranscriptEntry({
+        ...replayEntry(context, 'status', 'Compaction cancelled', 'plain'),
+        compactionData: {
+          result: 'cancelled',
+          instruction: record.instruction,
+        },
+      });
+      return;
+    }
+
+    this.host.appendTranscriptEntry({
+      ...replayEntry(context, 'status', 'Compaction complete', 'plain'),
+      compactionData: {
+        tokensBefore: record.result.tokensBefore,
+        tokensAfter: record.result.tokensAfter,
+        instruction: record.instruction,
+      },
     });
   }
 

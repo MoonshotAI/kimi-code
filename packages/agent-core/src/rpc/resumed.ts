@@ -1,5 +1,6 @@
 import type { AgentType } from '#/agent';
 import type { BackgroundTaskInfo } from '#/agent/background';
+import type { CompactionResult } from '#/agent/compaction';
 import type { AgentConfigData, AgentConfigUpdateData } from '#/agent/config';
 import type { AgentContextData, ContextMessage } from '#/agent/context';
 import type { GoalChange, GoalSnapshot } from '#/agent/goal';
@@ -16,6 +17,7 @@ import type { SessionMeta } from '#/session';
 
 export type AgentReplayRecord =
   | { type: 'message'; message: ContextMessage }
+  | { type: 'compaction'; result?: CompactionResult | 'cancelled'; instruction?: string }
   | {
       type: 'goal_updated';
       snapshot: GoalSnapshot;

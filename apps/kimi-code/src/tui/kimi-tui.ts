@@ -1269,7 +1269,11 @@ export class KimiTUI {
     if (entry.compactionData !== undefined) {
       const data = entry.compactionData;
       const block = new CompactionComponent(this.state.ui, data.instruction);
-      block.markDone(data.tokensBefore, data.tokensAfter);
+      if (data.result === 'cancelled') {
+        block.markCanceled();
+      } else {
+        block.markDone(data.tokensBefore, data.tokensAfter);
+      }
       return block;
     }
 
