@@ -1,6 +1,5 @@
 /**
- * Centralised reporting for unexpected, non-actionable errors. Modelled after
- * VSCode `base/common/errors.ts onUnexpectedError`. The pattern: listener
+ * Centralised reporting for unexpected, non-actionable errors. The pattern: listener
  * callbacks (registered via `Emitter.event(...)`) may throw; the Emitter
  * routes those exceptions through `onUnexpectedError` rather than swallowing
  * them silently or letting them bubble through `fire()`.
