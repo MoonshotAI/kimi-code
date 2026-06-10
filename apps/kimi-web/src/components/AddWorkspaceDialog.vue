@@ -383,7 +383,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   color: var(--ink);
   outline: none;
 }
-.paste-input:focus { border-color: var(--blue); }
+
 .paste-add {
   flex: none;
   display: inline-flex;

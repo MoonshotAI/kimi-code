@@ -250,7 +250,7 @@ onUnmounted(() => {
   color: var(--ink);
   outline: none;
 }
-.search-input:focus { border-color: var(--blue); }
+
 
 /* Session list */
 .session-list {

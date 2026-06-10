@@ -464,7 +464,7 @@ function statusLabel(status: AppProvider['status']): string {
   color: var(--ink);
   outline: none;
 }
-.finput:focus { border-color: var(--blue); }
+
 .fselect { cursor: pointer; }
 .add-error {
   font-size: 11.5px;

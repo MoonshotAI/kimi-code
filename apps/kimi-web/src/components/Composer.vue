@@ -899,10 +899,7 @@ function selectModel(modelId: string): void {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.composer-card.focused {
-  border-color: var(--bd);
-  box-shadow: 0 2px 12px rgba(21,101,192,0.08), 0 0 0 1px rgba(21,101,192,0.05);
-}
+
 
 /* Queued strip */
 .queue-strip {
@@ -931,7 +928,7 @@ function selectModel(modelId: string): void {
   border-radius: 3px;
   padding: 2px 6px 2px 8px;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 14px;
   color: var(--text);
   max-width: 200px;
 }
@@ -946,7 +943,7 @@ function selectModel(modelId: string): void {
   padding: 0;
   margin: 0;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 14px;
   color: var(--text);
   cursor: pointer;
   max-width: 168px;
@@ -1081,7 +1078,7 @@ function selectModel(modelId: string): void {
   outline: none;
   resize: none;
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: 14px;
   background: transparent;
   min-height: 56px;
   max-height: 200px;
@@ -1100,7 +1097,7 @@ function selectModel(modelId: string): void {
   border-radius: 3px;
   color: var(--warn);
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: 14px;
   padding: 0 4px;
   cursor: pointer;
   height: 19px;
@@ -1186,7 +1183,7 @@ function selectModel(modelId: string): void {
   gap: 4px;
   padding: 2px 7px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--muted);
   cursor: pointer;
   user-select: none;
@@ -1213,7 +1210,7 @@ function selectModel(modelId: string): void {
   gap: 4px;
   padding: 2px 7px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--dim);
   cursor: pointer;
   user-select: none;
@@ -1261,7 +1258,7 @@ function selectModel(modelId: string): void {
 }
 
 .ctx-num {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--muted);
   font-family: var(--mono);
 }
@@ -1273,7 +1270,7 @@ function selectModel(modelId: string): void {
   gap: 3px;
   padding: 2px 7px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--dim);
   cursor: pointer;
   user-select: none;
@@ -1330,7 +1327,7 @@ function selectModel(modelId: string): void {
 
 .md-section {
   padding: 4px 7px 2px;
-  font-size: 11.5px;
+  font-size: 14px;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1346,7 +1343,7 @@ function selectModel(modelId: string): void {
   border: none;
   cursor: pointer;
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text);
   padding: 5px 7px;
   border-radius: 6px;
@@ -1444,13 +1441,13 @@ function selectModel(modelId: string): void {
 
 .pd-name {
   font-family: var(--sans);
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 500;
 }
 
 .pd-desc {
   font-family: var(--sans);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--muted);
   line-height: 1.4;
 }
@@ -1462,7 +1459,7 @@ function selectModel(modelId: string): void {
   gap: 4px;
   padding: 2px 7px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--dim);
   cursor: pointer;
   user-select: none;
@@ -1549,22 +1546,22 @@ function selectModel(modelId: string): void {
   }
   .model-pill,
   .attach-btn {
-    font-size: 13.5px;
+    font-size: 14px;
   }
   .model-pill b {
     max-width: 240px;
   }
   .md-row {
-    font-size: 13.5px;
+    font-size: 14px;
   }
   .md-section {
-    font-size: 12px;
+    font-size: 14px;
   }
   .pd-name {
     font-size: 14px;
   }
   .pd-desc {
-    font-size: 12.5px;
+    font-size: 14px;
   }
 }
 

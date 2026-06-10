@@ -233,7 +233,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   color: var(--ink);
   outline: none;
 }
-.finput:focus { border-color: var(--blue); }
+
 
 /* Recent cwds section */
 .recent-section {

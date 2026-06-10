@@ -344,7 +344,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   color: var(--text);
   background: #fff;
 }
-.feedback-ta:focus { border-color: var(--blue); }
+
 .feedback-hint { font-size: 10.5px; color: var(--faint); margin-top: 4px; }
 
 /* Actions row */

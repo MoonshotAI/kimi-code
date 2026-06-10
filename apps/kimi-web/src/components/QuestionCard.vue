@@ -345,7 +345,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   background: transparent;
   min-width: 0;
 }
-.other-input:focus { border-bottom-color: var(--blue); }
+
 
 /* Footer */
 .qfooter {

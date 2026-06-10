@@ -247,7 +247,7 @@ function flatIdx(m: AppModel): number {
   color: var(--ink);
   outline: none;
 }
-.search-input:focus { border-color: var(--blue); }
+
 
 /* Model list */
 .model-list {
