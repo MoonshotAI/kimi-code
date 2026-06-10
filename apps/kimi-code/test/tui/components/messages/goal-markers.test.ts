@@ -1,3 +1,4 @@
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it } from 'vitest';
 
 import { buildGoalMarker, GoalMarkerComponent } from '#/tui/components/messages/goal-markers';
@@ -45,6 +46,22 @@ describe('buildGoalMarker', () => {
     );
 
     expect(strip(marker!.render(80))).toBe('\n● Goal paused after runtime error: socket hang up');
+  });
+
+  it('keeps long provider pause markers within the terminal width', () => {
+    const reason =
+      'Paused after provider API error: 400 {"error":{"message":"request id: 456043b9-6491-11f1-9425-2221bb1af97c, \\"thinking.enabled\\" is not supported for this model. Use \\"thinking.adaptive\\" and \\"output_config.effort\\" to control thinking behavior.","type":"invalid_request_error"}}';
+    const marker = buildGoalMarker(
+      { kind: 'lifecycle', status: 'paused', reason } as GoalChange,
+      false,
+      'runtime',
+    );
+
+    const width = 80;
+    expect(strip(marker!.render(width))).toContain('Goal paused after provider API error');
+    for (const line of marker!.render(width)) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+    }
   });
 
   it('attributes model pause and resume markers to the agent', () => {
