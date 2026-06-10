@@ -274,11 +274,11 @@ html[data-theme="modern"] .send {
   align-self: flex-end;
 }
 html[data-theme="modern"] .send:hover { background: var(--blue2); }
-html[data-theme="modern"] .interrupt {
-  height: 30px;
-  border-radius: var(--r-sm);
-  font-family: var(--sans);
-  align-self: flex-end;
+html[data-theme="modern"] .send.aborting {
+  background: var(--err);
+}
+html[data-theme="modern"] .send.aborting:hover {
+  background: #b91c1c;
 }
 html[data-theme="modern"] .toolbar {
   background: var(--panel);
@@ -300,7 +300,6 @@ html[data-theme="modern"] .model-pill {
 html[data-theme="modern"] .toggle-pill {
   font-family: var(--sans);
   border-radius: var(--r-sm);
-  font-size: 10.5px;
 }
 html[data-theme="modern"] .toggle-pill.on {
   background: var(--soft);
@@ -487,7 +486,7 @@ html[data-theme="modern"] .md-row { font-family: var(--sans); }
 html[data-theme="modern"] .queue-item,
 html[data-theme="modern"] .queue-text { font-family: var(--sans); }
 html[data-theme="modern"] .compact-chip { border-radius: var(--r-xs); }
-html[data-theme="modern"] .interrupt:hover { background: color-mix(in srgb, var(--err) 6%, transparent); }
+html[data-theme="modern"] .send.aborting:hover { background: #b91c1c; }
 html[data-theme="modern"] .att-thumb { border-radius: 5px; }
 
 /* ---- Floating menus + status line ---- */

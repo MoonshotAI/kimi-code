@@ -469,7 +469,7 @@ function handleKeydown(e: KeyboardEvent): void {
 // Computed
 // ---------------------------------------------------------------------------
 
-const sendLabel = computed(() => props.running ? t('composer.queue') : t('composer.send'));
+const sendLabel = computed(() => props.running ? t('composer.interrupt') : t('composer.send'));
 const hasUpload = computed(() => !!props.uploadImage);
 
 // ---------------------------------------------------------------------------
@@ -610,7 +610,7 @@ function selectModel(modelId: string): void {
           :title="msg.attachmentCount > 0 ? t('composer.queuedHasImage', { n: msg.attachmentCount }) : t('composer.editQueued')"
           @click="msg.attachmentCount === 0 && editQueued(i, msg.text)"
         >
-          <svg v-if="msg.attachmentCount > 0" class="queue-img" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><circle cx="5.5" cy="6.5" r="1.2"/><path d="M2.5 12l3.5-3.5 2.5 2.5 3-3 2 2"/></svg>
+          <svg v-if="msg.attachmentCount > 0" class="queue-img" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><circle cx="5.5" cy="6.5" r="1.2"/><path d="M2.5 12l3.5-3.5 2.5 2.5 3-3 2 2"/></svg>
           <span class="queue-text-inner" :class="{ placeholder: !msg.text }">{{ msg.text || t('composer.queuedImageOnly', { n: msg.attachmentCount }) }}</span>
         </button>
         <button class="queue-rm" :title="t('composer.remove')" @click="emit('unqueue', i)">
@@ -682,12 +682,38 @@ function selectModel(modelId: string): void {
             @blur="isFocused = false"
           />
 
-          <!-- Interrupt button when running -->
-          <button v-if="running" class="interrupt" :title="t('composer.interruptTitle')" @click="emit('interrupt')">{{ t('composer.interrupt') }}</button>
-
-          <button class="send" :aria-label="sendLabel" @click="handleSubmit">
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M8 3l6 5.5M8 3L2 8.5M8 3v10"/>
+          <button
+            class="send"
+            :class="{ aborting: running }"
+            :aria-label="sendLabel"
+            :title="running ? t('composer.interruptTitle') : sendLabel"
+            @click="running ? emit('interrupt') : handleSubmit()"
+          >
+            <svg
+              class="send-icon"
+              :class="{ hidden: running }"
+              viewBox="0 0 16 16"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M8 3l6 5.5M8 3L2 8.5M8 3v10" />
+            </svg>
+            <svg
+              class="send-icon"
+              :class="{ hidden: !running }"
+              viewBox="0 0 16 16"
+              width="12"
+              height="12"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <rect x="3.5" y="3.5" width="9" height="9" rx="1.5" />
             </svg>
           </button>
         </div>
@@ -715,7 +741,7 @@ function selectModel(modelId: string): void {
             type="button"
             @click="openFilePicker"
           >
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="5.5" cy="6.5" r="1"/><polyline points="2,13 5.5,9 8,11.5 10.5,8.5 14,13"/></svg>
+            <svg class="attach-icon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="5.5" cy="6.5" r="1"/><polyline points="2,13 5.5,9 8,11.5 10.5,8.5 14,13"/></svg>
           </button>
 
           <!-- Permission pill — click to open dropdown -->
@@ -1085,22 +1111,6 @@ function selectModel(modelId: string): void {
 .compact-chip:hover { background: var(--panel2); }
 
 /* Interrupt button */
-.interrupt {
-  background: none;
-  color: var(--err);
-  border: 1px solid var(--err);
-  padding: 4px 10px;
-  font-family: var(--mono);
-  font-size: 11.5px;
-  cursor: pointer;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
-.interrupt:hover {
-  background: #fef2f2;
-}
-
 /* Send button — circular icon */
 .send {
   width: 30px;
@@ -1115,15 +1125,38 @@ function selectModel(modelId: string): void {
   justify-content: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 0.12s;
+  transition: background 0.25s ease, transform 0.12s ease;
+  position: relative;
 }
 
 .send:hover {
   background: var(--blue2);
 }
 
+.send:active {
+  transform: scale(0.92);
+}
+
 .send svg {
   flex: none;
+}
+
+.send-icon {
+  position: absolute;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.send-icon.hidden {
+  opacity: 0;
+  transform: scale(0.7);
+  pointer-events: none;
+}
+
+.send.aborting {
+  background: var(--err);
+}
+.send.aborting:hover {
+  background: #b91c1c;
 }
 
 /* Bottom toolbar */
@@ -1141,7 +1174,7 @@ function selectModel(modelId: string): void {
 .toolbar-right {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   min-width: 0;
   overflow: hidden;
 }
@@ -1150,11 +1183,12 @@ function selectModel(modelId: string): void {
 .attach-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   padding: 2px 7px;
   border-radius: 6px;
   font-size: 13px;
-  color: var(--dim);
+  color: var(--muted);
   cursor: pointer;
   user-select: none;
   transition: background 0.1s, color 0.15s;
@@ -1162,6 +1196,11 @@ function selectModel(modelId: string): void {
   background: none;
   border: none;
   flex-shrink: 0;
+  line-height: 1;
+}
+.attach-icon {
+  display: block;
+  flex: none;
 }
 
 .attach-btn:hover {
@@ -1475,10 +1514,9 @@ function selectModel(modelId: string): void {
     line-height: 1;
     color: #fff;
   }
-  .interrupt {
-    min-height: 36px;
-    padding: 8px 12px;
-    align-self: flex-end;
+  .send.aborting::after {
+    content: "■";
+    font-size: 14px;
   }
 
   /* Mobile toolbar: hide secondary controls; only attach + model stay visible.

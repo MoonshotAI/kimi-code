@@ -88,14 +88,15 @@ const emit = defineEmits<{
 // Per-turn copy button state (keyed by turn id)
 const copiedTurn = ref<string | null>(null);
 
-/** Assemble the full content of a turn for copying (thinking + text + tool output). */
+/** Assemble the full content of a turn for copying — follows the ordered
+    blocks so thinking/text/tool output copy in the order they happened. */
 function turnPlainText(turn: ChatTurn): string {
   const parts: string[] = [];
-  if (turn.thinking) parts.push(turn.thinking);
-  if (turn.text) parts.push(turn.text);
-  for (const tool of turn.tools ?? []) {
-    if (tool.output && tool.output.length > 0) {
-      parts.push(`[${tool.name}]\n${tool.output.join('\n')}`);
+  for (const blk of turnBlocks(turn)) {
+    if (blk.kind === 'thinking' && blk.thinking) parts.push(blk.thinking);
+    else if (blk.kind === 'text' && blk.text) parts.push(blk.text);
+    else if (blk.kind === 'tool' && blk.tool.output && blk.tool.output.length > 0) {
+      parts.push(`[${blk.tool.name}]\n${blk.tool.output.join('\n')}`);
     }
   }
   return parts.join('\n\n');
@@ -109,11 +110,12 @@ function copyTurn(turn: ChatTurn) {
 }
 
 // Ordered render blocks for an assistant turn. messagesToTurns supplies `blocks`
-// (text + tool cards in call order); fall back to deriving them from text+tools
-// for any turn built without blocks (e.g. unit tests).
+// (thinking + text + tool cards in call order); fall back to deriving them from
+// the aggregate fields for any turn built without blocks (e.g. unit tests).
 function turnBlocks(turn: ChatTurn): TurnBlock[] {
   if (turn.blocks) return turn.blocks;
   const blocks: TurnBlock[] = [];
+  if (turn.thinking) blocks.push({ kind: 'thinking', thinking: turn.thinking });
   if (turn.text) blocks.push({ kind: 'text', text: turn.text });
   for (const tool of turn.tools ?? []) blocks.push({ kind: 'tool', tool });
   return blocks;
@@ -155,11 +157,12 @@ function turnBlocks(turn: ChatTurn): TurnBlock[] {
         <Markdown :text="turn.text" />
       </div>
 
-      <!-- Assistant turn → left-aligned, no name/role label -->
+      <!-- Assistant turn → left-aligned, no name/role label. Thinking renders
+           inline in the block stream — a turn may carry several segments. -->
       <div v-else class="a-msg">
-        <ThinkingBlock v-if="turn.thinking" :text="turn.thinking" :mobile="childBubble" :streaming="turn.id === streamingTurnId" />
         <template v-for="(blk, bi) in turnBlocks(turn)" :key="bi">
-          <div v-if="blk.kind === 'text' && blk.text" class="msg"><Markdown :text="blk.text" :streaming="turn.id === streamingTurnId && bi === turnBlocks(turn).length - 1" /></div>
+          <ThinkingBlock v-if="blk.kind === 'thinking'" :text="blk.thinking" :mobile="childBubble" :streaming="turn.id === streamingTurnId && bi === turnBlocks(turn).length - 1" />
+          <div v-else-if="blk.kind === 'text' && blk.text" class="msg"><Markdown :text="blk.text" :streaming="turn.id === streamingTurnId && bi === turnBlocks(turn).length - 1" /></div>
           <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" :mobile="childBubble" />
         </template>
         <div class="a-msg-ft">
@@ -239,12 +242,11 @@ function turnBlocks(turn: ChatTurn): TurnBlock[] {
             </button>
           </div>
 
-          <!-- Thinking block (before the message text) -->
-          <ThinkingBlock v-if="turn.thinking" :text="turn.thinking" :streaming="turn.id === streamingTurnId" />
-
-          <!-- Message text + tool cards, interleaved in original call order -->
+          <!-- Thinking + message text + tool cards, interleaved in original
+               call order (a turn may carry several thinking segments) -->
           <template v-for="(blk, bi) in turnBlocks(turn)" :key="bi">
-            <Markdown v-if="blk.kind === 'text' && blk.text" :text="blk.text" :streaming="turn.id === streamingTurnId && bi === turnBlocks(turn).length - 1" />
+            <ThinkingBlock v-if="blk.kind === 'thinking'" :text="blk.thinking" :streaming="turn.id === streamingTurnId && bi === turnBlocks(turn).length - 1" />
+            <Markdown v-else-if="blk.kind === 'text' && blk.text" :text="blk.text" :streaming="turn.id === streamingTurnId && bi === turnBlocks(turn).length - 1" />
             <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" />
           </template>
         </div>

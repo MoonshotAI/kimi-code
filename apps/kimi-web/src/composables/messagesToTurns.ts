@@ -252,7 +252,14 @@ export function messagesToTurns(
           else g.blocks.push({ kind: 'text', text: c.text });
         }
       } else if (c.type === 'thinking') {
-        if (c.thinking) g.thinkingParts.push(c.thinking);
+        if (c.thinking) {
+          g.thinkingParts.push(c.thinking);
+          // Ordered block too: thinking renders WHERE it happened in the turn,
+          // merging consecutive segments (same rule as text blocks above).
+          const last = g.blocks[g.blocks.length - 1];
+          if (last && last.kind === 'thinking') last.thinking += '\n' + c.thinking;
+          else g.blocks.push({ kind: 'thinking', thinking: c.thinking });
+        }
       } else if (c.type === 'toolUse') {
         const pendingApproval = approvalByTool.get(c.toolCallId);
         const toolCall: ToolCall = {

@@ -4,8 +4,9 @@
      failures were silently swallowed. -->
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
+import { watch, onUnmounted } from 'vue';
 
-defineProps<{ warnings: string[] }>();
+const props = defineProps<{ warnings: string[] }>();
 const emit = defineEmits<{ dismiss: [index: number] }>();
 
 const { t } = useI18n();
@@ -13,6 +14,33 @@ const { t } = useI18n();
 function isError(w: string): boolean {
   return w.startsWith(`${t('warnings.errorLabel')}:`) || /\b4\d\d\b|error|失败|failed/i.test(w);
 }
+
+/** Auto-dismiss timers keyed by warning text. */
+const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearAllTimers(): void {
+  timers.forEach(clearTimeout);
+  timers.clear();
+}
+
+watch(
+  () => props.warnings,
+  () => {
+    props.warnings.forEach((w) => {
+      if (timers.has(w)) return;
+      const duration = isError(w) ? 10000 : 6000;
+      const timer = setTimeout(() => {
+        timers.delete(w);
+        const idx = props.warnings.indexOf(w);
+        if (idx !== -1) emit('dismiss', idx);
+      }, duration);
+      timers.set(w, timer);
+    });
+  },
+  { flush: 'post' },
+);
+
+onUnmounted(clearAllTimers);
 </script>
 
 <template>

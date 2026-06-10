@@ -59,9 +59,6 @@ interface SessionState {
 
   // Assistant message tracking
   currentAssistantMsgId: string | undefined;
-  thinkingStarted: boolean;
-  thinkingContentIndex: number;
-  textContentIndex: number;
 
   // Tool timing
   toolStartTimes: Map<string, number>;
@@ -85,9 +82,6 @@ function createSessionState(): SessionState {
     turnPromptId: new Map(),
     currentPromptId: undefined,
     currentAssistantMsgId: undefined,
-    thinkingStarted: false,
-    thinkingContentIndex: 0,
-    textContentIndex: 0,
     toolStartTimes: new Map(),
     totalInput: 0,
     totalOutput: 0,
@@ -129,32 +123,31 @@ function startAssistantMessage(state: SessionState, sessionId: string, promptId:
   return msg;
 }
 
-function appendAssistantText(state: SessionState, messageId: string, contentIndex: number, delta: string): void {
+/**
+ * Append a streamed text/thinking delta in stream order: continue the LAST
+ * content part when it has the same type, otherwise open a NEW part at the
+ * end. Returns the content index written (-1 if the message is unknown) so
+ * the emitted assistantDelta targets the same slot in the reducer.
+ *
+ * No per-type fixed slots: a step that goes think → text → think again gets
+ * three parts in call order instead of all thinking collapsing into one slot.
+ */
+function appendAssistantDelta(
+  state: SessionState,
+  messageId: string,
+  kind: 'text' | 'thinking',
+  delta: string,
+): number {
   const msg = state.messages.find((m) => m.id === messageId);
-  if (!msg) return;
-  while (msg.content.length <= contentIndex) {
-    msg.content.push({ type: 'text', text: '' });
+  if (!msg) return -1;
+  const last = msg.content[msg.content.length - 1];
+  if (last && last.type === kind) {
+    if (kind === 'text') (last as { type: 'text'; text: string }).text += delta;
+    else (last as { type: 'thinking'; thinking: string }).thinking += delta;
+    return msg.content.length - 1;
   }
-  const slot = msg.content[contentIndex]!;
-  if (slot.type === 'text') {
-    (slot as { type: 'text'; text: string }).text += delta;
-  } else {
-    msg.content[contentIndex] = { type: 'text', text: delta };
-  }
-}
-
-function appendAssistantThinking(state: SessionState, messageId: string, contentIndex: number, delta: string): void {
-  const msg = state.messages.find((m) => m.id === messageId);
-  if (!msg) return;
-  while (msg.content.length <= contentIndex) {
-    msg.content.push({ type: 'thinking', thinking: '' });
-  }
-  const slot = msg.content[contentIndex]!;
-  if (slot.type === 'thinking') {
-    (slot as { type: 'thinking'; thinking: string }).thinking += delta;
-  } else {
-    msg.content[contentIndex] = { type: 'thinking', thinking: delta };
-  }
+  msg.content.push(kind === 'text' ? { type: 'text', text: delta } : { type: 'thinking', thinking: delta });
+  return msg.content.length - 1;
 }
 
 function appendToolUse(
@@ -319,9 +312,6 @@ export function createAgentProjector(): AgentProjector {
         // Create a new pending assistant message
         const msg = startAssistantMessage(s, sessionId, promptId);
         s.currentAssistantMsgId = msg.id;
-        s.thinkingStarted = false;
-        s.thinkingContentIndex = 0;
-        s.textContentIndex = 0;
 
         out.push({ type: 'messageCreated', message: cloneMessage(msg) });
         break;
@@ -334,18 +324,13 @@ export function createAgentProjector(): AgentProjector {
         const delta: string = p?.delta ?? '';
         if (!delta) break;
 
-        if (!s.thinkingStarted) {
-          s.thinkingStarted = true;
-          s.thinkingContentIndex = 0;
-          s.textContentIndex = 1;
-        }
-
-        appendAssistantThinking(s, msgId, s.thinkingContentIndex, delta);
+        const thinkIdx = appendAssistantDelta(s, msgId, 'thinking', delta);
+        if (thinkIdx < 0) break;
         out.push({
           type: 'assistantDelta',
           sessionId,
           messageId: msgId,
-          contentIndex: s.thinkingContentIndex,
+          contentIndex: thinkIdx,
           delta: { thinking: delta },
         });
         break;
@@ -358,8 +343,8 @@ export function createAgentProjector(): AgentProjector {
         const delta: string = p?.delta ?? '';
         if (!delta) break;
 
-        const textIdx = s.textContentIndex;
-        appendAssistantText(s, msgId, textIdx, delta);
+        const textIdx = appendAssistantDelta(s, msgId, 'text', delta);
+        if (textIdx < 0) break;
         out.push({
           type: 'assistantDelta',
           sessionId,
@@ -441,9 +426,6 @@ export function createAgentProjector(): AgentProjector {
 
         // Reset assistant message tracking — next step.started will create a fresh one
         s.currentAssistantMsgId = undefined;
-        s.thinkingStarted = false;
-        s.thinkingContentIndex = 0;
-        s.textContentIndex = 0;
         break;
       }
 
@@ -524,9 +506,6 @@ export function createAgentProjector(): AgentProjector {
 
         // Clear per-turn state
         s.currentAssistantMsgId = undefined;
-        s.thinkingStarted = false;
-        s.thinkingContentIndex = 0;
-        s.textContentIndex = 0;
         s.currentPromptId = undefined;
         break;
       }
@@ -542,9 +521,6 @@ export function createAgentProjector(): AgentProjector {
       case 'turn.step.interrupted': {
         // Discard current assistant message; next step.started will create a new one
         s.currentAssistantMsgId = undefined;
-        s.thinkingStarted = false;
-        s.thinkingContentIndex = 0;
-        s.textContentIndex = 0;
         break;
       }
 
