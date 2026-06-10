@@ -144,20 +144,20 @@ function turnBlocks(turn: ChatTurn): TurnBlock[] {
 
       <!-- Assistant turn → left-aligned, no name/role label -->
       <div v-else class="a-msg">
-        <div class="a-msg-hd">
-          <button
-            class="a-cpbtn"
-            :title="t('filePreview.copy')"
-            @click="copyTurn(turn)"
-          >
-            {{ copiedTurn === turn.id ? '✓' : '⧉' }}
-          </button>
-        </div>
         <ThinkingBlock v-if="turn.thinking" :text="turn.thinking" :mobile="childBubble" :streaming="turn.id === streamingTurnId" />
         <template v-for="(blk, bi) in turnBlocks(turn)" :key="bi">
           <div v-if="blk.kind === 'text' && blk.text" class="msg"><Markdown :text="blk.text" :streaming="turn.id === streamingTurnId && bi === turnBlocks(turn).length - 1" /></div>
           <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" :mobile="childBubble" />
         </template>
+        <div class="a-msg-ft">
+          <button
+            class="a-cpbtn"
+            :title="t('filePreview.copy')"
+            @click="copyTurn(turn)"
+          >
+            {{ copiedTurn === turn.id ? '✓' : '⧉' }} {{ t('filePreview.copy') }}
+          </button>
+        </div>
       </div>
     </template>
 
@@ -380,24 +380,20 @@ function turnBlocks(turn: ChatTurn): TurnBlock[] {
   align-self: flex-start;
   max-width: 94%;
   width: 94%;
-  position: relative;
 }
-.a-msg-hd {
+.a-msg-ft {
   display: flex;
-  justify-content: flex-end;
-  opacity: 0;
-  transition: opacity 0.15s;
-  margin-bottom: 2px;
-}
-.a-msg:hover .a-msg-hd {
-  opacity: 1;
+  margin-top: 6px;
 }
 .a-cpbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: none;
   border: none;
   color: var(--faint);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   padding: 2px 6px;
   border-radius: 4px;
   line-height: 1;
