@@ -18,7 +18,12 @@ import type { AuthFlowController } from '../controllers/auth-flow';
 import type { BtwPanelController } from '../controllers/btw-panel';
 import type { StreamingUIController } from '../controllers/streaming-ui';
 import type { TasksBrowserController } from '../controllers/tasks-browser';
-import type { AppState, LoginProgressSpinnerHandle, QueuedMessage } from '../types';
+import type {
+  AppState,
+  LoginProgressSpinnerHandle,
+  QueuedMessage,
+  TranscriptEntry,
+} from '../types';
 import type { TUIState } from '../tui-state';
 
 import { handleLoginCommand, handleLogoutCommand } from './auth';
@@ -109,6 +114,7 @@ export interface SlashCommandHost {
   showError(msg: string): void;
   showStatus(msg: string, color?: ColorToken): void;
   showNotice(title: string, detail?: string): void;
+  appendTranscriptEntry(entry: TranscriptEntry): void;
   track(event: string, props?: Record<string, unknown>): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
