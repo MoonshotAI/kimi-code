@@ -63,26 +63,6 @@ export class GitControlPathAccessAskPermissionPolicy implements PermissionPolicy
   }
 }
 
-export class CwdOutsideFileWriteAskPermissionPolicy implements PermissionPolicy {
-  readonly name = 'cwd-outside-file-write-ask';
-
-  constructor(private readonly agent: Agent) {}
-
-  evaluate(context: PermissionPolicyContext): PermissionPolicyResult | undefined {
-    const cwd = this.agent.config.cwd;
-    if (cwd.length === 0) return;
-    const pathClass = this.agent.kaos.pathClass();
-    const access = writeFileAccesses(context).find((fileAccess) => {
-      return !isWithinDirectory(fileAccess.path, cwd, pathClass);
-    });
-    if (access === undefined) return;
-    return {
-      kind: 'ask',
-      reason: fileAccessReason(access, { cwd_outside: true }),
-    };
-  }
-}
-
 function fileAccesses(context: PermissionPolicyContext): ToolFileAccess[] {
   return (
     context.execution.accesses?.filter((access): access is ToolFileAccess => access.kind === 'file') ??
