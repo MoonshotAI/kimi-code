@@ -1,5 +1,15 @@
 # @moonshot-ai/kimi-code
 
+## 0.14.0
+
+### Minor Changes
+
+- [#607](https://github.com/MoonshotAI/kimi-code/pull/607) [`b253a82`](https://github.com/MoonshotAI/kimi-code/commit/b253a82a7a5f7d91883dc77a30b8b38f8b6e1470) - Add an `Interrupt` hook event that fires when the user interrupts a turn (e.g. pressing Esc), letting hooks observe the turn stopping instead of getting stuck on a working state.
+
+### Patch Changes
+
+- [#626](https://github.com/MoonshotAI/kimi-code/pull/626) [`856ec00`](https://github.com/MoonshotAI/kimi-code/commit/856ec002906f4964086915ceb9aa616b89ab6594) - Preserve image outputs from tools when using OpenAI-compatible chat completions.
+
 ## 0.13.1
 
 ### Patch Changes
