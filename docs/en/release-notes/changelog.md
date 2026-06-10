@@ -2,6 +2,16 @@
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.14.0 (2026-06-10)
+
+### Features
+
+- Add an `Interrupt` hook event that fires when the user interrupts a turn (e.g. pressing Esc), letting hooks observe the turn stopping instead of getting stuck on a working state.
+
+### Bug Fixes
+
+- Preserve image outputs from tools when using OpenAI-compatible chat completions.
+
 ## 0.13.1 (2026-06-10)
 
 ### Bug Fixes
