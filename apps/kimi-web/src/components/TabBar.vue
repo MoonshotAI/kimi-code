@@ -147,14 +147,13 @@ const tabs: { key: PaneKey; labelKey: string }[] = [
   font-size: 12.5px;
   color: var(--muted);
   border-right: none;
-  border-bottom: 2px solid transparent;
+  border-bottom: none;
 }
 .tabs.mobile .tb:hover { background: var(--bg); }
 .tabs.mobile .tb.on {
   background: var(--bg);
   color: var(--blue);
   font-weight: 600;
-  border-bottom-color: var(--blue);
 }
 /* Tasks → solid blue count pill (prototype .bdg). */
 .tabs.mobile .cnt {

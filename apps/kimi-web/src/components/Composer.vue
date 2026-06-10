@@ -804,7 +804,7 @@ function selectModel(modelId: string): void {
           </span>
         </div>
 
-        <!-- Model dropdown — current provider models + thinking + more -->
+        <!-- Model dropdown — current provider models + controls + more -->
         <div v-if="dropdownOpen && status" class="model-dropdown" role="menu" @click.stop>
           <!-- Current provider models -->
           <div v-if="providerModels.length > 0" class="md-section">{{ currentProvider }}</div>
@@ -832,6 +832,31 @@ function selectModel(modelId: string): void {
             <span class="md-check">{{ thinkingOn ? '✓' : '' }}</span>
             <span class="md-name">{{ t('status.thinkingLabel') }}</span>
           </button>
+
+          <!-- Plan toggle -->
+          <button
+            class="md-row md-row-toggle"
+            role="menuitem"
+            :class="{ 'is-on': planOn }"
+            @click="emit('togglePlan'); closeDropdown();"
+          >
+            <span class="md-check">{{ planOn ? '✓' : '' }}</span>
+            <span class="md-name">{{ t('status.planLabel') }}</span>
+          </button>
+
+          <div class="md-divider" />
+
+          <!-- Permission (read-only info) -->
+          <div class="md-section">{{ t('status.permissionLabel') }}</div>
+          <div class="md-row md-row-info">
+            <span class="md-name" :style="{ color: permInfo?.color }">{{ permLabel }}</span>
+          </div>
+
+          <!-- Context (read-only info) -->
+          <div class="md-divider" />
+          <div class="md-row md-row-info">
+            <span class="md-name">{{ kFmt(status.ctxUsed) }} / {{ kFmt(status.ctxMax) }}</span>
+          </div>
 
           <div class="md-divider" />
 
@@ -1310,6 +1335,14 @@ function selectModel(modelId: string): void {
   background: var(--soft);
 }
 
+.md-row-info {
+  cursor: default;
+  pointer-events: none;
+}
+.md-row-info .md-name {
+  font-weight: 500;
+}
+
 .md-check {
   width: 14px;
   flex: none;
@@ -1453,6 +1486,15 @@ function selectModel(modelId: string): void {
     min-height: 36px;
     padding: 8px 12px;
     align-self: flex-end;
+  }
+
+  /* Mobile toolbar: hide secondary controls; only attach + model stay visible.
+     Permission, plan, context, compact chip move into the model dropdown. */
+  .perm-pill,
+  .toggle-pill,
+  .ctx-group,
+  .compact-chip {
+    display: none;
   }
 
   /* Model dropdown on mobile → anchored right with padding */
