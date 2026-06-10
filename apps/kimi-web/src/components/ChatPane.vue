@@ -128,6 +128,17 @@ function turnBlocks(turn: ChatTurn): TurnBlock[] {
     <template v-for="turn in turns" :key="turn.id">
       <!-- User turn → right-aligned soft-blue bubble -->
       <div v-if="turn.role === 'user'" class="u-bub">
+        <!-- Image attachments -->
+        <div v-if="turn.images && turn.images.length > 0" class="u-imgs">
+          <img
+            v-for="(img, ii) in turn.images"
+            :key="ii"
+            class="u-img"
+            :src="img.url"
+            :alt="img.alt || ''"
+            loading="lazy"
+          />
+        </div>
         <Markdown :text="turn.text" />
       </div>
 
@@ -380,6 +391,19 @@ function turnBlocks(turn: ChatTurn): TurnBlock[] {
   border-radius: 5px;
   padding: 1px 5px;
   color: var(--blue2);
+}
+
+.u-imgs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.u-img {
+  max-width: 100%;
+  max-height: 200px;
+  border-radius: 8px;
+  object-fit: cover;
 }
 
 /* NOTE: Modern-theme chat/bubble styles live in src/style.css (global). Scoped

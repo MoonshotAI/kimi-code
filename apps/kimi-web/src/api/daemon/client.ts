@@ -2,7 +2,7 @@
 // DaemonKimiWebApi — implements KimiWebApi using the daemon REST + WS APIs.
 
 import type { KimiApiConfig } from '../config';
-import { buildWsUrl } from '../config';
+import { buildRestUrl, buildWsUrl } from '../config';
 import type {
   AppMessage,
   AppMessageRole,
@@ -832,6 +832,10 @@ export class DaemonKimiWebApi implements KimiWebApi {
       mediaType: data.media_type,
       size: data.size,
     };
+  }
+
+  getFileUrl(fileId: string): string {
+    return buildRestUrl(this.config.daemonHttpUrl, `/files/${encodeURIComponent(fileId)}`);
   }
 
   // -------------------------------------------------------------------------

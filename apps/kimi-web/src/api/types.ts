@@ -407,8 +407,9 @@ export interface KimiWebApi {
   deleteProvider(id: string): Promise<{ deleted: true }>;
   refreshProvider(id: string): Promise<AppProvider>;
 
-  // File upload
+  // File upload / download
   uploadFile(input: { file: Blob; name?: string }): Promise<{ id: string; name: string; mediaType: string; size: number }>;
+  getFileUrl(fileId: string): string;
 
   // Auth — REAL endpoints
   getAuth(): Promise<{

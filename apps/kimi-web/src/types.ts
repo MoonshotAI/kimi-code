@@ -118,6 +118,8 @@ export interface ChatTurn {
   blocks?: TurnBlock[];
   approval?: ApprovalBlock;
   approvalId?: string; // daemon approval id — present when approval needs a decision
+  /** Image attachments sent by the user (rendered above the text bubble). */
+  images?: { url: string; alt?: string }[];
 }
 
 export type TaskState = 'run' | 'done' | 'fail';

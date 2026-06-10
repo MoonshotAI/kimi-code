@@ -196,6 +196,7 @@ function isDisplayableUserMessage(msg: AppMessage): boolean {
 export function messagesToTurns(
   messages: AppMessage[],
   approvals: AppApprovalRequest[],
+  getFileUrl?: (fileId: string) => string,
 ): ChatTurn[] {
   const turns: ChatTurn[] = [];
   let no = 1;
@@ -286,6 +287,19 @@ export function messagesToTurns(
     }
   }
 
+  function resolveImageUrl(c: AppMessage['content'][number]): string | undefined {
+    if (c.type === 'image') {
+      const src = c.source;
+      if (src.kind === 'url') return src.url;
+      if (src.kind === 'base64') return `data:${src.mediaType};base64,${src.data}`;
+      if (src.kind === 'file' && getFileUrl) return getFileUrl(src.fileId);
+    }
+    if (c.type === 'file' && getFileUrl && c.mediaType.startsWith('image/')) {
+      return getFileUrl(c.fileId);
+    }
+    return undefined;
+  }
+
   for (const msg of messages) {
     if (msg.role === 'system') continue;
 
@@ -296,14 +310,18 @@ export function messagesToTurns(
       // assistant turn but aren't rendered as a user bubble.
       if (!isDisplayableUserMessage(msg)) continue;
       const textParts: string[] = [];
+      const images: { url: string; alt?: string }[] = [];
       for (const c of msg.content) {
         if (c.type === 'text') textParts.push(c.text);
+        const url = resolveImageUrl(c);
+        if (url) images.push({ url, alt: c.type === 'file' ? c.name : undefined });
       }
       turns.push({
         id: msg.id,
         role: 'user',
         no: no++,
         text: textParts.join('\n'),
+        images: images.length > 0 ? images : undefined,
       });
       continue;
     }
