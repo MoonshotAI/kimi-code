@@ -155,7 +155,14 @@ function turnBlocks(turn: ChatTurn): TurnBlock[] {
             :title="t('filePreview.copy')"
             @click="copyTurn(turn)"
           >
-            {{ copiedTurn === turn.id ? '✓' : '⧉' }} {{ t('filePreview.copy') }}
+            <svg v-if="copiedTurn !== turn.id" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="9" height="9" rx="1.5"/>
+              <path d="M6 1h7a1 1 0 0 1 1 1v7"/>
+            </svg>
+            <svg v-else viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="3,8 6.5,11.5 13,5"/>
+            </svg>
+            {{ t('filePreview.copy') }}
           </button>
         </div>
       </div>
@@ -209,7 +216,13 @@ function turnBlocks(turn: ChatTurn): TurnBlock[] {
 
             <!-- Per-message copy button (shown on hover) -->
             <button class="cpbtn" @click="copyTurn(turn)" :title="t('filePreview.copy')" tabindex="-1">
-              {{ copiedTurn === turn.id ? '✓' : '⧉' }}
+              <svg v-if="copiedTurn !== turn.id" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="9" height="9" rx="1.5"/>
+                <path d="M6 1h7a1 1 0 0 1 1 1v7"/>
+              </svg>
+              <svg v-else viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="3,8 6.5,11.5 13,5"/>
+              </svg>
             </button>
           </div>
 
@@ -401,6 +414,9 @@ function turnBlocks(turn: ChatTurn): TurnBlock[] {
 .a-cpbtn:hover {
   background: var(--soft);
   color: var(--ink);
+}
+.a-cpbtn svg {
+  flex: none;
 }
 .a-msg .msg {
   font-size: 14px;
