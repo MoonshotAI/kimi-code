@@ -116,7 +116,8 @@ describe('ModelSelectorComponent', () => {
         },
       },
       providers: {
-        anthropic: { type: 'anthropic', apiKey: 'sk-test' },
+        // The component only needs the wire type — not credentials.
+        anthropic: { type: 'anthropic' },
       },
       currentValue: 'fable',
       currentThinking: false,

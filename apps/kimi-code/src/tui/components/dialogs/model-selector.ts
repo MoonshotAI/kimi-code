@@ -56,12 +56,13 @@ export function createModelChoiceOptions(
 export interface ModelSelectorOptions {
   readonly models: Record<string, ModelAlias>;
   /**
-   * Provider configs keyed by provider id, used to resolve detected
+   * Provider wire types keyed by provider id, used to resolve detected
    * capabilities (e.g. claude-fable-5 → always-on thinking) for aliases that
-   * don't declare them. Omitted in pre-add flows where aliases carry
+   * don't declare them. Only `type` is read — callers can pass their full
+   * `ProviderConfig` map as-is. Omitted in pre-add flows where aliases carry
    * catalog-declared capability strings instead.
    */
-  readonly providers?: Record<string, ProviderConfig>;
+  readonly providers?: Record<string, Pick<ProviderConfig, 'type'>>;
   readonly currentValue: string;
   readonly selectedValue?: string;
   readonly currentThinking: boolean;
@@ -86,7 +87,7 @@ function createModelChoices(models: Record<string, ModelAlias>): readonly ModelC
 
 function thinkingAvailability(
   model: ModelAlias,
-  providers: Record<string, ProviderConfig> | undefined,
+  providers: Record<string, Pick<ProviderConfig, 'type'>> | undefined,
 ): ThinkingAvailability {
   const resolved = resolveAliasCapabilities(providers?.[model.provider]?.type, model);
   if (resolved.always_thinking) return 'always-on';

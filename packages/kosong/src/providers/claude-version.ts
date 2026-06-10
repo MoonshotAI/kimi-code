@@ -92,11 +92,15 @@ function parseClaudeFamilyVersion(model: string, requireClaudeMarker: boolean): 
  * the request builder mishandles. The parser covers vendor-prefixed and
  * suffixed ids ("us.anthropic.claude-fable-5-v1:0", bare "fable-5"); the
  * literal prefix covers version-less ids ("claude-fable-latest") the parser
- * has no version component to anchor on.
+ * has no version component to anchor on. The prefix is anchored at a
+ * separator so ids merely containing the substring ("claude-fabled-x")
+ * don't classify.
  */
 export function isFableModel(model: string): boolean {
+  const lower = model.toLowerCase();
   return (
-    model.toLowerCase().startsWith('claude-fable') ||
+    lower === 'claude-fable' ||
+    lower.startsWith('claude-fable-') ||
     parseClaudeAliasVersion(model)?.family === 'fable'
   );
 }

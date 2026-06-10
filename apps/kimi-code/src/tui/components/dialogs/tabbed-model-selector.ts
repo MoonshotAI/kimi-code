@@ -38,7 +38,7 @@ const ALL_TAB_LABEL = 'All';
 export interface TabbedModelSelectorOptions {
   readonly models: Record<string, ModelAlias>;
   /** Passed through to the inner selectors — see {@link ModelSelectorOptions}. */
-  readonly providers?: Record<string, ProviderConfig>;
+  readonly providers?: Record<string, Pick<ProviderConfig, 'type'>>;
   readonly currentValue: string;
   readonly selectedValue?: string;
   readonly currentThinking: boolean;

@@ -25,7 +25,9 @@ function makeHarnessWithModels(
       ...(entry.capabilities !== undefined ? { capabilities: entry.capabilities } : {}),
     };
   }
-  const getConfig = vi.fn(async () => ({ providers: {}, models }));
+  // Deliberately omits `providers`: a partial stub exercises the RPC-boundary
+  // fallback in listModelsFromHarness.
+  const getConfig = vi.fn(async () => ({ models }));
   return { harness: { getConfig } as unknown as KimiHarness, getConfig };
 }
 

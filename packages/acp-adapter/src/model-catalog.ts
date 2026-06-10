@@ -96,7 +96,10 @@ export async function listModelsFromHarness(
   try {
     const config = await harness.getConfig();
     models = config.models;
-    providers = config.providers;
+    // `KimiConfig` types `providers` as required (zod default), but getConfig
+    // crosses an RPC/stub boundary — a partial harness can omit it, and this
+    // dereference sits outside the try.
+    providers = config.providers ?? {};
   } catch {
     return [];
   }

@@ -18,6 +18,7 @@ import { GoogleGenAIChatProvider } from '#/providers/google-genai';
 import { KimiChatProvider } from '#/providers/kimi';
 import { OpenAILegacyChatProvider } from '#/providers/openai-legacy';
 import { OpenAIResponsesChatProvider } from '#/providers/openai-responses';
+import { createProvider, getProviderModelCapability, type ProviderConfig } from '#/providers/index';
 import { describe, expect, it } from 'vitest';
 describe('KimiChatProvider.getCapability', () => {
   function make(model: string): KimiChatProvider {
@@ -155,6 +156,11 @@ describe('AnthropicChatProvider.getCapability', () => {
     }
   });
 
+  it('ids merely containing the fable substring do not classify as Fable', () => {
+    // The isFableModel prefix branch is separator-anchored.
+    expect(make('claude-fabled-2').getCapability()).toEqual(UNKNOWN_CAPABILITY);
+  });
+
   it('no Anthropic model supports audio_in', () => {
     // Sanity: Anthropic has no audio-input models today. If one ships later
     // and this fails, update the table — but make it a conscious decision.
@@ -229,5 +235,49 @@ describe('OpenAIResponsesChatProvider.getCapability', () => {
   it('unknown Responses model → UNKNOWN_CAPABILITY', () => {
     const cap = make('gpt-mystery').getCapability();
     expect(cap).toEqual(UNKNOWN_CAPABILITY);
+  });
+});
+describe('getProviderModelCapability (pure lookup)', () => {
+  // Cross-check against the instance path: the pure lookup's switch in
+  // providers/index.ts and each ChatProvider class's getCapability are two
+  // copies of the same type→registry mapping. If a provider's getCapability
+  // implementation ever changes (e.g. kimi gains catalog knowledge), this
+  // fails instead of the two silently drifting apart.
+  const CASES: ReadonlyArray<{ config: ProviderConfig; models: readonly string[] }> = [
+    {
+      config: { type: 'anthropic', model: 'claude-fable-5', apiKey: 'test-key' },
+      models: ['claude-fable-5', 'claude-opus-4', 'claude-3-5-sonnet', 'claude-not-real'],
+    },
+    {
+      config: { type: 'openai', model: 'o3', apiKey: 'test-key' },
+      models: ['o3', 'gpt-4o', 'gpt-mystery'],
+    },
+    {
+      config: { type: 'openai_responses', model: 'o3-mini', apiKey: 'test-key' },
+      models: ['o3-mini', 'gpt-4.1', 'gpt-mystery'],
+    },
+    {
+      config: { type: 'google-genai', model: 'gemini-2.5-pro', apiKey: 'test-key' },
+      models: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-not-real'],
+    },
+    {
+      config: { type: 'vertexai', model: 'gemini-2.5-pro', apiKey: 'test-key' },
+      models: ['gemini-2.5-pro', 'gemini-not-real'],
+    },
+    {
+      config: { type: 'kimi', model: 'kimi-for-coding', apiKey: 'test-key' },
+      models: ['kimi-for-coding', 'kimi-thinking-preview'],
+    },
+  ];
+
+  it('agrees with ChatProvider.getCapability for every provider type', () => {
+    for (const { config, models } of CASES) {
+      const provider = createProvider(config);
+      for (const model of models) {
+        expect(getProviderModelCapability(config.type, model), `${config.type}/${model}`).toEqual(
+          provider.getCapability?.(model),
+        );
+      }
+    }
   });
 });
