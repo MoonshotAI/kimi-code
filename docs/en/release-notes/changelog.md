@@ -1,3 +1,7 @@
+---
+outline: 2
+---
+
 # Changelog
 
 This page documents the changes in each Kimi Code CLI release.
