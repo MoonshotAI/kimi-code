@@ -2,6 +2,31 @@
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.13.0 (2026-06-10)
+
+### Features
+
+- Add custom color themes. Define your own palette as a JSON file in `~/.kimi-code/themes/`, or generate one with the built-in `/custom-theme` skill command.
+- Add `/import-from-cc-codex` to import selected Claude Code and Codex instructions, Skills, and MCP settings.
+- Show available plugin updates in the marketplace.
+
+### Bug Fixes
+
+- Fix Windows builds and development launches that could fail when package binaries resolve to command shims.
+- Fix device login to keep the URL and code visible when the browser cannot be opened.
+
+### Polish
+
+- Clarify grouped subagent progress with active status breakdowns and elapsed time.
+- Truncate queued message display to a single line with ellipsis when it exceeds terminal width.
+
+## 0.12.1 (2026-06-09)
+
+### Bug Fixes
+
+- Allow obsolete experimental config entries to remain without blocking startup.
+- Pass through xhigh reasoning effort for OpenAI-compatible chat completions requests.
+
 ## 0.12.0 (2026-06-09)
 
 ### Features

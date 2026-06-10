@@ -2,6 +2,31 @@
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.13.0（2026-06-10）
+
+### 新功能
+
+- 新增自定义颜色主题。在 `~/.kimi-code/themes/` 中以 JSON 文件定义自己的调色板，或使用内置的 `/custom-theme` Skill 命令生成。
+- 新增 `/import-from-cc-codex` 命令，用于导入选定的 Claude Code 和 Codex 指令、Skills 以及 MCP 设置。
+- 在 marketplace 中显示可用的 plugin 更新。
+
+### 修复
+
+- 修复 Windows 构建和开发启动可能因 package binary 解析到命令 shim 而失败的问题。
+- 修复设备登录，在浏览器无法打开时保持 URL 和验证码可见。
+
+### 优化
+
+- 通过活跃状态细分和已用时间，更清晰地展示分组子 Agent 进度。
+- 当排队消息超过终端宽度时，将其截断为单行并显示省略号。
+
+## 0.12.1（2026-06-09）
+
+### 修复
+
+- 允许过时的实验性配置条目保留而不阻塞启动。
+- 为 OpenAI 兼容的 Chat Completions 请求透传 xhigh reasoning effort。
+
 ## 0.12.0（2026-06-09）
 
 ### 新功能
