@@ -48,7 +48,7 @@ function capabilityToStrings(capability: ModelCapability): string[] | undefined 
   if (capability.thinking) caps.push('thinking');
   // Spelled out alongside `thinking` so consumers checking for plain
   // 'thinking' membership keep working.
-  if (capability.always_thinking === true) caps.push('always_thinking');
+  if (capability.always_thinking) caps.push('always_thinking');
   if (capability.tool_use) caps.push('tool_use');
   return caps.length > 0 ? caps : undefined;
 }

@@ -113,10 +113,10 @@ describe('ModelSelectorComponent', () => {
           model: 'claude-fable-5',
           maxContextSize: 1_000_000,
           displayName: 'Claude Fable 5',
-        } as unknown as ModelAlias,
+        },
       },
       providers: {
-        anthropic: { type: 'anthropic', apiKey: 'sk-test' } as never,
+        anthropic: { type: 'anthropic', apiKey: 'sk-test' },
       },
       currentValue: 'fable',
       currentThinking: false,

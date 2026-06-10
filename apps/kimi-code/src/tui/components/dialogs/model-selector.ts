@@ -89,7 +89,7 @@ function thinkingAvailability(
   providers: Record<string, ProviderConfig> | undefined,
 ): ThinkingAvailability {
   const resolved = resolveAliasCapabilities(providers?.[model.provider]?.type, model);
-  if (resolved.always_thinking === true) return 'always-on';
+  if (resolved.always_thinking) return 'always-on';
   if (resolved.thinking || model.adaptiveThinking === true) return 'toggle';
   return 'unsupported';
 }

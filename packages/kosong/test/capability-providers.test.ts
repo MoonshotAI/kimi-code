@@ -139,13 +139,15 @@ describe('AnthropicChatProvider.getCapability', () => {
   });
 
   it('vendor-prefixed Fable ids detect always_thinking like the wire layer', () => {
-    // The capability row is driven by the same parser generate() uses to omit
-    // `thinking: disabled`, so every id that runs always-on also advertises it.
+    // The capability row is driven by the same isFableModel predicate
+    // generate() uses to omit `thinking: disabled`, so every id that runs
+    // always-on also advertises it.
     for (const id of [
       'anthropic.claude-fable-5-v1:0',
       'us.anthropic.claude-fable-5-20251101-v1:0',
       'openrouter/anthropic/claude-fable-5',
       'fable-5',
+      'claude-fable-latest', // version-less: covered by the prefix branch
     ]) {
       const cap = make(id).getCapability();
       expect(cap.always_thinking, id).toBe(true);

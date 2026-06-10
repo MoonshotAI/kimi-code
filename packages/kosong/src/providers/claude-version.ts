@@ -1,9 +1,10 @@
 /**
  * Claude model-id parsing shared by the anthropic provider (wire-level
  * behavior like omitting `thinking: disabled` on Fable) and the capability
- * registry (advertising `always_thinking`). Keeping a single parser means the
- * advertised capability and the request-building behavior cannot drift apart
- * across the naming variants vendors use for the same model.
+ * registry (advertising `always_thinking`). Keeping the parser and the
+ * model-family predicates in one module means the advertised capability and
+ * the request-building behavior cannot drift apart across the naming
+ * variants vendors use for the same model.
  */
 
 export type ClaudeFamily = 'opus' | 'sonnet' | 'haiku' | 'fable';
@@ -84,6 +85,18 @@ function parseClaudeFamilyVersion(model: string, requireClaudeMarker: boolean): 
   return null;
 }
 
+/**
+ * Single Fable predicate shared by the wire layer (omit `thinking: disabled`,
+ * allow xhigh effort) and the capability registry (advertise
+ * `always_thinking`) — both sides MUST agree, or the UI would offer states
+ * the request builder mishandles. The parser covers vendor-prefixed and
+ * suffixed ids ("us.anthropic.claude-fable-5-v1:0", bare "fable-5"); the
+ * literal prefix covers version-less ids ("claude-fable-latest") the parser
+ * has no version component to anchor on.
+ */
 export function isFableModel(model: string): boolean {
-  return parseClaudeAliasVersion(model)?.family === 'fable';
+  return (
+    model.toLowerCase().startsWith('claude-fable') ||
+    parseClaudeAliasVersion(model)?.family === 'fable'
+  );
 }

@@ -25,7 +25,7 @@ function makeHarnessWithModels(
       ...(entry.capabilities !== undefined ? { capabilities: entry.capabilities } : {}),
     };
   }
-  const getConfig = vi.fn(async () => ({ models }));
+  const getConfig = vi.fn(async () => ({ providers: {}, models }));
   return { harness: { getConfig } as unknown as KimiHarness, getConfig };
 }
 

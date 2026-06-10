@@ -102,14 +102,10 @@ const ANTHROPIC_THINKING_VISION_TOOL_CAPABILITY: ModelCapability = Object.freeze
   max_context_tokens: 0,
 });
 
+// Fable: same vision/tool set, but thinking cannot be turned off.
 const ANTHROPIC_ALWAYS_THINKING_VISION_TOOL_CAPABILITY: ModelCapability = Object.freeze({
-  image_in: true,
-  video_in: false,
-  audio_in: false,
-  thinking: true,
+  ...ANTHROPIC_THINKING_VISION_TOOL_CAPABILITY,
   always_thinking: true,
-  tool_use: true,
-  max_context_tokens: 0,
 });
 
 const GEMINI_MULTIMODAL_TOOL_CAPABILITY: ModelCapability = Object.freeze({
@@ -135,13 +131,8 @@ const GEMINI_THINKING_MULTIMODAL_TOOL_CAPABILITY: ModelCapability = Object.freez
 // is rejected with a 400. 2.5 Flash / Flash-Lite accept budget 0 and stay in
 // the toggleable group.
 const GEMINI_ALWAYS_THINKING_MULTIMODAL_TOOL_CAPABILITY: ModelCapability = Object.freeze({
-  image_in: true,
-  video_in: true,
-  audio_in: true,
-  thinking: true,
+  ...GEMINI_THINKING_MULTIMODAL_TOOL_CAPABILITY,
   always_thinking: true,
-  tool_use: true,
-  max_context_tokens: 0,
 });
 
 const OPENAI_LEGACY_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
@@ -180,12 +171,12 @@ const ANTHROPIC_CAPABILITY_CATALOG: readonly CapabilityCatalogEntry[] = [
     capability: ANTHROPIC_THINKING_VISION_TOOL_CAPABILITY,
   },
   {
-    // Any id the anthropic wire layer treats as Fable — vendor prefixes
-    // ("us.anthropic.claude-fable-5-v1:0"), suffixes, bare "fable-5" — via
-    // the same parser generate() uses to omit `thinking: disabled`, so the
-    // advertised capability and the wire behavior cannot drift. The literal
-    // prefix keeps matching ids the parser needs a version for.
-    matches: (name) => name.startsWith('claude-fable') || isFableModel(name),
+    // isFableModel is the same predicate the anthropic wire layer uses to
+    // omit `thinking: disabled`, so the advertised capability and the
+    // request-building behavior cannot drift — vendor-prefixed
+    // ("us.anthropic.claude-fable-5-v1:0"), bare ("fable-5"), and
+    // version-less ("claude-fable-latest") ids all classify identically.
+    matches: isFableModel,
     capability: ANTHROPIC_ALWAYS_THINKING_VISION_TOOL_CAPABILITY,
   },
 ];

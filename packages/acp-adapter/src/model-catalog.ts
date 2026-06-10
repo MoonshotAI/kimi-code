@@ -81,8 +81,7 @@ export async function listModelsFromHarness(
   try {
     const config = await harness.getConfig();
     models = config.models;
-    // Tolerate partial test stubs that omit `providers`.
-    providers = config.providers ?? {};
+    providers = config.providers;
   } catch {
     return [];
   }

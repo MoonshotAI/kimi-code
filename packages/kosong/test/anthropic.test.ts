@@ -1018,11 +1018,16 @@ describe('AnthropicChatProvider', () => {
       }
     });
 
-    it('claude-fable-5 with thinking off omits the thinking field entirely', async () => {
+    it.each([
+      'claude-fable-5',
+      // Version-less id: the shared isFableModel prefix branch must keep the
+      // wire layer aligned with the capability registry's always_thinking.
+      'claude-fable-latest',
+    ])('%s with thinking off omits the thinking field entirely', async (model) => {
       // Fable 400s on an explicit `disabled` thinking config (unlike Opus
       // 4.7/4.8); the provider must drop the field from the request while
       // still reporting `off` to callers.
-      const provider = createProvider('claude-fable-5').withThinking('off');
+      const provider = createProvider(model).withThinking('off');
       expect(provider.thinkingEffort).toBe('off');
 
       const body = await captureRequestBody(provider, '', [], thinkHistory);
