@@ -1,5 +1,11 @@
 # @moonshot-ai/kosong
 
+## 0.4.2
+
+### Patch Changes
+
+- [#610](https://github.com/MoonshotAI/kimi-code/pull/610) [`b747c6a`](https://github.com/MoonshotAI/kimi-code/commit/b747c6a9501e208250d09cf9a2810c885c6ce91b) - Add Claude Fable 5 support to the Anthropic provider.
+
 ## 0.4.1
 
 ### Patch Changes
