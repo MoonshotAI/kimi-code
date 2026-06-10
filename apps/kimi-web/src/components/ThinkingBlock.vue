@@ -49,8 +49,12 @@ watch(
     <!-- Foldable: content above, last-line teaser below; click to toggle -->
     <template v-if="foldable">
       <div class="tc-wrap" :class="{ 'is-collapsed': !open }" @click="toggle">
-        <pre v-show="open" ref="bodyEl" class="tc">{{ text }}</pre>
-        <span v-show="!open" class="prev">{{ text.split(/\n{2,}/).filter((p) => p.trim().length > 0).pop() ?? '' }}</span>
+        <div class="tc-anim">
+          <pre ref="bodyEl" class="tc">{{ text }}</pre>
+        </div>
+        <div class="prev-anim">
+          <span class="prev">{{ text.split(/\n{2,}/).filter((p) => p.trim().length > 0).pop() ?? '' }}</span>
+        </div>
       </div>
     </template>
     <!-- Non-foldable: always show full content -->
@@ -63,6 +67,25 @@ watch(
   margin: 6px 0 18px 0;
 }
 
+.tc-wrap {
+  display: grid;
+  grid-template-rows: 1fr 0fr;
+  transition: grid-template-rows 0.25s ease;
+  cursor: pointer;
+}
+.tc-wrap.is-collapsed {
+  grid-template-rows: 0fr 1fr;
+}
+.tc-anim,
+.prev-anim {
+  overflow: hidden;
+}
+
+/* Hover indicates clickability only when collapsed (prev is visible) */
+.tc-wrap.is-collapsed:hover .prev {
+  color: var(--text);
+}
+
 .prev {
   color: var(--faint);
   font-size: 14px;
@@ -70,25 +93,7 @@ watch(
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.tc-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-/* Collapsed: hide content, show last-line teaser */
-.tc-wrap.is-collapsed .tc {
-  display: none;
-}
-
-/* Hover indicates clickability only when collapsed (prev is visible) */
-.tc-wrap.is-collapsed {
-  cursor: pointer;
-}
-.tc-wrap.is-collapsed:hover .prev {
-  color: var(--text);
+  display: block;
 }
 
 .tc {
