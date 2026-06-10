@@ -375,6 +375,14 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   async forkSession(input: ForkSessionPayload): Promise<ResumeSessionResult> {
     const source = await this.sessionStore.get(input.sessionId);
     const active = this.sessions.get(source.id);
+    if (active?.hasActiveTurn === true) {
+      throw new KimiError(
+        ErrorCodes.SESSION_FORK_ACTIVE_TURN,
+        `Session "${source.id}" cannot be forked while a turn is running`,
+        { details: { sessionId: source.id } },
+      );
+    }
+
     if (active !== undefined) {
       await active.flushMetadata();
     }
