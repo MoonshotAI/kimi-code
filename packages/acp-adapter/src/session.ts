@@ -2,23 +2,28 @@ import {
   RequestError,
   type AgentSideConnection,
   type ClientCapabilities,
+  type AvailableCommand,
   type ContentBlock,
   type ModelId,
   type PromptResponse,
   type SessionModeId,
 } from '@agentclientprotocol/sdk';
-import { LocalKaos, runWithKaos, type Kaos } from '@moonshot-ai/kaos';
 import {
   ErrorCodes,
   log,
   type ApprovalRequest,
   type ApprovalResponse,
+  type BackgroundTaskInfo,
   type ContextMessage,
+  type Event,
   type KimiErrorPayload,
   type KimiHarness,
+  type McpServerInfo,
   type QuestionAnswers,
   type QuestionRequest,
   type Session,
+  type SessionStatus,
+  type SessionUsage,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import {
@@ -27,9 +32,12 @@ import {
   buildPermissionToolCallUpdate,
   permissionResponseToApprovalResponse,
 } from './approval';
+import {
+  ACP_BUILTIN_SLASH_COMMANDS,
+  type AcpBuiltinSlashCommandName,
+} from './builtin-commands';
 import { buildSessionConfigOptions } from './config-options';
 import { acpBlocksToPromptParts } from './convert';
-import { AcpKaos } from './kaos-acp';
 import {
   acpToolCallId,
   assistantDeltaToSessionUpdate,
@@ -47,6 +55,7 @@ import {
 } from './events-map';
 import { acpModeToToggles, DEFAULT_MODE_ID, isAcpModeId, type AcpModeId } from './modes';
 import { outcomeToQuestionAnswer, questionItemToPermissionOptions } from './question';
+import { detectSlashIntent } from './slash';
 
 /**
  * Telemetry sink threaded into {@link AcpSession} so reverse-RPC bridges
@@ -86,15 +95,6 @@ export class AcpSession {
   private currentTurnId: number | undefined = undefined;
 
   /**
-   * Lazily-built inner {@link Kaos} (a {@link LocalKaos}) that the
-   * per-prompt {@link AcpKaos} wraps. Cached on the session so we don't
-   * re-probe the environment on every prompt. Built lazily because the
-   * majority of sessions (those whose client does not advertise the FS
-   * capability) never need it.
-   */
-  private innerKaos: Kaos | undefined = undefined;
-
-  /**
    * The adapter-side authoritative current BASE model id (no
    * `,thinking` suffix) for the `configOptions` model picker (PLAN D11).
    * Updated by {@link setModel} after the SDK call lands. Phase 15
@@ -131,6 +131,27 @@ export class AcpSession {
    * new mode. Always one of the four PLAN D9 literals.
    */
   private currentModeIdInternal: AcpModeId = DEFAULT_MODE_ID;
+
+  /**
+   * Per-session `slash command name → skill name` map, seeded by
+   * {@link AcpServer.emitAvailableCommandsUpdate} from the same
+   * `listSkills()` snapshot that builds the client palette. Consulted
+   * by {@link prompt} to intercept `/skill:<name> ...` inputs and
+   * route them to {@link Session.activateSkill} instead of forwarding
+   * the raw slash text to {@link Session.prompt} — which is what made
+   * Zed fall back to model-driven Bash exploration of
+   * `~/.kimi-code/skills/` and incurred permission prompts. Defaults
+   * to an empty map so adapter-level unit tests (which never call
+   * `setSkillCommandMap`) behave as a no-op passthrough.
+   */
+  private skillCommandMap: ReadonlyMap<string, string> = new Map();
+
+  /**
+   * The most recent command palette advertised to the ACP client. Used by
+   * `/help` so the response matches the client's `available_commands_update`
+   * snapshot, including dynamically discovered skill commands.
+   */
+  private availableCommands: readonly AvailableCommand[] = [];
 
   constructor(
     readonly conn: AgentSideConnection,
@@ -247,6 +268,30 @@ export class AcpSession {
    */
   async cancel(): Promise<void> {
     await this.session.cancel();
+  }
+
+  /**
+   * Seed the per-session `slash command name → skill name` map used by
+   * {@link prompt} to intercept `/skill:<name> ...` inputs. Called by
+   * {@link AcpServer.emitAvailableCommandsUpdate} from the same
+   * `listSkills()` snapshot that builds the client palette, so the map
+   * stays in lockstep with what the client advertises.
+   */
+  setSkillCommandMap(map: ReadonlyMap<string, string>): void {
+    this.skillCommandMap = map;
+  }
+
+  /**
+   * Seed the advertised command palette and the skill-routing map from one
+   * resolver snapshot. This keeps `available_commands_update`, `/help`, and
+   * skill slash interception in lockstep.
+   */
+  setAvailableCommands(
+    commands: readonly AvailableCommand[],
+    skillCommandMap: ReadonlyMap<string, string>,
+  ): void {
+    this.availableCommands = commands.slice();
+    this.skillCommandMap = skillCommandMap;
   }
 
   /**
@@ -450,7 +495,7 @@ export class AcpSession {
    * batch — completion ordering is what tells the caller (`loadSession`)
    * that the response is safe to return.
    */
-  async replayHistory(agentId: string = 'main'): Promise<void> {
+  async replayHistory(agentId: string = MAIN_AGENT_ID): Promise<void> {
     const sessionId = this.id;
     const conn = this.conn;
     const resumeState = this.session.getResumeState?.();
@@ -659,60 +704,174 @@ export class AcpSession {
     const sessionId = this.id;
     const conn = this.conn;
 
-    // Decide whether to bridge file I/O through ACP for this prompt.
-    // We honor the client's advertised capability surface only —
-    // unsupported clients silently fall back to `LocalKaos`, which keeps
-    // the rest of the codebase unaware of Phase 6.
-    //
-    // `runWithKaos` (NOT `setCurrentKaos`) is the correct primitive:
-    // `enterWith` persists for the rest of the current async context
-    // with no proper restore semantics, so concurrent prompts on the
-    // same process would step on each other. `run(...)` scopes the
-    // binding to the callback's async subtree.
-    const acpKaos = await this.maybeBuildAcpKaos();
-    if (!acpKaos) {
-      return this.runPromptBody(parts, sessionId, conn);
+    // ACP clients send slash commands as plain text `ContentBlock`s in
+    // `session/prompt`. Intercept only commands the adapter can execute
+    // directly: skills route to `Session.activateSkill(...)`, ACP-owned
+    // built-ins route to local SDK queries, and unknown slash commands are
+    // reported locally instead of being forwarded to the model as text.
+    const intent = detectLeadingSlashIntent(blocks, this.skillCommandMap);
+    if (intent.kind === 'skill') {
+      this.emitTelemetry('acp_skill_activated', { skill_name: intent.skillName });
+      const skillName = intent.skillName;
+      const skillArgs = intent.args;
+      return this.runTurnBody(sessionId, conn, () =>
+        // `activateSkill` accepts `args?: string | undefined`; pass the
+        // empty string through verbatim — the SDK's
+        // `normalizeOptionalString` converts `''` to `undefined`, which
+        // is the canonical "no args" form for the skill renderer.
+        this.session.activateSkill(skillName, skillArgs.length > 0 ? skillArgs : undefined),
+      );
     }
-    return runWithKaos(acpKaos, () => this.runPromptBody(parts, sessionId, conn));
+    if (intent.kind === 'builtin') {
+      return this.runBuiltInCommand(intent.name, intent.args);
+    }
+    if (intent.kind === 'unknown') {
+      return this.runUnknownSlashCommand(intent.name);
+    }
+
+    return this.runTurnBody(sessionId, conn, () => this.session.prompt(parts));
+  }
+
+  private async runBuiltInCommand(
+    name: AcpBuiltinSlashCommandName,
+    args: string,
+  ): Promise<PromptResponse> {
+    try {
+      switch (name) {
+        case 'compact':
+          await this.runCompactCommand(args);
+          break;
+        case 'status':
+          await this.emitLocalCommandMessage(formatStatusReport(await this.session.getStatus()));
+          break;
+        case 'usage':
+          await this.emitLocalCommandMessage(
+            formatUsageReport(await this.session.getUsage(), await this.session.getStatus()),
+          );
+          break;
+        case 'mcp':
+          await this.emitLocalCommandMessage(formatMcpReport(await this.session.listMcpServers()));
+          break;
+        case 'tasks':
+          await this.emitLocalCommandMessage(
+            formatTasksReport(await this.session.listBackgroundTasks()),
+          );
+          break;
+        case 'help':
+          await this.emitLocalCommandMessage(formatHelpReport(this.availableCommands));
+          break;
+      }
+    } catch (error) {
+      await this.emitLocalCommandMessage(`/${name} failed: ${errorMessage(error)}`);
+    }
+    return { stopReason: 'end_turn' };
+  }
+
+  private async runUnknownSlashCommand(name: string): Promise<PromptResponse> {
+    await this.emitLocalCommandMessage(
+      `Unknown ACP command: /${name}. Use /help to see available commands.`,
+    );
+    return { stopReason: 'end_turn' };
+  }
+
+  private async emitLocalCommandMessage(text: string): Promise<void> {
+    await this.conn.sessionUpdate({
+      sessionId: this.id,
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text },
+      },
+    });
+  }
+
+  private async runCompactCommand(args: string): Promise<void> {
+    const instruction = args.trim() || undefined;
+    let started = false;
+    let settled = false;
+    let unsubscribe: (() => void) | undefined;
+    // The agent-core compaction worker emits events in this order on
+    // failure: `compaction.cancelled` (from `markCanceled`) followed by
+    // `error` (unless the failure happened while blocked-by-turn, in
+    // which case `compact()` itself rejects). We resolve on whichever
+    // terminal event arrives first and ignore the rest, so a follow-up
+    // `error` after a cancelled never causes a double-settle.
+    const completion = new Promise<CompactionOutcome>((resolve, reject) => {
+      const settle = (action: () => void): void => {
+        if (settled) return;
+        settled = true;
+        action();
+      };
+      unsubscribe = this.session.onEvent((event: Event) => {
+        if (event.agentId !== undefined && event.agentId !== MAIN_AGENT_ID) return;
+        if (event.type === 'compaction.started') {
+          started = true;
+          void this.emitLocalCommandMessage(
+            instruction === undefined
+              ? 'Compacting conversation context…'
+              : `Compacting conversation context with instruction: ${instruction}`,
+          );
+          return;
+        }
+        if (event.type === 'compaction.completed') {
+          settle(() => resolve({ kind: 'completed', result: event.result }));
+          return;
+        }
+        if (event.type === 'compaction.cancelled') {
+          settle(() => resolve({ kind: 'cancelled' }));
+          return;
+        }
+        if (event.type === 'compaction.blocked') {
+          void this.emitLocalCommandMessage('Compaction is blocked by the current turn; retry when the turn is idle.');
+          return;
+        }
+        // Surface any error event the worker emits, even if it lands
+        // before `compaction.started` — that path is currently empty
+        // (begin() throws synchronously and rejects compact()), but
+        // dropping pre-start errors would silently hang the prompt if
+        // the worker is ever restructured.
+        if (event.type === 'error') {
+          settle(() => reject(new Error(event.message)));
+        }
+      });
+    });
+    try {
+      await this.session.compact({ instruction });
+      if (!started && !settled) {
+        await this.emitLocalCommandMessage('Compaction was not started.');
+        return;
+      }
+      const outcome = await completion;
+      if (outcome.kind === 'completed') {
+        await this.emitLocalCommandMessage(formatCompactionCompleted(outcome.result));
+      } else {
+        await this.emitLocalCommandMessage('Compaction cancelled.');
+      }
+    } finally {
+      unsubscribe?.();
+    }
   }
 
   /**
-   * Build an {@link AcpKaos} for this prompt if (and only if) the
-   * client advertised any FS reverse-RPC capability. Returns
-   * `undefined` otherwise — the caller then runs the prompt body in
-   * whatever Kaos was active before (typically the process-wide
-   * `LocalKaos` set up at startup).
-   *
-   * The inner {@link LocalKaos} is built lazily on the first capable
-   * prompt and cached on the instance (`this.innerKaos`); subsequent
-   * prompts reuse it.
+   * Body of {@link prompt}, extracted so the event-listener invariants
+   * — single `onEvent` subscription, `settled` flag semantics,
+   * `currentTurnId` reset — live in one place and can be driven by
+   * either `Session.prompt(parts)` or `Session.activateSkill(name, args)`.
+   * Both entry points trigger the same downstream turn (skill
+   * activation internally calls `agent.turn.prompt(...)` after
+   * injecting the `<kimi-skill-loaded>` block — see
+   * `packages/agent-core/src/agent/skill/index.ts`), so the event
+   * subscription's `turn.started` / `turn.ended` semantics apply
+   * uniformly.
    */
-  private async maybeBuildAcpKaos(): Promise<AcpKaos | undefined> {
-    const fs = this.clientCapabilities?.fs;
-    if (!fs?.readTextFile && !fs?.writeTextFile) {
-      return undefined;
-    }
-    if (!this.innerKaos) {
-      this.innerKaos = await LocalKaos.create();
-    }
-    return new AcpKaos(this.conn, this.id, this.innerKaos);
-  }
-
-  /**
-   * The pre-Phase-6 body of {@link prompt}, extracted verbatim so that
-   * the new `runWithKaos` wrapper can apply uniformly to capable
-   * clients while non-capable clients hit the same code path with no
-   * wrapping. Splitting it out (rather than inlining the if/else twice)
-   * keeps the event-listener invariants — single `onEvent` subscription,
-   * `settled` flag semantics, `currentTurnId` reset — in one place.
-   */
-  private runPromptBody(
-    parts: ReturnType<typeof acpBlocksToPromptParts>,
+  private runTurnBody(
     sessionId: string,
     conn: AgentSideConnection,
+    kick: () => Promise<unknown>,
   ): Promise<PromptResponse> {
     return new Promise<PromptResponse>((resolve, reject) => {
       let settled = false;
+      const isFromMainAgent = (event: { agentId?: string }): boolean =>
+        event.agentId === undefined || event.agentId === MAIN_AGENT_ID;
       // Per-tool-call streaming args accumulator. Lives in the Promise
       // executor closure so each `prompt()` invocation gets its own
       // map and no state leaks across concurrent or sequential turns.
@@ -739,17 +898,56 @@ export class AcpSession {
       // each turn produces a distinct wire-level tool call that needs
       // its own CREATE.
       const startedToolCalls = new Set<string>();
+      const initialActiveTurnId = this.currentTurnId;
+      let hasReceivedOwnTurnStarted = false;
       const unsub = this.session.onEvent((event) => {
+        if (
+          event.type === 'turn.started' &&
+          isFromMainAgent(event) &&
+          (initialActiveTurnId === undefined || event.turnId !== initialActiveTurnId)
+        ) {
+          hasReceivedOwnTurnStarted = true;
+        }
         // Track the active turn so `handleApproval` (registered once at
         // construction, called via `setApprovalHandler`) can compose the
         // prefixed `${turnId}:${toolCallId}` wire id that matches the
         // tool card the client already rendered. This branch is purely
         // additive: it runs before the existing dispatch and never
         // returns, so the if-chain below behaves exactly as in Phase 4.
-        if ('turnId' in event && typeof event.turnId === 'number') {
+        // Subagent turn events carry their own `turnId`; filtering on
+        // `agentId` keeps `currentTurnId` aligned with the parent turn
+        // that the approval prompt actually belongs to.
+        if (
+          'turnId' in event &&
+          typeof event.turnId === 'number' &&
+          isFromMainAgent(event)
+        ) {
           this.currentTurnId = event.turnId;
         }
+        if (event.type === 'error') {
+          if (settled) return;
+          if (!isFromMainAgent(event)) return;
+          if (event.code !== ErrorCodes.TURN_AGENT_BUSY) return;
+          if (hasReceivedOwnTurnStarted) return;
+          settled = true;
+          argsByToolCall.clear();
+          startedToolCalls.clear();
+          this.currentTurnId = undefined;
+          unsub();
+          log.warn('acp: prompt rejected because another turn is active', {
+            sessionId,
+            details: event.details,
+          });
+          reject(
+            RequestError.invalidRequest(
+              { code: event.code, details: event.details },
+              event.message,
+            ),
+          );
+          return;
+        }
         if (event.type === 'assistant.delta') {
+          if (!isFromMainAgent(event)) return;
           // `sessionUpdate` is itself async (it serializes onto the
           // ndjson stream). The text deltas form a strictly ordered
           // single-producer/single-consumer pipeline, so each await
@@ -767,6 +965,7 @@ export class AcpSession {
           return;
         }
         if (event.type === 'thinking.delta') {
+          if (!isFromMainAgent(event)) return;
           conn
             .sessionUpdate(thinkingDeltaToSessionUpdate(sessionId, event))
             .catch((err) => {
@@ -778,6 +977,7 @@ export class AcpSession {
           return;
         }
         if (event.type === 'tool.call.started') {
+          if (!isFromMainAgent(event)) return;
           // Seed the accumulator with the **stringified initial args**.
           // The wire-level `tool_call_update` is REPLACE-content (not
           // append) so each subsequent delta emits the cumulative args
@@ -836,6 +1036,7 @@ export class AcpSession {
           return;
         }
         if (event.type === 'tool.call.delta') {
+          if (!isFromMainAgent(event)) return;
           // The agent-core emits these args-stream deltas BEFORE the
           // `tool.call.started` event (deltas come from the provider's
           // streaming phase; started is dispatched afterwards). If we
@@ -878,6 +1079,7 @@ export class AcpSession {
           return;
         }
         if (event.type === 'tool.progress') {
+          if (!isFromMainAgent(event)) return;
           const note = toolProgressToSessionUpdate(sessionId, event);
           if (note === null) return;
           conn.sessionUpdate(note).catch((err) => {
@@ -890,6 +1092,7 @@ export class AcpSession {
           return;
         }
         if (event.type === 'tool.result') {
+          if (!isFromMainAgent(event)) return;
           conn
             .sessionUpdate(toolResultToSessionUpdate(sessionId, event))
             .catch((err) => {
@@ -903,6 +1106,7 @@ export class AcpSession {
         }
         if (event.type === 'turn.ended') {
           if (settled) return;
+          if (!isFromMainAgent(event)) return;
           settled = true;
           if (event.reason === 'failed') {
             // Failures bubble up via the SDK `error` payload. Phase 11.1
@@ -938,7 +1142,7 @@ export class AcpSession {
         }
       });
 
-      this.session.prompt(parts).catch((err) => {
+      kick().catch((err) => {
         if (settled) return;
         settled = true;
         unsub();
@@ -1130,6 +1334,133 @@ export class AcpSession {
  * The kimi-cli Python reference performs the same mapping at
  * `kimi-cli/src/kimi_cli/acp/session.py:218-247`; this is the TS port.
  */
+type CompactionCompletedResult = Extract<Event, { type: 'compaction.completed' }>['result'];
+
+type CompactionOutcome =
+  | { readonly kind: 'completed'; readonly result: CompactionCompletedResult }
+  | { readonly kind: 'cancelled' };
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function formatHelpReport(commands: readonly AvailableCommand[]): string {
+  const visibleCommands: readonly AvailableCommand[] =
+    commands.length > 0 ? commands : ACP_BUILTIN_SLASH_COMMANDS;
+  return [
+    'Available ACP commands:',
+    ...visibleCommands.map((command) => {
+      const hint = command.input?.hint ? ` ${command.input.hint}` : '';
+      return `- /${command.name}${hint} — ${command.description}`;
+    }),
+  ].join('\n');
+}
+
+function formatStatusReport(status: SessionStatus): string {
+  const maxTokens = status.maxContextTokens > 0 ? status.maxContextTokens.toLocaleString('en-US') : 'unknown';
+  const usage = formatContextUsage(status.contextUsage);
+  return [
+    'Session status:',
+    `- Model: ${status.model ?? '(not set)'}`,
+    `- Thinking: ${status.thinkingLevel}`,
+    `- Permission: ${status.permission}`,
+    `- Plan mode: ${status.planMode ? 'on' : 'off'}`,
+    `- Context: ${status.contextTokens.toLocaleString('en-US')} / ${maxTokens}${usage}`,
+  ].join('\n');
+}
+
+function formatUsageReport(usage: SessionUsage, status: SessionStatus): string {
+  const lines = ['Session usage:'];
+  if (usage.total !== undefined) {
+    lines.push(`- Total: ${formatTokenUsage(usage.total)}`);
+  }
+  if (usage.currentTurn !== undefined) {
+    lines.push(`- Current turn: ${formatTokenUsage(usage.currentTurn)}`);
+  }
+  for (const [model, modelUsage] of Object.entries(usage.byModel ?? {})) {
+    lines.push(`- ${model}: ${formatTokenUsage(modelUsage)}`);
+  }
+  lines.push(
+    `- Context: ${status.contextTokens.toLocaleString('en-US')} / ${status.maxContextTokens.toLocaleString('en-US')}${formatContextUsage(status.contextUsage)}`,
+  );
+  return lines.join('\n');
+}
+
+function formatMcpReport(servers: readonly McpServerInfo[]): string {
+  if (servers.length === 0) return 'No MCP servers are configured for this session.';
+  return [
+    `MCP servers (${servers.length}):`,
+    ...servers.map((server) => {
+      const base = `- ${server.name}: ${server.status} (${server.transport}, ${server.toolCount} tools)`;
+      return server.error === undefined ? base : `${base}\n  Error: ${server.error}`;
+    }),
+  ].join('\n');
+}
+
+function formatTasksReport(tasks: readonly BackgroundTaskInfo[]): string {
+  if (tasks.length === 0) return 'No background tasks for this session.';
+  return [
+    `Background tasks (${tasks.length}):`,
+    ...tasks.map((task) => {
+      const parts = [`- ${task.taskId}: ${task.status}`, task.description];
+      if (task.kind === 'process') parts.push(`command=${task.command}`);
+      if (task.kind === 'agent' && task.subagentType !== undefined) parts.push(`subagent=${task.subagentType}`);
+      if (task.stopReason !== undefined) parts.push(`reason=${task.stopReason}`);
+      return parts.join(' · ');
+    }),
+  ].join('\n');
+}
+
+function formatCompactionCompleted(result: CompactionCompletedResult): string {
+  return [
+    'Compaction completed.',
+    `- Messages compacted: ${result.compactedCount.toLocaleString('en-US')}`,
+    `- Tokens before: ${result.tokensBefore.toLocaleString('en-US')}`,
+    `- Tokens after: ${result.tokensAfter.toLocaleString('en-US')}`,
+  ].join('\n');
+}
+
+function formatTokenUsage(usage: NonNullable<SessionUsage['total']>): string {
+  return [
+    `input ${usage.inputOther.toLocaleString('en-US')}`,
+    `output ${usage.output.toLocaleString('en-US')}`,
+    `cache read ${usage.inputCacheRead.toLocaleString('en-US')}`,
+    `cache creation ${usage.inputCacheCreation.toLocaleString('en-US')}`,
+  ].join(', ');
+}
+
+// agent-core emits `contextUsage` as a 0..1 fraction (`contextTokens /
+// maxContextTokens` — see agent-core/src/agent/index.ts:419-422). It can
+// briefly exceed 1.0 when a turn overflows the budget; we still surface
+// that as ">100%" rather than collapsing back into 0..1.
+function formatContextUsage(contextUsage: number): string {
+  if (!Number.isFinite(contextUsage) || contextUsage < 0) return '';
+  return ` (${(contextUsage * 100).toFixed(1)}%)`;
+}
+
+/**
+ * Inspect the leading `ContentBlock` of an ACP prompt for a
+ * `/skill:<name>` form. Only the first block is examined — when Zed
+ * (or any other ACP client) sends a slash command, it always lives in
+ * the first text block; multi-part prompts that interleave images or
+ * resources before text are typed by humans and do not start with a
+ * slash. Non-text leading blocks short-circuit to passthrough.
+ *
+ * The parsing/resolution itself is delegated to `./slash` —
+ * deliberately duplicated from the TUI's
+ * `apps/kimi-code/src/tui/commands/parse.ts` and `resolve.ts` to
+ * avoid an app→package import inversion. See `./slash`'s top-of-file
+ * comment for the sync target.
+ */
+function detectLeadingSlashIntent(
+  blocks: readonly ContentBlock[],
+  skillCommandMap: ReadonlyMap<string, string>,
+): ReturnType<typeof detectSlashIntent> {
+  const first = blocks[0];
+  if (!first || first.type !== 'text') return { kind: 'passthrough' };
+  return detectSlashIntent(first.text, skillCommandMap);
+}
+
 function mapPromptError(err: unknown, sessionId: string): RequestError {
   const authErr = authRequiredFromUnknown(err);
   if (authErr) {
@@ -1205,6 +1536,14 @@ function authRequiredFromUnknown(err: unknown): RequestError | undefined {
  */
 const THINKING_ON_LEVEL = 'high';
 const THINKING_OFF_LEVEL = 'off';
+
+/**
+ * Identifier the agent-core session emits for the main (user-facing)
+ * agent. Subagents are issued generated ids by `Session.spawnAgent`;
+ * filtering on this constant keeps `turn.ended` / `error` events from a
+ * child agent from settling the parent's `session/prompt` promise.
+ */
+const MAIN_AGENT_ID = 'main';
 
 /**
  * Parse a tool call's `arguments` field (kosong wire format: a JSON

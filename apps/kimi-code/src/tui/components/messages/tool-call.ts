@@ -6,38 +6,47 @@
 import { isAbsolute, relative, sep } from 'node:path';
 
 import { Container, Text, Spacer, visibleWidth } from '@earendil-works/pi-tui';
-import type { Component, MarkdownTheme, TUI } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
-
+import type { Component, TUI } from '@earendil-works/pi-tui';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
-import { COMMAND_PREVIEW_LINES } from '#/tui/constant/rendering';
+import {
+  COMMAND_PREVIEW_LINES,
+  RESULT_PREVIEW_LINES,
+  THINKING_PREVIEW_LINES,
+} from '#/tui/constant/rendering';
 import {
   STREAMING_ARGS_FIELD_RE,
   STREAMING_ARGS_PREVIEW_MAX_CHARS,
 } from '#/tui/constant/streaming';
-import { STATUS_BULLET } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { FAILURE_MARK, STATUS_BULLET, SUCCESS_MARK } from '#/tui/constant/symbols';
+import { currentTheme } from '#/tui/theme';
+import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
 
+import { agentSwarmResultSummaryFromOutput } from './agent-swarm-progress';
 import { PlanBoxComponent } from './plan-box';
 import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
-import { pickResultRenderer } from './tool-renderers/registry';
+import { buildGoalToolHeader } from './tool-renderers/goal';
+import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
+import { TruncatedOutputComponent } from './tool-renderers/truncated';
 
 const MAX_ARG_LENGTH = 60;
 const MAX_SUB_TOOL_CALLS_SHOWN = 4;
 const MAX_SINGLE_SUBAGENT_TOOL_ROWS = 4;
+// Hanging indent for a sub-tool's previewed output, nested under its activity row.
+const SUBAGENT_SUBTOOL_OUTPUT_INDENT = 6;
 const APPROVED_PLAN_MARKER = '## Approved Plan:';
 const STREAMING_PROGRESS_INTERVAL_MS = 1000;
 const SUBAGENT_ELAPSED_INTERVAL_MS = 1000;
 const PROGRESS_URL_RE = /https?:\/\/\S+/g;
+const ABORTED_MARK = '⊘';
 
 type SubagentTextKind = 'thinking' | 'text';
-
+type SubagentPhase = 'queued' | 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded';
 
 interface FinishedSubCall {
   readonly name: string;
@@ -57,6 +66,7 @@ interface SubToolActivity {
   name: string;
   args: Record<string, unknown>;
   phase: 'ongoing' | 'done' | 'failed';
+  output?: string;
   readonly orderSeq: number;
 }
 
@@ -75,8 +85,9 @@ export interface ToolCallSubagentSnapshot {
   readonly toolName: string;
   readonly toolCallDescription: string;
   readonly agentName: string | undefined;
-  readonly phase: 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded' | undefined;
+  readonly phase: SubagentPhase | undefined;
   readonly toolCount: number;
+  readonly elapsedSeconds: number | undefined;
   readonly tokens: number;
   readonly isError: boolean;
   readonly errorText: string | undefined;
@@ -451,6 +462,10 @@ class PrefixedWrappedLine implements Component {
     private readonly firstPrefix: string,
     private readonly continuationPrefix: string,
     private readonly text: string,
+    // When set, only the last N wrapped display rows are kept, so a long
+    // unwrapped paragraph scrolls within a fixed window instead of growing
+    // unbounded. The first kept row still gets `firstPrefix`.
+    private readonly tailLines?: number,
   ) { }
 
   invalidate(): void { }
@@ -461,7 +476,11 @@ class PrefixedWrappedLine implements Component {
       visibleWidth(this.continuationPrefix),
     );
     const contentWidth = Math.max(1, width - prefixWidth);
-    const lines = new Text(this.text, 0, 0).render(contentWidth);
+    const wrapped = new Text(this.text, 0, 0).render(contentWidth);
+    const lines =
+      this.tailLines !== undefined && wrapped.length > this.tailLines
+        ? wrapped.slice(wrapped.length - this.tailLines)
+        : wrapped;
     return lines.map((line, index) =>
       index === 0 ? `${this.firstPrefix}${line}` : `${this.continuationPrefix}${line}`,
     );
@@ -470,12 +489,10 @@ class PrefixedWrappedLine implements Component {
 
 export class ToolCallComponent extends Container {
   private expanded = false;
-  private planExpanded = false;
   private toolCall: ToolCallBlockData;
+  private readonly markdownTheme = createMarkdownTheme();
   private result: ToolResultBlockData | undefined;
-  private colors: ColorPalette;
   private ui: TUI | undefined;
-  private markdownTheme: MarkdownTheme | undefined;
   private planPath: string | undefined;
   /**
    * Fallback plan body used when the LLM uses plan-file mode and
@@ -508,8 +525,8 @@ export class ToolCallComponent extends Container {
    */
   private subagentText = '';
   private subagentThinkingText = '';
-  // ── Subagent lifecycle state from subagent.spawned/completed/failed ──
-  private subagentPhase: 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded' | undefined;
+  // ── Subagent lifecycle state from subagent.spawned/started/completed/failed ──
+  private subagentPhase: SubagentPhase | undefined;
   /**
    * Authoritative terminal phase for a backgrounded subagent. Set from
    * `BackgroundTaskInfo.status` via `setBackgroundTaskTerminalStatus` once
@@ -554,17 +571,13 @@ export class ToolCallComponent extends Container {
   constructor(
     toolCall: ToolCallBlockData,
     result: ToolResultBlockData | undefined,
-    colors: ColorPalette,
     ui?: TUI,
-    markdownTheme?: MarkdownTheme,
     private readonly workspaceDir?: string,
   ) {
     super();
     this.toolCall = toolCall;
     this.result = result;
-    this.colors = colors;
     this.ui = ui;
-    this.markdownTheme = markdownTheme;
     this.applySubagentReplay(toolCall.subagent);
 
     this.addChild(new Spacer(1));
@@ -579,6 +592,12 @@ export class ToolCallComponent extends Container {
     this.syncSubagentElapsedTimer();
   }
 
+  override invalidate(): void {
+    this.headerText.setText(this.buildHeader());
+    this.rebuildBody();
+    super.invalidate();
+  }
+
   setExpanded(expanded: boolean): void {
     if (this.expanded === expanded) return;
     this.expanded = expanded;
@@ -588,17 +607,6 @@ export class ToolCallComponent extends Container {
     // children and would leave the call preview stuck at its initial
     // collapsed size.
     this.rebuildBody();
-  }
-
-  // Toggle the plan box's expanded state independently from tool-output
-  // expansion. Returns true iff this card actually owns a plan preview
-  // (ExitPlanMode), so the caller can decide whether to consume the keystroke.
-  setPlanExpanded(expanded: boolean): boolean {
-    if (this.toolCall.name !== 'ExitPlanMode') return false;
-    if (this.planExpanded === expanded) return true;
-    this.planExpanded = expanded;
-    this.rebuildBody();
-    return true;
   }
 
   setResult(result: ToolResultBlockData): void {
@@ -698,6 +706,7 @@ export class ToolCallComponent extends Container {
         call.name,
         call.args,
         call.result.is_error === true ? 'failed' : 'done',
+        call.result.output,
       );
     }
     while (this.finishedSubCalls.length > MAX_SUB_TOOL_CALLS_SHOWN) {
@@ -769,6 +778,7 @@ export class ToolCallComponent extends Container {
       agentName: this.subagentAgentName,
       phase: derivedPhase,
       toolCount: finished,
+      elapsedSeconds: this.getSubagentElapsedSeconds(),
       tokens,
       isError: derivedPhase === 'failed',
       errorText,
@@ -818,12 +828,14 @@ export class ToolCallComponent extends Container {
     name: string,
     args: Record<string, unknown>,
     phase: SubToolActivity['phase'],
+    output?: string,
   ): void {
     const existing = this.subToolActivities.get(id);
     if (existing !== undefined) {
       existing.name = name;
       existing.args = args;
       existing.phase = phase;
+      if (output !== undefined) existing.output = output;
       return;
     }
     this.subToolActivities.set(id, {
@@ -831,6 +843,7 @@ export class ToolCallComponent extends Container {
       name,
       args,
       phase,
+      ...(output !== undefined ? { output } : {}),
       orderSeq: ++this.subToolOrderSeq,
     });
   }
@@ -874,7 +887,7 @@ export class ToolCallComponent extends Container {
     const shouldTick =
       this.isSingleSubagentView() &&
       this.subagentStartedAtMs !== undefined &&
-      (phase === 'spawning' || phase === 'running');
+      (phase === 'queued' || phase === 'spawning' || phase === 'running');
     if (!shouldTick) {
       this.stopSubagentElapsedTimer();
       return;
@@ -882,12 +895,13 @@ export class ToolCallComponent extends Container {
     if (this.ui === undefined || this.subagentElapsedTimer !== undefined) return;
     this.subagentElapsedTimer = setInterval(() => {
       const latestPhase = this.getDerivedSubagentPhase();
-      if (latestPhase !== 'spawning' && latestPhase !== 'running') {
+      if (latestPhase !== 'queued' && latestPhase !== 'spawning' && latestPhase !== 'running') {
         this.stopSubagentElapsedTimer();
         return;
       }
       this.headerText.setText(this.buildHeader());
       this.invalidate();
+      this.notifySnapshotChange();
       this.ui?.requestRender();
     }, SUBAGENT_ELAPSED_INTERVAL_MS);
   }
@@ -909,10 +923,10 @@ export class ToolCallComponent extends Container {
   }
 
   /**
-   * Handles SDK `subagent.spawned`. The child agent is registered, but internal
-   * activity events (`assistant.delta` or `tool.call.started`) may not have
-   * arrived yet, so the UI moves to the 'spawning' placeholder state unless the
-   * agent is running in the background.
+   * Handles SDK `subagent.spawned`. The child agent is registered with the
+   * parent call, but its prompt may still be queued behind other subagents.
+   * `subagent.started` moves it to 'running' when the child turn actually
+   * begins.
    */
   onSubagentSpawned(meta: {
     agentId: string;
@@ -921,9 +935,30 @@ export class ToolCallComponent extends Container {
   }): void {
     this.subagentAgentId = meta.agentId;
     this.subagentAgentName = meta.agentName;
-    this.subagentPhase = meta.runInBackground ? 'backgrounded' : 'spawning';
+    this.subagentPhase = meta.runInBackground ? 'backgrounded' : 'queued';
     this.subagentStartedAtMs = Date.now();
     this.subagentEndedAtMs = undefined;
+    this.syncSubagentElapsedTimer();
+    this.headerText.setText(this.buildHeader());
+    this.rebuildContent();
+    this.notifySnapshotChange();
+    this.ui?.requestRender();
+  }
+
+  /** Handles SDK `subagent.started` once a queued child turn begins. */
+  onSubagentStarted(meta: {
+    agentId: string;
+    agentName?: string | undefined;
+    runInBackground: boolean;
+  }): void {
+    this.subagentAgentId = meta.agentId;
+    this.subagentAgentName = meta.agentName;
+    if (
+      !meta.runInBackground &&
+      (this.subagentPhase === undefined || this.subagentPhase === 'queued')
+    ) {
+      this.subagentPhase = 'running';
+    }
     this.syncSubagentElapsedTimer();
     this.headerText.setText(this.buildHeader());
     this.rebuildContent();
@@ -1078,7 +1113,11 @@ export class ToolCallComponent extends Container {
       this.subagentText += text;
     }
     // Child-agent activity means it is running unless already terminal/backgrounded.
-    if (this.subagentPhase === undefined || this.subagentPhase === 'spawning') {
+    if (
+      this.subagentPhase === undefined ||
+      this.subagentPhase === 'queued' ||
+      this.subagentPhase === 'spawning'
+    ) {
       this.subagentPhase = 'running';
     }
     this.headerText.setText(this.buildHeader());
@@ -1097,7 +1136,11 @@ export class ToolCallComponent extends Container {
         : {}),
     });
     this.upsertSubToolActivity(call.id, call.name, call.args, 'ongoing');
-    if (this.subagentPhase === undefined || this.subagentPhase === 'spawning') {
+    if (
+      this.subagentPhase === undefined ||
+      this.subagentPhase === 'queued' ||
+      this.subagentPhase === 'spawning'
+    ) {
       this.subagentPhase = 'running';
     }
     this.headerText.setText(this.buildHeader());
@@ -1123,6 +1166,13 @@ export class ToolCallComponent extends Container {
       streamingArguments: nextArgsText,
     });
     this.upsertSubToolActivity(delta.id, delta.name ?? existing?.name ?? 'Tool', parsed, 'ongoing');
+    if (
+      this.subagentPhase === undefined ||
+      this.subagentPhase === 'queued' ||
+      this.subagentPhase === 'spawning'
+    ) {
+      this.subagentPhase = 'running';
+    }
     this.headerText.setText(this.buildHeader());
     this.rebuildContent();
     this.notifySnapshotChange();
@@ -1148,6 +1198,7 @@ export class ToolCallComponent extends Container {
       ongoing.name,
       ongoing.args,
       result.is_error === true ? 'failed' : 'done',
+      result.output,
     );
     while (this.finishedSubCalls.length > MAX_SUB_TOOL_CALLS_SHOWN) {
       this.finishedSubCalls.shift();
@@ -1160,24 +1211,24 @@ export class ToolCallComponent extends Container {
   }
 
   private buildHeader(): string {
-    const { toolCall, result, colors } = this;
+    const { toolCall, result } = this;
     const isFinished = result !== undefined;
     const isError = result?.is_error ?? false;
     const isTruncated = toolCall.truncated === true && !isFinished;
 
     let bullet: string;
     if (isFinished) {
-      bullet = isError ? chalk.hex(colors.error)('✗ ') : chalk.hex(colors.success)(STATUS_BULLET);
+      bullet = isError ? currentTheme.fg('error', '✗ ') : currentTheme.fg('success', STATUS_BULLET);
     } else if (isTruncated) {
-      bullet = chalk.hex(colors.error)('✗ ');
+      bullet = currentTheme.fg('error', '✗ ');
     } else {
       // Solid bullet for in-flight tools — the previous marker ↔ blank
       // toggle caused visible flicker on every re-render.
-      bullet = chalk.hex(colors.roleAssistant)(STATUS_BULLET);
+      bullet = currentTheme.fg('text', STATUS_BULLET);
     }
 
     if (toolCall.name === 'ExitPlanMode') {
-      const label = chalk.hex(colors.primary).bold('Current plan');
+      const label = currentTheme.boldFg('primary', 'Current plan');
       if (!isFinished || result === undefined || result.is_error === true) {
         return label;
       }
@@ -1187,7 +1238,7 @@ export class ToolCallComponent extends Container {
           outcome.chosen !== undefined && outcome.chosen.length > 0
             ? `Approved: ${outcome.chosen}`
             : 'Approved';
-        return `${label}${chalk.hex(colors.success)(` · ${chipText}`)}`;
+        return `${label}${currentTheme.fg('success', ` · ${chipText}`)}`;
       }
       return label;
     }
@@ -1203,9 +1254,17 @@ export class ToolCallComponent extends Container {
         : isBackgroundAsk
           ? 'Starting background question'
           : 'Waiting for your input';
-      const tone = isError ? chalk.hex(colors.error) : chalk.hex(colors.primary);
-      return `${bullet}${tone.bold(label)}`;
+      const tone = isError ? 'error' : 'primary';
+      return `${bullet}${currentTheme.boldFg(tone, label)}`;
     }
+
+    const goalHeader = buildGoalToolHeader({
+      toolCall,
+      result,
+      bullet,
+      chip: isFinished && result !== undefined ? this.buildHeaderChip(result) : '',
+    });
+    if (goalHeader !== undefined) return goalHeader;
 
     if (this.isSingleSubagentView()) {
       return this.buildSingleSubagentHeader();
@@ -1215,13 +1274,13 @@ export class ToolCallComponent extends Container {
     const keyArg = extractKeyArgument(toolCall.name, toolCall.args, this.workspaceDir);
     const decoded = decodeMcpToolName(toolCall.name);
     const verbStyled = isTruncated
-      ? chalk.hex(colors.error)(verb)
+      ? currentTheme.fg('error', verb)
       : verb;
     const toolLabel =
       decoded !== null
-        ? `${chalk.hex(colors.primary).bold(decoded.toolName)}${chalk.dim(` · MCP/${decoded.serverName}`)}`
-        : chalk.hex(colors.primary).bold(toolCall.name);
-    const argStr = keyArg ? chalk.dim(` (${keyArg})`) : '';
+        ? `${currentTheme.boldFg('primary', decoded.toolName)}${currentTheme.dim(` · MCP/${decoded.serverName}`)}`
+        : currentTheme.boldFg('primary', toolCall.name);
+    const argStr = keyArg ? currentTheme.dim(` (${keyArg})`) : '';
     let chipStr = '';
     if (isFinished && result) chipStr = this.buildHeaderChip(result);
     return `${bullet}${verbStyled} ${toolLabel}${argStr}${chipStr}`;
@@ -1232,8 +1291,8 @@ export class ToolCallComponent extends Container {
     if (provider === undefined) return '';
     const text = provider(this.toolCall, result);
     if (text.length === 0) return '';
-    const tone = result.is_error ? chalk.hex(this.colors.error) : chalk.dim;
-    return tone(` · ${text}`);
+    if (result.is_error) return currentTheme.fg('error', ` · ${text}`);
+    return currentTheme.dim(` · ${text}`);
   }
 
   private rebuildContent(): void {
@@ -1277,10 +1336,10 @@ export class ToolCallComponent extends Container {
       PROGRESS_URL_RE.lastIndex = 0;
       const styled = PROGRESS_URL_RE.test(raw)
         ? raw.replace(PROGRESS_URL_RE, (url) => {
-          const visible = chalk.hex(this.colors.warning).underline(url);
+          const visible = currentTheme.underlineFg('warning', url);
           return `\u001B]8;;${url}\u001B\\${visible}\u001B]8;;\u001B\\`;
         })
-        : chalk.dim(raw);
+        : currentTheme.dim(raw);
       PROGRESS_URL_RE.lastIndex = 0;
       this.addChild(new Text(styled, 2, 0));
     }
@@ -1303,19 +1362,18 @@ export class ToolCallComponent extends Container {
       return;
     }
 
-    const dim = chalk.dim;
     const phaseChip = this.formatPhaseChip();
     const headerLabel =
       this.subagentAgentName !== undefined
         ? `subagent ${this.subagentAgentName} (${this.formatAgentId()})`
         : `subagent (${this.formatAgentId()})`;
-    this.addChild(new Text(`  ${dim(`↳ ${headerLabel}`)}${phaseChip}`, 0, 0));
+    this.addChild(new Text(`  ${currentTheme.dim(`↳ ${headerLabel}`)}${phaseChip}`, 0, 0));
 
     if (this.hiddenSubCallCount > 0) {
       const suffix = this.hiddenSubCallCount > 1 ? 's' : '';
       this.addChild(
         new Text(
-          dim.italic(`    ${String(this.hiddenSubCallCount)} more tool call${suffix} ...`),
+          currentTheme.italic(currentTheme.dim(`    ${String(this.hiddenSubCallCount)} more tool call${suffix} ...`)),
           0,
           0,
         ),
@@ -1324,26 +1382,26 @@ export class ToolCallComponent extends Container {
 
     for (const sub of this.finishedSubCalls) {
       const mark = sub.isError
-        ? chalk.hex(this.colors.error)('✗')
-        : chalk.hex(this.colors.success)('•');
+        ? currentTheme.fg('error', '✗')
+        : currentTheme.fg('success', '•');
       const keyArg = extractKeyArgument(sub.name, sub.args, this.workspaceDir);
-      const nameCol = chalk.hex(this.colors.primary)(sub.name);
-      const argCol = keyArg ? dim(` (${keyArg})`) : '';
+      const nameCol = currentTheme.fg('primary', sub.name);
+      const argCol = keyArg ? currentTheme.dim(` (${keyArg})`) : '';
       this.addChild(new Text(`    ${mark} Used ${nameCol}${argCol}`, 0, 0));
     }
 
     for (const [id, call] of this.ongoingSubCalls) {
       const keyArg = extractKeyArgument(call.name, call.args, this.workspaceDir);
-      const nameCol = chalk.hex(this.colors.primary)(call.name);
-      const argCol = keyArg ? dim(` (${keyArg})`) : '';
+      const nameCol = currentTheme.fg('primary', call.name);
+      const argCol = keyArg ? currentTheme.dim(` (${keyArg})`) : '';
       void id;
-      this.addChild(new Text(`    ${dim('…')} Using ${nameCol}${argCol}`, 0, 0));
+      this.addChild(new Text(`    ${currentTheme.dim('…')} Using ${nameCol}${argCol}`, 0, 0));
     }
 
     if (this.subagentText.length > 0) {
       const tailLines = this.subagentText.split('\n').slice(-3);
       for (const line of tailLines) {
-        this.addChild(new Text(`    ${dim(line)}`, 0, 0));
+        this.addChild(new Text(`    ${currentTheme.dim(line)}`, 0, 0));
       }
     }
 
@@ -1351,7 +1409,7 @@ export class ToolCallComponent extends Container {
     if (this.subagentPhase === 'done' && this.subagentResultSummary !== undefined) {
       const summaryLines = this.subagentResultSummary.split('\n').slice(0, 2);
       for (const line of summaryLines) {
-        this.addChild(new Text(`    ${dim('└')} ${line}`, 0, 0));
+        this.addChild(new Text(`    ${currentTheme.dim('└')} ${line}`, 0, 0));
       }
     }
 
@@ -1359,13 +1417,14 @@ export class ToolCallComponent extends Container {
     if (this.subagentPhase === 'failed' && this.subagentError !== undefined) {
       const errLines = this.subagentError.split('\n');
       for (const line of errLines) {
-        this.addChild(new Text(`    ${chalk.hex(this.colors.error)('└')} ${line}`, 0, 0));
+        this.addChild(new Text(`    ${currentTheme.fg('error', '└')} ${line}`, 0, 0));
       }
     }
   }
 
   /**
    * Header phase/token chip. No chip is shown when phase is undefined.
+   *   queued        -> queued
    *   spawning      -> starting
    *   running       -> running
    *   done          -> N tools, 8.4k tok
@@ -1374,9 +1433,11 @@ export class ToolCallComponent extends Container {
    */
   private formatPhaseChip(): string {
     if (this.subagentPhase === undefined) return '';
-    const dim = chalk.dim;
     const parts: string[] = [];
     switch (this.subagentPhase) {
+      case 'queued':
+        parts.push('○ queued');
+        break;
       case 'spawning':
         parts.push('↻ starting…');
         break;
@@ -1384,7 +1445,7 @@ export class ToolCallComponent extends Container {
         parts.push('↻ running');
         break;
       case 'done': {
-        parts.push(chalk.hex(this.colors.success)('✓ done'));
+        parts.push(currentTheme.fg('success', '✓ done'));
         const toolCount = this.finishedSubCalls.length + this.hiddenSubCallCount;
         if (toolCount > 0) parts.push(`${String(toolCount)} tool${toolCount > 1 ? 's' : ''}`);
         const tokens =
@@ -1394,13 +1455,13 @@ export class ToolCallComponent extends Container {
         break;
       }
       case 'failed':
-        parts.push(chalk.hex(this.colors.error)('✗ failed'));
+        parts.push(currentTheme.fg('error', '✗ failed'));
         break;
       case 'backgrounded':
         parts.push('◐ backgrounded');
         break;
     }
-    return parts.length > 0 ? dim(` · ${parts.join(' · ')}`) : '';
+    return parts.length > 0 ? currentTheme.dim(` · ${parts.join(' · ')}`) : '';
   }
 
   private formatAgentId(): string {
@@ -1425,13 +1486,7 @@ export class ToolCallComponent extends Container {
     return this.toolCall.name === 'Agent' && this.hasSubagentState();
   }
 
-  private getDerivedSubagentPhase():
-    | 'spawning'
-    | 'running'
-    | 'done'
-    | 'failed'
-    | 'backgrounded'
-    | undefined {
+  private getDerivedSubagentPhase(): SubagentPhase | undefined {
     if (this.backgroundTaskTerminalPhase !== undefined) {
       return this.backgroundTaskTerminalPhase;
     }
@@ -1444,40 +1499,39 @@ export class ToolCallComponent extends Container {
     const isFailed = phase === 'failed';
     const isDone = phase === 'done';
     const bullet = isFailed
-      ? chalk.hex(this.colors.error)('✗ ')
+      ? currentTheme.fg('error', '✗ ')
       : isDone
-        ? chalk.hex(this.colors.success)(STATUS_BULLET)
-        : chalk.hex(this.colors.roleAssistant)(STATUS_BULLET);
+        ? currentTheme.fg('success', STATUS_BULLET)
+        : currentTheme.fg('text', STATUS_BULLET);
     const labelText = formatSubagentLabel(this.subagentAgentName);
-    const label = chalk.hex(this.colors.primary).bold(labelText);
+    const label = currentTheme.boldFg('primary', labelText);
     const status = this.formatSingleSubagentStatus(phase);
     const description = str(this.toolCall.args['description']);
     const descriptionPlain = description.length > 0 ? ` (${description})` : '';
-    const descriptionText = descriptionPlain.length > 0 ? chalk.dim(descriptionPlain) : '';
+    const descriptionText = descriptionPlain.length > 0 ? currentTheme.dim(descriptionPlain) : '';
     const statsText = this.formatSingleSubagentStatsText();
     if (isDone) {
-      const success = chalk.hex(this.colors.success);
-      return `${bullet}${success.bold(labelText)} ${success(`Completed${descriptionPlain}${statsText}`)}`;
+      return `${bullet}${currentTheme.boldFg('success', labelText)} ${currentTheme.fg('success', `Completed${descriptionPlain}${statsText}`)}`;
     }
-    const stats = chalk.dim(statsText);
+    const stats = currentTheme.dim(statsText);
     return `${bullet}${label} ${status}${descriptionText}${stats}`;
   }
 
-  private formatSingleSubagentStatus(
-    phase: 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded' | undefined,
-  ): string {
+  private formatSingleSubagentStatus(phase: SubagentPhase | undefined): string {
     switch (phase) {
       case 'done':
-        return chalk.hex(this.colors.success)('Completed');
+        return currentTheme.fg('success', 'Completed');
       case 'failed':
-        return chalk.hex(this.colors.error)('Failed');
+        return currentTheme.fg('error', 'Failed');
       case 'running':
-        return chalk.hex(this.colors.primary)('Running');
+        return currentTheme.fg('primary', 'Running');
       case 'backgrounded':
         return 'Backgrounded';
+      case 'queued':
+        return currentTheme.fg('primary', 'Queued');
       case 'spawning':
       case undefined:
-        return chalk.hex(this.colors.primary)('Starting');
+        return currentTheme.fg('primary', 'Starting');
     }
   }
 
@@ -1507,12 +1561,13 @@ export class ToolCallComponent extends Container {
     for (const activity of this.getRecentSubToolActivities()) {
       const mark =
         activity.phase === 'failed'
-          ? chalk.hex(this.colors.error)('✗')
+          ? currentTheme.fg('error', '✗')
           : activity.phase === 'done'
-            ? chalk.hex(this.colors.success)('•')
-            : chalk.hex(this.colors.text)('•');
+            ? currentTheme.fg('success', '•')
+            : currentTheme.fg('text', '•');
       const verb = activity.phase === 'ongoing' ? 'Using' : 'Used';
       this.addChild(new Text(`  ${mark} ${this.formatSubToolActivity(verb, activity)}`, 0, 0));
+      this.addSubToolOutputPreview(activity);
     }
 
     if (this.getDerivedSubagentPhase() === 'failed' && this.subagentError !== undefined) {
@@ -1520,9 +1575,9 @@ export class ToolCallComponent extends Container {
       if (errorLine !== undefined) {
         this.addChild(
           new PrefixedWrappedLine(
-            `  ${chalk.hex(this.colors.error)('└')} `,
+            `  ${currentTheme.fg('error', '└')} `,
             '    ',
-            chalk.hex(this.colors.error)(errorLine),
+            currentTheme.fg('error', errorLine),
           ),
         );
       }
@@ -1530,21 +1585,51 @@ export class ToolCallComponent extends Container {
     }
 
     const outputLine = tailNonEmptyLines(this.subagentText, 1).at(-1);
-    const thinkingLine = tailNonEmptyLines(this.subagentThinkingText, 1).at(-1);
-    if (this.getDerivedSubagentPhase() !== 'done' && thinkingLine !== undefined) {
+    if (
+      this.getDerivedSubagentPhase() !== 'done' &&
+      this.subagentThinkingText.trim().length > 0
+    ) {
+      // Scroll thinking within a fixed two-row window (width-aware), matching
+      // the main agent's live thinking instead of growing without bound.
       this.addChild(
-        new PrefixedWrappedLine(`  ${chalk.dim('◌')} `, '    ', chalk.dim(thinkingLine)),
+        new PrefixedWrappedLine(
+          `  ${currentTheme.dim('◌')} `,
+          '    ',
+          currentTheme.dim(this.subagentThinkingText.trimEnd()),
+          THINKING_PREVIEW_LINES,
+        ),
       );
     }
     if (outputLine !== undefined) {
       this.addChild(
         new PrefixedWrappedLine(
-          `  ${chalk.hex(this.colors.text)('└')} `,
+          `  ${currentTheme.fg('text', '└')} `,
           '    ',
-          chalk.hex(this.colors.text)(outputLine),
+          currentTheme.fg('text', outputLine),
         ),
       );
     }
+  }
+
+  private addSubToolOutputPreview(activity: SubToolActivity): void {
+    if (activity.phase === 'ongoing') return;
+    const output = activity.output;
+    if (output === undefined || output.trim().length === 0) return;
+    // Mirror the main agent: Bash and any tool without a dedicated renderer
+    // (every MCP tool included) get a truncated output preview. Recognized
+    // tools keep their compact activity row only.
+    if (activity.name !== 'Bash' && !isGenericToolResult(activity.name)) return;
+    this.addChild(
+      new TruncatedOutputComponent(output, {
+        // Subagent output is always fixed-truncated; it does not take part in
+        // the ctrl+o expand toggle, so don't advertise it either.
+        expanded: false,
+        expandHint: false,
+        isError: activity.phase === 'failed',
+        maxLines: RESULT_PREVIEW_LINES,
+        indent: SUBAGENT_SUBTOOL_OUTPUT_INDENT,
+      }),
+    );
   }
 
   private getRecentSubToolActivities(): SubToolActivity[] {
@@ -1555,8 +1640,8 @@ export class ToolCallComponent extends Container {
 
   private formatSubToolActivity(verb: string, activity: SubToolActivity): string {
     const keyArg = extractKeyArgument(activity.name, activity.args, this.workspaceDir);
-    const nameCol = chalk.hex(this.colors.primary)(activity.name);
-    const argCol = keyArg ? chalk.dim(` (${keyArg})`) : '';
+    const nameCol = currentTheme.fg('primary', activity.name);
+    const argCol = keyArg ? currentTheme.dim(` (${keyArg})`) : '';
     return `${verb} ${nameCol}${argCol}`;
   }
 
@@ -1569,7 +1654,7 @@ export class ToolCallComponent extends Container {
     if (this.result === undefined && this.toolCall.truncated === true) {
       this.addChild(
         new Text(
-          chalk.dim('Tool call arguments truncated by max_tokens — call never executed.'),
+          currentTheme.dim('Tool call arguments truncated by max_tokens — call never executed.'),
           2,
           0,
         ),
@@ -1595,13 +1680,13 @@ export class ToolCallComponent extends Container {
       const shown = writeShouldCap ? allLines.slice(0, COMMAND_PREVIEW_LINES) : allLines;
       const remaining = allLines.length - shown.length;
       for (const [i, line] of shown.entries()) {
-        const lineNum = chalk.dim(String(i + 1).padStart(4) + '  ');
+        const lineNum = currentTheme.dim(String(i + 1).padStart(4) + '  ');
         this.addChild(new Text(lineNum + line, 2, 0));
       }
       if (writeShouldCap && remaining > 0) {
         this.addChild(
           new Text(
-            chalk.dim(
+            currentTheme.dim(
               `... (${String(remaining)} more lines, ${String(allLines.length)} total, ctrl+o to expand)`,
             ),
             2,
@@ -1614,7 +1699,7 @@ export class ToolCallComponent extends Container {
       const newStr = str(this.toolCall.args['new_string']);
       if (oldStr.length === 0 && newStr.length === 0) return;
       const filePath = str(this.toolCall.args['file_path'] ?? this.toolCall.args['path']);
-      const lines = renderDiffLinesClustered(oldStr, newStr, filePath, this.colors, {
+      const lines = renderDiffLinesClustered(oldStr, newStr, filePath, {
         contextLines: 3,
         ...(shouldCap ? { maxLines: COMMAND_PREVIEW_LINES } : {}),
       });
@@ -1656,7 +1741,7 @@ export class ToolCallComponent extends Container {
           allLines.length > maxLines
             ? allLines.length - maxLines + i
             : i;
-        const lineNum = chalk.dim(String(originalLineNumber + 1).padStart(4) + '  ');
+        const lineNum = currentTheme.dim(String(originalLineNumber + 1).padStart(4) + '  ');
         this.addChild(new Text(lineNum + line, 2, 0));
       }
       return;
@@ -1674,7 +1759,7 @@ export class ToolCallComponent extends Container {
       const progress = `Preparing changes${target}... ${formatByteSize(bytes)} · ${formatElapsed(
         elapsedSeconds,
       )} elapsed`;
-      this.addChild(new Text(chalk.dim(progress), 2, 0));
+      this.addChild(new Text(currentTheme.dim(progress), 2, 0));
       return;
     }
     if (name === 'Bash') {
@@ -1683,7 +1768,6 @@ export class ToolCallComponent extends Container {
       this.addChild(
         new ShellExecutionComponent({
           command: cmd,
-          colors: this.colors,
           showCommand: true,
           commandPreviewLines: COMMAND_PREVIEW_LINES,
         }),
@@ -1696,28 +1780,15 @@ export class ToolCallComponent extends Container {
   private buildPlanPreview(): void {
     // Priority: inline `args.plan`, approved plan parsed from result, then
     // asynchronously injected currentPlan used while approval is in flight.
-    // Once a plan is found, PlanBoxComponent renders it. Without markdownTheme
-    // (unit tests), fall back to indented dim text so it remains visible.
+    // Once a plan is found, PlanBoxComponent renders it.
     const plan = this.resolvePlanForPreview();
     if (plan.length === 0) return;
     const path = this.resolvePlanPath();
-    if (this.markdownTheme !== undefined) {
-      this.addChild(
-        new PlanBoxComponent(plan, this.markdownTheme, this.colors.success, path, {
-          maxContentLines: this.computePlanBoxMaxContentLines(),
-          expanded: this.planExpanded,
-          status: this.resolvePlanBoxStatus(),
-        }),
-      );
-    } else {
-      this.addChild(new Text(chalk.dim(plan), 2, 0));
-    }
-  }
-
-  private computePlanBoxMaxContentLines(): number | undefined {
-    const rows = this.ui?.terminal.rows;
-    if (rows === undefined || !Number.isFinite(rows) || rows <= 0) return undefined;
-    return Math.max(8, Math.floor(rows * 0.6) - 4);
+    this.addChild(
+      new PlanBoxComponent(plan, this.markdownTheme, currentTheme.color('success'), path, {
+        status: this.resolvePlanBoxStatus(),
+      }),
+    );
   }
 
   private resolvePlanForPreview(): string {
@@ -1746,12 +1817,19 @@ export class ToolCallComponent extends Container {
     if (!isExitPlanModeOutcomeOutput(result.output)) return undefined;
     const outcome = interpretExitPlanModeOutcome(result.output);
     if (outcome.kind !== 'rejected') return undefined;
-    return { label: 'Rejected', colorHex: this.colors.error };
+    return { label: 'Rejected', colorHex: currentTheme.color('error') };
   }
 
   private buildContent(): void {
     const { result } = this;
-    if (result === undefined || !result.output) return;
+    if (result === undefined) return;
+
+    if (this.toolCall.name === 'AgentSwarm') {
+      this.buildAgentSwarmResultSummary(result);
+      return;
+    }
+
+    if (!result.output) return;
 
     if (this.isSingleSubagentView()) {
       return;
@@ -1772,7 +1850,7 @@ export class ToolCallComponent extends Container {
       if (outcome.kind === 'rejected' && outcome.feedback !== undefined) {
         const trimmed = outcome.feedback.trim();
         if (trimmed.length > 0) {
-          const labelTone = chalk.hex(this.colors.warning).bold;
+          const labelTone = (text: string) => currentTheme.boldFg('warning', text);
           this.addChild(new Text(labelTone('↪ Suggestion'), 2, 0));
           for (const line of trimmed.split('\n')) {
             this.addChild(new Text(line, 4, 0));
@@ -1805,11 +1883,46 @@ export class ToolCallComponent extends Container {
     const renderer = pickResultRenderer(this.toolCall.name);
     const components = renderer(this.toolCall, result, {
       expanded: this.expanded,
-      colors: this.colors,
     });
     for (const component of components) {
       this.addChild(component);
     }
+  }
+
+  private buildAgentSwarmResultSummary(result: ToolResultBlockData): void {
+    const summary = agentSwarmResultSummaryFromOutput(result.output);
+    const dim = (s: string): string => currentTheme.fg('textDim', s);
+    const segments: string[] = [];
+
+    if (summary.completed > 0) {
+      segments.push(
+        currentTheme.fg('success', `${SUCCESS_MARK.trimEnd()} ${String(summary.completed)} completed`),
+      );
+    }
+    if (summary.failed > 0) {
+      segments.push(
+        currentTheme.fg('error', `${FAILURE_MARK.trimEnd()} ${String(summary.failed)} failed`),
+      );
+    }
+    if (summary.aborted > 0) {
+      segments.push(
+        currentTheme.fg('warning', `${ABORTED_MARK} ${String(summary.aborted)} aborted`),
+      );
+    }
+
+    if (segments.length > 0) {
+      this.addChild(new Text(`${dim('Agent swarm: ')}${segments.join(dim(' · '))}`, 2, 0));
+      return;
+    }
+
+    const isAborted = result.is_error === true && /\b(?:aborted|cancelled)\b/i.test(result.output);
+    const colorToken = isAborted ? 'warning' : result.is_error === true ? 'error' : 'success';
+    const label = isAborted
+      ? `${ABORTED_MARK} Aborted.`
+      : result.is_error === true
+        ? `${FAILURE_MARK.trimEnd()} Failed.`
+        : `${SUCCESS_MARK.trimEnd()} Completed.`;
+    this.addChild(new Text(`${dim('Agent swarm: ')}${currentTheme.fg(colorToken, label)}`, 2, 0));
   }
 
   /**
@@ -1826,9 +1939,7 @@ export class ToolCallComponent extends Container {
     }
     if (typeof parsed !== 'object' || parsed === null) return false;
 
-    const colors = this.colors;
-    const dim = chalk.dim;
-    const accent = chalk.hex(colors.primary);
+    const accent = (text: string) => currentTheme.fg('primary', text);
 
     const answers = (parsed as { answers?: unknown }).answers;
     const note = (parsed as { note?: unknown }).note;
@@ -1839,13 +1950,13 @@ export class ToolCallComponent extends Container {
     if (!hasAnswers) {
       const noteText =
         typeof note === 'string' && note.length > 0 ? note : 'User dismissed the question.';
-      this.addChild(new Text(dim(`  ${noteText}`), 0, 0));
+      this.addChild(new Text(currentTheme.dim(`  ${noteText}`), 0, 0));
       return true;
     }
 
     for (const [question, answer] of Object.entries(answers as Record<string, unknown>)) {
       const answerText = typeof answer === 'string' ? answer : JSON.stringify(answer);
-      this.addChild(new Text(`  ${dim('Q')}  ${question}`, 0, 0));
+      this.addChild(new Text(`  ${currentTheme.dim('Q')}  ${question}`, 0, 0));
       this.addChild(new Text(`  ${accent('→')}  ${answerText}`, 0, 0));
     }
     return true;

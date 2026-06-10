@@ -151,10 +151,11 @@ async function readQueueFile(session: GoalQueueSession): Promise<GoalQueueFile> 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch {
-    const empty = emptyQueueFile();
-    await writeQueueFile(session, empty);
-    return empty;
+  } catch (error) {
+    throw new KimiError(
+      ErrorCodes.CONFIG_INVALID,
+      `Invalid JSON in goal queue: ${describeError(error)}`,
+    );
   }
 
   if (!isGoalQueueFile(parsed)) {
@@ -261,4 +262,8 @@ function timestampAfter(previous: string): string {
 
 function isErrno(error: unknown, code: string): boolean {
   return isRecord(error) && error['code'] === code;
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

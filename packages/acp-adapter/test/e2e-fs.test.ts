@@ -1,7 +1,7 @@
 /**
  * End-to-end test for the FS reverse-RPC bridge.
  *
- * Wire shape under test (the integration that Phases 6.1 + 6.2 unlock):
+ * Wire shape under test:
  *
  *   ┌────────┐  fs/readTextFile (RPC)   ┌────────┐
  *   │ client │ ───────────────────────► │ agent  │
@@ -11,15 +11,14 @@
  *                                       │ kaos   │
  *                                       └────────┘
  *
- * The test drives a real `ClientSideConnection`+`AgentSideConnection`
- * pair over an in-memory ndjson stream, advertising
- * `clientCapabilities.fs.readTextFile = true` so the agent activates
- * `AcpKaos`. A mock harness's `Session.prompt` calls
- * `getCurrentKaos().readText('/path/x.ts')` inside its body — exactly
- * what a real Read tool would do — and emits the returned content as
- * an `assistant.delta`. We assert that the client's `readTextFile`
- * handler was invoked with the expected path AND that the assistant
- * chunk carrying the unsaved-buffer content reached the client.
+ * Boundary-injection model: when the client advertises
+ * `clientCapabilities.fs.readTextFile`, `AcpServer.newSession` builds
+ * an {@link AcpKaos} and threads it into `harness.createSession({ kaos })`.
+ * In the real stack the kernel `SessionImpl` ctor captures that kaos
+ * and every tool (Read / Write / Edit / Grep / Glob / Bash) sees the
+ * same reference. The harness stub here mimics that capture by
+ * forwarding the supplied kaos into the fake Session's `prompt` body —
+ * exactly what a real Read tool would consult.
  */
 
 import {
@@ -36,7 +35,7 @@ import {
   type WriteTextFileRequest,
   type WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
-import { getCurrentKaos } from '@moonshot-ai/kaos';
+import type { Kaos } from '@moonshot-ai/kaos';
 import type { Event, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it } from 'vitest';
 
@@ -54,14 +53,6 @@ function makeInMemoryStreamPair(): {
   return { agentStream, clientStream };
 }
 
-/**
- * A `Client` that:
- *  - Records every `readTextFile` request the agent sends.
- *  - Returns `unsavedContent` for those requests (the "unsaved buffer"
- *    payload).
- *  - Captures every `sessionUpdate` so the test can verify the
- *    assistant chunks carrying the content reached the client.
- */
 class UnsavedBufferClient implements Client {
   readonly readRequests: ReadTextFileRequest[] = [];
   readonly updates: SessionNotification[] = [];
@@ -83,23 +74,24 @@ class UnsavedBufferClient implements Client {
 }
 
 /**
- * Build a fake `Session` whose `prompt(parts)` performs a tool-shaped
- * action: it pulls `getCurrentKaos()` (the `AcpKaos` the agent wired
- * for this prompt), reads `targetPath`, emits the contents as an
- * assistant delta, and then ends the turn. This stands in for the
- * Read tool inside the SDK loop without dragging the full SDK harness
- * into the test.
+ * Build a fake `Session` whose `prompt` calls `kaos.readText(targetPath)`
+ * — what a real Read tool would do — and emits the contents as an
+ * assistant delta. The kaos is supplied at construction time (mirroring
+ * the kernel `SessionImpl` ctor's capture-on-construction behavior).
  */
-function makeReadingSession(sessionId: string, targetPath: string): Session {
+function makeReadingSession(
+  sessionId: string,
+  targetPath: string,
+  kaos: Kaos | undefined,
+): Session {
   const listeners = new Set<(event: Event) => void>();
   return {
     id: sessionId,
     prompt: async (_input: unknown) => {
-      // This call is the FS reverse-RPC trigger — it's what a real
-      // file-read tool would invoke. The `AcpKaos` activated by
-      // `AcpSession.prompt` makes this hit the client's
-      // `readTextFile` handler over the wire.
-      const content = await getCurrentKaos().readText(targetPath);
+      if (kaos === undefined) {
+        throw new Error('kaos missing — boundary injection failed');
+      }
+      const content = await kaos.readText(targetPath);
 
       for (const fn of listeners) {
         fn({
@@ -134,12 +126,16 @@ const textBlock = (text: string): ContentBlock => ({ type: 'text', text });
 
 describe('end-to-end FS reverse-RPC', () => {
   it('routes a tool-time readText through the client when fs.readTextFile is advertised', async () => {
-    const sessionId = 'sess-fs-e2e';
     const targetPath = '/Users/test/x.ts';
-    const session = makeReadingSession(sessionId, targetPath);
+    let createdSession: Session | undefined;
+    let capturedSessionId: string | undefined;
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
-      createSession: async () => session,
+      createSession: async (options: { id?: string; workDir: string; kaos?: Kaos }) => {
+        capturedSessionId = options.id ?? 'fallback';
+        createdSession = makeReadingSession(capturedSessionId, targetPath, options.kaos);
+        return createdSession;
+      },
     } as unknown as KimiHarness;
 
     const { agentStream, clientStream } = makeInMemoryStreamPair();
@@ -157,30 +153,27 @@ describe('end-to-end FS reverse-RPC', () => {
       },
     });
 
-    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    const newSession = await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
 
     const response = await client.prompt({
-      sessionId,
+      sessionId: newSession.sessionId,
       prompt: [textBlock('read the unsaved file please')],
     });
 
     expect(response.stopReason).toBe('end_turn');
 
-    // ── Assertion 1: the client saw exactly one fs/readTextFile
-    // request with the expected path and matching sessionId.
+    // The client saw exactly one fs/readTextFile request with the
+    // expected path and matching sessionId.
     expect(bufferClient.readRequests).toHaveLength(1);
     expect(bufferClient.readRequests[0]).toMatchObject({
-      sessionId,
+      sessionId: capturedSessionId,
       path: targetPath,
     });
 
     // Give the agent a tick to flush the queued sessionUpdate write
-    // through the ndjson stream (assistant chunks are fire-and-forget
-    // — see `session.ts` comments).
+    // through the ndjson stream.
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    // ── Assertion 2: the assistant chunk carrying the unsaved-buffer
-    // content reached the client, proving end-to-end plumbing.
     const chunkUpdate = bufferClient.updates.find(
       (u) => u.update.sessionUpdate === 'agent_message_chunk',
     );
@@ -192,48 +185,37 @@ describe('end-to-end FS reverse-RPC', () => {
   });
 
   it('does NOT route through the client when no FS capability is advertised', async () => {
-    // Sanity counterpart: the same wiring without the FS capability
-    // must fall back to local FS (which would attempt to actually read
-    // /Users/test/x.ts and fail). We avoid the filesystem touch by
-    // probing the session-side outcome differently: the prompt body
-    // now reads a path that DOES exist transiently — we just verify
-    // that the client never saw a readTextFile request.
-    const sessionId = 'sess-no-fs-e2e';
+    let observedKaos: Kaos | undefined;
+    let capturedSessionId: string | undefined;
 
-    const session: Session = {
-      id: sessionId,
-      // `prompt` here does NOT call getCurrentKaos — that path would
-      // throw / hit local FS, which we don't want in this test. We
-      // simply end the turn immediately. The point is: with no FS
-      // capability, the agent must NOT have built an AcpKaos and the
-      // client must NOT see any readTextFile RPC even if it had been
-      // called.
-      prompt: async () => {
-        // Emit turn.ended directly through the listener that
-        // session.onEvent registered.
-        for (const fn of listeners) {
-          fn({
-            type: 'turn.ended',
-            sessionId,
-            agentId: 'main',
-            turnId: 1,
-            reason: 'completed',
-          } as Event);
-        }
-      },
-      cancel: async () => undefined,
-      onEvent: (fn: (event: Event) => void) => {
-        listeners.add(fn);
-        return () => {
-          listeners.delete(fn);
-        };
-      },
-    } as unknown as Session;
     const listeners = new Set<(event: Event) => void>();
-
     const harness = {
       auth: { status: async () => AUTHED_STATUS },
-      createSession: async () => session,
+      createSession: async (options: { id?: string; workDir: string; kaos?: Kaos }) => {
+        observedKaos = options.kaos;
+        capturedSessionId = options.id ?? 'fallback';
+        return {
+          id: capturedSessionId,
+          prompt: async () => {
+            for (const fn of listeners) {
+              fn({
+                type: 'turn.ended',
+                sessionId: capturedSessionId,
+                agentId: 'main',
+                turnId: 1,
+                reason: 'completed',
+              } as Event);
+            }
+          },
+          cancel: async () => undefined,
+          onEvent: (fn: (event: Event) => void) => {
+            listeners.add(fn);
+            return () => {
+              listeners.delete(fn);
+            };
+          },
+        } as unknown as Session;
+      },
     } as unknown as KimiHarness;
 
     const { agentStream, clientStream } = makeInMemoryStreamPair();
@@ -244,20 +226,20 @@ describe('end-to-end FS reverse-RPC', () => {
     await client.initialize({
       protocolVersion: 1,
       clientCapabilities: {
-        // Both flags absent — agent must not activate AcpKaos.
         fs: { readTextFile: false, writeTextFile: false },
         terminal: false,
       },
     });
 
-    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    const newSession = await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
 
     const response = await client.prompt({
-      sessionId,
+      sessionId: newSession.sessionId,
       prompt: [textBlock('hi')],
     });
 
     expect(response.stopReason).toBe('end_turn');
     expect(bufferClient.readRequests).toEqual([]);
+    expect(observedKaos).toBeUndefined();
   });
 });

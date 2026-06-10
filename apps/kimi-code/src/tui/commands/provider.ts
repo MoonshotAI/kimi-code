@@ -49,7 +49,6 @@ function buildProviderManagerOptions(host: SlashCommandHost): ProviderManagerOpt
   return {
     providers: host.state.appState.availableProviders,
     activeProviderId,
-    colors: host.state.theme.colors,
     onAdd: () => {
       void handleProviderAdd(host);
     },
@@ -132,7 +131,6 @@ function promptProviderAddSource(
         { value: 'known', label: 'Known third-party provider' },
         { value: 'custom', label: 'Custom registry (api.json)' },
       ],
-      colors: host.state.theme.colors,
       onSelect: (value) => {
         host.restoreEditor();
         resolve(value === 'known' || value === 'custom' ? value : undefined);
@@ -232,7 +230,6 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     currentValue: host.state.appState.model,
     selectedValue: Object.keys(mergedModels).find((a) => a.startsWith(`${providerId}/`)),
     currentThinking: host.state.appState.thinking,
-    colors: host.state.theme.colors,
     initialTabId: providerId,
     onSelect: ({ alias, thinking }) => {
       host.restoreEditor();
@@ -304,7 +301,7 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
     count === 1
       ? 'Imported 1 provider from registry.'
       : `Imported ${String(count)} providers from registry.`,
-    host.state.theme.colors.success,
+    'success',
   );
 
   // Offer the model selector so the user can pick a default, just like the
@@ -321,7 +318,6 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
     currentValue: host.state.appState.model,
     selectedValue: firstNewAlias,
     currentThinking: host.state.appState.thinking,
-    colors: host.state.theme.colors,
     initialTabId: firstNewProvider,
     onSelect: ({ alias, thinking }) => {
       host.restoreEditor();
@@ -344,7 +340,6 @@ function promptCustomRegistryImport(
         host.restoreEditor();
         resolve(result.kind === 'ok' ? result.value : undefined);
       },
-      host.state.theme.colors,
     );
     host.mountEditorReplacement(dialog);
   });

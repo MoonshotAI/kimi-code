@@ -18,9 +18,8 @@ import {
   visibleWidth,
   type Focusable,
 } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 export interface CustomRegistryImportValue {
   readonly url: string;
@@ -54,7 +53,7 @@ function maskInputLine(raw: string): string {
 
   // Protect ANSI escape sequences (reverse-video cursor, IME marker, etc.)
   // while masking every other visible character.
-  const parts = content.split(/((?:\[[0-9;]*m|_pi:c))/);
+  const parts = content.split(/(\x1B(?:\[[0-9;]*m|_pi:c\x07))/);
   const maskedContent = parts
     .map((part, index) => {
       if (index % 2 === 1) return part; // ANSI sequence
@@ -71,19 +70,16 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
   private readonly urlInput = new Input();
   private readonly tokenInput = new Input();
   private readonly onDone: (result: CustomRegistryImportResult) => void;
-  private readonly colors: ColorPalette;
   private activeField: FieldId = 'url';
   private done = false;
   private hint: 'none' | 'url-empty' | 'token-empty' = 'none';
 
   constructor(
     onDone: (result: CustomRegistryImportResult) => void,
-    colors: ColorPalette,
     defaultUrl: string = '',
   ) {
     super();
     this.onDone = onDone;
-    this.colors = colors;
     if (defaultUrl.length > 0) this.urlInput.setValue(defaultUrl);
     // Enter on the URL field advances to the token field; Enter on the token
     // (last) field submits.
@@ -145,16 +141,17 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
     const innerWidth = Math.max(10, safeWidth - 4);
     const pad = '  ';
 
-    const border = (s: string): string => chalk.hex(this.colors.primary)(s);
-    const titleStyled = chalk.bold.hex(this.colors.textStrong)(TITLE);
+    const border = (s: string): string => currentTheme.fg('primary', s);
+    const titleStyled = currentTheme.boldFg('textStrong', TITLE);
     const subtitleText =
       this.hint === 'url-empty'
         ? SUBTITLE_URL_EMPTY
         : this.hint === 'token-empty'
           ? SUBTITLE_TOKEN_EMPTY
           : SUBTITLE_DEFAULT;
-    const subtitleStyled = chalk.hex(this.colors.textDim)(subtitleText);
-    const footerStyled = chalk.hex(this.colors.textDim)(
+    const subtitleStyled = currentTheme.fg('textDim', subtitleText);
+    const footerStyled = currentTheme.fg(
+      'textDim',
       this.activeField === 'url' ? FOOTER_NOT_LAST : FOOTER_LAST,
     );
 
@@ -162,12 +159,12 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
     const tokenLabelText = 'Bearer token';
     const urlLabelStyled =
       this.activeField === 'url'
-        ? chalk.bold.hex(this.colors.accent)(urlLabelText)
-        : chalk.hex(this.colors.textDim)(urlLabelText);
+        ? currentTheme.boldFg('accent', urlLabelText)
+        : currentTheme.fg('textDim', urlLabelText);
     const tokenLabelStyled =
       this.activeField === 'token'
-        ? chalk.bold.hex(this.colors.accent)(tokenLabelText)
-        : chalk.hex(this.colors.textDim)(tokenLabelText);
+        ? currentTheme.boldFg('accent', tokenLabelText)
+        : currentTheme.fg('textDim', tokenLabelText);
 
     const titleLine = truncateToWidth(titleStyled, innerWidth, '…');
     const subtitleLine = truncateToWidth(subtitleStyled, innerWidth, '…');

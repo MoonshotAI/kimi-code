@@ -1,7 +1,6 @@
 import type { PluginInfo, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
-import chalk from 'chalk';
 
-import type { ColorPalette } from '../../theme/colors';
+import { currentTheme } from '#/tui/theme';
 import {
   CURATED_BADGE,
   OFFICIAL_BADGE,
@@ -12,16 +11,15 @@ import {
 } from '../../utils/plugin-source-label';
 
 export interface PluginsListPanelInput {
-  readonly colors: ColorPalette;
   readonly plugins: readonly PluginSummary[];
 }
 
 export function buildPluginsListLines(input: PluginsListPanelInput): readonly string[] {
-  const muted = chalk.hex(input.colors.textDim);
-  const value = chalk.hex(input.colors.text);
-  const success = chalk.hex(input.colors.success);
-  const primary = chalk.hex(input.colors.primary);
-  const warning = chalk.hex(input.colors.warning);
+  const muted = (text: string) => currentTheme.fg('textDim', text);
+  const value = (text: string) => currentTheme.fg('text', text);
+  const success = (text: string) => currentTheme.fg('success', text);
+  const primary = (text: string) => currentTheme.fg('primary', text);
+  const warning = (text: string) => currentTheme.fg('warning', text);
   if (input.plugins.length === 0) {
     return [
       muted('No plugins installed.'),
@@ -56,18 +54,17 @@ export function buildPluginsListLines(input: PluginsListPanelInput): readonly st
 
 
 export interface PluginsInfoPanelInput {
-  readonly colors: ColorPalette;
   readonly info: PluginInfo;
 }
 
 export function buildPluginsInfoLines(input: PluginsInfoPanelInput): readonly string[] {
   const { info } = input;
-  const muted = chalk.hex(input.colors.textDim);
-  const value = chalk.hex(input.colors.text);
-  const success = chalk.hex(input.colors.success);
-  const warning = chalk.hex(input.colors.warning);
-  const error = chalk.hex(input.colors.error);
-  const primary = chalk.hex(input.colors.primary);
+  const muted = (text: string) => currentTheme.fg('textDim', text);
+  const value = (text: string) => currentTheme.fg('text', text);
+  const success = (text: string) => currentTheme.fg('success', text);
+  const warning = (text: string) => currentTheme.fg('warning', text);
+  const error = (text: string) => currentTheme.fg('error', text);
+  const primary = (text: string) => currentTheme.fg('primary', text);
   const status = info.enabled ? success('enabled') : muted('disabled');
   const trustLine = (() => {
     const label = pluginTrustLabel(info);
@@ -81,7 +78,7 @@ export function buildPluginsInfoLines(input: PluginsInfoPanelInput): readonly st
   })();
   const lines: string[] = [
     `${value(info.displayName)} (${muted(info.id)}) ${muted(info.version ?? '')}`.trim(),
-    `${muted('Status:')} ${status} | ${muted('state:')} ${stateText(info.state, input.colors)}`,
+    `${muted('Status:')} ${status} | ${muted('state:')} ${stateText(info.state)}`,
     trustLine,
     `${muted('Source:')} ${value(info.source)}`,
     `${muted('Root:')}   ${value(info.root)}`,
@@ -164,7 +161,7 @@ export function buildPluginsInfoLines(input: PluginsInfoPanelInput): readonly st
   return lines;
 }
 
-function stateText(state: PluginInfo['state'], colors: ColorPalette): string {
-  if (state === 'ok') return chalk.hex(colors.success)(state);
-  return chalk.hex(colors.error)(state);
+function stateText(state: PluginInfo['state']): string {
+  if (state === 'ok') return currentTheme.fg('success', state);
+  return currentTheme.fg('error', state);
 }

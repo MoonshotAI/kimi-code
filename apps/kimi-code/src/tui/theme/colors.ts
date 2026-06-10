@@ -1,148 +1,133 @@
 /**
  * Color palette definitions for dark and light themes.
  *
- * Two layers:
- *  - private `dark` / `light` raw palettes — unsemantic constants reused
- *    across multiple semantic tokens to avoid hex literal duplication.
- *  - exported `darkColors` / `lightColors` — the semantic `ColorPalette`
- *    consumed by every UI component via chalk.hex(...).
+ * `darkColors` / `lightColors` are the semantic `ColorPalette` consumed by
+ * every UI component via the global Theme singleton. Each token holds its hex
+ * value directly — see the per-token docs on `ColorPalette` for what each one
+ * controls.
  *
  * Light palette values are tuned for ≥ 4.5:1 contrast against #FFFFFF
  * for text tokens and ≥ 3:1 for chrome (border / large text), matching
  * WCAG AA.
  */
 
-const dark = {
-  blue400: '#4FA8FF',
-  cyan400: '#5BC0BE',
-  gray50: '#F5F5F5',
-  gray100: '#E0E0E0',
-  gray500: '#888888',
-  gray600: '#6B6B6B',
-  gray700: '#5A5A5A',
-  green400: '#4EC87E',
-  green300: '#7AD99B',
-  red400: '#E85454',
-  red300: '#F08585',
-  amber400: '#E8A838',
-  orange300: '#FFCB6B',
-} as const;
-
-const light = {
-  blue600: '#1565C0',
-  cyan700: '#00838F',
-  gray900: '#1A1A1A',
-  gray700: '#454545',
-  gray600: '#5F5F5F',
-  gray500: '#737373',
-  green700: '#0E7A38',
-  red700: '#B91C1C',
-  amber800: '#92660A',
-  orange700: '#9A4A00',
-} as const;
-
+// Each token below documents where it is actually consumed, so theme authors
+// know what changing it affects. "Widely" means the token is read across most
+// dialogs/messages rather than in one specific place.
 export interface ColorPalette {
-  // Brand
+  // ── Brand ──
+  /** Dominant interactive/brand colour: links & inline code, the selected item
+   *  in nearly every dialog, the focused editor border, plan/"running" badges,
+   *  spinners. The most widely used token. */
   primary: string;
+  /** Secondary highlight: approval "▶" prefix, device-code box, image
+   *  placeholder, BTW / queue panes, custom-registry import. */
   accent: string;
 
-  // Text
+  // ── Text ──
+  /** Default body text: dialog bodies, todo titles, footer model label,
+   *  markdown headings, tool/read output, and assistant-side message bullets
+   *  (assistant / tool / agent / read) plus markdown list bullets. */
   text: string;
+  /** Emphasised / bold text: input dialogs, status messages. */
   textStrong: string;
+  /** Secondary, dimmed text (the most widely used dim shade): thinking blocks,
+   *  hints, descriptions, completed todos, markdown quotes, and the footer
+   *  status bar (cwd path, git badge). */
   textDim: string;
+  /** Faintest text: counters, scroll info, descriptions, markdown link URLs,
+   *  code-block borders. */
   textMuted: string;
 
-  // Surface
+  // ── Surface ──
+  /** Borders: pane & editor borders, markdown horizontal rule. */
   border: string;
+  /** Focus / attention border — currently only the approval panel. */
   borderFocus: string;
 
-  // State
+  // ── State ──
+  /** Success: ✓ marks, "enabled", completed states. */
   success: string;
+  /** Warning: auto/yolo badges, stale markers, plan-mode hint. */
   warning: string;
+  /** Error: error messages, failed tool output. */
   error: string;
 
-  // Diff
+  // ── Diff (all consumed by components/media/diff-preview.ts) ──
+  /** Added lines. */
   diffAdded: string;
+  /** Removed lines. */
   diffRemoved: string;
+  /** Added lines — intra-line changed words (bold). */
   diffAddedStrong: string;
+  /** Removed lines — intra-line changed words (bold). */
   diffRemovedStrong: string;
+  /** Line-number gutter (also approval panel/preview). */
   diffGutter: string;
+  /** Meta / hunk headers. */
   diffMeta: string;
 
-  // Roles
+  // ── Roles ──
+  /** User message: bullet & text, skill-activation name. The one role colour
+   *  with its own hue — assistant/thinking/status bullets reuse text/textDim. */
   roleUser: string;
-  roleAssistant: string;
-  roleThinking: string;
-  roleTool: string;
-
-  // Status
-  status: string;
 }
 
 export const darkColors: ColorPalette = {
-  primary: dark.blue400,
-  accent: dark.cyan400,
+  primary: '#4FA8FF',
+  accent: '#5BC0BE',
 
-  text: dark.gray100,
-  textStrong: dark.gray50,
-  textDim: dark.gray500,
-  textMuted: dark.gray600,
+  text: '#E0E0E0',
+  textStrong: '#F5F5F5',
+  textDim: '#888888',
+  textMuted: '#6B6B6B',
 
-  border: dark.gray700,
-  borderFocus: dark.amber400,
+  border: '#5A5A5A',
+  borderFocus: '#E8A838',
 
-  success: dark.green400,
-  warning: dark.amber400,
-  error: dark.red400,
+  success: '#4EC87E',
+  warning: '#E8A838',
+  error: '#E85454',
 
-  diffAdded: dark.green400,
-  diffRemoved: dark.red400,
-  diffAddedStrong: dark.green300,
-  diffRemovedStrong: dark.red300,
-  diffGutter: dark.gray600,
-  diffMeta: dark.gray500,
+  diffAdded: '#4EC87E',
+  diffRemoved: '#E85454',
+  diffAddedStrong: '#7AD99B',
+  diffRemovedStrong: '#F08585',
+  diffGutter: '#6B6B6B',
+  diffMeta: '#888888',
 
-  roleUser: dark.orange300,
-  roleAssistant: dark.gray100,
-  roleThinking: dark.gray500,
-  roleTool: dark.amber400,
-
-  status: dark.gray500,
+  roleUser: '#FFCB6B',
 };
 
 export const lightColors: ColorPalette = {
-  primary: light.blue600,
-  accent: light.cyan700,
+  primary: '#1565C0',
+  accent: '#00838F',
 
-  text: light.gray900,
-  textStrong: light.gray900,
-  textDim: light.gray700,
-  textMuted: light.gray600,
+  text: '#1A1A1A',
+  textStrong: '#1A1A1A',
+  textDim: '#454545',
+  textMuted: '#5F5F5F',
 
-  border: light.gray500,
-  borderFocus: light.amber800,
+  border: '#737373',
+  borderFocus: '#92660A',
 
-  success: light.green700,
-  warning: light.amber800,
-  error: light.red700,
+  success: '#0E7A38',
+  warning: '#92660A',
+  error: '#B91C1C',
 
-  diffAdded: light.green700,
-  diffRemoved: light.red700,
-  diffAddedStrong: light.green700,
-  diffRemovedStrong: light.red700,
-  diffGutter: light.gray500,
-  diffMeta: light.gray600,
+  diffAdded: '#0E7A38',
+  diffRemoved: '#B91C1C',
+  diffAddedStrong: '#0E7A38',
+  diffRemovedStrong: '#B91C1C',
+  diffGutter: '#737373',
+  diffMeta: '#5F5F5F',
 
-  roleUser: light.orange700,
-  roleAssistant: light.gray900,
-  roleThinking: light.gray700,
-  roleTool: light.amber800,
-
-  status: light.gray700,
+  roleUser: '#9A4A00',
 };
 
 export type ResolvedTheme = 'dark' | 'light';
 
-export function getColorPalette(theme: ResolvedTheme): ColorPalette {
-  return theme === 'dark' ? darkColors : lightColors;
+/** Synchronous palette lookup for built-in themes only. */
+export function getBuiltInPalette(resolved: ResolvedTheme): ColorPalette {
+  return resolved === 'dark' ? darkColors : lightColors;
 }

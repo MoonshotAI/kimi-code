@@ -1,6 +1,6 @@
 import type { FinishReason, TokenUsage } from '@moonshot-ai/kosong';
 
-import type { GoalChange, GoalSnapshot } from '../session/goal';
+import type { GoalChange, GoalSnapshot } from '../agent/goal';
 import type { CronJobOrigin, PromptOrigin } from '../agent/context';
 import type { KimiErrorPayload } from '../errors';
 import type { PermissionMode } from '../agent/permission';
@@ -48,6 +48,7 @@ export interface AgentStatusUpdatedEvent {
   readonly maxContextTokens?: number | undefined;
   readonly contextUsage?: number | undefined;
   readonly planMode?: boolean | undefined;
+  readonly swarmMode?: boolean | undefined;
   readonly permission?: PermissionMode | undefined;
   readonly usage?: UsageStatus | undefined;
 }
@@ -208,13 +209,24 @@ export interface SubagentSpawnedEvent {
   readonly parentToolCallUuid?: string | undefined;
   readonly parentAgentId?: string | undefined;
   readonly description?: string | undefined;
+  readonly swarmIndex?: number;
   readonly runInBackground: boolean;
+}
+
+export interface SubagentStartedEvent {
+  readonly type: 'subagent.started';
+  readonly subagentId: string;
+}
+
+export interface SubagentSuspendedEvent {
+  readonly type: 'subagent.suspended';
+  readonly subagentId: string;
+  readonly reason: string;
 }
 
 export interface SubagentCompletedEvent {
   readonly type: 'subagent.completed';
   readonly subagentId: string;
-  readonly parentToolCallId: string;
   readonly resultSummary: string;
   readonly usage?: TokenUsage | undefined;
   readonly contextTokens?: number | undefined;
@@ -223,7 +235,6 @@ export interface SubagentCompletedEvent {
 export interface SubagentFailedEvent {
   readonly type: 'subagent.failed';
   readonly subagentId: string;
-  readonly parentToolCallId: string;
   readonly error: string;
 }
 
@@ -307,6 +318,8 @@ export type AgentEvent =
   | ToolListUpdatedEvent
   | McpServerStatusEvent
   | SubagentSpawnedEvent
+  | SubagentStartedEvent
+  | SubagentSuspendedEvent
   | SubagentCompletedEvent
   | SubagentFailedEvent
   | CompactionStartedEvent

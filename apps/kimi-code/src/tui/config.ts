@@ -17,7 +17,7 @@ import { getDataDir } from '#/utils/paths';
 export const INVALID_TUI_CONFIG_MESSAGE =
   'Invalid TUI config in ~/.kimi-code/tui.toml; using defaults.';
 
-export const TuiThemeSchema = z.enum(['dark', 'light', 'auto']);
+export const TuiThemeSchema = z.string();
 
 export const NotificationConditionSchema = z.enum(['unfocused', 'always']);
 
@@ -149,7 +149,7 @@ export function renderTuiConfig(config: TuiConfig): string {
 # Client preferences for kimi-code.
 # Agent/runtime settings stay in ~/.kimi-code/config.toml.
 
-theme = "${config.theme}" # "auto" | "dark" | "light"
+theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | custom theme name
 
 [editor]
 command = "${escapeTomlBasicString(config.editorCommand ?? '')}" # Empty uses $VISUAL / $EDITOR

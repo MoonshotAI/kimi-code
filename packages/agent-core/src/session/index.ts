@@ -9,7 +9,6 @@ import type { KimiConfig, SDKSessionRPC } from '#/rpc';
 import { proxyWithExtraPayload } from '#/rpc/types';
 
 import { Agent, type AgentOptions, type AgentType } from '../agent';
-import { SessionGoalStore, type SessionGoalState } from './goal';
 import { HookEngine, type HookDef } from './hooks';
 import type { PermissionManagerOptions, PermissionRule } from '../agent/permission';
 import { parseBooleanEnv, resolveConfigValue, type BackgroundConfig } from '../config';
@@ -44,6 +43,7 @@ import { FlagResolver, type ExperimentalFlagResolver } from '../flags';
 
 export interface SessionOptions {
   readonly kaos: Kaos;
+  readonly persistenceKaos?: Kaos;
   readonly config?: KimiConfig;
   readonly id?: string | undefined;
   readonly homedir: string;
@@ -65,6 +65,8 @@ export interface SessionOptions {
 
 export interface SessionSkillConfig {
   readonly userHomeDir?: string;
+  /** Brand data dir (KIMI_CODE_HOME); user brand skills live under `<brandHomeDir>/skills`. */
+  readonly brandHomeDir?: string;
   readonly explicitDirs?: readonly string[];
   readonly extraDirs?: readonly string[];
   readonly pluginSkillRoots?: readonly SkillRoot[];
@@ -76,6 +78,7 @@ export interface AgentMeta {
   readonly homedir: string;
   readonly type: AgentType;
   readonly parentAgentId: string | null;
+  readonly swarmItem?: string;
 }
 
 interface ResumedAgent {
@@ -88,6 +91,7 @@ type AgentEntry = Agent | Promise<ResumedAgent>;
 export interface CreateAgentOptions {
   readonly profile?: ResolvedAgentProfile;
   readonly parentAgentId?: string;
+  readonly swarmItem?: string;
   readonly persistMetadata?: boolean;
 }
 
@@ -113,8 +117,9 @@ export class Session {
   readonly log: Logger;
   private readonly logHandle: SessionLogHandle | undefined;
   readonly hookEngine: HookEngine;
-  readonly goals: SessionGoalStore;
   readonly experimentalFlags: ExperimentalFlagResolver;
+  private toolKaos: Kaos;
+  private persistenceKaos: Kaos;
   private agentIdCounter = 0;
   private readonly skillsReady: Promise<void>;
   metadata: SessionMeta = {
@@ -135,9 +140,9 @@ export class Session {
       options.id === undefined
         ? undefined
         : getRootLogger().attachSession({
-            sessionId: options.id,
-            sessionDir: options.homedir,
-          });
+          sessionId: options.id,
+          sessionDir: options.homedir,
+        });
     this.log =
       this.logHandle?.logger ??
       (options.id === undefined ? log : log.createChild({ sessionId: options.id }));
@@ -148,25 +153,11 @@ export class Session {
       sessionId: options.id,
     });
     this.telemetry = options.telemetry ?? noopTelemetryClient;
-    this.goals = new SessionGoalStore({
+    this.toolKaos = options.kaos;
+    this.persistenceKaos = options.persistenceKaos ?? options.kaos;
+    this.skills = new SkillRegistry({
       sessionId: options.id,
-      readState: () => this.metadata.custom?.['goal'] as SessionGoalState | undefined,
-      writeState: (state) => {
-        this.metadata.custom ??= {};
-        if (state === undefined) {
-          delete this.metadata.custom['goal'];
-        } else {
-          this.metadata.custom['goal'] = state;
-        }
-        return this.writeMetadata();
-      },
-      auditSink: () => this.getReadyAgent('main')?.records,
-      onGoalUpdated: (snapshot, change) => {
-        void this.rpc.emitEvent({ type: 'goal.updated', agentId: 'main', snapshot, change });
-      },
-      telemetry: this.telemetry,
     });
-    this.skills = new SkillRegistry({ sessionId: options.id });
     this.mcp = new McpConnectionManager({
       oauthService: new McpOAuthService({ kimiHomeDir: options.kimiHomeDir }),
       log: this.log,
@@ -186,12 +177,30 @@ export class Session {
     });
   }
 
+
+  setToolKaos(kaos: Kaos) {
+    this.toolKaos = kaos;
+    for (const agent of this.readyAgents()) {
+      agent.setKaos(kaos.withCwd(agent.config.cwd));
+    }
+    this.refreshAgentBuiltinTools();
+  }
+
+  /**
+   * Kaos used by session-internal bootstrap (AGENTS.md context, cwd listing)
+   * and metadata persistence. Always backed by the persistence sink (typically
+   * the local filesystem) so a transient ACP-side failure on system files like
+   * `AGENTS.md` never blocks `bootstrapAgentProfile` — tool calls still route
+   * through `agent.kaos` and continue to honor the ACP bridge.
+   */
+  systemContextKaos(cwd: string): Kaos {
+    return this.persistenceKaos.withCwd(cwd);
+  }
+
   async createMain() {
     const { agent } = await this.createAgent({ type: 'main' }, {
       profile: DEFAULT_AGENT_PROFILES['agent'],
     });
-    // The main-agent audit sink now exists; flush any goal records queued before it.
-    this.goals.flushPendingRecords();
     await this.triggerSessionStart('startup');
     return agent;
   }
@@ -199,17 +208,11 @@ export class Session {
   async resume(): Promise<{ warning?: string }> {
     await this.skillsReady;
     const { agents } = await this.readMetadata();
-    // Reconcile the persisted goal (active -> paused, drop malformed/stale) before
-    // agents are rebuilt. The audit record (if any) is queued and flushed below.
-    await this.goals.normalizeMetadata();
     this.agents.clear();
     // Only the main agent is needed to reopen the session; subagents replay
     // lazily when an RPC or Agent(resume=...) call asks for their state.
     const { warning } =
       agents['main'] === undefined ? { warning: undefined } : await this.resumeAgent('main');
-    // The main-agent audit sink now exists; flush any goal records queued during
-    // normalizeMetadata (e.g. the active -> paused resume transition).
-    this.goals.flushPendingRecords();
     // A session migrated from an external tool ships a wire without the
     // `config.update` bootstrap events a natively-created agent writes, so the
     // main agent comes back with an empty system prompt and no tools. Apply the
@@ -292,6 +295,7 @@ export class Session {
         homedir,
         type,
         parentAgentId,
+        swarmItem: options.swarmItem,
       };
       void this.writeMetadata();
     }
@@ -317,7 +321,10 @@ export class Session {
     agent: Agent,
     profile: ResolvedAgentProfile,
   ): Promise<void> {
-    const context = await prepareSystemPromptContext(agent.kaos);
+    const context = await prepareSystemPromptContext(
+      this.systemContextKaos(agent.kaos.getcwd()),
+      this.options.kimiHomeDir,
+    );
     agent.useProfile(profile, context);
   }
 
@@ -326,17 +333,17 @@ export class Session {
     const mainAgent = this.requireMainAgent();
 
     try {
-      const handle = await mainAgent.subagentHost!.spawn('coder', {
+      const handle = await mainAgent.subagentHost!.spawn({
+        profileName: 'coder',
         parentToolCallId: 'generate-agents-md',
         prompt: DEFAULT_INIT_PROMPT,
         description: 'Initialize AGENTS.md',
         runInBackground: false,
-        origin: { kind: 'system_trigger', name: 'init' },
         signal: new AbortController().signal,
       });
       await handle.completion;
 
-      const agentsMd = await loadAgentsMd(mainAgent.kaos);
+      const agentsMd = await loadAgentsMd(mainAgent.kaos, this.options.kimiHomeDir);
       mainAgent.context.appendSystemReminder(initCompletionReminder(agentsMd), {
         kind: 'injection',
         variant: 'init',
@@ -365,15 +372,15 @@ export class Session {
   writeMetadata() {
     const text = JSON.stringify(this.metadata, null, 2);
     const write = async () => {
-      await this.options.kaos.mkdir(this.options.homedir, { parents: true, existOk: true });
-      await this.options.kaos.writeText(this.metadataPath, text);
+      await this.persistenceKaos.mkdir(this.options.homedir, { parents: true, existOk: true });
+      await this.persistenceKaos.writeText(this.metadataPath, text);
     };
     this.writeMetadataPromise = this.writeMetadataPromise.then(write, write);
     return this.writeMetadataPromise;
   }
 
   async readMetadata() {
-    const text = await this.options.kaos.readText(this.metadataPath);
+    const text = await this.persistenceKaos.readText(this.metadataPath);
     this.metadata = JSON.parse(text);
     return this.metadata;
   }
@@ -393,6 +400,7 @@ export class Session {
     const roots = await resolveSkillRoots({
       paths: {
         userHomeDir: this.options.skills?.userHomeDir ?? homedir(),
+        brandHomeDir: this.options.skills?.brandHomeDir ?? this.options.kimiHomeDir,
         workDir: this.options.kaos.getcwd(),
       },
       explicitDirs: this.options.skills?.explicitDirs,
@@ -456,11 +464,6 @@ export class Session {
     });
   }
 
-  private backgroundTaskTimeoutMs(): number | undefined {
-    const timeoutS = this.options.background?.agentTaskTimeoutS;
-    return timeoutS === undefined ? undefined : timeoutS * 1000;
-  }
-
   private refreshAgentBuiltinTools(): void {
     for (const agent of this.readyAgents()) {
       if (!agent.config.hasProvider) continue;
@@ -476,11 +479,11 @@ export class Session {
     parentAgentId: string | null = null,
   ): Agent {
     const parentAgent = parentAgentId !== null ? this.getReadyAgent(parentAgentId) : undefined;
-    const cwd = parentAgent?.config.cwd ?? this.options.kaos.getcwd();
+    const cwd = parentAgent?.config.cwd ?? this.toolKaos.getcwd();
     return new Agent({
       ...config,
       type,
-      kaos: this.options.kaos.withCwd(cwd),
+      kaos: this.toolKaos.withCwd(cwd),
       toolServices: this.options.toolServices,
       config: this.options.config,
       homedir,
@@ -488,10 +491,8 @@ export class Session {
       rpc: proxyWithExtraPayload(this.rpc, { agentId: id }),
       modelProvider: this.options.providerManager,
       hookEngine: config.hookEngine ?? this.hookEngine,
-      subagentHost:
-        config.subagentHost ?? new SessionSubagentHost(this, id, this.backgroundTaskTimeoutMs()),
+      subagentHost: config.subagentHost ?? new SessionSubagentHost(this, id),
       mcp: this.mcp,
-      goals: this.goals,
       permission: this.permissionOptions(parentAgentId, config.permission),
       telemetry: this.telemetry,
       log: this.log.createChild({ agentId: id }),

@@ -1,7 +1,7 @@
 /**
  * CreateGoalTool — lets the main agent start an explicit goal on the user's
- * behalf. The goal becomes durable, structured state owned by the session goal
- * store, not text parsed from a slash command.
+ * behalf. The goal becomes durable, structured state owned by the agent's
+ * GoalMode, not text parsed from a slash command.
  */
 
 import type { Agent } from '#/agent';
@@ -10,7 +10,6 @@ import { z } from 'zod';
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
-import { goalErrorResult, isGoalToolError, requireGoalStore } from './shared';
 import DESCRIPTION from './create-goal.md';
 
 export const CreateGoalToolInputSchema = z
@@ -37,24 +36,21 @@ export class CreateGoalTool implements BuiltinTool<CreateGoalToolInput> {
   constructor(private readonly agent: Agent) {}
 
   resolveExecution(args: CreateGoalToolInput): ToolExecution {
-    const store = requireGoalStore(this.agent, this.name);
-    if (isGoalToolError(store)) return store;
+    const goal = this.agent.goal;
 
     return {
       description: 'Creating a goal',
       approvalRule: this.name,
       execute: async () => {
-        try {
-          const snapshot = await store.createGoal({
+        const snapshot = await goal.createGoal(
+          {
             objective: args.objective,
             completionCriterion: args.completionCriterion,
             replace: args.replace,
-            actor: 'model',
-          });
-          return { output: JSON.stringify({ goal: snapshot }, null, 2) };
-        } catch (error) {
-          return goalErrorResult(error);
-        }
+          },
+          'model',
+        );
+        return { output: JSON.stringify({ goal: snapshot }, null, 2) };
       },
     };
   }

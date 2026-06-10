@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { TUIState } from "#/tui/kimi-tui";
-import { darkColors, lightColors, getColorPalette } from "#/tui/theme/colors";
-import { createThemeStyles } from "#/tui/theme/styles";
+import { darkColors, lightColors } from "#/tui/theme/colors";
+import { getBuiltInPalette } from "#/tui/theme";
 import {
   DISABLE_TERMINAL_THEME_REPORTING,
   ENABLE_TERMINAL_THEME_REPORTING,
@@ -169,29 +169,7 @@ describe('ColorPalette warning token', () => {
   });
 
   it('resolves the correct palette by theme name', () => {
-    expect(getColorPalette('dark')).toBe(darkColors);
-    expect(getColorPalette('light')).toBe(lightColors);
-  });
-});
-
-describe('ThemeStyles warning helper', () => {
-  it('wraps text and includes the input', () => {
-    const styles = createThemeStyles(darkColors);
-    const result = styles.warning('test');
-    expect(result).toContain('test');
-  });
-
-  it('is a function that returns a string', () => {
-    const darkStyles = createThemeStyles(darkColors);
-    expect(typeof darkStyles.warning).toBe('function');
-    expect(typeof darkStyles.warning('hello')).toBe('string');
-  });
-
-  it('creates independent style sets per palette', () => {
-    const darkStyles = createThemeStyles(darkColors);
-    const lightStyles = createThemeStyles(lightColors);
-    expect(darkStyles.colors.warning).toBe(darkColors.warning);
-    expect(lightStyles.colors.warning).toBe(lightColors.warning);
-    expect(darkStyles.colors.warning).not.toBe(lightStyles.colors.warning);
+    expect(getBuiltInPalette('dark')).toBe(darkColors);
+    expect(getBuiltInPalette('light')).toBe(lightColors);
   });
 });

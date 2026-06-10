@@ -7,7 +7,6 @@
 import type { Component } from '@earendil-works/pi-tui';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { SessionUsage, TokenUsage } from '@moonshot-ai/kimi-code-sdk';
-import chalk from 'chalk';
 
 import {
   formatTokenCount,
@@ -15,7 +14,8 @@ import {
   renderProgressBar,
   safeUsageRatio,
 } from '#/utils/usage/usage-format';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
+import type { ColorToken } from '#/tui/theme';
 
 const LEFT_MARGIN = 2;
 const SIDE_PADDING = 1;
@@ -36,7 +36,6 @@ export interface ManagedUsageReport {
 }
 
 export interface UsageReportOptions {
-  readonly colors: ColorPalette;
   readonly sessionUsage?: SessionUsage;
   readonly sessionUsageError?: string;
   readonly contextUsage: number;
@@ -47,7 +46,6 @@ export interface UsageReportOptions {
 }
 
 export interface ManagedUsageReportLineOptions {
-  readonly colors: ColorPalette;
   readonly managedUsage?: ManagedUsageReport;
   readonly managedUsageError?: string;
 }
@@ -108,7 +106,6 @@ function buildManagedUsageSection(
   value: Colorize,
   muted: Colorize,
   errorStyle: Colorize,
-  severityHex: (sev: 'ok' | 'warn' | 'danger') => string,
 ): string[] {
   if (error !== undefined) return [accent('Plan usage'), errorStyle(`  ${error}`)];
   if (usage === undefined) return [];
@@ -124,12 +121,14 @@ function buildManagedUsageSection(
     r.limit > 0 ? Math.max(0, Math.min(r.used / r.limit, 1)) : 0;
   const labelWidth = Math.max(10, ...rows.map((r) => r.label.length));
   const pctWidth = Math.max(...rows.map((r) => `${Math.round(usedRatio(r) * 100)}% used`.length));
+  const severityColor = (sev: 'ok' | 'warn' | 'danger'): 'success' | 'warning' | 'error' =>
+    sev === 'danger' ? 'error' : sev === 'warn' ? 'warning' : 'success';
   const out: string[] = [accent('Plan usage')];
   for (const row of rows) {
     const ratioUsed = usedRatio(row);
     const bar = renderProgressBar(ratioUsed, 20);
     const pct = `${Math.round(ratioUsed * 100)}% used`;
-    const barColoured = chalk.hex(severityHex(ratioSeverity(ratioUsed)))(bar);
+    const barColoured = currentTheme.fg(severityColor(ratioSeverity(ratioUsed)), bar);
     const label = row.label.padEnd(labelWidth, ' ');
     const resetStr = row.resetHint ? `  ${muted(row.resetHint)}` : '';
     out.push(`  ${muted(label)}  ${barColoured}  ${value(pct.padEnd(pctWidth, ' '))}${resetStr}`);
@@ -138,13 +137,10 @@ function buildManagedUsageSection(
 }
 
 export function buildManagedUsageReportLines(options: ManagedUsageReportLineOptions): string[] {
-  const colors = options.colors;
-  const accent = chalk.hex(colors.primary).bold;
-  const value = chalk.hex(colors.text);
-  const muted = chalk.hex(colors.textDim);
-  const errorStyle = chalk.hex(colors.error);
-  const severityHex = (sev: 'ok' | 'warn' | 'danger'): string =>
-    sev === 'danger' ? colors.error : sev === 'warn' ? colors.warning : colors.success;
+  const accent = (text: string) => currentTheme.boldFg('primary', text);
+  const value = (text: string) => currentTheme.fg('text', text);
+  const muted = (text: string) => currentTheme.fg('textDim', text);
+  const errorStyle = (text: string) => currentTheme.fg('error', text);
 
   return buildManagedUsageSection(
     options.managedUsage,
@@ -153,18 +149,16 @@ export function buildManagedUsageReportLines(options: ManagedUsageReportLineOpti
     value,
     muted,
     errorStyle,
-    severityHex,
   );
 }
 
 export function buildUsageReportLines(options: UsageReportOptions): string[] {
-  const colors = options.colors;
-  const accent = chalk.hex(colors.primary).bold;
-  const value = chalk.hex(colors.text);
-  const muted = chalk.hex(colors.textDim);
-  const errorStyle = chalk.hex(colors.error);
-  const severityHex = (sev: 'ok' | 'warn' | 'danger'): string =>
-    sev === 'danger' ? colors.error : sev === 'warn' ? colors.warning : colors.success;
+  const accent = (text: string) => currentTheme.boldFg('primary', text);
+  const value = (text: string) => currentTheme.fg('text', text);
+  const muted = (text: string) => currentTheme.fg('textDim', text);
+  const errorStyle = (text: string) => currentTheme.fg('error', text);
+  const severityColor = (sev: 'ok' | 'warn' | 'danger'): 'success' | 'warning' | 'error' =>
+    sev === 'danger' ? 'error' : sev === 'warn' ? 'warning' : 'success';
 
   const lines: string[] = [
     accent('Session usage'),
@@ -181,7 +175,7 @@ export function buildUsageReportLines(options: UsageReportOptions): string[] {
     const ratio = safeUsageRatio(options.contextUsage);
     const bar = renderProgressBar(ratio, 20);
     const pct = `${(ratio * 100).toFixed(1)}%`;
-    const barColoured = chalk.hex(severityHex(ratioSeverity(ratio)))(bar);
+    const barColoured = currentTheme.fg(severityColor(ratioSeverity(ratio)), bar);
     lines.push('');
     lines.push(accent('Context window'));
     lines.push(
@@ -195,7 +189,6 @@ export function buildUsageReportLines(options: UsageReportOptions): string[] {
   }
 
   const managedSection = buildManagedUsageReportLines({
-    colors,
     managedUsage: options.managedUsage,
     managedUsageError: options.managedUsageError,
   });
@@ -208,16 +201,25 @@ export function buildUsageReportLines(options: UsageReportOptions): string[] {
 }
 
 export class UsagePanelComponent implements Component {
-  constructor(
-    private readonly lines: readonly string[],
-    private readonly borderHex: string,
-    private readonly title: string = ' Usage ',
-  ) {}
+  /** Cached coloured lines; rebuilt from `buildLines` on every invalidate. */
+  private lines: readonly string[];
 
-  invalidate(): void {}
+  constructor(
+    private readonly buildLines: () => readonly string[],
+    private readonly borderToken: ColorToken,
+    private readonly title: string = ' Usage ',
+  ) {
+    this.lines = buildLines();
+  }
+
+  invalidate(): void {
+    // Report bodies embed palette colours, so a theme switch must re-run the
+    // builder to repaint the cached lines (the data itself is captured).
+    this.lines = this.buildLines();
+  }
 
   render(width: number): string[] {
-    const paint = (s: string): string => chalk.hex(this.borderHex)(s);
+    const paint = (s: string): string => currentTheme.fg(this.borderToken, s);
     const indent = ' '.repeat(LEFT_MARGIN);
 
     const availableInterior = Math.max(

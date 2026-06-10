@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { startPluginMarketplaceServer } from './dev-plugin-marketplace-server.mjs';
 
+const require = createRequire(import.meta.url);
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = resolve(SCRIPT_DIR, '..');
 const MARKETPLACE_ENV = 'KIMI_CODE_PLUGIN_MARKETPLACE_URL';
@@ -18,12 +20,12 @@ if (env[MARKETPLACE_ENV] === undefined || env[MARKETPLACE_ENV]?.trim().length ==
   console.error(`Plugin marketplace dev server: ${marketplaceServer.marketplaceUrl}`);
 }
 
-const tsxBin = process.platform === 'win32' ? 'tsx.cmd' : 'tsx';
+const tsxCli = require.resolve('tsx/cli');
 const cliArgs = process.argv.slice(2);
 if (cliArgs[0] === '--') cliArgs.shift();
 const child = spawn(
-  tsxBin,
-  ['--import', '../../build/register-raw-text-loader.mjs', './src/main.ts', ...cliArgs],
+  process.execPath,
+  [tsxCli, '--import', '../../build/register-raw-text-loader.mjs', './src/main.ts', ...cliArgs],
   {
     cwd: APP_ROOT,
     env,

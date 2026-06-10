@@ -22,10 +22,9 @@
 
 import type { TUI } from '@earendil-works/pi-tui';
 import { Container, Spacer, Text } from '@earendil-works/pi-tui';
-import chalk from 'chalk';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 
 import type { ToolCallComponent, ToolCallReadSnapshot } from './tool-call';
 
@@ -42,11 +41,9 @@ export class ReadGroupComponent extends Container {
   private readonly bodyContainer: Container;
   private throttleTimer: ReturnType<typeof setTimeout> | null = null;
   private lastFlushPhases = new Map<string, ToolCallReadSnapshot['phase']>();
+  private _invalidating = false;
 
-  constructor(
-    private readonly colors: ColorPalette,
-    private readonly ui: TUI | undefined,
-  ) {
+  constructor(private readonly ui: TUI | undefined) {
     super();
     this.addChild(new Spacer(1));
     this.headerText = new Text('', 0, 0);
@@ -134,45 +131,53 @@ export class ReadGroupComponent extends Container {
   }
 
   private buildHeader(total: number, pending: number, failed: number, totalLines: number): string {
-    const colors = this.colors;
-    const dim = chalk.dim;
+    const dim = (text: string): string => currentTheme.dim(text);
 
     if (pending > 0) {
-      const bullet = chalk.hex(colors.roleAssistant)(STATUS_BULLET);
-      const label = chalk.hex(colors.primary).bold(`Reading ${String(total)} files…`);
+      const bullet = currentTheme.fg('text', STATUS_BULLET);
+      const label = currentTheme.boldFg('primary', `Reading ${String(total)} files…`);
       return `${bullet}${label}`;
     }
 
     // All reads have finished, either successfully or with failures.
     if (failed === total) {
-      const bullet = chalk.hex(colors.error)('✗ ');
-      const label = chalk.hex(colors.error).bold(`Read ${String(total)} files`);
-      return `${bullet}${label}${chalk.hex(colors.error)(' · failed')}`;
+      const bullet = currentTheme.fg('error', '✗ ');
+      const label = currentTheme.boldFg('error', `Read ${String(total)} files`);
+      return `${bullet}${label}${currentTheme.fg('error', ' · failed')}`;
     }
 
-    const bullet = chalk.hex(colors.success)(STATUS_BULLET);
-    const label = chalk.hex(colors.primary).bold(`Read ${String(total)} files`);
+    const bullet = currentTheme.fg('success', STATUS_BULLET);
+    const label = currentTheme.boldFg('primary', `Read ${String(total)} files`);
     const linesPart = dim(` · ${String(totalLines)} ${totalLines === 1 ? 'line' : 'lines'}`);
-    const failPart = failed > 0 ? chalk.hex(colors.error)(` · ${String(failed)} failed`) : '';
+    const failPart = failed > 0 ? currentTheme.fg('error', ` · ${String(failed)} failed`) : '';
     return `${bullet}${label}${linesPart}${failPart}`;
   }
 
   private buildBodyLine(snap: ToolCallReadSnapshot, isLast: boolean): string {
-    const colors = this.colors;
-    const dim = chalk.dim;
+    const dim = (text: string): string => currentTheme.dim(text);
     const branch = isLast ? '└─' : '├─';
     const path = snap.filePath ?? '';
-    const pathPart = chalk.hex(colors.text)(path);
+    const pathPart = currentTheme.fg('text', path);
 
     let tail: string;
     if (snap.phase === 'pending') {
       tail = dim(' · reading…');
     } else if (snap.phase === 'failed') {
-      tail = chalk.hex(colors.error)(' · failed');
+      tail = currentTheme.fg('error', ' · failed');
     } else {
       tail = dim(` · ${String(snap.lines)} ${snap.lines === 1 ? 'line' : 'lines'}`);
     }
     return `  ${branch} ${pathPart}${tail}`;
+  }
+
+  override invalidate(): void {
+    if (this._invalidating) {
+      super.invalidate();
+      return;
+    }
+    this._invalidating = true;
+    this.flushRender();
+    this._invalidating = false;
   }
 
   /** Releases throttle timers so destroyed components cannot refresh later. */

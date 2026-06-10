@@ -2,6 +2,7 @@ import type { Component } from '@earendil-works/pi-tui';
 
 import { WelcomeComponent } from '../components/chrome/welcome';
 import { AgentGroupComponent } from '../components/messages/agent-group';
+import { AgentSwarmProgressComponent } from '../components/messages/agent-swarm-progress';
 import { AssistantMessageComponent } from '../components/messages/assistant-message';
 import { BackgroundAgentStatusComponent } from '../components/messages/background-agent-status';
 import { CronMessageComponent } from '../components/messages/cron-message';
@@ -115,6 +116,7 @@ function isUndoContextEntry(entry: TranscriptEntry): boolean {
     case 'cron':
       return true;
     case 'status':
+    case 'goal':
       return entry.turnId !== undefined;
     case 'welcome':
       return false;
@@ -167,6 +169,7 @@ function isUndoContextComponent(child: Component): boolean {
     child instanceof ThinkingComponent ||
     child instanceof ToolCallComponent ||
     child instanceof AgentGroupComponent ||
+    child instanceof AgentSwarmProgressComponent ||
     child instanceof ReadGroupComponent ||
     child instanceof SkillActivationComponent ||
     child instanceof BackgroundAgentStatusComponent ||
@@ -183,6 +186,6 @@ function renderWelcome(host: SlashCommandHost): void {
     return;
   }
   host.state.transcriptContainer.addChild(
-    new WelcomeComponent(host.state.appState, host.state.theme.colors),
+    new WelcomeComponent(host.state.appState),
   );
 }

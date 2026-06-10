@@ -1,7 +1,5 @@
 import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 
-import type { ColorPalette } from '#/tui/theme/colors';
-
 const EDITOR_OPTIONS: readonly ChoiceOption[] = [
   { value: 'code --wait', label: 'VS Code (code --wait)' },
   { value: 'vim', label: 'Vim' },
@@ -12,7 +10,6 @@ const EDITOR_OPTIONS: readonly ChoiceOption[] = [
 
 export interface EditorSelectorOptions {
   readonly currentValue: string;
-  readonly colors: ColorPalette;
   readonly onSelect: (value: string) => void;
   readonly onCancel: () => void;
 }
@@ -23,7 +20,6 @@ export class EditorSelectorComponent extends ChoicePickerComponent {
       title: 'Select external editor',
       options: [...EDITOR_OPTIONS],
       currentValue: opts.currentValue,
-      colors: opts.colors,
       onSelect: opts.onSelect,
       onCancel: opts.onCancel,
     });

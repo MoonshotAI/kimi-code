@@ -1,4 +1,5 @@
 import type {
+  GoalChange,
   GoalSnapshot,
   ModelAlias,
   PermissionMode,
@@ -9,8 +10,7 @@ import type {
 
 import type { NotificationsConfig, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
-import type { Theme } from './theme';
-import type { ResolvedTheme } from './theme/colors';
+import type { ColorToken, ThemeName } from './theme';
 
 export interface AppState {
   model: string;
@@ -18,6 +18,7 @@ export interface AppState {
   sessionId: string;
   permissionMode: PermissionMode;
   planMode: boolean;
+  swarmMode: boolean;
   thinking: boolean;
   contextUsage: number;
   contextTokens: number;
@@ -26,7 +27,7 @@ export interface AppState {
   isReplaying: boolean;
   streamingPhase: 'idle' | 'waiting' | 'thinking' | 'composing';
   streamingStartTime: number;
-  theme: Theme;
+  theme: ThemeName;
   version: string;
   editorCommand: string | null;
   notifications: NotificationsConfig;
@@ -109,6 +110,10 @@ export interface CronTranscriptData {
   readonly missedCount?: number;
 }
 
+export type GoalTranscriptData =
+  | { readonly kind: 'created' }
+  | { readonly kind: 'lifecycle'; readonly change: GoalChange };
+
 export type TranscriptEntryKind =
   | 'welcome'
   | 'user'
@@ -117,7 +122,8 @@ export type TranscriptEntryKind =
   | 'thinking'
   | 'status'
   | 'skill_activation'
-  | 'cron';
+  | 'cron'
+  | 'goal';
 
 export type SkillActivationTrigger = 'user-slash' | 'model-tool' | 'nested-skill';
 
@@ -127,12 +133,13 @@ export interface TranscriptEntry {
   turnId?: string;
   renderMode: 'markdown' | 'plain' | 'notice';
   content: string;
-  color?: string;
+  color?: ColorToken;
   detail?: string;
   toolCallData?: ToolCallBlockData;
   backgroundAgentStatus?: BackgroundAgentStatusData;
   compactionData?: CompactionTranscriptData;
   cronData?: CronTranscriptData;
+  goalData?: GoalTranscriptData;
   imageAttachmentIds?: readonly number[];
   skillActivationId?: string;
   skillName?: string;
@@ -185,7 +192,6 @@ export type TUIStartupState = 'pending' | 'ready' | 'picker';
 export interface KimiTUIOptions {
   initialAppState: AppState;
   startup: TUIStartupOptions;
-  resolvedTheme?: ResolvedTheme;
 }
 
 export interface PendingExit {

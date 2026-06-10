@@ -213,6 +213,7 @@ describe('Session plan, compact, usage, and resume APIs', () => {
           },
         },
       });
+      await source.createGoal({ objective: 'source objective' });
       await source.setPlanMode(true);
       const sourcePlan = await source.getPlan();
       if (sourcePlan === null) throw new Error('expected source plan');
@@ -265,12 +266,12 @@ describe('Session plan, compact, usage, and resume APIs', () => {
         id: sourcePlan.id,
         time: expect.any(Number),
       });
-      const goalReminder = forkRecords.find((record) => {
-        const message = record['message'] as { origin?: { name?: string } } | undefined;
-        return record['type'] === 'context.append_message' && message?.origin?.name === 'goal_fork_cleared';
+      expect(forkRecords.find((record) => record['type'] === 'forked')).toEqual({
+        type: 'forked',
+        time: expect.any(Number),
       });
-      expect(goalReminder).toBeDefined();
-      expect(JSON.stringify(goalReminder)).toContain('This fork does not have a current goal.');
+      expect(forkRecords.some((record) => record['type'] === 'goal.clear')).toBe(false);
+      await expect(fork.getGoal()).resolves.toEqual({ goal: null });
       const forkState = JSON.parse(
         await readFile(join(forkSummary!.sessionDir, 'state.json'), 'utf-8'),
       ) as {

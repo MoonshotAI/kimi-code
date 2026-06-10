@@ -17,7 +17,7 @@
 | `/provider` | — | 打开交互式供应商管理器，查看、添加和删除已配置的供应商。详见[平台与模型 — `/provider` 与供应商管理](../configuration/providers.md#provider-与供应商管理) | 是 |
 | `/model` | — | 切换当前会话使用的 LLM 模型 | 是 |
 | `/settings` | `/config` | 打开 TUI 内的设置面板 | 是 |
-| `/experiments` | `/experimental` | 打开实验功能面板。确认后把变更持久化到 `config.toml` 并重载当前会话 | 是 |
+| `/experiments` | `/experimental` | 打开实验功能面板 | 是 |
 | `/permission` | — | 选择权限模式 | 是 |
 | `/editor` | — | 配置 `Ctrl-G` 调起的外部编辑器 | 是 |
 | `/theme` | — | 切换终端 UI 配色主题 | 是 |
@@ -44,30 +44,19 @@
 | `/auto [on\|off]` | — | 切换 auto 权限模式。开启后工具审批自动处理，Agent 不会向用户提问 | 是 |
 | `/plan [on\|off]` | — | 切换 Plan 模式。不带参数时翻转；显式传 `on`/`off` 时强制设置。单纯切换不会创建空计划文件 | 是 |
 | `/plan clear` | — | 清除当前 plan 方案 | 否 |
-| `/goal [...]` | — | 开始或管理目标模式（实验功能；可通过 `/experiments`、`[experimental].goal_command` 或 `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1` 启用） | 见下文 |
+| `/swarm on\|off` | — | 开启或关闭 swarm mode，但不发送提示词。 | 是 |
+| `/swarm <task>` | — | 先开启 swarm mode，再把 `<task>` 作为普通提示词发送。如果该轮次正常完成，swarm mode 会自动关闭。若当前是 `manual` 权限模式，启动前会提示是否切换到 `auto`。 | 否 |
+| `/goal [...]` | — | 开始或管理目标模式 | 见下文 |
 
 ::: warning 注意
 `/yolo` 会跳过普通工具调用的审批确认，使用前请确保了解可能的风险。Plan 模式的退出审批不会被 `/yolo` 跳过；Plan 模式下的 `Bash` 也按 `/yolo` 的普通放行规则处理。
 :::
 
-## 目标模式（实验功能）
-
-::: info
-`/goal` 是实验命令。可以通过 `/experiments` 启用，也可以写入 `~/.kimi-code/config.toml`：
-```toml
-[experimental]
-goal_command = true
-```
-
-也可以用环境变量只覆盖当前进程：
-```sh
-KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
-```
-:::
+## 目标模式
 
 `/goal` 用于开始或管理目标模式：Kimi Code 会在自动续跑的轮次中持续朝一个持久目标工作。使用指导和示例见[使用目标模式](../guides/goals.md)。
 
-```
+```sh
 /goal 更新 checkout 文档，运行 docs build，如果 20 轮后仍被阻塞就停止
 ```
 
@@ -78,8 +67,8 @@ KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
 | `/goal resume` | 继续被暂停或被阻塞的目标 | 仅空闲时 |
 | `/goal cancel` | 移除当前目标 | 随时可用 |
 | `/goal replace <objective>` | 用新目标替换已保存的目标 | 仅空闲时 |
-| `/goal next <objective>` | 为当前会话安排一个后续目标。当前目标完成前，Agent 不会看到它 | 随时可用 |
-| `/goal next manage` | 打开后续目标管理器。用 `↑`/`↓` 浏览，`Space` 选择一个目标以便移动，选中后用 `↑`/`↓` 调整顺序，`E` 编辑，`D` 删除，`Esc` 取消 | 随时可用 |
+| `/goal next <objective>` | 为当前会话安排一个后续目标。如果当前没有目标，则立即开始它。当前目标完成前，Agent 不会看到已排队的目标 | 随时可用 |
+| `/goal next manage` | 打开后续目标管理器。用 <kbd>↑</kbd> / <kbd>↓</kbd> 浏览，<kbd>Space</kbd> 选择一个目标以便移动，选中后用 <kbd>↑</kbd> / <kbd>↓</kbd> 调整顺序，<kbd>E</kbd> 编辑，<kbd>D</kbd> 删除，<kbd>Esc</kbd> 取消。编辑输入框中，用 <kbd>Shift-Enter</kbd> 或 <kbd>Ctrl-J</kbd> 添加新行，用 <kbd>Enter</kbd> 保存 | 随时可用 |
 
 `status`、`pause`、`resume`、`cancel`、`replace` 和 `next` 只有作为 `/goal` 后的第一个词时才是子命令。如果你的目标需要以这些词开头，请在目标前加 `--`：
 
@@ -96,7 +85,7 @@ KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi
 在非交互式 prompt 模式中，只有创建形式会启动目标模式：
 
 ```sh
-KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1 kimi -p "/goal 修复 checkout 测试失败"
+kimi -p "/goal 修复 checkout 测试失败"
 ```
 
 Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `3` 退出，在目标暂停时以 `6` 退出。其它 `/goal` 子命令，包括 `next`，都是 TUI 控制命令，不由 `kimi -p` 处理。
@@ -120,9 +109,23 @@ Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `
 | --- | --- | --- | --- |
 | `/exit` | `/quit`、`/q` | 退出 Kimi Code CLI | 否 |
 
+## 内置 Skill 命令
+
+Kimi Code CLI 随包内置了一组 Skill，直接以 `/<name>` 形式出现在斜杠命令面板中。与外部 Skill 不同，它们不需要 `skill:` 前缀，开箱即用。
+
+| 命令 | 说明 |
+| --- | --- |
+| `/mcp-config` | 配置 MCP server 并处理 MCP OAuth 登录。详见 [MCP](../customization/mcp.md) |
+| `/custom-theme [<text>]` | 创建或编辑自定义 TUI 配色主题。详见 [主题](../customization/themes.md) |
+| `/update-config` | 查看或编辑 `config.toml`（模型、供应商、权限、hooks）和 `tui.toml`（主题、编辑器、通知、自动更新） |
+| `/import-from-cc-codex` | 从 Claude Code 和 Codex 导入 instructions、skills 和 MCP 设置 |
+| `/sub-skill` | 发现并将本地 skill 库存重组为分层子 skill 包。包含 `/sub-skill.review`（只读提案）和 `/sub-skill.consolidate`（执行重组） |
+
+所有内置 Skill 命令仅在空闲状态下可用。
+
 ## Skill 动态命令
 
-已激活的 Skill 会自动注册为斜杠命令，统一以 `skill:` 作为命名空间前缀：
+已激活的外部 Skill 会自动注册为斜杠命令，并以 `skill:` 作为命名空间前缀：
 
 ```
 /skill:<name> [附加文本]
@@ -130,9 +133,9 @@ Prompt 模式在目标完成时以退出码 `0` 退出，在目标阻塞时以 `
 
 例如 `/skill:code-style` 加载名为 `code-style` 的 Skill 并发送给 Agent；命令后附带的文本拼接到 Skill 提示词之后。
 
-为方便输入，Skill 命令同时支持省略 `skill:` 前缀的简写形式 `/<name>`，前提是该名称未被内置命令占用——即 `/code-style` 会回退匹配到 `/skill:code-style`。
+为方便输入，外部 Skill 命令同时支持省略 `skill:` 前缀的简写形式 `/<name>`，前提是该名称未被系统斜杠命令占用——即 `/code-style` 会回退匹配到 `/skill:code-style`。
 
-Kimi Code CLI 随包内置了 `mcp-config` Skill，用于配置 MCP server 和处理 MCP OAuth 登录；可直接输入 `/mcp-config` 调用。
+Kimi Code CLI 随包内置的 Skill 会直接以 `/<name>` 形式出现在斜杠命令面板中。例如，`/mcp-config` 用于配置 MCP server 和处理 MCP OAuth 登录，`/custom-theme [附加文本]` 用于进入自定义主题流程，创建或编辑 TUI 主题。
 
 ::: info 说明
 所有 Skill 命令仅在空闲状态下可用。`flow` 类型的 Skill 同样通过 `/skill:<name>` 暴露，没有独立的 `/flow:` 命名空间。

@@ -89,44 +89,53 @@ describe('HarnessAPI session skills', () => {
     const created = await rpc.createSession({ id: 'ses_builtin_skill_list', workDir });
 
     const skills = await rpc.listSkills({ sessionId: created.id });
-    const listed = skills.find((skill) => skill.name === 'mcp-config');
+    const mcpConfig = skills.find((skill) => skill.name === 'mcp-config');
+    const importer = skills.find((skill) => skill.name === 'import-from-cc-codex');
 
-    expect(listed).toMatchObject({
+    expect(mcpConfig).toMatchObject({
       name: 'mcp-config',
       description: 'Configure MCP servers and handle MCP OAuth login.',
       source: 'builtin',
     });
-    expect(listed?.path).toBe('builtin://mcp-config');
+    expect(mcpConfig?.path).toBe('builtin://mcp-config');
+    expect(importer).toMatchObject({
+      name: 'import-from-cc-codex',
+      description: 'Import Claude Code and Codex instructions, skills, and MCP settings into Kimi Code.',
+      source: 'builtin',
+      disableModelInvocation: true,
+    });
+    expect(importer?.path).toBe('builtin://import-from-cc-codex');
     expect(JSON.stringify(skills)).not.toContain('Your tool list contains one synthetic tool');
+    expect(JSON.stringify(skills)).not.toContain('Do not migrate Claude custom commands');
   });
 
-  it('resolves user skills from the OS home directory, not from the kimi home', async () => {
+  it('resolves user brand skills from the kimi home, not the OS home', async () => {
     const processHome = join(tmp, 'process-home');
     vi.stubEnv('HOME', processHome);
-    await writeUserSkill(processHome, 'real-home-only', 'Real home skill');
-    await writeUserSkill(homeDir, 'sandbox-only', 'Sandbox skill');
+    await writeLegacyUserSkill(processHome, 'real-home-only', 'Real home skill');
+    await writeBrandUserSkill(homeDir, 'sandbox-only', 'Sandbox skill');
     const { rpc } = await createTestRpc();
     const created = await rpc.createSession({ id: 'ses_skill_sandbox_home', workDir });
 
     const names = new Set((await rpc.listSkills({ sessionId: created.id })).map((skill) => skill.name));
 
-    expect(names.has('real-home-only')).toBe(true);
-    expect(names.has('sandbox-only')).toBe(false);
+    expect(names.has('real-home-only')).toBe(false);
+    expect(names.has('sandbox-only')).toBe(true);
   });
 
-  it('resolves user skills from the OS home directory even when KIMI_CODE_HOME is set', async () => {
+  it('resolves user brand skills from KIMI_CODE_HOME when no explicit home is set', async () => {
     const processHome = join(tmp, 'env-process-home');
     vi.stubEnv('HOME', processHome);
     vi.stubEnv('KIMI_CODE_HOME', homeDir);
-    await writeUserSkill(processHome, 'env-real-home-only', 'Env real home skill');
-    await writeUserSkill(homeDir, 'env-sandbox-only', 'Env sandbox skill');
+    await writeLegacyUserSkill(processHome, 'env-real-home-only', 'Env real home skill');
+    await writeBrandUserSkill(homeDir, 'env-sandbox-only', 'Env sandbox skill');
     const { rpc } = await createTestRpc({});
     const created = await rpc.createSession({ id: 'ses_skill_env_home', workDir });
 
     const names = new Set((await rpc.listSkills({ sessionId: created.id })).map((skill) => skill.name));
 
-    expect(names.has('env-real-home-only')).toBe(true);
-    expect(names.has('env-sandbox-only')).toBe(false);
+    expect(names.has('env-real-home-only')).toBe(false);
+    expect(names.has('env-sandbox-only')).toBe(true);
   });
 
   it('activates an inline skill through core and records display origin metadata', async () => {
@@ -496,8 +505,23 @@ describe('HarnessAPI session skills', () => {
     await writeFile(join(dir, 'SKILL.md'), lines.join('\n'));
   }
 
-  async function writeUserSkill(userHomeDir: string, name: string, description: string): Promise<void> {
-    const dir = join(userHomeDir, '.kimi-code', 'skills', name);
+  async function writeLegacyUserSkill(
+    userHomeDir: string,
+    name: string,
+    description: string,
+  ): Promise<void> {
+    await writeSkillFile(join(userHomeDir, '.kimi-code', 'skills', name), name, description);
+  }
+
+  async function writeBrandUserSkill(
+    brandHomeDir: string,
+    name: string,
+    description: string,
+  ): Promise<void> {
+    await writeSkillFile(join(brandHomeDir, 'skills', name), name, description);
+  }
+
+  async function writeSkillFile(dir: string, name: string, description: string): Promise<void> {
     await mkdir(dir, { recursive: true });
     await writeFile(
       join(dir, 'SKILL.md'),

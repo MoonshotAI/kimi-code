@@ -13,6 +13,7 @@ import type { Component } from '@earendil-works/pi-tui';
 import { truncateToWidth } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 
+import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 
 export type TodoStatus = 'pending' | 'in_progress' | 'done';
@@ -98,11 +99,6 @@ export function selectVisibleTodos(todos: readonly TodoItem[]): VisibleTodos {
 
 export class TodoPanelComponent implements Component {
   private todos: readonly TodoItem[] = [];
-  private colors: ColorPalette;
-
-  constructor(colors: ColorPalette) {
-    this.colors = colors;
-  }
 
   setTodos(todos: readonly TodoItem[]): void {
     this.todos = todos.map((t) => ({ title: t.title, status: t.status }));
@@ -120,15 +116,11 @@ export class TodoPanelComponent implements Component {
     return this.todos.length === 0;
   }
 
-  setColors(colors: ColorPalette): void {
-    this.colors = colors;
-  }
-
   invalidate(): void {}
 
   render(width: number): string[] {
     if (this.todos.length === 0) return [];
-    const c = this.colors;
+    const c = currentTheme.palette;
     const { rows, hidden } = selectVisibleTodos(this.todos);
     const lines: string[] = [
       chalk.hex(c.border)('─'.repeat(width)),

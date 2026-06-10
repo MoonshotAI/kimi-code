@@ -2,7 +2,7 @@ import type { Component, Focusable } from '@earendil-works/pi-tui';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
-import type { Theme } from '../theme';
+import type { ColorToken, ThemeName } from '#/tui/theme';
 import type { ResolvedTheme } from '../theme/colors';
 import {
   LLM_NOT_SET_MESSAGE,
@@ -42,6 +42,7 @@ import { handleProviderCommand } from './provider';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 import { handlePluginsCommand } from './plugins';
 import { handleReloadCommand, handleReloadTuiCommand } from './reload';
+import { handleSwarmCommand } from './swarm';
 import {
   handleExportDebugZipCommand,
   handleExportMdCommand,
@@ -73,6 +74,7 @@ export {
   showPermissionPicker,
   showSettingsSelector,
 } from './config';
+export { handleSwarmCommand } from './swarm';
 export {
   handleFeedbackCommand,
   showMcpServers,
@@ -105,7 +107,7 @@ export interface SlashCommandHost {
   setAppState(patch: Partial<AppState>): void;
   resetLivePane(): void;
   showError(msg: string): void;
-  showStatus(msg: string, color?: string): void;
+  showStatus(msg: string, color?: ColorToken): void;
   showNotice(title: string, detail?: string): void;
   track(event: string, props?: Record<string, unknown>): void;
   mountEditorReplacement(panel: Component & Focusable): void;
@@ -120,6 +122,7 @@ export interface SlashCommandHost {
   beginSessionRequest(): void;
   failSessionRequest(message: string): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
+  requestQueuedGoalPromotion?(): void;
 
   // UI
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle;
@@ -127,7 +130,7 @@ export interface SlashCommandHost {
   showProgressSpinner(label: string): LoginProgressSpinnerHandle;
 
   // Theme
-  applyTheme(theme: Theme, resolved?: ResolvedTheme): void;
+  applyTheme(theme: ThemeName, resolved?: ResolvedTheme): Promise<void>;
   refreshTerminalThemeTracking(): void;
 
   // Dispatch
@@ -298,6 +301,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'plan':
       await handlePlanCommand(host, args);
+      return;
+    case 'swarm':
+      await handleSwarmCommand(host, args);
       return;
     case 'compact':
       await handleCompactCommand(host, args);

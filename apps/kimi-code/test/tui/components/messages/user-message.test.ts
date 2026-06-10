@@ -11,7 +11,6 @@ describe('UserMessageComponent', () => {
   it('renders video placeholders as plain text, not inline image escapes', () => {
     const component = new UserMessageComponent(
       'please inspect [video #1 sample.mov]',
-      darkColors,
       [],
     );
 

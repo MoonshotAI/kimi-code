@@ -7,11 +7,8 @@ import type {
   FileContentDisplayBlock,
   PendingApproval,
 } from '#/tui/reverse-rpc/types';
-import { getColorPalette } from '#/tui/theme/colors';
 
 import { captureProcessWrite } from '../../../helpers/process';
-
-const COLORS = getColorPalette('dark');
 
 function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -52,7 +49,6 @@ function makeDialog(): {
   const dialog = new ApprovalPanelComponent(
     makePending(),
     (response) => responses.push(response),
-    COLORS,
   );
   return { dialog, responses };
 }
@@ -84,12 +80,44 @@ describe('ApprovalPanelComponent', () => {
         choices: [{ label: 'Approve once', response: 'approved' }],
       },
     };
-    const dialog = new ApprovalPanelComponent(pending, () => {}, COLORS);
+    const dialog = new ApprovalPanelComponent(pending, () => {});
 
     const out = strip(dialog.render(80).join('\n'));
     expect(out).toContain('Dangerous: recursive delete');
     expect(out).not.toContain('potentially destructive');
     expect(out).not.toContain('⚠');
+  });
+
+  it('wraps a long single-line shell command instead of truncating it', () => {
+    const head = 'approve-long-command-head';
+    const tail = 'approve-long-command-tail';
+    const command = `printf ${head}_${'x'.repeat(220)}_${tail}`;
+    const pending: PendingApproval = {
+      data: {
+        id: 'approval_long_command',
+        tool_call_id: 'tool_long_command',
+        tool_name: 'Bash',
+        action: 'run',
+        description: '',
+        display: [
+          {
+            type: 'shell',
+            language: 'bash',
+            command,
+          },
+        ],
+        choices: [{ label: 'Approve once', response: 'approved' }],
+      },
+    };
+    const dialog = new ApprovalPanelComponent(pending, () => {});
+
+    const rendered = dialog.render(60);
+    const out = strip(rendered.join('\n'));
+    expect(rendered.length).toBeGreaterThan(8);
+    expect(out).toContain(head);
+    expect(out).toContain(tail);
+    expect(out).not.toContain('...');
+    expect(out).not.toContain('…');
   });
 
   it('numeric shortcuts still drive approval actions', () => {
@@ -184,7 +212,7 @@ describe('ApprovalPanelComponent', () => {
         ],
       },
     };
-    const dialog = new ApprovalPanelComponent(pending, () => {}, COLORS);
+    const dialog = new ApprovalPanelComponent(pending, () => {});
 
     const out = strip(dialog.render(80).join('\n'));
     expect(out).toContain('Ready to build with this plan?');
@@ -228,14 +256,11 @@ describe('ApprovalPanelComponent', () => {
       },
     };
     let toolOutputToggles = 0;
-    let planToggles = 0;
     const previewCalls: Array<DiffDisplayBlock | FileContentDisplayBlock> = [];
     const dialog = new ApprovalPanelComponent(
       pending,
       (r) => responses.push(r),
-      COLORS,
       () => toolOutputToggles++,
-      () => planToggles++,
       (block) => previewCalls.push(block),
     );
 
@@ -252,8 +277,7 @@ describe('ApprovalPanelComponent', () => {
     expect(after).not.toContain('new30');
     expect(after).toContain('ctrl+e preview');
     expect(previewCalls).toEqual([diffBlock]);
-    // The unrelated forward-only callbacks must not fire for ctrl+e.
-    expect(planToggles).toBe(0);
+    // The unrelated forward-only callback must not fire for ctrl+e.
     expect(toolOutputToggles).toBe(0);
     expect(responses).toEqual([]);
   });
@@ -278,7 +302,7 @@ describe('ApprovalPanelComponent', () => {
       },
     };
     let globalToggleCalls = 0;
-    const dialog = new ApprovalPanelComponent(pending, () => {}, COLORS, () => globalToggleCalls++);
+    const dialog = new ApprovalPanelComponent(pending, () => {}, () => globalToggleCalls++);
 
     dialog.handleInput('\u000F'); // Ctrl+O
 
@@ -288,10 +312,7 @@ describe('ApprovalPanelComponent', () => {
     expect(after).not.toContain('new30');
   });
 
-  // When there is no diff / file_content block to preview (e.g. plan_review
-  // with an empty display), ctrl+e falls through to the legacy global plan
-  // expand toggle so plan mode keeps working.
-  it('falls through to onTogglePlanExpand when there is nothing to preview', () => {
+  it('does nothing on ctrl+e when there is nothing to preview', () => {
     const pending: PendingApproval = {
       data: {
         id: 'approval_plan_only',
@@ -303,19 +324,15 @@ describe('ApprovalPanelComponent', () => {
         choices: [{ label: 'Approve', response: 'approved' }],
       },
     };
-    let planToggles = 0;
     const previewCalls: Array<DiffDisplayBlock | FileContentDisplayBlock> = [];
     const dialog = new ApprovalPanelComponent(
       pending,
       () => {},
-      COLORS,
       undefined,
-      () => planToggles++,
       (block) => previewCalls.push(block),
     );
 
     dialog.handleInput('\u0005'); // Ctrl+E
-    expect(planToggles).toBe(1);
     expect(previewCalls).toEqual([]);
   });
 
@@ -343,8 +360,6 @@ describe('ApprovalPanelComponent', () => {
     const dialog = new ApprovalPanelComponent(
       pending,
       (r) => responses.push(r),
-      COLORS,
-      undefined,
       undefined,
       (block) => previewCalls.push(block),
     );
@@ -386,8 +401,6 @@ describe('ApprovalPanelComponent', () => {
       const dialog = new ApprovalPanelComponent(
         pending,
         () => {},
-        COLORS,
-        undefined,
         undefined,
         (block) => previewCalls.push(block),
       );
@@ -430,7 +443,6 @@ describe('ApprovalPanelComponent', () => {
     const dialog = new ApprovalPanelComponent(
       pending,
       (response) => responses.push(response),
-      COLORS,
     );
 
     dialog.handleInput('2');

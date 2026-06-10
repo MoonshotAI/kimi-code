@@ -66,7 +66,6 @@ compaction_trigger_ratio = 0.85
 max_running_tasks = 4
 keep_alive_on_exit = false
 kill_grace_period_ms = 2000
-agent_task_timeout_s = 900
 print_wait_ceiling_s = 3600
 
 [services.moonshot_search]
@@ -154,7 +153,6 @@ max_context_size = "large"
       maxRunningTasks: 4,
       keepAliveOnExit: false,
       killGracePeriodMs: 2000,
-      agentTaskTimeoutS: 900,
       printWaitCeilingS: 3600,
     });
     expect(config.services?.moonshotSearch?.customHeaders).toEqual({ 'X-Search': '1' });
@@ -322,38 +320,32 @@ describe('KimiHarness config API', () => {
 
   it('returns experimental feature metadata through the harness', async () => {
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '0');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND', '');
     vi.stubEnv('KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION', '');
-    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_BACKGROUND_ASK', '');
     const homeDir = await makeTempDir();
     await writeFile(
       join(homeDir, 'config.toml'),
       `
 [experimental]
-goal_command = true
-background_ask = false
+micro_compaction = false
 `,
       'utf-8',
     );
     const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
 
     const features = await harness.getExperimentalFeatures();
-    const goalCommand = features.find((feature) => feature.id === 'goal_command');
+    const microCompaction = features.find((feature) => feature.id === 'micro_compaction');
 
-    expect(goalCommand).toMatchObject({
-      id: 'goal_command',
-      title: 'Goal command',
-      enabled: true,
+    expect(microCompaction).toMatchObject({
+      id: 'micro_compaction',
+      title: 'Micro compaction',
+      enabled: false,
       source: 'config',
-      configValue: true,
-      env: 'KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND',
+      configValue: false,
+      env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
     });
-    expect(features).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: 'goal_command', enabled: true }),
-        expect.objectContaining({ id: 'background_ask', enabled: false }),
-      ]),
-    );
+    expect(features).toEqual([
+      expect.objectContaining({ id: 'micro_compaction', enabled: false }),
+    ]);
   });
 
   it('can create the default config scaffold without selecting a model', async () => {

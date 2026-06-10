@@ -8,6 +8,7 @@ import {
   handleReloadCommand,
   handleReloadTuiCommand,
 } from '#/tui/commands/reload';
+import { currentTheme } from '#/tui/theme';
 import type { SlashCommandHost } from '#/tui/commands';
 import {
   isExperimentalFlagEnabled,
@@ -60,7 +61,7 @@ auto_install = false
     });
     expect(host.showStatus).toHaveBeenCalledWith(
       'TUI config reloaded.',
-      host.state.theme.colors.success,
+      'success',
     );
   });
 
@@ -79,11 +80,36 @@ auto_install = false
     expect(host.harness.getConfig).toHaveBeenCalledWith({ reload: true });
     expect(host.harness.getExperimentalFeatures).toHaveBeenCalledOnce();
     expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalledOnce();
-    expect(isExperimentalFlagEnabled('goal_command')).toBe(true);
+    expect(isExperimentalFlagEnabled('micro_compaction')).toBe(true);
     expect(host.state.appState.theme).toBe('light');
     expect(host.state.appState.availableModels).toEqual({
       fresh: { provider: 'test', model: 'fresh-model', maxContextSize: 1000 },
     });
+  });
+
+  it('awaits the async theme application before refreshing terminal tracking', async () => {
+    await writeTuiConfig('theme = "auto"\n');
+    const host = makeHost();
+    const mutable = host as unknown as {
+      applyTheme: (theme: string) => Promise<void>;
+      refreshTerminalThemeTracking: () => void;
+      state: { appState: { theme: string } };
+    };
+
+    let themeWhenTracked: string | undefined;
+    // Theme application resolves on a later microtask, mirroring the real
+    // async palette load; tracking must observe the *new* theme.
+    mutable.applyTheme = vi.fn(async (theme: string) => {
+      await Promise.resolve();
+      mutable.state.appState.theme = theme;
+    });
+    mutable.refreshTerminalThemeTracking = vi.fn(() => {
+      themeWhenTracked = mutable.state.appState.theme;
+    });
+
+    await handleReloadTuiCommand(host);
+
+    expect(themeWhenTracked).toBe('auto');
   });
 });
 
@@ -110,8 +136,7 @@ function makeHost({
       availableProviders: {},
     },
     theme: {
-      resolvedTheme: 'dark',
-      colors: {
+      palette: {
         success: '#00ff00',
       },
     },
@@ -128,7 +153,7 @@ function makeHost({
           test: { type: 'kimi', apiKey: 'test-key' },
         },
       })),
-      getExperimentalFeatures: vi.fn(async () => [{ id: 'goal_command', enabled: true }]),
+      getExperimentalFeatures: vi.fn(async () => [{ id: 'micro_compaction', enabled: true }]),
     },
     setAppState: vi.fn((patch: Record<string, unknown>) => {
       Object.assign(state.appState, patch);

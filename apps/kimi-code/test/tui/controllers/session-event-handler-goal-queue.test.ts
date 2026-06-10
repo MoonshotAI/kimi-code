@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 import { SessionEventHandler } from '#/tui/controllers/session-event-handler';
-import { getColorPalette } from '#/tui/theme/colors';
+import { getBuiltInPalette } from '#/tui/theme';
 import { readGoalQueue, removeGoalQueueItem, restoreGoalQueueItem } from '#/tui/goal-queue-store';
 
 vi.mock('#/tui/goal-queue-store', () => ({
@@ -19,10 +19,6 @@ function fakeGoalSnapshot(objective: string, status: 'active' | 'blocked' | 'pau
     goalId: 'g1',
     objective,
     status,
-    createdAt: '',
-    updatedAt: '',
-    startedBy: 'user' as const,
-    updatedBy: status === 'complete' || status === 'blocked' ? 'model' as const : 'user' as const,
     turnsUsed: 1,
     tokensUsed: 10,
     wallClockMs: 100,
@@ -58,7 +54,7 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
         permissionMode: 'auto',
       },
       queuedMessages: [],
-      theme: { colors: getColorPalette('dark') },
+      theme: { palette: getBuiltInPalette('dark') },
       toolOutputExpanded: false,
       todoPanel: { getTodos: vi.fn(() => []) },
       transcriptContainer: { addChild: vi.fn() },
@@ -72,6 +68,10 @@ function makeHost(options: { createGoalRejects?: boolean } = {}) {
       flushNow: vi.fn(),
       resetToolUi: vi.fn(),
       finalizeTurn: vi.fn(),
+      hasThinkingDraft: vi.fn(() => false),
+      flushThinkingToTranscript: vi.fn(),
+      appendAssistantDelta: vi.fn(),
+      scheduleFlush: vi.fn(),
     },
     requireSession: vi.fn(() => session),
     setAppState: vi.fn(),
@@ -137,6 +137,21 @@ function turnEndedEvent() {
     turnId: 1,
     reason: 'completed',
   } as const;
+}
+
+function modelBlockedEvent() {
+  return {
+    type: 'goal.updated',
+    sessionId: 's1',
+    agentId: 'main',
+    snapshot: fakeGoalSnapshot('Blocked goal', 'blocked'),
+    change: { kind: 'lifecycle', status: 'blocked' },
+  } as const;
+}
+
+function addedTranscriptText(host: ReturnType<typeof makeHost>['host']): string {
+  const component = host.state.transcriptContainer.addChild.mock.calls.at(-1)?.[0];
+  return component.render(80).join('\n').replaceAll(/\[[0-9;]*m/g, '');
 }
 
 describe('SessionEventHandler goal queue promotion', () => {
@@ -237,6 +252,31 @@ describe('SessionEventHandler goal queue promotion', () => {
     expect(session.createGoal).toHaveBeenCalledOnce();
   });
 
+  it('retries the queued goal on a later idle event after startup fails', async () => {
+    const { host, session } = makeHost();
+    session.createGoal.mockRejectedValueOnce(new Error('create failed'));
+    const handler = new SessionEventHandler(host);
+    const sendQueued = sendQueuedViaHost(host, session);
+
+    handler.handleEvent(completionEvent(), sendQueued);
+    handler.handleEvent(clearedEvent(), sendQueued);
+    handler.handleEvent(turnEndedEvent(), sendQueued);
+
+    await vi.waitFor(() => {
+      expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('create failed'));
+    });
+    expect(removeGoalQueueItem).not.toHaveBeenCalled();
+    expect(host.sendQueuedMessage).not.toHaveBeenCalled();
+
+    handler.handleEvent(turnEndedEvent(), sendQueued);
+
+    await vi.waitFor(() => {
+      expect(session.createGoal).toHaveBeenCalledTimes(2);
+    });
+    expect(removeGoalQueueItem).toHaveBeenCalledWith(session, { goalId: 'q1' });
+    expect(host.sendQueuedMessage).toHaveBeenCalledWith(session, { text: 'Ship queued goal' });
+  });
+
   it('does not send the queued objective when removal fails after goal creation', async () => {
     vi.mocked(removeGoalQueueItem).mockRejectedValueOnce(new Error('remove failed'));
     const { host, session } = makeHost();
@@ -253,6 +293,8 @@ describe('SessionEventHandler goal queue promotion', () => {
       objective: 'Ship queued goal',
       replace: false,
     });
+    expect(session.cancelGoal).toHaveBeenCalledOnce();
+    expect(restoreGoalQueueItem).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
     expect(host.sendQueuedMessage).not.toHaveBeenCalled();
   });
@@ -261,6 +303,30 @@ describe('SessionEventHandler goal queue promotion', () => {
     const { host, session } = makeHost();
     vi.mocked(removeGoalQueueItem).mockImplementationOnce(async () => {
       host.session = undefined;
+      return { goals: [] };
+    });
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent(completionEvent(), vi.fn());
+    handler.handleEvent(clearedEvent(), vi.fn());
+    handler.handleEvent(turnEndedEvent(), sendQueuedViaHost(host, session));
+
+    await vi.waitFor(() => {
+      expect(restoreGoalQueueItem).toHaveBeenCalledWith(session, {
+        id: 'q1',
+        objective: 'Ship queued goal',
+        createdAt: '',
+        updatedAt: '',
+      });
+    });
+    expect(session.cancelGoal).toHaveBeenCalledOnce();
+    expect(host.sendQueuedMessage).not.toHaveBeenCalled();
+  });
+
+  it('restores and cancels when the host becomes busy before sending the promoted goal', async () => {
+    const { host, session } = makeHost();
+    vi.mocked(removeGoalQueueItem).mockImplementationOnce(async () => {
+      host.setAppState({ streamingPhase: 'waiting' });
       return { goals: [] };
     });
     const handler = new SessionEventHandler(host);
@@ -301,6 +367,65 @@ describe('SessionEventHandler goal queue promotion', () => {
       );
     });
     expect(session.createGoal).not.toHaveBeenCalled();
+  });
+
+  it('does not render a duplicate marker for a model-reported blocked goal', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent(modelBlockedEvent(), vi.fn());
+
+    expect(host.state.transcriptContainer.addChild).not.toHaveBeenCalled();
+  });
+
+  it('renders a blocked fallback when the model does not explain the blocked goal', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent(modelBlockedEvent(), vi.fn());
+    handler.handleEvent(turnEndedEvent(), vi.fn());
+
+    expect(addedTranscriptText(host)).toBe('  ◦ Goal blocked');
+  });
+
+  it('does not render a blocked fallback after the model explains the blocked goal', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent(modelBlockedEvent(), vi.fn());
+    handler.handleEvent(
+      {
+        type: 'assistant.delta',
+        sessionId: 's1',
+        agentId: 'main',
+        turnId: 1,
+        delta: 'I am blocked because I need credentials.',
+      },
+      vi.fn(),
+    );
+    handler.handleEvent(turnEndedEvent(), vi.fn());
+
+    expect(host.state.transcriptContainer.addChild).not.toHaveBeenCalled();
+  });
+
+  it('does not render a blocked fallback after earlier assistant text in the same turn', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+
+    handler.handleEvent(
+      {
+        type: 'assistant.delta',
+        sessionId: 's1',
+        agentId: 'main',
+        turnId: 1,
+        delta: 'I am blocked because I need credentials.',
+      },
+      vi.fn(),
+    );
+    handler.handleEvent(modelBlockedEvent(), vi.fn());
+    handler.handleEvent(turnEndedEvent(), vi.fn());
+
+    expect(host.state.transcriptContainer.addChild).not.toHaveBeenCalled();
   });
 
   it('does not promote on paused or cancelled updates', async () => {

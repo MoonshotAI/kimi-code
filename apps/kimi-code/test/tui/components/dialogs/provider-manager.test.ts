@@ -24,7 +24,6 @@ function rendered(component: ProviderManagerComponent, width = 120): string {
 function makeComponent(overrides: Partial<ProviderManagerOptions> = {}): ProviderManagerComponent {
   return new ProviderManagerComponent({
     providers: {} as Record<string, ProviderConfig>,
-    colors: darkColors,
     onAdd: vi.fn(),
     onDeleteSource: vi.fn(),
     onClose: vi.fn(),

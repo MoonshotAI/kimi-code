@@ -79,8 +79,11 @@ describe('SessionStore.list', () => {
 
     const source = await store.create({ id: 'ses_fork_source', workDir });
     const sourceAgentDir = join(source.sessionDir, 'agents', 'main');
+    const sourceSubagentDir = join(source.sessionDir, 'agents', 'agent-1');
     await mkdir(sourceAgentDir, { recursive: true });
+    await mkdir(sourceSubagentDir, { recursive: true });
     await writeFile(join(sourceAgentDir, 'wire.jsonl'), '{"type":"context.clear"}\n', 'utf-8');
+    await writeFile(join(sourceSubagentDir, 'wire.jsonl'), '{"type":"context.clear"}\n', 'utf-8');
     await writeFile(
       join(source.sessionDir, 'upcoming-goals.json'),
       `${JSON.stringify({ version: 1, goals: [{ id: 'queued-1', objective: 'source queued goal' }] })}\n`,
@@ -95,6 +98,11 @@ describe('SessionStore.list', () => {
         main: {
           homedir: sourceAgentDir,
           type: 'main',
+        },
+        'agent-1': {
+          homedir: sourceSubagentDir,
+          type: 'subagent',
+          parentAgentId: 'main',
         },
       },
       custom: {
@@ -142,9 +150,25 @@ describe('SessionStore.list', () => {
     expect(forkState.custom).not.toHaveProperty('goal');
     expect(existsSync(join(fork.sessionDir, 'upcoming-goals.json'))).toBe(false);
     expect(existsSync(join(source.sessionDir, 'upcoming-goals.json'))).toBe(true);
-    await expect(readFile(join(fork.sessionDir, 'agents', 'main', 'wire.jsonl'), 'utf-8')).resolves.toBe(
-      '{"type":"context.clear"}\n',
+    const forkWire = await readFile(join(fork.sessionDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
+    expect(forkWire
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)).toEqual([
+      { type: 'context.clear' },
+      { type: 'forked', time: expect.any(Number) },
+    ]);
+    const forkSubagentWire = await readFile(
+      join(fork.sessionDir, 'agents', 'agent-1', 'wire.jsonl'),
+      'utf-8',
     );
+    expect(forkSubagentWire
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)).toEqual([
+      { type: 'context.clear' },
+      { type: 'forked', time: expect.any(Number) },
+    ]);
 
     const sourceState = JSON.parse(
       await readFile(join(source.sessionDir, 'state.json'), 'utf-8'),

@@ -35,7 +35,6 @@ describe('MigrationScreenComponent — ask phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: () => {},
     });
     const out = render(c);
@@ -55,7 +54,6 @@ describe('MigrationScreenComponent — ask phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: () => {},
     });
     const out = render(c);
@@ -69,7 +67,6 @@ describe('MigrationScreenComponent — ask phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: (r) => {
         result = r;
       },
@@ -85,7 +82,6 @@ describe('MigrationScreenComponent — ask phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       runMigration: async (input) => {
         captured = input;
         return makeReport();
@@ -104,7 +100,6 @@ describe('MigrationScreenComponent — ask phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       runMigration: async (input) => {
         captured = input;
         return makeReport();
@@ -123,7 +118,6 @@ describe('MigrationScreenComponent — ask phase', () => {
       plan: makePlan({ totalSessions: 1365 }),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: () => {},
     });
     c.handleInput('\r'); // ask1: Migrate now -> ask2
@@ -140,7 +134,6 @@ describe('MigrationScreenComponent — ask phase', () => {
       plan: makePlan({ totalSessions: 0 }),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: () => {},
     });
     c.handleInput('\r'); // ask1 -> ask2
@@ -155,7 +148,6 @@ describe('MigrationScreenComponent — ask phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       skipDecisionStep: true,
       onComplete: () => {},
     });
@@ -171,7 +163,6 @@ describe('MigrationScreenComponent — ask phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       skipDecisionStep: true,
       runMigration: async (input) => {
         captured = input;
@@ -191,7 +182,6 @@ describe('MigrationScreenComponent — progress phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: () => {},
     });
     // expose progress rendering via the test hook (see Step 5.2)
@@ -211,7 +201,6 @@ describe('MigrationScreenComponent — progress phase', () => {
         plan: makePlan(),
         sourceHome: '/x/.kimi',
         targetHome: '/y/.kimi-code',
-        colors: darkColors,
         skipDecisionStep: true,
         // A migration that never settles keeps the screen in the progress
         // phase so the spinner animation can be observed.
@@ -236,7 +225,6 @@ describe('MigrationScreenComponent — progress phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: () => {},
     });
     c._testEnterProgress();
@@ -312,7 +300,6 @@ describe('MigrationScreenComponent — result phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: () => {},
     });
     c._testShowResult(makeReport());
@@ -327,7 +314,6 @@ describe('MigrationScreenComponent — result phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: () => {},
     });
     c._testShowResult(
@@ -361,7 +347,6 @@ describe('MigrationScreenComponent — result phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: (r) => {
         result = r;
       },
@@ -377,7 +362,6 @@ describe('MigrationScreenComponent — result phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: () => {},
     });
     // config skipped (e.g. a malformed legacy config.toml).
@@ -413,7 +397,6 @@ describe('MigrationScreenComponent — result phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: () => {},
     });
     c._testShowResult(
@@ -454,7 +437,6 @@ describe('MigrationScreenComponent — result phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: () => {},
     });
     c._testShowResult(
@@ -496,7 +478,6 @@ describe('MigrationScreenComponent — result phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: () => {},
     });
     c._testShowResult(makeReport({ sessionsSkippedEmpty: 3 }));
@@ -511,7 +492,6 @@ describe('MigrationScreenComponent — result phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: () => {},
     });
     c._testShowResult(
@@ -544,7 +524,6 @@ describe('MigrationScreenComponent — result phase', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: () => {},
     });
     c._testShowResult(makeReport({}, {}, { mcpOauthServersRequiringReauth: ['srv-a', 'srv-b'] }));
@@ -561,7 +540,6 @@ describe('MigrationScreenComponent — execution wiring', () => {
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: (r) => {
         onCompleteResult = r;
       },
@@ -578,12 +556,11 @@ describe('MigrationScreenComponent — execution wiring', () => {
     expect(onCompleteResult?.migrated).toBe(true);
   });
 
-  it('lands on the failure screen when the runner rejects', async () => {
+  it('lands on the failure screen with the runner rejection reason', async () => {
     const c = new MigrationScreenComponent({
       plan: makePlan(),
       sourceHome: '/x/.kimi',
       targetHome: '/y/.kimi-code',
-      colors: darkColors,
       onComplete: () => {},
       runMigration: async () => {
         throw new Error('boom');
@@ -592,6 +569,8 @@ describe('MigrationScreenComponent — execution wiring', () => {
     c.handleInput('\r'); // ask1: Migrate now
     c.handleInput('\r'); // ask2: Config only -> begins migration
     await new Promise((res) => setTimeout(res, 0));
-    expect(c.render(80).join('\n')).toContain('Migration failed');
+    const out = c.render(80).join('\n');
+    expect(out).toContain('Migration failed');
+    expect(out).toContain('Reason: boom');
   });
 });

@@ -7,13 +7,12 @@ import {
   type Focusable,
 } from '@earendil-works/pi-tui';
 import type { PluginInfo, PluginMcpServerInfo, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
-import chalk from 'chalk';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
-import type { ColorPalette } from '#/tui/theme/colors';
+import { currentTheme } from '#/tui/theme';
 import { formatPluginSourceLabel, pluginTrustLabel } from '#/tui/utils/plugin-source-label';
 import { printableChar } from '#/tui/utils/printable-key';
-import type { PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
+import { computeUpdateStatus, type PluginMarketplaceEntry } from '#/utils/plugin-marketplace';
 
 import { ChoicePickerComponent } from './choice-picker';
 
@@ -51,7 +50,6 @@ export interface PluginsOverviewSelectorOptions {
     readonly id: string;
     readonly text: string;
   };
-  readonly colors: ColorPalette;
   readonly onSelect: (selection: PluginsOverviewSelection) => void;
   readonly onCancel: () => void;
 }
@@ -121,21 +119,21 @@ export class PluginsOverviewSelectorComponent extends Container implements Focus
   }
 
   override render(width: number): string[] {
-    const { colors, plugins } = this.opts;
+    const { plugins } = this.opts;
     const hint =
       '↑↓ navigate · Space toggle · M MCP servers · D remove · Enter details · Esc cancel';
     const pluginItems = this.items.filter((item) => item.kind === 'plugin');
     const actionItems = this.items.filter((item) => item.kind === 'action');
     const lines: string[] = [
-      chalk.hex(colors.primary)('─'.repeat(width)),
-      chalk.hex(colors.primary).bold(' Plugins'),
-      mutedHintLine(` ${hint}`, colors),
+      currentTheme.fg('primary', '─'.repeat(width)),
+      currentTheme.boldFg('primary', ' Plugins'),
+      mutedHintLine(` ${hint}`),
       '',
-      sectionLabel(`Installed plugins (${plugins.length})`, colors),
+      sectionLabel(`Installed plugins (${plugins.length})`),
     ];
 
     if (pluginItems.length === 0) {
-      lines.push(chalk.hex(colors.textMuted)('  No plugins installed.'));
+      lines.push(currentTheme.fg('textMuted', '  No plugins installed.'));
     } else {
       let absoluteIndex = 0;
       for (const item of pluginItems) {
@@ -145,35 +143,36 @@ export class PluginsOverviewSelectorComponent extends Container implements Focus
     }
 
     lines.push('');
-    lines.push(sectionLabel('Actions', colors));
+    lines.push(sectionLabel('Actions'));
     for (let i = 0; i < actionItems.length; i++) {
       lines.push(...this.renderItem(actionItems[i]!, pluginItems.length + i, width));
     }
 
     lines.push('');
-    lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
+    lines.push(currentTheme.fg('primary', '─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width, ELLIPSIS));
   }
 
   private renderItem(item: PluginsOverviewItem, index: number, width: number): string[] {
-    const { colors } = this.opts;
     const selected = index === this.selectedIndex;
     const pointer = selected ? SELECT_POINTER : ' ';
-    const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
-    const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
+    const labelStyle = selected
+      ? (text: string) => currentTheme.boldFg('primary', text)
+      : (text: string) => currentTheme.fg('text', text);
+    const prefix = currentTheme.fg(selected ? 'primary' : 'textDim', `  ${pointer} `);
     let line = prefix + labelStyle(item.label);
     if (item.status !== undefined) {
-      line += '  ' + statusStyle(item, colors)(item.status);
+      line += '  ' + statusStyle(item)(item.status);
     }
     const pluginId = overviewItemPluginId(item);
     if (pluginId !== undefined && this.opts.pluginHint?.id === pluginId) {
-      line += '  ' + chalk.hex(colors.warning)(this.opts.pluginHint.text);
+      line += '  ' + currentTheme.fg('warning', this.opts.pluginHint.text);
     }
 
     const descriptionWidth = Math.max(1, width - 4);
     const lines = [line];
     for (const descLine of wrapOverviewDescription(item.description, descriptionWidth)) {
-      lines.push(mutedHintLine(`    ${descLine}`, colors));
+      lines.push(mutedHintLine(`    ${descLine}`));
     }
     return lines;
   }
@@ -185,9 +184,8 @@ export type PluginMarketplaceSelection =
 
 export interface PluginMarketplaceSelectorOptions {
   readonly entries: readonly PluginMarketplaceEntry[];
-  readonly installedIds: ReadonlySet<string>;
+  readonly installed: ReadonlyMap<string, string | undefined>;
   readonly source: string;
-  readonly colors: ColorPalette;
   readonly onSelect: (selection: PluginMarketplaceSelection) => void;
   readonly onCancel: () => void;
 }
@@ -202,7 +200,7 @@ export class PluginMarketplaceSelectorComponent extends Container implements Foc
   constructor(opts: PluginMarketplaceSelectorOptions) {
     super();
     this.opts = opts;
-    this.items = buildMarketplaceItems(opts.entries, opts.installedIds);
+    this.items = buildMarketplaceItems(opts.entries, opts.installed);
   }
 
   handleInput(data: string): void {
@@ -232,20 +230,19 @@ export class PluginMarketplaceSelectorComponent extends Container implements Foc
   }
 
   override render(width: number): string[] {
-    const { colors } = this.opts;
     const entries = this.items.filter((item) => item.kind === 'plugin');
     const actions = this.items.filter((item) => item.kind === 'action');
     const lines: string[] = [
-      chalk.hex(colors.primary)('─'.repeat(width)),
-      chalk.hex(colors.primary).bold(' Official plugins'),
-      mutedHintLine(' ↑↓ navigate · Enter install/update · Esc cancel', colors),
-      chalk.hex(colors.textMuted)(` Source: ${this.opts.source}`),
+      currentTheme.fg('primary', '─'.repeat(width)),
+      currentTheme.boldFg('primary', ' Official plugins'),
+      mutedHintLine(' ↑↓ navigate · Enter install/update · Esc cancel'),
+      currentTheme.fg('textMuted', ` Source: ${this.opts.source}`),
       '',
-      sectionLabel(`Marketplace (${entries.length})`, colors),
+      sectionLabel(`Marketplace (${entries.length})`),
     ];
 
     if (entries.length === 0) {
-      lines.push(chalk.hex(colors.textMuted)('  No marketplace plugins found.'));
+      lines.push(currentTheme.fg('textMuted', '  No marketplace plugins found.'));
     } else {
       for (let i = 0; i < entries.length; i++) {
         lines.push(...this.renderItem(entries[i]!, i, width));
@@ -253,30 +250,31 @@ export class PluginMarketplaceSelectorComponent extends Container implements Foc
     }
 
     lines.push('');
-    lines.push(sectionLabel('Actions', colors));
+    lines.push(sectionLabel('Actions'));
     for (let i = 0; i < actions.length; i++) {
       lines.push(...this.renderItem(actions[i]!, entries.length + i, width));
     }
 
     lines.push('');
-    lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
+    lines.push(currentTheme.fg('primary', '─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width, ELLIPSIS));
   }
 
   private renderItem(item: PluginsOverviewItem, index: number, width: number): string[] {
-    const { colors } = this.opts;
     const selected = index === this.selectedIndex;
     const pointer = selected ? SELECT_POINTER : ' ';
-    const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
-    const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
+    const labelStyle = selected
+      ? (text: string) => currentTheme.boldFg('primary', text)
+      : (text: string) => currentTheme.fg('text', text);
+    const prefix = currentTheme.fg(selected ? 'primary' : 'textDim', `  ${pointer} `);
     let line = prefix + labelStyle(item.label);
     if (item.status !== undefined) {
-      line += '  ' + statusStyle(item, colors)(item.status);
+      line += '  ' + statusStyle(item)(item.status);
     }
     const descriptionWidth = Math.max(1, width - 4);
     const lines = [line];
     for (const descLine of wrapOverviewDescription(item.description, descriptionWidth)) {
-      lines.push(mutedHintLine(`    ${descLine}`, colors));
+      lines.push(mutedHintLine(`    ${descLine}`));
     }
     return lines;
   }
@@ -293,7 +291,6 @@ export interface PluginMcpSelectorOptions {
     readonly server: string;
     readonly text: string;
   };
-  readonly colors: ColorPalette;
   readonly onSelect: (selection: PluginMcpSelection) => void;
   readonly onCancel: () => void;
 }
@@ -349,19 +346,19 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
   }
 
   override render(width: number): string[] {
-    const { colors, info } = this.opts;
+    const { info } = this.opts;
     const serverItems = this.items.filter((item) => item.kind === 'plugin');
     const actionItems = this.items.filter((item) => item.kind === 'action');
     const lines: string[] = [
-      chalk.hex(colors.primary)('─'.repeat(width)),
-      chalk.hex(colors.primary).bold(` MCP servers · ${info.displayName}`),
-      mutedHintLine(' ↑↓ navigate · Enter/Space enable/disable · Esc cancel', colors),
+      currentTheme.fg('primary', '─'.repeat(width)),
+      currentTheme.boldFg('primary', ` MCP servers · ${info.displayName}`),
+      mutedHintLine(' ↑↓ navigate · Enter/Space enable/disable · Esc cancel'),
       '',
-      sectionLabel(`MCP servers (${info.enabledMcpServerCount}/${info.mcpServerCount} enabled)`, colors),
+      sectionLabel(`MCP servers (${info.enabledMcpServerCount}/${info.mcpServerCount} enabled)`),
     ];
 
     if (serverItems.length === 0) {
-      lines.push(chalk.hex(colors.textMuted)('  No MCP servers declared.'));
+      lines.push(currentTheme.fg('textMuted', '  No MCP servers declared.'));
     } else {
       for (let i = 0; i < serverItems.length; i++) {
         lines.push(...this.renderItem(serverItems[i]!, i, width));
@@ -369,34 +366,35 @@ export class PluginMcpSelectorComponent extends Container implements Focusable {
     }
 
     lines.push('');
-    lines.push(sectionLabel('Actions', colors));
+    lines.push(sectionLabel('Actions'));
     for (let i = 0; i < actionItems.length; i++) {
       lines.push(...this.renderItem(actionItems[i]!, serverItems.length + i, width));
     }
 
     lines.push('');
-    lines.push(chalk.hex(colors.primary)('─'.repeat(width)));
+    lines.push(currentTheme.fg('primary', '─'.repeat(width)));
     return lines.map((line) => truncateToWidth(line, width, ELLIPSIS));
   }
 
   private renderItem(item: PluginsOverviewItem, index: number, width: number): string[] {
-    const { colors } = this.opts;
     const selected = index === this.selectedIndex;
     const pointer = selected ? SELECT_POINTER : ' ';
-    const labelStyle = selected ? chalk.hex(colors.primary).bold : chalk.hex(colors.text);
-    const prefix = chalk.hex(selected ? colors.primary : colors.textDim)(`  ${pointer} `);
+    const labelStyle = selected
+      ? (text: string) => currentTheme.boldFg('primary', text)
+      : (text: string) => currentTheme.fg('text', text);
+    const prefix = currentTheme.fg(selected ? 'primary' : 'textDim', `  ${pointer} `);
     let line = prefix + labelStyle(item.label);
     if (item.status !== undefined) {
-      line += '  ' + statusStyle(item, colors)(item.status);
+      line += '  ' + statusStyle(item)(item.status);
     }
     const serverName = mcpItemServerName(item);
     if (serverName !== undefined && this.opts.serverHint?.server === serverName) {
-      line += '  ' + chalk.hex(colors.warning)(this.opts.serverHint.text);
+      line += '  ' + currentTheme.fg('warning', this.opts.serverHint.text);
     }
     const descriptionWidth = Math.max(1, width - 4);
     const lines = [line];
     for (const descLine of wrapOverviewDescription(item.description, descriptionWidth)) {
-      lines.push(mutedHintLine(`    ${descLine}`, colors));
+      lines.push(mutedHintLine(`    ${descLine}`));
     }
     return lines;
   }
@@ -409,7 +407,6 @@ export type PluginRemoveConfirmResult =
 export interface PluginRemoveConfirmOptions {
   readonly id: string;
   readonly displayName: string;
-  readonly colors: ColorPalette;
   readonly onDone: (result: PluginRemoveConfirmResult) => void;
 }
 
@@ -432,7 +429,6 @@ export class PluginRemoveConfirmComponent extends ChoicePickerComponent {
           description: 'Remove only the install record; plugin files are left in place.',
         },
       ],
-      colors: opts.colors,
       onSelect: (value) => {
         opts.onDone(value === REMOVE_CONFIRM_REMOVE ? { kind: 'confirm' } : { kind: 'cancel' });
       },
@@ -506,13 +502,13 @@ function overviewItemPluginId(item: PluginsOverviewItem): string | undefined {
 
 function buildMarketplaceItems(
   entries: readonly PluginMarketplaceEntry[],
-  installedIds: ReadonlySet<string>,
+  installed: ReadonlyMap<string, string | undefined>,
 ): PluginsOverviewItem[] {
   const items: PluginsOverviewItem[] = entries.map((entry) => ({
     value: entry.id,
     kind: 'plugin',
     label: entry.displayName,
-    status: installedIds.has(entry.id) ? 'installed' : installStatus(entry),
+    status: marketplaceItemStatus(entry, installed),
     description: marketplaceEntryDescription(entry),
   }));
   items.push({
@@ -560,13 +556,13 @@ function mcpItemServerName(item: PluginsOverviewItem): string | undefined {
 function marketplaceEntryDescription(entry: PluginMarketplaceEntry): string {
   const tier = marketplaceTierLabel(entry.tier);
   const description = entry.description ?? tier;
-  const version = entry.version !== undefined ? ` · v${entry.version}` : '';
   const keywords =
     entry.keywords !== undefined && entry.keywords.length > 0
       ? ` · ${entry.keywords.join(', ')}`
       : '';
   const tierSuffix = entry.description !== undefined ? ` · ${tier}` : '';
-  return `${description} · id ${entry.id}${version}${tierSuffix}${keywords}`;
+  // The version now lives in the status badge, so it is omitted here to avoid duplication.
+  return `${description} · id ${entry.id}${tierSuffix}${keywords}`;
 }
 
 function marketplaceTierLabel(tier: PluginMarketplaceEntry['tier']): string {
@@ -575,28 +571,39 @@ function marketplaceTierLabel(tier: PluginMarketplaceEntry['tier']): string {
   return 'Plugin';
 }
 
-function installStatus(entry: PluginMarketplaceEntry): string {
-  return entry.version === undefined ? 'install' : `install v${entry.version}`;
+function marketplaceItemStatus(
+  entry: PluginMarketplaceEntry,
+  installed: ReadonlyMap<string, string | undefined>,
+): string {
+  const status = computeUpdateStatus(entry.version, installed.get(entry.id), installed.has(entry.id));
+  switch (status.kind) {
+    case 'update':
+      return `update ${status.local} → ${status.latest}`;
+    case 'up-to-date':
+      return status.version === undefined ? 'installed' : `installed · v${status.version}`;
+    case 'not-installed':
+      return entry.version === undefined ? 'install' : `install v${entry.version}`;
+  }
 }
 
-function sectionLabel(label: string, colors: ColorPalette): string {
-  return chalk.hex(colors.textDim).bold(` ${label}`);
+function sectionLabel(label: string): string {
+  return currentTheme.boldFg('textDim', ` ${label}`);
 }
 
 function statusStyle(
   item: PluginsOverviewItem,
-  colors: ColorPalette,
 ): (text: string) => string {
-  if (item.kind === 'action') return chalk.hex(colors.textDim);
-  if (item.status === 'enabled' || item.status === 'installed') return chalk.hex(colors.success);
-  if (item.status?.startsWith('install')) return chalk.hex(colors.primary);
-  if (item.status === 'disabled') return chalk.hex(colors.textDim);
-  if (item.status !== undefined && /^\d/.test(item.status)) return chalk.hex(colors.textDim);
-  return chalk.hex(colors.warning);
+  if (item.kind === 'action') return (text) => currentTheme.fg('textDim', text);
+  if (item.status?.startsWith('update')) return (text) => currentTheme.fg('warning', text);
+  if (item.status === 'enabled' || item.status?.startsWith('installed')) return (text) => currentTheme.fg('success', text);
+  if (item.status?.startsWith('install')) return (text) => currentTheme.fg('primary', text);
+  if (item.status === 'disabled') return (text) => currentTheme.fg('textDim', text);
+  if (item.status !== undefined && /^\d/.test(item.status)) return (text) => currentTheme.fg('textDim', text);
+  return (text) => currentTheme.fg('warning', text);
 }
 
-function mutedHintLine(text: string, colors: ColorPalette): string {
-  return chalk.hex(colors.textMuted)(text);
+function mutedHintLine(text: string): string {
+  return currentTheme.fg('textMuted', text);
 }
 
 function wrapOverviewDescription(text: string, width: number): string[] {

@@ -30,7 +30,7 @@ describe('update preference commands', () => {
           notifications: { enabled: true, condition: 'unfocused' as const },
           upgrade: { autoInstall: true },
         },
-        theme: { colors: darkColors },
+        theme: { palette: darkColors },
       },
       setAppState,
       showStatus,

@@ -66,8 +66,10 @@ arguments:
 Kimi Code CLI 按作用域分四档扫描，越具体的作用域优先级越高：**Project > User > Extra > Built-in**
 
 **用户级**（对所有项目生效）：
-- `~/.kimi-code/skills/`
+- `$KIMI_CODE_HOME/skills/`（默认：`~/.kimi-code/skills/`）
 - `~/.agents/skills/`
+
+Kimi 专属用户级 Skill 目录会随 `KIMI_CODE_HOME` 移动，因此隔离数据根时也会隔离 Kimi 专属 Skills。通用 `~/.agents/skills/` 目录仍放在真实 OS home 下，以便跨工具共享。
 
 **项目级**（项目根 = 工作目录向上最近的含 `.git` 的目录）：
 - `.kimi-code/skills/`
@@ -79,7 +81,7 @@ Kimi Code CLI 按作用域分四档扫描，越具体的作用域优先级越高
 extra_skill_dirs = ["~/team-skills", ".agents/team-skills"]
 ```
 
-**内置 Skills** 随 CLI 一起分发，优先级最低。
+**内置 Skills** 随 CLI 一起分发，优先级最低。它们为常见任务提供开箱即用的工作流，例如配置 MCP server、定制 TUI 主题和编辑配置文件。完整列表详见[内置 Skill 命令](../reference/slash-commands.md#内置-skill-命令)。
 
 ## 调用 Skill
 
@@ -120,7 +122,7 @@ arguments:
    - 值得肯定的地方
 ```
 
-保存为 `~/.kimi-code/skills/review-pr/SKILL.md`，检查清单放在同目录的 `references/checklist.md`，重开会话后即可通过 `/skill:review-pr #1234` 调用，其中 `#1234` 会展开到 `$pr_ref`。
+保存为 `$KIMI_CODE_HOME/skills/review-pr/SKILL.md`（未设置 `KIMI_CODE_HOME` 时为 `~/.kimi-code/skills/review-pr/SKILL.md`），检查清单放在同目录的 `references/checklist.md`，重开会话后即可通过 `/skill:review-pr #1234` 调用，其中 `#1234` 会展开到 `$pr_ref`。
 
 ## 下一步
 
