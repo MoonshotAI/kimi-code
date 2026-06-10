@@ -741,7 +741,7 @@ function selectModel(modelId: string): void {
             type="button"
             @click="openFilePicker"
           >
-            <svg class="attach-icon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="5.5" cy="6.5" r="1"/><polyline points="2,13 5.5,9 8,11.5 10.5,8.5 14,13"/></svg>
+            <svg class="attach-icon" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M8 3v10M3 8h10"/></svg>
           </button>
 
           <!-- Permission pill — click to open dropdown -->
@@ -1474,7 +1474,7 @@ function selectModel(modelId: string): void {
 }
 .toggle-pill.on {
   background: var(--soft);
-  color: var(--blue2);
+  color: var(--dim);
 }
 .toggle-pill.on:hover {
   background: var(--soft);

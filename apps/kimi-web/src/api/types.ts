@@ -397,6 +397,7 @@ export interface KimiWebApi {
   // PRESUMED — falls back until the daemon ships /workspaces, /fs:browse, /fs:home.
   listWorkspaces(): Promise<AppWorkspace[]>;
   addWorkspace(input: { root: string; name?: string }): Promise<AppWorkspace>;
+  deleteWorkspace(id: string): Promise<void>;
   browseFs(path?: string): Promise<FsBrowseResult>;
   getFsHome(): Promise<{ home: string; recentRoots: string[] }>;
 

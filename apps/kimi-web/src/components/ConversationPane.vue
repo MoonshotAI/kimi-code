@@ -272,8 +272,14 @@ function onPanesScroll(): void {
     // (e.g. a turn auto-folding) — that lands exactly at the bottom and is not
     // a user scroll.
     following.value = false;
-  } else if (dist <= BOTTOM_THRESHOLD && top >= lastScrollTop) {
-    // Downward (user or our own pin) arrival in the bottom zone → follow again.
+  } else if (dist <= BOTTOM_THRESHOLD && top > lastScrollTop + 1) {
+    // STRICTLY downward arrival in the bottom zone → follow again. Equal
+    // positions must not re-arm the follow: browsers re-fire scroll events at
+    // an unchanged position (coalesced/synthetic scrolls), and treating those
+    // as "downward" would re-enable the follow right after the user scrolled
+    // up inside the zone — the next content mutation then yanks them back to
+    // the bottom. Our own scrollToBottom sets `following` itself, so it does
+    // not depend on this branch.
     following.value = true;
     showPill.value = false;
   }
@@ -506,20 +512,46 @@ onUnmounted(() => {
       <!-- Chat reading column: constrained to a comfortable max width and
            aligned left or centered within the pane. -->
       <div v-if="active === 'chat'" class="content-wrap" :class="[mobile ? 'align-mobile' : `align-${contentAlign}`]">
-        <ChatPane
-          :key="fileReloadKey ?? 'no-session'"
-          :turns="turns"
-          :approvals="approvals"
-          :bubble="bubble"
-          :mobile="mobile"
-          :running="running"
-          :sending="sending"
-          :session-loading="sessionLoading"
-          :workspace-empty="workspaceEmpty"
-          @approval-decide="handleApprovalDecide"
-          @fold-toggle="handleFoldToggle"
-          @submit="emit('submit', $event)"
-        />
+        <template v-if="workspaceEmpty && turns.length === 0 && !sessionLoading">
+          <!-- Empty workspace: Composer rendered in the centre of the pane -->
+          <div class="empty-spacer" />
+          <Composer
+            :running="running"
+            :queued="queued"
+            :search-files="searchFiles"
+            :upload-image="uploadImage"
+            :status="status"
+            :thinking="thinking"
+            :plan-mode="planMode"
+            :models="models"
+            @submit="handleComposerSubmit"
+            @command="emit('command', $event)"
+            @interrupt="emit('interrupt')"
+            @unqueue="emit('unqueue', $event)"
+            @edit-queued="emit('editQueued', $event)"
+            @set-permission="emit('setPermission', $event)"
+            @set-thinking="emit('setThinking', $event)"
+            @toggle-plan="emit('togglePlan')"
+            @compact="emit('compact')"
+            @pick-model="emit('pickModel')"
+            @select-model="emit('selectModel', $event)"
+          />
+          <div class="empty-spacer" />
+        </template>
+        <template v-else>
+          <ChatPane
+            :key="fileReloadKey ?? 'no-session'"
+            :turns="turns"
+            :approvals="approvals"
+            :bubble="bubble"
+            :mobile="mobile"
+            :running="running"
+            :sending="sending"
+            :session-loading="sessionLoading"
+            @approval-decide="handleApprovalDecide"
+            @fold-toggle="handleFoldToggle"
+          />
+        </template>
       </div>
       <TasksPane
         v-else-if="active === 'tasks'"
@@ -664,7 +696,7 @@ onUnmounted(() => {
         @dismiss="(qid) => emit('dismiss', qid)"
       />
       <Composer
-        v-else
+        v-else-if="!(workspaceEmpty && turns.length === 0 && !sessionLoading)"
         :running="running"
         :queued="queued"
         :search-files="searchFiles"
@@ -727,6 +759,9 @@ onUnmounted(() => {
 .content-wrap.align-left { margin-left: 0; margin-right: auto; }
 /* Mobile: bubbles span the full pane width; no reading-column constraint. */
 .content-wrap.align-mobile { max-width: none; }
+
+/* Empty-workspace spacers: push the centred Composer to the vertical middle. */
+.empty-spacer { flex: 1; }
 
 /* Bottom dock (status line + composer): capped to the same reading column as
    the chat and aligned the same way, so it doesn't stretch the full pane width

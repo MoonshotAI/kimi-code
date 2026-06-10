@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>kimi-web Dynamic HTML（可交互组件/iframe）功能调研</title>
+<style>
+  :root {
+    --ink: #1a1a1a; --muted: #57606a; --faint: #8b949e;
+    --line: #d8dee4; --soft: #f6f8fa; --panel: #ffffff;
+    --blue: #0969da; --bluebg: #ddf4ff; --green: #1a7f37; --greenbg: #dafbe1;
+    --red: #cf222e; --redbg: #ffebe9; --amber: #9a6700; --amberbg: #fff8c5;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 16px 80px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+    color: var(--ink); background: #fafbfc; line-height: 1.7; font-size: 15px;
+  }
+  main { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 24px; margin: 36px 0 6px; }
+  h2 { font-size: 19px; margin: 44px 0 12px; padding-bottom: 8px; border-bottom: 2px solid var(--line); }
+  h3 { font-size: 16px; margin: 26px 0 8px; }
+  p { margin: 8px 0; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+  code { font-family: var(--mono); font-size: 13px; background: var(--soft); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+  pre { background: #0d1117; color: #e6edf3; border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; border: none; color: inherit; padding: 0; }
+
+  /* 结论卡 */
+  .verdict {
+    background: var(--bluebg); border: 1px solid #54aeff66; border-radius: 10px;
+    padding: 14px 18px; margin: 18px 0;
+  }
+  .verdict b { color: var(--blue); }
+
+  /* 表格 */
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13.5px; background: var(--panel); }
+  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--soft); white-space: nowrap; }
+  .tablewrap { overflow-x: auto; }
+
+  /* 标签 */
+  .tag { display: inline-block; font-size: 11.5px; font-weight: 600; border-radius: 999px; padding: 1px 9px; margin-right: 4px; white-space: nowrap; }
+  .t-green { background: var(--greenbg); color: var(--green); }
+  .t-red { background: var(--redbg); color: var(--red); }
+  .t-amber { background: var(--amberbg); color: var(--amber); }
+  .t-blue { background: var(--bluebg); color: var(--blue); }
+
+  /* 方案卡片 */
+  .opt { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin: 14px 0; }
+  .opt h3 { margin-top: 0; }
+  .opt.rec { border: 2px solid var(--blue); }
+  .pro::before { content: "✓ "; color: var(--green); font-weight: 700; }
+  .con::before { content: "✗ "; color: var(--red); font-weight: 700; }
+  .pro, .con { margin: 3px 0; padding-left: 2px; }
+
+  /* 风险块 */
+  .risk { background: var(--redbg); border-left: 4px solid var(--red); border-radius: 6px; padding: 10px 14px; margin: 12px 0; }
+  .note { background: var(--amberbg); border-left: 4px solid var(--amber); border-radius: 6px; padding: 10px 14px; margin: 12px 0; }
+
+  /* 流程图 */
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 14px 0; font-size: 13px; }
+  .flow .step { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+  .flow .arrow { color: var(--faint); font-weight: 700; }
+
+  /* 折叠 */
+  details { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin: 10px 0; }
+  summary { cursor: pointer; font-weight: 600; }
+
+  /* 浮层目录 */
+  #tocbtn {
+    position: fixed; right: 18px; bottom: 18px; z-index: 20;
+    background: var(--ink); color: #fff; border: none; border-radius: 999px;
+    padding: 10px 16px; font-size: 13px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.2);
+  }
+  #toc {
+    position: fixed; right: 18px; bottom: 64px; z-index: 20; display: none;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 16px; box-shadow: 0 8px 24px rgba(0,0,0,.14); max-width: 280px;
+  }
+  #toc a { display: block; color: var(--ink); text-decoration: none; padding: 4px 0; font-size: 13px; }
+  #toc a:hover { color: var(--blue); }
+  @media (max-width: 640px) {
+    body { font-size: 14.5px; }
+    th, td { padding: 6px 8px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>kimi-web「Dynamic HTML」功能调研</h1>
+  <p class="sub">在聊天页面中嵌入可交互 HTML 组件 / iframe 页面 · 同类产品方案对比与落地建议 · 2026-06-11</p>
+
+  <div class="verdict">
+    <b>结论先行：</b>推荐 <b>「sandboxed iframe + srcdoc」内联 artifact 卡片</b> 起步（Claude Artifacts / Open WebUI 同路线），
+    分三期演进：① files 标签页与工具卡片的 HTML 预览 → ② 聊天流内的 artifact 卡片 + 右侧分屏 → ③ 真实 dev server 嵌入与 postMessage 交互桥。
+    <b>不需要</b> WebContainers / Sandpack 这类「浏览器里跑 Node」的重型方案——我们有本地 daemon，能跑真实进程，这是和云端 SaaS 产品最大的架构差异。
+    落地前必须先解决一个安全前提：<b>daemon API 目前无鉴权、无 CORS 校验</b>，绝不能让模型生成的 HTML 与应用同源运行。
+  </div>
+
+  <h2 id="s1">1. 我们要解决的问题</h2>
+  <p>kimi-web 的模型经常产出两类「应该被看到而不是被读源码」的内容：</p>
+  <ul>
+    <li><b>自包含 HTML 文件</b>：调研报告、方案对比、UI 原型、临时小工具（仓库 docs/ 下已有十几个这样的文件，模型的 HTML 生成规范也明确鼓励这种产物）。目前用户只能在 files 标签页看到源码，或手动去浏览器打开文件。</li>
+    <li><b>消息里的 <code>```html</code> 代码块</b>：目前只做语法高亮（markstream-vue + shiki），无法运行。</li>
+  </ul>
+  <p>目标：这些内容能直接在页面里<b>以可交互的形式渲染</b>，类似 Claude Artifacts 的体验。</p>
+
+  <h2 id="s2">2. 同类产品方案对比</h2>
+  <div class="tablewrap">
+  <table>
+    <tr><th>产品</th><th>渲染方式</th><th>隔离手段</th><th>支持内容</th><th>对我们的参考价值</th></tr>
+    <tr>
+      <td><b>Claude Artifacts</b></td>
+      <td>右侧分屏面板，sandboxed iframe</td>
+      <td>iframe sandbox + 严格 CSP（仅放行常用 CDN：Chart.js/D3/Tailwind 等；禁 localStorage、禁任意外联 fetch）</td>
+      <td>HTML / React / SVG / Mermaid，纯客户端</td>
+      <td><span class="tag t-green">高</span>交互范式标杆：分屏 + 卡片占位 + 版本切换</td>
+    </tr>
+    <tr>
+      <td><b>ChatGPT Canvas</b></td>
+      <td>右侧文档/代码编辑面板，后期补了预览模式</td>
+      <td>同为 iframe 沙箱</td>
+      <td>偏「协作编辑」而非「运行展示」</td>
+      <td><span class="tag t-amber">中</span>证明编辑器路线和预览路线是两个产品方向</td>
+    </tr>
+    <tr>
+      <td><b>Open WebUI</b></td>
+      <td>聊天旁 artifact 面板，<code>iframe srcdoc</code> 直塞转义后的 HTML</td>
+      <td><code>sandbox="allow-scripts"</code>（不带 allow-same-origin）+ 管理员可配 <code>IFRAME_CSP</code> 注入</td>
+      <td>自包含 HTML/JS/CSS</td>
+      <td><span class="tag t-green">高</span>实现最简、与我们体量最接近的开源实现</td>
+    </tr>
+    <tr>
+      <td><b>LibreChat</b></td>
+      <td>artifact 面板：Monaco 编辑 + Sandpack 预览</td>
+      <td>Sandpack bundler（可自托管）+ static-browser-server 给每个预览分配独立 origin + Service Worker 拦截请求</td>
+      <td>React / 多文件项目 / HTML</td>
+      <td><span class="tag t-amber">中</span>要支持 React 多文件时的成熟选型；默认依赖 CodeSandbox CDN 是个坑</td>
+    </tr>
+    <tr>
+      <td><b>bolt.new / StackBlitz</b></td>
+      <td>整个 IDE + 预览都在浏览器里</td>
+      <td>WebContainers：WASM 里跑 Node.js 虚拟机</td>
+      <td>完整全栈项目（npm install、dev server 全在浏览器内）</td>
+      <td><span class="tag t-red">低</span>它解决的是「云端没有用户机器」的问题——我们的 daemon 就在用户机器上，能跑真进程</td>
+    </tr>
+    <tr>
+      <td><b>MCP Apps（mcp-ui，官方扩展）</b></td>
+      <td>工具返回 <code>ui://</code> 资源，宿主渲染进 sandboxed iframe</td>
+      <td>iframe sandbox + 预声明模板 + JSON-RPC over postMessage（全程可审计）</td>
+      <td>工具自带的交互 UI</td>
+      <td><span class="tag t-blue">前瞻</span>kimi-code 支持 MCP；将来 artifact 通道可以直接复用这套协议做「UI→对话」回传</td>
+    </tr>
+  </table>
+  </div>
+  <p>规律很明显：<b>除了要跑完整项目的产品，所有人都收敛到了「sandboxed iframe」这一个原语上</b>；差异只在 HTML 从哪来（srcdoc 内联 / 独立 origin 伺服）和 CSP 收多紧。</p>
+
+  <h2 id="s3">3. 我们的架构现状（决定方案的约束）</h2>
+  <ul>
+    <li><b>daemon 已能按 Content-Type 伺服任意工作区文件</b>：<code>GET /api/v1/sessions/{id}/fs/*:download</code>（fs.ts:285-308），返回原始字节 + ETag。理论上 iframe src 可以直接指它——但见下面的安全问题。</li>
+    <li><b>daemon API 无鉴权、无 CORS 配置</b>（auth.ts 只有 readiness probe；未集成 @fastify/cors）。</li>
+    <li><b>生产形态下 web UI 与 API 同源</b>（daemon 的 webAssets 路由伺服前端）。</li>
+    <li>前端已有 FilePreview（markdown/json/图片/代码，无 HTML）、ToolCall 卡片（可从 write/edit 参数提取文件路径）、files 标签页双栏布局，docs/ 里已有 split-layout 的设计探索。</li>
+  </ul>
+
+  <div class="risk">
+    <b>关键安全约束（方案否决项）：</b>模型生成的 HTML 是不可信内容（提示注入可控制它）。如果让它<b>与应用同源</b>运行
+    （例如 iframe src 直接指向 daemon 的 :download 路由，或 srcdoc 加 <code>allow-same-origin</code>），
+    它就能用 fetch 调用无鉴权的 daemon API——读写任意文件、创建会话执行命令，等价于远程代码执行。
+    <b>所以：渲染不可信 HTML 必须用不带 allow-same-origin 的 sandbox（opaque origin），且永远不要给「同源放行」开关</b>
+    （Open WebUI 提供了这个开关，是它的减分项）。
+  </div>
+  <div class="note">
+    顺带发现的存量风险（与本功能无关但建议排期）：daemon 监听 127.0.0.1 且无鉴权，任何本机网页都可以向它发请求（drive-by 攻击面）。
+    Chrome 的 Private Network Access 只挡「公网页面→本地」的部分场景。建议后续给 daemon 加启动 token（URL 带 token，前端持有，API 校验 header）。
+  </div>
+
+  <h2 id="s4">4. 候选方案</h2>
+
+  <div class="opt rec">
+    <h3>方案 A：sandboxed iframe + srcdoc（内联 artifact）<span class="tag t-blue">推荐起步</span></h3>
+    <p>前端已经通过 fs:read 拿到 HTML 文本 → 直接塞进 <code>&lt;iframe srcdoc sandbox="allow-scripts allow-forms allow-modals allow-popups"&gt;</code>。
+    不带 allow-same-origin → iframe 是 opaque origin，访问不了 daemon API、localStorage、cookie。</p>
+    <p class="pro">实现量最小：FilePreview 加一种类型 + ToolCall 卡片加一个「预览」按钮即可</p>
+    <p class="pro">安全模型最清晰，和 Claude/Open WebUI 同路线</p>
+    <p class="pro">覆盖我们 90% 的真实场景（自包含 HTML 报告/原型）</p>
+    <p class="con">页面里的相对路径资源（同目录图片等）加载不了——自包含 HTML 不受影响</p>
+    <p class="con">opaque origin 下部分 API 受限（如 localStorage 抛错），需在生成规范里说明</p>
+  </div>
+
+  <div class="opt">
+    <h3>方案 B：daemon 独立预览 origin（伺服工作区文件）</h3>
+    <p>daemon 增加一个「预览专用」HTTP 端口或路径（如 127.0.0.1:7879），带严格 CSP 响应头伺服工作区静态文件；iframe src 指向它。
+    与应用端口不同 → 跨 origin 隔离，相对路径资源也能加载。LibreChat 的 static-browser-server 是这个思路的成熟版（每个预览一个独立 origin）。</p>
+    <p class="pro">支持多文件页面（HTML + 同目录 CSS/JS/图片）</p>
+    <p class="pro">天然支持「在新标签页打开」分享给浏览器</p>
+    <p class="con">需要 daemon 起第二个 listener + 路径安全（防目录穿越）+ 仍要防它反过来打主 API（主 API 加 origin 校验/token 才算闭环）</p>
+    <p class="con">实现量中等，但收益只在多文件场景</p>
+  </div>
+
+  <div class="opt">
+    <h3>方案 C：嵌入真实 dev server（iframe src = localhost:port）</h3>
+    <p>模型/用户在工作区跑 <code>vite dev</code> 等，daemon 已知后台任务的端口 → 聊天侧栏出现「预览」卡片，iframe 直接嵌 <code>http://localhost:5173</code>。
+    这是 bolt.new 体验在本地架构下的「免费」等价物——别人要 WASM 模拟 Node，我们直接用真进程。</p>
+    <p class="pro">支持任意框架的完整应用（HMR 都是真的）</p>
+    <p class="pro">和已有的 web-terminal / split-view 探索方向天然契合</p>
+    <p class="con">dev server 是用户自己的代码，同 localhost 不同 port 是跨 origin，风险可接受；但 X-Frame-Options/frame-ancestors 可能拒绝被嵌，需降级为「新标签页打开」</p>
+    <p class="con">依赖端口发现（解析后台任务输出或约定端口）</p>
+  </div>
+
+  <div class="opt">
+    <h3>方案 D：Sandpack / WebContainers<span class="tag t-red">不推荐</span></h3>
+    <p>浏览器内打包运行 React 多文件项目（LibreChat / bolt.new 路线）。</p>
+    <p class="con">引入庞大依赖（bundler 自托管、Service Worker、独立 origin 服务）</p>
+    <p class="con">解决的核心问题（无本地执行环境）我们不存在——daemon 能跑真 dev server（方案 C 覆盖同场景且更真实）</p>
+  </div>
+
+  <h2 id="s5">5. 推荐的分期落地</h2>
+
+  <h3>Phase 1 — HTML 预览（方案 A，~1-2 天）</h3>
+  <div class="flow">
+    <span class="step">模型 write 了 .html / 消息含 ```html</span><span class="arrow">→</span>
+    <span class="step">ToolCall 卡片出现「预览」按钮</span><span class="arrow">→</span>
+    <span class="step">files 标签页 FilePreview 渲染 sandboxed iframe</span><span class="arrow">→</span>
+    <span class="step">源码/预览切换 + 新窗口打开（Blob URL）</span>
+  </div>
+  <ul>
+    <li>FilePreview 增加 <code>html</code> 类型：「预览 | 源码」两个 tab，预览即 srcdoc iframe，高度自适应/可拖拽。</li>
+    <li>ToolCall（write/edit，路径以 .html 结尾）卡片加「预览」入口，跳到 files 标签页选中该文件（toolMeta 已能提取路径）。</li>
+    <li>「在新窗口打开」用 <code>URL.createObjectURL(new Blob([html]))</code>——blob origin 同样隔离且不经过 daemon。</li>
+  </ul>
+
+  <h3>Phase 2 — 聊天流内 artifact 卡片 + 分屏（~3-5 天）</h3>
+  <ul>
+    <li><code>```html</code> 代码块超过阈值（如 30 行）时折叠为 artifact 卡片：标题 + 预览缩略 + 「展开/分屏打开」。markstream-vue 需要自定义代码块渲染器（调研其扩展点，不行就在 TurnBlock 层先拆出来）。</li>
+    <li>右侧分屏复用 docs/ 里 split-layout 的设计探索；与 files/diff 面板共享布局。</li>
+    <li>流式期间只显示「生成中」骨架，结束后再渲染 iframe（避免每个 delta 重建 iframe）。</li>
+  </ul>
+
+  <h3>Phase 3 — 交互桥 + 真实应用预览（按需）</h3>
+  <ul>
+    <li><b>postMessage 桥</b>：参考 MCP Apps 的 JSON-RPC over postMessage——artifact 里的按钮可以把消息发回聊天（「基于这个原型改 X」），这是 artifact 从「看」到「用」的关键一步，也为将来直接支持 MCP Apps 留接口。</li>
+    <li><b>方案 C</b>：daemon 后台任务暴露端口元数据 → 聊天里出 dev server 预览卡。</li>
+    <li><b>安全闭环</b>：daemon 加启动 token + Origin 校验（独立于本功能，建议先做）。</li>
+  </ul>
+
+  <h2 id="s6">6. Phase 1 核心实现示意</h2>
+  <details open>
+    <summary>FilePreview 中的沙箱 iframe（要点）</summary>
+<pre><code>&lt;!-- FilePreview.vue 新增分支：kind === 'html' --&gt;
+&lt;iframe
+  class="html-preview"
+  :srcdoc="file.content"
+  sandbox="allow-scripts allow-forms allow-modals allow-popups"
+  referrerpolicy="no-referrer"
+  loading="lazy"
+/&gt;
+&lt;!-- 关键点：
+  1. 绝不加 allow-same-origin —— opaque origin 是整个安全模型的根基
+  2. 不用 iframe csp 属性（Chrome-only），如需收紧外联，
+     在 srcdoc 头部注入 &lt;meta http-equiv="Content-Security-Policy"&gt;
+     （meta CSP 与文档自带 CSP 取交集，只会更严不会更松）
+  3. 重新渲染 = 替换 srcdoc（key 绑定内容 hash），不复用旧实例
+--&gt;</code></pre>
+  </details>
+
+  <h2 id="s7">7. 参考来源</h2>
+  <ul style="font-size:13.5px">
+    <li>Open WebUI artifacts / IFRAME_CSP：github.com/open-webui/open-webui（commit 3bba1c2）、docs.openwebui.com/features/.../artifacts</li>
+    <li>LibreChat artifacts（Sandpack 自托管 + static-browser-server 独立 origin）：librechat.ai/docs/features/artifacts、github.com/LibreChat-AI/static-browser-server、PR #12109（Monaco 替换 Sandpack 编辑器）</li>
+    <li>Claude Artifacts 沙箱与 CSP 行为：simonwillison.net/tags/claude-artifacts、shareduo.com/blog/claude-artifacts</li>
+    <li>bolt.new / WebContainers 架构：github.com/stackblitz/bolt.new、newsletter.posthog.com「How bolt.new works」</li>
+    <li>MCP Apps 官方扩展（sandboxed iframe + JSON-RPC over postMessage）：blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps、modelcontextprotocol.io/extensions/apps/overview、github.com/MCP-UI-Org/mcp-ui</li>
+    <li>Sandpack vs WebContainers 取舍：sandpack.codesandbox.io/docs/resources/faq</li>
+  </ul>
+</main>
+
+<button id="tocbtn">目录</button>
+<nav id="toc">
+  <a href="#s1">1. 问题定义</a>
+  <a href="#s2">2. 同类产品对比</a>
+  <a href="#s3">3. 我们的架构约束</a>
+  <a href="#s4">4. 候选方案</a>
+  <a href="#s5">5. 分期落地建议</a>
+  <a href="#s6">6. Phase 1 实现示意</a>
+  <a href="#s7">7. 参考来源</a>
+</nav>
+<script>
+  const btn = document.getElementById('tocbtn');
+  const toc = document.getElementById('toc');
+  btn.addEventListener('click', () => {
+    toc.style.display = toc.style.display === 'block' ? 'none' : 'block';
+  });
+  toc.addEventListener('click', () => { toc.style.display = 'none'; });
+</script>
+</body>
+</html>

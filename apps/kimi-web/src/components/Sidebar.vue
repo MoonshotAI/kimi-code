@@ -6,7 +6,7 @@
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session, WorkspaceGroup, WorkspaceView } from '../types';
-import type { Accent, CodeFont, Theme } from '../composables/useKimiWebClient';
+import type { Accent, ColorScheme, Theme } from '../composables/useKimiWebClient';
 import { daemonEndpointLabel } from '../api/config';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import SessionRow from './SessionRow.vue';
@@ -30,8 +30,8 @@ const props = withDefaults(
     colWidth?: number;
     /** Active UI theme — forwarded to the settings popover. */
     theme?: Theme;
-    /** Active code font — forwarded to the settings popover. */
-    codeFont?: CodeFont;
+    /** Active color scheme — forwarded to the settings popover. */
+    colorScheme?: ColorScheme;
     /** Accent / colour scheme — forwarded to the settings popover. */
     accent?: Accent;
   }>(),
@@ -43,7 +43,7 @@ const props = withDefaults(
     accountModel: null,
     colWidth: 220,
     theme: 'terminal',
-    codeFont: 'sf-mono',
+    colorScheme: 'system',
     accent: 'blue',
   },
 );
@@ -62,22 +62,14 @@ const emit = defineEmits<{
   login: [];
   logout: [];
   setTheme: [theme: Theme];
-  setCodeFont: [font: CodeFont];
+  setColorScheme: [colorScheme: ColorScheme];
   setAccent: [accent: Accent];
   openOnboarding: [];
 }>();
 
 const totalSessionCount = computed(() => props.sessions.length);
 
-const CODE_FONT_OPTIONS: { value: CodeFont; labelKey: string; family: string }[] = [
-  { value: 'sf-mono', labelKey: 'theme.codeFontSfMono', family: 'var(--mono)' },
-  { value: 'fira-code', labelKey: 'theme.codeFontFiraCode', family: '"Fira Code", monospace' },
-  { value: 'jetbrains-mono', labelKey: 'theme.codeFontJetBrainsMono', family: '"JetBrains Mono", monospace' },
-  { value: 'source-code-pro', labelKey: 'theme.codeFontSourceCodePro', family: '"Source Code Pro", monospace' },
-  { value: 'ibm-plex-mono', labelKey: 'theme.codeFontIbmPlexMono', family: '"IBM Plex Mono", monospace' },
-  { value: 'space-mono', labelKey: 'theme.codeFontSpaceMono', family: '"Space Mono", monospace' },
-  { value: 'ubuntu-mono', labelKey: 'theme.codeFontUbuntuMono', family: '"Ubuntu Mono", monospace' },
-];
+
 
 // ---------------------------------------------------------------------------
 // Collapse groups
@@ -525,6 +517,32 @@ function blinkOnce(): void {
           </div>
         </div>
         <div class="am-lang">
+          <span class="am-lang-label">{{ t('theme.colorSchemeLabel') }}</span>
+          <div class="theme-seg" role="group" :aria-label="t('theme.colorSchemeLabel')">
+            <button
+              type="button"
+              class="theme-opt"
+              :class="{ on: colorScheme === 'light' }"
+              :aria-pressed="colorScheme === 'light'"
+              @click="emit('setColorScheme', 'light')"
+            >{{ t('theme.light') }}</button>
+            <button
+              type="button"
+              class="theme-opt"
+              :class="{ on: colorScheme === 'dark' }"
+              :aria-pressed="colorScheme === 'dark'"
+              @click="emit('setColorScheme', 'dark')"
+            >{{ t('theme.dark') }}</button>
+            <button
+              type="button"
+              class="theme-opt"
+              :class="{ on: colorScheme === 'system' }"
+              :aria-pressed="colorScheme === 'system'"
+              @click="emit('setColorScheme', 'system')"
+            >{{ t('theme.system') }}</button>
+          </div>
+        </div>
+        <div class="am-lang">
           <span class="am-lang-label">{{ t('theme.accentLabel') }}</span>
           <div class="theme-seg" role="group" :aria-label="t('theme.accentLabel')">
             <button
@@ -541,21 +559,6 @@ function blinkOnce(): void {
               :aria-pressed="accent === 'mono'"
               @click="emit('setAccent', 'mono')"
             >{{ t('theme.accentMono') }}</button>
-          </div>
-        </div>
-        <div class="am-lang">
-          <span class="am-lang-label">{{ t('theme.codeFontLabel') }}</span>
-          <div class="font-grid" role="group" :aria-label="t('theme.codeFontLabel')">
-            <button
-              v-for="f in CODE_FONT_OPTIONS"
-              :key="f.value"
-              type="button"
-              class="font-opt"
-              :class="{ on: codeFont === f.value }"
-              :aria-pressed="codeFont === f.value"
-              :style="{ fontFamily: f.family }"
-              @click="emit('setCodeFont', f.value)"
-            >{{ t(f.labelKey) }}</button>
           </div>
         </div>
         <div class="am-lang">
@@ -591,6 +594,32 @@ function blinkOnce(): void {
           </div>
         </div>
         <div class="am-lang">
+          <span class="am-lang-label">{{ t('theme.colorSchemeLabel') }}</span>
+          <div class="theme-seg" role="group" :aria-label="t('theme.colorSchemeLabel')">
+            <button
+              type="button"
+              class="theme-opt"
+              :class="{ on: colorScheme === 'light' }"
+              :aria-pressed="colorScheme === 'light'"
+              @click="emit('setColorScheme', 'light')"
+            >{{ t('theme.light') }}</button>
+            <button
+              type="button"
+              class="theme-opt"
+              :class="{ on: colorScheme === 'dark' }"
+              :aria-pressed="colorScheme === 'dark'"
+              @click="emit('setColorScheme', 'dark')"
+            >{{ t('theme.dark') }}</button>
+            <button
+              type="button"
+              class="theme-opt"
+              :class="{ on: colorScheme === 'system' }"
+              :aria-pressed="colorScheme === 'system'"
+              @click="emit('setColorScheme', 'system')"
+            >{{ t('theme.system') }}</button>
+          </div>
+        </div>
+        <div class="am-lang">
           <span class="am-lang-label">{{ t('theme.accentLabel') }}</span>
           <div class="theme-seg" role="group" :aria-label="t('theme.accentLabel')">
             <button
@@ -607,21 +636,6 @@ function blinkOnce(): void {
               :aria-pressed="accent === 'mono'"
               @click="emit('setAccent', 'mono')"
             >{{ t('theme.accentMono') }}</button>
-          </div>
-        </div>
-        <div class="am-lang">
-          <span class="am-lang-label">{{ t('theme.codeFontLabel') }}</span>
-          <div class="font-grid" role="group" :aria-label="t('theme.codeFontLabel')">
-            <button
-              v-for="f in CODE_FONT_OPTIONS"
-              :key="f.value"
-              type="button"
-              class="font-opt"
-              :class="{ on: codeFont === f.value }"
-              :aria-pressed="codeFont === f.value"
-              :style="{ fontFamily: f.family }"
-              @click="emit('setCodeFont', f.value)"
-            >{{ t(f.labelKey) }}</button>
           </div>
         </div>
         <div class="am-lang">

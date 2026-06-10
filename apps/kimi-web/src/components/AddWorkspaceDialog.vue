@@ -11,14 +11,10 @@ import type { FsBrowseEntry, FsBrowseResult } from '../api/types';
 
 const { t } = useI18n();
 
-const props = withDefaults(
-  defineProps<{
-    recentRoots: string[];
-    browseFs: (path?: string) => Promise<FsBrowseResult>;
-    getFsHome: () => Promise<{ home: string; recentRoots: string[] }>;
-  }>(),
-  { recentRoots: () => [] },
-);
+const props = defineProps<{
+  browseFs: (path?: string) => Promise<FsBrowseResult>;
+  getFsHome: () => Promise<{ home: string; recentRoots: string[] }>;
+}>();
 
 const emit = defineEmits<{
   add: [root: string];
@@ -33,7 +29,6 @@ const browseFailed = ref(false);
 const currentPath = ref('');
 const parentPath = ref<string | null>(null);
 const entries = ref<FsBrowseEntry[]>([]);
-const recent = ref<string[]>([...props.recentRoots]);
 
 // Paste-path escape hatch
 const pathInput = ref('');
@@ -90,10 +85,6 @@ function openThisFolder(): void {
   emit('add', currentPath.value);
 }
 
-function pickRecent(root: string): void {
-  void navigate(root);
-}
-
 function handlePasteAdd(): void {
   if (pathTrimmed.value.length === 0) return;
   emit('add', pathTrimmed.value);
@@ -103,7 +94,6 @@ onMounted(async () => {
   loading.value = true;
   try {
     const home = await props.getFsHome();
-    if (home.recentRoots.length > 0) recent.value = home.recentRoots;
     if (home.home) {
       await navigate(home.home);
     } else {
@@ -137,26 +127,6 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
             <line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/>
           </svg>
         </button>
-      </div>
-
-      <!-- Recent roots quick-pick -->
-      <div v-if="recent.length > 0" class="recent-section">
-        <div class="recent-label">{{ t('workspace.recentLabel') }}</div>
-        <div class="recent-list">
-          <button
-            v-for="root in recent"
-            :key="root"
-            class="recent-chip"
-            :title="root"
-            @click="pickRecent(root)"
-          >
-            <svg class="dir-icon" width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.2">
-              <rect x="1" y="3" width="9" height="6.5" rx="1"/>
-              <path d="M1 4.5V3a1 1 0 0 1 1-1h2.5l1 1.5"/>
-            </svg>
-            <span class="recent-path">{{ root }}</span>
-          </button>
-        </div>
       </div>
 
       <!-- Folder browser -->
@@ -220,7 +190,11 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
           spellcheck="false"
           @keydown.enter.stop="handlePasteAdd"
         />
-        <button class="paste-add" :disabled="pathTrimmed.length === 0" @click="handlePasteAdd">{{ t('workspace.add') }}</button>
+        <button class="paste-add" :disabled="pathTrimmed.length === 0" :title="t('workspace.add')" @click="handlePasteAdd">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M8 3v10M3 8h10"/>
+          </svg>
+        </button>
       </div>
 
       <!-- Actions -->
@@ -251,17 +225,18 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   z-index: 200;
 }
 .dialog {
+  position: relative;
   background: var(--bg);
-  border: 1px solid var(--line);
-  border-top: 2px solid var(--blue);
   border-radius: 4px;
   width: 540px;
   max-width: calc(100vw - 32px);
   display: flex;
   flex-direction: column;
   font-family: var(--mono);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.14);
+  box-shadow: inset 0 0 0 1px var(--line), 0 8px 32px rgba(0,0,0,0.14);
+  overflow: hidden;
 }
+
 .dh {
   display: flex;
   align-items: center;
@@ -287,38 +262,6 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   justify-content: center;
 }
 .close-btn:hover { color: var(--ink); }
-
-/* Recent roots */
-.recent-section {
-  padding: 10px 14px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  border-bottom: 1px solid var(--line2);
-}
-.recent-label {
-  font-size: 10px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.recent-list { display: flex; flex-wrap: wrap; gap: 5px; }
-.recent-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: var(--panel2);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 2px 9px 2px 7px;
-  cursor: pointer;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text);
-  max-width: 100%;
-}
-.recent-chip:hover { background: var(--soft); border-color: var(--bd); color: var(--blue); }
-.recent-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 /* Breadcrumb bar */
 .crumbbar {
@@ -443,16 +386,18 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 .paste-input:focus { border-color: var(--blue); }
 .paste-add {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   background: none;
   border: 1px solid var(--line);
   border-radius: 3px;
-  font-family: var(--mono);
-  font-size: 11.5px;
-  padding: 5px 12px;
   cursor: pointer;
   color: var(--text);
 }
-.paste-add:hover:not(:disabled) { background: var(--panel2); }
+.paste-add:hover:not(:disabled) { background: var(--panel2); border-color: var(--bd); }
 .paste-add:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Actions */
@@ -486,6 +431,5 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
   color: var(--faint);
   border-top: 1px solid var(--line2);
   background: var(--panel);
-  border-radius: 0 0 4px 4px;
 }
 </style>

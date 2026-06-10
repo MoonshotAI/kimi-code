@@ -66,12 +66,10 @@ const props = withDefaults(
      */
     sessionLoading?: boolean;
     /**
-     * True when the active workspace has no sessions — shows a centred input
-     * placeholder so the user can start typing immediately.
+     * @deprecated No longer used — Composer is rendered by ConversationPane.
      */
-    workspaceEmpty?: boolean;
   }>(),
-  { approvals: () => [], bubble: false, mobile: false, running: false, sending: false, workspaceEmpty: false },
+  { approvals: () => [], bubble: false, mobile: false, running: false, sending: false },
 );
 
 // Bubble layout is active on phones AND on the Modern desktop theme. ThinkingBlock
@@ -92,29 +90,10 @@ const emit = defineEmits<{
   /** The user toggled a process fold — the scroller must NOT auto-follow to
       the bottom, or the fold visually expands upward from a pinned bottom. */
   foldToggle: [];
-  /** Centred quick-start submit (workspace has no sessions yet). */
-  submit: [payload: { text: string; attachments: { fileId: string }[] }];
 }>();
 
 // Per-turn copy button state (keyed by turn id)
 const copiedTurn = ref<string | null>(null);
-
-// Centred quick-start textarea for empty workspaces
-const quickText = ref('');
-
-function handleQuickSubmit(): void {
-  const text = quickText.value.trim();
-  if (!text) return;
-  quickText.value = '';
-  emit('submit', { text, attachments: [] });
-}
-
-function onQuickKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    handleQuickSubmit();
-  }
-}
 
 /** Assemble the full content of a turn for copying — follows the ordered
     blocks so thinking/text/tool output copy in the order they happened. */
@@ -249,30 +228,7 @@ function processSummary(turn: ChatTurn): string {
       <span class="dot-pulse" aria-hidden="true" />
       <span class="chat-loading-text">{{ t('conversation.loading') }}</span>
     </div>
-    <div v-else-if="turns.length === 0 && (!approvals || approvals.length === 0)" class="chat-empty">
-      <template v-if="workspaceEmpty">
-        <div class="quick-start">
-          <textarea
-            v-model="quickText"
-            class="quick-ta"
-            :placeholder="t('composer.quickStartPlaceholder')"
-            rows="1"
-            @keydown="onQuickKeydown"
-          />
-          <button class="quick-send" :disabled="!quickText.trim()" @click="handleQuickSubmit">
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M2 8h12M9 3l5 5-5 5"/>
-            </svg>
-          </button>
-        </div>
-      </template>
-      <template v-else>
-        <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
-        </svg>
-        <div class="chat-empty-text">{{ t('composer.emptyConversation') }}</div>
-      </template>
-    </div>
+    <div v-else-if="turns.length === 0 && (!approvals || approvals.length === 0)" class="chat-empty" />
 
     <template v-for="turn in turns" :key="turn.id">
       <!-- User turn → right-aligned soft-blue bubble -->
@@ -318,6 +274,7 @@ function processSummary(turn: ChatTurn): string {
           <button
             class="a-cpbtn"
             :title="t('filePreview.copy')"
+            tabindex="-1"
             @click="copyTurn(turn)"
           >
             <svg v-if="copiedTurn !== turn.id" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -354,31 +311,9 @@ function processSummary(turn: ChatTurn): string {
       <span class="dot-pulse" aria-hidden="true" />
       <span class="chat-loading-text">{{ t('conversation.loading') }}</span>
     </div>
-    <!-- Empty state: a fresh/empty session shows a hint instead of a blank pane -->
-    <div v-else-if="turns.length === 0 && (!approvals || approvals.length === 0)" class="chat-empty">
-      <template v-if="workspaceEmpty">
-        <div class="quick-start">
-          <textarea
-            v-model="quickText"
-            class="quick-ta"
-            :placeholder="t('composer.quickStartPlaceholder')"
-            rows="1"
-            @keydown="onQuickKeydown"
-          />
-          <button class="quick-send" :disabled="!quickText.trim()" @click="handleQuickSubmit">
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M2 8h12M9 3l5 5-5 5"/>
-            </svg>
-          </button>
-        </div>
-      </template>
-      <template v-else>
-        <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
-        </svg>
-        <div class="chat-empty-text">{{ t('composer.emptyConversation') }}</div>
-      </template>
-    </div>
+    <!-- Empty state: a fresh/empty session shows a blank pane (Composer lives in
+         the dock, moved here by ConversationPane when workspaceEmpty). -->
+    <div v-else-if="turns.length === 0 && (!approvals || approvals.length === 0)" class="chat-empty" />
 
     <template v-for="turn in turns" :key="turn.id">
       <div class="ln" :class="turn.role === 'user' ? 'userline' : 'ai'">
@@ -487,54 +422,6 @@ function processSummary(turn: ChatTurn): string {
   text-align: center;
 }
 .chat-empty-text { font-size: 13px; }
-
-/* Centred quick-start input for empty workspaces */
-.quick-start {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  max-width: 480px;
-  padding: 8px 12px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-}
-.quick-ta {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  resize: none;
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--ink);
-  font-family: var(--mono);
-  max-height: 120px;
-}
-.quick-ta::placeholder { color: var(--faint); }
-.quick-send {
-  flex: none;
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--blue);
-  border: none;
-  border-radius: 6px;
-  color: #fff;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.quick-send:hover:not(:disabled) { background: var(--blue2); }
-.quick-send:disabled {
-  background: var(--line);
-  color: var(--faint);
-  cursor: not-allowed;
-}
 
 .chat-loading {
   flex: 1;
@@ -649,7 +536,17 @@ function processSummary(turn: ChatTurn): string {
 }
 .a-msg-ft {
   display: flex;
-  margin-top: 6px;
+  height: 0;
+  margin-top: 0;
+  opacity: 0;
+  overflow: visible;
+  pointer-events: none;
+  transition: opacity 0.1s;
+}
+.a-msg:hover .a-msg-ft,
+.a-msg:focus-within .a-msg-ft {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 /* Fold toggle: collapses process blocks (thinking + tools) before the final
@@ -704,6 +601,15 @@ function processSummary(turn: ChatTurn): string {
 }
 .a-cpbtn svg {
   flex: none;
+}
+/* Touch devices: always show copy button for easier tapping */
+@media (hover: none) {
+  .a-msg-ft {
+    height: auto;
+    margin-top: 6px;
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 .a-msg .msg {
   font-size: 14px;

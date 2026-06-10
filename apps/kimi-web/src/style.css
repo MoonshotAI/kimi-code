@@ -30,9 +30,61 @@
   --r-md: 12px;
   --r-lg: 16px;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  /* Both themes are light. Declared here (and in index.html) so the browser and
-     dark-mode extensions never force-darken the page. */
-  color-scheme: light;
+  color-scheme: light dark;
+}
+
+/* Dark mode variables — applied when explicitly chosen or via system preference. */
+html[data-color-scheme="dark"],
+html[data-color-scheme="system"] {
+  color-scheme: light dark;
+}
+
+html[data-color-scheme="dark"] {
+  --ink: #e8eaed;
+  --text: #c9cdd4;
+  --dim: #9aa0a8;
+  --muted: #727983;
+  --faint: #525960;
+  --line: #2d333b;
+  --line2: #22272e;
+  --panel: #1c2128;
+  --panel2: #161b22;
+  --bg: #0d1117;
+  --blue: #58a6ff;
+  --blue2: #79b8ff;
+  --soft: #1f2937;
+  --bd: #1f6feb;
+  --logo: #58a6ff;
+  --bluebg: #1c2a3a;
+  --blueln: #1f4f7a;
+  --ok: #3fb950;
+  --warn: #d29922;
+  --err: #f85149;
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-color-scheme="system"] {
+    --ink: #e8eaed;
+    --text: #c9cdd4;
+    --dim: #9aa0a8;
+    --muted: #727983;
+    --faint: #525960;
+    --line: #2d333b;
+    --line2: #22272e;
+    --panel: #1c2128;
+    --panel2: #161b22;
+    --bg: #0d1117;
+    --blue: #58a6ff;
+    --blue2: #79b8ff;
+    --soft: #1f2937;
+    --bd: #1f6feb;
+    --logo: #58a6ff;
+    --bluebg: #1c2a3a;
+    --blueln: #1f4f7a;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --err: #f85149;
+  }
 }
 
 /* Accent: black/white (Vercel-style) — remaps the blue tokens to grayscale.

@@ -11,6 +11,7 @@ import type {
   AppModel,
   AppProvider,
   AppQuestionRequest,
+  AppSession,
   AppSessionRuntimeStatus,
   AppWorkspace,
   ApprovalDecision,
@@ -60,6 +61,9 @@ const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'low', 'medium', 'high
 
 /** UI theme: 'terminal' = today's default line look, 'modern' = bubbles everywhere. */
 export type Theme = 'terminal' | 'modern';
+
+/** Color scheme: 'light', 'dark', or follow the OS preference ('system'). */
+export type ColorScheme = 'light' | 'dark' | 'system';
 
 /** Code font choices (all free / open-source). */
 export type CodeFont =
@@ -124,6 +128,33 @@ function loadAccentFromStorage(): Accent {
 function applyAccentToDocument(a: Accent): void {
   if (typeof document === 'undefined' || !document.documentElement) return;
   document.documentElement.dataset.accent = a;
+}
+
+const COLOR_SCHEME_STORAGE_KEY = 'kimi-web.color-scheme';
+const COLOR_SCHEME_VALUES: readonly string[] = ['light', 'dark', 'system'];
+
+function loadColorSchemeFromStorage(): ColorScheme {
+  try {
+    const v = localStorage.getItem(COLOR_SCHEME_STORAGE_KEY);
+    if (v && COLOR_SCHEME_VALUES.includes(v)) return v as ColorScheme;
+  } catch {
+    // ignore
+  }
+  return 'system';
+}
+
+function saveColorSchemeToStorage(v: ColorScheme): void {
+  try {
+    localStorage.setItem(COLOR_SCHEME_STORAGE_KEY, v);
+  } catch {
+    // ignore
+  }
+}
+
+/** Reflect the chosen color scheme onto <html data-color-scheme>. jsdom-safe. */
+function applyColorSchemeToDocument(c: ColorScheme): void {
+  if (typeof document === 'undefined' || !document.documentElement) return;
+  document.documentElement.dataset.colorScheme = c;
 }
 
 function loadPermissionFromStorage(): PermissionMode {
@@ -380,6 +411,20 @@ function setTheme(t: Theme): void {
 /** Flip Terminal ↔ Modern. */
 function toggleTheme(): void {
   setTheme(theme.value === 'modern' ? 'terminal' : 'modern');
+}
+
+// ---------------------------------------------------------------------------
+// Color scheme (light / dark / system). Persisted and mirrored onto
+// <html data-color-scheme> so CSS can switch variables.
+// ---------------------------------------------------------------------------
+const colorScheme = ref<ColorScheme>(loadColorSchemeFromStorage());
+
+watch(colorScheme, applyColorSchemeToDocument, { immediate: true });
+
+function setColorScheme(c: ColorScheme): void {
+  if (!COLOR_SCHEME_VALUES.includes(c)) return;
+  colorScheme.value = c;
+  saveColorSchemeToStorage(c);
 }
 
 // ---------------------------------------------------------------------------
@@ -970,7 +1015,7 @@ const changesByPath = computed<Record<string, string>>(() => {
  * workspace id IS the cwd).
  */
 function workspaceIdForSession(s: { workspaceId?: string; cwd: string }): string {
-  return s.workspaceId ?? s.cwd;
+  return rawState.workspaces.find((w) => w.root === s.cwd)?.id ?? s.workspaceId ?? s.cwd;
 }
 
 /**
@@ -1314,39 +1359,55 @@ function selectWorkspace(id: string): void {
   saveActiveWorkspaceToStorage(id);
 }
 
+/** Open a workspace in the main pane: clear the active session when the
+ *  workspace is empty so the centred composer is shown; otherwise activate
+ *  the most recent session in that workspace. */
+function openWorkspace(id: string): void {
+  selectWorkspace(id);
+  const sessionsInWs = rawState.sessions.filter((s) => workspaceIdForSession(s) === id);
+  if (sessionsInWs.length > 0) {
+    const mostRecent = sessionsInWs[0];
+    if (mostRecent && mostRecent.id !== rawState.activeSessionId) {
+      void selectSession(mostRecent.id);
+    }
+  } else {
+    rawState.activeSessionId = undefined;
+  }
+}
+
 /**
  * Create a session in a workspace — the one-click path (no cwd typing).
- * Create a session in a workspace — the one-click path (no cwd typing).
- * Resolves the workspace root → createSession({ workspaceId, cwd: root }).
+ * Register/touch the workspace first when the daemon supports it; if that
+ * fails, fall back to the legacy cwd-only create path.
  */
-async function createSessionInWorkspace(workspaceId: string): Promise<void> {
+async function createSessionInWorkspace(workspaceId: string): Promise<AppSession | undefined> {
   const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
-  if (!ws) return;
+  if (!ws) return undefined;
   try {
     const api = getKimiWebApi();
-    // A DERIVED workspace (id auto-assigned to a session by cwd) isn't in the
-    // daemon's workspace registry, and createSession validates the id against
-    // that registry ("workspace not found"). Register it first (idempotent),
-    // then use the registry's real id.
-    let workspaceIdForCreate = ws.id;
-    if (!rawState.workspaces.some((w) => w.id === ws.id)) {
-      try {
-        const registered = await api.addWorkspace({ root: ws.root });
-        workspaceIdForCreate = registered.id;
-        rawState.workspaces = [
-          registered,
-          ...rawState.workspaces.filter((w) => w.root !== registered.root),
-        ];
-      } catch {
-        // Registration failed — fall through with the derived id.
-      }
+    let workspaceIdForCreate: string | undefined;
+    let cwdForCreate = ws.root;
+    try {
+      const registered = await api.addWorkspace({ root: ws.root });
+      workspaceIdForCreate = registered.id;
+      cwdForCreate = registered.root;
+      rawState.workspaces = [
+        registered,
+        ...rawState.workspaces.filter((w) => w.root !== registered.root && w.root !== ws.root),
+      ];
+    } catch {
+      // Older daemons may not have /workspaces. In that mode, sending a local
+      // path-like workspace id as workspace_id would fail validation, so use
+      // metadata.cwd only.
     }
-    const session = await api.createSession({ workspaceId: workspaceIdForCreate, cwd: ws.root });
+    const session = await api.createSession({ workspaceId: workspaceIdForCreate, cwd: cwdForCreate });
     rawState.sessions = [session, ...rawState.sessions];
-    selectWorkspace(workspaceIdForCreate);
+    selectWorkspace(session.workspaceId ?? workspaceIdForCreate ?? workspaceId);
     await selectSession(session.id);
+    return session;
   } catch (err) {
     rawState.warnings = [...rawState.warnings, `createSessionInWorkspace failed: ${String(err)}`];
+    return undefined;
   }
 }
 
@@ -1774,6 +1835,22 @@ function renameWorkspace(id: string, name: string): void {
   );
 }
 
+/** Delete a workspace — calls API, removes locally */
+async function deleteWorkspace(id: string): Promise<void> {
+  try {
+    const api = getKimiWebApi();
+    await api.deleteWorkspace(id);
+    rawState.workspaces = rawState.workspaces.filter((w) => w.id !== id);
+    // Clear active workspace if it was the deleted one
+    if (rawState.activeWorkspaceId === id) {
+      rawState.activeWorkspaceId = null;
+      try { localStorage.removeItem(ACTIVE_WORKSPACE_KEY); } catch { /* ignore */ }
+    }
+  } catch (err) {
+    rawState.warnings = [...rawState.warnings, `deleteWorkspace failed: ${String(err)}`];
+  }
+}
+
 /** Delete a session — calls API, removes locally, picks another active session or none */
 async function deleteSession(id: string): Promise<void> {
   try {
@@ -2134,6 +2211,10 @@ export function useKimiWebClient() {
     setTheme,
     toggleTheme,
 
+    // Color scheme
+    colorScheme,
+    setColorScheme,
+
     // Code font
     codeFont,
     setCodeFont,
@@ -2150,6 +2231,7 @@ export function useKimiWebClient() {
     // Workspace actions
     loadWorkspaces,
     selectWorkspace,
+    openWorkspace,
     createSessionInWorkspace,
     addWorkspaceByPath,
     browseFs,
@@ -2172,6 +2254,7 @@ export function useKimiWebClient() {
     dismissWarning,
     renameSession,
     renameWorkspace,
+    deleteWorkspace,
     deleteSession,
     compact,
     forkSession,

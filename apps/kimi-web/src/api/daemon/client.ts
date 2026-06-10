@@ -663,6 +663,14 @@ export class DaemonKimiWebApi implements KimiWebApi {
   }
 
   /**
+   * Remove a registered workspace.
+   * PRESUMED — DELETE /api/v1/workspaces/:id. On error this throws.
+   */
+  async deleteWorkspace(id: string): Promise<void> {
+    await this.http.delete(`/workspaces/${encodeURIComponent(id)}`);
+  }
+
+  /**
    * Browse directories under `path` (defaults to $HOME on the daemon).
    * PRESUMED — GET /api/v1/fs:browse?path=. On error returns an empty result so
    * the picker degrades to paste-path + recentRoots.

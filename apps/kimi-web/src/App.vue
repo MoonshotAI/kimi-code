@@ -42,7 +42,7 @@ const activeSessionTitle = computed<string>(() => {
 
 // Number of sessions in the active workspace (mobile top-bar sub-line).
 const activeWorkspaceSessionCount = computed<number>(
-  () => client.sessionsForView.value.length,
+  () => client.visibleWorkspace.value?.sessionCount ?? 0,
 );
 
 // True when the active workspace has no sessions — drives the centred input
@@ -257,7 +257,8 @@ function handleEditQueued(index: number): void {
 async function handleSubmit(payload: { text: string; attachments: { fileId: string }[] }): Promise<void> {
   const wsId = client.activeWorkspaceId.value;
   if (wsId && workspaceEmpty.value) {
-    await client.createSessionInWorkspace(wsId);
+    const session = await client.createSessionInWorkspace(wsId);
+    if (session === undefined) return;
   }
   void client.sendPrompt(payload.text, payload.attachments);
 }
@@ -290,21 +291,22 @@ function handleCreateSession(): void {
         :auth-ready="client.authReady.value"
         :account-model="client.defaultModel.value"
         :theme="client.theme.value"
-        :code-font="client.codeFont.value"
+        :color-scheme="client.colorScheme.value"
         :accent="client.accent.value"
         @select="client.selectSession($event)"
         @create="handleCreateSession"
         @create-in-workspace="client.createSessionInWorkspace($event)"
-        @select-workspace="client.selectWorkspace($event)"
+        @select-workspace="client.openWorkspace($event)"
         @add-workspace="showAddWorkspace = true"
         @rename="(id, title) => client.renameSession(id, title)"
         @delete="(id) => client.deleteSession(id)"
         @rename-workspace="(id, name) => client.renameWorkspace(id, name)"
+        @delete-workspace="(id) => client.deleteWorkspace(id)"
         @select-workspaces="handleSelectWorkspaces"
         @login="openLogin"
         @logout="client.logout"
         @set-theme="client.setTheme($event)"
-        @set-code-font="client.setCodeFont($event)"
+        @set-color-scheme="client.setColorScheme($event)"
         @set-accent="client.setAccent($event)"
         @open-onboarding="openOnboarding"
       />
@@ -452,7 +454,6 @@ function handleCreateSession(): void {
     <!-- Add Workspace overlay (daemon folder browser + paste-path fallback) -->
     <AddWorkspaceDialog
       v-if="showAddWorkspace"
-      :recent-roots="client.recentRoots.value"
       :browse-fs="client.browseFs"
       :get-fs-home="client.getFsHome"
       @add="(root) => { showAddWorkspace = false; void client.addWorkspaceByPath(root); }"
@@ -518,6 +519,7 @@ function handleCreateSession(): void {
       :thinking="client.thinking.value"
       :plan-mode="client.planMode.value"
       :theme="client.theme.value"
+      :color-scheme="client.colorScheme.value"
       :accent="client.accent.value"
       :auth-ready="client.authReady.value"
       @pick-model="openModelPicker()"
@@ -525,6 +527,7 @@ function handleCreateSession(): void {
       @toggle-plan="client.togglePlanMode()"
       @set-permission="client.setPermission($event)"
       @set-theme="client.setTheme($event)"
+      @set-color-scheme="client.setColorScheme($event)"
       @set-accent="client.setAccent($event)"
       @login="openLogin"
       @logout="client.logout"

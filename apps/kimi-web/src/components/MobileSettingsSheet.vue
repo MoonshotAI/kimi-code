@@ -10,7 +10,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ConversationStatus, PermissionMode } from '../types';
 import type { ThinkingLevel } from '../api/types';
-import type { Accent, Theme } from '../composables/useKimiWebClient';
+import type { Accent, ColorScheme, Theme } from '../composables/useKimiWebClient';
 import BottomSheet from './BottomSheet.vue';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 
@@ -23,10 +23,11 @@ const props = withDefaults(
     thinking?: ThinkingLevel;
     planMode?: boolean;
     theme?: Theme;
+    colorScheme?: ColorScheme;
     accent?: Accent;
     authReady?: boolean;
   }>(),
-  { theme: 'terminal', accent: 'blue', authReady: false },
+  { theme: 'terminal', colorScheme: 'system', accent: 'blue', authReady: false },
 );
 
 const emit = defineEmits<{
@@ -36,6 +37,7 @@ const emit = defineEmits<{
   togglePlan: [];
   setPermission: [mode: PermissionMode];
   setTheme: [theme: Theme];
+  setColorScheme: [colorScheme: ColorScheme];
   setAccent: [accent: Accent];
   login: [];
   logout: [];
@@ -167,6 +169,35 @@ function onLogout(): void {
           :aria-pressed="theme === 'terminal'"
           @click="emit('setTheme', 'terminal')"
         >{{ t('theme.terminal') }}</button>
+      </div>
+    </div>
+
+    <div class="srow read-only pref">
+      <span class="srow-main">
+        <span class="srow-label">{{ t('theme.colorSchemeLabel') }}</span>
+      </span>
+      <div class="seg" role="group" :aria-label="t('theme.colorSchemeLabel')">
+        <button
+          type="button"
+          class="seg-opt"
+          :class="{ on: colorScheme === 'light' }"
+          :aria-pressed="colorScheme === 'light'"
+          @click="emit('setColorScheme', 'light')"
+        >{{ t('theme.light') }}</button>
+        <button
+          type="button"
+          class="seg-opt"
+          :class="{ on: colorScheme === 'dark' }"
+          :aria-pressed="colorScheme === 'dark'"
+          @click="emit('setColorScheme', 'dark')"
+        >{{ t('theme.dark') }}</button>
+        <button
+          type="button"
+          class="seg-opt"
+          :class="{ on: colorScheme === 'system' }"
+          :aria-pressed="colorScheme === 'system'"
+          @click="emit('setColorScheme', 'system')"
+        >{{ t('theme.system') }}</button>
       </div>
     </div>
 

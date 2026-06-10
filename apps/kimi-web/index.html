@@ -3,12 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <!-- Both UI themes (Terminal + Modern) are LIGHT. Declaring light-only keeps
-         browsers and dark-mode extensions (e.g. 沉浸式翻译 / Dark Reader) from
-         force-darkening <html>, which previously hijacked the page background and
-         broke fixed-positioned popovers in Modern mode. -->
-    <meta name="color-scheme" content="light" />
-    <meta name="theme-color" content="#ffffff" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)" />
     <!-- Free coding fonts (OFL/UFL licensed): Fira Code, JetBrains Mono, Source Code Pro,
          IBM Plex Mono, Space Mono, Ubuntu Mono. Loaded once; switched via CSS variable. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
