@@ -110,6 +110,7 @@ Hook 命令的工作目录是当前会话的项目目录。非 Windows 平台上
 | `SubagentStart` | 子 Agent 名称 | — | 子 Agent 开始运行前触发 |
 | `SubagentStop` | 子 Agent 名称 | — | 子 Agent 成功完成后触发（观察用） |
 | `StopFailure` | 错误类型 | — | 本轮因错误失败后触发（观察用） |
+| `Interrupt` | 空字符串 | — | 用户中断本轮时触发（例如按下 Esc）；超时或其他程序性中断不会触发。中断时 `Stop` 不会触发，由本事件替代。payload 含 `reason` 字段（观察用） |
 | `PreCompact` | `manual` 或 `auto` | — | 上下文压缩开始前触发；返回值被完全忽略 |
 | `PostCompact` | `manual` 或 `auto` | — | 上下文压缩完成后触发（观察用） |
 | `Notification` | 通知类型（如 `task.completed`） | — | 后台任务状态变化时触发（观察用） |
