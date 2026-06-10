@@ -18,7 +18,7 @@ import { arch, homedir, hostname, release, type } from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 
-const VERSION = '3.1.2';
+const VERSION = '3.2.0';
 const DEFAULT_KIMI_CODE_OAUTH_HOST = 'https://auth.kimi.com';
 const DEFAULT_KIMI_CODE_BASE_URL = 'https://api.kimi.com/coding/v1';
 const API_URL = datasourceApiUrl();
@@ -65,6 +65,7 @@ const TOOLS = [
             'tianyancha',
             'arxiv',
             'scholar',
+            'yuandian_law',
           ],
           description: 'Data source name.',
         },
@@ -123,17 +124,18 @@ async function runTool(params) {
       isError: true,
     };
   }
+  const trace = {};
   try {
     const built = handler.buildParams(args);
-    const response = await callKimiTool(handler.method, built);
+    const response = await callKimiTool(handler.method, built, trace);
     const fileWarnings = await writeResponseFiles(response, expectedResponseFilePath(built));
     const text = extractText(response);
     const formatted = (handler.format?.(text, built) ?? text).trim();
-    return { content: [{ type: 'text', text: appendWarnings(formatted, fileWarnings) }] };
+    return { content: [{ type: 'text', text: appendTrace(appendWarnings(formatted, fileWarnings), trace) }] };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
-      content: [{ type: 'text', text: message }],
+      content: [{ type: 'text', text: appendTrace(message, trace) }],
       isError: true,
     };
   }
@@ -204,6 +206,25 @@ function allowedResponseFilePath(name, expectedOutputPath) {
 function appendWarnings(text, warnings) {
   if (warnings.length === 0) return text;
   return `${text}\n\n${warnings.join('\n')}`;
+}
+
+// Pick the backend request id from the response headers, if the gateway sends one.
+function extractRequestId(headers) {
+  for (const key of ['x-request-id', 'x-trace-id', 'x-msh-request-id', 'x-msh-trace-id', 'request-id']) {
+    const value = headers.get(key);
+    if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+  }
+  return undefined;
+}
+
+// Append a trace line so failures can be correlated with backend logs. The
+// tool-call-id is the `X-Msh-Tool-Call-Id` header we send on every request.
+function appendTrace(text, trace) {
+  if (trace === undefined || trace.toolCallId === undefined) return text;
+  const parts = [];
+  if (trace.requestId !== undefined) parts.push(`request-id: ${trace.requestId}`);
+  parts.push(`tool-call-id: ${trace.toolCallId}`);
+  return `${text}\n\n[kimi-datasource] ${parts.join(' · ')}`;
 }
 
 function resolveKimiHome() {
@@ -287,8 +308,10 @@ async function loadAccessToken() {
   return { kimiHome, token };
 }
 
-async function callKimiTool(method, params) {
+async function callKimiTool(method, params, trace = {}) {
   const { kimiHome, token } = await loadAccessToken();
+  const toolCallId = randomUUID();
+  trace.toolCallId = toolCallId;
   const controller = new AbortController();
   const timeout = setTimeout(() => {
     controller.abort();
@@ -296,10 +319,11 @@ async function callKimiTool(method, params) {
   try {
     const response = await fetch(API_URL, {
       method: 'POST',
-      headers: await buildHeaders(kimiHome, token),
+      headers: await buildHeaders(kimiHome, token, toolCallId),
       body: JSON.stringify({ method, params }),
       signal: controller.signal,
     });
+    trace.requestId = extractRequestId(response.headers);
     const text = await response.text();
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} error: ${text}`);
@@ -319,11 +343,11 @@ async function callKimiTool(method, params) {
   }
 }
 
-async function buildHeaders(kimiHome, token) {
+async function buildHeaders(kimiHome, token, toolCallId) {
   return {
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',
-    'X-Msh-Tool-Call-Id': randomUUID(),
+    'X-Msh-Tool-Call-Id': toolCallId,
     'X-Msh-Platform': asciiHeader(process.env.KIMI_MSH_PLATFORM ?? 'kimi-code-cli'),
     'X-Msh-Version': asciiHeader(process.env.KIMI_MSH_VERSION ?? VERSION),
     'X-Msh-Device-Name': asciiHeader(process.env.KIMI_MSH_DEVICE_NAME ?? hostname()),
