@@ -138,14 +138,11 @@ export class FileMentionProvider implements AutocompleteProvider {
 
         if (matches.length === 0) return null;
         return {
-          items: matches.map((m) => {
-            const description = formatSlashCommandDescription(m.cmd);
-            return {
-              value: m.cmd.name,
-              label: m.label,
-              ...(description && { description }),
-            };
-          }),
+          items: matches.map((m) => ({
+            value: m.cmd.name,
+            label: m.label,
+            description: formatSlashCommandDescription(m.cmd),
+          })),
           prefix: textBeforeCursor,
         };
       }
