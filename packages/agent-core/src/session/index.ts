@@ -107,6 +107,32 @@ export interface SessionMeta {
 }
 
 const BACKGROUND_KEEP_ALIVE_ON_EXIT_ENV = 'KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT';
+const ACTIVE_TURN_CLOSE_TIMEOUT_MS = 8_000;
+
+async function waitForSettlementOrTimeout(
+  promise: Promise<unknown>,
+  timeoutMs: number,
+): Promise<boolean> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(
+        () => true,
+        () => true,
+      ),
+      new Promise<false>((resolve) => {
+        timeout = setTimeout(() => {
+          resolve(false);
+        }, timeoutMs);
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+  }
+}
 
 export class Session {
   readonly rpc: SDKSessionRPC;
@@ -232,6 +258,7 @@ export class Session {
       await Promise.allSettled(
         Array.from(this.readyAgents(), async (agent) => agent.cron?.stop()),
       );
+      await this.cancelActiveTurnsOnClose();
       await this.stopBackgroundTasksOnExit();
       await this.flushMetadata();
       await this.triggerSessionEnd('exit');
@@ -256,6 +283,38 @@ export class Session {
       } finally {
         await this.logHandle?.close();
       }
+    }
+  }
+
+  private async cancelActiveTurnsOnClose(): Promise<void> {
+    await Promise.allSettled(
+      Array.from(this.readyAgents(), (agent) => this.cancelAgentTurnOnClose(agent)),
+    );
+  }
+
+  private async cancelAgentTurnOnClose(agent: Agent): Promise<void> {
+    if (!agent.turn.hasActiveTurn) return;
+
+    let waitForTurn: Promise<unknown>;
+    try {
+      waitForTurn = agent.turn.waitForCurrentTurn();
+    } catch (error: unknown) {
+      this.log.debug('active turn wait unavailable during session close', {
+        agentType: agent.type,
+        agentHomedir: agent.homedir,
+        error,
+      });
+      return;
+    }
+
+    agent.turn.cancel(undefined, new Error('Session closed'));
+    const settled = await waitForSettlementOrTimeout(waitForTurn, ACTIVE_TURN_CLOSE_TIMEOUT_MS);
+    if (!settled) {
+      this.log.warn('timed out waiting for active turn to cancel during session close', {
+        agentType: agent.type,
+        agentHomedir: agent.homedir,
+        timeoutMs: ACTIVE_TURN_CLOSE_TIMEOUT_MS,
+      });
     }
   }
 

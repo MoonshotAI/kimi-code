@@ -176,6 +176,31 @@ describe('Session lifecycle hooks', () => {
     expect(agent.background.getTask(taskId)?.status).toBe('killed');
   });
 
+  it('cancels an active foreground turn before closing', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-active-turn-cleanup',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+    });
+    const agent = await session.createMain();
+    const turnSettled = createDeferred<void>();
+    const waitSpy = vi
+      .spyOn(agent.turn, 'waitForCurrentTurn')
+      .mockImplementation(() => turnSettled.promise as never);
+    const cancelSpy = vi.spyOn(agent.turn, 'cancel').mockImplementation(() => {
+      turnSettled.resolve();
+    });
+    vi.spyOn(agent.turn, 'hasActiveTurn', 'get').mockReturnValue(true);
+
+    await session.close();
+
+    expect(cancelSpy).toHaveBeenCalledWith(undefined, expect.any(Error));
+    expect(waitSpy).toHaveBeenCalledOnce();
+  });
+
   it('keeps background tasks alive and skips SessionEnd hooks when closing for reload', async () => {
     const { command, logPath, sessionDir, workDir } = await hookFixture();
     const session = new Session({
@@ -270,6 +295,22 @@ function createSessionRpc(): SDKSessionRPC {
       isError: true,
     })),
   } as SDKSessionRPC;
+}
+
+function createDeferred<T>(): {
+  readonly promise: Promise<T>;
+  resolve(value: T): void;
+} {
+  let resolveValue: (value: T) => void = () => {
+    /* replaced below */
+  };
+  const promise = new Promise<T>((resolve) => {
+    resolveValue = resolve;
+  });
+  return {
+    promise,
+    resolve: resolveValue,
+  };
 }
 
 function pendingProcess(exitOnKill = 143): {
