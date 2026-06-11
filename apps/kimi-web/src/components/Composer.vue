@@ -1184,6 +1184,7 @@ function selectModel(modelId: string): void {
   max-height: 200px;
   overflow-y: auto;
   line-height: 1.5;
+  margin-bottom: 6px;
 }
 
 .ph:not(:placeholder-shown) {
